@@ -1,0 +1,41 @@
+{
+  "name": "weave",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code harness tool — inject plugin capabilities into any project",
+  "type": "module",
+  "author": "zijing66",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "harness",
+    "mcp",
+    "skills"
+  ],
+  "homepage": "https://github.com/zijing66/weave#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zijing66/weave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zijing66/weave/issues"
+  },
+  "packageManager": "pnpm@11.8.0",
+  "scripts": {
+    "build": "tsc -b && cd packages/weave-templates && node copy-templates.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsc -b --watch",
+    "clean": "rimraf packages/weave-core/dist packages/weave-templates/dist packages/weave-cli/dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

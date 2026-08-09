@@ -1,0 +1,54 @@
+{
+  "name": "@weave/templates",
+  "version": "0.1.0",
+  "description": "Built-in skill, command, and agent templates",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "author": "zijing66",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "harness",
+    "mcp",
+    "skills"
+  ],
+  "homepage": "https://github.com/zijing66/weave#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zijing66/weave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zijing66/weave/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc && node copy-templates.mjs",
+    "prepack": "pnpm build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@weave/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
