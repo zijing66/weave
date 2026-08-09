@@ -1,3 +1,7 @@
+/**
+ * Inspired by ruflo (claude-flow v3.34.0) parser.
+ * MIT License, Copyright (c) 2024-2026 ruvnet — see THIRD_PARTY_NOTICES.md.
+ */
 /** Flag definition for a command option */
 export interface CommandOption {
   name: string;
