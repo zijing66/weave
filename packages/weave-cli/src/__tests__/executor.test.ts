@@ -80,35 +80,185 @@ describe('executeInit', () => {
     expect(result.created.files.some(f => f.includes('.claude') && f.includes('skills'))).toBe(true);
   });
 
-  // ---- Step 10: .gitignore excludes .weave/ ----
-  it('creates a .gitignore ignoring .weave/ when none exists', async () => {
+  // ---- Step 10: .weave/ ignore goes to .git/info/exclude, never .gitignore ----
+  it('never creates or touches .gitignore outside a git repository', async () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     const gitignorePath = path.join(tmpDir, '.gitignore');
-    expect(result.created.files).toContain(gitignorePath);
-    const content = await readFile(gitignorePath, 'utf-8');
-    expect(content).toContain('.weave/');
+    expect(result.created.files).not.toContain(gitignorePath);
+    await expect(stat(gitignorePath)).rejects.toThrow();
   });
 
-  it('appends .weave/ to an existing .gitignore without duplicating', async () => {
+  it('leaves an existing .gitignore byte-identical', async () => {
     const gitignorePath = path.join(tmpDir, '.gitignore');
-    await writeFile(gitignorePath, 'node_modules/\n');
-
-    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(result.created.files).toContain(gitignorePath);
-    const content = await readFile(gitignorePath, 'utf-8');
-    expect(content).toContain('.weave/');
-    expect(content).toContain('node_modules/'); // user entries preserved
-    expect(content.match(/\.weave\//g)?.length).toBe(1);
-  });
-
-  it('leaves a .gitignore that already ignores .weave/ untouched', async () => {
-    const gitignorePath = path.join(tmpDir, '.gitignore');
-    const original = '.weave/\nnode_modules/\n';
+    const original = 'node_modules/\n';
     await writeFile(gitignorePath, original);
 
-    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(result.skipped).toContain(gitignorePath);
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     const content = await readFile(gitignorePath, 'utf-8');
     expect(content).toBe(original);
+  });
+
+  it('writes .weave/ into .git/info/exclude when the target is a git repo root', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const excludePath = path.join(tmpDir, '.git', 'info', 'exclude');
+    expect(result.created.files).toContain(excludePath);
+    const content = await readFile(excludePath, 'utf-8');
+    expect(content).toContain('.weave/');
+  });
+
+  it('writes the exclude at the repo root when init runs in a subdirectory', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+    const sub = path.join(tmpDir, 'packages', 'app');
+    await mkdir(sub, { recursive: true });
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: sub });
+    const excludePath = path.join(tmpDir, '.git', 'info', 'exclude');
+    const content = await readFile(excludePath, 'utf-8');
+    expect(content).toContain('.weave/');
+  });
+
+  it('is idempotent — re-init does not duplicate the exclude entry', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const content = await readFile(path.join(tmpDir, '.git', 'info', 'exclude'), 'utf-8');
+    const entries = content
+      .split(/\r?\n/)
+      .filter((line) => {
+        const t = line.trim();
+        return t === '.weave' || t === '.weave/';
+      });
+    expect(entries).toHaveLength(1);
+  });
+
+  // ---- settings.json merge (user file: append-only) ----
+  it('merges weave settings into an existing settings.json, preserving user content', async () => {
+    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    const userSettings = {
+      myOwnSetting: 42,
+      permissions: { allow: ['Bash(git:*)'] },
+      statusLine: { type: 'command', command: 'node /user/my-statusline.cjs' },
+    };
+    await writeFile(settingsPath, JSON.stringify(userSettings, null, 2) + '\n');
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.merged).toContain(settingsPath);
+
+    const merged = JSON.parse(await readFile(settingsPath, 'utf-8'));
+    // user content preserved
+    expect(merged.myOwnSetting).toBe(42);
+    expect(merged.permissions.allow).toContain('Bash(git:*)');
+    expect(merged.statusLine.command).toContain('my-statusline.cjs');
+    // weave entries appended
+    const hooks = merged.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    expect(hooks.PreToolUse[0].hooks[0].command).toContain('hook-handler.cjs');
+    expect(merged.permissions.allow).toContain('Bash(pnpm:*)');
+  });
+
+  it('re-init of a weave-inited project is idempotent', async () => {
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    const once = await readFile(settingsPath, 'utf-8');
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const twice = await readFile(settingsPath, 'utf-8');
+    expect(twice).toBe(once);
+  });
+
+  it('skips a corrupt settings.json instead of overwriting it', async () => {
+    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    const corrupt = '{ this is not json';
+    await writeFile(settingsPath, corrupt);
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.skipped).toContain(settingsPath);
+    expect(await readFile(settingsPath, 'utf-8')).toBe(corrupt);
+  });
+
+  // ---- helpers: weave-marked files refresh, user files skip ----
+  it('refreshes a helper carrying the weave marker', async () => {
+    const handlerPath = path.join(tmpDir, '.claude', 'helpers', 'hook-handler.cjs');
+    await mkdir(path.dirname(handlerPath), { recursive: true });
+    await writeFile(handlerPath, '// @version weave@0.0.1\nold\n');
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.updated).toContain(handlerPath);
+    const content = await readFile(handlerPath, 'utf-8');
+    expect(content).toContain('@version weave@0.1.0');
+    expect(content).not.toContain('old');
+  });
+
+  it('leaves a user-customized helper at the same path untouched', async () => {
+    const handlerPath = path.join(tmpDir, '.claude', 'helpers', 'hook-handler.cjs');
+    await mkdir(path.dirname(handlerPath), { recursive: true });
+    const custom = '# my own script\n';
+    await writeFile(handlerPath, custom);
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.skipped).toContain(handlerPath);
+    expect(await readFile(handlerPath, 'utf-8')).toBe(custom);
+  });
+
+  // ---- .weave/config.yaml: weave-owned, always refreshed ----
+  it('overwrites .weave/config.yaml on re-init', async () => {
+    const configPath = path.join(tmpDir, '.weave', 'config.yaml');
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, 'initVersion: 0.0.1\n');
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.updated).toContain(configPath);
+    const content = await readFile(configPath, 'utf-8');
+    expect(content).toContain('initVersion: 0.1.0');
+  });
+
+  // ---- CLAUDE.md: user file, append-only block ----
+  it('appends the weave block to an existing CLAUDE.md', async () => {
+    const claudeMdPath = path.join(tmpDir, 'CLAUDE.md');
+    const user = '# My existing project instructions\n';
+    await writeFile(claudeMdPath, user);
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.merged).toContain(claudeMdPath);
+    const content = await readFile(claudeMdPath, 'utf-8');
+    expect(content).toContain('My existing project instructions');
+    expect(content).toContain('<!-- weave:start -->');
+    expect(content.match(/<!-- weave:start -->/g)?.length).toBe(1);
+  });
+
+  // ---- .mcp.json: user file, append-only servers ----
+  it('merges the weave server into an existing .mcp.json', async () => {
+    const mcpPath = path.join(tmpDir, '.mcp.json');
+    await writeFile(mcpPath, JSON.stringify({
+      mcpServers: { 'my-own': { command: 'foo' } },
+    }, null, 2) + '\n');
+
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      mcp: { weave: true },
+    });
+    expect(result.merged).toContain(mcpPath);
+    const merged = JSON.parse(await readFile(mcpPath, 'utf-8'));
+    expect(merged.mcpServers['my-own']).toEqual({ command: 'foo' });
+    expect(merged.mcpServers.weave).toBeDefined();
+  });
+
+  it('leaves a corrupt .mcp.json untouched', async () => {
+    const mcpPath = path.join(tmpDir, '.mcp.json');
+    const corrupt = 'not json';
+    await writeFile(mcpPath, corrupt);
+
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      mcp: { weave: true },
+    });
+    expect(result.skipped).toContain(mcpPath);
+    expect(await readFile(mcpPath, 'utf-8')).toBe(corrupt);
   });
 });

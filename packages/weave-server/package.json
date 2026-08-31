@@ -1,0 +1,59 @@
+{
+  "name": "@weave/server",
+  "version": "0.1.0",
+  "description": "Weave daemon — HTTP server, SQLite data layer, and hook ingestion",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "author": "zijing66",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "harness",
+    "daemon",
+    "sqlite"
+  ],
+  "homepage": "https://github.com/zijing66/weave#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zijing66/weave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zijing66/weave/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "pnpm build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@weave/core": "workspace:*",
+    "chokidar": "^4.0.0",
+    "smol-toml": "^1.3.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

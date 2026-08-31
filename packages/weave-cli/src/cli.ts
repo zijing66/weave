@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { CommandParser } from './parser.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
+import { daemonCommand } from './commands/daemon.js';
+import { scanCommand } from './commands/scan.js';
 import type { Command, CommandContext } from './parser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +45,8 @@ export class CLI {
   private registerCommands(): void {
     this.parser.registerCommand(initCommand);
     this.parser.registerCommand(statusCommand);
+    this.parser.registerCommand(daemonCommand);
+    this.parser.registerCommand(scanCommand);
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {

@@ -2,7 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/weave-core" },
-    { "path": "packages/weave-cli" },
-    { "path": "packages/weave-templates" }
+    { "path": "packages/weave-templates" },
+    { "path": "packages/weave-server" },
+    { "path": "packages/weave-cli" }
   ]
 }

@@ -24,18 +24,22 @@
   "packageManager": "pnpm@11.8.0",
   "scripts": {
     "build": "tsc -b && cd packages/weave-templates && node copy-templates.mjs",
+    "build:web": "pnpm -C packages/weave-web build",
+    "dev": "tsx watch --conditions=development packages/weave-cli/src/main.ts",
+    "dev:server": "tsx watch --conditions=development packages/weave-server/src/daemon/dev-entry.ts",
+    "dev:web": "pnpm -C packages/weave-web dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsc -b --watch",
-    "clean": "rimraf packages/weave-core/dist packages/weave-templates/dist packages/weave-cli/dist"
+    "clean": "rimraf packages/weave-core/dist packages/weave-templates/dist packages/weave-cli/dist packages/weave-server/dist packages/weave-web/dist"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "rimraf": "^6.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   }
 }
