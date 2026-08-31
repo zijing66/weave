@@ -109,6 +109,10 @@ export const InitResultSchema = z.object({
     files: z.array(z.string()),
   }),
   skipped: z.array(z.string()),
+  /** Existing user files that were merged into (append-only, user content preserved) */
+  merged: z.array(z.string()),
+  /** Weave-owned files overwritten in place (.weave/, marked helpers) */
+  updated: z.array(z.string()),
   errors: z.array(z.string()),
   summary: z.object({
     skillsCount: z.number(),

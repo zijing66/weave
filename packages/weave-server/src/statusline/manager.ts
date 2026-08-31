@@ -1,0 +1,257 @@
+import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import path from 'node:path';
+import {
+  DEFAULT_STATUSLINE_CONFIG,
+  LEGACY_IDENTITY_LINE,
+  LEGACY_METRICS_LINE,
+  SEGMENT_ORDER,
+  type StatuslineConfig,
+  type SegmentKey,
+} from './config.js';
+import { generateStatuslineScript } from './generator.js';
+
+/**
+ * Statusline manager — persists the config (project-local or global default),
+ * regenerates the script, and keeps `settings.json`'s `statusLine` pointed at
+ * it. All filesystem ops: the watch service observes `.claude/helpers/` and
+ * `.weave/`, so writes flow back to the dashboard via SSE without an explicit
+ * push.
+ *
+ * Config sourcing: a project either follows the global default template
+ * (`source: 'global'`, the default) or keeps its own local config
+ * (`source: 'custom'`). When following global, the project file only stores
+ * `{source:'global'}` and the script is generated from the global template —
+ * so editing the global config automatically re-renders every following
+ * project (auto-sync is per-project by construction).
+ */
+
+const WEAVE_DIR = '.weave';
+const STATUSLINE_FILE = 'statusline.json';
+const HELPERS_DIR = '.claude/helpers';
+const STATUSLINE_SCRIPT = 'statusline.cjs';
+const SETTINGS_FILE = '.claude/settings.json';
+const GLOBAL_STATUSLINE_FILE = 'statusline.json';
+
+/** Directory for the global template; overridable for tests (defaults to ~/.weave). */
+let globalStatuslineDir = path.join(homedir(), '.weave');
+
+/** Point the global template directory elsewhere (tests use a temp dir). */
+export function setGlobalStatuslineDir(dir: string): void {
+  globalStatuslineDir = dir;
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// --- global default template (~/.weave/statusline.json) ---
+
+/** Read the user's global statusline template; falls back to the default. */
+export async function readGlobalStatuslineConfig(): Promise<StatuslineConfig> {
+  try {
+    const raw = await readFile(
+      path.join(globalStatuslineDir, GLOBAL_STATUSLINE_FILE),
+      'utf-8',
+    );
+    const cfg = mergeDefaults(JSON.parse(raw) as Partial<StatuslineConfig>);
+    return { ...cfg, source: 'global' };
+  } catch {
+    return DEFAULT_STATUSLINE_CONFIG;
+  }
+}
+
+/** Persist the global statusline template (source is always `global`). */
+export async function writeGlobalStatuslineConfig(
+  config: StatuslineConfig,
+): Promise<void> {
+  await mkdir(globalStatuslineDir, { recursive: true });
+  const normalized = { ...mergeDefaults(config as Partial<StatuslineConfig>), source: 'global' };
+  await writeFile(
+    path.join(globalStatuslineDir, GLOBAL_STATUSLINE_FILE),
+    `${JSON.stringify(normalized, null, 2)}\n`,
+    'utf-8',
+  );
+}
+
+// --- project-local config ---
+
+/**
+ * Read the project's effective statusline config. A project with no local
+ * override (or one that stores `source: 'global'`) resolves to the global
+ * template; a `source: 'custom'` project resolves to its own local config.
+ */
+export async function readStatuslineConfig(projectPath: string): Promise<StatuslineConfig> {
+  const globalCfg = await readGlobalStatuslineConfig();
+  try {
+    const raw = await readFile(path.join(projectPath, WEAVE_DIR, STATUSLINE_FILE), 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<StatuslineConfig>;
+    if (parsed.source === 'custom') {
+      return mergeDefaults(parsed);
+    }
+    return globalCfg;
+  } catch {
+    return globalCfg;
+  }
+}
+
+/**
+ * Persist the project statusline config. Following projects (source `global`)
+ * only store the source marker — the script is generated from the global
+ * template, so global edits propagate automatically.
+ */
+export async function writeStatuslineConfig(
+  projectPath: string,
+  config: StatuslineConfig,
+): Promise<void> {
+  const dir = path.join(projectPath, WEAVE_DIR);
+  await mkdir(dir, { recursive: true });
+  const source = config.source ?? 'global';
+  const payload =
+    source === 'global'
+      ? { source: 'global' as const }
+      : mergeDefaults(config as Partial<StatuslineConfig>);
+  await writeFile(
+    path.join(dir, STATUSLINE_FILE),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    'utf-8',
+  );
+}
+
+/** Write the generated statusline script, creating the helpers dir if needed. */
+export async function writeStatuslineScript(projectPath: string, script: string): Promise<string> {
+  const dir = path.join(projectPath, HELPERS_DIR);
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, STATUSLINE_SCRIPT);
+  await writeFile(file, script, 'utf-8');
+  return file;
+}
+
+/** Read the generated statusline script (empty string if absent). */
+export async function readStatuslineScript(projectPath: string): Promise<string> {
+  try {
+    return await readFile(path.join(projectPath, HELPERS_DIR, STATUSLINE_SCRIPT), 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Ensure `.claude/settings.json` has a `statusLine` entry pointing at the
+ * statusline script, with a `refreshInterval` so Claude Code re-runs it on a
+ * timer and config changes take effect live. Preserves all other settings.
+ * Idempotent.
+ */
+export async function ensureSettingsStatusLine(
+  projectPath: string,
+  refreshInterval = 1,
+): Promise<void> {
+  const file = path.join(projectPath, SETTINGS_FILE);
+  const isWindows = process.platform === 'win32';
+  let settings: Record<string, unknown> = {};
+  if (await pathExists(file)) {
+    try {
+      settings = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+    } catch {
+      settings = {};
+    }
+  }
+  const scriptPath = path.join(projectPath, HELPERS_DIR, STATUSLINE_SCRIPT);
+  const command = isWindows ? `node "${scriptPath}"` : `node ${scriptPath}`;
+  settings['statusLine'] = {
+    type: 'command',
+    command,
+    refreshInterval: Math.max(1, Math.round(refreshInterval)),
+  };
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
+}
+
+/**
+ * Apply a statusline config to a project: persist it, regenerate the script
+ * (from the project's effective config), and keep `settings.json` pointed at
+ * the script. The watch service picks up the writes.
+ */
+export async function applyStatuslineConfig(
+  projectPath: string,
+  config: StatuslineConfig,
+): Promise<void> {
+  await writeStatuslineConfig(projectPath, config);
+  const effective =
+    (config.source ?? 'global') === 'global'
+      ? await readGlobalStatuslineConfig()
+      : mergeDefaults(config as Partial<StatuslineConfig>);
+  const script = generateStatuslineScript(effective);
+  await writeStatuslineScript(projectPath, script);
+  await ensureSettingsStatusLine(projectPath, effective.refreshInterval);
+}
+
+/**
+ * Migrate a possibly-legacy config to the `lines` model: configs that predate
+ * `lines` carried `layout` + `order` (single = one full row; multi = the old
+ * identity + metrics split). Every segment key must appear in some row so a
+ * segment checked on in the panel is always renderable — any missing keys are
+ * appended to the first row.
+ */
+/** Legacy on-disk shape (predates `lines`): `layout` + `order`. Kept only for
+ * migration, so it is intentionally wider than the current StatuslineConfig. */
+type LegacyStatuslineConfig = Partial<StatuslineConfig> & {
+  order?: SegmentKey[];
+  layout?: 'single' | 'multi';
+};
+
+function normalizeLines(parsed: LegacyStatuslineConfig): SegmentKey[][] {
+  let lines: SegmentKey[][];
+  if (parsed.lines?.length) {
+    lines = parsed.lines.map((r) => [...r]);
+  } else if (parsed.order?.length) {
+    const order = parsed.order;
+    if (parsed.layout === 'multi') {
+      lines = [
+        LEGACY_IDENTITY_LINE.filter((k) => order.includes(k)),
+        LEGACY_METRICS_LINE.filter((k) => order.includes(k)),
+      ].filter((l) => l.length > 0);
+    } else {
+      lines = [order];
+    }
+  } else {
+    lines = DEFAULT_STATUSLINE_CONFIG.lines.map((r) => [...r]);
+  }
+  const seen = new Set(lines.flat());
+  const missing = SEGMENT_ORDER.filter((k) => !seen.has(k));
+  if (missing.length) {
+    lines[0] = [...lines[0], ...missing];
+  }
+  return lines;
+}
+
+function mergeDefaults(parsed: Partial<StatuslineConfig>): StatuslineConfig {
+  const segments = { ...DEFAULT_STATUSLINE_CONFIG.segments };
+  for (const key of Object.keys(segments) as (keyof typeof segments)[]) {
+    const parsedSeg = parsed.segments?.[key];
+    if (parsedSeg) {
+      segments[key] = { ...segments[key], ...parsedSeg };
+    }
+  }
+  const interval = parsed.refreshInterval;
+  return {
+    separator: parsed.separator ?? DEFAULT_STATUSLINE_CONFIG.separator,
+    align: parsed.align ?? DEFAULT_STATUSLINE_CONFIG.align,
+    showLogo: parsed.showLogo ?? DEFAULT_STATUSLINE_CONFIG.showLogo,
+    logoText: parsed.logoText ?? DEFAULT_STATUSLINE_CONFIG.logoText,
+    logoColor: parsed.logoColor ?? DEFAULT_STATUSLINE_CONFIG.logoColor,
+    powerline: {
+      enabled: parsed.powerline?.enabled ?? DEFAULT_STATUSLINE_CONFIG.powerline.enabled,
+    },
+    lines: normalizeLines(parsed),
+    refreshInterval:
+      interval != null && interval >= 1 ? interval : DEFAULT_STATUSLINE_CONFIG.refreshInterval,
+    source: parsed.source ?? DEFAULT_STATUSLINE_CONFIG.source,
+    segments,
+  };
+}

@@ -8,6 +8,15 @@ export interface SettingsGeneratorInput {
   helpersDir: string;
 }
 
+/**
+ * Path segments identifying weave's own helpers. weave always invokes them as
+ * `<target>/.claude/helpers/<script>`, so a command is weave's when it carries
+ * this segment — user scripts that merely share the file name (e.g.
+ * `my-statusline.cjs`) are not matched.
+ */
+const WEAVE_HOOK_MARKER = '.claude/helpers/hook-handler.cjs';
+const WEAVE_STATUSLINE_MARKER = '.claude/helpers/statusline.cjs';
+
 export function generateSettingsJson(input: SettingsGeneratorInput): Record<string, unknown> {
   const { components, hooks, platform, helpersDir } = input;
 
@@ -21,40 +30,23 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
       ? `${helpersDir}/hook-handler.cjs`
       : helpersDir + '/hook-handler.cjs';
 
-    const hooksConfig: Record<string, unknown>[] = [];
+    // Claude Code expects a three-layer structure:
+    //   hooks.<EventType> = [{ matcher: '*', hooks: [{ type: 'command', command }] }]
+    // where the outer key is the event type, matcher filters tools ('*' = all),
+    // and hooks lists the commands to run.
+    const command = `node "${hookHandlerPath}"`;
+    const hookEntry = (): unknown[] => [
+      { matcher: '*', hooks: [{ type: 'command' as const, command }] },
+    ];
 
-    if (hooks.preToolUse) {
-      hooksConfig.push({
-        matcher: 'PreToolUse',
-        hooks: [{ type: 'command' as const, command: `node "${hookHandlerPath}"` }],
-      });
-    }
-    if (hooks.postToolUse) {
-      hooksConfig.push({
-        matcher: 'PostToolUse',
-        hooks: [{ type: 'command' as const, command: `node "${hookHandlerPath}"` }],
-      });
-    }
-    if (hooks.userPromptSubmit) {
-      hooksConfig.push({
-        matcher: 'UserPromptSubmit',
-        hooks: [{ type: 'command' as const, command: `node "${hookHandlerPath}"` }],
-      });
-    }
-    if (hooks.sessionStart) {
-      hooksConfig.push({
-        matcher: 'SessionStart',
-        hooks: [{ type: 'command' as const, command: `node "${hookHandlerPath}"` }],
-      });
-    }
+    const hooksMap: Record<string, unknown> = {};
+    if (hooks.preToolUse) hooksMap['PreToolUse'] = hookEntry();
+    if (hooks.postToolUse) hooksMap['PostToolUse'] = hookEntry();
+    if (hooks.userPromptSubmit) hooksMap['UserPromptSubmit'] = hookEntry();
+    if (hooks.sessionStart) hooksMap['SessionStart'] = hookEntry();
 
-    if (hooksConfig.length > 0) {
-      const merged = hooksConfig.reduce<Record<string, unknown>>((acc, entry) => {
-        const key = String(entry.matcher);
-        acc[key] = (entry as Record<string, unknown>).hooks;
-        return acc;
-      }, {});
-      settings['hooks'] = merged;
+    if (Object.keys(hooksMap).length > 0) {
+      settings['hooks'] = hooksMap;
     }
   }
 
@@ -76,4 +68,112 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
   }
 
   return settings;
+}
+
+/**
+ * Merge weave's generated settings into an existing user settings.json.
+ *
+ * Policy (weave init never overwrites user files):
+ * - every existing key is preserved as-is (including unknown keys)
+ * - weave entries are appended where missing
+ * - weave's own entries (hooks pointing at `hook-handler.cjs`, statusLine
+ *   pointing at `statusline.cjs`) are refreshed in place when present, so a
+ *   re-init upgrades stale paths instead of duplicating them
+ * - user-authored hooks, statusLine, permissions, and env values are never touched
+ *
+ * Idempotent: merging the same `generated` twice yields the same result.
+ */
+export function mergeSettingsJson(
+  existing: Record<string, unknown>,
+  generated: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+
+  // hooks — append weave's groups per event, dropping/refreshing stale weave groups
+  const generatedHooks = generated['hooks'] as Record<string, unknown> | undefined;
+  if (generatedHooks && typeof generatedHooks === 'object') {
+    const hooks = isPlainObject(merged['hooks']) ? merged['hooks'] : {};
+    for (const [event, weaveGroups] of Object.entries(generatedHooks)) {
+      const prev = (hooks as Record<string, unknown>)[event];
+      if (Array.isArray(prev)) {
+        // Keep the user's groups, drop weave's (possibly stale) ones
+        const userGroups = prev.filter((g) => !groupIsWeave(g));
+        (hooks as Record<string, unknown>)[event] = [...userGroups, ...(Array.isArray(weaveGroups) ? weaveGroups : [])];
+      } else if (prev === undefined) {
+        (hooks as Record<string, unknown>)[event] = weaveGroups;
+      }
+      // Non-array shapes belong to the user — leave untouched.
+    }
+    merged['hooks'] = hooks;
+  }
+
+  // statusLine — set when absent, or refresh when it already points at weave's script
+  const prevStatusLine = merged['statusLine'];
+  if (
+    generated['statusLine'] &&
+    (prevStatusLine === undefined || statusLineIsWeave(prevStatusLine))
+  ) {
+    merged['statusLine'] = generated['statusLine'];
+  }
+
+  // permissions — union (existing entries first, no duplicates)
+  const generatedPerms = generated['permissions'] as Record<string, unknown> | undefined;
+  if (generatedPerms && typeof generatedPerms === 'object') {
+    const perms = isPlainObject(merged['permissions']) ? merged['permissions'] : {};
+    for (const key of ['allow', 'deny'] as const) {
+      const gen = generatedPerms[key];
+      const prev = (perms as Record<string, unknown>)[key];
+      if (Array.isArray(gen)) {
+        (perms as Record<string, unknown>)[key] = unionLists(prev, gen);
+      } else if (prev === undefined) {
+        (perms as Record<string, unknown>)[key] = gen;
+      }
+    }
+    merged['permissions'] = perms;
+  }
+
+  // env — fill missing keys only; existing values always win
+  const generatedEnv = generated['env'] as Record<string, unknown> | undefined;
+  if (generatedEnv && typeof generatedEnv === 'object') {
+    const env = isPlainObject(merged['env']) ? merged['env'] : {};
+    for (const [k, v] of Object.entries(generatedEnv)) {
+      if ((env as Record<string, unknown>)[k] === undefined) {
+        (env as Record<string, unknown>)[k] = v;
+      }
+    }
+    merged['env'] = env;
+  }
+
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A hooks group is weave's when any of its commands invokes the hook-handler helper. */
+function groupIsWeave(group: unknown): boolean {
+  if (!isPlainObject(group)) return false;
+  const inner = group['hooks'];
+  if (!Array.isArray(inner)) return false;
+  return inner.some(
+    (h) => isPlainObject(h) && typeof h['command'] === 'string' && commandIsWeave(h['command'], WEAVE_HOOK_MARKER),
+  );
+}
+
+function statusLineIsWeave(statusLine: unknown): boolean {
+  if (!isPlainObject(statusLine)) return false;
+  const command = statusLine['command'];
+  return typeof command === 'string' && commandIsWeave(command, WEAVE_STATUSLINE_MARKER);
+}
+
+/** Normalize separators so the marker matches on both Windows and POSIX paths. */
+function commandIsWeave(command: string, marker: string): boolean {
+  return command.replace(/\\/g, '/').includes(marker);
+}
+
+/** Union of two list-shaped values; existing entries keep their order and win. */
+function unionLists(prev: unknown, next: unknown[]): unknown[] {
+  if (!Array.isArray(prev)) return [...next];
+  return [...prev, ...next.filter((x) => !prev.includes(x))];
 }

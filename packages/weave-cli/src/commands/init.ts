@@ -6,6 +6,7 @@ import {
   resolveComponents,
 } from '@weave/core';
 import { executeInit } from '../init/executor.js';
+import { registerProject } from '@weave/server';
 import type { Command } from '../parser.js';
 
 export const initCommand: Command = {
@@ -68,11 +69,14 @@ export const initCommand: Command = {
 
     // Output summary
     if (result.success) {
+      registerProject(targetDir, 'init');
       logger.success('\n  Init complete\n');
 
       const entries: [string, string][] = [
         ['Directories', String(result.created.directories.length)],
         ['Files created', String(result.created.files.length)],
+        ['Files merged', String(result.merged.length)],
+        ['Weave files updated', String(result.updated.length)],
         ['Skills', String(result.summary.skillsCount)],
         ['Commands', String(result.summary.commandsCount)],
         ['Agents', String(result.summary.agentsCount)],
@@ -80,6 +84,12 @@ export const initCommand: Command = {
       console.log(formatTable(entries));
       console.log();
 
+      if (result.merged.length > 0) {
+        logger.dim(`  Merged ${result.merged.length} existing file(s) — your content was preserved.\n`);
+      }
+      if (result.updated.length > 0) {
+        logger.dim(`  Refreshed ${result.updated.length} weave-owned file(s).\n`);
+      }
       if (result.skipped.length > 0) {
         logger.dim(`  Skipped ${result.skipped.length} existing file(s). Use --force to overwrite.\n`);
       }

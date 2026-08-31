@@ -17,6 +17,28 @@ describe('generateHookHandler', () => {
     const out = generateHookHandler();
     expect(out).toContain('weave@0.1.0');
   });
+
+  it('forwards reports to the daemon /hooks endpoint', () => {
+    const out = generateHookHandler();
+    expect(out).toContain("path: '/hooks'");
+    expect(out).toContain("method: 'POST'");
+    expect(out).toContain("'Bearer '");
+    expect(out).toContain('readProjectToken');
+    expect(out).toContain('readDaemonPort');
+  });
+
+  it('reads the project token from .weave/token', () => {
+    const out = generateHookHandler();
+    expect(out).toContain("'.weave'");
+    expect(out).toContain("'token'");
+  });
+
+  it('never blocks Claude Code: exits 0 on every path', () => {
+    const out = generateHookHandler();
+    // success, error, timeout, missing config, catch-all — at least one per path
+    const exitCount = (out.match(/process\.exit\(0\)/g) ?? []).length;
+    expect(exitCount).toBeGreaterThanOrEqual(4);
+  });
 });
 
 describe('generateStatusline', () => {

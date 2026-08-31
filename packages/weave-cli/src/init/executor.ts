@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, stat } from 'node:fs/promises';
 import {
   type InitOptions,
   type InitResult,
@@ -13,14 +13,20 @@ import {
   DEFAULT_MCP,
   ensureDir,
   writeFileIfAbsent,
+  fileExists,
   logger,
 } from '@weave/core';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weave/templates';
-import { generateSettingsJson } from './settings-gen.js';
-import { generateMcpJson } from './mcp-gen.js';
-import { generateClaudeMd, type ClaudeMdTemplate } from './claudemd-gen.js';
+import { generateSettingsJson, mergeSettingsJson } from './settings-gen.js';
+import { generateMcpJson, mergeMcpJson } from './mcp-gen.js';
+import {
+  generateClaudeMd,
+  generateClaudeMdSection,
+  mergeClaudeMd,
+  type ClaudeMdTemplate,
+} from './claudemd-gen.js';
 import { generateHookHandler, generateStatusline, generateAutoMemoryHook } from './helpers-gen.js';
 
 /** Map preset → CLAUDE.md template */
@@ -30,11 +36,16 @@ const PRESET_TEMPLATE: Record<string, ClaudeMdTemplate> = {
   full: 'full',
 };
 
+/** Marks a generated helper script as weave's own (weave-特性文件可覆写). */
+const WEAVE_HELPER_MARKER = '@version weave@';
+
 export async function executeInit(options: InitOptions): Promise<InitResult> {
   const { targetDir, force, interactive, preset } = options;
   const platform: PlatformInfo = detectPlatform();
   const created: { directories: string[]; files: string[] } = { directories: [], files: [] };
   const skipped: string[] = [];
+  const merged: string[] = [];
+  const updated: string[] = [];
   const errors: string[] = [];
 
   const components = resolveComponents(preset, options.components);
@@ -76,19 +87,31 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   }
 
   // ---- Step 2: Generate settings.json ----
+  // User file: never overwritten without --force. Existing files are merged —
+  // weave appends its entries and refreshes its own keys; user content is kept.
   if (components.settings) {
-    const settingsContent = JSON.stringify(
-      generateSettingsJson({ components, hooks, platform, helpersDir }),
-      null,
-      2,
-    ) + '\n';
-
+    const generated = generateSettingsJson({ components, hooks, platform, helpersDir });
     const settingsPath = path.join(claudeDir, 'settings.json');
-    const wrote = await writeFileIfAbsent(settingsPath, settingsContent, force);
-    if (wrote) {
+
+    if (force) {
+      await writeFile(settingsPath, JSON.stringify(generated, null, 2) + '\n', 'utf-8');
       created.files.push(settingsPath);
     } else {
-      skipped.push(settingsPath);
+      const existing = await readJsonObject(settingsPath);
+      if (existing === undefined) {
+        if (await fileExists(settingsPath)) {
+          // Present but not a parseable object — never touch what we cannot merge into
+          skipped.push(settingsPath);
+          logger.warn(`Skipped ${settingsPath}: not valid JSON. Fix or remove it, or use --force.`);
+        } else {
+          await writeFile(settingsPath, JSON.stringify(generated, null, 2) + '\n', 'utf-8');
+          created.files.push(settingsPath);
+        }
+      } else {
+        const mergedSettings = mergeSettingsJson(existing, generated);
+        await writeFile(settingsPath, JSON.stringify(mergedSettings, null, 2) + '\n', 'utf-8');
+        merged.push(settingsPath);
+      }
     }
   }
 
@@ -102,13 +125,26 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     // to false — emitting a file that points at a non-existent command would break
     // Claude Code's MCP loader.
     if (serverCount > 0) {
-      const mcpContent = JSON.stringify(mcpJson, null, 2) + '\n';
       const mcpPath = path.join(targetDir, '.mcp.json');
-      const wrote = await writeFileIfAbsent(mcpPath, mcpContent, force);
-      if (wrote) {
+
+      if (force) {
+        await writeFile(mcpPath, JSON.stringify(mcpJson, null, 2) + '\n', 'utf-8');
         created.files.push(mcpPath);
       } else {
-        skipped.push(mcpPath);
+        const existing = await readJsonObject(mcpPath);
+        if (existing === undefined) {
+          if (await fileExists(mcpPath)) {
+            skipped.push(mcpPath);
+            logger.warn(`Skipped ${mcpPath}: not valid JSON. Fix or remove it, or use --force.`);
+          } else {
+            await writeFile(mcpPath, JSON.stringify(mcpJson, null, 2) + '\n', 'utf-8');
+            created.files.push(mcpPath);
+          }
+        } else {
+          const mergedMcp = mergeMcpJson(existing, mcpJson as Record<string, unknown>);
+          await writeFile(mcpPath, JSON.stringify(mergedMcp, null, 2) + '\n', 'utf-8');
+          merged.push(mcpPath);
+        }
       }
     } else {
       skipped.push(path.join(targetDir, '.mcp.json'));
@@ -134,6 +170,9 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   }
 
   // ---- Step 7: Generate helpers ----
+  // Helper scripts are weave-generated ("do not edit manually"). Files carrying
+  // the weave version marker are weave's own and refreshed in place; a file at
+  // the same path WITHOUT the marker is user-authored and left untouched.
   if (components.helpers) {
     const helperFiles: [string, string][] = [
       ['hook-handler.cjs', generateHookHandler()],
@@ -143,9 +182,19 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
 
     for (const [filename, content] of helperFiles) {
       const filePath = path.join(helpersDir, filename);
-      const wrote = await writeFileIfAbsent(filePath, content, force);
-      if (wrote) {
+      if (force) {
+        await writeFile(filePath, content, 'utf-8');
         created.files.push(filePath);
+        continue;
+      }
+
+      const existing = await readTextIfPresent(filePath);
+      if (existing === null) {
+        await writeFile(filePath, content, 'utf-8');
+        created.files.push(filePath);
+      } else if (existing.includes(WEAVE_HELPER_MARKER)) {
+        await writeFile(filePath, content, 'utf-8');
+        updated.push(filePath);
       } else {
         skipped.push(filePath);
       }
@@ -153,21 +202,33 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   }
 
   // ---- Step 8: Generate CLAUDE.md ----
+  // User file: a fresh one is generated whole; an existing one only ever
+  // receives weave's delimited block (appended, or replaced when already
+  // present). Content outside the markers is never touched.
   if (components.claudeMd) {
     const template = PRESET_TEMPLATE[preset] ?? 'standard';
     const projectName = path.basename(targetDir);
-    const content = generateClaudeMd({ template, projectName });
-
     const claudeMdPath = path.join(targetDir, 'CLAUDE.md');
-    const wrote = await writeFileIfAbsent(claudeMdPath, content, force);
-    if (wrote) {
+
+    if (force) {
+      await writeFile(claudeMdPath, generateClaudeMd({ template, projectName }), 'utf-8');
       created.files.push(claudeMdPath);
     } else {
-      skipped.push(claudeMdPath);
+      const existing = await readTextIfPresent(claudeMdPath);
+      if (existing === null) {
+        await writeFile(claudeMdPath, generateClaudeMd({ template, projectName }), 'utf-8');
+        created.files.push(claudeMdPath);
+      } else {
+        const section = generateClaudeMdSection({ template, projectName });
+        await writeFile(claudeMdPath, mergeClaudeMd(existing, section), 'utf-8');
+        merged.push(claudeMdPath);
+      }
     }
   }
 
   // ---- Step 9: Write runtime config ----
+  // .weave/ is weave's own state: always rewritten so re-init refreshes the
+  // timestamp/preset. (weave-特性文件可以覆写)
   {
     const weaveDir = path.join(targetDir, '.weave');
     await ensureDir(weaveDir);
@@ -185,18 +246,16 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
       .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
       .join('\n') + '\n';
 
-    const wrote = await writeFileIfAbsent(configPath, yamlContent, force);
-    if (wrote) {
-      created.files.push(configPath);
-    } else {
-      skipped.push(configPath);
-    }
+    const existed = await fileExists(configPath);
+    await writeFile(configPath, yamlContent, 'utf-8');
+    (existed ? updated : created.files).push(configPath);
   }
 
-  // ---- Step 10: Ensure .gitignore excludes .weave/ ----
+  // ---- Step 10: Ensure .weave/ is git-ignored via .git/info/exclude ----
   // .weave/config.yaml is per-machine init metadata (timestamp, preset, etc.),
-  // not team-shared source — mirroring ruflo, which ignores .claude-flow/.
-  await ensureGitIgnore(targetDir, created, skipped);
+  // not team-shared source. The ignore entry goes into .git/info/exclude — a
+  // machine-local git file — so init never touches the user's .gitignore.
+  await ensureGitExclude(targetDir, created);
 
   // ---- Aggregate summary ----
   const summary = {
@@ -212,28 +271,31 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     platform,
     created,
     skipped,
+    merged,
+    updated,
     errors,
     summary,
   };
 }
 
 /**
- * Ensure the target project's `.gitignore` excludes `.weave/` (runtime state).
- * Creates the file when missing; appends the entry when present. Unlike
- * `writeFileIfAbsent`, this is an idempotent "ensure contained" operation that
- * does not skip an existing `.gitignore` without `--force`.
+ * Ensure `.weave/` (runtime state) is git-ignored by writing `.git/info/exclude`
+ * in the repository containing `targetDir`. Never touches the user's
+ * `.gitignore`. Idempotent; a no-op outside a git repository.
  */
-async function ensureGitIgnore(
+async function ensureGitExclude(
   targetDir: string,
   created: { directories: string[]; files: string[] },
-  skipped: string[],
 ): Promise<void> {
-  const gitignorePath = path.join(targetDir, '.gitignore');
+  const repoRoot = await findGitRepoRoot(targetDir);
+  if (!repoRoot) return;
+
+  const excludePath = path.join(repoRoot, '.git', 'info', 'exclude');
   let existing = '';
   try {
-    existing = await readFile(gitignorePath, 'utf-8');
+    existing = await readFile(excludePath, 'utf-8');
   } catch {
-    // .gitignore does not exist yet — will be created below
+    // exclude file does not exist yet — created below
   }
 
   const hasEntry = existing
@@ -242,19 +304,74 @@ async function ensureGitIgnore(
       const t = line.trim();
       return t === '.weave' || t === '.weave/';
     });
+  if (hasEntry) return;
 
-  if (hasEntry) {
-    skipped.push(gitignorePath);
-    return;
-  }
-
-  const block = `# weave harness runtime state\n.weave/\n`;
   const content = existing
-    ? existing.replace(/\s+$/, '') + `\n${block}`
-    : block;
+    ? existing.replace(/\s+$/, '') + '\n.weave/\n'
+    : '.weave/\n';
 
-  await writeFile(gitignorePath, content, 'utf-8');
-  created.files.push(gitignorePath);
+  await ensureDir(path.dirname(excludePath));
+  await writeFile(excludePath, content, 'utf-8');
+  created.files.push(excludePath);
+}
+
+/**
+ * Walk up from `startDir` to find the enclosing git repository root (a
+ * directory containing `.git`). Returns null when outside a repository, or
+ * when `.git` is a file (worktree/submodule) — weave does not resolve gitdirs
+ * and leaves those alone.
+ */
+async function findGitRepoRoot(startDir: string): Promise<string | null> {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    try {
+      const st = await stat(path.join(dir, '.git'));
+      return st.isDirectory() ? dir : null;
+    } catch {
+      // no .git here — keep walking up
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/** Read a file's text, or null when absent. Any other error propagates. */
+async function readTextIfPresent(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, 'utf-8');
+  } catch (err) {
+    if (isMissingFileError(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Read and parse a JSON object file. Returns the object, or undefined when the
+ * file is absent, unparseable, or not a JSON object — callers distinguish
+ * "absent" (create fresh) from "present but unusable" (skip, never clobber).
+ */
+async function readJsonObject(filePath: string): Promise<Record<string, unknown> | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf-8');
+  } catch (err) {
+    if (isMissingFileError(err)) return undefined;
+    throw err;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // unparseable — caller decides
+  }
+  return undefined;
+}
+
+function isMissingFileError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
 /**

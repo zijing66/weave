@@ -1,0 +1,54 @@
+@import 'highlight.js/styles/github-dark.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-neutral-950 text-neutral-100 font-sans;
+  }
+}
+
+@layer components {
+  /* macOS vibrancy — frosted translucent surface */
+  .frosted {
+    @apply bg-neutral-900/60 backdrop-blur-xl;
+  }
+  .frosted-strong {
+    @apply bg-neutral-900/80 backdrop-blur-2xl;
+  }
+}
+
+/* macOS-style overlay scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Markdown prose — dark dashboard tuning */
+.prose pre {
+  @apply bg-neutral-900 border border-white/[0.08] rounded-lg;
+}
+.prose code::before,
+.prose code::after {
+  content: '';
+}
+.prose :where(code):not(:where([class~='not-prose'] *)) {
+  @apply bg-neutral-800 px-1 py-0.5 rounded text-neutral-200;
+}
