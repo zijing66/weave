@@ -190,19 +190,29 @@ export async function readGlobalSkills(): Promise<string[]> {
   }
 }
 
-/** Install a skill directory to ~/.claude/skills/<name>/. */
-export async function installGlobalSkill(sourceDir: string, name: string): Promise<string> {
-  const target = path.join(globalSkillsPath(), name);
+/** Install a skill directory to the agent's global skills root
+ * (`~/.claude/skills/<name>/` or `~/.codex/skills/<name>/`). */
+export async function installGlobalSkill(
+  sourceDir: string,
+  name: string,
+  agent: 'claude' | 'codex' = 'claude',
+): Promise<string> {
+  const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
+  const target = path.join(root, name);
   if (await pathExists(target)) {
-    throw new Error(`Global skill "${name}" already exists`);
+    throw new Error(`Global ${agent} skill "${name}" already exists`);
   }
   await cp(sourceDir, target, { recursive: true });
   return target;
 }
 
-/** Remove ~/.claude/skills/<name>/. */
-export async function uninstallGlobalSkill(name: string): Promise<void> {
-  const target = path.join(globalSkillsPath(), name);
+/** Remove a global skill directory from the agent's skills root. */
+export async function uninstallGlobalSkill(
+  name: string,
+  agent: 'claude' | 'codex' = 'claude',
+): Promise<void> {
+  const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
+  const target = path.join(root, name);
   if (!(await pathExists(target))) return;
   await rm(target, { recursive: true, force: true });
 }
@@ -425,8 +435,9 @@ export async function resolveGlobalSkillDir(
 
 /** Recursively list files inside a global skill directory (symlinks followed),
  * with paths relative to the skill dir (posix separators). Hidden entries are
- * skipped. */
+ * skipped. The agent is derived from the dir path (`.codex` segment → Codex). */
 export async function listGlobalSkillFiles(dir: string): Promise<AssetEntry[]> {
+  const agent = dir.split(/[\\/]/).includes('.codex') ? 'codex' : 'claude';
   const out: AssetEntry[] = [];
   const walk = async (cur: string, rel: string) => {
     let entries: import('node:fs').Dirent[];
@@ -445,7 +456,7 @@ export async function listGlobalSkillFiles(dir: string): Promise<AssetEntry[]> {
       } else if (e.isFile() || e.isSymbolicLink()) {
         try {
           const s = await stat(childAbs);
-          if (s.isFile()) out.push({ absPath: childAbs, relPath: childRel, category: 'skill', mtimeMs: s.mtimeMs });
+          if (s.isFile()) out.push({ absPath: childAbs, relPath: childRel, category: 'skill', agent, mtimeMs: s.mtimeMs });
         } catch {
           // vanished between readdir and stat — skip
         }

@@ -10,6 +10,7 @@ import {
   type GlobalSkillSource,
   type PluginEnabledMap,
   type PluginRuntime,
+  FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
@@ -21,9 +22,14 @@ import {
 } from '@/components/SkillGrid';
 import { McpGrid, type McpRow } from '@/components/McpGrid';
 import { OtherAssets } from '@/components/OtherAssets';
+import {
+  FileAssetGrid,
+  toFileAssetRows,
+  type FileAssetRow,
+} from '@/components/FileAssetGrid';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { type MainCategory } from '@/components/CategoryBar';
-import { Code2, PackageX } from 'lucide-react';
+import { Code2, FileText, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
 
@@ -43,6 +49,7 @@ export function CategoryDetail({
   statuslineSource,
   onUninstallSkill,
   onUninstallMcp,
+  onUninstallFileAsset,
   onTogglePlugin,
   onOpenFile,
   onOpenSkillDetail,
@@ -60,8 +67,9 @@ export function CategoryDetail({
   pluginEnabled: PluginEnabledMap;
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
-  onUninstallSkill: (name: string, scope: AssetScope) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: 'claude' | 'codex') => void;
   onUninstallMcp: (name: string, scope: AssetScope) => void;
+  onUninstallFileAsset: (row: FileAssetRow) => void;
   onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
   onOpenFile: (relPath: string) => void;
   onOpenSkillDetail: OpenDetailFn;
@@ -79,10 +87,15 @@ export function CategoryDetail({
     category === 'commands' ||
     category === 'personalization';
 
-  // Project mode: a flat skill list from the project's own .claude/skills/
-  // (Claude-only — the project harness has no Codex-scope skills).
+  // Project mode: a flat skill list from the project's own .claude/skills/ and
+  // .codex/skills/, filtered by the runtime tab.
   const skills = useMemo<SkillRow[]>(
-    () => (isGlobal || runtimeTab === 'codex' ? [] : groupSkillRows(assets)),
+    () =>
+      isGlobal
+        ? []
+        : groupSkillRows(assets).filter(
+            (s) => runtimeTab === 'all' || s.agent === runtimeTab,
+          ),
     [isGlobal, runtimeTab, assets],
   );
 
@@ -126,6 +139,33 @@ export function CategoryDetail({
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
   const mcpUpdates = updates?.mcp.filter((u) => u.scope === scope);
+  const fileUpdates = updates?.files.filter((u) => u.scope === scope);
+
+  // Single-file harness assets (commands/agents/workflows/rules/output-styles)
+  // for the commands category, one grid per kind.
+  const fileRowsByCategory = useMemo(() => {
+    const rows = toFileAssetRows(assets, FILE_ASSET_CATEGORIES);
+    const byCat = new Map<string, FileAssetRow[]>();
+    for (const r of rows) {
+      const list = byCat.get(r.category) ?? [];
+      list.push(r);
+      byCat.set(r.category, list);
+    }
+    return byCat;
+  }, [assets]);
+
+  // Instruction files (CLAUDE.md / AGENTS.md), one per runtime.
+  const instructionFiles = useMemo(
+    () =>
+      assets
+        .filter((a) => a.category === 'instructions')
+        .filter((a) => {
+          if (runtimeTab === 'all') return true;
+          return a.agent ? a.agent === runtimeTab : a.relPath.endsWith('CLAUDE.md');
+        })
+        .sort((x, y) => x.relPath.localeCompare(y.relPath)),
+    [assets, runtimeTab],
+  );
 
   return (
     <div
@@ -169,7 +209,7 @@ export function CategoryDetail({
             runtimeTab === 'codex'
               ? isGlobal
                 ? '未安装 Codex 生效的全局 skills'
-                : '该项目无 Codex 生效的 skills（项目 .claude/skills 仅作用于 Claude）'
+                : '该项目 .codex/skills/ 下暂无 skills'
               : isGlobal
                 ? '未安装全局 skills'
                 : '该项目未安装 skills'
@@ -192,22 +232,64 @@ export function CategoryDetail({
           />
         ))}
 
-      {category === 'commands' &&
-        (runtimeTab === 'codex' ? (
-          <CodexPlaceholder text="Codex 的 commands / agents 暂未接入，当前仅管理 Claude 的 .claude/commands。" />
-        ) : isGlobal ? (
-          <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
-            <PackageX className="h-8 w-8 text-neutral-600" />
-            <div>
-              <p className="text-sm font-medium text-neutral-300">全局 Commands</p>
-              <p className="text-xs text-neutral-500 mt-1 max-w-xs">
-                全局级别的 commands / agents / helpers 配置暂未提供，仅在项目视图展示。
-              </p>
-            </div>
+      {category === 'commands' && !isGlobal && (
+        <div className="space-y-4">
+          {instructionFiles.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xs font-semibold text-neutral-400 uppercase">
+                Instructions <span className="text-neutral-600 normal-case font-normal">CLAUDE.md / AGENTS.md</span>
+              </h2>
+              <div className="grid grid-cols-2 gap-3 items-start">
+                {instructionFiles.map((a) => (
+                  <button
+                    key={a.relPath}
+                    onClick={() => onOpenFile(a.relPath)}
+                    className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-neutral-900/40 px-3 py-2 text-left hover:bg-white/[0.04] transition-colors"
+                    title={`Open ${a.relPath}`}
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                    <span className="text-xs font-mono truncate">{a.relPath}</span>
+                    <span className="ml-auto text-[10px] text-neutral-600 shrink-0">
+                      {a.agent === 'codex' ? 'Codex' : 'Claude'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {runtimeTab === 'codex' ? (
+            <CodexPlaceholder text="Codex 的自定义 prompts 位于 ~/.codex/prompts/（全局级，官方已标记 deprecated）。项目级文件资产当前仅支持 Claude。" />
+          ) : (
+            FILE_ASSET_CATEGORIES.map((cat) => (
+              <FileAssetGrid
+                key={cat}
+                category={cat}
+                rows={fileRowsByCategory.get(cat) ?? []}
+                updates={fileUpdates}
+                onUninstall={onUninstallFileAsset}
+                onOpenFile={onOpenFile}
+              />
+            ))
+          )}
+
+          {runtimeTab !== 'codex' && (
+            <OtherAssets assets={assets} onOpenFile={onOpenFile} />
+          )}
+        </div>
+      )}
+
+      {category === 'commands' && isGlobal && (
+        <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+          <PackageX className="h-8 w-8 text-neutral-600" />
+          <div>
+            <p className="text-sm font-medium text-neutral-300">全局 Commands</p>
+            <p className="text-xs text-neutral-500 mt-1 max-w-xs">
+              全局级别的 commands / agents 配置暂未提供，仅在项目视图展示。
+            </p>
           </div>
-        ) : (
-          <OtherAssets assets={assets} onOpenFile={onOpenFile} />
-        ))}
+        </div>
+      )}
 
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">

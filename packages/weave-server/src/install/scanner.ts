@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join, basename, relative, dirname } from 'node:path';
+import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 
 export interface SkillAsset {
   /** Skill name — the containing directory's basename. */
@@ -26,6 +27,19 @@ export interface McpTemplate {
   sourcePath: string;
   /** Path relative to the library root (for display). */
   relPath: string;
+}
+
+/** A single-file asset template (command / agent / workflow / rule / output-style). */
+export interface FileAssetTemplate {
+  /** Asset name — the file stem (e.g. "review" for review.md). */
+  name: string;
+  /** Absolute path to the template file (install = copy this one file). */
+  filePath: string;
+  /** Path relative to the library root (for display). */
+  relPath: string;
+  /** The kind directory's parent relative to the library root, for grouping. */
+  group: string;
+  category: FileAssetCategory;
 }
 
 const SKIP_DIRS = new Set([
@@ -163,4 +177,68 @@ function asTemplate(name: string, cfg: unknown): { name: string; command: string
     if (Object.keys(env).length) t.env = env;
   }
   return t;
+}
+
+/** kind-dir basename → category (e.g. "commands" → "command"). */
+const KIND_DIR_NAMES: Record<string, FileAssetCategory> = Object.fromEntries(
+  FILE_ASSET_CATEGORIES.map((c) => [basename(FILE_ASSET_SPECS[c].dir), c]),
+);
+
+/**
+ * Scan a library for single-file asset templates. A directory whose basename
+ * matches a kind dir ("commands", "agents", "workflows", "rules",
+ * "output-styles") contributes its direct files of the matching extension;
+ * the kind dir is not descended into. Directories containing SKILL.md are
+ * always skipped — they are skill dirs, even if coincidentally named like a
+ * kind dir. Results are grouped per kind.
+ */
+export async function scanLibraryFileAssets(
+  libPath: string,
+): Promise<Record<FileAssetCategory, FileAssetTemplate[]>> {
+  const out = {} as Record<FileAssetCategory, FileAssetTemplate[]>;
+  for (const c of FILE_ASSET_CATEGORIES) out[c] = [];
+  await walkFileAssets(libPath, libPath, out);
+  for (const c of FILE_ASSET_CATEGORIES) {
+    out[c].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return out;
+}
+
+async function walkFileAssets(
+  root: string,
+  dir: string,
+  out: Record<FileAssetCategory, FileAssetTemplate[]>,
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // unreadable / missing — skip
+  }
+  if (entries.some((e) => e.isFile() && e.name === 'SKILL.md')) return; // a skill dir
+
+  const kind = KIND_DIR_NAMES[basename(dir)];
+  if (kind) {
+    const spec = FILE_ASSET_SPECS[kind];
+    for (const e of entries) {
+      if (!e.isFile() || !e.name.endsWith(spec.ext)) continue;
+      const stem = e.name.slice(0, -spec.ext.length);
+      if (!stem) continue;
+      const abs = join(dir, e.name);
+      out[kind].push({
+        name: stem,
+        filePath: abs,
+        relPath: relative(root, abs).replace(/\\/g, '/'),
+        group: relative(root, dirname(dir)).replace(/\\/g, '/'),
+        category: kind,
+      });
+    }
+    return; // do not descend into a kind dir
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+    await walkFileAssets(root, join(dir, entry.name), out);
+  }
 }

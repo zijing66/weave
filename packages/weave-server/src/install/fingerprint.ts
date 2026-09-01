@@ -100,6 +100,16 @@ export function hashMcpConfig(config: McpServerConfig): string {
     .digest('hex');
 }
 
+/** Hash a single file's content (sha256); missing files hash to a constant. */
+export async function hashFile(file: string): Promise<string> {
+  try {
+    const content = await readFile(file);
+    return createHash('sha256').update(content).digest('hex');
+  } catch {
+    return 'missing';
+  }
+}
+
 function stableObj(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(stableObj);
   if (v && typeof v === 'object') {
@@ -118,6 +128,7 @@ function stableObj(v: unknown): unknown {
  */
 export class FingerprintCache {
   private readonly cache = new Map<string, FingerprintCacheEntry>();
+  private readonly fileCache = new Map<string, FingerprintCacheEntry>();
 
   /** Get the hash for `dir`, recomputing only when its max mtime changed. */
   async get(dir: string): Promise<string> {
@@ -129,6 +140,21 @@ export class FingerprintCache {
     return hash;
   }
 
+  /** Get the hash for a single `file`, recomputing only when its mtime changed. */
+  async getFile(file: string): Promise<string> {
+    let mtime: number;
+    try {
+      mtime = (await stat(file)).mtimeMs;
+    } catch {
+      return 'missing';
+    }
+    const cached = this.fileCache.get(file);
+    if (cached && cached.maxMtime === mtime) return cached.hash;
+    const hash = await hashFile(file);
+    this.fileCache.set(file, { maxMtime: mtime, hash });
+    return hash;
+  }
+
   /** Force-drop an entry (e.g. after a known write to the directory). */
   invalidate(dir: string): void {
     this.cache.delete(dir);
@@ -136,5 +162,6 @@ export class FingerprintCache {
 
   clear(): void {
     this.cache.clear();
+    this.fileCache.clear();
   }
 }

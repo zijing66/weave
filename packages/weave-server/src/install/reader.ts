@@ -7,9 +7,10 @@ import { AssetNotFoundError } from './installer.js';
  * dashboard (e.g. a skill's `SKILL.md`). Pure read: the watch service observes
  * `.claude/` and `.mcp.json`, so edits made elsewhere still flow through SSE.
  *
- * Access is confined to the allowed roots: `.claude/` (any depth), the MCP
- * config (`.mcp.json`), and `CLAUDE.md`. Path traversal and absolute paths are
- * rejected before touching the filesystem.
+ * Access is confined to the allowed roots: `.claude/` and `.codex/` (any
+ * depth), the MCP config (`.mcp.json`), and the instruction files
+ * (`CLAUDE.md` / `AGENTS.md`). Path traversal and absolute paths are rejected
+ * before touching the filesystem.
  */
 
 /** A project-relative path tried to escape its allowed roots. */
@@ -53,8 +54,11 @@ export function resolveProjectFile(projectPath: string, relPath: string): string
   const allowed =
     posix === '.mcp.json' ||
     posix === 'CLAUDE.md' ||
+    posix === 'AGENTS.md' ||
     posix === '.claude' ||
-    posix.startsWith('.claude/');
+    posix.startsWith('.claude/') ||
+    posix === '.codex' ||
+    posix.startsWith('.codex/');
   if (!allowed) {
     throw new PathEscapeError(`Path is outside the allowed roots: "${relPath}"`);
   }

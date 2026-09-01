@@ -15,6 +15,8 @@ export const InitComponentsSchema = z.object({
   helpers: z.boolean(),
   mcp: z.boolean(),
   claudeMd: z.boolean(),
+  /** Codex instruction file (AGENTS.md) — the cross-agent counterpart of claudeMd. */
+  agentsMd: z.boolean(),
 });
 export type InitComponents = z.infer<typeof InitComponentsSchema>;
 
@@ -133,6 +135,7 @@ export const MINIMAL_COMPONENTS: InitComponents = {
   helpers: false,
   mcp: false,
   claudeMd: true,
+  agentsMd: true,
 };
 
 export const DEFAULT_COMPONENTS: InitComponents = {
@@ -143,6 +146,7 @@ export const DEFAULT_COMPONENTS: InitComponents = {
   helpers: true,
   mcp: true,
   claudeMd: true,
+  agentsMd: true,
 };
 
 export const FULL_COMPONENTS: InitComponents = {
@@ -153,6 +157,7 @@ export const FULL_COMPONENTS: InitComponents = {
   helpers: true,
   mcp: true,
   claudeMd: true,
+  agentsMd: true,
 };
 
 export const DEFAULT_HOOKS: HooksConfig = {

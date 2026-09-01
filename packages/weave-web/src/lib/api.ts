@@ -31,11 +31,15 @@ export interface ProjectRow {
   meta: string | null;
 }
 
+export type AssetAgent = 'claude' | 'codex';
+
 export interface AssetEntry {
   absPath: string;
   relPath: string;
   category: string;
   mtimeMs: number;
+  /** Which coding agent's harness surface this asset belongs to. */
+  agent?: AssetAgent;
 }
 
 export interface AssetChangeEvent {
@@ -45,6 +49,7 @@ export interface AssetChangeEvent {
   relPath: string;
   absPath: string;
   kind: 'add' | 'change' | 'unlink';
+  agent?: AssetAgent;
 }
 
 export interface HookEventRow {
@@ -106,12 +111,36 @@ export interface McpServerConfig {
   env?: Record<string, string>;
 }
 
+/** Single-file harness assets (command/agent/workflow/rule/output-style). */
+export type FileAssetCategory = 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
+
+export const FILE_ASSET_CATEGORIES: FileAssetCategory[] = [
+  'command',
+  'agent',
+  'workflow',
+  'rule',
+  'output-style',
+];
+
+/** A file template found inside a registered library. */
+export interface FileAssetTemplate {
+  name: string;
+  /** Absolute path of the template file inside the library. */
+  filePath: string;
+  relPath: string;
+  group: string;
+  category: FileAssetCategory;
+}
+
 export interface InstallBody {
-  category: 'skill' | 'mcp';
+  category: 'skill' | 'mcp' | FileAssetCategory;
   name: string;
   sourceDir?: string;
+  /** Template file (library-relative or absolute) for file assets. */
+  sourceFile?: string;
   mcpConfig?: McpServerConfig;
   scope?: 'project' | 'global';
+  agent?: AssetAgent;
 }
 
 export type AssetScope = 'project' | 'global';
@@ -122,6 +151,17 @@ export interface SkillUpdate {
   outdated: boolean;
   custom: boolean;
   sourceDir?: string;
+  libraryId?: number;
+  agent?: AssetAgent;
+}
+
+export interface FileAssetUpdate {
+  name: string;
+  category: FileAssetCategory;
+  scope: AssetScope;
+  outdated: boolean;
+  custom: boolean;
+  sourceFile?: string;
   libraryId?: number;
 }
 
@@ -135,6 +175,7 @@ export interface McpUpdate {
 
 export interface UpdateReport {
   skills: SkillUpdate[];
+  files: FileAssetUpdate[];
   mcp: McpUpdate[];
   available: number;
 }
@@ -327,7 +368,12 @@ export const api = {
     apiFetch<UpdateReport>(`/projects/${projectId}/updates`),
   updateAsset: (
     projectId: number,
-    body: { category: 'skill' | 'mcp'; name: string; scope: AssetScope },
+    body: {
+      category: 'skill' | 'mcp' | FileAssetCategory;
+      name: string;
+      scope: AssetScope;
+      agent?: AssetAgent;
+    },
   ): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/update`, {
       method: 'POST',
@@ -395,10 +441,18 @@ export const api = {
     }),
   listLibraryAssets: (
     id: number,
-  ): Promise<{ library: LibraryRow; skills: SkillAsset[]; mcp: McpTemplate[] }> =>
-    apiFetch<{ library: LibraryRow; skills: SkillAsset[]; mcp: McpTemplate[] }>(
-      `/libraries/${id}/assets`,
-    ),
+  ): Promise<{
+    library: LibraryRow;
+    skills: SkillAsset[];
+    files: FileAssetTemplate[];
+    mcp: McpTemplate[];
+  }> =>
+    apiFetch<{
+      library: LibraryRow;
+      skills: SkillAsset[];
+      files: FileAssetTemplate[];
+      mcp: McpTemplate[];
+    }>(`/libraries/${id}/assets`),
 
   /** EventSource cannot set headers; pass the token as a query param instead. */
   eventsUrl: (): string => `${BASE}/events?token=${encodeURIComponent(TOKEN)}`,

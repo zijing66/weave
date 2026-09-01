@@ -3,8 +3,11 @@ import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } f
 import {
   api,
   type AssetEntry,
+  type AssetAgent,
   type AssetChangeEvent,
   type AssetScope,
+  type FileAssetCategory,
+  type FileAssetTemplate,
   type HookEventRow,
   type McpServerConfig,
   type ProjectRow,
@@ -20,6 +23,7 @@ import {
 import { ProjectList } from '@/components/ProjectList';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode } from '@/components/CategoryDetail';
+import { type FileAssetRow } from '@/components/FileAssetGrid';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { TaskView } from '@/components/TaskView';
 import { LibraryPanel } from '@/components/LibraryPanel';
@@ -64,6 +68,7 @@ export default function App() {
     scope: AssetScope;
     source?: GlobalSkillSource;
     pluginKey?: string;
+    agent?: AssetAgent;
   } | null>(null);
 
   const [leftW, setLeftW] = useState<number>(() => {
@@ -175,7 +180,7 @@ export default function App() {
     for (const g of globalSkillGroups) for (const k of g.skills) s.add(k.name);
     for (const a of assets) {
       if (a.category === 'skill') {
-        const n = a.relPath.match(/^\.claude\/skills\/([^/]+)\//)?.[1];
+        const n = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//)?.[1];
         if (n) s.add(n);
       }
     }
@@ -184,17 +189,14 @@ export default function App() {
 
   const assetCounts = useMemo(() => {
     const skillNames = new Set<string>();
-    let command = 0;
     for (const a of assets) {
       if (a.category === 'skill') {
-        const n = a.relPath.match(/^\.claude\/skills\/([^/]+)\//)?.[1];
+        const n = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//)?.[1];
         if (n) skillNames.add(n);
-      } else if (a.category === 'command') {
-        command++;
       }
     }
     const mcp = Object.keys(mcpServers.project).length + Object.keys(mcpServers.global).length;
-    return { skill: skillNames.size, mcp, command };
+    return { skill: skillNames.size, mcp };
   }, [assets, mcpServers]);
 
   const categoryData = useMemo<CategoryBarData>(() => {
@@ -237,6 +239,7 @@ export default function App() {
             relPath: change.relPath,
             category: change.category,
             mtimeMs: Date.now(),
+            agent: change.agent,
           };
           const idx = prev.findIndex((a) => a.relPath === change.relPath);
           if (idx >= 0) {
@@ -261,7 +264,7 @@ export default function App() {
   }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills]);
 
   const handleInstallSkill = useCallback(
-    async (skill: SkillAsset, scope: AssetScope = 'project') => {
+    async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
@@ -271,6 +274,7 @@ export default function App() {
         name: skill.name,
         sourceDir: skill.dirPath,
         scope,
+        agent,
       });
       if (!res.ok) {
         setError(`Install failed: ${res.status} ${await res.text()}`);
@@ -281,6 +285,29 @@ export default function App() {
       refreshUpdates(target);
     },
     [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
+  );
+
+  /** Install a single-file asset (command / agent / workflow / rule / output-style). */
+  const handleInstallFileAsset = useCallback(
+    async (file: FileAssetTemplate, scope: AssetScope = 'project') => {
+      if (!selected && !globalMode) return;
+      const target = selected ?? projects[0];
+      if (!target) return;
+      setError(null);
+      const res = await api.install(target.id, {
+        category: file.category,
+        name: file.name,
+        sourceFile: file.filePath,
+        scope,
+      });
+      if (!res.ok) {
+        setError(`Install failed: ${res.status} ${await res.text()}`);
+        return;
+      }
+      refreshAssets(target);
+      refreshUpdates(target);
+    },
+    [selected, projects, globalMode, refreshAssets, refreshUpdates],
   );
 
   const handleInstallMcp = useCallback(
@@ -302,11 +329,16 @@ export default function App() {
   );
 
   const handleUninstallSkill = useCallback(
-    async (name: string, scope: AssetScope = 'project') => {
+    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
       if (!target) return;
       setError(null);
-      const res = await api.uninstall(target.id, { category: 'skill', name, scope });
+      const res = await api.uninstall(target.id, {
+        category: 'skill',
+        name,
+        scope,
+        agent: agent ?? 'claude',
+      });
       if (!res.ok) {
         setError(`Uninstall failed: ${res.status} ${await res.text()}`);
         return;
@@ -316,6 +348,26 @@ export default function App() {
       refreshUpdates(target);
     },
     [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
+  );
+
+  const handleUninstallFileAsset = useCallback(
+    async (row: FileAssetRow) => {
+      const target = selected ?? projects[0];
+      if (!target) return;
+      setError(null);
+      const res = await api.uninstall(target.id, {
+        category: row.category as FileAssetCategory,
+        name: row.name,
+        scope: 'project',
+      });
+      if (!res.ok) {
+        setError(`Uninstall failed: ${res.status} ${await res.text()}`);
+        return;
+      }
+      refreshAssets(target);
+      refreshUpdates(target);
+    },
+    [selected, projects, refreshAssets, refreshUpdates],
   );
 
   const handleUninstallMcp = useCallback(
@@ -349,11 +401,21 @@ export default function App() {
   }, [selected, projects, refreshUpdates, refreshAssets]);
 
   const handleUpdateAsset = useCallback(
-    async (category: 'skill' | 'mcp', name: string, scope: AssetScope) => {
+    async (
+      category: 'skill' | 'mcp' | FileAssetCategory,
+      name: string,
+      scope: AssetScope,
+      agent?: AssetAgent,
+    ) => {
       const target = selected ?? projects[0];
       if (!target) return;
       setError(null);
-      const res = await api.updateAsset(target.id, { category, name, scope });
+      const res = await api.updateAsset(target.id, {
+        category,
+        name,
+        scope,
+        ...(category === 'skill' ? { agent: agent ?? 'claude' } : {}),
+      });
       if (!res.ok) {
         setError(`Update failed: ${res.status} ${await res.text()}`);
         return;
@@ -406,16 +468,23 @@ export default function App() {
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over || over.id !== 'project-assets') return;
-    const data = active.data.current as { sourceDir?: string; name?: string } | undefined;
+    const data = active.data.current as
+      | { sourceDir?: string; name?: string; agent?: AssetAgent }
+      | undefined;
     if (data?.sourceDir && data?.name) {
-      void handleInstallSkill({ name: data.name, dirPath: data.sourceDir } as SkillAsset);
+      void handleInstallSkill(
+        { name: data.name, dirPath: data.sourceDir } as SkillAsset,
+        'project',
+        data.agent ?? 'claude',
+      );
     }
   }
 
   // Drawer data for the open skill (project-scope files; global rows have none).
   const drawerFiles = useMemo(() => {
     if (!drawerSkill || drawerSkill.scope === 'global') return [];
-    const prefix = `.claude/skills/${drawerSkill.name}/`;
+    const root = drawerSkill.agent === 'codex' ? '.codex' : '.claude';
+    const prefix = `${root}/skills/${drawerSkill.name}/`;
     return assets.filter((a) => a.relPath.startsWith(prefix));
   }, [drawerSkill, assets]);
 
@@ -524,10 +593,11 @@ export default function App() {
                         statuslineSource={statuslineSource}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
+                        onUninstallFileAsset={handleUninstallFileAsset}
                         onTogglePlugin={handleTogglePlugin}
                         onOpenFile={setSelectedFile}
-                        onOpenSkillDetail={(name, sc, source, pluginKey) =>
-                          setDrawerSkill({ name, scope: sc, source, pluginKey })
+                        onOpenSkillDetail={(name, sc, source, pluginKey, agent) =>
+                          setDrawerSkill({ name, scope: sc, source, pluginKey, agent })
                         }
                       />
                     )}
@@ -569,12 +639,13 @@ export default function App() {
                   scope={drawerSkill.scope}
                   source={drawerSkill.source}
                   pluginKey={drawerSkill.pluginKey}
+                  agent={drawerSkill.agent}
                   files={drawerFiles}
                   readOnly={!globalMode && drawerSkill.scope === 'global'}
                   outdated={drawerUpdate?.outdated ?? false}
                   custom={drawerUpdate?.custom ?? false}
                   onUninstall={() => {
-                    void handleUninstallSkill(drawerSkill.name, drawerSkill.scope);
+                    void handleUninstallSkill(drawerSkill.name, drawerSkill.scope, drawerSkill.agent);
                     setDrawerSkill(null);
                   }}
                   onClose={() => setDrawerSkill(null)}
@@ -593,6 +664,7 @@ export default function App() {
                 <LibraryPanel
                   installedSkillNames={installedSkillNames}
                   onInstallSkill={handleInstallSkill}
+                  onInstallFileAsset={handleInstallFileAsset}
                   onInstallMcp={handleInstallMcp}
                   updates={updates}
                   onUpdateAsset={handleUpdateAsset}

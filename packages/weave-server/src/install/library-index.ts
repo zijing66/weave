@@ -1,4 +1,12 @@
-import { scanLibrarySkills, scanLibraryMcp, type SkillAsset, type McpTemplate } from './scanner.js';
+import {
+  scanLibrarySkills,
+  scanLibraryMcp,
+  scanLibraryFileAssets,
+  type SkillAsset,
+  type McpTemplate,
+  type FileAssetTemplate,
+} from './scanner.js';
+import type { FileAssetCategory } from './file-assets.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 import type { McpServerConfig } from './installer.js';
 
@@ -41,11 +49,22 @@ export interface McpSource {
   sourcePath: string;
 }
 
+export interface FileAssetSource {
+  name: string;
+  category: FileAssetCategory;
+  libraryId: number;
+  libraryPath: string;
+  /** Absolute path to the template file (copy source). */
+  filePath: string;
+}
+
 export interface LibraryIndex {
   /** name → source (first library wins on collision). */
   skills: Map<string, SkillSource>;
   /** name → source (first library wins on collision). */
   mcp: Map<string, McpSource>;
+  /** `${category}/${name}` → source (first library wins on collision). */
+  files: Map<string, FileAssetSource>;
 }
 
 /**
@@ -56,6 +75,7 @@ export interface LibraryIndex {
 export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<LibraryIndex> {
   const skills = new Map<string, SkillSource>();
   const mcp = new Map<string, McpSource>();
+  const files = new Map<string, FileAssetSource>();
   for (const lib of libraries) {
     const wantSkill = lib.kind === 'skill' || lib.kind === 'both';
     const wantMcp = lib.kind === 'mcp' || lib.kind === 'both';
@@ -90,8 +110,31 @@ export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<Librar
         // unreadable library — skip
       }
     }
+    // File assets (commands/agents/workflows/rules/output-styles) follow the
+    // skill kind gate — they are content templates, not MCP configs.
+    if (wantSkill) {
+      try {
+        const scanned = await scanLibraryFileAssets(lib.path);
+        for (const templates of Object.values(scanned) as FileAssetTemplate[][]) {
+          for (const t of templates) {
+            const key = `${t.category}/${t.name}`;
+            if (!files.has(key)) {
+              files.set(key, {
+                name: t.name,
+                category: t.category,
+                libraryId: lib.id,
+                libraryPath: lib.path,
+                filePath: t.filePath,
+              });
+            }
+          }
+        }
+      } catch {
+        // unreadable library — skip
+      }
+    }
   }
-  return { skills, mcp };
+  return { skills, mcp, files };
 }
 
 /** Resolve the library source for an installed skill by name, if any. */
@@ -102,4 +145,13 @@ export function findSkillSource(index: LibraryIndex, name: string): SkillSource 
 /** Resolve the library source for an installed MCP server by name, if any. */
 export function findMcpSource(index: LibraryIndex, name: string): McpSource | undefined {
   return index.mcp.get(name);
+}
+
+/** Resolve the library source for an installed file asset, if any. */
+export function findFileAssetSource(
+  index: LibraryIndex,
+  category: FileAssetCategory,
+  name: string,
+): FileAssetSource | undefined {
+  return index.files.get(`${category}/${name}`);
 }

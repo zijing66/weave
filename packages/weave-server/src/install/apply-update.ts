@@ -1,4 +1,4 @@
-import { rm, cp } from 'node:fs/promises';
+import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { installMcp, uninstallMcp } from './installer.js';
@@ -9,10 +9,12 @@ import {
   buildLibraryIndex,
   findSkillSource,
   findMcpSource,
+  findFileAssetSource,
   type LibraryIndex,
 } from './library-index.js';
 import { detectUpdates } from './updates.js';
 import { FingerprintCache } from './fingerprint.js';
+import { FILE_ASSET_SPECS, fileAssetTargetDir, isFileAssetCategory } from './file-assets.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -22,16 +24,19 @@ import type { LibraryRow } from '../repositories/libraries.js';
  * with the current source content. Any local edits to the installed copy are
  * lost. The UI must surface this clearly before invoking.
  *
- * Scope is honoured: project skills → `.claude/skills/`, global skills →
- * `~/.claude/skills/`; project mcp → `.mcp.json`, global mcp → `~/.claude.json`.
+ * Scope + agent are honoured:
+ *   project skill → `.claude/skills/` (claude) · `.codex/skills/` (codex)
+ *   global  skill → `~/.claude/skills/` (claude) · `~/.codex/skills/` (codex)
+ *   project mcp   → `.mcp.json`, global mcp → `~/.claude.json`
+ *   file assets   → the kind's project dir (see file-assets.ts)
  */
 
-const PROJECT_SKILLS_DIR = '.claude/skills';
-
 export interface ApplyUpdateInput {
-  category: 'skill' | 'mcp';
+  category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
   name: string;
   scope: 'project' | 'global';
+  /** Which agent's surface to refresh (skills only matter today). */
+  agent?: 'claude' | 'codex';
 }
 
 /** Overwrite one installed asset from its library source. */
@@ -43,16 +48,29 @@ export async function applyUpdate(
 ): Promise<void> {
   const idx =
     index ?? (libraries ? await buildLibraryIndex(libraries) : await buildLibraryIndex([]));
+  const agent = input.agent ?? 'claude';
 
   if (input.category === 'skill') {
     const src = findSkillSource(idx, input.name);
     if (!src) throw new Error(`No library source for skill "${input.name}"`);
-    const targetDir =
+    const skillsRoot =
       input.scope === 'global'
-        ? path.join(homedirSkills(), input.name)
-        : path.join(projectPath, PROJECT_SKILLS_DIR, input.name);
+        ? path.join(homedir(), agent === 'codex' ? '.codex' : '.claude', 'skills')
+        : path.join(projectPath, agent === 'codex' ? '.codex' : '.claude', 'skills');
+    const targetDir = path.join(skillsRoot, input.name);
     await rm(targetDir, { recursive: true, force: true });
     await cp(src.dirPath, targetDir, { recursive: true });
+    return;
+  }
+
+  if (isFileAssetCategory(input.category)) {
+    const src = findFileAssetSource(idx, input.category, input.name);
+    if (!src) throw new Error(`No library source for ${input.category} "${input.name}"`);
+    const targetDir = fileAssetTargetDir(input.category, agent, input.scope, projectPath, homedir());
+    await mkdir(targetDir, { recursive: true });
+    const target = path.join(targetDir, `${input.name}${FILE_ASSET_SPECS[input.category].ext}`);
+    await rm(target, { force: true });
+    await cp(src.filePath, target);
     return;
   }
 
@@ -87,13 +105,26 @@ export async function syncAll(
   const updated: ApplyUpdateInput[] = [];
   for (const s of report.skills) {
     if (s.custom || !s.outdated) continue;
-    await applyUpdate(projectPath, { category: 'skill', name: s.name, scope: s.scope }, idx);
-    updated.push({ category: 'skill', name: s.name, scope: s.scope });
+    await applyUpdate(
+      projectPath,
+      { category: 'skill', name: s.name, scope: s.scope, agent: s.agent },
+      idx,
+    );
+    updated.push({ category: 'skill', name: s.name, scope: s.scope, agent: s.agent });
   }
   for (const m of report.mcp) {
     if (m.custom || !m.outdated) continue;
     await applyUpdate(projectPath, { category: 'mcp', name: m.name, scope: m.scope }, idx);
     updated.push({ category: 'mcp', name: m.name, scope: m.scope });
+  }
+  for (const f of report.files) {
+    if (f.custom || !f.outdated) continue;
+    await applyUpdate(
+      projectPath,
+      { category: f.category, name: f.name, scope: f.scope },
+      idx,
+    );
+    updated.push({ category: f.category, name: f.name, scope: f.scope });
   }
   return { updated, skipped: 0 };
 }
@@ -105,8 +136,4 @@ export async function syncAll(
 export async function refreshStatusline(projectPath: string): Promise<void> {
   const config = await readStatuslineConfig(projectPath);
   await applyStatuslineConfig(projectPath, config);
-}
-
-function homedirSkills(): string {
-  return path.join(homedir(), '.claude', 'skills');
 }

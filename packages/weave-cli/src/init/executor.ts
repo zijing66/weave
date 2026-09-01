@@ -27,6 +27,11 @@ import {
   mergeClaudeMd,
   type ClaudeMdTemplate,
 } from './claudemd-gen.js';
+import {
+  generateAgentsMd,
+  generateAgentsMdSection,
+  mergeAgentsMd,
+} from './agentsmd-gen.js';
 import { generateHookHandler, generateStatusline, generateAutoMemoryHook } from './helpers-gen.js';
 
 /** Map preset → CLAUDE.md template */
@@ -226,6 +231,31 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     }
   }
 
+  // ---- Step 8b: Generate AGENTS.md (Codex + cross-agent instructions) ----
+  // Same policy as CLAUDE.md: fresh file generated whole, existing file only
+  // ever receives weave's delimited block. The agents.md standard is read
+  // natively by Codex; other agents increasingly follow it too.
+  if (components.agentsMd) {
+    const template = PRESET_TEMPLATE[preset] ?? 'standard';
+    const projectName = path.basename(targetDir);
+    const agentsMdPath = path.join(targetDir, 'AGENTS.md');
+
+    if (force) {
+      await writeFile(agentsMdPath, generateAgentsMd({ template, projectName }), 'utf-8');
+      created.files.push(agentsMdPath);
+    } else {
+      const existing = await readTextIfPresent(agentsMdPath);
+      if (existing === null) {
+        await writeFile(agentsMdPath, generateAgentsMd({ template, projectName }), 'utf-8');
+        created.files.push(agentsMdPath);
+      } else {
+        const section = generateAgentsMdSection({ template, projectName });
+        await writeFile(agentsMdPath, mergeAgentsMd(existing, section), 'utf-8');
+        merged.push(agentsMdPath);
+      }
+    }
+  }
+
   // ---- Step 9: Write runtime config ----
   // .weave/ is weave's own state: always rewritten so re-init refreshes the
   // timestamp/preset. (weave-特性文件可以覆写)
@@ -238,7 +268,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
       initVersion: '0.1.0',
       initTimestamp: new Date().toISOString(),
       preset,
-      components: { settings: components.settings, skills: components.skills, commands: components.commands, agents: components.agents, helpers: components.helpers, mcp: components.mcp, claudeMd: components.claudeMd },
+      components: { settings: components.settings, skills: components.skills, commands: components.commands, agents: components.agents, helpers: components.helpers, mcp: components.mcp, claudeMd: components.claudeMd, agentsMd: components.agentsMd },
     };
 
     const configPath = path.join(weaveDir, 'config.yaml');

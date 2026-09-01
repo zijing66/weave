@@ -8,17 +8,20 @@ import type { LibraryRepository } from '../repositories/libraries.js';
 import type { HookAdapter } from '../hooks/adapter.js';
 import type { HookReport } from '../hooks/types.js';
 import type { WatchService } from '../watch/watch-service.js';
-import { scanLibrarySkills, scanLibraryMcp } from '../install/scanner.js';
+import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from '../install/scanner.js';
 import {
   installSkill,
   uninstallSkill,
   installMcp,
   uninstallMcp,
+  installFileAsset,
+  uninstallFileAsset,
   readMcpServers,
   InstallConflictError,
   AssetNotFoundError,
 } from '../install/installer.js';
-import type { McpServerConfig } from '../install/installer.js';
+import type { McpServerConfig, InstallAgent } from '../install/installer.js';
+import { isFileAssetCategory } from '../install/file-assets.js';
 import {
   readGlobalMcpServers,
   writeGlobalMcpServer,
@@ -259,7 +262,9 @@ async function handleRequest(
     const skills = await scanLibrarySkills(lib.path);
     const mcp =
       lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path) : [];
-    sendJson(200, { library: lib, skills, mcp });
+    const files =
+      lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryFileAssets(lib.path) : null;
+    sendJson(200, { library: lib, skills, mcp, files });
     return;
   }
   const libMatch = pathname.match(/^\/libraries\/(\d+)$/);
@@ -296,11 +301,28 @@ async function handleRequest(
           sendJson(400, { error: 'Missing "name" or "sourceDir"' });
           return;
         }
+        const agent = body.agent ?? 'claude';
         const target =
           body.scope === 'global'
-            ? await installGlobalSkill(body.sourceDir, body.name)
-            : await installSkill(project.path, body.sourceDir, body.name);
-        sendJson(201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', path: target });
+            ? await installGlobalSkill(body.sourceDir, body.name, agent)
+            : await installSkill(project.path, body.sourceDir, body.name, agent);
+        sendJson(201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
+      } else if (body.category && isFileAssetCategory(body.category)) {
+        if (!body.name || !body.sourceFile) {
+          sendJson(400, { error: 'Missing "name" or "sourceFile"' });
+          return;
+        }
+        const agent = body.agent ?? 'claude';
+        const scope = body.scope ?? 'project';
+        const target = await installFileAsset(
+          project.path,
+          body.category,
+          body.name,
+          body.sourceFile,
+          agent,
+          scope,
+        );
+        sendJson(201, { category: body.category, name: body.name, scope, agent, path: target });
       } else if (body.category === 'mcp') {
         if (!body.name || !body.mcpConfig) {
           sendJson(400, { error: 'Missing "name" or "mcpConfig"' });
@@ -313,7 +335,7 @@ async function handleRequest(
         }
         sendJson(201, { category: 'mcp', name: body.name, scope: body.scope ?? 'project' });
       } else {
-        sendJson(400, { error: 'Invalid "category" (skill|mcp)' });
+        sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
       }
     } catch (e) {
       sendInstallError(res, e);
@@ -328,9 +350,14 @@ async function handleRequest(
       sendJson(404, { error: 'Project not found' });
       return;
     }
-    let body: { category?: string; name?: string; scope?: 'project' | 'global' };
+    let body: {
+      category?: string;
+      name?: string;
+      scope?: 'project' | 'global';
+      agent?: 'claude' | 'codex';
+    };
     try {
-      body = JSON.parse(await readBody(req)) as { category?: string; name?: string; scope?: 'project' | 'global' };
+      body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
       sendJson(400, { error: 'Invalid JSON body' });
       return;
@@ -341,8 +368,21 @@ async function handleRequest(
           sendJson(400, { error: 'Missing "name"' });
           return;
         }
-        if (body.scope === 'global') await uninstallGlobalSkill(body.name);
-        else await uninstallSkill(project.path, body.name);
+        const agent = body.agent ?? 'claude';
+        if (body.scope === 'global') await uninstallGlobalSkill(body.name, agent);
+        else await uninstallSkill(project.path, body.name, agent);
+      } else if (body.category && isFileAssetCategory(body.category)) {
+        if (!body.name) {
+          sendJson(400, { error: 'Missing "name"' });
+          return;
+        }
+        await uninstallFileAsset(
+          project.path,
+          body.category,
+          body.name,
+          body.agent ?? 'claude',
+          body.scope ?? 'project',
+        );
       } else if (body.category === 'mcp') {
         if (!body.name) {
           sendJson(400, { error: 'Missing "name"' });
@@ -351,7 +391,7 @@ async function handleRequest(
         if (body.scope === 'global') await removeGlobalMcpServer(body.name);
         else await uninstallMcp(project.path, body.name);
       } else {
-        sendJson(400, { error: 'Invalid "category" (skill|mcp)' });
+        sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
         return;
       }
       sendJson(200, { ok: true });
@@ -537,7 +577,7 @@ async function handleRequest(
       return;
     }
     if (!deps.libraries) {
-      sendJson(200, { skills: [], mcp: [], available: 0 });
+      sendJson(200, { skills: [], mcp: [], files: [], available: 0 });
       return;
     }
     const report = await detectUpdates(
@@ -562,13 +602,14 @@ async function handleRequest(
       sendJson(503, { error: 'Libraries unavailable' });
       return;
     }
-    let body: { category?: string; name?: string; scope?: 'project' | 'global' };
+    let body: {
+      category?: string;
+      name?: string;
+      scope?: 'project' | 'global';
+      agent?: 'claude' | 'codex';
+    };
     try {
-      body = JSON.parse(await readBody(req)) as {
-        category?: string;
-        name?: string;
-        scope?: 'project' | 'global';
-      };
+      body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
       sendJson(400, { error: 'Invalid JSON body' });
       return;
@@ -577,15 +618,21 @@ async function handleRequest(
       sendJson(400, { error: 'Missing "category", "name", or "scope"' });
       return;
     }
-    if (!['skill', 'mcp'].includes(body.category)) {
-      sendJson(400, { error: 'Invalid "category" (skill|mcp)' });
+    const validCategories = ['skill', 'mcp', 'command', 'agent', 'workflow', 'rule', 'output-style'];
+    if (!validCategories.includes(body.category)) {
+      sendJson(400, { error: 'Invalid "category"' });
       return;
     }
     try {
       const index = await buildLibraryIndex(deps.libraries.list());
       await applyUpdate(
         project.path,
-        { category: body.category as 'skill' | 'mcp', name: body.name, scope: body.scope },
+        {
+          category: body.category as 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style',
+          name: body.name,
+          scope: body.scope,
+          agent: body.agent,
+        },
         index,
       );
       sendJson(200, { ok: true, category: body.category, name: body.name, scope: body.scope });
@@ -842,9 +889,12 @@ interface InstallBody {
   category?: string;
   name?: string;
   sourceDir?: string;
+  sourceFile?: string;
   mcpConfig?: McpServerConfig;
-  /** 'project' (default) writes into the project; 'global' writes ~/.claude. */
+  /** 'project' (default) writes into the project; 'global' writes ~/.claude / ~/.codex. */
   scope?: 'project' | 'global';
+  /** Which coding agent's surface to target (default: claude). */
+  agent?: InstallAgent;
 }
 
 /** Map installer errors to HTTP statuses (409 conflict / 404 missing / 400 bad). */

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { type AssetEntry } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 
-const CATEGORY_ORDER = ['command', 'agent', 'helper', 'settings', 'other'];
+/** command / agent are rendered by FileAssetGrid; here only the tail kinds. */
+const CATEGORY_ORDER = ['helper', 'settings', 'other'];
 
 function groupByCategory(assets: AssetEntry[]): Map<string, AssetEntry[]> {
   const m = new Map<string, AssetEntry[]>();
