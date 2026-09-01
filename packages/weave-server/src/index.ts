@@ -44,11 +44,20 @@ export type { HookAdapter } from './hooks/adapter.js';
 export type { HookReport, NormalizedHookPayload } from './hooks/types.js';
 
 // --- install / uninstall (asset lifecycle on the filesystem) ---
-export { scanLibrarySkills, scanLibraryMcp } from './install/scanner.js';
-export type { SkillAsset, McpTemplate } from './install/scanner.js';
+export { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from './install/scanner.js';
+export type { SkillAsset, McpTemplate, FileAssetTemplate } from './install/scanner.js';
+export {
+  FILE_ASSET_SPECS,
+  FILE_ASSET_CATEGORIES,
+  fileAssetTargetDir,
+  isFileAssetCategory,
+} from './install/file-assets.js';
+export type { FileAssetCategory, FileAssetSpec } from './install/file-assets.js';
 export {
   installSkill,
   uninstallSkill,
+  installFileAsset,
+  uninstallFileAsset,
   installMcp,
   uninstallMcp,
   InstallConflictError,
@@ -56,12 +65,12 @@ export {
 } from './install/installer.js';
 export type { McpServerConfig } from './install/installer.js';
 export { readMcpServers, readMcpJson } from './install/installer.js';
-export { buildLibraryIndex, findSkillSource } from './install/library-index.js';
-export type { SkillSource, LibraryIndex } from './install/library-index.js';
-export { hashSkillDir, maxMtimeDir, hashMcpConfig, FingerprintCache } from './install/fingerprint.js';
+export { buildLibraryIndex, findSkillSource, findFileAssetSource } from './install/library-index.js';
+export type { SkillSource, LibraryIndex, FileAssetSource } from './install/library-index.js';
+export { hashSkillDir, maxMtimeDir, hashMcpConfig, hashFile, FingerprintCache } from './install/fingerprint.js';
 export type { FingerprintCacheEntry } from './install/fingerprint.js';
-export { detectUpdates, detectSkillUpdates } from './install/updates.js';
-export type { SkillUpdate, McpUpdate, UpdateReport } from './install/updates.js';
+export { detectUpdates, detectSkillUpdates, detectFileAssetUpdates } from './install/updates.js';
+export type { SkillUpdate, McpUpdate, FileAssetUpdate, UpdateReport } from './install/updates.js';
 export {
   readProjectFile,
   resolveProjectFile,
@@ -117,6 +126,8 @@ export { generateStatuslineScript } from './statusline/generator.js';
 export {
   readStatuslineConfig,
   writeStatuslineConfig,
+  readGlobalStatuslineConfig,
+  writeGlobalStatuslineConfig,
   applyStatuslineConfig,
   ensureSettingsStatusLine,
   readStatuslineScript,

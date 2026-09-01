@@ -7,7 +7,11 @@ import {
   type McpTemplate,
   type McpServerConfig,
   type AssetScope,
+  type AssetAgent,
+  type FileAssetTemplate,
+  type FileAssetCategory,
   type UpdateReport,
+  FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
@@ -33,10 +37,16 @@ interface LibraryPanelProps {
   /** Skill names already installed in the selected project (for the ✓ mark). */
   installedSkillNames: Set<string>;
   /** Click-to-install fallback (drag is the primary interaction). */
-  onInstallSkill: (skill: SkillAsset, scope: AssetScope) => void;
+  onInstallSkill: (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => void;
+  onInstallFileAsset: (file: FileAssetTemplate, scope: AssetScope) => void;
   onInstallMcp: (name: string, config: McpServerConfig, scope: AssetScope) => void;
   updates: UpdateReport | null;
-  onUpdateAsset: (category: 'skill' | 'mcp', name: string, scope: AssetScope) => void;
+  onUpdateAsset: (
+    category: 'skill' | 'mcp' | FileAssetCategory,
+    name: string,
+    scope: AssetScope,
+    agent?: AssetAgent,
+  ) => void;
   /** Which main category is active — the panel shows matching installable lists. */
   category: MainCategory;
   /** Install-to scope, driven by the current project/global context. */
@@ -46,6 +56,7 @@ interface LibraryPanelProps {
 export function LibraryPanel({
   installedSkillNames,
   onInstallSkill,
+  onInstallFileAsset,
   onInstallMcp,
   updates,
   onUpdateAsset,
@@ -55,10 +66,13 @@ export function LibraryPanel({
   const [libraries, setLibraries] = useState<LibraryRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [skills, setSkills] = useState<SkillAsset[]>([]);
+  const [fileTemplates, setFileTemplates] = useState<FileAssetTemplate[]>([]);
   const [mcp, setMcp] = useState<McpTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** Install-to runtime for skills (Claude .claude/skills vs Codex .codex/skills). */
+  const [skillAgent, setSkillAgent] = useState<AssetAgent>('claude');
 
   useEffect(() => {
     api.listLibraries().then(setLibraries).catch((e) => setError(String(e)));
@@ -67,6 +81,7 @@ export function LibraryPanel({
   useEffect(() => {
     if (selectedId === null) {
       setSkills([]);
+      setFileTemplates([]);
       setMcp([]);
       return;
     }
@@ -76,6 +91,7 @@ export function LibraryPanel({
       .listLibraryAssets(selectedId)
       .then((r) => {
         setSkills(r.skills);
+        setFileTemplates(r.files ?? []);
         setMcp(r.mcp ?? []);
       })
       .catch((e) => setError(String(e)))
@@ -128,17 +144,22 @@ export function LibraryPanel({
 
   const outdatedSkills = (updates?.skills ?? []).filter((u) => u.outdated);
   const outdatedMcp = (updates?.mcp ?? []).filter((u) => u.outdated);
+  const outdatedFiles = (updates?.files ?? []).filter((u) => u.outdated);
 
   // The installable list shown depends on the active main category.
   const showSkills = category === 'skills';
+  const showFiles = category === 'commands';
   const showMcp = category === 'mcp';
-  const noTemplates = !showSkills && !showMcp;
+  const noTemplates = !showSkills && !showMcp && !showFiles;
 
   // Sections and groups that are currently rendered — collapse-all targets.
   const visibleSections = [
     ...(showSkills ? [SECTION_SKILLS] : []),
+    ...(showFiles ? [SECTION_FILES] : []),
     ...(showMcp ? [SECTION_MCP] : []),
-    ...(outdatedSkills.length > 0 || outdatedMcp.length > 0 ? [SECTION_UPDATES] : []),
+    ...(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0
+      ? [SECTION_UPDATES]
+      : []),
   ];
   const groupKeys = groupSkills(skills).map(([g]) => g || '__root__');
   const anyCollapsed =
@@ -268,6 +289,32 @@ export function LibraryPanel({
             {!loading && selectedId !== null && skills.length === 0 && (
               <p className="text-xs text-neutral-600">No skills found.</p>
             )}
+            {/* Install-to runtime: Claude (.claude/skills) or Codex (.codex/skills) */}
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-[11px] text-neutral-500 shrink-0">安装目标</span>
+              {(['claude', 'codex'] as const).map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setSkillAgent(a)}
+                  className={cn(
+                    'rounded px-1.5 py-0.5 text-[11px]',
+                    skillAgent === a
+                      ? 'bg-neutral-700 text-neutral-100'
+                      : 'text-neutral-500 hover:text-neutral-300',
+                  )}
+                  title={
+                    a === 'claude'
+                      ? '安装到 .claude/skills/'
+                      : '安装到 .codex/skills/（全局则为 ~/.codex/skills/）'
+                  }
+                >
+                  {a === 'claude' ? 'Claude' : 'Codex'}
+                </button>
+              ))}
+              {scope === 'global' && skillAgent === 'codex' && (
+                <span className="text-[10px] text-neutral-600">→ ~/.codex/skills/</span>
+              )}
+            </div>
             {groupSkills(skills).map(([group, items]) => {
               const key = group || '__root__';
               const collapsed = collapsedGroups.has(key);
@@ -304,12 +351,66 @@ export function LibraryPanel({
                         <DraggableSkill
                           key={s.name}
                           skill={s}
+                          agent={skillAgent}
                           installed={installedSkillNames.has(s.name)}
-                          onInstall={() => onInstallSkill(s, scope)}
+                          onInstall={() => onInstallSkill(s, scope, skillAgent)}
                         />
                       ))}
                     </div>
                   )}
+                </div>
+              );
+            })}
+          </TemplateSection>
+        )}
+
+        {/* File templates — commands / agents / workflows / rules / output-styles */}
+        {showFiles && (
+          <TemplateSection
+            icon={<FileCode className="h-3.5 w-3.5 text-blue-400" />}
+            title="File templates"
+            hint="Click to install"
+            count={fileTemplates.length}
+            open={!sectionsCollapsed.has(SECTION_FILES)}
+            onToggle={() => toggleSection(SECTION_FILES)}
+          >
+            {loading && <p className="text-xs text-neutral-500">Scanning…</p>}
+            {!loading && selectedId === null && (
+              <p className="text-xs text-neutral-600">Add a library above to browse templates.</p>
+            )}
+            {!loading && selectedId !== null && fileTemplates.length === 0 && (
+              <p className="text-xs text-neutral-600">
+                库中未发现文件模板（commands / agents / workflows / rules / output-styles 目录）。
+              </p>
+            )}
+            {FILE_ASSET_CATEGORIES.map((cat) => {
+              const items = fileTemplates.filter((f) => f.category === cat);
+              if (!items.length) return null;
+              return (
+                <div key={cat} className="mb-1">
+                  <div className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5">
+                    <Folder className="h-3 w-3 shrink-0 text-emerald-500/60" />
+                    <span className="truncate">{cat}</span>
+                    <Badge className="shrink-0">{items.length}</Badge>
+                  </div>
+                  <div className="space-y-0.5">
+                    {items.map((f) => (
+                      <div
+                        key={f.filePath}
+                        className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
+                        title={f.filePath}
+                      >
+                        <FileCode className="h-3 w-3 shrink-0 text-blue-400" />
+                        <span className="truncate">{f.name}</span>
+                        <button
+                          onClick={() => onInstallFileAsset(f, scope)}
+                          className="ml-auto text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          install
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               );
             })}
@@ -359,21 +460,30 @@ export function LibraryPanel({
         )}
 
         {/* Update hints */}
-        {(outdatedSkills.length > 0 || outdatedMcp.length > 0) && (
+        {(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0) && (
           <TemplateSection
             icon={<RefreshCw className="h-3.5 w-3.5 text-orange-400" />}
             title="Update hints"
             hint="Overwrites local changes"
-            count={outdatedSkills.length + outdatedMcp.length}
+            count={outdatedSkills.length + outdatedMcp.length + outdatedFiles.length}
             open={!sectionsCollapsed.has(SECTION_UPDATES)}
             onToggle={() => toggleSection(SECTION_UPDATES)}
           >
             {outdatedSkills.map((u) => (
               <UpdateHintRow
-                key={`skill-${u.scope}-${u.name}`}
+                key={`skill-${u.agent ?? 'claude'}-${u.scope}-${u.name}`}
                 label={u.name}
                 scope={u.scope}
-                onUpdate={() => onUpdateAsset('skill', u.name, u.scope)}
+                agent={u.agent}
+                onUpdate={() => onUpdateAsset('skill', u.name, u.scope, u.agent)}
+              />
+            ))}
+            {outdatedFiles.map((u) => (
+              <UpdateHintRow
+                key={`file-${u.category}-${u.name}`}
+                label={`${u.category}/${u.name}`}
+                scope={u.scope}
+                onUpdate={() => onUpdateAsset(u.category, u.name, u.scope)}
               />
             ))}
             {outdatedMcp.map((u) => (
@@ -408,6 +518,7 @@ function categoryLabel(category: MainCategory): string {
 
 /** Collapse-state keys for the template sections. */
 const SECTION_SKILLS = 'skill-templates';
+const SECTION_FILES = 'file-templates';
 const SECTION_MCP = 'mcp-templates';
 const SECTION_UPDATES = 'update-hints';
 
@@ -483,16 +594,23 @@ function TemplateSection({
 function UpdateHintRow({
   label,
   scope,
+  agent,
   onUpdate,
 }: {
   label: string;
   scope: AssetScope;
+  agent?: AssetAgent;
   onUpdate: () => void;
 }) {
   return (
     <div className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900">
       <RefreshCw className="h-3 w-3 shrink-0 text-orange-400" />
       <span className="truncate">{label}</span>
+      {agent === 'codex' && (
+        <Badge variant="other" className="shrink-0">
+          Codex
+        </Badge>
+      )}
       <Badge variant="skill" className="shrink-0">
         {scope}
       </Badge>
@@ -508,16 +626,19 @@ function UpdateHintRow({
 
 function DraggableSkill({
   skill,
+  agent,
   installed,
   onInstall,
 }: {
   skill: SkillAsset;
+  /** Install target carried through the drag payload. */
+  agent: AssetAgent;
   installed: boolean;
   onInstall: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `lib-skill-${skill.name}`,
-    data: { sourceDir: skill.dirPath, name: skill.name },
+    data: { sourceDir: skill.dirPath, name: skill.name, agent },
   });
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }

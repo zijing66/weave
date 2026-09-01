@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  type AssetAgent,
   type AssetEntry,
   type AssetScope,
   type SkillUpdate,
@@ -30,15 +31,19 @@ export interface SkillRow {
   source?: GlobalSkillSource;
   /** `plugin@marketplace` for plugin-sourced global skills. */
   pluginKey?: string;
+  /** Runtime surface the skill is installed on (project rows only). */
+  agent?: AssetAgent;
 }
 
 /** Open a skill's detail drawer. Global rows carry source/pluginKey so the
- * drawer can fetch files from the right global root. */
+ * drawer can fetch files from the right global root; project rows carry the
+ * runtime (claude/codex) so files resolve under the right skills/ root. */
 export type OpenDetailFn = (
   name: string,
   scope: AssetScope,
   source?: GlobalSkillSource,
   pluginKey?: string,
+  agent?: AssetAgent,
 ) => void;
 
 /** A labelled group of skills (global view only). Plugin groups carry enable
@@ -74,19 +79,26 @@ function SkillCard({
   /** Read-only context (project view showing global skills): show a 全局 tag,
    * never an uninstall button. */
   readOnly?: boolean;
-  onUninstallSkill: (name: string, scope: AssetScope) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onOpenDetail: OpenDetailFn;
 }) {
   return (
     <Card>
       <CardHeader className="items-center gap-2">
         <button
-          onClick={() => onOpenDetail(row.name, row.scope, row.source, row.pluginKey)}
+          onClick={() =>
+            onOpenDetail(row.name, row.scope, row.source, row.pluginKey, row.agent)
+          }
           className="flex items-center gap-2 text-left flex-1 min-w-0"
           title={`Open ${row.name} detail`}
         >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
+          {row.agent === 'codex' && (
+            <Badge variant="other" className="ml-1">
+              Codex
+            </Badge>
+          )}
           {readOnly && (
             <Badge variant="settings" className="ml-1">
               全局
@@ -110,7 +122,7 @@ function SkillCard({
         </button>
         {canUninstall && !readOnly && (
           <button
-            onClick={() => onUninstallSkill(row.name, row.scope)}
+            onClick={() => onUninstallSkill(row.name, row.scope, row.agent)}
             className="text-neutral-500 hover:text-red-400 shrink-0"
             title={`Uninstall ${row.name}`}
           >
@@ -142,7 +154,7 @@ export function SkillGrid({
   /** Update info already filtered to this mode's scope. */
   updates?: SkillUpdate[];
   empty: string;
-  onUninstallSkill: (name: string, scope: AssetScope) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onOpenDetail: OpenDetailFn;
   onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
 }) {
@@ -213,7 +225,7 @@ function GroupedSkills({
 }: {
   groups: SkillGroup[];
   updates?: SkillUpdate[];
-  onUninstallSkill: (name: string, scope: AssetScope) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onOpenDetail: OpenDetailFn;
   onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
   /** Read-only context (project view): no enable toggle, cards tagged 全局. */
@@ -352,17 +364,26 @@ function GroupedSkills({
   );
 }
 
-/** Group project-scope skill files by their containing skill directory. */
+/** Group project-scope skill files by their containing skill directory.
+ * Matches both `.claude/skills/` and `.codex/skills/` roots; the agent is
+ * carried on each row so uninstall targets the right surface. */
 export function groupSkillRows(assets: AssetEntry[]): SkillRow[] {
-  const m = new Map<string, AssetEntry[]>();
+  const m = new Map<string, { agent: AssetAgent; files: AssetEntry[] }>();
   for (const a of assets) {
-    const name = a.relPath.match(/^\.claude\/skills\/([^/]+)\//)?.[1];
-    if (!name) continue;
-    const list = m.get(name) ?? [];
-    list.push(a);
-    m.set(name, list);
+    const match = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//);
+    if (!match) continue;
+    const name = match[1];
+    const agent: AssetAgent = a.relPath.startsWith('.codex') ? 'codex' : 'claude';
+    const entry = m.get(name) ?? { agent, files: [] as AssetEntry[] };
+    entry.files.push(a);
+    m.set(name, entry);
   }
   return [...m.entries()]
-    .map(([name, files]) => ({ name, scope: 'project' as AssetScope, files }))
+    .map(([name, { agent, files }]) => ({
+      name,
+      scope: 'project' as AssetScope,
+      agent,
+      files,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

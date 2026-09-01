@@ -14,7 +14,14 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
 } from 'lucide-react';
-import { api, type AssetEntry, type AssetChangeEvent, type AssetScope, type GlobalSkillSource } from '@/lib/api';
+import {
+  api,
+  type AssetAgent,
+  type AssetEntry,
+  type AssetChangeEvent,
+  type AssetScope,
+  type GlobalSkillSource,
+} from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { splitFrontmatter } from '@/lib/markdown';
@@ -164,6 +171,7 @@ export function SkillDetailDrawer({
   scope,
   source,
   pluginKey,
+  agent,
   files,
   readOnly,
   outdated,
@@ -178,6 +186,8 @@ export function SkillDetailDrawer({
   source?: GlobalSkillSource;
   /** `plugin@marketplace` for plugin-sourced global skills. */
   pluginKey?: string;
+  /** Runtime surface of a project-scope skill (drives the footer hint). */
+  agent?: AssetAgent;
   /** Project-scope asset entries (files inside the project skill directory).
    * Global rows ignore this and fetch via listGlobalSkillFiles. */
   files: AssetEntry[];
@@ -418,7 +428,7 @@ export function SkillDetailDrawer({
         {scope === 'project' ? (
           <>
             <Folder className="h-3 w-3" />
-            Project-scope skill — lives in .claude/skills/
+            Project-scope skill — lives in {agent === 'codex' ? '.codex' : '.claude'}/skills/
           </>
         ) : readOnly ? (
           <>

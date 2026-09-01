@@ -5,7 +5,7 @@ import { watch } from 'chokidar';
 import type { FSWatcher } from 'chokidar';
 import type { ProjectRepository } from '../repositories/projects.js';
 import { WatchCache } from './cache.js';
-import { classifyAsset, normalizeRelPath } from './classifier.js';
+import { classifyAgent, classifyAsset, normalizeRelPath } from './classifier.js';
 import type { AssetChangeEvent, AssetChangeKind, AssetEntry } from './types.js';
 import { globalPersonalSkillRoots } from '../install/global-config.js';
 
@@ -21,8 +21,9 @@ const GLOBAL_SENTINEL = '<global>';
  * by the watcher.
  *
  * chokidar v4 dropped glob support, so we watch the project root (`'.'` with
- * `cwd`) and filter with this function: keep only `.claude/`, `.weave/`, and
- * `.mcp.json`; drop large/irrelevant subtrees (`node_modules`, `.git`, and the
+ * `cwd`) and filter with this function: keep only `.claude/`, `.codex/`,
+ * `.weave/`, `.mcp.json` and the two instruction files (CLAUDE.md / AGENTS.md);
+ * drop large/irrelevant subtrees (`node_modules`, `.git`, and the
  * session-history/cache dirs under `.claude`).
  */
 export function shouldIgnore(rel: string): boolean {
@@ -32,10 +33,12 @@ export function shouldIgnore(rel: string): boolean {
   if (rel === '.git' || rel.startsWith('.git/')) return true;
   if (rel === '.claude/projects' || rel.startsWith('.claude/projects/')) return true;
   if (rel === '.claude/cache' || rel.startsWith('.claude/cache/')) return true;
-  // Keep everything else under .claude / .weave, and the mcp config file.
+  // Keep everything else under .claude / .codex / .weave, and the mcp config file.
   if (rel === '.claude' || rel.startsWith('.claude/')) return false;
+  if (rel === '.codex' || rel.startsWith('.codex/')) return false;
   if (rel === '.weave' || rel.startsWith('.weave/')) return false;
   if (rel === '.mcp.json') return false;
+  if (rel === 'CLAUDE.md' || rel === 'AGENTS.md') return false;
   return true; // ignore all other project files
 }
 
@@ -215,7 +218,8 @@ export class WatchService {
 
   /** Handle a change inside a global personal skill root. Events carry the
    * GLOBAL_SENTINEL projectPath so App.tsx's project cache ignores them; the
-   * open skill drawer subscribes to its own EventSource and re-fetches. */
+   * open skill drawer subscribes to its own EventSource and re-fetches. The
+   * agent is derived from the root (`.codex` path segment → Codex). */
   private onGlobalFile(root: string, rawPath: string, kind: AssetChangeKind): void {
     const relPath = normalizeRelPath(rawPath);
     const absPath = path.join(root, relPath);
@@ -223,6 +227,7 @@ export class WatchService {
       projectPath: GLOBAL_SENTINEL,
       projectName: 'global',
       category: 'skill',
+      agent: root.split(/[\\/]/).includes('.codex') ? 'codex' : 'claude',
       relPath,
       absPath,
       kind,
@@ -251,20 +256,21 @@ export class WatchService {
     const relPath = normalizeRelPath(rawPath);
     const absPath = path.join(projectPath, relPath);
     const category = classifyAsset(relPath);
+    const agent = classifyAgent(relPath);
 
     if (kind === 'unlink') {
       this.cache.remove(projectPath, relPath);
     } else {
       try {
         const stat = statSync(absPath);
-        this.cache.upsert(projectPath, { absPath, relPath, category, mtimeMs: stat.mtimeMs });
+        this.cache.upsert(projectPath, { absPath, relPath, category, agent, mtimeMs: stat.mtimeMs });
       } catch {
         // File vanished between event and stat — treat as removal.
         this.cache.remove(projectPath, relPath);
       }
     }
 
-    this.enqueue(projectPath, { projectPath, projectName, category, relPath, absPath, kind });
+    this.enqueue(projectPath, { projectPath, projectName, category, agent, relPath, absPath, kind });
   }
 
   /** Buffer an event and coalesce per-file within the debounce window. */
