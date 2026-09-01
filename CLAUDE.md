@@ -124,10 +124,16 @@ weave/
 |------|------|--------|
 | `weave init` | 注入 harness 到当前项目 | P0 |
 | `weave status` | 查看 harness 状态 | P0 |
+| `weave daemon` | 启停 Dashboard 后台守护进程 | P0 |
+| `weave scan` | 扫描已 init 项目并注册到 daemon | P1 |
+| `weave statusline preview` | statusline 交互式 TUI 预览（Ink） | P1 |
 | `weave doctor` | 诊断配置问题 | P1 |
 | `weave add <type> <name>` | 动态添加组件 | P1 |
 | `weave remove <type> <name>` | 移除组件 | P2 |
 | `weave upgrade` | 更新到新版本 | P2 |
+
+> 双 harness 说明：weave 同时管理 Claude Code（`.claude/`）与 Codex（`.codex/`、`AGENTS.md`）表面。
+> 共性面（skills / 指令文件 / commands / agents 等）已实现；高难度项见 `docs/BACKLOG.md`。
 
 ---
 
