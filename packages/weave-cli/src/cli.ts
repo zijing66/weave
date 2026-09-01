@@ -6,6 +6,7 @@ import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { daemonCommand } from './commands/daemon.js';
 import { scanCommand } from './commands/scan.js';
+import { statuslineCommand } from './commands/statusline.js';
 import type { Command, CommandContext } from './parser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +48,7 @@ export class CLI {
     this.parser.registerCommand(statusCommand);
     this.parser.registerCommand(daemonCommand);
     this.parser.registerCommand(scanCommand);
+    this.parser.registerCommand(statuslineCommand);
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {
