@@ -16,9 +16,11 @@ import { SEGMENT_ORDER } from './config.js';
  * (thinking), `git status --porcelain` (changes).
  *
  * When `powerline.enabled`, segments render as solid background blocks joined
- * edge-to-edge (ccstatusline-style); each segment can carry an icon and merge
- * into the next block. `align` pads the rendered line within the terminal
- * width so it sits left, centred, or right.
+ * by Nerd-Font chevrons — a join glyph's fg is the previous block's bg and
+ * its bg is the next block's, so consecutive blocks melt into one chevron
+ * (ccstatusline's powerline bridge); a start/end cap frames the row. Each
+ * segment can carry an icon and merge into the next block. `align` pads the
+ * rendered line within the terminal width so it sits left, centred, or right.
  */
 
 const ANSI: Record<StatuslineColor, string> = {
@@ -50,6 +52,10 @@ const BAR_FILL = '█';
 const BAR_EMPTY = '░';
 const BAR_CELLS = 10;
 
+/** Powerline chevrons (Nerd Font): left cap `` and block join ``. */
+const GLYPH_START = '';
+const GLYPH_JOIN = '';
+
 export function generateStatuslineScript(config: StatuslineConfig): string {
   const embeddedConfig = JSON.stringify(config);
   const embeddedAnsi = JSON.stringify(ANSI);
@@ -71,6 +77,8 @@ const DIVIDER = ${embeddedDivider};
 const BAR_FILL = '${BAR_FILL}';
 const BAR_EMPTY = '${BAR_EMPTY}';
 const BAR_CELLS = ${BAR_CELLS};
+const GLYPH_START = ${JSON.stringify(GLYPH_START)};
+const GLYPH_JOIN = ${JSON.stringify(GLYPH_JOIN)};
 
 function paint(text, color, bold, bg) {
   var fg = ANSI[color] || '37';
@@ -121,14 +129,14 @@ function segmentValue(key) {
     case 'changes':
       try {
         var n = require('child_process').execSync(
-          'git status --porcelain | find /c /v ""',
+          'git --no-optional-locks status --porcelain | find /c /v ""',
           { cwd: cwd, shell: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
         ).toString().trim();
         return n ? String(n) : '';
       } catch (e) {
         try {
           var n2 = require('child_process').execSync(
-            'git status --porcelain',
+            'git --no-optional-locks status --porcelain',
             { cwd: cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
           ).toString();
           var count = n2 ? n2.split('\\n').filter(function (l) { return l.length > 0; }).length : 0;
@@ -200,8 +208,12 @@ function renderLine(items) {
   var ordered = [];
   for (var i = 0; i < items.length; i++) {
     if (items[i].merge) { pending.push(items[i]); continue; }
-    // the merge segments before this item join this block, sharing its bg
-    for (var m = 0; m < pending.length; m++) pending[m].bg = items[i].bg;
+    // the merge segments before this item join this block, sharing its bg —
+    // they render flush against it (no separator of any kind)
+    for (var m = 0; m < pending.length; m++) {
+      pending[m].bg = items[i].bg;
+      pending[m].joinsNext = true;
+    }
     ordered = ordered.concat(pending);
     pending = [];
     ordered.push(items[i]);
@@ -215,6 +227,25 @@ function renderLine(items) {
   var plainParts = [];
   for (var k = 0; k < ordered.length; k++) {
     var it = ordered[k];
+    // a merge segment joins the item after it, so no separator goes between
+    if (k > 0 && !ordered[k - 1].joinsNext) {
+      var prev = ordered[k - 1];
+      if (isPower && prev.bg && it.bg) {
+        // powerline bridge (ccstatusline): the join glyph's fg is the previous
+        // block's bg and its bg is the next block's, so the two blocks melt
+        // into one chevron; when both blocks share a bg the glyph keeps the
+        // previous block's fg so they read as a single block
+        var bridgeFg = prev.bg === it.bg ? prev.fg : prev.bg;
+        parts.push(paint(GLYPH_JOIN, bridgeFg, false, it.bg));
+        plainParts.push(GLYPH_JOIN);
+      } else if (isPower) {
+        parts.push(' '); // a block without bg gets a plain gap, never a '│'
+        plainParts.push(' ');
+      } else {
+        parts.push(CONFIG.separator);
+        plainParts.push(CONFIG.separator);
+      }
+    }
     if (isPower) {
       parts.push(paint(' ' + it.text + ' ', it.fg, it.bold, it.bg));
       plainParts.push(' ' + it.text + ' ');
@@ -223,21 +254,35 @@ function renderLine(items) {
       plainParts.push(it.text);
     }
   }
-  var sep = isPower ? '' : CONFIG.separator;
-  return { line: parts.join(sep), plain: plainParts.join(sep) };
+  // cap the row with chevrons in the first/last block's bg (transparent bg)
+  if (isPower && ordered.length) {
+    if (ordered[0].bg) {
+      parts.unshift(paint(GLYPH_START, ordered[0].bg, false, null));
+      plainParts.unshift(GLYPH_START);
+    }
+    var last = ordered[ordered.length - 1];
+    if (last.bg) {
+      parts.push(paint(GLYPH_JOIN, last.bg, false, null));
+      plainParts.push(GLYPH_JOIN);
+    }
+  }
+  return { line: parts.join(''), plain: plainParts.join('') };
 }
 
 // Pad the line so it sits left / centre / right of the terminal width. The
-// script runs as a subprocess, so it falls back to a sane default width.
+// script runs as a subprocess, so it falls back to a sane default width. A
+// small safety margin keeps the statusline clear of the terminal's right
+// edge (ccstatusline reserves 6 columns for the same reason).
 function alignLine(rendered) {
   if (CONFIG.align === 'left') return rendered.line;
   var cols =
     (input.terminal && (input.terminal.columns || input.terminal.width)) ||
     (process.stdout && process.stdout.columns) ||
     80;
+  var usable = Math.max(20, cols - 6);
   var pad = 0;
-  if (CONFIG.align === 'right') pad = Math.max(0, cols - rendered.plain.length - 2);
-  else pad = Math.max(0, Math.floor((cols - rendered.plain.length) / 2));
+  if (CONFIG.align === 'right') pad = Math.max(0, usable - rendered.plain.length - 2);
+  else pad = Math.max(0, Math.floor((usable - rendered.plain.length) / 2));
   if (pad <= 0) return rendered.line;
   return new Array(pad + 1).join(' ') + rendered.line;
 }
@@ -257,7 +302,9 @@ for (var li = 0; li < rows.length; li++) {
     var logo = logoItem();
     if (logo) items.unshift(logo);
   }
-  renderedLines.push(alignLine(renderLine(items)));
+  // lead each content line with a reset so Claude Code's dim setting for the
+  // statusline area does not wash out our colours (ccstatusline does the same)
+  renderedLines.push('\\x1b[0m' + alignLine(renderLine(items)));
   if (li < rows.length - 1) renderedLines.push(dim(DIVIDER));
 }
 process.stdout.write(renderedLines.join('\\n'));

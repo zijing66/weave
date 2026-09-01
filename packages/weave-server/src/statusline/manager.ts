@@ -143,13 +143,14 @@ export async function readStatuslineScript(projectPath: string): Promise<string>
 
 /**
  * Ensure `.claude/settings.json` has a `statusLine` entry pointing at the
- * statusline script, with a `refreshInterval` so Claude Code re-runs it on a
- * timer and config changes take effect live. Preserves all other settings.
- * Idempotent.
+ * statusline script, with a `refreshInterval` (seconds) so Claude Code re-runs
+ * it on a timer during idle periods — updates after each assistant response
+ * are event-driven by Claude Code itself and need no weave-side polling.
+ * Preserves all other settings. Idempotent.
  */
 export async function ensureSettingsStatusLine(
   projectPath: string,
-  refreshInterval = 1,
+  refreshInterval = 10,
 ): Promise<void> {
   const file = path.join(projectPath, SETTINGS_FILE);
   const isWindows = process.platform === 'win32';
@@ -166,6 +167,7 @@ export async function ensureSettingsStatusLine(
   settings['statusLine'] = {
     type: 'command',
     command,
+    padding: 0,
     refreshInterval: Math.max(1, Math.round(refreshInterval)),
   };
   await mkdir(path.dirname(file), { recursive: true });

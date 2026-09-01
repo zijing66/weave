@@ -89,7 +89,7 @@ describe('statusline — manager', () => {
     expect(cfg.segments.project.enabled).toBe(true);
     expect(cfg.segments.tokens.enabled).toBe(false);
     expect(cfg.lines[0]).toContain('context');
-    expect(cfg.refreshInterval).toBe(1);
+    expect(cfg.refreshInterval).toBe(10);
   });
 
   it('defaults new powerline/source/lines fields on a legacy partial config', async () => {
@@ -323,7 +323,27 @@ describe('statusline — runtime output', () => {
     const out = runScript(generateStatuslineScript(cfg), stdin);
     expect(out).toContain(';46m'); // cyan background
     expect(out).toContain(';44m'); // blue background
-    expect(out).not.toContain('│'); // blocks join edge-to-edge
+    expect(out).not.toContain('│'); // blocks join via chevrons/gaps, never '│'
+  });
+
+  it('powerline bridges adjacent blocks with chevron glyphs and caps the row', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      powerline: { enabled: true },
+      showLogo: false,
+      lines: [['project', 'model']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        project: { ...DEFAULT_STATUSLINE_CONFIG.segments.project, backgroundColor: 'cyan' },
+        model: { ...DEFAULT_STATUSLINE_CONFIG.segments.model, backgroundColor: 'blue' },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), stdin);
+    // join glyph: fg = previous block's bg (cyan), bg = next block's bg (blue)
+    expect(out).toContain('36;44m');
+    // start cap in the first block's bg (cyan), end cap in the last (blue)
+    expect(out).toContain('\x1b[36m');
+    expect(out).toContain('\x1b[34m');
   });
 
   it('merge segments inherit the next block background', () => {
@@ -345,7 +365,7 @@ describe('statusline — runtime output', () => {
   it('align right pads the line to the terminal width', () => {
     const cfg = { ...DEFAULT_STATUSLINE_CONFIG, align: 'right' as const };
     const out = runScript(generateStatuslineScript(cfg), stdin);
-    expect(out.startsWith(' ')).toBe(true);
+    expect(out).toMatch(/^\x1b\[0m {5,}/); // leading reset, then right-align padding
     expect(out.trimEnd()).toContain('claude-sonnet-5');
   });
 
@@ -353,6 +373,6 @@ describe('statusline — runtime output', () => {
     const cfg = { ...DEFAULT_STATUSLINE_CONFIG, align: 'center' as const };
     const out = runScript(generateStatuslineScript(cfg), stdin);
     expect(out.trim()).toContain('claude-sonnet-5');
-    expect(out.startsWith(' ')).toBe(true);
+    expect(out).toMatch(/^\x1b\[0m {10,}/); // leading reset, then centring padding
   });
 });

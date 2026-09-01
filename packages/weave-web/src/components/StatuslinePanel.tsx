@@ -428,9 +428,10 @@ export function StatuslinePanel({
               disabled={!editable}
               onChange={(e) => patch({ refreshInterval: Math.max(1, Number(e.target.value) || 1) })}
               className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-12 text-center disabled:opacity-40"
-              title="Seconds between Claude Code re-runs of the script"
+              title="Claude Code 空闲时重跑脚本的间隔（秒）；交互驱动的更新不受此限制"
             />
             <span className="text-neutral-600">s</span>
+            <span className="text-neutral-600 text-[10px]">空闲时定时刷新；交互后即时更新</span>
           </label>
         </div>
         <label className="flex items-center gap-2 text-xs text-neutral-400">

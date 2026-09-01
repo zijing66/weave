@@ -10,8 +10,11 @@
  *   - `lines` : an ordered list of rows; each row is the left-to-right segment
  *               order of that line (draggable in the panel, across rows too).
  *               Rows are separated by a dim divider; the logo prefixes row 0.
- *   - `refreshInterval`: how often Claude Code re-runs the generated script so
- *               changes take effect live (Claude Code minimum is 1 second).
+ *   - `refreshInterval`: how often (seconds, min 1) Claude Code re-runs the
+ *               generated script during idle periods. Updates are driven by
+ *               Claude Code's own mechanism — the script is a one-shot command
+ *               re-invoked after each assistant response (~300ms debounce)
+ *               plus this timer; default 10s.
  *
  * When `powerline.enabled`, segments render as solid background blocks that
  * join edge-to-edge (ccstatusline-style), each optionally prefixed by an icon.
@@ -84,7 +87,11 @@ export interface StatuslineConfig {
    * Rows are separated by a dim divider; the logo prefixes the first row.
    */
   lines: SegmentKey[][];
-  /** How often Claude Code re-runs the statusline script (seconds, min 1). */
+  /**
+   * How often Claude Code re-runs the statusline script (seconds, min 1).
+   * Event-driven updates (after each assistant response) happen regardless;
+   * this timer only bounds staleness during idle periods. Default 10s.
+   */
   refreshInterval: number;
   /** Project config origin: follow the global template, or project-local. */
   source: StatuslineSource;
@@ -130,7 +137,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
   logoColor: 'magenta',
   powerline: { enabled: false },
   lines: [SEGMENT_ORDER],
-  refreshInterval: 1,
+  refreshInterval: 10,
   source: 'global',
   segments: {
     project: seg({ color: 'cyan', bold: true, icon: '📁' }),

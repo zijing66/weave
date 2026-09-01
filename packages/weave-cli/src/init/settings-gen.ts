@@ -59,11 +59,16 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
   // Env
   settings['env'] = { WEAVE_ENABLED: 'true' };
 
-  // Status line
+  // Status line — refreshInterval (seconds) lets Claude Code re-run the script
+  // on a timer during idle periods; interaction-driven updates happen on top.
+  // padding 0 keeps Claude Code from adding its own cell padding, so the
+  // rendered line owns the full width (same convention as ccstatusline).
   if (components.helpers) {
     settings['statusLine'] = {
       type: 'command' as const,
       command: platform.os === 'windows' ? `node "${helpersDir}/statusline.cjs"` : 'node ' + helpersDir + '/statusline.cjs',
+      padding: 0,
+      refreshInterval: 10,
     };
   }
 
