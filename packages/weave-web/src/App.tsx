@@ -29,7 +29,9 @@ import { TaskView } from '@/components/TaskView';
 import { LibraryPanel } from '@/components/LibraryPanel';
 import { FileViewer } from '@/components/FileViewer';
 import { Resizer } from '@/components/Resizer';
+import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
+import { Settings } from 'lucide-react';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
@@ -58,6 +60,7 @@ export default function App() {
   });
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Main area
   const [mainCategory, setMainCategory] = useState<MainCategory>('skills');
@@ -440,6 +443,19 @@ export default function App() {
     }
   }, [selected, projectConfig, refreshConfig]);
 
+  /** Context-menu action: open a project's folder in the file manager / terminal. */
+  const handleOpenProject = useCallback(
+    async (p: ProjectRow, target: 'explorer' | 'terminal') => {
+      setError(null);
+      try {
+        await api.openProject(p.id, target);
+      } catch (e) {
+        setError(`Open failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [],
+  );
+
   /** Toggle a plugin's enable state in the host config (Claude settings.json or
    * Codex config.toml). Optimistically updates the local map, then persists;
    * reloads groups on success so enable badges stay in sync. */
@@ -508,6 +524,13 @@ export default function App() {
             <TrafficLight />
             <span className="text-sm font-semibold tracking-tight text-neutral-200">Weave</span>
             <span className="text-xs text-neutral-500">{projects.length} projects</span>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title="设置（默认终端等）"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
           </div>
 
           <div className="flex flex-1 overflow-hidden">
@@ -522,6 +545,8 @@ export default function App() {
                 globalActive={globalMode}
                 onSelect={loadProject}
                 onSelectGlobal={selectGlobal}
+                onOpenExplorer={(p) => void handleOpenProject(p, 'explorer')}
+                onOpenTerminal={(p) => void handleOpenProject(p, 'terminal')}
               />
             </aside>
             <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title="拖拽调整左侧宽度" />
@@ -680,6 +705,8 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </DndContext>
   );
 }
