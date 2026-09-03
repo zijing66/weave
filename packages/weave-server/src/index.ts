@@ -24,6 +24,21 @@ export type { DaemonState } from './daemon/state.js';
 export { generateToken, extractBearerToken } from './daemon/auth.js';
 export { createWeaveServer, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
+export {
+  readDaemonSettings,
+  writeDaemonSettings,
+  terminalPresetsFor,
+  DEFAULT_DAEMON_SETTINGS,
+} from './daemon/settings.js';
+export type { DaemonSettings, TerminalSettings, TerminalPreset, TerminalPresetMeta } from './daemon/settings.js';
+export {
+  resolveTerminalLaunch,
+  resolveExplorerLaunch,
+  openInExplorer,
+  openInTerminal,
+  defaultProjectOpener,
+} from './daemon/opener.js';
+export type { ProjectOpener, TerminalLaunch } from './daemon/opener.js';
 export { resolveStaticDir } from './daemon/static.js';
 export { startDaemon } from './daemon/start.js';
 export { registerProject } from './registry.js';

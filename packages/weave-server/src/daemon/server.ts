@@ -58,6 +58,13 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
+import {
+  readDaemonSettings,
+  writeDaemonSettings,
+  terminalPresetsFor,
+  type DaemonSettings,
+} from './settings.js';
+import { defaultProjectOpener, type ProjectOpener } from './opener.js';
 import { DAEMON_HOST } from './port.js';
 
 export const DAEMON_VERSION = '0.1.0';
@@ -78,6 +85,8 @@ export interface WeaveServerDeps {
   fingerprintCache?: FingerprintCache;
   /** Directory of the built SPA to statically host; optional. */
   staticDir?: string;
+  /** Directory-opening backend for the project context menu; spied in tests. */
+  opener?: ProjectOpener;
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
@@ -186,6 +195,68 @@ async function handleRequest(
     const projectId = Number(hooksMatch[1]);
     const limit = clampLimit(url.searchParams.get('limit'));
     sendJson(200, { events: deps.hookEvents.listByProject(projectId, limit) });
+    return;
+  }
+
+  // --- daemon settings (terminal preset for "open in terminal") ---
+  if (pathname === '/settings') {
+    if (!requireAuth()) return;
+    if (req.method === 'GET') {
+      sendJson(200, {
+        settings: await readDaemonSettings(),
+        presets: terminalPresetsFor(process.platform),
+        platform: process.platform,
+      });
+      return;
+    }
+    if (req.method === 'PUT') {
+      let body: Partial<DaemonSettings>;
+      try {
+        body = JSON.parse(await readBody(req)) as Partial<DaemonSettings>;
+      } catch {
+        sendJson(400, { error: 'Invalid JSON body' });
+        return;
+      }
+      const saved = await writeDaemonSettings(body as DaemonSettings);
+      sendJson(200, saved);
+      return;
+    }
+  }
+
+  // --- open a project directory in the file manager or a terminal ---
+  const openMatch = pathname.match(/^\/projects\/(\d+)\/open$/);
+  if (openMatch && req.method === 'POST') {
+    if (!requireAuth()) return;
+    const project = deps.projects.getById(Number(openMatch[1]));
+    if (!project) {
+      sendJson(404, { error: 'Project not found' });
+      return;
+    }
+    let body: { target?: string };
+    try {
+      body = JSON.parse(await readBody(req)) as { target?: string };
+    } catch {
+      sendJson(400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (body.target !== 'explorer' && body.target !== 'terminal') {
+      sendJson(400, { error: 'Invalid "target" (explorer|terminal)' });
+      return;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    try {
+      const stat = await fs.promises.stat(project.path);
+      if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+      if (body.target === 'explorer') {
+        await opener.openExplorer(project.path);
+      } else {
+        const settings = await readDaemonSettings();
+        await opener.openTerminal(project.path, settings.terminal);
+      }
+      sendJson(200, { ok: true, target: body.target, path: project.path });
+    } catch (e) {
+      sendJson(400, { error: e instanceof Error ? e.message : 'Open failed' });
+    }
     return;
   }
 

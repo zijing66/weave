@@ -223,6 +223,39 @@ export interface ProjectConfig {
   lastSyncAt: string | null;
 }
 
+/** Which terminal "open in terminal" launches; presets are platform-scoped. */
+export type TerminalPreset =
+  | 'auto'
+  | 'wt'
+  | 'powershell'
+  | 'cmd'
+  | 'terminal'
+  | 'iterm'
+  | 'gnome'
+  | 'konsole'
+  | 'custom';
+
+export interface TerminalSettings {
+  preset: TerminalPreset;
+  /** Template for `custom`; `{path}` is replaced with the quoted directory. */
+  customCommand: string;
+}
+
+export interface DaemonSettings {
+  terminal: TerminalSettings;
+}
+
+export interface TerminalPresetMeta {
+  id: TerminalPreset;
+  label: string;
+}
+
+export interface DaemonSettingsBundle {
+  settings: DaemonSettings;
+  presets: TerminalPresetMeta[];
+  platform: string;
+}
+
 export interface ProjectFile {
   path: string;
   content: string;
@@ -433,6 +466,26 @@ export const api = {
     }),
   getProjectConfig: (projectId: number): Promise<ProjectConfig> =>
     apiFetch<ProjectConfig>(`/projects/${projectId}/config`),
+  /** Open a project directory in the OS file manager or a terminal. */
+  openProject: (
+    projectId: number,
+    target: 'explorer' | 'terminal',
+  ): Promise<{ ok: boolean; target: string; path: string }> =>
+    apiFetch<{ ok: boolean; target: string; path: string }>(
+      `/projects/${projectId}/open`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ target }),
+      },
+    ),
+  /** Daemon-level settings (terminal preset) plus this platform's options. */
+  getDaemonSettings: (): Promise<DaemonSettingsBundle> =>
+    apiFetch<DaemonSettingsBundle>('/settings'),
+  putDaemonSettings: (settings: DaemonSettings): Promise<DaemonSettings> =>
+    apiFetch<DaemonSettings>('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
   putProjectConfig: (projectId: number, config: ProjectConfig): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/config`, {
       method: 'PUT',
