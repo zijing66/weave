@@ -1,5 +1,5 @@
 import type { StatuslineColor, StatuslineConfig } from './config.js';
-import { SEGMENT_ORDER } from './config.js';
+import { POWERLINE_DEFAULT_GLYPHS, SEGMENT_ORDER } from './config.js';
 
 /**
  * Generate the `helpers/statusline.cjs` source for a config.
@@ -52,10 +52,6 @@ const BAR_FILL = '█';
 const BAR_EMPTY = '░';
 const BAR_CELLS = 10;
 
-/** Powerline chevrons (Nerd Font): left cap `` and block join ``. */
-const GLYPH_START = '';
-const GLYPH_JOIN = '';
-
 export function generateStatuslineScript(config: StatuslineConfig): string {
   const embeddedConfig = JSON.stringify(config);
   const embeddedAnsi = JSON.stringify(ANSI);
@@ -77,8 +73,12 @@ const DIVIDER = ${embeddedDivider};
 const BAR_FILL = '${BAR_FILL}';
 const BAR_EMPTY = '${BAR_EMPTY}';
 const BAR_CELLS = ${BAR_CELLS};
-const GLYPH_START = ${JSON.stringify(GLYPH_START)};
-const GLYPH_JOIN = ${JSON.stringify(GLYPH_JOIN)};
+// Powerline glyphs (Nerd Font), configurable via CONFIG.powerline: undefined
+// falls back to the classic triangle set; an empty cap string disables the cap.
+const PL = CONFIG.powerline || {};
+const GLYPH_JOIN = PL.separator === undefined ? ${JSON.stringify(POWERLINE_DEFAULT_GLYPHS.separator)} : PL.separator;
+const GLYPH_START = PL.startCap === undefined ? ${JSON.stringify(POWERLINE_DEFAULT_GLYPHS.startCap)} : PL.startCap;
+const GLYPH_END = PL.endCap === undefined ? ${JSON.stringify(POWERLINE_DEFAULT_GLYPHS.endCap)} : PL.endCap;
 
 function paint(text, color, bold, bg) {
   var fg = ANSI[color] || '37';
@@ -254,16 +254,17 @@ function renderLine(items) {
       plainParts.push(it.text);
     }
   }
-  // cap the row with chevrons in the first/last block's bg (transparent bg)
+  // cap the row with chevrons in the first/last block's bg (transparent bg);
+  // an empty cap config ("" / disabled) skips that cap entirely
   if (isPower && ordered.length) {
-    if (ordered[0].bg) {
+    if (GLYPH_START && ordered[0].bg) {
       parts.unshift(paint(GLYPH_START, ordered[0].bg, false, null));
       plainParts.unshift(GLYPH_START);
     }
     var last = ordered[ordered.length - 1];
-    if (last.bg) {
-      parts.push(paint(GLYPH_JOIN, last.bg, false, null));
-      plainParts.push(GLYPH_JOIN);
+    if (GLYPH_END && last.bg) {
+      parts.push(paint(GLYPH_END, last.bg, false, null));
+      plainParts.push(GLYPH_END);
     }
   }
   return { line: parts.join(''), plain: plainParts.join('') };
