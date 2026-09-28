@@ -248,6 +248,9 @@ function mergeDefaults(parsed: Partial<StatuslineConfig>): StatuslineConfig {
     logoText: parsed.logoText ?? DEFAULT_STATUSLINE_CONFIG.logoText,
     logoColor: parsed.logoColor ?? DEFAULT_STATUSLINE_CONFIG.logoColor,
     powerline: {
+      // spread keeps the optional glyph fields (separator/startCap/endCap);
+      // undefined means "classic triangle defaults" downstream
+      ...parsed.powerline,
       enabled: parsed.powerline?.enabled ?? DEFAULT_STATUSLINE_CONFIG.powerline.enabled,
     },
     lines: normalizeLines(parsed),

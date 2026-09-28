@@ -68,6 +68,30 @@ export type StatuslineAlign = 'left' | 'center' | 'right';
 /** `global` = follow the global default template; `custom` = project-local. */
 export type StatuslineSource = 'global' | 'custom';
 
+/**
+ * Powerline glyph configuration. All glyph fields are optional Nerd-Font
+ * characters; `undefined` falls back to the classic triangle set and an empty
+ * string disables that glyph (caps only — the join separator is never empty).
+ */
+export interface StatuslinePowerline {
+  enabled: boolean;
+  /** Block-join separator between adjacent blocks (default `` U+E0B0). */
+  separator?: string;
+  /** Row-start cap, painted in the first block's bg on a transparent
+   * background (default `` U+E0B2). Empty string disables. */
+  startCap?: string;
+  /** Row-end cap, painted in the last block's bg (default `` U+E0B0).
+   * Empty string disables. */
+  endCap?: string;
+}
+
+/** Classic triangle glyph set, used when the config leaves a field unset. */
+export const POWERLINE_DEFAULT_GLYPHS = {
+  separator: '',
+  startCap: '',
+  endCap: '',
+} as const;
+
 export interface StatuslineConfig {
   /** Separator rendered between segments within a line (ignored in powerline mode). */
   separator: string;
@@ -80,7 +104,7 @@ export interface StatuslineConfig {
   /** Colour of the logo mark. */
   logoColor: StatuslineColor;
   /** ccstatusline-style solid background blocks. */
-  powerline: { enabled: boolean };
+  powerline: StatuslinePowerline;
   /**
    * Ordered lines; each line is the left-to-right segment order of that row.
    * The panel adds/removes lines and reorders segments within/across them.

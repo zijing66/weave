@@ -110,6 +110,22 @@ describe('statusline — manager', () => {
     expect(cfg.lines).toEqual([DEFAULT_STATUSLINE_CONFIG.lines[0]]);
   });
 
+  it('powerline glyph fields round-trip through config normalisation', async () => {
+    mkdirSync(join(dir, '.weave'), { recursive: true });
+    writeFileSync(
+      join(dir, '.weave/statusline.json'),
+      JSON.stringify({
+        source: 'custom',
+        powerline: { enabled: true, separator: '', startCap: '', endCap: '' },
+      }),
+    );
+    const cfg = await readStatuslineConfig(dir);
+    expect(cfg.powerline.enabled).toBe(true);
+    expect(cfg.powerline.separator).toBe(''); // preserved verbatim
+    expect(cfg.powerline.startCap).toBe(''); // explicit empty = disabled cap
+    expect(cfg.powerline.endCap).toBe('');
+  });
+
   it('migrates a legacy multi layout into the two old rows', async () => {
     mkdirSync(join(dir, '.weave'), { recursive: true });
     writeFileSync(
@@ -344,6 +360,40 @@ describe('statusline — runtime output', () => {
     // start cap in the first block's bg (cyan), end cap in the last (blue)
     expect(out).toContain('\x1b[36m');
     expect(out).toContain('\x1b[34m');
+  });
+
+  it('powerline glyphs are configurable — round separator, disabled caps', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      powerline: { enabled: true, separator: '', startCap: '', endCap: '' },
+      showLogo: false,
+      lines: [['project', 'model']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        project: { ...DEFAULT_STATUSLINE_CONFIG.segments.project, backgroundColor: 'cyan' },
+        model: { ...DEFAULT_STATUSLINE_CONFIG.segments.model, backgroundColor: 'blue' },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), stdin);
+    expect(out).toContain(''); // round join glyph between blocks
+    expect(out).not.toContain(''); // triangle join replaced
+    expect(out).not.toContain(''); // start cap disabled
+  });
+
+  it('powerline glyph fields undefined fall back to the triangle set', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      powerline: { enabled: true },
+      showLogo: false,
+      lines: [['project']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        project: { ...DEFAULT_STATUSLINE_CONFIG.segments.project, backgroundColor: 'cyan' },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), stdin);
+    expect(out).toContain(''); // default start cap
+    expect(out).toContain(''); // default end cap
   });
 
   it('merge segments inherit the next block background', () => {

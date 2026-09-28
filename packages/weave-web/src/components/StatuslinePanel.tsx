@@ -53,6 +53,93 @@ const BAR_STYLES: { key: 'percent' | 'bar' | 'both'; label: string }[] = [
   { key: 'both', label: 'both' },
 ];
 
+// Powerline glyph presets (Nerd Font code points — spelled out so the source
+// stays copy-paste safe; a literal PUA char does not survive editing reliably).
+const glyph = (hex: number, name: string): { char: string; name: string } => ({
+  char: String.fromCodePoint(hex),
+  name,
+});
+/** Classic triangle set — used when the config leaves a glyph field undefined. */
+const DEFAULT_JOIN = String.fromCodePoint(0xe0b0);
+const DEFAULT_START_CAP = String.fromCodePoint(0xe0b2);
+const DEFAULT_END_CAP = String.fromCodePoint(0xe0b0);
+const JOIN_PRESETS = [
+  glyph(0xe0b0, 'Triangle Right'),
+  glyph(0xe0b2, 'Triangle Left'),
+  glyph(0xe0b4, 'Round Right'),
+  glyph(0xe0b6, 'Round Left'),
+];
+const START_CAP_PRESETS = [
+  glyph(0xe0b2, 'Triangle'),
+  glyph(0xe0b6, 'Round'),
+  glyph(0xe0ba, 'Lower Triangle'),
+  glyph(0xe0be, 'Diagonal'),
+];
+const END_CAP_PRESETS = [
+  glyph(0xe0b0, 'Triangle'),
+  glyph(0xe0b4, 'Round'),
+  glyph(0xe0b8, 'Lower Triangle'),
+  glyph(0xe0bc, 'Diagonal'),
+];
+
+/** One glyph role's preset buttons. `undefined` selects the default preset;
+ * an explicit empty string means "disabled" (caps only). */
+function GlyphPicker({
+  label,
+  value,
+  fallback,
+  presets,
+  editable,
+  allowNone,
+  onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  fallback: string;
+  presets: { char: string; name: string }[];
+  editable: boolean;
+  allowNone?: boolean;
+  onChange: (v: string) => void;
+}) {
+  const current = value ?? fallback;
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-neutral-500">{label}</span>
+      {presets.map((p) => (
+        <button
+          key={p.name}
+          onClick={() => onChange(p.char)}
+          disabled={!editable}
+          title={`${p.name} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
+          className={cn(
+            'w-6 h-6 rounded flex items-center justify-center font-mono disabled:opacity-30',
+            current === p.char
+              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-white/30'
+              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900',
+          )}
+        >
+          {p.char}
+        </button>
+      ))}
+      {allowNone && (
+        <button
+          onClick={() => onChange('')}
+          disabled={!editable}
+          title="Disable this cap"
+          className={cn(
+            'rounded px-1.5 h-6 text-[10px] disabled:opacity-30',
+            value === ''
+              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-white/30'
+              : 'text-neutral-500 hover:text-neutral-300',
+          )}
+        >
+          无
+        </button>
+      )}
+    </div>
+  );
+}
+
 const COLOR_CLASS: Record<StatuslineColor, string> = {
   gray: 'bg-gray-500',
   red: 'bg-red-500',
@@ -93,6 +180,8 @@ interface PreviewItem {
   bold: boolean;
   bg: StatuslineColor | null;
   merge: boolean;
+  /** Merged into the following block — no separator between them. */
+  joinsNext?: boolean;
 }
 
 /** Context-bar sample follows the segment's style (mirrors the generator). */
@@ -125,7 +214,10 @@ function buildPreviewItems(config: StatuslineConfig, keys: SegmentKey[]): Previe
       pending.push(it);
       continue;
     }
-    for (const p of pending) p.bg = it.bg;
+    for (const p of pending) {
+      p.bg = it.bg;
+      p.joinsNext = true;
+    }
     pending = [];
     out.push(it);
   }
@@ -439,11 +531,48 @@ export function StatuslinePanel({
             type="checkbox"
             checked={config.powerline.enabled}
             disabled={!editable}
-            onChange={(e) => patch({ powerline: { enabled: e.target.checked } })}
+            onChange={(e) =>
+              patch({ powerline: { ...config.powerline, enabled: e.target.checked } })
+            }
           />
           Powerline style
           <span className="text-neutral-600">(solid background blocks, icons merge)</span>
         </label>
+
+        {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
+        {config.powerline.enabled && (
+          <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pl-6">
+            <GlyphPicker
+              label="分隔符"
+              value={config.powerline.separator}
+              fallback={DEFAULT_JOIN}
+              presets={JOIN_PRESETS}
+              editable={editable}
+              onChange={(v) =>
+                patch({ powerline: { ...config.powerline, separator: v } })
+              }
+            />
+            <GlyphPicker
+              label="左端"
+              value={config.powerline.startCap}
+              fallback={DEFAULT_START_CAP}
+              presets={START_CAP_PRESETS}
+              editable={editable}
+              allowNone
+              onChange={(v) => patch({ powerline: { ...config.powerline, startCap: v } })}
+            />
+            <GlyphPicker
+              label="右端"
+              value={config.powerline.endCap}
+              fallback={DEFAULT_END_CAP}
+              presets={END_CAP_PRESETS}
+              editable={editable}
+              allowNone
+              onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
+            />
+            <span className="text-neutral-600 text-[10px]">需要 Nerd Font 终端字体</span>
+          </div>
+        )}
         <label className="flex items-center gap-2 text-xs text-neutral-400">
           <input
             type="checkbox"
@@ -519,7 +648,9 @@ export function StatuslinePanel({
   );
 }
 
-/** Renders a row as joined powerline blocks, or plain text when powerline is off. */
+/** Renders a row as joined powerline blocks, or plain text when powerline is off.
+ * Mirrors the generator: the join glyph's fg is the previous block's bg (or the
+ * previous fg when both blocks share a bg), caps frame the row transparently. */
 function PowerlineRow({
   items,
   config,
@@ -544,16 +675,54 @@ function PowerlineRow({
       </span>
     );
   }
+  const pl = config.powerline;
+  const join = pl.separator ?? DEFAULT_JOIN;
+  const startCap = pl.startCap ?? DEFAULT_START_CAP;
+  const endCap = pl.endCap ?? DEFAULT_END_CAP;
+  const first = items[0];
+  const last = items[items.length - 1];
   return (
-    <span className="inline-flex items-stretch rounded overflow-hidden">
-      {items.map((it, i) => (
-        <span
-          key={i}
-          className={cn('px-1.5 whitespace-pre', it.bold && 'font-bold', it.bg ? BG_CLASS[it.bg] : '', TEXT_CLASS[it.fg])}
-        >
-          {it.text}
-        </span>
-      ))}
+    <span className="inline-flex items-stretch">
+      {startCap && first?.bg && (
+        <span className={cn('whitespace-pre', TEXT_CLASS[first.bg])}>{startCap}</span>
+      )}
+      {items.map((it, i) => {
+        const prev = items[i - 1];
+        const bridged = i > 0 && !prev.joinsNext;
+        // bridge between adjacent backgrounded blocks; a bg-less block gets a gap
+        const showGlyph = bridged && !!it.bg && !!prev.bg && join !== '';
+        return (
+          <span key={i} className="inline-flex items-stretch">
+            {bridged &&
+              (showGlyph ? (
+                <span
+                  className={cn(
+                    'whitespace-pre',
+                    BG_CLASS[it.bg!],
+                    TEXT_CLASS[prev.bg === it.bg ? prev.fg : prev.bg!],
+                  )}
+                >
+                  {join}
+                </span>
+              ) : (
+                <span className="w-1" />
+              ))}
+            <span
+              className={cn(
+                'px-1.5 whitespace-pre',
+                it.bold && 'font-bold',
+                it.bg ? BG_CLASS[it.bg] : '',
+                TEXT_CLASS[it.fg],
+              )}
+            >
+              {it.text}
+            </span>
+          </span>
+        );
+      })}
+      {endCap && last?.bg && (
+        <span className={cn('whitespace-pre', TEXT_CLASS[last.bg])}>{endCap}</span>
+      )}
     </span>
   );
 }

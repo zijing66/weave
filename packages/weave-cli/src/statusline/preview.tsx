@@ -131,7 +131,17 @@ export function cycleAlign(config: StatuslineConfig): StatuslineConfig {
 }
 
 export function togglePowerline(config: StatuslineConfig): StatuslineConfig {
-  return { ...config, powerline: { enabled: !config.powerline.enabled } };
+  return { ...config, powerline: { ...config.powerline, enabled: !config.powerline.enabled } };
+}
+
+/** Nerd-Font join-separator presets cycled with `g` (classic triangles first). */
+const PL_JOINS = ['', '', '', ''];
+
+export function cyclePowerlineGlyph(config: StatuslineConfig): StatuslineConfig {
+  const cur = config.powerline.separator ?? PL_JOINS[0]!;
+  const i = PL_JOINS.indexOf(cur);
+  const next = PL_JOINS[(i + 1) % PL_JOINS.length]!;
+  return { ...config, powerline: { ...config.powerline, separator: next } };
 }
 
 export function toggleLogo(config: StatuslineConfig): StatuslineConfig {
@@ -316,6 +326,9 @@ function PreviewApp({
       case 'p':
         edit((c) => togglePowerline(c));
         return;
+      case 'g':
+        edit((c) => cyclePowerlineGlyph(c));
+        return;
       case 'l':
         edit((c) => toggleLogo(c));
         return;
@@ -415,8 +428,8 @@ function PreviewApp({
           </Text>
         ) : null}
         <Text dimColor>
-          keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · a 对齐 · p powerline · l logo ·
-          s 分隔符 · r 重渲染 · w 写入 · q 退出
+          keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · a 对齐 · p powerline · g
+          powerline 分隔符 · l logo · s 分隔符 · r 重渲染 · w 写入 · q 退出
         </Text>
         {status && (
           <Text color="green">{status}</Text>

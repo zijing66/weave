@@ -19,6 +19,7 @@ import {
   cycleContextStyle,
   cycleAlign,
   togglePowerline,
+  cyclePowerlineGlyph,
   toggleLogo,
   cycleSeparator,
   bumpRefreshInterval,
@@ -143,6 +144,25 @@ describe('statusline config editors', () => {
     expect(typeof cycleSeparator(c).separator).toBe('string');
     expect(bumpRefreshInterval(c, 1).refreshInterval).toBe(c.refreshInterval + 1);
     expect(bumpRefreshInterval({ ...c, refreshInterval: 1 }, -5).refreshInterval).toBe(1);
+  });
+
+  it('togglePowerline keeps configured glyphs; cyclePowerlineGlyph walks presets', () => {
+    const c: StatuslineConfig = {
+      ...cfg(),
+      powerline: { enabled: true, separator: '', startCap: '', endCap: '' },
+    };
+    // toggling must not drop the glyph fields
+    expect(togglePowerline(c).powerline).toEqual({
+      enabled: false,
+      separator: '',
+      startCap: '',
+      endCap: '',
+    });
+    // unset separator cycles from the default triangle to the second preset
+    const d = cfg();
+    expect(cyclePowerlineGlyph(d).powerline.separator).toBe('');
+    // a preset value advances to the next; a custom value resets to the first
+    expect(cyclePowerlineGlyph(c).powerline.separator).toBe('');
   });
 
   it('clampCursor keeps the cursor inside the grid', () => {
