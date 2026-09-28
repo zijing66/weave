@@ -1,4 +1,4 @@
-import { type AssetScope, type McpServerConfig, type McpUpdate } from '@/lib/api';
+import { type AssetAgent, type AssetScope, type McpServerConfig, type McpUpdate } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Server, Trash2 } from 'lucide-react';
@@ -7,6 +7,8 @@ export interface McpRow {
   name: string;
   config: McpServerConfig;
   scope: AssetScope;
+  /** 'codex' rows target ~/.codex/config.toml (user-level). */
+  agent?: AssetAgent;
 }
 
 export function McpGrid({
@@ -19,7 +21,7 @@ export function McpGrid({
   /** Update info already filtered to this mode's scope. */
   updates?: McpUpdate[];
   empty: string;
-  onUninstallMcp: (name: string, scope: AssetScope) => void;
+  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
 }) {
   if (servers.length === 0) {
     return (
@@ -29,7 +31,10 @@ export function McpGrid({
     );
   }
 
-  const isOutdated = (name: string) => !!updates?.find((u) => u.name === name && u.outdated);
+  const isOutdated = (name: string, agent?: AssetAgent) =>
+    !!updates?.find(
+      (u) => u.name === name && u.outdated && (u.agent ?? 'claude') === (agent ?? 'claude'),
+    );
 
   return (
     <section className="space-y-2">
@@ -38,19 +43,24 @@ export function McpGrid({
       </h2>
       <div className="grid grid-cols-2 gap-3 items-start">
         {servers.map((s) => {
-          const outdated = isOutdated(s.name);
+          const outdated = isOutdated(s.name, s.agent);
           return (
-            <Card key={`${s.scope}-${s.name}`}>
+            <Card key={`${s.agent ?? 'claude'}-${s.scope}-${s.name}`}>
               <CardHeader className="items-center gap-2">
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
                 <CardTitle className="truncate">{s.name}</CardTitle>
+                {s.agent === 'codex' && (
+                  <Badge className="shrink-0 bg-cyan-950/60 text-cyan-300 border-cyan-800/50">
+                    codex
+                  </Badge>
+                )}
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
                     update
                   </Badge>
                 )}
                 <button
-                  onClick={() => onUninstallMcp(s.name, s.scope)}
+                  onClick={() => onUninstallMcp(s.name, s.scope, s.agent)}
                   className="ml-auto text-neutral-500 hover:text-red-400 shrink-0"
                   title={`Remove ${s.name}`}
                 >

@@ -10,6 +10,7 @@ import {
   type FileAssetTemplate,
   type HookEventRow,
   type McpServerConfig,
+  type McpServerMap,
   type ProjectRow,
   type SkillAsset,
   type StatuslineSource,
@@ -47,10 +48,11 @@ export default function App() {
   const [globalMode, setGlobalMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   const [hooks, setHooks] = useState<HookEventRow[]>([]);
-  const [mcpServers, setMcpServers] = useState<{
-    project: Record<string, McpServerConfig>;
-    global: Record<string, McpServerConfig>;
-  }>({ project: {}, global: {} });
+  const [mcpServers, setMcpServers] = useState<McpServerMap>({
+    project: {},
+    global: {},
+    codex: {},
+  });
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>({ claude: {}, codex: {} });
@@ -125,7 +127,7 @@ export default function App() {
       setGlobalMode(false);
       setAssets([]);
       setHooks([]);
-      setMcpServers({ project: {}, global: {} });
+      setMcpServers({ project: {}, global: {}, codex: {} });
       setUpdates(null);
       setGlobalSkillGroups([]);
       setPluginEnabled({ claude: {}, codex: {} });
@@ -314,12 +316,25 @@ export default function App() {
   );
 
   const handleInstallMcp = useCallback(
-    async (name: string, config: McpServerConfig, scope: AssetScope = 'project') => {
+    async (
+      name: string,
+      config: McpServerConfig,
+      scope: AssetScope = 'project',
+      agent: AssetAgent = 'claude',
+    ) => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
       setError(null);
-      const res = await api.install(target.id, { category: 'mcp', name, mcpConfig: config, scope });
+      // Codex MCP servers only live in ~/.codex/config.toml (user-level).
+      const effectiveScope = agent === 'codex' ? 'global' : scope;
+      const res = await api.install(target.id, {
+        category: 'mcp',
+        name,
+        mcpConfig: config,
+        scope: effectiveScope,
+        agent,
+      });
       if (!res.ok) {
         setError(`MCP install failed: ${res.status} ${await res.text()}`);
         return;
@@ -374,11 +389,17 @@ export default function App() {
   );
 
   const handleUninstallMcp = useCallback(
-    async (name: string, scope: AssetScope = 'project') => {
+    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
       if (!target) return;
       setError(null);
-      const res = await api.uninstall(target.id, { category: 'mcp', name, scope });
+      // Codex servers are user-level — uninstall always targets the TOML file.
+      const res = await api.uninstall(target.id, {
+        category: 'mcp',
+        name,
+        scope: agent === 'codex' ? 'global' : scope,
+        ...(agent ? { agent } : {}),
+      });
       if (!res.ok) {
         setError(`MCP uninstall failed: ${res.status} ${await res.text()}`);
         return;
@@ -417,7 +438,7 @@ export default function App() {
         category,
         name,
         scope,
-        ...(category === 'skill' ? { agent: agent ?? 'claude' } : {}),
+        ...(category === 'skill' || category === 'mcp' ? { agent: agent ?? 'claude' } : {}),
       });
       if (!res.ok) {
         setError(`Update failed: ${res.status} ${await res.text()}`);
@@ -646,7 +667,7 @@ export default function App() {
                     style={{ height: taskH }}
                     className="shrink-0 border-t border-white/[0.06] overflow-y-auto p-3"
                   >
-                    <TaskView events={hooks} />
+                    <TaskView key={activeProject.id} events={hooks} />
                   </div>
                 </>
               ) : (

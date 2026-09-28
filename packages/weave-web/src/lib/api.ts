@@ -111,6 +111,14 @@ export interface McpServerConfig {
   env?: Record<string, string>;
 }
 
+/** MCP servers per surface: project (.mcp.json), global (~/.claude.json),
+ * codex user-level (~/.codex/config.toml). */
+export interface McpServerMap {
+  project: Record<string, McpServerConfig>;
+  global: Record<string, McpServerConfig>;
+  codex: Record<string, McpServerConfig>;
+}
+
 /** Single-file harness assets (command/agent/workflow/rule/output-style). */
 export type FileAssetCategory = 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
 
@@ -171,6 +179,8 @@ export interface McpUpdate {
   outdated: boolean;
   custom: boolean;
   libraryId?: number;
+  /** 'codex' updates target ~/.codex/config.toml (always global scope). */
+  agent?: AssetAgent;
 }
 
 export interface UpdateReport {
@@ -306,7 +316,8 @@ export interface StatuslineConfig {
   showLogo: boolean;
   logoText: string;
   logoColor: StatuslineColor;
-  powerline: { enabled: boolean };
+  /** Nerd-Font glyph set; `undefined` = classic triangle defaults, '' disables a cap. */
+  powerline: { enabled: boolean; separator?: string; startCap?: string; endCap?: string };
   /** Ordered rows; each row is the left-to-right segment order of that line. */
   lines: SegmentKey[][];
   /** Seconds between Claude Code re-runs of the script (min 1). */
@@ -368,13 +379,10 @@ export const api = {
     apiFetch<ProjectFile>(
       `/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`,
     ),
-  /** Returns project-scope (.mcp.json) and global-scope (~/.claude.json) servers. */
-  listMcp: (
-    projectId: number,
-  ): Promise<{ project: Record<string, McpServerConfig>; global: Record<string, McpServerConfig> }> =>
-    apiFetch<{ project: Record<string, McpServerConfig>; global: Record<string, McpServerConfig> }>(
-      `/projects/${projectId}/mcp`,
-    ),
+  /** Returns project-scope (.mcp.json), global-scope (~/.claude.json) and
+   * Codex user-level (~/.codex/config.toml) MCP servers. */
+  listMcp: (projectId: number): Promise<McpServerMap> =>
+    apiFetch<McpServerMap>(`/projects/${projectId}/mcp`),
   getStatusline: (
     projectId: number,
   ): Promise<{ config: StatuslineConfig; script: string; globalConfig: StatuslineConfig }> =>
