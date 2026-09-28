@@ -39,6 +39,13 @@ import {
   ClaudeJsonCorruptError,
 } from '../install/global-config.js';
 import type { GlobalSkillSource } from '../install/global-config.js';
+import {
+  readCodexMcpServers,
+  writeCodexMcpServer,
+  removeCodexMcpServer,
+  codexMcpExists,
+  CodexTomlCorruptError,
+} from '../install/codex-toml.js';
 import { readMcpEnableMap, setMcpEnableState } from '../install/settings-mcp.js';
 import type { McpEnableState } from '../install/settings-mcp.js';
 import { readProjectConfig, writeProjectConfig } from '../install/project-config.js';
@@ -399,12 +406,28 @@ async function handleRequest(
           sendJson(400, { error: 'Missing "name" or "mcpConfig"' });
           return;
         }
-        if (body.scope === 'global') {
+        if (body.agent === 'codex') {
+          // Codex MCP servers live in ~/.codex/config.toml (user-level only)
+          if (body.scope === 'project') {
+            sendJson(400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "global"' });
+            return;
+          }
+          if (await codexMcpExists(body.name)) {
+            sendInstallError(res, new InstallConflictError(`MCP server "${body.name}" is already configured in ~/.codex/config.toml`));
+            return;
+          }
+          await writeCodexMcpServer(body.name, body.mcpConfig as McpServerConfig);
+        } else if (body.scope === 'global') {
           await writeGlobalMcpServer(body.name, body.mcpConfig as McpServerConfig);
         } else {
           await installMcp(project.path, body.name, body.mcpConfig as McpServerConfig);
         }
-        sendJson(201, { category: 'mcp', name: body.name, scope: body.scope ?? 'project' });
+        sendJson(201, {
+          category: 'mcp',
+          name: body.name,
+          scope: body.agent === 'codex' ? 'global' : (body.scope ?? 'project'),
+          agent: body.agent ?? 'claude',
+        });
       } else {
         sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
       }
@@ -459,7 +482,15 @@ async function handleRequest(
           sendJson(400, { error: 'Missing "name"' });
           return;
         }
-        if (body.scope === 'global') await removeGlobalMcpServer(body.name);
+        if (body.agent === 'codex') {
+          if (!(await removeCodexMcpServer(body.name))) {
+            sendInstallError(
+              res,
+              new AssetNotFoundError(`MCP server "${body.name}" is not configured in ~/.codex/config.toml`),
+            );
+            return;
+          }
+        } else if (body.scope === 'global') await removeGlobalMcpServer(body.name);
         else await uninstallMcp(project.path, body.name);
       } else {
         sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
@@ -504,11 +535,16 @@ async function handleRequest(
       sendJson(404, { error: 'Project not found' });
       return;
     }
-    const [projectServers, globalServers] = await Promise.all([
+    const [projectServers, globalServers, codexServers] = await Promise.all([
       readMcpServers(project.path),
       safeReadGlobalMcp(),
+      readCodexMcpServers().catch(() => ({})),
     ]);
-    sendJson(200, { project: projectServers, global: globalServers });
+    sendJson(200, {
+      project: projectServers,
+      global: globalServers,
+      codex: codexServers,
+    });
     return;
   }
 
@@ -976,6 +1012,8 @@ function sendInstallError(res: ServerResponse, e: unknown): void {
     res.statusCode = 404;
   } else if (e instanceof ClaudeJsonCorruptError) {
     res.statusCode = 500; // refuse to corrupt ~/.claude.json
+  } else if (e instanceof CodexTomlCorruptError) {
+    res.statusCode = 500; // refuse to corrupt ~/.codex/config.toml
   } else {
     res.statusCode = 400;
   }

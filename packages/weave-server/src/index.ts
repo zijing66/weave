@@ -80,6 +80,28 @@ export {
 } from './install/installer.js';
 export type { McpServerConfig } from './install/installer.js';
 export { readMcpServers, readMcpJson } from './install/installer.js';
+export {
+  codexConfigFile,
+  readCodexMcpServers,
+  writeCodexMcpServer,
+  removeCodexMcpServer,
+  codexMcpExists,
+  readCodexMcpFromText,
+  upsertCodexMcpInText,
+  removeCodexMcpFromText,
+  upsertCodexPluginEnabledInText,
+  parseDottedKey,
+  sectionHeaderKey,
+  renderTomlHeader,
+  renderTomlKey,
+  renderTomlString,
+  splitTomlSections,
+  upsertTomlSection,
+  removeTomlSection,
+  parseSectionEntries,
+  CodexTomlCorruptError,
+} from './install/codex-toml.js';
+export type { TomlSection } from './install/codex-toml.js';
 export { buildLibraryIndex, findSkillSource, findFileAssetSource } from './install/library-index.js';
 export type { SkillSource, LibraryIndex, FileAssetSource } from './install/library-index.js';
 export { hashSkillDir, maxMtimeDir, hashMcpConfig, hashFile, FingerprintCache } from './install/fingerprint.js';
@@ -127,12 +149,14 @@ export type { ApplyUpdateInput } from './install/apply-update.js';
 // --- statusline management (ccstatusline-style config + script generation) ---
 export {
   DEFAULT_STATUSLINE_CONFIG,
+  POWERLINE_DEFAULT_GLYPHS,
   SEGMENT_ORDER,
   LEGACY_IDENTITY_LINE,
   LEGACY_METRICS_LINE,
 } from './statusline/config.js';
 export type {
   StatuslineConfig,
+  StatuslinePowerline,
   StatuslineSegment,
   StatuslineColor,
   SegmentKey,
