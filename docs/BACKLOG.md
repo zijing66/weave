@@ -6,23 +6,6 @@
 
 ---
 
-## 1. MCP → Codex `config.toml`（优先级 P1，难度高）
-
-**目标**：安装 MCP server 时，除写入 `.mcp.json`（Claude Code）外，同步写入 `~/.codex/config.toml` 的 `[mcp_servers.<name>]` 段。
-
-**为什么难**：
-- TOML 的 parse → stringify 往返会**丢失用户手写的注释与键序**。`~/.codex/config.toml` 是用户深度定制的文件（sandbox、approvals、model 等），不可整文件重写。
-- Codex 的 MCP schema 演进中（user 层与 project 层 `.codex/config.toml` 双层语义有差异）。
-
-**建议方案**：
-- 实现一个**增量 TOML 编辑器**：按 section 定位 `[mcp_servers.<name>]`，仅插入/替换该 section 的行，其余内容按原行序保留。
-- 落点：`packages/weave-server/src/install/codex-toml.ts`（新文件），仿照 `settings-gen.ts` 的「weave key 可刷新、其余原样保留」合并策略。
-- 前端 MCP 分类 Codex tab 由占位符改为真实网格（`McpGrid` 复用 + uninstall 走 TOML 编辑器）。
-
-**前置条件**：无（独立模块）。
-
----
-
 ## 2. Codex hooks（config.toml 实验性）
 
 **目标**：把 weave 的 hook-handler 接入 Codex 的事件系统。
@@ -102,12 +85,12 @@
 
 ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：一次性进程（非常驻、无 daemon）+ 文件 TTL 缓存（usage 180s / PR 30s / 5h block 5h）+ 进程内 git 命令去重 + 「先收集 widget 清单再统一预渲染」两段式管线 + 按需计算（没有对应 widget 就完全跳过昂贵数据）。
 
-## 7c. statusline 后续优化（未落地，按价值排序）
+## 7c. statusline 后续优化（按价值排序）
 
-1. **超宽截断（ANSI 保留式）**：内容超出终端宽度时按 grapheme cluster 计宽截断、保留转义序列（ccstatusline `src/utils/ansi.ts:397-476` 的 `truncateStyledText`）。weave 目前超宽会换行挤压。需要先解决宽度探测：Claude Code spawn 脚本时 stdout 非 TTY，`process.stdout.columns` 为 undefined；ccstatusline 在 Unix 向上遍历父进程找 PTY、**win32 直接放弃**——weave 主战场是 Windows，可试 `CONOUT` 查询或接受 stdin JSON 提供的宽度字段。
-2. **flex 分隔符**：一行内左右两端对齐（剩余空间均分给占位分隔符），宽度不可用时降级为普通分隔符（`src/utils/renderer.ts:852-897`）。依赖 1 的宽度探测。
+1. **超宽截断（ANSI 保留式）**：内容超出终端宽度时按 grapheme cluster 计宽截断、保留转义序列（ccstatusline `src/utils/ansi.ts:397-476` 的 `truncateStyledText`）。weave 目前超宽会换行挤压。**宽度探测调研结论（2026-09）**：Claude Code 的 statusline stdin JSON 不含宽度字段（社区请求 anthropics/claude-code#52125、#22115 均未实现）；ccstatusline 的 Unix 方案是逐级 spawn `ps`/`stty`（每次渲染 ~100ms 额外开销）、**win32 直接放弃**，Node 亦无轻量 CONOUT 查询途径（无内置 FFI）。唯一可行路径是官方 JSON 加宽度字段——继续搁置，等上游。
+2. **flex 分隔符**：一行内左右两端对齐（剩余空间均分给占位分隔符），宽度不可用时降级为普通分隔符（`src/utils/renderer.ts:852-897`）。依赖 1 的宽度探测，同样搁置。
 3. **昂贵数据 TTL 文件缓存**：git status 每次渲染都 spawn（~50ms+）。可把 ccstatusline 的轻量 JSON TTL 模式（`~/.cache/` 下 mtime 判断）搬进单文件脚本，把 changes 段降到 TTL 一次。注意 weave 已有 daemon/sqlite，但 statusline 脚本按裁决保持零依赖、不依赖 daemon 存活。
-4. **powerline glyph 可配置**：当前硬编码 ``/``（U+E0B2/U+E0B0）。ccstatusline 提供 12 种 glyph（圆角 ``、斜切 `` 等，`src/tui/components/PowerlineSeparatorEditor.tsx:54-71`）。做成 `powerline.separator` 字段 + 面板/preview 选项即可。
+4. ~~**powerline glyph 可配置**~~（**已落地，2026-09**）：`powerline.separator/startCap/endCap` 三字段（`undefined` = 经典三角集、`''` = 禁用 cap），面板 GlyphPicker 预设按钮 + 预览 glyph 桥接渲染（`StatuslinePanel.tsx`）、preview TUI `g` 键循环（`preview.tsx`）、生成脚本从 CONFIG 读取（`generator.ts`）、mergeDefaults spread 保留（`manager.ts`）。
 5. **空格转 NBSP**：防 VSCode 等终端 trim 行尾（`src/ccstatusline.ts:208-211`）。不做的原因：会波及 preview round-trip 测试断言与面板显示，且 weave 主场景（Claude Code TUI）无此问题。
 
 ---
@@ -124,6 +107,7 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 
 | 能力 | 实现位置 |
 |------|---------|
+| MCP → Codex `config.toml`（增量 TOML 编辑器：保留注释/键序，weave key 刷新、未知 key 保留，merge 验证 + clean replace 二级回退；前端 Codex tab 真实网格 + 安装目标切换） | `weave-server/src/install/codex-toml.ts`、`server.ts`、`apply-update.ts`、`updates.ts`、`weave-web/src/components/`（`McpGrid`、`CategoryDetail`、`LibraryPanel`） |
 | AGENTS.md 生成（Codex 指令文件，镜像 CLAUDE.md 合并策略） | `weave-cli/src/init/agentsmd-gen.ts` |
 | `.codex/` 项目目录监听（skills/config.toml） | `weave-server/src/watch/watch-service.ts` |
 | skills 双端安装/卸载/更新（`.claude/skills` + `.codex/skills`，四表面扫描） | `weave-server/src/install/installer.ts`、`updates.ts` |
