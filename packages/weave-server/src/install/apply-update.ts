@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { installMcp, uninstallMcp } from './installer.js';
 import { writeGlobalMcpServer } from './global-config.js';
+import { writeCodexMcpServer } from './codex-toml.js';
 import { applyStatuslineConfig } from '../statusline/manager.js';
 import { readStatuslineConfig } from '../statusline/manager.js';
 import {
@@ -28,6 +29,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
  *   project skill → `.claude/skills/` (claude) · `.codex/skills/` (codex)
  *   global  skill → `~/.claude/skills/` (claude) · `~/.codex/skills/` (codex)
  *   project mcp   → `.mcp.json`, global mcp → `~/.claude.json`
+ *   codex  mcp    → `~/.codex/config.toml` (agent: 'codex')
  *   file assets   → the kind's project dir (see file-assets.ts)
  */
 
@@ -35,7 +37,7 @@ export interface ApplyUpdateInput {
   category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
   name: string;
   scope: 'project' | 'global';
-  /** Which agent's surface to refresh (skills only matter today). */
+  /** Which agent's surface to refresh (skills + codex MCP matter). */
   agent?: 'claude' | 'codex';
 }
 
@@ -77,6 +79,11 @@ export async function applyUpdate(
   // mcp
   const src = findMcpSource(idx, input.name);
   if (!src) throw new Error(`No library source for MCP "${input.name}"`);
+  if (agent === 'codex') {
+    // Codex MCP servers live in ~/.codex/config.toml — upsert replaces the section
+    await writeCodexMcpServer(input.name, src.config);
+    return;
+  }
   if (input.scope === 'global') {
     await writeGlobalMcpServer(input.name, src.config);
   } else {
@@ -114,8 +121,8 @@ export async function syncAll(
   }
   for (const m of report.mcp) {
     if (m.custom || !m.outdated) continue;
-    await applyUpdate(projectPath, { category: 'mcp', name: m.name, scope: m.scope }, idx);
-    updated.push({ category: 'mcp', name: m.name, scope: m.scope });
+    await applyUpdate(projectPath, { category: 'mcp', name: m.name, scope: m.scope, agent: m.agent }, idx);
+    updated.push({ category: 'mcp', name: m.name, scope: m.scope, agent: m.agent });
   }
   for (const f of report.files) {
     if (f.custom || !f.outdated) continue;

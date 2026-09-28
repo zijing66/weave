@@ -1,9 +1,10 @@
-import { readFile, writeFile, readdir, cp, rm, access, stat, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, cp, rm, access, stat, realpath, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { parse, stringify } from 'smol-toml';
+import { parse } from 'smol-toml';
 import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
+import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
 
@@ -572,25 +573,24 @@ export async function readCodexPluginEnabled(): Promise<Record<string, boolean>>
   }
 }
 
-/** Set `[plugins."key"] enabled` in ~/.codex/config.toml, preserving all other
- * content (round-tripped through smol-toml). The file is created if missing. */
+/** Set `[plugins."key"] enabled` in ~/.codex/config.toml. Uses the incremental
+ * section editor so comments, key order and other sections survive; the file
+ * is created if missing. */
 export async function writeCodexPluginEnabled(key: string, enabled: boolean): Promise<void> {
   const file = path.join(homedir(), CODEX_HOME_DIR, 'config.toml');
-  let parsed: Record<string, unknown> = {};
+  let text = '';
   if (await pathExists(file)) {
+    text = await readFile(file, 'utf-8');
     try {
-      parsed = parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
-    } catch {
-      // corrupt TOML → start fresh to avoid clobbering on parse mismatch
-      parsed = {};
+      parse(text);
+    } catch (e) {
+      throw new CodexTomlCorruptError(
+        `${file} is not valid TOML — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
-  const plugins = (parsed.plugins ?? {}) as Record<string, unknown>;
-  const existing = (plugins[key] ?? {}) as Record<string, unknown>;
-  existing.enabled = enabled;
-  plugins[key] = existing;
-  parsed.plugins = plugins;
-  await writeFile(file, stringify(parsed), 'utf-8');
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, upsertCodexPluginEnabledInText(text, key, enabled), 'utf-8');
 }
 
 export {

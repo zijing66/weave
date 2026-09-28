@@ -11,6 +11,7 @@ import {
 } from './library-index.js';
 import { readMcpServers } from './installer.js';
 import { readGlobalMcpServers, readGlobalSkills } from './global-config.js';
+import { readCodexMcpServers } from './codex-toml.js';
 import { FILE_ASSET_CATEGORIES, FILE_ASSET_SPECS } from './file-assets.js';
 import type { FileAssetCategory } from './file-assets.js';
 import type { LibraryRow } from '../repositories/libraries.js';
@@ -31,6 +32,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
  *   global  skill → `~/.claude/skills/<name>/` (claude) · `~/.codex/skills/` (codex)
  *   project mcp   → `.mcp.json`
  *   global  mcp   → `~/.claude.json`
+ *   codex   mcp   → `~/.codex/config.toml`
  */
 
 export interface SkillUpdate {
@@ -50,6 +52,8 @@ export interface SkillUpdate {
 export interface McpUpdate {
   name: string;
   scope: 'project' | 'global';
+  /** Which agent's surface the server is configured on (Codex = config.toml). */
+  agent?: 'claude' | 'codex';
   outdated: boolean;
   custom: boolean;
   libraryId?: number;
@@ -194,11 +198,12 @@ export async function detectFileAssetUpdates(
   return out;
 }
 
-/** Detect MCP updates (project + global) against the library index. */
+/** Detect MCP updates (project + global + Codex config.toml) against the index. */
 async function detectMcpUpdates(projectPath: string, idx: LibraryIndex): Promise<McpUpdate[]> {
-  const [projectServers, globalServers] = await Promise.all([
+  const [projectServers, globalServers, codexServers] = await Promise.all([
     readMcpServers(projectPath).catch(() => ({})),
     readGlobalMcpServers().catch(() => ({})),
+    readCodexMcpServers().catch(() => ({})),
   ]);
   const out: McpUpdate[] = [];
   for (const [name, cfg] of Object.entries(projectServers)) {
@@ -223,6 +228,21 @@ async function detectMcpUpdates(projectPath: string, idx: LibraryIndex): Promise
       out.push({
         name,
         scope: 'global',
+        outdated: hashMcpConfig(cfg) !== hashMcpConfig(src.config),
+        custom: false,
+        libraryId: src.libraryId,
+      });
+    }
+  }
+  for (const [name, cfg] of Object.entries(codexServers)) {
+    const src = findMcpSource(idx, name);
+    if (!src) {
+      out.push({ name, scope: 'global', agent: 'codex', outdated: false, custom: true });
+    } else {
+      out.push({
+        name,
+        scope: 'global',
+        agent: 'codex',
         outdated: hashMcpConfig(cfg) !== hashMcpConfig(src.config),
         custom: false,
         libraryId: src.libraryId,
