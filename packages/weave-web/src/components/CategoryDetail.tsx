@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
   type AssetEntry,
+  type AssetAgent,
   type McpServerConfig,
+  type McpServerMap,
   type UpdateReport,
   type AssetScope,
   type StatuslineSource,
@@ -61,14 +63,14 @@ export function CategoryDetail({
   /** Bumped when re-entering the statusline panel → remounts with a fresh tab. */
   statuslineNonce: number;
   assets: AssetEntry[];
-  mcpServers: { project: Record<string, McpServerConfig>; global: Record<string, McpServerConfig> };
+  mcpServers: McpServerMap;
   updates: UpdateReport | null;
   globalSkillGroups: GlobalSkillGroup[];
   pluginEnabled: PluginEnabledMap;
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: 'claude' | 'codex') => void;
-  onUninstallMcp: (name: string, scope: AssetScope) => void;
+  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onUninstallFileAsset: (row: FileAssetRow) => void;
   onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
   onOpenFile: (relPath: string) => void;
@@ -132,13 +134,25 @@ export function CategoryDetail({
     });
   }, [globalSkillGroups, pluginEnabled, runtimeTab]);
 
+  // MCP rows for the active runtime tab. Codex servers always come from the
+  // user-level ~/.codex/config.toml map; the claude/all tabs show the current
+  // scope's map (.mcp.json or ~/.claude.json), 'all' merges both surfaces.
   const mcp = useMemo<McpRow[]>(() => {
-    const map = isGlobal ? mcpServers.global : mcpServers.project;
-    return Object.entries(map).map(([name, config]) => ({ name, config, scope }));
-  }, [isGlobal, mcpServers, scope]);
+    const toRows = (map: Record<string, McpServerConfig>, agent?: AssetAgent) =>
+      Object.entries(map).map(([name, config]) => ({ name, config, scope, agent }));
+    if (runtimeTab === 'codex') return toRows(mcpServers.codex, 'codex');
+    const claude = toRows(isGlobal ? mcpServers.global : mcpServers.project);
+    if (runtimeTab === 'all') return [...claude, ...toRows(mcpServers.codex, 'codex')];
+    return claude;
+  }, [isGlobal, runtimeTab, mcpServers, scope]);
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
-  const mcpUpdates = updates?.mcp.filter((u) => u.scope === scope);
+  // Codex MCP updates are user-level (global scope) and shown whenever the
+  // codex servers themselves are visible (codex / all tabs).
+  const mcpUpdates = updates?.mcp.filter((u) => {
+    if (u.agent === 'codex') return runtimeTab !== 'claude';
+    return u.scope === scope && runtimeTab !== 'codex';
+  });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
   // Single-file harness assets (commands/agents/workflows/rules/output-styles)
@@ -220,17 +234,20 @@ export function CategoryDetail({
         />
       )}
 
-      {category === 'mcp' &&
-        (runtimeTab === 'codex' ? (
-          <CodexPlaceholder text="Codex 的 MCP 配置（~/.codex/config.toml）暂未接入，当前仅管理 Claude 的 .mcp.json。" />
-        ) : (
-          <McpGrid
-            servers={mcp}
-            updates={mcpUpdates}
-            empty={isGlobal ? '未配置全局 MCP' : '该项目未配置 MCP'}
-            onUninstallMcp={onUninstallMcp}
-          />
-        ))}
+      {category === 'mcp' && (
+        <McpGrid
+          servers={mcp}
+          updates={mcpUpdates}
+          empty={
+            runtimeTab === 'codex'
+              ? '未配置 Codex MCP（~/.codex/config.toml）'
+              : isGlobal
+                ? '未配置全局 MCP'
+                : '该项目未配置 MCP'
+          }
+          onUninstallMcp={onUninstallMcp}
+        />
+      )}
 
       {category === 'commands' && !isGlobal && (
         <div className="space-y-4">

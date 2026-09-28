@@ -39,7 +39,7 @@ interface LibraryPanelProps {
   /** Click-to-install fallback (drag is the primary interaction). */
   onInstallSkill: (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => void;
   onInstallFileAsset: (file: FileAssetTemplate, scope: AssetScope) => void;
-  onInstallMcp: (name: string, config: McpServerConfig, scope: AssetScope) => void;
+  onInstallMcp: (name: string, config: McpServerConfig, scope: AssetScope, agent?: AssetAgent) => void;
   updates: UpdateReport | null;
   onUpdateAsset: (
     category: 'skill' | 'mcp' | FileAssetCategory,
@@ -71,8 +71,8 @@ export function LibraryPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  /** Install-to runtime for skills (Claude .claude/skills vs Codex .codex/skills). */
-  const [skillAgent, setSkillAgent] = useState<AssetAgent>('claude');
+  /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
+  const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
 
   useEffect(() => {
     api.listLibraries().then(setLibraries).catch((e) => setError(String(e)));
@@ -290,31 +290,12 @@ export function LibraryPanel({
               <p className="text-xs text-neutral-600">No skills found.</p>
             )}
             {/* Install-to runtime: Claude (.claude/skills) or Codex (.codex/skills) */}
-            <div className="flex items-center gap-1 mb-1">
-              <span className="text-[11px] text-neutral-500 shrink-0">安装目标</span>
-              {(['claude', 'codex'] as const).map((a) => (
-                <button
-                  key={a}
-                  onClick={() => setSkillAgent(a)}
-                  className={cn(
-                    'rounded px-1.5 py-0.5 text-[11px]',
-                    skillAgent === a
-                      ? 'bg-neutral-700 text-neutral-100'
-                      : 'text-neutral-500 hover:text-neutral-300',
-                  )}
-                  title={
-                    a === 'claude'
-                      ? '安装到 .claude/skills/'
-                      : '安装到 .codex/skills/（全局则为 ~/.codex/skills/）'
-                  }
-                >
-                  {a === 'claude' ? 'Claude' : 'Codex'}
-                </button>
-              ))}
-              {scope === 'global' && skillAgent === 'codex' && (
-                <span className="text-[10px] text-neutral-600">→ ~/.codex/skills/</span>
-              )}
-            </div>
+            <AgentToggle
+              agent={installAgent}
+              onChange={setInstallAgent}
+              kind="skills"
+              globalHint={scope === 'global'}
+            />
             {groupSkills(skills).map(([group, items]) => {
               const key = group || '__root__';
               const collapsed = collapsedGroups.has(key);
@@ -351,9 +332,9 @@ export function LibraryPanel({
                         <DraggableSkill
                           key={s.name}
                           skill={s}
-                          agent={skillAgent}
+                          agent={installAgent}
                           installed={installedSkillNames.has(s.name)}
-                          onInstall={() => onInstallSkill(s, scope, skillAgent)}
+                          onInstall={() => onInstallSkill(s, scope, installAgent)}
                         />
                       ))}
                     </div>
@@ -430,6 +411,8 @@ export function LibraryPanel({
             {mcp.length === 0 && (
               <p className="text-xs text-neutral-600">No MCP templates found.</p>
             )}
+            {/* Install-to runtime: Claude (.mcp.json / ~/.claude.json) or Codex (~/.codex/config.toml) */}
+            <AgentToggle agent={installAgent} onChange={setInstallAgent} kind="mcp" />
             {mcp.map((t) => (
               <div
                 key={t.name}
@@ -448,6 +431,7 @@ export function LibraryPanel({
                         ...(t.env && { env: t.env }),
                       },
                       scope,
+                      installAgent,
                     )
                   }
                   className="ml-auto text-xs text-blue-400 hover:text-blue-300"
@@ -488,17 +472,22 @@ export function LibraryPanel({
             ))}
             {outdatedMcp.map((u) => (
               <UpdateHintRow
-                key={`mcp-${u.scope}-${u.name}`}
+                key={`mcp-${u.agent ?? 'claude'}-${u.scope}-${u.name}`}
                 label={u.name}
                 scope={u.scope}
-                onUpdate={() => onUpdateAsset('mcp', u.name, u.scope)}
+                agent={u.agent}
+                onUpdate={() => onUpdateAsset('mcp', u.name, u.scope, u.agent)}
               />
             ))}
           </TemplateSection>
         )}
       </div>
 
-      {showMcp && <McpForm onInstall={(name, config) => onInstallMcp(name, config, scope)} />}
+      {showMcp && (
+        <McpForm
+          onInstall={(name, config) => onInstallMcp(name, config, scope, installAgent)}
+        />
+      )}
     </div>
   );
 }
@@ -540,6 +529,61 @@ function groupSkills(skills: SkillAsset[]): [string, SkillAsset[]][] {
     if (!b[0]) return -1;
     return a[0].localeCompare(b[0]);
   });
+}
+
+/** Claude / Codex install-target toggle shared by the skill and MCP template
+ * sections. Tooltips and the destination hint differ per kind. */
+function AgentToggle({
+  agent,
+  onChange,
+  kind,
+  globalHint,
+}: {
+  agent: AssetAgent;
+  onChange: (a: AssetAgent) => void;
+  kind: 'skills' | 'mcp';
+  /** skills only: show the ~/.codex path hint in global scope. */
+  globalHint?: boolean;
+}) {
+  const tips =
+    kind === 'skills'
+      ? {
+          claude: '安装到 .claude/skills/',
+          codex: '安装到 .codex/skills/（全局则为 ~/.codex/skills/）',
+        }
+      : {
+          claude: '安装到 .mcp.json / ~/.claude.json',
+          codex: '写入 ~/.codex/config.toml（全局，增量合并）',
+        };
+  return (
+    <div className="flex items-center gap-1 mb-1">
+      <span className="text-[11px] text-neutral-500 shrink-0">安装目标</span>
+      {(['claude', 'codex'] as const).map((a) => (
+        <button
+          key={a}
+          onClick={() => onChange(a)}
+          className={cn(
+            'rounded px-1.5 py-0.5 text-[11px]',
+            agent === a
+              ? 'bg-neutral-700 text-neutral-100'
+              : 'text-neutral-500 hover:text-neutral-300',
+          )}
+          title={tips[a]}
+        >
+          {a === 'claude' ? 'Claude' : 'Codex'}
+        </button>
+      ))}
+      {agent === 'codex' && (
+        <span className="text-[10px] text-neutral-600">
+          {kind === 'skills'
+            ? globalHint
+              ? '→ ~/.codex/skills/'
+              : '→ .codex/skills/'
+            : '→ ~/.codex/config.toml（全局）'}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function TemplateSection({
