@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileExists, logger, formatTable } from '@weave/core';
+import { checkHarness } from '../init/harness-checks.js';
 import type { Command } from '../parser.js';
 
 /** Read the runtime config YAML and display harness status */
@@ -67,5 +68,18 @@ export const statusCommand: Command = {
 
     console.log(formatTable(entries));
     console.log();
+
+    // Health checks run after the table so the summary stays readable; they
+    // cover the failure modes that are invisible until something downstream
+    // misbehaves (a symlink checked out as text, a stale absolute path).
+    const issues = await checkHarness(targetDir);
+    if (issues.length > 0) {
+      logger.warn(`  ${issues.length} issue(s) found:\n`);
+      for (const issue of issues) {
+        logger.warn(`    - ${issue.message}`);
+        logger.dim(`      fix: ${issue.fix}`);
+      }
+      console.log();
+    }
   },
 };
