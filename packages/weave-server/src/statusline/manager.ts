@@ -329,7 +329,9 @@ function mergeDefaults(parsed: Partial<StatuslineConfig>): StatuslineConfig {
     align: parsed.align ?? DEFAULT_STATUSLINE_CONFIG.align,
     // `showLogo` from older configs is intentionally dropped: the logo is no
     // longer optional, and carrying a dead field would confuse the panel.
-    logoText: parsed.logoText ?? DEFAULT_STATUSLINE_CONFIG.logoText,
+    // The text is weave's badge too — only the colour is configurable — so a
+    // stored custom value is coerced back on every read and write.
+    logoText: DEFAULT_STATUSLINE_CONFIG.logoText,
     logoColor: normalizeColor(parsed.logoColor, DEFAULT_STATUSLINE_CONFIG.logoColor),
     powerline: {
       // spread keeps the optional glyph fields (separator/startCap/endCap);
