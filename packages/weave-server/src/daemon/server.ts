@@ -53,7 +53,13 @@ import { readProjectConfig, writeProjectConfig } from '../install/project-config
 import type { ProjectConfig } from '../install/project-config.js';
 import { applyUpdate, syncAll } from '../install/apply-update.js';
 import { buildLibraryIndex } from '../install/library-index.js';
-import { readProjectFile, PathEscapeError, FileTooLargeError } from '../install/reader.js';
+import {
+  readProjectFile,
+  readGlobalFile,
+  PathEscapeError,
+  FileTooLargeError,
+} from '../install/reader.js';
+import { listGlobalFileAssets } from '../install/global-file-assets.js';
 import {
   readStatuslineConfig,
   readStatuslineScript,
@@ -527,6 +533,23 @@ async function handleRequest(
     return;
   }
 
+  // --- machine-level file reader (~/.claude/…, ~/.codex/…) for the global tree ---
+  if (pathname === '/global-file' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    const relPath = url.searchParams.get('path');
+    if (!relPath) {
+      sendJson(400, { error: 'Missing "path" query parameter' });
+      return;
+    }
+    try {
+      const file = await readGlobalFile(relPath);
+      sendJson(200, { path: relPath, content: file.content, size: file.size });
+    } catch (e) {
+      sendReaderError(res, e);
+    }
+    return;
+  }
+
   // --- mcp servers (project .mcp.json + global ~/.claude.json) ---
   const mcpMatch = pathname.match(/^\/projects\/(\d+)\/mcp$/);
   if (mcpMatch && req.method === 'GET') {
@@ -894,6 +917,15 @@ async function handleRequest(
       return;
     }
     sendJson(200, { projectPath, assets: deps.watch.getAssets(projectPath) });
+    return;
+  }
+
+  // /global-file-assets — curated machine-level harness files (~/.claude,
+  // ~/.codex) for the global 文件资产 tree. A bounded whitelist walk, never a
+  // home-directory scan.
+  if (pathname === '/global-file-assets' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    sendJson(200, { assets: await listGlobalFileAssets() });
     return;
   }
 

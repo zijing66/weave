@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { watch } from 'chokidar';
 import type { FSWatcher } from 'chokidar';
@@ -263,19 +263,41 @@ export class WatchService {
     const category = classifyAsset(relPath);
     const agent = classifyAgent(relPath);
 
+    let isSymlink: boolean | undefined;
     if (kind === 'unlink') {
       this.cache.remove(projectPath, relPath);
     } else {
       try {
-        const stat = statSync(absPath);
-        this.cache.upsert(projectPath, { absPath, relPath, category, agent, mtimeMs: stat.mtimeMs });
+        // lstat first so symlinked files (e.g. the AGENTS.md -> CLAUDE.md
+        // link weave creates) are flagged; the link's own mtime is NOT used —
+        // target edits must keep bumping change events, so stat the target.
+        const lst = lstatSync(absPath);
+        isSymlink = lst.isSymbolicLink() || undefined;
+        const mtimeMs = isSymlink ? statSync(absPath).mtimeMs : lst.mtimeMs;
+        this.cache.upsert(projectPath, {
+          absPath,
+          relPath,
+          category,
+          agent,
+          mtimeMs,
+          ...(isSymlink ? { isSymlink: true } : {}),
+        });
       } catch {
         // File vanished between event and stat — treat as removal.
         this.cache.remove(projectPath, relPath);
       }
     }
 
-    this.enqueue(projectPath, { projectPath, projectName, category, agent, relPath, absPath, kind });
+    this.enqueue(projectPath, {
+      projectPath,
+      projectName,
+      category,
+      agent,
+      relPath,
+      absPath,
+      kind,
+      ...(isSymlink ? { isSymlink: true } : {}),
+    });
   }
 
   /** Buffer an event and coalesce per-file within the debounce window. */

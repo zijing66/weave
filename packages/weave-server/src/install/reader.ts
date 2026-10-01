@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { AssetNotFoundError } from './installer.js';
 
@@ -89,4 +90,11 @@ export async function readProjectFile(projectPath: string, relPath: string): Pro
   }
   const content = await readFile(abs, 'utf-8');
   return { content, size: s.size };
+}
+
+/** Read a machine-level harness file (`~/.claude/…`, `~/.codex/…`).
+ * Same allowed roots as the project reader — only the base changes to the
+ * user's home directory. */
+export async function readGlobalFile(relPath: string): Promise<ProjectFile> {
+  return readProjectFile(homedir(), relPath);
 }
