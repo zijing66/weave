@@ -115,7 +115,10 @@ describe('statusline — manager', () => {
     expect(cfg.source).toBe('global');
     expect(cfg.segments.project.enabled).toBe(true);
     expect(cfg.segments.tokens.enabled).toBe(true);
-    expect(cfg.lines[0]).toContain('context');
+    // the shipped default is three thematic rows; context sits on row 2
+    expect(cfg.lines).toHaveLength(3);
+    expect(cfg.lines[0]).toEqual(['model', 'thinking']);
+    expect(cfg.lines[1]).toContain('context');
     expect(cfg.refreshInterval).toBe(10);
   });
 
@@ -242,6 +245,22 @@ describe('statusline — config normalisation', () => {
     writeFileSync(join(dir, '.weave/statusline.json'), JSON.stringify({ source: 'custom', ...(cfg as object) }));
   };
 
+  it('trusts an explicit lines value so capsules can be unplaced', async () => {
+    // The panel lets users remove a capsule from every row; that omission
+    // must survive save/reload instead of being force-appended back.
+    writeCustom({ lines: [['model'], ['context', 'project']] });
+    const cfg = await readStatuslineConfig(dir);
+    expect(cfg.lines).toEqual([['model'], ['context', 'project']]);
+  });
+
+  it('dedupes a segment key across rows and drops unknown keys', async () => {
+    writeCustom({
+      lines: [['model', 'model', 'not-a-segment'], ['model', 'git']],
+    });
+    const cfg = await readStatuslineConfig(dir);
+    expect(cfg.lines).toEqual([['model'], ['git']]);
+  });
+
   it('accepts the seven named colours', async () => {
     writeCustom({ segments: { project: { enabled: true, color: 'magenta' } } });
     const cfg = await readStatuslineConfig(dir);
@@ -337,19 +356,20 @@ describe('statusline — default config golden output', () => {
     terminal: { columns: 200 },
   };
 
-  it('renders the shipped two-row layout byte-for-byte (ANSI stripped)', () => {
+  it('renders the shipped three-row layout byte-for-byte (ANSI stripped)', () => {
     const out = runScript(generateStatuslineScript(DEFAULT_STATUSLINE_CONFIG), stdin);
     const plain = out
       .replace(/\x1b\[[0-9;]*m/g, '')
       // powerline blocks pad their text with a space on each side, and the
       // row caps are private-use glyphs — collapse both for a readable pin
-      .replace(/[-]/g, '')
+      .replace(/[-]/g, '')
       .replace(/[ \t]+/g, ' ')
       .trim();
 
     expect(plain.split('\n').map((l) => l.trim())).toEqual([
-      `▊ weave v${WEAVE_VERSION} 🤖 Model: claude-sonnet-5 🧠 [█░░░░░░░░░░░] 39k/1.0M (4%)`,
-      `🧩 Thinking: high 💸 Cost: $0.45 📁 /tmp/my-project`,
+      `▊ weave v${WEAVE_VERSION} 🤖 Model: claude-sonnet-5 🧩 Thinking: high`,
+      `🧠 [█░░░░░░░░░░░] 39k/1.0M (4%) 💸 Cost: $0.45`,
+      `📁 /tmp/my-project`,
     ]);
   });
 });
@@ -478,7 +498,7 @@ describe('statusline — shipped default layout', () => {
     while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
   });
 
-  it('renders the reference layout across two rows', () => {
+  it('renders the reference layout across three rows', () => {
     const dir = mkdtempSync(join(tmpdir(), 'weave-sl-ref-'));
     tmpDirs.push(dir);
     // a directory (not a repo) so git/changes have no data and drop out
@@ -512,11 +532,13 @@ describe('statusline — shipped default layout', () => {
     expect(out).toContain('💸 Cost: $0.45');
     expect(out).toContain('🔢 Total: 24k');
     expect(out).toContain(`📁 ${cwd}`); // the default shows the full working directory
-    // two content rows with a dim divider between them
+    // three content rows with dim dividers between them
     const rows = out.split('\n').filter((l) => !l.includes('──'));
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(3);
     expect(rows[0]).toContain('Model:');
-    expect(rows[1]).toContain('Thinking:');
+    expect(rows[0]).toContain('Thinking:');
+    expect(rows[1]).toContain('🧠');
+    expect(rows[2]).toContain('📁');
   });
 
   it('the plain variant drops the Nerd-Font glyphs but keeps the text', () => {
@@ -539,11 +561,18 @@ describe('statusline — shipped default layout', () => {
     expect(out).toContain('💸 Cost: $0.45');
   });
 
-  it('ships the labelled, two-row layout as the default', () => {
+  it('ships the labelled, three-row layout as the default', () => {
     expect(DEFAULT_STATUSLINE_CONFIG.segments.model.label).toBe('Model');
     expect(DEFAULT_STATUSLINE_CONFIG.segments.tokens.label).toBe('Total');
     expect(DEFAULT_STATUSLINE_CONFIG.segments.tokens.metric).toBe('session');
-    expect(DEFAULT_STATUSLINE_CONFIG.lines[0]).toEqual(['model', 'context', 'git', 'changes']);
+    expect(DEFAULT_STATUSLINE_CONFIG.lines).toEqual([
+      ['model', 'thinking'],
+      ['context', 'tokens', 'cost', 'rate'],
+      ['git', 'changes', 'project', 'time'],
+    ]);
+    // round caps ship by default (triangles remain the undefined fallback)
+    expect(DEFAULT_STATUSLINE_CONFIG.powerline.startCap).toBe('\ue0b6');
+    expect(DEFAULT_STATUSLINE_CONFIG.powerline.endCap).toBe('\ue0b4');
     expect(DEFAULT_STATUSLINE_CONFIG.bar).toEqual({ cells: 12, fill: '█', empty: '░' });
     expect(DEFAULT_STATUSLINE_CONFIG.powerline.enabled).toBe(true);
     expect(DEFAULT_STATUSLINE_CONFIG.divider).toBe('');

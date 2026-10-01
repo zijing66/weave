@@ -238,12 +238,13 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
   align: 'left',
   logoText: '▊ weave',
   logoColor: 'magenta',
-  powerline: { enabled: true, separator: '\ue0b0', startCap: '\ue0b2', endCap: '\ue0b0' },
+  powerline: { enabled: true, separator: '\ue0b0', startCap: '\ue0b6', endCap: '\ue0b4' },
+  // Three rows by theme: model setup, live context/metrics, then git + cwd.
+  // rate/time ride along disabled (every segment key must sit in a row).
   lines: [
-    ['model', 'context', 'git', 'changes'],
-    // rate/time sit here rather than in row 0 so the first row matches the
-    // reference layout exactly; both are disabled out of the box.
-    ['thinking', 'cost', 'tokens', 'project', 'rate', 'time'],
+    ['model', 'thinking'],
+    ['context', 'tokens', 'cost', 'rate'],
+    ['git', 'changes', 'project', 'time'],
   ],
   refreshInterval: 10,
   source: 'global',

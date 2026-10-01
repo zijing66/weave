@@ -201,8 +201,10 @@ export async function applyStatuslineConfig(
  * Migrate a possibly-legacy config to the `lines` model: configs that predate
  * `lines` carried `layout` + `order` (single = one full row; multi = the old
  * identity + metrics split). Every segment key must appear in some row so a
- * segment checked on in the panel is always renderable — any missing keys are
- * appended to the first row.
+ * segment checked on in the panel is always renderable — a LEGACY migration
+ * appends any missing keys to the first row. An explicit `lines` value is
+ * trusted verbatim (deduped, unknown keys dropped): the panel lets users
+ * remove a capsule from every row, and that must survive a save/reload.
  */
 /** Legacy on-disk shape (predates `lines`): `layout` + `order`. Kept only for
  * migration, so it is intentionally wider than the current StatuslineConfig. */
@@ -213,9 +215,13 @@ type LegacyStatuslineConfig = Partial<StatuslineConfig> & {
 
 function normalizeLines(parsed: LegacyStatuslineConfig): SegmentKey[][] {
   let lines: SegmentKey[][];
+  // Only migrations force full coverage; an explicit `lines` value is the
+  // user's arrangement and may legitimately omit keys (unplaced capsules).
+  let seededFromLegacy = false;
   if (parsed.lines?.length) {
     lines = parsed.lines.map((r) => [...r]);
   } else if (parsed.order?.length) {
+    seededFromLegacy = true;
     const order = parsed.order;
     if (parsed.layout === 'multi') {
       lines = [
@@ -226,12 +232,23 @@ function normalizeLines(parsed: LegacyStatuslineConfig): SegmentKey[][] {
       lines = [order];
     }
   } else {
+    seededFromLegacy = true;
     lines = DEFAULT_STATUSLINE_CONFIG.lines.map((r) => [...r]);
   }
-  const seen = new Set(lines.flat());
-  const missing = SEGMENT_ORDER.filter((k) => !seen.has(k));
-  if (missing.length) {
-    lines[0] = [...lines[0], ...missing];
+  // Known keys only, each at most once across all rows (first row wins).
+  const seen = new Set<SegmentKey>();
+  lines = lines.map((row) =>
+    row.filter((k) => {
+      if (!SEGMENT_ORDER.includes(k)) return false;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }),
+  );
+  if (lines.length === 0) lines = [[]];
+  if (seededFromLegacy) {
+    const missing = SEGMENT_ORDER.filter((k) => !seen.has(k));
+    if (missing.length) lines[0] = [...lines[0], ...missing];
   }
   return lines;
 }
