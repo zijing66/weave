@@ -320,7 +320,8 @@ interface PreviewItem {
  * mirror that lets the panel preview edits without a server round-trip.
  */
 const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
-  project: { name: 'my-project' },
+  // Both keys: the default layout renders {path}, older configs use {name}.
+  project: { name: 'my-project', path: '/workspace/my-project' },
   git: { branch: 'main' },
   changes: { added: '1', deleted: '1', files: '3' },
   model: { model: 'claude-sonnet-5' },
@@ -609,7 +610,7 @@ export function StatuslinePanel({
             scrolls inside the card's fixed height. */}
         <div className="shrink-0 border-b border-white/[0.06] p-3">
           {/* live preview — one block per row, powerline blocks when enabled */}
-          <div className="rounded-md bg-neutral-950 border border-white/[0.06] px-3 py-2 text-xs font-mono text-neutral-300 whitespace-pre overflow-x-auto">
+          <div className="nerd-font rounded-md bg-neutral-950 border border-white/[0.06] px-3 py-2 text-xs text-neutral-300 whitespace-pre overflow-x-auto">
             {config.lines.map((row, i) => {
               const items = buildPreviewItems(config, row);
               if (i === 0 && logo) items.unshift(logo);
