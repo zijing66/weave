@@ -5,6 +5,7 @@ import { CommandParser } from './parser.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
 import { daemonCommand } from './commands/daemon.js';
+import { dashboardCommand } from './commands/dashboard.js';
 import { scanCommand } from './commands/scan.js';
 import { statuslineCommand } from './commands/statusline.js';
 import type { Command, CommandContext } from './parser.js';
@@ -47,6 +48,7 @@ export class CLI {
     this.parser.registerCommand(initCommand);
     this.parser.registerCommand(statusCommand);
     this.parser.registerCommand(daemonCommand);
+    this.parser.registerCommand(dashboardCommand);
     this.parser.registerCommand(scanCommand);
     this.parser.registerCommand(statuslineCommand);
   }

@@ -26,16 +26,34 @@ async function probeDaemon(port: number): Promise<boolean> {
   }
 }
 
-async function startAction(): Promise<void> {
-  // Single-instance: reuse an already-running daemon.
-  if (await probeDaemon(DEFAULT_PORT)) {
-    logger.info(`Daemon already running on port ${DEFAULT_PORT}`);
-    return;
-  }
+export interface DaemonHandle {
+  port: number;
+  /** Empty when a daemon is alive but its token could not be recovered. */
+  token: string;
+  /** False when an already-running daemon was reused. */
+  started: boolean;
+}
+
+/**
+ * Ensure a daemon is running and return how to reach it.
+ *
+ * Reuses a live daemon (probing the default port, then whatever the state file
+ * records) instead of spawning a second one — the daemon is single-instance by
+ * design, and a second copy would fight over the SQLite file.
+ *
+ * The token comes from the state file, so a daemon started by `pnpm dev:server`
+ * (fixed dev token) is usable exactly like one this command spawned.
+ */
+export async function ensureDaemonRunning(): Promise<DaemonHandle> {
+  // Reuse a live daemon, preferring the state file's port/token pair.
   const existing = readDaemonState();
   if (existing && (await probeDaemon(existing.port))) {
-    logger.info(`Daemon already running on port ${existing.port}`);
-    return;
+    return { port: existing.port, token: existing.token, started: false };
+  }
+  if (await probeDaemon(DEFAULT_PORT)) {
+    // Alive on the default port but the state file disagrees (or is missing) —
+    // we have no token to authenticate with, so say so rather than 401 later.
+    return { port: DEFAULT_PORT, token: '', started: false };
   }
 
   // Resolve port: default when free, otherwise scan forward.
@@ -53,8 +71,17 @@ async function startAction(): Promise<void> {
   });
   child.unref();
 
-  logger.success(`Daemon started on http://${DAEMON_HOST}:${port}`);
-  logger.dim(`Token: ${token}`);
+  return { port, token, started: true };
+}
+
+async function startAction(): Promise<void> {
+  const handle = await ensureDaemonRunning();
+  if (!handle.started) {
+    logger.info(`Daemon already running on port ${handle.port}`);
+    return;
+  }
+  logger.success(`Daemon started on http://${DAEMON_HOST}:${handle.port}`);
+  logger.dim(`Token: ${handle.token}`);
 }
 
 async function stopAction(): Promise<void> {
@@ -91,9 +118,13 @@ async function statusAction(): Promise<void> {
 
 export const daemonCommand: Command = {
   name: 'daemon',
-  description: 'Manage the weave daemon',
+  description: 'Manage the background daemon (start, stop, status)',
   subcommands: [
-    { name: 'start', description: 'Start the daemon in the background', action: startAction },
+    {
+      name: 'start',
+      description: 'Start the daemon in the background (no browser — see `weave dashboard`)',
+      action: startAction,
+    },
     { name: 'stop', description: 'Stop the running daemon', action: stopAction },
     { name: 'status', description: 'Show daemon status', action: statusAction },
   ],
