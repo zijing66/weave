@@ -4,7 +4,24 @@
  * itself and statically hosts the SPA for everything else.
  */
 
-const TOKEN = import.meta.env.V_DAEMON_TOKEN;
+/**
+ * The daemon token.
+ *
+ * Read from `?token=` first, falling back to the value baked in at build time.
+ * The query param matters because the build-time value is a fixed default while
+ * `weave daemon start` mints a random token per machine — `weave dashboard`
+ * opens the console with the running daemon's own token, so the two always
+ * agree. (`/events` uses the same param because EventSource cannot set headers.)
+ */
+function resolveToken(): string {
+  if (typeof window !== 'undefined') {
+    const fromUrl = new URLSearchParams(window.location.search).get('token');
+    if (fromUrl) return fromUrl;
+  }
+  return import.meta.env.V_DAEMON_TOKEN;
+}
+
+const TOKEN = resolveToken();
 const BASE = '/api';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -272,7 +289,7 @@ export interface ProjectFile {
   size: number;
 }
 
-export type StatuslineColor =
+export type StatuslineNamedColor =
   | 'gray'
   | 'red'
   | 'green'
@@ -280,6 +297,25 @@ export type StatuslineColor =
   | 'blue'
   | 'magenta'
   | 'cyan';
+
+/**
+ * Mirror of `StatuslineColor` in packages/weave-server/src/statusline/config.ts.
+ * The web app does not depend on @weave/server, so this file is a hand-copied
+ * duplicate — keep the two in lockstep (a mismatch breaks `tsc && vite build`).
+ * A colour is a named ANSI colour, `ansi256:0-255`, or `#rgb`/`#rrggbb`.
+ */
+export type StatuslineColor = StatuslineNamedColor | `ansi256:${number}` | `#${string}`;
+
+/** The seven classic ANSI names, in palette order. */
+export const NAMED_COLORS: readonly StatuslineNamedColor[] = [
+  'gray',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+];
 
 export type SegmentKey =
   | 'project'
@@ -305,15 +341,35 @@ export interface StatuslineSegment {
   merge: boolean;
   /** Context-bar display mode; ignored by other segments. */
   style?: 'percent' | 'bar' | 'both';
+  /** Static prefix, rendered as `<label><labelSeparator><value>`. */
+  label?: string;
+  /** `{token}` value template; replaces the built-in formatting when set. */
+  format?: string;
+  /** `tokens` only: session-cumulative or context-window count. */
+  metric?: 'session' | 'context';
+}
+
+/** Progress-bar appearance; global rather than per-segment. */
+export interface StatuslineBar {
+  cells: number;
+  fill: string;
+  empty: string;
 }
 
 export type StatuslineAlign = 'left' | 'center' | 'right';
 export type StatuslineSource = 'global' | 'custom';
 
+/**
+ * Mirror of `WEAVE_VERSION` in packages/weave-server/src/version.ts — the web
+ * app stamps the same version into the logo preview as the generator does.
+ * Keep in lockstep with that file and the workspace package manifests.
+ */
+export const WEAVE_VERSION = '0.1.0';
+
 export interface StatuslineConfig {
   separator: string;
   align: StatuslineAlign;
-  showLogo: boolean;
+  /** Row-0 logo text, rendered as `<logoText> v<version>`. Not optional. */
   logoText: string;
   logoColor: StatuslineColor;
   /** Nerd-Font glyph set; `undefined` = classic triangle defaults, '' disables a cap. */
@@ -324,8 +380,49 @@ export interface StatuslineConfig {
   refreshInterval: number;
   /** Follow the global template, or keep a project-local config. */
   source: StatuslineSource;
+  /** Progress-bar appearance, shared by every segment that draws a bar. */
+  bar: StatuslineBar;
+  /** Rendered between rows; an empty string (the default) draws nothing. */
+  divider: string;
+  /** Rendered between a segment's `label` and its value. */
+  labelSeparator: string;
   segments: Record<SegmentKey, StatuslineSegment>;
 }
+
+/** Mirror of `SEGMENT_TOKENS` in the server's statusline/config.ts. */
+export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
+  project: ['name', 'path'],
+  git: ['branch'],
+  changes: ['added', 'deleted', 'files'],
+  model: ['model'],
+  thinking: ['level'],
+  context: ['bar', 'used', 'total', 'percent', 'remaining'],
+  tokens: ['total', 'percent'],
+  cost: ['cost'],
+  rate: ['percent', 'limit', 'resets'],
+  time: ['time'],
+};
+
+/** Mirror of `SEGMENT_DEFAULT_FORMAT` in the server's statusline/config.ts. */
+export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
+  project: '{name}',
+  git: '{branch}',
+  changes: '{files}',
+  model: '{model}',
+  thinking: '{level}',
+  context: '{percent}% {bar}',
+  tokens: '{total}',
+  cost: '{cost}',
+  rate: '5h {percent}%',
+  time: '{time}',
+};
+
+/** Mirror of `CONTEXT_STYLE_FORMAT`: legacy `context.style` → template. */
+export const CONTEXT_STYLE_FORMAT: Record<'percent' | 'bar' | 'both', string> = {
+  percent: '{percent}%',
+  bar: '{bar}',
+  both: '{percent}% {bar}',
+};
 
 export const api = {
   listProjects: (): Promise<ProjectRow[]> =>
