@@ -57,6 +57,8 @@ export interface AssetEntry {
   mtimeMs: number;
   /** Which coding agent's harness surface this asset belongs to. */
   agent?: AssetAgent;
+  /** True when the file itself is a symbolic link (its target is watched). */
+  isSymlink?: boolean;
 }
 
 export interface AssetChangeEvent {
@@ -67,6 +69,8 @@ export interface AssetChangeEvent {
   absPath: string;
   kind: 'add' | 'change' | 'unlink';
   agent?: AssetAgent;
+  /** True when the file itself is a symbolic link (its target is watched). */
+  isSymlink?: boolean;
 }
 
 export interface HookEventRow {
@@ -433,6 +437,9 @@ export const api = {
     apiFetch<{ projectPath: string; assets: AssetEntry[] }>(
       `/assets?path=${encodeURIComponent(projectPath)}`,
     ).then((r) => r.assets),
+  /** Machine-level harness files (~/.claude, ~/.codex) for the global tree. */
+  listGlobalFileAssets: (): Promise<AssetEntry[]> =>
+    apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
   listHooks: (projectId: number): Promise<HookEventRow[]> =>
     apiFetch<{ events: HookEventRow[] }>(`/projects/${projectId}/hooks`).then(
       (r) => r.events,
@@ -478,6 +485,9 @@ export const api = {
     apiFetch<ProjectFile>(
       `/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`,
     ),
+  /** Read a machine-level harness file (same allowed roots as readFile). */
+  readGlobalFile: (relPath: string): Promise<ProjectFile> =>
+    apiFetch<ProjectFile>(`/global-file?path=${encodeURIComponent(relPath)}`),
   /** Returns project-scope (.mcp.json), global-scope (~/.claude.json) and
    * Codex user-level (~/.codex/config.toml) MCP servers. */
   listMcp: (projectId: number): Promise<McpServerMap> =>
