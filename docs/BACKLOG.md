@@ -108,7 +108,7 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 | 能力 | 实现位置 |
 |------|---------|
 | MCP → Codex `config.toml`（增量 TOML 编辑器：保留注释/键序，weave key 刷新、未知 key 保留，merge 验证 + clean replace 二级回退；前端 Codex tab 真实网格 + 安装目标切换） | `weave-server/src/install/codex-toml.ts`、`server.ts`、`apply-update.ts`、`updates.ts`、`weave-web/src/components/`（`McpGrid`、`CategoryDetail`、`LibraryPanel`） |
-| AGENTS.md 生成（Codex 指令文件，镜像 CLAUDE.md 合并策略） | `weave-cli/src/init/agentsmd-gen.ts` |
+| 指令文件生成（CLAUDE.md / AGENTS.md 合并为一份 + 软连接，跨平台降级为报错退出） | `weave-cli/src/init/claudemd-gen.ts`、`instruction-link.ts` |
 | `.codex/` 项目目录监听（skills/config.toml） | `weave-server/src/watch/watch-service.ts` |
 | skills 双端安装/卸载/更新（`.claude/skills` + `.codex/skills`，四表面扫描） | `weave-server/src/install/installer.ts`、`updates.ts` |
 | 单文件资产管线：commands / agents / workflows / rules / output-styles | `weave-server/src/install/file-assets.ts`（单一事实来源，表驱动） |
@@ -118,3 +118,21 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 | statusline 预览 TUI（Ink，真实脚本回放） | `weave-cli/src/statusline/preview.tsx` |
 | statusline powerline 桥接渲染 + `padding: 0` + `--no-optional-locks`（对齐 ccstatusline） | `weave-server/src/statusline/generator.ts` |
 | statusline refreshInterval 默认 10s（事件驱动为主，定时为辅） | `weave-server/src/statusline/config.ts` |
+| statusline 全自定义：`label`/`format` 模板、256 色与 hex 真彩、可配进度条、`changes` 的 `(+N, -N)`、`tokens` 的会话累计（transcript 按 `message.id` 去重 + 增量缓存） | `weave-server/src/statusline/{config,generator,manager}.ts`、`weave-cli/src/statusline/{preview.tsx,ansi.ts}`、`weave-web/src/components/StatuslinePanel.tsx` |
+| `weave init` 产出真实 statusline 脚本（原先只写占位 stub）+ 嵌套自忽略 `.gitignore` | `weave-cli/src/init/executor.ts` |
+| harness 健康检查（软连接未落盘 / 指令文件重复 / 悬挂软连接 / statusLine 绝对路径失效） | `weave-cli/src/init/harness-checks.ts`，由 `weave status` 输出 |
+| `weave dashboard` 启动 daemon 并打开 web 控制台；前端改从 `?token=` 取 token（此前只有构建期烘入的固定值，与 `weave daemon start` 的随机 token 不匹配会 401） | `weave-cli/src/commands/dashboard.ts`、`weave-web/src/lib/api.ts` |
+
+---
+
+## 9. statusline 后续项
+
+**1. `alignLine` 用 `plain.length`（UTF-16 码元）计宽**：emoji（代理对计 2）与 Nerd-Font PUA 字形会让 right/center 对齐偏移，开启 powerline 后更明显。修法是用 `string-width` 之类的显示宽度估算；会波及现有 `align` 测试的断言，故本轮未动。
+
+**2. statusline 类型在 web 端有一份手抄副本**：`weave-web/src/lib/api.ts` 镜像了 `weave-server/src/statusline/config.ts` 的 `StatuslineConfig` 等类型（web 不依赖 `@weave/server`），改动必须两侧同步。长期应下沉到 `@weave/core`。
+
+**3. 提交软连接的跨平台风险无法根治**：`core.symlinks` 是本机 git 配置、不随仓库传播。未开 Windows 开发者模式的队友 clone 后，`AGENTS.md` 会被检出成内容为 `CLAUDE.md` 的普通文件。`weave status` 能检测并告警，但根治只能靠不提交软连接（用根 `.gitignore` 忽略 `AGENTS.md`，代价是队友 clone 后需自己跑 `weave init`）。
+
+**4. 版本号仍是手写常量**：`weave-server/src/version.ts` 的 `WEAVE_VERSION` 是各处版本戳的单一来源（statusline 的 logo、helper 脚本的 `@version`、`DAEMON_VERSION`、init 记录的 `initVersion`），但它本身仍需与各 `package.json` 的 `version` 手工保持一致。修法是构建时从 package.json 注入。
+
+**5. 默认布局变更会影响存量项目**：`DEFAULT_STATUSLINE_CONFIG` 现在就是参考图那套（双行 powerline、文字标签、方括号进度条）。`apply-update` 的 `refreshStatusline()` 会用「follow global 且本机无全局模板」的项目的默认值重刷脚本，因此升级后这些项目会一起换肤——这是刻意的产品决定，但发布说明里要写明。已有 `.weave/statusline.json`（`source: custom`）或配了 `~/.weave/statusline.json` 的项目不受影响。
