@@ -107,7 +107,9 @@ weave/
 
 - 格式：`<type>(<scope>): <description>`
 - 类型：`feat` | `fix` | `docs` | `refactor` | `test` | `chore`
-- 示例：`feat(cli): add init command with preset selection`
+- **description 用中文写**（type/scope 保持英文）
+- 示例：`feat(cli): init 时生成真实 statusline 脚本`
+- 提交信息正文（如需多行）同样用中文
 
 ### 测试要求
 
