@@ -260,6 +260,8 @@ export type TerminalPreset =
   | 'iterm'
   | 'gnome'
   | 'konsole'
+  | 'wezterm'
+  | 'ghostty'
   | 'custom';
 
 export interface TerminalSettings {
