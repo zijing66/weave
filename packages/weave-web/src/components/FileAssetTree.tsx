@@ -9,6 +9,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
+import { useT, type TFunc } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dict';
 import {
   ChevronDown,
   ChevronRight,
@@ -30,18 +32,23 @@ export interface FileAssetRow {
   agent?: AssetAgent;
 }
 
-/** Tag label per asset kind — every non-skill/non-mcp category the scan emits. */
-const KIND_LABELS: Record<string, string> = {
-  instructions: 'Instructions',
-  command: 'Commands',
-  agent: 'Agents',
-  workflow: 'Workflows',
-  rule: 'Rules',
-  'output-style': 'Output Styles',
-  helper: 'Helpers',
-  settings: 'Settings',
-  other: 'Other',
+/** Tag label per asset kind — every non-skill/non-mcp category the scan emits.
+ * Values are dict keys (module scope can't call hooks); translate at render. */
+const KIND_LABELS: Record<string, MessageKey> = {
+  instructions: 'fileTree.kind.instructions',
+  command: 'fileTree.kind.command',
+  agent: 'fileTree.kind.agent',
+  workflow: 'fileTree.kind.workflow',
+  rule: 'fileTree.kind.rule',
+  'output-style': 'fileTree.kind.outputStyle',
+  helper: 'fileTree.kind.helper',
+  settings: 'fileTree.kind.settings',
+  other: 'fileTree.kind.other',
 };
+
+/** Translated kind label — unknown future kinds fall back to the raw token. */
+const kindLabel = (kind: string, t: TFunc): string =>
+  kind in KIND_LABELS ? t(KIND_LABELS[kind] as MessageKey) : kind;
 
 /** Stable filter-chip order (every kind is shown, even with a 0 count). */
 const KIND_ORDER = [
@@ -213,6 +220,7 @@ function AssetTreeNode({
   onOpenFile: (relPath: string) => void;
   onUninstall: (row: FileAssetRow) => void;
 }) {
+  const t = useT();
   const pad = 8 + depth * 14;
 
   if (node.type === 'file') {
@@ -233,7 +241,9 @@ function AssetTreeNode({
           onClick={() => onOpenFile(a.relPath)}
           style={{ paddingLeft: pad, paddingRight: 30 }}
           className="w-full flex items-center gap-1.5 rounded-md py-1 text-left text-xs font-mono text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
-          title={a.isSymlink ? `${a.absPath} — 符号链接` : a.absPath}
+          title={
+            a.isSymlink ? t('fileTree.symlinkTitle', { path: a.absPath }) : a.absPath
+          }
         >
           {a.isSymlink ? (
             <FileSymlink className="h-3 w-3 shrink-0 text-amber-400" />
@@ -250,16 +260,16 @@ function AssetTreeNode({
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
           <span className={cn(ROW_TAG_BASE, kindColor(a.category).on)}>
-            {KIND_LABELS[a.category] ?? a.category}
+            {kindLabel(a.category, t)}
           </span>
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
-              update
+              {t('fileTree.update')}
             </Badge>
           )}
           {update?.custom && (
             <Badge variant="other" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
-              custom
+              {t('fileTree.custom')}
             </Badge>
           )}
         </button>
@@ -275,7 +285,7 @@ function AssetTreeNode({
               })
             }
             className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 hover:text-red-400 hover:bg-neutral-800"
-            title={`Uninstall ${name}`}
+            title={t('fileTree.uninstall', { name })}
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -341,6 +351,7 @@ export function FileAssetTree({
   onUninstall: (row: FileAssetRow) => void;
   onOpenFile: (relPath: string) => void;
 }) {
+  const t = useT();
   // Counts cover every known kind — kinds with no files show as 0-count chips
   // rather than disappearing, so the filter bar always reads the full taxonomy.
   const counts = useMemo(() => {
@@ -402,15 +413,15 @@ export function FileAssetTree({
     setSelected(next);
   };
 
-  const scopeLabel = scope === 'global' ? '全局' : '项目';
+  const scopeLabel = scope === 'global' ? t('fileTree.scopeGlobal') : t('fileTree.scopeProject');
 
   return (
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {scopeLabel} 文件资产{' '}
+          {scopeLabel} {t('fileTree.title')}{' '}
           <span className="text-neutral-600 normal-case font-normal">
-            {scope === 'global' ? '~/.claude/ · ~/.codex/' : '.claude/ · .codex/ · 根目录'}
+            {scope === 'global' ? t('fileTree.pathsGlobal') : t('fileTree.pathsProject')}
           </span>
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
@@ -421,14 +432,14 @@ export function FileAssetTree({
             type="button"
             onClick={toggleAll}
             className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
-            title={anyCollapsed ? '展开全部目录' : '折叠全部目录'}
+            title={anyCollapsed ? t('fileTree.expandAllDirs') : t('fileTree.collapseAllDirs')}
           >
             {anyCollapsed ? (
               <ChevronsUpDown className="h-2.5 w-2.5" />
             ) : (
               <ChevronsDownUp className="h-2.5 w-2.5" />
             )}
-            {anyCollapsed ? '全展开' : '全折叠'}
+            {anyCollapsed ? t('fileTree.expandAll') : t('fileTree.collapseAll')}
           </button>
         )}
       </div>
@@ -436,12 +447,12 @@ export function FileAssetTree({
       {/* Multi-select type filter — empty selection shows every kind. */}
       <div className="flex flex-wrap items-center gap-1.5">
         <KindChip active={active.size === 0} onClick={() => setSelected(new Set())}>
-          全部
+          {t('fileTree.all')}
           <span className="tabular-nums text-[10px] opacity-70">{assets.length}</span>
         </KindChip>
         {chipKinds.map((k) => (
           <KindChip key={k} kind={k} active={active.has(k)} onClick={() => toggleKind(k)}>
-            {KIND_LABELS[k] ?? k}
+            {kindLabel(k, t)}
             <span className="tabular-nums text-[10px] opacity-70">{counts.get(k) ?? 0}</span>
           </KindChip>
         ))}
@@ -449,7 +460,7 @@ export function FileAssetTree({
 
       {tree.length === 0 ? (
         <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
-          没有匹配当前筛选的文件
+          {t('fileTree.emptyFiltered')}
         </p>
       ) : (
         <div className="rounded-lg border border-white/[0.06] bg-neutral-900/40 p-2 space-y-0.5">

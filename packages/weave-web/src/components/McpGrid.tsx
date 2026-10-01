@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Server, Trash2 } from 'lucide-react';
+import { useT } from '@/i18n/I18nProvider';
 
 export interface McpRow {
   name: string;
@@ -28,6 +29,7 @@ export function McpGrid({
   empty: string;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
 }) {
+  const t = useT();
   if (servers.length === 0) {
     return (
       <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
@@ -45,7 +47,7 @@ export function McpGrid({
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {scope === 'global' ? '全局' : '项目'} MCP Servers
+          {scope === 'global' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
         </h2>
         {/* No enable semantics on the server map yet, so this is a plain
             count — same shape as the project-skills section pill. */}
@@ -64,13 +66,13 @@ export function McpGrid({
                 <AgentBadge agent={s.agent} />
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
-                    update
+                    {t('mcp.update')}
                   </Badge>
                 )}
                 <button
                   onClick={() => onUninstallMcp(s.name, s.scope, s.agent)}
                   className="ml-auto text-neutral-500 hover:text-red-400 shrink-0"
-                  title={`Remove ${s.name}`}
+                  title={t('mcp.remove', { name: s.name })}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
