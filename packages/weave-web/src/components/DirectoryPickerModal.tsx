@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { createPortal } from 'react-dom';
 import { api, type BrowseChild, type BrowseRoot } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dict';
 import {
   Check,
   ChevronDown,
@@ -26,14 +28,14 @@ interface DirectoryPickerModalProps {
   existingPaths?: string[];
 }
 
-const ROOT_LABELS: Record<BrowseRoot['kind'], { label: string; icon: typeof Home }> = {
-  home: { label: '主目录', icon: Home },
-  desktop: { label: '桌面', icon: Monitor },
-  downloads: { label: '下载', icon: Download },
-  documents: { label: '文档', icon: FileText },
-  'library-parent': { label: '库位置', icon: Library },
-  drive: { label: '磁盘', icon: HardDrive },
-  root: { label: '根目录', icon: HardDrive },
+const ROOT_LABELS: Record<BrowseRoot['kind'], { labelKey: MessageKey; icon: typeof Home }> = {
+  home: { labelKey: 'picker.home', icon: Home },
+  desktop: { labelKey: 'picker.desktop', icon: Monitor },
+  downloads: { labelKey: 'picker.downloads', icon: Download },
+  documents: { labelKey: 'picker.documents', icon: FileText },
+  'library-parent': { labelKey: 'picker.libraryParent', icon: Library },
+  drive: { labelKey: 'picker.drive', icon: HardDrive },
+  root: { labelKey: 'picker.root', icon: HardDrive },
 };
 
 const ROOT_ORDER: BrowseRoot['kind'][] = [
@@ -72,6 +74,7 @@ export function DirectoryPickerModal({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   useEffect(() => {
     if (!open || roots.length > 0) return;
@@ -145,7 +148,7 @@ export function DirectoryPickerModal({
           <button
             onClick={() => toggleExpand(node.path)}
             className="shrink-0 p-0.5 text-neutral-500 hover:text-neutral-200"
-            title={isExpanded ? '折叠' : '展开'}
+            title={isExpanded ? t('common.collapse') : t('common.expand')}
           >
             {isExpanded ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -169,10 +172,10 @@ export function DirectoryPickerModal({
             {/* Drives share one rootKind label ("磁盘"), so the row must show
                 the path itself (C:\, D:\ …) or multiple disks look identical. */}
             <span className="truncate text-xs">
-              {node.rootKind === 'drive' ? node.name : (meta ? meta.label : node.name)}
+              {node.rootKind === 'drive' ? node.name : (meta ? t(meta.labelKey) : node.name)}
             </span>
             {isExisting && (
-              <span className="shrink-0 text-[10px] text-neutral-600">已添加</span>
+              <span className="shrink-0 text-[10px] text-neutral-600">{t('picker.alreadyAdded')}</span>
             )}
           </button>
           <button
@@ -185,7 +188,7 @@ export function DirectoryPickerModal({
                 : 'border-neutral-600 text-transparent group-hover:border-neutral-400',
               isExisting && 'opacity-30 cursor-not-allowed',
             )}
-            title={isChecked ? '取消选择' : '选择此文件夹'}
+            title={isChecked ? t('picker.unselect') : t('picker.selectFolder')}
           >
             <Check className="h-3 w-3" />
           </button>
@@ -200,7 +203,7 @@ export function DirectoryPickerModal({
               style={{ paddingLeft: (depth + 1) * 14 + 24 }}
             >
               <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="text-[11px]">加载中…</span>
+              <span className="text-[11px]">{t('common.loading')}</span>
             </div>,
           );
         } else if (children.length > 0) {
@@ -212,7 +215,7 @@ export function DirectoryPickerModal({
               className="text-neutral-600 py-1"
               style={{ paddingLeft: (depth + 1) * 14 + 24 }}
             >
-              <span className="text-[11px]">（空）</span>
+              <span className="text-[11px]">{t('common.empty')}</span>
             </div>,
           );
         }
@@ -238,12 +241,12 @@ export function DirectoryPickerModal({
       <div className="relative w-[720px] max-w-full h-[560px] max-h-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
           <Folder className="h-4 w-4 text-blue-400" />
-          <span className="text-sm font-semibold text-neutral-200">选择资产库文件夹</span>
-          <span className="text-[11px] text-neutral-500">勾选一个或多个文件夹（点击箭头展开目录）</span>
+          <span className="text-sm font-semibold text-neutral-200">{t('picker.title')}</span>
+          <span className="text-[11px] text-neutral-500">{t('picker.subtitle')}</span>
           <button
             onClick={onClose}
             className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-            title="关闭"
+            title={t('common.close')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -252,7 +255,7 @@ export function DirectoryPickerModal({
         <div className="flex-1 flex overflow-hidden">
           <aside className="w-44 shrink-0 border-r border-white/[0.06] overflow-y-auto p-2 space-y-0.5 frosted">
             <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-              快速访问
+              {t('picker.quickAccess')}
             </p>
             {roots.map((r) => {
               const meta = ROOT_LABELS[r.kind];
@@ -269,7 +272,7 @@ export function DirectoryPickerModal({
                     <meta.icon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
                   )}
                   <span className="text-xs text-neutral-300 truncate">
-                    {meta.label}
+                    {t(meta.labelKey)}
                     {r.kind === 'home' || r.kind === 'drive' ? (
                       <span className="ml-1 text-neutral-500">{r.path}</span>
                     ) : null}
@@ -278,7 +281,7 @@ export function DirectoryPickerModal({
               );
             })}
             {roots.length === 0 && (
-              <p className="px-2 py-2 text-[11px] text-neutral-500">加载中…</p>
+              <p className="px-2 py-2 text-[11px] text-neutral-500">{t('common.loading')}</p>
             )}
           </aside>
 
@@ -287,7 +290,7 @@ export function DirectoryPickerModal({
               renderNodes(rootNodes, 0)
             ) : (
               <div className="flex items-center justify-center h-full text-neutral-500 text-xs">
-                {error ?? '加载中…'}
+                {error ?? t('common.loading')}
               </div>
             )}
           </main>
@@ -296,14 +299,14 @@ export function DirectoryPickerModal({
         <footer className="shrink-0 border-t border-white/[0.06] px-4 py-2.5 flex items-center gap-3 frosted">
           <div className="flex-1 min-w-0 flex flex-wrap gap-1 max-h-12 overflow-y-auto">
             {selected.length === 0 && (
-              <span className="text-[11px] text-neutral-500">尚未选择任何文件夹</span>
+              <span className="text-[11px] text-neutral-500">{t('picker.noneSelected')}</span>
             )}
             {selected.map((p) => (
               <button
                 key={p}
                 onClick={() => toggleCheck(p)}
                 className="inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-200 pl-2 pr-1 py-0.5 text-[11px] hover:bg-blue-900/60"
-                title="点击移除"
+                title={t('picker.clickRemove')}
               >
                 <Folder className="h-3 w-3" />
                 <span className="max-w-[220px] truncate">{p}</span>
@@ -312,12 +315,14 @@ export function DirectoryPickerModal({
             ))}
           </div>
           {error && <span className="text-[11px] text-red-400 max-w-[200px] truncate">{error}</span>}
-          <span className="text-[11px] text-neutral-500 shrink-0">已选 {selected.length} 项</span>
+          <span className="text-[11px] text-neutral-500 shrink-0">
+            {t('picker.selectedCount', { count: selected.length })}
+          </span>
           <button
             onClick={onClose}
             className="shrink-0 rounded-lg bg-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-700"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             onClick={() => {
@@ -327,7 +332,9 @@ export function DirectoryPickerModal({
             disabled={selected.length === 0}
             className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            添加 {selected.length > 0 ? `（${selected.length}）` : ''}
+            {selected.length > 0
+              ? t('picker.addCount', { count: selected.length })
+              : t('picker.add')}
           </button>
         </footer>
       </div>

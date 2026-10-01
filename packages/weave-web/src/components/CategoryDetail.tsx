@@ -14,6 +14,7 @@ import {
   type PluginRuntime,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
 import {
   SkillGrid,
   groupSkillRows,
@@ -89,6 +90,7 @@ export function CategoryDetail({
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
   const scope: AssetScope = isGlobal ? 'global' : 'project';
+  const t = useT();
 
   // Harness-tool tab: globally effective skills differ per tool (Claude vs
   // Codex), so the asset categories filter by runtime instead of mixing them.
@@ -194,23 +196,25 @@ export function CategoryDetail({
     >
       {showRuntimeTabs && (
         <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
-          {(['claude', 'codex', 'all'] as const).map((t) => (
+          {(['claude', 'codex', 'all'] as const).map((tab) => (
             <button
-              key={t}
-              onClick={() => setRuntimeTab(t)}
+              key={tab}
+              onClick={() => setRuntimeTab(tab)}
               className={cn(
                 'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                runtimeTab === t
+                runtimeTab === tab
                   ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
                   : 'text-neutral-500 hover:text-neutral-300',
               )}
               title={
-                t === 'all'
-                  ? '混合展示全部 harness 工具的资产'
-                  : `仅展示 ${t === 'claude' ? 'Claude Code' : 'Codex'} 生效的资产`
+                tab === 'all'
+                  ? t('category.tabAllTip')
+                  : t('category.tabToolTip', {
+                      tool: tab === 'claude' ? 'Claude Code' : 'Codex',
+                    })
               }
             >
-              {t === 'claude' ? 'Claude' : t === 'codex' ? 'Codex' : '全部'}
+              {tab === 'claude' ? 'Claude' : tab === 'codex' ? 'Codex' : t('category.tabAll')}
             </button>
           ))}
         </div>
@@ -225,11 +229,11 @@ export function CategoryDetail({
           empty={
             runtimeTab === 'codex'
               ? isGlobal
-                ? '未安装 Codex 生效的全局 skills'
-                : '该项目 .codex/skills/ 下暂无 skills'
+                ? t('category.emptySkillsGlobalCodex')
+                : t('category.emptySkillsProjectCodex')
               : isGlobal
-                ? '未安装全局 skills'
-                : '该项目未安装 skills'
+                ? t('category.emptySkillsGlobal')
+                : t('category.emptySkillsProject')
           }
           onUninstallSkill={onUninstallSkill}
           onOpenDetail={onOpenSkillDetail}
@@ -244,10 +248,10 @@ export function CategoryDetail({
           updates={mcpUpdates}
           empty={
             runtimeTab === 'codex'
-              ? '未配置 Codex MCP（~/.codex/config.toml）'
+              ? t('category.emptyMcpCodex')
               : isGlobal
-                ? '未配置全局 MCP'
-                : '该项目未配置 MCP'
+                ? t('category.emptyMcpGlobal')
+                : t('category.emptyMcpProject')
           }
           onUninstallMcp={onUninstallMcp}
         />
@@ -257,11 +261,11 @@ export function CategoryDetail({
         !isGlobal &&
         (treeAssets.length === 0 ? (
           runtimeTab === 'codex' ? (
-            <CodexPlaceholder text="该项目暂无 Codex 文件资产（AGENTS.md、.codex/config.toml 等会展示在文件树中）。Codex 自定义 prompts（~/.codex/prompts/）已被官方移除。" />
+            <CodexPlaceholder text={t('category.codexFilesPlaceholder')} />
           ) : (
             <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
               <PackageX className="h-8 w-8 text-neutral-600" />
-              <p className="text-xs text-neutral-500">该项目暂无文件资产</p>
+              <p className="text-xs text-neutral-500">{t('category.emptyFilesProject')}</p>
             </div>
           )
         ) : (
@@ -280,9 +284,9 @@ export function CategoryDetail({
           <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
             <PackageX className="h-8 w-8 text-neutral-600" />
             <div>
-              <p className="text-sm font-medium text-neutral-300">全局文件资产</p>
+              <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
               <p className="text-xs text-neutral-500 mt-1 max-w-xs">
-                ~/.claude 与 ~/.codex 下暂无匹配的文件资产（skills 与 MCP 有各自页面）。
+                {t('category.emptyFilesGlobalDesc')}
               </p>
             </div>
           </div>
@@ -299,10 +303,17 @@ export function CategoryDetail({
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">
           <p className="text-[11px] text-neutral-500">
-            {isGlobal ? '全局 Claude 个性化配置（模板）' : 'Claude Code 个性化配置'}
+            {isGlobal
+              ? t('category.personalizationGlobal')
+              : t('category.personalizationProject')}
             {statuslineSource && (
               <span className="ml-2">
-                statusline：{statuslineSource === 'custom' ? '项目自定义' : '跟随全局模板'}
+                {t('category.statuslineSource', {
+                  source:
+                    statuslineSource === 'custom'
+                      ? t('category.statuslineCustom')
+                      : t('category.statuslineFollowGlobal'),
+                })}
               </span>
             )}
           </p>
@@ -315,10 +326,10 @@ export function CategoryDetail({
       )}
 
       {category === 'personalization' && runtimeTab !== 'claude' && (
-        <CodexPlaceholder text="Codex 个性化配置（statusline / 主题等）暂未接入。weave 目前仅管理 Claude Code 的 harness 资产，Codex 配置将在后续版本提供。" />
+        <CodexPlaceholder text={t('category.codexPersonalizationPlaceholder')} />
       )}
 
-      {isOver && <p className="text-xs text-blue-300">Drop to install skill</p>}
+      {isOver && <p className="text-xs text-blue-300">{t('category.dropToInstall')}</p>}
     </div>
   );
 }
