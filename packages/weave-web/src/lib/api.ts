@@ -506,6 +506,9 @@ export const api = {
     }),
   getGlobalStatusline: (): Promise<{ config: StatuslineConfig }> =>
     apiFetch<{ config: StatuslineConfig }>('/statusline/global'),
+  /** Shipped factory defaults for the statusline panel's 恢复出厂. */
+  getFactoryStatusline: (): Promise<StatuslineConfig> =>
+    apiFetch<{ config: StatuslineConfig }>('/statusline/default').then((r) => r.config),
   putGlobalStatusline: (config: StatuslineConfig): Promise<Response> =>
     fetch(`${BASE}/statusline/global`, {
       method: 'PUT',
