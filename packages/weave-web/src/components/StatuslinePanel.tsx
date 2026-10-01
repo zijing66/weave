@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DndContext,
   closestCenter,
@@ -11,7 +12,7 @@ import {
 import {
   SortableContext,
   useSortable,
-  verticalListSortingStrategy,
+  horizontalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable';
 import {
@@ -132,7 +133,9 @@ function GlyphPicker({
           disabled={!editable}
           title={`${p.name} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
           className={cn(
-            'w-6 h-6 rounded flex items-center justify-center font-mono disabled:opacity-30',
+            // nerd-font = bundled Nerd Font + mono fallback; plain font-mono
+            // shows tofu here on machines without a system Nerd Font
+            'nerd-font w-6 h-6 rounded flex items-center justify-center disabled:opacity-30',
             current === p.char
               ? 'bg-neutral-800 text-neutral-100 ring-1 ring-white/30'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900',
@@ -421,6 +424,13 @@ export function StatuslinePanel({
   const [globalConfig, setGlobalConfig] = useState<StatuslineConfig | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
+  // 恢复出厂 is destructive (overwrites the global template), so the first
+  // click only arms the button; a second click within 5s executes.
+  const [resetArmed, setResetArmed] = useState(false);
+  // Which capsule's edit modal is open (key === null means "adding").
+  const [editing, setEditing] = useState<{ line: number; key: SegmentKey | null } | null>(null);
+  // A finished drag also fires a click on the capsule — swallow it.
+  const lastDragEnd = useRef(0);
   const skipNextSave = useRef(false);
   // Whole-panel collapse — the header row toggles the entire statusline config block.
   const [open, setOpen] = useState(true);
@@ -445,6 +455,31 @@ export function StatuslinePanel({
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  // Disarm a pending factory reset after a few seconds of hesitation.
+  useEffect(() => {
+    if (!resetArmed) return;
+    const t = setTimeout(() => setResetArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [resetArmed]);
+
+  /** First click arms, second click loads the shipped defaults into the form —
+   * the normal debounced save then PUTs them and auto-syncs follower projects. */
+  const restoreFactory = useCallback(async () => {
+    if (!resetArmed) {
+      setResetArmed(true);
+      return;
+    }
+    setResetArmed(false);
+    setError(null);
+    try {
+      const factory = await api.getFactoryStatusline();
+      setSaveState('idle');
+      setConfig(structuredClone(factory));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [resetArmed]);
 
   const persist = useCallback(async () => {
     if (!config) return;
@@ -518,7 +553,38 @@ export function StatuslinePanel({
     });
   }
 
+  /** Insert a key at the end of a row, first removing it from every row
+   * (used by the modal's type tags: picking a placed type MOVES it here). */
+  function placeKeyInLine(line: number, key: SegmentKey) {
+    setConfig((c) => {
+      if (!c) return c;
+      const rows = c.lines.map((r) => r.filter((k) => k !== key));
+      rows[line] = [...rows[line], key];
+      return { ...c, lines: rows };
+    });
+  }
+
+  /** Swap the key occupying a slot, preserving its position; the target type
+   * may live on another row (it is moved, never duplicated). */
+  function switchKeyInLine(line: number, from: SegmentKey, to: SegmentKey) {
+    setConfig((c) => {
+      if (!c) return c;
+      const rows = c.lines.map((r) => r.filter((k) => k !== from && k !== to));
+      const idx = c.lines[line].indexOf(from);
+      const at = Math.min(Math.max(idx, 0), rows[line].length);
+      rows[line] = [...rows[line].slice(0, at), to, ...rows[line].slice(at)];
+      return { ...c, lines: rows };
+    });
+  }
+
+  /** Take a capsule out of its row; the key stays configured so re-adding it
+   * from the + pill restores the same styling. */
+  function unplaceFromLine(line: number, key: SegmentKey) {
+    setConfig((c) => c && ({ ...c, lines: c.lines.map((r, i) => (i === line ? r.filter((k) => k !== key) : r)) }));
+  }
+
   function handleDragEnd(e: DragEndEvent) {
+    lastDragEnd.current = Date.now();
     const { active, over } = e;
     if (!over) return;
     const key = active.id as SegmentKey;
@@ -582,6 +648,20 @@ export function StatuslinePanel({
           <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400">
             {isGlobal ? '全局模板' : '项目配置'}
           </span>
+          {isGlobal && (
+            <button
+              onClick={() => void restoreFactory()}
+              className={cn(
+                'rounded px-2 py-1 transition-colors',
+                resetArmed
+                  ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                  : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
+              )}
+              title="用出厂默认覆盖当前全局模板（需再次点击确认）"
+            >
+              {resetArmed ? '确认恢复出厂?' : '恢复出厂'}
+            </button>
+          )}
           <button
             onClick={() => void persist()}
             disabled={saveState === 'saving'}
@@ -773,7 +853,7 @@ export function StatuslinePanel({
               value={config.separator}
               disabled={!editable}
               onChange={(e) => patch({ separator: e.target.value })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-20 disabled:opacity-40"
+              className="nerd-font bg-neutral-900 rounded px-2 py-0.5 w-20 disabled:opacity-40"
             />
             <span className="text-neutral-600">(powerline ignores it)</span>
           </label>
@@ -823,7 +903,8 @@ export function StatuslinePanel({
             </label>
           </div>
 
-          {/* lines — draggable rows, segments reorder within and across */}
+          {/* lines — preview-styled capsules; click to edit, drag within/across
+              rows, + pill appends a block (type tags in the modal pick/move it) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-[11px] text-neutral-500 uppercase tracking-wide">Lines</p>
@@ -837,18 +918,41 @@ export function StatuslinePanel({
             </div>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               {config.lines.map((row, li) => (
-                <SortableRow
+                <CapsuleRow
                   key={li}
                   li={li}
                   row={row}
                   linesLen={config.lines.length}
                   editable={editable}
-                  segments={config.segments}
-                  onRemove={removeRow}
-                  onChange={(key, p) => update(key, p)}
+                  config={config}
+                  lastDragEnd={lastDragEnd}
+                  onRemoveRow={removeRow}
+                  onOpen={(line, key) => setEditing({ line, key })}
+                  onAdd={(line) => setEditing({ line, key: null })}
                 />
               ))}
             </DndContext>
+            {editing && (
+              <SegmentModal
+                editing={editing}
+                config={config}
+                placedIn={(k) => config.lines.findIndex((r) => r.includes(k))}
+                onPick={(k) => {
+                  if (editing.key === null) {
+                    placeKeyInLine(editing.line, k);
+                  } else if (editing.key !== k) {
+                    switchKeyInLine(editing.line, editing.key, k);
+                  }
+                  setEditing({ line: editing.line, key: k });
+                }}
+                onPatch={update}
+                onUnplace={() => {
+                  if (editing.key) unplaceFromLine(editing.line, editing.key);
+                  setEditing(null);
+                }}
+                onClose={() => setEditing(null)}
+              />
+            )}
           </div>
         </CardContent>
       </>
@@ -943,24 +1047,91 @@ function PowerlineRow({
   );
 }
 
-/** A statusline row: a droppable container (so empty rows accept drops) holding
- * a SortableContext of its segments (reorder within/across rows). */
-function SortableRow({
+/** One segment as a preview-styled pill. Click opens the edit modal; dragging
+ * reorders within or across rows — handleDragEnd swallows the trailing click. */
+function Capsule({
+  segKey,
+  line,
+  segment,
+  config,
+  editable,
+  lastDragEnd,
+  onOpen,
+}: {
+  segKey: SegmentKey;
+  line: number;
+  segment: StatuslineSegment;
+  config: StatuslineConfig;
+  editable: boolean;
+  lastDragEnd: { current: number };
+  onOpen: (line: number, key: SegmentKey) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: segKey,
+    disabled: !editable,
+    data: { line },
+  });
+  const style = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transition,
+  };
+  const meta = SEGMENTS.find((s) => s.key === segKey)!;
+  const on = segment.enabled;
+  const text = sampleText(segKey, segment, config) || meta.label;
+  const bg = on && segment.backgroundColor ? cssSolid(segment.backgroundColor) : undefined;
+  const fg = on ? cssFg(segment.color) : undefined;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn('shrink-0 max-w-[260px]', isDragging && 'opacity-50 ring-1 ring-white/30')}
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={() => {
+          // dnd-kit also fires a click after a real drag — ignore that tail
+          if (Date.now() - lastDragEnd.current < 250) return;
+          onOpen(line, segKey);
+        }}
+        title={`${meta.label}${on ? '' : ' (未启用)'} — 点击编辑，拖动排序`}
+        className={cn(
+          'rounded-full px-2.5 py-1 text-xs whitespace-pre select-none transition',
+          on
+            ? 'shadow-mac-sm'
+            : 'border border-dashed border-neutral-600 bg-neutral-800/60 text-neutral-500',
+          editable ? 'cursor-grab active:cursor-grabbing hover:brightness-110' : 'cursor-default',
+        )}
+        style={bg || fg ? { backgroundColor: bg, color: fg } : undefined}
+      >
+        <span className="block truncate">{text}</span>
+      </button>
+    </div>
+  );
+}
+
+/** A statusline row: a droppable container of capsules (empty rows accept
+ * drops too) plus the + pill that opens the add modal. */
+function CapsuleRow({
   li,
   row,
   linesLen,
   editable,
-  segments,
-  onRemove,
-  onChange,
+  config,
+  lastDragEnd,
+  onRemoveRow,
+  onOpen,
+  onAdd,
 }: {
   li: number;
   row: SegmentKey[];
   linesLen: number;
   editable: boolean;
-  segments: StatuslineConfig['segments'];
-  onRemove: (line: number) => void;
-  onChange: (key: SegmentKey, patch: Partial<StatuslineSegment>) => void;
+  config: StatuslineConfig;
+  lastDragEnd: { current: number };
+  onRemoveRow: (line: number) => void;
+  onOpen: (line: number, key: SegmentKey) => void;
+  onAdd: (line: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `line-${li}`,
@@ -971,16 +1142,16 @@ function SortableRow({
     <div
       ref={setNodeRef}
       className={cn(
-        'rounded-md border border-white/[0.08] bg-neutral-900/30 p-1.5 space-y-1 transition-shadow',
+        'rounded-lg border border-white/[0.08] bg-neutral-900/30 px-2 py-1.5 transition-shadow',
         isOver && 'ring-2 ring-emerald-400/50',
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 pb-1">
         <span className="text-[10px] text-neutral-600 font-mono">row {li + 1}</span>
-        <span className="text-[10px] text-neutral-600">{row.length} segs</span>
+        <span className="text-[10px] text-neutral-600">{row.length} 块</span>
         {linesLen > 1 && (
           <button
-            onClick={() => onRemove(li)}
+            onClick={() => onRemoveRow(li)}
             disabled={!editable}
             className="ml-auto text-neutral-500 hover:text-red-400 disabled:opacity-30"
             title="Remove row"
@@ -989,204 +1160,284 @@ function SortableRow({
           </button>
         )}
       </div>
-      <SortableContext items={row} strategy={verticalListSortingStrategy}>
-        {row.map((key) => (
-          <SortableSegment
-            key={key}
-            segKey={key}
-            line={li}
-            segment={segments[key]}
-            label={SEGMENTS.find((s) => s.key === key)!.label}
-            editable={editable}
-            onChange={(p) => onChange(key, p)}
-          />
-        ))}
+      <SortableContext items={row} strategy={horizontalListSortingStrategy}>
+        <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
+          {row.length === 0 && (
+            <span className="text-[11px] text-neutral-600">
+              空行 — 点 + 添加块，或把胶囊拖进来
+            </span>
+          )}
+          {row.map((key) => (
+            <Capsule
+              key={key}
+              segKey={key}
+              line={li}
+              segment={config.segments[key]}
+              config={config}
+              editable={editable}
+              lastDragEnd={lastDragEnd}
+              onOpen={onOpen}
+            />
+          ))}
+          {editable && (
+            <button
+              onClick={() => onAdd(li)}
+              className="rounded-full border border-dashed border-neutral-600 px-2.5 py-1 text-xs text-neutral-400 transition-colors hover:border-neutral-400 hover:text-neutral-200"
+              title="添加块（选择类型；已在其他行的类型会移动过来）"
+            >
+              + 块
+            </button>
+          )}
+        </div>
       </SortableContext>
-      {row.length === 0 && (
-        <p className="text-[11px] text-neutral-600 px-1">Empty row — drag a segment here.</p>
-      )}
     </div>
   );
 }
 
-function SortableSegment({
-  segKey,
-  line,
-  segment,
-  label,
-  editable,
-  onChange,
+/**
+ * Small dialog for one capsule: switch its type with the tags (a tag whose
+ * type already lives on another row shows where, and moves it here), edit
+ * every field, or take the capsule out of its row. Portalled to <body> so the
+ * card's backdrop-filter cannot trap the fixed overlay.
+ */
+function SegmentModal({
+  editing,
+  config,
+  placedIn,
+  onPick,
+  onPatch,
+  onUnplace,
+  onClose,
 }: {
-  segKey: SegmentKey;
-  line: number;
-  segment: StatuslineSegment;
-  label: string;
-  editable: boolean;
-  onChange: (patch: Partial<StatuslineSegment>) => void;
+  editing: { line: number; key: SegmentKey | null };
+  config: StatuslineConfig;
+  placedIn: (k: SegmentKey) => number;
+  onPick: (k: SegmentKey) => void;
+  onPatch: (k: SegmentKey, p: Partial<StatuslineSegment>) => void;
+  onUnplace: () => void;
+  onClose: () => void;
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: segKey,
-    disabled: !editable,
-    data: { line },
-  });
-  const style = {
-    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
-    transition,
-  };
+  const key = editing.key;
+  const seg = key ? config.segments[key] : null;
 
-  return (
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
     <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        'rounded-md border border-white/[0.06] bg-neutral-900/40 p-1.5 space-y-1',
-        isDragging && 'opacity-50 ring-1 ring-white/30',
-      )}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="flex items-center gap-2">
-        <button
-          ref={setActivatorNodeRef}
-          {...attributes}
-          {...listeners}
-          className={cn(
-            'cursor-grab text-neutral-500 active:cursor-grabbing',
-            !editable && 'opacity-20 cursor-not-allowed',
-          )}
-          title="Drag to reorder (within or across rows)"
-        >
-          <span className="text-[11px] leading-none">⠿</span>
-        </button>
-        <input
-          type="checkbox"
-          checked={segment.enabled}
-          disabled={!editable}
-          onChange={(e) => onChange({ enabled: e.target.checked })}
-        />
-        <span className="text-xs w-14">{label}</span>
-        <button
-          onClick={() => onChange({ bold: !segment.bold })}
-          disabled={!editable}
-          className={cn(
-            'text-[11px] rounded px-1.5 py-0.5 disabled:opacity-30',
-            segment.bold ? 'bg-neutral-800 text-neutral-100 font-bold' : 'text-neutral-500 hover:text-neutral-300',
-          )}
-          title="Bold"
-        >
-          B
-        </button>
-        <label
-          className={cn(
-            'flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5 cursor-pointer',
-            !editable && 'opacity-40',
-            segment.merge ? 'bg-neutral-800 text-neutral-200' : 'text-neutral-500 hover:text-neutral-300',
-          )}
-          title="Merge into the next block's background"
-        >
-          <input
-            type="checkbox"
-            checked={segment.merge}
-            disabled={!editable}
-            onChange={(e) => onChange({ merge: e.target.checked })}
-            className="hidden"
-          />
-          merge
-        </label>
-        <input
-          value={segment.icon}
-          onChange={(e) => onChange({ icon: e.target.value })}
-          disabled={!editable}
-          placeholder="icon"
-          className="bg-neutral-900 rounded px-1.5 py-0.5 text-xs font-mono w-12 ml-auto text-center disabled:opacity-40"
-          title="Optional emoji / symbol prefix"
-        />
-        {/* context bar style selector */}
-        {segKey === 'context' && (
-          <div className="flex gap-0.5">
-            {BAR_STYLES.map((s) => (
+      <div className="w-full max-w-md space-y-3 rounded-xl border border-white/10 bg-neutral-900 p-4 shadow-mac">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-neutral-100">
+            {key
+              ? `${config.segments[key].icon ? config.segments[key].icon + ' ' : ''}${
+                  SEGMENTS.find((s) => s.key === key)!.label
+                }`
+              : '添加块'}
+          </span>
+          <span className="text-[10px] text-neutral-500">row {editing.line + 1}</span>
+          <button
+            onClick={onClose}
+            className="ml-auto text-neutral-500 hover:text-neutral-300"
+            title="关闭 (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* type tags — pick a new type; a type placed elsewhere shows its row */}
+        <div className="flex flex-wrap gap-1.5">
+          {SEGMENTS.map((s) => {
+            const at = placedIn(s.key);
+            const isCurrent = s.key === key;
+            const otherRow = at >= 0 && at !== editing.line;
+            return (
               <button
                 key={s.key}
-                onClick={() => onChange({ style: s.key })}
-                disabled={!editable}
+                type="button"
+                onClick={() => {
+                  if (!isCurrent) onPick(s.key);
+                }}
+                title={otherRow ? `已在 row ${at + 1} — 点击移至本行` : s.key}
                 className={cn(
-                  'text-[10px] rounded px-1 py-0.5 disabled:opacity-30',
-                  (segment.style ?? 'both') === s.key
-                    ? 'bg-neutral-800 text-neutral-100'
-                    : 'text-neutral-500 hover:text-neutral-300',
+                  'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                  isCurrent
+                    ? 'border-blue-500/50 bg-blue-900/50 text-blue-200'
+                    : otherRow
+                      ? 'border-transparent bg-neutral-800/70 text-amber-400/80 hover:bg-neutral-700 hover:text-amber-300'
+                      : 'border-transparent bg-neutral-800/70 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
                 )}
-                title={s.label}
               >
                 {s.label}
+                {otherRow && <span className="ml-1 text-[9px] opacity-70">row{at + 1}</span>}
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+
+        {key === null && (
+          <p className="text-xs text-neutral-500">
+            选择一个块类型加入本行；已在其他行的类型会整体移动过来。
+          </p>
         )}
-        {/* tokens: cumulative session total vs. current context window */}
-        {segKey === 'tokens' && (
-          <div className="flex gap-0.5">
-            {TOKEN_METRICS.map((m) => (
+
+        {key && seg && (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
               <button
-                key={m.key}
-                onClick={() => onChange({ metric: m.key })}
-                disabled={!editable}
+                onClick={() => onPatch(key, { enabled: !seg.enabled })}
                 className={cn(
-                  'text-[10px] rounded px-1 py-0.5 disabled:opacity-30',
-                  (segment.metric ?? 'session') === m.key
-                    ? 'bg-neutral-800 text-neutral-100'
+                  'rounded px-2 py-0.5',
+                  seg.enabled
+                    ? 'bg-emerald-900/50 text-emerald-300'
+                    : 'bg-neutral-800 text-neutral-500',
+                )}
+              >
+                {seg.enabled ? '已启用' : '未启用'}
+              </button>
+              <button
+                onClick={() => onPatch(key, { bold: !seg.bold })}
+                className={cn(
+                  'rounded px-2 py-0.5',
+                  seg.bold
+                    ? 'bg-neutral-800 text-neutral-100 font-bold'
                     : 'text-neutral-500 hover:text-neutral-300',
                 )}
-                title={m.title}
+                title="Bold"
               >
-                {m.key}
+                B
               </button>
-            ))}
-          </div>
+              <label
+                className={cn(
+                  'flex cursor-pointer items-center gap-1 rounded px-2 py-0.5',
+                  seg.merge
+                    ? 'bg-neutral-800 text-neutral-200'
+                    : 'text-neutral-500 hover:text-neutral-300',
+                )}
+                title="Merge into the next block's background"
+              >
+                <input
+                  type="checkbox"
+                  checked={seg.merge}
+                  onChange={(e) => onPatch(key, { merge: e.target.checked })}
+                  className="hidden"
+                />
+                merge
+              </label>
+              <input
+                value={seg.icon}
+                onChange={(e) => onPatch(key, { icon: e.target.value })}
+                placeholder="icon"
+                className="ml-auto w-14 rounded bg-neutral-800 px-1.5 py-0.5 text-center font-mono text-xs"
+                title="Optional emoji / symbol prefix"
+              />
+            </div>
+
+            {key === 'context' && (
+              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
+                <span className="w-10 text-neutral-600">样式</span>
+                {BAR_STYLES.map((st) => (
+                  <button
+                    key={st.key}
+                    onClick={() => onPatch(key, { style: st.key })}
+                    className={cn(
+                      'rounded px-1.5 py-0.5',
+                      (seg.style ?? 'both') === st.key
+                        ? 'bg-neutral-800 text-neutral-100'
+                        : 'text-neutral-500 hover:text-neutral-300',
+                    )}
+                    title={st.label}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {key === 'tokens' && (
+              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
+                <span className="w-10 text-neutral-600">计量</span>
+                {TOKEN_METRICS.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => onPatch(key, { metric: m.key })}
+                    className={cn(
+                      'rounded px-1.5 py-0.5',
+                      (seg.metric ?? 'session') === m.key
+                        ? 'bg-neutral-800 text-neutral-100'
+                        : 'text-neutral-500 hover:text-neutral-300',
+                    )}
+                    title={m.title}
+                  >
+                    {m.key}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-10 text-neutral-600">fg / bg</span>
+              <ColorPicker
+                value={seg.color}
+                editable
+                onChange={(c) => onPatch(key, { color: c })}
+              />
+              <ColorPicker
+                value={seg.backgroundColor}
+                editable
+                allowNone
+                noneSelected={seg.backgroundColor === null}
+                onNone={() => onPatch(key, { backgroundColor: null })}
+                onChange={(c) => onPatch(key, { backgroundColor: c })}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-10 text-neutral-600">label</span>
+              <input
+                value={seg.label ?? ''}
+                onChange={(e) => onPatch(key, { label: e.target.value })}
+                placeholder="Label"
+                className="w-24 rounded bg-neutral-800 px-1.5 py-0.5 font-mono"
+                title="Static prefix rendered before the value, joined by the label separator"
+              />
+              <span className="text-neutral-600">format</span>
+              <input
+                value={seg.format ?? ''}
+                onChange={(e) => onPatch(key, { format: e.target.value })}
+                placeholder={SEGMENT_DEFAULT_FORMAT[key]}
+                className="min-w-0 flex-1 rounded bg-neutral-800 px-1.5 py-0.5 font-mono"
+                title={`Template tokens: ${SEGMENT_TOKENS[key].map((t) => '{' + t + '}').join(' ')}`}
+              />
+            </div>
+
+            <div className="flex items-center justify-between border-t border-white/[0.06] pt-2">
+              <button
+                onClick={onUnplace}
+                className="rounded px-2 py-1 text-xs text-red-400/80 hover:bg-red-900/30 hover:text-red-300"
+                title="把该块移出行（配置保留，可从 + 块再加回）"
+              >
+                从行中移除
+              </button>
+              <button
+                onClick={onClose}
+                className="rounded bg-blue-900/50 px-3 py-1 text-xs text-blue-200 hover:bg-blue-900/70"
+              >
+                完成
+              </button>
+            </div>
+          </>
         )}
       </div>
-      <div className="flex items-center gap-1 pl-6">
-        <span className="text-[10px] text-neutral-600 w-12">fg / bg</span>
-        <ColorPicker
-          value={segment.color}
-          editable={editable}
-          onChange={(c) => onChange({ color: c })}
-        />
-        <span className="text-[10px] text-neutral-600 ml-2">bg</span>
-        <ColorPicker
-          value={segment.backgroundColor}
-          editable={editable}
-          allowNone
-          noneSelected={segment.backgroundColor === null}
-          onNone={() => onChange({ backgroundColor: null })}
-          onChange={(c) => onChange({ backgroundColor: c })}
-        />
-      </div>
-      <div className="flex items-center gap-1 pl-6">
-        <span className="text-[10px] text-neutral-600 w-12">label</span>
-        <input
-          value={segment.label ?? ''}
-          onChange={(e) => onChange({ label: e.target.value })}
-          disabled={!editable}
-          placeholder="Model"
-          className="bg-neutral-900 rounded px-1.5 py-0.5 text-xs font-mono w-20 disabled:opacity-40"
-          title="Static prefix rendered before the value, joined by the label separator"
-        />
-        <span className="text-[10px] text-neutral-600 ml-2">format</span>
-        <input
-          value={segment.format ?? ''}
-          onChange={(e) => onChange({ format: e.target.value })}
-          disabled={!editable}
-          placeholder={SEGMENT_DEFAULT_FORMAT[segKey]}
-          className="bg-neutral-900 rounded px-1.5 py-0.5 text-xs font-mono flex-1 disabled:opacity-40"
-          title={`Template tokens: ${SEGMENT_TOKENS[segKey].map((t) => `{${t}}`).join(' ')}`}
-        />
-      </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
