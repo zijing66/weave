@@ -9,6 +9,7 @@ import {
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { countEffectiveSkills } from '@/lib/skill-stats';
 import {
   Trash2,
   FileCode,
@@ -215,6 +216,37 @@ export function SkillGrid({
   );
 }
 
+/** `已生效 N / M` pill — how many of the listed skills are actually in effect.
+ * Green when everything is live, amber when a disabled plugin is holding some
+ * back, neutral when there is nothing to count. */
+function EffectivePill({ effective, total }: { effective: number; total: number }) {
+  const tone =
+    total === 0
+      ? 'bg-neutral-800 text-neutral-500'
+      : effective === total
+        ? 'bg-emerald-900/40 text-emerald-300'
+        : 'bg-amber-900/30 text-amber-300';
+  const title =
+    total === 0
+      ? '没有可统计的 skill'
+      : effective === total
+        ? `${total} 个 skill 全部生效`
+        : `${total - effective} 个 skill 因所属插件被禁用而未生效`;
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums',
+        tone,
+      )}
+      title={title}
+    >
+      <Power className="h-3 w-3" />
+      已生效：{effective} / {total}
+    </span>
+  );
+}
+
 function GroupedSkills({
   groups,
   updates,
@@ -250,14 +282,19 @@ function GroupedSkills({
   const toggleAll = () =>
     anyCollapsed ? setCollapsed(new Set()) : setCollapsed(new Set(groupKeys));
 
+  // How many of the listed skills are actually live. The heading used to carry
+  // the total; the pill shows effective/total, so that count would be a repeat.
+  const { effective, total } = countEffectiveSkills(groups);
+
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {readOnly ? '全局生效' : '全局 Skills'} ({groups.reduce((n, g) => n + g.skills.length, 0)})
+          {readOnly ? '全局生效' : '全局 Skills'}
           {readOnly && <span className="ml-1 text-[10px] text-neutral-600 normal-case">只读</span>}
         </h2>
         <div className="ml-auto flex items-center gap-1">
+          <EffectivePill effective={effective} total={total} />
           <button
             onClick={toggleAll}
             className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
