@@ -11,8 +11,8 @@ import {
   type StatuslineColor,
   type StatuslineConfig,
 } from '@weave/server';
-import { parseAnsiSpans } from './ansi.js';
-import { buildMockInput } from './mock-input.js';
+import { parseAnsiSpans, toInkColor } from './ansi.js';
+import { buildMockInput, writeFixtureTranscript } from './mock-input.js';
 
 /**
  * Interactive statusline preview TUI (Ink).
@@ -34,12 +34,38 @@ export interface Cursor {
 }
 
 /** Cycle lists for the single-key toggles. */
-const COLORS: StatuslineColor[] = ['gray', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan'];
+const NAMED_COLORS: StatuslineColor[] = ['gray', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan'];
+/**
+ * Extended entries appended to the colour cycle so one key covers all three
+ * encodings: indexed 256, then truecolor hex.
+ */
+const EXTENDED_COLORS: StatuslineColor[] = [
+  'ansi256:196',
+  'ansi256:208',
+  'ansi256:39',
+  '#f7768e',
+  '#7aa2f7',
+  '#9ece6a',
+];
+const COLORS: StatuslineColor[] = [...NAMED_COLORS, ...EXTENDED_COLORS];
+/** The full colour cycle, exported so tests can assert wrap-around length. */
+export const COLOR_CYCLE: readonly StatuslineColor[] = COLORS;
 const SEPARATORS = [' │ ', ' · ', ' — ', '  ', ''];
 const ALIGNS: StatuslineConfig['align'][] = ['left', 'center', 'right'];
 const CONTEXT_STYLES: NonNullable<
   StatuslineConfig['segments'][SegmentKey]['style']
 >[] = ['percent', 'bar', 'both'];
+
+/** Glyph pairs cycled with `B` for the progress bar. */
+const BAR_GLYPHS: { fill: string; empty: string }[] = [
+  { fill: '█', empty: '░' },
+  { fill: '▰', empty: '▱' },
+  { fill: '=', empty: '·' },
+  { fill: '#', empty: '-' },
+];
+
+/** Rendered between a label and its value; cycled with `L`. */
+const LABEL_SEPARATORS = [': ', ' ', ':  ', ' » '];
 
 /** Segment key → icon candidates (cycled with `i`). */
 const ICONS: Partial<Record<SegmentKey, string[]>> = {
@@ -47,13 +73,23 @@ const ICONS: Partial<Record<SegmentKey, string[]>> = {
   git: ['', '🌿'],
   changes: ['', '✏️'],
   model: ['', '🤖'],
-  thinking: ['', '🧠'],
-  context: ['', '📊'],
+  thinking: ['', '🧩'],
+  context: ['', '🧠'],
   tokens: ['', '🔢'],
-  cost: ['', '💰'],
+  cost: ['', '💸'],
   rate: ['', '⚡'],
   time: ['', '🕒'],
 };
+
+/**
+ * Fixture transcript for the preview, written once per process — the `Total`
+ * segment reads it, so without it that segment would render empty.
+ */
+let fixtureTranscript: string | undefined;
+function mockTranscript(): string {
+  if (fixtureTranscript === undefined) fixtureTranscript = writeFixtureTranscript();
+  return fixtureTranscript;
+}
 
 /** Run the generated script against the mock payload and capture its output. */
 export function runPreviewLines(
@@ -64,7 +100,7 @@ export function runPreviewLines(
   const script = generateStatuslineScript(config);
   // `node -e` cannot start with a shebang — strip the first line.
   const source = script.replace(/^#!.*\n/, '');
-  const input = JSON.stringify(buildMockInput(projectPath, columns));
+  const input = JSON.stringify(buildMockInput(projectPath, columns, mockTranscript()));
   try {
     const res = spawnSync(process.execPath, ['-e', source], {
       input,
@@ -144,8 +180,13 @@ export function cyclePowerlineGlyph(config: StatuslineConfig): StatuslineConfig 
   return { ...config, powerline: { ...config.powerline, separator: next } };
 }
 
-export function toggleLogo(config: StatuslineConfig): StatuslineConfig {
-  return { ...config, showLogo: !config.showLogo };
+/**
+ * Cycle the logo mark's colour. The logo itself cannot be hidden — it carries
+ * the running weave version.
+ */
+export function cycleLogoColor(config: StatuslineConfig): StatuslineConfig {
+  const i = COLORS.indexOf(config.logoColor);
+  return { ...config, logoColor: COLORS[(i + 1) % COLORS.length]! };
 }
 
 export function cycleSeparator(config: StatuslineConfig): StatuslineConfig {
@@ -158,6 +199,43 @@ export function bumpRefreshInterval(config: StatuslineConfig, delta: number): St
     ...config,
     refreshInterval: Math.max(1, config.refreshInterval + delta),
   };
+}
+
+/**
+ * Set a segment's free-text field. An empty string clears it (stored as
+ * undefined) so the segment falls back to its default rendering rather than
+ * emitting a bare label separator.
+ */
+export function setSegmentField(
+  config: StatuslineConfig,
+  key: SegmentKey,
+  field: 'label' | 'format',
+  value: string,
+): StatuslineConfig {
+  const patch: Partial<StatuslineConfig['segments'][SegmentKey]> =
+    value === '' ? { [field]: undefined } : { [field]: value };
+  return patchSegment(config, key, patch);
+}
+
+/** Grow/shrink the progress bar, clamped to the 1-40 range the generator uses. */
+export function bumpBarCells(config: StatuslineConfig, delta: number): StatuslineConfig {
+  const cells = Math.max(1, Math.min(40, config.bar.cells + delta));
+  return { ...config, bar: { ...config.bar, cells } };
+}
+
+/** Cycle the bar's fill/empty glyph pair. */
+export function cycleBarGlyph(config: StatuslineConfig): StatuslineConfig {
+  const i = BAR_GLYPHS.findIndex(
+    (g) => g.fill === config.bar.fill && g.empty === config.bar.empty,
+  );
+  const next = BAR_GLYPHS[(i + 1) % BAR_GLYPHS.length]!;
+  return { ...config, bar: { ...config.bar, ...next } };
+}
+
+/** Cycle the separator drawn between a segment's label and its value. */
+export function cycleLabelSeparator(config: StatuslineConfig): StatuslineConfig {
+  const i = LABEL_SEPARATORS.indexOf(config.labelSeparator);
+  return { ...config, labelSeparator: LABEL_SEPARATORS[(i + 1) % LABEL_SEPARATORS.length]! };
 }
 
 /** Clamp a cursor to the config's grid, skipping over empty rows. */
@@ -199,8 +277,8 @@ function SpanLine({ line }: { line: string }) {
       {spans.map((s, i) => (
         <Text
           key={i}
-          color={s.color}
-          backgroundColor={s.backgroundColor}
+          color={s.color ? toInkColor(s.color) : undefined}
+          backgroundColor={s.backgroundColor ? toInkColor(s.backgroundColor) : undefined}
           bold={s.bold}
           dimColor={s.dim}
         >
@@ -223,7 +301,7 @@ function SegmentChip({
   const label = `${seg.enabled ? '●' : '○'}${seg.icon ? seg.icon : ''}${segmentKey}`;
   return (
     <Text
-      color={seg.enabled ? seg.color : 'gray'}
+      color={toInkColor(seg.enabled ? seg.color : 'gray')}
       bold={focused}
       inverse={focused}
       dimColor={!seg.enabled}
@@ -250,6 +328,12 @@ function PreviewApp({
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
+  /** Active text edit for a segment's label/format (null = not editing). */
+  const [editing, setEditing] = useState<{
+    key: SegmentKey;
+    field: 'label' | 'format';
+    buf: string;
+  } | null>(null);
 
   const columns = Math.max(60, stdout?.columns ?? 100);
   const focusKey = config.lines[cursor.row]?.[cursor.col];
@@ -271,6 +355,29 @@ function PreviewApp({
 
   useInput((input, key) => {
     if (writing) return;
+
+    // A label/format edit swallows every key until Enter or Escape.
+    if (editing) {
+      if (key.escape) {
+        setEditing(null);
+        return;
+      }
+      if (key.return) {
+        const { key: target, field, buf } = editing;
+        edit((c) => setSegmentField(c, target, field, buf));
+        setEditing(null);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setEditing({ ...editing, buf: editing.buf.slice(0, -1) });
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setEditing({ ...editing, buf: editing.buf + input });
+      }
+      return;
+    }
+
     if (input === 'q') {
       void exit();
       return;
@@ -300,7 +407,37 @@ function PreviewApp({
       // key reserved so `w` stays the only destructive action.
       return;
     }
+
+    // Uppercase keys are checked against the raw input, because the switch
+    // below folds case (`l` is logo, `L` is the label separator).
+    if (input === 'B') {
+      edit(cycleBarGlyph);
+      return;
+    }
+    if (input === 'L') {
+      edit(cycleLabelSeparator);
+      return;
+    }
+    if (input === '[') {
+      edit((c) => bumpBarCells(c, -1));
+      return;
+    }
+    if (input === ']') {
+      edit((c) => bumpBarCells(c, 1));
+      return;
+    }
+
     if (!focusKey) return;
+
+    if (input === 'n') {
+      setEditing({ key: focusKey, field: 'label', buf: config.segments[focusKey].label ?? '' });
+      return;
+    }
+    if (input === 'f') {
+      setEditing({ key: focusKey, field: 'format', buf: config.segments[focusKey].format ?? '' });
+      return;
+    }
+
     switch (input.toLowerCase()) {
       case ' ':
         edit((c) => toggleSegment(c, focusKey));
@@ -330,7 +467,7 @@ function PreviewApp({
         edit((c) => cyclePowerlineGlyph(c));
         return;
       case 'l':
-        edit((c) => toggleLogo(c));
+        edit((c) => cycleLogoColor(c));
         return;
       case 's':
         edit((c) => cycleSeparator(c));
@@ -415,7 +552,16 @@ function PreviewApp({
       </Box>
 
       <Box flexDirection="column" gap={0} marginTop={1}>
-        {seg && focusKey ? (
+        {editing ? (
+          <Text>
+            <Text bold color="yellow">
+              {` ${editing.key}.${editing.field} `}
+            </Text>{' '}
+            <Text>{editing.buf}</Text>
+            <Text inverse> </Text>
+            <Text dimColor> Enter 确认 · Esc 取消</Text>
+          </Text>
+        ) : seg && focusKey ? (
           <Text>
             <Text bold inverse>
               {` ${focusKey} `}
@@ -427,13 +573,22 @@ function PreviewApp({
             </Text>
           </Text>
         ) : null}
+        {!editing && seg && focusKey && (seg.label || seg.format) ? (
+          <Text dimColor>
+            {seg.label ? `label ${seg.label}${config.labelSeparator}` : ''}
+            {seg.format ? `format ${seg.format}` : ''}
+          </Text>
+        ) : null}
         <Text dimColor>
-          keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · a 对齐 · p powerline · g
-          powerline 分隔符 · l logo · s 分隔符 · r 重渲染 · w 写入 · q 退出
+          bar {config.bar.cells}格 {config.bar.fill}
+          {config.bar.empty} · labelSep {JSON.stringify(config.labelSeparator)}
         </Text>
-        {status && (
-          <Text color="green">{status}</Text>
-        )}
+        <Text dimColor>
+          keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · n 标签 · f 模板 · [ ] bar 格数
+          · B bar 字形 · L 标签分隔符 · a 对齐 · p powerline · g powerline 分隔符 · l logo 颜色 ·
+          s 分隔符 · r 重渲染 · w 写入 · q 退出
+        </Text>
+        {status && <Text color="green">{status}</Text>}
         {writing && <Text color="yellow">writing…</Text>}
       </Box>
     </Box>

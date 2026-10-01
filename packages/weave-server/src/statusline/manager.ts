@@ -5,8 +5,12 @@ import {
   DEFAULT_STATUSLINE_CONFIG,
   LEGACY_IDENTITY_LINE,
   LEGACY_METRICS_LINE,
+  NAMED_COLORS,
   SEGMENT_ORDER,
   type StatuslineConfig,
+  type StatuslineColor,
+  type StatuslineBar,
+  type StatuslineSegment,
   type SegmentKey,
 } from './config.js';
 import { generateStatuslineScript } from './generator.js';
@@ -232,21 +236,84 @@ function normalizeLines(parsed: LegacyStatuslineConfig): SegmentKey[][] {
   return lines;
 }
 
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
+const HEX3 = /^#([0-9a-fA-F]{3})$/;
+const ANSI256 = /^ansi256:(\d{1,3})$/;
+
+/**
+ * Coerce a stored colour to a valid one, falling back when it is malformed.
+ * Accepts the seven names, `ansi256:0-255`, and `#rgb` / `#rrggbb` (3-digit
+ * hex is expanded so downstream code only ever sees 6-digit form).
+ *
+ * Values are validated here rather than in the generator because a bad colour
+ * must never reach a written config — the generated script has a hard fallback
+ * (`37`), so an invalid value would otherwise fail silently.
+ */
+function normalizeColor(value: unknown, fallback: StatuslineColor): StatuslineColor {
+  if (typeof value !== 'string') return fallback;
+  if ((NAMED_COLORS as readonly string[]).includes(value)) {
+    return value as StatuslineColor;
+  }
+  const indexed = ANSI256.exec(value);
+  if (indexed) {
+    const n = Number(indexed[1]);
+    if (n >= 0 && n <= 255) return `ansi256:${n}`;
+    return fallback;
+  }
+  if (HEX6.test(value)) return value.toLowerCase() as StatuslineColor;
+  const short = HEX3.exec(value);
+  if (short) {
+    const [, h] = short;
+    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toLowerCase() as StatuslineColor;
+  }
+  return fallback;
+}
+
+/** Merge a stored segment over its default, validating the colour fields. */
+function normalizeSegment(raw: unknown, base: StatuslineSegment): StatuslineSegment {
+  if (!raw || typeof raw !== 'object') return { ...base };
+  const p = raw as Partial<StatuslineSegment>;
+  const merged: StatuslineSegment = {
+    ...base,
+    ...p,
+    color: normalizeColor(p.color, base.color),
+    backgroundColor:
+      p.backgroundColor == null ? null : normalizeColor(p.backgroundColor, base.backgroundColor ?? 'gray'),
+  };
+  // Empty strings mean "unset" for the optional text fields — storing '' would
+  // otherwise render a bare labelSeparator with no label.
+  if (typeof p.label !== 'string' || p.label === '') delete merged.label;
+  if (typeof p.format !== 'string' || p.format === '') delete merged.format;
+  if (p.metric !== 'session' && p.metric !== 'context') delete merged.metric;
+  return merged;
+}
+
+/** Clamp a stored bar into range; malformed glyph fields fall back. */
+function normalizeBar(raw: unknown): StatuslineBar {
+  const base = DEFAULT_STATUSLINE_CONFIG.bar;
+  if (!raw || typeof raw !== 'object') return { ...base };
+  const b = raw as Partial<StatuslineBar>;
+  const cells = Math.round(Number(b.cells));
+  return {
+    cells: Number.isFinite(cells) ? Math.max(1, Math.min(40, cells)) : base.cells,
+    fill: typeof b.fill === 'string' && b.fill !== '' ? b.fill : base.fill,
+    empty: typeof b.empty === 'string' && b.empty !== '' ? b.empty : base.empty,
+  };
+}
+
 function mergeDefaults(parsed: Partial<StatuslineConfig>): StatuslineConfig {
   const segments = { ...DEFAULT_STATUSLINE_CONFIG.segments };
   for (const key of Object.keys(segments) as (keyof typeof segments)[]) {
-    const parsedSeg = parsed.segments?.[key];
-    if (parsedSeg) {
-      segments[key] = { ...segments[key], ...parsedSeg };
-    }
+    segments[key] = normalizeSegment(parsed.segments?.[key], segments[key]);
   }
   const interval = parsed.refreshInterval;
   return {
     separator: parsed.separator ?? DEFAULT_STATUSLINE_CONFIG.separator,
     align: parsed.align ?? DEFAULT_STATUSLINE_CONFIG.align,
-    showLogo: parsed.showLogo ?? DEFAULT_STATUSLINE_CONFIG.showLogo,
+    // `showLogo` from older configs is intentionally dropped: the logo is no
+    // longer optional, and carrying a dead field would confuse the panel.
     logoText: parsed.logoText ?? DEFAULT_STATUSLINE_CONFIG.logoText,
-    logoColor: parsed.logoColor ?? DEFAULT_STATUSLINE_CONFIG.logoColor,
+    logoColor: normalizeColor(parsed.logoColor, DEFAULT_STATUSLINE_CONFIG.logoColor),
     powerline: {
       // spread keeps the optional glyph fields (separator/startCap/endCap);
       // undefined means "classic triangle defaults" downstream
@@ -257,6 +324,12 @@ function mergeDefaults(parsed: Partial<StatuslineConfig>): StatuslineConfig {
     refreshInterval:
       interval != null && interval >= 1 ? interval : DEFAULT_STATUSLINE_CONFIG.refreshInterval,
     source: parsed.source ?? DEFAULT_STATUSLINE_CONFIG.source,
+    bar: normalizeBar(parsed.bar),
+    divider: typeof parsed.divider === 'string' ? parsed.divider : DEFAULT_STATUSLINE_CONFIG.divider,
+    labelSeparator:
+      typeof parsed.labelSeparator === 'string'
+        ? parsed.labelSeparator
+        : DEFAULT_STATUSLINE_CONFIG.labelSeparator,
     segments,
   };
 }

@@ -153,14 +153,22 @@ export {
   SEGMENT_ORDER,
   LEGACY_IDENTITY_LINE,
   LEGACY_METRICS_LINE,
+  NAMED_COLORS,
+  SEGMENT_TOKENS,
+  SEGMENT_DEFAULT_FORMAT,
+  CONTEXT_STYLE_FORMAT,
+  PLAIN_STATUSLINE_CONFIG,
 } from './statusline/config.js';
 export type {
   StatuslineConfig,
   StatuslinePowerline,
   StatuslineSegment,
   StatuslineColor,
+  StatuslineNamedColor,
+  StatuslineBar,
   SegmentKey,
 } from './statusline/config.js';
+export { WEAVE_VERSION } from './version.js';
 export { generateStatuslineScript } from './statusline/generator.js';
 export {
   readStatuslineConfig,

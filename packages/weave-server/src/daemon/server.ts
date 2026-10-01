@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { WEAVE_VERSION } from '../version.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -74,7 +75,7 @@ import {
 import { defaultProjectOpener, type ProjectOpener } from './opener.js';
 import { DAEMON_HOST } from './port.js';
 
-export const DAEMON_VERSION = '0.1.0';
+export const DAEMON_VERSION = WEAVE_VERSION;
 
 export interface WeaveServerDeps {
   projects: ProjectRepository;
