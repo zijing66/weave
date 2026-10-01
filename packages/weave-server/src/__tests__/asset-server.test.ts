@@ -130,15 +130,23 @@ describe('daemon server — file / mcp / statusline', () => {
     const res = await fetch(`${base()}/api/statusline/global`, {
       method: 'PUT',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...DEFAULT_STATUSLINE_CONFIG, logoText: '▊ GLOBAL2' }),
+      // logoText is pinned to the badge now — the model label marks the
+      // template instead (it survives normalisation and renders at runtime).
+      body: JSON.stringify({
+        ...DEFAULT_STATUSLINE_CONFIG,
+        segments: {
+          ...DEFAULT_STATUSLINE_CONFIG.segments,
+          model: { ...DEFAULT_STATUSLINE_CONFIG.segments.model, label: 'GLOBAL2' },
+        },
+      }),
     });
     expect(res.status).toBe(200);
     const script = readFileSync(join(projectDir, '.claude/helpers/statusline.cjs'), 'utf-8');
-    expect(script).toContain('▊ GLOBAL2');
+    expect(script).toContain('GLOBAL2');
     // GET returns the stored global template
     const g = await fetch(`${base()}/api/statusline/global`, { headers: auth });
     const gd = await g.json();
-    expect(gd.config.logoText).toBe('▊ GLOBAL2');
+    expect(gd.config.segments.model.label).toBe('GLOBAL2');
   });
 
   it('GET /projects/:id/statusline includes globalConfig', async () => {
@@ -146,7 +154,7 @@ describe('daemon server — file / mcp / statusline', () => {
     const data = await res.json();
     expect(data.config.source).toBe('global');
     expect(data.globalConfig.source).toBe('global');
-    expect(data.globalConfig.logoText).toBe('▊ GLOBAL2');
+    expect(data.globalConfig.segments.model.label).toBe('GLOBAL2');
   });
 
   it('requires the daemon token', async () => {

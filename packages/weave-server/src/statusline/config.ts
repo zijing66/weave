@@ -153,14 +153,15 @@ export const POWERLINE_DEFAULT_GLYPHS = {
 } as const;
 
 export interface StatuslineConfig {
-  /** Separator rendered between segments within a line (ignored in powerline mode). */
+  /** Rendered between segments when powerline blocks are off; powerline
+   * mode ignores it (the join glyph takes over). Default a single space. */
   separator: string;
-  /** Where the rendered line(s) sit within the terminal width. */
+  /** Alignment of each rendered row: left, centre or right. */
   align: StatuslineAlign;
   /**
-   * Text of the row-0 logo mark, rendered as `<logoText> v<version>`. The logo
-   * itself is not optional — it identifies the line as weave's and carries the
-   * version that generated the script.
+   * Text of the row-0 logo mark, rendered as `<logoText> v<version>`.
+   * weave's badge: the value is pinned to the shipped mark (only `logoColor`
+   * is user-configurable) and the panel offers no editor for it.
    */
   logoText: string;
   /** Colour of the logo mark. */

@@ -831,13 +831,12 @@ export function StatuslinePanel({
           )}
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             Logo
-            <input
-              value={config.logoText}
-              disabled={!editable}
-              onChange={(e) => patch({ logoText: e.target.value })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-28 disabled:opacity-40"
-            />
-            <span className="text-neutral-600 text-[10px]">v{WEAVE_VERSION} 会一并显示，不可关闭</span>
+            {/* The badge is fixed (text and visibility are not user settings);
+                only its colour below is configurable. */}
+            <span className="rounded bg-neutral-900 px-2 py-0.5 font-mono text-neutral-300">
+              {config.logoText} v{WEAVE_VERSION}
+            </span>
+            <span className="text-neutral-600 text-[10px]">文字固定、不可隐藏，仅颜色可调</span>
             <div className="flex gap-1">
               <ColorPicker
                 value={config.logoColor}

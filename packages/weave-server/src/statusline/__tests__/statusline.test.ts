@@ -189,13 +189,21 @@ describe('statusline — manager', () => {
   });
 
   it('a following project stores only the source marker and renders from global', async () => {
-    await writeGlobalStatuslineConfig({ ...DEFAULT_STATUSLINE_CONFIG, logoText: '▊ GLOBAL' });
+    // logoText is pinned to the badge now, so the propagation marker is the
+    // model label — rendered at runtime by the generated script's config.
+    await writeGlobalStatuslineConfig({
+      ...DEFAULT_STATUSLINE_CONFIG,
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        model: { ...DEFAULT_STATUSLINE_CONFIG.segments.model, label: 'GLOBMARK' },
+      },
+    });
     await applyStatuslineConfig(dir, { ...DEFAULT_STATUSLINE_CONFIG, source: 'global' });
     const file = JSON.parse(readFileSync(join(dir, '.weave/statusline.json'), 'utf-8'));
     expect(file.source).toBe('global');
     expect(file.segments).toBeUndefined(); // full config is NOT persisted locally
     const script = readFileSync(join(dir, '.claude/helpers/statusline.cjs'), 'utf-8');
-    expect(script).toContain('▊ GLOBAL'); // generated from the global template
+    expect(script).toContain('GLOBMARK'); // generated from the global template
   });
 
   it('global template round-trips', async () => {
@@ -259,6 +267,13 @@ describe('statusline — config normalisation', () => {
     });
     const cfg = await readStatuslineConfig(dir);
     expect(cfg.lines).toEqual([['model'], ['git']]);
+  });
+
+  it('pins logoText to the shipped badge (only the colour is configurable)', async () => {
+    writeCustom({ logoText: 'HACKED', logoColor: 'cyan' });
+    const cfg = await readStatuslineConfig(dir);
+    expect(cfg.logoText).toBe(DEFAULT_STATUSLINE_CONFIG.logoText);
+    expect(cfg.logoColor).toBe('cyan'); // colour still round-trips
   });
 
   it('accepts the seven named colours', async () => {
