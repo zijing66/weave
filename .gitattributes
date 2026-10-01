@@ -1,0 +1,22 @@
+# Line-ending policy.
+#
+# `core.autocrlf` is a per-machine setting and is not cloned, so the repository
+# cannot rely on it: two contributors could produce different bytes for the
+# same file. These attributes are versioned, so the rule applies everywhere.
+#
+# The history already stores LF throughout, so this only pins what is there.
+
+# Normalize to LF in the repository, and keep the working tree LF on every
+# platform too — that is what makes a checkout byte-identical across machines.
+* text=auto eol=lf
+
+# Windows batch files are the exception. cmd.exe is documented to misparse
+# LF-only scripts around labels and multi-line blocks, and the dev shims in
+# bin/ use multi-line `if` blocks, so they keep CRLF on disk.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never let text conversion run over binary assets. `text=auto` already detects
+# these correctly; stating it explicitly keeps the intent visible. Add further
+# asset types here as they appear.
+*.png binary
