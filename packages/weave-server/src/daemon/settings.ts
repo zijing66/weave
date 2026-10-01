@@ -25,6 +25,10 @@ export type TerminalPreset =
   // Linux
   | 'gnome' // gnome-terminal
   | 'konsole'
+  // Windows / macOS / Linux
+  | 'wezterm'
+  // macOS / Linux only — Ghostty has no Windows build
+  | 'ghostty'
   // Arbitrary command template
   | 'custom';
 
@@ -56,6 +60,8 @@ export const ALL_TERMINAL_PRESETS: TerminalPreset[] = [
   'iterm',
   'gnome',
   'konsole',
+  'wezterm',
+  'ghostty',
   'custom',
 ];
 
@@ -75,17 +81,24 @@ const PRESET_LABELS: Record<TerminalPreset, string> = {
   iterm: 'iTerm2',
   gnome: 'gnome-terminal',
   konsole: 'Konsole',
+  wezterm: 'WezTerm',
+  ghostty: 'Ghostty',
   custom: '自定义命令',
 };
 
-/** Presets selectable on the given platform (ordered for the dropdown). */
+/** Presets selectable on the given platform (ordered for the dropdown).
+ *
+ * The list is a superset of what is installed — a preset is offered whenever
+ * the terminal *can* run on that platform, since the machine running the
+ * dashboard is not necessarily the one the choice is for. Ghostty is macOS and
+ * Linux only (no official Windows build), so it is omitted on win32. */
 export function terminalPresetsFor(platform: NodeJS.Platform): TerminalPresetMeta[] {
   const ids: TerminalPreset[] =
     platform === 'win32'
-      ? ['auto', 'wt', 'powershell', 'cmd', 'custom']
+      ? ['auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']
       : platform === 'darwin'
-        ? ['auto', 'terminal', 'iterm', 'custom']
-        : ['auto', 'gnome', 'konsole', 'custom'];
+        ? ['auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']
+        : ['auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom'];
   return ids.map((id) => ({ id, label: PRESET_LABELS[id] }));
 }
 

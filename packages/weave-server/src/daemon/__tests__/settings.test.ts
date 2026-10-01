@@ -57,17 +57,35 @@ describe('daemon settings persistence', () => {
 describe('terminalPresetsFor', () => {
   it('offers only Windows presets on win32', () => {
     const ids = terminalPresetsFor('win32').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'wt', 'powershell', 'cmd', 'custom']);
+    expect(ids).toEqual(['auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']);
   });
 
   it('offers only macOS presets on darwin', () => {
     const ids = terminalPresetsFor('darwin').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'terminal', 'iterm', 'custom']);
+    expect(ids).toEqual(['auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']);
   });
 
   it('offers only Linux presets elsewhere', () => {
     const ids = terminalPresetsFor('linux').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'gnome', 'konsole', 'custom']);
+    expect(ids).toEqual(['auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom']);
+  });
+
+  it('omits Ghostty on Windows, where it has no build', () => {
+    expect(terminalPresetsFor('win32').map((p) => p.id)).not.toContain('ghostty');
+  });
+
+  it('offers WezTerm on every platform', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as NodeJS.Platform[]) {
+      expect(terminalPresetsFor(platform).map((p) => p.id)).toContain('wezterm');
+    }
+  });
+
+  it('labels every preset it offers', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as NodeJS.Platform[]) {
+      for (const preset of terminalPresetsFor(platform)) {
+        expect(preset.label.length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 
@@ -107,6 +125,36 @@ describe('resolveTerminalLaunch', () => {
   it('platform-specific presets resolve to empty off their platform', () => {
     const off = resolveTerminalLaunch('/tmp/p', { preset: 'wt', customCommand: '' }, 'linux');
     expect(off).toEqual([]);
+  });
+
+  it('wezterm uses `start --cwd` on every platform', () => {
+    const expected = { command: 'wezterm', args: ['start', '--cwd', 'D:\\proj'] };
+    expect(
+      resolveTerminalLaunch('D:\\proj', { preset: 'wezterm', customCommand: '' }, 'win32'),
+    ).toEqual([expected]);
+    // the directory is an argument, never interpolated into a shell string
+    const posix = resolveTerminalLaunch('/tmp/p', { preset: 'wezterm', customCommand: '' }, 'linux');
+    expect(posix).toEqual([{ command: 'wezterm', args: ['start', '--cwd', '/tmp/p'] }]);
+    expect(posix[0]!.shell).toBeUndefined();
+  });
+
+  it('ghostty launches directly on Linux', () => {
+    expect(
+      resolveTerminalLaunch('/tmp/p', { preset: 'ghostty', customCommand: '' }, 'linux'),
+    ).toEqual([{ command: 'ghostty', args: ['--working-directory=/tmp/p'] }]);
+  });
+
+  it('ghostty goes through the app bundle on macOS', () => {
+    // the macOS `ghostty` binary is a helper CLI that cannot start the app
+    expect(
+      resolveTerminalLaunch('/tmp/p', { preset: 'ghostty', customCommand: '' }, 'darwin'),
+    ).toEqual([{ command: 'open', args: ['-a', 'Ghostty', '/tmp/p'] }]);
+  });
+
+  it('ghostty resolves to nothing on Windows, where it does not exist', () => {
+    expect(
+      resolveTerminalLaunch('D:\\proj', { preset: 'ghostty', customCommand: '' }, 'win32'),
+    ).toEqual([]);
   });
 
   it('a custom template substitutes the quoted path and runs via shell', () => {

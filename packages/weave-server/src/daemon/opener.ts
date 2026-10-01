@@ -61,6 +61,21 @@ export function resolveTerminalLaunch(
       return [{ command: 'gnome-terminal', args: [`--working-directory=${dir}`] }];
     case 'konsole':
       return [{ command: 'konsole', args: ['--workdir', dir] }];
+    case 'wezterm':
+      // `start` opens the GUI (or a new window in an existing one) and `--cwd`
+      // applies to the first program it spawns. Cross-platform.
+      return [{ command: 'wezterm', args: ['start', '--cwd', dir] }];
+    case 'ghostty':
+      // No Windows build, so nothing to launch there.
+      if (win) return [];
+      // On macOS the `ghostty` binary is only a helper CLI — it cannot start
+      // the app, so go through the bundle the way the Terminal/iTerm entries
+      // do. Ghostty registers a folder open handler that lands the new window
+      // in that directory.
+      if (mac) return [{ command: 'open', args: ['-a', 'Ghostty', dir] }];
+      // On Linux `--working-directory` is a config key, also accepted as a
+      // command-line flag when launching.
+      return [{ command: 'ghostty', args: [`--working-directory=${dir}`] }];
     case 'custom': {
       const template = terminal.customCommand.trim();
       if (!template) return [];
