@@ -269,18 +269,21 @@ function GroupedSkills({
     () => groups.map((g) => `${g.source}:${g.pluginKey ?? '-'}`),
     [groups],
   );
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Tracks the groups the user *opened* rather than the ones they closed, so
+  // groups start collapsed — including any that appear later when the runtime
+  // tab changes, which a "start expanded" set could not express.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (key: string) =>
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  const anyCollapsed = collapsed.size > 0;
+  const anyExpanded = expanded.size > 0;
   /** One button that flips between expand-all and collapse-all. */
   const toggleAll = () =>
-    anyCollapsed ? setCollapsed(new Set()) : setCollapsed(new Set(groupKeys));
+    setExpanded(anyExpanded ? new Set() : new Set(groupKeys));
 
   // How many of the listed skills are actually live. The heading used to carry
   // the total; the pill shows effective/total, so that count would be a repeat.
@@ -298,14 +301,14 @@ function GroupedSkills({
           <button
             onClick={toggleAll}
             className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
-            title={anyCollapsed ? '展开全部分组' : '折叠全部分组'}
+            title={anyExpanded ? '折叠全部分组' : '展开全部分组'}
           >
-            {anyCollapsed ? (
-              <ChevronsUpDown className="h-3 w-3" />
-            ) : (
+            {anyExpanded ? (
               <ChevronsDownUp className="h-3 w-3" />
+            ) : (
+              <ChevronsUpDown className="h-3 w-3" />
             )}
-            {anyCollapsed ? '全部展开' : '全部折叠'}
+            {anyExpanded ? '全部折叠' : '全部展开'}
           </button>
         </div>
       </div>
@@ -313,10 +316,14 @@ function GroupedSkills({
       <div className="space-y-2">
         {groups.map((g, i) => {
           const key = groupKeys[i];
-          const isCollapsed = collapsed.has(key);
+          const isCollapsed = !expanded.has(key);
           const runtime = PLUGIN_RUNTIME[g.source];
           const isPlugin = g.source.endsWith('-plugin');
           const runtimeLabel = g.source.startsWith('claude') ? 'Claude' : 'Codex';
+          // A group is atomic — its plugin is either enabled or not — so this
+          // is either all of its skills or none. Shown anyway so every group
+          // reads the same as the section heading above.
+          const groupStats = countEffectiveSkills([g]);
           return (
             <div
               key={key}
@@ -348,9 +355,7 @@ function GroupedSkills({
                 <Badge variant="other">
                   {runtimeLabel}
                 </Badge>
-                <Badge variant="other">
-                  {g.skills.length}
-                </Badge>
+                <EffectivePill effective={groupStats.effective} total={groupStats.total} />
                 {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
                  * Hidden in read-only (project) mode: global config is not edited from a project view. */}
                 {isPlugin && runtime && onTogglePlugin && !readOnly && g.enabled !== undefined && (
