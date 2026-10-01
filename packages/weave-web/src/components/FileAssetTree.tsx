@@ -56,58 +56,23 @@ const KIND_ORDER = [
   'other',
 ];
 
-/* One colour family per asset kind.
- *  - `pill`: row-tag look (coloured border + fill) — rows are badges.
- *  - `on` / `off`: filter-chip text only — chips keep a grey background in
- *    both states, so only the text colour says which kind and whether it is
- *    selected. (Tailwind needs literal class strings, hence no template.)
- */
-const KIND_COLORS: Record<string, { pill: string; on: string; off: string }> = {
+/* One colour family per asset kind, expressed in TEXT COLOUR ONLY: both the
+ * filter chips and the row tags keep the same grey background, so the hue is
+ * what distinguishes kinds. Selected chips additionally get a highlight ring.
+ * (Tailwind needs literal class strings, hence no template.) */
+const KIND_COLORS: Record<string, { on: string; off: string }> = {
   instructions: {
-    pill: 'border-teal-500/40 bg-teal-900/50 text-teal-200',
     on: 'text-teal-200',
     off: 'text-teal-300/50 hover:text-teal-200',
   },
-  command: {
-    pill: 'border-purple-500/40 bg-purple-900/50 text-purple-200',
-    on: 'text-purple-200',
-    off: 'text-purple-300/50 hover:text-purple-200',
-  },
-  agent: {
-    pill: 'border-emerald-500/40 bg-emerald-900/50 text-emerald-200',
-    on: 'text-emerald-200',
-    off: 'text-emerald-300/50 hover:text-emerald-200',
-  },
-  workflow: {
-    pill: 'border-indigo-500/40 bg-indigo-900/50 text-indigo-200',
-    on: 'text-indigo-200',
-    off: 'text-indigo-300/50 hover:text-indigo-200',
-  },
-  rule: {
-    pill: 'border-rose-500/40 bg-rose-900/50 text-rose-200',
-    on: 'text-rose-200',
-    off: 'text-rose-300/50 hover:text-rose-200',
-  },
-  'output-style': {
-    pill: 'border-fuchsia-500/40 bg-fuchsia-900/50 text-fuchsia-200',
-    on: 'text-fuchsia-200',
-    off: 'text-fuchsia-300/50 hover:text-fuchsia-200',
-  },
-  helper: {
-    pill: 'border-amber-500/40 bg-amber-900/50 text-amber-200',
-    on: 'text-amber-200',
-    off: 'text-amber-300/50 hover:text-amber-200',
-  },
-  settings: {
-    pill: 'border-cyan-500/40 bg-cyan-900/50 text-cyan-200',
-    on: 'text-cyan-200',
-    off: 'text-cyan-300/50 hover:text-cyan-200',
-  },
-  other: {
-    pill: 'border-neutral-500/40 bg-neutral-800/60 text-neutral-300',
-    on: 'text-neutral-200',
-    off: 'text-neutral-400/70 hover:text-neutral-200',
-  },
+  command: { on: 'text-purple-200', off: 'text-purple-300/50 hover:text-purple-200' },
+  agent: { on: 'text-emerald-200', off: 'text-emerald-300/50 hover:text-emerald-200' },
+  workflow: { on: 'text-indigo-200', off: 'text-indigo-300/50 hover:text-indigo-200' },
+  rule: { on: 'text-rose-200', off: 'text-rose-300/50 hover:text-rose-200' },
+  'output-style': { on: 'text-fuchsia-200', off: 'text-fuchsia-300/50 hover:text-fuchsia-200' },
+  helper: { on: 'text-amber-200', off: 'text-amber-300/50 hover:text-amber-200' },
+  settings: { on: 'text-cyan-200', off: 'text-cyan-300/50 hover:text-cyan-200' },
+  other: { on: 'text-neutral-200', off: 'text-neutral-400/70 hover:text-neutral-200' },
 };
 
 /** Palette for a kind — unknown future kinds fall back to neutral. */
@@ -121,6 +86,13 @@ const ALL_OFF = 'text-neutral-400 hover:text-neutral-300';
 /** Grey chip shell — identical for every chip; only the text colour varies. */
 const CHIP_BASE =
   'inline-flex items-center gap-1.5 rounded-full border border-transparent bg-neutral-800/60 px-2 py-0.5 text-[11px] font-medium transition-colors duration-150 hover:bg-neutral-700/60';
+
+/** Highlight for a chip in the filtered (selected) state. */
+const CHIP_ACTIVE_HL = 'bg-neutral-700 ring-1 ring-blue-500/50 hover:bg-neutral-700';
+
+/** Shared grey tag shell for rows — same background as the filter chips. */
+const ROW_TAG_BASE =
+  'shrink-0 rounded-full border border-transparent bg-neutral-800/60 px-1.5 py-0 text-[10px] font-medium font-sans';
 
 /** Kinds the daemon's uninstall route accepts in a project
  * (mirrors isFileAssetCategory). */
@@ -215,7 +187,7 @@ function KindChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={cn(CHIP_BASE, active ? text.on : text.off)}
+      className={cn(CHIP_BASE, active && CHIP_ACTIVE_HL, active ? text.on : text.off)}
     >
       {children}
     </button>
@@ -277,12 +249,7 @@ function AssetTreeNode({
             agent={a.agent ?? 'claude'}
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
-          <span
-            className={cn(
-              'shrink-0 rounded-full border px-1.5 py-0 text-[10px] font-medium font-sans',
-              kindColor(a.category).pill,
-            )}
-          >
+          <span className={cn(ROW_TAG_BASE, kindColor(a.category).on)}>
             {KIND_LABELS[a.category] ?? a.category}
           </span>
           {update?.outdated && (
