@@ -54,18 +54,26 @@ export const initCommand: Command = {
 
     const components = resolveComponents(preset);
 
-    const result = await executeInit({
-      targetDir,
-      force,
-      interactive,
-      preset,
-      components,
-      hooks: {},
-      skills: {},
-      commands: {},
-      agents: {},
-      mcp: {},
-    });
+    let result;
+    try {
+      result = await executeInit({
+        targetDir,
+        force,
+        interactive,
+        preset,
+        components,
+        hooks: {},
+        skills: {},
+        commands: {},
+        agents: {},
+        mcp: {},
+      });
+    } catch (err) {
+      // A hard failure (e.g. the platform refuses to create the instruction
+      // symlink) must fail loudly rather than leave a half-configured project.
+      logger.error(`\n  Init failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    }
 
     // Output summary
     if (result.success) {
