@@ -594,6 +594,7 @@ export default function App() {
                     {!globalMode && updates && updates.available > 0 && (
                       <button
                         onClick={handleSyncAll}
+                        title={`立即应用全部 ${updates.available} 个过期资产（等同于让自动同步跑一轮）`}
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                       >
                         Sync all
@@ -602,6 +603,12 @@ export default function App() {
                     {!globalMode && selected && (
                       <button
                         onClick={handleToggleAutoSync}
+                        aria-pressed={projectConfig.autoSync}
+                        title={
+                          projectConfig.autoSync
+                            ? '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动'
+                            : '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）'
+                        }
                         className={cn(
                           'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
                           projectConfig.autoSync
