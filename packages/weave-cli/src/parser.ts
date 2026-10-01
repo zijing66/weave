@@ -2,10 +2,13 @@
  * Inspired by ruflo (claude-flow v3.34.0) parser.
  * MIT License, Copyright (c) 2024-2026 ruvnet — see THIRD_PARTY_NOTICES.md.
  */
+import { t } from './i18n/index.js';
+
 /** Flag definition for a command option */
 export interface CommandOption {
   name: string;
   short?: string;
+  /** Dict key rendered via `t()` in help output (semantic: i18n key). */
   description: string;
   type: 'boolean' | 'string' | 'number' | 'array';
   /** Default value applied when flag is absent */
@@ -21,6 +24,7 @@ export interface CommandOption {
 /** A registered command (or subcommand) */
 export interface Command {
   name: string;
+  /** Dict key rendered via `t()` in help output (semantic: i18n key). */
   description?: string;
   aliases?: string[];
   options?: CommandOption[];
@@ -70,28 +74,28 @@ export class CommandParser {
       {
         name: 'help',
         short: 'h',
-        description: 'Show help',
+        description: 'flag.help',
         type: 'boolean',
         default: false,
       },
       {
         name: 'version',
         short: 'V',
-        description: 'Show version',
+        description: 'flag.version',
         type: 'boolean',
         default: false,
       },
       {
         name: 'verbose',
         short: 'v',
-        description: 'Verbose output',
+        description: 'flag.verbose',
         type: 'boolean',
         default: false,
       },
       {
         name: 'quiet',
         short: 'q',
-        description: 'Suppress non-essential output',
+        description: 'flag.quiet',
         type: 'boolean',
         default: false,
       },
@@ -196,12 +200,18 @@ export class CommandParser {
     for (const opt of allOptions) {
       const key = this.normalizeKey(opt.name);
       if (opt.required && flags[key] === undefined) {
-        errors.push(`Missing required option: --${opt.name}`);
+        errors.push(t('cli.missingRequired', { name: opt.name }));
       }
       if (opt.choices && flags[key] !== undefined) {
         const v = String(flags[key]);
         if (!opt.choices.includes(v)) {
-          errors.push(`Invalid value for --${opt.name}: "${v}". Choices: ${opt.choices.join(', ')}`);
+          errors.push(
+            t('cli.invalidChoice', {
+              name: opt.name,
+              value: v,
+              choices: opt.choices.join(', '),
+            }),
+          );
         }
       }
       if (opt.validate && flags[key] !== undefined) {

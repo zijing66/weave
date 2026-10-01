@@ -78,11 +78,11 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
 export const dashboardCommand: Command = {
   name: 'dashboard',
   aliases: ['dash'],
-  description: 'Open the web console in a browser (starts the daemon if needed)',
+  description: 'cmd.dashboard.desc',
   options: [
     {
       name: 'no-open',
-      description: 'Print the dashboard URL without opening a browser',
+      description: 'flag.dashboard.noOpen',
       type: 'boolean',
       default: false,
     },

@@ -31,12 +31,12 @@ async function checkFile(relPath: string, targetDir: string): Promise<'present' 
 
 export const statusCommand: Command = {
   name: 'status',
-  description: 'Show current harness status',
+  description: 'cmd.status.desc',
   options: [
     {
       name: 'dir',
       short: 'd',
-      description: 'Target directory (default: current directory)',
+      description: 'flag.dir',
       type: 'string',
       default: process.cwd(),
     },
