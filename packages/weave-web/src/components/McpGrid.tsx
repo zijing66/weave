@@ -1,6 +1,7 @@
 import { type AssetAgent, type AssetScope, type McpServerConfig, type McpUpdate } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { AgentBadge } from '@/components/AgentBadge';
 import { Server, Trash2 } from 'lucide-react';
 
 export interface McpRow {
@@ -13,11 +14,15 @@ export interface McpRow {
 
 export function McpGrid({
   servers,
+  scope,
   updates,
   empty,
   onUninstallMcp,
 }: {
   servers: McpRow[];
+  /** Which view this grid is rendered in — prefixes the section heading the
+   * same way the skills sections do (项目 X / 全局 X). */
+  scope: AssetScope;
   /** Update info already filtered to this mode's scope. */
   updates?: McpUpdate[];
   empty: string;
@@ -38,9 +43,16 @@ export function McpGrid({
 
   return (
     <section className="space-y-2">
-      <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-        MCP Servers ({servers.length})
-      </h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-xs font-semibold text-neutral-400 uppercase">
+          {scope === 'global' ? '全局' : '项目'} MCP Servers
+        </h2>
+        {/* No enable semantics on the server map yet, so this is a plain
+            count — same shape as the project-skills section pill. */}
+        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+          {servers.length}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-3 items-start">
         {servers.map((s) => {
           const outdated = isOutdated(s.name, s.agent);
@@ -49,11 +61,7 @@ export function McpGrid({
               <CardHeader className="items-center gap-2">
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
                 <CardTitle className="truncate">{s.name}</CardTitle>
-                {s.agent === 'codex' && (
-                  <Badge className="shrink-0 bg-cyan-950/60 text-cyan-300 border-cyan-800/50">
-                    codex
-                  </Badge>
-                )}
+                <AgentBadge agent={s.agent} />
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
                     update

@@ -32,6 +32,7 @@ import { FileViewer } from '@/components/FileViewer';
 import { Resizer } from '@/components/Resizer';
 import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
+import { countEffectiveSkills } from '@/lib/skill-stats';
 import { Settings } from 'lucide-react';
 
 const LEFT_MIN = 176;
@@ -204,12 +205,36 @@ export default function App() {
     return { skill: skillNames.size, mcp };
   }, [assets, mcpServers]);
 
+  // Machine-wide skills actually in effect: a plugin group that is switched
+  // off contributes nothing. The enable state is re-derived from the live map
+  // (same rule as the section pills in CategoryDetail) rather than trusting
+  // the group's own `enabled`, which the server can have stale.
+  const effectiveGlobalSkills = useMemo(
+    () =>
+      countEffectiveSkills(
+        globalSkillGroups.map((g) => {
+          const runtime: PluginRuntime | null = g.source.startsWith('claude')
+            ? 'claude'
+            : g.source.startsWith('codex')
+              ? 'codex'
+              : null;
+          const enabled =
+            g.pluginKey && runtime ? pluginEnabled[runtime][g.pluginKey] ?? false : undefined;
+          return { enabled, skills: g.skills };
+        }),
+      ).effective,
+    [globalSkillGroups, pluginEnabled],
+  );
+
   const categoryData = useMemo<CategoryBarData>(() => {
+    // Codex MCP servers live in ~/.codex/config.toml, so they belong to the
+    // machine, not the scope — both views count them (their tab is visible in
+    // both).
+    const codexMcp = Object.keys(mcpServers.codex).length;
     if (globalMode) {
-      const globalSkillCount = globalSkillGroups.reduce((n, g) => n + g.skills.length, 0);
       return {
-        skills: globalSkillCount,
-        mcp: Object.keys(mcpServers.global).length,
+        skills: effectiveGlobalSkills,
+        mcp: Object.keys(mcpServers.global).length + codexMcp,
         commands: 0,
         outdatedSkills: (updates?.skills ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
@@ -218,14 +243,18 @@ export default function App() {
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
     return {
-      skills: assetCounts.skill,
-      mcp: assetCounts.mcp,
+      // project skills + machine-wide skills in effect — the page shows both
+      // sections, so the card counts what they contain together
+      skills: assetCounts.skill + effectiveGlobalSkills,
+      // this view's Claude scope (project), matching what the MCP page shows
+      // under the Claude tab, plus the machine-wide Codex surface
+      mcp: Object.keys(mcpServers.project).length + codexMcp,
       commands: otherCount,
       outdatedSkills: (updates?.skills ?? []).filter((u) => u.outdated).length,
       outdatedMcp: (updates?.mcp ?? []).filter((u) => u.outdated).length,
       statuslineSource,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, assetCounts, projectConfig, statuslineSource]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource]);
 
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.

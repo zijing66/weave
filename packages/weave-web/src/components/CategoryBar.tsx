@@ -18,7 +18,10 @@ export const MAIN_CATEGORIES: {
 }[] = [
   { key: 'skills', label: 'Skills', icon: FileCode },
   { key: 'mcp', label: 'MCP', icon: Server },
-  { key: 'commands', label: 'Commands', icon: Terminal },
+  // The count on this card is every project asset that is not a skill or MCP
+  // (instructions, file assets, settings, helpers …), so the label says 文件
+  // 资产 rather than implying it counts commands alone.
+  { key: 'commands', label: '文件资产', icon: Terminal },
   { key: 'personalization', label: '个性化配置', icon: Sparkles },
 ];
 
