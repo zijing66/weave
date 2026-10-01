@@ -7,6 +7,7 @@ import {
 } from '@weave/core';
 import { executeInit } from '../init/executor.js';
 import { registerProject } from '@weave/server';
+import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 export const initCommand: Command = {
@@ -49,8 +50,8 @@ export const initCommand: Command = {
     const interactive = !Boolean(ctx.flags['noInteractive']);
     const targetDir = String(ctx.flags.dir ?? process.cwd());
 
-    logger.info(`\n  Weave — Claude Code harness v0.1.0\n`);
-    logger.dim(`  Preset: ${preset}  |  Target: ${targetDir}\n`);
+    logger.info(t('init.banner'));
+    logger.dim(t('init.presetTarget', { preset, target: targetDir }));
 
     const components = resolveComponents(preset);
 
@@ -71,40 +72,40 @@ export const initCommand: Command = {
     } catch (err) {
       // A hard failure (e.g. the platform refuses to create the instruction
       // symlink) must fail loudly rather than leave a half-configured project.
-      logger.error(`\n  Init failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      logger.error(t('init.failed', { error: err instanceof Error ? err.message : String(err) }));
       process.exit(1);
     }
 
     // Output summary
     if (result.success) {
       registerProject(targetDir, 'init');
-      logger.success('\n  Init complete\n');
+      logger.success(t('init.complete'));
 
       const entries: [string, string][] = [
-        ['Directories', String(result.created.directories.length)],
-        ['Files created', String(result.created.files.length)],
-        ['Files merged', String(result.merged.length)],
-        ['Weave files updated', String(result.updated.length)],
-        ['Skills', String(result.summary.skillsCount)],
-        ['Commands', String(result.summary.commandsCount)],
-        ['Agents', String(result.summary.agentsCount)],
+        [t('init.table.directories'), String(result.created.directories.length)],
+        [t('init.table.filesCreated'), String(result.created.files.length)],
+        [t('init.table.filesMerged'), String(result.merged.length)],
+        [t('init.table.weaveUpdated'), String(result.updated.length)],
+        [t('init.table.skills'), String(result.summary.skillsCount)],
+        [t('init.table.commands'), String(result.summary.commandsCount)],
+        [t('init.table.agents'), String(result.summary.agentsCount)],
       ];
       console.log(formatTable(entries));
       console.log();
 
       if (result.merged.length > 0) {
-        logger.dim(`  Merged ${result.merged.length} existing file(s) — your content was preserved.\n`);
+        logger.dim(t('init.merged', { count: result.merged.length }));
       }
       if (result.updated.length > 0) {
-        logger.dim(`  Refreshed ${result.updated.length} weave-owned file(s).\n`);
+        logger.dim(t('init.refreshed', { count: result.updated.length }));
       }
       if (result.skipped.length > 0) {
-        logger.dim(`  Skipped ${result.skipped.length} existing file(s). Use --force to overwrite.\n`);
+        logger.dim(t('init.skipped', { count: result.skipped.length }));
       }
     } else {
-      logger.error('\n  Init completed with errors\n');
+      logger.error(t('init.completedWithErrors'));
       for (const err of result.errors) {
-        logger.error(`    - ${err}`);
+        logger.error(t('init.errorLine', { error: err }));
       }
     }
   },

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
+import { t } from '../i18n/index.js';
 
 /**
  * Keep CLAUDE.md and AGENTS.md as one file.
@@ -71,12 +72,15 @@ async function makeLink(dir: string, linkName: string, targetName: string): Prom
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     throw new Error(
-      `Could not create ${linkName} -> ${targetName} (${linkPath}): ${
-        code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN'
-          ? 'this system does not allow symlinks without elevation. On Windows, enable Developer Mode ' +
-            '(Settings > System > For developers) or run weave init from an elevated shell, then retry.'
-          : String(err)
-      }`,
+      t('ilink.linkFailed', {
+        link: linkName,
+        target: targetName,
+        path: linkPath,
+        detail:
+          code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN'
+            ? t('ilink.symlinkNotAllowed')
+            : String(err),
+      }),
     );
   }
 }
@@ -147,8 +151,8 @@ export async function ensureInstructionLink(
   const replaceAgents = opts.force
     ? true
     : await opts.confirm(
-        'CLAUDE.md 与 AGENTS.md 都包含内容',
-        `将把 AGENTS.md 替换为指向 CLAUDE.md 的软连接（原文件会备份到 .weave/backup/）。`,
+        t('ilink.bothHaveContent'),
+        t('ilink.replaceDetail', { backupDir: '.weave/backup/' }),
       );
   if (!replaceAgents) {
     return { action: 'unchanged', realFile: CLAUDE };

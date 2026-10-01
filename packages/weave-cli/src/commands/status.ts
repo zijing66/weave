@@ -2,6 +2,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileExists, logger, formatTable } from '@weave/core';
 import { checkHarness } from '../init/harness-checks.js';
+import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 /** Read the runtime config YAML and display harness status */
@@ -24,9 +25,12 @@ async function readRuntimeConfig(targetDir: string): Promise<Record<string, stri
   }
 }
 
-async function checkFile(relPath: string, targetDir: string): Promise<'present' | 'missing'> {
+async function checkFile(
+  relPath: string,
+  targetDir: string,
+): Promise<'out.status.present' | 'out.status.missing'> {
   const exists = await fileExists(path.join(targetDir, relPath));
-  return exists ? 'present' : 'missing';
+  return exists ? 'out.status.present' : 'out.status.missing';
 }
 
 export const statusCommand: Command = {
@@ -47,23 +51,23 @@ export const statusCommand: Command = {
     const config = await readRuntimeConfig(targetDir);
 
     if (!config) {
-      logger.warn('Weave not initialized. Run `weave init` first.');
+      logger.warn(t('out.status.notInitialized'));
       return;
     }
 
-    logger.info('\n  Weave Harness Status\n');
+    logger.info(t('out.status.header'));
 
     const entries: [string, string][] = [
-      ['Version', config.initVersion ?? 'unknown'],
-      ['Initialized', config.initTimestamp ?? 'unknown'],
-      ['Preset', config.preset ?? 'unknown'],
-      ['CLAUDE.md', await checkFile('CLAUDE.md', targetDir)],
-      ['settings.json', await checkFile('.claude/settings.json', targetDir)],
-      ['.mcp.json', await checkFile('.mcp.json', targetDir)],
-      ['helpers', await checkFile('.claude/helpers', targetDir)],
-      ['skills', await checkFile('.claude/skills', targetDir)],
-      ['commands', await checkFile('.claude/commands', targetDir)],
-      ['agents', await checkFile('.claude/agents', targetDir)],
+      [t('out.status.col.version'), config.initVersion ?? t('out.status.unknown')],
+      [t('out.status.col.initialized'), config.initTimestamp ?? t('out.status.unknown')],
+      [t('out.status.col.preset'), config.preset ?? t('out.status.unknown')],
+      ['CLAUDE.md', t(await checkFile('CLAUDE.md', targetDir))],
+      ['settings.json', t(await checkFile('.claude/settings.json', targetDir))],
+      ['.mcp.json', t(await checkFile('.mcp.json', targetDir))],
+      ['helpers', t(await checkFile('.claude/helpers', targetDir))],
+      ['skills', t(await checkFile('.claude/skills', targetDir))],
+      ['commands', t(await checkFile('.claude/commands', targetDir))],
+      ['agents', t(await checkFile('.claude/agents', targetDir))],
     ];
 
     console.log(formatTable(entries));
@@ -74,10 +78,10 @@ export const statusCommand: Command = {
     // misbehaves (a symlink checked out as text, a stale absolute path).
     const issues = await checkHarness(targetDir);
     if (issues.length > 0) {
-      logger.warn(`  ${issues.length} issue(s) found:\n`);
+      logger.warn(t('out.status.issuesFound', { count: issues.length }));
       for (const issue of issues) {
-        logger.warn(`    - ${issue.message}`);
-        logger.dim(`      fix: ${issue.fix}`);
+        logger.warn(t('out.status.issue', { message: issue.message }));
+        logger.dim(t('out.status.fix', { fix: issue.fix }));
       }
       console.log();
     }

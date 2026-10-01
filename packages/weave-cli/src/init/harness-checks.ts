@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { lstat, readFile, readlink, access } from 'node:fs/promises';
+import { t } from '../i18n/index.js';
 
 /**
  * Health checks over the state `weave init` produced.
@@ -59,8 +60,8 @@ async function checkLinkCheckout(dir: string): Promise<HarnessCheck | null> {
 
   return {
     id: 'instruction-link-not-materialised',
-    message: `${AGENTS} is a plain file containing "${CLAUDE}" — git checked the symlink out as text.`,
-    fix: 'Enable Developer Mode, then run `git config core.symlinks true` and re-checkout the file.',
+    message: t('harness.instructionLinkNotMaterialised.message', { agents: AGENTS, claude: CLAUDE }),
+    fix: t('harness.instructionLinkNotMaterialised.fix'),
   };
 }
 
@@ -72,8 +73,8 @@ async function checkDuplicateInstructions(dir: string): Promise<HarnessCheck | n
 
   return {
     id: 'instruction-files-duplicated',
-    message: `${CLAUDE} and ${AGENTS} are both regular files — they will drift apart.`,
-    fix: 'Run `weave init` to link one to the other (the displaced file is backed up).',
+    message: t('harness.instructionFilesDuplicated.message', { claude: CLAUDE, agents: AGENTS }),
+    fix: t('harness.instructionFilesDuplicated.fix'),
   };
 }
 
@@ -83,8 +84,8 @@ async function checkDanglingLink(dir: string): Promise<HarnessCheck | null> {
     if ((await linkState(path.join(dir, name))) !== 'dangling') continue;
     return {
       id: 'instruction-link-dangling',
-      message: `${name} is a symlink whose target does not exist.`,
-      fix: 'Run `weave init` to rewrite the link and the instruction file.',
+      message: t('harness.instructionLinkDangling.message', { name }),
+      fix: t('harness.instructionLinkDangling.fix'),
     };
   }
   return null;
@@ -131,8 +132,8 @@ async function checkStatuslinePath(dir: string): Promise<HarnessCheck | null> {
   if (!scriptPath) {
     return {
       id: 'statusline-path-unresolved',
-      message: `statusLine command does not resolve to a script path: ${command}`,
-      fix: 'Run `weave init` to regenerate `.claude/settings.json`.',
+      message: t('harness.statuslinePathUnresolved.message', { command }),
+      fix: t('harness.statuslinePathUnresolved.fix'),
     };
   }
 
@@ -140,16 +141,16 @@ async function checkStatuslinePath(dir: string): Promise<HarnessCheck | null> {
   if (!path.resolve(scriptPath).startsWith(expectedPrefix)) {
     return {
       id: 'statusline-path-foreign',
-      message: `statusLine points outside this project (${scriptPath}) — it was generated for another checkout.`,
-      fix: 'Run `weave init` in this project to rewrite the absolute path.',
+      message: t('harness.statuslinePathForeign.message', { path: scriptPath }),
+      fix: t('harness.statuslinePathForeign.fix'),
     };
   }
 
   if (!(await pathExists(scriptPath))) {
     return {
       id: 'statusline-script-missing',
-      message: `statusLine script is missing: ${scriptPath}`,
-      fix: 'Run `weave init` to regenerate it.',
+      message: t('harness.statuslineScriptMissing.message', { path: scriptPath }),
+      fix: t('harness.statuslineScriptMissing.fix'),
     };
   }
 

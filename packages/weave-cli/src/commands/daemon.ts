@@ -12,6 +12,7 @@ import {
   daemonEntryUrl,
 } from '@weave/server';
 import { logger } from '@weave/core';
+import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 /** True when a weave daemon answers /health on `port`. */
@@ -77,17 +78,17 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
 async function startAction(): Promise<void> {
   const handle = await ensureDaemonRunning();
   if (!handle.started) {
-    logger.info(`Daemon already running on port ${handle.port}`);
+    logger.info(t('out.daemon.alreadyRunning', { port: handle.port }));
     return;
   }
-  logger.success(`Daemon started on http://${DAEMON_HOST}:${handle.port}`);
-  logger.dim(`Token: ${handle.token}`);
+  logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
+  logger.dim(t('out.daemon.token', { token: handle.token }));
 }
 
 async function stopAction(): Promise<void> {
   const state = readDaemonState();
   if (!state) {
-    logger.warn('No daemon state found — daemon is not running.');
+    logger.warn(t('out.daemon.noState'));
     return;
   }
   try {
@@ -96,23 +97,29 @@ async function stopAction(): Promise<void> {
     // Stale pid — fall through to clear state.
   }
   clearDaemonState();
-  logger.success(`Daemon stopped (pid ${state.pid}).`);
+  logger.success(t('out.daemon.stopped', { pid: state.pid }));
 }
 
 async function statusAction(): Promise<void> {
   const state = readDaemonState();
   if (!state) {
-    logger.info('Daemon: not running');
+    logger.info(t('out.daemon.statusNotRunning'));
     return;
   }
   if (await probeDaemon(state.port)) {
     const res = await fetch(`http://${DAEMON_HOST}:${state.port}/health`);
     const health = (await res.json()) as { pid: number; port: number; uptimeMs: number };
     logger.info(
-      `Daemon: running (pid ${health.pid}, port ${health.port}, up ${Math.round(health.uptimeMs / 1000)}s)`,
+      t('out.daemon.statusRunning', {
+        pid: health.pid,
+        port: health.port,
+        uptime: Math.round(health.uptimeMs / 1000),
+      }),
     );
   } else {
-    logger.warn(`Daemon: stale state (pid ${state.pid}, port ${state.port} not responding)`);
+    logger.warn(
+      t('out.daemon.statusStale', { pid: state.pid, port: state.port }),
+    );
   }
 }
 

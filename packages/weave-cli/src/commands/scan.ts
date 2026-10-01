@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerProject } from '@weave/server';
 import { logger } from '@weave/core';
+import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.cache']);
@@ -51,7 +52,7 @@ export const scanCommand: Command = {
       registerProject(dir, 'scan');
     }
 
-    logger.success(`Registered ${found.length} project(s) from ${root}`);
+    logger.success(t('out.scan.registered', { count: found.length, root }));
     if (found.length > 0) {
       for (const dir of found) logger.dim(`  ${dir}`);
     }
