@@ -117,7 +117,7 @@ describe('statusline — manager', () => {
     expect(cfg.segments.tokens.enabled).toBe(true);
     // the shipped default is three thematic rows; context sits on row 2
     expect(cfg.lines).toHaveLength(3);
-    expect(cfg.lines[0]).toEqual(['model', 'thinking']);
+    expect(cfg.lines[0]).toEqual(['model', 'thinking', 'time']);
     expect(cfg.lines[1]).toContain('context');
     expect(cfg.refreshInterval).toBe(10);
   });
@@ -372,7 +372,16 @@ describe('statusline — default config golden output', () => {
   };
 
   it('renders the shipped three-row layout byte-for-byte (ANSI stripped)', () => {
-    const out = runScript(generateStatuslineScript(DEFAULT_STATUSLINE_CONFIG), stdin);
+    // The wall-clock segment is non-deterministic, so the golden run switches
+    // it off; `ships the labelled…` pins that the shipped default ships it on.
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        time: { ...DEFAULT_STATUSLINE_CONFIG.segments.time, enabled: false },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), stdin);
     const plain = out
       .replace(/\x1b\[[0-9;]*m/g, '')
       // powerline blocks pad their text with a space on each side, and the
@@ -581,10 +590,13 @@ describe('statusline — shipped default layout', () => {
     expect(DEFAULT_STATUSLINE_CONFIG.segments.tokens.label).toBe('Total');
     expect(DEFAULT_STATUSLINE_CONFIG.segments.tokens.metric).toBe('session');
     expect(DEFAULT_STATUSLINE_CONFIG.lines).toEqual([
-      ['model', 'thinking'],
+      ['model', 'thinking', 'time'],
       ['context', 'tokens', 'cost', 'rate'],
-      ['git', 'changes', 'project', 'time'],
+      ['git', 'changes', 'project'],
     ]);
+    // the clock ships enabled with its blue block (baked from the live config)
+    expect(DEFAULT_STATUSLINE_CONFIG.segments.time.enabled).toBe(true);
+    expect(DEFAULT_STATUSLINE_CONFIG.segments.time.backgroundColor).toBe('blue');
     // round caps ship by default (triangles remain the undefined fallback)
     expect(DEFAULT_STATUSLINE_CONFIG.powerline.startCap).toBe('\ue0b6');
     expect(DEFAULT_STATUSLINE_CONFIG.powerline.endCap).toBe('\ue0b4');
@@ -1009,7 +1021,15 @@ describe('statusline — runtime output', () => {
   });
 
   it('align center pads both sides', () => {
-    const cfg = { ...DEFAULT_STATUSLINE_CONFIG, align: 'center' as const };
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      align: 'center' as const,
+      // the clock's variable width would shift the centring padding
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        time: { ...DEFAULT_STATUSLINE_CONFIG.segments.time, enabled: false },
+      },
+    };
     const out = runScript(generateStatuslineScript(cfg), stdin);
     expect(out.trim()).toContain('claude-sonnet-5');
     expect(out).toMatch(/^\x1b\[0m {10,}/); // leading reset, then centring padding

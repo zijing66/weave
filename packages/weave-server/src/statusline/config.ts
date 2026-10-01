@@ -240,12 +240,12 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
   logoText: '▊ weave',
   logoColor: 'magenta',
   powerline: { enabled: true, separator: '\ue0b0', startCap: '\ue0b6', endCap: '\ue0b4' },
-  // Three rows by theme: model setup, live context/metrics, then git + cwd.
-  // rate/time ride along disabled (every segment key must sit in a row).
+  // Three rows by theme: model setup (+ wall clock), live context/metrics,
+  // then git + cwd. rate rides along disabled (every key must sit in a row).
   lines: [
-    ['model', 'thinking'],
+    ['model', 'thinking', 'time'],
     ['context', 'tokens', 'cost', 'rate'],
-    ['git', 'changes', 'project', 'time'],
+    ['git', 'changes', 'project'],
   ],
   refreshInterval: 10,
   source: 'global',
@@ -294,7 +294,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
       format: '{path}',
     }),
     rate: seg({ enabled: false, color: '#f7768e', icon: '⚡', label: 'Rate' }),
-    time: seg({ enabled: false, color: 'gray', icon: '🕒' }),
+    time: seg({ enabled: true, color: 'gray', backgroundColor: 'blue', icon: '🕒' }),
   },
 };
 
