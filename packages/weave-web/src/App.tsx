@@ -24,7 +24,7 @@ import {
 import { ProjectList } from '@/components/ProjectList';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode } from '@/components/CategoryDetail';
-import { type FileAssetRow } from '@/components/FileAssetGrid';
+import { type FileAssetRow } from '@/components/FileAssetTree';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { TaskView } from '@/components/TaskView';
 import { LibraryPanel } from '@/components/LibraryPanel';
@@ -48,6 +48,9 @@ export default function App() {
   const [selected, setSelected] = useState<ProjectRow | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
+  // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
+  // when the global 文件资产 page is opened.
+  const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [hooks, setHooks] = useState<HookEventRow[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerMap>({
     project: {},
@@ -235,7 +238,8 @@ export default function App() {
       return {
         skills: effectiveGlobalSkills,
         mcp: Object.keys(mcpServers.global).length + codexMcp,
-        commands: 0,
+        // machine-level file assets (~/.claude, ~/.codex) — the global tree
+        commands: globalAssets.length,
         outdatedSkills: (updates?.skills ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         statuslineSource: 'global',
@@ -254,7 +258,25 @@ export default function App() {
       outdatedMcp: (updates?.mcp ?? []).filter((u) => u.outdated).length,
       statuslineSource,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource]);
+
+  // Asset entry backing the open file preview — supplies the agent badge in
+  // the drawer header. Missing rows (cache lag) fall back to plain Claude.
+  const selectedAsset = useMemo<AssetEntry | null>(() => {
+    if (!selectedFile) return null;
+    const pool = globalMode ? globalAssets : assets;
+    return pool.find((a) => a.relPath === selectedFile) ?? null;
+  }, [globalMode, globalAssets, assets, selectedFile]);
+
+  // Global 文件资产 is a bounded whitelist walk on the daemon, so fetch it
+  // only when that page is actually opened (and refresh on every entry).
+  useEffect(() => {
+    if (!globalMode || mainCategory !== 'commands') return;
+    api
+      .listGlobalFileAssets()
+      .then(setGlobalAssets)
+      .catch((e) => setError(String(e)));
+  }, [globalMode, mainCategory]);
 
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
@@ -272,6 +294,7 @@ export default function App() {
             category: change.category,
             mtimeMs: Date.now(),
             agent: change.agent,
+            ...(change.isSymlink ? { isSymlink: true } : {}),
           };
           const idx = prev.findIndex((a) => a.relPath === change.relPath);
           if (idx >= 0) {
@@ -396,14 +419,15 @@ export default function App() {
   );
 
   const handleUninstallFileAsset = useCallback(
-    async (row: FileAssetRow) => {
+    async (row: FileAssetRow, scope: AssetScope = 'project') => {
       const target = selected ?? projects[0];
       if (!target) return;
       setError(null);
       const res = await api.uninstall(target.id, {
         category: row.category as FileAssetCategory,
         name: row.name,
-        scope: 'project',
+        scope,
+        ...(row.agent ? { agent: row.agent } : {}),
       });
       if (!res.ok) {
         setError(`Uninstall failed: ${res.status} ${await res.text()}`);
@@ -680,6 +704,7 @@ export default function App() {
                         category={mainCategory}
                         statuslineNonce={statuslineNonce}
                         assets={assets}
+                        globalAssets={globalAssets}
                         mcpServers={mcpServers}
                         updates={updates}
                         globalSkillGroups={globalSkillGroups}
@@ -689,20 +714,15 @@ export default function App() {
                         onUninstallMcp={handleUninstallMcp}
                         onUninstallFileAsset={handleUninstallFileAsset}
                         onTogglePlugin={handleTogglePlugin}
-                        onOpenFile={setSelectedFile}
-                        onOpenSkillDetail={(name, sc, source, pluginKey, agent) =>
-                          setDrawerSkill({ name, scope: sc, source, pluginKey, agent })
-                        }
+                        onOpenFile={(relPath) => {
+                          setSelectedFile(relPath);
+                          setDrawerSkill(null);
+                        }}
+                        onOpenSkillDetail={(name, sc, source, pluginKey, agent) => {
+                          setSelectedFile(null);
+                          setDrawerSkill({ name, scope: sc, source, pluginKey, agent });
+                        }}
                       />
-                    )}
-                    {selectedFile && (
-                      <div className="absolute inset-0 z-20 frosted-strong">
-                        <FileViewer
-                          projectId={activeProject!.id}
-                          relPath={selectedFile}
-                          onClose={() => setSelectedFile(null)}
-                        />
-                      </div>
                     )}
                   </div>
 
@@ -722,6 +742,17 @@ export default function App() {
                 <div className="flex-1 flex items-center justify-center text-neutral-500 text-sm">
                   Select a project
                 </div>
+              )}
+
+              {/* File preview drawer — same right-side slot as the skill drawer */}
+              {selectedFile && activeProject && (
+                <FileViewer
+                  projectId={activeProject.id}
+                  relPath={selectedFile}
+                  global={globalMode}
+                  agent={selectedAsset ? (selectedAsset.agent ?? 'claude') : undefined}
+                  onClose={() => setSelectedFile(null)}
+                />
               )}
 
               {/* Skill detail drawer overlays the main column */}

@@ -12,7 +12,6 @@ import {
   type GlobalSkillSource,
   type PluginEnabledMap,
   type PluginRuntime,
-  FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
@@ -24,17 +23,24 @@ import {
 } from '@/components/SkillGrid';
 import { McpGrid, type McpRow } from '@/components/McpGrid';
 import { AgentBadge } from '@/components/AgentBadge';
-import { OtherAssets } from '@/components/OtherAssets';
 import {
-  FileAssetGrid,
-  toFileAssetRows,
+  FileAssetTree,
   type FileAssetRow,
-} from '@/components/FileAssetGrid';
+} from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { type MainCategory } from '@/components/CategoryBar';
-import { Code2, FileText, PackageX } from 'lucide-react';
+import { Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
+
+/** Runtime surface of an asset row. Rows scanned before the agent field
+ * existed fall back to the server's path rule (Codex owns .codex/ and
+ * AGENTS.md anywhere in the tree). */
+function agentOf(a: AssetEntry): AssetAgent {
+  if (a.agent) return a.agent;
+  const base = a.relPath.slice(a.relPath.lastIndexOf('/') + 1);
+  return base === 'AGENTS.md' || a.relPath.startsWith('.codex/') ? 'codex' : 'claude';
+}
 
 /** Harness-tool filter for the asset categories (skills / mcp / commands). */
 export type RuntimeTab = 'claude' | 'codex' | 'all';
@@ -45,6 +51,7 @@ export function CategoryDetail({
   category,
   statuslineNonce,
   assets,
+  globalAssets,
   mcpServers,
   updates,
   globalSkillGroups,
@@ -64,6 +71,8 @@ export function CategoryDetail({
   /** Bumped when re-entering the statusline panel → remounts with a fresh tab. */
   statuslineNonce: number;
   assets: AssetEntry[];
+  /** Machine-level harness files for the global 文件资产 tree. */
+  globalAssets: AssetEntry[];
   mcpServers: McpServerMap;
   updates: UpdateReport | null;
   globalSkillGroups: GlobalSkillGroup[];
@@ -72,7 +81,7 @@ export function CategoryDetail({
   statuslineSource: StatuslineSource | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: 'claude' | 'codex') => void;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
-  onUninstallFileAsset: (row: FileAssetRow) => void;
+  onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void;
   onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
   onOpenFile: (relPath: string) => void;
   onOpenSkillDetail: OpenDetailFn;
@@ -156,30 +165,23 @@ export function CategoryDetail({
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
-  // Single-file harness assets (commands/agents/workflows/rules/output-styles)
-  // for the commands category, one grid per kind.
-  const fileRowsByCategory = useMemo(() => {
-    const rows = toFileAssetRows(assets, FILE_ASSET_CATEGORIES);
-    const byCat = new Map<string, FileAssetRow[]>();
-    for (const r of rows) {
-      const list = byCat.get(r.category) ?? [];
-      list.push(r);
-      byCat.set(r.category, list);
-    }
-    return byCat;
-  }, [assets]);
-
-  // Instruction files (CLAUDE.md / AGENTS.md), one per runtime.
-  const instructionFiles = useMemo(
+  // Project 文件资产: everything that is neither a skill nor MCP, for the
+  // active runtime tab.
+  const treeAssets = useMemo(
     () =>
-      assets
-        .filter((a) => a.category === 'instructions')
-        .filter((a) => {
-          if (runtimeTab === 'all') return true;
-          return a.agent ? a.agent === runtimeTab : a.relPath.endsWith('CLAUDE.md');
-        })
-        .sort((x, y) => x.relPath.localeCompare(y.relPath)),
+      assets.filter(
+        (a) =>
+          a.category !== 'skill' &&
+          a.category !== 'mcp' &&
+          (runtimeTab === 'all' || agentOf(a) === runtimeTab),
+      ),
     [assets, runtimeTab],
+  );
+
+  // Global 文件资产: the same filter over ~/.claude + ~/.codex rows.
+  const globalTreeAssets = useMemo(
+    () => globalAssets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
+    [globalAssets, runtimeTab],
   );
 
   return (
@@ -251,66 +253,48 @@ export function CategoryDetail({
         />
       )}
 
-      {category === 'commands' && !isGlobal && (
-        <div className="space-y-4">
-          {instructionFiles.length > 0 && (
-            <section className="space-y-2">
-              <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-                项目 Instructions{' '}
-                <span className="text-neutral-600 normal-case font-normal">CLAUDE.md / AGENTS.md</span>
-              </h2>
-              <div className="grid grid-cols-2 gap-3 items-start">
-                {instructionFiles.map((a) => (
-                  <button
-                    key={a.relPath}
-                    onClick={() => onOpenFile(a.relPath)}
-                    className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-neutral-900/40 px-3 py-2 text-left hover:bg-white/[0.04] transition-colors"
-                    title={`Open ${a.relPath}`}
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                    <span className="text-xs font-mono truncate">{a.relPath}</span>
-                    <span className="ml-auto shrink-0">
-                      <AgentBadge agent={a.agent} />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {runtimeTab === 'codex' ? (
-            <CodexPlaceholder text="Codex 的自定义 prompts 位于 ~/.codex/prompts/（全局级，官方已标记 deprecated）。项目级文件资产当前仅支持 Claude。" />
+      {category === 'commands' &&
+        !isGlobal &&
+        (treeAssets.length === 0 ? (
+          runtimeTab === 'codex' ? (
+            <CodexPlaceholder text="该项目暂无 Codex 文件资产（AGENTS.md、.codex/config.toml 等会展示在文件树中）。Codex 自定义 prompts（~/.codex/prompts/）已被官方移除。" />
           ) : (
-            FILE_ASSET_CATEGORIES.map((cat) => (
-              <FileAssetGrid
-                key={cat}
-                category={cat}
-                scope={scope}
-                rows={fileRowsByCategory.get(cat) ?? []}
-                updates={fileUpdates}
-                onUninstall={onUninstallFileAsset}
-                onOpenFile={onOpenFile}
-              />
-            ))
-          )}
+            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+              <PackageX className="h-8 w-8 text-neutral-600" />
+              <p className="text-xs text-neutral-500">该项目暂无文件资产</p>
+            </div>
+          )
+        ) : (
+          <FileAssetTree
+            scope={scope}
+            assets={treeAssets}
+            updates={fileUpdates}
+            onUninstall={(row) => onUninstallFileAsset(row, 'project')}
+            onOpenFile={onOpenFile}
+          />
+        ))}
 
-          {runtimeTab !== 'codex' && (
-            <OtherAssets assets={assets} onOpenFile={onOpenFile} />
-          )}
-        </div>
-      )}
-
-      {category === 'commands' && isGlobal && (
-        <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
-          <PackageX className="h-8 w-8 text-neutral-600" />
-          <div>
-            <p className="text-sm font-medium text-neutral-300">全局 Commands</p>
-            <p className="text-xs text-neutral-500 mt-1 max-w-xs">
-              全局级别的 commands / agents 配置暂未提供，仅在项目视图展示。
-            </p>
+      {category === 'commands' &&
+        isGlobal &&
+        (globalTreeAssets.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+            <PackageX className="h-8 w-8 text-neutral-600" />
+            <div>
+              <p className="text-sm font-medium text-neutral-300">全局文件资产</p>
+              <p className="text-xs text-neutral-500 mt-1 max-w-xs">
+                ~/.claude 与 ~/.codex 下暂无匹配的文件资产（skills 与 MCP 有各自页面）。
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <FileAssetTree
+            scope={scope}
+            assets={globalTreeAssets}
+            updates={fileUpdates}
+            onUninstall={(row) => onUninstallFileAsset(row, 'global')}
+            onOpenFile={onOpenFile}
+          />
+        ))}
 
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">
@@ -344,6 +328,7 @@ function CodexPlaceholder({ text }: { text: string }) {
   return (
     <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
       <Code2 className="h-8 w-8 text-neutral-600" />
+      <AgentBadge agent="codex" />
       <p className="text-xs text-neutral-500 max-w-xs">{text}</p>
     </div>
   );
