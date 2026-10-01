@@ -67,7 +67,7 @@ import {
   readGlobalStatuslineConfig,
   writeGlobalStatuslineConfig,
 } from '../statusline/manager.js';
-import type { StatuslineConfig } from '../statusline/config.js';
+import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/config.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
@@ -860,6 +860,14 @@ async function handleRequest(
       }
       return;
     }
+  }
+
+  // Shipped factory defaults — the panel's 恢复出厂 fetches these, so the
+  // reset target always comes from the server (single source of truth).
+  if (pathname === '/statusline/default' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    sendJson(200, { config: DEFAULT_STATUSLINE_CONFIG });
+    return;
   }
 
   const statuslineMatch = pathname.match(/^\/projects\/(\d+)\/statusline$/);
