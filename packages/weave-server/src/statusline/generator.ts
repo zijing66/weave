@@ -184,6 +184,17 @@ function humanize(n) {
   return String(Math.round(v));
 }
 
+// Milliseconds to a compact duration: 45s / 12m / 2.5h / 3d. Empty when the
+// value is missing so an absent token renders as nothing.
+function humanizeMs(ms) {
+  if (ms == null || isNaN(ms) || Number(ms) <= 0) return '';
+  var sec = Number(ms) / 1000;
+  if (sec < 60) return Math.round(sec) + 's';
+  if (sec < 3600) return (sec / 60).toFixed(1).replace(/\\.0$/, '') + 'm';
+  if (sec < 86400) return (sec / 3600).toFixed(1).replace(/\\.0$/, '') + 'h';
+  return (sec / 86400).toFixed(1).replace(/\\.0$/, '') + 'd';
+}
+
 // Render a progress bar of CONFIG.bar.cells cells from a 0-100 percentage.
 function barFor(pct, bar) {
   var cells = Math.max(1, Math.min(40, (bar && bar.cells) || BAR_CELLS));
@@ -349,7 +360,14 @@ function segmentTokens(key, seg) {
           'git', ['rev-parse', '--abbrev-ref', 'HEAD'],
           { cwd: cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true }
         ).toString().trim();
-        return branch ? { branch: branch } : null;
+        if (!branch) return null;
+        // workspace.repo is optional (parsed from the git remote) — the token
+        // stays empty when absent so the default {branch} format is unaffected.
+        var repoInfo = input.workspace && input.workspace.repo;
+        return {
+          branch: branch,
+          repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
+        };
       } catch (e) { return null; }
     case 'changes': {
       var diff = gitNumstat(cwd);
@@ -397,14 +415,63 @@ function segmentTokens(key, seg) {
         (input.cost && input.cost.total_cost_usd) ||
         (input.session && input.session.cost_usd) ||
         input.total_cost_usd;
-      return cost != null ? { cost: '$' + Number(cost).toFixed(2) } : null;
+      if (cost == null) return null;
+      var costObj = input.cost || {};
+      return {
+        cost: '$' + Number(cost).toFixed(2),
+        duration: humanizeMs(costObj.total_duration_ms),
+        api_duration: humanizeMs(costObj.total_api_duration_ms),
+        lines_added: costObj.total_lines_added != null ? String(costObj.total_lines_added) : '',
+        lines_removed: costObj.total_lines_removed != null ? String(costObj.total_lines_removed) : ''
+      };
     }
     case 'rate': {
-      var rl = input.rate_limits && input.rate_limits.five_hour;
+      // Which window to report: five_hour (default), seven_day or spend.
+      var win = (seg && seg.window) || 'five_hour';
+      // the payload spells the third window 'spend_limit', not 'spend'
+      var rlKey = win === 'spend' ? 'spend_limit' : win;
+      var rl = input.rate_limits && input.rate_limits[rlKey];
       var rp = rl && pctOf(rl.used_percentage);
       if (rp == null) return null;
-      return { percent: rp, limit: '5h', resets: rl.resets_at || '' };
+      var limitLabel = win === 'seven_day' ? '7d' : win === 'spend' ? 'spend' : '5h';
+      return { percent: rp, limit: limitLabel, resets: rl.resets_at || '' };
     }
+    case 'version':
+      return input.version ? { version: input.version } : null;
+    case 'output_style':
+      return input.output_style && input.output_style.name
+        ? { style: input.output_style.name }
+        : null;
+    case 'session': {
+      // Named sessions show their name; anonymous ones fall back to the id
+      // prefix so the block always has something to render.
+      if (input.session_name) return { name: String(input.session_name).slice(0, 40) };
+      return input.session_id ? { name: String(input.session_id).slice(0, 8) } : null;
+    }
+    case 'exceeds200k':
+      return input.exceeds_200k_tokens ? { over: '200k' } : null;
+    case 'fast_mode':
+      return input.fast_mode ? { mode: 'fast' } : null;
+    case 'vim':
+      return input.vim && input.vim.mode ? { mode: input.vim.mode } : null;
+    case 'pr': {
+      var prInfo = input.pr;
+      return prInfo && prInfo.number != null
+        ? {
+            number: prInfo.number,
+            state: prInfo.review_state || prInfo.kind || '',
+            url: prInfo.url || ''
+          }
+        : null;
+    }
+    case 'worktree': {
+      var wtInfo = input.worktree;
+      return wtInfo && (wtInfo.name || wtInfo.branch)
+        ? { name: wtInfo.name || '', branch: wtInfo.branch || '' }
+        : null;
+    }
+    case 'agent':
+      return input.agent && input.agent.name ? { name: input.agent.name } : null;
     case 'time':
       return { time: new Date().toLocaleTimeString() };
     default:

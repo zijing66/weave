@@ -247,7 +247,15 @@ function normalizeLines(parsed: LegacyStatuslineConfig): SegmentKey[][] {
   );
   if (lines.length === 0) lines = [[]];
   if (seededFromLegacy) {
-    const missing = SEGMENT_ORDER.filter((k) => !seen.has(k));
+    // Only ENABLED keys must be reachable: opt-in blocks (exceeds200k, vim, …)
+    // ship disabled and stay unplaced until the user adds them from the panel.
+    const missing = SEGMENT_ORDER.filter((k) => {
+      if (seen.has(k)) return false;
+      const own = parsed.segments?.[k];
+      return typeof own?.enabled === 'boolean'
+        ? own.enabled
+        : DEFAULT_STATUSLINE_CONFIG.segments[k].enabled;
+    });
     if (missing.length) lines[0] = [...lines[0], ...missing];
   }
   return lines;
@@ -302,6 +310,8 @@ function normalizeSegment(raw: unknown, base: StatuslineSegment): StatuslineSegm
   if (typeof p.label !== 'string' || p.label === '') delete merged.label;
   if (typeof p.format !== 'string' || p.format === '') delete merged.format;
   if (p.metric !== 'session' && p.metric !== 'context') delete merged.metric;
+  if (p.window !== 'five_hour' && p.window !== 'seven_day' && p.window !== 'spend')
+    delete merged.window;
   return merged;
 }
 

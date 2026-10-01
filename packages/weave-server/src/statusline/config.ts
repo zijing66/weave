@@ -73,7 +73,16 @@ export type SegmentKey =
   | 'tokens' // tokens-total
   | 'cost' // session-cost
   | 'rate' // rate-limit used %
-  | 'time';
+  | 'time'
+  | 'version' // Claude Code version
+  | 'output_style' // active output style name
+  | 'session' // session name (or short id)
+  | 'exceeds200k' // flag: context over 200k (renders only while true)
+  | 'fast_mode' // flag: fast mode on (renders only while true)
+  | 'vim' // vim mode indicator (renders only in vim mode)
+  | 'pr' // GitHub PR number/state (conditional)
+  | 'worktree' // --worktree session name/branch (conditional)
+  | 'agent'; // active agent name (conditional)
 
 export interface StatuslineSegment {
   enabled: boolean;
@@ -88,6 +97,8 @@ export interface StatuslineSegment {
   merge: boolean;
   /** Context-bar display mode; ignored by other segments. */
   style?: 'percent' | 'bar' | 'both';
+  /** Which rate-limit window `rate` reports; ignored by other segments. */
+  window?: 'five_hour' | 'seven_day' | 'spend';
   /**
    * Static text prefix, rendered as `<label><labelSeparator><value>` — e.g.
    * `label: 'Cost'` yields `Cost: $0.45`. Empty/absent means no prefix, which
@@ -203,6 +214,15 @@ export const SEGMENT_ORDER: SegmentKey[] = [
   'cost',
   'rate',
   'time',
+  'version',
+  'output_style',
+  'session',
+  'exceeds200k',
+  'fast_mode',
+  'vim',
+  'pr',
+  'worktree',
+  'agent',
 ];
 
 /**
@@ -295,6 +315,30 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
     }),
     rate: seg({ enabled: false, color: '#f7768e', icon: '⚡', label: 'Rate' }),
     time: seg({ enabled: true, color: 'gray', backgroundColor: 'blue', icon: '🕒' }),
+    // Opt-in blocks: every one ships disabled and unplaced — add them from the
+    // panel's + 块 pill. Conditional kinds (exceeds200k/vim/pr/worktree/agent)
+    // render only while their payload field is present.
+    version: seg({
+      enabled: false,
+      color: '#a9b1d6',
+      icon: 'ℹ️',
+      label: 'CC',
+      format: '{version}',
+    }),
+    output_style: seg({ enabled: false, color: '#bb9af7', icon: '🎨', format: '{style}' }),
+    session: seg({
+      enabled: false,
+      color: '#7dcfff',
+      icon: '🏷️',
+      label: 'Session',
+      format: '{name}',
+    }),
+    exceeds200k: seg({ enabled: false, color: '#f7768e', icon: '🚨', format: '{over}' }),
+    fast_mode: seg({ enabled: false, color: '#ff9e64', icon: '🚀', format: '{mode}' }),
+    vim: seg({ enabled: false, color: '#9ece6a', icon: '⌨️', format: '{mode}' }),
+    pr: seg({ enabled: false, color: '#73daca', icon: '🔗', label: 'PR', format: '#{number}' }),
+    worktree: seg({ enabled: false, color: '#7aa2f7', icon: '🪴', format: '{name}' }),
+    agent: seg({ enabled: false, color: '#c0caf5', icon: '🎭', label: 'Agent', format: '{name}' }),
   },
 };
 
@@ -315,15 +359,24 @@ export const PLAIN_STATUSLINE_CONFIG: StatuslineConfig = {
  */
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
-  git: ['branch'],
+  git: ['branch', 'repo'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
   thinking: ['level'],
   context: ['bar', 'used', 'total', 'percent', 'remaining'],
   tokens: ['total', 'percent'],
-  cost: ['cost'],
+  cost: ['cost', 'duration', 'api_duration', 'lines_added', 'lines_removed'],
   rate: ['percent', 'limit', 'resets'],
   time: ['time'],
+  version: ['version'],
+  output_style: ['style'],
+  session: ['name'],
+  exceeds200k: ['over'],
+  fast_mode: ['mode'],
+  vim: ['mode'],
+  pr: ['number', 'state', 'url'],
+  worktree: ['name', 'branch'],
+  agent: ['name'],
 };
 
 /**
@@ -343,8 +396,19 @@ export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   context: '{percent}% {bar}',
   tokens: '{total}',
   cost: '{cost}',
-  rate: '5h {percent}%',
+  // {limit} renders '5h' for the default window — same bytes as the old
+  // hard-coded '5h', but correct once the window selector picks 7d/spend.
+  rate: '{limit} {percent}%',
   time: '{time}',
+  version: '{version}',
+  output_style: '{style}',
+  session: '{name}',
+  exceeds200k: '{over}',
+  fast_mode: '{mode}',
+  vim: '{mode}',
+  pr: '#{number}',
+  worktree: '{name}',
+  agent: '{name}',
 };
 
 /** Legacy `context.style` → template, preserving each mode's old rendering. */

@@ -4,7 +4,14 @@ import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, appendFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateStatuslineScript } from '../generator.js';
-import { DEFAULT_STATUSLINE_CONFIG, PLAIN_STATUSLINE_CONFIG, type SegmentKey } from '../config.js';
+import {
+  DEFAULT_STATUSLINE_CONFIG,
+  PLAIN_STATUSLINE_CONFIG,
+  SEGMENT_DEFAULT_FORMAT,
+  SEGMENT_ORDER,
+  SEGMENT_TOKENS,
+  type SegmentKey,
+} from '../config.js';
 import { WEAVE_VERSION } from '../../version.js';
 import {
   readStatuslineConfig,
@@ -353,7 +360,40 @@ describe('statusline — config normalisation', () => {
     const cfg = await readStatuslineConfig(dir);
     expect(cfg.segments.tokens.metric).toBeUndefined();
   });
+
+  it('round-trips the rate window and drops an unknown one', async () => {
+    writeCustom({ segments: { rate: { enabled: true, window: 'seven_day' } } });
+    expect((await readStatuslineConfig(dir)).segments.rate.window).toBe('seven_day');
+    writeCustom({ segments: { rate: { enabled: true, window: 'hourly' } } });
+    expect((await readStatuslineConfig(dir)).segments.rate.window).toBeUndefined();
+  });
+
+  it('legacy seeding places enabled opt-in blocks but leaves disabled ones out', async () => {
+    writeFileSync(
+      join(dir, '.weave/statusline.json'),
+      JSON.stringify({
+        // no source → resolves as the global template; source custom reaches
+        // mergeDefaults, where the legacy order→lines migration lives
+        source: 'custom',
+        layout: 'single',
+        order: ['model'],
+        segments: { vim: { enabled: true }, pr: { enabled: false } },
+      }),
+    );
+    const cfg = await readStatuslineConfig(dir);
+    expect(cfg.lines.flat()).toContain('vim');
+    expect(cfg.lines.flat()).not.toContain('pr');
+  });
+
+  it('every segment key has token hints, a default format and a default segment', () => {
+    for (const k of SEGMENT_ORDER) {
+      expect(SEGMENT_TOKENS[k], `tokens for ${k}`).toBeDefined();
+      expect(SEGMENT_DEFAULT_FORMAT[k], `format for ${k}`).toBeTruthy();
+      expect(DEFAULT_STATUSLINE_CONFIG.segments[k], `segment for ${k}`).toBeDefined();
+    }
+  });
 });
+
 
 describe('statusline — default config golden output', () => {
   // Pins the exact rendering of the shipped default, ANSI stripped, so a change
@@ -1018,6 +1058,146 @@ describe('statusline — runtime output', () => {
     const out = runScript(generateStatuslineScript(cfg), stdin);
     expect(out).toMatch(/^\x1b\[0m {5,}/); // leading reset, then right-align padding
     expect(out.trimEnd()).toContain('claude-sonnet-5');
+  });
+
+  const optInKeys: SegmentKey[] = [
+    'version',
+    'output_style',
+    'session',
+    'exceeds200k',
+    'fast_mode',
+    'vim',
+    'pr',
+    'worktree',
+    'agent',
+  ];
+
+  const optInConfig = () => {
+    const segments = { ...DEFAULT_STATUSLINE_CONFIG.segments };
+    for (const k of optInKeys) segments[k] = { ...segments[k], enabled: true };
+    return {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [optInKeys] as SegmentKey[][],
+      segments,
+    };
+  };
+
+  it('renders every opt-in block when its payload field is present', () => {
+    const out = runScript(generateStatuslineScript(optInConfig()), {
+      ...stdin,
+      version: '2.1.286',
+      output_style: { name: 'explanatory' },
+      session_name: 'feat-x',
+      exceeds_200k_tokens: true,
+      fast_mode: true,
+      vim: { mode: 'INSERT' },
+      pr: { number: 482, url: 'https://github.com/acme/weave/pull/482', review_state: 'approved' },
+      worktree: { name: 'wt-next', branch: 'feat/y' },
+      agent: { name: 'reviewer' },
+    });
+    expect(out).toContain('2.1.286');
+    expect(out).toContain('explanatory');
+    expect(out).toContain('feat-x');
+    expect(out).toContain('200k');
+    expect(out).toContain('fast');
+    expect(out).toContain('INSERT');
+    expect(out).toContain('#482');
+    expect(out).toContain('wt-next');
+    expect(out).toContain('reviewer');
+  });
+
+  it('drops conditional blocks when their payload field is missing', () => {
+    const out = runScript(generateStatuslineScript(optInConfig()), {
+      ...stdin,
+      version: '2.1.286', // the only unconditioned block in the set
+      exceeds_200k_tokens: false,
+      // no fast_mode / vim / pr / worktree / agent / output_style / session_name;
+      // session falls back to the short id
+      session_id: '01234567-89ab-cdef',
+    });
+    expect(out).toContain('2.1.286');
+    expect(out).not.toContain('INSERT');
+    expect(out).not.toContain('#482');
+    expect(out).not.toContain('wt-next');
+    expect(out).not.toContain('reviewer');
+    expect(out).not.toContain('explanatory');
+    // session_name absent → the id prefix still renders
+    expect(out).toContain('01234567');
+  });
+
+  it('rate can report the seven-day and spend windows', () => {
+    const rateWith = (win: 'five_hour' | 'seven_day' | 'spend') => ({
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['rate']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        rate: { ...DEFAULT_STATUSLINE_CONFIG.segments.rate, enabled: true, window: win },
+      },
+    });
+    const seven = runScript(generateStatuslineScript(rateWith('seven_day')), {
+      ...stdin,
+      rate_limits: { seven_day: { used_percentage: 33, resets_at: 'monday' } },
+    });
+    expect(seven).toContain('7d 33%');
+    const spend = runScript(generateStatuslineScript(rateWith('spend')), {
+      ...stdin,
+      rate_limits: { spend_limit: { used_percentage: 10 } },
+    });
+    expect(spend).toContain('spend 10%');
+    // the default window still renders byte-identically to the old hard-coded form
+    const five = runScript(generateStatuslineScript(rateWith('five_hour')), {
+      ...stdin,
+      rate_limits: { five_hour: { used_percentage: 45 } },
+    });
+    expect(five).toContain('5h 45%');
+  });
+
+  it('cost exposes duration and line-count tokens', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['cost']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        cost: {
+          ...DEFAULT_STATUSLINE_CONFIG.segments.cost,
+          enabled: true,
+          format: '{cost} {duration} +{lines_added}/-{lines_removed}',
+        },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), {
+      ...stdin,
+      cost: {
+        total_cost_usd: 1.5,
+        total_duration_ms: 7200000,
+        total_lines_added: 12,
+        total_lines_removed: 3,
+      },
+    });
+    expect(out).toContain('$1.50 2h +12/-3');
+  });
+
+  it('git exposes the repo owner/name token', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git: {
+          ...DEFAULT_STATUSLINE_CONFIG.segments.git,
+          enabled: true,
+          format: '{branch}@{repo}',
+        },
+      },
+    };
+    const out = runScript(generateStatuslineScript(cfg), {
+      ...stdin,
+      workspace: {
+        current_dir: process.cwd(), // inside the weave repo, so branch resolves
+        repo: { host: 'github.com', owner: 'acme', name: 'weave' },
+      },
+    });
+    expect(out).toContain('@acme/weave');
   });
 
   it('align center pads both sides', () => {
