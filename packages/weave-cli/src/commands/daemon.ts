@@ -118,14 +118,14 @@ async function statusAction(): Promise<void> {
 
 export const daemonCommand: Command = {
   name: 'daemon',
-  description: 'Manage the background daemon (start, stop, status)',
+  description: 'cmd.daemon.desc',
   subcommands: [
     {
       name: 'start',
-      description: 'Start the daemon in the background (no browser — see `weave dashboard`)',
+      description: 'cmd.daemon.start.desc',
       action: startAction,
     },
-    { name: 'stop', description: 'Stop the running daemon', action: stopAction },
-    { name: 'status', description: 'Show daemon status', action: statusAction },
+    { name: 'stop', description: 'cmd.daemon.stop.desc', action: stopAction },
+    { name: 'status', description: 'cmd.daemon.status.desc', action: statusAction },
   ],
 };

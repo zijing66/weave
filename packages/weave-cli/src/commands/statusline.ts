@@ -25,16 +25,16 @@ async function previewAction(context: CommandContext): Promise<void> {
 
 export const statuslineCommand: Command = {
   name: 'statusline',
-  description: 'Statusline tools (preview TUI)',
+  description: 'cmd.statusline.desc',
   subcommands: [
     {
       name: 'preview',
-      description: 'Interactive Ink preview of the statusline',
+      description: 'cmd.statusline.preview.desc',
       options: [
         {
           name: 'project',
           short: 'p',
-          description: 'Target project path (default: cwd)',
+          description: 'flag.statusline.preview.project',
           type: 'string',
         },
       ],

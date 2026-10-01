@@ -11,12 +11,12 @@ import type { Command } from '../parser.js';
 
 export const initCommand: Command = {
   name: 'init',
-  description: 'Initialize weave harness in the current project',
+  description: 'cmd.init.desc',
   options: [
     {
       name: 'preset',
       short: 'p',
-      description: 'Configuration preset: minimal, default, or full',
+      description: 'flag.init.preset',
       type: 'string',
       default: 'default',
       choices: ['minimal', 'default', 'full'],
@@ -24,20 +24,20 @@ export const initCommand: Command = {
     {
       name: 'force',
       short: 'f',
-      description: 'Overwrite existing files',
+      description: 'flag.init.force',
       type: 'boolean',
       default: false,
     },
     {
       name: 'no-interactive',
-      description: 'Disable interactive prompts',
+      description: 'flag.init.noInteractive',
       type: 'boolean',
       default: false,
     },
     {
       name: 'dir',
       short: 'd',
-      description: 'Target directory (default: current directory)',
+      description: 'flag.dir',
       type: 'string',
       default: process.cwd(),
     },

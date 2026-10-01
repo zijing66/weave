@@ -32,12 +32,12 @@ async function findProjectDirs(root: string, depth = 0, maxDepth = 6): Promise<s
 
 export const scanCommand: Command = {
   name: 'scan',
-  description: 'Scan for weave-initialized projects and register them',
+  description: 'cmd.scan.desc',
   options: [
     {
       name: 'dir',
       short: 'd',
-      description: 'Root directory to scan (default: current directory)',
+      description: 'flag.scan.dir',
       type: 'string',
       default: process.cwd(),
     },

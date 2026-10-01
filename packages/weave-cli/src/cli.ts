@@ -9,6 +9,8 @@ import { dashboardCommand } from './commands/dashboard.js';
 import { scanCommand } from './commands/scan.js';
 import { statuslineCommand } from './commands/statusline.js';
 import type { Command, CommandContext } from './parser.js';
+import { initCliLocale, t } from './i18n/index.js';
+import type { MessageKey } from './i18n/dict/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,18 +23,21 @@ function readVersion(): string {
   }
 }
 
+/** Help renders command/option `description` fields as dict keys. */
 function showHelp(parser: CommandParser): void {
   const version = readVersion();
-  console.log(`weave v${version} — Claude Code harness tool\n`);
-  console.log('Usage: weave <command> [options]\n');
-  console.log('Commands:');
+  console.log(`${t('help.tagline', { version })}\n`);
+  console.log(`${t('help.usage')}\n`);
+  console.log(t('help.commands'));
   for (const cmd of parser.getAllCommands()) {
-    if (cmd.description) console.log(`  ${cmd.name.padEnd(12)}${cmd.description}`);
+    if (cmd.description) {
+      console.log(`  ${cmd.name.padEnd(12)}${t(cmd.description as MessageKey)}`);
+    }
   }
-  console.log('\nGlobal options:');
+  console.log(`\n${t('help.globalOptions')}`);
   for (const opt of parser.getGlobalOptions()) {
     const flag = opt.short ? `-${opt.short}, --${opt.name}` : `    --${opt.name}`;
-    console.log(`  ${flag.padEnd(20)}${opt.description}`);
+    console.log(`  ${flag.padEnd(20)}${t(opt.description as MessageKey)}`);
   }
 }
 
@@ -54,6 +59,9 @@ export class CLI {
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {
+    // 语言先于 help/错误解析：settings.json 的 locale（或 WEAVE_LOCALE）决定
+    // 本次调用全部输出语言。
+    await initCliLocale();
     const result = this.parser.parse(argv);
 
     // Global flags
@@ -74,14 +82,14 @@ export class CLI {
     }
 
     if (!cmd?.action) {
-      console.error(`Unknown command: ${result.command.join(' ')}`);
+      console.error(t('cli.unknownCommand', { command: result.command.join(' ') }));
       showHelp(this.parser);
       process.exit(1);
     }
 
     const errors = this.parser.validateFlags(result.flags, cmd);
     if (errors.length > 0) {
-      for (const e of errors) console.error(`Error: ${e}`);
+      for (const e of errors) console.error(t('cli.error', { error: e }));
       process.exit(1);
     }
 

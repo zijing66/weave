@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { dashboardCommand, dashboardUrl } from '../commands/dashboard';
 import { daemonCommand } from '../commands/daemon';
+import { zh, en, type MessageKey } from '../i18n/dict';
+import { makeT } from '../i18n/t';
 
 describe('dashboardUrl', () => {
   it('carries the token as a query param', () => {
@@ -53,9 +55,16 @@ describe('dashboard vs daemon split', () => {
   });
 
   it('each description points at the other command', () => {
-    expect(daemonCommand.subcommands?.find((s) => s.name === 'start')?.description).toContain(
-      'weave dashboard',
-    );
-    expect(dashboardCommand.description).toContain('starts the daemon');
+    // description 字段是词典 key，断言渲染结果（zh 里含 weave dashboard 字面，
+    // en 里含 starts the daemon）——见 cli.ts showHelp。
+    const zhT = makeT(zh, zh);
+    const enT = makeT(en, zh);
+    const startDesc = daemonCommand.subcommands?.find((s) => s.name === 'start')?.description;
+    expect(startDesc).toBeDefined();
+    expect(zhT(startDesc as MessageKey)).toContain('weave dashboard');
+    expect(enT(startDesc as MessageKey)).toContain('weave dashboard');
+    expect(dashboardCommand.description).toBeDefined();
+    expect(enT(dashboardCommand.description as MessageKey)).toContain('starts the daemon');
+    expect(zhT(dashboardCommand.description as MessageKey)).toContain('守护进程');
   });
 });
