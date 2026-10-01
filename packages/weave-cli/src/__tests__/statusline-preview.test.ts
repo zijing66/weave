@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseAnsiSpans, stripAnsi } from '../statusline/ansi.js';
-import { buildMockInput } from '../statusline/mock-input.js';
+import { parseAnsiSpans, stripAnsi, toInkColor } from '../statusline/ansi.js';
+import { buildMockInput, writeFixtureTranscript } from '../statusline/mock-input.js';
 import {
   DEFAULT_STATUSLINE_CONFIG,
+  PLAIN_STATUSLINE_CONFIG,
   type StatuslineConfig,
   type SegmentKey,
 } from '@weave/server';
 import {
   runPreviewLines,
+  COLOR_CYCLE,
   toggleSegment,
   cycleSegmentColor,
   toggleSegmentBold,
@@ -20,9 +23,13 @@ import {
   cycleAlign,
   togglePowerline,
   cyclePowerlineGlyph,
-  toggleLogo,
+  cycleLogoColor,
   cycleSeparator,
   bumpRefreshInterval,
+  bumpBarCells,
+  cycleBarGlyph,
+  cycleLabelSeparator,
+  setSegmentField,
   clampCursor,
   moveCursor,
 } from '../statusline/preview.js';
@@ -63,6 +70,69 @@ describe('parseAnsiSpans', () => {
     const joined = parseAnsiSpans(line).map((s) => s.text).join('');
     expect(joined).toBe(stripAnsi(line));
   });
+
+  it('parses an indexed 256-colour foreground', () => {
+    expect(parseAnsiSpans('\x1b[38;5;196mX\x1b[0m')).toEqual([
+      { text: 'X', color: 'ansi256:196' },
+    ]);
+  });
+
+  it('parses a truecolor foreground back into hex', () => {
+    expect(parseAnsiSpans('\x1b[38;2;122;162;247mX\x1b[0m')).toEqual([
+      { text: 'X', color: '#7aa2f7' },
+    ]);
+  });
+
+  it('parses extended background colours', () => {
+    expect(parseAnsiSpans('\x1b[48;5;236mX\x1b[0m')).toEqual([
+      { text: 'X', backgroundColor: 'ansi256:236' },
+    ]);
+    expect(parseAnsiSpans('\x1b[48;2;31;35;53mX\x1b[0m')).toEqual([
+      { text: 'X', backgroundColor: '#1f2335' },
+    ]);
+  });
+
+  it('reads palette index 0 as black, not as a reset', () => {
+    // inside 38;5;0 the trailing 0 is a palette index, not SGR 0
+    expect(parseAnsiSpans('\x1b[38;5;0mX\x1b[0m')).toEqual([
+      { text: 'X', color: 'ansi256:0' },
+    ]);
+  });
+
+  it('handles bold combined with an extended colour', () => {
+    expect(parseAnsiSpans('\x1b[1;38;2;255;136;0mX\x1b[0m')).toEqual([
+      { text: 'X', bold: true, color: '#ff8800' },
+    ]);
+  });
+
+  it('emits the full powerline shape: fg + bg + bold', () => {
+    // paint(glyph, prevBg, false, nextBg) shape used for the join chevron
+    expect(parseAnsiSpans('\x1b[36;44m\x1b[0m')).toEqual([
+      { text: '', color: 'cyan', backgroundColor: 'blue' },
+    ]);
+  });
+});
+
+describe('toInkColor', () => {
+  it('re-spells indexed colours the way chalk expects', () => {
+    expect(toInkColor('ansi256:196')).toBe('ansi256(196)');
+  });
+
+  it('passes colour names and hex through unchanged', () => {
+    expect(toInkColor('red')).toBe('red');
+    expect(toInkColor('#7aa2f7')).toBe('#7aa2f7');
+  });
+});
+
+describe('writeFixtureTranscript', () => {
+  it('repeats a message id so the preview exercises de-duplication', () => {
+    const records = readFileSync(writeFixtureTranscript(), 'utf-8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { message: { id: string } });
+    expect(records.length).toBe(3);
+    expect(new Set(records.map((r) => r.message.id)).size).toBe(2);
+  });
 });
 
 describe('buildMockInput', () => {
@@ -93,17 +163,24 @@ describe('statusline config editors', () => {
   });
 
   it('cycleSegmentColor walks the palette and wraps', () => {
-    const palette = ['gray', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan'];
-    const c = cfg();
+    const palette = [...COLOR_CYCLE];
+    // start from a named colour: the shipped default uses hex, which is not a
+    // member of the cycle, so indexOf would be -1
+    const c = { ...cfg(), segments: { ...cfg().segments, model: { ...cfg().segments.model, color: 'gray' as const } } };
     const start = palette.indexOf(c.segments.model.color);
     expect(start).toBeGreaterThanOrEqual(0);
-    // a full lap (7 colours) lands back on the starting colour
+    // one full lap lands back on the starting colour
     let cur = c;
     for (let i = 0; i < palette.length; i++) cur = cycleSegmentColor(cur, 'model');
     expect(cur.segments.model.color).toBe(c.segments.model.color);
     // one more step moves to the next palette entry (with wrap-around)
     const next = cycleSegmentColor(cur, 'model').segments.model.color;
     expect(next).toBe(palette[(start + 1) % palette.length]);
+  });
+
+  it('the colour cycle reaches 256 and hex encodings', () => {
+    expect(COLOR_CYCLE.some((c) => c.startsWith('ansi256:'))).toBe(true);
+    expect(COLOR_CYCLE.some((c) => c.startsWith('#'))).toBe(true);
   });
 
   it('toggleSegmentBold / toggleSegmentMerge flip their flags', () => {
@@ -137,10 +214,10 @@ describe('statusline config editors', () => {
     expect(cycleAlign(cycleAlign(cycleAlign(c))).align).toBe('left');
   });
 
-  it('togglePowerline / toggleLogo / cycleSeparator / bumpRefreshInterval', () => {
+  it('togglePowerline / cycleLogoColor / cycleSeparator / bumpRefreshInterval', () => {
     const c = cfg();
     expect(togglePowerline(c).powerline.enabled).toBe(!c.powerline.enabled);
-    expect(toggleLogo(c).showLogo).toBe(!c.showLogo);
+    expect(cycleLogoColor(c).logoColor).not.toBe(c.logoColor);
     expect(typeof cycleSeparator(c).separator).toBe('string');
     expect(bumpRefreshInterval(c, 1).refreshInterval).toBe(c.refreshInterval + 1);
     expect(bumpRefreshInterval({ ...c, refreshInterval: 1 }, -5).refreshInterval).toBe(1);
@@ -163,6 +240,46 @@ describe('statusline config editors', () => {
     expect(cyclePowerlineGlyph(d).powerline.separator).toBe('');
     // a preset value advances to the next; a custom value resets to the first
     expect(cyclePowerlineGlyph(c).powerline.separator).toBe('');
+  });
+
+  it('setSegmentField sets a label and clears it with an empty string', () => {
+    const c = cfg();
+    const before = c.segments.model.label;
+    const withLabel = setSegmentField(c, 'model', 'label', 'Model');
+    expect(withLabel.segments.model.label).toBe('Model');
+    expect(c.segments.model.label).toBe(before); // input untouched
+    expect(setSegmentField(withLabel, 'model', 'label', '').segments.model.label).toBeUndefined();
+  });
+
+  it('setSegmentField round-trips a format template', () => {
+    const template = '[{bar}] {used}/{total} ({percent}%)';
+    const c = setSegmentField(cfg(), 'context', 'format', template);
+    expect(c.segments.context.format).toBe(template);
+    expect(setSegmentField(c, 'context', 'format', '').segments.context.format).toBeUndefined();
+  });
+
+  it('bumpBarCells clamps into the generator’s 1..40 range', () => {
+    const c = cfg();
+    expect(bumpBarCells(c, 1).bar.cells).toBe(c.bar.cells + 1);
+    expect(bumpBarCells(c, -99).bar.cells).toBe(1);
+    expect(bumpBarCells({ ...c, bar: { ...c.bar, cells: 40 } }, 5).bar.cells).toBe(40);
+  });
+
+  it('cycleBarGlyph walks the glyph pairs and returns to the default', () => {
+    const start = cfg().bar;
+    const next = cycleBarGlyph(cfg());
+    expect(next.bar).not.toEqual(start);
+    let cur = next;
+    for (let i = 0; i < 12 && (cur.bar.fill !== start.fill || cur.bar.empty !== start.empty); i++) {
+      cur = cycleBarGlyph(cur);
+    }
+    expect(cur.bar.fill).toBe(start.fill);
+    expect(cur.bar.empty).toBe(start.empty);
+  });
+
+  it('cycleLabelSeparator walks the presets and wraps', () => {
+    const c = cfg();
+    expect(cycleLabelSeparator(c).labelSeparator).not.toBe(c.labelSeparator);
   });
 
   it('clampCursor keeps the cursor inside the grid', () => {
@@ -229,12 +346,25 @@ describe('runPreviewLines (real script round-trip)', () => {
     const centered: StatuslineConfig = {
       ...DEFAULT_STATUSLINE_CONFIG,
       align: 'center',
-      showLogo: false,
     };
     const res = runPreviewLines(centered, dir, 100);
     const first = res.lines[0] ?? '';
     expect(first.startsWith('  ') || first.length > 10).toBe(true);
     // plain length < terminal width → padding was added somewhere
     expect(stripAnsi(first).length).toBeGreaterThan(0);
+  }, 20000);
+
+  it('renders the reference preset with labels, bar and session total', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'weave-preview-ref-'));
+    const res = runPreviewLines(PLAIN_STATUSLINE_CONFIG, dir, 200);
+    expect(res.error).toBeUndefined();
+    const plain = res.lines.map(stripAnsi).join('\n');
+    expect(plain).toContain('Model: Fable 5');
+    expect(plain).toContain('[█████░░░░░░░] 420k/1.0M (42%)');
+    expect(plain).toContain('Thinking: high');
+    expect(plain).toContain('Cost: $1.23');
+    // 960.9k only comes out right if the fixture's repeated message id is
+    // de-duplicated — otherwise this reads ~1.4M
+    expect(plain).toContain('Total: 960.9k');
   }, 20000);
 });
