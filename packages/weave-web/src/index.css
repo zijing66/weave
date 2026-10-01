@@ -1,5 +1,30 @@
 @import 'highlight.js/styles/github-dark.css';
 
+/* Nerd Font powerline glyphs ( etc.), preloaded from index.html so the
+   statusline preview never renders tofu. Subset to the powerline block only
+   (U+E0A0-E0FF) — 8KB per weight. Loaded before everything else on purpose. */
+@font-face {
+  font-family: 'Weave Nerd Mono';
+  src: url('/fonts/WeaveNerdMono-Regular.woff?v=2') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Weave Nerd Mono';
+  src: url('/fonts/WeaveNerdMono-Bold.woff?v=2') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Unlayered on purpose: outranks Tailwind's font-mono utility so the preview
+   stack reads glyphs from the bundled font first. */
+.nerd-font {
+  font-family: 'Weave Nerd Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Courier New', monospace;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
