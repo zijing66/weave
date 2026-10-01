@@ -457,6 +457,10 @@ export function StatuslinePanel({
   // 恢复出厂 is destructive (overwrites the global template), so the first
   // click only arms the button; a second click within 5s executes.
   const [resetArmed, setResetArmed] = useState(false);
+  // Follow global / Sync from global both discard the local custom config —
+  // the first click arms the button, a second click within 5s executes
+  // (same two-step pattern as 恢复出厂).
+  const [confirmSwitch, setConfirmSwitch] = useState<'follow' | 'sync' | null>(null);
   // Which capsule's edit modal is open (key === null means "adding").
   const [editing, setEditing] = useState<{ line: number; key: SegmentKey | null } | null>(null);
   // A finished drag also fires a click on the capsule — swallow it.
@@ -492,6 +496,13 @@ export function StatuslinePanel({
     const t = setTimeout(() => setResetArmed(false), 5000);
     return () => clearTimeout(t);
   }, [resetArmed]);
+
+  // Same hesitation window for the follow/sync confirmations.
+  useEffect(() => {
+    if (!confirmSwitch) return;
+    const t = setTimeout(() => setConfirmSwitch(null), 5000);
+    return () => clearTimeout(t);
+  }, [confirmSwitch]);
 
   /** First click arms, second click loads the shipped defaults into the form —
    * the normal debounced save then PUTs them and auto-syncs follower projects. */
@@ -762,18 +773,42 @@ export function StatuslinePanel({
                   <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-300">local custom config</span>
                   <span className="text-neutral-600">This project has its own config.</span>
                   <button
-                    onClick={() => patch({ source: 'global' })}
-                    className="ml-auto shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
-                    title="Stop customizing; resume following the global template"
+                    onClick={() => {
+                      if (confirmSwitch !== 'follow') {
+                        setConfirmSwitch('follow');
+                        return;
+                      }
+                      setConfirmSwitch(null);
+                      patch({ source: 'global' });
+                    }}
+                    className={cn(
+                      'ml-auto shrink-0 rounded px-2 py-0.5 transition-colors',
+                      confirmSwitch === 'follow'
+                        ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                    )}
+                    title="改为跟随全局模板 — 本地自定义配置将被替换（再次点击确认，5 秒内有效）"
                   >
-                    Follow global
+                    {confirmSwitch === 'follow' ? '确认跟随?' : 'Follow global'}
                   </button>
                   <button
-                    onClick={adoptGlobal}
-                    className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
-                    title="Overwrite this project's config with the global template"
+                    onClick={() => {
+                      if (confirmSwitch !== 'sync') {
+                        setConfirmSwitch('sync');
+                        return;
+                      }
+                      setConfirmSwitch(null);
+                      adoptGlobal();
+                    }}
+                    className={cn(
+                      'shrink-0 rounded px-2 py-0.5 transition-colors',
+                      confirmSwitch === 'sync'
+                        ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                    )}
+                    title="用全局模板覆盖本地自定义配置（再次点击确认，5 秒内有效）"
                   >
-                    Sync from global
+                    {confirmSwitch === 'sync' ? '确认覆盖?' : 'Sync from global'}
                   </button>
                 </>
               )}
