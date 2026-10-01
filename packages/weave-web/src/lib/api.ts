@@ -274,8 +274,14 @@ export interface TerminalSettings {
   customCommand: string;
 }
 
+/** mirror of packages/weave-server/src/daemon/settings.ts — 保持同步
+ * （web 不能 import 含 node:fs 的 workspace 包，服务端 mergeDefaults
+ * 白名单会把非法值规范化，漂移可自愈）。 */
+export type Locale = 'zh-CN' | 'en';
+
 export interface DaemonSettings {
   terminal: TerminalSettings;
+  locale: Locale;
 }
 
 export interface TerminalPresetMeta {

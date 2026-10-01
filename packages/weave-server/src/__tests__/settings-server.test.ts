@@ -90,13 +90,34 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({
       terminal: { preset: 'wt', customCommand: '' },
+      locale: 'zh-CN',
     });
     // A follow-up GET reads the same value back through the injected dir.
     const get = await fetch(`http://127.0.0.1:${port}/settings`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
-    const data = (await get.json()) as { settings: { terminal: { preset: string } } };
+    const data = (await get.json()) as { settings: { terminal: { preset: string }; locale: string } };
     expect(data.settings.terminal.preset).toBe('wt');
+    expect(data.settings.locale).toBe('zh-CN');
+  });
+
+  it('PUT /settings accepts and round-trips a locale change', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'weave-settings-api-'));
+    setDaemonSettingsDir(dir);
+    const put = await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'auto', customCommand: '' }, locale: 'en' }),
+    });
+    expect(put.status).toBe(200);
+    expect(((await put.json()) as { locale: string }).locale).toBe('en');
+    // An unsupported locale is normalized back to the default, never persisted raw.
+    const bad = await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'auto', customCommand: '' }, locale: 'fr' }),
+    });
+    expect(((await bad.json()) as { locale: string }).locale).toBe('zh-CN');
   });
 
   it('POST /projects/:id/open with target=explorer opens the project directory', async () => {

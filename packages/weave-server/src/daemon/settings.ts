@@ -38,8 +38,24 @@ export interface TerminalSettings {
   customCommand: string;
 }
 
+/**
+ * UI/CLI language. Machine-level and stored in daemon settings.json so the
+ * dashboard and the `weave` CLI read the same value.
+ *
+ * Extending: add the tag here and to SUPPORTED_LOCALES, then provide the
+ * matching web/CLI dictionaries — both are `Record<Locale, …>`, so a new
+ * locale without dictionaries fails to compile (by design).
+ */
+export type Locale = 'zh-CN' | 'en';
+
+/** Registration point for future locales (ja, ko, …). */
+export const SUPPORTED_LOCALES: readonly Locale[] = ['zh-CN', 'en'];
+
+export const DEFAULT_LOCALE: Locale = 'zh-CN';
+
 export interface DaemonSettings {
   terminal: TerminalSettings;
+  locale: Locale;
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -49,7 +65,15 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
 
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
+  locale: DEFAULT_LOCALE,
 };
+
+/** Coerce a stored locale to a supported one (whitelist, never throws). */
+export function resolveLocale(raw: unknown): Locale {
+  return (SUPPORTED_LOCALES as readonly string[]).includes(raw as string)
+    ? (raw as Locale)
+    : DEFAULT_LOCALE;
+}
 
 export const ALL_TERMINAL_PRESETS: TerminalPreset[] = [
   'auto',
@@ -112,6 +136,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
         : DEFAULT_TERMINAL_SETTINGS.preset,
       customCommand: typeof term.customCommand === 'string' ? term.customCommand : '',
     },
+    locale: resolveLocale(obj.locale),
   };
 }
 
