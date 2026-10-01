@@ -166,7 +166,11 @@ export function DirectoryPickerModal({
             ) : (
               <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
             )}
-            <span className="truncate text-xs">{meta ? meta.label : node.name}</span>
+            {/* Drives share one rootKind label ("磁盘"), so the row must show
+                the path itself (C:\, D:\ …) or multiple disks look identical. */}
+            <span className="truncate text-xs">
+              {node.rootKind === 'drive' ? node.name : (meta ? meta.label : node.name)}
+            </span>
             {isExisting && (
               <span className="shrink-0 text-[10px] text-neutral-600">已添加</span>
             )}
