@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile, writeFile, stat, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, stat, mkdir, lstat, readlink, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { executeInit } from '../init/executor';
@@ -98,40 +98,103 @@ describe('executeInit', () => {
     expect(content).toBe(original);
   });
 
-  it('writes .weave/ into .git/info/exclude when the target is a git repo root', async () => {
+  // ---- Step 10: generated dirs carry a self-ignoring .gitignore ----
+  it('writes a self-ignoring .gitignore into .claude/ and .weave/', async () => {
     await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    for (const dir of ['.claude', '.weave']) {
+      const content = await readFile(path.join(tmpDir, dir, '.gitignore'), 'utf-8');
+      expect(content).toContain('*');
+      expect(content).toContain('!.gitignore');
+    }
+  });
+
+  it('still never creates or touches the root .gitignore', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+    const rootGitignore = path.join(tmpDir, '.gitignore');
+    const original = 'node_modules/\n';
+    await writeFile(rootGitignore, original);
 
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    const excludePath = path.join(tmpDir, '.git', 'info', 'exclude');
-    expect(result.created.files).toContain(excludePath);
-    const content = await readFile(excludePath, 'utf-8');
-    expect(content).toContain('.weave/');
+    expect(await readFile(rootGitignore, 'utf-8')).toBe(original);
+    expect(result.created.files).not.toContain(rootGitignore);
   });
 
-  it('writes the exclude at the repo root when init runs in a subdirectory', async () => {
-    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
-    const sub = path.join(tmpDir, 'packages', 'app');
-    await mkdir(sub, { recursive: true });
-
-    await executeInit({ ...BASE_OPTIONS, targetDir: sub });
+  it('leaves .git/info/exclude alone', async () => {
+    await mkdir(path.join(tmpDir, '.git', 'info'), { recursive: true });
     const excludePath = path.join(tmpDir, '.git', 'info', 'exclude');
-    const content = await readFile(excludePath, 'utf-8');
-    expect(content).toContain('.weave/');
+    await writeFile(excludePath, '# user content\n');
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readFile(excludePath, 'utf-8')).toBe('# user content\n');
   });
 
-  it('is idempotent — re-init does not duplicate the exclude entry', async () => {
+  it('is idempotent — re-init keeps the nested .gitignore byte-identical', async () => {
     await mkdir(path.join(tmpDir, '.git'), { recursive: true });
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const first = await readFile(path.join(tmpDir, '.claude', '.gitignore'), 'utf-8');
+    const second = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readFile(path.join(tmpDir, '.claude', '.gitignore'), 'utf-8')).toBe(first);
+    // already-correct file is not reported as recreated
+    expect(second.created.files).not.toContain(path.join(tmpDir, '.claude', '.gitignore'));
+  });
+
+  // ---- Step 8: CLAUDE.md and AGENTS.md resolve to one file ----
+  it('links AGENTS.md to CLAUDE.md on a fresh install', async () => {
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    const content = await readFile(path.join(tmpDir, '.git', 'info', 'exclude'), 'utf-8');
-    const entries = content
-      .split(/\r?\n/)
-      .filter((line) => {
-        const t = line.trim();
-        return t === '.weave' || t === '.weave/';
-      });
-    expect(entries).toHaveLength(1);
+
+    const link = await lstat(path.join(tmpDir, 'AGENTS.md'));
+    expect(link.isSymbolicLink()).toBe(true);
+    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe('CLAUDE.md');
+    // the real file carries the content
+    const content = await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8');
+    expect(content).toContain('weave:start');
+    expect(content).toContain('## Skills');
+  });
+
+  it('adopts an existing AGENTS.md instead of overwriting it', async () => {
+    const agents = path.join(tmpDir, 'AGENTS.md');
+    await writeFile(agents, '# Project\n\nHand-written notes.\n');
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+
+    const link = await lstat(path.join(tmpDir, 'CLAUDE.md'));
+    expect(link.isSymbolicLink()).toBe(true);
+    expect(await readlink(path.join(tmpDir, 'CLAUDE.md'))).toBe('AGENTS.md');
+    // the user's prose survives, weave's block is appended to it
+    const content = await readFile(agents, 'utf-8');
+    expect(content).toContain('Hand-written notes.');
+    expect(content).toContain('weave:start');
+  });
+
+  it('replaces an AGENTS.md that duplicates a CLAUDE.md, backing it up first', async () => {
+    await writeFile(path.join(tmpDir, 'CLAUDE.md'), '# Project\n\nClaude notes.\n');
+    await writeFile(path.join(tmpDir, 'AGENTS.md'), '# Project\n\nAgent notes.\n');
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+
+    const link = await lstat(path.join(tmpDir, 'AGENTS.md'));
+    expect(link.isSymbolicLink()).toBe(true);
+    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe('CLAUDE.md');
+
+    // the displaced content is preserved under the self-ignored .weave/ dir
+    const backups = await readdir(path.join(tmpDir, '.weave', 'backup'));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(path.join(tmpDir, '.weave', 'backup', backups[0]), 'utf-8')).toContain(
+      'Agent notes.',
+    );
+  });
+
+  it('is idempotent — an already-correct link is left alone', async () => {
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const before = await readlink(path.join(tmpDir, 'AGENTS.md'));
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe(before);
+    // no second backup was made
+    await expect(readdir(path.join(tmpDir, '.weave', 'backup'))).rejects.toThrow();
   });
 
   // ---- settings.json merge (user file: append-only) ----

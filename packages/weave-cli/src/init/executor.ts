@@ -19,6 +19,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weave/templates';
+import { WEAVE_VERSION, generateStatuslineScript, readStatuslineConfig } from '@weave/server';
 import { generateSettingsJson, mergeSettingsJson } from './settings-gen.js';
 import { generateMcpJson, mergeMcpJson } from './mcp-gen.js';
 import {
@@ -27,12 +28,8 @@ import {
   mergeClaudeMd,
   type ClaudeMdTemplate,
 } from './claudemd-gen.js';
-import {
-  generateAgentsMd,
-  generateAgentsMdSection,
-  mergeAgentsMd,
-} from './agentsmd-gen.js';
-import { generateHookHandler, generateStatusline, generateAutoMemoryHook } from './helpers-gen.js';
+import { ensureInstructionLink } from './instruction-link.js';
+import { generateHookHandler, generateAutoMemoryHook } from './helpers-gen.js';
 
 /** Map preset → CLAUDE.md template */
 const PRESET_TEMPLATE: Record<string, ClaudeMdTemplate> = {
@@ -179,9 +176,14 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   // the weave version marker are weave's own and refreshed in place; a file at
   // the same path WITHOUT the marker is user-authored and left untouched.
   if (components.helpers) {
+    // The statusline is generated from the project's effective config rather
+    // than a placeholder, so `weave init` alone produces a working statusline.
+    // (`readStatuslineConfig` resolves the project's `.weave/statusline.json`,
+    // falling back to the global template.)
+    const statuslineConfig = await readStatuslineConfig(targetDir);
     const helperFiles: [string, string][] = [
       ['hook-handler.cjs', generateHookHandler()],
-      ['statusline.cjs', generateStatusline()],
+      ['statusline.cjs', generateStatuslineScript(statuslineConfig)],
       ['auto-memory-hook.mjs', generateAutoMemoryHook()],
     ];
 
@@ -206,52 +208,42 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     }
   }
 
-  // ---- Step 8: Generate CLAUDE.md ----
-  // User file: a fresh one is generated whole; an existing one only ever
-  // receives weave's delimited block (appended, or replaced when already
-  // present). Content outside the markers is never touched.
-  if (components.claudeMd) {
+  // ---- Step 8: Instruction file (CLAUDE.md / AGENTS.md) ----
+  // The two names mean the same thing to different agents (Claude Code reads
+  // CLAUDE.md, Codex reads AGENTS.md), so weave keeps ONE file and links the
+  // other name to it rather than writing both and letting them drift.
+  //
+  // Policy for the real file (user file: append-only): a fresh one is generated
+  // whole; an existing one only ever receives weave's delimited block (appended,
+  // or replaced when already present). Content outside the markers is untouched.
+  if (components.claudeMd || components.agentsMd) {
+    const link = await ensureInstructionLink(targetDir, {
+      force,
+      interactive,
+      confirm: (question, detail) => confirmPrompt(question, detail, interactive),
+    });
+    if (link.backedUpTo) {
+      logger.dim(`Backed up the previous AGENTS.md to ${link.backedUpTo}`);
+      created.files.push(link.backedUpTo);
+    }
+
     const template = PRESET_TEMPLATE[preset] ?? 'standard';
     const projectName = path.basename(targetDir);
-    const claudeMdPath = path.join(targetDir, 'CLAUDE.md');
+    const instructionPath = path.join(targetDir, link.realFile);
+    const fresh = generateClaudeMd({ template, projectName });
 
     if (force) {
-      await writeFile(claudeMdPath, generateClaudeMd({ template, projectName }), 'utf-8');
-      created.files.push(claudeMdPath);
+      await writeFile(instructionPath, fresh, 'utf-8');
+      created.files.push(instructionPath);
     } else {
-      const existing = await readTextIfPresent(claudeMdPath);
+      const existing = await readTextIfPresent(instructionPath);
       if (existing === null) {
-        await writeFile(claudeMdPath, generateClaudeMd({ template, projectName }), 'utf-8');
-        created.files.push(claudeMdPath);
+        await writeFile(instructionPath, fresh, 'utf-8');
+        created.files.push(instructionPath);
       } else {
         const section = generateClaudeMdSection({ template, projectName });
-        await writeFile(claudeMdPath, mergeClaudeMd(existing, section), 'utf-8');
-        merged.push(claudeMdPath);
-      }
-    }
-  }
-
-  // ---- Step 8b: Generate AGENTS.md (Codex + cross-agent instructions) ----
-  // Same policy as CLAUDE.md: fresh file generated whole, existing file only
-  // ever receives weave's delimited block. The agents.md standard is read
-  // natively by Codex; other agents increasingly follow it too.
-  if (components.agentsMd) {
-    const template = PRESET_TEMPLATE[preset] ?? 'standard';
-    const projectName = path.basename(targetDir);
-    const agentsMdPath = path.join(targetDir, 'AGENTS.md');
-
-    if (force) {
-      await writeFile(agentsMdPath, generateAgentsMd({ template, projectName }), 'utf-8');
-      created.files.push(agentsMdPath);
-    } else {
-      const existing = await readTextIfPresent(agentsMdPath);
-      if (existing === null) {
-        await writeFile(agentsMdPath, generateAgentsMd({ template, projectName }), 'utf-8');
-        created.files.push(agentsMdPath);
-      } else {
-        const section = generateAgentsMdSection({ template, projectName });
-        await writeFile(agentsMdPath, mergeAgentsMd(existing, section), 'utf-8');
-        merged.push(agentsMdPath);
+        await writeFile(instructionPath, mergeClaudeMd(existing, section), 'utf-8');
+        merged.push(instructionPath);
       }
     }
   }
@@ -265,7 +257,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     created.directories.push(weaveDir);
 
     const runtimeConfig = {
-      initVersion: '0.1.0',
+      initVersion: WEAVE_VERSION,
       initTimestamp: new Date().toISOString(),
       preset,
       components: { settings: components.settings, skills: components.skills, commands: components.commands, agents: components.agents, helpers: components.helpers, mcp: components.mcp, claudeMd: components.claudeMd, agentsMd: components.agentsMd },
@@ -281,11 +273,14 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     (existed ? updated : created.files).push(configPath);
   }
 
-  // ---- Step 10: Ensure .weave/ is git-ignored via .git/info/exclude ----
-  // .weave/config.yaml is per-machine init metadata (timestamp, preset, etc.),
-  // not team-shared source. The ignore entry goes into .git/info/exclude — a
-  // machine-local git file — so init never touches the user's .gitignore.
-  await ensureGitExclude(targetDir, created);
+  // ---- Step 10: Keep weave's generated dirs out of version control ----
+  // Both `.claude/` and `.weave/` hold machine-local, regenerable content (a
+  // statusline script embedding this machine's absolute paths, init metadata).
+  // Each gets a self-ignoring `.gitignore` rather than an entry in the user's
+  // root `.gitignore`: the nested file is itself committed, so a teammate who
+  // clones inherits the rule without weave ever editing a file the user owns.
+  await ensureNestedGitignore(targetDir, claudeDir, created);
+  await ensureNestedGitignore(targetDir, path.join(targetDir, '.weave'), created);
 
   // ---- Aggregate summary ----
   const summary = {
@@ -309,40 +304,58 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
 }
 
 /**
- * Ensure `.weave/` (runtime state) is git-ignored by writing `.git/info/exclude`
- * in the repository containing `targetDir`. Never touches the user's
- * `.gitignore`. Idempotent; a no-op outside a git repository.
+ * Self-ignoring `.gitignore` contents written into each weave-generated dir.
+ *
+ * `*` ignores everything beside the file itself; the `!` line keeps this file
+ * tracked so the rule travels with the repository.
  */
-async function ensureGitExclude(
+const NESTED_GITIGNORE = `# weave — generated; do not commit
+*
+!.gitignore
+`;
+
+/**
+ * Write a self-ignoring `.gitignore` into a weave-generated directory.
+ *
+ * The user's own root `.gitignore` is never touched (`.git/info/exclude` is not
+ * used either — it is machine-local, so a teammate cloning the repo would not
+ * inherit the rule). Idempotent; a no-op outside a git repository, matching the
+ * previous behaviour for projects weave is run in before `git init`.
+ */
+async function ensureNestedGitignore(
   targetDir: string,
+  dir: string,
   created: { directories: string[]; files: string[] },
 ): Promise<void> {
-  const repoRoot = await findGitRepoRoot(targetDir);
-  if (!repoRoot) return;
+  if (!(await findGitRepoRoot(targetDir))) return;
 
-  const excludePath = path.join(repoRoot, '.git', 'info', 'exclude');
-  let existing = '';
+  const file = path.join(dir, '.gitignore');
+  const existing = await readTextIfPresent(file);
+  if (existing === NESTED_GITIGNORE) return;
+
+  await ensureDir(dir);
+  await writeFile(file, NESTED_GITIGNORE, 'utf-8');
+  created.files.push(file);
+}
+
+/**
+ * Ask a yes/no question, defaulting to yes.
+ *
+ * Returns the default without prompting when the run is non-interactive or
+ * stdin is not a terminal — `weave init` must stay scriptable, and the default
+ * action is always the one the user asked for (replace AGENTS.md with a link).
+ */
+async function confirmPrompt(question: string, detail: string, interactive: boolean): Promise<boolean> {
+  if (!interactive || !process.stdin.isTTY || !process.stdout.isTTY) return true;
+
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    existing = await readFile(excludePath, 'utf-8');
-  } catch {
-    // exclude file does not exist yet — created below
+    const answer = await rl.question(`\n  ${question}\n  ${detail}\n  Proceed? [Y/n] `);
+    return !/^n(o)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
   }
-
-  const hasEntry = existing
-    .split(/\r?\n/)
-    .some((line) => {
-      const t = line.trim();
-      return t === '.weave' || t === '.weave/';
-    });
-  if (hasEntry) return;
-
-  const content = existing
-    ? existing.replace(/\s+$/, '') + '\n.weave/\n'
-    : '.weave/\n';
-
-  await ensureDir(path.dirname(excludePath));
-  await writeFile(excludePath, content, 'utf-8');
-  created.files.push(excludePath);
 }
 
 /**

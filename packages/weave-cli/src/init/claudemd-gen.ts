@@ -5,6 +5,16 @@ export interface ClaudeMdGeneratorInput {
   projectName: string;
 }
 
+/**
+ * Instruction-file generator.
+ *
+ * weave writes ONE instruction file and links the other name to it
+ * (`AGENTS.md -> CLAUDE.md`, see instruction-link.ts), so this content has to
+ * serve every agent that reads either name — Claude Code and Codex both. The
+ * header wording is therefore agent-neutral, and the managed block carries both
+ * the weave command list and the skills note.
+ */
+
 /** Delimit weave's managed block so re-init can replace it in place. */
 const WEAVE_BLOCK_START = '<!-- weave:start -->';
 const WEAVE_BLOCK_END = '<!-- weave:end -->';
@@ -12,7 +22,7 @@ const WEAVE_BLOCK_END = '<!-- weave:end -->';
 function header(name: string): string {
   return `# ${name}
 
-> This file is managed by [weave](https://github.com/weave) — a Claude Code harness.
+> This file is managed by [weave](https://github.com/weave) — a coding-agent harness.
 > Re-run \`weave init\` to regenerate.
 
 `;
@@ -65,6 +75,15 @@ function gettingStarted(): string {
 `;
 }
 
+function skillsNote(): string {
+  return `## Skills
+
+Reusable skills live in \`skills/\` (agent skills standard: one directory per
+skill with a \`SKILL.md\`). Invoke a skill by name when the task matches one.
+
+`;
+}
+
 /**
  * Weave's managed block — everything weave may write into a CLAUDE.md is
  * delimited by these markers. When the target file already contains the
@@ -85,6 +104,7 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
   }
 
   content += gettingStarted();
+  content += skillsNote();
   content += `${WEAVE_BLOCK_END}\n`;
   return content;
 }
