@@ -16,12 +16,24 @@ import {
 } from '@dnd-kit/sortable';
 import {
   api,
+  NAMED_COLORS,
+  SEGMENT_TOKENS,
+  SEGMENT_DEFAULT_FORMAT,
+  CONTEXT_STYLE_FORMAT,
+  WEAVE_VERSION,
   type StatuslineConfig,
   type StatuslineColor,
   type StatuslineAlign,
   type StatuslineSegment,
   type SegmentKey,
 } from '@/lib/api';
+import {
+  ANSI256_GRID,
+  colorLabel,
+  cssFg,
+  cssSolid,
+  parseColorInput,
+} from '@/lib/statusline-color';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -39,7 +51,8 @@ const SEGMENTS: { key: SegmentKey; label: string; sample: string }[] = [
   { key: 'time', label: 'Time', sample: '12:30' },
 ];
 
-const COLORS: StatuslineColor[] = ['gray', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan'];
+/** Shortcut row in the swatch strip; the popover exposes the full range. */
+const COLORS: StatuslineColor[] = [...NAMED_COLORS];
 
 const ALIGNS: { key: StatuslineAlign; label: string }[] = [
   { key: 'left', label: 'Left' },
@@ -51,6 +64,12 @@ const BAR_STYLES: { key: 'percent' | 'bar' | 'both'; label: string }[] = [
   { key: 'percent', label: '%' },
   { key: 'bar', label: 'bar' },
   { key: 'both', label: 'both' },
+];
+
+/** Which quantity the `tokens` segment reports. */
+const TOKEN_METRICS: { key: 'session' | 'context'; title: string }[] = [
+  { key: 'session', title: 'Cumulative tokens for the session (read from the transcript)' },
+  { key: 'context', title: 'Tokens currently in the context window' },
 ];
 
 // Powerline glyph presets (Nerd Font code points — spelled out so the source
@@ -140,37 +159,145 @@ function GlyphPicker({
   );
 }
 
-const COLOR_CLASS: Record<StatuslineColor, string> = {
-  gray: 'bg-gray-500',
-  red: 'bg-red-500',
-  green: 'bg-green-500',
-  yellow: 'bg-yellow-500',
-  blue: 'bg-blue-500',
-  magenta: 'bg-fuchsia-500',
-  cyan: 'bg-cyan-500',
-};
+/**
+ * A colour swatch strip plus an expandable popover.
+ *
+ * The seven named colours stay one click away; the popover adds the full 256
+ * palette and a native colour input for arbitrary hex. Values resolve through
+ * `cssSolid`, so an `ansi256:` index or a `#rrggbb` renders exactly, which
+ * Tailwind classes could not express.
+ */
+function ColorPicker({
+  value,
+  editable,
+  onChange,
+  allowNone,
+  noneSelected,
+  onNone,
+}: {
+  value: StatuslineColor | null;
+  editable: boolean;
+  onChange: (c: StatuslineColor) => void;
+  allowNone?: boolean;
+  noneSelected?: boolean;
+  onNone?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
 
-/** Preview background blocks / swatches. */
-const BG_CLASS: Record<StatuslineColor, string> = {
-  gray: 'bg-gray-500/70',
-  red: 'bg-red-500/70',
-  green: 'bg-green-500/70',
-  yellow: 'bg-yellow-500/70',
-  blue: 'bg-blue-500/70',
-  magenta: 'bg-fuchsia-500/70',
-  cyan: 'bg-cyan-500/70',
-};
+  const commitDraft = (): void => {
+    const parsed = parseColorInput(draft);
+    if (parsed) onChange(parsed);
+    setDraft('');
+  };
 
-/** Preview foreground text colour, mirroring the terminal ANSI palette. */
-const TEXT_CLASS: Record<StatuslineColor, string> = {
-  gray: 'text-gray-300',
-  red: 'text-red-300',
-  green: 'text-green-300',
-  yellow: 'text-yellow-200',
-  blue: 'text-blue-200',
-  magenta: 'text-fuchsia-200',
-  cyan: 'text-cyan-200',
-};
+  return (
+    <div className="flex gap-1 items-center">
+      {allowNone && (
+        <button
+          type="button"
+          onClick={onNone}
+          disabled={!editable}
+          title="No background"
+          className={cn(
+            'h-3.5 w-3.5 rounded border border-white/20 disabled:opacity-30',
+            noneSelected ? 'ring-2 ring-white/60 bg-neutral-800' : 'opacity-40',
+          )}
+        >
+          <span className="block h-px bg-neutral-500 rotate-45" />
+        </button>
+      )}
+
+      {COLORS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          disabled={!editable}
+          title={c}
+          style={{ backgroundColor: cssSolid(c) }}
+          className={cn(
+            'h-3.5 w-3.5 rounded-full disabled:opacity-30',
+            value === c ? 'ring-2 ring-white/60' : 'opacity-50',
+          )}
+        />
+      ))}
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={!editable}
+        title={
+          value && !isNamedColor(value)
+            ? `More colours — current: ${colorLabel(value)}`
+            : 'More colours (256 / hex)'
+        }
+        style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
+        className={cn(
+          'h-3.5 w-3.5 rounded-full border border-white/25 text-[8px] leading-none disabled:opacity-30',
+          value && !isNamedColor(value) ? 'ring-2 ring-white/60' : 'opacity-50 text-neutral-400',
+        )}
+      >
+        {value && !isNamedColor(value) ? '' : '+'}
+      </button>
+
+      {open && editable && (
+        <div className="relative">
+          <div className="absolute z-20 left-0 top-5 w-64 rounded border border-white/15 bg-neutral-950 p-2 shadow-xl">
+            <div className="grid grid-cols-[repeat(16,minmax(0,1fr))] gap-[2px]">
+              {ANSI256_GRID.map((hex, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  title={`ansi256:${i}`}
+                  onClick={() => {
+                    onChange(`ansi256:${i}` as StatuslineColor);
+                    setOpen(false);
+                  }}
+                  style={{ backgroundColor: hex }}
+                  className="h-3 w-3 rounded-sm hover:ring-1 hover:ring-white/70"
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-1">
+              <input
+                type="color"
+                value={toHexInput(value)}
+                onChange={(e) => onChange(e.target.value.toLowerCase() as StatuslineColor)}
+                className="h-6 w-8 bg-transparent"
+                title="Pick a truecolor value"
+              />
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitDraft();
+                }}
+                placeholder="#rrggbb or ansi256:N"
+                className="bg-neutral-900 rounded px-1.5 py-0.5 text-[11px] font-mono flex-1"
+              />
+              <button
+                type="button"
+                onClick={commitDraft}
+                className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const isNamedColor = (c: string): boolean => (NAMED_COLORS as readonly string[]).includes(c);
+
+/** A valid `#rrggbb` for `<input type="color">`, which cannot show names. */
+function toHexInput(color: StatuslineColor | null): string {
+  if (!color) return '#000000';
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : cssSolid(color);
+}
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -184,11 +311,43 @@ interface PreviewItem {
   joinsNext?: boolean;
 }
 
-/** Context-bar sample follows the segment's style (mirrors the generator). */
-function contextSample(style?: 'percent' | 'bar' | 'both'): string {
-  if (style === 'percent') return '78%';
-  if (style === 'bar') return '▰▰▰▰▰▰▰▱▱';
-  return '78% ▰▰▰▰▰▰▰▱▱';
+/**
+ * Sample values for each segment's format tokens.
+ *
+ * Keep in lockstep with `segmentTokens` in
+ * packages/weave-server/src/statusline/generator.ts — this is the browser-side
+ * mirror that lets the panel preview edits without a server round-trip.
+ */
+const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
+  project: { name: 'my-project' },
+  git: { branch: 'main' },
+  changes: { added: '1', deleted: '1', files: '3' },
+  model: { model: 'claude-sonnet-5' },
+  thinking: { level: 'high' },
+  context: { percent: '78', used: '780k', total: '1.0M', remaining: '22' },
+  tokens: { total: '960.9k', percent: '42' },
+  cost: { cost: '$0.42' },
+  rate: { percent: '45', limit: '5h', resets: '' },
+  time: { time: '12:30' },
+};
+
+/** The value template a segment renders with, matching the generator. */
+function formatFor(key: SegmentKey, seg: StatuslineSegment): string {
+  if (seg.format) return seg.format;
+  if (key === 'context' && seg.style) return CONTEXT_STYLE_FORMAT[seg.style];
+  return SEGMENT_DEFAULT_FORMAT[key];
+}
+
+/** Render a segment's sample text: icon + label + templated value. */
+function sampleText(key: SegmentKey, seg: StatuslineSegment, config: StatuslineConfig): string {
+  const tokens = { ...SAMPLE_TOKENS[key] };
+  if (key === 'context') {
+    const filled = Math.round((Number(tokens.percent) / 100) * config.bar.cells);
+    tokens.bar = config.bar.fill.repeat(filled) + config.bar.empty.repeat(config.bar.cells - filled);
+  }
+  const value = formatFor(key, seg).replace(/\{(\w+)\}/g, (_m, k: string) => tokens[k] ?? '');
+  const label = seg.label ? `${seg.label}${config.labelSeparator}` : '';
+  return (seg.icon ? `${seg.icon} ` : '') + label + value;
 }
 
 /** Mirrors the generator's renderParts: enabled segments for a row. */
@@ -197,9 +356,10 @@ function buildPreviewItems(config: StatuslineConfig, keys: SegmentKey[]): Previe
   for (const key of keys) {
     const seg = config.segments[key];
     if (!seg.enabled) continue;
-    const sample = key === 'context' ? contextSample(seg.style) : SEGMENTS.find((s) => s.key === key)!.sample;
+    const text = sampleText(key, seg, config);
+    if (text === '') continue;
     items.push({
-      text: (seg.icon ? `${seg.icon} ` : '') + sample,
+      text,
       fg: seg.color,
       bold: seg.bold,
       bg: seg.backgroundColor,
@@ -386,9 +546,14 @@ export function StatuslinePanel({
     });
   }
 
-  const logo = config.showLogo
-    ? { text: config.logoText, fg: config.logoColor, bold: true, bg: null as StatuslineColor | null, merge: false }
-    : null;
+  // Mirrors the generator's logoItem: always present, version stamped on.
+  const logo = {
+    text: `${config.logoText} v${WEAVE_VERSION}`,
+    fg: config.logoColor,
+    bold: true,
+    bg: null as StatuslineColor | null,
+    merge: false,
+  };
 
   return (
     <Card>
@@ -574,33 +739,20 @@ export function StatuslinePanel({
           </div>
         )}
         <label className="flex items-center gap-2 text-xs text-neutral-400">
-          <input
-            type="checkbox"
-            checked={config.showLogo}
-            disabled={!editable}
-            onChange={(e) => patch({ showLogo: e.target.checked })}
-          />
-          Show logo
+          Logo
           <input
             value={config.logoText}
             disabled={!editable}
             onChange={(e) => patch({ logoText: e.target.value })}
             className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-28 disabled:opacity-40"
           />
+          <span className="text-neutral-600 text-[10px]">v{WEAVE_VERSION} 会一并显示，不可关闭</span>
           <div className="flex gap-1">
-            {COLORS.map((c) => (
-              <button
-                key={c}
-                onClick={() => patch({ logoColor: c })}
-                disabled={!editable}
-                className={cn(
-                  'h-3.5 w-3.5 rounded-full',
-                  COLOR_CLASS[c],
-                  config.logoColor === c ? 'ring-2 ring-white/60' : 'opacity-50',
-                )}
-                title={c}
-              />
-            ))}
+            <ColorPicker
+              value={config.logoColor}
+              editable={editable}
+              onChange={(c) => patch({ logoColor: c })}
+            />
           </div>
         </label>
 
@@ -614,6 +766,51 @@ export function StatuslinePanel({
           />
           <span className="text-neutral-600">(powerline ignores it)</span>
         </label>
+
+        {/* bar + label separator — global, because a statusline reads as one design */}
+        <div className="flex items-center gap-3 text-xs text-neutral-400">
+          <label className="flex items-center gap-2">
+            Bar
+            <input
+              type="number"
+              min={1}
+              max={40}
+              value={config.bar.cells}
+              disabled={!editable}
+              onChange={(e) => patch({ bar: { ...config.bar, cells: Number(e.target.value) || 1 } })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
+              title="Bar cells (1-40)"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            fill
+            <input
+              value={config.bar.fill}
+              disabled={!editable}
+              onChange={(e) => patch({ bar: { ...config.bar, fill: e.target.value } })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            empty
+            <input
+              value={config.bar.empty}
+              disabled={!editable}
+              onChange={(e) => patch({ bar: { ...config.bar, empty: e.target.value } })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            Label sep
+            <input
+              value={config.labelSeparator}
+              disabled={!editable}
+              onChange={(e) => patch({ labelSeparator: e.target.value })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
+              title="Rendered between a segment's label and its value"
+            />
+          </label>
+        </div>
 
         {/* lines — draggable rows, segments reorder within and across */}
         <div className="space-y-2">
@@ -663,7 +860,11 @@ function PowerlineRow({
       <span>
         {items
           .map((it) => (
-            <span key={it.text + it.fg} className={cn(it.bold && 'font-bold', TEXT_CLASS[it.fg])}>
+            <span
+              key={it.text + it.fg}
+              className={cn(it.bold && 'font-bold')}
+              style={{ color: cssFg(it.fg) }}
+            >
               {it.text}
             </span>
           ))
@@ -684,7 +885,9 @@ function PowerlineRow({
   return (
     <span className="inline-flex items-stretch">
       {startCap && first?.bg && (
-        <span className={cn('whitespace-pre', TEXT_CLASS[first.bg])}>{startCap}</span>
+        <span className="whitespace-pre" style={{ color: cssFg(first.bg) }}>
+          {startCap}
+        </span>
       )}
       {items.map((it, i) => {
         const prev = items[i - 1];
@@ -696,11 +899,11 @@ function PowerlineRow({
             {bridged &&
               (showGlyph ? (
                 <span
-                  className={cn(
-                    'whitespace-pre',
-                    BG_CLASS[it.bg!],
-                    TEXT_CLASS[prev.bg === it.bg ? prev.fg : prev.bg!],
-                  )}
+                  className="whitespace-pre"
+                  style={{
+                    backgroundColor: cssSolid(it.bg!),
+                    color: cssFg(prev.bg === it.bg ? prev.fg : prev.bg!),
+                  }}
                 >
                   {join}
                 </span>
@@ -708,12 +911,11 @@ function PowerlineRow({
                 <span className="w-1" />
               ))}
             <span
-              className={cn(
-                'px-1.5 whitespace-pre',
-                it.bold && 'font-bold',
-                it.bg ? BG_CLASS[it.bg] : '',
-                TEXT_CLASS[it.fg],
-              )}
+              className={cn('px-1.5 whitespace-pre', it.bold && 'font-bold')}
+              style={{
+                ...(it.bg ? { backgroundColor: cssSolid(it.bg) } : {}),
+                color: cssFg(it.fg),
+              }}
             >
               {it.text}
             </span>
@@ -721,7 +923,9 @@ function PowerlineRow({
         );
       })}
       {endCap && last?.bg && (
-        <span className={cn('whitespace-pre', TEXT_CLASS[last.bg])}>{endCap}</span>
+        <span className="whitespace-pre" style={{ color: cssFg(last.bg) }}>
+          {endCap}
+        </span>
       )}
     </span>
   );
@@ -912,49 +1116,64 @@ function SortableSegment({
             ))}
           </div>
         )}
+        {/* tokens: cumulative session total vs. current context window */}
+        {segKey === 'tokens' && (
+          <div className="flex gap-0.5">
+            {TOKEN_METRICS.map((m) => (
+              <button
+                key={m.key}
+                onClick={() => onChange({ metric: m.key })}
+                disabled={!editable}
+                className={cn(
+                  'text-[10px] rounded px-1 py-0.5 disabled:opacity-30',
+                  (segment.metric ?? 'session') === m.key
+                    ? 'bg-neutral-800 text-neutral-100'
+                    : 'text-neutral-500 hover:text-neutral-300',
+                )}
+                title={m.title}
+              >
+                {m.key}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-1 pl-6">
         <span className="text-[10px] text-neutral-600 w-12">fg / bg</span>
-        <div className="flex gap-1 items-center">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => onChange({ color: c })}
-              disabled={!editable}
-              className={cn(
-                'h-3 w-3 rounded-full',
-                COLOR_CLASS[c],
-                segment.color === c ? 'ring-2 ring-white/60' : 'opacity-40',
-              )}
-              title={c}
-            />
-          ))}
-        </div>
+        <ColorPicker
+          value={segment.color}
+          editable={editable}
+          onChange={(c) => onChange({ color: c })}
+        />
         <span className="text-[10px] text-neutral-600 ml-2">bg</span>
-        <button
-          onClick={() => onChange({ backgroundColor: null })}
+        <ColorPicker
+          value={segment.backgroundColor}
+          editable={editable}
+          allowNone
+          noneSelected={segment.backgroundColor === null}
+          onNone={() => onChange({ backgroundColor: null })}
+          onChange={(c) => onChange({ backgroundColor: c })}
+        />
+      </div>
+      <div className="flex items-center gap-1 pl-6">
+        <span className="text-[10px] text-neutral-600 w-12">label</span>
+        <input
+          value={segment.label ?? ''}
+          onChange={(e) => onChange({ label: e.target.value })}
           disabled={!editable}
-          className={cn(
-            'h-3.5 w-3.5 rounded border border-white/20',
-            segment.backgroundColor === null ? 'ring-2 ring-white/60 bg-neutral-800' : 'opacity-40',
-          )}
-          title="No background"
-        >
-          <span className="block h-px bg-neutral-500 rotate-45" />
-        </button>
-        {COLORS.map((c) => (
-          <button
-            key={c}
-            onClick={() => onChange({ backgroundColor: c })}
-            disabled={!editable}
-            className={cn(
-              'h-3.5 w-3.5 rounded-full',
-              BG_CLASS[c],
-              segment.backgroundColor === c ? 'ring-2 ring-white/60' : 'opacity-40',
-            )}
-            title={c}
-          />
-        ))}
+          placeholder="Model"
+          className="bg-neutral-900 rounded px-1.5 py-0.5 text-xs font-mono w-20 disabled:opacity-40"
+          title="Static prefix rendered before the value, joined by the label separator"
+        />
+        <span className="text-[10px] text-neutral-600 ml-2">format</span>
+        <input
+          value={segment.format ?? ''}
+          onChange={(e) => onChange({ format: e.target.value })}
+          disabled={!editable}
+          placeholder={SEGMENT_DEFAULT_FORMAT[segKey]}
+          className="bg-neutral-900 rounded px-1.5 py-0.5 text-xs font-mono flex-1 disabled:opacity-40"
+          title={`Template tokens: ${SEGMENT_TOKENS[segKey].map((t) => `{${t}}`).join(' ')}`}
+        />
       </div>
     </div>
   );
