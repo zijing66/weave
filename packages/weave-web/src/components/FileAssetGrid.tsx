@@ -1,10 +1,12 @@
 import {
   type AssetAgent,
   type AssetEntry,
+  type AssetScope,
   type FileAssetCategory,
   type FileAssetUpdate,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { AgentBadge } from '@/components/AgentBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Trash2, FileCode } from 'lucide-react';
 
@@ -24,6 +26,8 @@ export interface FileAssetRow {
   name: string;
   category: FileAssetCategory;
   relPath: string;
+  /** Which runtime surface the file lives on (`.codex/…` paths). */
+  agent?: AssetAgent;
 }
 
 /** Map asset entries of the given categories to rows (name = file stem). */
@@ -37,7 +41,12 @@ export function toFileAssetRows(
     const posix = a.relPath.replace(/\\/g, '/');
     const name = posix.split('/').pop() ?? posix;
     const stem = name.replace(/\.(md|js)$/u, '');
-    rows.push({ name: stem, category: a.category as FileAssetCategory, relPath: a.relPath });
+    rows.push({
+      name: stem,
+      category: a.category as FileAssetCategory,
+      relPath: a.relPath,
+      agent: a.agent,
+    });
   }
   return rows.sort((x, y) => x.name.localeCompare(y.name));
 }
@@ -63,6 +72,7 @@ function FileAssetCard({
         >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
+          <AgentBadge agent={row.agent} />
           {update?.outdated && (
             <Badge variant="warning" className="ml-1">
               update
@@ -89,23 +99,28 @@ function FileAssetCard({
 /** Grid of installed single-file assets for one category. */
 export function FileAssetGrid({
   category,
+  scope,
   rows,
   updates,
   onUninstall,
   onOpenFile,
 }: {
   category: FileAssetCategory;
+  /** Which view this grid is in — prefixes the heading (项目 X / 全局 X). */
+  scope: AssetScope;
   rows: FileAssetRow[];
   updates?: FileAssetUpdate[];
   onUninstall: (row: FileAssetRow) => void;
   onOpenFile: (relPath: string) => void;
 }) {
+  const scopeLabel = scope === 'global' ? '全局' : '项目';
   const meta = FILE_ASSET_META[category];
   if (!rows.length) {
     return (
       <section className="space-y-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {meta.label} <span className="text-neutral-600 normal-case font-normal">{meta.dir}</span>
+          {scopeLabel} {meta.label}{' '}
+          <span className="text-neutral-600 normal-case font-normal">{meta.dir}</span>
         </h2>
         <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
           暂无 {meta.label.toLowerCase()}
@@ -115,10 +130,15 @@ export function FileAssetGrid({
   }
   return (
     <section className="space-y-2">
-      <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-        {meta.label} ({rows.length}){' '}
-        <span className="text-neutral-600 normal-case font-normal">{meta.dir}</span>
-      </h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-xs font-semibold text-neutral-400 uppercase">
+          {scopeLabel} {meta.label}{' '}
+          <span className="text-neutral-600 normal-case font-normal">{meta.dir}</span>
+        </h2>
+        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+          {rows.length}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-3 items-start">
         {rows.map((r) => (
           <FileAssetCard

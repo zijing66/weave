@@ -8,6 +8,7 @@ import {
   type PluginRuntime,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { AgentBadge } from '@/components/AgentBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import {
@@ -95,11 +96,7 @@ function SkillCard({
         >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
-          {row.agent === 'codex' && (
-            <Badge variant="other" className="ml-1">
-              Codex
-            </Badge>
-          )}
+          <AgentBadge agent={row.agent} className="ml-1" />
           {readOnly && (
             <Badge variant="settings" className="ml-1">
               全局
@@ -188,7 +185,15 @@ export function SkillGrid({
     <div className="space-y-4">
       {hasProject && (
         <section className="space-y-2">
-          <h2 className="text-xs font-semibold text-neutral-400 uppercase">Skills ({skills!.length})</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold text-neutral-400 uppercase">项目 Skills</h2>
+            {/* Project skills have no enable toggle, so this is a count, not
+                an effectiveness ratio — same pill shape as the global section
+                so the two rows read as one family. */}
+            <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+              {skills!.length}
+            </span>
+          </div>
           <div className="grid grid-cols-2 gap-3 items-start">
             {skills!.map((s) => (
               <SkillCard
@@ -293,7 +298,9 @@ function GroupedSkills({
     <section className="space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {readOnly ? '全局生效' : '全局 Skills'}
+          {/* Same name in both modes; `只读` marks the project view, where the
+              global groups are shown but not editable. */}
+          全局 Skills
           {readOnly && <span className="ml-1 text-[10px] text-neutral-600 normal-case">只读</span>}
         </h2>
         <div className="ml-auto flex items-center gap-1">
@@ -319,7 +326,6 @@ function GroupedSkills({
           const isCollapsed = !expanded.has(key);
           const runtime = PLUGIN_RUNTIME[g.source];
           const isPlugin = g.source.endsWith('-plugin');
-          const runtimeLabel = g.source.startsWith('claude') ? 'Claude' : 'Codex';
           // A group is atomic — its plugin is either enabled or not — so this
           // is either all of its skills or none. Shown anyway so every group
           // reads the same as the section heading above.
@@ -352,9 +358,7 @@ function GroupedSkills({
                 <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
                   {isPlugin ? '插件' : '本地'}
                 </Badge>
-                <Badge variant="other">
-                  {runtimeLabel}
-                </Badge>
+                <AgentBadge agent={g.source.startsWith('claude') ? 'claude' : 'codex'} />
                 <EffectivePill effective={groupStats.effective} total={groupStats.total} />
                 {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
                  * Hidden in read-only (project) mode: global config is not edited from a project view. */}

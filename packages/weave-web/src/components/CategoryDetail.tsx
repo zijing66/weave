@@ -23,6 +23,7 @@ import {
   type OpenDetailFn,
 } from '@/components/SkillGrid';
 import { McpGrid, type McpRow } from '@/components/McpGrid';
+import { AgentBadge } from '@/components/AgentBadge';
 import { OtherAssets } from '@/components/OtherAssets';
 import {
   FileAssetGrid,
@@ -237,6 +238,7 @@ export function CategoryDetail({
       {category === 'mcp' && (
         <McpGrid
           servers={mcp}
+          scope={scope}
           updates={mcpUpdates}
           empty={
             runtimeTab === 'codex'
@@ -254,7 +256,8 @@ export function CategoryDetail({
           {instructionFiles.length > 0 && (
             <section className="space-y-2">
               <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-                Instructions <span className="text-neutral-600 normal-case font-normal">CLAUDE.md / AGENTS.md</span>
+                项目 Instructions{' '}
+                <span className="text-neutral-600 normal-case font-normal">CLAUDE.md / AGENTS.md</span>
               </h2>
               <div className="grid grid-cols-2 gap-3 items-start">
                 {instructionFiles.map((a) => (
@@ -266,8 +269,8 @@ export function CategoryDetail({
                   >
                     <FileText className="h-3.5 w-3.5 shrink-0 text-blue-400" />
                     <span className="text-xs font-mono truncate">{a.relPath}</span>
-                    <span className="ml-auto text-[10px] text-neutral-600 shrink-0">
-                      {a.agent === 'codex' ? 'Codex' : 'Claude'}
+                    <span className="ml-auto shrink-0">
+                      <AgentBadge agent={a.agent} />
                     </span>
                   </button>
                 ))}
@@ -282,6 +285,7 @@ export function CategoryDetail({
               <FileAssetGrid
                 key={cat}
                 category={cat}
+                scope={scope}
                 rows={fileRowsByCategory.get(cat) ?? []}
                 updates={fileUpdates}
                 onUninstall={onUninstallFileAsset}
