@@ -92,7 +92,10 @@ export function CategoryBar({
   };
 
   return (
-    <div className="flex gap-2 p-2 border-b border-white/[0.06]">
+    // One row of cards, always. Each card keeps a sane minimum width; when the
+    // row can no longer fit them all it scrolls sideways rather than squeezing
+    // every card down to a width where its content collides.
+    <div className="flex gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
       {MAIN_CATEGORIES.map(({ key, label, icon: Icon }) => {
         const active = category === key;
         return (
@@ -100,7 +103,12 @@ export function CategoryBar({
             key={key}
             onClick={() => onSelect(key)}
             className={cn(
-              'flex-1 min-w-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left',
+              // flex-wrap keeps the card's own contents on one line when there
+              // is room and lets them flow onto a second one when there is not
+              // — the personalization card carries two badges, which would
+              // otherwise collide with its label. The floor is low enough that
+              // wrapping happens before the row has to scroll.
+              'flex-1 min-w-[9rem] flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-2.5 py-2 text-left',
               'border border-white/[0.08] transition-all duration-200 ease-mac',
               active
                 ? 'bg-neutral-800/90 ring-1 ring-blue-500/50 shadow-mac-sm'
@@ -116,11 +124,17 @@ export function CategoryBar({
                 key === 'personalization' && 'text-cyan-400',
               )}
             />
-            <span className="min-w-0 flex-1">
+            {/* `flex-auto` (basis: auto) rather than `flex-1` (basis: 0) is
+                load-bearing: with a zero basis the wrap decision sees this
+                block as zero-width, so instead of the badges moving to their
+                own line the label gets squeezed to nothing and disappears. */}
+            <span className="min-w-0 flex-auto">
               <span className="block truncate text-sm font-medium">{label}</span>
-              <span className="block text-[11px] text-neutral-500">{countFor(key)} items</span>
+              <span className="block truncate text-[11px] text-neutral-500">
+                {countFor(key)} items
+              </span>
             </span>
-            {badgeFor(key)}
+            <span className="flex flex-wrap items-center gap-1">{badgeFor(key)}</span>
           </button>
         );
       })}
