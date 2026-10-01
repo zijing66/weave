@@ -35,6 +35,8 @@ export interface AssetEntry {
   agent: AssetAgent;
   /** Last modification time in ms since epoch. */
   mtimeMs: number;
+  /** True when the file itself is a symbolic link (its target is watched). */
+  isSymlink?: boolean;
 }
 
 /** Kind of change observed for a file. */
@@ -49,4 +51,6 @@ export interface AssetChangeEvent {
   relPath: string;
   absPath: string;
   kind: AssetChangeKind;
+  /** True when the file itself is a symbolic link (its target is watched). */
+  isSymlink?: boolean;
 }
