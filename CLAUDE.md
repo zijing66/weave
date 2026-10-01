@@ -118,6 +118,23 @@ weave/
 - 使用 vitest，测试文件放在同级 `__tests__/` 目录
 - 文件名：`*.test.ts`
 
+### 国际化（i18n）
+
+- 界面文案（weave-web 组件 + weave-cli 命令输出/帮助/preview TUI）**必须走词典**，
+  禁止在组件或命令里硬编码中英文；专有名词（Claude Code、Codex、MCP、路径、命令字面、
+  用户数据）不入典，写死在词条值里即可。
+- 语言的单一事实源是 daemon settings（`<configDir>/weave/settings.json` 的 `locale`）：
+  web 由 `I18nProvider` 挂载时读取（localStorage 仅作首屏缓存），CLI 由 `initCliLocale()`
+  解析（`WEAVE_LOCALE` 环境变量可单次覆盖）。
+- 词典位置：web `packages/weave-web/src/i18n/dict/`（按领域分 chunk），
+  CLI `packages/weave-cli/src/i18n/dict/`；手写类型安全字典，chunk 文件级
+  `en: Record<keyof typeof zh, string>` 强制 key 对齐（漏译编译失败）。
+- **新增语言的注册步骤**：① `weave-server/src/daemon/settings.ts` 的 `Locale` 联合 +
+  `SUPPORTED_LOCALES` 加一项；② web `src/i18n/locale.ts` 镜像同步 + `LOCALE_NATIVE_NAMES`
+  加一项，各 chunk 补齐该语言词条并在 `dict/index.ts` 合并进 `DICTS`；③ CLI 新建
+  `dict/<lang>.ts` 并注册进 `DICTS`。`Record<Locale, …>` 穷举检查保证不写完字典
+  无法编译，调用点零改动。
+
 ---
 
 ## 核心命令
