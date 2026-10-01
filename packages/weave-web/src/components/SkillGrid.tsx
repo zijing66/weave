@@ -22,6 +22,7 @@ import {
   ChevronsDownUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
 
 export interface SkillRow {
   name: string;
@@ -84,6 +85,7 @@ function SkillCard({
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onOpenDetail: OpenDetailFn;
 }) {
+  const t = useT();
   return (
     <Card>
       <CardHeader className="items-center gap-2">
@@ -92,14 +94,14 @@ function SkillCard({
             onOpenDetail(row.name, row.scope, row.source, row.pluginKey, row.agent)
           }
           className="flex items-center gap-2 text-left flex-1 min-w-0"
-          title={`Open ${row.name} detail`}
+          title={t('skillGrid.openDetail', { name: row.name })}
         >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
           <AgentBadge agent={row.agent} className="ml-1" />
           {readOnly && (
             <Badge variant="settings" className="ml-1">
-              全局
+              {t('skillGrid.globalTag')}
             </Badge>
           )}
           {row.files.length > 0 && (
@@ -109,12 +111,12 @@ function SkillCard({
           )}
           {update?.outdated && (
             <Badge variant="warning" className="ml-1">
-              update
+              {t('skillGrid.update')}
             </Badge>
           )}
           {update?.custom && (
             <Badge variant="other" className="ml-1">
-              custom
+              {t('skillGrid.custom')}
             </Badge>
           )}
         </button>
@@ -122,7 +124,7 @@ function SkillCard({
           <button
             onClick={() => onUninstallSkill(row.name, row.scope, row.agent)}
             className="text-neutral-500 hover:text-red-400 shrink-0"
-            title={`Uninstall ${row.name}`}
+            title={t('skillGrid.uninstall', { name: row.name })}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -156,6 +158,7 @@ export function SkillGrid({
   onOpenDetail: OpenDetailFn;
   onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
 }) {
+  const t = useT();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
 
   // --- global mode: editable collapsible groups ---
@@ -186,7 +189,7 @@ export function SkillGrid({
       {hasProject && (
         <section className="space-y-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold text-neutral-400 uppercase">项目 Skills</h2>
+            <h2 className="text-xs font-semibold text-neutral-400 uppercase">{t('skillGrid.projectHeading')}</h2>
             {/* Project skills have no enable toggle, so this is a count, not
                 an effectiveness ratio — same pill shape as the global section
                 so the two rows read as one family. */}
@@ -225,6 +228,7 @@ export function SkillGrid({
  * Green when everything is live, amber when a disabled plugin is holding some
  * back, neutral when there is nothing to count. */
 function EffectivePill({ effective, total }: { effective: number; total: number }) {
+  const t = useT();
   const tone =
     total === 0
       ? 'bg-neutral-800 text-neutral-500'
@@ -233,10 +237,10 @@ function EffectivePill({ effective, total }: { effective: number; total: number 
         : 'bg-amber-900/30 text-amber-300';
   const title =
     total === 0
-      ? '没有可统计的 skill'
+      ? t('skillGrid.effNone')
       : effective === total
-        ? `${total} 个 skill 全部生效`
-        : `${total - effective} 个 skill 因所属插件被禁用而未生效`;
+        ? t('skillGrid.effAll', { n: total })
+        : t('skillGrid.effDisabled', { n: total - effective });
 
   return (
     <span
@@ -247,7 +251,7 @@ function EffectivePill({ effective, total }: { effective: number; total: number 
       title={title}
     >
       <Power className="h-3 w-3" />
-      已生效：{effective} / {total}
+      {t('skillGrid.effective', { done: effective, total })}
     </span>
   );
 }
@@ -268,6 +272,7 @@ function GroupedSkills({
   /** Read-only context (project view): no enable toggle, cards tagged 全局. */
   readOnly?: boolean;
 }) {
+  const t = useT();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
   // One collapse flag per group, keyed by source+pluginKey (stable across re-renders).
   const groupKeys = useMemo(
@@ -300,22 +305,28 @@ function GroupedSkills({
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
           {/* Same name in both modes; `只读` marks the project view, where the
               global groups are shown but not editable. */}
-          全局 Skills
-          {readOnly && <span className="ml-1 text-[10px] text-neutral-600 normal-case">只读</span>}
+          {t('skillGrid.globalHeading')}
+          {readOnly && (
+            <span className="ml-1 text-[10px] text-neutral-600 normal-case">
+              {t('skillGrid.readOnly')}
+            </span>
+          )}
         </h2>
         <div className="ml-auto flex items-center gap-1">
           <EffectivePill effective={effective} total={total} />
           <button
             onClick={toggleAll}
             className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
-            title={anyExpanded ? '折叠全部分组' : '展开全部分组'}
+            title={
+              anyExpanded ? t('skillGrid.collapseAllGroups') : t('skillGrid.expandAllGroups')
+            }
           >
             {anyExpanded ? (
               <ChevronsDownUp className="h-3 w-3" />
             ) : (
               <ChevronsUpDown className="h-3 w-3" />
             )}
-            {anyExpanded ? '全部折叠' : '全部展开'}
+            {anyExpanded ? t('skillGrid.collapseAll') : t('skillGrid.expandAll')}
           </button>
         </div>
       </div>
@@ -356,7 +367,7 @@ function GroupedSkills({
                 <span className="text-xs font-semibold text-neutral-300 truncate">{g.label}</span>
                 {/* prominent source tag: 插件 / 本地 + runtime */}
                 <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
-                  {isPlugin ? '插件' : '本地'}
+                  {isPlugin ? t('skillGrid.plugin') : t('skillGrid.local')}
                 </Badge>
                 <AgentBadge agent={g.source.startsWith('claude') ? 'claude' : 'codex'} />
                 <EffectivePill effective={groupStats.effective} total={groupStats.total} />
@@ -368,7 +379,7 @@ function GroupedSkills({
                       e.stopPropagation();
                       onTogglePlugin(runtime, g.pluginKey!, !g.enabled);
                     }}
-                    title={`${g.enabled ? '已启用' : '已禁用'} — 点击切换`}
+                    title={g.enabled ? t('skillGrid.pluginOn') : t('skillGrid.pluginOff')}
                     className={cn(
                       'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
                       g.enabled
@@ -377,14 +388,14 @@ function GroupedSkills({
                     )}
                   >
                     <Power className="h-3 w-3" />
-                    {g.enabled ? 'ON' : 'OFF'}
+                    {g.enabled ? t('skillGrid.on') : t('skillGrid.off')}
                   </button>
                 )}
               </div>
               {!isCollapsed && (
                 <div className="px-3 pb-3 pt-1">
                   {g.skills.length === 0 ? (
-                    <p className="text-xs text-neutral-600 py-2">无</p>
+                    <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
                   ) : (
                     <div className="grid grid-cols-2 gap-3 items-start">
                       {g.skills.map((s) => (

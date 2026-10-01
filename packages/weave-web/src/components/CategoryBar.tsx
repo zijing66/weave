@@ -1,6 +1,8 @@
 import { type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { useT } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dict';
 import {
   FileCode,
   Server,
@@ -13,16 +15,17 @@ export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization';
 
 export const MAIN_CATEGORIES: {
   key: MainCategory;
-  label: string;
+  /** Dict key for the card label — module scope can't call hooks. */
+  labelKey: MessageKey;
   icon: LucideIcon;
 }[] = [
-  { key: 'skills', label: 'Skills', icon: FileCode },
-  { key: 'mcp', label: 'MCP', icon: Server },
+  { key: 'skills', labelKey: 'catbar.skills', icon: FileCode },
+  { key: 'mcp', labelKey: 'catbar.mcp', icon: Server },
   // The count on this card is every project asset that is not a skill or MCP
   // (instructions, file assets, settings, helpers …), so the label says 文件
   // 资产 rather than implying it counts commands alone.
-  { key: 'commands', label: '文件资产', icon: Terminal },
-  { key: 'personalization', label: '个性化配置', icon: Sparkles },
+  { key: 'commands', labelKey: 'catbar.commands', icon: Terminal },
+  { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
 ];
 
 export interface CategoryBarData {
@@ -49,6 +52,7 @@ export function CategoryBar({
   onSelect: (c: MainCategory) => void;
   data: CategoryBarData;
 }) {
+  const t = useT();
   const countFor = (c: MainCategory): number => {
     switch (c) {
       case 'skills':
@@ -66,16 +70,16 @@ export function CategoryBar({
     switch (c) {
       case 'skills':
         return data.outdatedSkills > 0 ? (
-          <Badge variant="warning">{data.outdatedSkills} update</Badge>
+          <Badge variant="warning">{t('catbar.updateBadge', { n: data.outdatedSkills })}</Badge>
         ) : null;
       case 'mcp':
         return data.outdatedMcp > 0 ? (
-          <Badge variant="warning">{data.outdatedMcp} update</Badge>
+          <Badge variant="warning">{t('catbar.updateBadge', { n: data.outdatedMcp })}</Badge>
         ) : null;
       case 'personalization':
         return data.statuslineSource ? (
           <Badge variant={data.statuslineSource === 'custom' ? 'skill' : 'default'}>
-            {data.statuslineSource === 'custom' ? '自定义' : '跟随全局'}
+            {data.statuslineSource === 'custom' ? t('catbar.custom') : t('catbar.followGlobal')}
           </Badge>
         ) : null;
       default:
@@ -88,7 +92,7 @@ export function CategoryBar({
     // row can no longer fit them all it scrolls sideways rather than squeezing
     // every card down to a width where its content collides.
     <div className="flex gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
-      {MAIN_CATEGORIES.map(({ key, label, icon: Icon }) => {
+      {MAIN_CATEGORIES.map(({ key, labelKey, icon: Icon }) => {
         const active = category === key;
         return (
           <button
@@ -121,9 +125,9 @@ export function CategoryBar({
                 block as zero-width, so instead of the badges moving to their
                 own line the label gets squeezed to nothing and disappears. */}
             <span className="min-w-0 flex-auto">
-              <span className="block truncate text-sm font-medium">{label}</span>
+              <span className="block truncate text-sm font-medium">{t(labelKey)}</span>
               <span className="block truncate text-[11px] text-neutral-500">
-                {countFor(key)} items
+                {t('catbar.items', { n: countFor(key) })}
               </span>
             </span>
             <span className="flex flex-wrap items-center gap-1">{badgeFor(key)}</span>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { type HookEventRow } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface SessionGroup {
@@ -101,6 +102,7 @@ function EventRow({
   open: boolean;
   onToggle: () => void;
 }) {
+  const t = useT();
   const d = parseDetail(event.payload);
   const hasDetail =
     d.toolName !== null ||
@@ -143,7 +145,7 @@ function EventRow({
               )}
             </>
           ) : (
-            <p className="text-[11px] text-neutral-600">No payload details</p>
+            <p className="text-[11px] text-neutral-600">{t('task.noPayload')}</p>
           )}
         </div>
       )}
@@ -164,6 +166,7 @@ function SessionPanel({
   openEvents: ReadonlySet<number>;
   onToggleEvent: (id: number) => void;
 }) {
+  const t = useT();
   const first = group.events[0];
   const last = group.events[group.events.length - 1];
   const sources = [...new Set(group.events.map((e) => e.source))];
@@ -187,7 +190,9 @@ function SessionPanel({
         <span className="font-mono text-xs text-neutral-300 truncate">
           {shortSessionId(group.sessionId)}
         </span>
-        <span className="shrink-0 text-xs text-neutral-500">{group.events.length} events</span>
+        <span className="shrink-0 text-xs text-neutral-500">
+          {t('task.events', { n: group.events.length })}
+        </span>
         <span className="ml-auto shrink-0 text-[11px] text-neutral-600 font-mono">
           {formatTime(first.createdAt)} – {formatTime(last.createdAt)}
         </span>
@@ -209,6 +214,7 @@ function SessionPanel({
 }
 
 export function TaskView({ events }: { events: HookEventRow[] }) {
+  const t = useT();
   const [collapsed, setCollapsed] = useState(false);
   const groups = groupBySession(events);
 
@@ -257,7 +263,7 @@ export function TaskView({ events }: { events: HookEventRow[] }) {
           ) : (
             <ChevronDown className="h-3 w-3" />
           )}
-          Tasks ({events.length} events, {groups.length} sessions)
+          {t('task.heading', { events: events.length, sessions: groups.length })}
         </button>
         {!collapsed && groups.length > 1 && (
           <span className="ml-auto flex items-center gap-2 font-normal normal-case">
@@ -265,19 +271,19 @@ export function TaskView({ events }: { events: HookEventRow[] }) {
               onClick={() => setAllSessions(true)}
               className="text-[11px] text-neutral-500 hover:text-neutral-200"
             >
-              expand all
+              {t('task.expandAll')}
             </button>
             <button
               onClick={() => setAllSessions(false)}
               className="text-[11px] text-neutral-500 hover:text-neutral-200"
             >
-              collapse all
+              {t('task.collapseAll')}
             </button>
           </span>
         )}
       </div>
       {!collapsed && groups.length === 0 && (
-        <p className="text-xs text-neutral-600">No hook events yet</p>
+        <p className="text-xs text-neutral-600">{t('task.empty')}</p>
       )}
       {!collapsed &&
         groups.map((g) => (

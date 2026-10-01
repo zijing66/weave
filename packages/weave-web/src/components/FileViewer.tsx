@@ -7,6 +7,7 @@ import { api, type AssetAgent } from '@/lib/api';
 import { splitFrontmatter } from '@/lib/markdown';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 import { AgentBadge } from '@/components/AgentBadge';
+import { useT } from '@/i18n/I18nProvider';
 
 /**
  * Fetches and renders a project file. Markdown files are split into
@@ -28,6 +29,7 @@ export function FileViewer({
   agent?: AssetAgent;
   onClose: () => void;
 }) {
+  const t = useT();
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +57,7 @@ export function FileViewer({
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {error && <p className="text-red-400 text-xs">{error}</p>}
-        {content == null && !error && <p className="text-xs text-neutral-500">Loading…</p>}
+        {content == null && !error && <p className="text-xs text-neutral-500">{t('common.loading')}</p>}
         {parsed && (
           <>
             {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
