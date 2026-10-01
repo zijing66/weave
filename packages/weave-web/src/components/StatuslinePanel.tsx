@@ -35,6 +35,7 @@ import {
   parseColorInput,
 } from '@/lib/statusline-color';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -342,7 +343,11 @@ function formatFor(key: SegmentKey, seg: StatuslineSegment): string {
 function sampleText(key: SegmentKey, seg: StatuslineSegment, config: StatuslineConfig): string {
   const tokens = { ...SAMPLE_TOKENS[key] };
   if (key === 'context') {
-    const filled = Math.round((Number(tokens.percent) / 100) * config.bar.cells);
+    const pct = Number(tokens.percent);
+    let filled = Math.round((pct / 100) * config.bar.cells);
+    // A non-zero percentage must light at least one cell — mirrors the
+    // generator's barFor (otherwise low usage rounds down to an empty bar).
+    if (pct > 0 && filled === 0) filled = 1;
     tokens.bar = config.bar.fill.repeat(filled) + config.bar.empty.repeat(config.bar.cells - filled);
   }
   const value = formatFor(key, seg).replace(/\{(\w+)\}/g, (_m, k: string) => tokens[k] ?? '');
@@ -556,8 +561,8 @@ export function StatuslinePanel({
   };
 
   return (
-    <Card>
-      <CardHeader className="items-center">
+    <Card className={cn('flex flex-col', open && 'h-[600px] overflow-hidden')}>
+      <CardHeader className="shrink-0 items-center">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -570,6 +575,7 @@ export function StatuslinePanel({
             <ChevronRight className="h-4 w-4 text-neutral-500" />
           )}
           <CardTitle>Statusline</CardTitle>
+          <AgentBadge agent="claude" />
         </button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400">
@@ -598,248 +604,253 @@ export function StatuslinePanel({
         </div>
       </CardHeader>
       {open && (
-      <CardContent className="space-y-3">
-        {error && <p className="text-red-400 text-xs">{error}</p>}
-
-        {/* source status row (project view only — global view edits the template directly) */}
-        {!isGlobal && (
-          <div className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-neutral-900/60 px-2 py-1.5 text-xs">
-            {config.source === 'global' ? (
-              <>
-                <span className="rounded-full bg-blue-900/50 px-2 py-0.5 text-blue-300">following global template</span>
-                <span className="text-neutral-600">
-                  Edits are disabled — switch to a local config to customize this project.
-                </span>
-                <button
-                  onClick={adoptGlobal}
-                  className="ml-auto shrink-0 rounded bg-blue-900/40 px-2 py-0.5 text-blue-300 hover:bg-blue-900/60"
-                >
-                  Customize locally
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-300">local custom config</span>
-                <span className="text-neutral-600">This project has its own config.</span>
-                <button
-                  onClick={() => patch({ source: 'global' })}
-                  className="ml-auto shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
-                  title="Stop customizing; resume following the global template"
-                >
-                  Follow global
-                </button>
-                <button
-                  onClick={adoptGlobal}
-                  className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
-                  title="Overwrite this project's config with the global template"
-                >
-                  Sync from global
-                </button>
-              </>
-            )}
+      <>
+        {/* The preview is pinned under the header; everything below it
+            scrolls inside the card's fixed height. */}
+        <div className="shrink-0 border-b border-white/[0.06] p-3">
+          {/* live preview — one block per row, powerline blocks when enabled */}
+          <div className="rounded-md bg-neutral-950 border border-white/[0.06] px-3 py-2 text-xs font-mono text-neutral-300 whitespace-pre overflow-x-auto">
+            {config.lines.map((row, i) => {
+              const items = buildPreviewItems(config, row);
+              if (i === 0 && logo) items.unshift(logo);
+              return (
+                <div key={i}>
+                  {i > 0 && <div className="text-neutral-700">────────────────────────────</div>}
+                  {items.length ? (
+                    <PowerlineRow items={items} config={config} />
+                  ) : (
+                    <span className="text-neutral-600">(empty row)</span>
+                  )}
+                </div>
+              );
+            })}
+            <span className="text-neutral-600 text-[10px]">{' ← preview'}</span>
           </div>
-        )}
-
-        {/* live preview — one block per row, powerline blocks when enabled */}
-        <div className="rounded-md bg-neutral-950 border border-white/[0.06] px-3 py-2 text-xs font-mono text-neutral-300 whitespace-pre overflow-x-auto">
-          {config.lines.map((row, i) => {
-            const items = buildPreviewItems(config, row);
-            if (i === 0 && logo) items.unshift(logo);
-            return (
-              <div key={i}>
-                {i > 0 && <div className="text-neutral-700">────────────────────────────</div>}
-                {items.length ? (
-                  <PowerlineRow items={items} config={config} />
-                ) : (
-                  <span className="text-neutral-600">(empty row)</span>
-                )}
-              </div>
-            );
-          })}
-          <span className="text-neutral-600 text-[10px]">{' ← preview'}</span>
         </div>
+        <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          {error && <p className="text-red-400 text-xs">{error}</p>}
 
-        {/* align + powerline + logo + refresh */}
-        <div className="flex items-center gap-2 text-xs text-neutral-400 flex-wrap">
-          <span className="w-12">Align</span>
-          {ALIGNS.map((a) => (
-            <button
-              key={a.key}
-              onClick={() => patch({ align: a.key })}
-              disabled={!editable}
-              className={cn(
-                'rounded px-2 py-0.5 disabled:opacity-30',
-                config.align === a.key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200',
+          {/* source status row (project view only — global view edits the template directly) */}
+          {!isGlobal && (
+            <div className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-neutral-900/60 px-2 py-1.5 text-xs">
+              {config.source === 'global' ? (
+                <>
+                  <span className="rounded-full bg-blue-900/50 px-2 py-0.5 text-blue-300">following global template</span>
+                  <span className="text-neutral-600">
+                    Edits are disabled — switch to a local config to customize this project.
+                  </span>
+                  <button
+                    onClick={adoptGlobal}
+                    className="ml-auto shrink-0 rounded bg-blue-900/40 px-2 py-0.5 text-blue-300 hover:bg-blue-900/60"
+                  >
+                    Customize locally
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-300">local custom config</span>
+                  <span className="text-neutral-600">This project has its own config.</span>
+                  <button
+                    onClick={() => patch({ source: 'global' })}
+                    className="ml-auto shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
+                    title="Stop customizing; resume following the global template"
+                  >
+                    Follow global
+                  </button>
+                  <button
+                    onClick={adoptGlobal}
+                    className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
+                    title="Overwrite this project's config with the global template"
+                  >
+                    Sync from global
+                  </button>
+                </>
               )}
-            >
-              {a.label}
-            </button>
-          ))}
-          <span className="text-neutral-600">|</span>
-          <label className="flex items-center gap-1.5">
-            Refresh
-            <input
-              type="number"
-              min={1}
-              value={config.refreshInterval}
-              disabled={!editable}
-              onChange={(e) => patch({ refreshInterval: Math.max(1, Number(e.target.value) || 1) })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-12 text-center disabled:opacity-40"
-              title="Claude Code 空闲时重跑脚本的间隔（秒）；交互驱动的更新不受此限制"
-            />
-            <span className="text-neutral-600">s</span>
-            <span className="text-neutral-600 text-[10px]">空闲时定时刷新；交互后即时更新</span>
-          </label>
-        </div>
-        <label className="flex items-center gap-2 text-xs text-neutral-400">
-          <input
-            type="checkbox"
-            checked={config.powerline.enabled}
-            disabled={!editable}
-            onChange={(e) =>
-              patch({ powerline: { ...config.powerline, enabled: e.target.checked } })
-            }
-          />
-          Powerline style
-          <span className="text-neutral-600">(solid background blocks, icons merge)</span>
-        </label>
+            </div>
+          )}
 
-        {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
-        {config.powerline.enabled && (
-          <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pl-6">
-            <GlyphPicker
-              label="分隔符"
-              value={config.powerline.separator}
-              fallback={DEFAULT_JOIN}
-              presets={JOIN_PRESETS}
-              editable={editable}
-              onChange={(v) =>
-                patch({ powerline: { ...config.powerline, separator: v } })
+          {/* align + powerline + logo + refresh */}
+          <div className="flex items-center gap-2 text-xs text-neutral-400 flex-wrap">
+            <span className="w-12">Align</span>
+            {ALIGNS.map((a) => (
+              <button
+                key={a.key}
+                onClick={() => patch({ align: a.key })}
+                disabled={!editable}
+                className={cn(
+                  'rounded px-2 py-0.5 disabled:opacity-30',
+                  config.align === a.key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200',
+                )}
+              >
+                {a.label}
+              </button>
+            ))}
+            <span className="text-neutral-600">|</span>
+            <label className="flex items-center gap-1.5">
+              Refresh
+              <input
+                type="number"
+                min={1}
+                value={config.refreshInterval}
+                disabled={!editable}
+                onChange={(e) => patch({ refreshInterval: Math.max(1, Number(e.target.value) || 1) })}
+                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-12 text-center disabled:opacity-40"
+                title="Claude Code 空闲时重跑脚本的间隔（秒）；交互驱动的更新不受此限制"
+              />
+              <span className="text-neutral-600">s</span>
+              <span className="text-neutral-600 text-[10px]">空闲时定时刷新；交互后即时更新</span>
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              checked={config.powerline.enabled}
+              disabled={!editable}
+              onChange={(e) =>
+                patch({ powerline: { ...config.powerline, enabled: e.target.checked } })
               }
             />
-            <GlyphPicker
-              label="左端"
-              value={config.powerline.startCap}
-              fallback={DEFAULT_START_CAP}
-              presets={START_CAP_PRESETS}
-              editable={editable}
-              allowNone
-              onChange={(v) => patch({ powerline: { ...config.powerline, startCap: v } })}
-            />
-            <GlyphPicker
-              label="右端"
-              value={config.powerline.endCap}
-              fallback={DEFAULT_END_CAP}
-              presets={END_CAP_PRESETS}
-              editable={editable}
-              allowNone
-              onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
-            />
-            <span className="text-neutral-600 text-[10px]">需要 Nerd Font 终端字体</span>
-          </div>
-        )}
-        <label className="flex items-center gap-2 text-xs text-neutral-400">
-          Logo
-          <input
-            value={config.logoText}
-            disabled={!editable}
-            onChange={(e) => patch({ logoText: e.target.value })}
-            className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-28 disabled:opacity-40"
-          />
-          <span className="text-neutral-600 text-[10px]">v{WEAVE_VERSION} 会一并显示，不可关闭</span>
-          <div className="flex gap-1">
-            <ColorPicker
-              value={config.logoColor}
-              editable={editable}
-              onChange={(c) => patch({ logoColor: c })}
-            />
-          </div>
-        </label>
+            Powerline style
+            <span className="text-neutral-600">(solid background blocks, icons merge)</span>
+          </label>
 
-        <label className="flex items-center gap-2 text-xs text-neutral-400">
-          Separator
-          <input
-            value={config.separator}
-            disabled={!editable}
-            onChange={(e) => patch({ separator: e.target.value })}
-            className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-20 disabled:opacity-40"
-          />
-          <span className="text-neutral-600">(powerline ignores it)</span>
-        </label>
-
-        {/* bar + label separator — global, because a statusline reads as one design */}
-        <div className="flex items-center gap-3 text-xs text-neutral-400">
-          <label className="flex items-center gap-2">
-            Bar
-            <input
-              type="number"
-              min={1}
-              max={40}
-              value={config.bar.cells}
-              disabled={!editable}
-              onChange={(e) => patch({ bar: { ...config.bar, cells: Number(e.target.value) || 1 } })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
-              title="Bar cells (1-40)"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            fill
-            <input
-              value={config.bar.fill}
-              disabled={!editable}
-              onChange={(e) => patch({ bar: { ...config.bar, fill: e.target.value } })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            empty
-            <input
-              value={config.bar.empty}
-              disabled={!editable}
-              onChange={(e) => patch({ bar: { ...config.bar, empty: e.target.value } })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            Label sep
-            <input
-              value={config.labelSeparator}
-              disabled={!editable}
-              onChange={(e) => patch({ labelSeparator: e.target.value })}
-              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
-              title="Rendered between a segment's label and its value"
-            />
-          </label>
-        </div>
-
-        {/* lines — draggable rows, segments reorder within and across */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] text-neutral-500 uppercase tracking-wide">Lines</p>
-            <button
-              onClick={addRow}
-              disabled={!editable}
-              className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30"
-            >
-              + Add row
-            </button>
-          </div>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            {config.lines.map((row, li) => (
-              <SortableRow
-                key={li}
-                li={li}
-                row={row}
-                linesLen={config.lines.length}
+          {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
+          {config.powerline.enabled && (
+            <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pl-6">
+              <GlyphPicker
+                label="分隔符"
+                value={config.powerline.separator}
+                fallback={DEFAULT_JOIN}
+                presets={JOIN_PRESETS}
                 editable={editable}
-                segments={config.segments}
-                onRemove={removeRow}
-                onChange={(key, p) => update(key, p)}
+                onChange={(v) =>
+                  patch({ powerline: { ...config.powerline, separator: v } })
+                }
               />
-            ))}
-          </DndContext>
-        </div>
-      </CardContent>
+              <GlyphPicker
+                label="左端"
+                value={config.powerline.startCap}
+                fallback={DEFAULT_START_CAP}
+                presets={START_CAP_PRESETS}
+                editable={editable}
+                allowNone
+                onChange={(v) => patch({ powerline: { ...config.powerline, startCap: v } })}
+              />
+              <GlyphPicker
+                label="右端"
+                value={config.powerline.endCap}
+                fallback={DEFAULT_END_CAP}
+                presets={END_CAP_PRESETS}
+                editable={editable}
+                allowNone
+                onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
+              />
+              <span className="text-neutral-600 text-[10px]">需要 Nerd Font 终端字体</span>
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            Logo
+            <input
+              value={config.logoText}
+              disabled={!editable}
+              onChange={(e) => patch({ logoText: e.target.value })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-28 disabled:opacity-40"
+            />
+            <span className="text-neutral-600 text-[10px]">v{WEAVE_VERSION} 会一并显示，不可关闭</span>
+            <div className="flex gap-1">
+              <ColorPicker
+                value={config.logoColor}
+                editable={editable}
+                onChange={(c) => patch({ logoColor: c })}
+              />
+            </div>
+          </label>
+
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            Separator
+            <input
+              value={config.separator}
+              disabled={!editable}
+              onChange={(e) => patch({ separator: e.target.value })}
+              className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-20 disabled:opacity-40"
+            />
+            <span className="text-neutral-600">(powerline ignores it)</span>
+          </label>
+
+          {/* bar + label separator — global, because a statusline reads as one design */}
+          <div className="flex items-center gap-3 text-xs text-neutral-400">
+            <label className="flex items-center gap-2">
+              Bar
+              <input
+                type="number"
+                min={1}
+                max={40}
+                value={config.bar.cells}
+                disabled={!editable}
+                onChange={(e) => patch({ bar: { ...config.bar, cells: Number(e.target.value) || 1 } })}
+                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
+                title="Bar cells (1-40)"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              fill
+              <input
+                value={config.bar.fill}
+                disabled={!editable}
+                onChange={(e) => patch({ bar: { ...config.bar, fill: e.target.value } })}
+                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              empty
+              <input
+                value={config.bar.empty}
+                disabled={!editable}
+                onChange={(e) => patch({ bar: { ...config.bar, empty: e.target.value } })}
+                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-10 text-center disabled:opacity-40"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              Label sep
+              <input
+                value={config.labelSeparator}
+                disabled={!editable}
+                onChange={(e) => patch({ labelSeparator: e.target.value })}
+                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
+                title="Rendered between a segment's label and its value"
+              />
+            </label>
+          </div>
+
+          {/* lines — draggable rows, segments reorder within and across */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-neutral-500 uppercase tracking-wide">Lines</p>
+              <button
+                onClick={addRow}
+                disabled={!editable}
+                className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30"
+              >
+                + Add row
+              </button>
+            </div>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              {config.lines.map((row, li) => (
+                <SortableRow
+                  key={li}
+                  li={li}
+                  row={row}
+                  linesLen={config.lines.length}
+                  editable={editable}
+                  segments={config.segments}
+                  onRemove={removeRow}
+                  onChange={(key, p) => update(key, p)}
+                />
+              ))}
+            </DndContext>
+          </div>
+        </CardContent>
+      </>
       )}
     </Card>
   );
