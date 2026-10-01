@@ -44,7 +44,7 @@
     "build": "tsc",
     "prepack": "pnpm build",
     "test": "vitest run",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx watch --conditions=development src/main.ts"
   },
   "dependencies": {
     "@weave/core": "workspace:*",
