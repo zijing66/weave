@@ -17,6 +17,10 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   let server: Server;
   let port: number;
   let projectPath: string;
+  // Isolated settings home for the whole suite — without it the first GET
+  // reads the machine's real %APPDATA% settings (whatever terminal preset the
+  // user last picked) and the "defaults" assertion becomes environment flake.
+  let settingsDir: string;
   let opener: ProjectOpener & {
     explorerCalls: string[];
     terminalCalls: Array<{ dir: string; terminal: TerminalSettings }>;
@@ -37,6 +41,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
         opener.terminalCalls.push({ dir, terminal });
       },
     };
+    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-settings-suite-'));
+    setDaemonSettingsDir(settingsDir);
     server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -45,10 +51,11 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   afterAll(() => {
     server.close();
     db.close();
+    setDaemonSettingsDir(null); // back to the machine default for other suites
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDir(settingsDir); // undo any per-test override
   });
 
   it('GET /settings returns defaults plus platform presets', async () => {
