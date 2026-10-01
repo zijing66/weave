@@ -39,89 +39,103 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dict';
 
-const SEGMENTS: { key: SegmentKey; label: string; sample: string }[] = [
-  { key: 'project', label: 'Project', sample: 'my-project' },
-  { key: 'git', label: 'Git', sample: 'main' },
-  { key: 'changes', label: 'Changes', sample: '3' },
-  { key: 'model', label: 'Model', sample: 'claude-sonnet-5' },
-  { key: 'thinking', label: 'Thinking', sample: 'high' },
-  { key: 'context', label: 'Context', sample: '78% ▰▰▰▰▰▰▰▱▱' },
-  { key: 'tokens', label: 'Tokens', sample: '12k' },
-  { key: 'cost', label: 'Cost', sample: '$0.42' },
-  { key: 'rate', label: 'Rate', sample: '5h 45%' },
-  { key: 'time', label: 'Time', sample: '12:30' },
-  { key: 'version', label: 'Version', sample: '2.1.286' },
-  { key: 'output_style', label: 'Output Style', sample: 'explanatory' },
-  { key: 'session', label: 'Session', sample: 'feat-statusline' },
-  { key: 'exceeds200k', label: '200k+', sample: '200k' },
-  { key: 'fast_mode', label: 'Fast Mode', sample: 'fast' },
-  { key: 'vim', label: 'Vim', sample: 'INSERT' },
-  { key: 'pr', label: 'PR', sample: '#482' },
-  { key: 'worktree', label: 'Worktree', sample: 'weave-next' },
-  { key: 'agent', label: 'Agent', sample: 'reviewer' },
+const SEGMENTS: { key: SegmentKey; labelKey: MessageKey; sample: string }[] = [
+  { key: 'project', labelKey: 'seg.project', sample: 'my-project' },
+  { key: 'git', labelKey: 'seg.git', sample: 'main' },
+  { key: 'changes', labelKey: 'seg.changes', sample: '3' },
+  { key: 'model', labelKey: 'seg.model', sample: 'claude-sonnet-5' },
+  { key: 'thinking', labelKey: 'seg.thinking', sample: 'high' },
+  { key: 'context', labelKey: 'seg.context', sample: '78% ▰▰▰▰▰▰▰▱▱' },
+  { key: 'tokens', labelKey: 'seg.tokens', sample: '12k' },
+  { key: 'cost', labelKey: 'seg.cost', sample: '$0.42' },
+  { key: 'rate', labelKey: 'seg.rate', sample: '5h 45%' },
+  { key: 'time', labelKey: 'seg.time', sample: '12:30' },
+  { key: 'version', labelKey: 'seg.version', sample: '2.1.286' },
+  { key: 'output_style', labelKey: 'seg.output_style', sample: 'explanatory' },
+  { key: 'session', labelKey: 'seg.session', sample: 'feat-statusline' },
+  { key: 'exceeds200k', labelKey: 'seg.exceeds200k', sample: '200k' },
+  { key: 'fast_mode', labelKey: 'seg.fast_mode', sample: 'fast' },
+  { key: 'vim', labelKey: 'seg.vim', sample: 'INSERT' },
+  { key: 'pr', labelKey: 'seg.pr', sample: '#482' },
+  { key: 'worktree', labelKey: 'seg.worktree', sample: 'weave-next' },
+  { key: 'agent', labelKey: 'seg.agent', sample: 'reviewer' },
 ];
 
 /** Shortcut row in the swatch strip; the popover exposes the full range. */
 const COLORS: StatuslineColor[] = [...NAMED_COLORS];
 
-const ALIGNS: { key: StatuslineAlign; label: string }[] = [
-  { key: 'left', label: 'Left' },
-  { key: 'center', label: 'Center' },
-  { key: 'right', label: 'Right' },
+const ALIGNS: { key: StatuslineAlign; labelKey: MessageKey }[] = [
+  { key: 'left', labelKey: 'align.left' },
+  { key: 'center', labelKey: 'align.center' },
+  { key: 'right', labelKey: 'align.right' },
 ];
 
-const BAR_STYLES: { key: 'percent' | 'bar' | 'both'; label: string }[] = [
-  { key: 'percent', label: '%' },
-  { key: 'bar', label: 'bar' },
-  { key: 'both', label: 'both' },
+const BAR_STYLES: { key: 'percent' | 'bar' | 'both'; labelKey: MessageKey }[] = [
+  { key: 'percent', labelKey: 'statusline.barStyle.percent' },
+  { key: 'bar', labelKey: 'statusline.barStyle.bar' },
+  { key: 'both', labelKey: 'statusline.barStyle.both' },
 ];
 
 /** Which quantity the `tokens` segment reports. */
-const TOKEN_METRICS: { key: 'session' | 'context'; title: string }[] = [
-  { key: 'session', title: 'Cumulative tokens for the session (read from the transcript)' },
-  { key: 'context', title: 'Tokens currently in the context window' },
+const TOKEN_METRICS: {
+  key: 'session' | 'context';
+  labelKey: MessageKey;
+  titleKey: MessageKey;
+}[] = [
+  {
+    key: 'session',
+    labelKey: 'statusline.metric.session',
+    titleKey: 'statusline.metric.sessionTitle',
+  },
+  {
+    key: 'context',
+    labelKey: 'statusline.metric.context',
+    titleKey: 'statusline.metric.contextTitle',
+  },
 ];
 
 
 /** Which rate-limit window the `rate` block reports. */
 const RATE_WINDOWS: {
   key: 'five_hour' | 'seven_day' | 'spend';
-  label: string;
-  title: string;
+  labelKey: MessageKey;
+  titleKey: MessageKey;
 }[] = [
-  { key: 'five_hour', label: '5h', title: 'rate_limits.five_hour — 5 小时限额' },
-  { key: 'seven_day', label: '7d', title: 'rate_limits.seven_day — 7 天限额' },
-  { key: 'spend', label: 'spend', title: 'rate_limits.spend_limit — 花费限额（gateway）' },
+  { key: 'five_hour', labelKey: 'rateWin.fiveHour.label', titleKey: 'rateWin.fiveHour.title' },
+  { key: 'seven_day', labelKey: 'rateWin.sevenDay.label', titleKey: 'rateWin.sevenDay.title' },
+  { key: 'spend', labelKey: 'rateWin.spend.label', titleKey: 'rateWin.spend.title' },
 ];
 
 // Powerline glyph presets (Nerd Font code points — spelled out so the source
 // stays copy-paste safe; a literal PUA char does not survive editing reliably).
-const glyph = (hex: number, name: string): { char: string; name: string } => ({
+const glyph = (hex: number, nameKey: MessageKey): { char: string; nameKey: MessageKey } => ({
   char: String.fromCodePoint(hex),
-  name,
+  nameKey,
 });
 /** Classic triangle set — used when the config leaves a glyph field undefined. */
 const DEFAULT_JOIN = String.fromCodePoint(0xe0b0);
 const DEFAULT_START_CAP = String.fromCodePoint(0xe0b2);
 const DEFAULT_END_CAP = String.fromCodePoint(0xe0b0);
 const JOIN_PRESETS = [
-  glyph(0xe0b0, 'Triangle Right'),
-  glyph(0xe0b2, 'Triangle Left'),
-  glyph(0xe0b4, 'Round Right'),
-  glyph(0xe0b6, 'Round Left'),
+  glyph(0xe0b0, 'statusline.glyph.triangleRight'),
+  glyph(0xe0b2, 'statusline.glyph.triangleLeft'),
+  glyph(0xe0b4, 'statusline.glyph.roundRight'),
+  glyph(0xe0b6, 'statusline.glyph.roundLeft'),
 ];
 const START_CAP_PRESETS = [
-  glyph(0xe0b2, 'Triangle'),
-  glyph(0xe0b6, 'Round'),
-  glyph(0xe0ba, 'Lower Triangle'),
-  glyph(0xe0be, 'Diagonal'),
+  glyph(0xe0b2, 'statusline.glyph.triangle'),
+  glyph(0xe0b6, 'statusline.glyph.round'),
+  glyph(0xe0ba, 'statusline.glyph.lowerTriangle'),
+  glyph(0xe0be, 'statusline.glyph.diagonal'),
 ];
 const END_CAP_PRESETS = [
-  glyph(0xe0b0, 'Triangle'),
-  glyph(0xe0b4, 'Round'),
-  glyph(0xe0b8, 'Lower Triangle'),
-  glyph(0xe0bc, 'Diagonal'),
+  glyph(0xe0b0, 'statusline.glyph.triangle'),
+  glyph(0xe0b4, 'statusline.glyph.round'),
+  glyph(0xe0b8, 'statusline.glyph.lowerTriangle'),
+  glyph(0xe0bc, 'statusline.glyph.diagonal'),
 ];
 
 /** One glyph role's preset buttons. `undefined` selects the default preset;
@@ -138,21 +152,22 @@ function GlyphPicker({
   label: string;
   value: string | undefined;
   fallback: string;
-  presets: { char: string; name: string }[];
+  presets: { char: string; nameKey: MessageKey }[];
   editable: boolean;
   allowNone?: boolean;
   onChange: (v: string) => void;
 }) {
+  const t = useT();
   const current = value ?? fallback;
   return (
     <div className="flex items-center gap-1">
       <span className="text-neutral-500">{label}</span>
       {presets.map((p) => (
         <button
-          key={p.name}
+          key={p.nameKey}
           onClick={() => onChange(p.char)}
           disabled={!editable}
-          title={`${p.name} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
+          title={`${t(p.nameKey)} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
           className={cn(
             // nerd-font = bundled Nerd Font + mono fallback; plain font-mono
             // shows tofu here on machines without a system Nerd Font
@@ -169,7 +184,7 @@ function GlyphPicker({
         <button
           onClick={() => onChange('')}
           disabled={!editable}
-          title="Disable this cap"
+          title={t('statusline.disableCap')}
           className={cn(
             'rounded px-1.5 h-6 text-[10px] disabled:opacity-30',
             value === ''
@@ -177,7 +192,7 @@ function GlyphPicker({
               : 'text-neutral-500 hover:text-neutral-300',
           )}
         >
-          无
+          {t('statusline.none')}
         </button>
       )}
     </div>
@@ -209,6 +224,7 @@ function ColorPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const t = useT();
 
   const commitDraft = (): void => {
     const parsed = parseColorInput(draft);
@@ -223,7 +239,7 @@ function ColorPicker({
           type="button"
           onClick={onNone}
           disabled={!editable}
-          title="No background"
+          title={t('statusline.noBackground')}
           className={cn(
             'h-3.5 w-3.5 rounded border border-white/20 disabled:opacity-30',
             noneSelected ? 'ring-2 ring-white/60 bg-neutral-800' : 'opacity-40',
@@ -254,8 +270,8 @@ function ColorPicker({
         disabled={!editable}
         title={
           value && !isNamedColor(value)
-            ? `More colours — current: ${colorLabel(value)}`
-            : 'More colours (256 / hex)'
+            ? t('statusline.moreColorsCurrent', { color: colorLabel(value) })
+            : t('statusline.moreColors')
         }
         style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
         className={cn(
@@ -290,7 +306,7 @@ function ColorPicker({
                 value={toHexInput(value)}
                 onChange={(e) => onChange(e.target.value.toLowerCase() as StatuslineColor)}
                 className="h-6 w-8 bg-transparent"
-                title="Pick a truecolor value"
+                title={t('statusline.pickTruecolor')}
               />
               <input
                 value={draft}
@@ -298,7 +314,7 @@ function ColorPicker({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') commitDraft();
                 }}
-                placeholder="#rrggbb or ansi256:N"
+                placeholder={t('statusline.colorPlaceholder')}
                 className="bg-neutral-900 rounded px-1.5 py-0.5 text-[11px] font-mono flex-1"
               />
               <button
@@ -306,7 +322,7 @@ function ColorPicker({
                 onClick={commitDraft}
                 className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
               >
-                OK
+                {t('statusline.ok')}
               </button>
             </div>
           </div>
@@ -450,6 +466,7 @@ export function StatuslinePanel({
   initialTab?: 'project' | 'global';
 }) {
   const isGlobal = initialTab === 'global';
+  const t = useT();
   const [config, setConfig] = useState<StatuslineConfig | null>(null);
   const [globalConfig, setGlobalConfig] = useState<StatuslineConfig | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -493,15 +510,15 @@ export function StatuslinePanel({
   // Disarm a pending factory reset after a few seconds of hesitation.
   useEffect(() => {
     if (!resetArmed) return;
-    const t = setTimeout(() => setResetArmed(false), 5000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setResetArmed(false), 5000);
+    return () => clearTimeout(timer);
   }, [resetArmed]);
 
   // Same hesitation window for the follow/sync confirmations.
   useEffect(() => {
     if (!confirmSwitch) return;
-    const t = setTimeout(() => setConfirmSwitch(null), 5000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setConfirmSwitch(null), 5000);
+    return () => clearTimeout(timer);
   }, [confirmSwitch]);
 
   /** First click arms, second click loads the shipped defaults into the form —
@@ -534,13 +551,13 @@ export function StatuslinePanel({
         setSaveState('saved');
       } else {
         setSaveState('error');
-        setError(`Save failed: ${res.status} ${await res.text()}`);
+        setError(t('statusline.saveFailed', { error: `${res.status} ${await res.text()}` }));
       }
     } catch (e) {
       setSaveState('error');
       setError(String(e));
     }
-  }, [projectId, config, isGlobal]);
+  }, [projectId, config, isGlobal, t]);
 
   // Auto-save on edit (debounced). The initial load re-sets config without saving.
   useEffect(() => {
@@ -549,11 +566,11 @@ export function StatuslinePanel({
       skipNextSave.current = false;
       return;
     }
-    const t = setTimeout(() => void persist(), 700);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => void persist(), 700);
+    return () => clearTimeout(timer);
   }, [config, persist]);
 
-  if (!config) return <p className="text-xs text-neutral-500">{error ?? 'Loading…'}</p>;
+  if (!config) return <p className="text-xs text-neutral-500">{error ?? t('common.loading')}</p>;
 
   const editable = isGlobal || config.source === 'custom';
 
@@ -675,19 +692,19 @@ export function StatuslinePanel({
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex items-center gap-2 text-left"
-          title={open ? '折叠' : '展开'}
+          title={open ? t('common.collapse') : t('common.expand')}
         >
           {open ? (
             <ChevronDown className="h-4 w-4 text-neutral-500" />
           ) : (
             <ChevronRight className="h-4 w-4 text-neutral-500" />
           )}
-          <CardTitle>Statusline</CardTitle>
+          <CardTitle>{t('statusline.title')}</CardTitle>
           <AgentBadge agent="claude" />
         </button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400">
-            {isGlobal ? '全局模板' : '项目配置'}
+            {isGlobal ? t('statusline.scopeGlobal') : t('statusline.scopeProject')}
           </span>
           {isGlobal && (
             <button
@@ -698,9 +715,9 @@ export function StatuslinePanel({
                   ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
                   : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
               )}
-              title="用出厂默认覆盖当前全局模板（需再次点击确认）"
+              title={t('statusline.resetHint')}
             >
-              {resetArmed ? '确认恢复出厂?' : '恢复出厂'}
+              {resetArmed ? t('statusline.resetConfirm') : t('statusline.reset')}
             </button>
           )}
           <button
@@ -716,12 +733,12 @@ export function StatuslinePanel({
             )}
           >
             {saveState === 'saving'
-              ? 'Saving…'
+              ? t('common.saving')
               : saveState === 'saved'
-                ? 'Saved ✓'
+                ? t('statusline.saved')
                 : saveState === 'error'
-                  ? 'Retry'
-                  : 'Save'}
+                  ? t('statusline.retry')
+                  : t('common.save')}
           </button>
         </div>
       </CardHeader>
@@ -741,12 +758,12 @@ export function StatuslinePanel({
                   {items.length ? (
                     <PowerlineRow items={items} config={config} />
                   ) : (
-                    <span className="text-neutral-600">(empty row)</span>
+                    <span className="text-neutral-600">{t('statusline.emptyRow')}</span>
                   )}
                 </div>
               );
             })}
-            <span className="text-neutral-600 text-[10px]">{' ← preview'}</span>
+            <span className="text-neutral-600 text-[10px]">{t('statusline.preview')}</span>
           </div>
         </div>
         <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto">
@@ -757,21 +774,23 @@ export function StatuslinePanel({
             <div className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-neutral-900/60 px-2 py-1.5 text-xs">
               {config.source === 'global' ? (
                 <>
-                  <span className="rounded-full bg-blue-900/50 px-2 py-0.5 text-blue-300">following global template</span>
-                  <span className="text-neutral-600">
-                    Edits are disabled — switch to a local config to customize this project.
+                  <span className="rounded-full bg-blue-900/50 px-2 py-0.5 text-blue-300">
+                    {t('statusline.followingGlobal')}
                   </span>
+                  <span className="text-neutral-600">{t('statusline.editsDisabled')}</span>
                   <button
                     onClick={adoptGlobal}
                     className="ml-auto shrink-0 rounded bg-blue-900/40 px-2 py-0.5 text-blue-300 hover:bg-blue-900/60"
                   >
-                    Customize locally
+                    {t('statusline.customizeLocally')}
                   </button>
                 </>
               ) : (
                 <>
-                  <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-300">local custom config</span>
-                  <span className="text-neutral-600">This project has its own config.</span>
+                  <span className="rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-300">
+                    {t('statusline.localCustom')}
+                  </span>
+                  <span className="text-neutral-600">{t('statusline.ownConfig')}</span>
                   <button
                     onClick={() => {
                       if (confirmSwitch !== 'follow') {
@@ -787,9 +806,9 @@ export function StatuslinePanel({
                         ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
                         : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
                     )}
-                    title="改为跟随全局模板 — 本地自定义配置将被替换（再次点击确认，5 秒内有效）"
+                    title={t('statusline.followHint')}
                   >
-                    {confirmSwitch === 'follow' ? '确认跟随?' : 'Follow global'}
+                    {confirmSwitch === 'follow' ? t('statusline.followConfirm') : t('statusline.follow')}
                   </button>
                   <button
                     onClick={() => {
@@ -806,9 +825,9 @@ export function StatuslinePanel({
                         ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
                         : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
                     )}
-                    title="用全局模板覆盖本地自定义配置（再次点击确认，5 秒内有效）"
+                    title={t('statusline.syncHint')}
                   >
-                    {confirmSwitch === 'sync' ? '确认覆盖?' : 'Sync from global'}
+                    {confirmSwitch === 'sync' ? t('statusline.syncConfirm') : t('statusline.sync')}
                   </button>
                 </>
               )}
@@ -817,7 +836,7 @@ export function StatuslinePanel({
 
           {/* align + powerline + logo + refresh */}
           <div className="flex items-center gap-2 text-xs text-neutral-400 flex-wrap">
-            <span className="w-12">Align</span>
+            <span className="w-12">{t('statusline.alignLabel')}</span>
             {ALIGNS.map((a) => (
               <button
                 key={a.key}
@@ -828,12 +847,12 @@ export function StatuslinePanel({
                   config.align === a.key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200',
                 )}
               >
-                {a.label}
+                {t(a.labelKey)}
               </button>
             ))}
             <span className="text-neutral-600">|</span>
             <label className="flex items-center gap-1.5">
-              Refresh
+              {t('statusline.refresh')}
               <input
                 type="number"
                 min={1}
@@ -841,10 +860,10 @@ export function StatuslinePanel({
                 disabled={!editable}
                 onChange={(e) => patch({ refreshInterval: Math.max(1, Number(e.target.value) || 1) })}
                 className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-12 text-center disabled:opacity-40"
-                title="Claude Code 空闲时重跑脚本的间隔（秒）；交互驱动的更新不受此限制"
+                title={t('statusline.refreshHint')}
               />
               <span className="text-neutral-600">s</span>
-              <span className="text-neutral-600 text-[10px]">空闲时定时刷新；交互后即时更新</span>
+              <span className="text-neutral-600 text-[10px]">{t('statusline.refreshNote')}</span>
             </label>
           </div>
           <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -856,15 +875,15 @@ export function StatuslinePanel({
                 patch({ powerline: { ...config.powerline, enabled: e.target.checked } })
               }
             />
-            Powerline style
-            <span className="text-neutral-600">(solid background blocks, icons merge)</span>
+            {t('statusline.powerlineStyle')}
+            <span className="text-neutral-600">{t('statusline.powerlineHint')}</span>
           </label>
 
           {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
           {config.powerline.enabled && (
             <div className="flex items-center gap-4 text-xs text-neutral-400 flex-wrap pl-6">
               <GlyphPicker
-                label="分隔符"
+                label={t('statusline.glyphSeparator')}
                 value={config.powerline.separator}
                 fallback={DEFAULT_JOIN}
                 presets={JOIN_PRESETS}
@@ -874,7 +893,7 @@ export function StatuslinePanel({
                 }
               />
               <GlyphPicker
-                label="左端"
+                label={t('statusline.glyphStartCap')}
                 value={config.powerline.startCap}
                 fallback={DEFAULT_START_CAP}
                 presets={START_CAP_PRESETS}
@@ -883,7 +902,7 @@ export function StatuslinePanel({
                 onChange={(v) => patch({ powerline: { ...config.powerline, startCap: v } })}
               />
               <GlyphPicker
-                label="右端"
+                label={t('statusline.glyphEndCap')}
                 value={config.powerline.endCap}
                 fallback={DEFAULT_END_CAP}
                 presets={END_CAP_PRESETS}
@@ -891,17 +910,17 @@ export function StatuslinePanel({
                 allowNone
                 onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
               />
-              <span className="text-neutral-600 text-[10px]">需要 Nerd Font 终端字体</span>
+              <span className="text-neutral-600 text-[10px]">{t('statusline.nerdFontHint')}</span>
             </div>
           )}
           <label className="flex items-center gap-2 text-xs text-neutral-400">
-            Logo
+            {t('statusline.logo')}
             {/* The badge is fixed (text and visibility are not user settings);
                 only its colour below is configurable. */}
             <span className="rounded bg-neutral-900 px-2 py-0.5 font-mono text-neutral-300">
               {config.logoText} v{WEAVE_VERSION}
             </span>
-            <span className="text-neutral-600 text-[10px]">文字固定、不可隐藏，仅颜色可调</span>
+            <span className="text-neutral-600 text-[10px]">{t('statusline.logoHint')}</span>
             <div className="flex gap-1">
               <ColorPicker
                 value={config.logoColor}
@@ -912,20 +931,20 @@ export function StatuslinePanel({
           </label>
 
           <label className="flex items-center gap-2 text-xs text-neutral-400">
-            Separator
+            {t('statusline.separator')}
             <input
               value={config.separator}
               disabled={!editable}
               onChange={(e) => patch({ separator: e.target.value })}
               className="nerd-font bg-neutral-900 rounded px-2 py-0.5 w-20 disabled:opacity-40"
             />
-            <span className="text-neutral-600">(powerline ignores it)</span>
+            <span className="text-neutral-600">{t('statusline.separatorHint')}</span>
           </label>
 
           {/* bar + label separator — global, because a statusline reads as one design */}
           <div className="flex items-center gap-3 text-xs text-neutral-400">
             <label className="flex items-center gap-2">
-              Bar
+              {t('statusline.bar')}
               <input
                 type="number"
                 min={1}
@@ -934,11 +953,11 @@ export function StatuslinePanel({
                 disabled={!editable}
                 onChange={(e) => patch({ bar: { ...config.bar, cells: Number(e.target.value) || 1 } })}
                 className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
-                title="Bar cells (1-40)"
+                title={t('statusline.barCellsHint')}
               />
             </label>
             <label className="flex items-center gap-2">
-              fill
+              {t('statusline.fill')}
               <input
                 value={config.bar.fill}
                 disabled={!editable}
@@ -947,7 +966,7 @@ export function StatuslinePanel({
               />
             </label>
             <label className="flex items-center gap-2">
-              empty
+              {t('statusline.emptyChar')}
               <input
                 value={config.bar.empty}
                 disabled={!editable}
@@ -956,13 +975,13 @@ export function StatuslinePanel({
               />
             </label>
             <label className="flex items-center gap-2">
-              Label sep
+              {t('statusline.labelSep')}
               <input
                 value={config.labelSeparator}
                 disabled={!editable}
                 onChange={(e) => patch({ labelSeparator: e.target.value })}
                 className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
-                title="Rendered between a segment's label and its value"
+                title={t('statusline.labelSepHint')}
               />
             </label>
           </div>
@@ -971,13 +990,15 @@ export function StatuslinePanel({
               rows, + pill appends a block (type tags in the modal pick/move it) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-[11px] text-neutral-500 uppercase tracking-wide">Lines</p>
+              <p className="text-[11px] text-neutral-500 uppercase tracking-wide">
+                {t('statusline.lines')}
+              </p>
               <button
                 onClick={addRow}
                 disabled={!editable}
                 className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30"
               >
-                + Add row
+                {t('statusline.addRow')}
               </button>
             </div>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -1135,6 +1156,7 @@ function Capsule({
   lastDragEnd: { current: number };
   onOpen: (line: number, key: SegmentKey) => void;
 }) {
+  const t = useT();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: segKey,
     disabled: !editable,
@@ -1146,7 +1168,7 @@ function Capsule({
   };
   const meta = SEGMENTS.find((s) => s.key === segKey)!;
   const on = segment.enabled;
-  const text = sampleText(segKey, segment, config) || meta.label;
+  const text = sampleText(segKey, segment, config) || t(meta.labelKey);
   const bg = on && segment.backgroundColor ? cssSolid(segment.backgroundColor) : undefined;
   const fg = on ? cssFg(segment.color) : undefined;
   return (
@@ -1163,7 +1185,11 @@ function Capsule({
           if (Date.now() - lastDragEnd.current < 250) return;
           onOpen(line, segKey);
         }}
-        title={`${meta.label}${on ? '' : ' (未启用)'} — 点击编辑，拖动排序`}
+        title={
+          on
+            ? t('statusline.capsuleTitle', { name: t(meta.labelKey) })
+            : t('statusline.capsuleTitleOff', { name: t(meta.labelKey) })
+        }
         className={cn(
           'rounded-full px-2.5 py-1 text-xs whitespace-pre select-none transition',
           on
@@ -1202,6 +1228,7 @@ function CapsuleRow({
   onOpen: (line: number, key: SegmentKey) => void;
   onAdd: (line: number) => void;
 }) {
+  const t = useT();
   const { setNodeRef, isOver } = useDroppable({
     id: `line-${li}`,
     data: { line: li, container: true },
@@ -1216,14 +1243,18 @@ function CapsuleRow({
       )}
     >
       <div className="flex items-center gap-2 pb-1">
-        <span className="text-[10px] text-neutral-600 font-mono">row {li + 1}</span>
-        <span className="text-[10px] text-neutral-600">{row.length} 块</span>
+        <span className="text-[10px] text-neutral-600 font-mono">
+          {t('statusline.rowN', { n: li + 1 })}
+        </span>
+        <span className="text-[10px] text-neutral-600">
+          {t('statusline.blockCount', { n: row.length })}
+        </span>
         {linesLen > 1 && (
           <button
             onClick={() => onRemoveRow(li)}
             disabled={!editable}
             className="ml-auto text-neutral-500 hover:text-red-400 disabled:opacity-30"
-            title="Remove row"
+            title={t('statusline.removeRow')}
           >
             <span className="text-xs leading-none">✕</span>
           </button>
@@ -1232,9 +1263,7 @@ function CapsuleRow({
       <SortableContext items={row} strategy={horizontalListSortingStrategy}>
         <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
           {row.length === 0 && (
-            <span className="text-[11px] text-neutral-600">
-              空行 — 点 + 添加块，或把胶囊拖进来
-            </span>
+            <span className="text-[11px] text-neutral-600">{t('statusline.emptyRowHint')}</span>
           )}
           {row.map((key) => (
             <Capsule
@@ -1252,9 +1281,9 @@ function CapsuleRow({
             <button
               onClick={() => onAdd(li)}
               className="rounded-full border border-dashed border-neutral-600 px-2.5 py-1 text-xs text-neutral-400 transition-colors hover:border-neutral-400 hover:text-neutral-200"
-              title="添加块（选择类型；已在其他行的类型会移动过来）"
+              title={t('statusline.addBlockHint')}
             >
-              + 块
+              {t('statusline.addBlock')}
             </button>
           )}
         </div>
@@ -1288,6 +1317,7 @@ function SegmentModal({
 }) {
   const key = editing.key;
   const seg = key ? config.segments[key] : null;
+  const t = useT();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1309,15 +1339,17 @@ function SegmentModal({
           <span className="text-sm font-semibold text-neutral-100">
             {key
               ? `${config.segments[key].icon ? config.segments[key].icon + ' ' : ''}${
-                  SEGMENTS.find((s) => s.key === key)!.label
+                  t(SEGMENTS.find((s) => s.key === key)!.labelKey)
                 }`
-              : '添加块'}
+              : t('statusline.addBlockTitle')}
           </span>
-          <span className="text-[10px] text-neutral-500">row {editing.line + 1}</span>
+          <span className="text-[10px] text-neutral-500">
+            {t('statusline.rowN', { n: editing.line + 1 })}
+          </span>
           <button
             onClick={onClose}
             className="ml-auto text-neutral-500 hover:text-neutral-300"
-            title="关闭 (Esc)"
+            title={t('statusline.closeEsc')}
           >
             ✕
           </button>
@@ -1336,7 +1368,7 @@ function SegmentModal({
                 onClick={() => {
                   if (!isCurrent) onPick(s.key);
                 }}
-                title={otherRow ? `已在 row ${at + 1} — 点击移至本行` : s.key}
+                title={otherRow ? t('statusline.tagOtherRow', { n: at + 1 }) : s.key}
                 className={cn(
                   'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
                   isCurrent
@@ -1346,17 +1378,19 @@ function SegmentModal({
                       : 'border-transparent bg-neutral-800/70 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
                 )}
               >
-                {s.label}
-                {otherRow && <span className="ml-1 text-[9px] opacity-70">row{at + 1}</span>}
+                {t(s.labelKey)}
+                {otherRow && (
+                  <span className="ml-1 text-[9px] opacity-70">
+                    {t('statusline.rowShort', { n: at + 1 })}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
 
         {key === null && (
-          <p className="text-xs text-neutral-500">
-            选择一个块类型加入本行；已在其他行的类型会整体移动过来。
-          </p>
+          <p className="text-xs text-neutral-500">{t('statusline.pickHint')}</p>
         )}
 
         {key && seg && (
@@ -1371,7 +1405,7 @@ function SegmentModal({
                     : 'bg-neutral-800 text-neutral-500',
                 )}
               >
-                {seg.enabled ? '已启用' : '未启用'}
+                {seg.enabled ? t('statusline.enabled') : t('statusline.disabled')}
               </button>
               <button
                 onClick={() => onPatch(key, { bold: !seg.bold })}
@@ -1381,7 +1415,7 @@ function SegmentModal({
                     ? 'bg-neutral-800 text-neutral-100 font-bold'
                     : 'text-neutral-500 hover:text-neutral-300',
                 )}
-                title="Bold"
+                title={t('statusline.bold')}
               >
                 B
               </button>
@@ -1392,7 +1426,7 @@ function SegmentModal({
                     ? 'bg-neutral-800 text-neutral-200'
                     : 'text-neutral-500 hover:text-neutral-300',
                 )}
-                title="Merge into the next block's background"
+                title={t('statusline.mergeHint')}
               >
                 <input
                   type="checkbox"
@@ -1400,20 +1434,20 @@ function SegmentModal({
                   onChange={(e) => onPatch(key, { merge: e.target.checked })}
                   className="hidden"
                 />
-                merge
+                {t('statusline.merge')}
               </label>
               <input
                 value={seg.icon}
                 onChange={(e) => onPatch(key, { icon: e.target.value })}
-                placeholder="icon"
+                placeholder={t('statusline.iconPlaceholder')}
                 className="ml-auto w-14 rounded bg-neutral-800 px-1.5 py-0.5 text-center font-mono text-xs"
-                title="Optional emoji / symbol prefix"
+                title={t('statusline.iconHint')}
               />
             </div>
 
             {key === 'context' && (
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                <span className="w-10 text-neutral-600">样式</span>
+                <span className="w-10 text-neutral-600">{t('statusline.fieldStyle')}</span>
                 {BAR_STYLES.map((st) => (
                   <button
                     key={st.key}
@@ -1424,16 +1458,16 @@ function SegmentModal({
                         ? 'bg-neutral-800 text-neutral-100'
                         : 'text-neutral-500 hover:text-neutral-300',
                     )}
-                    title={st.label}
+                    title={t(st.labelKey)}
                   >
-                    {st.label}
+                    {t(st.labelKey)}
                   </button>
                 ))}
               </div>
             )}
             {key === 'tokens' && (
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                <span className="w-10 text-neutral-600">计量</span>
+                <span className="w-10 text-neutral-600">{t('statusline.fieldMetric')}</span>
                 {TOKEN_METRICS.map((m) => (
                   <button
                     key={m.key}
@@ -1444,9 +1478,9 @@ function SegmentModal({
                         ? 'bg-neutral-800 text-neutral-100'
                         : 'text-neutral-500 hover:text-neutral-300',
                     )}
-                    title={m.title}
+                    title={t(m.titleKey)}
                   >
-                    {m.key}
+                    {t(m.labelKey)}
                   </button>
                 ))}
               </div>
@@ -1454,7 +1488,7 @@ function SegmentModal({
 
             {key === 'rate' && (
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                <span className="w-10 text-neutral-600">窗口</span>
+                <span className="w-10 text-neutral-600">{t('statusline.fieldWindow')}</span>
                 {RATE_WINDOWS.map((w) => (
                   <button
                     key={w.key}
@@ -1465,16 +1499,16 @@ function SegmentModal({
                         ? 'bg-neutral-800 text-neutral-100'
                         : 'text-neutral-500 hover:text-neutral-300',
                     )}
-                    title={w.title}
+                    title={t(w.titleKey)}
                   >
-                    {w.label}
+                    {t(w.labelKey)}
                   </button>
                 ))}
               </div>
             )}
 
             <div className="flex items-center gap-2 text-xs">
-              <span className="w-10 text-neutral-600">fg / bg</span>
+              <span className="w-10 text-neutral-600">{t('statusline.fgBg')}</span>
               <ColorPicker
                 value={seg.color}
                 editable
@@ -1491,21 +1525,23 @@ function SegmentModal({
             </div>
 
             <div className="flex items-center gap-2 text-xs">
-              <span className="w-10 text-neutral-600">label</span>
+              <span className="w-10 text-neutral-600">{t('statusline.fieldLabel')}</span>
               <input
                 value={seg.label ?? ''}
                 onChange={(e) => onPatch(key, { label: e.target.value })}
-                placeholder="Label"
+                placeholder={t('statusline.labelPlaceholder')}
                 className="w-24 rounded bg-neutral-800 px-1.5 py-0.5 font-mono"
-                title="Static prefix rendered before the value, joined by the label separator"
+                title={t('statusline.labelInputHint')}
               />
-              <span className="text-neutral-600">format</span>
+              <span className="text-neutral-600">{t('statusline.fieldFormat')}</span>
               <input
                 value={seg.format ?? ''}
                 onChange={(e) => onPatch(key, { format: e.target.value })}
                 placeholder={SEGMENT_DEFAULT_FORMAT[key]}
                 className="min-w-0 flex-1 rounded bg-neutral-800 px-1.5 py-0.5 font-mono"
-                title={`Template tokens: ${SEGMENT_TOKENS[key].map((t) => '{' + t + '}').join(' ')}`}
+                title={t('statusline.tokensTitle', {
+                  tokens: SEGMENT_TOKENS[key].map((tok) => '{' + tok + '}').join(' '),
+                })}
               />
             </div>
 
@@ -1513,15 +1549,15 @@ function SegmentModal({
               <button
                 onClick={onUnplace}
                 className="rounded px-2 py-1 text-xs text-red-400/80 hover:bg-red-900/30 hover:text-red-300"
-                title="把该块移出行（配置保留，可从 + 块再加回）"
+                title={t('statusline.unplaceHint')}
               >
-                从行中移除
+                {t('statusline.unplace')}
               </button>
               <button
                 onClick={onClose}
                 className="rounded bg-blue-900/50 px-3 py-1 text-xs text-blue-200 hover:bg-blue-900/70"
               >
-                完成
+                {t('statusline.done')}
               </button>
             </div>
           </>
