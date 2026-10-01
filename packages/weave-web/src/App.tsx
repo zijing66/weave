@@ -164,8 +164,14 @@ export default function App() {
     setSelectedFile(null);
     setDrawerSkill(null);
     setMainCategory('skills');
-    setStatuslineSource('global');
+    setStatuslineSource(null); // no source badge/sub-text in the template view
     setError(null);
+    // One bounded whitelist walk of ~/.claude + ~/.codex — cheap enough to
+    // run on every entry, and it keeps the 文件资产 card count honest.
+    api
+      .listGlobalFileAssets()
+      .then(setGlobalAssets)
+      .catch((e) => setError(String(e)));
     refreshGlobalSkills(anchor);
     refreshPluginEnabled(anchor);
     refreshMcp(anchor);
@@ -242,7 +248,8 @@ export default function App() {
         commands: globalAssets.length,
         outdatedSkills: (updates?.skills ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
-        statuslineSource: 'global',
+        // The global view IS the template — a 跟随全局 badge would be noise.
+        statuslineSource: null,
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -268,15 +275,6 @@ export default function App() {
     return pool.find((a) => a.relPath === selectedFile) ?? null;
   }, [globalMode, globalAssets, assets, selectedFile]);
 
-  // Global 文件资产 is a bounded whitelist walk on the daemon, so fetch it
-  // only when that page is actually opened (and refresh on every entry).
-  useEffect(() => {
-    if (!globalMode || mainCategory !== 'commands') return;
-    api
-      .listGlobalFileAssets()
-      .then(setGlobalAssets)
-      .catch((e) => setError(String(e)));
-  }, [globalMode, mainCategory]);
 
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
