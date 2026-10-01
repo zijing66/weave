@@ -239,17 +239,42 @@ describe('global skill file listing / reading (follows symlinks)', () => {
     writeFileSync(join(skillDir, '.hidden'), 'should be skipped');
   });
 
-  it('globalPersonalSkillRoots lists the two personal roots', () => {
+  it('globalPersonalSkillRoots lists the Claude root and both Codex roots', () => {
     const roots = globalPersonalSkillRoots();
-    expect(roots.length).toBe(2);
     expect(roots.some((r) => r.endsWith(join('.claude', 'skills')))).toBe(true);
+    // current Codex location, then the deprecated one it still reads
+    expect(roots.some((r) => r.endsWith(join('.agents', 'skills')))).toBe(true);
     expect(roots.some((r) => r.endsWith(join('.codex', 'skills')))).toBe(true);
+    expect(roots.length).toBe(3);
   });
 
   it('resolveGlobalSkillDir finds a claude-personal skill', async () => {
     const dir = await resolveGlobalSkillDir('claude-personal', 'flist');
     expect(dir).toBe(skillDir);
     expect(await resolveGlobalSkillDir('claude-personal', 'nope')).toBeNull();
+  });
+
+  it('reads Codex personal skills from both roots, preferring the current one', async () => {
+    // Codex reads ~/.agents/skills first and still registers the deprecated
+    // ~/.codex/skills, so weave must surface skills from either.
+    const current = join(fakeHome, '.agents', 'skills');
+    const legacy = join(fakeHome, '.codex', 'skills');
+    for (const [root, name] of [
+      [current, 'in-both'],
+      [legacy, 'in-both'],
+      [legacy, 'legacy-only'],
+    ] as const) {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'SKILL.md'), `# ${name}`);
+    }
+
+    const groups = await readGlobalSkillGroups();
+    const personal = groups.find((g) => g.source === 'codex-personal');
+    expect(personal).toBeDefined();
+    const names = personal!.skills.map((s) => s.name).sort();
+    expect(names).toEqual(['in-both', 'legacy-only']);
+    // the collision resolves to the current location
+    expect(personal!.skills.find((s) => s.name === 'in-both')!.dir).toBe(join(current, 'in-both'));
   });
 
   it('lists files recursively, excluding hidden entries', async () => {

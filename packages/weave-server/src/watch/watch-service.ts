@@ -10,7 +10,8 @@ import type { AssetChangeEvent, AssetChangeKind, AssetEntry } from './types.js';
 import { globalPersonalSkillRoots } from '../install/global-config.js';
 
 /** Synthetic projectPath for global skill events. Personal skill roots
- * (`~/.claude/skills/`, `~/.codex/skills/`) are watched so edits to a
+ * (`~/.claude/skills/`, `~/.agents/skills/`, and the deprecated
+ * `~/.codex/skills/`) are watched so edits to a
  * symlinked skill's original files reach the dashboard. These events are not
  * tied to any registered project — App.tsx ignores them for its project asset
  * cache (projectPath mismatch) and the skill drawer listens on its own. */
@@ -70,7 +71,8 @@ export class WatchService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pending = new Map<string, Map<string, AssetChangeEvent>>();
   private reconcileTimer: NodeJS.Timeout | undefined;
-  // Global personal skill roots (~/.claude/skills/, ~/.codex/skills/) watched
+  // Global personal skill roots (~/.claude/skills/, ~/.agents/skills/, and the
+  // deprecated ~/.codex/skills/) watched
   // for live preview of symlinked skills. Keyed by absolute root path.
   private readonly globalWatchers = new Map<string, FSWatcher>();
   private readonly globalPending = new Map<string, AssetChangeEvent>();
@@ -196,7 +198,8 @@ export class WatchService {
     this.cache.clear(projectPath);
   }
 
-  /** Watch a personal skill root (`~/.claude/skills/` or `~/.codex/skills/`).
+  /** Watch a personal skill root (`~/.claude/skills/`, `~/.agents/skills/`, or the
+   * deprecated `~/.codex/skills/`).
    * `followSymlinks` (default) lets edits to a symlinked skill's original files
    * (the link target, e.g. a dev repo) surface as events on the link path,
    * matching the abs paths returned by `listGlobalSkillFiles`. `ignoreInitial`
@@ -227,7 +230,9 @@ export class WatchService {
       projectPath: GLOBAL_SENTINEL,
       projectName: 'global',
       category: 'skill',
-      agent: root.split(/[\\/]/).includes('.codex') ? 'codex' : 'claude',
+      agent: root.split(/[\\/]/).some((seg) => seg === '.codex' || seg === '.agents')
+        ? 'codex'
+        : 'claude',
       relPath,
       absPath,
       kind,

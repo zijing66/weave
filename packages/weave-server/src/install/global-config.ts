@@ -19,7 +19,8 @@ import type { AssetEntry } from '../watch/types.js';
  *
  * Beyond the user's own skills, the global view also enumerates skills coming
  * from installed Claude Code plugins (`~/.claude/plugins/installed_plugins.json`
- * → each plugin's `skills/` dir) and Codex skills (`~/.codex/skills/` plus
+ * → each plugin's `skills/` dir) and Codex skills (`~/.agents/skills/`, plus the
+ * deprecated `~/.codex/skills/`
  * Codex plugin caches). Plugin enable state is read from / written to the
  * host config: `~/.claude/settings.json` (`enabledPlugins`) for Claude and
  * `~/.codex/config.toml` (`[plugins."key"] enabled`) for Codex.
@@ -38,7 +39,17 @@ const GLOBAL_SKILLS_DIR = '.claude/skills';
 const CLAUDE_PLUGINS_JSON = '.claude/plugins/installed_plugins.json';
 const CLAUDE_SETTINGS = '.claude/settings.json';
 const CODEX_HOME_DIR = '.codex';
-const CODEX_SKILLS_DIR = '.codex/skills';
+/**
+ * Codex's current user-level skills root. Cross-tool convention, and the one
+ * Codex reads first (`codex-rs/ext/skills/src/host_roots.rs`).
+ */
+const CODEX_AGENTS_SKILLS_DIR = '.agents/skills';
+/**
+ * Where Codex used to keep user-level skills. `host_roots.rs` still registers
+ * it, commented "Deprecated user skills location, kept for backward
+ * compatibility" — so it is read but never written.
+ */
+const CODEX_LEGACY_SKILLS_DIR = '.codex/skills';
 const CODEX_PLUGINS_CACHE = '.codex/plugins/cache';
 
 /** Where a global skill came from — used as the grouping key in the UI. */
@@ -78,8 +89,16 @@ function claudePluginsJsonPath(): string {
 function claudeSettingsPath(): string {
   return path.join(homedir(), CLAUDE_SETTINGS);
 }
+/** Codex user-level skills root — the one installs target. */
 function codexSkillsPath(): string {
-  return path.join(homedir(), CODEX_SKILLS_DIR);
+  return path.join(homedir(), ...CODEX_AGENTS_SKILLS_DIR.split('/'));
+}
+/** Codex user-level skills roots, current location first. */
+function codexSkillsPaths(): string[] {
+  return [
+    codexSkillsPath(),
+    path.join(homedir(), ...CODEX_LEGACY_SKILLS_DIR.split('/')),
+  ];
 }
 function codexPluginsCachePath(): string {
   return path.join(homedir(), CODEX_PLUGINS_CACHE);
@@ -89,7 +108,7 @@ function codexPluginsCachePath(): string {
  * watch service observes so edits to a symlinked skill's original files flow
  * through SSE. Plugin caches are versioned/static and intentionally excluded. */
 export function globalPersonalSkillRoots(): string[] {
-  return [globalSkillsPath(), codexSkillsPath()];
+  return [globalSkillsPath(), ...codexSkillsPaths()];
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -192,7 +211,7 @@ export async function readGlobalSkills(): Promise<string[]> {
 }
 
 /** Install a skill directory to the agent's global skills root
- * (`~/.claude/skills/<name>/` or `~/.codex/skills/<name>/`). */
+ * (`~/.claude/skills/<name>/` or `~/.agents/skills/<name>/`). */
 export async function installGlobalSkill(
   sourceDir: string,
   name: string,
@@ -287,9 +306,18 @@ async function readClaudePluginSkills(): Promise<GlobalSkillGroup[]> {
   return groups.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/** Skills under ~/.codex/skills/ (personal). Hidden dirs like `.system` skipped. */
+/** Personal Codex skills. Both roots are read — `~/.agents/skills` is where
+ * Codex looks first, `~/.codex/skills` is its deprecated predecessor whose
+ * contents still load, so an install made before the move keeps appearing.
+ * On a name collision the current location wins. */
 async function readCodexPersonalSkills(): Promise<GlobalSkillGroup> {
-  const skills = await listSkillSubdirs(codexSkillsPath());
+  const byName = new Map<string, GlobalSkillEntry>();
+  for (const root of codexSkillsPaths()) {
+    for (const skill of await listSkillSubdirs(root)) {
+      if (!byName.has(skill.name)) byName.set(skill.name, skill);
+    }
+  }
+  const skills = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   return { source: 'codex-personal', label: 'Codex · 个人', skills };
 }
 

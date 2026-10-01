@@ -27,7 +27,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
  *
  * Scope + agent are honoured:
  *   project skill → `.claude/skills/` (claude) · `.codex/skills/` (codex)
- *   global  skill → `~/.claude/skills/` (claude) · `~/.codex/skills/` (codex)
+ *   global  skill → `~/.claude/skills/` (claude) · `~/.agents/skills/` (codex)
  *   project mcp   → `.mcp.json`, global mcp → `~/.claude.json`
  *   codex  mcp    → `~/.codex/config.toml` (agent: 'codex')
  *   file assets   → the kind's project dir (see file-assets.ts)

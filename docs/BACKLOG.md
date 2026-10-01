@@ -97,9 +97,9 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 
 ## 8. Codex prompts 全局面管理
 
-**现状**：`.codex/prompts/` 作为文件资产已支持全局安装（`FILE_ASSET_SPECS.command.codexUserDir`），但未提供列表/卸载 UI（官方已将 custom prompts 标记 deprecated，方向是 skills）。
+**现状（已结案）**：`~/.codex/prompts/` 不是「deprecated」而是**已被删除**——Codex 源码里 `custom_prompts.rs` 在 `rust-v0.44.0` 存在、`rust-v0.120.0` 起已无，现在全仓库没有任何 `join("prompts")`。它的替代是 plugin `commands/` 目录，而 Codex 加载插件时会把这些命令**自动迁移成 skills**（`core-plugins/src/command_migration/`）。
 
-**建议**：跟随官方方向，把 Codex 全局 prompts 的展示并入 skills 分类的 Codex tab（列为「prompts (deprecated)」分组），不再单独建设。
+**结论**：weave 不再往那里装（`FILE_ASSET_SPECS.command.codexUserDir` 已移除），命令类资产的 Codex 路径留给「插件 commands → skills」这条官方迁移路径，不自行建设。
 
 ---
 
@@ -126,7 +126,6 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 ---
 
 ## 9. statusline 后续项
-
 **1. `alignLine` 用 `plain.length`（UTF-16 码元）计宽**：emoji（代理对计 2）与 Nerd-Font PUA 字形会让 right/center 对齐偏移，开启 powerline 后更明显。修法是用 `string-width` 之类的显示宽度估算；会波及现有 `align` 测试的断言，故本轮未动。
 
 **2. statusline 类型在 web 端有一份手抄副本**：`weave-web/src/lib/api.ts` 镜像了 `weave-server/src/statusline/config.ts` 的 `StatuslineConfig` 等类型（web 不依赖 `@weave/server`），改动必须两侧同步。长期应下沉到 `@weave/core`。
@@ -136,3 +135,35 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 **4. 版本号仍是手写常量**：`weave-server/src/version.ts` 的 `WEAVE_VERSION` 是各处版本戳的单一来源（statusline 的 logo、helper 脚本的 `@version`、`DAEMON_VERSION`、init 记录的 `initVersion`），但它本身仍需与各 `package.json` 的 `version` 手工保持一致。修法是构建时从 package.json 注入。
 
 **5. 默认布局变更会影响存量项目**：`DEFAULT_STATUSLINE_CONFIG` 现在就是参考图那套（双行 powerline、文字标签、方括号进度条）。`apply-update` 的 `refreshStatusline()` 会用「follow global 且本机无全局模板」的项目的默认值重刷脚本，因此升级后这些项目会一起换肤——这是刻意的产品决定，但发布说明里要写明。已有 `.weave/statusline.json`（`source: custom`）或配了 `~/.weave/statusline.json` 的项目不受影响。
+
+---
+
+## 10. Harness 表面：已确证但未实现的差距
+
+调研方法：本机安装的 Claude Code CLI v2.1.286 原生二进制（搜字符串常量与路径拼接）+ openai/codex main 源码 + anthropics/claude-code 的 CHANGELOG。**不要用「官方文档没写」推断功能不存在**——plugin-dev 的组件文档至今没列 output styles，而 CHANGELOG 2.0.41 早就写明了。
+
+### 已修（本轮）
+- ~~`command.codexUserDir: '.codex/prompts'`~~：Codex 已删除 custom prompts（`custom_prompts.rs` 在 `rust-v0.44.0` 存在、`rust-v0.120.0` 已无），该目录无人读取。
+- ~~Codex 用户级 skills 读写 `~/.codex/skills`~~：Codex 的 `host_roots.rs` 注释其为 "Deprecated user skills location"；现写入改为 `~/.agents/skills`，读取同时兼容旧位置（当前位置优先）。
+
+### 待做
+
+**1. `workflow` / `rule` 缺 `userDir`**（`install/file-assets.ts`）
+Claude Code 的用户级目录白名单（二进制原串）含 `workflows` 与 `rules`，且 CHANGELOG 2.1.178 明确「project-scope workflow saves … closest existing `.claude/workflows/`」、2.1.208 有 user-scope。两者都该补 `userDir: '.claude/workflows'` / `'.claude/rules'`，否则全局安装会抛 "project-scoped only"。`file-assets.test.ts` 里已用 KNOWN GAP 标注。
+
+**2. `routines` 完全未建模**
+二进制中 135 次命中，出现在用户级白名单与 `--project-config-root` 帮助文本（"commands, agents, skills, workflows, routines, output-styles"）里。是一个真实但尚无文档的表面，需要先弄清文件格式再决定是否建模。
+
+**3. Codex subagents（`.toml`）**
+Codex 有 agent roles：`~/.codex/agents/*.toml` + `<project>/.codex/agents/*.toml`，且官方提供 `.claude/agents/*.md` → `.codex/agents/*.toml` 的转换器。weave 目前把 agents 当 Claude 专属。格式不同，不能直接复制，需要转换器。
+
+**4. Codex statusline 形态不同**
+Codex 的 `/statusline` + `tui.status_line = [...]` 只能选内置条目，不支持任意 shell 命令。weave 的 statusline 工作是 Claude 专属，这是正确的，但 UI 上不该暗示 Codex 有对等物。
+
+**5. `project_doc_fallback_filenames` 是软连接的官方替代**
+Codex 支持声明额外回退文件名，把 `CLAUDE.md` 列进去即可让 Codex 直接读，无需软连接——也就没有「Windows 队友 checkout 成普通文件」的风险。值得作为 `weave init` 的可选方案评估。
+
+**6. §2「Codex hooks 是实验特性」的前提可能已过时**
+Codex 源码里是 11+ 事件的完整体系（`PreToolUse`/`PostToolUse`/`PermissionRequest`/`SubagentStart`/`SubagentStop`/`Interrupt`/`PreCompact`/`PostCompact`/`SessionStart`/`SessionEnd`/`UserPromptSubmit`/`Stop`），handler 类型还多出 `McpTool` 与 `Agent`。重新评估是否值得接入。
+
+---
