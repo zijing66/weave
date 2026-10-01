@@ -213,7 +213,6 @@ export default function App() {
         commands: 0,
         outdatedSkills: (updates?.skills ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
-        autoSync: null,
         statuslineSource: 'global',
       };
     }
@@ -224,7 +223,6 @@ export default function App() {
       commands: otherCount,
       outdatedSkills: (updates?.skills ?? []).filter((u) => u.outdated).length,
       outdatedMcp: (updates?.mcp ?? []).filter((u) => u.outdated).length,
-      autoSync: projectConfig.autoSync,
       statuslineSource,
     };
   }, [globalMode, globalSkillGroups, mcpServers, updates, assets, assetCounts, projectConfig, statuslineSource]);
@@ -601,23 +599,37 @@ export default function App() {
                       </button>
                     )}
                     {!globalMode && selected && (
-                      <button
-                        onClick={handleToggleAutoSync}
-                        aria-pressed={projectConfig.autoSync}
-                        title={
-                          projectConfig.autoSync
-                            ? '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动'
-                            : '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）'
-                        }
-                        className={cn(
-                          'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
-                          projectConfig.autoSync
-                            ? 'bg-emerald-900/40 text-emerald-300'
-                            : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
-                        )}
-                      >
-                        Auto-sync {projectConfig.autoSync ? 'ON' : 'OFF'}
-                      </button>
+                      <>
+                        {/* Both controls below run the same server-side syncAll,
+                            so one chip states the scope for the pair. */}
+                        <span
+                          className="shrink-0 rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
+                          title={
+                            '自动同步（Sync all 相同）覆盖：Skills、MCP，以及 commands / agents / ' +
+                            'workflows / rules / output-styles 这些单文件资产。' +
+                            '本地改过（custom）的条目会跳过，不会被覆盖。'
+                          }
+                        >
+                          覆盖 Skills · MCP · 文件资产
+                        </span>
+                        <button
+                          onClick={handleToggleAutoSync}
+                          aria-pressed={projectConfig.autoSync}
+                          title={
+                            projectConfig.autoSync
+                              ? '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动'
+                              : '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）'
+                          }
+                          className={cn(
+                            'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
+                            projectConfig.autoSync
+                              ? 'bg-emerald-900/40 text-emerald-300'
+                              : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
+                          )}
+                        >
+                          Auto-sync {projectConfig.autoSync ? 'ON' : 'OFF'}
+                        </button>
+                      </>
                     )}
                   </div>
 

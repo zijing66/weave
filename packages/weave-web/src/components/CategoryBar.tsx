@@ -33,8 +33,6 @@ export interface CategoryBarData {
   outdatedSkills: number;
   /** Number of outdated MCP servers. */
   outdatedMcp: number;
-  /** Project auto-sync toggle state (Claude card badge); null hides it. */
-  autoSync: boolean | null;
   /** Statusline source; null while not loaded (Claude card badge). */
   statuslineSource: 'global' | 'custom' | null;
 }
@@ -72,20 +70,11 @@ export function CategoryBar({
           <Badge variant="warning">{data.outdatedMcp} update</Badge>
         ) : null;
       case 'personalization':
-        return (
-          <>
-            {data.statuslineSource && (
-              <Badge variant={data.statuslineSource === 'custom' ? 'skill' : 'default'}>
-                {data.statuslineSource === 'custom' ? '自定义' : '跟随全局'}
-              </Badge>
-            )}
-            {data.autoSync != null && (
-              <Badge variant={data.autoSync ? 'skill' : 'other'}>
-                {data.autoSync ? 'auto-sync ON' : 'auto-sync OFF'}
-              </Badge>
-            )}
-          </>
-        );
+        return data.statuslineSource ? (
+          <Badge variant={data.statuslineSource === 'custom' ? 'skill' : 'default'}>
+            {data.statuslineSource === 'custom' ? '自定义' : '跟随全局'}
+          </Badge>
+        ) : null;
       default:
         return null;
     }
