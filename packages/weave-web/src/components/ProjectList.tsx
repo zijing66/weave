@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type ProjectRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
 import { Circle, FolderOpen, Globe, Terminal } from 'lucide-react';
 
 interface ProjectListProps {
@@ -33,6 +34,7 @@ export function ProjectList({
   onOpenExplorer,
   onOpenTerminal,
 }: ProjectListProps) {
+  const t = useT();
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -62,7 +64,9 @@ export function ProjectList({
   return (
     <div className="flex flex-col">
       {/* 全局配置 */}
-      <p className="px-4 pt-2 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">全局配置</p>
+      <p className="px-4 pt-2 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">
+        {t('project.globalConfig')}
+      </p>
       <div className="px-2">
         <button
           onClick={onSelectGlobal}
@@ -78,15 +82,21 @@ export function ProjectList({
             )}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">全局配置</span>
-            <span className="block text-[11px] text-neutral-500">机器级 harness 默认模板</span>
+            <span className="block truncate text-sm">{t('project.globalConfig')}</span>
+            <span className="block text-[11px] text-neutral-500">
+              {t('project.globalSubtitle')}
+            </span>
           </span>
         </button>
       </div>
 
       {/* 项目 */}
-      <p className="px-4 pt-3 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">项目</p>
-      {projects.length === 0 && <p className="p-3 text-xs text-neutral-500">No projects registered</p>}
+      <p className="px-4 pt-3 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">
+        {t('project.sectionHeader')}
+      </p>
+      {projects.length === 0 && (
+        <p className="p-3 text-xs text-neutral-500">{t('project.noneRegistered')}</p>
+      )}
       <ul className="p-2 space-y-1">
         {projects.map((p) => (
           <li key={p.id}>
@@ -135,7 +145,7 @@ export function ProjectList({
             </p>
             <MenuButton
               icon={<FolderOpen className="h-3.5 w-3.5" />}
-              label="在资源管理器中打开"
+              label={t('project.openInExplorer')}
               onClick={() => {
                 onOpenExplorer(menu.project);
                 setMenu(null);
@@ -143,7 +153,7 @@ export function ProjectList({
             />
             <MenuButton
               icon={<Terminal className="h-3.5 w-3.5" />}
-              label="在终端中打开"
+              label={t('project.openInTerminal')}
               onClick={() => {
                 onOpenTerminal(menu.project);
                 setMenu(null);
