@@ -348,7 +348,7 @@ describe('statusline — default config golden output', () => {
       .trim();
 
     expect(plain.split('\n').map((l) => l.trim())).toEqual([
-      `▊ weave v${WEAVE_VERSION} 🤖 Model: claude-sonnet-5 🧠 [░░░░░░░░░░░░] 39k/1.0M (4%)`,
+      `▊ weave v${WEAVE_VERSION} 🤖 Model: claude-sonnet-5 🧠 [█░░░░░░░░░░░] 39k/1.0M (4%)`,
       `🧩 Thinking: high 💸 Cost: $0.45 📁 /tmp/my-project`,
     ]);
   });
@@ -507,7 +507,7 @@ describe('statusline — shipped default layout', () => {
     });
 
     expect(out).toContain('🤖 Model: deepseek-flash[1M]');
-    expect(out).toContain('🧠 [░░░░░░░░░░░░] 39k/1.0M (4%)');
+    expect(out).toContain('🧠 [█░░░░░░░░░░░] 39k/1.0M (4%)');
     expect(out).toContain('🧩 Thinking: high');
     expect(out).toContain('💸 Cost: $0.45');
     expect(out).toContain('🔢 Total: 24k');
@@ -628,6 +628,44 @@ describe('statusline — runtime output', () => {
     expect(out).toContain('78%');
     expect(out).toContain('█'); // filled progress bar cell
     expect(out).toContain('░'); // empty progress bar cell
+  });
+
+  it('lights at least one bar cell for any non-zero percentage', () => {
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['context']] as SegmentKey[][],
+      bar: { cells: 12, fill: '█', empty: '░' },
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        context: {
+          ...DEFAULT_STATUSLINE_CONFIG.segments.context,
+          enabled: true,
+          format: '[{bar}] ({percent}%)',
+        },
+      },
+    };
+    // 3% of 12 cells is 0.36 — must not round down to an all-empty bar.
+    const low = runScript(generateStatuslineScript(cfg), {
+      ...stdin,
+      context_window: {
+        total_input_tokens: 34200,
+        total_output_tokens: 0,
+        context_window_size: 1000000,
+        used_percentage: 3,
+      },
+    });
+    expect(low).toContain('[█░░░░░░░░░░░] (3%)');
+    // 0% still renders a fully empty bar, not a false sliver of progress.
+    const zero = runScript(generateStatuslineScript(cfg), {
+      ...stdin,
+      context_window: {
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        context_window_size: 1000000,
+        used_percentage: 0,
+      },
+    });
+    expect(zero).toContain('[░░░░░░░░░░░░] (0%)');
   });
 
   it('context segment can render as a bare percentage or a bare bar', () => {
@@ -865,7 +903,7 @@ describe('statusline — runtime output', () => {
         used_percentage: 4,
       },
     });
-    expect(out).toContain('[░░░░░░░░░░░░] 39k/1.0M (4%)');
+    expect(out).toContain('[█░░░░░░░░░░░] 39k/1.0M (4%)');
   });
 
   it('honours custom bar cells and glyphs', () => {

@@ -190,6 +190,9 @@ function barFor(pct, bar) {
   var fill = (bar && bar.fill) || BAR_FILL;
   var empty = (bar && bar.empty) || BAR_EMPTY;
   var filled = Math.round((pct / 100) * cells);
+  // A non-zero percentage must light at least one cell: with 12 cells even 4%
+  // rounds down to 0 and the bar reads as completely empty next to "(4%)".
+  if (pct > 0 && filled === 0) filled = 1;
   return new Array(filled + 1).join(fill) + new Array(cells - filled + 1).join(empty);
 }
 
