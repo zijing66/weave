@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { DAEMON_HOST, resolveStaticDir } from '@weave/server';
 import { logger } from '@weave/core';
+import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
 import type { Command } from '../parser.js';
 
@@ -28,7 +29,7 @@ export function openBrowser(url: string): void {
   child.on('error', () => {
     // Headless machines and locked-down environments have no opener; the URL
     // is printed either way, so failing to launch is not fatal.
-    logger.dim(`(could not launch a browser automatically — open it manually)`);
+    logger.dim(t('out.dash.browserFailed'));
   });
   child.unref();
 }
@@ -45,31 +46,29 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
   const handle = await ensureDaemonRunning();
 
   if (!handle.started) {
-    logger.info(`Daemon already running on port ${handle.port}`);
+    logger.info(t('out.daemon.alreadyRunning', { port: handle.port }));
   } else {
-    logger.success(`Daemon started on http://${DAEMON_HOST}:${handle.port}`);
-    logger.dim('Stop it later with `weave daemon stop`.');
+    logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
+    logger.dim(t('out.dash.stopHint'));
   }
 
   if (!handle.token) {
-    logger.error(
-      'A daemon is running on the default port but its token is unknown, so the console cannot authenticate.',
-    );
-    logger.dim('  Restart it with `weave daemon stop` then `weave dashboard`.');
+    logger.error(t('out.dash.tokenUnknown'));
+    logger.dim(t('out.dash.restartHint'));
     process.exitCode = 1;
     return;
   }
 
   if (!resolveStaticDir()) {
-    logger.warn('The web bundle is not built, so the daemon has nothing to serve.');
-    logger.dim('  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (http://localhost:9527).');
+    logger.warn(t('out.dash.noBundle'));
+    logger.dim(t('out.dash.buildHint'));
   }
 
   const url = dashboardUrl(handle.port, handle.token);
-  logger.info(`\n  Dashboard: ${url}\n`);
+  logger.info(t('out.dash.url', { url }));
 
   if (noOpen) {
-    logger.dim('  (--no-open: not launching a browser)');
+    logger.dim(t('out.dash.noOpen'));
     return;
   }
   openBrowser(url);

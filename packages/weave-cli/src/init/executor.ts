@@ -30,6 +30,7 @@ import {
 } from './claudemd-gen.js';
 import { ensureInstructionLink } from './instruction-link.js';
 import { generateHookHandler, generateAutoMemoryHook } from './helpers-gen.js';
+import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
 const PRESET_TEMPLATE: Record<string, ClaudeMdTemplate> = {
@@ -64,7 +65,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   const helpersDir = path.join(claudeDir, 'helpers');
 
   if (!interactive) {
-    logger.dim('Running in non-interactive mode');
+    logger.dim(t('init.nonInteractive'));
   }
 
   // ---- Step 1: Create directory structure ----
@@ -104,7 +105,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
         if (await fileExists(settingsPath)) {
           // Present but not a parseable object — never touch what we cannot merge into
           skipped.push(settingsPath);
-          logger.warn(`Skipped ${settingsPath}: not valid JSON. Fix or remove it, or use --force.`);
+          logger.warn(t('init.skippedInvalidJson', { path: settingsPath }));
         } else {
           await writeFile(settingsPath, JSON.stringify(generated, null, 2) + '\n', 'utf-8');
           created.files.push(settingsPath);
@@ -137,7 +138,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
         if (existing === undefined) {
           if (await fileExists(mcpPath)) {
             skipped.push(mcpPath);
-            logger.warn(`Skipped ${mcpPath}: not valid JSON. Fix or remove it, or use --force.`);
+            logger.warn(t('init.skippedInvalidJson', { path: mcpPath }));
           } else {
             await writeFile(mcpPath, JSON.stringify(mcpJson, null, 2) + '\n', 'utf-8');
             created.files.push(mcpPath);
@@ -223,7 +224,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
       confirm: (question, detail) => confirmPrompt(question, detail, interactive),
     });
     if (link.backedUpTo) {
-      logger.dim(`Backed up the previous AGENTS.md to ${link.backedUpTo}`);
+      logger.dim(t('init.backedUp', { path: link.backedUpTo }));
       created.files.push(link.backedUpTo);
     }
 
@@ -351,7 +352,9 @@ async function confirmPrompt(question: string, detail: string, interactive: bool
   const { createInterface } = await import('node:readline/promises');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const answer = await rl.question(`\n  ${question}\n  ${detail}\n  Proceed? [Y/n] `);
+    const answer = await rl.question(
+      `\n  ${question}\n  ${detail}\n  ${t('init.proceed')} `,
+    );
     return !/^n(o)?$/i.test(answer.trim());
   } finally {
     rl.close();
@@ -443,7 +446,7 @@ async function copyTemplateDir(
       }
     }
   } catch (err) {
-    logger.warn(`Could not copy templates from ${srcDir}: ${String(err)}`);
+    logger.warn(t('init.copyTemplatesFailed', { srcDir, error: String(err) }));
   }
 }
 

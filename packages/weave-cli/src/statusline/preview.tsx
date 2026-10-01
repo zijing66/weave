@@ -13,6 +13,7 @@ import {
 } from '@weave/server';
 import { parseAnsiSpans, toInkColor } from './ansi.js';
 import { buildMockInput, writeFixtureTranscript } from './mock-input.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Interactive statusline preview TUI (Ink).
@@ -109,7 +110,7 @@ export function runPreviewLines(
       windowsHide: true,
     });
     if (res.status !== 0) {
-      return { lines: [], error: (res.stderr || `exit ${res.status}`).trim() };
+      return { lines: [], error: (res.stderr || t('preview.scriptExit', { status: String(res.status) })).trim() };
     }
     const out = (res.stdout ?? '').replace(/\r\n/g, '\n');
     return { lines: out.split('\n').filter((l) => l !== '') };
@@ -347,10 +348,10 @@ function PreviewApp({
   // Re-run the real script whenever the config changes (debounced so a burst of
   // keystrokes triggers one spawn).
   useEffect(() => {
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setOutput(runPreviewLines(config, projectPath, columns));
     }, 60);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [config, columns, projectPath]);
 
   useInput((input, key) => {
@@ -474,7 +475,7 @@ function PreviewApp({
         return;
       case 'r':
         setOutput(runPreviewLines(config, projectPath, columns));
-        setStatus('re-rendered');
+        setStatus(t('preview.reRendered'));
         return;
       case 'w':
         void (async () => {
@@ -487,9 +488,9 @@ function PreviewApp({
             }
             await applyStatuslineConfig(projectPath, config);
             setDirty(false);
-            setStatus('已写入并重新生成 statusline 脚本');
+            setStatus(t('preview.saved'));
           } catch (e) {
-            setStatus(`写入失败: ${String(e)}`);
+            setStatus(t('preview.writeFailed', { error: String(e) }));
           } finally {
             setWriting(false);
           }
@@ -510,12 +511,14 @@ function PreviewApp({
         </Text>
         <Text dimColor> — {path.basename(projectPath)} </Text>
         <Text dimColor>
-          source: {config.source ?? 'global'} · refresh: {config.refreshInterval}s · align:{' '}
-          {config.align} · powerline: {config.powerline.enabled ? 'on' : 'off'}
+          {t('preview.headerMeta', {
+            source: config.source ?? 'global',
+            refresh: config.refreshInterval,
+            align: config.align,
+            powerline: config.powerline.enabled ? t('preview.on') : t('preview.off'),
+          })}
         </Text>
-        {dirty && (
-          <Text color="yellow"> ●未保存</Text>
-        )}
+        {dirty && <Text color="yellow">{t('preview.unsaved')}</Text>}
       </Box>
 
       <Box
@@ -526,19 +529,19 @@ function PreviewApp({
         marginY={0}
       >
         {output.error ? (
-          <Text color="red">script error: {output.error}</Text>
+          <Text color="red">{t('preview.scriptError', { error: output.error })}</Text>
         ) : output.lines.length ? (
           output.lines.map((l, i) => <SpanLine key={i} line={l} />)
         ) : (
-          <Text dimColor>rendering…</Text>
+          <Text dimColor>{t('preview.rendering')}</Text>
         )}
       </Box>
 
       <Box flexDirection="column">
-        <Text dimColor>layout — ↑↓←→ 移动 · space 开关</Text>
+        <Text dimColor>{t('preview.layoutHelp')}</Text>
         {config.lines.map((line, row) => (
           <Box key={row} gap={1}>
-            <Text dimColor>{`row ${row + 1}  `}</Text>
+            <Text dimColor>{t('preview.rowLabel', { row: row + 1 })}</Text>
             {line.map((k, col) => (
               <SegmentChip
                 key={k}
@@ -559,7 +562,7 @@ function PreviewApp({
             </Text>{' '}
             <Text>{editing.buf}</Text>
             <Text inverse> </Text>
-            <Text dimColor> Enter 确认 · Esc 取消</Text>
+            <Text dimColor>{t('preview.editConfirm')}</Text>
           </Text>
         ) : seg && focusKey ? (
           <Text>
@@ -567,29 +570,37 @@ function PreviewApp({
               {` ${focusKey} `}
             </Text>{' '}
             <Text dimColor>
-              color {seg.color} · bold {seg.bold ? 'on' : 'off'} · merge{' '}
-              {seg.merge ? 'on' : 'off'} · icon {seg.icon || '—'}
-              {focusKey === 'context' ? ` · style ${seg.style ?? 'both'}` : ''}
+              {t('preview.segDetail', {
+                color: seg.color,
+                bold: seg.bold ? t('preview.on') : t('preview.off'),
+                merge: seg.merge ? t('preview.on') : t('preview.off'),
+                icon: seg.icon || '—',
+                style:
+                  focusKey === 'context'
+                    ? t('preview.styleSuffix', { style: seg.style ?? 'both' })
+                    : '',
+              })}
             </Text>
           </Text>
         ) : null}
         {!editing && seg && focusKey && (seg.label || seg.format) ? (
           <Text dimColor>
-            {seg.label ? `label ${seg.label}${config.labelSeparator}` : ''}
-            {seg.format ? `format ${seg.format}` : ''}
+            {seg.label
+              ? t('preview.labelValue', { value: `${seg.label}${config.labelSeparator}` })
+              : ''}
+            {seg.format ? t('preview.formatValue', { value: seg.format }) : ''}
           </Text>
         ) : null}
         <Text dimColor>
-          bar {config.bar.cells}格 {config.bar.fill}
-          {config.bar.empty} · labelSep {JSON.stringify(config.labelSeparator)}
+          {t('preview.barLine', {
+            cells: config.bar.cells,
+            glyphs: `${config.bar.fill}${config.bar.empty}`,
+            labelSep: JSON.stringify(config.labelSeparator),
+          })}
         </Text>
-        <Text dimColor>
-          keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · n 标签 · f 模板 · [ ] bar 格数
-          · B bar 字形 · L 标签分隔符 · a 对齐 · p powerline · g powerline 分隔符 · l logo 颜色 ·
-          s 分隔符 · r 重渲染 · w 写入 · q 退出
-        </Text>
+        <Text dimColor>{t('preview.keysHelp')}</Text>
         {status && <Text color="green">{status}</Text>}
-        {writing && <Text color="yellow">writing…</Text>}
+        {writing && <Text color="yellow">{t('preview.writing')}</Text>}
       </Box>
     </Box>
   );

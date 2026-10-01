@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { runStatuslinePreview } from '../statusline/preview.js';
+import { t } from '../i18n/index.js';
 import type { Command, CommandContext } from '../parser.js';
 
 /**
@@ -17,7 +18,7 @@ async function previewAction(context: CommandContext): Promise<void> {
   try {
     await access(projectPath);
   } catch {
-    console.error(`Project path does not exist: ${projectPath}`);
+    console.error(t('out.statusline.pathMissing', { path: projectPath }));
     process.exit(1);
   }
   await runStatuslinePreview(projectPath);
