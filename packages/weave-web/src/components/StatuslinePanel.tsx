@@ -999,8 +999,12 @@ function PowerlineRow({
   const last = items[items.length - 1];
   return (
     <span className="inline-flex items-stretch">
+      {/* caps/joins paint a block's BACKGROUND colour as text — cssSolid, not
+          cssFg: the two palettes diverge for named colours, which showed up
+          as a visible shade gap against the block fill (mirrors the
+          generator, where fg and bg take the same config value). */}
       {startCap && first?.bg && (
-        <span className="whitespace-pre" style={{ color: cssFg(first.bg) }}>
+        <span className="whitespace-pre" style={{ color: cssSolid(first.bg) }}>
           {startCap}
         </span>
       )}
@@ -1017,7 +1021,8 @@ function PowerlineRow({
                   className="whitespace-pre"
                   style={{
                     backgroundColor: cssSolid(it.bg!),
-                    color: cssFg(prev.bg === it.bg ? prev.fg : prev.bg!),
+                    color:
+                      prev.bg === it.bg ? cssFg(prev.fg) : cssSolid(prev.bg!),
                   }}
                 >
                   {join}
@@ -1038,7 +1043,7 @@ function PowerlineRow({
         );
       })}
       {endCap && last?.bg && (
-        <span className="whitespace-pre" style={{ color: cssFg(last.bg) }}>
+        <span className="whitespace-pre" style={{ color: cssSolid(last.bg) }}>
           {endCap}
         </span>
       )}
