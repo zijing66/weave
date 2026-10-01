@@ -24,6 +24,7 @@ import {
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 
@@ -199,6 +200,7 @@ export function SkillDetailDrawer({
   onUninstall: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const isGlobal = scope === 'global' && !!source;
   // Global rows start with no files and fetch them (follows symlinks).
   const [fileList, setFileList] = useState<AssetEntry[]>(files);
@@ -330,26 +332,26 @@ export function SkillDetailDrawer({
         ) : (
           <>
             <Badge variant="skill">global</Badge>
-            {readOnly && <Badge variant="settings">只读</Badge>}
+            {readOnly && <Badge variant="settings">{t('skillDetail.readOnly')}</Badge>}
           </>
         )}
         {isGlobal && (
           <>
             <Badge variant={isPlugin ? 'mcp' : 'skill'}>
-              {isPlugin ? '插件' : '本地'}
+              {isPlugin ? t('skillDetail.plugin') : t('skillDetail.local')}
             </Badge>
             <Badge variant="other">{runtimeLabel}</Badge>
           </>
         )}
-        <Badge>{fileList.length} files</Badge>
-        {outdated && <Badge variant="warning">update</Badge>}
-        {custom && <Badge variant="other">custom</Badge>}
+        <Badge>{t('skillDetail.fileCount', { n: fileList.length })}</Badge>
+        {outdated && <Badge variant="warning">{t('skillDetail.update')}</Badge>}
+        {custom && <Badge variant="other">{t('skillDetail.custom')}</Badge>}
         <div className="ml-auto flex items-center gap-2 shrink-0">
           {!readOnly && (
             <button
               onClick={onUninstall}
               className="text-neutral-500 hover:text-red-400"
-              title="Uninstall skill"
+              title={t('skillDetail.uninstallTitle')}
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -368,20 +370,24 @@ export function SkillDetailDrawer({
               <button
                 onClick={toggleAll}
                 className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
-                title={anyCollapsed ? '展开全部目录' : '折叠全部目录'}
+                title={
+                  anyCollapsed
+                    ? t('skillDetail.expandAllDirs')
+                    : t('skillDetail.collapseAllDirs')
+                }
               >
                 {anyCollapsed ? (
                   <ChevronsUpDown className="h-2.5 w-2.5" />
                 ) : (
                   <ChevronsDownUp className="h-2.5 w-2.5" />
                 )}
-                {anyCollapsed ? '全展开' : '全折叠'}
+                {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
               </button>
             </div>
           )}
           {tree.length === 0 && (
             <p className="text-xs text-neutral-600">
-              {isGlobal ? 'Loading…' : 'No files'}
+              {isGlobal ? t('common.loading') : t('skillDetail.noFiles')}
             </p>
           )}
           {tree.map((node) => (
@@ -400,7 +406,7 @@ export function SkillDetailDrawer({
         <div className="flex-1 overflow-y-auto p-4">
           {error && <p className="text-red-400 text-xs">{error}</p>}
           {content == null && !error && (
-            <p className="text-xs text-neutral-500">Loading…</p>
+            <p className="text-xs text-neutral-500">{t('common.loading')}</p>
           )}
           {parsed && (
             <>
@@ -418,7 +424,7 @@ export function SkillDetailDrawer({
             </pre>
           )}
           {selected?.relPath.endsWith('/SKILL.md') && content === '' && (
-            <p className="text-xs text-neutral-600">Empty SKILL.md</p>
+            <p className="text-xs text-neutral-600">{t('skillDetail.emptySkillMd')}</p>
           )}
         </div>
       </div>
@@ -428,22 +434,24 @@ export function SkillDetailDrawer({
         {scope === 'project' ? (
           <>
             <Folder className="h-3 w-3" />
-            Project-scope skill — lives in {agent === 'codex' ? '.codex' : '.claude'}/skills/
+            {t('skillDetail.projectScopeHint', {
+              root: agent === 'codex' ? '.codex' : '.claude',
+            })}
           </>
         ) : readOnly ? (
           <>
             <Globe className="h-3 w-3" />
-            全局技能（只读）— 项目视图不可修改全局配置
+            {t('skillDetail.globalReadOnlyHint')}
           </>
         ) : isPlugin ? (
           <>
             <Globe className="h-3 w-3" />
-            全局插件技能 — {runtimeLabel}
+            {t('skillDetail.globalPluginHint', { runtime: runtimeLabel })}
           </>
         ) : (
           <>
             <Globe className="h-3 w-3" />
-            全局本地技能 — {runtimeLabel}
+            {t('skillDetail.globalLocalHint', { runtime: runtimeLabel })}
           </>
         )}
       </div>

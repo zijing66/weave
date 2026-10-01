@@ -33,6 +33,7 @@ import { Resizer } from '@/components/Resizer';
 import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
+import { useT } from '@/i18n/I18nProvider';
 import { Settings } from 'lucide-react';
 
 const LEFT_MIN = 176;
@@ -44,6 +45,7 @@ const TASK_MAX = 520;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 export default function App() {
+  const t = useT();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selected, setSelected] = useState<ProjectRow | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
@@ -330,14 +332,14 @@ export default function App() {
         agent,
       });
       if (!res.ok) {
-        setError(`Install failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.installFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshGlobalSkills(target);
       refreshUpdates(target);
     },
-    [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [t, selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
   /** Install a single-file asset (command / agent / workflow / rule / output-style). */
@@ -354,13 +356,13 @@ export default function App() {
         scope,
       });
       if (!res.ok) {
-        setError(`Install failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.installFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshUpdates(target);
     },
-    [selected, projects, globalMode, refreshAssets, refreshUpdates],
+    [t, selected, projects, globalMode, refreshAssets, refreshUpdates],
   );
 
   const handleInstallMcp = useCallback(
@@ -384,14 +386,14 @@ export default function App() {
         agent,
       });
       if (!res.ok) {
-        setError(`MCP install failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.mcpInstallFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshMcp(target);
       refreshUpdates(target);
     },
-    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
+    [t, selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   const handleUninstallSkill = useCallback(
@@ -406,14 +408,14 @@ export default function App() {
         agent: agent ?? 'claude',
       });
       if (!res.ok) {
-        setError(`Uninstall failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.uninstallFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshGlobalSkills(target);
       refreshUpdates(target);
     },
-    [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [t, selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
   const handleUninstallFileAsset = useCallback(
@@ -428,13 +430,13 @@ export default function App() {
         ...(row.agent ? { agent: row.agent } : {}),
       });
       if (!res.ok) {
-        setError(`Uninstall failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.uninstallFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshUpdates(target);
     },
-    [selected, projects, refreshAssets, refreshUpdates],
+    [t, selected, projects, refreshAssets, refreshUpdates],
   );
 
   const handleUninstallMcp = useCallback(
@@ -450,14 +452,14 @@ export default function App() {
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) {
-        setError(`MCP uninstall failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.mcpUninstallFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshAssets(target);
       refreshMcp(target);
       refreshUpdates(target);
     },
-    [selected, projects, refreshAssets, refreshMcp, refreshUpdates],
+    [t, selected, projects, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   const handleSyncAll = useCallback(async () => {
@@ -466,12 +468,12 @@ export default function App() {
     setError(null);
     const res = await api.syncAll(target.id);
     if (!res.ok) {
-      setError(`Sync failed: ${res.status} ${await res.text()}`);
+      setError(t('errors.syncFailed', { error: `${res.status} ${await res.text()}` }));
       return;
     }
     refreshUpdates(target);
     refreshAssets(target);
-  }, [selected, projects, refreshUpdates, refreshAssets]);
+  }, [t, selected, projects, refreshUpdates, refreshAssets]);
 
   const handleUpdateAsset = useCallback(
     async (
@@ -490,7 +492,7 @@ export default function App() {
         ...(category === 'skill' || category === 'mcp' ? { agent: agent ?? 'claude' } : {}),
       });
       if (!res.ok) {
-        setError(`Update failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.updateFailed', { error: `${res.status} ${await res.text()}` }));
         return;
       }
       refreshUpdates(target);
@@ -498,7 +500,7 @@ export default function App() {
       if (category === 'mcp') refreshMcp(target);
       if (category === 'skill') refreshGlobalSkills(target);
     },
-    [selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
+    [t, selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
   );
 
   const handleToggleAutoSync = useCallback(async () => {
@@ -508,10 +510,10 @@ export default function App() {
     setProjectConfig(next);
     const res = await api.putProjectConfig(selected.id, next);
     if (!res.ok) {
-      setError(`Config update failed: ${res.status} ${await res.text()}`);
+      setError(t('errors.configUpdateFailed', { error: `${res.status} ${await res.text()}` }));
       refreshConfig(selected);
     }
-  }, [selected, projectConfig, refreshConfig]);
+  }, [t, selected, projectConfig, refreshConfig]);
 
   /** Context-menu action: open a project's folder in the file manager / terminal. */
   const handleOpenProject = useCallback(
@@ -520,10 +522,10 @@ export default function App() {
       try {
         await api.openProject(p.id, target);
       } catch (e) {
-        setError(`Open failed: ${e instanceof Error ? e.message : String(e)}`);
+        setError(t('errors.openFailed', { error: e instanceof Error ? e.message : String(e) }));
       }
     },
-    [],
+    [t],
   );
 
   /** Toggle a plugin's enable state in the host config (Claude settings.json or
@@ -537,13 +539,13 @@ export default function App() {
       setPluginEnabled((prev) => ({ ...prev, [runtime]: { ...prev[runtime], [key]: enabled } }));
       const res = await api.putPluginEnabled(target.id, { runtime, key, enabled });
       if (!res.ok) {
-        setError(`Plugin toggle failed: ${res.status} ${await res.text()}`);
+        setError(t('errors.pluginToggleFailed', { error: `${res.status} ${await res.text()}` }));
         refreshPluginEnabled(target);
         return;
       }
       refreshGlobalSkills(target);
     },
-    [selected, projects, refreshPluginEnabled, refreshGlobalSkills],
+    [t, selected, projects, refreshPluginEnabled, refreshGlobalSkills],
   );
 
   const selectCategory = useCallback((c: MainCategory) => {
@@ -593,11 +595,13 @@ export default function App() {
           <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-white/[0.06] frosted">
             <TrafficLight />
             <span className="text-sm font-semibold tracking-tight text-neutral-200">Weave</span>
-            <span className="text-xs text-neutral-500">{projects.length} projects</span>
+            <span className="text-xs text-neutral-500">
+              {t('app.projectCount', { n: projects.length })}
+            </span>
             <button
               onClick={() => setSettingsOpen(true)}
               className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title="设置（默认终端等）"
+              title={t('app.settingsTooltip')}
             >
               <Settings className="h-4 w-4" />
             </button>
@@ -619,7 +623,7 @@ export default function App() {
                 onOpenTerminal={(p) => void handleOpenProject(p, 'terminal')}
               />
             </aside>
-            <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title="拖拽调整左侧宽度" />
+            <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
@@ -629,24 +633,26 @@ export default function App() {
                   <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-semibold truncate">
-                        {globalMode ? '全局配置' : (selected?.name ?? '')}
+                        {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
                       </h2>
                       <p className="text-[11px] text-neutral-500 truncate">
-                        {globalMode ? '机器级 harness 默认模板 · 作用于所有项目' : (selected?.path ?? '')}
+                        {globalMode ? t('app.globalSubtitle') : (selected?.path ?? '')}
                       </p>
                     </div>
                     {!globalMode && updates && updates.available > 0 && (
                       <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium">
-                        {updates.available} update{updates.available > 1 ? 's' : ''}
+                        {updates.available === 1
+                          ? t('app.updateCountOne')
+                          : t('app.updateCount', { n: updates.available })}
                       </span>
                     )}
                     {!globalMode && updates && updates.available > 0 && (
                       <button
                         onClick={handleSyncAll}
-                        title={`立即应用全部 ${updates.available} 个过期资产（等同于让自动同步跑一轮）`}
+                        title={t('app.syncAllTooltip', { n: updates.available })}
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                       >
-                        Sync all
+                        {t('app.syncAll')}
                       </button>
                     )}
                     {!globalMode && selected && (
@@ -655,21 +661,17 @@ export default function App() {
                             so one chip states the scope for the pair. */}
                         <span
                           className="shrink-0 rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
-                          title={
-                            '自动同步（Sync all 相同）覆盖：Skills、MCP，以及 commands / agents / ' +
-                            'workflows / rules / output-styles 这些单文件资产。' +
-                            '本地改过（custom）的条目会跳过，不会被覆盖。'
-                          }
+                          title={t('app.scopeCoverageTooltip')}
                         >
-                          覆盖 Skills · MCP · 文件资产
+                          {t('app.scopeCoverageChip')}
                         </span>
                         <button
                           onClick={handleToggleAutoSync}
                           aria-pressed={projectConfig.autoSync}
                           title={
                             projectConfig.autoSync
-                              ? '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动'
-                              : '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）'
+                              ? t('app.autoSyncOnTooltip')
+                              : t('app.autoSyncOffTooltip')
                           }
                           className={cn(
                             'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
@@ -678,7 +680,7 @@ export default function App() {
                               : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
                           )}
                         >
-                          Auto-sync {projectConfig.autoSync ? 'ON' : 'OFF'}
+                          {projectConfig.autoSync ? t('app.autoSyncOn') : t('app.autoSyncOff')}
                         </button>
                       </>
                     )}
@@ -693,7 +695,7 @@ export default function App() {
                   <div className="flex-1 overflow-y-auto p-3 relative">
                     {noAnchor ? (
                       <p className="text-xs text-neutral-500">
-                        需要至少注册一个项目作为全局数据源。
+                        {t('app.needProjectAnchor')}
                       </p>
                     ) : (
                       <CategoryDetail
@@ -727,7 +729,7 @@ export default function App() {
                   <Resizer
                     orientation="vertical"
                     onResize={(d) => setTaskH((h) => clamp(h - d, TASK_MIN, TASK_MAX))}
-                    title="拖拽调整任务区高度"
+                    title={t('app.resizeTaskHeight')}
                   />
                   <div
                     style={{ height: taskH }}
@@ -738,7 +740,7 @@ export default function App() {
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-neutral-500 text-sm">
-                  Select a project
+                  {t('app.selectProject')}
                 </div>
               )}
 
@@ -778,7 +780,7 @@ export default function App() {
 
             {/* Sign matters: this handle sits to the LEFT of the panel, so
                 dragging left (negative delta) has to make it wider. */}
-            <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title="拖拽调整右侧宽度" />
+            <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title={t('app.resizeRight')} />
 
             {/* Right — installable asset library, scope follows the active context */}
             <aside
@@ -798,7 +800,7 @@ export default function App() {
                 />
               ) : (
                 <div className="p-3 text-xs text-neutral-500">
-                  Select a project to install assets into.
+                  {t('app.selectProjectForAssets')}
                 </div>
               )}
             </aside>
