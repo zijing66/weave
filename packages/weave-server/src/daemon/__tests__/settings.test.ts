@@ -30,27 +30,48 @@ describe('daemon settings persistence', () => {
   it('writeDaemonSettings round-trips a valid config and persists JSON', async () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'wt', customCommand: '' },
+      locale: 'zh-CN',
     });
     expect(saved.terminal.preset).toBe('wt');
     expect(await readDaemonSettings()).toEqual(saved);
     const raw = JSON.parse(await readFile(path.join(dir, 'settings.json'), 'utf-8')) as {
       terminal: { preset: string };
+      locale: string;
     };
     expect(raw.terminal.preset).toBe('wt');
+    expect(raw.locale).toBe('zh-CN');
   });
 
   it('an unknown preset falls back to auto; non-string customCommand to empty', async () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'does-not-exist' as never, customCommand: 42 as never },
+      locale: 'zh-CN',
     });
     expect(saved).toEqual(DEFAULT_DAEMON_SETTINGS);
   });
 
   it('a corrupt file falls back to defaults instead of throwing', async () => {
-    await writeDaemonSettings({ terminal: { preset: 'cmd', customCommand: 'x' } });
+    await writeDaemonSettings({ terminal: { preset: 'cmd', customCommand: 'x' }, locale: 'zh-CN' });
     const { writeFile } = await import('node:fs/promises');
     await writeFile(path.join(dir, 'settings.json'), '{not json', 'utf-8');
     expect(await readDaemonSettings()).toEqual(DEFAULT_DAEMON_SETTINGS);
+  });
+
+  it('locale round-trips through write and read', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'en',
+    });
+    expect(saved.locale).toBe('en');
+    expect((await readDaemonSettings()).locale).toBe('en');
+  });
+
+  it('an unsupported locale falls back to zh-CN', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'fr' as never,
+    });
+    expect(saved.locale).toBe('zh-CN');
   });
 });
 

@@ -28,9 +28,12 @@ export {
   readDaemonSettings,
   writeDaemonSettings,
   terminalPresetsFor,
+  resolveLocale,
   DEFAULT_DAEMON_SETTINGS,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
 } from './daemon/settings.js';
-export type { DaemonSettings, TerminalSettings, TerminalPreset, TerminalPresetMeta } from './daemon/settings.js';
+export type { DaemonSettings, TerminalSettings, TerminalPreset, TerminalPresetMeta, Locale } from './daemon/settings.js';
 export {
   resolveTerminalLaunch,
   resolveExplorerLaunch,
