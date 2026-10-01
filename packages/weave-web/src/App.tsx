@@ -699,7 +699,9 @@ export default function App() {
               )}
             </main>
 
-            <Resizer onResize={(d) => setRightW((w) => clamp(w + d, RIGHT_MIN, RIGHT_MAX))} title="拖拽调整右侧宽度" />
+            {/* Sign matters: this handle sits to the LEFT of the panel, so
+                dragging left (negative delta) has to make it wider. */}
+            <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title="拖拽调整右侧宽度" />
 
             {/* Right — installable asset library, scope follows the active context */}
             <aside
