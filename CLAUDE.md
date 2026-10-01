@@ -123,8 +123,9 @@ weave/
 | 命令 | 功能 | 优先级 |
 |------|------|--------|
 | `weave init` | 注入 harness 到当前项目 | P0 |
-| `weave status` | 查看 harness 状态 | P0 |
+| `weave status` | 查看 harness 状态（含健康检查告警） | P0 |
 | `weave daemon` | 启停 Dashboard 后台守护进程 | P0 |
+| `weave dashboard` | 启动 daemon 并打开 web 控制台 | P0 |
 | `weave scan` | 扫描已 init 项目并注册到 daemon | P1 |
 | `weave statusline preview` | statusline 交互式 TUI 预览（Ink） | P1 |
 | `weave doctor` | 诊断配置问题 | P1 |
