@@ -35,7 +35,10 @@ export const FILE_ASSET_SPECS: Record<FileAssetCategory, FileAssetSpec> = {
     dir: '.claude/commands',
     ext: '.md',
     userDir: '.claude/commands',
-    codexUserDir: '.codex/prompts',
+    // No Codex surface: Codex removed custom prompts (`$CODEX_HOME/prompts`,
+    // gone from its source), and its slash commands are a compile-time enum.
+    // Its only file-based command path is a plugin's `commands/`, which Codex
+    // migrates into skills on load.
   },
   agent: { dir: '.claude/agents', ext: '.md', userDir: '.claude/agents' },
   workflow: { dir: '.claude/workflows', ext: '.js' },

@@ -29,7 +29,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
  * Scope + agent are inferred from the install path:
  *   project skill → `<project>/.claude/skills/<name>/` (claude)
  *                   `<project>/.codex/skills/<name>/`  (codex)
- *   global  skill → `~/.claude/skills/<name>/` (claude) · `~/.codex/skills/` (codex)
+ *   global  skill → `~/.claude/skills/<name>/` (claude) · `~/.agents/skills/<name>/` (codex)
  *   project mcp   → `.mcp.json`
  *   global  mcp   → `~/.claude.json`
  *   codex   mcp   → `~/.codex/config.toml`
