@@ -51,6 +51,15 @@ const SEGMENTS: { key: SegmentKey; label: string; sample: string }[] = [
   { key: 'cost', label: 'Cost', sample: '$0.42' },
   { key: 'rate', label: 'Rate', sample: '5h 45%' },
   { key: 'time', label: 'Time', sample: '12:30' },
+  { key: 'version', label: 'Version', sample: '2.1.286' },
+  { key: 'output_style', label: 'Output Style', sample: 'explanatory' },
+  { key: 'session', label: 'Session', sample: 'feat-statusline' },
+  { key: 'exceeds200k', label: '200k+', sample: '200k' },
+  { key: 'fast_mode', label: 'Fast Mode', sample: 'fast' },
+  { key: 'vim', label: 'Vim', sample: 'INSERT' },
+  { key: 'pr', label: 'PR', sample: '#482' },
+  { key: 'worktree', label: 'Worktree', sample: 'weave-next' },
+  { key: 'agent', label: 'Agent', sample: 'reviewer' },
 ];
 
 /** Shortcut row in the swatch strip; the popover exposes the full range. */
@@ -72,6 +81,18 @@ const BAR_STYLES: { key: 'percent' | 'bar' | 'both'; label: string }[] = [
 const TOKEN_METRICS: { key: 'session' | 'context'; title: string }[] = [
   { key: 'session', title: 'Cumulative tokens for the session (read from the transcript)' },
   { key: 'context', title: 'Tokens currently in the context window' },
+];
+
+
+/** Which rate-limit window the `rate` block reports. */
+const RATE_WINDOWS: {
+  key: 'five_hour' | 'seven_day' | 'spend';
+  label: string;
+  title: string;
+}[] = [
+  { key: 'five_hour', label: '5h', title: 'rate_limits.five_hour — 5 小时限额' },
+  { key: 'seven_day', label: '7d', title: 'rate_limits.seven_day — 7 天限额' },
+  { key: 'spend', label: 'spend', title: 'rate_limits.spend_limit — 花费限额（gateway）' },
 ];
 
 // Powerline glyph presets (Nerd Font code points — spelled out so the source
@@ -325,15 +346,24 @@ interface PreviewItem {
 const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
   // Both keys: the default layout renders {path}, older configs use {name}.
   project: { name: 'my-project', path: '/workspace/my-project' },
-  git: { branch: 'main' },
+  git: { branch: 'main', repo: 'acme/weave' },
   changes: { added: '1', deleted: '1', files: '3' },
   model: { model: 'claude-sonnet-5' },
   thinking: { level: 'high' },
   context: { percent: '78', used: '780k', total: '1.0M', remaining: '22' },
   tokens: { total: '960.9k', percent: '42' },
-  cost: { cost: '$0.42' },
+  cost: { cost: '$0.42', duration: '12m', api_duration: '3m', lines_added: '42', lines_removed: '7' },
   rate: { percent: '45', limit: '5h', resets: '' },
   time: { time: '12:30' },
+  version: { version: '2.1.286' },
+  output_style: { style: 'explanatory' },
+  session: { name: 'feat-statusline' },
+  exceeds200k: { over: '200k' },
+  fast_mode: { mode: 'fast' },
+  vim: { mode: 'INSERT' },
+  pr: { number: '482', state: 'approved', url: 'https://github.com/acme/weave/pull/482' },
+  worktree: { name: 'weave-next', branch: 'feat/x' },
+  agent: { name: 'reviewer' },
 };
 
 /** The value template a segment renders with, matching the generator. */
@@ -1382,6 +1412,27 @@ function SegmentModal({
                     title={m.title}
                   >
                     {m.key}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {key === 'rate' && (
+              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
+                <span className="w-10 text-neutral-600">窗口</span>
+                {RATE_WINDOWS.map((w) => (
+                  <button
+                    key={w.key}
+                    onClick={() => onPatch(key, { window: w.key })}
+                    className={cn(
+                      'rounded px-1.5 py-0.5',
+                      (seg.window ?? 'five_hour') === w.key
+                        ? 'bg-neutral-800 text-neutral-100'
+                        : 'text-neutral-500 hover:text-neutral-300',
+                    )}
+                    title={w.title}
+                  >
+                    {w.label}
                   </button>
                 ))}
               </div>

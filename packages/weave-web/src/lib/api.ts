@@ -333,7 +333,16 @@ export type SegmentKey =
   | 'tokens'
   | 'cost'
   | 'rate'
-  | 'time';
+  | 'time'
+  | 'version'
+  | 'output_style'
+  | 'session'
+  | 'exceeds200k'
+  | 'fast_mode'
+  | 'vim'
+  | 'pr'
+  | 'worktree'
+  | 'agent';
 
 export interface StatuslineSegment {
   enabled: boolean;
@@ -353,6 +362,8 @@ export interface StatuslineSegment {
   format?: string;
   /** `tokens` only: session-cumulative or context-window count. */
   metric?: 'session' | 'context';
+  /** Which rate-limit window `rate` reports; ignored by other segments. */
+  window?: 'five_hour' | 'seven_day' | 'spend';
 }
 
 /** Progress-bar appearance; global rather than per-segment. */
@@ -398,15 +409,24 @@ export interface StatuslineConfig {
 /** Mirror of `SEGMENT_TOKENS` in the server's statusline/config.ts. */
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
-  git: ['branch'],
+  git: ['branch', 'repo'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
   thinking: ['level'],
   context: ['bar', 'used', 'total', 'percent', 'remaining'],
   tokens: ['total', 'percent'],
-  cost: ['cost'],
+  cost: ['cost', 'duration', 'api_duration', 'lines_added', 'lines_removed'],
   rate: ['percent', 'limit', 'resets'],
   time: ['time'],
+  version: ['version'],
+  output_style: ['style'],
+  session: ['name'],
+  exceeds200k: ['over'],
+  fast_mode: ['mode'],
+  vim: ['mode'],
+  pr: ['number', 'state', 'url'],
+  worktree: ['name', 'branch'],
+  agent: ['name'],
 };
 
 /** Mirror of `SEGMENT_DEFAULT_FORMAT` in the server's statusline/config.ts. */
@@ -419,8 +439,17 @@ export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   context: '{percent}% {bar}',
   tokens: '{total}',
   cost: '{cost}',
-  rate: '5h {percent}%',
+  rate: '{limit} {percent}%',
   time: '{time}',
+  version: '{version}',
+  output_style: '{style}',
+  session: '{name}',
+  exceeds200k: '{over}',
+  fast_mode: '{mode}',
+  vim: '{mode}',
+  pr: '#{number}',
+  worktree: '{name}',
+  agent: '{name}',
 };
 
 /** Mirror of `CONTEXT_STYLE_FORMAT`: legacy `context.style` → template. */
