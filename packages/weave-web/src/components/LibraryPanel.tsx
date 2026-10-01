@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
+import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { type MainCategory } from '@/components/CategoryBar';
 import {
   GripVertical,
@@ -73,6 +74,7 @@ export function LibraryPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
   const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
+  const t = useT();
 
   useEffect(() => {
     api.listLibraries().then(setLibraries).catch((e) => setError(String(e)));
@@ -180,19 +182,21 @@ export function LibraryPanel({
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-white/[0.06] space-y-2">
         <div className="flex items-center gap-2">
-          <h2 className="text-xs font-semibold text-neutral-400 uppercase">Asset Libraries</h2>
+          <h2 className="text-xs font-semibold text-neutral-400 uppercase">{t('library.heading')}</h2>
           {!noTemplates && (
             <button
               onClick={toggleAll}
               className="ml-auto inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
-              title={anyCollapsed ? '展开全部分组与区块' : '折叠全部分组与区块'}
+              title={
+                anyCollapsed ? t('library.expandAllTip') : t('library.collapseAllTip')
+              }
             >
               {anyCollapsed ? (
                 <ChevronsUpDown className="h-2.5 w-2.5" />
               ) : (
                 <ChevronsDownUp className="h-2.5 w-2.5" />
               )}
-              {anyCollapsed ? '全展开' : '全折叠'}
+              {anyCollapsed ? t('library.expandAll') : t('library.collapseAll')}
             </button>
           )}
         </div>
@@ -205,22 +209,22 @@ export function LibraryPanel({
             <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           )}
           <span className="text-[11px] text-neutral-400">
-            Install to{' '}
+            {t('library.installTo')}{' '}
             <span className={cn('font-semibold', scope === 'global' ? 'text-emerald-300' : 'text-blue-300')}>
-              {scope === 'global' ? 'Global' : 'Project'}
+              {scope === 'global' ? t('library.scopeGlobal') : t('library.scopeProject')}
             </span>
           </span>
-          <span className="ml-auto text-[11px] text-neutral-600">跟随当前选择</span>
+          <span className="ml-auto text-[11px] text-neutral-600">{t('library.followsSelection')}</span>
         </div>
 
         {/* Add libraries via the in-browser cross-platform directory picker */}
         <button
           onClick={() => setPickerOpen(true)}
           className="w-full flex items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700"
-          title="选择一个或多个文件夹作为资产库"
+          title={t('library.addFoldersTip')}
         >
           <FolderOpen className="h-3.5 w-3.5" />
-          添加文件夹（可多选）
+          {t('library.addFolders')}
         </button>
         <DirectoryPickerModal
           open={pickerOpen}
@@ -264,10 +268,10 @@ export function LibraryPanel({
           <div className="rounded-md border border-dashed border-white/[0.08] bg-neutral-900/40 p-4 text-center">
             <PackageX className="h-5 w-5 mx-auto text-neutral-600 mb-1" />
             <p className="text-xs text-neutral-500">
-              「{categoryLabel(category)}」分类暂无外部可安装模板。
+              {t('library.noTemplates', { name: categoryLabel(category, t) })}
             </p>
             <p className="text-[11px] text-neutral-600 mt-0.5">
-              切换到 Skills / MCP 分类查看可安装内容。
+              {t('library.noTemplatesHint')}
             </p>
           </div>
         )}
@@ -276,18 +280,18 @@ export function LibraryPanel({
         {showSkills && (
           <TemplateSection
             icon={<FileCode className="h-3.5 w-3.5 text-emerald-400" />}
-            title="Skill templates"
-            hint="Drag to install"
+            title={t('library.sectionSkills')}
+            hint={t('library.hintDragInstall')}
             count={skills.length}
             open={!sectionsCollapsed.has(SECTION_SKILLS)}
             onToggle={() => toggleSection(SECTION_SKILLS)}
           >
-            {loading && <p className="text-xs text-neutral-500">Scanning…</p>}
+            {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
             {!loading && selectedId === null && (
-              <p className="text-xs text-neutral-600">Add a library above to browse skills.</p>
+              <p className="text-xs text-neutral-600">{t('library.addLibrarySkills')}</p>
             )}
             {!loading && selectedId !== null && skills.length === 0 && (
-              <p className="text-xs text-neutral-600">No skills found.</p>
+              <p className="text-xs text-neutral-600">{t('library.noSkillsFound')}</p>
             )}
             {/* Install-to runtime: Claude (.claude/skills) or Codex (.codex/skills) */}
             <AgentToggle
@@ -312,7 +316,7 @@ export function LibraryPanel({
                       }
                     }}
                     className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
-                    title={group || 'library root'}
+                    title={group || t('library.rootName')}
                   >
                     {collapsed ? (
                       <ChevronRight className="h-3 w-3 shrink-0" />
@@ -320,9 +324,9 @@ export function LibraryPanel({
                       <ChevronDown className="h-3 w-3 shrink-0" />
                     )}
                     <Folder className="h-3 w-3 shrink-0 text-emerald-500/60" />
-                    <span className="truncate">{group || 'library root'}</span>
+                    <span className="truncate">{group || t('library.rootName')}</span>
                     <Badge variant="skill" className="shrink-0">
-                      本地
+                      {t('library.localBadge')}
                     </Badge>
                     <Badge className="shrink-0">{items.length}</Badge>
                   </div>
@@ -349,20 +353,18 @@ export function LibraryPanel({
         {showFiles && (
           <TemplateSection
             icon={<FileCode className="h-3.5 w-3.5 text-blue-400" />}
-            title="File templates"
-            hint="Click to install"
+            title={t('library.sectionFiles')}
+            hint={t('library.hintClickInstall')}
             count={fileTemplates.length}
             open={!sectionsCollapsed.has(SECTION_FILES)}
             onToggle={() => toggleSection(SECTION_FILES)}
           >
-            {loading && <p className="text-xs text-neutral-500">Scanning…</p>}
+            {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
             {!loading && selectedId === null && (
-              <p className="text-xs text-neutral-600">Add a library above to browse templates.</p>
+              <p className="text-xs text-neutral-600">{t('library.addLibraryTemplates')}</p>
             )}
             {!loading && selectedId !== null && fileTemplates.length === 0 && (
-              <p className="text-xs text-neutral-600">
-                库中未发现文件模板（commands / agents / workflows / rules / output-styles 目录）。
-              </p>
+              <p className="text-xs text-neutral-600">{t('library.noFileTemplates')}</p>
             )}
             {FILE_ASSET_CATEGORIES.map((cat) => {
               const items = fileTemplates.filter((f) => f.category === cat);
@@ -387,7 +389,7 @@ export function LibraryPanel({
                           onClick={() => onInstallFileAsset(f, scope)}
                           className="ml-auto text-xs text-blue-400 hover:text-blue-300"
                         >
-                          install
+                          {t('library.install')}
                         </button>
                       </div>
                     ))}
@@ -402,33 +404,33 @@ export function LibraryPanel({
         {showMcp && (
           <TemplateSection
             icon={<Server className="h-3.5 w-3.5 text-blue-400" />}
-            title="MCP templates"
-            hint="Click to add"
+            title={t('library.sectionMcp')}
+            hint={t('library.hintClickAdd')}
             count={mcp.length}
             open={!sectionsCollapsed.has(SECTION_MCP)}
             onToggle={() => toggleSection(SECTION_MCP)}
           >
             {mcp.length === 0 && (
-              <p className="text-xs text-neutral-600">No MCP templates found.</p>
+              <p className="text-xs text-neutral-600">{t('library.noMcpTemplates')}</p>
             )}
             {/* Install-to runtime: Claude (.mcp.json / ~/.claude.json) or Codex (~/.codex/config.toml) */}
             <AgentToggle agent={installAgent} onChange={setInstallAgent} kind="mcp" />
-            {mcp.map((t) => (
+            {mcp.map((srv) => (
               <div
-                key={t.name}
+                key={srv.name}
                 className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
-                title={t.sourcePath}
+                title={srv.sourcePath}
               >
                 <Server className="h-3 w-3 shrink-0 text-blue-400" />
-                <span className="truncate">{t.name}</span>
+                <span className="truncate">{srv.name}</span>
                 <button
                   onClick={() =>
                     onInstallMcp(
-                      t.name,
+                      srv.name,
                       {
-                        command: t.command,
-                        ...(t.args && { args: t.args }),
-                        ...(t.env && { env: t.env }),
+                        command: srv.command,
+                        ...(srv.args && { args: srv.args }),
+                        ...(srv.env && { env: srv.env }),
                       },
                       scope,
                       installAgent,
@@ -436,7 +438,7 @@ export function LibraryPanel({
                   }
                   className="ml-auto text-xs text-blue-400 hover:text-blue-300"
                 >
-                  install
+                  {t('library.install')}
                 </button>
               </div>
             ))}
@@ -447,8 +449,8 @@ export function LibraryPanel({
         {(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0) && (
           <TemplateSection
             icon={<RefreshCw className="h-3.5 w-3.5 text-orange-400" />}
-            title="Update hints"
-            hint="Overwrites local changes"
+            title={t('library.sectionUpdates')}
+            hint={t('library.hintOverwrite')}
             count={outdatedSkills.length + outdatedMcp.length + outdatedFiles.length}
             open={!sectionsCollapsed.has(SECTION_UPDATES)}
             onToggle={() => toggleSection(SECTION_UPDATES)}
@@ -492,16 +494,16 @@ export function LibraryPanel({
   );
 }
 
-function categoryLabel(category: MainCategory): string {
+function categoryLabel(category: MainCategory, t: TFunc): string {
   switch (category) {
     case 'skills':
       return 'Skills';
     case 'mcp':
       return 'MCP';
     case 'commands':
-      return 'Commands';
+      return t('library.catCommands');
     case 'personalization':
-      return '个性化配置';
+      return t('library.catPersonalization');
   }
 }
 
@@ -545,19 +547,20 @@ function AgentToggle({
   /** skills only: show the ~/.codex path hint in global scope. */
   globalHint?: boolean;
 }) {
+  const t = useT();
   const tips =
     kind === 'skills'
       ? {
-          claude: '安装到 .claude/skills/',
-          codex: '安装到 .codex/skills/（全局则为 ~/.codex/skills/）',
+          claude: t('library.tipSkillsClaude'),
+          codex: t('library.tipSkillsCodex'),
         }
       : {
-          claude: '安装到 .mcp.json / ~/.claude.json',
-          codex: '写入 ~/.codex/config.toml（全局，增量合并）',
+          claude: t('library.tipMcpClaude'),
+          codex: t('library.tipMcpCodex'),
         };
   return (
     <div className="flex items-center gap-1 mb-1">
-      <span className="text-[11px] text-neutral-500 shrink-0">安装目标</span>
+      <span className="text-[11px] text-neutral-500 shrink-0">{t('library.installTarget')}</span>
       {(['claude', 'codex'] as const).map((a) => (
         <button
           key={a}
@@ -579,7 +582,7 @@ function AgentToggle({
             ? globalHint
               ? '→ ~/.codex/skills/'
               : '→ .codex/skills/'
-            : '→ ~/.codex/config.toml（全局）'}
+            : t('library.codexMcpPathHint')}
         </span>
       )}
     </div>
@@ -605,6 +608,7 @@ function TemplateSection({
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <section>
       <div
@@ -618,7 +622,7 @@ function TemplateSection({
           }
         }}
         className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
-        title={open ? '折叠' : '展开'}
+        title={open ? t('common.collapse') : t('common.expand')}
       >
         {open ? (
           <ChevronDown className="h-3 w-3 text-neutral-500" />
@@ -646,6 +650,7 @@ function UpdateHintRow({
   agent?: AssetAgent;
   onUpdate: () => void;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900">
       <RefreshCw className="h-3 w-3 shrink-0 text-orange-400" />
@@ -662,7 +667,7 @@ function UpdateHintRow({
         onClick={onUpdate}
         className="ml-auto text-xs text-blue-400 hover:text-blue-300 shrink-0"
       >
-        update
+        {t('library.update')}
       </button>
     </div>
   );
@@ -684,6 +689,7 @@ function DraggableSkill({
     id: `lib-skill-${skill.name}`,
     data: { sourceDir: skill.dirPath, name: skill.name, agent },
   });
+  const t = useT();
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
@@ -704,7 +710,7 @@ function DraggableSkill({
       <span className="truncate">{skill.name}</span>
       {installed ? (
         <Badge variant="skill" className="ml-auto">
-          installed
+          {t('library.installed')}
         </Badge>
       ) : (
         <button
@@ -715,7 +721,7 @@ function DraggableSkill({
           }}
           className="ml-auto text-xs text-blue-400 hover:text-blue-300"
         >
-          install
+          {t('library.install')}
         </button>
       )}
     </div>
@@ -731,6 +737,7 @@ function McpForm({
   const [command, setCommand] = useState('');
   const [args, setArgs] = useState('');
   const [env, setEnv] = useState('');
+  const t = useT();
 
   function submit() {
     if (!name.trim() || !command.trim()) return;
@@ -750,30 +757,30 @@ function McpForm({
   return (
     <div className="border-t border-white/[0.06] p-3 space-y-1.5">
       <h3 className="text-xs font-semibold text-neutral-400 uppercase flex items-center gap-1">
-        <Server className="h-3 w-3" /> Add MCP Server
+        <Server className="h-3 w-3" /> {t('library.addMcpServer')}
       </h3>
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="name"
+        placeholder={t('library.mcpNamePlaceholder')}
         className="w-full bg-neutral-900 rounded px-2 py-1 text-xs font-mono"
       />
       <input
         value={command}
         onChange={(e) => setCommand(e.target.value)}
-        placeholder="command (e.g. npx)"
+        placeholder={t('library.mcpCommandPlaceholder')}
         className="w-full bg-neutral-900 rounded px-2 py-1 text-xs font-mono"
       />
       <input
         value={args}
         onChange={(e) => setArgs(e.target.value)}
-        placeholder="args (space-separated)"
+        placeholder={t('library.mcpArgsPlaceholder')}
         className="w-full bg-neutral-900 rounded px-2 py-1 text-xs font-mono"
       />
       <textarea
         value={env}
         onChange={(e) => setEnv(e.target.value)}
-        placeholder="env (KEY=value per line)"
+        placeholder={t('library.mcpEnvPlaceholder')}
         rows={2}
         className="w-full bg-neutral-900 rounded px-2 py-1 text-xs font-mono"
       />
@@ -782,7 +789,7 @@ function McpForm({
         disabled={!name.trim() || !command.trim()}
         className="w-full rounded bg-blue-900/40 text-blue-300 py-1 text-xs disabled:opacity-40"
       >
-        Add MCP Server
+        {t('library.addMcpServer')}
       </button>
     </div>
   );
