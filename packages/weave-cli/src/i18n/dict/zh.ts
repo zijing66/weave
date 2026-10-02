@@ -102,6 +102,7 @@ export const zh = {
   'init.errorLine': '    - {error}',
   'init.nonInteractive': '以非交互模式运行',
   'init.skippedInvalidJson': '已跳过 {path}：不是合法 JSON。请修复或删除它，或使用 --force。',
+  'init.pluginMcpRenamed': '插件 MCP server 重名已加前缀：{renamed}',
   'init.backedUp': '已将原 AGENTS.md 备份到 {path}',
   'init.copyTemplatesFailed': '无法从 {srcDir} 复制模板：{error}',
   'init.proceed': '是否继续？[Y/n]',

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "CHANGELOG 检查",
+    "priority": 15,
+    "source": { "kind": "claude-event", "event": "PostToolUse" },
+    "filter": { "toolNames": ["Edit", "Write"], "pathGlobs": ["**/package.json", "**/CHANGELOG.md"] },
+    "handler": { "type": "inject", "template": "@file:prompts/remind.md" },
+    "timeoutMs": 8000
+  },
+  {
+    "name": "维护文件人工确认",
+    "source": { "kind": "claude-event", "event": "PostToolUse" },
+    "filter": { "pathGlobs": ["**/package.json"] },
+    "handler": { "type": "manual", "template": "确认 {file} 的版本号变更是否需要同步 CHANGELOG（严重度 {rule}）" }
+  }
+]

@@ -75,6 +75,9 @@ export class HookDispatcher {
       const settings = await readDaemonSettings();
       if (!settings.hooks.enabled) return {};
 
+      // ⑦ 事件订阅转发：所有采集事件（不只命中规则的）fire-and-forget 通知插件。
+      this.deps.plugins?.notifyEvent?.(ctx.payload.eventType, ctx.payload, ctx.sessionId);
+
       // 会话 rename 双向（独立于规则匹配）：
       // 读——payload 的 session_title（/rename 或 --name 后下一次上报）做 diff 采纳；
       // 写——dashboard 挂的 pending_title 随响应下发（sessionTitle 与 /rename 同效），

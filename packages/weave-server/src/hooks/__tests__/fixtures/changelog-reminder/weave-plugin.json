@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "changelog-reminder",
+  "name": "变更日志提醒",
+  "version": "1.0.0",
+  "description": "维护类文件变更后注入 CHANGELOG 检查指令；订阅事件流做命中统计（AI 按 docs/PLUGIN-SPEC.md 生成的验收样本）",
+  "author": "weave-acceptance",
+  "rules": ["rules.json"],
+  "subscribe": { "events": ["PostToolUse"], "entry": "subscriber.mjs" },
+  "requires": { "events": ["PostToolUse"] },
+  "config": { "severity": "minor" }
+}

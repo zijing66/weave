@@ -5,11 +5,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
-import { ProjectRepository } from '../../repositories/projects.js';
+import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
+import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
+import { HookEventRepository } from '../../repositories/hook-events.js';
+import { SessionRepository } from '../../repositories/sessions.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
 import { HookRuleRegistry } from '../registry.js';
+import { HookEventBus } from '../bus.js';
+import { HookDispatcher } from '../dispatcher.js';
 import { WeavePluginLoader } from '../plugin-loader.js';
+import { setDaemonSettingsDir, writeDaemonSettings } from '../../daemon/settings.js';
 
 async function writePlugin(
   root: string,
@@ -374,5 +380,134 @@ describe('hook_rules 旧库升级（origin/plugin_id 列兜底）', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成的规范外新插件）', () => {
+  let db: DatabaseSync;
+  let rules: HookRuleRepository;
+  let registry: HookRuleRegistry;
+  let loader: WeavePluginLoader;
+  let dispatcher: HookDispatcher;
+  let hookEvents: HookEventRepository;
+  let project: ProjectRow;
+  let settingsDir: string;
+
+  const fixturesDir = fileURLToPath(new URL('./fixtures/', import.meta.url));
+
+  beforeEach(async () => {
+    // dispatcher 读 daemon 总开关——测试用独立 settings 目录，隔离真实用户配置
+    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-ai-gen-'));
+    setDaemonSettingsDir(settingsDir);
+    await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
+    db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    project = projects.register({ path: 'D:\\ai-gen', name: 'ai', token: 't', source: 'init' });
+    rules = new HookRuleRepository(db);
+    registry = new HookRuleRegistry(rules);
+    hookEvents = new HookEventRepository(db);
+    loader = new WeavePluginLoader({
+      rules,
+      registry,
+      states: new PluginStateRepository(db),
+    });
+    const loaded = await loader.loadRoot(fixturesDir, 'global', null);
+    expect(loaded.find((p) => p.id === 'changelog-reminder')?.status).toBe('active');
+
+    dispatcher = new HookDispatcher({
+      registry,
+      dispatches: new HookDispatchRepository(db),
+      bus: new HookEventBus(),
+      projects,
+      sessions: new SessionRepository(db),
+      plugins: loader,
+    });
+    (globalThis as Record<string, unknown>).__changelogReminderEvents = [];
+  });
+
+  afterEach(() => {
+    setDaemonSettingsDir(null);
+    db.close();
+    delete (globalThis as Record<string, unknown>).__changelogReminderEvents;
+  });
+
+  it('规范冒烟：manifest/规则/@file 模板/订阅入口全部通过（9 项清单）', () => {
+    const list = rules.listByPlugin('changelog-reminder');
+    expect(list).toHaveLength(2);
+    const inject = list.find((r) => r.handler.type === 'inject');
+    expect(inject).toBeDefined();
+    if (inject!.handler.type === 'inject') {
+      expect(inject!.handler.template).toContain('Keep a Changelog'); // @file: 已内联
+      expect(inject!.handler.template).toContain('{file}'); // 模板变量保留
+    }
+    expect(loader.getConfig('changelog-reminder')).toEqual({ severity: 'minor' });
+  });
+
+  it('命中注入（PostToolUse + package.json）+ manual 入池 + 订阅回调触发', async () => {
+    const payload = {
+      eventType: 'PostToolUse',
+      toolName: 'Edit',
+      toolInput: { file_path: 'D:\\ai-gen\\package.json' },
+      toolResponse: {},
+      cwd: 'D:\\ai-gen',
+      transcriptPath: null,
+      raw: {},
+    };
+    const eventId = hookEvents.insert({
+      projectId: project.id,
+      source: 'claude',
+      eventType: 'PostToolUse',
+      sessionId: 's-ai',
+      payload: JSON.stringify(payload),
+    });
+
+    const outcome = await dispatcher.onIngest({
+      eventId,
+      project,
+      sessionId: 's-ai',
+      payload: payload as never,
+    });
+
+    // inject 命中：注入内容 = remind.md 全文
+    expect(outcome.additionalContext).toContain('Keep a Changelog');
+    expect(outcome.additionalContext).toContain('D:/ai-gen/package.json');
+    // manual 同时入池（两条规则都命中）
+    const dispatches = new HookDispatchRepository(db).list();
+    expect(dispatches.some((d) => d.status === 'injected')).toBe(true);
+    expect(dispatches.some((d) => d.status === 'pending')).toBe(true);
+
+    // ⑦ 订阅回调（fire-and-forget，给微任务队列排空的时间）
+    await new Promise((r) => setTimeout(r, 20));
+    expect((globalThis.__changelogReminderEvents as string[])).toContain('PostToolUse');
+  });
+
+  it('不命中场景：路径不符的事件不注入', async () => {
+    const payload = {
+      eventType: 'PostToolUse',
+      toolName: 'Edit',
+      toolInput: { file_path: 'D:\\ai-gen\\src\\app.ts' },
+      toolResponse: {},
+      cwd: 'D:\\ai-gen',
+      transcriptPath: null,
+      raw: {},
+    };
+    const eventId = hookEvents.insert({
+      projectId: project.id,
+      source: 'claude',
+      eventType: 'PostToolUse',
+      sessionId: 's-ai',
+      payload: JSON.stringify(payload),
+    });
+    const outcome = await dispatcher.onIngest({
+      eventId,
+      project,
+      sessionId: 's-ai',
+      payload: payload as never,
+    });
+    expect(outcome.additionalContext).toBeUndefined();
   });
 });
