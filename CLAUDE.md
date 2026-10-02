@@ -135,6 +135,28 @@ weave/
   `dict/<lang>.ts` 并注册进 `DICTS`。`Record<Locale, …>` 穷举检查保证不写完字典
   无法编译，调用点零改动。
 
+### hooks 事件系统（D3）
+
+- 链路：Claude Code hooks → `.claude/helpers/hook-handler.cjs`（恒 exit 0、5s guard）
+  → `POST /hooks`（项目 token）→ adapter 归一化 → `hook_events`（append-only）→
+  **dispatcher 在响应路径上同步匹配规则**，命中 inject 时把 `additionalContext`
+  放进响应体由 handler 输出注入会话（官方同步 hook 输出通道，**不是** async）。
+- 规则存 SQLite `hook_rules`（行级 CRUD，开关即 `enabled` 字段），内存索引在
+  `hooks/registry.ts`；运行态在 `hook_dispatches`；会话标题在 `sessions`（rename 双向：
+  读 payload `session_title` diff、写 `pending_title` 经 hook 输出 `sessionTitle`）。
+- 四种下游处理器：`log` / `webhook`（出站）/ `inject`（入池+注入当前会话）/
+  `manual`（只入池，dashboard 复制或拖到会话经 resume 执行）。inject 只允许挂在
+  `INJECTABLE_HOOK_EVENTS` 白名单事件上（规则创建时校验）。
+- 采集面（settings.json 7 事件全集）与响应（daemon 规则开关）**分离**：handler 恒不阻塞，
+  是否动作由规则决定；全局总开关在 daemon settings `hooks.enabled`。
+- **weave 生成物必带标记**并按标记清扫：settings.json hook 组以路径
+  `.claude/helpers/hook-handler.cjs` 为 marker（`mergeSettingsJson` 组级清扫，weave 组
+  永远等于本次生成结果）、helper 脚本以 `@version weave@` 为 marker（executor 清理
+  不在清单的遗留文件，记入 `InitResult.removed`）。改生成器必须同步更新清扫测试。
+- 关键文件：`weave-server/src/hooks/{registry,dispatcher,bus,match,resume-runner}.ts`、
+  `daemon/hooks-routes.ts`、`weave-cli/src/init/{settings-gen,helpers-gen}.ts`、
+  web `components/HooksPanel.tsx`。详见 `docs/FEATURES.md` D3。
+
 ---
 
 ## 核心命令
@@ -147,6 +169,7 @@ weave/
 | `weave dashboard` | 启动 daemon 并打开 web 控制台 | P0 |
 | `weave scan` | 扫描已 init 项目并注册到 daemon | P1 |
 | `weave statusline preview` | statusline 交互式 TUI 预览（Ink） | P1 |
+| `weave hooks` | 列表/开关切换 daemon hook 规则 | P1 |
 | `weave doctor` | 诊断配置问题 | P1 |
 | `weave add <type> <name>` | 动态添加组件 | P1 |
 | `weave remove <type> <name>` | 移除组件 | P2 |

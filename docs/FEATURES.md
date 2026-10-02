@@ -343,26 +343,48 @@ weave add helper hook-handler
 
 ---
 
-### D3. Hooks 事件系统 — P2
+### D3. Hooks 事件系统 — P2 ✅（一期已实现）
 
-**描述**：基于 Claude Code hooks 的自动事件响应系统。
+**描述**：基于 Claude Code hooks 的自动事件响应系统——采集 → 规则匹配 → 下游分发 → 可视化。
 
-**事件类型**：
+**采集面**（`weave init` 默认全集写入 settings.json；`--hooks` 可裁剪）：
 | 事件 | 触发时机 |
 |------|---------|
 | `PreToolUse` | 工具调用前 |
-| `PostToolUse` | 工具调用后 |
-| `UserPromptSubmit` | 用户提交 prompt 时 |
+| `PostToolUse` | 工具调用后（文档更新识别：pathGlobs `**/*.md`） |
+| `UserPromptSubmit` | 用户提交 prompt 时（session_title diff 检测 /rename） |
 | `SessionStart` | 会话开始时 |
-| `Stop` | 会话结束时 |
+| `Stop` | 一轮结束时 |
+| `SubagentStop` | 子 agent 结束时 |
 | `Notification` | 通知触发时 |
 
-**ruflo 参考**：`@claude-flow/shared/src/hooks/registry.ts`
+**架构**（`weave-server/src/hooks/`）：
+- `registry.ts` — 规则内存索引（SQLite `hook_rules` 加载，priority 降序，inject 白名单校验）
+- `dispatcher.ts` — ingest 响应路径同步匹配；四种下游处理器：
+  `log`（记账）/ `webhook`（出站转发，HMAC 签名）/ `inject`（渲染指令入池 + 经
+  `additionalContext` 同步注入当前会话）/ `manual`（只入池，dashboard 复制或拖到会话执行）
+- `sessions.ts`（repository）— 会话 rename 双向：读 `session_title` diff、写 `pending_title`
+  经 hook 输出 `sessionTitle`（与 `/rename` 同效）
+- `resume-runner.ts` — 指令池手动执行：detached spawn `claude --resume <sid> -p`，状态机回写
+- `bus.ts` — HookEventBus → SSE `/events`（帧 `type:'hook'`）实时推送
+- 全局总开关：daemon settings `hooks.enabled`；规则级开关：`enabled` 字段（API/CLI/dashboard）
 
-**预期产出**：
-- `HookRegistry` 类，管理事件订阅与分发
-- hooks 配置写入 settings.json
-- hook-handler.cjs 作为通用事件处理器
+**管理面**：
+- dashboard Hooks 面板（@xyflow/react 数据流链路图：事件源→规则→处理器→会话，SSE 高亮）
+- REST：`/hooks/rules` CRUD+toggle、`/hooks/dispatches`、`/hooks/dispatches/:id/run`、`/sessions`
+- CLI：`weave hooks list|enable|disable`（ID 支持唯一前缀）
+
+**标记清扫**：weave 生成物全部带标记（settings.json 组=路径 marker、helper 脚本=`@version weave@`）；
+re-init 时按标记清除多余/过期条目（`mergeSettingsJson` 组级清扫 + executor 目录清扫，记入 `removed`）。
+
+**Codex**：hooks 在 config.toml 且 schema 未稳定——一期不接，保留 `HookAdapter` 扩展点（加 `codex-adapter.ts` 即可）。
+
+**ruflo 参考**：`@claude-flow/shared/src/hooks/registry.ts`（Map-按事件索引 + priority 形态）
+
+**预期产出** ✅：
+- `HookRegistry` 类，管理事件订阅与分发 ✅（registry + dispatcher）
+- hooks 配置写入 settings.json ✅（7 事件全集 + 清扫）
+- hook-handler.cjs 作为通用事件处理器 ✅（转发 + 响应注入中继）
 
 ---
 
