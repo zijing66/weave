@@ -279,6 +279,16 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect(list.dispatches).toHaveLength(1);
     expect(list.dispatches[0]).toMatchObject({ status: 'injected', sessionId: 'sess-api' });
 
+    // sessionId 过滤（任务视图按会话查派发）
+    const bySession = (await (await get('/hooks/dispatches?sessionId=sess-api')).json()) as {
+      dispatches: unknown[];
+    };
+    expect(bySession.dispatches).toHaveLength(1);
+    const missSession = (await (await get('/hooks/dispatches?sessionId=nope')).json()) as {
+      dispatches: unknown[];
+    };
+    expect(missSession.dispatches).toHaveLength(0);
+
     await post(`/hooks/rules/${rule.id}`, null, 'DELETE');
   });
 
@@ -331,11 +341,13 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     });
 
     const list = (await (await get('/sessions')).json()) as {
-      sessions: Array<{ sessionId: string; pendingTitle: string | null }>;
+      sessions: Array<{ sessionId: string; pendingTitle: string | null; eventCount?: number }>;
     };
     const row = list.sessions.find((s) => s.sessionId === 'sess-rename');
     expect(row).toBeDefined();
     expect(row!.pendingTitle).toBeNull();
+    // 事件计数（任务视图左栏，LEFT JOIN 一次查出）
+    expect(row!.eventCount).toBe(1);
 
     const renamed = await post('/sessions/sess-rename', { title: '新标题' }, 'PATCH');
     expect(renamed.status).toBe(200);

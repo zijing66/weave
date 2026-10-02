@@ -208,12 +208,14 @@ export async function handleHooksRoutes(
     const ruleId = url.searchParams.get('ruleId') ?? undefined;
     const statusRaw = url.searchParams.get('status');
     const status = statusRaw ? HookDispatchStatusSchema.parse(statusRaw) : undefined;
+    const sessionId = url.searchParams.get('sessionId') ?? undefined;
     const limitRaw = url.searchParams.get('limit');
     const limit = limitRaw ? Number(limitRaw) : undefined;
     sendJson(200, {
       dispatches: deps.hookDispatches.list({
         ruleId,
         status,
+        sessionId,
         limit: Number.isFinite(limit) ? limit : undefined,
       }),
     });
@@ -251,7 +253,7 @@ export async function handleHooksRoutes(
     }
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
-    sendJson(200, { sessions: deps.hookSessions.list(projectId) });
+    sendJson(200, { sessions: deps.hookSessions.listWithCounts(projectId) });
     return true;
   }
 

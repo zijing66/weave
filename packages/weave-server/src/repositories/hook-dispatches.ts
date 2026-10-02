@@ -79,7 +79,9 @@ export class HookDispatchRepository {
     return this.getById(id);
   }
 
-  list(filter: { ruleId?: string; status?: HookDispatchStatus; limit?: number } = {}): HookDispatchRow[] {
+  list(
+    filter: { ruleId?: string; status?: HookDispatchStatus; sessionId?: string; limit?: number } = {},
+  ): HookDispatchRow[] {
     const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
@@ -90,6 +92,10 @@ export class HookDispatchRepository {
     if (filter.status) {
       clauses.push('status = ?');
       params.push(filter.status);
+    }
+    if (filter.sessionId) {
+      clauses.push('session_id = ?');
+      params.push(filter.sessionId);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     return this.db

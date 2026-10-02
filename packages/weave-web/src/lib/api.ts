@@ -193,6 +193,8 @@ export interface SessionRow {
   pendingTitle: string | null;
   lastSeenAt: string;
   createdAt: string;
+  /** 该会话 hook 事件数（GET /sessions 的 listWithCounts 填充）。 */
+  eventCount?: number;
 }
 
 /** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */
@@ -614,6 +616,11 @@ export const api = {
     apiFetch<{ events: HookEventRow[] }>(`/projects/${projectId}/hooks`).then(
       (r) => r.events,
     ),
+  /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。 */
+  listSessionHooks: (projectId: number, sessionId: string, limit = 300): Promise<HookEventRow[]> =>
+    apiFetch<{ events: HookEventRow[] }>(
+      `/projects/${projectId}/hooks?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}`,
+    ).then((r) => r.events),
 
   // --- hooks rules / dispatches / sessions ---
   /** 不带 projectId 返回全部规则；带 projectId 返回全局 + 该项目的规则。 */
@@ -664,11 +671,13 @@ export const api = {
   listHookDispatches: (q?: {
     ruleId?: string;
     status?: HookDispatchStatus;
+    sessionId?: string;
     limit?: number;
   }): Promise<HookDispatch[]> => {
     const params = new URLSearchParams();
     if (q?.ruleId) params.set('ruleId', q.ruleId);
     if (q?.status) params.set('status', q.status);
+    if (q?.sessionId) params.set('sessionId', q.sessionId);
     if (q?.limit !== undefined) params.set('limit', String(q.limit));
     const qs = params.toString();
     return apiFetch<{ dispatches: HookDispatch[] }>(
