@@ -38,7 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node copy-presets.mjs",
     "prepack": "pnpm build",
     "test": "vitest run"
   },

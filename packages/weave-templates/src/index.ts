@@ -32,22 +32,39 @@ const MANIFEST: TemplateEntry[] = [
 
 export class TemplateRegistry {
   private entries: TemplateEntry[];
+  /** 插件注册的条目（sourcePath 为插件目录内的绝对路径）。 */
+  private pluginEntries: TemplateEntry[] = [];
 
   constructor() {
     this.entries = [...MANIFEST];
   }
 
+  /**
+   * 注册插件模板（扩展点③）：name 冲突时拒绝（内置优先），返回是否注册成功。
+   * sourcePath 允许绝对路径（插件目录内），resolvePath 对绝对路径原样返回。
+   */
+  register(entry: TemplateEntry): boolean {
+    if (this.getByName(entry.name)) return false;
+    this.pluginEntries.push(entry);
+    return true;
+  }
+
+  /** 某插件注册的全部条目（name 形如 `<pluginId>:<模板名>` 由调用方保证唯一）。 */
+  getPluginEntries(pluginId: string): TemplateEntry[] {
+    return this.pluginEntries.filter((e) => e.name.startsWith(`${pluginId}:`));
+  }
+
   getByCategory(category: TemplateEntry['category']): TemplateEntry[] {
-    return this.entries.filter(e => e.category === category);
+    return [...this.entries, ...this.pluginEntries].filter(e => e.category === category);
   }
 
   getByName(name: string): TemplateEntry | undefined {
-    return this.entries.find(e => e.name === name);
+    return [...this.entries, ...this.pluginEntries].find(e => e.name === name);
   }
 
-  /** Resolve to absolute filesystem path */
+  /** Resolve to absolute filesystem path（插件条目的 sourcePath 已是绝对路径）。 */
   resolvePath(entry: TemplateEntry): string {
-    return path.join(__dirname, entry.sourcePath);
+    return path.isAbsolute(entry.sourcePath) ? entry.sourcePath : path.join(__dirname, entry.sourcePath);
   }
 
   /** Get absolute source directory for skill templates (used by init executor) */
@@ -66,7 +83,7 @@ export class TemplateRegistry {
   }
 
   getAll(): TemplateEntry[] {
-    return [...this.entries];
+    return [...this.entries, ...this.pluginEntries];
   }
 }
 

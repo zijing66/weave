@@ -30,6 +30,7 @@ import {
 } from './claudemd-gen.js';
 import { ensureInstructionLink } from './instruction-link.js';
 import { generateHookHandler, generateAutoMemoryHook } from './helpers-gen.js';
+import { registerPluginTemplates } from './plugin-templates.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -171,6 +172,36 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   if (components.agents && agents.core) {
     const srcDir = templateRegistry.getAgentsSourceDir();
     await copyTemplateDir(srcDir, agentsDir, force, created, skipped);
+  }
+
+  // ---- Step 6b: 插件模板注入（扩展点③）----
+  // 扫描插件根目录 manifest.templates 并复制（name 冲突内置优先；与核心模板
+  // 同用 writeFileIfAbsent 的 force/skipped 语义）。
+  if (components.skills || components.commands || components.agents) {
+    try {
+      const { registered: pluginTemplates } = await registerPluginTemplates(targetDir);
+      for (const entry of pluginTemplates) {
+        const src = templateRegistry.resolvePath(entry);
+        if (entry.category === 'skill') {
+          if (!components.skills) continue;
+          await copyTemplateDir(src, path.join(skillsDir, path.basename(src)), force, created, skipped);
+          continue;
+        }
+        if (entry.category === 'command' && !components.commands) continue;
+        if (entry.category === 'agent' && !components.agents) continue;
+        const destDir = entry.category === 'command' ? commandsDir : agentsDir;
+        const destFile = path.join(destDir, path.basename(src));
+        try {
+          const content = await readFile(src, 'utf-8');
+          if (await writeFileIfAbsent(destFile, content, force)) created.files.push(destFile);
+          else skipped.push(destFile);
+        } catch (err) {
+          logger.warn(t('init.copyTemplatesFailed', { srcDir: src, error: String(err) }));
+        }
+      }
+    } catch (err) {
+      logger.warn(t('init.copyTemplatesFailed', { srcDir: 'plugins', error: String(err) }));
+    }
   }
 
   // ---- Step 7: Generate helpers ----

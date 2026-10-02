@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 1,
+  "id": "weave-cross-project-touch",
+  "name": "跨项目交互识别",
+  "version": "1.0.0",
+  "description": "文件操作命中其他已注册项目根时入指令池，供 dashboard 拖到会话人工执行（manual 示例）",
+  "author": "weave",
+  "rules": ["rules.json"],
+  "requires": { "events": ["PostToolUse"] }
+}

@@ -1,0 +1,11 @@
+[
+  {
+    "name": "跨项目交互",
+    "enabled": false,
+    "priority": 5,
+    "source": { "kind": "claude-event", "event": "PostToolUse" },
+    "filter": { "crossProjectOnly": true },
+    "handler": { "type": "manual", "template": "@file:prompts/cross-project.md" },
+    "timeoutMs": 10000
+  }
+]
