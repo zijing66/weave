@@ -6,7 +6,7 @@ import type { FSWatcher } from 'chokidar';
 import type { ProjectRepository } from '../repositories/projects.js';
 import { WatchCache } from './cache.js';
 import { classifyAgent, classifyAsset, normalizeRelPath } from './classifier.js';
-import type { AssetChangeEvent, AssetChangeKind, AssetEntry } from './types.js';
+import type { AssetChangeEvent, AssetChangeKind, AssetEntry, ProjectChangeEvent } from './types.js';
 import { globalPersonalSkillRoots } from '../install/global-config.js';
 
 /** Synthetic projectPath for global skill events. Personal skill roots
@@ -116,14 +116,30 @@ export class WatchService {
 
   /** Sync watchers with the projects table: start new projects, drop removed.
    * Also reconcile global personal skill roots so a root created after start
-   * (e.g. ~/.claude/skills/ appearing later) gets picked up. */
+   * (e.g. ~/.claude/skills/ appearing later) gets picked up.
+   *
+   * Registry diffs (another process ran `weave init`/`scan` against the shared
+   * sqlite) are published as `project` events so SSE clients can refresh their
+   * project list without a page reload. `added` only fires when a watcher was
+   * actually created — a project whose directory vanished is retried silently
+   * each cycle instead of spamming the frame. */
   reconcile(): void {
     const current = new Set(this.projects.list().map((p) => p.path));
     for (const projectPath of current) {
-      if (!this.watchers.has(projectPath)) this.watchProject(projectPath);
+      if (!this.watchers.has(projectPath)) {
+        this.watchProject(projectPath);
+        // watchProject skips missing directories without registering a
+        // watcher; only report rows that became observable right now.
+        if (this.watchers.has(projectPath)) {
+          this.emitter.emit('project', { action: 'added', projectPath });
+        }
+      }
     }
     for (const projectPath of [...this.watchers.keys()]) {
-      if (!current.has(projectPath)) this.unwatchProject(projectPath);
+      if (!current.has(projectPath)) {
+        this.unwatchProject(projectPath);
+        this.emitter.emit('project', { action: 'removed', projectPath });
+      }
     }
     this.reconcileGlobalRoots();
   }
@@ -155,6 +171,13 @@ export class WatchService {
   subscribe(listener: (e: AssetChangeEvent) => void): () => void {
     this.emitter.on('change', listener);
     return () => this.emitter.off('change', listener);
+  }
+
+  /** Subscribe to project registry changes (weave init/scan in other
+   * processes). Returns an unsubscribe function. */
+  subscribeProjects(listener: (e: ProjectChangeEvent) => void): () => void {
+    this.emitter.on('project', listener);
+    return () => this.emitter.off('project', listener);
   }
 
   private watchProject(projectPath: string): void {
