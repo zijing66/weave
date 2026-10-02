@@ -18,6 +18,9 @@ import { DAEMON_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
 import { resolveStaticDir } from './static.js';
 
+// 同 dev-entry：入口剥离 Claude Code child-session 标记，防污染派生物。
+delete process.env.CLAUDE_CODE_CHILD_SESSION;
+
 /**
  * Start the daemon in the current process. Reads port/token from the daemon
  * state file (written by `weave daemon start`), binds the HTTP server, starts

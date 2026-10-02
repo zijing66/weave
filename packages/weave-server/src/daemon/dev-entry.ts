@@ -25,6 +25,13 @@ import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
 import { resolveStaticDir } from './static.js';
 
+// daemon 若启于 Claude Code 会话内，环境携带的 CLAUDE_CODE_CHILD_SESSION 会
+// 传染给一切派生物（「在终端中打开」的终端、resume 出的子会话——表现为
+// 「Transcript saving is off」提示且 transcript 不落盘）。入口统一剥离，
+// 下游 spawn 无需各自防御。
+const hadChildMarker = 'CLAUDE_CODE_CHILD_SESSION' in process.env;
+delete process.env.CLAUDE_CODE_CHILD_SESSION;
+
 const DEV_TOKEN = 'weave-dev-token';
 
 async function main(): Promise<void> {
@@ -83,6 +90,7 @@ async function main(): Promise<void> {
 
   server.listen(port, DAEMON_HOST, () => {
     console.log(`[dev] weave daemon listening on http://${DAEMON_HOST}:${port}`);
+  console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
     console.log(`[dev] token: ${DEV_TOKEN}`);
     if (staticDir) console.log(`[dev] static: ${staticDir}`);
     else console.log('[dev] static: (weave-web/dist not built — run pnpm build:web)');
