@@ -56,6 +56,12 @@ export const DEFAULT_LOCALE: Locale = 'zh-CN';
 export interface DaemonSettings {
   terminal: TerminalSettings;
   locale: Locale;
+  /** D3 hooks 系统总开关（规则级 enabled 另控；关掉后 dispatcher 全量短路）。 */
+  hooks: HooksSettings;
+}
+
+export interface HooksSettings {
+  enabled: boolean;
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -63,9 +69,12 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   customCommand: '',
 };
 
+export const DEFAULT_HOOKS_SETTINGS: HooksSettings = { enabled: true };
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
+  hooks: DEFAULT_HOOKS_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -129,6 +138,7 @@ export function terminalPresetsFor(platform: NodeJS.Platform): TerminalPresetMet
 function mergeDefaults(raw: unknown): DaemonSettings {
   const obj = (raw ?? {}) as Partial<DaemonSettings>;
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
+  const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
   return {
     terminal: {
       preset: ALL_TERMINAL_PRESETS.includes(term.preset as TerminalPreset)
@@ -137,6 +147,9 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       customCommand: typeof term.customCommand === 'string' ? term.customCommand : '',
     },
     locale: resolveLocale(obj.locale),
+    hooks: {
+      enabled: typeof hooks.enabled === 'boolean' ? hooks.enabled : DEFAULT_HOOKS_SETTINGS.enabled,
+    },
   };
 }
 

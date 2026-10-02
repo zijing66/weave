@@ -31,6 +31,7 @@ describe('daemon settings persistence', () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'wt', customCommand: '' },
       locale: 'zh-CN',
+      hooks: { enabled: true },
     });
     expect(saved.terminal.preset).toBe('wt');
     expect(await readDaemonSettings()).toEqual(saved);
@@ -46,12 +47,17 @@ describe('daemon settings persistence', () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'does-not-exist' as never, customCommand: 42 as never },
       locale: 'zh-CN',
+      hooks: { enabled: true },
     });
     expect(saved).toEqual(DEFAULT_DAEMON_SETTINGS);
   });
 
   it('a corrupt file falls back to defaults instead of throwing', async () => {
-    await writeDaemonSettings({ terminal: { preset: 'cmd', customCommand: 'x' }, locale: 'zh-CN' });
+    await writeDaemonSettings({
+      terminal: { preset: 'cmd', customCommand: 'x' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
     const { writeFile } = await import('node:fs/promises');
     await writeFile(path.join(dir, 'settings.json'), '{not json', 'utf-8');
     expect(await readDaemonSettings()).toEqual(DEFAULT_DAEMON_SETTINGS);
@@ -61,6 +67,7 @@ describe('daemon settings persistence', () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'en',
+      hooks: { enabled: true },
     });
     expect(saved.locale).toBe('en');
     expect((await readDaemonSettings()).locale).toBe('en');
@@ -70,8 +77,26 @@ describe('daemon settings persistence', () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'fr' as never,
+      hooks: { enabled: true },
     });
     expect(saved.locale).toBe('zh-CN');
+  });
+
+  it('hooks.enabled round-trips; non-boolean falls back to true', async () => {
+    const off = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: false },
+    });
+    expect(off.hooks.enabled).toBe(false);
+    expect((await readDaemonSettings()).hooks.enabled).toBe(false);
+
+    const bad = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: 'yes' as never },
+    });
+    expect(bad.hooks.enabled).toBe(true);
   });
 });
 

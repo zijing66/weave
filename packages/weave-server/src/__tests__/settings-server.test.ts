@@ -91,6 +91,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(await put.json()).toEqual({
       terminal: { preset: 'wt', customCommand: '' },
       locale: 'zh-CN',
+      hooks: { enabled: true },
     });
     // A follow-up GET reads the same value back through the injected dir.
     const get = await fetch(`http://127.0.0.1:${port}/settings`, {
