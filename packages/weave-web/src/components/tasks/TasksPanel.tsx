@@ -14,6 +14,16 @@ import { SessionFlowCanvas } from './SessionFlowCanvas';
 import { deriveSessionStatus, type SessionStatus } from './session-status';
 import { Activity, Loader2 } from 'lucide-react';
 
+/** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
+interface HookFrame {
+  kind?: string;
+  sessionId?: string | null;
+  ruleId?: string;
+  eventId?: number;
+  dispatchId?: number;
+  status?: string;
+}
+
 function LegendDot({ className, label }: { className: string; label: string }) {
   return (
     <span className="flex items-center gap-1">
@@ -25,8 +35,8 @@ function LegendDot({ className, label }: { className: string; label: string }) {
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
- * 右 = 选中会话的事件链画布（批 2 落地，当前为占位空态）。
- * 批 1 为静态状态推导；SSE 实时化在批 3。
+ * 右 = 选中会话的事件链画布。SSE（App 转发的 weave:hook 帧）驱动：
+ * 500ms 防抖 refetch + overlay 即时状态 + 边脉冲/注入波纹动效。
  */
 export function TasksPanel({ projectId }: { projectId: number }) {
   const t = useT();
@@ -41,6 +51,12 @@ export function TasksPanel({ projectId }: { projectId: number }) {
     sessionId: string;
     sessionLabel: string;
   } | null>(null);
+  /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
+  const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
+  /** 正在脉冲的边 id（rule.matched，500ms）。 */
+  const [pulseEdgeId, setPulseEdgeId] = useState<string | null>(null);
+  /** 正在波纹的派发 id（dispatch.created status=injected，900ms）。 */
+  const [rippleId, setRippleId] = useState<number | null>(null);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -83,6 +99,94 @@ export function TasksPanel({ projectId }: { projectId: number }) {
     if (selectedId) void refreshEvents(selectedId);
   }, [selectedId, refreshEvents]);
 
+  // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
+  useEffect(() => {
+    const timers: number[] = [];
+    let refreshTimer: number | null = null;
+
+    const refetchAll = (): void => {
+      void (async () => {
+        await Promise.allSettled([refreshSessions(), refreshDispatches()]);
+        if (selectedId) await refreshEvents(selectedId).catch(() => {});
+        // API 数据已回，overlay 完成使命（started/finished 的行状态已落库）
+        setOverlay(new Map());
+      })();
+    };
+    const debounceRefetch = (): void => {
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        refetchAll();
+      }, 500);
+    };
+
+    const onHook = (e: Event): void => {
+      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+      switch (f.kind) {
+        case 'event.ingested': {
+          if (f.sessionId) {
+            // 左栏计数/lastSeen 本地即时 +1（refetch 兜底校准）
+            setSessions((prev) =>
+              prev?.map((s) =>
+                s.sessionId === f.sessionId
+                  ? {
+                      ...s,
+                      eventCount: (s.eventCount ?? 0) + 1,
+                      lastSeenAt: new Date().toISOString(),
+                    }
+                  : s,
+              ) ?? prev,
+            );
+          }
+          break;
+        }
+        case 'rule.matched': {
+          if (f.ruleId && f.eventId) {
+            setPulseEdgeId(`e:ev${f.eventId}->rule:${f.ruleId}`);
+            timers.push(window.setTimeout(() => setPulseEdgeId(null), 500));
+          }
+          break;
+        }
+        case 'dispatch.created': {
+          if (f.status === 'injected' && f.dispatchId) {
+            setRippleId(f.dispatchId);
+            timers.push(window.setTimeout(() => setRippleId(null), 900));
+          }
+          break;
+        }
+        case 'dispatch.started': {
+          if (f.sessionId) {
+            setOverlay((prev) => new Map(prev).set(f.sessionId as string, 'running'));
+          }
+          break;
+        }
+        case 'dispatch.finished': {
+          if (!f.sessionId) break;
+          setOverlay((prev) => {
+            const next = new Map(prev);
+            if (f.status === 'failed' || f.status === 'timeout') {
+              next.set(f.sessionId as string, 'failed');
+            } else {
+              next.delete(f.sessionId as string); // succeeded → 交还 API 数据
+            }
+            return next;
+          });
+          break;
+        }
+        default:
+          break;
+      }
+      debounceRefetch();
+    };
+
+    window.addEventListener('weave:hook', onHook);
+    return () => {
+      window.removeEventListener('weave:hook', onHook);
+      for (const id of timers) window.clearTimeout(id);
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    };
+  }, [refreshSessions, refreshDispatches, refreshEvents, selectedId]);
+
   const dispatchBySession = useMemo(() => {
     const m = new Map<string, HookDispatch[]>();
     for (const d of dispatches) {
@@ -110,20 +214,32 @@ export function TasksPanel({ projectId }: { projectId: number }) {
           hasRunningDispatch: mine.some((d) => d.status === 'running'),
           latestDispatchFailed:
             latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
+          overlay: overlay.get(s.sessionId),
         }),
       );
     }
     return map;
-  }, [sessions, dispatchBySession, events, selectedId]);
+  }, [sessions, dispatchBySession, events, selectedId, overlay]);
 
   const chain = useMemo(() => {
     if (!selectedId) return { nodes: [], edges: [], truncated: false };
-    return buildSessionChain({
+    const graph = buildSessionChain({
       events,
       dispatches: dispatchBySession.get(selectedId) ?? [],
       rules,
     });
-  }, [selectedId, events, dispatchBySession, rules]);
+    return {
+      truncated: graph.truncated,
+      edges: graph.edges.map((e) =>
+        e.id === pulseEdgeId ? { ...e, className: 'weave-edge-flash' } : e,
+      ),
+      nodes: graph.nodes.map((n) =>
+        n.type === 'dispatch' && n.data.dispatch?.id === rippleId
+          ? { ...n, data: { ...n.data, ripple: true } }
+          : n,
+      ),
+    };
+  }, [selectedId, events, dispatchBySession, rules, pulseEdgeId, rippleId]);
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {

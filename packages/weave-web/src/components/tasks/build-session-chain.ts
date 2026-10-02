@@ -30,6 +30,8 @@ export type ChainNodeData = {
   ruleCount?: number;
   dispatch?: HookDispatch;
   ruleName?: string | null;
+  /** 注入派发的波纹动效标记（SSE dispatch.created status=injected 置位）。 */
+  ripple?: boolean;
 };
 export type ChainNode = Node<ChainNodeData, 'event' | 'rule' | 'handler' | 'dispatch'>;
 /** 边携带定位信息（SSE 动效按 id/数据命中）。 */

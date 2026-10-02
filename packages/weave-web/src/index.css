@@ -77,3 +77,47 @@
 .prose :where(code):not(:where([class~='not-prose'] *)) {
   @apply bg-neutral-800 px-1 py-0.5 rounded text-neutral-200;
 }
+
+/* ---- 任务视图动效（SSE 驱动，一次性而非循环） ----
+   命中边 500ms 高亮脉冲：className 由 rule.matched 帧挂上，定时摘除。 */
+@keyframes weave-edge-flash {
+  0% {
+    stroke: rgba(56, 189, 248, 0.95);
+    stroke-width: 2.5;
+  }
+  100% {
+    stroke: rgba(255, 255, 255, 0.25);
+    stroke-width: 1.5;
+  }
+}
+.weave-edge-flash path {
+  animation: weave-edge-flash 500ms ease-out;
+}
+
+/* 注入（workflow 触发）节点双环波纹，900ms 两环错峰 150ms。 */
+@keyframes weave-ripple {
+  from {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  to {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+.weave-ripple {
+  position: relative;
+}
+.weave-ripple::before,
+.weave-ripple::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 1.5px solid rgba(52, 211, 153, 0.8);
+  animation: weave-ripple 900ms ease-out forwards;
+  pointer-events: none;
+}
+.weave-ripple::after {
+  animation-delay: 150ms;
+}
