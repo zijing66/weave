@@ -650,6 +650,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }).then(() => undefined),
+  /** 安装插件（本地目录 | git URL）→ daemon 复制进全局插件根并立即重扫。 */
+  installHookPlugin: (src: string): Promise<{ installed: Array<{ id: string }>; warnings: string[] }> =>
+    apiFetch<{ installed: Array<{ id: string }>; warnings: string[] }>('/hooks/plugins', {
+      method: 'POST',
+      body: JSON.stringify({ src }),
+    }),
+  /** 卸载插件（删目录，规则随重扫级联移除）。 */
+  uninstallHookPlugin: (id: string): Promise<void> =>
+    apiFetch<{ ok: boolean }>(`/hooks/plugins/${encodeURIComponent(id)}/uninstall`, {
+      method: 'POST',
+    }).then(() => undefined),
   listHookDispatches: (q?: {
     ruleId?: string;
     status?: HookDispatchStatus;

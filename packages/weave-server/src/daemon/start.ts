@@ -60,6 +60,9 @@ export function startDaemon(): void {
   const pluginManager: PluginManager = {
     list: () => pluginLoaderRef?.list() ?? [],
     setPluginEnabled: (id, enabled) => pluginLoaderRef?.setPluginEnabled(id, enabled) ?? false,
+    reloadAll: async () => {
+      await pluginLoaderRef?.reloadAll();
+    },
   };
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
