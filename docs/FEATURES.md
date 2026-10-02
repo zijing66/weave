@@ -337,9 +337,11 @@ weave add helper hook-handler
 **ruflo 参考**：`@claude-flow/shared/src/plugin-registry.ts`
 
 **预期产出**：
-- `TemplateRegistry` 类，支持动态注册与发现
-- 扩展点机制（可挂载新的模板源）
-- 第三方可通过 npm 包提供额外模板
+- `TemplateRegistry` 类，支持动态注册与发现 ✅（`register()` 动态注册已落地，
+  供 D3.1 插件模板扩展点③使用）
+- 扩展点机制（可挂载新的模板源）✅（hooks 插件扩展点已落地，见 D3.1；
+  npm 模板源仍待做）
+- 第三方可通过 npm 包提供额外模板（待做）
 
 ---
 
@@ -385,6 +387,31 @@ re-init 时按标记清除多余/过期条目（`mergeSettingsJson` 组级清扫
 - `HookRegistry` 类，管理事件订阅与分发 ✅（registry + dispatcher）
 - hooks 配置写入 settings.json ✅（7 事件全集 + 清扫）
 - hook-handler.cjs 作为通用事件处理器 ✅（转发 + 响应注入中继）
+
+#### D3.1 插件系统（基础设施二期）✅
+
+**描述**：预定义全局 hook 以**插件包**形态分发——带 `weave-plugin.json` manifest 的
+自包含目录放在约定位置即被 daemon 自动识别（SPI 式接入），AI 仅凭
+`docs/PLUGIN-SPEC.md` 即可生成完整可用插件。
+
+- **扫描位置**：内置 `presets/`（3 个预设：文档更新检查/跨项目交互/轮末总结，
+  默认禁用）→ `<configDir>/weave/plugins/` → 项目 `.weave/plugins/`。
+- **扩展点全集**：① hook 规则（复用 `HookRuleSchema`，`origin`/`plugin_id` 标记，
+  upsert 保用户开关）② 自定义处理器 `handler.mjs`（dispatcher plugin 分支，
+  与 inject/manual 同防线：60s 去重/超时/白名单/catch-all）③ 模板注入
+  （TemplateRegistry 动态注册 + init 复制）④ MCP server 定义（init 合并，
+  同名 namespace 化）⑤ `@file:` 指令模板（含 workflow 引导语）⑦ 事件订阅
+  （`subscribe.entry` 导出 onEvent，ingest fire-and-forget 转发）。
+- **热重载**：三根目录 chokidar 监听防抖 1s 重扫；消失/重载失败的插件级联
+  删规则卸处理器；SSE `plugin.reloaded/plugin.toggled` 帧。
+- **管理面**：`GET/POST /hooks/plugins`（安装/卸载）、`POST …/toggle`（级联开关）、
+  dashboard 插件区段、CLI `weave hooks plugins`。
+- **分发四通道**：目录扫描 / `weave plugins install <本地|git URL>`
+  （installed.json 清单）/ `search`（sources.json 索引源）/ `export` 打包分享。
+- **workflow 结合**：inject 模板注入指令 → Claude 会话内原生 Workflow/子 agent
+  编排（无自有引擎）；防递归走既有 DISPATCH_MARKER + 60s 去重。
+- **AI 验收**：`fixtures/changelog-reminder`（按规范生成的样本）+ 固定回归测试；
+  `docs/PLUGIN-SPEC.md` §10 开发流程。
 
 ---
 

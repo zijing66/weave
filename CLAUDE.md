@@ -157,6 +157,29 @@ weave/
   `daemon/hooks-routes.ts`、`weave-cli/src/init/{settings-gen,helpers-gen}.ts`、
   web `components/HooksPanel.tsx`。详见 `docs/FEATURES.md` D3。
 
+### 插件系统（D3.1，SPI 式基础设施）
+
+- **插件包** = 带 `weave-plugin.json` manifest 的目录（rules.json 复用
+  `HookRuleSchema` + 可选 handler.mjs/模板/订阅），放约定位置即被 daemon
+  自动识别：内置 `presets/` → `<configDir>/weave/plugins/` → 项目
+  `.weave/plugins/`。**规范唯一权威 = `docs/PLUGIN-SPEC.md`**（AI 按此生成
+  插件，§9 smoke 清单即加载器校验，§10 开发流程，fixtures/changelog-reminder
+  为回归基准）。
+- **扩展点**：①规则（`hook_rules.origin/plugin_id`，upsert 保用户开关）
+  ②自定义处理器（dispatcher `plugin` 分支，与 inject/manual 同防线）
+  ③模板注入（TemplateRegistry.register + init Step 6b 复制）
+  ④MCP 定义（init 合并，同名 namespace 化）⑤`@file:` 指令模板
+  （含 workflow 引导语——**注入触发 Claude 原生 Workflow，无自有引擎**）
+  ⑦事件订阅（manifest.subscribe，ingest fire-and-forget 转发）。
+- **生命周期**：chokidar 三根目录热重载（防抖 1s）；消失/校验失败的插件
+  级联删规则卸 handler（重复 id 不误删）；开关 = `plugin_states` 级联启停。
+- **分发**：`weave plugins list|install|uninstall|enable|disable|export|search`
+  （installed.json 清单 / sources.json 索引源）+ dashboard 插件区段 +
+  `GET/POST /hooks/plugins`。
+- 关键文件：`weave-server/src/hooks/{plugin-loader,plugin-installer}.ts`、
+  `repositories/plugin-states.ts`、`weave-cli/src/init/plugin-templates.ts`、
+  `weave-cli/src/commands/plugins.ts`、web `components/HooksPluginsSection.tsx`。
+
 ---
 
 ## 核心命令
@@ -249,3 +272,35 @@ weave/
 - `vitest` — 测试框架
 - `@types/node` — Node.js 类型定义
 - `tsx` — 开发时 TypeScript 执行
+
+<!-- weave:start -->
+## Behavioral Rules
+
+- Follow existing code conventions and patterns in this project
+- Prefer editing existing files over creating new ones
+- Don't add features, refactor, or introduce abstractions beyond the task
+- Three similar lines is better than a premature abstraction
+- Write no comments unless the WHY is non-obvious
+- Never write multi-paragraph explanations in code
+- Don't add error handling for states that can't happen
+
+## File Organization
+
+- Source code: `src/`
+- Tests: co-located `*.test.ts` or `__tests__/` directories
+- Config files at project root
+- Use existing directory structure — don't invent new top-level folders
+
+## Weave Commands
+
+- `/review` — Code review current changes
+- `/test` — Write or update tests
+- `/explain` — Explain selected code
+- `/scaffold` — Generate component scaffold
+
+## Skills
+
+Reusable skills live in `skills/` (agent skills standard: one directory per
+skill with a `SKILL.md`). Invoke a skill by name when the task matches one.
+
+<!-- weave:end -->
