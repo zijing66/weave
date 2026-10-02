@@ -9,6 +9,8 @@ export interface SessionRow {
   pendingTitle: string | null;
   lastSeenAt: string;
   createdAt: string;
+  /** 该会话的 hook 事件数（listWithCounts 查询填充；其他查询为 undefined）。 */
+  eventCount?: number;
 }
 
 /**
@@ -50,6 +52,28 @@ export class SessionRepository {
             )
             .all(projectId);
     return rows.map(toSession);
+  }
+
+  /**
+   * 会话列表 + 事件计数（任务视图左栏用）：LEFT JOIN 一次查出避免 N+1。
+   * 计数不过滤项目（会话可能有跨项目事件），与事件链的 sessionId-only 语义一致。
+   */
+  listWithCounts(projectId?: number): SessionRow[] {
+    const base = 'SELECT s.*, COUNT(e.id) AS event_count FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
+    const rows =
+      projectId === undefined
+        ? this.db
+            .prepare(`${base} GROUP BY s.session_id ORDER BY s.last_seen_at DESC LIMIT 200`)
+            .all()
+        : this.db
+            .prepare(
+              `${base} WHERE s.project_id = ? GROUP BY s.session_id ORDER BY s.last_seen_at DESC LIMIT 200`,
+            )
+            .all(projectId);
+    return rows.map((row) => ({
+      ...toSession(row),
+      eventCount: Number((row as { event_count: number }).event_count ?? 0),
+    }));
   }
 
   /** dashboard 改名：挂 pending（生效延迟一轮/一次 resume）。 */

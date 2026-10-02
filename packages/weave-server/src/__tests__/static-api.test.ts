@@ -19,6 +19,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   let port: number;
   let staticDir: string;
   let projectId: number;
+  let hookEvents: HookEventRepository;
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
@@ -31,7 +32,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
     });
     projectId = row.id;
 
-    const hookEvents = new HookEventRepository(db);
+    hookEvents = new HookEventRepository(db);
     hookEvents.insert({
       projectId,
       source: 'claude',
@@ -114,6 +115,41 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { events: unknown[] };
     expect(data.events).toHaveLength(1);
+  });
+
+  it('GET /projects/:id/hooks?sessionId= 按会话过滤（任务视图事件链），projectId 仅作鉴权锚点', async () => {
+    // s2 的事件带不同 projectId 语义也应返回——sessionId-only 过滤
+    hookEvents.insert({
+      projectId,
+      source: 'claude',
+      eventType: 'Stop',
+      sessionId: 's2',
+      payload: '{}',
+    });
+
+    const s1 = await fetch(
+      `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=s1`,
+      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
+    );
+    const s1Data = (await s1.json()) as { events: Array<{ sessionId: string; eventType: string }> };
+    expect(s1Data.events).toHaveLength(2);
+    expect(s1Data.events.every((e) => e.sessionId === 's1')).toBe(true);
+    // 时间升序（事件链保序）
+    expect(s1Data.events.map((e) => e.eventType)).toEqual(['PostToolUse', 'PreToolUse']);
+
+    const s2 = await fetch(
+      `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=s2`,
+      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
+    );
+    const s2Data = (await s2.json()) as { events: Array<{ eventType: string }> };
+    expect(s2Data.events).toHaveLength(1);
+    expect(s2Data.events[0]!.eventType).toBe('Stop');
+
+    const missing = await fetch(
+      `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=nope`,
+      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
+    );
+    expect(((await missing.json()) as { events: unknown[] }).events).toHaveLength(0);
   });
 
   it('serves index.html at the root (SPA entrypoint)', async () => {

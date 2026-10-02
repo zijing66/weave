@@ -506,6 +506,8 @@ function categoryLabel(category: MainCategory, t: TFunc): string {
       return t('library.catPersonalization');
     case 'hooks':
       return t('catbar.hooks');
+    case 'tasks':
+      return t('catbar.tasks');
   }
 }
 

@@ -49,10 +49,11 @@ export class HookEventRepository {
       .map((row) => toHookEvent(row));
   }
 
-  listBySession(sessionId: string): HookEventRow[] {
+  /** 按会话查事件（时间升序——任务视图事件链保序）。 */
+  listBySession(sessionId: string, limit = 300): HookEventRow[] {
     return this.db
-      .prepare('SELECT * FROM hook_events WHERE session_id = ? ORDER BY created_at ASC')
-      .all(sessionId)
+      .prepare('SELECT * FROM hook_events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?')
+      .all(sessionId, limit)
       .map((row) => toHookEvent(row));
   }
 }

@@ -28,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
+import { getDispatchDrag, setDispatchDrag } from '@/lib/dnd';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -283,9 +284,8 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
       onDrop={(e) => {
         e.preventDefault();
         setDropping(false);
-        const raw = e.dataTransfer.getData('application/x-weave-dispatch');
-        const id = Number(raw);
-        if (raw && Number.isFinite(id)) data.onDropPrompt(id, data.sessionId, data.label);
+        const id = getDispatchDrag(e.dataTransfer);
+        if (id !== null) data.onDropPrompt(id, data.sessionId, data.label);
       }}
     >
       <Handle type="target" position={Position.Left} className="!bg-blue-400/80" />
@@ -1290,8 +1290,7 @@ export function HooksPanel({
                   key={d.id}
                   draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData('application/x-weave-dispatch', String(d.id));
-                    e.dataTransfer.effectAllowed = 'copy';
+                    setDispatchDrag(e.dataTransfer, d.id);
                   }}
                   className="cursor-grab rounded-lg border border-white/[0.08] bg-neutral-900/40 px-2.5 py-2 transition-colors hover:border-white/[0.14] active:cursor-grabbing"
                 >

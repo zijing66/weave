@@ -291,6 +291,7 @@ export default function App() {
         // The global view IS the template — a 跟随全局 badge would be noise.
         statuslineSource: null,
         hooksRules: hookRules.length,
+        sessions: 0, // 全局模式任务卡隐藏（hidden prop），字段仅满足类型
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -309,6 +310,7 @@ export default function App() {
       hooksRules: hookRules.filter(
         (r) => r.projectId === null || r.projectId === selected?.id,
       ).length,
+      sessions: sessions.length,
     };
   }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected]);
 
@@ -769,9 +771,18 @@ export default function App() {
                     category={mainCategory}
                     onSelect={selectCategory}
                     data={categoryData}
+                    hidden={globalMode ? new Set(['tasks'] as const) : undefined}
                   />
 
-                  <div className="flex-1 overflow-y-auto p-3 relative">
+                  {/* 任务视图自管两栏内部滚动（全高），其余分类沿用外层滚动 */}
+                  <div
+                    className={cn(
+                      'flex-1 relative',
+                      mainCategory === 'tasks' && !globalMode
+                        ? 'overflow-hidden !p-0'
+                        : 'overflow-y-auto p-3',
+                    )}
+                  >
                     {noAnchor ? (
                       <p className="text-xs text-neutral-500">
                         {t('app.needProjectAnchor')}

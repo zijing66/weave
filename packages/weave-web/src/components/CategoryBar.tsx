@@ -9,10 +9,11 @@ import {
   Terminal,
   Sparkles,
   Workflow,
+  ListTodo,
   type LucideIcon,
 } from 'lucide-react';
 
-export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization' | 'hooks';
+export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization' | 'hooks' | 'tasks';
 
 export const MAIN_CATEGORIES: {
   key: MainCategory;
@@ -28,6 +29,7 @@ export const MAIN_CATEGORIES: {
   { key: 'commands', labelKey: 'catbar.commands', icon: Terminal },
   { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
   { key: 'hooks', labelKey: 'catbar.hooks', icon: Workflow },
+  { key: 'tasks', labelKey: 'catbar.tasks', icon: ListTodo },
 ];
 
 export interface CategoryBarData {
@@ -43,6 +45,8 @@ export interface CategoryBarData {
   outdatedMcp: number;
   /** Hook rules effective in the current view (global rules + own rules). */
   hooksRules: number;
+  /** 项目会话数（任务卡计数）。 */
+  sessions: number;
   /** Statusline source; null while not loaded (Claude card badge). */
   statuslineSource: 'global' | 'custom' | null;
 }
@@ -51,10 +55,13 @@ export function CategoryBar({
   category,
   onSelect,
   data,
+  hidden,
 }: {
   category: MainCategory;
   onSelect: (c: MainCategory) => void;
   data: CategoryBarData;
+  /** 隐藏的分类卡（全局模式隐藏 tasks——任务视图仅项目级）。 */
+  hidden?: ReadonlySet<MainCategory>;
 }) {
   const t = useT();
   const countFor = (c: MainCategory): number => {
@@ -69,6 +76,8 @@ export function CategoryBar({
         return 1; // the Claude statusline config is always present
       case 'hooks':
         return data.hooksRules;
+      case 'tasks':
+        return data.sessions;
     }
   };
 
@@ -98,7 +107,7 @@ export function CategoryBar({
     // row can no longer fit them all it scrolls sideways rather than squeezing
     // every card down to a width where its content collides.
     <div className="flex gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
-      {MAIN_CATEGORIES.map(({ key, labelKey, icon: Icon }) => {
+      {MAIN_CATEGORIES.filter((c) => !hidden?.has(c.key)).map(({ key, labelKey, icon: Icon }) => {
         const active = category === key;
         return (
           <button
@@ -125,6 +134,7 @@ export function CategoryBar({
                 key === 'commands' && 'text-purple-400',
                 key === 'personalization' && 'text-cyan-400',
                 key === 'hooks' && 'text-amber-400',
+                key === 'tasks' && 'text-rose-400',
               )}
             />
             {/* `flex-auto` (basis: auto) rather than `flex-1` (basis: 0) is

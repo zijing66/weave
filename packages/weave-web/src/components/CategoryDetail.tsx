@@ -30,6 +30,7 @@ import {
 } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
+import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { type MainCategory } from '@/components/CategoryBar';
 import { Code2, PackageX } from 'lucide-react';
 
@@ -302,6 +303,9 @@ export function CategoryDetail({
         ))}
 
       {category === 'hooks' && <HooksPanel projectId={projectId} mode={mode} />}
+
+      {/* 任务视图仅项目级（全局模式由 CategoryBar hidden 卡 + 此处兜底双保险） */}
+      {category === 'tasks' && !isGlobal && <TasksPanel projectId={projectId} />}
 
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">
