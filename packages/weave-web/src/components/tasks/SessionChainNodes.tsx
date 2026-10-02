@@ -56,12 +56,17 @@ export function HandlerNode({ data }: NodeProps<ChainNode>) {
   );
 }
 
-/** 派发结果节点：按 status 渲染徽标/spinner/绿勾/红叉（批 3 加 ripple 动效）。 */
+/** 派发结果节点：按 status 渲染徽标/spinner/绿勾/红叉；injected 态带波纹。 */
 export function DispatchNode({ data }: NodeProps<ChainNode>) {
   if (!data.dispatch) return null;
   const status = data.dispatch.status;
   return (
-    <div className="w-52 rounded-lg border border-white/[0.08] bg-neutral-900/70 px-2.5 py-2 shadow-sm">
+    <div
+      className={cn(
+        'w-52 rounded-lg border border-white/[0.08] bg-neutral-900/70 px-2.5 py-2 shadow-sm',
+        data.ripple && 'weave-ripple',
+      )}
+    >
       <div className="flex items-center gap-1.5">
         {status === 'running' ? (
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-400" />
