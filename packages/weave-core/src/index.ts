@@ -1,5 +1,23 @@
 export { type InitOptions, type InitResult, type InitComponents, type Preset } from './types.js';
 export { type HooksConfig, type SkillsConfig, type CommandsConfig, type AgentsConfig, type MCPConfig } from './types.js';
+export type {
+  HookRule,
+  HookRuleSource,
+  HookRuleFilter,
+  HandlerConfig,
+  HookDispatchStatus,
+  HookDispatchMode,
+} from './types.js';
+export {
+  HookRuleSchema,
+  HookRuleSourceSchema,
+  HookRuleFilterSchema,
+  HandlerConfigSchema,
+  HookDispatchStatusSchema,
+  HookDispatchModeSchema,
+  CLAUDE_HOOK_EVENTS,
+  INJECTABLE_HOOK_EVENTS,
+} from './types.js';
 export { InitOptionsSchema, PresetSchema, resolveComponents } from './types.js';
 export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types.js';
 export { DEFAULT_HOOKS, DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS, DEFAULT_MCP } from './types.js';

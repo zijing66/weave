@@ -28,11 +28,101 @@ export const HooksConfigSchema = z.object({
   userPromptSubmit: z.boolean(),
   sessionStart: z.boolean(),
   stop: z.boolean(),
+  subagentStop: z.boolean(),
   notification: z.boolean(),
   timeout: z.number().default(5000),
   continueOnError: z.boolean().default(true),
 });
 export type HooksConfig = z.infer<typeof HooksConfigSchema>;
+
+// ---- Hook rule model (D3 事件系统) ----
+
+/** Claude Code 事件采集面（settings-gen 全集注册；是否响应由 daemon 规则开关决定）。 */
+export const CLAUDE_HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'SessionStart',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+] as const;
+
+/**
+ * 支持同步 `hookSpecificOutput.additionalContext` 注入的事件白名单——
+ * inject 处理器只能挂在这里（官方 hooks 文档逐事件核实）。
+ */
+export const INJECTABLE_HOOK_EVENTS = [
+  'PostToolUse',
+  'UserPromptSubmit',
+  'SessionStart',
+  'Stop',
+  'SubagentStop',
+] as const;
+
+export const HookRuleSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('claude-event'), event: z.string().min(1) }),
+  /** 二期占位：外部系统 ingress，一期 schema 预留但不实现入口。 */
+  z.object({ kind: z.literal('webhook'), routeId: z.string().min(1) }),
+]);
+export type HookRuleSource = z.infer<typeof HookRuleSourceSchema>;
+
+export const HookRuleFilterSchema = z.object({
+  /** 匹配 toolInput 的工具名（PostToolUse/PreToolUse 事件）。 */
+  toolNames: z.array(z.string().min(1)).optional(),
+  /** 匹配 toolInput.file_path 的 glob（posix 分隔符），如 md 文件或 docs 目录前缀。 */
+  pathGlobs: z.array(z.string().min(1)).optional(),
+  /** 只在 file_path/cwd 命中「其他已注册项目根」时触发（多项目交互识别）。 */
+  crossProjectOnly: z.boolean().optional(),
+});
+export type HookRuleFilter = z.infer<typeof HookRuleFilterSchema>;
+
+export const HandlerConfigSchema = z.discriminatedUnion('type', [
+  /** 只记账 + SSE 通知，不入指令池（高频事件防写放大）。 */
+  z.object({ type: z.literal('log') }),
+  /** 出站 POST 转发到外部系统；body 为事件摘要，secret 用于 HMAC 签名头。 */
+  z.object({
+    type: z.literal('webhook'),
+    url: z.string().url(),
+    secret: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+  /** 渲染指令入池（status=injected）并同步注入当前会话（additionalContext）。 */
+  z.object({ type: z.literal('inject'), template: z.string().min(1) }),
+  /** 只入池（status=pending），等 dashboard 复制 / 拖到会话执行。 */
+  z.object({ type: z.literal('manual'), template: z.string().min(1) }),
+]);
+export type HandlerConfig = z.infer<typeof HandlerConfigSchema>;
+
+export const HookRuleSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  /** 数值越大越先匹配。 */
+  priority: z.number().int(),
+  /** null = 全局规则（对所有注册项目生效）。 */
+  projectId: z.number().int().nullable(),
+  source: HookRuleSourceSchema,
+  filter: HookRuleFilterSchema.default({}),
+  handler: HandlerConfigSchema,
+  timeoutMs: z.number().int().positive().default(10_000),
+  /** 是否落 hook_dispatches（log 默认 false）。 */
+  record: z.boolean().default(true),
+});
+export type HookRule = z.infer<typeof HookRuleSchema>;
+
+export const HookDispatchStatusSchema = z.enum([
+  'pending',
+  'injected',
+  'running',
+  'succeeded',
+  'failed',
+  'timeout',
+]);
+export type HookDispatchStatus = z.infer<typeof HookDispatchStatusSchema>;
+
+export const HookDispatchModeSchema = z.enum(['auto', 'manual']);
+export type HookDispatchMode = z.infer<typeof HookDispatchModeSchema>;
 
 // ---- Skills categories ----
 
@@ -166,6 +256,7 @@ export const DEFAULT_HOOKS: HooksConfig = {
   userPromptSubmit: false,
   sessionStart: true,
   stop: false,
+  subagentStop: false,
   notification: false,
   timeout: 5000,
   continueOnError: true,
