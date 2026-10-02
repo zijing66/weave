@@ -280,6 +280,46 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     await post(`/hooks/rules/${rule.id}`, null, 'DELETE');
   });
 
+  it('每条采集事件都经 SSE 推出 event.ingested 帧（任务面板实时刷新源）', async () => {
+    const ctrl = new AbortController();
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/events?token=${DAEMON_TOKEN}`, {
+        signal: ctrl.signal,
+      });
+      expect(res.headers.get('content-type')).toContain('text/event-stream');
+
+      // 流建立后再发事件（先连后发，避免帧早于订阅丢失）
+      const post = await fetch(`http://127.0.0.1:${port}/hooks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+        body: JSON.stringify({
+          source: 'claude',
+          eventType: 'PostToolUse',
+          sessionId: 'sse-sess',
+          payload: '{}',
+        }),
+      });
+      expect(post.status).toBe(201);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+      let found = false;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && !found) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        found = buffered.includes('"kind":"event.ingested"');
+      }
+      expect(found).toBe(true);
+      expect(buffered).toContain('"type":"hook"');
+      expect(buffered).toContain('"sessionId":"sse-sess"');
+    } finally {
+      ctrl.abort();
+    }
+  });
+
   it('会话列表随事件出现；PATCH 改名挂 pending_title；未知会话 404', async () => {
     // 事件触发 touch
     await fetch(`http://127.0.0.1:${port}/hooks`, {

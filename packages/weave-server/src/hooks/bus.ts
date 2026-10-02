@@ -6,6 +6,13 @@ import { EventEmitter } from 'node:events';
  * 各自独立 emitter，handleSse 双订阅。
  */
 export type HookBusMessage =
+  | {
+      kind: 'event.ingested';
+      eventId: number;
+      projectId: number;
+      sessionId: string | null;
+      at: string;
+    }
   | { kind: 'rule.matched'; ruleId: string; eventId: number; sessionId: string | null; at: string }
   | {
       kind: 'dispatch.created';

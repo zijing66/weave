@@ -199,6 +199,14 @@ async function handleRequest(
     if (deps.hookSessions && input.sessionId) {
       deps.hookSessions.touch(input.sessionId, project.id);
     }
+    // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
+    deps.hookBus?.emit({
+      kind: 'event.ingested',
+      eventId: id,
+      projectId: project.id,
+      sessionId: input.sessionId ?? null,
+      at: new Date().toISOString(),
+    });
     // D3 分发：在响应路径上同步匹配规则——命中 inject 时把 additionalContext
     // 放进响应体，由 hook-handler.cjs 输出给会话。失败降级为无动作（201 不变）。
     let outcome: { additionalContext?: string; sessionTitle?: string } = {};
@@ -1000,10 +1008,10 @@ async function handleRequest(
 
 /** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
 function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerDeps): void {
-  if (!deps.watch) {
+  if (!deps.watch && !deps.hookBus) {
     res.statusCode = 503;
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ error: 'Watch service unavailable' }));
+    res.end(JSON.stringify({ error: 'Event stream unavailable' }));
     return;
   }
   res.writeHead(200, {
@@ -1016,11 +1024,13 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
 
   const unsubscribes: Array<() => void> = [];
   // 帧加 type 判别字段：旧前端忽略未知字段（asset 帧内容不变，向后兼容）。
-  unsubscribes.push(
-    deps.watch.subscribe((e) => {
-      res.write(`data: ${JSON.stringify({ type: 'asset', ...e })}\n\n`);
-    }),
-  );
+  if (deps.watch) {
+    unsubscribes.push(
+      deps.watch.subscribe((e) => {
+        res.write(`data: ${JSON.stringify({ type: 'asset', ...e })}\n\n`);
+      }),
+    );
+  }
   if (deps.hookBus) {
     unsubscribes.push(
       deps.hookBus.subscribe((message) => {

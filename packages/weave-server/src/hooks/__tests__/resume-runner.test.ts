@@ -105,8 +105,16 @@ describe('ResumeRunner', () => {
     const runner = makeRunner(fake.spawnImpl);
     const dispatch = insertDispatch();
 
-    const result = await runner.run(dispatch.id, SESSION_ID);
-    expect(result).toEqual({ ok: true, dispatchId: dispatch.id });
+    // 模拟 daemon 启于 Claude Code 会话内：环境带 child-session 标记
+    const hadMarker = 'CLAUDE_CODE_CHILD_SESSION' in process.env;
+    process.env['CLAUDE_CODE_CHILD_SESSION'] = '1';
+    try {
+      const result = await runner.run(dispatch.id, SESSION_ID);
+      expect(result).toEqual({ ok: true, dispatchId: dispatch.id });
+    } finally {
+      if (hadMarker) process.env['CLAUDE_CODE_CHILD_SESSION'] = '1';
+      else delete process.env['CLAUDE_CODE_CHILD_SESSION'];
+    }
 
     // run() 返回时应已置 running 且 spawn 参数符合规格
     expect(dispatches.getById(dispatch.id)?.status).toBe('running');
@@ -119,6 +127,8 @@ describe('ResumeRunner', () => {
     expect(call.options.windowsHide).toBe(true);
     expect(call.options.stdio).toEqual(['ignore', 'pipe', 'pipe']);
     expect(call.options.env?.WEAVE_HOOK_DISPATCH).toBe('1');
+    // resume 出的是正常会话：child-session 标记必须被剥离（否则 transcript 不落盘）
+    expect(call.options.env?.['CLAUDE_CODE_CHILD_SESSION']).toBeUndefined();
     expect(busEvents).toContainEqual(
       expect.objectContaining({ kind: 'dispatch.started', dispatchId: dispatch.id, sessionId: SESSION_ID }),
     );
