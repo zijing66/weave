@@ -44,10 +44,23 @@ export interface PluginHandler {
   ): Promise<PluginHandlerResult | void> | PluginHandlerResult | void;
 }
 
+/** 订阅模块（扩展点⑦）default 导出形状：只读观察采集事件流。 */
+export interface PluginSubscriber {
+  onEvent(ctx: {
+    eventType: string;
+    payload: unknown;
+    sessionId: string | null;
+    config: Record<string, unknown>;
+    logger: PluginHandlerContext['logger'];
+  }): void | Promise<void>;
+}
+
 /** dispatcher 侧的插件宿主接口（解耦 loader 具体实现，便于测试注入）。 */
 export interface PluginHost {
   getHandler(pluginId: string, handlerType: string): PluginHandler | undefined;
   getConfig(pluginId: string): Record<string, unknown>;
+  /** ⑦ 事件订阅转发：每个采集事件 fire-and-forget 通知（可选，测试可不实现）。 */
+  notifyEvent?(eventType: string, payload: unknown, sessionId: string | null): void;
 }
 
 export type PluginLoadStatus = 'active' | 'rejected' | 'disabled';
@@ -81,6 +94,8 @@ export class WeavePluginLoader implements PluginHost {
   private readonly handlers = new Map<string, PluginHandler>();
   private readonly configs = new Map<string, Record<string, unknown>>();
   private readonly plugins = new Map<string, LoadedPluginInfo>();
+  /** ⑦ 事件订阅者：pluginId → {events, subscriber}（disabled/删除时摘除）。 */
+  private readonly subscribers = new Map<string, { events: Set<string>; sub: PluginSubscriber }>();
   /** 已登记的扫描根 → 作用域（热重载时按根重扫用）。 */
   private readonly roots = new Map<string, { scope: 'builtin' | 'global' | 'project'; projectId: number | null }>();
   private watchStop: (() => void) | undefined;
@@ -153,8 +168,8 @@ export class WeavePluginLoader implements PluginHost {
       this.emitReload({ pluginId: id, status: 'rejected', ruleCount: 0, removed: true });
     }
 
-    // 规则变更（upsert 或删除）后刷新内存索引（一次 reload 覆盖本批全部变更）。
-    if (removedAny || loaded.some((p) => p.status !== 'rejected')) this.deps.registry.load();
+    // 规则变更（upsert/删除/rejected 回滚）后刷新内存索引。
+    if (removedAny || loaded.length > 0) this.deps.registry.load();
     for (const info of loaded) {
       this.emitReload({
         pluginId: info.id,
@@ -227,6 +242,32 @@ export class WeavePluginLoader implements PluginHost {
     for (const key of [...this.handlers.keys()]) {
       if (key.startsWith(`${pluginId}:`)) this.handlers.delete(key);
     }
+    this.subscribers.delete(pluginId);
+  }
+
+  /**
+   * ⑦ 事件订阅转发：每个采集事件通知全部订阅了该事件的插件。
+   * fire-and-forget + 吞错——订阅者慢/挂永不阻塞 ingest 响应路径。
+   */
+  notifyEvent(eventType: string, payload: unknown, sessionId: string | null): void {
+    for (const [pluginId, entry] of this.subscribers) {
+      if (!entry.events.has(eventType)) continue;
+      const cfg = this.configs.get(pluginId) ?? {};
+      void (async () => {
+        await entry.sub.onEvent({
+          eventType,
+          payload,
+          sessionId,
+          config: cfg,
+          logger: {
+            debug: (msg: string) => console.debug(`[plugin:${pluginId}] ${msg}`),
+            info: (msg: string) => console.info(`[plugin:${pluginId}] ${msg}`),
+            warn: (msg: string) => console.warn(`[plugin:${pluginId}] ${msg}`),
+            error: (msg: string) => console.error(`[plugin:${pluginId}] ${msg}`),
+          },
+        });
+      })().catch(() => {});
+    }
   }
 
   private emitReload(frame: {
@@ -245,17 +286,17 @@ export class WeavePluginLoader implements PluginHost {
     projectId: number | null,
     dirName: string,
   ): Promise<LoadedPluginInfo> {
-    const reject = (id: string, error: string, name = dirName, version = '0.0.0'): LoadedPluginInfo => ({
-      id,
-      name,
-      version,
-      dir,
-      scope,
-      projectId,
-      status: 'rejected',
-      error,
-      ruleCount: 0,
-    });
+    const reject = (id: string, error: string, name = dirName, version = '0.0.0'): LoadedPluginInfo => {
+      // 重载失败 = 整体禁用：仅当该 id 上次由本目录注册时，清理其旧规则/handler/
+      // 订阅（重复 id 场景 reject 的是别人，绝不能误删已注册插件）。
+      const prior = this.plugins.get(id);
+      if (prior && prior.dir === dir) {
+        this.deps.rules.removeByPlugin(id);
+        this.unloadHandlers(id);
+        this.configs.delete(id);
+      }
+      return { id, name, version, dir, scope, projectId, status: 'rejected', error, ruleCount: 0 };
+    };
 
     // 1. manifest 解析与校验
     let manifest: WeavePluginManifest;
@@ -317,6 +358,30 @@ export class WeavePluginLoader implements PluginHost {
         pendingHandlers.set(`${manifest.id}:${h.type}`, impl);
       } catch (err) {
         return reject(manifest.id, `handler ${h.type} 加载失败: ${err instanceof Error ? err.message : String(err)}`, manifest.name, manifest.version);
+      }
+    }
+
+    // 5b. 事件订阅入口（扩展点⑦）：events 须为采集面子集，entry 导出 onEvent
+    let pendingSubscriber: { events: Set<string>; sub: PluginSubscriber } | undefined;
+    if (manifest.subscribe) {
+      const subEvents = manifest.subscribe.events.filter(
+        (e) => !(CLAUDE_HOOK_EVENTS as readonly string[]).includes(e),
+      );
+      if (subEvents.length > 0) {
+        return reject(manifest.id, `subscribe.events 含未知事件: ${subEvents.join(', ')}`, manifest.name, manifest.version);
+      }
+      try {
+        const entryAbs = this.resolveWithin(dir, manifest.subscribe.entry);
+        const mod = (await import(`${pathToFileURL(entryAbs).href}?t=${Date.now()}`)) as {
+          default?: PluginSubscriber;
+        };
+        const impl = mod.default;
+        if (!impl || typeof impl.onEvent !== 'function') {
+          throw new Error(`${manifest.subscribe.entry} 的 default 导出缺少 onEvent 函数`);
+        }
+        pendingSubscriber = { events: new Set(manifest.subscribe.events), sub: impl };
+      } catch (err) {
+        return reject(manifest.id, `subscriber 加载失败: ${err instanceof Error ? err.message : String(err)}`, manifest.name, manifest.version);
       }
     }
 
@@ -392,9 +457,13 @@ export class WeavePluginLoader implements PluginHost {
       }
     }
 
-    // 8. 接管 handler/config（同 id 重载时替换旧实现）
+    // 8. 接管 handler/config/subscriber（同 id 重载时替换旧实现；
+    //    disabled 插件不注册 subscriber——没有规则门槛，必须显式抑制）
     for (const [key, impl] of pendingHandlers) this.handlers.set(key, impl);
     this.configs.set(manifest.id, { ...(manifest.config ?? {}), ...(state?.config ?? {}) });
+    if (pendingSubscriber && !(state && !state.enabled)) {
+      this.subscribers.set(manifest.id, pendingSubscriber);
+    }
 
     return {
       id: manifest.id,

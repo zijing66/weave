@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { templateRegistry } from '@weave/templates';
-import { registerPluginTemplates } from '../init/plugin-templates.js';
+import { registerPluginTemplates, collectPluginMcpServers } from '../init/plugin-templates.js';
 
 // templateRegistry 是模块级单例：用唯一 id 避免跨用例同名冲突。
 let root: string;
@@ -90,5 +90,60 @@ describe('registerPluginTemplates（扩展点③发现面）', () => {
     const { registered, skipped } = await registerPluginTemplates(projectDir, root);
     expect(registered).toHaveLength(0);
     expect(skipped).toHaveLength(0);
+  });
+});
+
+describe('collectPluginMcpServers（扩展点④发现面）', () => {
+  let root: string;
+  let projectDir: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'weave-mcp-'));
+    projectDir = await mkdtemp(path.join(tmpdir(), 'weave-mcp-proj-'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+  });
+
+  it('收集插件 mcpServers；与核心( existing )或插件间同名时 namespace 化', async () => {
+    const write = async (id: string, servers: Record<string, unknown>): Promise<void> => {
+      const dir = path.join(root, id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        path.join(dir, 'weave-plugin.json'),
+        JSON.stringify({ manifestVersion: 1, id, name: id, version: '1.0.0', mcpServers: servers }),
+      );
+    };
+    await write('mcp-a', { 'my-server': { command: 'node', args: ['a.js'] } });
+    await write('mcp-b', { 'my-server': { command: 'node', args: ['b.js'] } });
+
+    // existing = 核心已生成的 server 名（同名绝不覆盖核心）
+    const { servers, renamed } = await collectPluginMcpServers(projectDir, root, ['my-server']);
+    expect(Object.keys(servers).sort()).toEqual(['mcp-a-my-server', 'mcp-b-my-server']);
+    expect(renamed).toEqual([
+      'my-server → mcp-a-my-server',
+      'my-server → mcp-b-my-server',
+    ]);
+    expect(servers['mcp-a-my-server']).toEqual({ command: 'node', args: ['a.js'] });
+    expect(servers['mcp-b-my-server']).toEqual({ command: 'node', args: ['b.js'] });
+
+    // 无冲突时不改名（字典序：mcp-b-my-server < my-server）
+    const clean = await collectPluginMcpServers(projectDir, root, []);
+    expect(Object.keys(clean.servers).sort()).toEqual(['mcp-b-my-server', 'my-server']);
+    expect(clean.renamed).toEqual(['my-server → mcp-b-my-server']);
+  });
+
+  it('无 mcpServers / 非法 manifest 的插件被跳过', async () => {
+    const dir = path.join(root, 'plain');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'weave-plugin.json'),
+      JSON.stringify({ manifestVersion: 1, id: 'plain', name: 'p', version: '1.0.0' }),
+    );
+    const { servers, renamed } = await collectPluginMcpServers(projectDir, root);
+    expect(servers).toEqual({});
+    expect(renamed).toEqual([]);
   });
 });

@@ -244,3 +244,24 @@ export default {
    `rejected`（已入库规则回滚删除），**不阻断其他插件**。
 
 满足本清单 = 加载成功；加载成功 + 规则可被命中 = 插件可用。
+
+## 10. 开发流程（AI 生成插件）
+
+插件开发的标准姿势就是让 AI 照本文档生成，无需读 weave 源码：
+
+1. **给 AI 的提示词**（可直接复制）：
+   > 阅读 `docs/PLUGIN-SPEC.md`，按规范生成一个插件目录 `<id>`，需求：……
+   > 输出全部文件内容（weave-plugin.json / rules.json / prompts/ / handler.mjs）。
+2. **落盘**：把生成的目录放进任一扫描位置
+   （`<configDir>/weave/plugins/`、项目 `.weave/plugins//`）。
+3. **验证**：daemon 1 秒内热重载（或 `weave hooks plugins` 查看状态）——
+   `active` 即通过 smoke；`rejected` 的 error 字段会给出具体失败项。
+4. **联调**：dashboard Hooks 面板启用插件规则 → 触发对应事件 →
+   看指令池/注入效果；改文件即热重载，无需重启。
+5. **分发**：`weave plugins export <id> [outDir]` 打包给他人，
+   对方 `weave plugins install <目录|git URL>` 即用。
+
+**回归基准**：仓库内 `packages/weave-server/src/hooks/__tests__/fixtures/changelog-reminder/`
+即「AI 按本文档生成」的验收样本（规则 + `@file:` 模板 + 事件订阅组合），
+其验收测试固定在 `plugin-loader.test.ts` 的「AI 生成验收」describe 中——
+改规范必须同步该样本与测试。

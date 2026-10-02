@@ -30,7 +30,7 @@ import {
 } from './claudemd-gen.js';
 import { ensureInstructionLink } from './instruction-link.js';
 import { generateHookHandler, generateAutoMemoryHook } from './helpers-gen.js';
-import { registerPluginTemplates } from './plugin-templates.js';
+import { registerPluginTemplates, collectPluginMcpServers } from './plugin-templates.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -123,7 +123,13 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   // ---- Step 3: Generate .mcp.json ----
   if (components.mcp) {
     const mcpJson = generateMcpJson({ platform, includeWeaveServer: mcp.weave });
-    const serverCount = Object.keys((mcpJson as { mcpServers: Record<string, unknown> }).mcpServers ?? {}).length;
+    // 扩展点④：插件 manifest.mcpServers 合并（与核心/插件间同名 → namespace 化）
+    const coreServers = Object.keys((mcpJson as { mcpServers: Record<string, unknown> }).mcpServers);
+    const pluginMcp = await collectPluginMcpServers(targetDir, undefined, coreServers);
+    const servers = (mcpJson as { mcpServers: Record<string, unknown> }).mcpServers;
+    for (const [name, config] of Object.entries(pluginMcp.servers)) servers[name] = config;
+    for (const r of pluginMcp.renamed) logger.warn(t('init.pluginMcpRenamed', { renamed: r }));
+    const serverCount = Object.keys(servers).length;
 
     // Only write .mcp.json when there's at least one server configured.
     // P0-1: the CLI has no `weave mcp start` command yet, so `mcp.weave` defaults

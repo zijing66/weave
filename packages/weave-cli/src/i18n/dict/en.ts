@@ -109,6 +109,7 @@ export const en: Record<keyof typeof zh, string> = {
     'Skipped {path}: not valid JSON. Fix or remove it, or use --force.',
   'init.backedUp': 'Backed up the previous AGENTS.md to {path}',
   'init.copyTemplatesFailed': 'Could not copy templates from {srcDir}: {error}',
+  'init.pluginMcpRenamed': 'Plugin MCP server name conflict, prefixed: {renamed}',
   'init.proceed': 'Proceed? [Y/n]',
   'out.hooks.empty': 'No hook rules yet — create one in the dashboard Hooks panel.',
   'out.hooks.col.status': 'ON',
