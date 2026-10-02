@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 1,
+  "id": "weave-stop-summary",
+  "name": "轮末总结",
+  "version": "1.0.0",
+  "description": "Stop 事件（一轮回复结束）注入轻量总结指令，沉淀本轮变更与待办（inject 白名单事件示例）",
+  "author": "weave",
+  "rules": ["rules.json"],
+  "requires": { "events": ["Stop"] }
+}

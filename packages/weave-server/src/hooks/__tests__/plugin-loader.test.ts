@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
@@ -228,6 +229,72 @@ describe('WeavePluginLoader', () => {
     const loaded = await loader.loadRoot(root, 'global', null);
     expect(loaded[0].status).toBe('rejected');
     expect(loaded[0].error).toContain('execute');
+  });
+});
+
+describe('内置预设 presets（随包发货的参考实现）', () => {
+  let db: DatabaseSync;
+  let rules: HookRuleRepository;
+  let registry: HookRuleRegistry;
+  let states: PluginStateRepository;
+  let loader: WeavePluginLoader;
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    rules = new HookRuleRepository(db);
+    registry = new HookRuleRegistry(rules);
+    states = new PluginStateRepository(db);
+    loader = new WeavePluginLoader({ rules, registry, states });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('三个预设全部加载成功，origin=builtin，默认禁用不产生候选，启用后可命中', async () => {
+    const presetsDir = fileURLToPath(new URL('../presets/', import.meta.url));
+    const loaded = await loader.loadRoot(presetsDir, 'builtin', null);
+
+    expect(loaded.map((p) => p.id).sort()).toEqual([
+      'weave-cross-project-touch',
+      'weave-doc-update-check',
+      'weave-stop-summary',
+    ]);
+    expect(loaded.every((p) => p.status === 'active' && p.error === undefined)).toBe(true);
+
+    // 规则入库：origin/命名空间/默认禁用
+    const list = rules.list();
+    expect(list).toHaveLength(3);
+    expect(list.every((r) => r.origin === 'builtin')).toBe(true);
+    expect(list.every((r) => r.pluginId?.startsWith('weave-'))).toBe(true);
+    expect(list.every((r) => r.enabled === false)).toBe(true);
+    expect(registry.candidates('PostToolUse')).toHaveLength(0); // 默认禁用 = 无候选
+
+    // 用户启用 → 候选出现且 @file: 模板已内联
+    const docRule = list.find((r) => r.pluginId === 'weave-doc-update-check')!;
+    rules.setEnabled(docRule.id, true);
+    registry.load();
+    const candidates = registry.candidates('PostToolUse');
+    expect(candidates.map((r) => r.id)).toEqual([docRule.id]);
+    if (docRule.handler.type === 'inject') {
+      expect(docRule.handler.template).toContain('文档一致性检查');
+      expect(docRule.handler.template).toContain('{file}');
+    }
+  });
+
+  it('预设规则引用的 handler 事件与 filter 符合规范（inject 均在白名单事件上）', async () => {
+    const presetsDir = fileURLToPath(new URL('../presets/', import.meta.url));
+    await loader.loadRoot(presetsDir, 'builtin', null);
+    for (const rule of rules.list()) {
+      if (rule.handler.type === 'inject') {
+        expect(rule.source.kind).toBe('claude-event');
+        if (rule.source.kind === 'claude-event') {
+          expect(['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop', 'SubagentStop']).toContain(
+            rule.source.event,
+          );
+        }
+      }
+    }
   });
 });
 

@@ -23,7 +23,7 @@
   },
   "packageManager": "pnpm@11.8.0",
   "scripts": {
-    "build": "tsc -b && cd packages/weave-templates && node copy-templates.mjs",
+    "build": "tsc -b && cd packages/weave-templates && node copy-templates.mjs && cd ../weave-server && node copy-presets.mjs",
     "build:web": "pnpm -C packages/weave-web build",
     "dev": "tsx watch --conditions=development packages/weave-cli/src/main.ts",
     "dev:server": "tsx watch --conditions=development packages/weave-server/src/daemon/dev-entry.ts",

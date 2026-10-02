@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 1,
+  "id": "weave-doc-update-check",
+  "name": "文档更新检查",
+  "version": "1.0.0",
+  "description": "编辑 Markdown 文件后注入指令，提示 Claude 检查受影响文档与代码的一致性（workflow 触发示例）",
+  "author": "weave",
+  "rules": ["rules.json"],
+  "requires": { "events": ["PostToolUse"] }
+}

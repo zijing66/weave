@@ -1,0 +1,11 @@
+[
+  {
+    "name": "文档更新检查",
+    "enabled": false,
+    "priority": 10,
+    "source": { "kind": "claude-event", "event": "PostToolUse" },
+    "filter": { "toolNames": ["Edit", "Write", "NotebookEdit"], "pathGlobs": ["**/*.md"] },
+    "handler": { "type": "inject", "template": "@file:prompts/check-docs.md" },
+    "timeoutMs": 10000
+  }
+]

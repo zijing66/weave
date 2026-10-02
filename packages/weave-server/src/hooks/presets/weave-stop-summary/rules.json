@@ -1,0 +1,11 @@
+[
+  {
+    "name": "轮末总结",
+    "enabled": false,
+    "priority": 0,
+    "source": { "kind": "claude-event", "event": "Stop" },
+    "handler": { "type": "inject", "template": "@file:prompts/summary.md" },
+    "record": false,
+    "timeoutMs": 10000
+  }
+]
