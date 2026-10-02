@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { watch as fsWatch } from 'chokidar';
 import {
   CLAUDE_HOOK_EVENTS,
   HookRuleSchema,
@@ -13,6 +14,7 @@ import {
 import { getDataDir } from '../db/paths.js';
 import type { HookRuleRepository } from '../repositories/hook-rules.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
+import type { HookEventBus } from './bus.js';
 import { validateHandler, type HookRuleRegistry } from './registry.js';
 
 /** plugin 处理器返回值：prompt 入池（pending），additionalContext 注入当前会话。 */
@@ -50,6 +52,12 @@ export interface PluginHost {
 
 export type PluginLoadStatus = 'active' | 'rejected' | 'disabled';
 
+/** HTTP 路由面的插件管理接口（loader 异步就绪前返回空/失败，不阻塞 daemon 启动）。 */
+export interface PluginManager {
+  list(): LoadedPluginInfo[];
+  setPluginEnabled(pluginId: string, enabled: boolean): boolean;
+}
+
 export interface LoadedPluginInfo {
   /** manifest.id（manifest 校验失败时回退为目录名）。 */
   id: string;
@@ -71,12 +79,17 @@ export class WeavePluginLoader implements PluginHost {
   private readonly handlers = new Map<string, PluginHandler>();
   private readonly configs = new Map<string, Record<string, unknown>>();
   private readonly plugins = new Map<string, LoadedPluginInfo>();
+  /** 已登记的扫描根 → 作用域（热重载时按根重扫用）。 */
+  private readonly roots = new Map<string, { scope: 'builtin' | 'global' | 'project'; projectId: number | null }>();
+  private watchStop: (() => void) | undefined;
 
   constructor(
     private readonly deps: {
       rules: HookRuleRepository;
       registry: HookRuleRegistry;
       states: PluginStateRepository;
+      /** 可选：插件变更帧（plugin.reloaded/plugin.toggled）推送源。 */
+      bus?: HookEventBus;
     },
   ) {}
 
@@ -95,30 +108,127 @@ export class WeavePluginLoader implements PluginHost {
   /**
    * 扫描一个插件根目录（其一级子目录各为一个插件包）并加载全部插件。
    * 单个插件失败（校验/重复/handler 加载）只标记 rejected，不影响其他插件。
-   * 幂等：同 id 再次加载 = 覆盖式重载（规则 upsert，handler map 替换）。
+   * 幂等：同 id 再次加载 = 覆盖式重载（规则 upsert，handler map 替换）；
+   * **上次在、本次消失的插件**（目录删除/改坏）规则级联删除、handler 卸载。
    */
   async loadRoot(
     root: string,
     scope: 'builtin' | 'global' | 'project',
     projectId: number | null,
   ): Promise<LoadedPluginInfo[]> {
+    const normalizedRoot = path.resolve(root);
+    this.roots.set(normalizedRoot, { scope, projectId });
+
     let entries: string[];
     try {
-      entries = await readdir(root);
+      entries = await readdir(normalizedRoot);
     } catch {
       return []; // 目录不存在 = 无插件，正常
     }
 
+    const priorIds = new Set(
+      [...this.plugins.values()].filter((p) => p.dir.startsWith(normalizedRoot + path.sep)).map((p) => p.id),
+    );
+
     const loaded: LoadedPluginInfo[] = [];
     for (const name of entries) {
-      const dir = path.join(root, name);
+      const dir = path.join(normalizedRoot, name);
       const info = await this.loadOne(dir, scope, projectId, name);
       this.plugins.set(info.id, info);
       loaded.push(info);
     }
-    // 规则入库后刷新内存索引（一次 reload 覆盖本批全部 upsert）。
-    if (loaded.some((p) => p.status !== 'rejected')) this.deps.registry.load();
+
+    // 消失的插件：删规则 + 卸 handler + 发 removed 帧
+    const seenIds = new Set(loaded.map((p) => p.id));
+    let removedAny = false;
+    for (const id of priorIds) {
+      if (seenIds.has(id)) continue;
+      this.deps.rules.removeByPlugin(id);
+      this.unloadHandlers(id);
+      this.configs.delete(id);
+      this.plugins.delete(id);
+      removedAny = true;
+      this.emitReload({ pluginId: id, status: 'rejected', ruleCount: 0, removed: true });
+    }
+
+    // 规则变更（upsert 或删除）后刷新内存索引（一次 reload 覆盖本批全部变更）。
+    if (removedAny || loaded.some((p) => p.status !== 'rejected')) this.deps.registry.load();
+    for (const info of loaded) {
+      this.emitReload({
+        pluginId: info.id,
+        status: info.status,
+        ruleCount: info.ruleCount,
+        at: new Date().toISOString(),
+      });
+    }
     return loaded;
+  }
+
+  /**
+   * 热重载：watch 全部已登记根目录，文件/目录变更防抖后按根重扫。
+   * 返回 stop 函数。daemon 关闭时调用。
+   */
+  watchRoots(debounceMs = 1000): () => void {
+    if (this.watchStop) return this.watchStop;
+    const timers = new Map<string, NodeJS.Timeout>();
+    const watchers = [...this.roots.keys()].map((root) => {
+      const w = fsWatch(root, { ignoreInitial: true, depth: 2 });
+      w.on('all', () => {
+        const existing = timers.get(root);
+        if (existing) clearTimeout(existing);
+        timers.set(
+          root,
+          setTimeout(() => {
+            timers.delete(root);
+            const meta = this.roots.get(root);
+            if (meta) void this.loadRoot(root, meta.scope, meta.projectId).catch(() => {});
+          }, debounceMs),
+        );
+      });
+      w.on('error', () => {}); // 监听失败不崩 daemon
+      return w;
+    });
+    this.watchStop = () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+      for (const w of watchers) void w.close();
+      this.watchStop = undefined;
+    };
+    return this.watchStop;
+  }
+
+  /** 插件级开关：写 plugin_states 并级联启停其全部规则（保留规则级差异）。 */
+  setPluginEnabled(pluginId: string, enabled: boolean): boolean {
+    const info = this.plugins.get(pluginId);
+    if (!info) return false;
+    this.deps.states.setEnabled(pluginId, enabled);
+    for (const rule of this.deps.rules.listByPlugin(pluginId)) this.deps.rules.setEnabled(rule.id, enabled);
+    this.deps.registry.load();
+    // rejected 插件即使 enable 也保持 rejected（校验失败不因开关消失）
+    const status: LoadedPluginInfo['status'] = enabled
+      ? info.error
+        ? 'rejected'
+        : 'active'
+      : 'disabled';
+    this.plugins.set(pluginId, { ...info, status });
+    this.deps.bus?.emit({ kind: 'plugin.toggled', pluginId, enabled, at: new Date().toISOString() });
+    return true;
+  }
+
+  private unloadHandlers(pluginId: string): void {
+    for (const key of [...this.handlers.keys()]) {
+      if (key.startsWith(`${pluginId}:`)) this.handlers.delete(key);
+    }
+  }
+
+  private emitReload(frame: {
+    pluginId: string;
+    status: 'active' | 'rejected' | 'disabled';
+    ruleCount: number;
+    removed?: boolean;
+    at?: string;
+  }): void {
+    this.deps.bus?.emit({ kind: 'plugin.reloaded', at: new Date().toISOString(), ...frame });
   }
 
   private async loadOne(
@@ -249,6 +359,7 @@ export class WeavePluginLoader implements PluginHost {
           id: `plugin:${manifest.id}:${i}`,
           projectId,
           enabled: entry2.enabled ?? true,
+          priority: entry2.priority ?? 0,
           origin: scope === 'builtin' ? 'builtin' : 'plugin',
           pluginId: manifest.id,
         });
@@ -318,6 +429,7 @@ export async function loadAllPlugins(
     rules: HookRuleRepository;
     registry: HookRuleRegistry;
     states: PluginStateRepository;
+    bus?: HookEventBus;
   },
   projects: ReadonlyArray<{ id: number; path: string }>,
 ): Promise<{ loader: WeavePluginLoader; loaded: LoadedPluginInfo[] }> {

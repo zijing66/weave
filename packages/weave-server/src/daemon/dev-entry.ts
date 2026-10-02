@@ -20,7 +20,7 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
-import { loadAllPlugins, type PluginHost } from '../hooks/plugin-loader.js';
+import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
@@ -56,33 +56,29 @@ async function main(): Promise<void> {
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
   const hookBus = new HookEventBus();
-  const pluginHostHolder: PluginHost = {
-    getHandler: () => undefined,
-    getConfig: () => ({}),
-  };
+  const { loader: hookPlugins } = await loadAllPlugins(
+    {
+      rules: new HookRuleRepository(db),
+      registry: hookRegistry,
+      states: new PluginStateRepository(db),
+      bus: hookBus,
+    },
+    projects.list(),
+  );
+  {
+    const rejected = hookPlugins.list().filter((p) => p.status === 'rejected');
+    console.log(`[dev] plugins loaded: ${hookPlugins.list().length} (rejected: ${rejected.length})`);
+    for (const r of rejected) console.log(`[dev]   rejected ${r.id}: ${r.error}`);
+  }
+  hookPlugins.watchRoots(); // 热重载（dev 下改插件文件即时生效）
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
     bus: hookBus,
     projects,
     sessions: hookSessions,
-    plugins: pluginHostHolder,
+    plugins: hookPlugins,
   });
-  {
-    const { loader } = await loadAllPlugins(
-      {
-        rules: new HookRuleRepository(db),
-        registry: hookRegistry,
-        states: new PluginStateRepository(db),
-      },
-      projects.list(),
-    );
-    pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
-    pluginHostHolder.getConfig = (id) => loader.getConfig(id);
-    const rejected = loader.list().filter((p) => p.status === 'rejected');
-    console.log(`[dev] plugins loaded: ${loader.list().length} (rejected: ${rejected.length})`);
-    for (const r of rejected) console.log(`[dev]   rejected ${r.id}: ${r.error}`);
-  }
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,
@@ -108,6 +104,7 @@ async function main(): Promise<void> {
     hookBus,
     hookDispatcher,
     hookRunner,
+    hookPlugins,
   });
 
   server.listen(port, DAEMON_HOST, () => {

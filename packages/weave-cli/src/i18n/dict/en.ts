@@ -36,6 +36,7 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.hooks.list.desc': 'List all hook rules',
   'cmd.hooks.enable.desc': 'Enable a rule',
   'cmd.hooks.disable.desc': 'Disable a rule',
+  'cmd.hooks.plugins.desc': 'List loaded plugins (SPI scan results)',
   'flag.init.hooks':
     'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification); "none" registers none; default: all',
   'flag.dir': 'Target directory (default: current directory)',
@@ -114,6 +115,13 @@ export const en: Record<keyof typeof zh, string> = {
   'out.hooks.ambiguous': 'Rule ID prefix is not unique: {id}',
   'out.hooks.idRequired': 'Rule ID required: weave hooks enable|disable <id>',
   'out.hooks.failed': 'Daemon request failed: {error}',
+  'out.hooks.plugins.empty':
+    'No plugins yet — drop a plugin directory into <configDir>/weave/plugins/ or the project .weave/plugins/ to auto-register (see docs/PLUGIN-SPEC.md).',
+  'out.hooks.plugins.col.id': 'ID',
+  'out.hooks.plugins.col.version': 'Version',
+  'out.hooks.plugins.col.scope': 'Scope',
+  'out.hooks.plugins.col.rules': 'Rules',
+  'out.hooks.plugins.col.name': 'Name',
   'init.hooksUnknownKeys': 'Ignored unknown hook event names: {keys}',
   'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---

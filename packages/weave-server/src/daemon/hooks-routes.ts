@@ -135,6 +135,34 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 插件管理面（SPI 加载结果 + 插件级开关）----
+  if (pathname === '/hooks/plugins') {
+    if (req.method === 'GET') {
+      sendJson(200, { plugins: deps.hookPlugins?.list() ?? [] });
+      return true;
+    }
+  }
+
+  const pluginToggleMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/toggle$/);
+  if (pluginToggleMatch && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    try {
+      const body = ToggleBody.parse(await readJson());
+      const ok = deps.hookPlugins.setPluginEnabled(decodeURIComponent(pluginToggleMatch[1]!), body.enabled);
+      if (!ok) {
+        sendJson(404, { error: 'Plugin not found' });
+        return true;
+      }
+      sendJson(200, { ok: true });
+    } catch (err) {
+      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
+    return true;
+  }
+
   // ---- 派发记录 ----
   if (pathname === '/hooks/dispatches' && req.method === 'GET') {
     if (!deps.hookDispatches) {

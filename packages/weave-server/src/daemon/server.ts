@@ -14,6 +14,7 @@ import type { HookRuleRegistry } from '../hooks/registry.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
+import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from '../install/scanner.js';
 import {
@@ -121,6 +122,8 @@ export interface WeaveServerDeps {
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
   hookRunner?: ResumeRunner;
+  /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
+  hookPlugins?: PluginManager;
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */

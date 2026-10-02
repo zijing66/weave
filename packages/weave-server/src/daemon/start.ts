@@ -11,7 +11,7 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
-import { loadAllPlugins, type PluginHost } from '../hooks/plugin-loader.js';
+import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -50,10 +50,16 @@ export function startDaemon(): void {
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
   const hookBus = new HookEventBus();
-  // 插件 SPI 加载是异步的，dispatcher 先持有一个 holder；加载完成后接管查询。
+  // 插件 SPI 加载是异步的，dispatcher 先持有一个 holder；加载完成后接管查询并开启热重载。
   const pluginHostHolder: PluginHost = {
     getHandler: () => undefined,
     getConfig: () => ({}),
+  };
+  let stopPluginWatch: (() => void) | undefined;
+  let pluginLoaderRef: WeavePluginLoader | undefined;
+  const pluginManager: PluginManager = {
+    list: () => pluginLoaderRef?.list() ?? [],
+    setPluginEnabled: (id, enabled) => pluginLoaderRef?.setPluginEnabled(id, enabled) ?? false,
   };
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
@@ -68,11 +74,14 @@ export function startDaemon(): void {
       rules: new HookRuleRepository(db),
       registry: hookRegistry,
       states: new PluginStateRepository(db),
+      bus: hookBus,
     },
     projects.list(),
   ).then(({ loader }) => {
+    pluginLoaderRef = loader;
     pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
     pluginHostHolder.getConfig = (id) => loader.getConfig(id);
+    stopPluginWatch = loader.watchRoots();
   });
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
@@ -103,9 +112,11 @@ export function startDaemon(): void {
     hookBus,
     hookDispatcher,
     hookRunner,
+    hookPlugins: pluginManager,
   });
 
   const shutdown = (): void => {
+    stopPluginWatch?.();
     syncScheduler.stop();
     watch.stop();
     server.close();

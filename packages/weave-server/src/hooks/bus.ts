@@ -31,7 +31,17 @@ export type HookBusMessage =
       status: 'succeeded' | 'failed' | 'timeout';
       sessionId: string | null;
       at: string;
-    };
+    }
+  | {
+      kind: 'plugin.reloaded';
+      pluginId: string;
+      status: 'active' | 'rejected' | 'disabled';
+      ruleCount: number;
+      /** true = 插件目录被移除/不再发现，规则已级联删除。 */
+      removed?: boolean;
+      at: string;
+    }
+  | { kind: 'plugin.toggled'; pluginId: string; enabled: boolean; at: string };
 
 export class HookEventBus {
   private readonly emitter = new EventEmitter();

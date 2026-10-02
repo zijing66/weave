@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../db/db.js';
@@ -9,11 +9,13 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { HookRuleRepository } from '../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { ClaudeCodeAdapter } from '../hooks/adapter.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
+import { WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDir, writeDaemonSettings } from '../daemon/settings.js';
 
@@ -341,5 +343,119 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
 
     expect((await post('/sessions/nope', { title: 'x' }, 'PATCH')).status).toBe(404);
     expect((await post('/sessions/sess-rename', { title: '' }, 'PATCH')).status).toBe(400);
+  });
+});
+
+describe('daemon server /hooks/plugins API', () => {
+  let db: DatabaseSync;
+  let server: Server;
+  let port: number;
+  let root: string;
+  let loader: WeavePluginLoader;
+
+  const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
+  const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
+
+  beforeAll(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'weave-plugins-api-'));
+    const dir = path.join(root, 'demo-plugin');
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(path.join(dir, 'prompts'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'weave-plugin.json'),
+      JSON.stringify({
+        manifestVersion: 1,
+        id: 'demo-plugin',
+        name: '演示插件',
+        version: '1.0.0',
+        rules: ['rules.json'],
+      }),
+    );
+    await writeFile(
+      path.join(dir, 'rules.json'),
+      JSON.stringify([
+        {
+          name: '演示规则',
+          source: { kind: 'claude-event', event: 'PostToolUse' },
+          handler: { type: 'inject', template: '演示 {file}' },
+        },
+      ]),
+    );
+
+    db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    projects.register({ path: '/plug-proj', name: 'p', token: PROJECT_TOKEN, source: 'init' });
+    const rules = new HookRuleRepository(db);
+    const registry = new HookRuleRegistry(rules);
+    loader = new WeavePluginLoader({
+      rules,
+      registry,
+      states: new PluginStateRepository(db),
+    });
+    await loader.loadRoot(root, 'global', null);
+
+    server = createWeaveServer({
+      projects,
+      daemonToken: DAEMON_TOKEN,
+      port: 0,
+      hookRegistry: registry,
+      hookPlugins: loader,
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    server.close();
+    db.close();
+    void rm(root, { recursive: true, force: true });
+  });
+
+  it('GET /hooks/plugins 列出 SPI 加载结果', async () => {
+    const res = await get('/hooks/plugins');
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { plugins: Array<{ id: string; status: string; ruleCount: number }> };
+    expect(data.plugins).toHaveLength(1);
+    expect(data.plugins[0]).toMatchObject({ id: "demo-plugin", status: "active", ruleCount: 1 });
+  });
+
+  it('POST toggle 级联启停插件规则（401 无 token / 404 未知插件）', async () => {
+    const unauth = await fetch(`http://127.0.0.1:${port}/hooks/plugins/demo-plugin/toggle`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(unauth.status).toBe(401);
+
+    const notFound = await fetch(`http://127.0.0.1:${port}/hooks/plugins/nope/toggle`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(notFound.status).toBe(404);
+
+    const ok = await fetch(`http://127.0.0.1:${port}/hooks/plugins/demo-plugin/toggle`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(ok.status).toBe(200);
+
+    const after = (await (await get('/hooks/plugins')).json()) as {
+      plugins: Array<{ status: string }>;
+    };
+    expect(after.plugins[0]!.status).toBe('disabled');
+    // 规则级联关闭
+    const rules = (await (await get('/hooks/rules')).json()) as { rules: Array<{ enabled: boolean }> };
+    expect(rules.rules.every((r) => r.enabled === false)).toBe(true);
+
+    // 恢复
+    await fetch(`http://127.0.0.1:${port}/hooks/plugins/demo-plugin/toggle`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ enabled: true }),
+    });
+    const restored = (await (await get('/hooks/rules')).json()) as { rules: Array<{ enabled: boolean }> };
+    expect(restored.rules.every((r) => r.enabled === true)).toBe(true);
   });
 });

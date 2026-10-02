@@ -230,6 +230,50 @@ describe('WeavePluginLoader', () => {
     expect(loaded[0].status).toBe('rejected');
     expect(loaded[0].error).toContain('execute');
   });
+  it('插件目录被移除 → 重载时规则级联删除、handler 卸载', async () => {
+    await writePlugin(
+      root,
+      'doomed',
+      { ...BASE_MANIFEST, id: 'doomed', handlers: [{ type: 'x', entry: 'handler.mjs' }], rules: ['rules.json'] },
+      {
+        'rules.json': JSON.stringify(BASE_RULES),
+        'prompts/check.md': 'x {file}',
+        'handler.mjs': 'export default { type: "x", execute: () => ({}) };',
+      },
+    );
+    const first = await loader.loadRoot(root, 'global', null);
+    expect(first.find((p) => p.id === 'doomed')?.status).toBe('active');
+    expect(rules.listByPlugin('doomed')).toHaveLength(1);
+    expect(loader.getHandler('doomed', 'x')).toBeDefined();
+
+    // 删除目录 → 重载（同一 loader，模拟热重载）
+    await rm(path.join(root, 'doomed'), { recursive: true, force: true });
+    await loader.loadRoot(root, 'global', null);
+
+    expect(loader.list().find((p) => p.id === 'doomed')).toBeUndefined();
+    expect(rules.listByPlugin('doomed')).toHaveLength(0);
+    expect(loader.getHandler('doomed', 'x')).toBeUndefined();
+    expect(registry.candidates('PostToolUse')).toHaveLength(0);
+  });
+
+  it('setPluginEnabled：级联启停规则 + plugin_states 落库 + rejected 保持 rejected', async () => {
+    await writePlugin(root, 'doc-update-check', BASE_MANIFEST, {
+      'rules.json': JSON.stringify(BASE_RULES),
+      'prompts/check.md': 'x {file}',
+    });
+    await loader.loadRoot(root, 'global', null);
+
+    expect(loader.setPluginEnabled('doc-update-check', false)).toBe(true);
+    expect(loader.list().find((p) => p.id === 'doc-update-check')?.status).toBe('disabled');
+    expect(rules.list()[0]!.enabled).toBe(false);
+    expect(states.get('doc-update-check')?.enabled).toBe(false);
+
+    expect(loader.setPluginEnabled('doc-update-check', true)).toBe(true);
+    expect(loader.list().find((p) => p.id === 'doc-update-check')?.status).toBe('active');
+    expect(rules.list()[0]!.enabled).toBe(true);
+
+    expect(loader.setPluginEnabled('nonexistent', true)).toBe(false);
+  });
 });
 
 describe('内置预设 presets（随包发货的参考实现）', () => {
