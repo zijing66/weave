@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import {
   api,
@@ -9,6 +9,7 @@ import {
   type FileAssetCategory,
   type FileAssetTemplate,
   type HookEventRow,
+  type SessionRow,
   type HookRule,
   type McpServerConfig,
   type McpServerMap,
@@ -55,6 +56,7 @@ export default function App() {
   // when the global 文件资产 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [hooks, setHooks] = useState<HookEventRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
   // All hook rules (global + per project) — drives the Hooks card count; the
   // panel refetches its own copy after every mutation.
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
@@ -153,6 +155,7 @@ export default function App() {
       setGlobalMode(false);
       setAssets([]);
       setHooks([]);
+      setSessions([]);
       setMcpServers({ project: {}, global: {}, codex: {} });
       setUpdates(null);
       setGlobalSkillGroups([]);
@@ -164,6 +167,7 @@ export default function App() {
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
       api.listHooks(p.id).then(setHooks).catch((e) => setError(String(e)));
+      api.listSessions(p.id).then(setSessions).catch(() => {});
       refreshMcp(p);
       refreshUpdates(p);
       refreshGlobalSkills(p);
@@ -303,8 +307,17 @@ export default function App() {
   }, [globalMode, globalAssets, assets, selectedFile]);
 
 
+  // 任务面板数据（hook 事件 + 会话标题）的刷新入口：SSE hook 帧防抖调用，
+  // 工具栏「刷新」按钮立即调用。
+  const refreshTaskView = useCallback(() => {
+    if (!selected) return;
+    api.listHooks(selected.id).then(setHooks).catch(() => {});
+    api.listSessions(selected.id).then(setSessions).catch(() => {});
+  }, [selected]);
+
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
+  const taskRefreshTimer = useRef<number | null>(null);
   useEffect(() => {
     const es = new EventSource(api.eventsUrl());
     es.onmessage = (ev) => {
@@ -314,6 +327,12 @@ export default function App() {
         // stream; the Hooks panel listens for them on `weave:hook`.
         if (data.type === 'hook') {
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: data }));
+          // 任务面板实时刷新（含无规则命中的 event.ingested 帧），防抖 500ms
+          if (taskRefreshTimer.current !== null) window.clearTimeout(taskRefreshTimer.current);
+          taskRefreshTimer.current = window.setTimeout(() => {
+            taskRefreshTimer.current = null;
+            refreshTaskView();
+          }, 500);
           return;
         }
         const change = data;
@@ -347,8 +366,14 @@ export default function App() {
     es.onerror = () => {
       // EventSource auto-reconnects; nothing to do.
     };
-    return () => es.close();
-  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills]);
+    return () => {
+      es.close();
+      if (taskRefreshTimer.current !== null) {
+        window.clearTimeout(taskRefreshTimer.current);
+        taskRefreshTimer.current = null;
+      }
+    };
+  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshTaskView]);
 
   const handleInstallSkill = useCallback(
     async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
@@ -769,7 +794,7 @@ export default function App() {
                     style={{ height: taskH }}
                     className="shrink-0 border-t border-white/[0.06] overflow-y-auto p-3"
                   >
-                    <TaskView key={activeProject.id} events={hooks} />
+                    <TaskView key={activeProject.id} events={hooks} sessions={sessions} onRefresh={refreshTaskView} />
                   </div>
                 </>
               ) : (

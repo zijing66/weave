@@ -1,21 +1,26 @@
 import { useState } from 'react';
-import { type HookEventRow } from '@/lib/api';
+import { type HookEventRow, type SessionRow } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, RefreshCw } from 'lucide-react';
 
 interface SessionGroup {
   sessionId: string;
+  /** 会话自定义名（sessions 表 title；rename 后回显在折叠条上）。 */
+  title: string | null;
+  /** dashboard 改名待生效标记。 */
+  pendingTitle: string | null;
   events: HookEventRow[];
 }
 
 /**
  * Group events by session. The API returns newest-first, so groups come out
- * with the most recent session first; each session's events are reversed back
- * to chronological order so an expanded panel reads as a timeline.
+ * with the most recent session first and each session's events stay in
+ * reverse-chronological order（日志倒序：新事件在上）.
  */
-function groupBySession(events: HookEventRow[]): SessionGroup[] {
+function groupBySession(events: HookEventRow[], sessions: SessionRow[]): SessionGroup[] {
+  const titles = new Map(sessions.map((s) => [s.sessionId, s]));
   const m = new Map<string, HookEventRow[]>();
   for (const e of events) {
     const sid = e.sessionId ?? '(no-session)';
@@ -23,10 +28,15 @@ function groupBySession(events: HookEventRow[]): SessionGroup[] {
     list.push(e);
     m.set(sid, list);
   }
-  return [...m.entries()].map(([sessionId, evs]) => ({
-    sessionId,
-    events: [...evs].reverse(),
-  }));
+  return [...m.entries()].map(([sessionId, evs]) => {
+    const s = titles.get(sessionId);
+    return {
+      sessionId,
+      title: s?.title ?? null,
+      pendingTitle: s?.pendingTitle ?? null,
+      events: evs,
+    };
+  });
 }
 
 /** Fields of the daemon-side NormalizedHookPayload, tolerated when absent. */
@@ -74,10 +84,6 @@ const EMPTY_SET: ReadonlySet<string> = new Set();
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString();
-}
-
-function shortSessionId(sessionId: string): string {
-  return sessionId.length > 12 ? `${sessionId.slice(0, 12)}…` : sessionId;
 }
 
 function PayloadBlock({ label, value }: { label: string; value: unknown }) {
@@ -167,15 +173,32 @@ function SessionPanel({
   onToggleEvent: (id: number) => void;
 }) {
   const t = useT();
-  const first = group.events[0];
-  const last = group.events[group.events.length - 1];
+  const [copied, setCopied] = useState(false);
+  const first = group.events[0]; // 最新（倒序列表）
+  const last = group.events[group.events.length - 1]; // 最早
   const sources = [...new Set(group.events.map((e) => e.source))];
+
+  const copySessionId = (): void => {
+    void navigator.clipboard.writeText(group.sessionId).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
   return (
     <div className="rounded-md border border-white/[0.06] bg-white/[0.015]">
-      <button
+      {/* 折叠条：div+role=button（内部含复制按钮，不能嵌套 button） */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
-        title={group.sessionId}
-        className="w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-white/[0.04]"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-white/[0.04] cursor-pointer"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -187,16 +210,41 @@ function SessionPanel({
             {s}
           </Badge>
         ))}
-        <span className="font-mono text-xs text-neutral-300 truncate">
-          {shortSessionId(group.sessionId)}
+        {group.title && (
+          <span className="shrink-0 text-xs font-medium text-neutral-200">{group.title}</span>
+        )}
+        {group.pendingTitle && (
+          <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
+            {t('task.pendingTitle')}
+          </Badge>
+        )}
+        {/* 完整 session id（不截断） */}
+        <span
+          className={cn(
+            'font-mono whitespace-nowrap',
+            group.title ? 'text-[11px] text-neutral-500' : 'text-xs text-neutral-300',
+          )}
+        >
+          {group.sessionId}
         </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            copySessionId();
+          }}
+          title={copied ? t('task.copied') : t('task.copySessionId')}
+          className="shrink-0 p-0.5 rounded text-neutral-500 hover:text-neutral-200 hover:bg-white/[0.06]"
+        >
+          {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        </button>
         <span className="shrink-0 text-xs text-neutral-500">
           {t('task.events', { n: group.events.length })}
         </span>
         <span className="ml-auto shrink-0 text-[11px] text-neutral-600 font-mono">
-          {formatTime(first.createdAt)} – {formatTime(last.createdAt)}
+          {formatTime(last.createdAt)} – {formatTime(first.createdAt)}
         </span>
-      </button>
+      </div>
       {open && (
         <ul className="border-t border-white/[0.06] px-2 py-1.5 space-y-0.5">
           {group.events.map((e) => (
@@ -213,10 +261,25 @@ function SessionPanel({
   );
 }
 
-export function TaskView({ events }: { events: HookEventRow[] }) {
+export function TaskView({
+  events,
+  sessions,
+  onRefresh,
+}: {
+  events: HookEventRow[];
+  sessions: SessionRow[];
+  onRefresh: () => void;
+}) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(false);
-  const groups = groupBySession(events);
+  const [refreshing, setRefreshing] = useState(false);
+  const groups = groupBySession(events, sessions);
+
+  const handleRefresh = (): void => {
+    setRefreshing(true);
+    onRefresh();
+    window.setTimeout(() => setRefreshing(false), 600);
+  };
 
   // Sessions are open unless the user closes them. Before events load the
   // state stays null; the first non-empty render initializes everything but
@@ -265,20 +328,32 @@ export function TaskView({ events }: { events: HookEventRow[] }) {
           )}
           {t('task.heading', { events: events.length, sessions: groups.length })}
         </button>
-        {!collapsed && groups.length > 1 && (
+        {!collapsed && (
           <span className="ml-auto flex items-center gap-2 font-normal normal-case">
             <button
-              onClick={() => setAllSessions(true)}
-              className="text-[11px] text-neutral-500 hover:text-neutral-200"
+              onClick={handleRefresh}
+              title={t('task.refresh')}
+              className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-200"
             >
-              {t('task.expandAll')}
+              <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+              {t('task.refresh')}
             </button>
-            <button
-              onClick={() => setAllSessions(false)}
-              className="text-[11px] text-neutral-500 hover:text-neutral-200"
-            >
-              {t('task.collapseAll')}
-            </button>
+            {groups.length > 1 && (
+              <>
+                <button
+                  onClick={() => setAllSessions(true)}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-200"
+                >
+                  {t('task.expandAll')}
+                </button>
+                <button
+                  onClick={() => setAllSessions(false)}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-200"
+                >
+                  {t('task.collapseAll')}
+                </button>
+              </>
+            )}
           </span>
         )}
       </div>
