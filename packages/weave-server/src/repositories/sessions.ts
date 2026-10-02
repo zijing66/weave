@@ -88,16 +88,6 @@ export class SessionRepository {
     return false;
   }
 
-  /** hook 下发 sessionTitle 成功后，由 dispatcher 调用落定。 */
-  settlePendingTitle(sessionId: string, appliedTitle: string): void {
-    this.db
-      .prepare(
-        `UPDATE sessions SET title = ?, pending_title = NULL
-         WHERE session_id = ? AND (pending_title = ? OR pending_title IS NULL)`,
-      )
-      .run(appliedTitle, sessionId, appliedTitle);
-  }
-
   remove(sessionId: string): void {
     this.db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
   }

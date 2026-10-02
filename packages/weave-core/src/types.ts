@@ -206,6 +206,8 @@ export const InitResultSchema = z.object({
   /** Weave-owned files overwritten in place (.weave/, marked helpers) */
   updated: z.array(z.string()),
   errors: z.array(z.string()),
+  /** weave 按标记清扫移除的遗留生成物（如旧版 helper 脚本）。 */
+  removed: z.array(z.string()),
   summary: z.object({
     skillsCount: z.number(),
     commandsCount: z.number(),
@@ -251,13 +253,15 @@ export const FULL_COMPONENTS: InitComponents = {
 };
 
 export const DEFAULT_HOOKS: HooksConfig = {
+  // 采集面全开（hook-handler 恒 exit 0，只上报不动作）；是否响应由 daemon
+  // 规则开关决定，两者分离使开关语义单一。weave init --hooks 可裁剪。
   preToolUse: true,
   postToolUse: true,
-  userPromptSubmit: false,
+  userPromptSubmit: true,
   sessionStart: true,
-  stop: false,
-  subagentStop: false,
-  notification: false,
+  stop: true,
+  subagentStop: true,
+  notification: true,
   timeout: 5000,
   continueOnError: true,
 };

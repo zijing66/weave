@@ -51,6 +51,7 @@ async function main(): Promise<void> {
     dispatches: hookDispatches,
     bus: hookBus,
     projects,
+    sessions: hookSessions,
   });
   const watch = new WatchService(projects);
   watch.start();

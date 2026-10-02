@@ -168,6 +168,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       dispatches,
       bus,
       projects,
+      sessions,
     });
     server = createWeaveServer({
       projects,

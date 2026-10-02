@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, writeFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, stat, readdir, unlink } from 'node:fs/promises';
 import {
   type InitOptions,
   type InitResult,
@@ -49,6 +49,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   const skipped: string[] = [];
   const merged: string[] = [];
   const updated: string[] = [];
+  const removed: string[] = [];
   const errors: string[] = [];
 
   const components = resolveComponents(preset, options.components);
@@ -207,6 +208,23 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
         skipped.push(filePath);
       }
     }
+
+    // 标记清扫：helpers 目录里「内容带 weave 版本戳但不在本次生成清单」的文件
+    // 是旧版/改名遗留的生成物——按标记识别后移除；无标记的用户文件永不碰。
+    const keep = new Set(helperFiles.map(([filename]) => filename));
+    try {
+      for (const entry of await readdir(helpersDir, { withFileTypes: true })) {
+        if (!entry.isFile() || keep.has(entry.name)) continue;
+        const legacyPath = path.join(helpersDir, entry.name);
+        const content = await readTextIfPresent(legacyPath);
+        if (content !== null && content.includes(WEAVE_HELPER_MARKER)) {
+          await unlink(legacyPath);
+          removed.push(legacyPath);
+        }
+      }
+    } catch {
+      // helpers 目录读取失败（不存在/权限）不阻断 init
+    }
   }
 
   // ---- Step 8: Instruction file (CLAUDE.md / AGENTS.md) ----
@@ -288,7 +306,15 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     skillsCount: templateRegistry.getByCategory('skill').length,
     commandsCount: templateRegistry.getByCategory('command').length,
     agentsCount: templateRegistry.getByCategory('agent').length,
-    hooksEnabled: [hooks.preToolUse, hooks.postToolUse, hooks.userPromptSubmit, hooks.sessionStart]
+    hooksEnabled: [
+      hooks.preToolUse,
+      hooks.postToolUse,
+      hooks.userPromptSubmit,
+      hooks.sessionStart,
+      hooks.stop,
+      hooks.subagentStop,
+      hooks.notification,
+    ]
       .filter(Boolean).length,
   };
 
@@ -299,6 +325,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     skipped,
     merged,
     updated,
+    removed,
     errors,
     summary,
   };

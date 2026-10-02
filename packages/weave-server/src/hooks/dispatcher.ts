@@ -2,6 +2,7 @@ import type { HookRule } from '@weave/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookEventBus } from './bus.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import { readDaemonSettings } from '../daemon/settings.js';
@@ -58,6 +59,8 @@ export class HookDispatcher {
       dispatches: HookDispatchRepository;
       bus: HookEventBus;
       projects: ProjectRepository;
+      /** 会话标题双向 rename（session_title diff + pending 下发）。 */
+      sessions: SessionRepository;
       /** 测试注入；缺省用全局 fetch。 */
       fetchImpl?: typeof fetch;
     },
@@ -68,10 +71,22 @@ export class HookDispatcher {
       const settings = await readDaemonSettings();
       if (!settings.hooks.enabled) return {};
 
-      const rules = this.match(ctx);
-      if (rules.length === 0) return {};
-
+      // 会话 rename 双向（独立于规则匹配）：
+      // 读——payload 的 session_title（/rename 或 --name 后下一次上报）做 diff 采纳；
+      // 写——dashboard 挂的 pending_title 随响应下发（sessionTitle 与 /rename 同效），
+      // 生效确认仍靠下一次上报的 reported title（不乐观落定，避免新旧标题打架）。
       const outcome: IngestOutcome = {};
+      if (ctx.sessionId) {
+        this.deps.sessions.touch(ctx.sessionId, ctx.project.id); // 幂等 upsert
+        const reported = extractReportedTitle(ctx.payload);
+        if (reported !== null) this.deps.sessions.applyReportedTitle(ctx.sessionId, reported);
+        const pending = this.deps.sessions.getBySessionId(ctx.sessionId)?.pendingTitle;
+        if (pending) outcome.sessionTitle = pending;
+      }
+
+      const rules = this.match(ctx);
+      if (rules.length === 0) return outcome;
+
       const injected: string[] = [];
       const now = Date.now();
 
@@ -272,4 +287,12 @@ export class HookDispatcher {
       if (now - ts >= DEDUPE_WINDOW_MS) this.recentPool.delete(key);
     }
   }
+}
+
+/** payload.raw 中的自定义会话标题（SessionStart / UserPromptSubmit 携带）。 */
+function extractReportedTitle(payload: NormalizedHookPayload): string | null {
+  const raw = payload.raw;
+  if (typeof raw !== 'object' || raw === null) return null;
+  const title = (raw as Record<string, unknown>)['session_title'];
+  return typeof title === 'string' && title.length > 0 ? title : null;
 }

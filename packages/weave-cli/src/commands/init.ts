@@ -1,5 +1,6 @@
 import {
   type Preset,
+  type HooksConfig,
   PresetSchema,
   logger,
   formatTable,
@@ -9,6 +10,34 @@ import { executeInit } from '../init/executor.js';
 import { registerProject } from '@weave/server';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
+
+/** 可经 --hooks 裁剪的采集事件（与 settings-gen 输出一一对应）。 */
+const HOOK_KEYS = [
+  'preToolUse',
+  'postToolUse',
+  'userPromptSubmit',
+  'sessionStart',
+  'stop',
+  'subagentStop',
+  'notification',
+] as const;
+
+/**
+ * 解析 `--hooks` 裁剪 flag：
+ * - 空/缺省 → `{}`（全部取默认值，即全开）
+ * - `none` → 全关
+ * - 逗号列表 → 只开列出的事件（未列出的关）
+ */
+function parseHooksFlag(raw: string): Partial<HooksConfig> {
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
+  const allOff = Object.fromEntries(HOOK_KEYS.map((k) => [k, false])) as Partial<HooksConfig>;
+  if (trimmed === 'none') return allOff;
+  const listed = new Set(trimmed.split(',').map((s) => s.trim()).filter(Boolean));
+  const unknown = [...listed].filter((k) => !(HOOK_KEYS as readonly string[]).includes(k));
+  if (unknown.length > 0) logger.warn(t('init.hooksUnknownKeys', { keys: unknown.join(', ') }));
+  return Object.fromEntries(HOOK_KEYS.map((k) => [k, listed.has(k)])) as Partial<HooksConfig>;
+}
 
 export const initCommand: Command = {
   name: 'init',
@@ -42,6 +71,12 @@ export const initCommand: Command = {
       type: 'string',
       default: process.cwd(),
     },
+    {
+      name: 'hooks',
+      description: 'flag.init.hooks',
+      type: 'string',
+      default: '',
+    },
   ],
 
   async action(ctx) {
@@ -63,7 +98,7 @@ export const initCommand: Command = {
         interactive,
         preset,
         components,
-        hooks: {},
+        hooks: parseHooksFlag(String(ctx.flags.hooks ?? '')),
         skills: {},
         commands: {},
         agents: {},
@@ -98,6 +133,9 @@ export const initCommand: Command = {
       }
       if (result.updated.length > 0) {
         logger.dim(t('init.refreshed', { count: result.updated.length }));
+      }
+      if (result.removed.length > 0) {
+        logger.dim(t('init.removed', { count: result.removed.length }));
       }
       if (result.skipped.length > 0) {
         logger.dim(t('init.skipped', { count: result.skipped.length }));

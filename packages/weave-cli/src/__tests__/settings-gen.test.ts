@@ -31,9 +31,16 @@ describe('generateSettingsJson', () => {
     });
     expect(settings.hooks).toBeDefined();
     const hooks = settings.hooks as Record<string, unknown>;
-    expect(Object.keys(hooks)).toContain('PreToolUse');
-    expect(Object.keys(hooks)).toContain('PostToolUse');
-    expect(Object.keys(hooks)).toContain('SessionStart');
+    // 采集面全集（7 事件）
+    expect(Object.keys(hooks).sort()).toEqual([
+      'Notification',
+      'PostToolUse',
+      'PreToolUse',
+      'SessionStart',
+      'Stop',
+      'SubagentStop',
+      'UserPromptSubmit',
+    ]);
   });
 
   it('omits hooks when helpers are disabled', () => {
@@ -46,6 +53,28 @@ describe('generateSettingsJson', () => {
     expect(settings.hooks).toBeUndefined();
   });
 
+  it('emits an empty hooks object when every event is trimmed', () => {
+    const allOff = {
+      preToolUse: false,
+      postToolUse: false,
+      userPromptSubmit: false,
+      sessionStart: false,
+      stop: false,
+      subagentStop: false,
+      notification: false,
+      timeout: 5000,
+      continueOnError: true,
+    };
+    const settings = generateSettingsJson({
+      components: FULL_COMPONENTS,
+      hooks: allOff,
+      platform: unixPlatform,
+      helpersDir: '/proj/.claude/helpers',
+    });
+    // 空对象也写（键存在 = merge 时按标记清扫 weave 旧组）
+    expect(settings.hooks).toEqual({});
+  });
+
   it('respects per-hook toggles', () => {
     const settings = generateSettingsJson({
       components: FULL_COMPONENTS,
@@ -53,8 +82,12 @@ describe('generateSettingsJson', () => {
       platform: unixPlatform,
       helpersDir: '/proj/.claude/helpers',
     });
-    // all hooks disabled → hooks field omitted entirely
-    expect(settings.hooks).toBeUndefined();
+    const hooks = settings.hooks as Record<string, unknown>;
+    expect(hooks.PreToolUse).toBeUndefined();
+    expect(hooks.PostToolUse).toBeUndefined();
+    expect(hooks.SessionStart).toBeUndefined();
+    expect(hooks.Stop).toBeDefined();
+    expect(hooks.SubagentStop).toBeDefined();
   });
 
   it('adds deny rules for sensitive files', () => {
@@ -175,6 +208,64 @@ describe('mergeSettingsJson', () => {
     const once = mergeSettingsJson({ hooks: { PreToolUse: [userGroup] } }, generated());
     const twice = mergeSettingsJson(once, generated());
     expect(twice).toEqual(once);
+  });
+
+  it('removes a stale weave group from an event no longer generated (marker sweep)', () => {
+    // 曾经生成过 Notification 的 weave 组；本次生成裁剪掉了该事件
+    const staleWeaveGroup = {
+      matcher: '*',
+      hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/hook-handler.cjs"' }],
+    };
+    const userGroup = { matcher: 'Bash', hooks: [{ type: 'command', command: 'node /user/audit.cjs' }] };
+    const trimmed = generateSettingsJson({
+      components: FULL_COMPONENTS,
+      hooks: { ...DEFAULT_HOOKS, notification: false },
+      platform: unixPlatform,
+      helpersDir: '/proj/.claude/helpers',
+    });
+    const merged = mergeSettingsJson(
+      { hooks: { Notification: [staleWeaveGroup], Stop: [userGroup, staleWeaveGroup] } },
+      trimmed,
+    );
+    const hooks = merged.hooks as Record<string, unknown[] | undefined>;
+    // 未生成的事件：weave 组被清，事件键只剩用户组
+    expect(hooks.Notification).toBeUndefined();
+    // 生成的事件：weave 组清后重新并入本次生成，用户组仍在最前
+    expect(hooks.Stop![0]).toBe(userGroup);
+    expect(hooks.Stop).toHaveLength(2);
+    expect((hooks.Stop![1] as { hooks: Array<{ command: string }> }).hooks[0]!.command).toContain(
+      '/proj/.claude/helpers/hook-handler.cjs',
+    );
+  });
+
+  it('clears all weave groups when the new generation has an empty hooks object', () => {
+    const staleWeaveGroup = {
+      matcher: '*',
+      hooks: [{ type: 'command', command: 'node "/old/.claude/helpers/hook-handler.cjs"' }],
+    };
+    const userGroup = { matcher: '*', hooks: [{ type: 'command', command: 'node /user/x.cjs' }] };
+    const empty = generateSettingsJson({
+      components: FULL_COMPONENTS,
+      hooks: {
+        preToolUse: false,
+        postToolUse: false,
+        userPromptSubmit: false,
+        sessionStart: false,
+        stop: false,
+        subagentStop: false,
+        notification: false,
+        timeout: 5000,
+        continueOnError: true,
+      },
+      platform: unixPlatform,
+      helpersDir: '/proj/.claude/helpers',
+    });
+    const merged = mergeSettingsJson(
+      { hooks: { PreToolUse: [staleWeaveGroup, userGroup] } },
+      empty,
+    );
+    const hooks = merged.hooks as Record<string, unknown[]>;
+    expect(hooks.PreToolUse).toEqual([userGroup]);
   });
 
   it('leaves a non-array hooks event untouched', () => {
