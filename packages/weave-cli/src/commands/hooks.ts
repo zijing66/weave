@@ -87,6 +87,26 @@ async function toggle(context: CommandContext, enabled: boolean): Promise<void> 
   }
 }
 
+interface PluginRow {
+  id: string;
+  name: string;
+  version: string;
+  status: 'active' | 'rejected' | 'disabled';
+  scope: string;
+  ruleCount: number;
+  error?: string;
+}
+
+async function fetchPlugins(): Promise<PluginRow[]> {
+  const handle = await ensureDaemonRunning();
+  const res = await fetch(`http://127.0.0.1:${handle.port}/hooks/plugins`, {
+    headers: { authorization: `Bearer ${handle.token}` },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const data = (await res.json()) as { plugins: PluginRow[] };
+  return data.plugins;
+}
+
 export const hooksCommand: Command = {
   name: 'hooks',
   description: 'cmd.hooks.desc',
@@ -137,6 +157,43 @@ export const hooksCommand: Command = {
       name: 'disable',
       description: 'cmd.hooks.disable.desc',
       action: (context) => toggle(context, false),
+    },
+    {
+      name: 'plugins',
+      description: 'cmd.hooks.plugins.desc',
+      async action() {
+        try {
+          const plugins = await fetchPlugins();
+          if (plugins.length === 0) {
+            console.log(t('out.hooks.plugins.empty'));
+            return;
+          }
+          const rows = plugins.map((p) => [
+            p.status === 'active' ? '●' : p.status === 'disabled' ? '○' : '✗',
+            p.id,
+            p.version,
+            p.scope,
+            String(p.ruleCount),
+            p.error ? `${p.name} (${p.error})` : p.name,
+          ]);
+          console.log(
+            renderTable(
+              [
+                t('out.hooks.col.status'),
+                t('out.hooks.plugins.col.id'),
+                t('out.hooks.plugins.col.version'),
+                t('out.hooks.plugins.col.scope'),
+                t('out.hooks.plugins.col.rules'),
+                t('out.hooks.plugins.col.name'),
+              ],
+              rows,
+            ),
+          );
+        } catch (err) {
+          console.error(t('out.hooks.failed', { error: err instanceof Error ? err.message : String(err) }));
+          process.exit(1);
+        }
+      },
     },
   ],
 };

@@ -139,7 +139,7 @@ export const WEAVE_PLUGIN_MANIFEST = 'weave-plugin.json';
 export const PluginRuleEntrySchema = HookRuleSchema.omit({
   id: true,
   projectId: true,
-}).extend({ enabled: z.boolean().optional() });
+}).extend({ enabled: z.boolean().optional(), priority: z.number().int().optional() });
 export type PluginRuleEntry = z.infer<typeof PluginRuleEntrySchema>;
 
 export const WeavePluginManifestSchema = z.object({

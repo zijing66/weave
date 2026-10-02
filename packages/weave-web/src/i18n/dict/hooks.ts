@@ -104,6 +104,16 @@ export const hooksZh = {
   'hooks.renameTip': '双击标题或点铅笔改名',
   'hooks.renamePlaceholder': '会话标题',
   'hooks.pendingTitle': '待生效',
+
+  // —— 插件区段（SPI）——
+  'hooks.plugins.title': '插件',
+  'hooks.plugins.hint': '放在约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
+  'hooks.plugins.empty':
+    '暂无插件——把插件目录放入全局 weave/plugins/ 或项目 .weave/plugins/ 即自动加载。',
+  'hooks.plugins.rules': '{n} 条规则',
+  'hooks.plugins.toggleTip': '启停该插件的全部规则（规则级开关保留）',
+  'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
+  'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
 };
 
 export const hooksEn: Record<keyof typeof hooksZh, string> = {
@@ -211,4 +221,14 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.renameTip': 'Double-click the title or hit the pencil to rename',
   'hooks.renamePlaceholder': 'Session title',
   'hooks.pendingTitle': 'Pending apply',
+
+  // —— Plugins section (SPI) ——
+  'hooks.plugins.title': 'Plugins',
+  'hooks.plugins.hint': 'Drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
+  'hooks.plugins.empty':
+    'No plugins yet — drop a plugin directory into the global weave/plugins/ or the project .weave/plugins/.',
+  'hooks.plugins.rules': '{n} rules',
+  'hooks.plugins.toggleTip': 'Enable/disable all rules of this plugin (per-rule switches are kept)',
+  'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
+  'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
 };

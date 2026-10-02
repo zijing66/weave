@@ -124,6 +124,22 @@ export interface HookRule {
   timeoutMs: number;
   /** 是否落 hook_dispatches（log 默认 false）。 */
   record: boolean;
+  /** 来源标记（插件规则显示徽标用；旧服务端缺省视为 user）。 */
+  origin?: 'user' | 'plugin' | 'builtin';
+  pluginId?: string | null;
+}
+
+/** mirror of `LoadedPluginInfo` in packages/weave-server/src/hooks/plugin-loader.ts。 */
+export interface HookPlugin {
+  id: string;
+  name: string;
+  version: string;
+  dir: string;
+  scope: 'builtin' | 'global' | 'project';
+  projectId: number | null;
+  status: 'active' | 'rejected' | 'disabled';
+  error?: string;
+  ruleCount: number;
 }
 
 /** 创建/更新规则的请求体（服务端 zod CreateRuleBody / UpdateRuleBody）。 */
@@ -625,6 +641,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }).then((r) => r.rule),
+  /** SPI 扫描的插件列表（内置预设/全局/项目三根）。 */
+  listHookPlugins: (): Promise<HookPlugin[]> =>
+    apiFetch<{ plugins: HookPlugin[] }>('/hooks/plugins').then((r) => r.plugins),
+  /** 插件级开关（级联启停其全部规则）。 */
+  toggleHookPlugin: (id: string, enabled: boolean): Promise<void> =>
+    apiFetch<{ ok: boolean }>(`/hooks/plugins/${encodeURIComponent(id)}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }).then(() => undefined),
   listHookDispatches: (q?: {
     ruleId?: string;
     status?: HookDispatchStatus;

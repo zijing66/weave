@@ -26,6 +26,8 @@ import {
 } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { HooksPluginsSection } from '@/components/HooksPluginsSection';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -343,40 +345,7 @@ const nodeTypes = {
   ph: PlaceholderNode,
 };
 
-/** macOS 风格的迷你开关（规则节点 + 规则列表共用）。 */
-function Switch({
-  checked,
-  onChange,
-  title,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  title: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onChange(!checked);
-      }}
-      className={cn(
-        'nodrag relative h-4 w-7 shrink-0 rounded-full transition-colors duration-200',
-        checked ? 'bg-emerald-500/80' : 'bg-neutral-600',
-      )}
-    >
-      <span
-        className={cn(
-          'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all duration-200',
-          checked ? 'left-3.5' : 'left-0.5',
-        )}
-      />
-    </button>
-  );
-}
+// macOS 风格迷你开关已提炼到 ui/switch.tsx（与插件区段共用）。
 
 // ---------------------------------------------------------------------------
 // 链路图布局（静态：列 x = 0/320/640/960，行 y 递增 100）
@@ -918,6 +887,17 @@ export function HooksPanel({
           )}
         </button>
       </div>
+
+      {/* 插件区段（SPI 扫描：内置预设/全局/项目三根，热重载自动刷新） */}
+      <Card>
+        <CardHeader className="flex-row items-center gap-2 space-y-0">
+          <CardTitle className="text-sm">{t('hooks.plugins.title')}</CardTitle>
+          <span className="text-[11px] text-neutral-500">{t('hooks.plugins.hint')}</span>
+        </CardHeader>
+        <CardContent className="space-y-1">
+          <HooksPluginsSection />
+        </CardContent>
+      </Card>
 
       {/* 链路图：事件源 → 规则 → 处理器，独立会话列 */}
       <Card>

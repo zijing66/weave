@@ -21,6 +21,7 @@ export const zh = {
   'cmd.hooks.list.desc': '列出全部 hook 规则',
   'cmd.hooks.enable.desc': '启用指定规则',
   'cmd.hooks.disable.desc': '禁用指定规则',
+  'cmd.hooks.plugins.desc': '列出已加载的插件（SPI 扫描结果）',
   'cmd.status.desc': '查看当前 harness 状态',
   'cmd.daemon.desc': '管理后台守护进程（start、stop、status）',
   'cmd.daemon.start.desc': '在后台启动守护进程（不开浏览器——见 `weave dashboard`）',
@@ -109,6 +110,13 @@ export const zh = {
   'out.hooks.ambiguous': '规则 ID 前缀不唯一：{id}',
   'out.hooks.idRequired': '请提供规则 ID：weave hooks enable|disable <id>',
   'out.hooks.failed': '请求 daemon 失败：{error}',
+  'out.hooks.plugins.empty':
+    '暂无插件——把插件目录放入 <configDir>/weave/plugins/ 或项目 .weave/plugins/ 即自动识别（见 docs/PLUGIN-SPEC.md）。',
+  'out.hooks.plugins.col.id': 'ID',
+  'out.hooks.plugins.col.version': '版本',
+  'out.hooks.plugins.col.scope': '来源',
+  'out.hooks.plugins.col.rules': '规则数',
+  'out.hooks.plugins.col.name': '名称',
   'init.hooksUnknownKeys': '已忽略未知的 hooks 事件名：{keys}',
   'init.removed': '  已按标记清理 {count} 个遗留生成物。\n',
   // --- harness 健康检查 message / fix ---
