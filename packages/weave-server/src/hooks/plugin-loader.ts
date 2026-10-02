@@ -56,6 +56,8 @@ export type PluginLoadStatus = 'active' | 'rejected' | 'disabled';
 export interface PluginManager {
   list(): LoadedPluginInfo[];
   setPluginEnabled(pluginId: string, enabled: boolean): boolean;
+  /** 重扫全部已登记根（安装/卸载后立即生效，不等热重载防抖）。 */
+  reloadAll(): Promise<void>;
 }
 
 export interface LoadedPluginInfo {
@@ -197,9 +199,15 @@ export class WeavePluginLoader implements PluginHost {
     return this.watchStop;
   }
 
+  /** 重扫全部已登记根（安装/卸载 API 调用；不等热重载防抖窗口）。 */
+  async reloadAll(): Promise<void> {
+    for (const [root, meta] of [...this.roots]) {
+      await this.loadRoot(root, meta.scope, meta.projectId).catch(() => {});
+    }
+  }
+
   /** 插件级开关：写 plugin_states 并级联启停其全部规则（保留规则级差异）。 */
-  setPluginEnabled(pluginId: string, enabled: boolean): boolean {
-    const info = this.plugins.get(pluginId);
+  setPluginEnabled(pluginId: string, enabled: boolean): boolean {    const info = this.plugins.get(pluginId);
     if (!info) return false;
     this.deps.states.setEnabled(pluginId, enabled);
     for (const rule of this.deps.rules.listByPlugin(pluginId)) this.deps.rules.setEnabled(rule.id, enabled);

@@ -189,3 +189,14 @@ export {
  * spawn the correct entry either way.
  */
 export const daemonEntryUrl = new URL('./daemon/entry.ts', import.meta.url).href;
+
+// 插件分发通道（A3）：CLI 的 weave plugins install/uninstall/export/search 直调。
+export {
+  installPlugin,
+  uninstallPlugin,
+  exportPlugin,
+  searchPlugins,
+  globalPluginRoot,
+  isGitSource,
+} from './hooks/plugin-installer.js';
+export type { InstallResult, PluginIndexEntry } from './hooks/plugin-installer.js';

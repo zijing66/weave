@@ -19,6 +19,9 @@ const SCOPE_STYLES: Record<HookPlugin['scope'], string> = {
 export function HooksPluginsSection() {
   const t = useT();
   const [plugins, setPlugins] = useState<HookPlugin[] | null>(null);
+  const [installSrc, setInstallSrc] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -46,13 +49,40 @@ export function HooksPluginsSection() {
     }
   };
 
+  const install = async (): Promise<void> => {
+    const src = installSrc.trim();
+    if (!src || installing) return;
+    setInstalling(true);
+    setInstallMsg(null);
+    try {
+      const result = await api.installHookPlugin(src);
+      setInstallMsg(t('hooks.plugins.installOk', { id: result.installed.map((p) => p.id).join(', ') }));
+      setInstallSrc('');
+      refresh();
+    } catch (e) {
+      setInstallMsg(t('hooks.plugins.installFail', { error: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const uninstall = async (p: HookPlugin): Promise<void> => {
+    if (!window.confirm(t('hooks.plugins.uninstallConfirm', { id: p.id }))) return;
+    try {
+      await api.uninstallHookPlugin(p.id);
+      refresh();
+    } catch {
+      // 失败保持原状
+    }
+  };
+
   if (plugins === null) return null;
-  if (plugins.length === 0) {
-    return <p className="text-xs text-neutral-600">{t('hooks.plugins.empty')}</p>;
-  }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
+      {plugins.length === 0 && (
+        <p className="text-xs text-neutral-600">{t('hooks.plugins.empty')}</p>
+      )}
       {plugins.map((p) => (
         <div
           key={p.id}
@@ -80,7 +110,15 @@ export function HooksPluginsSection() {
               {p.error}
             </span>
           )}
-          <span className="ml-auto shrink-0">
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void uninstall(p)}
+              title={t('hooks.plugins.uninstallTip')}
+              className="rounded px-1 text-[11px] text-neutral-600 hover:text-red-400"
+            >
+              ✕
+            </button>
             <Switch
               checked={p.status !== 'disabled'}
               onChange={(v) => void toggle(p, v)}
@@ -93,7 +131,29 @@ export function HooksPluginsSection() {
           </span>
         </div>
       ))}
-      <p className="flex items-center gap-1 pt-0.5 text-[10px] text-neutral-600">
+
+      {/* 安装：粘贴本地目录或 git URL */}
+      <div className="flex items-center gap-1.5">
+        <input
+          value={installSrc}
+          onChange={(e) => setInstallSrc(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void install();
+          }}
+          placeholder={t('hooks.plugins.installPlaceholder')}
+          className="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-neutral-950/60 px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-blue-500/50 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => void install()}
+          disabled={installing || !installSrc.trim()}
+          className="shrink-0 rounded-md bg-blue-600/80 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+        >
+          {installing ? t('hooks.plugins.installing') : t('hooks.plugins.install')}
+        </button>
+      </div>
+      {installMsg && <p className="text-[11px] text-neutral-500">{installMsg}</p>}
+      <p className="flex items-center gap-1 text-[10px] text-neutral-600">
         <RotateCw className="h-3 w-3" />
         {t('hooks.plugins.hotReload')}
       </p>

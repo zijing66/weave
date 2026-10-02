@@ -7,6 +7,7 @@ import {
   HookDispatchStatusSchema,
 } from '@weave/core';
 import type { WeaveServerDeps } from './server.js';
+import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -33,6 +34,8 @@ const ToggleBody = z.object({ enabled: z.boolean() });
 const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
+
+const InstallBody = z.object({ src: z.string().min(1) });
 
 export async function handleHooksRoutes(
   req: IncomingMessage,
@@ -135,12 +138,45 @@ export async function handleHooksRoutes(
     return true;
   }
 
-  // ---- 插件管理面（SPI 加载结果 + 插件级开关）----
+  // ---- 插件管理面（SPI 加载结果 + 插件级开关 + 安装/卸载）----
   if (pathname === '/hooks/plugins') {
     if (req.method === 'GET') {
       sendJson(200, { plugins: deps.hookPlugins?.list() ?? [] });
       return true;
     }
+    if (req.method === 'POST') {
+      // 安装：body { src } = 本地路径 | git URL → 复制进全局插件根 → 立即重扫
+      if (!deps.hookPlugins) {
+        sendJson(503, { error: 'Plugin loader unavailable' });
+        return true;
+      }
+      try {
+        const body = InstallBody.parse(await readJson());
+        const result = await installPlugin(body.src);
+        await deps.hookPlugins.reloadAll();
+        sendJson(201, result);
+      } catch (err) {
+        sendJson(400, { error: err instanceof Error ? err.message : 'Install failed' });
+      }
+      return true;
+    }
+  }
+
+  const pluginUninstallMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/uninstall$/);
+  if (pluginUninstallMatch && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    const id = decodeURIComponent(pluginUninstallMatch[1]!);
+    const removed = await uninstallPlugin(id);
+    if (!removed) {
+      sendJson(404, { error: 'Plugin directory not found' });
+      return true;
+    }
+    await deps.hookPlugins.reloadAll();
+    sendJson(200, { ok: true });
+    return true;
   }
 
   const pluginToggleMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/toggle$/);

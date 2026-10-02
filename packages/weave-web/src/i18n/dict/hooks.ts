@@ -114,6 +114,13 @@ export const hooksZh = {
   'hooks.plugins.toggleTip': '启停该插件的全部规则（规则级开关保留）',
   'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
   'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
+  'hooks.plugins.installPlaceholder': '粘贴本地目录或 git URL 后回车安装',
+  'hooks.plugins.install': '安装',
+  'hooks.plugins.installing': '安装中…',
+  'hooks.plugins.installOk': '已安装：{id}',
+  'hooks.plugins.installFail': '安装失败：{error}',
+  'hooks.plugins.uninstallTip': '卸载插件（删除目录）',
+  'hooks.plugins.uninstallConfirm': '确定卸载插件 {id}？其规则将被级联移除。',
 };
 
 export const hooksEn: Record<keyof typeof hooksZh, string> = {
@@ -231,4 +238,11 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.plugins.toggleTip': 'Enable/disable all rules of this plugin (per-rule switches are kept)',
   'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
   'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
+  'hooks.plugins.installPlaceholder': 'Paste a local directory or git URL, press Enter to install',
+  'hooks.plugins.install': 'Install',
+  'hooks.plugins.installing': 'Installing…',
+  'hooks.plugins.installOk': 'Installed: {id}',
+  'hooks.plugins.installFail': 'Install failed: {error}',
+  'hooks.plugins.uninstallTip': 'Uninstall plugin (remove directory)',
+  'hooks.plugins.uninstallConfirm': 'Uninstall plugin {id}? Its rules will be cascade-removed.',
 };
