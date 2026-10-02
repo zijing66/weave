@@ -88,14 +88,21 @@ export interface CreateHookRuleBody {
 }
 
 /** inject 只允许挂在支持 additionalContext 的事件上（官方文档逐事件核实的白名单）。 */
-function validateHandler(source: HookRuleSource, handler: HandlerConfig): void {
-  if (handler.type !== 'inject') return;
-  if (source.kind !== 'claude-event') {
-    throw new Error('inject handler requires source.kind = "claude-event"');
+export function validateHandler(source: HookRuleSource, handler: HandlerConfig): void {
+  if (handler.type === 'inject') {
+    if (source.kind !== 'claude-event') {
+      throw new Error('inject handler requires source.kind = "claude-event"');
+    }
+    if (!(INJECTABLE_HOOK_EVENTS as readonly string[]).includes(source.event)) {
+      throw new Error(
+        `inject handler is not supported on event "${source.event}" (allowed: ${INJECTABLE_HOOK_EVENTS.join(', ')})`,
+      );
+    }
+    return;
   }
-  if (!(INJECTABLE_HOOK_EVENTS as readonly string[]).includes(source.event)) {
-    throw new Error(
-      `inject handler is not supported on event "${source.event}" (allowed: ${INJECTABLE_HOOK_EVENTS.join(', ')})`,
-    );
+  if (handler.type === 'plugin') {
+    if (source.kind !== 'claude-event') {
+      throw new Error('plugin handler requires source.kind = "claude-event"');
+    }
   }
 }

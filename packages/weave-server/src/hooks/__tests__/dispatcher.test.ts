@@ -325,4 +325,117 @@ describe('HookDispatcher', () => {
     expect(await dispatcher.onIngest(ctx())).toEqual({});
     expect(messages).toHaveLength(0);
   });
+
+  describe('plugin 处理器分支', () => {
+    /** 构造一个带 plugin host 的 dispatcher（复用既有 db/registry/bus）。 */
+    const makeDispatcher = (handlers: Record<string, (c: unknown) => unknown>, config: Record<string, unknown> = {}): HookDispatcher =>
+      new HookDispatcher({
+        registry,
+        dispatches,
+        bus,
+        projects,
+        sessions: new SessionRepository(db),
+        plugins: {
+          getHandler: (pluginId, type) => {
+            const fn = handlers[`${pluginId}:${type}`];
+            return fn ? { type, execute: fn } : undefined;
+          },
+          getConfig: () => config,
+        },
+      });
+
+    const createPluginRule = (timeoutMs?: number) =>
+      registry.create({
+        name: '插件规则',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PostToolUse' },
+        handler: { type: 'plugin', pluginId: 'demo', handlerType: 'lint' },
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      });
+
+    it('返回 prompt → 入池 pending（带防递归标记）+ dispatch.created', async () => {
+      createPluginRule();
+      const d = makeDispatcher({ 'demo:lint': () => ({ prompt: '插件指令' }) });
+      const outcome = await d.onIngest(ctx());
+      expect(outcome.additionalContext).toBeUndefined();
+
+      const rows = dispatches.list();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ status: 'pending', mode: 'auto' });
+      expect(rows[0].prompt).toContain('插件指令');
+      expect(rows[0].prompt).toContain(DISPATCH_MARKER);
+      expect(messages.some((m) => m.kind === 'dispatch.created')).toBe(true);
+    });
+
+    it('返回 additionalContext（白名单事件）→ 注入响应体；非白名单事件 → 丢弃', async () => {
+      createPluginRule();
+      const d = makeDispatcher({ 'demo:lint': () => ({ additionalContext: '插件注入' }) });
+      const outcome = await d.onIngest(ctx());
+      expect(outcome.additionalContext).toContain('插件注入');
+
+      // PreToolUse 规则（plugin 类型允许非白名单事件挂载）→ 注入内容丢弃
+      registry.create({
+        name: 'pre 规则',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PreToolUse' },
+        handler: { type: 'plugin', pluginId: 'demo', handlerType: 'lint' },
+      });
+      const off = await d.onIngest(ctx({ payload: payload({ eventType: 'PreToolUse' }) }));
+      expect(off.additionalContext).toBeUndefined();
+    });
+
+    it('ctx 收到 config 与 logger；handler 抛异常/超时 → 静默跳过，不影响 ingest', async () => {
+      createPluginRule(50);
+      let seen: unknown;
+      const d = makeDispatcher(
+        {
+          'demo:lint': (c) => {
+            seen = c;
+            throw new Error('boom');
+          },
+        },
+        { threshold: 3 },
+      );
+      const outcome = await d.onIngest(ctx());
+      expect(outcome).toEqual({}); // 异常吞掉，ingest 正常
+      expect(dispatches.list()).toHaveLength(0);
+      const ctxArg = seen as { config: Record<string, unknown>; logger: { error: (m: string) => void } };
+      expect(ctxArg.config).toEqual({ threshold: 3 });
+      expect(typeof ctxArg.logger.error).toBe('function');
+
+      // 超时路径
+      const slow = makeDispatcher({ 'demo:lint': () => new Promise((r) => setTimeout(r, 500)) });
+      expect(await slow.onIngest(ctx())).toEqual({});
+    });
+
+    it('60s 去重：同 rule × session 第二次不重复执行', async () => {
+      createPluginRule();
+      let calls = 0;
+      const d = makeDispatcher({
+        'demo:lint': () => {
+          calls++;
+          return { prompt: 'p' };
+        },
+      });
+      await d.onIngest(ctx());
+      await d.onIngest(ctx());
+      expect(calls).toBe(1);
+      expect(dispatches.list()).toHaveLength(1);
+    });
+
+    it('PluginHost 未注入 / handler 未注册 → 跳过不报错', async () => {
+      createPluginRule();
+      const noHost = new HookDispatcher({
+        registry,
+        dispatches,
+        bus,
+        projects,
+        sessions: new SessionRepository(db),
+      });
+      expect(await noHost.onIngest(ctx())).toEqual({});
+      const emptyHost = makeDispatcher({});
+      expect(await emptyHost.onIngest(ctx())).toEqual({});
+      expect(dispatches.list()).toHaveLength(0);
+    });
+  });
 });

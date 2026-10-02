@@ -54,10 +54,20 @@ CREATE TABLE IF NOT EXISTS hook_rules (
   handler    TEXT NOT NULL,
   timeout_ms INTEGER NOT NULL DEFAULT 10000,
   record     INTEGER NOT NULL DEFAULT 1,
+  origin     TEXT NOT NULL DEFAULT 'user',
+  plugin_id  TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_hook_rules_project ON hook_rules(project_id);
+CREATE INDEX IF NOT EXISTS idx_hook_rules_plugin ON hook_rules(plugin_id);
+
+CREATE TABLE IF NOT EXISTS plugin_states (
+  id         TEXT PRIMARY KEY,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  config     TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS hook_dispatches (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,5 +105,27 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  migrateHookRulesColumns(db);
   return db;
+}
+
+/**
+ * 无迁移基建下的列级兜底：`CREATE TABLE IF NOT EXISTS` 不会给既有库补列，
+ * hook_rules 的 origin/plugin_id（D3 插件来源标记）对旧库用
+ * `PRAGMA table_info` 探测 + `ALTER TABLE ADD COLUMN` 补上。
+ * 幂等：列已存在则跳过。
+ */
+function migrateHookRulesColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(hook_rules)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (!cols.has('origin')) {
+    db.exec("ALTER TABLE hook_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'");
+  }
+  if (!cols.has('plugin_id')) {
+    db.exec('ALTER TABLE hook_rules ADD COLUMN plugin_id TEXT');
+  }
 }

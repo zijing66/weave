@@ -13,12 +13,14 @@ import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
 import { HookRuleRepository } from '../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { ClaudeCodeAdapter } from '../hooks/adapter.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
+import { loadAllPlugins, type PluginHost } from '../hooks/plugin-loader.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
@@ -54,13 +56,33 @@ async function main(): Promise<void> {
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
   const hookBus = new HookEventBus();
+  const pluginHostHolder: PluginHost = {
+    getHandler: () => undefined,
+    getConfig: () => ({}),
+  };
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
     bus: hookBus,
     projects,
     sessions: hookSessions,
+    plugins: pluginHostHolder,
   });
+  {
+    const { loader } = await loadAllPlugins(
+      {
+        rules: new HookRuleRepository(db),
+        registry: hookRegistry,
+        states: new PluginStateRepository(db),
+      },
+      projects.list(),
+    );
+    pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
+    pluginHostHolder.getConfig = (id) => loader.getConfig(id);
+    const rejected = loader.list().filter((p) => p.status === 'rejected');
+    console.log(`[dev] plugins loaded: ${loader.list().length} (rejected: ${rejected.length})`);
+    for (const r of rejected) console.log(`[dev]   rejected ${r.id}: ${r.error}`);
+  }
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,

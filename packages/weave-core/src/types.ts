@@ -91,8 +91,20 @@ export const HandlerConfigSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('inject'), template: z.string().min(1) }),
   /** 只入池（status=pending），等 dashboard 复制 / 拖到会话执行。 */
   z.object({ type: z.literal('manual'), template: z.string().min(1) }),
+  /** 插件自定义处理器：dispatcher 按 pluginId:handlerType 定位动态加载的
+   * handler.mjs 并在同一条防线下执行（去重/超时/白名单/不影响 ingest）。 */
+  z.object({
+    type: z.literal('plugin'),
+    pluginId: z.string().min(1),
+    handlerType: z.string().min(1),
+    config: z.record(z.string(), z.unknown()).optional(),
+  }),
 ]);
 export type HandlerConfig = z.infer<typeof HandlerConfigSchema>;
+
+/** 规则来源标记（hook_rules.origin 列）：user=dashboard/CLI，plugin=插件目录，builtin=内置预设。 */
+export const HookRuleOriginSchema = z.enum(['user', 'plugin', 'builtin']);
+export type HookRuleOrigin = z.infer<typeof HookRuleOriginSchema>;
 
 export const HookRuleSchema = z.object({
   id: z.string().min(1),
@@ -108,8 +120,67 @@ export const HookRuleSchema = z.object({
   timeoutMs: z.number().int().positive().default(10_000),
   /** 是否落 hook_dispatches（log 默认 false）。 */
   record: z.boolean().default(true),
+  /** 来源标记；插件/预设规则由加载器 upsert，用户规则经 dashboard/CLI 创建。 */
+  origin: HookRuleOriginSchema.default('user'),
+  /** origin 为 plugin/builtin 时的插件 id；用户规则为 null。 */
+  pluginId: z.string().min(1).nullable().default(null),
 });
 export type HookRule = z.infer<typeof HookRuleSchema>;
+
+// ---- Weave 插件包规范（docs/PLUGIN-SPEC.md 的 schema 化，AI 按此生成插件目录）----
+
+/** 插件包 manifest 文件名（约定位于插件根目录）。 */
+export const WEAVE_PLUGIN_MANIFEST = 'weave-plugin.json';
+
+/**
+ * rules.json 的元素：完整 HookRule 去掉 id/projectId（加载器生成），
+ * enabled 可省略（默认 true，但用户在 dashboard 的开关改动会被保留）。
+ */
+export const PluginRuleEntrySchema = HookRuleSchema.omit({
+  id: true,
+  projectId: true,
+}).extend({ enabled: z.boolean().optional() });
+export type PluginRuleEntry = z.infer<typeof PluginRuleEntrySchema>;
+
+export const WeavePluginManifestSchema = z.object({
+  /** 规范版本；加载器只接受当前主版本。 */
+  manifestVersion: z.literal(1),
+  /** kebab-case 唯一 id（内置预设命名空间保留，用户同名插件 rejected）。 */
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+  name: z.string().min(1),
+  version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
+  description: z.string().optional(),
+  author: z.string().optional(),
+  engines: z.object({ weave: z.string().optional() }).optional(),
+  /** 规则文件（相对插件根目录的 posix 路径），元素须过 PluginRuleEntrySchema。 */
+  rules: z.array(z.string().min(1)).default([]),
+  /** 自定义处理器入口（相对路径；entry 由 loader 动态 import，路径必须留在插件目录内）。 */
+  handlers: z
+    .array(z.object({ type: z.string().min(1), entry: z.string().min(1) }))
+    .default([]),
+  /** 声明依赖的采集事件；未知事件名 → 加载 rejected。 */
+  requires: z.object({ events: z.array(z.string().min(1)).optional() }).optional(),
+  // ---- 扩展点（schema 先行，按批次落地消费方）----
+  /** ③ skills/commands/agents 模板路径（相对插件根目录）。 */
+  templates: z
+    .object({
+      skills: z.array(z.string().min(1)).optional(),
+      commands: z.array(z.string().min(1)).optional(),
+      agents: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
+  /** ④ MCP server 定义（init mcp-gen 合并，键=server 名）。 */
+  mcpServers: z.record(z.string(), z.unknown()).optional(),
+  /** ⑦ 事件流订阅（entry 导出 onEvent，daemon 转发 HookBus 帧）。 */
+  subscribe: z
+    .object({ events: z.array(z.string().min(1)), entry: z.string().min(1) })
+    .optional(),
+  /** ⑥ statusline 组件入口（后期）。 */
+  statusline: z.object({ entry: z.string().min(1) }).optional(),
+  /** 插件默认配置；用户经 plugin_states.config 覆写，合并后进 handler ctx.config。 */
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+export type WeavePluginManifest = z.infer<typeof WeavePluginManifestSchema>;
 
 export const HookDispatchStatusSchema = z.enum([
   'pending',

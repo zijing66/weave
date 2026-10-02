@@ -1,6 +1,8 @@
 import type { HookRule } from '@weave/core';
+import { INJECTABLE_HOOK_EVENTS } from '@weave/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
+import type { PluginHost, PluginHandler, PluginHandlerResult } from './plugin-loader.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookEventBus } from './bus.js';
@@ -61,6 +63,8 @@ export class HookDispatcher {
       projects: ProjectRepository;
       /** 会话标题双向 rename（session_title diff + pending 下发）。 */
       sessions: SessionRepository;
+      /** 插件宿主（plugin-loader）；缺省时 plugin 规则按无动作跳过。 */
+      plugins?: PluginHost;
       /** 测试注入；缺省用全局 fetch。 */
       fetchImpl?: typeof fetch;
     },
@@ -173,6 +177,52 @@ export class HookDispatcher {
             at: new Date().toISOString(),
           });
           void this.runWebhookAsync(rule, this.summary(rule, ctx), row.id);
+          continue;
+        }
+
+        if (rule.handler.type === 'plugin') {
+          // 插件处理器与 inject/manual 同防（60s 去重防递归、timeoutMs 超时、
+          // catch-all 不影响 ingest）；返回 prompt 入池、additionalContext 注入
+          // 但同样要求事件在白名单内。
+          const host = this.deps.plugins;
+          if (!host) continue;
+          const impl = host.getHandler(rule.handler.pluginId, rule.handler.handlerType);
+          if (!impl) continue;
+
+          const key = `${rule.id}:${ctx.sessionId ?? ''}`;
+          const last = this.recentPool.get(key);
+          if (last !== undefined && now - last < DEDUPE_WINDOW_MS) continue;
+          this.recentPool.set(key, now);
+          this.trimDedupe(now);
+
+          const result = await this.runPluginHandler(rule, ctx, host, impl);
+          if (!result) continue;
+          if (result.prompt) {
+            const row = this.deps.dispatches.insert({
+              ruleId: rule.id,
+              eventId: ctx.eventId,
+              sessionId: ctx.sessionId,
+              prompt: result.prompt + `\n${DISPATCH_MARKER}`,
+              status: 'pending',
+              mode: 'auto',
+            });
+            this.deps.bus.emit({
+              kind: 'dispatch.created',
+              ruleId: rule.id,
+              dispatchId: row.id,
+              status: 'pending',
+              mode: 'auto',
+              sessionId: ctx.sessionId,
+              at: row.startedAt,
+            });
+          }
+          if (
+            result.additionalContext &&
+            ctx.payload.eventType &&
+            (INJECTABLE_HOOK_EVENTS as readonly string[]).includes(ctx.payload.eventType)
+          ) {
+            injected.push(result.additionalContext);
+          }
         }
       }
 
@@ -206,6 +256,46 @@ export class HookDispatcher {
       }
       return true;
     });
+  }
+
+  /** 执行插件处理器：timeoutMs 竞速超时，任何异常/超时返回 undefined（不注入不入池）。 */
+  private async runPluginHandler(
+    rule: HookRule,
+    ctx: IngestContext,
+    host: PluginHost,
+    impl: PluginHandler,
+  ): Promise<PluginHandlerResult | undefined> {
+    if (rule.handler.type !== 'plugin') return undefined;
+    const { pluginId } = rule.handler;
+    const logger = {
+      debug: (msg: string) => console.debug(`[plugin:${pluginId}] ${msg}`),
+      info: (msg: string) => console.info(`[plugin:${pluginId}] ${msg}`),
+      warn: (msg: string) => console.warn(`[plugin:${pluginId}] ${msg}`),
+      error: (msg: string) => console.error(`[plugin:${pluginId}] ${msg}`),
+    };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const execution = Promise.resolve(
+        impl.execute({
+          event: ctx.payload,
+          rule,
+          config: host.getConfig(pluginId),
+          logger,
+        }),
+      );
+      const result = await Promise.race([
+        execution,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('plugin handler timeout')), rule.timeoutMs);
+        }),
+      ]);
+      if (result && typeof result === 'object') return result as PluginHandlerResult;
+      return undefined;
+    } catch {
+      return undefined; // 插件失败永不影响 ingest（与 catch-all 语义一致）
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private summary(rule: HookRule, ctx: IngestContext): EventSummary {
