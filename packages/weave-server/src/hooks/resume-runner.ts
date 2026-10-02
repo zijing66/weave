@@ -133,7 +133,17 @@ export class ResumeRunner {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       // 递归标记：子进程派生的后代也能识别「weave hook 发起」。
-      env: { ...process.env, WEAVE_HOOK_DISPATCH: '1' },
+      // 同时剥离 CLAUDE_CODE_CHILD_SESSION：daemon 可能启于某个 Claude Code
+      // 会话内（环境继承了 child-session 标记），resume 出的是正常会话——
+      // 带着标记会让新会话关闭 transcript 持久化（历史丢失）。
+      env: (() => {
+        const env: Record<string, string | undefined> = {
+          ...process.env,
+          WEAVE_HOOK_DISPATCH: '1',
+        };
+        delete env['CLAUDE_CODE_CHILD_SESSION'];
+        return env;
+      })(),
     };
     const child = this.spawnImpl(this.claudeBin, args, options);
     const active = this.active.get(sessionId);
