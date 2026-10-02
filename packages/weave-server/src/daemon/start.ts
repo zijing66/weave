@@ -9,6 +9,7 @@ import { ClaudeCodeAdapter } from '../hooks/adapter.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
+import { ResumeRunner } from '../hooks/resume-runner.js';
 import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -51,6 +52,12 @@ export function startDaemon(): void {
     projects,
     sessions: hookSessions,
   });
+  const hookRunner = new ResumeRunner({
+    dispatches: hookDispatches,
+    sessions: hookSessions,
+    projects,
+    bus: hookBus,
+  });
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -73,6 +80,7 @@ export function startDaemon(): void {
     hookSessions,
     hookBus,
     hookDispatcher,
+    hookRunner,
   });
 
   const shutdown = (): void => {

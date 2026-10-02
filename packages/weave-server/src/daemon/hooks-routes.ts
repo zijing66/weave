@@ -32,6 +32,8 @@ const ToggleBody = z.object({ enabled: z.boolean() });
 
 const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
+const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
+
 export async function handleHooksRoutes(
   req: IncomingMessage,
   res: ServerResponse,
@@ -151,6 +153,29 @@ export async function handleHooksRoutes(
         limit: Number.isFinite(limit) ? limit : undefined,
       }),
     });
+    return true;
+  }
+
+  // ---- 指令池 resume：spawn claude --resume 后立即返回（「已启动」语义）----
+  const runMatch = pathname.match(/^\/hooks\/dispatches\/(\d+)\/run$/);
+  if (runMatch && req.method === 'POST') {
+    if (!deps.hookRunner) {
+      sendJson(503, { error: 'Resume runner unavailable' });
+      return true;
+    }
+    let sessionId: string;
+    try {
+      sessionId = RunDispatchBody.parse(await readJson()).sessionId;
+    } catch (err) {
+      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const result = await deps.hookRunner.run(Number(runMatch[1]!), sessionId);
+    if (result.ok) {
+      sendJson(200, { ok: true, dispatchId: result.dispatchId });
+    } else {
+      sendJson(result.status, { error: result.error });
+    }
     return true;
   }
 
