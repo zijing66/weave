@@ -6,8 +6,13 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
+import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookAdapter } from '../hooks/adapter.js';
-import type { HookReport } from '../hooks/types.js';
+import type { HookReport, NormalizedHookPayload } from '../hooks/types.js';
+import type { HookRuleRegistry } from '../hooks/registry.js';
+import type { HookDispatcher } from '../hooks/dispatcher.js';
+import type { HookEventBus } from '../hooks/bus.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from '../install/scanner.js';
 import {
@@ -71,6 +76,7 @@ import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
+import { handleHooksRoutes } from './hooks-routes.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
   readDaemonSettings,
@@ -101,6 +107,17 @@ export interface WeaveServerDeps {
   staticDir?: string;
   /** Directory-opening backend for the project context menu; spied in tests. */
   opener?: ProjectOpener;
+  // ---- D3 hooks subsystem (all optional so existing tests can omit them) ----
+  /** In-memory rule index (match candidates + CRUD facade). */
+  hookRegistry?: HookRuleRegistry;
+  /** Dispatch (运行态) store. */
+  hookDispatches?: HookDispatchRepository;
+  /** Session titles (rename 双向). */
+  hookSessions?: SessionRepository;
+  /** Hook event bus — SSE subscribes alongside the watch service. */
+  hookBus?: HookEventBus;
+  /** Event dispatcher; when present, POST /hooks runs rules on the response path. */
+  hookDispatcher?: HookDispatcher;
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
@@ -175,11 +192,33 @@ async function handleRequest(
     }
     const input = adapter.normalize(report, project.id);
     const id = deps.hookEvents.insert(input);
+    // 会话 upsert：刷新 last_seen_at（rename 双向在 dispatcher/批3 中消费 session_title）。
+    if (deps.hookSessions && input.sessionId) {
+      deps.hookSessions.touch(input.sessionId, project.id);
+    }
+    // D3 分发：在响应路径上同步匹配规则——命中 inject 时把 additionalContext
+    // 放进响应体，由 hook-handler.cjs 输出给会话。失败降级为无动作（201 不变）。
+    let outcome: { additionalContext?: string; sessionTitle?: string } = {};
+    if (deps.hookDispatcher) {
+      let payload: NormalizedHookPayload;
+      try {
+        payload = JSON.parse(input.payload) as NormalizedHookPayload;
+      } catch {
+        payload = { eventType: input.eventType, toolName: null, toolInput: null, toolResponse: null, cwd: null, transcriptPath: null, raw: null };
+      }
+      outcome = await deps.hookDispatcher.onIngest({
+        eventId: id,
+        project,
+        sessionId: input.sessionId ?? null,
+        payload,
+      });
+    }
     sendJson(201, {
       id,
       projectId: project.id,
       source: input.source,
       eventType: input.eventType,
+      ...outcome,
     });
     return;
   }
@@ -197,6 +236,9 @@ async function handleRequest(
     }
     return true;
   };
+
+  // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。
+  if (await handleHooksRoutes(req, res, deps, pathname, url, isAuthed)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).
   const hooksMatch = pathname.match(/^\/projects\/(\d+)\/hooks$/);
@@ -953,7 +995,7 @@ async function handleRequest(
   sendJson(404, { error: 'Not found' });
 }
 
-/** Upgrade a response to an SSE stream subscribed to the watch service. */
+/** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
 function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerDeps): void {
   if (!deps.watch) {
     res.statusCode = 503;
@@ -969,12 +1011,23 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
   });
   res.write(': connected\n\n');
 
-  const unsubscribe = deps.watch.subscribe((e) => {
-    res.write(`data: ${JSON.stringify(e)}\n\n`);
-  });
+  const unsubscribes: Array<() => void> = [];
+  // 帧加 type 判别字段：旧前端忽略未知字段（asset 帧内容不变，向后兼容）。
+  unsubscribes.push(
+    deps.watch.subscribe((e) => {
+      res.write(`data: ${JSON.stringify({ type: 'asset', ...e })}\n\n`);
+    }),
+  );
+  if (deps.hookBus) {
+    unsubscribes.push(
+      deps.hookBus.subscribe((message) => {
+        res.write(`data: ${JSON.stringify({ type: 'hook', ...message })}\n\n`);
+      }),
+    );
+  }
 
   req.on('close', () => {
-    unsubscribe();
+    for (const unsubscribe of unsubscribes) unsubscribe();
   });
 }
 

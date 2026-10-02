@@ -282,6 +282,8 @@ export type Locale = 'zh-CN' | 'en';
 export interface DaemonSettings {
   terminal: TerminalSettings;
   locale: Locale;
+  /** mirror of packages/weave-server/src/daemon/settings.ts — 保持同步。 */
+  hooks: { enabled: boolean };
 }
 
 export interface TerminalPresetMeta {

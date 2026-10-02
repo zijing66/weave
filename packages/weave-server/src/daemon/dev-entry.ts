@@ -11,7 +11,13 @@ import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
+import { HookRuleRepository } from '../repositories/hook-rules.js';
+import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import { SessionRepository } from '../repositories/sessions.js';
 import { ClaudeCodeAdapter } from '../hooks/adapter.js';
+import { HookRuleRegistry } from '../hooks/registry.js';
+import { HookDispatcher } from '../hooks/dispatcher.js';
+import { HookEventBus } from '../hooks/bus.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
@@ -36,6 +42,16 @@ async function main(): Promise<void> {
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
   const adapters = [new ClaudeCodeAdapter()];
+  const hookRegistry = new HookRuleRegistry(new HookRuleRepository(db));
+  const hookDispatches = new HookDispatchRepository(db);
+  const hookSessions = new SessionRepository(db);
+  const hookBus = new HookEventBus();
+  const hookDispatcher = new HookDispatcher({
+    registry: hookRegistry,
+    dispatches: hookDispatches,
+    bus: hookBus,
+    projects,
+  });
   const watch = new WatchService(projects);
   watch.start();
   const staticDir = resolveStaticDir();
@@ -49,6 +65,11 @@ async function main(): Promise<void> {
     adapters,
     libraries,
     staticDir,
+    hookRegistry,
+    hookDispatches,
+    hookSessions,
+    hookBus,
+    hookDispatcher,
   });
 
   server.listen(port, DAEMON_HOST, () => {
