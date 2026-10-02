@@ -29,6 +29,7 @@ import {
   type FileAssetRow,
 } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
+import { HooksPanel } from '@/components/HooksPanel';
 import { type MainCategory } from '@/components/CategoryBar';
 import { Code2, PackageX } from 'lucide-react';
 
@@ -299,6 +300,8 @@ export function CategoryDetail({
             onOpenFile={onOpenFile}
           />
         ))}
+
+      {category === 'hooks' && <HooksPanel projectId={projectId} mode={mode} />}
 
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">

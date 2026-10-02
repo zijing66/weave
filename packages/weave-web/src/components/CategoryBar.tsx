@@ -8,10 +8,11 @@ import {
   Server,
   Terminal,
   Sparkles,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 
-export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization';
+export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization' | 'hooks';
 
 export const MAIN_CATEGORIES: {
   key: MainCategory;
@@ -26,6 +27,7 @@ export const MAIN_CATEGORIES: {
   // 资产 rather than implying it counts commands alone.
   { key: 'commands', labelKey: 'catbar.commands', icon: Terminal },
   { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
+  { key: 'hooks', labelKey: 'catbar.hooks', icon: Workflow },
 ];
 
 export interface CategoryBarData {
@@ -39,6 +41,8 @@ export interface CategoryBarData {
   outdatedSkills: number;
   /** Number of outdated MCP servers. */
   outdatedMcp: number;
+  /** Hook rules effective in the current view (global rules + own rules). */
+  hooksRules: number;
   /** Statusline source; null while not loaded (Claude card badge). */
   statuslineSource: 'global' | 'custom' | null;
 }
@@ -63,6 +67,8 @@ export function CategoryBar({
         return data.commands;
       case 'personalization':
         return 1; // the Claude statusline config is always present
+      case 'hooks':
+        return data.hooksRules;
     }
   };
 
@@ -118,6 +124,7 @@ export function CategoryBar({
                 key === 'mcp' && 'text-blue-400',
                 key === 'commands' && 'text-purple-400',
                 key === 'personalization' && 'text-cyan-400',
+                key === 'hooks' && 'text-amber-400',
               )}
             />
             {/* `flex-auto` (basis: auto) rather than `flex-1` (basis: 0) is
