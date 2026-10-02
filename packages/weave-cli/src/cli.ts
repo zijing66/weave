@@ -61,6 +61,9 @@ export class CLI {
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {
+    // CLI 可能启于 Claude Code 会话内：剥离 child-session 标记，防止传染给
+    // ensureDaemonRunning 拉起的 daemon（进而污染其派生的终端/子会话）。
+    delete process.env.CLAUDE_CODE_CHILD_SESSION;
     // 语言先于 help/错误解析：settings.json 的 locale（或 WEAVE_LOCALE）决定
     // 本次调用全部输出语言。
     await initCliLocale();
