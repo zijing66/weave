@@ -18,6 +18,7 @@ import { ClaudeCodeAdapter } from '../hooks/adapter.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
+import { ResumeRunner } from '../hooks/resume-runner.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
@@ -53,6 +54,12 @@ async function main(): Promise<void> {
     projects,
     sessions: hookSessions,
   });
+  const hookRunner = new ResumeRunner({
+    dispatches: hookDispatches,
+    sessions: hookSessions,
+    projects,
+    bus: hookBus,
+  });
   const watch = new WatchService(projects);
   watch.start();
   const staticDir = resolveStaticDir();
@@ -71,6 +78,7 @@ async function main(): Promise<void> {
     hookSessions,
     hookBus,
     hookDispatcher,
+    hookRunner,
   });
 
   server.listen(port, DAEMON_HOST, () => {
