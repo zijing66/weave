@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -6,22 +7,65 @@ import { useT } from '@/i18n/I18nProvider';
 import { Check, Loader2, X, Zap } from 'lucide-react';
 import type { ChainNode } from './build-session-chain';
 
-/** 事件节点：类型徽标 + 工具名 + 时间。 */
+/** 事件节点：类型徽标 + 工具名 + 时间；点击展开 payload 详情
+ * （收编原 TaskView EventRow 的查看能力——toolInput/toolResponse/cwd）。 */
 export function EventNode({ data }: NodeProps<ChainNode>) {
+  const [open, setOpen] = useState(false);
   if (!data.event || !data.detail) return null;
+  const d = data.detail;
+  const hasDetail =
+    d.toolName !== null ||
+    d.cwd !== null ||
+    d.transcriptPath !== null ||
+    d.toolInput !== null ||
+    d.toolResponse !== null;
+  const render = (value: unknown): string =>
+    typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? String(value));
   return (
-    <div className="w-56 rounded-lg border border-white/[0.08] bg-neutral-900/70 px-2.5 py-2 shadow-sm">
+    <div
+      onClick={() => hasDetail && setOpen((v) => !v)}
+      className={cn(
+        'w-56 cursor-pointer rounded-lg border border-white/[0.08] bg-neutral-900/70 px-2.5 py-2 shadow-sm nodrag',
+        open && 'border-white/[0.16]',
+      )}
+    >
       <div className="flex items-center gap-1.5">
         <Badge className={cn('shrink-0', EVENT_TYPE_STYLES[data.event.eventType])}>
           {data.event.eventType}
         </Badge>
         <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
-          {data.detail.toolName ?? '—'}
+          {d.toolName ?? '—'}
         </span>
         <span className="shrink-0 text-[10px] text-neutral-500">
           {formatTime(data.event.createdAt)}
         </span>
       </div>
+      {open && hasDetail && (
+        <div className="mt-1.5 space-y-1.5 border-t border-white/[0.06] pt-1.5">
+          {d.cwd && <p className="break-all text-[10px] text-neutral-500">cwd: {d.cwd}</p>}
+          {d.transcriptPath && (
+            <p className="break-all text-[10px] text-neutral-500">
+              transcript: {d.transcriptPath}
+            </p>
+          )}
+          {d.toolInput !== null && (
+            <div>
+              <p className="text-[9px] uppercase tracking-wide text-neutral-600">input</p>
+              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all text-[10px] text-neutral-400">
+                {render(d.toolInput)}
+              </pre>
+            </div>
+          )}
+          {d.toolResponse !== null && (
+            <div>
+              <p className="text-[9px] uppercase tracking-wide text-neutral-600">response</p>
+              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all text-[10px] text-neutral-400">
+                {render(d.toolResponse)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

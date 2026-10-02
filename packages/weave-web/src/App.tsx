@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import {
   api,
@@ -8,7 +8,6 @@ import {
   type AssetScope,
   type FileAssetCategory,
   type FileAssetTemplate,
-  type HookEventRow,
   type SessionRow,
   type HookRule,
   type McpServerConfig,
@@ -28,7 +27,6 @@ import { CategoryBar, type MainCategory, type CategoryBarData } from '@/componen
 import { CategoryDetail, type Mode } from '@/components/CategoryDetail';
 import { type FileAssetRow } from '@/components/FileAssetTree';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
-import { TaskView } from '@/components/TaskView';
 import { LibraryPanel } from '@/components/LibraryPanel';
 import { FileViewer } from '@/components/FileViewer';
 import { Resizer } from '@/components/Resizer';
@@ -42,8 +40,6 @@ const LEFT_MIN = 176;
 const LEFT_MAX = 320;
 const RIGHT_MIN = 260;
 const RIGHT_MAX = 440;
-const TASK_MIN = 96;
-const TASK_MAX = 520;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 export default function App() {
@@ -55,7 +51,6 @@ export default function App() {
   // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
   // when the global 文件资产 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
-  const [hooks, setHooks] = useState<HookEventRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   // All hook rules (global + per project) — drives the Hooks card count; the
   // panel refetches its own copy after every mutation.
@@ -96,13 +91,8 @@ export default function App() {
     const v = Number(localStorage.getItem('weave:col-right'));
     return Number.isFinite(v) && v > 0 ? clamp(v, RIGHT_MIN, RIGHT_MAX) : 288;
   });
-  const [taskH, setTaskH] = useState<number>(() => {
-    const v = Number(localStorage.getItem('weave:task-height'));
-    return Number.isFinite(v) && v > 0 ? clamp(v, TASK_MIN, TASK_MAX) : 176;
-  });
   useEffect(() => localStorage.setItem('weave:col-left', String(leftW)), [leftW]);
   useEffect(() => localStorage.setItem('weave:col-right', String(rightW)), [rightW]);
-  useEffect(() => localStorage.setItem('weave:task-height', String(taskH)), [taskH]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -168,7 +158,6 @@ export default function App() {
       setSelected(p);
       setGlobalMode(false);
       setAssets([]);
-      setHooks([]);
       setSessions([]);
       setMcpServers({ project: {}, global: {}, codex: {} });
       setUpdates(null);
@@ -180,7 +169,6 @@ export default function App() {
       setStatuslineSource(null);
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
-      api.listHooks(p.id).then(setHooks).catch((e) => setError(String(e)));
       api.listSessions(p.id).then(setSessions).catch(() => {});
       refreshMcp(p);
       refreshUpdates(p);
@@ -323,19 +311,18 @@ export default function App() {
   }, [globalMode, globalAssets, assets, selectedFile]);
 
 
-  // 任务面板数据（hook 事件 + 会话标题）的刷新入口：SSE hook 帧防抖调用，
-  // 工具栏「刷新」按钮立即调用。
-  const refreshTaskView = useCallback(() => {
+  // 分类卡会话计数的刷新入口：SSE hook 帧防抖调用（任务视图内部数据
+  // 由 TasksPanel 自拉，这里只维护左栏分类卡的 sessions 镜像）。
+  const refreshSessions = useCallback(() => {
     if (!selected) return;
-    api.listHooks(selected.id).then(setHooks).catch(() => {});
     api.listSessions(selected.id).then(setSessions).catch(() => {});
   }, [selected]);
 
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
-  const taskRefreshTimer = useRef<number | null>(null);
   useEffect(() => {
     const es = new EventSource(api.eventsUrl());
+    let sessionTimer: number | null = null;
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data) as AssetChangeEvent & { type?: string };
@@ -346,14 +333,14 @@ export default function App() {
           return;
         }
         // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
-        // stream; the Hooks panel listens for them on `weave:hook`.
+        // stream; the Hooks / Tasks panels listen for them on `weave:hook`.
         if (data.type === 'hook') {
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: data }));
-          // 任务面板实时刷新（含无规则命中的 event.ingested 帧），防抖 500ms
-          if (taskRefreshTimer.current !== null) window.clearTimeout(taskRefreshTimer.current);
-          taskRefreshTimer.current = window.setTimeout(() => {
-            taskRefreshTimer.current = null;
-            refreshTaskView();
+          // 分类卡会话计数防抖刷新（与 TasksPanel 各自监听互不干扰）
+          if (sessionTimer !== null) window.clearTimeout(sessionTimer);
+          sessionTimer = window.setTimeout(() => {
+            sessionTimer = null;
+            refreshSessions();
           }, 500);
           return;
         }
@@ -390,12 +377,9 @@ export default function App() {
     };
     return () => {
       es.close();
-      if (taskRefreshTimer.current !== null) {
-        window.clearTimeout(taskRefreshTimer.current);
-        taskRefreshTimer.current = null;
-      }
+      if (sessionTimer !== null) window.clearTimeout(sessionTimer);
     };
-  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshTaskView, refreshProjects]);
+  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshSessions, refreshProjects]);
 
   const handleInstallSkill = useCallback(
     async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
@@ -814,18 +798,6 @@ export default function App() {
                         }}
                       />
                     )}
-                  </div>
-
-                  <Resizer
-                    orientation="vertical"
-                    onResize={(d) => setTaskH((h) => clamp(h - d, TASK_MIN, TASK_MAX))}
-                    title={t('app.resizeTaskHeight')}
-                  />
-                  <div
-                    style={{ height: taskH }}
-                    className="shrink-0 border-t border-white/[0.06] overflow-y-auto p-3"
-                  >
-                    <TaskView key={activeProject.id} events={hooks} sessions={sessions} onRefresh={refreshTaskView} />
                   </div>
                 </>
               ) : (
