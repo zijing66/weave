@@ -5,6 +5,7 @@ import {
   type HandlerConfig,
   type HookRule,
   type HookRuleFilter,
+  type HookRuleOrigin,
   type HookRuleSource,
 } from '@weave/core';
 
@@ -18,6 +19,8 @@ export interface CreateHookRuleInput {
   handler: HandlerConfig;
   timeoutMs?: number;
   record?: boolean;
+  origin?: HookRuleOrigin;
+  pluginId?: string | null;
 }
 
 /**
@@ -40,9 +43,65 @@ export class HookRuleRepository {
       handler: input.handler,
       timeoutMs: input.timeoutMs ?? 10_000,
       record: input.record ?? input.handler.type !== 'log',
+      origin: input.origin ?? 'user',
+      pluginId: input.pluginId ?? null,
     });
     this.insertRow(rule, now, now);
     return rule;
+  }
+
+  /**
+   * 插件规则 upsert：id 由加载器稳定生成（`plugin:<id>:<n>`）。
+   * 已存在则只覆盖定义字段，**保留用户改过的 enabled**（插件更新不动用户开关）；
+   * 不存在则按插件默认值插入。origin/plugin_id 每次同步为本次加载的值。
+   */
+  upsertPluginRule(rule: HookRule): HookRule {
+    const now = new Date().toISOString();
+    const existing = this.getById(rule.id);
+    if (!existing) {
+      this.insertRow(rule, now, now);
+      return rule;
+    }
+    const next = HookRuleSchema.parse({
+      ...rule,
+      enabled: existing.enabled, // 用户开关优先于插件默认值
+    });
+    this.db
+      .prepare(
+        `UPDATE hook_rules SET name = ?, enabled = ?, priority = ?, project_id = ?,
+           source = ?, filter = ?, handler = ?, timeout_ms = ?, record = ?,
+           origin = ?, plugin_id = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        next.name,
+        next.enabled ? 1 : 0,
+        next.priority,
+        next.projectId,
+        JSON.stringify(next.source),
+        JSON.stringify(next.filter),
+        JSON.stringify(next.handler),
+        next.timeoutMs,
+        next.record ? 1 : 0,
+        next.origin,
+        next.pluginId,
+        now,
+        next.id,
+      );
+    return next;
+  }
+
+  /** 删除某插件的全部规则（插件卸载/校验失败回滚）。返回删除数。 */
+  removeByPlugin(pluginId: string): number {
+    const result = this.db.prepare('DELETE FROM hook_rules WHERE plugin_id = ?').run(pluginId);
+    return Number(result.changes);
+  }
+
+  listByPlugin(pluginId: string): HookRule[] {
+    const rows = this.db
+      .prepare('SELECT * FROM hook_rules WHERE plugin_id = ? ORDER BY created_at ASC')
+      .all(pluginId);
+    return rows.map(toRule).filter((r): r is HookRule => r !== undefined);
   }
 
   getById(id: string): HookRule | undefined {
@@ -111,8 +170,8 @@ export class HookRuleRepository {
     this.db
       .prepare(
         `INSERT INTO hook_rules (id, name, enabled, priority, project_id, source, filter, handler,
-           timeout_ms, record, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           timeout_ms, record, origin, plugin_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         rule.id,
@@ -125,6 +184,8 @@ export class HookRuleRepository {
         JSON.stringify(rule.handler),
         rule.timeoutMs,
         rule.record ? 1 : 0,
+        rule.origin,
+        rule.pluginId,
         createdAt,
         updatedAt,
       );
@@ -145,6 +206,8 @@ function toRule(row: Record<string, unknown>): HookRule | undefined {
       handler: JSON.parse(String(row.handler)),
       timeoutMs: Number(row.timeout_ms),
       record: Number(row.record) === 1,
+      origin: (row.origin as HookRuleOrigin | undefined) ?? 'user',
+      pluginId: row.plugin_id == null ? null : String(row.plugin_id),
     });
   } catch {
     return undefined;
