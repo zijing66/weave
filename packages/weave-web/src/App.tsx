@@ -110,6 +110,20 @@ export default function App() {
     api.listProjects().then(setProjects).catch((e) => setError(String(e)));
   }, []);
 
+  // 项目列表刷新：SSE project 帧（另一进程 weave init/scan 落库 → daemon
+  // reconcile 检出）触发整表重拉；visibilitychange 兜底 ≤5s reconcile 窗口。
+  const refreshProjects = useCallback(() => {
+    api.listProjects().then(setProjects).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshProjects();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshProjects]);
+
   const refreshAssets = useCallback((p: ProjectRow) => {
     api.listAssets(p.path).then(setAssets).catch(() => {});
   }, []);
@@ -323,6 +337,12 @@ export default function App() {
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data) as AssetChangeEvent & { type?: string };
+        // 项目注册表变更帧：必须先于 asset 过滤处理（它没有 selected 项目语义），
+        // 整表重拉后 ProjectList 自然出现新项目。
+        if (data.type === 'project') {
+          refreshProjects();
+          return;
+        }
         // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
         // stream; the Hooks panel listens for them on `weave:hook`.
         if (data.type === 'hook') {
@@ -373,7 +393,7 @@ export default function App() {
         taskRefreshTimer.current = null;
       }
     };
-  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshTaskView]);
+  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshTaskView, refreshProjects]);
 
   const handleInstallSkill = useCallback(
     async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {

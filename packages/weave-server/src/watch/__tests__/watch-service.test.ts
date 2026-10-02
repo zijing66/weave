@@ -116,4 +116,34 @@ describe('WatchService', () => {
 
     expect(watch.getAssets(projectDir)).toHaveLength(0);
   });
+
+  it('emits project added/removed frames when the registry changes', async () => {
+    watch.start(); // initial reconcile registers projectDir before we subscribe
+    const frames: Array<{ action: string; projectPath: string }> = [];
+    const unsub = watch.subscribeProjects((e) => frames.push(e));
+
+    // Register a second project (simulates `weave init` in another process).
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'weave-watch2-'));
+    try {
+      projects.register({ path: dir2, name: 'second', token: 't2', source: 'init' });
+      watch.reconcile();
+      await vi.waitFor(() =>
+        expect(frames.some((f) => f.action === 'added' && f.projectPath === dir2)).toBe(true),
+      );
+
+      // Stable state: a repeat reconcile must not re-emit for known watchers.
+      watch.reconcile();
+      expect(frames.filter((f) => f.action === 'added' && f.projectPath === dir2)).toHaveLength(1);
+
+      const [proj] = projects.list().filter((p) => p.path === dir2);
+      projects.remove(proj.id);
+      watch.reconcile();
+      await vi.waitFor(() =>
+        expect(frames.some((f) => f.action === 'removed' && f.projectPath === dir2)).toBe(true),
+      );
+    } finally {
+      unsub();
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  });
 });

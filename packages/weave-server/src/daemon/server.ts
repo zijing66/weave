@@ -1030,6 +1030,13 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
         res.write(`data: ${JSON.stringify({ type: 'asset', ...e })}\n\n`);
       }),
     );
+    // 项目注册表变更（另一进程 weave init/scan 落库 → reconcile 检出）。
+    // 帧无 projectPath 之外的资产字段，web 收到后整表重拉。
+    unsubscribes.push(
+      deps.watch.subscribeProjects((e) => {
+        res.write(`data: ${JSON.stringify({ type: 'project', ...e })}\n\n`);
+      }),
+    );
   }
   if (deps.hookBus) {
     unsubscribes.push(

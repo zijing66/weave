@@ -54,3 +54,14 @@ export interface AssetChangeEvent {
   /** True when the file itself is a symbolic link (its target is watched). */
   isSymlink?: boolean;
 }
+
+/**
+ * Registry change detected by the reconciler: a project row appeared in (or
+ * disappeared from) the shared sqlite `projects` table — e.g. another process
+ * ran `weave init` / `weave scan`. Pushed to SSE so the dashboard project list
+ * updates without a page reload.
+ */
+export interface ProjectChangeEvent {
+  action: 'added' | 'removed';
+  projectPath: string;
+}
