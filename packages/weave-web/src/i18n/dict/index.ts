@@ -6,6 +6,7 @@ import { appZh, appEn } from './app';
 import { statuslineZh, statuslineEn } from './statusline';
 import { libraryZh, libraryEn } from './library';
 import { assetsZh, assetsEn } from './assets';
+import { hooksZh, hooksEn } from './hooks';
 
 /** 扁平 dotted key 词典：按领域分 chunk，chunk 内 zh/en 成对、文件级强制
  * key 对齐（漏译编译失败），合并后这里再兜一层类型。 */
@@ -17,6 +18,7 @@ export const zh = {
   ...statuslineZh,
   ...libraryZh,
   ...assetsZh,
+  ...hooksZh,
 };
 
 export const en: Record<keyof typeof zh, string> = {
@@ -27,6 +29,7 @@ export const en: Record<keyof typeof zh, string> = {
   ...statuslineEn,
   ...libraryEn,
   ...assetsEn,
+  ...hooksEn,
 };
 
 export type MessageKey = keyof typeof zh;

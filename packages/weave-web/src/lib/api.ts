@@ -83,6 +83,123 @@ export interface HookEventRow {
   createdAt: string;
 }
 
+/**
+ * Mirror of the hook rule model in packages/weave-core/src/types.ts — 保持同步
+ * （web 不能 import 含 node:fs 的 workspace 包，服务端 zod 校验兜底）。
+ */
+export type HookRuleSource =
+  | { kind: 'claude-event'; event: string }
+  /** 二期占位：外部系统 ingress，一期 schema 预留。 */
+  | { kind: 'webhook'; routeId: string };
+
+/** mirror of `HookRuleFilter` in packages/weave-core/src/types.ts。 */
+export interface HookRuleFilter {
+  /** 匹配 toolInput 的工具名（PostToolUse/PreToolUse 事件）。 */
+  toolNames?: string[];
+  /** 匹配 toolInput.file_path 的 glob（posix 分隔符）。 */
+  pathGlobs?: string[];
+  /** 只在 file_path/cwd 命中「其他已注册项目根」时触发。 */
+  crossProjectOnly?: boolean;
+}
+
+/** mirror of `HandlerConfig` in packages/weave-core/src/types.ts。 */
+export type HandlerConfig =
+  | { type: 'log' }
+  | { type: 'webhook'; url: string; secret?: string; headers?: Record<string, string> }
+  | { type: 'inject'; template: string }
+  | { type: 'manual'; template: string };
+
+/** mirror of `HookRule` in packages/weave-core/src/types.ts。 */
+export interface HookRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** 数值越大越先匹配。 */
+  priority: number;
+  /** null = 全局规则（对所有注册项目生效）。 */
+  projectId: number | null;
+  source: HookRuleSource;
+  filter: HookRuleFilter;
+  handler: HandlerConfig;
+  timeoutMs: number;
+  /** 是否落 hook_dispatches（log 默认 false）。 */
+  record: boolean;
+}
+
+/** 创建/更新规则的请求体（服务端 zod CreateRuleBody / UpdateRuleBody）。 */
+export interface HookRuleInput {
+  name: string;
+  enabled?: boolean;
+  priority?: number;
+  projectId: number | null;
+  source: HookRuleSource;
+  filter?: HookRuleFilter;
+  handler: HandlerConfig;
+  timeoutMs?: number;
+  record?: boolean;
+}
+
+/** mirror of `HookDispatchStatus` in packages/weave-core/src/types.ts。 */
+export type HookDispatchStatus =
+  | 'pending'
+  | 'injected'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'timeout';
+
+/** mirror of `HookDispatchMode` in packages/weave-core/src/types.ts。 */
+export type HookDispatchMode = 'auto' | 'manual';
+
+/** mirror of `HookDispatchRow` in packages/weave-server/src/repositories/hook-dispatches.ts。 */
+export interface HookDispatch {
+  id: number;
+  ruleId: string;
+  eventId: number | null;
+  sessionId: string | null;
+  /** 待运行指令文本（指令池中的「物」）。 */
+  prompt: string;
+  status: HookDispatchStatus;
+  mode: HookDispatchMode;
+  output: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** mirror of `SessionRow` in packages/weave-server/src/repositories/sessions.ts。 */
+export interface SessionRow {
+  sessionId: string;
+  projectId: number | null;
+  /** 已生效的自定义标题。 */
+  title: string | null;
+  /** dashboard 改名待生效：下次 SessionStart/UserPromptSubmit 时经 hook 下发。 */
+  pendingTitle: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+}
+
+/** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */
+export const CLAUDE_HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'SessionStart',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+] as const;
+
+/** mirror of `INJECTABLE_HOOK_EVENTS` — inject 处理器只允许这些事件（服务端 400）。 */
+export const INJECTABLE_HOOK_EVENTS = [
+  'PostToolUse',
+  'UserPromptSubmit',
+  'SessionStart',
+  'Stop',
+  'SubagentStop',
+] as const;
+
+
 export interface LibraryRow {
   id: number;
   path: string;
@@ -481,6 +598,67 @@ export const api = {
     apiFetch<{ events: HookEventRow[] }>(`/projects/${projectId}/hooks`).then(
       (r) => r.events,
     ),
+
+  // --- hooks rules / dispatches / sessions ---
+  /** 不带 projectId 返回全部规则；带 projectId 返回全局 + 该项目的规则。 */
+  listHooksRules: (projectId?: number): Promise<HookRule[]> =>
+    apiFetch<{ rules: HookRule[] }>(
+      `/hooks/rules${projectId === undefined ? '' : `?projectId=${projectId}`}`,
+    ).then((r) => r.rules),
+  createHookRule: (body: HookRuleInput): Promise<HookRule> =>
+    apiFetch<{ rule: HookRule }>('/hooks/rules', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then((r) => r.rule),
+  /** 局部更新；未知 id 抛 404 错误。 */
+  updateHookRule: (id: string, patch: Partial<HookRuleInput>): Promise<HookRule> =>
+    apiFetch<{ rule: HookRule }>(`/hooks/rules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    }).then((r) => r.rule),
+  deleteHookRule: (id: string): Promise<void> =>
+    apiFetch<{ ok: boolean }>(`/hooks/rules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).then(() => undefined),
+  toggleHookRule: (id: string, enabled: boolean): Promise<HookRule> =>
+    apiFetch<{ rule: HookRule }>(`/hooks/rules/${encodeURIComponent(id)}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }).then((r) => r.rule),
+  listHookDispatches: (q?: {
+    ruleId?: string;
+    status?: HookDispatchStatus;
+    limit?: number;
+  }): Promise<HookDispatch[]> => {
+    const params = new URLSearchParams();
+    if (q?.ruleId) params.set('ruleId', q.ruleId);
+    if (q?.status) params.set('status', q.status);
+    if (q?.limit !== undefined) params.set('limit', String(q.limit));
+    const qs = params.toString();
+    return apiFetch<{ dispatches: HookDispatch[] }>(
+      `/hooks/dispatches${qs ? `?${qs}` : ''}`,
+    ).then((r) => r.dispatches);
+  },
+  /** 把指令池中的一条派发执行到指定会话（另一并行任务实现的路由）。 */
+  runHookDispatch: (
+    dispatchId: number,
+    sessionId: string,
+  ): Promise<{ ok: boolean; dispatchId: number }> =>
+    apiFetch<{ ok: boolean; dispatchId: number }>(
+      `/hooks/dispatches/${dispatchId}/run`,
+      { method: 'POST', body: JSON.stringify({ sessionId }) },
+    ),
+  /** 不带 projectId 返回全部会话（最近活跃在前，最多 200 条）。 */
+  listSessions: (projectId?: number): Promise<SessionRow[]> =>
+    apiFetch<{ sessions: SessionRow[] }>(
+      `/sessions${projectId === undefined ? '' : `?projectId=${projectId}`}`,
+    ).then((r) => r.sessions),
+  /** dashboard 改名：写 pendingTitle，下次 hook 下发时生效。 */
+  renameSession: (sessionId: string, title: string): Promise<SessionRow> =>
+    apiFetch<{ session: SessionRow }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'PATCH', body: JSON.stringify({ title }) },
+    ).then((r) => r.session),
 
   // --- libraries (asset sources) ---
   listLibraries: (): Promise<LibraryRow[]> =>

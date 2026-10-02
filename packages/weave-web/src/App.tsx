@@ -9,6 +9,7 @@ import {
   type FileAssetCategory,
   type FileAssetTemplate,
   type HookEventRow,
+  type HookRule,
   type McpServerConfig,
   type McpServerMap,
   type ProjectRow,
@@ -54,6 +55,9 @@ export default function App() {
   // when the global 文件资产 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [hooks, setHooks] = useState<HookEventRow[]>([]);
+  // All hook rules (global + per project) — drives the Hooks card count; the
+  // panel refetches its own copy after every mutation.
+  const [hookRules, setHookRules] = useState<HookRule[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerMap>({
     project: {},
     global: {},
@@ -126,6 +130,22 @@ export default function App() {
   const refreshConfig = useCallback((p: ProjectRow) => {
     api.getProjectConfig(p.id).then(setProjectConfig).catch(() => {});
   }, []);
+
+  /** Refresh the hooks rule set (card count). */
+  const refreshHookRules = useCallback(() => {
+    api.listHooksRules().then(setHookRules).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshHookRules();
+  }, [refreshHookRules]);
+
+  // HooksPanel announces rule mutations with this event so the category card
+  // count stays honest without threading callbacks through CategoryDetail.
+  useEffect(() => {
+    window.addEventListener('weave:rules-changed', refreshHookRules);
+    return () => window.removeEventListener('weave:rules-changed', refreshHookRules);
+  }, [refreshHookRules]);
 
   const loadProject = useCallback(
     (p: ProjectRow) => {
@@ -252,6 +272,7 @@ export default function App() {
         outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
         // The global view IS the template — a 跟随全局 badge would be noise.
         statuslineSource: null,
+        hooksRules: hookRules.length,
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -266,8 +287,12 @@ export default function App() {
       outdatedSkills: (updates?.skills ?? []).filter((u) => u.outdated).length,
       outdatedMcp: (updates?.mcp ?? []).filter((u) => u.outdated).length,
       statuslineSource,
+      // same rule as the server's ?projectId= filter: global rules + own rules
+      hooksRules: hookRules.filter(
+        (r) => r.projectId === null || r.projectId === selected?.id,
+      ).length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -284,7 +309,14 @@ export default function App() {
     const es = new EventSource(api.eventsUrl());
     es.onmessage = (ev) => {
       try {
-        const change = JSON.parse(ev.data) as AssetChangeEvent;
+        const data = JSON.parse(ev.data) as AssetChangeEvent & { type?: string };
+        // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
+        // stream; the Hooks panel listens for them on `weave:hook`.
+        if (data.type === 'hook') {
+          window.dispatchEvent(new CustomEvent('weave:hook', { detail: data }));
+          return;
+        }
+        const change = data;
         if (!selected || change.projectPath !== selected.path) return;
         setAssets((prev) => {
           if (change.kind === 'unlink') return prev.filter((a) => a.relPath !== change.relPath);
@@ -551,7 +583,9 @@ export default function App() {
   const selectCategory = useCallback((c: MainCategory) => {
     setMainCategory(c);
     if (c === 'personalization') setStatuslineNonce((n) => n + 1);
-  }, []);
+    // reopen → pick up rule changes made elsewhere before the card count shows
+    if (c === 'hooks') refreshHookRules();
+  }, [refreshHookRules]);
 
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
