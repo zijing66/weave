@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
+import { SessionRepository } from '../../repositories/sessions.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookRuleRegistry } from '../registry.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
@@ -84,6 +85,7 @@ describe('HookDispatcher', () => {
       dispatches,
       bus,
       projects,
+      sessions: new SessionRepository(db),
       fetchImpl: (async (url: URL | string, init?: RequestInit) => {
         fetchCalls.push({ url: String(url), init: init ?? {} });
         return new Response('ok', { status: 200 });
@@ -277,6 +279,7 @@ describe('HookDispatcher', () => {
       dispatches,
       bus,
       projects,
+      sessions: new SessionRepository(db),
       fetchImpl: (async () => {
         throw new Error('ECONNREFUSED');
       }) as typeof fetch,
@@ -294,6 +297,28 @@ describe('HookDispatcher', () => {
     const row = dispatches.list()[0]!;
     expect(row.status).toBe('failed');
     expect(row.error).toContain('ECONNREFUSED');
+  });
+
+  it('rename 双向：session_title diff 采纳外部改名；pending 随响应下发 sessionTitle', async () => {
+    // 无任何规则也要跑 rename 逻辑
+    const first = await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: '外部改名' } }) }));
+    expect(first.sessionTitle).toBeUndefined();
+    // applyReportedTitle 落定由 sessions 完成——经 repo 直接验证
+    const sessions = new SessionRepository(db);
+    expect(sessions.getBySessionId('s1')?.title).toBe('外部改名');
+
+    // dashboard 挂 pending → 下一次事件的响应带 sessionTitle（hook 输出后原生改名）
+    sessions.setPendingTitle('s1', 'dashboard改名');
+    const second = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
+    expect(second.sessionTitle).toBe('dashboard改名');
+    // 未确认前 pending 保留、外部旧值不采纳
+    await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: '旧外部' } }) }));
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '外部改名', pendingTitle: 'dashboard改名' });
+    // 外部回带 pending 值 → 落定并清 pending
+    await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: 'dashboard改名' } }) }));
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: 'dashboard改名', pendingTitle: null });
+    const third = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
+    expect(third.sessionTitle).toBeUndefined();
   });
 
   it('没有任何规则命中时返回空对象', async () => {

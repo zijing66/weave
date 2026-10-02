@@ -32,6 +32,8 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.init.preset': 'Configuration preset: minimal, default, or full',
   'flag.init.force': 'Overwrite existing files',
   'flag.init.noInteractive': 'Disable interactive prompts',
+  'flag.init.hooks':
+    'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification); "none" registers none; default: all',
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
@@ -95,6 +97,8 @@ export const en: Record<keyof typeof zh, string> = {
   'init.backedUp': 'Backed up the previous AGENTS.md to {path}',
   'init.copyTemplatesFailed': 'Could not copy templates from {srcDir}: {error}',
   'init.proceed': 'Proceed? [Y/n]',
+  'init.hooksUnknownKeys': 'Ignored unknown hook event names: {keys}',
+  'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---
   'harness.instructionLinkNotMaterialised.message':
     '{agents} is a plain file containing "{claude}" — git checked the symlink out as text.',

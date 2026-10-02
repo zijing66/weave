@@ -30,6 +30,8 @@ export const zh = {
   'flag.init.preset': '配置预设：minimal、default 或 full',
   'flag.init.force': '覆盖已存在的文件',
   'flag.init.noInteractive': '禁用交互式提示',
+  'flag.init.hooks':
+    '启用的 hook 事件，逗号分隔（preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification）；none 表示全不注册；默认全开',
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
@@ -90,6 +92,8 @@ export const zh = {
   'init.backedUp': '已将原 AGENTS.md 备份到 {path}',
   'init.copyTemplatesFailed': '无法从 {srcDir} 复制模板：{error}',
   'init.proceed': '是否继续？[Y/n]',
+  'init.hooksUnknownKeys': '已忽略未知的 hooks 事件名：{keys}',
+  'init.removed': '  已按标记清理 {count} 个遗留生成物。\n',
   // --- harness 健康检查 message / fix ---
   'harness.instructionLinkNotMaterialised.message': '{agents} 是内容为 "{claude}" 的普通文件——git 把软链接检出成了文本。',
   'harness.instructionLinkNotMaterialised.fix': '启用开发者模式，然后运行 `git config core.symlinks true` 并重新检出该文件。',

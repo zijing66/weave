@@ -209,11 +209,6 @@ describe('SessionRepository', () => {
     expect(sessions.applyReportedTitle('s1', 'dashboard名')).toBe(true);
     expect(sessions.getBySessionId('s1')).toMatchObject({ title: 'dashboard名', pendingTitle: null });
     expect(sessions.applyReportedTitle('s1', 'dashboard名')).toBe(false); // 已一致
-
-    // 通道 B：dispatcher 下发 sessionTitle 后 settlePendingTitle 乐观落定
-    sessions.setPendingTitle('s1', '再来一次');
-    sessions.settlePendingTitle('s1', '再来一次');
-    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '再来一次', pendingTitle: null });
     db.close();
   });
 });

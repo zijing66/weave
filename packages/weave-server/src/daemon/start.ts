@@ -49,6 +49,7 @@ export function startDaemon(): void {
     dispatches: hookDispatches,
     bus: hookBus,
     projects,
+    sessions: hookSessions,
   });
   const watch = new WatchService(projects);
   watch.start();

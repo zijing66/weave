@@ -44,10 +44,13 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
     if (hooks.postToolUse) hooksMap['PostToolUse'] = hookEntry();
     if (hooks.userPromptSubmit) hooksMap['UserPromptSubmit'] = hookEntry();
     if (hooks.sessionStart) hooksMap['SessionStart'] = hookEntry();
+    if (hooks.stop) hooksMap['Stop'] = hookEntry();
+    if (hooks.subagentStop) hooksMap['SubagentStop'] = hookEntry();
+    if (hooks.notification) hooksMap['Notification'] = hookEntry();
 
-    if (Object.keys(hooksMap).length > 0) {
-      settings['hooks'] = hooksMap;
-    }
+    // 即使全被裁剪也写空对象：merge 语义靠「键存在」判定 helpers 是否启用，
+    // 从而把 weave 的旧 hook 组整体清掉（weave 组 = 本次生成结果，空即清光）。
+    settings['hooks'] = hooksMap;
   }
 
   // Permissions
@@ -81,10 +84,12 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
  * Policy (weave init never overwrites user files):
  * - every existing key is preserved as-is (including unknown keys)
  * - weave entries are appended where missing
- * - weave's own entries (hooks pointing at `hook-handler.cjs`, statusLine
- *   pointing at `statusline.cjs`) are refreshed in place when present, so a
- *   re-init upgrades stale paths instead of duplicating them
- * - user-authored hooks, statusLine, permissions, and env values are never touched
+ * - weave's own hooks entries are REPLACED wholesale by this generation: first
+ *   every group carrying the weave marker is dropped from all events (events
+ *   no longer generated no longer linger), then the generated groups are
+ *   appended. User-authored hook groups are never touched.
+ * - statusLine pointing at `statusline.cjs` is refreshed in place
+ * - user-authored statusLine, permissions, and env values are never touched
  *
  * Idempotent: merging the same `generated` twice yields the same result.
  */
@@ -94,20 +99,29 @@ export function mergeSettingsJson(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
 
-  // hooks — append weave's groups per event, dropping/refreshing stale weave groups
+  // hooks — weave 组永远且仅等于本次生成结果（按 marker 清扫多余/过期组）
   const generatedHooks = generated['hooks'] as Record<string, unknown> | undefined;
   if (generatedHooks && typeof generatedHooks === 'object') {
-    const hooks = isPlainObject(merged['hooks']) ? merged['hooks'] : {};
+    const hooks = isPlainObject(merged['hooks'])
+      ? { ...(merged['hooks'] as Record<string, unknown>) }
+      : {};
+    // 1) 清扫：所有事件里带 weave marker 的组一律移除；组内只剩 weave 条目则删事件键。
+    //    非数组形状属于用户，不动。
+    for (const [event, groups] of Object.entries(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      const userGroups = groups.filter((g) => !groupIsWeave(g));
+      if (userGroups.length > 0) hooks[event] = userGroups;
+      else delete hooks[event];
+    }
+    // 2) 并入本次生成的组（此时 prev 已无 weave 条目）。
     for (const [event, weaveGroups] of Object.entries(generatedHooks)) {
-      const prev = (hooks as Record<string, unknown>)[event];
-      if (Array.isArray(prev)) {
-        // Keep the user's groups, drop weave's (possibly stale) ones
-        const userGroups = prev.filter((g) => !groupIsWeave(g));
-        (hooks as Record<string, unknown>)[event] = [...userGroups, ...(Array.isArray(weaveGroups) ? weaveGroups : [])];
-      } else if (prev === undefined) {
-        (hooks as Record<string, unknown>)[event] = weaveGroups;
+      const prev = hooks[event];
+      if (prev === undefined) {
+        hooks[event] = weaveGroups;
+      } else if (Array.isArray(prev)) {
+        hooks[event] = [...prev, ...(Array.isArray(weaveGroups) ? weaveGroups : [])];
       }
-      // Non-array shapes belong to the user — leave untouched.
+      // 非数组形状保持原样（用户数据）。
     }
     merged['hooks'] = hooks;
   }

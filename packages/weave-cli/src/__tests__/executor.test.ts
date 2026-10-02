@@ -267,6 +267,22 @@ describe('executeInit', () => {
     expect(await readFile(handlerPath, 'utf-8')).toBe(custom);
   });
 
+  it('按标记清扫：带 weave 版本戳但不在本次清单的遗留脚本被移除，用户文件保留', async () => {
+    const helpersDir = path.join(tmpDir, '.claude', 'helpers');
+    await mkdir(helpersDir, { recursive: true });
+    const legacy = path.join(helpersDir, 'legacy-hook.cjs');
+    const userFile = path.join(helpersDir, 'my-local.cjs');
+    await writeFile(legacy, '// @version weave@0.0.1\nold generated script\n');
+    await writeFile(userFile, '# user authored, no marker\n');
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.removed).toContain(legacy);
+    await expect(stat(legacy)).rejects.toThrow(); // 已删除
+    expect(await readFile(userFile, 'utf-8')).toBe('# user authored, no marker\n');
+    // 本次清单内的文件不受清扫影响
+    expect(await readFile(path.join(helpersDir, 'hook-handler.cjs'), 'utf-8')).toContain('@version weave@');
+  });
+
   // ---- .weave/config.yaml: weave-owned, always refreshed ----
   it('overwrites .weave/config.yaml on re-init', async () => {
     const configPath = path.join(tmpDir, '.weave', 'config.yaml');

@@ -40,6 +40,20 @@ describe('generateHookHandler', () => {
     const exitCount = (out.match(/process\.exit\(0\)/g) ?? []).length;
     expect(exitCount).toBeGreaterThanOrEqual(4);
   });
+
+  it('relays additionalContext/sessionTitle from the daemon response', () => {
+    const out = generateHookHandler();
+    // 读响应体并解析
+    expect(out).toContain("res.on('end'");
+    expect(out).toContain('JSON.parse(data)');
+    // 命中 inject 规则时输出 hookSpecificOutput.additionalContext
+    expect(out).toContain('additionalContext');
+    expect(out).toContain('sessionTitle');
+    expect(out).toContain('hookSpecificOutput');
+    expect(out).toContain('hookEventName');
+    // 解析失败静默退出（catch 空块）
+    expect(out).toContain('} catch {}');
+  });
 });
 
 describe('generateAutoMemoryHook', () => {
