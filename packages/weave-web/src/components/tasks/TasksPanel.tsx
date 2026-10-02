@@ -7,9 +7,21 @@ import {
   type SessionRow,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { Badge } from '@/components/ui/badge';
 import { SessionList } from './SessionList';
+import { buildSessionChain } from './build-session-chain';
+import { SessionFlowCanvas } from './SessionFlowCanvas';
 import { deriveSessionStatus, type SessionStatus } from './session-status';
 import { Activity, Loader2 } from 'lucide-react';
+
+function LegendDot({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className={`h-2 w-2 rounded-full ${className}`} />
+      {label}
+    </span>
+  );
+}
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
@@ -104,6 +116,15 @@ export function TasksPanel({ projectId }: { projectId: number }) {
     return map;
   }, [sessions, dispatchBySession, events, selectedId]);
 
+  const chain = useMemo(() => {
+    if (!selectedId) return { nodes: [], edges: [], truncated: false };
+    return buildSessionChain({
+      events,
+      dispatches: dispatchBySession.get(selectedId) ?? [],
+      rules,
+    });
+  }, [selectedId, events, dispatchBySession, rules]);
+
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
       await api.renameSession(sessionId, title);
@@ -175,20 +196,44 @@ export function TasksPanel({ projectId }: { projectId: number }) {
         )}
       </aside>
 
-      {/* 右栏：事件链画布（批 2 落地） */}
+      {/* 右栏：事件链画布 */}
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2 pb-2">
           <Activity className="h-3.5 w-3.5 text-rose-400" />
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
+          {chain.truncated && (
+            <Badge className="bg-amber-900/40 text-amber-300">
+              {t('tasks.chainTruncated', { n: chain.nodes.filter((n) => n.type === 'event').length })}
+            </Badge>
+          )}
+          <span className="ml-auto flex items-center gap-2 text-[10px] text-neutral-600">
+            <LegendDot className="bg-blue-400" label={t('tasks.legendEvent')} />
+            <LegendDot className="bg-blue-500" label={t('tasks.legendRule')} />
+            <LegendDot className="bg-purple-400" label={t('tasks.legendHandler')} />
+            <LegendDot className="bg-neutral-400" label={t('tasks.legendDispatch')} />
+          </span>
         </div>
-        <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-white/[0.06] bg-neutral-950/40">
+        <div className="relative min-h-0 flex-1 rounded-lg border border-white/[0.06] bg-neutral-950/40">
           {!selectedId ? (
-            <p className="text-xs text-neutral-600">{t('tasks.selectHint')}</p>
-          ) : events.length === 0 ? (
-            <p className="text-xs text-neutral-600">{t('tasks.chainEmpty')}</p>
+            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
+              {t('tasks.selectHint')}
+            </p>
+          ) : chain.nodes.length === 0 ? (
+            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
+              {t('tasks.chainEmpty')}
+            </p>
           ) : (
-            <p className="text-xs text-neutral-600">
-              {t('tasks.chainTitle')} · {events.length} · rules {rules.length}
+            <SessionFlowCanvas
+              nodes={chain.nodes}
+              edges={chain.edges}
+              viewKey={selectedId}
+              emptyHint={t('tasks.chainEmpty')}
+            />
+          )}
+          {/* log 规则命中不落库的图例缺口说明 */}
+          {chain.nodes.length > 0 && (
+            <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
+              {t('tasks.legendNote')}
             </p>
           )}
         </div>
