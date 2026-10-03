@@ -50,6 +50,13 @@ export interface ProjectRow {
   meta: string | null;
 }
 
+/** Structured result of one harness health check (core 返回，文案由 web 词典渲染). */
+export interface HarnessCheck {
+  id: string;
+  params: Record<string, string | boolean>;
+  ok: boolean;
+}
+
 export type AssetAgent = Harness;
 
 export interface AssetEntry {
@@ -859,6 +866,9 @@ export const api = {
     }),
   getProjectConfig: (projectId: number): Promise<ProjectConfig> =>
     apiFetch<ProjectConfig>(`/projects/${projectId}/config`),
+  /** Structured harness health checks (read-only; 批 8). */
+  getHarnessChecks: (projectId: number): Promise<{ checks: HarnessCheck[] }> =>
+    apiFetch<{ checks: HarnessCheck[] }>(`/projects/${projectId}/harness-checks`),
   /** Open a project directory in the OS file manager or a terminal. */
   openProject: (
     projectId: number,

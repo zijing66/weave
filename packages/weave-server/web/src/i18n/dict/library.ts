@@ -43,7 +43,7 @@ export const libraryZh = {
   'category.statuslineCustom': '项目自定义',
   'category.statuslineFollowGlobal': '跟随全局模板',
   'category.codexPersonalizationPlaceholder':
-    'Codex 个性化配置（statusline / 主题等）暂未接入。weave 目前仅管理 Claude Code 的 harness 资产，Codex 配置将在后续版本提供。',
+    'Codex 没有 statusline 等个性化对等物（BACKLOG §10-4：Claude 专属是正确的）。此面板仅提供 Claude Code 个性化配置，Codex 侧不会出现对应界面。',
   'category.dropToInstall': '拖放以安装 skill',
 
   // —— LibraryPanel（library.*）——
@@ -139,7 +139,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'category.statuslineCustom': 'Project custom',
   'category.statuslineFollowGlobal': 'Follows global template',
   'category.codexPersonalizationPlaceholder':
-    'Codex personalization (statusline / themes, etc.) is not wired up yet. weave currently manages only Claude Code harness assets; Codex config arrives in a later release.',
+    'Codex has no statusline counterpart for personalization (BACKLOG §10-4: Claude-only by design). This panel only provides Claude Code personalization — no equivalent surface exists for Codex.',
   'category.dropToInstall': 'Drop to install skill',
 
   // —— LibraryPanel（library.*）——
