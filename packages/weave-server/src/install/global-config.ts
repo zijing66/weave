@@ -8,6 +8,7 @@ import { AssetNotFoundError } from './installer.js';
 import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
+import { assetSurfaceFor } from '../surfaces.js';
 
 /**
  * Global (user-scope) Claude Code configuration.
@@ -35,22 +36,10 @@ export class ClaudeJsonCorruptError extends Error {
   }
 }
 
+// 批 4a：skills 根 / settings.json / config.toml 路径常量已收敛进
+// AssetSurface（`globalSkillsRoots` / `userConfigFile`），此处只留插件枚举路径。
 const CLAUDE_JSON = '.claude.json';
-const GLOBAL_SKILLS_DIR = '.claude/skills';
 const CLAUDE_PLUGINS_JSON = '.claude/plugins/installed_plugins.json';
-const CLAUDE_SETTINGS = '.claude/settings.json';
-const CODEX_HOME_DIR = '.codex';
-/**
- * Codex's current user-level skills root. Cross-tool convention, and the one
- * Codex reads first (`codex-rs/ext/skills/src/host_roots.rs`).
- */
-const CODEX_AGENTS_SKILLS_DIR = '.agents/skills';
-/**
- * Where Codex used to keep user-level skills. `host_roots.rs` still registers
- * it, commented "Deprecated user skills location, kept for backward
- * compatibility" — so it is read but never written.
- */
-const CODEX_LEGACY_SKILLS_DIR = '.codex/skills';
 const CODEX_PLUGINS_CACHE = '.codex/plugins/cache';
 
 /** Where a global skill came from — used as the grouping key in the UI. */
@@ -81,25 +70,24 @@ export interface GlobalSkillGroup {
 function claudeJsonPath(): string {
   return path.join(homedir(), CLAUDE_JSON);
 }
+/** Claude 全局 skills 根（`~/.claude/skills`）——经 AssetSurface 查询。 */
 function globalSkillsPath(): string {
-  return path.join(homedir(), GLOBAL_SKILLS_DIR);
+  return assetSurfaceFor('claude').globalSkillsRoots(homedir())[0];
 }
 function claudePluginsJsonPath(): string {
   return path.join(homedir(), CLAUDE_PLUGINS_JSON);
 }
+/** Claude 用户级配置（`~/.claude/settings.json`）——经 AssetSurface 查询。 */
 function claudeSettingsPath(): string {
-  return path.join(homedir(), CLAUDE_SETTINGS);
+  return assetSurfaceFor('claude').userConfigFile(homedir());
 }
 /** Codex user-level skills root — the one installs target. */
 function codexSkillsPath(): string {
-  return path.join(homedir(), ...CODEX_AGENTS_SKILLS_DIR.split('/'));
+  return assetSurfaceFor('codex').globalSkillsRoots(homedir())[0];
 }
 /** Codex user-level skills roots, current location first. */
 function codexSkillsPaths(): string[] {
-  return [
-    codexSkillsPath(),
-    path.join(homedir(), ...CODEX_LEGACY_SKILLS_DIR.split('/')),
-  ];
+  return assetSurfaceFor('codex').globalSkillsRoots(homedir());
 }
 function codexPluginsCachePath(): string {
   return path.join(homedir(), CODEX_PLUGINS_CACHE);
@@ -109,7 +97,10 @@ function codexPluginsCachePath(): string {
  * watch service observes so edits to a symlinked skill's original files flow
  * through SSE. Plugin caches are versioned/static and intentionally excluded. */
 export function globalPersonalSkillRoots(): string[] {
-  return [globalSkillsPath(), ...codexSkillsPaths()];
+  return [
+    ...assetSurfaceFor('claude').globalSkillsRoots(homedir()),
+    ...assetSurfaceFor('codex').globalSkillsRoots(homedir()),
+  ];
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -584,7 +575,7 @@ export async function writeClaudePluginEnabled(key: string, enabled: boolean): P
 
 /** Read `[plugins."key"] enabled` from ~/.codex/config.toml (empty if absent). */
 export async function readCodexPluginEnabled(): Promise<Record<string, boolean>> {
-  const file = path.join(homedir(), CODEX_HOME_DIR, 'config.toml');
+  const file = assetSurfaceFor('codex').userConfigFile(homedir());
   if (!(await pathExists(file))) return {};
   try {
     const parsed = parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
@@ -606,7 +597,7 @@ export async function readCodexPluginEnabled(): Promise<Record<string, boolean>>
  * section editor so comments, key order and other sections survive; the file
  * is created if missing. */
 export async function writeCodexPluginEnabled(key: string, enabled: boolean): Promise<void> {
-  const file = path.join(homedir(), CODEX_HOME_DIR, 'config.toml');
+  const file = assetSurfaceFor('codex').userConfigFile(homedir());
   let text = '';
   if (await pathExists(file)) {
     text = await readFile(file, 'utf-8');

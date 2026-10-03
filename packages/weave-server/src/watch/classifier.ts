@@ -1,4 +1,5 @@
 import type { AssetAgent, AssetCategory } from './types.js';
+import { assetSurfaceFor } from '../surfaces.js';
 
 /**
  * Classify a project-relative path into an asset category.
@@ -29,13 +30,16 @@ export function classifyAsset(relPath: string): AssetCategory {
 /**
  * Which coding agent a project-relative path belongs to: Codex owns `.codex/`
  * and `AGENTS.md`; everything else weave observes is Claude Code's surface.
+ *
+ * 批 4a：认领规则在各 harness 的 AssetSurface（`classify`），此处只委托——
+ * 按 codex→claude 顺序找首个认领者，无人认领（weave 未观测的任意路径）默认 claude。
  */
 export function classifyAgent(relPath: string): AssetAgent {
   const p = normalizeRelPath(relPath);
-  if (p === '.codex' || p.startsWith('.codex/')) return 'codex';
-  // AGENTS.md is the Codex/agents instruction surface wherever it sits.
-  if (p.slice(p.lastIndexOf('/') + 1) === 'AGENTS.md') return 'codex';
-  return 'claude';
+  const owner = [assetSurfaceFor('codex'), assetSurfaceFor('claude')].find((s) =>
+    s.classify(p),
+  );
+  return owner?.harness ?? 'claude';
 }
 
 /**

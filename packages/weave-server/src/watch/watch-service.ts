@@ -8,6 +8,7 @@ import { WatchCache } from './cache.js';
 import { classifyAgent, classifyAsset, normalizeRelPath } from './classifier.js';
 import type { AssetChangeEvent, AssetChangeKind, AssetEntry, ProjectChangeEvent } from './types.js';
 import { globalPersonalSkillRoots } from '../install/global-config.js';
+import { assetSurfaceFor } from '../surfaces.js';
 
 /** Synthetic projectPath for global skill events. Personal skill roots
  * (`~/.claude/skills/`, `~/.agents/skills/`, and the deprecated
@@ -22,25 +23,15 @@ const GLOBAL_SENTINEL = '<global>';
  * by the watcher.
  *
  * chokidar v4 dropped glob support, so we watch the project root (`'.'` with
- * `cwd`) and filter with this function: keep only `.claude/`, `.codex/`,
- * `.weave/`, `.mcp.json` and the two instruction files (CLAUDE.md / AGENTS.md);
- * drop large/irrelevant subtrees (`node_modules`, `.git`, and the
- * session-history/cache dirs under `.claude`).
+ * `cwd`) and filter with this function. 批 4a：`.claude/` / `.codex/` 观测集
+ * （含 `node_modules` / `.git` / session-history 等噪音剔除）收敛进各
+ * harness 的 AssetSurface（`ignore`，两面取 AND——任一 surface 观测即保留）；
+ * 项目根与 `.weave` 是中立于 harness 的规则，留在此处。
  */
 export function shouldIgnore(rel: string): boolean {
   if (rel === '' || rel === '.') return false; // project root itself
-  // Drop noisy / large subtrees first.
-  if (rel === 'node_modules' || rel.startsWith('node_modules/')) return true;
-  if (rel === '.git' || rel.startsWith('.git/')) return true;
-  if (rel === '.claude/projects' || rel.startsWith('.claude/projects/')) return true;
-  if (rel === '.claude/cache' || rel.startsWith('.claude/cache/')) return true;
-  // Keep everything else under .claude / .codex / .weave, and the mcp config file.
-  if (rel === '.claude' || rel.startsWith('.claude/')) return false;
-  if (rel === '.codex' || rel.startsWith('.codex/')) return false;
-  if (rel === '.weave' || rel.startsWith('.weave/')) return false;
-  if (rel === '.mcp.json') return false;
-  if (rel === 'CLAUDE.md' || rel === 'AGENTS.md') return false;
-  return true; // ignore all other project files
+  if (rel === '.weave' || rel.startsWith('.weave/')) return false; // weave 自身面
+  return assetSurfaceFor('claude').ignore(rel) && assetSurfaceFor('codex').ignore(rel);
 }
 
 export interface WatchServiceOptions {
