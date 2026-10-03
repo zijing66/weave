@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
     console.log(`[dev] token: ${DEV_TOKEN}`);
     if (staticDir) console.log(`[dev] static: ${staticDir}`);
-    else console.log('[dev] static: (weave-web/dist not built — run pnpm build:web)');
+    else console.log('[dev] static: (web/dist not built — run pnpm build:web)');
   });
 }
 
