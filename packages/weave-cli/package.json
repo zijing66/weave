@@ -48,6 +48,7 @@
   },
   "dependencies": {
     "@weave/core": "workspace:*",
+    "@weave/harness": "workspace:*",
     "@weave/server": "workspace:*",
     "@weave/templates": "workspace:*",
     "ink": "^5.0.0",

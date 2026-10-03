@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, writeFile, stat, readdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, stat } from 'node:fs/promises';
 import {
   type InitOptions,
   type InitResult,
@@ -7,21 +7,15 @@ import {
   detectPlatform,
   resolveComponents,
   DEFAULT_HOOKS,
-  DEFAULT_SKILLS,
-  DEFAULT_COMMANDS,
-  DEFAULT_AGENTS,
-  DEFAULT_MCP,
   ensureDir,
-  writeFileIfAbsent,
   fileExists,
   logger,
 } from '@weave/core';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weave/templates';
-import { WEAVE_VERSION, generateStatuslineScript, readStatuslineConfig } from '@weave/server';
-import { generateSettingsJson, mergeSettingsJson } from './settings-gen.js';
-import { generateMcpJson, mergeMcpJson } from './mcp-gen.js';
+import { WEAVE_VERSION } from '@weave/server';
+import type { InitContext } from '@weave/harness';
 import {
   generateClaudeMd,
   generateClaudeMdSection,
@@ -29,8 +23,8 @@ import {
   type ClaudeMdTemplate,
 } from './claudemd-gen.js';
 import { ensureInstructionLink } from './instruction-link.js';
-import { generateHookHandler, generateAutoMemoryHook } from './helpers-gen.js';
-import { registerPluginTemplates, collectPluginMcpServers } from './plugin-templates.js';
+import { buildInitRegistry } from './wiring.js';
+import { type ClaudePipeline } from './harnesses/claude.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -40,11 +34,16 @@ const PRESET_TEMPLATE: Record<string, ClaudeMdTemplate> = {
   full: 'full',
 };
 
-/** Marks a generated helper script as weave's own (weave-特性文件可覆写). */
-const WEAVE_HELPER_MARKER = '@version weave@';
-
+/**
+ * init 编排器（图① InitOrchestrator，模板方法 executeInit）：
+ * 0 prepare → 1 selected → 2 逐 harness runSurface（InitPipeline final 骨架
+ * 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config → 10 嵌套 gitignore → 11 汇总。
+ * 表面步骤（1–7）的实现在 init/harnesses/claude.ts（ClaudeInitTemplate）。
+ */
 export async function executeInit(options: InitOptions): Promise<InitResult> {
   const { targetDir, force, interactive, preset } = options;
+
+  // ---- Step 0: prepare（平台 / 组件 / 结果累加器）----
   const platform: PlatformInfo = detectPlatform();
   const created: { directories: string[]; files: string[] } = { directories: [], files: [] };
   const skipped: string[] = [];
@@ -55,213 +54,28 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
 
   const components = resolveComponents(preset, options.components);
   const hooks = { ...DEFAULT_HOOKS, ...options.hooks };
-  const skills = { ...DEFAULT_SKILLS, ...options.skills };
-  const commands = { ...DEFAULT_COMMANDS, ...options.commands };
-  const agents = { ...DEFAULT_AGENTS, ...options.agents };
-  const mcp = { ...DEFAULT_MCP, ...options.mcp };
-
   const claudeDir = path.join(targetDir, '.claude');
-  const skillsDir = path.join(claudeDir, 'skills');
-  const commandsDir = path.join(claudeDir, 'commands');
-  const agentsDir = path.join(claudeDir, 'agents');
-  const helpersDir = path.join(claudeDir, 'helpers');
 
   if (!interactive) {
     logger.dim(t('init.nonInteractive'));
   }
 
-  // ---- Step 1: Create directory structure ----
-  await ensureDir(claudeDir);
-  created.directories.push(claudeDir);
+  // ---- Step 1: selected —— 批 3 恒 ['claude']（--harness flag 与交互多选归批 5）----
+  const selected = ['claude'] as const;
 
-  if (components.skills) {
-    await ensureDir(skillsDir);
-    created.directories.push(skillsDir);
-  }
-  if (components.commands) {
-    await ensureDir(commandsDir);
-    created.directories.push(commandsDir);
-  }
-  if (components.agents) {
-    await ensureDir(agentsDir);
-    created.directories.push(agentsDir);
-  }
-  if (components.helpers) {
-    await ensureDir(helpersDir);
-    created.directories.push(helpersDir);
-  }
-
-  // ---- Step 2: Generate settings.json ----
-  // User file: never overwritten without --force. Existing files are merged —
-  // weave appends its entries and refreshes its own keys; user content is kept.
-  if (components.settings) {
-    const generated = generateSettingsJson({ components, hooks, platform, helpersDir });
-    const settingsPath = path.join(claudeDir, 'settings.json');
-
-    if (force) {
-      await writeFile(settingsPath, JSON.stringify(generated, null, 2) + '\n', 'utf-8');
-      created.files.push(settingsPath);
-    } else {
-      const existing = await readJsonObject(settingsPath);
-      if (existing === undefined) {
-        if (await fileExists(settingsPath)) {
-          // Present but not a parseable object — never touch what we cannot merge into
-          skipped.push(settingsPath);
-          logger.warn(t('init.skippedInvalidJson', { path: settingsPath }));
-        } else {
-          await writeFile(settingsPath, JSON.stringify(generated, null, 2) + '\n', 'utf-8');
-          created.files.push(settingsPath);
-        }
-      } else {
-        const mergedSettings = mergeSettingsJson(existing, generated);
-        await writeFile(settingsPath, JSON.stringify(mergedSettings, null, 2) + '\n', 'utf-8');
-        merged.push(settingsPath);
-      }
-    }
-  }
-
-  // ---- Step 3: Generate .mcp.json ----
-  if (components.mcp) {
-    const mcpJson = generateMcpJson({ platform, includeWeaveServer: mcp.weave });
-    // 扩展点④：插件 manifest.mcpServers 合并（与核心/插件间同名 → namespace 化）
-    const coreServers = Object.keys((mcpJson as { mcpServers: Record<string, unknown> }).mcpServers);
-    const pluginMcp = await collectPluginMcpServers(targetDir, undefined, coreServers);
-    const servers = (mcpJson as { mcpServers: Record<string, unknown> }).mcpServers;
-    for (const [name, config] of Object.entries(pluginMcp.servers)) servers[name] = config;
-    for (const r of pluginMcp.renamed) logger.warn(t('init.pluginMcpRenamed', { renamed: r }));
-    const serverCount = Object.keys(servers).length;
-
-    // Only write .mcp.json when there's at least one server configured.
-    // P0-1: the CLI has no `weave mcp start` command yet, so `mcp.weave` defaults
-    // to false — emitting a file that points at a non-existent command would break
-    // Claude Code's MCP loader.
-    if (serverCount > 0) {
-      const mcpPath = path.join(targetDir, '.mcp.json');
-
-      if (force) {
-        await writeFile(mcpPath, JSON.stringify(mcpJson, null, 2) + '\n', 'utf-8');
-        created.files.push(mcpPath);
-      } else {
-        const existing = await readJsonObject(mcpPath);
-        if (existing === undefined) {
-          if (await fileExists(mcpPath)) {
-            skipped.push(mcpPath);
-            logger.warn(t('init.skippedInvalidJson', { path: mcpPath }));
-          } else {
-            await writeFile(mcpPath, JSON.stringify(mcpJson, null, 2) + '\n', 'utf-8');
-            created.files.push(mcpPath);
-          }
-        } else {
-          const mergedMcp = mergeMcpJson(existing, mcpJson as Record<string, unknown>);
-          await writeFile(mcpPath, JSON.stringify(mergedMcp, null, 2) + '\n', 'utf-8');
-          merged.push(mcpPath);
-        }
-      }
-    } else {
-      skipped.push(path.join(targetDir, '.mcp.json'));
-    }
-  }
-
-  // ---- Step 4: Copy skills ----
-  if (components.skills && skills.core) {
-    const srcDir = templateRegistry.getSkillsSourceDir();
-    await copyTemplateDir(srcDir, skillsDir, force, created, skipped);
-  }
-
-  // ---- Step 5: Copy commands ----
-  if (components.commands && commands.core) {
-    const srcDir = templateRegistry.getCommandsSourceDir();
-    await copyTemplateDir(srcDir, commandsDir, force, created, skipped);
-  }
-
-  // ---- Step 6: Copy agents ----
-  if (components.agents && agents.core) {
-    const srcDir = templateRegistry.getAgentsSourceDir();
-    await copyTemplateDir(srcDir, agentsDir, force, created, skipped);
-  }
-
-  // ---- Step 6b: 插件模板注入（扩展点③）----
-  // 扫描插件根目录 manifest.templates 并复制（name 冲突内置优先；与核心模板
-  // 同用 writeFileIfAbsent 的 force/skipped 语义）。
-  if (components.skills || components.commands || components.agents) {
-    try {
-      const { registered: pluginTemplates } = await registerPluginTemplates(targetDir);
-      for (const entry of pluginTemplates) {
-        const src = templateRegistry.resolvePath(entry);
-        if (entry.category === 'skill') {
-          if (!components.skills) continue;
-          await copyTemplateDir(src, path.join(skillsDir, path.basename(src)), force, created, skipped);
-          continue;
-        }
-        if (entry.category === 'command' && !components.commands) continue;
-        if (entry.category === 'agent' && !components.agents) continue;
-        const destDir = entry.category === 'command' ? commandsDir : agentsDir;
-        const destFile = path.join(destDir, path.basename(src));
-        try {
-          const content = await readFile(src, 'utf-8');
-          if (await writeFileIfAbsent(destFile, content, force)) created.files.push(destFile);
-          else skipped.push(destFile);
-        } catch (err) {
-          logger.warn(t('init.copyTemplatesFailed', { srcDir: src, error: String(err) }));
-        }
-      }
-    } catch (err) {
-      logger.warn(t('init.copyTemplatesFailed', { srcDir: 'plugins', error: String(err) }));
-    }
-  }
-
-  // ---- Step 7: Generate helpers ----
-  // Helper scripts are weave-generated ("do not edit manually"). Files carrying
-  // the weave version marker are weave's own and refreshed in place; a file at
-  // the same path WITHOUT the marker is user-authored and left untouched.
-  if (components.helpers) {
-    // The statusline is generated from the project's effective config rather
-    // than a placeholder, so `weave init` alone produces a working statusline.
-    // (`readStatuslineConfig` resolves the project's `.weave/statusline.json`,
-    // falling back to the global template.)
-    const statuslineConfig = await readStatuslineConfig(targetDir);
-    const helperFiles: [string, string][] = [
-      ['hook-handler.cjs', generateHookHandler()],
-      ['statusline.cjs', generateStatuslineScript(statuslineConfig)],
-      ['auto-memory-hook.mjs', generateAutoMemoryHook()],
-    ];
-
-    for (const [filename, content] of helperFiles) {
-      const filePath = path.join(helpersDir, filename);
-      if (force) {
-        await writeFile(filePath, content, 'utf-8');
-        created.files.push(filePath);
-        continue;
-      }
-
-      const existing = await readTextIfPresent(filePath);
-      if (existing === null) {
-        await writeFile(filePath, content, 'utf-8');
-        created.files.push(filePath);
-      } else if (existing.includes(WEAVE_HELPER_MARKER)) {
-        await writeFile(filePath, content, 'utf-8');
-        updated.push(filePath);
-      } else {
-        skipped.push(filePath);
-      }
-    }
-
-    // 标记清扫：helpers 目录里「内容带 weave 版本戳但不在本次生成清单」的文件
-    // 是旧版/改名遗留的生成物——按标记识别后移除；无标记的用户文件永不碰。
-    const keep = new Set(helperFiles.map(([filename]) => filename));
-    try {
-      for (const entry of await readdir(helpersDir, { withFileTypes: true })) {
-        if (!entry.isFile() || keep.has(entry.name)) continue;
-        const legacyPath = path.join(helpersDir, entry.name);
-        const content = await readTextIfPresent(legacyPath);
-        if (content !== null && content.includes(WEAVE_HELPER_MARKER)) {
-          await unlink(legacyPath);
-          removed.push(legacyPath);
-        }
-      }
-    } catch {
-      // helpers 目录读取失败（不存在/权限）不阻断 init
-    }
+  // ---- Step 2: 逐 harness 跑 InitPipeline final 骨架 ----
+  const ctx: InitContext = { ...options, platform };
+  const registry = buildInitRegistry();
+  for (const h of selected) {
+    const pipeline = new (registry.initFor(h)!)(ctx) as ClaudePipeline;
+    await pipeline.runSurface();
+    const rec = pipeline.records;
+    created.directories.push(...rec.created.directories);
+    created.files.push(...rec.created.files);
+    skipped.push(...rec.skipped);
+    merged.push(...rec.merged);
+    updated.push(...rec.updated);
+    removed.push(...rec.removed);
   }
 
   // ---- Step 8: Instruction file (CLAUDE.md / AGENTS.md) ----
@@ -456,79 +270,6 @@ async function readTextIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
-/**
- * Read and parse a JSON object file. Returns the object, or undefined when the
- * file is absent, unparseable, or not a JSON object — callers distinguish
- * "absent" (create fresh) from "present but unusable" (skip, never clobber).
- */
-async function readJsonObject(filePath: string): Promise<Record<string, unknown> | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(filePath, 'utf-8');
-  } catch (err) {
-    if (isMissingFileError(err)) return undefined;
-    throw err;
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // unparseable — caller decides
-  }
-  return undefined;
-}
-
 function isMissingFileError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT';
-}
-
-/**
- * Copy template files from a source directory into a target directory.
- * Each file is copied individually so existing targets are respected:
- * without `force`, files already present in the target are skipped (P0-2).
- */
-async function copyTemplateDir(
-  srcDir: string,
-  destDir: string,
-  force: boolean,
-  created: { directories: string[]; files: string[] },
-  skipped: string[],
-): Promise<void> {
-  try {
-    const files = await walkDir(srcDir);
-    for (const srcFile of files) {
-      const rel = path.relative(srcDir, srcFile);
-      const destFile = path.join(destDir, rel);
-      const content = await readFile(srcFile, 'utf-8');
-      const wrote = await writeFileIfAbsent(destFile, content, force);
-      if (wrote) {
-        created.files.push(destFile);
-      } else {
-        skipped.push(destFile);
-      }
-    }
-  } catch (err) {
-    logger.warn(t('init.copyTemplatesFailed', { srcDir, error: String(err) }));
-  }
-}
-
-async function walkDir(dir: string): Promise<string[]> {
-  const result: string[] = [];
-  try {
-    const { readdir } = await import('node:fs/promises');
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        result.push(...(await walkDir(full)));
-      } else {
-        result.push(full);
-      }
-    }
-  } catch {
-    // dir might not exist
-  }
-  return result;
 }
