@@ -24,34 +24,35 @@ export abstract class InitPipeline {
   /**
    * 模板方法：按 1→2→3→4→5→6→6b→7 调用钩子。
    * final 约定——TS 无 final 关键字，子类不得覆写本方法；顺序由 pipeline.test 锁定。
+   * 钩子可同步（void）也可异步（Promise<void>），逐个 await。
    */
-  runSurface(): void {
-    this.ensureDirs();            // 1
-    this.writeSettings();         // 2
-    this.writeMcp();              // 3
-    this.copySkills();            // 4
-    this.copyCommands();          // 5
-    this.copyAgents();            // 6
-    this.injectPluginTemplates(); // 6b（virtual）
-    this.writeHelpers();          // 7
+  async runSurface(): Promise<void> {
+    await this.ensureDirs();            // 1
+    await this.writeSettings();         // 2
+    await this.writeMcp();              // 3
+    await this.copySkills();            // 4
+    await this.copyCommands();          // 5
+    await this.copyAgents();            // 6
+    await this.injectPluginTemplates(); // 6b（virtual）
+    await this.writeHelpers();          // 7
   }
 
   /** Step 1：建 harness 表面目录结构。 */
-  protected abstract ensureDirs(): void;
+  protected abstract ensureDirs(): void | Promise<void>;
   /** Step 2：生成/合并 settings.json。 */
-  protected abstract writeSettings(): void;
+  protected abstract writeSettings(): void | Promise<void>;
   /** Step 3：生成/合并 MCP 配置。 */
-  protected abstract writeMcp(): void;
+  protected abstract writeMcp(): void | Promise<void>;
   /** Step 4：复制 skills 模板到表面目录。 */
-  protected abstract copySkills(): void;
+  protected abstract copySkills(): void | Promise<void>;
   /** Step 5：复制 commands 模板到表面目录。 */
-  protected abstract copyCommands(): void;
+  protected abstract copyCommands(): void | Promise<void>;
   /** Step 6：复制 agents 模板到表面目录。 */
-  protected abstract copyAgents(): void;
+  protected abstract copyAgents(): void | Promise<void>;
   /** Step 7：生成 helper 脚本（含标记清扫）。 */
-  protected abstract writeHelpers(): void;
+  protected abstract writeHelpers(): void | Promise<void>;
   /** Step 6b（virtual）：插件模板注入（扩展点③），默认 no-op。 */
-  protected injectPluginTemplates(): void {}
+  protected injectPluginTemplates(): void | Promise<void> {}
 
   /** 记录一次跳过：步骤名入 `skipped`，原因入 `skipReasons`。 */
   protected skip(step: string, reason: string): void {

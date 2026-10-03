@@ -29,6 +29,9 @@ importers:
       '@weave/core':
         specifier: workspace:*
         version: link:../weave-core
+      '@weave/harness':
+        specifier: workspace:*
+        version: link:../weave-harness
       '@weave/server':
         specifier: workspace:*
         version: link:../weave-server
