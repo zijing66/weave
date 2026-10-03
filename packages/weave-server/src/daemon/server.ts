@@ -1,15 +1,15 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weave/core';
+import type { EventSource, HarnessRegistry } from '@weave/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ProjectRepository } from '../repositories/projects.js';
-import type { HookEventRepository } from '../repositories/hook-events.js';
+import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
-import type { HookAdapter } from '../hooks/adapter.js';
 import type { HookReport, NormalizedHookPayload } from '../hooks/types.js';
 import type { HookRuleRegistry } from '../hooks/registry.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
@@ -100,8 +100,13 @@ export interface WeaveServerDeps {
   watch?: WatchService;
   /** Hook event repository; optional so non-ingestion tests can omit it. */
   hookEvents?: HookEventRepository;
-  /** Hook adapters keyed by source; required when `hookEvents` is provided. */
-  adapters?: HookAdapter[];
+  /**
+   * 事件接入源（批 4b：类型由 HookAdapter 放宽为结构兼容的 EventSource，
+   * `HookAdapter[]` 仍可赋值）；`harnesses` 存在时 POST /hooks 由其派生。
+   */
+  adapters?: EventSource[];
+  /** 批 4b：harness 驱动注册表（图② 装配）——events/resume 等能力槽的运行时来源。 */
+  harnesses?: HarnessRegistry;
   /** Library registry (asset sources) for the install panel; optional. */
   libraries?: LibraryRepository;
   /** Content-fingerprint cache for update detection; created if absent. */
@@ -177,7 +182,7 @@ async function handleRequest(
       sendJson(401, { error: 'Unauthorized' });
       return;
     }
-    if (!deps.hookEvents || !deps.adapters) {
+    if (!deps.hookEvents || (!deps.adapters && !deps.harnesses)) {
       sendJson(503, { error: 'Hook ingestion unavailable' });
       return;
     }
@@ -192,12 +197,19 @@ async function handleRequest(
       sendJson(400, { error: 'Missing "source" or "eventType"' });
       return;
     }
-    const adapter = deps.adapters.find((a) => a.source === report.source);
+    // 批 4b：分派列表优先由 harness registry 派生（图②），回退 deps.adapters
+    //（测试/兼容注入）——当前仅 claude 一个 source，两路查找结果一致。
+    const sources: readonly EventSource[] = deps.harnesses
+      ? deps.harnesses.byCapability('events').flatMap((d) => d.events ?? [])
+      : (deps.adapters ?? []);
+    const adapter = sources.find((a) => a.source === report.source);
     if (!adapter) {
       sendJson(400, { error: `Unknown hook source: ${report.source}` });
       return;
     }
-    const input = adapter.normalize(report, project.id);
+    // EventSource.normalize 返回 unknown（harness 不依赖 server 类型）；
+    // 落库行结构由 ClaudeEventSource 保证，同源断言后 insert。
+    const input = adapter.normalize(report, project.id) as HookEventInput;
     const id = deps.hookEvents.insert(input);
     // 会话 upsert：刷新 last_seen_at（rename 双向在 dispatcher/批3 中消费 session_title）。
     if (deps.hookSessions && input.sessionId) {

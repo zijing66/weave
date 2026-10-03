@@ -15,7 +15,7 @@ export type InitTemplateClass = new (ctx: InitContext) => InitPipeline;
 
 /**
  * 事件接入源——字段名保留 `source`，结构兼容 server 的 HookAdapter
- * （批 4b 才迁实现，这里只定接口）。
+ * （实现见 `claude/event-source.ts`，批 4b 迁入）。
  */
 export interface EventSource {
   readonly source: Harness;

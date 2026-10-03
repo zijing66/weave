@@ -1,66 +1,23 @@
 import type { Harness } from '@weave/core';
 import type { HookEventInput } from '../repositories/hook-events.js';
-import type { HookReport, NormalizedHookPayload } from './types.js';
+import type { HookReport } from './types.js';
 
 /**
  * Normalizes a raw hook report from a specific agent into the unified
- * {@link HookEventInput} shape for persistence. Implementations live daemon-side
- * so the injected hook script stays a dependency-free forwarder.
+ * {@link HookEventInput} shape for persistence.
+ *
+ * 批 4b 兼容类型：实现已迁入 `@weave/harness`（ClaudeEventSource），本接口保留
+ * 具体签名（HookReport → HookEventInput）供既有注入方使用——与 harness 的
+ * `EventSource` 结构兼容（normalize 参数放宽为 unknown、返回收窄为具体行，
+ * 方法双变下 HookAdapter 是 EventSource 的结构子类型）。
  */
 export interface HookAdapter {
   readonly source: Harness;
   normalize(report: HookReport, projectId: number): HookEventInput;
 }
 
-/** Parse the raw payload JSON, tolerating malformed/non-object input. */
-function parseRaw(payload: string): Record<string, unknown> {
-  try {
-    const v = JSON.parse(payload);
-    return v && typeof v === 'object' && !Array.isArray(v)
-      ? (v as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-/** Return the first non-null value found under any of the given keys. */
-function pick<T = unknown>(raw: Record<string, unknown>, ...keys: string[]): T | null {
-  for (const k of keys) {
-    if (raw[k] != null) return raw[k] as T;
-  }
-  return null;
-}
-
 /**
- * Normalizes Claude Code hook events. Claude Code sends snake_case fields via
- * stdin (session_id, hook_event_name, tool_name, tool_input, tool_response,
- * transcript_path, cwd); camelCase variants are tolerated for safety.
+ * 旧名保留（批 4b 迁出）：构造与行为与原 ClaudeCodeAdapter 完全一致，
+ * `new ClaudeCodeAdapter()` 等价于 `new ClaudeEventSource()`。
  */
-export class ClaudeCodeAdapter implements HookAdapter {
-  readonly source = 'claude' as const;
-
-  normalize(report: HookReport, projectId: number): HookEventInput {
-    const raw = parseRaw(report.payload);
-    const eventType = report.eventType || String(raw.hook_event_name ?? 'unknown');
-    const sessionId = report.sessionId ?? pick(raw, 'session_id', 'sessionId');
-
-    const normalized: NormalizedHookPayload = {
-      eventType,
-      toolName: pick(raw, 'tool_name', 'toolName'),
-      toolInput: pick(raw, 'tool_input', 'toolInput'),
-      toolResponse: pick(raw, 'tool_response', 'toolResponse'),
-      cwd: report.cwd ?? pick(raw, 'cwd'),
-      transcriptPath: pick(raw, 'transcript_path', 'transcriptPath'),
-      raw,
-    };
-
-    return {
-      projectId,
-      source: 'claude',
-      eventType,
-      sessionId: sessionId ?? undefined,
-      payload: JSON.stringify(normalized),
-    };
-  }
-}
+export { ClaudeEventSource as ClaudeCodeAdapter } from '@weave/harness';
