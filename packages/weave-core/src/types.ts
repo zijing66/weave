@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { HARNESS_EVENTS, INJECTABLE_EVENTS, type Harness } from './harness.js';
 
 // ---- Presets ----
 
@@ -37,35 +38,48 @@ export type HooksConfig = z.infer<typeof HooksConfigSchema>;
 
 // ---- Hook rule model (D3 事件系统) ----
 
-/** Claude Code 事件采集面（settings-gen 全集注册；是否响应由 daemon 规则开关决定）。 */
-export const CLAUDE_HOOK_EVENTS = [
-  'PreToolUse',
-  'PostToolUse',
-  'UserPromptSubmit',
-  'SessionStart',
-  'Stop',
-  'SubagentStop',
-  'Notification',
-] as const;
-
 /**
- * 支持同步 `hookSpecificOutput.additionalContext` 注入的事件白名单——
- * inject 处理器只能挂在这里（官方 hooks 文档逐事件核实）。
+ * 兼容 re-export（CROSS §2.2）：存量 import 路径不变，
+ * 实际表已下沉 `harness.ts` 的 `HARNESS_EVENTS.claude`。
  */
-export const INJECTABLE_HOOK_EVENTS = [
-  'PostToolUse',
-  'UserPromptSubmit',
-  'SessionStart',
-  'Stop',
-  'SubagentStop',
-] as const;
+export const CLAUDE_HOOK_EVENTS = HARNESS_EVENTS.claude;
+/** 兼容 re-export：`INJECTABLE_EVENTS.claude`。 */
+export const INJECTABLE_HOOK_EVENTS = INJECTABLE_EVENTS.claude;
 
 export const HookRuleSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('claude-event'), event: z.string().min(1) }),
+  z.object({
+    kind: z.literal('hook-event'),
+    harness: z.enum(['claude', 'codex', 'any']),
+    event: z.string().min(1),
+  }),
   /** 二期占位：外部系统 ingress，一期 schema 预留但不实现入口。 */
   z.object({ kind: z.literal('webhook'), routeId: z.string().min(1) }),
+  /**
+   * 读兼容分支：存量 hook_rules.source 里的 'claude-event'。
+   * 读侧经 `normalizeHookRuleSource` 内存转换为 hook-event（不写迁移脚本，
+   * 下次 update 落新形）；写侧在 create/validate 入口同样先 normalize。
+   */
+  z.object({ kind: z.literal('claude-event'), event: z.string().min(1) }),
 ]);
 export type HookRuleSource = z.infer<typeof HookRuleSourceSchema>;
+
+/** 读/写侧统一 normalize：legacy 'claude-event' → 'hook-event'{harness:'claude'}。 */
+export function normalizeHookRuleSource(source: HookRuleSource): HookRuleSource {
+  if (source.kind === 'claude-event') {
+    return { kind: 'hook-event', harness: 'claude', event: source.event };
+  }
+  return source;
+}
+
+/**
+ * 规则声明的目标 harness：webhook 无 harness 语义返回 null；
+ * legacy 形视作 'claude'。dispatcher 的 match 首行按此过滤。
+ */
+export function hookSourceHarness(source: HookRuleSource): Harness | 'any' | null {
+  if (source.kind === 'claude-event') return 'claude';
+  if (source.kind === 'hook-event') return source.harness;
+  return null;
+}
 
 export const HookRuleFilterSchema = z.object({
   /** 匹配 toolInput 的工具名（PostToolUse/PreToolUse 事件）。 */

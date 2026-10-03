@@ -4,6 +4,8 @@
  * itself and statically hosts the SPA for everything else.
  */
 
+import type { Harness } from '@weave/core/harness';
+
 /**
  * The daemon token.
  *
@@ -48,7 +50,7 @@ export interface ProjectRow {
   meta: string | null;
 }
 
-export type AssetAgent = 'claude' | 'codex';
+export type AssetAgent = Harness;
 
 export interface AssetEntry {
   absPath: string;
@@ -88,9 +90,25 @@ export interface HookEventRow {
  * （web 不能 import 含 node:fs 的 workspace 包，服务端 zod 校验兜底）。
  */
 export type HookRuleSource =
-  | { kind: 'claude-event'; event: string }
-  /** 二期占位：外部系统 ingress，一期 schema 预留。 */
-  | { kind: 'webhook'; routeId: string };
+  | { kind: 'hook-event'; harness: Harness | 'any'; event: string }
+  | { kind: 'webhook'; routeId: string }
+  /** 读兼容分支：存量规则的 legacy 形，读侧经 normalizeHookRuleSource 归一。 */
+  | { kind: 'claude-event'; event: string };
+
+/** mirror of `normalizeHookRuleSource` in packages/weave-core/src/types.ts。 */
+export function normalizeHookRuleSource(source: HookRuleSource): HookRuleSource {
+  if (source.kind === 'claude-event') {
+    return { kind: 'hook-event', harness: 'claude', event: source.event };
+  }
+  return source;
+}
+
+/** mirror of `hookSourceHarness` in packages/weave-core/src/types.ts。 */
+export function hookSourceHarness(source: HookRuleSource): Harness | 'any' | null {
+  if (source.kind === 'claude-event') return 'claude';
+  if (source.kind === 'hook-event') return source.harness;
+  return null;
+}
 
 /** mirror of `HookRuleFilter` in packages/weave-core/src/types.ts。 */
 export interface HookRuleFilter {
@@ -107,7 +125,8 @@ export type HandlerConfig =
   | { type: 'log' }
   | { type: 'webhook'; url: string; secret?: string; headers?: Record<string, string> }
   | { type: 'inject'; template: string }
-  | { type: 'manual'; template: string };
+  | { type: 'manual'; template: string }
+  | { type: 'plugin'; pluginId: string; handlerType: string; config?: Record<string, unknown> };
 
 /** mirror of `HookRule` in packages/weave-core/src/types.ts。 */
 export interface HookRule {
@@ -375,7 +394,7 @@ export interface PluginEnabledMap {
   codex: Record<string, boolean>;
 }
 
-export type PluginRuntime = 'claude' | 'codex';
+export type PluginRuntime = Harness;
 
 export type McpEnableState = 'enabled' | 'disabled' | 'default';
 

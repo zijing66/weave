@@ -15,15 +15,19 @@ import {
   api,
   CLAUDE_HOOK_EVENTS,
   INJECTABLE_HOOK_EVENTS,
+  hookSourceHarness,
+  normalizeHookRuleSource,
   type HandlerConfig,
   type HookDispatch,
   type HookDispatchStatus,
   type HookRule,
   type HookRuleFilter,
   type HookRuleInput,
+  type HookRuleSource,
   type ProjectRow,
   type SessionRow,
 } from '@/lib/api';
+import type { Harness } from '@weave/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -44,6 +48,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Puzzle,
   ScrollText,
   Trash2,
   Webhook,
@@ -70,13 +75,14 @@ interface HookFrame {
 
 type FlowMode = 'project' | 'global';
 
-const HANDLER_TYPES: HandlerConfig['type'][] = ['log', 'webhook', 'inject', 'manual'];
+const HANDLER_TYPES: HandlerConfig['type'][] = ['log', 'webhook', 'inject', 'manual', 'plugin'];
 
 const HANDLER_LABEL_KEYS: Record<HandlerConfig['type'], MessageKey> = {
   log: 'hooks.handler.log',
   webhook: 'hooks.handler.webhook',
   inject: 'hooks.handler.inject',
   manual: 'hooks.handler.manual',
+  plugin: 'hooks.handler.plugin',
 };
 
 const HANDLER_TIP_KEYS: Record<HandlerConfig['type'], MessageKey> = {
@@ -84,6 +90,7 @@ const HANDLER_TIP_KEYS: Record<HandlerConfig['type'], MessageKey> = {
   webhook: 'hooks.handlerWebhookTip',
   inject: 'hooks.handlerInjectTip',
   manual: 'hooks.handlerManualTip',
+  plugin: 'hooks.handlerPluginTip',
 };
 
 const HANDLER_ICONS: Record<HandlerConfig['type'], LucideIcon> = {
@@ -91,7 +98,13 @@ const HANDLER_ICONS: Record<HandlerConfig['type'], LucideIcon> = {
   webhook: Webhook,
   inject: Bot,
   manual: Hand,
+  plugin: Puzzle,
 };
+
+/** 规则来源的两种可编辑形（webhook 形一期不开放编辑）。 */
+const SOURCE_KINDS: Array<HookRuleSource['kind']> = ['hook-event', 'claude-event'];
+
+const HARNESS_OPTIONS: Array<Harness | 'any'> = ['claude', 'codex', 'any'];
 
 const STATUS_KEY: Record<HookDispatchStatus, MessageKey> = {
   pending: 'hooks.status.pending',
@@ -206,8 +219,8 @@ function RuleNode({ data }: NodeProps<RuleFlowNode>) {
   const t = useT();
   const rule = data.rule;
   const HandlerIcon = HANDLER_ICONS[rule.handler.type];
-  const eventLabel =
-    rule.source.kind === 'claude-event' ? rule.source.event : rule.source.routeId;
+  const src = normalizeHookRuleSource(rule.source);
+  const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
   return (
     <div
       className={cn(
@@ -375,7 +388,8 @@ function buildGraph(
   // 事件源列：CLAUDE_HOOK_EVENTS 顺序，只画被规则引用的事件。
   const used = new Set<string>();
   for (const r of rules) {
-    if (r.source.kind === 'claude-event') used.add(r.source.event);
+    const src = normalizeHookRuleSource(r.source);
+    if (src.kind === 'hook-event') used.add(src.event);
   }
   CLAUDE_HOOK_EVENTS.filter((e) => used.has(e)).forEach((event, i) => {
     nodes.push({
@@ -398,10 +412,11 @@ function buildGraph(
       position: { x: COL_X.rule, y: i * ROW_Y },
       data: { rule, scopeLabel, onToggle: cb.onToggle },
     });
-    if (rule.source.kind === 'claude-event') {
+    const src = normalizeHookRuleSource(rule.source);
+    if (src.kind === 'hook-event') {
       edges.push({
-        id: `e:${rule.source.event}->${rule.id}`,
-        source: `src:${rule.source.event}`,
+        id: `e:${src.event}->${rule.id}`,
+        source: `src:${src.event}`,
         target: `rule:${rule.id}`,
         data: { ruleId: rule.id },
       });
@@ -469,6 +484,8 @@ function buildGraph(
 interface RuleFormState {
   name: string;
   projectId: number | null;
+  sourceKind: 'hook-event' | 'claude-event';
+  harness: Harness | 'any';
   event: string;
   toolNames: string;
   pathGlobs: string;
@@ -477,6 +494,8 @@ interface RuleFormState {
   template: string;
   url: string;
   secret: string;
+  pluginId: string;
+  pluginHandlerType: string;
   record: boolean;
   enabled: boolean;
 }
@@ -485,6 +504,8 @@ function emptyForm(defaultProjectId: number | null): RuleFormState {
   return {
     name: '',
     projectId: defaultProjectId,
+    sourceKind: 'hook-event',
+    harness: 'claude',
     event: 'PostToolUse',
     toolNames: '',
     pathGlobs: '',
@@ -493,6 +514,8 @@ function emptyForm(defaultProjectId: number | null): RuleFormState {
     template: '',
     url: '',
     secret: '',
+    pluginId: '',
+    pluginHandlerType: '',
     record: true,
     enabled: true,
   };
@@ -500,10 +523,13 @@ function emptyForm(defaultProjectId: number | null): RuleFormState {
 
 function formFromRule(rule: HookRule): RuleFormState {
   const handler = rule.handler;
+  const src = normalizeHookRuleSource(rule.source);
   return {
     name: rule.name,
     projectId: rule.projectId,
-    event: rule.source.kind === 'claude-event' ? rule.source.event : 'PostToolUse',
+    sourceKind: rule.source.kind === 'claude-event' ? 'claude-event' : 'hook-event',
+    harness: hookSourceHarness(rule.source) ?? 'claude',
+    event: src.kind === 'hook-event' ? src.event : 'PostToolUse',
     toolNames: (rule.filter.toolNames ?? []).join(', '),
     pathGlobs: (rule.filter.pathGlobs ?? []).join(', '),
     crossProjectOnly: rule.filter.crossProjectOnly ?? false,
@@ -511,6 +537,8 @@ function formFromRule(rule: HookRule): RuleFormState {
     template: handler.type === 'inject' || handler.type === 'manual' ? handler.template : '',
     url: handler.type === 'webhook' ? handler.url : '',
     secret: handler.type === 'webhook' ? (handler.secret ?? '') : '',
+    pluginId: handler.type === 'plugin' ? handler.pluginId : '',
+    pluginHandlerType: handler.type === 'plugin' ? handler.handlerType : '',
     record: rule.record,
     enabled: rule.enabled,
   };
@@ -801,6 +829,10 @@ export function HooksPanel({
         return;
       }
     }
+    if (s.handlerType === 'plugin' && (!s.pluginId.trim() || !s.pluginHandlerType.trim())) {
+      setFormError(t('hooks.errPluginRequired'));
+      return;
+    }
     const handler: HandlerConfig =
       s.handlerType === 'log'
         ? { type: 'log' }
@@ -810,18 +842,28 @@ export function HooksPanel({
               url: s.url.trim(),
               ...(s.secret.trim() ? { secret: s.secret.trim() } : {}),
             }
-          : { type: s.handlerType, template: s.template.trim() };
+          : s.handlerType === 'plugin'
+            ? {
+                type: 'plugin',
+                pluginId: s.pluginId.trim(),
+                handlerType: s.pluginHandlerType.trim(),
+              }
+            : { type: s.handlerType, template: s.template.trim() };
     const filter: HookRuleFilter = {};
     const tools = splitList(s.toolNames);
     const globs = splitList(s.pathGlobs);
     if (tools.length) filter.toolNames = tools;
     if (globs.length) filter.pathGlobs = globs;
     if (s.crossProjectOnly) filter.crossProjectOnly = true;
+    const source: HookRuleSource =
+      s.sourceKind === 'claude-event'
+        ? { kind: 'claude-event', event: s.event }
+        : { kind: 'hook-event', harness: s.harness, event: s.event };
     const body: HookRuleInput = {
       name,
       enabled: s.enabled,
       projectId: s.projectId,
-      source: { kind: 'claude-event', event: s.event },
+      source,
       filter,
       handler,
       record: s.record,
@@ -1011,6 +1053,44 @@ export function HooksPanel({
               </label>
 
               <label className="block space-y-1">
+                <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
+                <select
+                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={form.state.sourceKind}
+                  onChange={(e) =>
+                    patchForm({ sourceKind: e.target.value as RuleFormState['sourceKind'] })
+                  }
+                >
+                  {SOURCE_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind === 'hook-event'
+                        ? t('hooks.sourceKind.hookEvent')
+                        : t('hooks.sourceKind.legacy')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {form.state.sourceKind === 'hook-event' && (
+                <label className="block space-y-1">
+                  <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
+                  <select
+                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={form.state.harness}
+                    onChange={(e) =>
+                      patchForm({ harness: e.target.value as Harness | 'any' })
+                    }
+                  >
+                    {HARNESS_OPTIONS.map((h) => (
+                      <option key={h} value={h}>
+                        {t(`hooks.harness.${h}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="block space-y-1">
                 <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
                 <select
                   className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1073,6 +1153,31 @@ export function HooksPanel({
                     className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     value={form.state.secret}
                     onChange={(e) => patchForm({ secret: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
+
+            {form.state.handlerType === 'plugin' && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="text-[11px] text-neutral-500">{t('hooks.field.pluginId')}</span>
+                  <input
+                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={form.state.pluginId}
+                    onChange={(e) => patchForm({ pluginId: e.target.value })}
+                    placeholder={t('hooks.pluginIdPlaceholder')}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] text-neutral-500">
+                    {t('hooks.field.pluginHandlerType')}
+                  </span>
+                  <input
+                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={form.state.pluginHandlerType}
+                    onChange={(e) => patchForm({ pluginHandlerType: e.target.value })}
+                    placeholder={t('hooks.pluginHandlerPlaceholder')}
                   />
                 </label>
               </div>
@@ -1168,10 +1273,8 @@ export function HooksPanel({
               rules.map((rule) => {
                 const tools = rule.filter.toolNames ?? [];
                 const globs = rule.filter.pathGlobs ?? [];
-                const eventLabel =
-                  rule.source.kind === 'claude-event'
-                    ? rule.source.event
-                    : rule.source.routeId;
+                const src = normalizeHookRuleSource(rule.source);
+                const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
                 const HandlerIcon = HANDLER_ICONS[rule.handler.type];
                 return (
                   <div

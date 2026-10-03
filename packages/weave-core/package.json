@@ -11,6 +11,11 @@
       "development": "./src/index.ts",
       "import": "./dist/index.js"
     },
+    "./harness": {
+      "types": "./dist/harness.d.ts",
+      "development": "./src/harness.ts",
+      "import": "./dist/harness.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

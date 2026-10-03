@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
+import type { Harness } from '@weave/core';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -225,6 +226,7 @@ async function handleRequest(
         project,
         sessionId: input.sessionId ?? null,
         payload,
+        source: input.source,
       });
     }
     sendJson(201, {
@@ -518,7 +520,7 @@ async function handleRequest(
       category?: string;
       name?: string;
       scope?: 'project' | 'global';
-      agent?: 'claude' | 'codex';
+      agent?: Harness;
     };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
@@ -800,7 +802,7 @@ async function handleRequest(
       category?: string;
       name?: string;
       scope?: 'project' | 'global';
-      agent?: 'claude' | 'codex';
+      agent?: Harness;
     };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;

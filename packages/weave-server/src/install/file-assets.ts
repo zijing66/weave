@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { Harness } from '@weave/core';
 
 /**
  * File-backed harness asset kinds — the single source of truth for everything
@@ -58,7 +59,7 @@ export function isFileAssetCategory(category: string): category is FileAssetCate
  * (e.g. rules are project-only, agents have no Codex equivalent). */
 export function fileAssetTargetDir(
   category: FileAssetCategory,
-  agent: 'claude' | 'codex',
+  agent: Harness,
   scope: 'project' | 'global',
   projectPath: string,
   homedir: string,

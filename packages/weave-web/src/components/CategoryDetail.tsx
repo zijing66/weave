@@ -13,6 +13,7 @@ import {
   type PluginEnabledMap,
   type PluginRuntime,
 } from '@/lib/api';
+import type { Harness } from '@weave/core/harness';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import {
@@ -46,7 +47,7 @@ function agentOf(a: AssetEntry): AssetAgent {
 }
 
 /** Harness-tool filter for the asset categories (skills / mcp / commands). */
-export type RuntimeTab = 'claude' | 'codex' | 'all';
+export type RuntimeTab = Harness | 'all';
 
 export function CategoryDetail({
   projectId,
@@ -82,7 +83,7 @@ export function CategoryDetail({
   pluginEnabled: PluginEnabledMap;
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
-  onUninstallSkill: (name: string, scope: AssetScope, agent?: 'claude' | 'codex') => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
   onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void;
   onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;

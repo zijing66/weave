@@ -123,7 +123,10 @@ export const hooksCommand: Command = {
           }
           const rows = rules.map((r) => [
             r.enabled ? '●' : '○',
-            r.source.kind === 'claude-event' ? (r.source.event ?? '') : `webhook:${r.source.routeId ?? ''}`,
+            // 兼容读形：hook-event（新）与 legacy claude-event 都取 event；webhook 单列。
+            r.source.kind === 'webhook'
+              ? `webhook:${r.source.routeId ?? ''}`
+              : (r.source.event ?? ''),
             r.handler.type,
             r.name,
             r.projectId == null ? '*' : String(r.projectId),

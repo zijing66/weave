@@ -1,8 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { Harness } from '@weave/core';
 
 export interface HookEventInput {
   projectId: number;
-  source: 'claude' | 'codex';
+  source: Harness;
   eventType: string;
   sessionId?: string;
   /** Serialized JSON payload captured from the agent hook. */

@@ -8,6 +8,8 @@
  * (persistence boundary: see weave-dashboard-architecture).
  */
 
+import type { Harness } from '@weave/core';
+
 /** Coarse classification of an observed asset file. */
 export type AssetCategory =
   | 'skill'
@@ -23,7 +25,7 @@ export type AssetCategory =
   | 'other';
 
 /** Which coding agent an asset belongs to (`.claude/` vs `.codex/` + AGENTS.md). */
-export type AssetAgent = 'claude' | 'codex';
+export type AssetAgent = Harness;
 
 /** A single cached asset file within a project. */
 export interface AssetEntry {

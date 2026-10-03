@@ -9,7 +9,11 @@ import path from 'node:path';
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: {
+      // 源码直引（批 1）：web 不依赖 workspace 包运行时，别名指到 core 源文件。
+      '@weave/core/harness': path.resolve(__dirname, '../weave-core/src/harness.ts'),
+      '@': path.resolve(__dirname, 'src'),
+    },
   },
   server: {
     port: 9527,

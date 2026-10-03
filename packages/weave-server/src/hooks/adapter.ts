@@ -1,3 +1,4 @@
+import type { Harness } from '@weave/core';
 import type { HookEventInput } from '../repositories/hook-events.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 
@@ -7,7 +8,7 @@ import type { HookReport, NormalizedHookPayload } from './types.js';
  * so the injected hook script stays a dependency-free forwarder.
  */
 export interface HookAdapter {
-  readonly source: 'claude' | 'codex';
+  readonly source: Harness;
   normalize(report: HookReport, projectId: number): HookEventInput;
 }
 

@@ -496,6 +496,7 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
       project,
       sessionId: 's-ai',
       payload: payload as never,
+      source: 'claude',
     });
 
     // inject 命中：注入内容 = remind.md 全文
@@ -533,6 +534,7 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
       project,
       sessionId: 's-ai',
       payload: payload as never,
+      source: 'claude',
     });
     expect(outcome.additionalContext).toBeUndefined();
   });
