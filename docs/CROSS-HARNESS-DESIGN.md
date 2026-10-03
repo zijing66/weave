@@ -5,7 +5,8 @@
 > `docs/PLUGIN-SPEC.md`（本设计对其的修改随实施批次同步）；外部机制借鉴依据见
 > `docs/PLUGIN-RESEARCH.md`。
 >
-> 当前状态：**设计已定稿，代码未实施**（批次序列见 §5，启动由用户确认）。
+> 当前状态：**设计已定稿**；批 0 类型地基已随架构重构计划批 1 落地（commit
+> d30cd38），其余批次（批 1–5）未启动（批次序列见 §5，启动由用户确认）。
 
 ## 1. 关系定位与三段式现状
 
@@ -19,13 +20,18 @@
 
 | 段 | 成熟度 | 关键事实 |
 |---|---|---|
-| **生成侧**（`weave-cli/src/init`） | Claude 专属 | `executor.ts` 目录树只有 `.claude/`；`settings-gen`/`helpers-gen` 硬编码（`source:'claude'`、`CLAUDE_PROJECT_DIR`、marker `.claude/helpers/...`）；唯一双分叉 = `instruction-link.ts`（CLAUDE.md/AGENTS.md 单文件+软链） |
-| **资产层**（install / watch / 可视化） | **已双 harness** | `'claude'|'codex'` 贯穿 skills/MCP/插件 enable 态；`GlobalSkillSource` 已是「harness×来源」二维抽象；缺口：`FILE_ASSET_SPECS.codexUserDir` 字段在值全空、`weave scan` marker 只认 `.weave|.claude` |
+| **生成侧**（`weave-cli/src/init`） | Claude 专属（**已随架构重构计划批 3/5 模板方法化并接入 Codex init，见下方落地注记**） | `executor.ts` 目录树只有 `.claude/`；`settings-gen`/`helpers-gen` 硬编码（`source:'claude'`、`CLAUDE_PROJECT_DIR`、marker `.claude/helpers/...`）；唯一双分叉 = `instruction-link.ts`（CLAUDE.md/AGENTS.md 单文件+软链） |
+| **资产层**（install / watch / 可视化） | **已双 harness** | `'claude'|'codex'` 贯穿 skills/MCP/插件 enable 态；`GlobalSkillSource` 已是「harness×来源」二维抽象；缺口：`FILE_ASSET_SPECS.codexUserDir` 字段在值全空、`weave scan` marker 只认 `.weave|.claude`（**已随计划批 5 扩展认 `.codex`**） |
 | **hooks 运行时**（D3/D3.1） | 接口留缝、只装 Claude | `HookAdapter.source` 已带双值，`server.ts` 按 `report.source` 分派 adapter（缝已开）；但只注册 `ClaudeCodeAdapter`，规则模型/插件校验/match 全部写死 Claude |
+
+> **架构重构落地注记**：`Harness` 类型下沉（§2.1）与 subpath 已随计划批 1 落地；
+> 模板方法 + 可插拔 HarnessDriver 架构已实施——新目录 `packages/weave-harness/`
+> （driver / pipeline / registry-wiring + claude/ codex/ 接入目录），web 源码并入
+> `packages/weave-server/web/`——详见 `docs/plan/template-method-harness-refactor.md`。
 
 **结构性税**：全仓无 `Harness` 共享类型——`'claude'|'codex'` 手写重复 ≥14 处
 （server 侧 11 处 + web `api.ts`/`CategoryDetail.tsx` 手抄镜像，因 web 不能 import
-含 `node:fs` 的包）。
+含 `node:fs` 的包）（**已随计划批 1 消解**）。
 
 **已存在但空转的缝**（本设计的直接受益点）：
 
@@ -269,7 +275,7 @@ git | npm`），替代「origin 枚举 + installed.json 附带信息」的分裂
 
 ---
 
-## 5. 实施批次序列（未启动）
+## 5. 实施批次序列（批 0 已落地，其余未启动）
 
 依赖链：**`0 → 1 → {2, 3} → 4`**，批 5 独立可弃。每批铁律：
 `pnpm build && pnpm build:web && pnpm test` 退出码全 0；中文提交
@@ -277,11 +283,11 @@ git | npm`），替代「origin 枚举 + installed.json 附带信息」的分裂
 
 | 批 | 内容 | 触达面 | 批内硬闸 |
 |---|---|---|---|
-| **批 0 类型地基** | `harness.ts` 下沉 + subpath export；≥14 处换 `Harness`；`IngestContext.source` + match 首行过滤；规则 `hook-event` 泛化 + 读侧 normalize；validateHandler 按 harness 白名单；web HandlerConfig plugin 分支与 source 编辑 | weave-core、server hooks、daemon/server.ts、web ≈10–15 文件 | **存量 hook 规则测试零改动通过**（读兼容生效） |
-| **批 1 能力 A** | manifest targets / requires·subscribe 并集校验 / 规则 source 补齐 / templates target 分流（共用 helper）/ provenance `<id>@<source>` / **PLUGIN-SPEC 同步** | plugin-loader、plugin-installer、plugin-templates、executor、SPEC、fixtures ≈8–12 文件 | fixtures/changelog-reminder 回归过；「声明 codex 但转换器未就绪 → skip+warn」有用例 |
-| **批 2 能力 B** | **B0 调研先行** → codex-adapter、双 adapter 注册、DB 三列（`migrateColumns` 泛化）、resume 命令表分派、web 投送统一 + source 消费、scan marker 认 `.codex`（**注：scan 认 `.codex` 已前移至本计划 `docs/plan/template-method-harness-refactor.md` 批 5 落地**） | codex-adapter、start/dev-entry、db、resume-runner、hooks-routes、web ≈10–15 文件 | **B0 未锁 schema 不开主批**；codex 降级路径有用例；旧库补列幂等用例 |
+| **批 0 类型地基** | `harness.ts` 下沉 + subpath export；≥14 处换 `Harness`；`IngestContext.source` + match 首行过滤；规则 `hook-event` 泛化 + 读侧 normalize；validateHandler 按 harness 白名单；web HandlerConfig plugin 分支与 source 编辑——**已落地（随架构重构计划批 1，commit d30cd38）；显式例外 1 项：「事件下拉按 harness 过滤」随能力 B（批 2）** | weave-core、server hooks、daemon/server.ts、web ≈10–15 文件 | **存量 hook 规则测试零改动通过**（读兼容生效） |
+| **批 1 能力 A** | manifest targets / requires·subscribe 并集校验 / 规则 source 补齐 / templates target 分流（共用 helper）/ provenance `<id>@<source>` / **PLUGIN-SPEC 同步**——**注：架构重构计划批 1 已落 compat re-export（`CLAUDE_HOOK_EVENTS` 等，commit d30cd38），requires/subscribe 并集化仍归本行独立推进** | plugin-loader、plugin-installer、plugin-templates、executor、SPEC、fixtures ≈8–12 文件 | fixtures/changelog-reminder 回归过；「声明 codex 但转换器未就绪 → skip+warn」有用例 |
+| **批 2 能力 B** | **B0 调研先行** → codex-adapter、双 adapter 注册、DB 三列（`migrateColumns` 泛化）、resume 命令表分派、web 投送统一 + source 消费、scan marker 认 `.codex`（**注：scan 认 `.codex` 已前移至本计划 `docs/plan/template-method-harness-refactor.md` 批 5 落地**）；**注：web 投送统一与 `hook_events.source` 消费的 web 视图部分移交架构重构计划批 9（见 `docs/plan/template-method-harness-refactor.md` 第四章批 9 可验信号），DB/API 部分仍归本行** | codex-adapter、start/dev-entry、db、resume-runner、hooks-routes、web ≈10–15 文件 | **B0 未锁 schema 不开主批**；codex 降级路径有用例；旧库补列幂等用例 |
 | **批 3 能力 C** | TemplateEntry.targets、file-assets codex 面、md→toml 转换器、`weave add/remove`、插件模板三通道一致 | weave-templates、install、cli commands ≈8–10 文件 | 转换 round-trip 测试；remove checksum 不删用户改写 |
-| **批 4 能力 D** | projects.meta 写入、`GET /inventory`、dashboard 总览视图、按 harness 启停、SOURCE_STYLES codex 消费 | repositories/projects、server、web 新视图 ≈8–10 文件 | meta 探测幂等；启停边界（不回滚已注入物）有用例 |
+| **批 4 能力 D** | projects.meta 写入、`GET /inventory`、dashboard 总览视图、按 harness 启停、SOURCE_STYLES codex 消费——**注：dashboard 总览视图与 SOURCE_STYLES codex 消费（web 视图部分）移交架构重构计划批 9，后端 meta/inventory 仍归本行** | repositories/projects、server、web 新视图 ≈8–10 文件 | meta 探测幂等；启停边界（不回滚已注入物）有用例 |
 | **批 5（可选）A′** | manifest config 类型化 userConfig、loader 校验、dashboard 表单生成 | types、plugin-loader、web ≈5–8 文件 | schema 拒绝用例；无 schema 存量插件兼容 |
 
 **空转缝随批清理**：web plugin 分支 → 批 0；`hook_events.source` 消费 → 批 2；
