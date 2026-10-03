@@ -15,7 +15,7 @@ import { HookRuleRepository } from '../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
-import { ClaudeCodeAdapter } from '../hooks/adapter.js';
+import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -51,7 +51,11 @@ async function main(): Promise<void> {
   const projects = new ProjectRepository(db);
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
-  const adapters = [new ClaudeCodeAdapter()];
+  // 图② 装配：registry 注册运行时驱动 → adapters 由 events 能力槽派生
+  //（== 旧 [new ClaudeCodeAdapter()]），resume 规格同源注入。
+  const harnesses = new HarnessRegistry();
+  registerRuntimeDrivers(harnesses);
+  const adapters = harnesses.byCapability('events').flatMap((d) => d.events ?? []);
   const hookRegistry = new HookRuleRegistry(new HookRuleRepository(db));
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
@@ -84,6 +88,8 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     projects,
     bus: hookBus,
+    // 批 4b：resume 规格来自 registry（缺省回落 CLAUDE_RESUME，行为不变）。
+    resumeSpec: harnesses.get('claude')?.resume,
   });
   const watch = new WatchService(projects);
   watch.start();
@@ -96,6 +102,7 @@ async function main(): Promise<void> {
     watch,
     hookEvents,
     adapters,
+    harnesses,
     libraries,
     staticDir,
     hookRegistry,

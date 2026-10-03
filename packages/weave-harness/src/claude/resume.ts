@@ -1,4 +1,12 @@
 import type { ResumeCommandSpec } from '../driver.js';
 
-/** 批 4b 迁入：CLAUDE_RESUME（现 `resume-runner.ts` 内联的 claude spawn 参数）。 */
-export const CLAUDE_RESUME: ResumeCommandSpec | null = null;
+/**
+ * 批 4b 迁入：Claude resume 命令规格——bin/args 逐字来自 server
+ * `resume-runner.ts` 现状（`claude --resume <sessionId> -p <prompt>`）；
+ * `WEAVE_CLAUDE_BIN` / `claudeBin` 环境与测试覆盖由 runner 保留。
+ */
+export const CLAUDE_RESUME: ResumeCommandSpec = {
+  supported: true,
+  bin: 'claude',
+  args: (sessionId, prompt) => ['--resume', sessionId, '-p', prompt],
+};

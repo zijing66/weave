@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
+import { CLAUDE_RESUME, type ResumeCommandSpec } from '@weave/harness';
 import type { HookDispatchRepository, HookDispatchRow } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -8,6 +9,10 @@ import type { HookEventBus } from './bus.js';
  * D3 指令池 resume 执行器：把 pending / injected 的 dispatch 用
  * `claude --resume <sessionId> -p <prompt>` 在项目根下异步执行，
  * 退出后回写 succeeded/failed/timeout 并广播 bus dispatch.finished。
+ *
+ * 批 4b：bin/args 规格迁入 `@weave/harness` 的 `CLAUDE_RESUME`
+ * （ResumeCommandSpec 注入，缺省 = 现行为）；claudeBin / WEAVE_CLAUDE_BIN
+ * 覆盖窗保留。
  *
  * run() 只做「校验 → 置 running → spawn」并立即返回（HTTP「已启动」语义）；
  * 等待退出、超时强杀、状态回写全部走后台，校验后任何异常内部消化为 failed，
@@ -40,8 +45,10 @@ export interface ResumeRunnerDeps {
   spawnImpl?: SpawnLike;
   /** 测试注入的强杀实现（缺省：Windows 下 taskkill，POSIX 杀进程组）。 */
   killImpl?: (pid: number) => void;
-  /** claude 可执行文件名覆盖（测试用）；缺省环境变量或 'claude'。 */
+  /** claude 可执行文件名覆盖（测试用）；缺省环境变量，再缺省 spec.bin。 */
   claudeBin?: string;
+  /** 批 4b：resume 命令规格注入；缺省 CLAUDE_RESUME（与现行为等价）。 */
+  resumeSpec?: ResumeCommandSpec;
   /** 单次 resume 超时（毫秒），超时强杀 → timeout；缺省 300_000，测试传短值。 */
   timeoutMs?: number;
 }
@@ -64,6 +71,7 @@ export class ResumeRunner {
   private readonly spawnImpl: SpawnLike;
   private readonly killImpl: (pid: number) => void;
   private readonly claudeBin: string;
+  private readonly resumeSpec: ResumeCommandSpec;
   private readonly timeoutMs: number;
   /** sessionId → 进行中的 resume（并发闸）；终态落定后清除。 */
   private readonly active = new Map<string, { dispatchId: number; pid?: number }>();
@@ -71,9 +79,10 @@ export class ResumeRunner {
   constructor(private readonly deps: ResumeRunnerDeps) {
     this.spawnImpl = deps.spawnImpl ?? nodeSpawn;
     this.killImpl = deps.killImpl ?? defaultKill;
+    this.resumeSpec = deps.resumeSpec ?? CLAUDE_RESUME;
     // Windows 上 claude 常是 claude.cmd，spawn 不经 shell 不解析 .cmd ——
     // 生产细节主会话后续可补 PATH/后缀解析；测试经 claudeBin 注入不走真实路径。
-    this.claudeBin = deps.claudeBin ?? process.env.WEAVE_CLAUDE_BIN ?? 'claude';
+    this.claudeBin = deps.claudeBin ?? process.env.WEAVE_CLAUDE_BIN ?? this.resumeSpec.bin;
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
@@ -126,7 +135,7 @@ export class ResumeRunner {
     cwd: string,
     state: { settled: boolean },
   ): void {
-    const args = ['--resume', sessionId, '-p', dispatch.prompt];
+    const args = this.resumeSpec.args(sessionId, dispatch.prompt);
     const options: SpawnOptions = {
       cwd,
       detached: true, // POSIX 下自成进程组，超时可整组强杀
