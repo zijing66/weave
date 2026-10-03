@@ -40,7 +40,9 @@
   "scripts": {
     "build": "tsc && node copy-presets.mjs",
     "prepack": "pnpm build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:web": "cd web && tsc && vite build",
+    "dev:web": "cd web && vite"
   },
   "dependencies": {
     "@weave/core": "workspace:*",
@@ -49,8 +51,30 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@dnd-kit/core": "^6.1.0",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@tailwindcss/typography": "^0.5.20",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.5.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@xyflow/react": "^12.12.0",
+    "autoprefixer": "^10.4.20",
+    "clsx": "^2.1.1",
+    "highlight.js": "^11.12.0",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.460.0",
+    "postcss": "^8.4.49",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.5.4",
+    "tailwindcss": "^3.4.15",
     "typescript": "^5.6.0",
+    "vite": "^5.4.11",
     "vitest": "^3.0.0"
   },
   "engines": {

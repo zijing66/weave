@@ -11,7 +11,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // 源码直引（批 1）：web 不依赖 workspace 包运行时，别名指到 core 源文件。
-      '@weave/core/harness': path.resolve(__dirname, '../weave-core/src/harness.ts'),
+      '@weave/core/harness': path.resolve(__dirname, '../../weave-core/src/harness.ts'),
       '@': path.resolve(__dirname, 'src'),
     },
   },

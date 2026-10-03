@@ -8,7 +8,7 @@ import type { Command } from '../parser.js';
 /**
  * `weave dashboard` — start the daemon if needed and open the web console.
  *
- * The daemon serves the built SPA (packages/weave-web/dist) on a single origin.
+ * The daemon serves the built SPA (packages/weave-server/web/dist) on a single origin.
  * The console is opened with the daemon's own token in `?token=`, so it works
  * regardless of which token the running daemon minted — the build-time default
  * baked into the bundle is only a fallback.
