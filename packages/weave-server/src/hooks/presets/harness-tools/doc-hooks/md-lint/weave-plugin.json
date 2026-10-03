@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 1,
+  "id": "md-lint",
+  "name": "Markdown Lint 注入",
+  "version": "0.1.0",
+  "description": "md 编辑后执行轻量 lint 检查并把修复指令注入当前会话（weave 规则成分，走 daemon plugin-loader）",
+  "author": "weave",
+  "rules": ["rules.json"],
+  "handlers": [{ "type": "md-lint", "entry": "handler.mjs" }],
+  "requires": { "events": ["PostToolUse"] }
+}

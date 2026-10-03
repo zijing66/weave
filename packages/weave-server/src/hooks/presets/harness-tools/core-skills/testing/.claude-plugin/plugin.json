@@ -1,0 +1,8 @@
+{
+  "name": "testing",
+  "version": "0.1.0",
+  "description": "Test authoring and execution guidance for this project (vitest, behavior verification)",
+  "author": {
+    "name": "weave"
+  }
+}

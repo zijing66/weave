@@ -1,0 +1,4 @@
+{
+  "targets": ["claude"],
+  "kind": "rule"
+}

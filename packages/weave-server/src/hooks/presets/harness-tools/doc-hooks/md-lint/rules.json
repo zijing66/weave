@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Markdown lint 注入",
+    "priority": 10,
+    "source": { "kind": "claude-event", "event": "PostToolUse" },
+    "filter": { "toolNames": ["Edit", "Write"], "pathGlobs": ["**/*.md"] },
+    "handler": { "type": "plugin", "handlerType": "md-lint" },
+    "timeoutMs": 8000
+  }
+]

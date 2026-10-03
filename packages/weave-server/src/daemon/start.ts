@@ -12,6 +12,7 @@ import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
+import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -67,7 +68,15 @@ export function startDaemon(): void {
     reloadAll: async () => {
       await pluginLoaderRef?.reloadAll();
     },
+    loadToolkitRoot: async (root, scope, projectId) =>
+      pluginLoaderRef ? pluginLoaderRef.loadToolkitRoot(root, scope, projectId) : [],
   };
+  // 批 10 工具包服务（扫描/开关/外置目录）；states 与 loader 同库同表。
+  const toolkit = new ToolkitService({
+    projects,
+    states: new PluginStateRepository(db),
+    plugins: pluginManager,
+  });
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
@@ -123,6 +132,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     hookPlugins: pluginManager,
+    toolkit,
   });
 
   const shutdown = (): void => {

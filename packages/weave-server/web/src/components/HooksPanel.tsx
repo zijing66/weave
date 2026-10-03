@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
+import { ToolkitSection } from '@/components/ToolkitSection';
 import { getDispatchDrag, setDispatchDrag } from '@/lib/dnd';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -938,6 +939,17 @@ export function HooksPanel({
         </CardHeader>
         <CardContent className="space-y-1">
           <HooksPluginsSection />
+        </CardContent>
+      </Card>
+
+      {/* 工具箱区段（批 10：内置/外置工具包的项目级开关） */}
+      <Card>
+        <CardHeader className="flex-row items-center gap-2 space-y-0">
+          <CardTitle className="text-sm">{t('toolkit.title')}</CardTitle>
+          <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
+        </CardHeader>
+        <CardContent className="space-y-1">
+          <ToolkitSection projectId={projectId} />
         </CardContent>
       </Card>
 

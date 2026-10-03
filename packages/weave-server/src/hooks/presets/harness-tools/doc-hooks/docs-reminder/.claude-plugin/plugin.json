@@ -1,0 +1,8 @@
+{
+  "name": "docs-reminder",
+  "version": "0.1.0",
+  "description": "Remind to check documentation consistency after Markdown edits (classic hooks, derived from the changelog-reminder fixture)",
+  "author": {
+    "name": "weave"
+  }
+}

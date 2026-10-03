@@ -1,0 +1,8 @@
+{
+  "name": "refactoring",
+  "version": "0.1.0",
+  "description": "Safe restructuring guidance: tests first, one change at a time, delete dead code",
+  "author": {
+    "name": "weave"
+  }
+}

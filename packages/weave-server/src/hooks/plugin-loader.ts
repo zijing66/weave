@@ -16,6 +16,7 @@ import type { HookRuleRepository } from '../repositories/hook-rules.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { HookEventBus } from './bus.js';
 import { validateHandler, type HookRuleRegistry } from './registry.js';
+import { builtinToolkitRoot, discoverToolkitSources, discoverWeavePackDirs } from './toolkit-scan.js';
 
 /** plugin 处理器返回值：prompt 入池（pending），additionalContext 注入当前会话。 */
 export interface PluginHandlerResult {
@@ -71,6 +72,8 @@ export interface PluginManager {
   setPluginEnabled(pluginId: string, enabled: boolean): boolean;
   /** 重扫全部已登记根（安装/卸载后立即生效，不等热重载防抖）。 */
   reloadAll(): Promise<void>;
+  /** 批 10：动态登记工具包扫描根（`add-dir` 时调用；loader 未就绪则跳过）。 */
+  loadToolkitRoot?(root: string, scope: 'builtin' | 'global' | 'project', projectId: number | null): Promise<LoadedPluginInfo[]>;
 }
 
 export interface LoadedPluginInfo {
@@ -90,14 +93,22 @@ export interface LoadedPluginInfo {
 /** `@file:` 模板引用前缀：handler.template 写 `@file:prompts/x.md`，加载时内联。 */
 const FILE_TEMPLATE_PREFIX = '@file:';
 
+/** 内置工具包根的解析形（loadRoot 跳过该容器子目录用）。 */
+function builtinToolkitRootResolved(): string {
+  return path.resolve(builtinToolkitRoot());
+}
+
 export class WeavePluginLoader implements PluginHost {
   private readonly handlers = new Map<string, PluginHandler>();
   private readonly configs = new Map<string, Record<string, unknown>>();
   private readonly plugins = new Map<string, LoadedPluginInfo>();
   /** ⑦ 事件订阅者：pluginId → {events, subscriber}（disabled/删除时摘除）。 */
   private readonly subscribers = new Map<string, { events: Set<string>; sub: PluginSubscriber }>();
-  /** 已登记的扫描根 → 作用域（热重载时按根重扫用）。 */
-  private readonly roots = new Map<string, { scope: 'builtin' | 'global' | 'project'; projectId: number | null }>();
+  /** 已登记的扫描根 → 作用域（热重载时按根重扫用；deep = 批 10 工具包深度根）。 */
+  private readonly roots = new Map<
+    string,
+    { scope: 'builtin' | 'global' | 'project'; projectId: number | null; deep?: boolean }
+  >();
   private watchStop: (() => void) | undefined;
 
   constructor(
@@ -143,19 +154,87 @@ export class WeavePluginLoader implements PluginHost {
       return []; // 目录不存在 = 无插件，正常
     }
 
-    const priorIds = new Set(
-      [...this.plugins.values()].filter((p) => p.dir.startsWith(normalizedRoot + path.sep)).map((p) => p.id),
-    );
+    const priorIds = this.priorIdsUnder(normalizedRoot);
 
     const loaded: LoadedPluginInfo[] = [];
     for (const name of entries) {
       const dir = path.join(normalizedRoot, name);
+      // 已登记的更深扫描根（批 10：presets/ 下的 harness-tools 树）不作包位，
+      // 否则会生成幽灵 rejected 条目并误删深度根注册的插件。
+      if (this.roots.has(path.resolve(dir)) || path.resolve(dir) === builtinToolkitRootResolved()) {
+        continue;
+      }
       const info = await this.loadOne(dir, scope, projectId, name);
       this.plugins.set(info.id, info);
       loaded.push(info);
     }
 
-    // 消失的插件：删规则 + 卸 handler + 发 removed 帧
+    return this.finalizeScan(priorIds, loaded);
+  }
+
+  /**
+   * 批 10：工具包深度扫描根（`presets/harness-tools/<scope>/<pack>/` 与外置
+   * `add-dir` 目录）。单层 readdir 见不到 depth-3 嵌套——先递归发现含
+   * `weave-plugin.json` 的包位再逐包装载；其余成分（CC 原生/裸表面）由
+   * toolkit 服务走文件管线，不进本加载器。
+   * 首见的 weave 成分行默认 **停用**（工具包 opt-in：包开关 = plugin_states
+   * 级联事实，用户 enable 后才生效）；已有状态行（用户/既有安装）保持不变。
+   */
+  async loadToolkitRoot(
+    root: string,
+    scope: 'builtin' | 'global' | 'project',
+    projectId: number | null,
+  ): Promise<LoadedPluginInfo[]> {
+    const normalizedRoot = path.resolve(root);
+    this.roots.set(normalizedRoot, { scope, projectId, deep: true });
+
+    const packDirs = await discoverWeavePackDirs(normalizedRoot);
+    const priorIds = this.priorIdsUnder(normalizedRoot);
+
+    const loaded: LoadedPluginInfo[] = [];
+    for (const dir of packDirs) {
+      await this.ensureToolkitDefaultDisabled(dir);
+      const info = await this.loadOne(dir, scope, projectId, path.basename(dir));
+      this.plugins.set(info.id, info);
+      loaded.push(info);
+    }
+    return this.finalizeScan(priorIds, loaded);
+  }
+
+  /** 工具包 weave 成分首见即落 `enabled=false`（无状态行时）。 */
+  private async ensureToolkitDefaultDisabled(dir: string): Promise<void> {
+    try {
+      const raw = JSON.parse(await readFile(path.join(dir, WEAVE_PLUGIN_MANIFEST), 'utf8')) as {
+        id?: unknown;
+      };
+      if (typeof raw.id === 'string' && !this.deps.states.get(raw.id)) {
+        this.deps.states.setEnabled(raw.id, false);
+      }
+    } catch {
+      // manifest 坏 → 交给 loadOne 标 rejected
+    }
+  }
+
+  /** 本根上次注册的插件 id（更深注册根名下的不归本根管，防深度/浅层互删）。 */
+  private priorIdsUnder(normalizedRoot: string): Set<string> {
+    const nested = [...this.roots.keys()].filter(
+      (r) => r !== normalizedRoot && r.startsWith(normalizedRoot + path.sep),
+    );
+    return new Set(
+      [...this.plugins.values()]
+        .filter((p) => {
+          if (!p.dir.startsWith(normalizedRoot + path.sep)) return false;
+          return !nested.some((n) => p.dir.startsWith(n + path.sep));
+        })
+        .map((p) => p.id),
+    );
+  }
+
+  /** 扫描收尾：消失插件级联删规则/卸 handler，刷新索引并推送重载帧。 */
+  private finalizeScan(
+    priorIds: Set<string>,
+    loaded: LoadedPluginInfo[],
+  ): LoadedPluginInfo[] {
     const seenIds = new Set(loaded.map((p) => p.id));
     let removedAny = false;
     for (const id of priorIds) {
@@ -183,13 +262,14 @@ export class WeavePluginLoader implements PluginHost {
 
   /**
    * 热重载：watch 全部已登记根目录，文件/目录变更防抖后按根重扫。
+   * 深度根（批 10 工具包）用更大 watch depth——pack 在 level 2，其内容在 level 3+。
    * 返回 stop 函数。daemon 关闭时调用。
    */
   watchRoots(debounceMs = 1000): () => void {
     if (this.watchStop) return this.watchStop;
     const timers = new Map<string, NodeJS.Timeout>();
-    const watchers = [...this.roots.keys()].map((root) => {
-      const w = fsWatch(root, { ignoreInitial: true, depth: 2 });
+    const watchers = [...this.roots.entries()].map(([root, meta]) => {
+      const w = fsWatch(root, { ignoreInitial: true, depth: meta.deep ? 6 : 2 });
       w.on('all', () => {
         const existing = timers.get(root);
         if (existing) clearTimeout(existing);
@@ -197,8 +277,12 @@ export class WeavePluginLoader implements PluginHost {
           root,
           setTimeout(() => {
             timers.delete(root);
-            const meta = this.roots.get(root);
-            if (meta) void this.loadRoot(root, meta.scope, meta.projectId).catch(() => {});
+            const current = this.roots.get(root);
+            if (!current) return;
+            const scan = current.deep
+              ? this.loadToolkitRoot(root, current.scope, current.projectId)
+              : this.loadRoot(root, current.scope, current.projectId);
+            void scan.catch(() => {});
           }, debounceMs),
         );
       });
@@ -217,7 +301,10 @@ export class WeavePluginLoader implements PluginHost {
   /** 重扫全部已登记根（安装/卸载 API 调用；不等热重载防抖窗口）。 */
   async reloadAll(): Promise<void> {
     for (const [root, meta] of [...this.roots]) {
-      await this.loadRoot(root, meta.scope, meta.projectId).catch(() => {});
+      const scan = meta.deep
+        ? this.loadToolkitRoot(root, meta.scope, meta.projectId)
+        : this.loadRoot(root, meta.scope, meta.projectId);
+      await scan.catch(() => {});
     }
   }
 
@@ -497,8 +584,10 @@ function patchPluginHandler(handler: unknown, pluginId: string): unknown {
 }
 
 /**
- * SPI 全量加载：内置 presets → 全局 `<configDir>/weave/plugins/` → 各注册项目
+ * SPI 全量加载：工具包扫描根（内置 harness-tools + `add-dir` 外置目录，批 10）
+ * → 内置 presets → 全局 `<configDir>/weave/plugins/` → 各注册项目
  * `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
+ * 工具包根先注册：浅层 presets 根扫描据此跳过 `harness-tools` 容器目录。
  * 任一根目录失败不抛（loadRoot 内部已吞 readdir 错误）。
  */
 export async function loadAllPlugins(
@@ -512,6 +601,17 @@ export async function loadAllPlugins(
 ): Promise<{ loader: WeavePluginLoader; loaded: LoadedPluginInfo[] }> {
   const loader = new WeavePluginLoader(deps);
   const loaded: LoadedPluginInfo[] = [];
+
+  // 批 10：工具包深度根（内置 + 外置）——weave 成分走本加载器，天然停用待开关。
+  for (const source of await discoverToolkitSources()) {
+    loaded.push(
+      ...(await loader.loadToolkitRoot(
+        source.root,
+        source.provenance === 'builtin' ? 'builtin' : 'global',
+        null,
+      )),
+    );
+  }
 
   // 内置预设随 dist 发货（tsc 不拷 JSON，批 2 的 build 脚本负责复制 presets 目录）。
   loaded.push(
