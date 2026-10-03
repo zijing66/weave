@@ -493,9 +493,10 @@ packages/weave-server/src/hooks/presets/harness-tools/<scope>/<pack>/  # 内置�
 | 「一键工作流」band（二期） | prompt 上方按钮排：跑测试/生成 commit/派发 weave 指令池 | `AbovePrompt` Button、`$.command`、`$.process` |
 | `weave-dashboard`（二期） | Pane 读 weave daemon 指令池/最近 dispatch（`$.process` 调 CLI） | 依赖 daemon 活着 |
 
-> mods 能力引用基于 **2.1.277 契约（EARLY ACCESS，API 可能无预警变更）**，实施时
-> 以当时 `claude-code.d.ts` 为准；`AbovePrompt` 全进程**仅一个实例**——mission-control
-> 与二期 band 类 mod 需互斥或合并绘制（一个 `ui.render` 消费方画整条 band）。
+> mods 能力引用基于 **Claude Code ≥ 2.1.287 契约（EARLY ACCESS，API 可能无预警变更）**，
+> 实施时以当时 `claude-code.d.ts` 为准，**mod 类工具启用前提 = 宿主 Claude Code ≥ 2.1.287**
+> （低版本加载前须版本检测并给明确提示）；`AbovePrompt` 全进程**仅一个实例**——
+> mission-control 与二期 band 类 mod 需互斥或合并绘制（一个 `ui.render` 消费方画整条 band）。
 
 **mod 绘制规范（ink 决策）**：mod 运行在**无 Node 的模块环境**，绘制必须走引擎
 `$.ui.resolve(e)` 元素表（`Box/Text/Button`，API 形态与 Ink 相近、经验直接复用）——
@@ -519,7 +520,8 @@ Codex 面 skill 补充——按首批落地效果再定。
   enable 无副作用）；④ 非 `targets` 内 harness 表面零写入；⑤ 内置与外置同包
   enable 结果逐字段一致（provenance 除外）；另：三门禁 + 新增 loader/toggle 单测。
 - **mod 验证**：`claude plugin validate <mod folder>` 过 + `tsc -p` 过 +
-  每个 mod 至少一个 `*.test.ts`（`claude plugin test`）；**静态闸**：
+  每个 mod 至少一个 `*.test.ts`（`claude plugin test`）；**宿主版本闸**：启用前检测
+  Claude Code ≥ 2.1.287，低版本给明确提示不落盘；**静态闸**：
   `grep -rE "from ['\"]node:|require\(" …presets/harness-tools/` 零命中（守住无 Node
   能力圈）；启用后**包整体落项目插件位**保持 `.claude-plugin` + `hooks/hooks.json`
   modules 结构，由 Claude Code 按原生插件机制加载（插件位形态**待**风险 9 实测锁定，
