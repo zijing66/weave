@@ -12,7 +12,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] },
+    "paths": {
+      "@/*": ["src/*"],
+      "@weave/core/harness": ["../weave-core/src/harness.ts"]
+    },
     "noEmit": true
   },
   "include": ["src"]

@@ -57,6 +57,7 @@ describe('HookDispatcher', () => {
       project,
       sessionId: 's1',
       payload: payload0,
+      source: 'claude',
       ...over,
       payload: payload0,
     };

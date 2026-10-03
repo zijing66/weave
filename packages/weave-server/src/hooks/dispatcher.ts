@@ -1,5 +1,5 @@
 import type { HookRule } from '@weave/core';
-import { INJECTABLE_HOOK_EVENTS } from '@weave/core';
+import { INJECTABLE_EVENTS, hookSourceHarness, type Harness } from '@weave/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { PluginHost, PluginHandler, PluginHandlerResult } from './plugin-loader.js';
@@ -25,6 +25,8 @@ export interface IngestContext {
   project: ProjectRow;
   sessionId: string | null;
   payload: NormalizedHookPayload;
+  /** 事件来源 harness（server.ts 传入 input.source）；规则 harness 过滤按此比对。 */
+  source: Harness;
 }
 
 /**
@@ -222,7 +224,7 @@ export class HookDispatcher {
           if (
             result.additionalContext &&
             ctx.payload.eventType &&
-            (INJECTABLE_HOOK_EVENTS as readonly string[]).includes(ctx.payload.eventType)
+            (INJECTABLE_EVENTS[ctx.source] as readonly string[]).includes(ctx.payload.eventType)
           ) {
             injected.push(result.additionalContext);
           }
@@ -239,6 +241,9 @@ export class HookDispatcher {
   /** 候选规则：事件索引（启用+priority 降序）→ 项目归属 → 过滤条件。 */
   private match(ctx: IngestContext): HookRule[] {
     return this.deps.registry.candidates(ctx.payload.eventType).filter((rule) => {
+      // harness 首行过滤：'any' 跨 harness 命中；webhook 源（null）不按 harness 过滤。
+      const ruleHarness = hookSourceHarness(rule.source);
+      if (ruleHarness !== null && ruleHarness !== 'any' && ruleHarness !== ctx.source) return false;
       if (rule.projectId !== null && rule.projectId !== ctx.project.id) return false;
       const f = rule.filter;
       if (f.toolNames?.length) {

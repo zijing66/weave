@@ -2,6 +2,7 @@ import { readFile, writeFile, readdir, cp, rm, access, stat, realpath, mkdir } f
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
+import type { Harness } from '@weave/core';
 import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
 import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';
@@ -215,7 +216,7 @@ export async function readGlobalSkills(): Promise<string[]> {
 export async function installGlobalSkill(
   sourceDir: string,
   name: string,
-  agent: 'claude' | 'codex' = 'claude',
+  agent: Harness = 'claude',
 ): Promise<string> {
   const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
   const target = path.join(root, name);
@@ -229,7 +230,7 @@ export async function installGlobalSkill(
 /** Remove a global skill directory from the agent's skills root. */
 export async function uninstallGlobalSkill(
   name: string,
-  agent: 'claude' | 'codex' = 'claude',
+  agent: Harness = 'claude',
 ): Promise<void> {
   const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
   const target = path.join(root, name);

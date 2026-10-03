@@ -1,6 +1,7 @@
 import { cp, rm, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { Harness } from '@weave/core';
 import {
   FILE_ASSET_SPECS,
   fileAssetTargetDir,
@@ -37,7 +38,7 @@ export interface McpServerConfig {
 }
 
 /** Which coding agent an install targets — Claude Code or Codex surfaces. */
-export type InstallAgent = 'claude' | 'codex';
+export type InstallAgent = Harness;
 
 const SKILLS_DIR = '.claude/skills';
 const CODEX_SKILLS_DIR = '.codex/skills';

@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { Harness } from '@weave/core';
 import { FingerprintCache, hashMcpConfig } from './fingerprint.js';
 import {
   buildLibraryIndex,
@@ -39,7 +40,7 @@ export interface SkillUpdate {
   name: string;
   scope: 'project' | 'global';
   /** Which agent's surface the skill is installed on. */
-  agent: 'claude' | 'codex';
+  agent: Harness;
   /** true = installed content differs from source (update available). */
   outdated: boolean;
   /** true = no library source found (cannot update). */
@@ -53,7 +54,7 @@ export interface McpUpdate {
   name: string;
   scope: 'project' | 'global';
   /** Which agent's surface the server is configured on (Codex = config.toml). */
-  agent?: 'claude' | 'codex';
+  agent?: Harness;
   outdated: boolean;
   custom: boolean;
   libraryId?: number;
@@ -115,7 +116,7 @@ export async function detectSkillUpdates(
   idx: LibraryIndex,
 ): Promise<SkillUpdate[]> {
   const homes = [homedir(), homedir()];
-  const surfaces: { dir: string; scope: 'project' | 'global'; agent: 'claude' | 'codex' }[] = [
+  const surfaces: { dir: string; scope: 'project' | 'global'; agent: Harness }[] = [
     { dir: path.join(projectPath, '.claude', 'skills'), scope: 'project', agent: 'claude' },
     { dir: path.join(projectPath, '.codex', 'skills'), scope: 'project', agent: 'codex' },
     { dir: path.join(homes[0], '.claude', 'skills'), scope: 'global', agent: 'claude' },

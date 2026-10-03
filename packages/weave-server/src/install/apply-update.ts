@@ -1,6 +1,7 @@
 import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { Harness } from '@weave/core';
 import { installMcp, uninstallMcp } from './installer.js';
 import { writeGlobalMcpServer } from './global-config.js';
 import { writeCodexMcpServer } from './codex-toml.js';
@@ -38,7 +39,7 @@ export interface ApplyUpdateInput {
   name: string;
   scope: 'project' | 'global';
   /** Which agent's surface to refresh (skills + codex MCP matter). */
-  agent?: 'claude' | 'codex';
+  agent?: Harness;
 }
 
 /** Overwrite one installed asset from its library source. */

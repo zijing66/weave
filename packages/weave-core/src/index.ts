@@ -26,6 +26,13 @@ export {
   INJECTABLE_HOOK_EVENTS,
 } from './types.js';
 export { InitOptionsSchema, PresetSchema, resolveComponents } from './types.js';
+export { normalizeHookRuleSource, hookSourceHarness } from './types.js';
+export {
+  type Harness,
+  HARNESS_EVENTS,
+  INJECTABLE_EVENTS,
+  HARNESS_DIRS,
+} from './harness.js';
 export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types.js';
 export { DEFAULT_HOOKS, DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS, DEFAULT_MCP } from './types.js';
 export { type PlatformInfo } from './types.js';

@@ -7,9 +7,11 @@
  * {@link NormalizedHookPayload} before persisting to hook_events.
  */
 
+import type { Harness } from '@weave/core';
+
 /** Payload posted by an injected project hook script. */
 export interface HookReport {
-  source: 'claude' | 'codex';
+  source: Harness;
   eventType: string;
   sessionId?: string | null;
   cwd?: string;

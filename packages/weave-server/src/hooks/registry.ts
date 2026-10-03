@@ -1,5 +1,7 @@
 import {
-  INJECTABLE_HOOK_EVENTS,
+  INJECTABLE_EVENTS,
+  hookSourceHarness,
+  normalizeHookRuleSource,
   type HandlerConfig,
   type HookRule,
   type HookRuleFilter,
@@ -13,7 +15,7 @@ import type { CreateHookRuleInput, HookRuleRepository } from '../repositories/ho
  * 所有变更经 registry 走 repository 落库后 reload，保证缓存与库一致。
  */
 export class HookRuleRegistry {
-  /** event → 规则，priority 降序。仅含 source.kind === 'claude-event'。 */
+  /** event → 规则，priority 降序。仅含 source.kind === 'hook-event'（legacy 形已读侧 normalize）。 */
   private byEvent = new Map<string, HookRule[]>();
   private all: HookRule[] = [];
 
@@ -21,12 +23,12 @@ export class HookRuleRegistry {
     this.load();
   }
 
-  /** 从 SQLite 全量重载（外部直接改库后可调用）。 */
+  /** 从 SQLite 全量重载（外部直接改库后可调用）；读侧把 legacy 'claude-event' normalize 为 hook-event。 */
   load(): void {
-    this.all = this.repo.list();
+    this.all = this.repo.list().map((r) => ({ ...r, source: normalizeHookRuleSource(r.source) }));
     this.byEvent = new Map();
     for (const rule of this.all) {
-      if (rule.source.kind !== 'claude-event') continue;
+      if (rule.source.kind !== 'hook-event') continue; // webhook 源不参与事件匹配（现状不变）
       const bucket = this.byEvent.get(rule.source.event);
       if (bucket) bucket.push(rule);
       else this.byEvent.set(rule.source.event, [rule]);
@@ -34,7 +36,9 @@ export class HookRuleRegistry {
   }
 
   list(projectId?: number): HookRule[] {
-    return projectId === undefined ? [...this.all] : this.repo.list(projectId);
+    const rows = projectId === undefined ? this.all : this.repo.list(projectId);
+    // 两条路径统一读侧 normalize（this.all 已 normalize，幂等）——API 输出形一致。
+    return rows.map((r) => ({ ...r, source: normalizeHookRuleSource(r.source) }));
   }
 
   get(id: string): HookRule | undefined {
@@ -47,8 +51,10 @@ export class HookRuleRegistry {
   }
 
   create(input: CreateHookRuleInput): HookRule {
-    validateHandler(input.source, input.handler);
-    const rule = this.repo.create(input);
+    // 写侧 normalize：legacy 'claude-event' 入口即转 hook-event（下次 update 落新形同理）。
+    const source = normalizeHookRuleSource(input.source);
+    validateHandler(source, input.handler);
+    const rule = this.repo.create({ ...input, source });
     this.load();
     return rule;
   }
@@ -56,8 +62,9 @@ export class HookRuleRegistry {
   update(id: string, patch: Partial<CreateHookRuleInput>): HookRule | undefined {
     const existing = this.get(id);
     if (!existing) return undefined;
-    validateHandler(patch.source ?? existing.source, patch.handler ?? existing.handler);
-    const next = this.repo.update(id, patch);
+    const source = patch.source ? normalizeHookRuleSource(patch.source) : existing.source;
+    validateHandler(source, patch.handler ?? existing.handler);
+    const next = this.repo.update(id, patch.source ? { ...patch, source } : patch);
     if (next) this.load();
     return next;
   }
@@ -87,22 +94,32 @@ export interface CreateHookRuleBody {
   record?: boolean;
 }
 
-/** inject 只允许挂在支持 additionalContext 的事件上（官方文档逐事件核实的白名单）。 */
+/**
+ * inject 只允许挂在支持 additionalContext 的事件上（白名单按 harness 分表）。
+ * legacy 'claude-event' 视作 harness='claude'；'any' 拒绝（两 harness 注入通道不同，
+ * 白名单必须按具体 harness 查）；错误文案保留 `requires source.kind` 前缀（存量断言）。
+ */
 export function validateHandler(source: HookRuleSource, handler: HandlerConfig): void {
+  const harness = hookSourceHarness(source);
   if (handler.type === 'inject') {
-    if (source.kind !== 'claude-event') {
-      throw new Error('inject handler requires source.kind = "claude-event"');
-    }
-    if (!(INJECTABLE_HOOK_EVENTS as readonly string[]).includes(source.event)) {
+    if (harness === null || harness === 'any') {
       throw new Error(
-        `inject handler is not supported on event "${source.event}" (allowed: ${INJECTABLE_HOOK_EVENTS.join(', ')})`,
+        'inject handler requires source.kind = "hook-event" with a concrete harness (legacy "claude-event" accepted; "any" rejected)',
+      );
+    }
+    const allowed = INJECTABLE_EVENTS[harness];
+    const event =
+      source.kind === 'claude-event' || source.kind === 'hook-event' ? source.event : '';
+    if (!(allowed as readonly string[]).includes(event)) {
+      throw new Error(
+        `inject handler is not supported on event "${event}" (allowed: ${allowed.join(', ')})`,
       );
     }
     return;
   }
   if (handler.type === 'plugin') {
-    if (source.kind !== 'claude-event') {
-      throw new Error('plugin handler requires source.kind = "claude-event"');
+    if (harness === null) {
+      throw new Error('plugin handler requires source.kind = "hook-event"');
     }
   }
 }
