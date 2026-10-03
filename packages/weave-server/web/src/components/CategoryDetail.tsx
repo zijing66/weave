@@ -246,6 +246,7 @@ export function CategoryDetail({
 
       {category === 'mcp' && (
         <McpGrid
+          projectId={projectId}
           servers={mcp}
           scope={scope}
           updates={mcpUpdates}

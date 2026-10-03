@@ -55,6 +55,10 @@ export const assetsZh = {
   'mcp.headingProject': '项目 MCP Servers',
   'mcp.update': '待更新',
   'mcp.remove': '移除 {name}',
+  'mcp.enableDefault': '默认',
+  'mcp.enableOn': '启用',
+  'mcp.enableOff': '禁用',
+  'mcp.enableTip': '{state} — 点击切换',
 
   // —— CategoryBar ——
   'catbar.skills': 'Skills',
@@ -138,6 +142,10 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'mcp.headingProject': 'Project MCP Servers',
   'mcp.update': 'update',
   'mcp.remove': 'Remove {name}',
+  'mcp.enableDefault': 'Default',
+  'mcp.enableOn': 'Enabled',
+  'mcp.enableOff': 'Disabled',
+  'mcp.enableTip': '{state} — click to cycle',
 
   // —— CategoryBar ——
   'catbar.skills': 'Skills',

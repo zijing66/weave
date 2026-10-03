@@ -4,7 +4,8 @@ import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/li
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
-import { Languages, Settings, Terminal, X } from 'lucide-react';
+import { Languages, Settings, Terminal, X, Zap } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 
 interface SettingsModalProps {
   open: boolean;
@@ -12,11 +13,11 @@ interface SettingsModalProps {
 }
 
 /**
- * Daemon settings dialog (top-right gear): UI language and the terminal
- * "open in terminal" launches. Presets offered come from the server, so the
- * dropdown only shows options valid for the daemon's platform. Language is
- * persisted together with the rest on 保存 — one atomic PUT, then the whole
- * UI switches immediately via the i18n context.
+ * Daemon settings dialog (top-right gear): UI language, the terminal
+ * "open in terminal" launches, and the daemon hooks master switch. Presets
+ * offered come from the server, so the dropdown only shows options valid for
+ * the daemon's platform. Everything is persisted together on 保存 — one atomic
+ * PUT, then the whole UI switches immediately via the i18n context.
  */
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { locale, t, setLocale } = useI18n();
@@ -147,6 +148,23 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="text-xs font-medium text-neutral-300">{t('settings.hooks')}</label>
+              <span className="ml-auto">
+                <Switch
+                  checked={settings?.hooks.enabled ?? true}
+                  onChange={(v) =>
+                    setSettings((s) => (s ? { ...s, hooks: { ...s.hooks, enabled: v } } : s))
+                  }
+                  title={t('settings.hooks')}
+                />
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-500">{t('settings.hooksHint')}</p>
+          </div>
 
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}
         </div>

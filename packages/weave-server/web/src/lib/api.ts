@@ -631,10 +631,6 @@ export const api = {
   /** Machine-level harness files (~/.claude, ~/.codex) for the global tree. */
   listGlobalFileAssets: (): Promise<AssetEntry[]> =>
     apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
-  listHooks: (projectId: number): Promise<HookEventRow[]> =>
-    apiFetch<{ events: HookEventRow[] }>(`/projects/${projectId}/hooks`).then(
-      (r) => r.events,
-    ),
   /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。 */
   listSessionHooks: (projectId: number, sessionId: string, limit = 300): Promise<HookEventRow[]> =>
     apiFetch<{ events: HookEventRow[] }>(
@@ -783,8 +779,6 @@ export const api = {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify(config),
     }),
-  getGlobalStatusline: (): Promise<{ config: StatuslineConfig }> =>
-    apiFetch<{ config: StatuslineConfig }>('/statusline/global'),
   /** Shipped factory defaults for the statusline panel's 恢复出厂. */
   getFactoryStatusline: (): Promise<StatuslineConfig> =>
     apiFetch<{ config: StatuslineConfig }>('/statusline/default').then((r) => r.config),
