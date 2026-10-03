@@ -121,3 +121,33 @@
 .weave-ripple::after {
   animation-delay: 150ms;
 }
+
+/* ReactFlow 左下角 Controls（zoom±/fitView）暗色主题覆盖：
+   xyflow 默认白底浅色按钮，在暗色仪表盘上看不清。
+   选择器加 .react-flow__controls 前缀提升特异性，保证覆盖 import 进
+   组件内的 xyflow style.css（无论打包顺序如何）。 */
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(23, 23, 23, 0.92);
+  box-shadow: none;
+}
+.react-flow__controls .react-flow__controls-button {
+  width: 24px;
+  height: 24px;
+  padding: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: #a3a3a3;
+}
+.react-flow__controls .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls .react-flow__controls-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e5e5e5;
+}
+.react-flow__controls .react-flow__controls-button svg {
+  fill: currentColor;
+}
