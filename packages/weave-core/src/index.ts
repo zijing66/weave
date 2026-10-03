@@ -38,5 +38,6 @@ export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types
 export { DEFAULT_HOOKS, DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS, DEFAULT_MCP } from './types.js';
 export { type PlatformInfo } from './types.js';
 export { detectPlatform } from './platform.js';
+export { checkHarness, type HarnessCheck } from './harness-checks.js';
 export { ensureDir, writeFileIfAbsent, fileExists } from './utils/fs.js';
 export { logger, formatTable } from './utils/logger.js';

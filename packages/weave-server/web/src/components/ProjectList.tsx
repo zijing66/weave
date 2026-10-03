@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type ProjectRow } from '@/lib/api';
+import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
-import { Circle, FolderOpen, Globe, Terminal } from 'lucide-react';
+import type { MessageKey } from '@/i18n/dict';
+import { Circle, FolderOpen, Globe, Terminal, TriangleAlert } from 'lucide-react';
 
 interface ProjectListProps {
   projects: ProjectRow[];
@@ -122,6 +123,7 @@ export function ProjectList({
                 <span className="block truncate text-sm">{p.name}</span>
                 <span className="block text-[11px] text-neutral-500">{p.path}</span>
               </span>
+              <HealthBadge projectId={p.id} />
             </button>
           </li>
         ))}
@@ -183,5 +185,61 @@ function MenuButton({
       <span className="text-neutral-400">{icon}</span>
       {label}
     </button>
+  );
+}
+
+/** check id → web 词典 key（core 只回结构，文案由词典渲染）。 */
+const HEALTH_KEYS: Record<string, MessageKey> = {
+  'instruction-link-not-materialised': 'health.check.instructionLinkNotMaterialised',
+  'instruction-files-duplicated': 'health.check.instructionFilesDuplicated',
+  'instruction-link-dangling': 'health.check.instructionLinkDangling',
+  'statusline-path-unresolved': 'health.check.statuslinePathUnresolved',
+  'statusline-path-foreign': 'health.check.statuslinePathForeign',
+  'statusline-script-missing': 'health.check.statuslineScriptMissing',
+};
+
+/**
+ * 健康徽标（批 8）：全 ok → 绿点；有 fail → 警示图标 + tooltip 列出失败项。
+ * 请求失败（daemon 未运行 / 端点 500）→ 静默不显示，不打扰。
+ */
+function HealthBadge({ projectId }: { projectId: number }) {
+  const t = useT();
+  const [fails, setFails] = useState<HarnessCheck[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getHarnessChecks(projectId)
+      .then((r) => {
+        if (alive) setFails(r.checks.filter((c) => !c.ok));
+      })
+      .catch(() => {
+        // daemon 未运行或端点出错 —— 静默，不显示徽标
+      });
+    return () => {
+      alive = false;
+    };
+  }, [projectId]);
+
+  if (fails === null) return null;
+
+  if (fails.length === 0) {
+    return (
+      <span title={t('health.okTip')} className="ml-auto mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+    );
+  }
+
+  const tip = [
+    t('health.badgeTip', { count: fails.length }),
+    ...fails.flatMap((c) => {
+      const key = HEALTH_KEYS[c.id];
+      return key ? [t(key, c.params)] : [];
+    }),
+  ].join('\n');
+
+  return (
+    <span title={tip} className="ml-auto mt-1 shrink-0">
+      <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
+    </span>
   );
 }

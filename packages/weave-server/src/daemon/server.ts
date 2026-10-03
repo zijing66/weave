@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weave/core';
+import { checkHarness } from '@weave/core';
 import type { EventSource, HarnessRegistry } from '@weave/harness';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -646,6 +647,20 @@ async function handleRequest(
       global: globalServers,
       codex: codexServers,
     });
+    return;
+  }
+
+  // --- harness health checks (read-only, 批 8): structured results from core,
+  // rendered by each client's own dictionary ---
+  const harnessChecksMatch = pathname.match(/^\/projects\/(\d+)\/harness-checks$/);
+  if (harnessChecksMatch && req.method === 'GET') {
+    if (!requireAuth()) return;
+    const project = deps.projects.getById(Number(harnessChecksMatch[1]));
+    if (!project) {
+      sendJson(404, { error: 'Project not found' });
+      return;
+    }
+    sendJson(200, { checks: await checkHarness(project.path) });
     return;
   }
 

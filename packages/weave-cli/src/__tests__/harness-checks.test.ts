@@ -3,6 +3,9 @@ import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { checkHarness } from '../init/harness-checks';
+import { t } from '../i18n/index';
+import { makeT } from '../i18n/t';
+import { zh, en } from '../i18n/dict/index';
 
 let dir: string;
 
@@ -45,7 +48,9 @@ describe('checkHarness', () => {
     const found = await checkHarness(dir);
 
     expect(found.map((c) => c.id)).toContain('instruction-link-not-materialised');
-    expect(found[0]!.fix).toContain('core.symlinks');
+    // 批 8：core 只回结构，文案断言改写为词典渲染断言（zh/en 各留一条）
+    expect(found[0]!.fix).toBe(t('harness.instructionLinkNotMaterialised.fix'));
+    expect(makeT(en, zh)('harness.instructionLinkNotMaterialised.fix')).toContain('core.symlinks');
   });
 
   it('does not mistake prose mentioning the filename for a bad checkout', async () => {

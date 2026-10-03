@@ -1,7 +1,7 @@
 import type { Dict, MessageKey } from './dict';
 
 /** Interpolation values for `{name}` placeholders. */
-export type Params = Record<string, string | number>;
+export type Params = Record<string, string | number | boolean>;
 
 /** Replace `{name}` placeholders; unknown placeholders stay verbatim so a
  * missing param shows up visibly instead of rendering "undefined". */
