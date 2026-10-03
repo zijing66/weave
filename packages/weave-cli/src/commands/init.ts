@@ -1,7 +1,9 @@
 import {
   type Preset,
   type HooksConfig,
+  type Harness,
   PresetSchema,
+  HARNESS_KEYS,
   logger,
   formatTable,
   resolveComponents,
@@ -37,6 +39,26 @@ function parseHooksFlag(raw: string): Partial<HooksConfig> {
   const unknown = [...listed].filter((k) => !(HOOK_KEYS as readonly string[]).includes(k));
   if (unknown.length > 0) logger.warn(t('init.hooksUnknownKeys', { keys: unknown.join(', ') }));
   return Object.fromEntries(HOOK_KEYS.map((k) => [k, listed.has(k)])) as Partial<HooksConfig>;
+}
+
+/**
+ * 解析 `--harness` flag（仿 `parseHooksFlag`，批 5）：
+ * - 空/缺省 → `undefined`（交给交互多选 / 默认 `['claude']` 两级）
+ * - 逗号列表 → 只留合法项（去重保序）；非法项 warn 忽略
+ * - 全非法 → 回落默认 `['claude']`
+ */
+export function parseHarnessFlag(raw: string): Harness[] | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const listed = trimmed.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const valid = [
+    ...new Set(
+      listed.filter((k): k is Harness => (HARNESS_KEYS as readonly string[]).includes(k)),
+    ),
+  ];
+  const unknown = listed.filter((k) => !(HARNESS_KEYS as readonly string[]).includes(k));
+  if (unknown.length > 0) logger.warn(t('init.harnessUnknownKeys', { keys: unknown.join(', ') }));
+  return valid.length > 0 ? valid : ['claude'];
 }
 
 export const initCommand: Command = {
@@ -77,12 +99,20 @@ export const initCommand: Command = {
       type: 'string',
       default: '',
     },
+    {
+      name: 'harness',
+      description: 'flag.init.harness',
+      type: 'string',
+      default: '',
+    },
   ],
 
   async action(ctx) {
     const preset = PresetSchema.parse(ctx.flags.preset ?? 'default') as Preset;
     const force = Boolean(ctx.flags.force);
-    const interactive = !Boolean(ctx.flags['noInteractive']);
+    // 裸 `--no-interactive` 被 parser 的 `--no-` 前缀语义落在 flags.interactive=false，
+    // `--no-interactive=true` 形落在 flags.noInteractive——两种形都认。
+    const interactive = ctx.flags.noInteractive !== true && ctx.flags.interactive !== false;
     const targetDir = String(ctx.flags.dir ?? process.cwd());
 
     logger.info(t('init.banner'));
@@ -97,6 +127,7 @@ export const initCommand: Command = {
         force,
         interactive,
         preset,
+        harnesses: parseHarnessFlag(String(ctx.flags.harness ?? '')),
         components,
         hooks: parseHooksFlag(String(ctx.flags.hooks ?? '')),
         skills: {},

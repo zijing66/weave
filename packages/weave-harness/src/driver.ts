@@ -77,14 +77,20 @@ export interface ResumeCommandSpec {
   args(sessionId: string, prompt: string): string[];
 }
 
+/** detect 返回结构（批 5 定）：harness 标识 + `dir` 下是否命中其标记。 */
+export interface DetectResult {
+  harness: Harness;
+  present: boolean;
+}
+
 /** 探测策略——scan/status 认 harness 标记，批 5 消费（scan/status/meta 三处）。 */
 export interface Detector {
   /** 识别标记（如 `.claude` / `CLAUDE.md`）。 */
   markers: readonly string[];
   /** `dir` 下是否命中该 harness 标记。 */
   present(dir: string): boolean;
-  /** 执行探测并返回结果（结构批 5 定）。 */
-  detect(dir: string): unknown;
+  /** 执行探测并返回结果。 */
+  detect(dir: string): DetectResult;
 }
 
 /** 单个 harness 的驱动：id/displayName 必填，五个能力槽按批次补齐。 */

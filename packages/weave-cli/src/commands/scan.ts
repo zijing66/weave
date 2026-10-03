@@ -3,15 +3,26 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerProject } from '@weave/server';
 import { logger } from '@weave/core';
+import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.cache']);
 
-/** Recursively find directories that carry a weave/claude harness marker. */
-async function findProjectDirs(root: string, depth = 0, maxDepth = 6): Promise<string[]> {
+/** detect 槽探测器（批 5）：`.claude`/`CLAUDE.md`、`.codex`/`AGENTS.md`。 */
+const DETECTORS = (() => {
+  const reg = new HarnessRegistry();
+  registerRuntimeDrivers(reg);
+  return reg
+    .byCapability('detect')
+    .map((d) => d.detect)
+    .filter((det): det is NonNullable<typeof det> => det !== undefined);
+})();
+
+/** Recursively find directories carrying a weave runtime or any harness marker. */
+export async function findProjectDirs(root: string, depth = 0, maxDepth = 6): Promise<string[]> {
   if (depth > maxDepth) return [];
-  if (existsSync(join(root, '.weave')) || existsSync(join(root, '.claude'))) {
+  if (existsSync(join(root, '.weave')) || DETECTORS.some((det) => det.present(root))) {
     return [root];
   }
 

@@ -47,6 +47,8 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.plugins.search.desc': 'Search configured index sources (sources.json) by keyword',
   'flag.init.hooks':
     'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification); "none" registers none; default: all',
+  'flag.init.harness':
+    'Comma-separated harness surfaces to initialize (claude, codex); omitted → interactive multiselect on a TTY, default claude',
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
@@ -79,6 +81,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.status.col.version': 'Version',
   'out.status.col.initialized': 'Initialized',
   'out.status.col.preset': 'Preset',
+  'out.status.col.harness': 'Harness',
   'out.status.unknown': 'unknown',
   'out.status.present': 'present',
   'out.status.missing': 'missing',
@@ -142,6 +145,12 @@ export const en: Record<keyof typeof zh, string> = {
   'out.plugins.disabled': 'Plugin disabled: {id}',
   'out.plugins.col.desc': 'Description',
   'init.hooksUnknownKeys': 'Ignored unknown hook event names: {keys}',
+  'init.harnessUnknownKeys': 'Ignored unknown harness name(s): {keys}',
+  'init.multiselect.title': 'Select harnesses to initialize (multiple allowed):',
+  'init.multiselect.hint': 'Enter numbers or names (comma-separated), or press Enter for {defaults}:',
+  'init.multiselect.invalid': 'Ignored unrecognized selection(s): {keys}',
+  'init.noPeerFace': 'no equivalent surface',
+  'init.stepSkipped': 'Skipped {step}: {reason}',
   'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---
   'harness.instructionLinkNotMaterialised.message':

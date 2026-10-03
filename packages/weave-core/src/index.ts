@@ -30,6 +30,7 @@ export { normalizeHookRuleSource, hookSourceHarness } from './types.js';
 export {
   type Harness,
   HARNESS_EVENTS,
+  HARNESS_KEYS,
   INJECTABLE_EVENTS,
   HARNESS_DIRS,
 } from './harness.js';
