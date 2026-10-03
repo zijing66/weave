@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileExists, logger, formatTable } from '@weave/core';
+import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
@@ -57,10 +58,21 @@ export const statusCommand: Command = {
 
     logger.info(t('out.status.header'));
 
+    // harness 识别经 Detector（批 5）：认 `.claude`/`CLAUDE.md` 与 `.codex`/`AGENTS.md`，
+    // 不再硬编码 marker；下方存量 claude 表面行与 checkHarness 健康检查保持不动。
+    const reg = new HarnessRegistry();
+    registerRuntimeDrivers(reg);
+    const detected = reg
+      .byCapability('detect')
+      .flatMap((d) =>
+        d.detect && d.detect.detect(targetDir).present ? [d.id] : [],
+      );
+
     const entries: [string, string][] = [
       [t('out.status.col.version'), config.initVersion ?? t('out.status.unknown')],
       [t('out.status.col.initialized'), config.initTimestamp ?? t('out.status.unknown')],
       [t('out.status.col.preset'), config.preset ?? t('out.status.unknown')],
+      [t('out.status.col.harness'), detected.length > 0 ? detected.join(', ') : t('out.status.unknown')],
       ['CLAUDE.md', t(await checkFile('CLAUDE.md', targetDir))],
       ['settings.json', t(await checkFile('.claude/settings.json', targetDir))],
       ['.mcp.json', t(await checkFile('.mcp.json', targetDir))],
@@ -69,6 +81,9 @@ export const statusCommand: Command = {
       ['commands', t(await checkFile('.claude/commands', targetDir))],
       ['agents', t(await checkFile('.claude/agents', targetDir))],
     ];
+    if (detected.includes('codex')) {
+      entries.push(['.codex/skills', t(await checkFile('.codex/skills', targetDir))]);
+    }
 
     console.log(formatTable(entries));
     console.log();

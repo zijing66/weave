@@ -42,3 +42,9 @@ export const HARNESS_DIRS = {
   claude: { projectDir: '.claude', userDir: '.claude' },
   codex: { projectDir: '.codex', userDir: '.codex' },
 } satisfies Record<Harness, { projectDir: string; userDir: string }>;
+
+/**
+ * 可选 harness 键序（= `HARNESS_EVENTS` 的键）：
+ * `--harness` flag 值域与 init 交互多选的选项表共用（批 5）。
+ */
+export const HARNESS_KEYS = Object.keys(HARNESS_EVENTS) as Harness[];

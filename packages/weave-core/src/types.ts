@@ -244,6 +244,8 @@ export const RuntimeConfigSchema = z.object({
   initVersion: z.string(),
   initTimestamp: z.string(),
   preset: PresetSchema,
+  /** 本次 init 选择的 harness 面（批 5 记录；旧文件无此字段 → undefined，向后兼容）。 */
+  harnesses: z.array(z.enum(['claude', 'codex'])).optional(),
   components: InitComponentsSchema,
 });
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
@@ -267,6 +269,8 @@ export const InitOptionsSchema = z.object({
   force: z.boolean().default(false),
   interactive: z.boolean().default(true),
   preset: PresetSchema.default('default'),
+  /** `--harness` flag 解析结果：undefined = 未提供（走交互/默认三级优先级）。 */
+  harnesses: z.array(z.enum(['claude', 'codex'])).optional(),
   components: InitComponentsSchema.partial().default({}),
   hooks: HooksConfigSchema.partial().default({}),
   skills: SkillsConfigSchema.partial().default({}),

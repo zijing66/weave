@@ -4,9 +4,12 @@ import {
   type InitOptions,
   type InitResult,
   type PlatformInfo,
+  type Harness,
   detectPlatform,
   resolveComponents,
   DEFAULT_HOOKS,
+  HARNESS_DIRS,
+  HARNESS_KEYS,
   ensureDir,
   fileExists,
   logger,
@@ -25,6 +28,7 @@ import {
 import { ensureInstructionLink } from './instruction-link.js';
 import { buildInitRegistry } from './wiring.js';
 import { type ClaudePipeline } from './harnesses/claude.js';
+import { createPromptPort, type PromptPort } from './prompt.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -34,16 +38,36 @@ const PRESET_TEMPLATE: Record<string, ClaudeMdTemplate> = {
   full: 'full',
 };
 
+/** 默认 harness 面：非 TTY / --no-interactive / 未选择时的回落值。 */
+const DEFAULT_HARNESSES: Harness[] = ['claude'];
+
+/**
+ * 三级选择（图①-b 步 1）：`--harness` flag > 交互 prompt.multiselect() > 默认 `['claude']`。
+ * 交互仅在 `interactive` 且 stdin/stdout 均为 TTY 时进行——`createPromptPort`
+ * 内部另查一次 TTY（非 TTY 静默取 defaults），注入的假 PromptPort 供测试驱动第二级。
+ */
+async function selectHarnesses(options: InitOptions, prompt: PromptPort): Promise<Harness[]> {
+  if (options.harnesses && options.harnesses.length > 0) return [...options.harnesses];
+  if (!options.interactive) return [...DEFAULT_HARNESSES];
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return [...DEFAULT_HARNESSES];
+  const picked = await prompt.multiselect(HARNESS_KEYS, DEFAULT_HARNESSES);
+  return picked.length > 0 ? [...picked] : [...DEFAULT_HARNESSES];
+}
+
 /**
  * init 编排器（图① InitOrchestrator，模板方法 executeInit）：
- * 0 prepare → 1 selected → 2 逐 harness runSurface（InitPipeline final 骨架
- * 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config → 10 嵌套 gitignore → 11 汇总。
- * 表面步骤（1–7）的实现在 init/harnesses/claude.ts（ClaudeInitTemplate）。
+ * 0 prepare（平台 / 组件 / PromptPort）→ 1 selected → 2 逐 harness runSurface
+ * （InitPipeline final 骨架 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config
+ * → 10 嵌套 gitignore → 11 汇总。表面步骤（1–7）的实现在 init/harnesses/ 下。
+ * `prompt` 可注入（测试用假实现驱动多选优先级）。
  */
-export async function executeInit(options: InitOptions): Promise<InitResult> {
+export async function executeInit(
+  options: InitOptions,
+  promptOverride?: PromptPort,
+): Promise<InitResult> {
   const { targetDir, force, interactive, preset } = options;
 
-  // ---- Step 0: prepare（平台 / 组件 / 结果累加器）----
+  // ---- Step 0: prepare（平台 / 组件 / PromptPort / 结果累加器）----
   const platform: PlatformInfo = detectPlatform();
   const created: { directories: string[]; files: string[] } = { directories: [], files: [] };
   const skipped: string[] = [];
@@ -54,14 +78,14 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
 
   const components = resolveComponents(preset, options.components);
   const hooks = { ...DEFAULT_HOOKS, ...options.hooks };
-  const claudeDir = path.join(targetDir, '.claude');
+  const prompt = promptOverride ?? createPromptPort(interactive);
 
   if (!interactive) {
     logger.dim(t('init.nonInteractive'));
   }
 
-  // ---- Step 1: selected —— 批 3 恒 ['claude']（--harness flag 与交互多选归批 5）----
-  const selected = ['claude'] as const;
+  // ---- Step 1: selected —— flag > 交互多选 > 默认 ['claude'] ----
+  const selected = await selectHarnesses(options, prompt);
 
   // ---- Step 2: 逐 harness 跑 InitPipeline final 骨架 ----
   const ctx: InitContext = { ...options, platform };
@@ -90,7 +114,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
     const link = await ensureInstructionLink(targetDir, {
       force,
       interactive,
-      confirm: (question, detail) => confirmPrompt(question, detail, interactive),
+      confirm: (question, detail) => prompt.confirm(question, detail),
     });
     if (link.backedUpTo) {
       logger.dim(t('init.backedUp', { path: link.backedUpTo }));
@@ -130,6 +154,7 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
       initVersion: WEAVE_VERSION,
       initTimestamp: new Date().toISOString(),
       preset,
+      harnesses: selected,
       components: { settings: components.settings, skills: components.skills, commands: components.commands, agents: components.agents, helpers: components.helpers, mcp: components.mcp, claudeMd: components.claudeMd, agentsMd: components.agentsMd },
     };
 
@@ -144,12 +169,15 @@ export async function executeInit(options: InitOptions): Promise<InitResult> {
   }
 
   // ---- Step 10: Keep weave's generated dirs out of version control ----
-  // Both `.claude/` and `.weave/` hold machine-local, regenerable content (a
-  // statusline script embedding this machine's absolute paths, init metadata).
-  // Each gets a self-ignoring `.gitignore` rather than an entry in the user's
-  // root `.gitignore`: the nested file is itself committed, so a teammate who
-  // clones inherits the rule without weave ever editing a file the user owns.
-  await ensureNestedGitignore(targetDir, claudeDir, created);
+  // `.claude/`（或 codex 选择时的 `.codex/`）与 `.weave/` hold machine-local,
+  // regenerable content (a statusline script embedding this machine's absolute
+  // paths, init metadata). Each gets a self-ignoring `.gitignore` rather than an
+  // entry in the user's root `.gitignore`: the nested file is itself committed,
+  // so a teammate who clones inherits the rule without weave ever editing a
+  // file the user owns.
+  for (const h of selected) {
+    await ensureNestedGitignore(targetDir, path.join(targetDir, HARNESS_DIRS[h].projectDir), created);
+  }
   await ensureNestedGitignore(targetDir, path.join(targetDir, '.weave'), created);
 
   // ---- Aggregate summary ----
@@ -215,28 +243,6 @@ async function ensureNestedGitignore(
   await ensureDir(dir);
   await writeFile(file, NESTED_GITIGNORE, 'utf-8');
   created.files.push(file);
-}
-
-/**
- * Ask a yes/no question, defaulting to yes.
- *
- * Returns the default without prompting when the run is non-interactive or
- * stdin is not a terminal — `weave init` must stay scriptable, and the default
- * action is always the one the user asked for (replace AGENTS.md with a link).
- */
-async function confirmPrompt(question: string, detail: string, interactive: boolean): Promise<boolean> {
-  if (!interactive || !process.stdin.isTTY || !process.stdout.isTTY) return true;
-
-  const { createInterface } = await import('node:readline/promises');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(
-      `\n  ${question}\n  ${detail}\n  ${t('init.proceed')} `,
-    );
-    return !/^n(o)?$/i.test(answer.trim());
-  } finally {
-    rl.close();
-  }
 }
 
 /**

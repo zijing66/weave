@@ -45,6 +45,8 @@ export const zh = {
   'flag.init.noInteractive': '禁用交互式提示',
   'flag.init.hooks':
     '启用的 hook 事件，逗号分隔（preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification）；none 表示全不注册；默认全开',
+  'flag.init.harness':
+    '要初始化的 harness 面，逗号分隔（claude、codex）；缺省时 TTY 下交互多选，默认 claude',
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
@@ -75,6 +77,7 @@ export const zh = {
   'out.status.col.version': '版本',
   'out.status.col.initialized': '初始化时间',
   'out.status.col.preset': '预设',
+  'out.status.col.harness': 'harness',
   'out.status.unknown': '未知',
   'out.status.present': '存在',
   'out.status.missing': '缺失',
@@ -137,6 +140,12 @@ export const zh = {
   'out.plugins.disabled': '已禁用插件：{id}',
   'out.plugins.col.desc': '描述',
   'init.hooksUnknownKeys': '已忽略未知的 hooks 事件名：{keys}',
+  'init.harnessUnknownKeys': '已忽略未知的 harness：{keys}',
+  'init.multiselect.title': '选择要初始化的 harness（可多选）：',
+  'init.multiselect.hint': '输入编号或名称（逗号分隔），直接回车取默认 {defaults}：',
+  'init.multiselect.invalid': '已忽略无法识别的选择：{keys}',
+  'init.noPeerFace': '无对等面',
+  'init.stepSkipped': '已跳过 {step}：{reason}',
   'init.removed': '  已按标记清理 {count} 个遗留生成物。\n',
   // --- harness 健康检查 message / fix ---
   'harness.instructionLinkNotMaterialised.message': '{agents} 是内容为 "{claude}" 的普通文件——git 把软链接检出成了文本。',
