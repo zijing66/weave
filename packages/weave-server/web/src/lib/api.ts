@@ -168,6 +168,37 @@ export interface HookPlugin {
   ruleCount: number;
 }
 
+/** mirror of `ToolkitPackInfo` in packages/weave-server/src/hooks/toolkit.ts（批 10）。 */
+export interface ToolkitPack {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  scope: string;
+  dir: string;
+  provenance: 'builtin' | 'external-dir';
+  sourceRoot: string;
+  targets: string[];
+  kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
+  components: string[];
+  ccPack: boolean;
+  weavePack: boolean;
+  skills: string[];
+  enabled: boolean;
+  weave?: { status: 'active' | 'rejected' | 'disabled'; ruleCount: number; error?: string };
+}
+
+/** mirror of server `ToolkitListResult` / `ToolkitToggleResult`。 */
+export interface ToolkitListResult {
+  packs: ToolkitPack[];
+  dirs: string[];
+}
+
+export interface ToolkitToggleResult {
+  pack: ToolkitPack;
+  warnings: string[];
+}
+
 /** 创建/更新规则的请求体（服务端 zod CreateRuleBody / UpdateRuleBody）。 */
 export interface HookRuleInput {
   name: string;
@@ -690,6 +721,33 @@ export const api = {
     apiFetch<{ ok: boolean }>(`/hooks/plugins/${encodeURIComponent(id)}/uninstall`, {
       method: 'POST',
     }).then(() => undefined),
+  // ---- 批 10 工具包（toolkit）----
+  listToolkit: (projectId: number): Promise<ToolkitListResult> =>
+    apiFetch<ToolkitListResult>(`/projects/${projectId}/toolkit`),
+  toggleToolkit: (
+    projectId: number,
+    id: string,
+    enabled: boolean,
+    source?: string,
+  ): Promise<ToolkitToggleResult> =>
+    apiFetch<ToolkitToggleResult>(
+      `/projects/${projectId}/toolkit/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}${
+        source ? `?source=${encodeURIComponent(source)}` : ''
+      }`,
+      { method: 'POST' },
+    ),
+  listToolkitDirs: (): Promise<{ dirs: string[]; indexes: string[] }> =>
+    apiFetch<{ dirs: string[]; indexes: string[] }>('/toolkit/dirs'),
+  addToolkitDir: (path: string): Promise<{ dirs: string[] }> =>
+    apiFetch<{ dirs: string[] }>('/toolkit/dirs', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  removeToolkitDir: (path: string): Promise<{ dirs: string[]; disabled: string[] }> =>
+    apiFetch<{ dirs: string[]; disabled: string[] }>('/toolkit/dirs/remove', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   listHookDispatches: (q?: {
     ruleId?: string;
     status?: HookDispatchStatus;

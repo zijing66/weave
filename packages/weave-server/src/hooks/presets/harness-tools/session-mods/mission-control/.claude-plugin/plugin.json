@@ -1,0 +1,8 @@
+{
+  "name": "mission-control",
+  "version": "0.1.0",
+  "description": "Mission control: session/turn tool-call counters in a Pane, an AbovePrompt band and a status entry",
+  "author": {
+    "name": "weave"
+  }
+}

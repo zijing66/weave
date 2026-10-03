@@ -69,6 +69,28 @@ export class ProjectRepository {
   remove(id: number): void {
     this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   }
+
+  /** 读 meta JSON（缺失/损坏返回 null，调用方按需回退默认值）。 */
+  getMeta(id: number): Record<string, unknown> | null {
+    const row = this.db.prepare('SELECT meta FROM projects WHERE id = ?').get(id) as
+      | { meta?: unknown }
+      | undefined;
+    if (!row || row.meta == null) return null;
+    try {
+      const parsed: unknown = JSON.parse(String(row.meta));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 浅合并写回 meta JSON（保留未触及的顶层键；批 10 toolkit 状态索引入口）。 */
+  setMeta(id: number, patch: Record<string, unknown>): void {
+    const merged = { ...(this.getMeta(id) ?? {}), ...patch };
+    this.db.prepare('UPDATE projects SET meta = ? WHERE id = ?').run(JSON.stringify(merged), id);
+  }
 }
 
 function toProject(row: Record<string, unknown>): ProjectRow {

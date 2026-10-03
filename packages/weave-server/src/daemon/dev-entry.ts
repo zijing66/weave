@@ -21,6 +21,7 @@ import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
+import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
@@ -75,6 +76,12 @@ async function main(): Promise<void> {
     for (const r of rejected) console.log(`[dev]   rejected ${r.id}: ${r.error}`);
   }
   hookPlugins.watchRoots(); // 热重载（dev 下改插件文件即时生效）
+  // 批 10 工具包服务（loader 已就绪，直接挂载）
+  const toolkit = new ToolkitService({
+    projects,
+    states: new PluginStateRepository(db),
+    plugins: hookPlugins,
+  });
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
@@ -112,6 +119,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     hookPlugins,
+    toolkit,
   });
 
   server.listen(port, DAEMON_HOST, () => {

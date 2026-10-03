@@ -1,0 +1,8 @@
+{
+  "name": "file-guard",
+  "version": "0.1.0",
+  "description": "Deny writes to protected files (.env/secrets/keys) and dangerous Bash patterns, with a toast explaining why",
+  "author": {
+    "name": "weave"
+  }
+}

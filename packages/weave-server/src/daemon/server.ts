@@ -81,6 +81,8 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
 import { handleHooksRoutes } from './hooks-routes.js';
+import { handleToolkitRoutes } from './toolkit-routes.js';
+import type { ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
   readDaemonSettings,
@@ -131,6 +133,8 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
+  /** 批 10 工具包服务；/projects/:id/toolkit 与 /toolkit/dirs 依赖它。 */
+  toolkit?: ToolkitService;
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
@@ -268,6 +272,9 @@ async function handleRequest(
 
   // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。
   if (await handleHooksRoutes(req, res, deps, pathname, url, isAuthed)) return;
+
+  // 批 10 工具包子路由（包清单/开关/外置目录）——未命中返回 false，主链继续。
+  if (await handleToolkitRoutes(req, res, deps, pathname, url, isAuthed)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).
   const hooksMatch = pathname.match(/^\/projects\/(\d+)\/hooks$/);

@@ -1,0 +1,149 @@
+import { useCallback, useEffect, useState } from 'react';
+import { api, type ToolkitPack } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { useT } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dict';
+import { FolderOpen, Package, Wrench } from 'lucide-react';
+
+const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
+  skill: 'toolkit.kind.skill',
+  hook: 'toolkit.kind.hook',
+  mod: 'toolkit.kind.mod',
+  rule: 'toolkit.kind.rule',
+  surface: 'toolkit.kind.surface',
+};
+
+const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
+  skill: 'bg-emerald-900/40 text-emerald-300',
+  hook: 'bg-blue-900/40 text-blue-300',
+  mod: 'bg-purple-900/40 text-purple-300',
+  rule: 'bg-amber-900/40 text-amber-300',
+  surface: 'bg-neutral-800 text-neutral-300',
+};
+
+const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
+  builtin: 'toolkit.prov.builtin',
+  'external-dir': 'toolkit.prov.external-dir',
+};
+
+/**
+ * 工具箱区段（批 10）：包清单（provenance/类型徽标 + 目标面）+ 项目级开关 +
+ * 外置目录展示（add-dir/remove-dir 走 CLI，文案指引）。开关调用幂等端点，
+ * 返回后置状态后刷新。
+ */
+export function ToolkitSection({ projectId }: { projectId: number }) {
+  const t = useT();
+  const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
+  const [dirs, setDirs] = useState<string[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    api
+      .listToolkit(projectId)
+      .then((data) => {
+        setPacks(data.packs);
+        setDirs(data.dirs);
+      })
+      .catch((e) => {
+        setPacks((prev) => prev ?? []);
+        setMsg(t('toolkit.loadFailed', { error: e instanceof Error ? e.message : String(e) }));
+      });
+  }, [projectId, t]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const toggle = async (pack: ToolkitPack, enabled: boolean): Promise<void> => {
+    setMsg(null);
+    try {
+      const result = await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
+      if (result.warnings.length > 0) setMsg(result.warnings.join('；'));
+      refresh();
+    } catch (e) {
+      setMsg(t('toolkit.toggleFailed', { error: e instanceof Error ? e.message : String(e) }));
+      refresh();
+    }
+  };
+
+  if (packs === null) {
+    return <p className="text-xs text-neutral-600">{t('toolkit.loading')}</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {packs.length === 0 && <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>}
+      {packs.map((p) => (
+        <div
+          key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
+          className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
+        >
+          <Package
+            className={cn('h-3.5 w-3.5 shrink-0', p.enabled ? 'text-emerald-400' : 'text-neutral-600')}
+          />
+          <span className="shrink-0 text-xs font-medium text-neutral-200">{p.name}</span>
+          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+          <Badge className={cn('shrink-0', KIND_STYLES[p.kind])}>{t(KIND_KEY[p.kind])}</Badge>
+          <Badge
+            className={cn(
+              'shrink-0',
+              p.provenance === 'builtin'
+                ? 'bg-amber-900/40 text-amber-300'
+                : 'bg-neutral-800 text-neutral-300',
+            )}
+          >
+            {t(PROV_KEY[p.provenance])}
+          </Badge>
+          <span className="shrink-0 text-[10px] text-neutral-600">v{p.version}</span>
+          <span className="shrink-0 text-[10px] text-neutral-600">
+            {t('toolkit.targets', { targets: p.targets.join('+') })}
+          </span>
+          {p.weave && (
+            <span className="shrink-0 text-[10px] text-neutral-600">
+              {t('toolkit.weaveRules', { n: p.weave.ruleCount })}
+            </span>
+          )}
+          {p.description && (
+            <span className="min-w-0 truncate text-[11px] text-neutral-500" title={p.description}>
+              {p.description}
+            </span>
+          )}
+          <span className="ml-auto shrink-0">
+            <Switch
+              checked={p.enabled}
+              onChange={(v) => void toggle(p, v)}
+              title={t('toolkit.toggleTip')}
+            />
+          </span>
+        </div>
+      ))}
+
+      {msg && <p className="text-[11px] text-amber-400/90">{msg}</p>}
+
+      {/* 外置目录：list 展示 + CLI 文案指引（编辑交互从简） */}
+      <div className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5">
+        <p className="flex items-center gap-1.5 text-[11px] font-medium text-neutral-300">
+          <FolderOpen className="h-3.5 w-3.5 text-neutral-500" />
+          {t('toolkit.dirsTitle')}
+        </p>
+        {dirs.length === 0 ? (
+          <p className="mt-0.5 text-[10px] text-neutral-600">{t('toolkit.dirsEmpty')}</p>
+        ) : (
+          <ul className="mt-0.5 space-y-0.5">
+            {dirs.map((d) => (
+              <li key={d} className="truncate font-mono text-[10px] text-neutral-500" title={d}>
+                {d}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-1 flex items-start gap-1 text-[10px] text-neutral-600">
+          <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
+          {t('toolkit.dirsHint')}
+        </p>
+      </div>
+    </div>
+  );
+}
