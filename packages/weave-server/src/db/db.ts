@@ -60,7 +60,6 @@ CREATE TABLE IF NOT EXISTS hook_rules (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_hook_rules_project ON hook_rules(project_id);
-CREATE INDEX IF NOT EXISTS idx_hook_rules_plugin ON hook_rules(plugin_id);
 
 CREATE TABLE IF NOT EXISTS plugin_states (
   id         TEXT PRIMARY KEY,
@@ -114,6 +113,10 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
  * hook_rules 的 origin/plugin_id（D3 插件来源标记）对旧库用
  * `PRAGMA table_info` 探测 + `ALTER TABLE ADD COLUMN` 补上。
  * 幂等：列已存在则跳过。
+ *
+ * 注意必须先于 `idx_hook_rules_plugin` 建索引执行——SCHEMA 里的
+ * `CREATE INDEX ... ON hook_rules(plugin_id)` 遇到缺列旧库会直接报
+ * `no such column`，故该索引也在此处、列补齐后创建。
  */
 function migrateHookRulesColumns(db: DatabaseSync): void {
   const cols = new Set(
@@ -122,10 +125,12 @@ function migrateHookRulesColumns(db: DatabaseSync): void {
       .all()
       .map((row) => String((row as { name: string }).name)),
   );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
   if (!cols.has('origin')) {
     db.exec("ALTER TABLE hook_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'");
   }
   if (!cols.has('plugin_id')) {
     db.exec('ALTER TABLE hook_rules ADD COLUMN plugin_id TEXT');
   }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_hook_rules_plugin ON hook_rules(plugin_id)');
 }

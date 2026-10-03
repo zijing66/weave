@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
@@ -349,15 +349,32 @@ describe('内置预设 presets（随包发货的参考实现）', () => {
 });
 
 describe('hook_rules 旧库升级（origin/plugin_id 列兜底）', () => {
-  it('对旧 schema 库 openDatabase 后列存在且默认值正确', async () => {
+  it('对缺列旧库 openDatabase 迁移列并建 plugin 索引（回归 no such column: plugin_id）', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'weave-db-mig-'));
     const dbPath = path.join(dir, 'weave.db');
     try {
-      // 第一次打开建新库（含新列）
-      const db1 = openDatabase(dbPath);
-      db1.close();
-      // 手工删列模拟旧库？SQLite 不支持 DROP COLUMN 非常量……改为验证幂等：
-      // 二次打开（migrate 探测列已存在）不报错，且插入不带 origin 的行默认 user。
+      // 用 D3.1 之前的旧 schema 建库：无 origin/plugin_id 列、无对应索引
+      const old = new DatabaseSync(dbPath);
+      old.exec(`
+        CREATE TABLE hook_rules (
+          id         TEXT PRIMARY KEY,
+          name       TEXT NOT NULL,
+          enabled    INTEGER NOT NULL DEFAULT 1,
+          priority   INTEGER NOT NULL DEFAULT 0,
+          project_id INTEGER,
+          source     TEXT NOT NULL,
+          filter     TEXT NOT NULL DEFAULT '{}',
+          handler    TEXT NOT NULL,
+          timeout_ms INTEGER NOT NULL DEFAULT 10000,
+          record     INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      old.close();
+
+      // 回归锚点：SCHEMA 遇缺列旧库不能在建 plugin 索引时报
+      // `no such column: plugin_id`（索引须推迟到迁移补列之后）
       const db2 = openDatabase(dbPath);
       const projects = new ProjectRepository(db2);
       const project = projects.register({ path: 'D:\\x', name: 'x', token: 't', source: 'init' });
@@ -376,7 +393,16 @@ describe('hook_rules 旧库升级（origin/plugin_id 列兜底）', () => {
         .map((r) => String((r as { name: string }).name));
       expect(cols).toContain('origin');
       expect(cols).toContain('plugin_id');
+      const indexes = db2
+        .prepare('PRAGMA index_list(hook_rules)')
+        .all()
+        .map((r) => String((r as { name: string }).name));
+      expect(indexes).toContain('idx_hook_rules_plugin');
       db2.close();
+
+      // 幂等：二次打开不再迁移也不报错
+      const db3 = openDatabase(dbPath);
+      db3.close();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
