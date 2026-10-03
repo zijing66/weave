@@ -1,5 +1,6 @@
 import type { Harness } from '@weave/core';
 import type { InitContext, InitPipeline } from './init/pipeline.js';
+import type { FileAssetCategory } from './shared/file-specs.js';
 
 /**
  * 抽象定义的家：五种能力接口 + HarnessDriver + HarnessRegistry + supports。
@@ -23,12 +24,47 @@ export interface EventSource {
 }
 
 /**
- * 资产落盘表面查询——批 4a 补全（`fileAssetTargetDir` / `skillsDirFor` /
- * `classifyAgent` / `shouldIgnore` / global-config / codex-toml 六处散落并入）。
+ * 资产落盘表面查询（批 4a 补全）：「某 harness 的资产落哪 / 怎么分类」的知识
+ * 从 server 六处散落收敛进本接口的实现（`claude/assets.ts` / `codex/assets.ts`），
+ * server 保留原函数名作薄委托——`fileAssetTargetDir` / `skillsDirFor` /
+ * `classifyAgent` / `shouldIgnore` / global-config skills 常量 / codex-toml 路径。
  */
 export interface AssetSurface {
+  /** 所属 harness——按序遍历多个 surface 时回指归属（`classifyAgent` 消费）。 */
+  readonly harness: Harness;
+
   /** 某资产类别在指定 scope 的目标目录；无该表面则抛错（同 `fileAssetTargetDir` 语义）。 */
-  targetDir(kind: string, scope: 'project' | 'global', projectPath: string, homedir: string): string;
+  targetDir(
+    category: FileAssetCategory,
+    scope: 'project' | 'global',
+    projectPath: string,
+    homedir: string,
+  ): string;
+
+  /** 项目内 skills 目录（相对项目根，posix 分隔；`skillsDirFor` 消费）。 */
+  projectSkillsDir(): string;
+
+  /**
+   * 全局 skills 根（绝对路径）：[0] 为安装写入目标，其后为只读遗留根
+   * （Codex 的 deprecated `~/.codex/skills`；global-config 消费）。
+   */
+  globalSkillsRoots(homedir: string): string[];
+
+  /** weave 增量编辑的用户级配置文件（Claude `~/.claude/settings.json`；Codex `~/.codex/config.toml`）。 */
+  userConfigFile(homedir: string): string;
+
+  /**
+   * 路径归属：该相对路径（posix 已归一）是否认领为本 harness 表面
+   * （`classifyAgent` 消费——按 codex→claude 顺序找首个认领者，无人认领默认 claude）。
+   */
+  classify(relPath: string): boolean;
+
+  /**
+   * watch 忽略：本 harness 视角下该相对路径是否不在观测集
+   * （`shouldIgnore` 消费——两面取 AND，任一 surface 观测即保留；
+   * 项目根与 `.weave` 是中立规则，留在 server 的 `shouldIgnore`）。
+   */
+  ignore(relPath: string): boolean;
 }
 
 /** resume 执行规格——`args` 签名对齐 `resume-runner.ts` 现状调用（sessionId, prompt）。 */

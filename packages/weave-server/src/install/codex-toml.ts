@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
 import type { McpServerConfig } from './installer.js';
+import { assetSurfaceFor } from '../surfaces.js';
 
 /**
  * Incremental editor for `~/.codex/config.toml`.
@@ -334,9 +335,9 @@ export function parseSectionEntries(lines: string[]): [string, string][] {
 // ---------------------------------------------------------------------------
 
 /** Absolute path of the Codex user config (`~/.codex/config.toml`),
- * respecting the test override. */
+ * respecting the test override. 批 4a：路径本体在 AssetSurface（`userConfigFile`）。 */
 export function codexConfigFile(home: string = homedir()): string {
-  return codexConfigFileOverride ?? path.join(home, '.codex', 'config.toml');
+  return codexConfigFileOverride ?? assetSurfaceFor('codex').userConfigFile(home);
 }
 
 /** Read the `mcp_servers` map from config.toml text (empty when absent or

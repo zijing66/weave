@@ -89,6 +89,9 @@ importers:
       '@weave/core':
         specifier: workspace:*
         version: link:../weave-core
+      '@weave/harness':
+        specifier: workspace:*
+        version: link:../weave-harness
       chokidar:
         specifier: ^4.0.0
         version: 4.0.3

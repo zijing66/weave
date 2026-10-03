@@ -7,6 +7,7 @@ import {
   fileAssetTargetDir,
   type FileAssetCategory,
 } from './file-assets.js';
+import { assetSurfaceFor } from '../surfaces.js';
 
 /**
  * Asset install/uninstall — pure filesystem operations, no sqlite writes.
@@ -40,8 +41,6 @@ export interface McpServerConfig {
 /** Which coding agent an install targets — Claude Code or Codex surfaces. */
 export type InstallAgent = Harness;
 
-const SKILLS_DIR = '.claude/skills';
-const CODEX_SKILLS_DIR = '.codex/skills';
 const MCP_FILE = '.mcp.json';
 
 /** Reject names that could escape the target directory (path traversal). */
@@ -67,9 +66,10 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /** Resolve the skills directory for an agent (Codex project skills live under
- * `.codex/skills/`; everything else is Claude's `.claude/skills/`). */
+ * `.codex/skills/`; everything else is Claude's `.claude/skills/`).
+ * 批 4a：路径知识在 AssetSurface（`projectSkillsDir`），此处只委托。 */
 function skillsDirFor(agent: InstallAgent): string {
-  return agent === 'codex' ? CODEX_SKILLS_DIR : SKILLS_DIR;
+  return assetSurfaceFor(agent).projectSkillsDir();
 }
 
 /** Copy an entire skill directory into the agent's `<skills>/<name>/`. */
