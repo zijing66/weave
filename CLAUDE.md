@@ -42,13 +42,27 @@ weave/
 │   │   │   │   ├── doctor.ts      # doctor 命令
 │   │   │   │   └── add.ts         # add 命令
 │   │   │   └── init/
-│   │   │       ├── executor.ts    # 初始化编排器
+│   │   │       ├── executor.ts    # 初始化编排器（InitOrchestrator）
 │   │   │       ├── settings-gen.ts
 │   │   │       ├── mcp-gen.ts
 │   │   │       ├── claudemd-gen.ts
 │   │   │       └── helpers-gen.ts
 │   │   ├── bin/
 │   │   │   └── cli.js             # Shebang 入口
+│   │   └── package.json
+│   │
+│   ├── weave-harness/        # @weave/harness：能力接口与注册表（仅依赖 @weave/core）
+│   │   ├── src/
+│   │   │   ├── driver.ts          # HarnessDriver 五能力接口 + HarnessRegistry
+│   │   │   ├── init/pipeline.ts   # abstract InitPipeline（init 模板方法）
+│   │   │   ├── registry-wiring.ts # registerRuntimeDrivers 运行时装配
+│   │   │   ├── claude/            # Claude 接入模块（events/assets/resume/detect）
+│   │   │   └── codex/             # Codex 接入模块（assets/detect）
+│   │   └── package.json
+│   │
+│   ├── weave-server/         # daemon 服务端：hooks/watch/install/装配 + HTTP 路由
+│   │   ├── src/
+│   │   ├── web/              # web 源码（原 weave-web 整包并入，不再单独成包）
 │   │   └── package.json
 │   │
 │   └── weave-templates/     # 模板库：skills、commands、agents
@@ -120,13 +134,13 @@ weave/
 
 ### 国际化（i18n）
 
-- 界面文案（weave-web 组件 + weave-cli 命令输出/帮助/preview TUI）**必须走词典**，
+- 界面文案（web 组件 + weave-cli 命令输出/帮助/preview TUI）**必须走词典**，
   禁止在组件或命令里硬编码中英文；专有名词（Claude Code、Codex、MCP、路径、命令字面、
   用户数据）不入典，写死在词条值里即可。
 - 语言的单一事实源是 daemon settings（`<configDir>/weave/settings.json` 的 `locale`）：
   web 由 `I18nProvider` 挂载时读取（localStorage 仅作首屏缓存），CLI 由 `initCliLocale()`
   解析（`WEAVE_LOCALE` 环境变量可单次覆盖）。
-- 词典位置：web `packages/weave-web/src/i18n/dict/`（按领域分 chunk），
+- 词典位置：web `packages/weave-server/web/src/i18n/dict/`（按领域分 chunk），
   CLI `packages/weave-cli/src/i18n/dict/`；手写类型安全字典，chunk 文件级
   `en: Record<keyof typeof zh, string>` 强制 key 对齐（漏译编译失败）。
 - **新增语言的注册步骤**：① `weave-server/src/daemon/settings.ts` 的 `Locale` 联合 +
@@ -200,6 +214,8 @@ weave/
 
 > 双 harness 说明：weave 同时管理 Claude Code（`.claude/`）与 Codex（`.codex/`、`AGENTS.md`）表面。
 > 共性面（skills / 指令文件 / commands / agents 等）已实现；高难度项见 `docs/BACKLOG.md`。
+> `weave init` 支持 `--harness` 多选（TTY 下交互多选，非 TTY / `--no-interactive` 默认 `['claude']`），
+> `weave scan`/`weave status` 按 harness marker 探测（`.claude`/`.codex`）。
 
 ---
 
@@ -259,6 +275,12 @@ weave/
 ---
 
 ## 依赖清单
+
+### 包依赖（workspace 内部，无新增运行时依赖）
+
+- `harness → core`（仅此一条；harness 永不依赖 server/cli，防成环）
+- `server → core, harness`
+- `cli → core, server, templates, harness`
 
 ### 运行时依赖
 

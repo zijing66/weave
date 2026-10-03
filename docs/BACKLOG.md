@@ -121,6 +121,7 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 | statusline 全自定义：`label`/`format` 模板、256 色与 hex 真彩、可配进度条、`changes` 的 `(+N, -N)`、`tokens` 的会话累计（transcript 按 `message.id` 去重 + 增量缓存） | `weave-server/src/statusline/{config,generator,manager}.ts`、`weave-cli/src/statusline/{preview.tsx,ansi.ts}`、`weave-web/src/components/StatuslinePanel.tsx` |
 | `weave init` 产出真实 statusline 脚本（原先只写占位 stub）+ 嵌套自忽略 `.gitignore` | `weave-cli/src/init/executor.ts` |
 | harness 健康检查（软连接未落盘 / 指令文件重复 / 悬挂软连接 / statusLine 绝对路径失效） | `weave-cli/src/init/harness-checks.ts`，由 `weave status` 输出 |
+| `weave init` 多 harness（`--harness` flag / TTY 交互多选 / Codex init 落 `.codex/skills`）+ `weave scan`/`weave status` harness marker 探测认 `.codex`（架构重构批 5，commit 8bb411d） | `weave-cli/src/commands/{init,scan,status}.ts`、`init/harnesses/codex.ts`、`@weave/harness` Detector |
 | `weave dashboard` 启动 daemon 并打开 web 控制台；前端改从 `?token=` 取 token（此前只有构建期烘入的固定值，与 `weave daemon start` 的随机 token 不匹配会 401） | `weave-cli/src/commands/dashboard.ts`、`weave-web/src/lib/api.ts` |
 
 ---

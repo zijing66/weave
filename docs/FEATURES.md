@@ -9,6 +9,8 @@ Weave 是一个 Claude Code harness 工具，可对任意已有项目执行 `wea
 
 ## A. Harness 注入（`weave init` 核心）
 
+> **已实现注记（架构重构批 3/5，commit 3e0465c / 8bb411d）**：A1–A5 已模板方法化（`InitPipeline` + `InitOrchestrator`），`weave init` 支持 `--harness` 多 harness 选择（Claude / Codex），详见 `docs/plan/template-method-harness-refactor.md`。
+
 ### A1. 目录结构注入 — P0
 
 **描述**：在目标项目中创建 `.claude/` 目录树，作为 Claude Code 的工作空间结构。
@@ -214,6 +216,8 @@ Weave 是一个 Claude Code harness 工具，可对任意已有项目执行 `wea
 ## C. 生命周期管理
 
 ### C1. `weave status` — P0
+
+> **部分实现注记（架构重构批 5，commit 8bb411d）**：`weave scan` / `weave status` 的 harness marker 探测走 Detector 策略，已认 `.claude` 与 `.codex`（含 `CLAUDE.md`/`AGENTS.md`）。
 
 **描述**：检查当前项目 harness 状态，显示已注入的组件清单。
 
