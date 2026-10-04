@@ -43,14 +43,15 @@ export class SessionRepository {
   }
 
   list(projectId?: number): SessionRow[] {
+    // 创建时间固定排序（不随活跃跳动）。
     const rows =
       projectId === undefined
         ? this.db
-            .prepare('SELECT * FROM sessions ORDER BY last_seen_at DESC LIMIT 200')
+            .prepare('SELECT * FROM sessions ORDER BY created_at DESC LIMIT 200')
             .all()
         : this.db
             .prepare(
-              'SELECT * FROM sessions WHERE project_id = ? ORDER BY last_seen_at DESC LIMIT 200',
+              'SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 200',
             )
             .all(projectId);
     return rows.map(toSession);
@@ -69,11 +70,13 @@ export class SessionRepository {
     const rows =
       projectId === undefined
         ? this.db
-            .prepare(`${base} GROUP BY s.session_id ORDER BY s.last_seen_at DESC LIMIT 200`)
+            .prepare(
+              `${base} GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT 200`,
+            )
             .all()
         : this.db
             .prepare(
-              `${base} WHERE s.project_id = ? GROUP BY s.session_id ORDER BY s.last_seen_at DESC LIMIT 200`,
+              `${base} WHERE s.project_id = ? GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT 200`,
             )
             .all(projectId);
     return rows.map((row) => {
@@ -86,8 +89,20 @@ export class SessionRepository {
     });
   }
 
-  /** dashboard 改名：挂 pending（生效延迟一轮/一次 resume）。 */
+  /**
+   * dashboard 改名：挂 pending（生效延迟一轮/一次 resume）。
+   * 幂等短路：title 与当前生效名相同 → 不进待生效态（已有 pending 视为撤销，一并清掉）；
+   * 与当前 pending 相同 → 维持 pending 原样返回。只有名称实际变化才写 pending。
+   */
   setPendingTitle(sessionId: string, title: string): SessionRow | undefined {
+    const row = this.getBySessionId(sessionId);
+    if (!row) return undefined;
+    if (row.title === title) {
+      if (row.pendingTitle != null) {
+        this.db.prepare('UPDATE sessions SET pending_title = NULL WHERE session_id = ?').run(sessionId);
+      }
+      return this.getBySessionId(sessionId);
+    }
     this.db
       .prepare('UPDATE sessions SET pending_title = ? WHERE session_id = ?')
       .run(title, sessionId);
@@ -95,9 +110,10 @@ export class SessionRepository {
   }
 
   /**
-   * hook 上报的 session_title diff：
-   * - 有待生效 pending 时以上报值确认 pending 已落地（外部生效了同名？）或直接采纳 pending 优先——
-   *   这里策略：pending 存在时忽略外部值（pending 更晚创建），外部值仅在无 pending 时采纳。
+   * hook 上报的 session_title diff（兜底自纠通道）：
+   * - 确认主通道 = 交付落定（confirmPendingTitle）：sessionTitle 随 hook 响应下发即视为生效。
+   * - reported diff 分支保留作兜底——会话未真正应用时，下一次上报的旧标题经 diff 通道把
+   *   title 改回（自纠）；pending 存在时忽略外部值（pending 更晚创建）。
    * - 返回是否发生了标题变化（供 bus 发 session.renamed）。
    */
   applyReportedTitle(sessionId: string, reportedTitle: string | null): boolean {
@@ -120,6 +136,16 @@ export class SessionRepository {
       return true;
     }
     return false;
+  }
+
+  /** 交付确认：sessionTitle 已随本次 hook 响应下发——pending 落定为已生效标题。 */
+  confirmPendingTitle(sessionId: string, title: string): boolean {
+    const res = this.db
+      .prepare(
+        'UPDATE sessions SET title = ?, pending_title = NULL WHERE session_id = ? AND pending_title = ?',
+      )
+      .run(title, sessionId, title);
+    return res.changes > 0;
   }
 
   remove(sessionId: string): void {
