@@ -28,7 +28,7 @@ import { addToolkitDir, readSourcesFile } from '../plugin-installer.js';
  * 闸④ 非 targets 表面零写入 + 项目零 CC 副本；
  * 闸⑤ 内置 vs add-dir 外置同包 enable 结果一致 + 两项目共享全局位、
  *    enabledPlugins 各自独立；
- * 另：mod 宿主版本闸、meta 索引同步、remove-dir 级联、weave 成分级联。
+ * 另：mod 宿主版本闸、meta 索引同步、remove-dir 级联、weave 成分按项目开关。
  * CC CLI 走可注入假 executor（createClaudePluginSurface），home 用临时目录 mock。
  */
 
@@ -407,18 +407,31 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     expect(projects.getMeta(project.id)).toMatchObject({ toolkit: { enabled: [] } });
   });
 
-  it('weave 成分级联：md-lint（weave-only）无落盘，开关走 plugin_states 级联事实', async () => {
+  it('weave 成分按项目开关（批 4 修订）：写 meta.plugins.enabled，不 flip 全局 plugin_states', async () => {
     const res = await service.enable(project.id, 'md-lint');
     expect(res.pack.enabled).toBe(true);
-    expect(loaderState.get('md-lint')).toBe(true);
-    expect(states.get('md-lint')?.enabled).toBe(true);
+    // toolkit 开关与 plugins.enabled 同一状态源（D3 串项目修复）
+    expect(projects.getMeta(project.id)).toMatchObject({
+      plugins: { enabled: { 'md-lint': true } },
+    });
+    // 全局 plugin_states 行不被创建/翻转；loader 不被级联调用
+    expect(states.get('md-lint')).toBeUndefined();
+    expect(loaderState.has('md-lint')).toBe(false);
     // 无文件成分 → 不落记录文件
     const files = Object.keys(await snapshot(projectDir));
     expect(files.filter((f) => f.includes('md-lint'))).toEqual([]);
 
+    // 串项目：另一未同步项目不继承本项目的启用
+    expect(
+      (await service.list(project2.id)).packs.find((p) => p.id === 'md-lint')?.enabled,
+    ).toBe(false);
+
     const off = await service.disable(project.id, 'md-lint');
     expect(off.pack.enabled).toBe(false);
-    expect(states.get('md-lint')?.enabled).toBe(false);
+    expect(projects.getMeta(project.id)).toMatchObject({
+      plugins: { enabled: { 'md-lint': false } },
+    });
+    expect(states.get('md-lint')).toBeUndefined();
   });
 
   it('扫描缺省停用：states 无行的 weave 包默认 disabled（opt-in）', async () => {

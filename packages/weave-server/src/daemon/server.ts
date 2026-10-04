@@ -17,6 +17,8 @@ import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
+import type { PluginStateRepository } from '../repositories/plugin-states.js';
+import { syncPlugins } from '../hooks/plugin-project-state.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from '../install/scanner.js';
 import {
@@ -133,6 +135,8 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
+  /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
+  pluginStates?: PluginStateRepository;
   /** 批 10 工具包服务；/projects/:id/toolkit 与 /toolkit/dirs 依赖它。 */
   toolkit?: ToolkitService;
 }
@@ -888,7 +892,16 @@ async function handleRequest(
     try {
       const cache = deps.fingerprintCache ?? new FingerprintCache();
       const result = await syncAll(project.path, deps.libraries.list(), cache);
-      sendJson(200, result);
+      // 插件同步 additive 追加
+      let payload: unknown = result;
+      try {
+        const knownIds = deps.hookPlugins?.list().map((p) => p.id) ?? [];
+        const syncedAt = syncPlugins(project, knownIds, { projects: deps.projects });
+        payload = { ...result, pluginSync: { syncedAt } };
+      } catch {
+        // 失败只丢附加字段，不改资产同步结果（R8）
+      }
+      sendJson(200, payload);
     } catch (e) {
       sendJson(400, { error: e instanceof Error ? e.message : 'Sync failed' });
     }

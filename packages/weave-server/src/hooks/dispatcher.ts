@@ -7,7 +7,9 @@ import type { HookDispatchRepository } from '../repositories/hook-dispatches.js'
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookEventBus } from './bus.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
+import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { readDaemonSettings } from '../daemon/settings.js';
+import { effective } from './plugin-project-state.js';
 import { runWebhook, type EventSummary } from './handlers/webhook.js';
 import {
   DISPATCH_MARKER,
@@ -67,6 +69,8 @@ export class HookDispatcher {
       sessions: SessionRepository;
       /** 插件宿主（plugin-loader）；缺省时 plugin 规则按无动作跳过。 */
       plugins?: PluginHost;
+      /** D3 项目启用门控的全局回落源（plugin_states 行）；缺省不门控（现状语义）。 */
+      pluginStates?: Pick<PluginStateRepository, 'get'>;
       /** 测试注入；缺省用全局 fetch。 */
       fetchImpl?: typeof fetch;
     },
@@ -245,6 +249,15 @@ export class HookDispatcher {
       const ruleHarness = hookSourceHarness(rule.source);
       if (ruleHarness !== null && ruleHarness !== 'any' && ruleHarness !== ctx.source) return false;
       if (rule.projectId !== null && rule.projectId !== ctx.project.id) return false;
+      // D3 插件项目启用门控：插件规则按 effective 三分支（fail-closed，
+      // 仅影响 plugin_id 非空的规则；未注入 states = 不门控 = 现状语义）。
+      if (
+        rule.pluginId !== null &&
+        this.deps.pluginStates &&
+        !effective(ctx.project, rule.pluginId, { states: this.deps.pluginStates })
+      ) {
+        return false;
+      }
       const f = rule.filter;
       if (f.toolNames?.length) {
         if (!ctx.payload.toolName || !f.toolNames.includes(ctx.payload.toolName)) return false;

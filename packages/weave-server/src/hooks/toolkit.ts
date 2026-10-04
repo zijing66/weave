@@ -9,6 +9,7 @@ import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
+import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
   addToolkitDir,
   readSourcesFile,
@@ -28,9 +29,10 @@ import {
  *      不扫描项目 `.claude/plugins/`——H4，存量副本读时自愈清扫，list 报
  *      legacyCopies），disable 只关项目启用、全局安装保留；
  *   ② 表面解包（裸表面/Codex → 批 4a AssetSurface 目标目录，同 checksum 清扫）；
- *   ③ weave 规则成分（既有 plugin-loader 注册，`plugin_states` 级联到包开关）。
- * 状态单一事实源 = 落盘/级联事实；`projects.meta.toolkit.enabled[]` 只是索引，
- * 读侧以磁盘与 plugin_states 校验为准（meta 读时自愈）。
+ *   ③ weave 规则成分（按项目 `meta.plugins.enabled` 开关——D3 effective 单点，
+ *      全局 plugin_states 仍是「默认启用」，不再按项目 flip）。
+ * 状态单一事实源 = 落盘事实 + D3 effective；`projects.meta.toolkit.enabled[]`
+ * 只是索引，读侧以磁盘与 effective 校验为准（meta 读时自愈）。
  */
 
 export type ToolkitErrorCode = 'not-found' | 'host-version' | 'invalid';
@@ -390,14 +392,15 @@ export class ToolkitService {
       await writeFile(recPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
     }
 
-    // 管线③：weave 规则成分级联启用；loader 未就绪时先落 states（重载时生效）。
+    // 管线③：weave 规则成分按项目开关（D3：写 meta.plugins.enabled，
+    // 不再 flip 全局 plugin_states——串项目修复）。
     if (pack.weavePack) {
-      const cascaded = this.deps.plugins.setPluginEnabled(pack.id, true);
-      if (!cascaded) this.deps.states.setEnabled(pack.id, true);
+      setProjectEnabled(project, pack.id, true, { projects: this.deps.projects });
     }
 
     this.rememberEnabled(project, pack.id, true);
-    return { pack: await this.packInfo(project, pack), warnings };
+    // meta 刚被改写：重取行读 effective（row.meta 是注册时快照）
+    return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings };
   }
 
   /** 幂等禁用：表面/解包文件按 checksum 删除（改写保留），记录删除；CC 原生包
@@ -411,11 +414,10 @@ export class ToolkitService {
       await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
     }
     if (pack.weavePack) {
-      const cascaded = this.deps.plugins.setPluginEnabled(pack.id, false);
-      if (!cascaded) this.deps.states.setEnabled(pack.id, false);
+      setProjectEnabled(project, pack.id, false, { projects: this.deps.projects });
     }
     this.rememberEnabled(project, pack.id, false);
-    return { pack: await this.packInfo(project, pack), warnings: [] };
+    return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
   }
 
   /** 文件管线清扫（disable 与 remove-dir 级联共用）。 */
@@ -508,7 +510,8 @@ export class ToolkitService {
 
   /**
    * 启用态 = 各成分事实的 AND：表面/解包成分看落盘，CC 原生包看「全局已装 &&
-   * 项目 enabledPlugins 开」（批 3 判据），weave 成分看级联状态。
+   * 项目 enabledPlugins 开」（批 3 判据），weave 成分看 D3 effective（项目覆盖
+   * → 已同步未启用 → 回落全局）。
    * 读记录即触发存量项目副本自愈（读时清扫）。
    */
   private async computeEnabled(project: ProjectRow, pack: ToolkitPack): Promise<boolean> {
@@ -534,7 +537,9 @@ export class ToolkitService {
           (await surface.readProjectEnabled(project.path, pack.name)),
       );
     }
-    if (pack.weavePack) facts.push(this.deps.states.get(pack.id)?.enabled ?? false);
+    if (pack.weavePack) {
+      facts.push(effective(project, pack.id, { states: this.deps.states, defaultEnabled: false }));
+    }
     return facts.length > 0 ? facts.every(Boolean) : false;
   }
 

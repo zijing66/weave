@@ -1,10 +1,12 @@
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
+import type { PluginManager } from '../hooks/plugin-loader.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { buildLibraryIndex } from '../install/library-index.js';
 import { detectUpdates } from '../install/updates.js';
 import { syncAll } from '../install/apply-update.js';
 import { readProjectConfig, markSynced } from '../install/project-config.js';
+import { syncPlugins } from '../hooks/plugin-project-state.js';
 
 /**
  * SyncScheduler — periodically applies outdated updates to projects that have
@@ -21,12 +23,15 @@ export interface SyncSchedulerOptions {
   intervalMs?: number;
   /** Fingerprint cache shared with update-detection routes. */
   cache?: FingerprintCache;
+  /** 插件清单源（D3 项目同步的 knownIds）；缺省跳过插件同步。 */
+  plugins?: Pick<PluginManager, 'list'>;
 }
 
 export class SyncScheduler {
   private timer: NodeJS.Timeout | undefined;
   private readonly intervalMs: number;
   private readonly cache: FingerprintCache;
+  private readonly plugins?: Pick<PluginManager, 'list'>;
   private running = false;
 
   constructor(
@@ -36,6 +41,7 @@ export class SyncScheduler {
   ) {
     this.intervalMs = options.intervalMs ?? 60_000;
     this.cache = options.cache ?? new FingerprintCache();
+    this.plugins = options.plugins;
   }
 
   start(): void {
@@ -60,9 +66,17 @@ export class SyncScheduler {
       const libs = this.libraries.list();
       // Build the index once per sweep (reused across all projects).
       const index = await buildLibraryIndex(libs);
+      const knownIds = this.plugins?.list().map((p) => p.id);
       for (const project of this.projects.list()) {
         const cfg = await readProjectConfig(project.path);
         if (!cfg.autoSync) continue;
+        if (knownIds) {
+          try {
+            syncPlugins(project, knownIds, { projects: this.projects });
+          } catch {
+            // 插件同步失败不中断资产同步（R8）
+          }
+        }
         const report = await detectUpdates(project.path, libs, this.cache, index);
         if (report.available === 0) continue;
         await syncAll(project.path, libs, this.cache, index);

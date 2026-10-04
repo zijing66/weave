@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
+import { PluginStateRepository } from '../../repositories/plugin-states.js';
 import { SessionRepository } from '../../repositories/sessions.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookRuleRegistry } from '../registry.js';
@@ -436,6 +437,85 @@ describe('HookDispatcher', () => {
       expect(await noHost.onIngest(ctx())).toEqual({});
       const emptyHost = makeDispatcher({});
       expect(await emptyHost.onIngest(ctx())).toEqual({});
+      expect(dispatches.list()).toHaveLength(0);
+    });
+  });
+
+  describe('插件项目启用门控（D3 effective）', () => {
+    let states: PluginStateRepository;
+
+    const makeGated = (): HookDispatcher =>
+      new HookDispatcher({
+        registry,
+        dispatches,
+        bus,
+        projects,
+        sessions: new SessionRepository(db),
+        pluginStates: states,
+      });
+
+    /** 顶层 pluginId 的插件规则（loader 形）+ 一条普通规则做对照。 */
+    const createRules = (withPlain = false): void => {
+      registry.create({
+        name: 'plugin-rule',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PostToolUse' },
+        handler: { type: 'inject', template: 'plugin-hit' },
+        pluginId: 'demo-plugin',
+      });
+      if (withPlain) {
+        registry.create({
+          name: 'plain-rule',
+          projectId: null,
+          source: { kind: 'claude-event', event: 'PostToolUse' },
+          handler: { type: 'inject', template: 'plain-hit' },
+        });
+      }
+    };
+
+    beforeEach(() => {
+      states = new PluginStateRepository(db);
+    });
+
+    it('未同步项目回落全局：states 开 → 命中（现状语义）', async () => {
+      states.setEnabled('demo-plugin', true);
+      createRules();
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toContain('plugin-hit');
+    });
+
+    it('已同步未启用 → 不命中；非插件规则不受门控影响（fail-closed 只限插件规则）', async () => {
+      states.setEnabled('demo-plugin', true);
+      projects.setMeta(project.id, {
+        plugins: { syncedAt: '2026-01-01T00:00:00.000Z', enabled: {} },
+      });
+      project = projects.getById(project.id)!;
+      createRules(true);
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toContain('plain-hit');
+      expect(outcome.additionalContext).not.toContain('plugin-hit');
+    });
+
+    it('显式启用 → 命中（即使全局为关）', async () => {
+      states.setEnabled('demo-plugin', false);
+      projects.setMeta(project.id, {
+        plugins: { syncedAt: null, enabled: { 'demo-plugin': true } },
+      });
+      project = projects.getById(project.id)!;
+      createRules();
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toContain('plugin-hit');
+    });
+
+    it('显式禁用 → 不命中（即使全局为开）', async () => {
+      states.setEnabled('demo-plugin', true);
+      projects.setMeta(project.id, {
+        plugins: { syncedAt: null, enabled: { 'demo-plugin': false } },
+      });
+      project = projects.getById(project.id)!;
+      createRules();
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toBeUndefined();
       expect(dispatches.list()).toHaveLength(0);
     });
   });
