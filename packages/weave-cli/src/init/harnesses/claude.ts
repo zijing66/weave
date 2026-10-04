@@ -240,7 +240,11 @@ async function writeMcp(st: InitStepState): Promise<void> {
         }
       }
     } else {
-      st.skipped.push(path.join(st.targetDir, '.mcp.json'));
+      // 无可写 server → 不生成 .mcp.json；仅当文件已存在才计入「跳过已有文件」，
+      // 否则不存在的文件会被误报为「已有文件 + 使用 --force 覆盖」（force 也救不了）。
+      if (await fileExists(path.join(st.targetDir, '.mcp.json'))) {
+        st.skipped.push(path.join(st.targetDir, '.mcp.json'));
+      }
     }
   }
 }
