@@ -384,10 +384,15 @@ export function FileAssetTree({
   const toggleAll = () =>
     anyCollapsed ? setCollapsed(new Set()) : setCollapsed(new Set(allDirPaths));
 
-  // Every known kind, plus any future category the scan invents.
+  // Count-descending (ties keep the taxonomy order), so the busiest kinds
+  // sit leftmost; future categories sort in by their own counts too.
   const chipKinds = useMemo(() => {
-    const extra = [...counts.keys()].filter((k) => !KIND_ORDER.includes(k)).sort();
-    return [...KIND_ORDER, ...extra];
+    const rank = new Map<string, number>();
+    KIND_ORDER.forEach((k, i) => rank.set(k, i));
+    return [...counts.keys()].sort((a, b) => {
+      const d = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
+      return d !== 0 ? d : (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity);
+    });
   }, [counts]);
   const toggleKind = (k: string) => {
     const next = new Set(active);
