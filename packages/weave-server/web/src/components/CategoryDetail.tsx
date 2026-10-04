@@ -12,6 +12,7 @@ import {
   type GlobalSkillSource,
   type PluginEnabledMap,
   type PluginRuntime,
+  type ProjectRow,
 } from '@/lib/api';
 import type { Harness } from '@weave/core/harness';
 import { cn } from '@/lib/utils';
@@ -33,6 +34,7 @@ import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
+import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
 import { Code2, PackageX } from 'lucide-react';
@@ -91,6 +93,9 @@ export function CategoryDetail({
   onTogglePlugin,
   onOpenFile,
   onOpenSkillDetail,
+  projects,
+  onOpenSession,
+  initialSessionId,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
   projectId: number;
@@ -116,6 +121,11 @@ export function CategoryDetail({
   onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
   onOpenFile: (relPath: string) => void;
   onOpenSkillDetail: OpenDetailFn;
+  /** 全局任务总览的项目名映射与跳转入口。 */
+  projects: ProjectRow[];
+  onOpenSession: (projectId: number, sessionId: string) => void;
+  /** 全局总览跳进项目任务视图时的初始选中会话。 */
+  initialSessionId?: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
@@ -364,8 +374,13 @@ export function CategoryDetail({
 
       {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}
 
-      {/* 任务视图仅项目级（全局模式由 CategoryBar hidden 卡 + 此处兜底双保险） */}
-      {category === 'tasks' && !isGlobal && <TasksPanel projectId={projectId} />}
+      {/* 任务：项目级 = 分组事件链视图；全局级 = 跨项目只读总览 */}
+      {category === 'tasks' &&
+        (isGlobal ? (
+          <GlobalTasksOverview projects={projects} onOpenSession={onOpenSession} />
+        ) : (
+          <TasksPanel projectId={projectId} initialSessionId={initialSessionId} />
+        ))}
 
       {category === 'personalization' && runtimeTab !== 'codex' && (
         <div className="space-y-3">

@@ -12,8 +12,8 @@ import { taskNodeTypes } from './SessionChainNodes';
 
 /**
  * 事件链画布（哑组件）：ReactFlow 配置对齐 HooksPanel（smoothstep 边、
- * fitView、可拖拽不可连线）。key = viewKey（切会话重建实例 → 首帧 fitView；
- * 同会话内事件新增只同步节点，不重置视口/拖拽位置）。
+ * fitView、可拖拽不可连线）。key = viewKey（切会话/切组重建实例 → 首帧 fitView；
+ * 同组内事件新增只同步节点，不重置视口/拖拽位置）。
  */
 export function SessionFlowCanvas({
   nodes: externalNodes,
@@ -23,7 +23,7 @@ export function SessionFlowCanvas({
 }: {
   nodes: ChainNode[];
   edges: ChainEdge[];
-  /** = selectedSessionId，变更时重建并 fitView。 */
+  /** = 会话id:组id，变更时重建并 fitView。 */
   viewKey: string;
   /** 无数据时的提示（由父级渲染空态时传空数组即可）。 */
   emptyHint?: string;

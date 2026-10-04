@@ -1,4 +1,4 @@
-/** 任务视图（项目级会话列表 + 事件链画布）词条。 */
+/** 任务视图（会话列表 + 分组事件链画布 + 全局任务总览）词条。 */
 export const tasksZh = {
   'catbar.tasks': '任务',
   'tasks.heading': '任务视图',
@@ -28,6 +28,19 @@ export const tasksZh = {
   'tasks.legendDispatch': '派发结果',
   'tasks.legendNote': 'log 规则命中不落库，历史链可能缺该类节点（图例说明）',
   'tasks.unnamedSession': '未命名会话',
+  'tasks.groupDispatches': '{n} 派发',
+  'tasks.groupOpen': '未正常结束',
+  'tasks.groupSubagent': '子代理完成 ×{n}',
+  'tasks.groupPreSession': '会话引导',
+  'tasks.groupOrphan': '游离指令',
+  'tasks.overviewTitle': '全局任务总览',
+  'tasks.overviewEmpty': '暂无跨项目会话——在任意项目里跑一次 Claude 会话即出现',
+  'tasks.overviewProject': '项目',
+  'tasks.overviewSession': '会话',
+  'tasks.overviewStatus': '状态',
+  'tasks.overviewEvents': '事件',
+  'tasks.overviewTime': '时间',
+  'tasks.overviewUnknownProject': '未识别项目',
 };
 
 export const tasksEn: Record<keyof typeof tasksZh, string> = {
@@ -59,4 +72,17 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.legendDispatch': 'Dispatch result',
   'tasks.legendNote': 'log-rule hits are not persisted; historical chains may omit them',
   'tasks.unnamedSession': 'Unnamed session',
+  'tasks.groupDispatches': '{n} dispatches',
+  'tasks.groupOpen': 'Not ended normally',
+  'tasks.groupSubagent': 'Subagents completed ×{n}',
+  'tasks.groupPreSession': 'Session kickoff',
+  'tasks.groupOrphan': 'Loose dispatch',
+  'tasks.overviewTitle': 'Global task overview',
+  'tasks.overviewEmpty': 'No sessions across projects yet — run a Claude session in any project',
+  'tasks.overviewProject': 'Project',
+  'tasks.overviewSession': 'Session',
+  'tasks.overviewStatus': 'Status',
+  'tasks.overviewEvents': 'Events',
+  'tasks.overviewTime': 'Time',
+  'tasks.overviewUnknownProject': 'Unknown project',
 };
