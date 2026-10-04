@@ -51,6 +51,7 @@ import {
   Plus,
   Puzzle,
   ScrollText,
+  Send,
   Trash2,
   Webhook,
   Wrench,
@@ -61,9 +62,10 @@ import {
 } from 'lucide-react';
 
 /**
- * Hooks 规则面板：链路图（事件源 → 规则 → 处理器 + 会话列）+ 规则列表 +
- * 指令池同页布局。会话列是指令投送目标（拖拽 / 下拉执行），不与规则连边。
- * 实时高亮与指令池刷新挂在 App 转发的 `weave:hook` window 事件上。
+ * Weave 规则面板：链路图（事件源 → 规则 → 处理器 + 会话列 + 指令列）+ 规则列表。
+ * 会话列是指令投送目标（拖拽指令节点 / 节点上选择会话执行），指令列展示
+ * dispatch（待指派簇在列顶）。实时高亮与指令刷新挂在 App 转发的 `weave:hook` window 事件上。
+ * 双形态：全局 = 插件管理（安装/卸载 + 默认启用开关）；项目 = 项目启用列表（effective）。
  */
 
 /** SSE hook 帧（App 的 onmessage 解析后转发）。 */
@@ -155,7 +157,7 @@ function formatTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString();
 }
 
-/** 指令池排序：pending/injected（可执行的）优先，其次按 id 倒序。 */
+/** 指令列排序：pending/injected（可执行的）优先，其次按 id 倒序。 */
 function sortPool(list: HookDispatch[]): HookDispatch[] {
   const rank = (d: HookDispatch) => (d.status === 'pending' || d.status === 'injected' ? 0 : 1);
   return [...list].sort((a, b) => rank(a) - rank(b) || b.id - a.id);
@@ -192,18 +194,29 @@ type SessionData = {
   onDropPrompt: (dispatchId: number, sessionId: string, label: string) => void;
 };
 type PlaceholderData = { label: string };
+type DispatchData = {
+  dispatch: HookDispatch;
+  ruleName: string;
+  /** 节点「选择会话 ▶」下拉的候选项（画布内会话列前 30 条）。 */
+  sessions: Array<{ sessionId: string; label: string }>;
+  /** dispatch.created 入场波纹（900ms）。 */
+  ripple: boolean;
+  onRun: (dispatchId: number, sessionId: string, label: string) => void;
+};
 
 type SourceFlowNode = Node<SourceData, 'source'>;
 type RuleFlowNode = Node<RuleData, 'rule'>;
 type HandlerFlowNode = Node<HandlerData, 'handler'>;
 type SessionFlowNode = Node<SessionData, 'session'>;
 type PlaceholderFlowNode = Node<PlaceholderData, 'ph'>;
+type DispatchFlowNode = Node<DispatchData, 'dispatch'>;
 type FlowNode =
   | SourceFlowNode
   | RuleFlowNode
   | HandlerFlowNode
   | SessionFlowNode
-  | PlaceholderFlowNode;
+  | PlaceholderFlowNode
+  | DispatchFlowNode;
 type FlowEdge = Edge<{ ruleId: string }>;
 
 function SourceNode({ data }: NodeProps<SourceFlowNode>) {
@@ -351,21 +364,127 @@ function PlaceholderNode({ data }: NodeProps<PlaceholderFlowNode>) {
   );
 }
 
+/**
+ * 指令节点（画布第 5 列）：状态徽标 + 规则名 + 时间 + prompt 两行 clamp。
+ * 整卡 HTML5 draggable（拖到会话节点执行）；悬停出「选择会话 ▾ + ▶」，走既有
+ * pendingRun 确认条；复制为节点本地状态。
+ */
+function DispatchNode({ data }: NodeProps<DispatchFlowNode>) {
+  const t = useT();
+  const [draft, setDraft] = useState('');
+  const [copied, setCopied] = useState(false);
+  const d = data.dispatch;
+
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(d.prompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (permissions / non-secure context)
+    }
+  };
+
+  const run = (): void => {
+    const s = data.sessions.find((x) => x.sessionId === draft);
+    if (s) data.onRun(d.id, s.sessionId, s.label);
+  };
+
+  return (
+    <div
+      draggable
+      onDragStart={(e) => setDispatchDrag(e.dataTransfer, d.id)}
+      className={cn(
+        'group nodrag w-[230px] cursor-grab rounded-lg border border-white/[0.08] bg-neutral-900/90 px-2.5 py-2 shadow-mac-sm active:cursor-grabbing',
+        data.ripple && 'weave-ripple',
+      )}
+    >
+      <Handle type="source" position={Position.Left} className="!bg-emerald-400/80" />
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+            STATUS_CLASS[d.status],
+          )}
+        >
+          {d.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
+          {t(STATUS_KEY[d.status])}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-neutral-500">
+          {t('hooks.byRule', { name: data.ruleName })}
+        </span>
+        <span className="shrink-0 text-neutral-600">{formatTime(d.startedAt)}</span>
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs text-neutral-300" title={d.prompt}>
+        {d.prompt}
+      </p>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[10px] transition-colors',
+            copied ? 'text-emerald-300' : 'text-neutral-400 hover:text-neutral-200',
+          )}
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              {t('hooks.copied')}
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              {t('hooks.copy')}
+            </>
+          )}
+        </button>
+        <span className="ml-auto flex min-w-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <select
+            className="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 focus:outline-none"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          >
+            <option value="">
+              {data.sessions.length > 0 ? t('hooks.selectSession') : t('hooks.noSessions')}
+            </option>
+            {data.sessions.map((s) => (
+              <option key={s.sessionId} value={s.sessionId}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            title={t('hooks.run')}
+            disabled={!draft}
+            onClick={run}
+            className="shrink-0 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[10px] text-blue-300 transition-colors enabled:hover:bg-blue-900/40 disabled:opacity-40"
+          >
+            <Play className="h-3 w-3" />
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const nodeTypes = {
   source: SourceNode,
   rule: RuleNode,
   handler: HandlerNode,
   session: SessionNode,
   ph: PlaceholderNode,
+  dispatch: DispatchNode,
 };
 
 // macOS 风格迷你开关已提炼到 ui/switch.tsx（与插件区段共用）。
 
 // ---------------------------------------------------------------------------
-// 链路图布局（静态：列 x = 0/320/640/960，行 y 递增 100）
+// 链路图布局（静态：列 x = 0/320/640/960/1280，行 y 递增 100）
 // ---------------------------------------------------------------------------
 
-const COL_X = { source: 0, rule: 320, handler: 640, session: 960 };
+const COL_X = { source: 0, rule: 320, handler: 640, session: 960, dispatch: 1280 };
 const ROW_Y = 100;
 /** 会话列最多画这么多行 — fitView 后仍可读。 */
 const MAX_SESSION_NODES = 30;
@@ -379,6 +498,7 @@ interface GraphCallbacks {
 function buildGraph(
   rules: HookRule[],
   sessions: SessionRow[],
+  dispatches: HookDispatch[],
   projectById: Map<number, string>,
   t: ReturnType<typeof useT>,
   cb: GraphCallbacks,
@@ -446,6 +566,7 @@ function buildGraph(
   );
 
   // 会话列：独立展示（指令投送目标，不连边）。
+  const drawnSessions = sessions.slice(0, MAX_SESSION_NODES);
   if (sessions.length === 0) {
     nodes.push({
       id: 'sessions:empty',
@@ -454,7 +575,7 @@ function buildGraph(
       data: { label: t('hooks.sessionsEmpty') },
     });
   } else {
-    sessions.slice(0, MAX_SESSION_NODES).forEach((s, i) => {
+    drawnSessions.forEach((s, i) => {
       nodes.push({
         id: `sess:${s.sessionId}`,
         type: 'session',
@@ -472,6 +593,75 @@ function buildGraph(
           onDropPrompt: cb.onDropPrompt,
         },
       });
+    });
+  }
+
+  // 指令列：待指派（无 sessionId / 目标会话未画出）在列顶成簇，其余对齐目标
+  // 会话行；同一会话多条时向下顺延占位，不与会话列约束耦合。
+  const sessionIndex = new Map(drawnSessions.map((s, i) => [s.sessionId, i]));
+  const ruleNameById = new Map(rules.map((r) => [r.id, r.name]));
+  const sessionOptions = drawnSessions.map((s) => ({
+    sessionId: s.sessionId,
+    label: sessionLabel(s),
+  }));
+  const unassigned: HookDispatch[] = [];
+  const bySession = new Map<string, HookDispatch[]>();
+  for (const d of dispatches) {
+    if (d.sessionId && sessionIndex.has(d.sessionId)) {
+      const list = bySession.get(d.sessionId) ?? [];
+      list.push(d);
+      bySession.set(d.sessionId, list);
+    } else {
+      unassigned.push(d);
+    }
+  }
+
+  const pushDispatch = (d: HookDispatch, y: number): void => {
+    nodes.push({
+      id: `dispatch:${d.id}`,
+      type: 'dispatch',
+      position: { x: COL_X.dispatch, y },
+      data: {
+        dispatch: d,
+        ruleName: ruleNameById.get(d.ruleId) ?? t('hooks.unknownRule'),
+        sessions: sessionOptions,
+        ripple: false,
+        onRun: cb.onDropPrompt,
+      },
+    });
+  };
+
+  if (dispatches.length === 0) {
+    nodes.push({
+      id: 'dispatch:empty',
+      type: 'ph',
+      position: { x: COL_X.dispatch, y: 0 },
+      data: { label: t('hooks.poolEmpty') },
+    });
+  } else {
+    if (unassigned.length > 0) {
+      nodes.push({
+        id: 'dispatch:unassigned',
+        type: 'ph',
+        position: { x: COL_X.dispatch, y: -(unassigned.length + 1) * ROW_Y },
+        data: { label: t('hooks.poolTitle') },
+      });
+      unassigned.forEach((d, i) => pushDispatch(d, -(unassigned.length - i) * ROW_Y));
+    }
+    let slot = 0;
+    drawnSessions.forEach((s, i) => {
+      const list = bySession.get(s.sessionId);
+      if (!list?.length) return;
+      slot = Math.max(slot, i);
+      for (const d of list) {
+        pushDispatch(d, slot * ROW_Y);
+        slot += 1;
+        edges.push({
+          id: `e:dispatch:${d.id}->sess:${s.sessionId}`,
+          source: `dispatch:${d.id}`,
+          target: `sess:${s.sessionId}`,
+        });
+      }
     });
   }
 
@@ -573,15 +763,14 @@ export function HooksPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [pulseRuleId, setPulseRuleId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
-  /** 拖拽 / 下拉选择后的执行确认目标。 */
+  /** dispatch.created 入场波纹的 dispatch id（900ms 后摘除）。 */
+  const [rippleId, setRippleId] = useState<number | null>(null);
+  /** 拖拽 / 节点下拉选择后的执行确认目标。 */
   const [pendingRun, setPendingRun] = useState<{
     dispatchId: number;
     sessionId: string;
     sessionLabel: string;
   } | null>(null);
-  /** 每条指令卡「选择会话执行」下拉的选中值。 */
-  const [runDrafts, setRunDrafts] = useState<Record<number, string>>({});
 
   const projectById = useMemo(
     () => new Map(projects.map((p) => [p.id, p.name])),
@@ -688,10 +877,10 @@ export function HooksPanel({
     [confirmDeleteId, form, refreshRules],
   );
 
-  // ---- 实时高亮 + 指令池防抖刷新 ----
+  // ---- 实时高亮 + 指令刷新 ----
   const refreshTimer = useRef<number | null>(null);
   const pulseTimer = useRef<number | null>(null);
-  const copyTimer = useRef<number | null>(null);
+  const rippleTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const onHook = (ev: Event): void => {
@@ -700,6 +889,11 @@ export function HooksPanel({
         setPulseRuleId(frame.ruleId ?? null);
         if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
         pulseTimer.current = window.setTimeout(() => setPulseRuleId(null), 500);
+      }
+      if (frame.kind === 'dispatch.created' && frame.dispatchId != null) {
+        setRippleId(frame.dispatchId);
+        if (rippleTimer.current) window.clearTimeout(rippleTimer.current);
+        rippleTimer.current = window.setTimeout(() => setRippleId(null), 900);
       }
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => {
@@ -711,7 +905,7 @@ export function HooksPanel({
       window.removeEventListener('weave:hook', onHook);
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
       if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
-      if (copyTimer.current) window.clearTimeout(copyTimer.current);
+      if (rippleTimer.current) window.clearTimeout(rippleTimer.current);
     };
   }, [refreshDispatches]);
 
@@ -720,8 +914,8 @@ export function HooksPanel({
   const [baseEdges, setBaseEdges] = useState<FlowEdge[]>([]);
 
   useEffect(() => {
-    if (!rules || !sessions) return;
-    const built = buildGraph(rules, sessions, projectById, t, {
+    if (!rules || !sessions || !dispatches) return;
+    const built = buildGraph(rules, sessions, dispatches, projectById, t, {
       onToggle: toggleRule,
       onRename: renameSession,
       onDropPrompt: askRun,
@@ -735,11 +929,22 @@ export function HooksPanel({
       });
     });
     setBaseEdges(built.edges);
-  }, [rules, sessions, projectById, t, toggleRule, renameSession, askRun, setNodes]);
+  }, [rules, sessions, dispatches, projectById, t, toggleRule, renameSession, askRun, setNodes]);
 
-  const edges = useMemo<FlowEdge[]>(
-    () =>
-      pulseRuleId
+  // SSE 高亮覆盖在静态图之上：触发规则节点边框闪烁 500ms、新指令节点入场波纹 900ms。
+  const { viewNodes, edges } = useMemo<{ viewNodes: FlowNode[]; edges: FlowEdge[] }>(() => {
+    const flashId = pulseRuleId ? `rule:${pulseRuleId}` : null;
+    return {
+      viewNodes: nodes.map((n) => {
+        if (n.type === 'dispatch' && n.data.dispatch.id === rippleId) {
+          return { ...n, data: { ...n.data, ripple: true } };
+        }
+        if (flashId && n.id === flashId) {
+          return { ...n, className: 'weave-node-flash' };
+        }
+        return n;
+      }),
+      edges: pulseRuleId
         ? baseEdges.map((e) =>
             e.data?.ruleId === pulseRuleId
               ? {
@@ -749,8 +954,8 @@ export function HooksPanel({
               : e,
           )
         : baseEdges,
-    [baseEdges, pulseRuleId],
-  );
+    };
+  }, [nodes, baseEdges, pulseRuleId, rippleId]);
 
   // ---- 表单 ----
   const formRef = useRef<HTMLDivElement>(null);
@@ -897,24 +1102,8 @@ export function HooksPanel({
     }
   };
 
-  // ---- 指令池操作 ----
-  const copyPrompt = async (d: HookDispatch): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(d.prompt);
-      setCopiedId(d.id);
-      if (copyTimer.current) window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
-    } catch {
-      // clipboard unavailable (permissions / non-secure context)
-    }
-  };
-
-  const ruleNameById = useMemo(
-    () => new Map((rules ?? []).map((r) => [r.id, r.name])),
-    [rules],
-  );
-
   // ---- 渲染 ----
+  const pendingCount = dispatches?.filter((d) => d.sessionId === null).length ?? 0;
   return (
     <div className="space-y-3">
       {error && (
@@ -947,14 +1136,17 @@ export function HooksPanel({
         </button>
       </div>
 
-      {/* 插件区段（SPI 扫描：内置预设/全局/项目三根，热重载自动刷新） */}
+      {/* 插件区段（SPI 扫描：内置预设/全局/项目三根，热重载自动刷新）。
+          全局 = 插件管理（安装/卸载 + 默认启用开关）；项目 = effective 启用列表 */}
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-sm">{t('hooks.plugins.title')}</CardTitle>
-          <span className="text-[11px] text-neutral-500">{t('hooks.plugins.hint')}</span>
+          <span className="text-[11px] text-neutral-500">
+            {mode === 'project' ? t('hooks.plugins.projectHint') : t('hooks.plugins.hint')}
+          </span>
         </CardHeader>
         <CardContent className="space-y-1">
-          <HooksPluginsSection />
+          <HooksPluginsSection projectId={mode === 'project' ? projectId : undefined} />
         </CardContent>
       </Card>
 
@@ -969,7 +1161,7 @@ export function HooksPanel({
         </CardContent>
       </Card>
 
-      {/* 链路图：事件源 → 规则 → 处理器，独立会话列 */}
+      {/* 链路图：事件源 → 规则 → 处理器 + 会话列 + 指令列 */}
       <Card>
         <CardHeader className="flex-col gap-1.5">
           <div className="flex w-full items-center gap-2">
@@ -977,6 +1169,11 @@ export function HooksPanel({
             {rules && rules.length === 0 && (
               <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlow')}</span>
             )}
+            <span className="text-[11px] text-neutral-500">
+              {dispatches === null
+                ? t('hooks.loading')
+                : `${t('hooks.poolTitle')} ${t('hooks.poolCount', { n: pendingCount })}`}
+            </span>
             <span className="ml-auto text-[11px] text-neutral-500">
               {t('hooks.flowHint')}
             </span>
@@ -986,6 +1183,7 @@ export function HooksPanel({
             <LegendChip icon={Workflow} tone="text-blue-400" label={t('hooks.colRule')} />
             <LegendChip icon={ScrollText} tone="text-purple-300" label={t('hooks.colHandler')} />
             <LegendChip icon={Inbox} tone="text-cyan-400" label={t('hooks.colSession')} />
+            <LegendChip icon={Send} tone="text-emerald-400" label={t('hooks.colDispatch')} />
           </div>
         </CardHeader>
         <CardContent className="p-2">
@@ -993,7 +1191,7 @@ export function HooksPanel({
             {/* 数据到位后才挂 ReactFlow — fitView 首帧就能对上铺满的图。 */}
             {nodes.length > 0 ? (
               <ReactFlow
-                nodes={nodes}
+                nodes={viewNodes}
                 onNodesChange={onNodesChange}
                 edges={edges}
                 nodeTypes={nodeTypes}
@@ -1283,231 +1481,124 @@ export function HooksPanel({
         </Card>
       )}
 
-      {/* 规则列表 + 指令池 */}
-      <div className="flex flex-col items-start gap-3 xl:flex-row">
-        <Card className="min-w-0 flex-1">
-          <CardHeader className="items-center justify-between">
-            <CardTitle>{t('hooks.rulesTitle')}</CardTitle>
-            <span className="text-[11px] text-neutral-500">
-              {rules === null ? t('hooks.loading') : t('catbar.items', { n: rules.length })}
-            </span>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {rules === null ? (
-              <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
-            ) : rules.length === 0 ? (
-              <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.rulesEmpty')}</p>
-            ) : (
-              rules.map((rule) => {
-                const tools = rule.filter.toolNames ?? [];
-                const globs = rule.filter.pathGlobs ?? [];
-                const src = normalizeHookRuleSource(rule.source);
-                const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
-                const HandlerIcon = HANDLER_ICONS[rule.handler.type];
-                return (
-                  <div
-                    key={rule.id}
-                    className={cn(
-                      'rounded-lg border px-3 py-2 transition-colors',
-                      rule.enabled
-                        ? 'border-white/[0.08] bg-neutral-900/40'
-                        : 'border-white/[0.05] bg-neutral-900/20 opacity-70',
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
-                        {rule.name}
-                      </span>
-                      <Badge variant="helper">{eventLabel}</Badge>
-                      <Switch
-                        checked={rule.enabled}
-                        title={t('hooks.toggleTip', { name: rule.name })}
-                        onChange={(v) => void toggleRule(rule.id, v)}
-                      />
-                      <button
-                        type="button"
-                        title={t('hooks.edit')}
-                        onClick={() => openEdit(rule)}
-                        className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
-                        onClick={() => void deleteRule(rule.id)}
-                        className={cn(
-                          'rounded px-1.5 py-1 text-[11px] font-medium transition-colors',
-                          confirmDeleteId === rule.id
-                            ? 'bg-red-900/60 text-red-300'
-                            : 'text-neutral-500 hover:text-red-300',
-                        )}
-                      >
-                        {confirmDeleteId === rule.id ? (
-                          t('hooks.confirmDelete')
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-neutral-500">
-                      <Badge variant="command" className="gap-1">
-                        <HandlerIcon className="h-3 w-3" />
-                        {t(HANDLER_LABEL_KEYS[rule.handler.type])}
-                      </Badge>
-                      <Badge variant="default">
-                        {rule.projectId === null
-                          ? t('hooks.scopeGlobal')
-                          : projectById.has(rule.projectId)
-                            ? t('hooks.scopeProjectName', {
-                                name: projectById.get(rule.projectId)!,
-                              })
-                            : t('hooks.scopeProjectId', { id: rule.projectId })}
-                      </Badge>
-                      {tools.length > 0 && (
-                        <span
-                          className="inline-flex items-center gap-0.5"
-                          title={t('hooks.filterToolTip', { names: tools.join(', ') })}
-                        >
-                          <Wrench className="h-3 w-3" />
-                          {tools.length}
-                        </span>
-                      )}
-                      {globs.length > 0 && (
-                        <span
-                          className="inline-flex items-center gap-0.5"
-                          title={t('hooks.filterPathTip', { paths: globs.join(', ') })}
-                        >
-                          <FileText className="h-3 w-3" />
-                          {globs.length}
-                        </span>
-                      )}
-                      {rule.filter.crossProjectOnly && (
-                        <span
-                          className="inline-flex items-center gap-0.5"
-                          title={t('hooks.filterCrossTip')}
-                        >
-                          <GitBranch className="h-3 w-3" />
-                        </span>
-                      )}
-                      {tools.length === 0 && globs.length === 0 && !rule.filter.crossProjectOnly && (
-                        <span>{t('hooks.filterNone')}</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="w-full shrink-0 xl:w-[360px]">
-          <CardHeader className="items-center justify-between">
-            <CardTitle>{t('hooks.poolTitle')}</CardTitle>
-            <span className="text-[11px] text-neutral-500">
-              {dispatches === null
-                ? t('hooks.loading')
-                : t('hooks.poolCount', { n: dispatches.length })}
-            </span>
-          </CardHeader>
-          <CardContent className="max-h-[420px] space-y-2 overflow-y-auto">
-            {dispatches === null ? (
-              <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
-            ) : dispatches.length === 0 ? (
-              <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.poolEmpty')}</p>
-            ) : (
-              dispatches.map((d) => (
+      {/* 规则列表（指令执行交互已迁至画布指令节点） */}
+      <Card>
+        <CardHeader className="items-center justify-between">
+          <CardTitle>{t('hooks.rulesTitle')}</CardTitle>
+          <span className="text-[11px] text-neutral-500">
+            {rules === null ? t('hooks.loading') : t('catbar.items', { n: rules.length })}
+          </span>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {rules === null ? (
+            <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
+          ) : rules.length === 0 ? (
+            <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.rulesEmpty')}</p>
+          ) : (
+            rules.map((rule) => {
+              const tools = rule.filter.toolNames ?? [];
+              const globs = rule.filter.pathGlobs ?? [];
+              const src = normalizeHookRuleSource(rule.source);
+              const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
+              const HandlerIcon = HANDLER_ICONS[rule.handler.type];
+              return (
                 <div
-                  key={d.id}
-                  draggable
-                  onDragStart={(e) => {
-                    setDispatchDrag(e.dataTransfer, d.id);
-                  }}
-                  className="cursor-grab rounded-lg border border-white/[0.08] bg-neutral-900/40 px-2.5 py-2 transition-colors hover:border-white/[0.14] active:cursor-grabbing"
+                  key={rule.id}
+                  className={cn(
+                    'rounded-lg border px-3 py-2 transition-colors',
+                    rule.enabled
+                      ? 'border-white/[0.08] bg-neutral-900/40'
+                      : 'border-white/[0.05] bg-neutral-900/20 opacity-70',
+                  )}
                 >
-                  <div className="flex items-center gap-1.5 text-[11px]">
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                        STATUS_CLASS[d.status],
-                      )}
-                    >
-                      {d.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
-                      {t(STATUS_KEY[d.status])}
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+                      {rule.name}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-neutral-500">
-                      {t('hooks.byRule', {
-                        name: ruleNameById.get(d.ruleId) ?? t('hooks.unknownRule'),
-                      })}
-                    </span>
-                    <span className="shrink-0 text-neutral-600">{formatTime(d.startedAt)}</span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-xs text-neutral-300" title={d.prompt}>
-                    {d.prompt}
-                  </p>
-                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <Badge variant="helper">{eventLabel}</Badge>
+                    <Switch
+                      checked={rule.enabled}
+                      title={t('hooks.toggleTip', { name: rule.name })}
+                      onChange={(v) => void toggleRule(rule.id, v)}
+                    />
                     <button
                       type="button"
-                      onClick={() => void copyPrompt(d)}
+                      title={t('hooks.edit')}
+                      onClick={() => openEdit(rule)}
+                      className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
+                      onClick={() => void deleteRule(rule.id)}
                       className={cn(
-                        'inline-flex items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[10px] transition-colors',
-                        copiedId === d.id
-                          ? 'text-emerald-300'
-                          : 'text-neutral-400 hover:text-neutral-200',
+                        'rounded px-1.5 py-1 text-[11px] font-medium transition-colors',
+                        confirmDeleteId === rule.id
+                          ? 'bg-red-900/60 text-red-300'
+                          : 'text-neutral-500 hover:text-red-300',
                       )}
                     >
-                      {copiedId === d.id ? (
-                        <>
-                          <Check className="h-3 w-3" />
-                          {t('hooks.copied')}
-                        </>
+                      {confirmDeleteId === rule.id ? (
+                        t('hooks.confirmDelete')
                       ) : (
-                        <>
-                          <Copy className="h-3 w-3" />
-                          {t('hooks.copy')}
-                        </>
+                        <Trash2 className="h-3.5 w-3.5" />
                       )}
                     </button>
-                    <select
-                      className="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 focus:outline-none"
-                      value={runDrafts[d.id] ?? ''}
-                      onChange={(e) =>
-                        setRunDrafts((prev) => ({ ...prev, [d.id]: e.target.value }))
-                      }
-                    >
-                      <option value="">
-                        {sessions && sessions.length > 0
-                          ? t('hooks.selectSession')
-                          : t('hooks.noSessions')}
-                      </option>
-                      {(sessions ?? []).map((s) => (
-                        <option key={s.sessionId} value={s.sessionId}>
-                          {sessionLabel(s)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      title={t('hooks.run')}
-                      disabled={!runDrafts[d.id]}
-                      onClick={() => {
-                        const sid = runDrafts[d.id];
-                        const s = (sessions ?? []).find((x) => x.sessionId === sid);
-                        if (s) askRun(d.id, s.sessionId, sessionLabel(s));
-                      }}
-                      className="rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[10px] text-blue-300 transition-colors enabled:hover:bg-blue-900/40 disabled:opacity-40"
-                    >
-                      <Play className="h-3 w-3" />
-                    </button>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-neutral-500">
+                    <Badge variant="command" className="gap-1">
+                      <HandlerIcon className="h-3 w-3" />
+                      {t(HANDLER_LABEL_KEYS[rule.handler.type])}
+                    </Badge>
+                    <Badge variant="default">
+                      {rule.projectId === null
+                        ? t('hooks.scopeGlobal')
+                        : projectById.has(rule.projectId)
+                          ? t('hooks.scopeProjectName', {
+                              name: projectById.get(rule.projectId)!,
+                            })
+                          : t('hooks.scopeProjectId', { id: rule.projectId })}
+                    </Badge>
+                    {tools.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={t('hooks.filterToolTip', { names: tools.join(', ') })}
+                      >
+                        <Wrench className="h-3 w-3" />
+                        {tools.length}
+                      </span>
+                    )}
+                    {globs.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={t('hooks.filterPathTip', { paths: globs.join(', ') })}
+                      >
+                        <FileText className="h-3 w-3" />
+                        {globs.length}
+                      </span>
+                    )}
+                    {rule.filter.crossProjectOnly && (
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={t('hooks.filterCrossTip')}
+                      >
+                        <GitBranch className="h-3 w-3" />
+                      </span>
+                    )}
+                    {tools.length === 0 && globs.length === 0 && !rule.filter.crossProjectOnly && (
+                      <span>{t('hooks.filterNone')}</span>
+                    )}
                   </div>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
 
-      {/* 执行确认条（拖拽 / 下拉共用） */}
+      {/* 执行确认条（拖拽 / 节点下拉共用） */}
       {pendingRun && (
         <div className="sticky bottom-0 z-20 flex items-center gap-3 rounded-xl border border-blue-500/40 bg-neutral-900/95 px-4 py-2.5 shadow-mac backdrop-blur">
           <p className="min-w-0 flex-1 text-xs text-neutral-200">

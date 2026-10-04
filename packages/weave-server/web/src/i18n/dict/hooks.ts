@@ -4,13 +4,14 @@ export const hooksZh = {
   'catbar.hooks': 'Weave',
 
   // —— 面板框架 / 链路图 ——
-  'hooks.title': '规则与数据流',
-  'hooks.flowTitle': '数据流链路',
-  'hooks.flowHint': '指令卡可拖拽到右侧会话节点执行',
+  'hooks.title': 'Weave 规则与数据流',
+  'hooks.flowTitle': '数据流画布',
+  'hooks.flowHint': '拖动指令节点到会话节点执行，或悬停节点选择会话',
   'hooks.colSource': '事件源',
   'hooks.colRule': '规则',
   'hooks.colHandler': '处理器',
   'hooks.colSession': '会话',
+  'hooks.colDispatch': '指令',
   'hooks.emptyFlow': '还没有任何规则，链路图为空',
   'hooks.sessionsEmpty': '暂无会话',
   'hooks.loading': '加载中…',
@@ -63,12 +64,12 @@ export const hooksZh = {
   'hooks.handler.log': '仅记录',
   'hooks.handler.webhook': 'Webhook 转发',
   'hooks.handler.inject': '注入会话',
-  'hooks.handler.manual': '指令池（手动）',
+  'hooks.handler.manual': '手动指令',
   'hooks.handler.plugin': '插件处理器',
   'hooks.handlerLogTip': '只记录事件并广播 SSE，不生成指令',
   'hooks.handlerWebhookTip': '将事件摘要 POST 到外部地址（可选 HMAC 密钥）',
   'hooks.handlerInjectTip': '渲染指令并同步注入当前会话',
-  'hooks.handlerManualTip': '渲染指令入池，等待复制或拖到会话执行',
+  'hooks.handlerManualTip': '渲染为指令节点，等待复制或拖到会话执行',
   'hooks.handlerPluginTip': '按 pluginId:handlerType 加载插件自带的 handler.mjs 执行',
   'hooks.field.toolNames': '工具名过滤',
   'hooks.toolNamesPlaceholder': '逗号分隔，如 Read, Edit, Bash',
@@ -84,7 +85,7 @@ export const hooksZh = {
   'hooks.pluginIdPlaceholder': '如 changelog-reminder',
   'hooks.field.pluginHandlerType': 'handlerType',
   'hooks.pluginHandlerPlaceholder': '如 notify',
-  'hooks.field.record': '写入指令池记录',
+  'hooks.field.record': '记录为指令',
   'hooks.field.enabled': '启用',
   'hooks.save': '保存',
   'hooks.cancel': '取消',
@@ -93,10 +94,10 @@ export const hooksZh = {
   'hooks.errUrlRequired': '请填写合法的回调 URL',
   'hooks.errPluginRequired': '请填写 pluginId 与 handlerType',
 
-  // —— 指令池 ——
-  'hooks.poolTitle': '指令池',
+  // —— 指令列（画布第 5 列）——
+  'hooks.poolTitle': '待指派',
   'hooks.poolCount': '{n} 条',
-  'hooks.poolEmpty': '指令池为空：注入 / 手动规则命中后会在这里出现待执行指令。',
+  'hooks.poolEmpty': '画布指令列为空：注入 / 手动规则命中后会在这里出现待执行指令。',
   'hooks.status.pending': '待执行',
   'hooks.status.injected': '已注入',
   'hooks.status.running': '运行中',
@@ -121,11 +122,15 @@ export const hooksZh = {
 
   // —— 插件区段（SPI）——
   'hooks.plugins.title': '插件',
-  'hooks.plugins.hint': '放在约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
+  'hooks.plugins.hint': '全局开关 = 各项目默认启用 · 放入约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
+  'hooks.plugins.projectHint': '本项目启用状态（未单独设置则跟随全局）· 安装 / 卸载在全局侧操作',
+  'hooks.plugins.followGlobal': '跟随全局',
+  'hooks.plugins.projectOverride': '已单独设置',
   'hooks.plugins.empty':
     '暂无插件——把插件目录放入全局 weave/plugins/ 或项目 .weave/plugins/ 即自动加载。',
   'hooks.plugins.rules': '{n} 条规则',
-  'hooks.plugins.toggleTip': '启停该插件的全部规则（规则级开关保留）',
+  'hooks.plugins.toggleTip':
+    '默认启用开关：启停该插件全部规则（各项目可单独覆盖，规则级开关保留）',
   'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
   'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
   'hooks.plugins.installPlaceholder': '粘贴本地目录或 git URL 后回车安装',
@@ -142,13 +147,14 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'catbar.hooks': 'Weave',
 
   // —— Panel frame / flow graph ——
-  'hooks.title': 'Rules & data flow',
-  'hooks.flowTitle': 'Data flow',
-  'hooks.flowHint': 'Drag a prompt card onto a session node to run it',
+  'hooks.title': 'Weave rules & data flow',
+  'hooks.flowTitle': 'Data flow canvas',
+  'hooks.flowHint': 'Drag a prompt node onto a session, or hover one to pick a session',
   'hooks.colSource': 'Sources',
   'hooks.colRule': 'Rules',
   'hooks.colHandler': 'Handlers',
   'hooks.colSession': 'Sessions',
+  'hooks.colDispatch': 'Prompts',
   'hooks.emptyFlow': 'No rules yet — the flow graph is empty',
   'hooks.sessionsEmpty': 'No sessions',
   'hooks.loading': 'Loading…',
@@ -201,12 +207,12 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.handler.log': 'Log only',
   'hooks.handler.webhook': 'Webhook',
   'hooks.handler.inject': 'Inject into session',
-  'hooks.handler.manual': 'Manual (pool)',
+  'hooks.handler.manual': 'Manual prompt',
   'hooks.handler.plugin': 'Plugin handler',
   'hooks.handlerLogTip': 'Records the event and broadcasts SSE; no prompt generated',
   'hooks.handlerWebhookTip': 'POSTs an event summary to an external URL (optional HMAC secret)',
   'hooks.handlerInjectTip': 'Renders the prompt and injects it into the current session',
-  'hooks.handlerManualTip': 'Renders the prompt into the pool to copy or drag onto a session',
+  'hooks.handlerManualTip': 'Renders the prompt as a node to copy or drag onto a session',
   'hooks.handlerPluginTip': "Loads the plugin's own handler.mjs by pluginId:handlerType and runs it",
   'hooks.field.toolNames': 'Tool name filter',
   'hooks.toolNamesPlaceholder': 'Comma-separated, e.g. Read, Edit, Bash',
@@ -231,10 +237,11 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.errUrlRequired': 'Please enter a valid webhook URL',
   'hooks.errPluginRequired': 'Please fill in pluginId and handlerType',
 
-  // —— Prompt pool ——
-  'hooks.poolTitle': 'Prompt pool',
+  // —— Prompt column (5th canvas column) ——
+  'hooks.poolTitle': 'Unassigned',
   'hooks.poolCount': '{n} items',
-  'hooks.poolEmpty': 'The pool is empty: inject / manual rules land here as runnable prompts when they fire.',
+  'hooks.poolEmpty':
+    'The prompt column is empty: inject / manual rules land here as prompt nodes when they fire.',
   'hooks.status.pending': 'Pending',
   'hooks.status.injected': 'Injected',
   'hooks.status.running': 'Running',
@@ -259,11 +266,16 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
 
   // —— Plugins section (SPI) ——
   'hooks.plugins.title': 'Plugins',
-  'hooks.plugins.hint': 'Drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
+  'hooks.plugins.hint': 'Global switch = default state for every project · drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
+  'hooks.plugins.projectHint':
+    'Enabled state for this project (follows global until overridden) · install / uninstall at global scope',
+  'hooks.plugins.followGlobal': 'Follows global',
+  'hooks.plugins.projectOverride': 'Set for this project',
   'hooks.plugins.empty':
     'No plugins yet — drop a plugin directory into the global weave/plugins/ or the project .weave/plugins/.',
   'hooks.plugins.rules': '{n} rules',
-  'hooks.plugins.toggleTip': 'Enable/disable all rules of this plugin (per-rule switches are kept)',
+  'hooks.plugins.toggleTip':
+    'Default switch: enable/disable all rules of this plugin (projects can override; per-rule switches are kept)',
   'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
   'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
   'hooks.plugins.installPlaceholder': 'Paste a local directory or git URL, press Enter to install',

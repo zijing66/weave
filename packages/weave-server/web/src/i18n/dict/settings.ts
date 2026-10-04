@@ -7,8 +7,8 @@ export const settingsZh = {
   'settings.defaultTerminalHint': '「在终端中打开」使用的终端程序；自动模式会探测当前系统可用的终端。',
   'settings.customCommand': '自定义命令',
   'settings.pathHint': '会被替换为带引号的项目路径，例如：',
-  'settings.hooks': 'Hooks 总开关',
-  'settings.hooksHint': 'daemon hooks 总开关（规则级开关另控）；关闭后规则命中直接短路。',
+  'settings.hooks': 'Weave 总开关',
+  'settings.hooksHint': 'Weave daemon 总开关（规则级开关另控）；关闭后规则命中直接短路。',
 };
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
@@ -20,7 +20,7 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
     'Terminal used by "Open in terminal"; auto mode probes the terminals available on this system.',
   'settings.customCommand': 'Custom command',
   'settings.pathHint': 'is replaced with the quoted project path, e.g.:',
-  'settings.hooks': 'Hooks master switch',
+  'settings.hooks': 'Weave master switch',
   'settings.hooksHint':
-    'Daemon-wide hooks switch (rule-level switches stay independent); when off, rule matching short-circuits.',
+    'Weave daemon master switch (rule-level switches stay independent); when off, rule matching short-circuits.',
 };
