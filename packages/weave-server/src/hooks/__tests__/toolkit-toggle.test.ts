@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { createClaudePluginSurface, type PluginExecutor } from '@weave/harness';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
@@ -19,13 +20,16 @@ import {
 import { addToolkitDir, readSourcesFile } from '../plugin-installer.js';
 
 /**
- * 批 10 硬闸（5.6）逐条：
- * 闸① 无改写主用例——enable→disable 后文件树逐字节还原；
- * 闸② 改写分支——改写文件保留，其余按 checksum 还原；
+ * 批 10 硬闸（5.6）逐条，批 3 修订 ①②④⑤ 与附带 CC 用例：
+ * 闸① enable = 全局安装 + 项目启用（项目零副本、toolkit 记录仍写），
+ *    disable = 关项目启用、全局安装保留；
+ * 闸② 改写分支——改写的表面文件保留，其余按 checksum 还原、全局安装保留；
  * 闸③ 重复 enable 幂等（快照零变化）；
- * 闸④ 非 targets 表面零写入；
- * 闸⑤ 内置 vs add-dir 外置同包 enable 结果一致（provenance 除外）；
+ * 闸④ 非 targets 表面零写入 + 项目零 CC 副本；
+ * 闸⑤ 内置 vs add-dir 外置同包 enable 结果一致 + 两项目共享全局位、
+ *    enabledPlugins 各自独立；
  * 另：mod 宿主版本闸、meta 索引同步、remove-dir 级联、weave 成分级联。
+ * CC CLI 走可注入假 executor（createClaudePluginSurface），home 用临时目录 mock。
  */
 
 const BUILTIN_ROOT = fileURLToPath(new URL('../presets/harness-tools/', import.meta.url));
@@ -63,6 +67,56 @@ describe('toolkit 启用/禁用（硬闸）', () => {
   let extRoot: string;
   let service: ToolkitService;
   let loaderState: Map<string, boolean>;
+  let execCalls: string[][];
+  let prevHome: string | undefined;
+  let prevUserProfile: string | undefined;
+
+  /** 假 CLI：记录参数数组；install 时模拟 CC 写 installed_plugins.json。 */
+  const fakeExec: PluginExecutor = async (args) => {
+    execCalls.push(args);
+    if (args[1] === 'install') {
+      const key = args[2]!;
+      const file = path.join(base, '.claude', 'plugins', 'installed_plugins.json');
+      let json: { version: number; plugins: Record<string, unknown[]> } = {
+        version: 2,
+        plugins: {},
+      };
+      try {
+        json = JSON.parse(await readFile(file, 'utf8'));
+      } catch {
+        // 首装：从空注册源开始
+      }
+      json.plugins[key] = [
+        { scope: 'user', installPath: path.join(base, '.claude', 'plugins', 'cache', key), version: '0.1.0' },
+      ];
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify(json, null, 2));
+    }
+    return { stdout: '', stderr: '' };
+  };
+
+  /** 项目 settings 的 enabledPlugins（无文件/无键 → {}）。 */
+  const enabledPluginsOf = async (dir: string): Promise<Record<string, boolean>> => {
+    try {
+      const json = JSON.parse(await readFile(path.join(dir, '.claude', 'settings.json'), 'utf8')) as {
+        enabledPlugins?: Record<string, boolean>;
+      };
+      return json.enabledPlugins ?? {};
+    } catch {
+      return {};
+    }
+  };
+
+  const installedKeys = async (): Promise<string[]> => {
+    try {
+      const json = JSON.parse(
+        await readFile(path.join(base, '.claude', 'plugins', 'installed_plugins.json'), 'utf8'),
+      ) as { plugins?: Record<string, unknown> };
+      return Object.keys(json.plugins ?? {});
+    } catch {
+      return [];
+    }
+  };
 
   const makeService = (claudeVersion?: () => Promise<string | null>): ToolkitService =>
     new ToolkitService({
@@ -71,6 +125,7 @@ describe('toolkit 启用/禁用（硬闸）', () => {
       builtinRoot: BUILTIN_ROOT,
       sourcesRoot,
       claudeVersion: claudeVersion ?? (async () => '2.1.288'),
+      pluginSurface: createClaudePluginSurface({ exec: fakeExec }),
       plugins: {
         list: () => [],
         setPluginEnabled: (id, enabled) => {
@@ -83,6 +138,10 @@ describe('toolkit 启用/禁用（硬闸）', () => {
 
   beforeEach(async () => {
     base = await mkdtemp(path.join(tmpdir(), 'weave-tk-'));
+    prevHome = process.env.HOME;
+    prevUserProfile = process.env.USERPROFILE;
+    process.env.HOME = base;
+    process.env.USERPROFILE = base;
     projectDir = path.join(base, 'proj');
     sourcesRoot = path.join(base, 'cfg');
     extRoot = path.join(base, 'ext-tools');
@@ -108,45 +167,80 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     });
     await mkdir(project2.path, { recursive: true });
     loaderState = new Map();
+    execCalls = [];
     service = makeService();
   });
 
   afterEach(async () => {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevUserProfile;
     db.close();
     await rm(base, { recursive: true, force: true });
   });
 
-  it('闸①：无改写主用例——enable→disable 后文件树逐字节还原', async () => {
+  it('闸①：enable 全局安装+项目启用（项目零副本、记录仍写）；disable 关项目启用、全局保留', async () => {
     const before = await snapshot(projectDir);
     const { pack } = await service.enable(project.id, 'docs-reminder');
     expect(pack.enabled).toBe(true);
-    // 落盘：插件位整体（含 .claude-plugin 结构保持）
     const landed = await snapshot(projectDir);
-    expect(landed['.claude/plugins/docs-reminder/.claude-plugin/plugin.json']).toBeTruthy();
-    expect(landed['.claude/plugins/docs-reminder/hooks/reminder.cjs']).toBeTruthy();
+    // 项目零 CC 副本（宿主不扫描项目插件位）
+    expect(Object.keys(landed).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
+    // toolkit 记录仍写（文件条目为空——不再复制进项目）
     expect(landed['.weave/toolkit/docs-reminder.json']).toBeTruthy();
+    // 全局位落盘：weave marketplace 拷贝 + installed_plugins 登记
+    const mktCopy = JSON.parse(
+      await readFile(
+        path.join(
+          base,
+          '.claude',
+          'weave-marketplace',
+          'plugins',
+          'docs-reminder',
+          '.claude-plugin',
+          'plugin.json',
+        ),
+        'utf8',
+      ),
+    ) as { name?: string };
+    expect(mktCopy.name).toBe('docs-reminder');
+    expect(await installedKeys()).toContain('docs-reminder@weave');
+    // 项目 enabledPlugins 开
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'docs-reminder@weave': true });
 
     await service.disable(project.id, 'docs-reminder');
     const after = await snapshot(projectDir);
-    expect(after).toEqual(before);
-    // settings.json 从未被触碰（内容一致由快照保证）
-    expect(JSON.parse(await readFile(path.join(projectDir, '.claude', 'settings.json'), 'utf8')))
-      .toHaveProperty('hooks.Stop');
+    const { '.claude/settings.json': _beforeSettings, ...beforeRest } = before;
+    const { '.claude/settings.json': _afterSettings, ...afterRest } = after;
+    expect(afterRest).toEqual(beforeRest);
+    // settings.json 用户键原样、启用键关为 false（须覆盖用户层 true）
+    const settings = JSON.parse(
+      await readFile(path.join(projectDir, '.claude', 'settings.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(settings.hooks).toHaveProperty('Stop');
+    expect(settings.enabledPlugins).toEqual({ 'docs-reminder@weave': false });
+    // 全局安装保留；记录按既有语义删除
+    expect(await installedKeys()).toContain('docs-reminder@weave');
+    expect(after['.weave/toolkit/docs-reminder.json']).toBeUndefined();
   });
 
-  it('闸②：改写分支——改写文件保留，其余按 checksum 还原', async () => {
-    await service.enable(project.id, 'docs-reminder');
-    const rewritten = '.claude/plugins/docs-reminder/hooks/reminder.cjs';
+  it('闸②：改写分支——改写文件保留，其余按 checksum 还原；全局安装保留', async () => {
+    await service.enable(project.id, 'code-review');
+    const rewritten = '.codex/skills/code-review/SKILL.md';
     await writeFile(path.join(projectDir, ...rewritten.split('/')), '// user rewrote this\n');
 
-    await service.disable(project.id, 'docs-reminder');
+    await service.disable(project.id, 'code-review');
     const after = await snapshot(projectDir);
     expect(after[rewritten]).toBe(await hashFile(path.join(projectDir, ...rewritten.split('/'))));
-    // 其余包文件按 checksum 删除
-    expect(after['.claude/plugins/docs-reminder/.claude-plugin/plugin.json']).toBeUndefined();
-    expect(after['.weave/toolkit/docs-reminder.json']).toBeUndefined();
+    // 项目零 CC 副本；记录删除
+    expect(Object.keys(after).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
+    expect(after['.weave/toolkit/code-review.json']).toBeUndefined();
     // 用户原文件仍在
     expect(after['.claude/settings.json']).toBeTruthy();
+    // 全局安装保留（disable 只关项目启用）
+    expect(await installedKeys()).toContain('code-review@weave');
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': false });
   });
 
   it('闸③：重复 enable 幂等——第二次无任何写入（快照零变化）', async () => {
@@ -157,21 +251,23 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     expect(await snapshot(projectDir)).toEqual(first);
   });
 
-  it('闸④：非 targets 表面零写入（claude-only 不碰 .codex；双目标双落）', async () => {
+  it('闸④：非 targets 表面零写入（项目零 CC 副本；双目标双落）', async () => {
     await service.enable(project.id, 'docs-reminder');
     const files = Object.keys(await snapshot(projectDir));
     expect(files.some((f) => f.startsWith('.codex/'))).toBe(false);
+    expect(files.some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
 
     await service.enable(project.id, 'code-review');
     const all = await snapshot(projectDir);
-    // claude：插件位整体
-    expect(all['.claude/plugins/code-review/.claude-plugin/plugin.json']).toBeTruthy();
+    // claude：全局安装，项目零副本
+    expect(all['.claude/plugins/code-review/.claude-plugin/plugin.json']).toBeUndefined();
+    expect(await installedKeys()).toContain('code-review@weave');
     // codex：表面解包 skills（cc 包不重复解 claude skills）
     expect(all['.codex/skills/code-review/SKILL.md']).toBeTruthy();
     expect(all['.claude/skills/code-review/SKILL.md']).toBeUndefined();
   });
 
-  it('闸⑤：内置与 add-dir 外置同包 enable 结果一致（provenance/sourceRoot/dir 除外）', async () => {
+  it('闸⑤：内置与外置同包 enable 结果一致；两项目共享全局位、enabledPlugins 各自独立', async () => {
     // 镜像内置结构到外置目录（scope 字段也要一致）
     await cp(BUILTIN_ROOT, extRoot, { recursive: true });
     await addToolkitDir(extRoot, sourcesRoot);
@@ -186,18 +282,78 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     expect(strip(b.pack)).toEqual(strip(a.pack));
     expect(a.pack.provenance).toBe('builtin');
     expect(b.pack.provenance).toBe('external-dir');
-    // 实际落盘（包内容部分，剔除带 provenance 的记录文件与用户预置文件）逐文件一致
+    // 实际落盘（表面解包部分）逐文件一致；项目零 CC 副本
     const landed = async (dir: string): Promise<Record<string, string>> => {
       const snap = await snapshot(dir);
-      return Object.fromEntries(
-        Object.entries(snap).filter(
-          ([f]) =>
-            (f.startsWith('.claude/plugins/') || f.startsWith('.codex/')) &&
-            !f.startsWith('.weave/'),
-        ),
-      );
+      return Object.fromEntries(Object.entries(snap).filter(([f]) => f.startsWith('.codex/')));
     };
     expect(await landed(project2.path)).toEqual(await landed(projectDir));
+    expect(Object.keys(await snapshot(projectDir)).some((f) => f.startsWith('.claude/plugins/'))).toBe(
+      false,
+    );
+    // 全局位只装一次（两项目共享同一全局安装）
+    expect(execCalls.filter((args) => args[1] === 'install')).toHaveLength(1);
+    expect(await installedKeys()).toContain('code-review@weave');
+
+    // enabledPlugins 各自独立：各项目自己的 settings
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': true });
+    expect(await enabledPluginsOf(project2.path)).toEqual({ 'code-review@weave': true });
+
+    // 关 project2 不影响 project1
+    await service.disable(project2.id, 'code-review', extRoot);
+    expect(await enabledPluginsOf(project2.path)).toEqual({ 'code-review@weave': false });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': true });
+    expect((await service.list(project.id)).packs.find((p) => p.id === 'code-review')?.enabled).toBe(
+      true,
+    );
+    expect(
+      (await service.list(project2.id)).packs.find((p) => p.id === 'code-review')?.enabled,
+    ).toBe(false);
+  });
+
+  it('存量项目副本读时自愈：record 前缀条目按 checksum 删副本重写 record；孤儿副本报 legacyCopies 并可清理', async () => {
+    // 伪造旧管线状态：CC 包整体复制进项目插件位 + 记录文件
+    const rel = '.claude/plugins/docs-reminder/hooks/reminder.cjs';
+    const abs = path.join(projectDir, ...rel.split('/'));
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, '// copied by legacy pipeline\n');
+    const recPath = path.join(projectDir, '.weave', 'toolkit', 'docs-reminder.json');
+    await mkdir(path.dirname(recPath), { recursive: true });
+    await writeFile(
+      recPath,
+      JSON.stringify(
+        {
+          packId: 'docs-reminder',
+          provenance: 'builtin',
+          sourceRoot: BUILTIN_ROOT,
+          sourceDir: path.join(BUILTIN_ROOT, 'doc-hooks', 'docs-reminder'),
+          enabledAt: new Date().toISOString(),
+          files: { [rel]: await hashFile(abs) },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const first = await service.list(project.id);
+    // 记录条目读时自愈：副本删除、record 重写为无 legacy 条目
+    expect((await snapshot(projectDir))[rel]).toBeUndefined();
+    expect((JSON.parse(await readFile(recPath, 'utf8')) as { files: object }).files).toEqual({});
+    expect(first.legacyCopies).toEqual([]);
+
+    // 未被 record 覆盖的孤儿副本保留并报出（显式清理才删）
+    const orphan = path.join(projectDir, '.claude', 'plugins', 'orphan', 'x.txt');
+    await mkdir(path.dirname(orphan), { recursive: true });
+    await writeFile(orphan, 'x');
+    expect((await service.list(project.id)).legacyCopies).toEqual(['.claude/plugins/orphan']);
+
+    const cleaned = await service.cleanupLegacyCopies(project.id);
+    expect(cleaned.removed).toEqual(['.claude/plugins/orphan']);
+    expect((await service.list(project.id)).legacyCopies).toEqual([]);
+    // 幂等：再清一次为空
+    expect((await service.cleanupLegacyCopies(project.id)).removed).toEqual([]);
+    // 用户原文件不受影响
+    expect((await snapshot(projectDir))['.claude/settings.json']).toBeTruthy();
   });
 
   it('mod 宿主版本闸：低版本明确拒绝不落盘；未知版本降级 warning；高版本放行', async () => {
@@ -319,7 +475,8 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     const after = await snapshot(projectDir);
     // 用户文件保留（内容未变）
     expect(after['.codex/skills/project-navigation/SKILL.md']).toBe(userHash);
-    // 无冲突的插件位部分被还原
-    expect(after['.claude/plugins/project-navigation/.claude-plugin/plugin.json']).toBeUndefined();
+    // 项目零 CC 副本（批 3：原「插件位被还原」断言升级为零副本）
+    expect(Object.keys(after).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'project-navigation@weave': false });
   });
 });

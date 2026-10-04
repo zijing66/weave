@@ -8,7 +8,7 @@ import { AssetNotFoundError } from './installer.js';
 import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
-import { assetSurfaceFor } from '../surfaces.js';
+import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
 
 /**
  * Global (user-scope) Claude Code configuration.
@@ -532,45 +532,16 @@ export async function readGlobalSkillFile(dir: string, relPath: string): Promise
 
 // --- plugin enable state (Claude: settings.json JSON, Codex: config.toml) ---
 
-/** Read `enabledPlugins` from ~/.claude/settings.json (empty if absent/corrupt). */
+/** Read `enabledPlugins` from ~/.claude/settings.json (empty if absent/corrupt).
+ * 批 3：实现迁入 harness `claude/plugins.ts`，此处同名导出薄委托（零改闸）。 */
 export async function readClaudePluginEnabled(): Promise<Record<string, boolean>> {
-  const file = claudeSettingsPath();
-  if (!(await pathExists(file))) return {};
-  try {
-    const parsed = JSON.parse(await readFile(file, 'utf-8'));
-    const ep = (parsed as { enabledPlugins?: unknown }).enabledPlugins;
-    if (!ep || typeof ep !== 'object' || Array.isArray(ep)) return {};
-    return Object.fromEntries(
-      Object.entries(ep as Record<string, unknown>).filter(
-        ([, v]) => typeof v === 'boolean',
-      ) as [string, boolean][],
-    );
-  } catch {
-    return {};
-  }
-}
-
-async function readClaudeSettings(): Promise<Record<string, unknown>> {
-  const file = claudeSettingsPath();
-  if (!(await pathExists(file))) return {};
-  try {
-    const parsed = JSON.parse(await readFile(file, 'utf-8'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
+  return pluginSurfaceFor('claude').readGlobalEnabled();
 }
 
 /** Set `enabledPlugins[key]` in ~/.claude/settings.json, preserving all other
- * keys. The file is created if missing. */
+ * keys. The file is created if missing. 批 3：实现迁入 harness，薄委托。 */
 export async function writeClaudePluginEnabled(key: string, enabled: boolean): Promise<void> {
-  const settings = await readClaudeSettings();
-  const map = (settings.enabledPlugins ?? {}) as Record<string, unknown>;
-  map[key] = enabled;
-  settings.enabledPlugins = map;
-  await writeFile(claudeSettingsPath(), `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
+  return pluginSurfaceFor('claude').writeGlobalEnabled(key, enabled);
 }
 
 /** Read `[plugins."key"] enabled` from ~/.codex/config.toml (empty if absent). */

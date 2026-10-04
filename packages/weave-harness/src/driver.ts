@@ -3,12 +3,12 @@ import type { InitContext, InitPipeline } from './init/pipeline.js';
 import type { FileAssetCategory } from './shared/file-specs.js';
 
 /**
- * 抽象定义的家：五种能力接口 + HarnessDriver + HarnessRegistry + supports。
+ * 抽象定义的家：六种能力接口 + HarnessDriver + HarnessRegistry + supports。
  * 依赖硬约束：本包仅依赖 @weave/core（永不依赖 server/cli，防 statusline/i18n 成环）。
  */
 
-/** 五种可插拔能力槽——driver 声明持有哪些，注册表按能力检索。 */
-export type HarnessCapability = 'init' | 'events' | 'assets' | 'resume' | 'detect';
+/** 六种可插拔能力槽——driver 声明持有哪些，注册表按能力检索。 */
+export type HarnessCapability = 'init' | 'events' | 'assets' | 'resume' | 'detect' | 'plugins';
 
 /** init 槽类型：以 InitContext 构造 InitPipeline 子类（图① InitTemplateClass）。 */
 export type InitTemplateClass = new (ctx: InitContext) => InitPipeline;
@@ -93,7 +93,58 @@ export interface Detector {
   detect(dir: string): DetectResult;
 }
 
-/** 单个 harness 的驱动：id/displayName 必填，五个能力槽按批次补齐。 */
+/** installed_plugins.json（schema v2）单键值：安装记录数组（每键可多版本）。 */
+export interface InstalledPluginRecord {
+  scope?: string;
+  installPath?: string;
+  version?: string;
+  installedAt?: string;
+  lastUpdated?: string;
+}
+
+/** 全局安装结果（幂等命中已装时同样返回）。 */
+export interface PluginInstallInfo {
+  /** 注册键 = `<name>@<marketplace>`。 */
+  key: string;
+  /** 调用前已装（幂等短路，未跑安装链）。 */
+  alreadyInstalled: boolean;
+  scope?: string;
+  /** 插件缓存目录（installed_plugins.json 的 installPath）。 */
+  installPath?: string;
+  version?: string;
+}
+
+export interface GlobalInstallOptions {
+  /** 插件名覆盖（缺省读 srcDir 的 `.claude-plugin/plugin.json`）。 */
+  name?: string;
+}
+
+/**
+ * 插件安装与启用面（批 3）：harness 的「全局安装 + 项目启用」知识全部收在
+ * 实现（`claude/plugins.ts`）——marketplace/installed_plugins/项目 settings
+ * 的路径与键形不外泄，server 只经本接口编排（H1-H5 结论见
+ * docs/plan/cc-plugin-verification.md）。
+ */
+export interface PluginSurface {
+  /** 项目插件位（绝对路径）。宿主不扫描该目录——仅存量副本与清理语义消费。 */
+  projectPluginDir(projectPath: string): string;
+  /** 全局安装（两步 CLI 链；幂等：已装直接返回安装信息）。 */
+  globalInstall(srcDir: string, opts?: GlobalInstallOptions): Promise<PluginInstallInfo>;
+  /** 读 installed_plugins.json 的插件映射（缺失/损坏 → 空对象）。 */
+  readInstalled(): Promise<Record<string, InstalledPluginRecord[]>>;
+  /** 插件是否已全局安装（`name` 为插件名，marketplace 后缀由实现补）。 */
+  isInstalled(name: string): Promise<boolean>;
+  /** 项目 settings 的 enabledPlugins（键 `name@<marketplace>`；缺省 false）。 */
+  readProjectEnabled(projectPath: string, name: string): Promise<boolean>;
+  /** 写项目 enabledPlugins 单键（其余键保留，文件可创建）。 */
+  setProjectEnabled(projectPath: string, name: string, enabled: boolean): Promise<void>;
+  /** 全局 settings 的 enabledPlugins 全量读（键为 `name@marketplace`）。 */
+  readGlobalEnabled(): Promise<Record<string, boolean>>;
+  /** 全局 settings 单键写（其余键保留，文件可创建）。 */
+  writeGlobalEnabled(key: string, enabled: boolean): Promise<void>;
+}
+
+/** 单个 harness 的驱动：id/displayName 必填，六个能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
   displayName: string;
@@ -103,6 +154,7 @@ export interface HarnessDriver {
   assets?: AssetSurface;
   resume?: ResumeCommandSpec;
   detect?: Detector;
+  plugins?: PluginSurface;
 }
 
 /**

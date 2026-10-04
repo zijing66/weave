@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
-import { FolderOpen, Package, Wrench } from 'lucide-react';
+import { FolderOpen, Package, TriangleAlert, Wrench } from 'lucide-react';
 
 const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
   skill: 'toolkit.kind.skill',
@@ -29,7 +29,8 @@ const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
 };
 
 /**
- * 工具箱区段（批 10）：包清单（provenance/类型徽标 + 目标面）+ 项目级开关 +
+ * 工具箱区段（批 10，批 3 增旧副本警示）：包清单（provenance/类型徽标 + 目标面）
+ * + 项目级开关（CC 原生包 = 全局安装 + 项目启用）+ 项目插件位旧副本警示/清理 +
  * 外置目录展示（add-dir/remove-dir 走 CLI，文案指引）。开关调用幂等端点，
  * 返回后置状态后刷新。
  */
@@ -37,6 +38,7 @@ export function ToolkitSection({ projectId }: { projectId: number }) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
+  const [legacyCopies, setLegacyCopies] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -45,6 +47,7 @@ export function ToolkitSection({ projectId }: { projectId: number }) {
       .then((data) => {
         setPacks(data.packs);
         setDirs(data.dirs);
+        setLegacyCopies(data.legacyCopies ?? []);
       })
       .catch((e) => {
         setPacks((prev) => prev ?? []);
@@ -68,12 +71,45 @@ export function ToolkitSection({ projectId }: { projectId: number }) {
     }
   };
 
+  const cleanupLegacy = async (): Promise<void> => {
+    setMsg(null);
+    try {
+      await api.cleanupToolkitLegacyCopies(projectId);
+      refresh();
+    } catch (e) {
+      setMsg(t('toolkit.toggleFailed', { error: e instanceof Error ? e.message : String(e) }));
+      refresh();
+    }
+  };
+
   if (packs === null) {
     return <p className="text-xs text-neutral-600">{t('toolkit.loading')}</p>;
   }
 
   return (
     <div className="space-y-2">
+      {/* 存量项目插件位旧副本（CC 不加载的死数据）警示 + 显式清理 */}
+      {legacyCopies.length > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+          <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium text-amber-300">
+              {t('toolkit.legacyTitle', { n: legacyCopies.length })}
+            </p>
+            <p className="truncate text-[10px] text-amber-200/60" title={legacyCopies.join('\n')}>
+              {t('toolkit.legacyHint')}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/20"
+            onClick={() => void cleanupLegacy()}
+          >
+            {t('toolkit.legacyCleanup')}
+          </button>
+        </div>
+      )}
+
       {packs.length === 0 && <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>}
       {packs.map((p) => (
         <div
