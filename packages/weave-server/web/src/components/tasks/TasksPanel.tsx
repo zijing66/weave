@@ -242,8 +242,11 @@ export function TasksPanel({
             dispatchBySession.get(selectedId) ?? [],
             HARNESS_LIFECYCLE.claude,
           ).filter((g) => g.id !== ORPHAN_GROUP_ID)
+            // 头部截断未翻完时，preSession 组是上一 turn 尾巴的窗口伪影
+            //（「会话引导」名不副实）——翻到底（exhausted）后才是真会话引导。
+            .filter((g) => !(g.preSession && !olderExhausted))
         : [],
-    [selectedId, events, dispatchBySession],
+    [selectedId, events, dispatchBySession, olderExhausted],
   );
 
   const activeGroupId = useMemo(() => {
@@ -332,6 +335,24 @@ export function TasksPanel({
     scrollThrottle.current = now;
     void loadOlderGroups();
   };
+  /** 触顶后继续上滚：内容不再位移 → scroll 不再触发，须由 wheel 补触发。 */
+  const onListWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
+    const el = e.currentTarget;
+    if (!hasOlder || e.deltaY >= 0 || el.scrollTop > 8) return;
+    const now = Date.now();
+    if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
+    scrollThrottle.current = now;
+    void loadOlderGroups();
+  };
+
+  // 自动补拉：默认承诺「最新 10 条」——头部截断导致窗口内真组不足 10 时，
+  // 静默向前翻页直到凑满或翻到底（通常一批 300 事件即够）。
+  useEffect(() => {
+    if (!selectedId || olderExhausted || events.length === 0) return;
+    if (groups.length >= 10) return;
+    void loadOlderGroups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, groups.length, olderExhausted, events.length]);
 
   const onDropDispatch = (dispatchId: number, sessionId: string): void => {
     const session = (sessions ?? []).find((s) => s.sessionId === sessionId);
@@ -461,6 +482,7 @@ export function TasksPanel({
           <div
             className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1"
             onScroll={onListScroll}
+            onWheel={onListWheel}
           >
             {/* 顶部渐变遮罩：更早 prompt 未加载的 affordance——向上滚动自动加载，
                 也可点击按钮（组窗口余量 → 扩窗；否则 beforeId 拉更早事件） */}
