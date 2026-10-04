@@ -1,5 +1,5 @@
 /**
- * Harness 类型与三张注册表——纯类型 + 纯常量（零 node、零 zod）。
+ * Harness 类型与注册表——纯类型 + 纯常量（零 node、零 zod）。
  *
  * 经 `@weave/core/harness` subpath 暴露给 web：主入口 re-export platform/fs
  * 含 node 依赖，web 不能 import；本文件是唯一被 web 直引的 core 源。
@@ -42,6 +42,33 @@ export const HARNESS_DIRS = {
   claude: { projectDir: '.claude', userDir: '.claude' },
   codex: { projectDir: '.codex', userDir: '.codex' },
 } satisfies Record<Harness, { projectDir: string; userDir: string }>;
+
+/** 任务分组生命周期表的条目形状（D7）——分组差异是 harness 知识。 */
+export interface HarnessLifecycle {
+  /** 开启一个 turn 组的事件（组头）。 */
+  open: string;
+  /** 正常关闭组的事件。 */
+  close: readonly string[];
+  /** 只作标记的会话级事件（open 组遇之按中断关组，其余不切组）。 */
+  sessionMarkers: readonly string[];
+  /** 组内计数、不独立成组。 */
+  subagentStop: string;
+}
+
+/**
+ * 任务分组生命周期表（D7）——server/web 分组一律经表参数，
+ * 不散落 `if (source==='claude')`；web 经 tasks/lifecycle.ts 常量镜像。
+ */
+export const HARNESS_LIFECYCLE = {
+  claude: {
+    open: 'UserPromptSubmit',
+    close: ['Stop'],
+    sessionMarkers: ['SessionStart', 'SessionEnd'],
+    subagentStop: 'SubagentStop',
+  },
+  /** Codex 事件待批 2 B0 调研锁定（同 HARNESS_EVENTS 闸）；空值占位，类型完整。 */
+  codex: { open: '', close: [], sessionMarkers: [], subagentStop: '' },
+} satisfies Record<Harness, HarnessLifecycle>;
 
 /**
  * 可选 harness 键序（= `HARNESS_EVENTS` 的键）：

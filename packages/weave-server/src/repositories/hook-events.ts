@@ -50,12 +50,17 @@ export class HookEventRepository {
       .map((row) => toHookEvent(row));
   }
 
-  /** 按会话查事件（时间升序——任务视图事件链保序）。 */
+  /**
+   * 按会话查事件（最新窗口，返回升序——任务视图事件链保序）。
+   * id 单调=插入序，消解 created_at 并列；取最新窗口后 reverse 成升序，
+   * 返回序与原 ORDER BY created_at ASC 一致，调用方零适配（游标翻页 BACKLOG）。
+   */
   listBySession(sessionId: string, limit = 300): HookEventRow[] {
-    return this.db
-      .prepare('SELECT * FROM hook_events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?')
+    const rows = this.db
+      .prepare('SELECT * FROM hook_events WHERE session_id = ? ORDER BY id DESC LIMIT ?')
       .all(sessionId, limit)
       .map((row) => toHookEvent(row));
+    return rows.reverse();
   }
 }
 
