@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { openDatabase } from '../../db/db.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
@@ -13,7 +10,7 @@ import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookRuleRegistry } from '../registry.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { HookDispatcher, type IngestContext } from '../dispatcher.js';
-import { setDaemonSettingsDir, writeDaemonSettings } from '../../daemon/settings.js';
+import { setDaemonSettingsDb, writeDaemonSettings } from '../../daemon/settings.js';
 import { DISPATCH_MARKER } from '../match.js';
 import type { NormalizedHookPayload } from '../types.js';
 
@@ -32,7 +29,6 @@ function payload(over: Partial<NormalizedHookPayload> = {}): NormalizedHookPaylo
 
 describe('HookDispatcher', () => {
   let db: DatabaseSync;
-  let settingsDir: string;
   let projects: ProjectRepository;
   let project: ProjectRow;
   let hookEvents: HookEventRepository;
@@ -65,8 +61,7 @@ describe('HookDispatcher', () => {
   };
 
   beforeEach(async () => {
-    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-dispatcher-'));
-    setDaemonSettingsDir(settingsDir);
+    setDaemonSettingsDb(openDatabase(':memory:')); // 隔离真实用户配置
     await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'zh-CN',
@@ -96,7 +91,7 @@ describe('HookDispatcher', () => {
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDb(null);
     db.close();
   });
 

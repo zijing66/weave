@@ -7,7 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
-import { setDaemonSettingsDir, type TerminalSettings } from '../daemon/settings.js';
+import { setDaemonSettingsDb, type TerminalSettings } from '../daemon/settings.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 const TOKEN = 'daemon-token';
@@ -17,10 +17,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   let server: Server;
   let port: number;
   let projectPath: string;
-  // Isolated settings home for the whole suite — without it the first GET
-  // reads the machine's real %APPDATA% settings (whatever terminal preset the
-  // user last picked) and the "defaults" assertion becomes environment flake.
-  let settingsDir: string;
+  // 隔离整个 suite 的 settings 存储（注入内存库）——否则第一次 GET 读到
+  // 机器真实配置（用户上次选的终端），“defaults”断言变成环境抖动。
   let opener: ProjectOpener & {
     explorerCalls: string[];
     terminalCalls: Array<{ dir: string; terminal: TerminalSettings }>;
@@ -41,8 +39,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
         opener.terminalCalls.push({ dir, terminal });
       },
     };
-    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-settings-suite-'));
-    setDaemonSettingsDir(settingsDir);
+    setDaemonSettingsDb(db);
     server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -51,11 +48,11 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   afterAll(() => {
     server.close();
     db.close();
-    setDaemonSettingsDir(null); // back to the machine default for other suites
+    setDaemonSettingsDb(null); // back to the machine default for other suites
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(settingsDir); // undo any per-test override
+    setDaemonSettingsDb(db); // undo any per-test override
   });
 
   it('GET /settings returns defaults plus platform presets', async () => {
@@ -80,8 +77,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   });
 
   it('PUT /settings persists and returns the normalized settings', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'weave-settings-api-'));
-    setDaemonSettingsDir(dir);
+    setDaemonSettingsDb(openDatabase(':memory:'));
     const put = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
@@ -104,8 +100,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   });
 
   it('PUT /settings accepts and round-trips a locale change', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'weave-settings-api-'));
-    setDaemonSettingsDir(dir);
+    setDaemonSettingsDb(openDatabase(':memory:'));
     const put = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
@@ -138,8 +133,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   });
 
   it('POST /projects/:id/open with target=terminal passes the configured preset', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'weave-settings-term-'));
-    setDaemonSettingsDir(dir);
+    setDaemonSettingsDb(openDatabase(':memory:'));
     await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },

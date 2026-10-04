@@ -1,35 +1,33 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { openDatabase } from '../../db/db.js';
 import {
   DEFAULT_DAEMON_SETTINGS,
   DEFAULT_EVENT_RETENTION_DAYS,
   readDaemonSettings,
   readDaemonSettingsSync,
   writeDaemonSettings,
-  setDaemonSettingsDir,
+  setDaemonSettingsDb,
   terminalPresetsFor,
 } from '../settings.js';
 import { quotePath, resolveTerminalLaunch, resolveExplorerLaunch } from '../opener.js';
 
-describe('daemon settings persistence', () => {
-  let dir: string;
+describe('daemon settings persistence (db key-value)', () => {
+  let db: ReturnType<typeof openDatabase>;
 
-  beforeEach(async () => {
-    dir = await mkdtemp(path.join(tmpdir(), 'weave-settings-'));
-    setDaemonSettingsDir(dir);
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    setDaemonSettingsDb(db);
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDb(null);
   });
 
-  it('readDaemonSettings returns defaults when no file exists', async () => {
+  it('readDaemonSettings returns defaults when no rows exist', async () => {
     expect(await readDaemonSettings()).toEqual(DEFAULT_DAEMON_SETTINGS);
   });
 
-  it('writeDaemonSettings round-trips a valid config and persists JSON', async () => {
+  it('writeDaemonSettings round-trips and lands in the settings kv table', async () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'wt', customCommand: '' },
       locale: 'zh-CN',
@@ -37,12 +35,15 @@ describe('daemon settings persistence', () => {
     });
     expect(saved.terminal.preset).toBe('wt');
     expect(await readDaemonSettings()).toEqual(saved);
-    const raw = JSON.parse(await readFile(path.join(dir, 'settings.json'), 'utf-8')) as {
-      terminal: { preset: string };
-      locale: string;
-    };
-    expect(raw.terminal.preset).toBe('wt');
-    expect(raw.locale).toBe('zh-CN');
+    const rows = db.prepare('SELECT key, value FROM settings').all() as {
+      key: string;
+      value: string;
+    }[];
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+    expect(map.get('terminal.preset')).toBe('wt');
+    expect(map.get('locale')).toBe('zh-CN');
+    expect(map.get('hooks.enabled')).toBe('true');
+    expect(map.get('events.retentionDays')).toBe('90');
   });
 
   it('an unknown preset falls back to auto; non-string customCommand to empty', async () => {
@@ -54,15 +55,20 @@ describe('daemon settings persistence', () => {
     expect(saved).toEqual(DEFAULT_DAEMON_SETTINGS);
   });
 
-  it('a corrupt file falls back to defaults instead of throwing', async () => {
+  it('corrupt rows heal per-key to defaults instead of throwing', async () => {
     await writeDaemonSettings({
-      terminal: { preset: 'cmd', customCommand: 'x' },
-      locale: 'zh-CN',
+      terminal: { preset: 'wt', customCommand: 'x' },
+      locale: 'en',
       hooks: { enabled: true },
     });
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(path.join(dir, 'settings.json'), '{not json', 'utf-8');
-    expect(await readDaemonSettings()).toEqual(DEFAULT_DAEMON_SETTINGS);
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('nope', 'terminal.preset');
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('fr', 'locale');
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('NaN', 'events.retentionDays');
+    const s = await readDaemonSettings();
+    expect(s.terminal.preset).toBe('auto'); // 白名单回落
+    expect(s.locale).toBe('zh-CN');
+    expect(s.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
+    expect(s.terminal.customCommand).toBe('x'); // 好值不受坏值影响
   });
 
   it('locale round-trips through write and read', async () => {

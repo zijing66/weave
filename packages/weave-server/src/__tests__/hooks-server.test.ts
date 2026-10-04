@@ -17,7 +17,7 @@ import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { createWeaveServer } from '../daemon/server.js';
-import { setDaemonSettingsDir, writeDaemonSettings } from '../daemon/settings.js';
+import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js';
 
 const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
@@ -138,7 +138,6 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   let db: DatabaseSync;
   let server: Server;
   let port: number;
-  let settingsDir: string;
   let registry: HookRuleRegistry;
   let dispatches: HookDispatchRepository;
   let sessions: SessionRepository;
@@ -150,8 +149,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     fetch(`http://127.0.0.1:${port}${p}`, { method, headers: auth, body: JSON.stringify(body) });
 
   beforeAll(async () => {
-    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-hooks-api-'));
-    setDaemonSettingsDir(settingsDir);
+    setDaemonSettingsDb(openDatabase(':memory:'));
     await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'zh-CN',
@@ -191,7 +189,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   afterAll(() => {
     server.close();
     db.close();
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDb(null);
   });
 
   it('未带 daemon token 的规则请求 401', async () => {
