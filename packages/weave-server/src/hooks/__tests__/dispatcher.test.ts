@@ -518,5 +518,52 @@ describe('HookDispatcher', () => {
       expect(outcome.additionalContext).toBeUndefined();
       expect(dispatches.list()).toHaveLength(0);
     });
+
+    it('反向闭环：全局关（loader 级联规则停用）+ 项目同步 + 显式开 → 命中', async () => {
+      states.setEnabled('demo-plugin', false);
+      projects.setMeta(project.id, {
+        plugins: { syncedAt: '2026-01-01T00:00:00.000Z', enabled: { 'demo-plugin': true } },
+      });
+      project = projects.getById(project.id)!;
+      // 全局关 → loader 级联把规则级 enabled 写 false（本批不动 plugin-loader，等值模拟）
+      registry.create({
+        name: 'plugin-rule',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PostToolUse' },
+        handler: { type: 'inject', template: 'plugin-hit' },
+        pluginId: 'demo-plugin',
+        enabled: false,
+      });
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toContain('plugin-hit');
+    });
+
+    it('项目无显式记录 → 规则级停用不被 effective 回落 true 复活（presets/规则级关语义保留）', async () => {
+      // 无全局 plugin_states 行（presets 形）：effective 回落 true，但 rule.enabled 仍否决
+      registry.create({
+        name: 'plugin-rule',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PostToolUse' },
+        handler: { type: 'inject', template: 'plugin-hit' },
+        pluginId: 'demo-plugin',
+        enabled: false,
+      });
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toBeUndefined();
+      expect(dispatches.list()).toHaveLength(0);
+    });
+
+    it('门控下非插件停用规则仍不命中（enabled 预滤语义不变）', async () => {
+      registry.create({
+        name: 'plain-off',
+        projectId: null,
+        source: { kind: 'claude-event', event: 'PostToolUse' },
+        handler: { type: 'inject', template: 'plain-hit' },
+        enabled: false,
+      });
+      const outcome = await makeGated().onIngest(ctx());
+      expect(outcome.additionalContext).toBeUndefined();
+      expect(dispatches.list()).toHaveLength(0);
+    });
   });
 });

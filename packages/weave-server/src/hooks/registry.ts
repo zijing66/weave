@@ -45,9 +45,14 @@ export class HookRuleRegistry {
     return this.all.find((r) => r.id === id);
   }
 
-  /** 匹配候选：该事件下已启用的规则，priority 降序（projectId 归属过滤在 dispatcher）。 */
-  candidates(event: string): HookRule[] {
-    return (this.byEvent.get(event) ?? []).filter((r) => r.enabled);
+  /**
+   * 匹配候选：该事件下的规则，priority 降序（projectId 归属过滤在 dispatcher）。
+   * 默认只含已启用；includeDisabled 供 dispatcher 对插件规则做「项目显式启用复活」
+   * （enabled 在那边按插件语义裁决），默认形不变 = 非插件路径语义不变。
+   */
+  candidates(event: string, opts?: { includeDisabled?: boolean }): HookRule[] {
+    const bucket = this.byEvent.get(event) ?? [];
+    return opts?.includeDisabled ? [...bucket] : bucket.filter((r) => r.enabled);
   }
 
   create(input: CreateHookRuleInput): HookRule {

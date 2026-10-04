@@ -9,7 +9,7 @@ import type { HookEventBus } from './bus.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { readDaemonSettings } from '../daemon/settings.js';
-import { effective } from './plugin-project-state.js';
+import { effective, pluginsStateOf } from './plugin-project-state.js';
 import { runWebhook, type EventSummary } from './handlers/webhook.js';
 import {
   DISPATCH_MARKER,
@@ -244,39 +244,45 @@ export class HookDispatcher {
 
   /** 候选规则：事件索引（启用+priority 降序）→ 项目归属 → 过滤条件。 */
   private match(ctx: IngestContext): HookRule[] {
-    return this.deps.registry.candidates(ctx.payload.eventType).filter((rule) => {
-      // harness 首行过滤：'any' 跨 harness 命中；webhook 源（null）不按 harness 过滤。
-      const ruleHarness = hookSourceHarness(rule.source);
-      if (ruleHarness !== null && ruleHarness !== 'any' && ruleHarness !== ctx.source) return false;
-      if (rule.projectId !== null && rule.projectId !== ctx.project.id) return false;
-      // D3 插件项目启用门控：插件规则按 effective 三分支（fail-closed，
-      // 仅影响 plugin_id 非空的规则；未注入 states = 不门控 = 现状语义）。
-      if (
-        rule.pluginId !== null &&
-        this.deps.pluginStates &&
-        !effective(ctx.project, rule.pluginId, { states: this.deps.pluginStates })
-      ) {
-        return false;
-      }
-      const f = rule.filter;
-      if (f.toolNames?.length) {
-        if (!ctx.payload.toolName || !f.toolNames.includes(ctx.payload.toolName)) return false;
-      }
-      if (f.pathGlobs?.length) {
-        const fp = extractFilePath(ctx.payload.toolInput);
-        if (!fp || !matchesAnyGlob(fp, f.pathGlobs)) return false;
-      }
-      if (f.crossProjectOnly) {
-        const fp = extractFilePath(ctx.payload.toolInput) ?? ctx.payload.cwd;
-        if (!fp) return false;
-        const others = this.deps.projects
-          .list()
-          .map((p) => p.path)
-          .filter((p) => p !== ctx.project.path);
-        if (!isCrossProjectPath(fp, ctx.project.path, others)) return false;
-      }
-      return true;
-    });
+    const states = this.deps.pluginStates;
+    // 插件规则反向闭环：全局关时 loader 已把 rule.enabled 级联为 false，项目级显式
+    // 启用必须能复活它——门控在场时候选含停用规则，enabled 与 effective 在此裁决。
+    const projectPlugins = states ? pluginsStateOf(ctx.project.meta).enabled : null;
+    return this.deps.registry
+      .candidates(ctx.payload.eventType, states ? { includeDisabled: true } : undefined)
+      .filter((rule) => {
+        // harness 首行过滤：'any' 跨 harness 命中；webhook 源（null）不按 harness 过滤。
+        const ruleHarness = hookSourceHarness(rule.source);
+        if (ruleHarness !== null && ruleHarness !== 'any' && ruleHarness !== ctx.source) return false;
+        if (rule.projectId !== null && rule.projectId !== ctx.project.id) return false;
+        if (rule.pluginId !== null) {
+          // 仅项目显式启用才绕过 enabled 否决：无全局行时 effective 回落 true，
+          // 不能反超 rule.enabled（manifest 默认关的 presets、规则级手动关保持不命中）；
+          // 放行后由 effective 三分支全权（fail-closed，未注入 states = 不门控 = 现状语义）。
+          if (!rule.enabled && projectPlugins?.[rule.pluginId] !== true) return false;
+          if (states && !effective(ctx.project, rule.pluginId, { states })) return false;
+        } else if (!rule.enabled) {
+          return false; // 非插件规则维持 enabled 预滤（门控放开候选时在此补回）
+        }
+        const f = rule.filter;
+        if (f.toolNames?.length) {
+          if (!ctx.payload.toolName || !f.toolNames.includes(ctx.payload.toolName)) return false;
+        }
+        if (f.pathGlobs?.length) {
+          const fp = extractFilePath(ctx.payload.toolInput);
+          if (!fp || !matchesAnyGlob(fp, f.pathGlobs)) return false;
+        }
+        if (f.crossProjectOnly) {
+          const fp = extractFilePath(ctx.payload.toolInput) ?? ctx.payload.cwd;
+          if (!fp) return false;
+          const others = this.deps.projects
+            .list()
+            .map((p) => p.path)
+            .filter((p) => p !== ctx.project.path);
+          if (!isCrossProjectPath(fp, ctx.project.path, others)) return false;
+        }
+        return true;
+      });
   }
 
   /** 执行插件处理器：timeoutMs 竞速超时，任何异常/超时返回 undefined（不注入不入池）。 */
