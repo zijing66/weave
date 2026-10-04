@@ -30,6 +30,10 @@ import type { McpServerConfig } from './installer.js';
  * (by `libraries.list()` order) wins for update-checking. Any matching source
  * is sufficient to detect "outdated"; a precise multi-source UI can be layered
  * on later without a schema change.
+ *
+ * 批 9（R11）：传入的 `LibraryRow[]` 假定已由 `LibraryRepository` 读侧经
+ * `market/resolve` 解析为绝对路径（最浅接入——收编在 repo 读侧，本模块不逐处
+ * resolve）；测试直构的行本就是绝对路径，行为不变。
  */
 
 export interface SkillSource {

@@ -8,7 +8,7 @@ import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
-import type { LibraryRepository } from '../repositories/libraries.js';
+import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookReport, NormalizedHookPayload } from '../hooks/types.js';
@@ -64,6 +64,10 @@ import { readProjectConfig, writeProjectConfig } from '../install/project-config
 import type { ProjectConfig } from '../install/project-config.js';
 import { applyUpdate, syncAll } from '../install/apply-update.js';
 import { buildLibraryIndex } from '../install/library-index.js';
+import { getDataDir } from '../db/paths.js';
+import { importFromDir, importFromGit, importLibraryIntoMarket } from '../market/import.js';
+import { marketDir, readManifest } from '../market/manifest.js';
+import { isInsideDir, toRelPosix } from '../market/resolve.js';
 import {
   readProjectFile,
   readGlobalFile,
@@ -450,6 +454,94 @@ async function handleRequest(
     }
     deps.libraries.remove(Number(libMatch[1]));
     sendJson(200, { ok: true });
+    return;
+  }
+
+  // --- 资源市场（批 9）：清单 / 双导入 / 删除 / legacy 外部源迁入 ---
+  if (pathname === '/market' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(503, { error: 'Libraries unavailable' });
+      return;
+    }
+    const items = await Promise.all(deps.libraries.list().map((row) => marketItem(row)));
+    sendJson(200, { items });
+    return;
+  }
+  if (pathname === '/market' && req.method === 'POST') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(503, { error: 'Libraries unavailable' });
+      return;
+    }
+    let body: { kind?: string; path?: string; url?: string };
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      sendJson(400, { error: 'Invalid JSON body' });
+      return;
+    }
+    const importDeps = { libraries: deps.libraries };
+    try {
+      if (body.kind === 'dir' && body.path) {
+        const imported = await importFromDir(body.path, importDeps);
+        sendJson(201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+      } else if (body.kind === 'git' && body.url) {
+        const imported = await importFromGit(body.url, importDeps);
+        sendJson(201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+      } else {
+        sendJson(400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
+      }
+    } catch (e) {
+      sendJson(400, { error: e instanceof Error ? e.message : 'Import failed' });
+    }
+    return;
+  }
+  const marketMatch = pathname.match(/^\/market\/(\d+)$/);
+  if (marketMatch && req.method === 'DELETE') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(503, { error: 'Libraries unavailable' });
+      return;
+    }
+    const row = deps.libraries.getById(Number(marketMatch[1]));
+    if (!row) {
+      sendJson(404, { error: 'Library not found' });
+      return;
+    }
+    if (!isInsideDir(row.path, marketDir())) {
+      sendJson(400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
+      return;
+    }
+    await fs.promises.rm(row.path, { recursive: true, force: true });
+    deps.libraries.remove(row.id);
+    // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
+    sendJson(200, {
+      ok: true,
+      removed: row.path,
+      installedCopiesKept: true,
+      note: 'Installed copies are kept; uninstall them from the assets panel if needed.',
+    });
+    return;
+  }
+  const migrateMatch = pathname.match(/^\/libraries\/(\d+)\/market-import$/);
+  if (migrateMatch && req.method === 'POST') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(503, { error: 'Libraries unavailable' });
+      return;
+    }
+    const row = deps.libraries.getById(Number(migrateMatch[1]));
+    if (!row) {
+      sendJson(404, { error: 'Library not found' });
+      return;
+    }
+    try {
+      const imported = await importLibraryIntoMarket(row, { libraries: deps.libraries });
+      sendJson(200, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+    } catch (e) {
+      sendJson(400, { error: e instanceof Error ? e.message : 'Import failed' });
+    }
     return;
   }
 
@@ -1205,6 +1297,30 @@ async function safeReadGlobalMcp(): Promise<Record<string, McpServerConfig>> {
   } catch {
     return {};
   }
+}
+
+/**
+ * 资源市场清单行（批 9）：libraries 行 + resolve 后有效路径 + 清单元数据 +
+ * legacy 外部源标记。repo 读侧已把 path 解析为绝对路径（R11）。
+ */
+async function marketItem(row: LibraryRow): Promise<Record<string, unknown>> {
+  const dataDir = getDataDir();
+  const managed = isInsideDir(row.path, marketDir(dataDir));
+  const manifest = managed ? await readManifest(row.path) : null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    addedAt: row.addedAt,
+    path: row.path,
+    relPath: isInsideDir(row.path, dataDir) ? toRelPosix(row.path, dataDir) : null,
+    resourceId: managed ? path.basename(row.path) : null,
+    managed,
+    legacy: !manifest,
+    source: manifest?.source ?? 'legacy',
+    origin: manifest?.origin ?? null,
+    importedAt: manifest?.importedAt ?? null,
+    commit: manifest?.commit ?? null,
+  };
 }
 
 /** Map reader errors to HTTP statuses (403 escape / 413 too large / 404 missing). */
