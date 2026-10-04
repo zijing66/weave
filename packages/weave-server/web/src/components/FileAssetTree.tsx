@@ -31,23 +31,49 @@ export interface FileAssetRow {
   agent?: AssetAgent;
 }
 
-/** Stable filter-chip order (every kind is shown, even with a 0 count).
- *  Chips and row tags show the raw scan token — no translation layer. */
-const KIND_ORDER = [
+/** 抽象工具大类（筛选概念）：chips 与行 tag 只暴露 harness 工具的抽象概念，
+ *  绠向细节（helper 就是 hook 脚本、workflow 并入 rules 等）折叠进大类。
+ *  skill/mcp 是 tab 专属维度，不进 chips（tab 已管）。 */
+const BUCKET_ORDER = [
   'instructions',
   'command',
   'agent',
-  'workflow',
-  'rule',
-  'output-style',
-  'helper',
+  'hooks',
+  'rules',
+  'style',
   'settings',
   'other',
-];
+] as const;
 
-/* One colour family per asset kind, expressed in TEXT COLOUR ONLY: both the
+/** tab 专属类别：不参与大类 chips/计数（Skills|MCP tab 各自过滤）。 */
+const TAB_KINDS = new Set(['skill', 'mcp']);
+
+/** 原始扫描 category（+路径细判）→ 抽象大类；未知未来类目归 other。 */
+function bucketOf(category: string, relPath: string): string {
+  switch (category) {
+    case 'helper':
+      return 'hooks'; // .claude/helpers/ = hook 处理脚本
+    case 'rule':
+    case 'workflow':
+      return 'rules';
+    case 'output-style':
+      return 'style';
+    case 'instructions':
+    case 'command':
+    case 'agent':
+    case 'settings':
+      return category;
+    default:
+      break;
+  }
+  if (TAB_KINDS.has(category)) return category;
+  if (relPath.startsWith('.claude/hooks/')) return 'hooks';
+  return 'other';
+}
+
+/* One colour family per bucket, expressed in TEXT COLOUR ONLY: both the
  * filter chips and the row tags keep the same grey background, so the hue is
- * what distinguishes kinds. Selected chips additionally get a highlight ring.
+ * what distinguishes buckets. Selected chips additionally get a highlight ring.
  * (Tailwind needs literal class strings, hence no template.) */
 const KIND_COLORS: Record<string, { on: string; off: string }> = {
   instructions: {
@@ -56,12 +82,14 @@ const KIND_COLORS: Record<string, { on: string; off: string }> = {
   },
   command: { on: 'text-purple-200', off: 'text-purple-300/50 hover:text-purple-200' },
   agent: { on: 'text-emerald-200', off: 'text-emerald-300/50 hover:text-emerald-200' },
-  workflow: { on: 'text-indigo-200', off: 'text-indigo-300/50 hover:text-indigo-200' },
-  rule: { on: 'text-rose-200', off: 'text-rose-300/50 hover:text-rose-200' },
-  'output-style': { on: 'text-fuchsia-200', off: 'text-fuchsia-300/50 hover:text-fuchsia-200' },
-  helper: { on: 'text-amber-200', off: 'text-amber-300/50 hover:text-amber-200' },
+  hooks: { on: 'text-amber-200', off: 'text-amber-300/50 hover:text-amber-200' },
+  rules: { on: 'text-rose-200', off: 'text-rose-300/50 hover:text-rose-200' },
+  style: { on: 'text-fuchsia-200', off: 'text-fuchsia-300/50 hover:text-fuchsia-200' },
   settings: { on: 'text-cyan-200', off: 'text-cyan-300/50 hover:text-cyan-200' },
   other: { on: 'text-neutral-200', off: 'text-neutral-400/70 hover:text-neutral-200' },
+  // tab 专属类别只做行 tag 配色（chips 不列）
+  skill: { on: 'text-lime-200', off: 'text-lime-300/50 hover:text-lime-200' },
+  mcp: { on: 'text-sky-200', off: 'text-sky-300/50 hover:text-sky-200' },
 };
 
 /** Palette for a kind — unknown future kinds fall back to neutral. */
@@ -241,8 +269,8 @@ function AssetTreeNode({
             agent={a.agent ?? 'claude'}
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
-          <span className={cn(ROW_TAG_BASE, kindColor(a.category).on)}>
-            {a.category}
+          <span className={cn(ROW_TAG_BASE, kindColor(bucketOf(a.category, a.relPath)).on)}>
+            {bucketOf(a.category, a.relPath)}
           </span>
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
@@ -338,8 +366,12 @@ export function FileAssetTree({
   // rather than disappearing, so the filter bar always reads the full taxonomy.
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const k of KIND_ORDER) m.set(k, 0);
-    for (const a of assets) m.set(a.category, (m.get(a.category) ?? 0) + 1);
+    for (const k of BUCKET_ORDER) m.set(k, 0);
+    for (const a of assets) {
+      if (TAB_KINDS.has(a.category)) continue; // skill/mcp 归 tab 维度，不进 chips
+      const b = bucketOf(a.category, a.relPath);
+      m.set(b, (m.get(b) ?? 0) + 1);
+    }
     return m;
   }, [assets]);
 
@@ -352,7 +384,10 @@ export function FileAssetTree({
     return s;
   }, [selected, counts]);
   const visible = useMemo(
-    () => (active.size ? assets.filter((a) => active.has(a.category)) : assets),
+    () =>
+      active.size
+        ? assets.filter((a) => active.has(bucketOf(a.category, a.relPath)))
+        : assets,
     [assets, active],
   );
 
@@ -388,7 +423,7 @@ export function FileAssetTree({
   // sit leftmost; future categories sort in by their own counts too.
   const chipKinds = useMemo(() => {
     const rank = new Map<string, number>();
-    KIND_ORDER.forEach((k, i) => rank.set(k, i));
+    BUCKET_ORDER.forEach((k, i) => rank.set(k, i));
     return [...counts.keys()].sort((a, b) => {
       const d = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
       return d !== 0 ? d : (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity);

@@ -573,7 +573,7 @@ export function LifecycleMindmap({
       })),
     [laid.nodes, flashKey, ruleInfo, onToggle],
   );
-  // 箭头 + 流动动效：表达 prompt 生命周期的数据流向。
+  // 箭头 + 流动动效 + 亮蓝加粗：显著表达 prompt 生命周期的调用关系。
   const flowEdges: Edge[] = useMemo(
     () =>
       laid.edges.map((e) => ({
@@ -582,8 +582,8 @@ export function LifecycleMindmap({
         target: e.target,
         type: 'smoothstep',
         animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-        style: { stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+        style: { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
       })),
     [laid.edges],
   );
@@ -639,8 +639,8 @@ export function LifecycleMindmap({
             defaultEdgeOptions={{
               type: 'smoothstep',
               animated: true,
-              markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-              style: { stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1.5 },
+              markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+              style: { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
             }}
           >
             <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />
