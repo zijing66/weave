@@ -537,9 +537,12 @@ export function LifecycleMindmap({
     const mine = dispatches
       .filter((d) => d.sessionId === sessionId || (d.eventId != null && eventIds.has(d.eventId)))
       .sort((a, b) => a.id - b.id);
-    // 游离指令组不进视图（无生命周期从属、扰乱顺序——由任务「待派发」区承载）。
+    // 游离指令组不进视图（无生命周期从属、扰乱顺序——由任务「待派发」区承载）；
+    // 头部满一整批（≥300）说明窗口从半截 turn 切开——此时的 preSession 组是
+    // 上一 turn 尾巴的伪影，隐藏（翻到底才是真会话引导）。
+    const headTruncated = events.length >= 300;
     const all = buildLifecycleGroups(events, mine, HARNESS_LIFECYCLE.claude).filter(
-      (g) => g.id !== ORPHAN_GROUP_ID,
+      (g) => g.id !== ORPHAN_GROUP_ID && !(g.preSession && headTruncated),
     );
     return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
   }, [events, dispatches, sessionId, focusGroupId]);
