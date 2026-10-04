@@ -235,6 +235,29 @@ describe('layoutMindmap', () => {
     // 主链同理：组 open（未等到 Stop）→ 末事件不闭环回根
     expect(edges.some((e) => e.closure && e.target === 'g:turn:1')).toBe(false);
   });
+
+  it('派发即生子节点：环空且执行中 → 占位子代理节点挂在锚下', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        events: [ev(1, 'UserPromptSubmit'), dispatchEv(2, 'a4b7cd62', 'call_1')],
+      }),
+    ];
+    const { nodes, edges } = layoutMindmap(groups, new Set(['g:turn:1']));
+    const ph = nodes.find((n) => n.key === 'e:2:agent')!;
+    expect(ph).toMatchObject({
+      kind: 'subagent',
+      depth: 2, // 挂锚（depth 1）下
+      agentId: 'a4b7cd62',
+      model: 'mimo-v2.6-flash',
+      agentRunning: true,
+      expandable: false,
+    });
+    expect(ph.event).toBeUndefined(); // 占位——真实事件到达后替换
+    // 锚 → 占位的分叉链；占位未返回 → 环上无闭环回边
+    expect(edges.map((e) => e.id)).toContain('e:2->e:2:agent');
+    expect(edges.some((e) => e.closure && e.source === 'e:2:agent')).toBe(false);
+  });
 });
 
 describe('summarizeEvent — 按 hook 类型提取完整信息', () => {

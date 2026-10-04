@@ -282,8 +282,22 @@ export function layoutMindmap(
           nodesByRow.set(e.id, node);
           prevRow = e;
         }
-        // 环成员挂锚前部（分叉语义，先于命中链子树展示）
+        // 环成员挂锚前部（分叉语义，先于命中链子树展示）。
+        // 派发即生子节点：锚下尚无成员且子代理执行中 → 先生成占位子节点
+        //（SubagentStop/task-notification 到达后由真实事件节点替换）。
         for (const [anchor, members] of ringMembers) {
+          if (members.length === 0 && anchor.agentRunning) {
+            members.push({
+              key: `${anchor.key}:agent`,
+              kind: 'subagent',
+              children: [],
+              hasPotential: false,
+              highlight: false,
+              agentId: anchor.agentId,
+              model: anchor.model,
+              agentRunning: true,
+            });
+          }
           if (members.length > 0) {
             anchor.children = [...members, ...anchor.children];
             anchor.highlight = anchor.highlight || members.some((m) => m.highlight);
@@ -550,6 +564,30 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             {summary}
           </span>
         )}
+      </>
+    );
+  } else if (node.kind === 'subagent' && !node.event) {
+    // 占位子节点：派发已发出、子代理事件（SubagentStop/返回通知）未到——
+    // 派发即在锚下生出子节点，真实事件到达后替换，收到通知才闭环
+    body = (
+      <>
+        <span className="flex flex-wrap items-center gap-1">
+          <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
+            subagent
+          </span>
+          {node.agentId && (
+            <span className="text-[10px] text-neutral-500">agent …{node.agentId.slice(-8)}</span>
+          )}
+          {node.model && <ModelTag model={node.model} />}
+          {node.agentRunning && (
+            <span className={tagCls('bg-amber-900/50 text-amber-300')}>
+              {t('hooks.mindmap.agentRunning')}
+            </span>
+          )}
+        </span>
+        <span className="mt-0.5 block text-[11px] text-neutral-400">
+          {t('hooks.mindmap.agentPending')}
+        </span>
       </>
     );
   } else if (node.kind === 'rule') {
@@ -860,6 +898,30 @@ export function LifecycleMindmap({
           </div>
           {row(t('tasks.events', { n: g.events.length }), '')}
           {row(t('tasks.groupDispatches', { n: g.dispatches.length }), '')}
+        </>
+      );
+    }
+    if (n.kind === 'subagent' && !n.event) {
+      // 占位子节点明细：派发证据（agentId/model）+ 执行状态
+      return (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}
+            >
+              subagent
+            </span>
+            {n.agentId && (
+              <span className="text-neutral-500">agent …{n.agentId.slice(-8)}</span>
+            )}
+            {n.model && <ModelTag model={n.model} />}
+            {n.agentRunning && (
+              <span className={tagCls('bg-amber-900/50 text-amber-300')}>
+                {t('hooks.mindmap.agentRunning')}
+              </span>
+            )}
+          </div>
+          <p className="text-neutral-400">{t('hooks.mindmap.agentPending')}</p>
         </>
       );
     }
