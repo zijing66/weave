@@ -149,9 +149,10 @@ export function LibraryPanel({
   const outdatedFiles = (updates?.files ?? []).filter((u) => u.outdated);
 
   // The installable list shown depends on the active main category.
-  const showSkills = category === 'skills';
-  const showFiles = category === 'commands';
-  const showMcp = category === 'mcp';
+  // 文件资产卡暂三区全显（批 2 才按 assetTab 互斥）。
+  const showFiles = category === 'files';
+  const showSkills = showFiles;
+  const showMcp = showFiles;
   const noTemplates = !showSkills && !showMcp && !showFiles;
 
   // Sections and groups that are currently rendered — collapse-all targets.
@@ -496,15 +497,11 @@ export function LibraryPanel({
 
 function categoryLabel(category: MainCategory, t: TFunc): string {
   switch (category) {
-    case 'skills':
-      return 'Skills';
-    case 'mcp':
-      return 'MCP';
-    case 'commands':
-      return t('library.catCommands');
+    case 'files':
+      return t('catbar.files');
     case 'personalization':
       return t('library.catPersonalization');
-    case 'hooks':
+    case 'weave':
       return t('catbar.hooks');
     case 'tasks':
       return t('catbar.tasks');
