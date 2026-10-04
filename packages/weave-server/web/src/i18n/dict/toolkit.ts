@@ -16,6 +16,9 @@ export const toolkitZh = {
   'toolkit.prov.external-dir': '外置',
   'toolkit.targets': '目标：{targets}',
   'toolkit.weaveRules': '规则 {n}',
+  'toolkit.legacyTitle': '发现 {n} 个 Weave 旧插件副本',
+  'toolkit.legacyHint': '旧管线复制进项目插件位的死数据（Claude Code 不加载），可安全清理',
+  'toolkit.legacyCleanup': '清理',
   'toolkit.dirsTitle': '外置目录',
   'toolkit.dirsEmpty': '未注册外置目录',
   'toolkit.dirsHint': '添加：终端运行 weave toolkit add-dir <目录>；移除：weave toolkit remove-dir <目录>（级联卸载已启用包）',
@@ -38,6 +41,10 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.prov.external-dir': 'external-dir',
   'toolkit.targets': 'Targets: {targets}',
   'toolkit.weaveRules': 'rules {n}',
+  'toolkit.legacyTitle': 'Found {n} stale Weave plugin copies',
+  'toolkit.legacyHint':
+    'Dead data the old pipeline copied into the project plugin dir (Claude Code does not load it); safe to clean up',
+  'toolkit.legacyCleanup': 'Clean up',
   'toolkit.dirsTitle': 'External dirs',
   'toolkit.dirsEmpty': 'No external dirs registered',
   'toolkit.dirsHint':

@@ -2,9 +2,10 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { PluginSurface } from '@weave/harness';
 import { hashFile } from '../install/fingerprint.js';
 import { fileAssetTargetDir } from '../install/file-assets.js';
-import { assetSurfaceFor } from '../surfaces.js';
+import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
@@ -21,16 +22,15 @@ import {
 } from './toolkit-scan.js';
 
 /**
- * 批 10 工具包服务：按包成分分三条既有管线启用/禁用——
- *   ① 插件位整体（CC 原生包原样复制进项目 `.claude/plugins/<pack>/`，禁用按
- *      checksum 清扫：用户改写过的文件保留）；
+ * 批 10 工具包服务，批 3 改 CC 原生包管线：按包成分分三条既有管线启用/禁用——
+ *   ① CC 原生包（mod 同机制，H2）→ harness PluginSurface 全局安装（幂等两步
+ *      CLI）+ 项目 settings `enabledPlugins` 开关；**项目插件位零副本**（宿主
+ *      不扫描项目 `.claude/plugins/`——H4，存量副本读时自愈清扫，list 报
+ *      legacyCopies），disable 只关项目启用、全局安装保留；
  *   ② 表面解包（裸表面/Codex → 批 4a AssetSurface 目标目录，同 checksum 清扫）；
  *   ③ weave 规则成分（既有 plugin-loader 注册，`plugin_states` 级联到包开关）。
  * 状态单一事实源 = 落盘/级联事实；`projects.meta.toolkit.enabled[]` 只是索引，
  * 读侧以磁盘与 plugin_states 校验为准（meta 读时自愈）。
- *
- * 风险 9：项目插件位（`.claude/plugins/<pack>/`）的 CC 自动发现语义**待实测
- * 锁定**——此处只保证「落盘保持 `.claude-plugin/` 结构」，加载语义不在本批断言。
  */
 
 export type ToolkitErrorCode = 'not-found' | 'host-version' | 'invalid';
@@ -66,6 +66,8 @@ export interface ToolkitPackInfo extends ToolkitPack {
 export interface ToolkitListResult {
   packs: ToolkitPackInfo[];
   dirs: string[];
+  /** 项目插件位残留（Weave 旧副本；宿主不加载，可安全清理）。 */
+  legacyCopies: string[];
 }
 
 export interface ToolkitToggleResult {
@@ -143,8 +145,7 @@ async function walkFiles(
     return;
   }
   for (const entry of entries) {
-    // 只剔除仓库噪音（node_modules/.git）；`.claude-plugin/` 是包结构本体，
-    // 必须随包原样复制进插件位。
+    // 只剔除仓库噪音（node_modules/.git）。
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
     const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
     if (entry.isDirectory()) await walkFiles(base, rel, out);
@@ -154,25 +155,19 @@ async function walkFiles(
 
 /**
  * 启用落盘计划（五闸④的唯一事实源）：按 `targets` 分流——
- * - CC 原生包 × claude → 插件位整体（保持 `.claude-plugin/` 结构）；
+ * - CC 原生包 × claude → **零项目落盘**（全局安装 + 项目 enabledPlugins，
+ *   见 enable；宿主不加载项目插件位副本）；
  * - skills × codex → `.codex/skills/`（Codex 无插件机制，只能表面解包）；
- * - 裸表面 × claude → `.claude/skills|commands|agents/`（CC 包已在插件位，
- *   不重复解包）；非 `targets` 内的 harness 表面零条目。
+ * - 裸表面 × claude → `.claude/skills|commands|agents/`；非 `targets` 内的
+ *   harness 表面零条目。
  */
 async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<FileCopy[]> {
   const plan: FileCopy[] = [];
   const claude = pack.targets.includes('claude');
 
-  if (pack.ccPack && claude) {
-    const base = `.claude/plugins/${path.basename(pack.dir)}`;
-    const files: Array<{ rel: string; abs: string }> = [];
-    await walkFiles(pack.dir, '', files);
-    for (const f of files) plan.push({ src: f.abs, rel: `${base}/${f.rel}` });
-  }
-
   if (pack.skills.length > 0) {
     for (const harness of pack.targets) {
-      if (harness === 'claude' && pack.ccPack) continue; // 插件位已覆盖
+      if (harness === 'claude' && pack.ccPack) continue; // CC 插件由全局安装覆盖
       // 批 4a：skills 表面单一事实源 = AssetSurface.projectSkillsDir()
       const skillsBase = assetSurfaceFor(harness).projectSkillsDir();
       for (const skill of pack.skills) {
@@ -289,6 +284,8 @@ export interface ToolkitServiceDeps {
   sourcesRoot?: string;
   /** 覆盖宿主版本探测（测试）。 */
   claudeVersion?: () => Promise<string | null>;
+  /** 插件安装面（测试注入假 exec 的 surface；缺省经 registry 取 Claude 面）。 */
+  pluginSurface?: PluginSurface;
 }
 
 export class ToolkitService {
@@ -312,9 +309,9 @@ export class ToolkitService {
   }
 
   /**
-   * 包清单 + 启用态（读侧以落盘/级联校验），顺带把 meta 索引自愈到事实。
-   * `source` 消歧：同 id 可同时来自内置与外置（provenance 不同），
-   * 精确匹配 sourceRoot，缺省 builtin 优先。
+   * 包清单 + 启用态（读侧以落盘/级联校验），顺带把 meta 索引自愈到事实、
+   * 清扫存量项目插件副本。`source` 消歧：同 id 可同时来自内置与外置
+   * （provenance 不同），精确匹配 sourceRoot，缺省 builtin 优先。
    */
   async list(projectId: number): Promise<ToolkitListResult> {
     const project = this.requireProject(projectId);
@@ -323,7 +320,7 @@ export class ToolkitService {
     for (const pack of packs) infos.push(await this.packInfo(project, pack));
     await this.healMeta(project, infos);
     const { dirs } = await readSourcesFile(this.deps.sourcesRoot);
-    return { packs: infos, dirs };
+    return { packs: infos, dirs, legacyCopies: await this.scanLegacyCopies(project) };
   }
 
   /** 幂等启用：已启用（记录在且文件齐）→ 无任何写入，直接回后置状态。 */
@@ -344,8 +341,17 @@ export class ToolkitService {
     }
 
     const projectPath = project.path;
+
+    // 管线①：CC 原生包全局安装（幂等两步 CLI）+ 项目启用；项目插件位零副本。
+    const ccLanded = pack.ccPack && pack.targets.includes('claude');
+    if (ccLanded) {
+      const surface = this.pluginSurface();
+      await surface.globalInstall(pack.dir, { name: pack.name });
+      await surface.setProjectEnabled(projectPath, pack.name, true);
+    }
+
     const recPath = recordPathFor(projectPath, pack.id);
-    const existing = await readRecord(recPath);
+    const existing = await this.readRecordHealed(projectPath, pack.id);
     const record: ToolkitRecord = existing ?? {
       packId: pack.id,
       provenance: pack.provenance,
@@ -377,8 +383,9 @@ export class ToolkitService {
       // 目标已存在且非本包记录 → 用户文件：append-only，不覆盖不记账。
     }
 
-    // 记录文件 = 文件管线的落盘事实（weave-only 包无落盘成分，不写记录）。
-    if (recordChanged && plan.length > 0) {
+    // 记录文件 = 文件管线的落盘事实（weave-only 包无落盘成分、CC-only 包仅
+    // 记启用出处，均不带文件条目）。
+    if (recordChanged && (plan.length > 0 || ccLanded)) {
       await mkdir(path.dirname(recPath), { recursive: true });
       await writeFile(recPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
     }
@@ -393,12 +400,16 @@ export class ToolkitService {
     return { pack: await this.packInfo(project, pack), warnings };
   }
 
-  /** 幂等禁用：checksum 一致的文件删除，用户改写过的保留，记录文件删除。 */
+  /** 幂等禁用：表面/解包文件按 checksum 删除（改写保留），记录删除；CC 原生包
+   * 只关项目启用（enabledPlugins=false），全局安装保留。 */
   async disable(projectId: number, packId: string, sourceRoot?: string): Promise<ToolkitToggleResult> {
     const project = this.requireProject(projectId);
     const pack = await this.resolvePack(packId, sourceRoot);
     await this.removePackFiles(project, pack, pack.sourceRoot);
 
+    if (pack.ccPack && pack.targets.includes('claude')) {
+      await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
+    }
     if (pack.weavePack) {
       const cascaded = this.deps.plugins.setPluginEnabled(pack.id, false);
       if (!cascaded) this.deps.states.setEnabled(pack.id, false);
@@ -459,6 +470,9 @@ export class ToolkitService {
         const weaveOnlyEnabled = !record && metaIds.includes(pack.id) && pack.weavePack;
         if (!fromThisDir && !weaveOnlyEnabled) continue;
         await this.removePackFiles(project, pack, abs);
+        if (pack.ccPack && pack.targets.includes('claude')) {
+          await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
+        }
         if (pack.weavePack) {
           const cascaded = this.deps.plugins.setPluginEnabled(pack.id, false);
           if (!cascaded) this.deps.states.setEnabled(pack.id, false);
@@ -492,12 +506,16 @@ export class ToolkitService {
     return chosen;
   }
 
-  /** 启用态 = 各成分事实的 AND（文件成分看落盘，weave 成分看级联状态）。 */
+  /**
+   * 启用态 = 各成分事实的 AND：表面/解包成分看落盘，CC 原生包看「全局已装 &&
+   * 项目 enabledPlugins 开」（批 3 判据），weave 成分看级联状态。
+   * 读记录即触发存量项目副本自愈（读时清扫）。
+   */
   private async computeEnabled(project: ProjectRow, pack: ToolkitPack): Promise<boolean> {
     const facts: boolean[] = [];
+    const record = await this.readRecordHealed(project.path, pack.id);
     const plan = await buildFilePlan(project.path, pack);
     if (plan.length > 0) {
-      const record = await readRecord(recordPathFor(project.path, pack.id));
       let present = !!record;
       if (record) {
         for (const rel of Object.keys(record.files)) {
@@ -508,6 +526,13 @@ export class ToolkitService {
         }
       }
       facts.push(present);
+    }
+    if (pack.ccPack && pack.targets.includes('claude')) {
+      const surface = this.pluginSurface();
+      facts.push(
+        (await surface.isInstalled(pack.name)) &&
+          (await surface.readProjectEnabled(project.path, pack.name)),
+      );
     }
     if (pack.weavePack) facts.push(this.deps.states.get(pack.id)?.enabled ?? false);
     return facts.length > 0 ? facts.every(Boolean) : false;
@@ -553,5 +578,77 @@ export class ToolkitService {
     if (merged.join('\n') !== indexed.join('\n')) {
       this.deps.projects.setMeta(project.id, { toolkit: { enabled: merged } });
     }
+  }
+
+  /** 插件安装面（deps 可注入假 exec；缺省经 registry 取 Claude 面——批 3 最浅接入）。 */
+  private pluginSurface(): PluginSurface {
+    return this.deps.pluginSurface ?? pluginSurfaceFor('claude');
+  }
+
+  /**
+   * 读记录 + 存量项目插件副本自愈（仿 healMeta）：旧管线把 CC 包复制进项目
+   * 插件位，宿主从不加载（H4）——按 checksum 删副本并重写记录；用户改写过的
+   * 文件保留（由 legacyCopies 报出，清理走显式端点）。
+   */
+  private async readRecordHealed(
+    projectPath: string,
+    packId: string,
+  ): Promise<ToolkitRecord | null> {
+    const recPath = recordPathFor(projectPath, packId);
+    const record = await readRecord(recPath);
+    if (!record) return null;
+    const relBase = toPosix(
+      path.relative(projectPath, this.pluginSurface().projectPluginDir(projectPath)),
+    );
+    const legacy = Object.keys(record.files).filter((rel) => rel.startsWith(`${relBase}/`));
+    if (legacy.length === 0) return record;
+    const removed: string[] = [];
+    for (const rel of legacy) {
+      const abs = path.join(projectPath, ...rel.split('/'));
+      if ((await hashFile(abs)) === record.files[rel]) {
+        await rm(abs, { force: true });
+        removed.push(rel);
+      }
+      delete record.files[rel];
+    }
+    await pruneEmptyDirs(projectPath, removed);
+    await writeFile(recPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
+    return record;
+  }
+
+  /** 项目插件位残留清单（readRecordHealed 覆盖不到的孤儿副本在此报出）。 */
+  private async scanLegacyCopies(project: ProjectRow): Promise<string[]> {
+    const dir = this.pluginSurface().projectPluginDir(project.path);
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return entries.map((e) => toPosix(path.relative(project.path, path.join(dir, e.name)))).sort();
+  }
+
+  /** 幂等清理项目插件位残留（宿主不加载的死数据，清理不改变任何加载行为）。 */
+  async cleanupLegacyCopies(projectId: number): Promise<{ removed: string[] }> {
+    const project = this.requireProject(projectId);
+    const dir = this.pluginSurface().projectPluginDir(project.path);
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return { removed: [] };
+    }
+    const removed: string[] = [];
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      await rm(abs, { recursive: true, force: true });
+      removed.push(toPosix(path.relative(project.path, abs)));
+    }
+    try {
+      if ((await readdir(dir)).length === 0) await rm(dir, { recursive: true, force: true });
+    } catch {
+      // 目录已消失——跳过
+    }
+    return { removed: removed.sort() };
   }
 }

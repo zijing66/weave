@@ -192,6 +192,7 @@ export interface ToolkitPack {
 export interface ToolkitListResult {
   packs: ToolkitPack[];
   dirs: string[];
+  legacyCopies: string[];
 }
 
 export interface ToolkitToggleResult {
@@ -736,6 +737,10 @@ export const api = {
       }`,
       { method: 'POST' },
     ),
+  cleanupToolkitLegacyCopies: (projectId: number): Promise<{ removed: string[] }> =>
+    apiFetch<{ removed: string[] }>(`/projects/${projectId}/toolkit/legacy-copies/cleanup`, {
+      method: 'POST',
+    }),
   listToolkitDirs: (): Promise<{ dirs: string[]; indexes: string[] }> =>
     apiFetch<{ dirs: string[]; indexes: string[] }>('/toolkit/dirs'),
   addToolkitDir: (path: string): Promise<{ dirs: string[] }> =>
