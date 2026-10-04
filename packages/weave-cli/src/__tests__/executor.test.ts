@@ -69,6 +69,8 @@ describe('executeInit', () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     // weave server defaults to false → no .mcp.json written
     expect(result.created.files).not.toContain(path.join(tmpDir, '.mcp.json'));
+    // 未生成的文件也不得计入「跳过已有文件」（否则汇总误报 + --force 提示失效）
+    expect(result.skipped).not.toContain(path.join(tmpDir, '.mcp.json'));
     await expect(stat(path.join(tmpDir, '.mcp.json'))).rejects.toThrow();
   });
 
