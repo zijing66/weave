@@ -18,7 +18,7 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { deriveSessionStatus, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
-import { Activity, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
 
 /** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
 interface HookFrame {
@@ -378,6 +378,16 @@ export function TasksPanel({
     });
   };
 
+  /** 折叠条复制 prompt：复制该组开组 prompt 原文（1.5s 换 ✓ 反馈）。 */
+  const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null);
+  const copyGroupPrompt = (g: { id: string; prompt?: string }): void => {
+    if (!g.prompt) return;
+    void navigator.clipboard.writeText(g.prompt).then(() => {
+      setCopiedGroupId(g.id);
+      window.setTimeout(() => setCopiedGroupId(null), 1500);
+    });
+  };
+
   const confirmRun = async (): Promise<void> => {
     if (!pendingRun) return;
     try {
@@ -520,10 +530,18 @@ export function TasksPanel({
                   key={g.id}
                   className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.015]"
                 >
-                  <button
-                    type="button"
+                  {/* div role=button：内嵌复制按钮（button 嵌套 button 非法） */}
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedGroupId(expanded ? '' : g.id)}
-                    className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setExpandedGroupId(expanded ? '' : g.id);
+                      }
+                    }}
+                    className="flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
                   >
                     {expanded ? (
                       <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -551,6 +569,11 @@ export function TasksPanel({
                         {t('tasks.groupSubagent', { n: g.subagentStops })}
                       </Badge>
                     )}
+                    {g.agentsDispatched > 0 && (
+                      <Badge className="shrink-0 bg-fuchsia-900/40 text-fuchsia-300">
+                        {t('tasks.groupAgents', { n: g.agentsDispatched })}
+                      </Badge>
+                    )}
                     {timeIso && (
                       <span className="shrink-0 text-[10px] text-neutral-500">
                         {formatTime(timeIso)}
@@ -562,6 +585,23 @@ export function TasksPanel({
                     <span className="shrink-0 text-[10px] text-neutral-500">
                       {t('tasks.groupDispatches', { n: g.dispatches.length })}
                     </span>
+                    {g.prompt && (
+                      <button
+                        type="button"
+                        title={copiedGroupId === g.id ? t('tasks.copied') : t('tasks.copyPrompt')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyGroupPrompt(g);
+                        }}
+                        className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+                      >
+                        {copiedGroupId === g.id ? (
+                          <Check className="h-3 w-3 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </button>
+                    )}
                     {(isLatestGroup &&
                       g.open &&
                       (activeStatus === 'running' || activeStatus === 'active')) && (
@@ -569,7 +609,7 @@ export function TasksPanel({
                         <HarnessIcon harness={selectedHarness} running />
                       </span>
                     )}
-                  </button>
+                  </div>
                   {expanded && (
                     <div className="h-[calc(100vh-330px)] min-h-[420px] max-h-[760px] shrink-0 border-t border-white/[0.06] p-1.5">
                       {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；

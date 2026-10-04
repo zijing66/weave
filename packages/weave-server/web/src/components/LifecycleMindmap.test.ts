@@ -33,8 +33,41 @@ const group = (over: Partial<LifecycleGroup>): LifecycleGroup => ({
   events: [],
   dispatches: [],
   subagentStops: 0,
+  agentsDispatched: 0,
   ...over,
 });
+
+/** 派发证据事件：PostToolUse + toolResponse.agentId（异步子代理）。 */
+const dispatchEv = (
+  id: number,
+  agentId: string,
+  toolUseId: string,
+  model = 'mimo-v2.6-flash',
+): HookEventRow =>
+  ev(
+    id,
+    'PostToolUse',
+    JSON.stringify({
+      toolResponse: { isAsync: true, status: 'async_launched', agentId, resolvedModel: model },
+      raw: { tool_use_id: toolUseId },
+    }),
+  );
+
+/** SubagentStop（agent_id 归属派发）。 */
+const subStop = (id: number, agentId: string): HookEventRow =>
+  ev(id, 'SubagentStop', JSON.stringify({ raw: { agent_id: agentId } }));
+
+/** task-notification（UserPromptSubmit 携带子代理返回 XML）。 */
+const notif = (id: number, agentId: string, toolUseId: string): HookEventRow =>
+  ev(
+    id,
+    'UserPromptSubmit',
+    JSON.stringify({
+      raw: {
+        prompt: `<task-notification>\n<task-id>${agentId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<status>completed</status>\n<summary>Agent "x" finished</summary>\n</task-notification>`,
+      },
+    }),
+  );
 
 describe('layoutMindmap', () => {
   it('折叠态：每组一个 depth0 节点，叶子 y 顺序占槽', () => {
@@ -139,6 +172,69 @@ describe('layoutMindmap', () => {
     // 无触发指令的子代理是叶子——不给折叠按钮（明细点节点看）
     expect(sub.expandable).toBe(false);
   });
+
+  it('派发环：agentId 证据节点挂 SubagentStop 与 task-notification，已返回成闭环', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        agentsDispatched: 1,
+        events: [
+          ev(1, 'UserPromptSubmit'),
+          dispatchEv(2, 'a4b7cd62', 'call_1'),
+          ev(3, 'PostToolUse'),
+          subStop(4, 'a4b7cd62'),
+          notif(5, 'a4b7cd62', 'call_1'),
+          ev(6, 'Stop'),
+        ],
+      }),
+    ];
+    const { nodes, edges } = layoutMindmap(groups, new Set(['g:turn:1']), new Map(), 'sess-model');
+    const anchor = nodes.find((n) => n.key === 'e:2')!;
+    expect(anchor.agentId).toBe('a4b7cd62');
+    expect(anchor.model).toBe('mimo-v2.6-flash'); // resolvedModel 显著展示
+    expect(anchor.agentRunning).toBe(false); // 收到返回 → 非执行中
+    // 环成员挂锚下（depth = 锚+1），不进主链
+    const sub = nodes.find((n) => n.key === 'e:4')!;
+    const note = nodes.find((n) => n.key === 'e:5')!;
+    expect(sub.depth).toBe(anchor.depth + 1);
+    expect(note.depth).toBe(anchor.depth + 1);
+    expect(note.kind).toBe('notification');
+    // 环链：锚→SubagentStop→notification→锚（闭环回边）
+    expect(new Set(edges.map((e) => e.id))).toEqual(
+      new Set([
+        'g:turn:1->e:1',
+        'e:1->e:2',
+        'e:2->e:3',
+        'e:3->e:6',
+        'e:6->g:turn:1',
+        'e:2->e:4',
+        'e:4->e:5',
+        'e:5->e:2',
+      ]),
+    );
+    expect(edges.find((e) => e.id === 'e:5->e:2')?.closure).toBe(true);
+    expect(edges.find((e) => e.id === 'e:4->e:5')?.vertical).toBe(true);
+    // 组根 model tag（会话级）
+    expect(nodes.find((n) => n.key === 'g:turn:1')?.model).toBe('sess-model');
+  });
+
+  it('派发环执行中：未收到 task-notification → 不画闭环', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        open: true, // 进行中/未正常结束：没有 Stop 这一闭环事件
+        events: [ev(1, 'UserPromptSubmit'), dispatchEv(2, 'a4b7cd62', 'call_1'), subStop(4, 'a4b7cd62')],
+      }),
+    ];
+    const { nodes, edges } = layoutMindmap(groups, new Set(['g:turn:1']));
+    const anchor = nodes.find((n) => n.key === 'e:2')!;
+    expect(anchor.agentRunning).toBe(true);
+    // 有锚→成员链，但没有 成员→锚 的闭环回边
+    expect(edges.map((e) => e.id)).toContain('e:2->e:4');
+    expect(edges.some((e) => e.closure && e.source === 'e:4')).toBe(false);
+    // 主链同理：组 open（未等到 Stop）→ 末事件不闭环回根
+    expect(edges.some((e) => e.closure && e.target === 'g:turn:1')).toBe(false);
+  });
 });
 
 describe('summarizeEvent — 按 hook 类型提取完整信息', () => {
@@ -171,5 +267,10 @@ describe('summarizeEvent — 按 hook 类型提取完整信息', () => {
         ev(4, 'SubagentStop', JSON.stringify({ raw: { last_assistant_message: '梳理完毕' } })),
       ),
     ).toBe('梳理完毕');
+  });
+
+  it('task-notification 取 status/summary，不展示整段 XML', () => {
+    const e = notif(5, 'agent-x', 'call-1');
+    expect(summarizeEvent(e)).toBe('completed · Agent "x" finished');
   });
 });

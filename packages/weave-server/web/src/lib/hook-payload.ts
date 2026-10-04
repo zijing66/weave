@@ -73,6 +73,65 @@ const flat = (v: string): string => v.replace(/\s+/g, ' ').trim();
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
 /**
+ * 派发子代理证据：PostToolUse(toolResponse.agentId) —— agentId 是子代理的
+ * 身份锚（关联其 SubagentStop / task-notification），resolvedModel 是该
+ * 子代理使用的 model。非派发事件返回 null。
+ */
+export interface AgentDispatch {
+  agentId: string;
+  toolUseId: string | null;
+  model: string | null;
+}
+
+export function agentDispatchOf(event: HookEventRow): AgentDispatch | null {
+  if (event.eventType !== 'PostToolUse') return null;
+  try {
+    const p = JSON.parse(event.payload) as {
+      toolResponse?: unknown;
+      raw?: { tool_use_id?: unknown };
+    };
+    const resp = p.toolResponse as { agentId?: unknown; resolvedModel?: unknown } | null;
+    if (!resp || typeof resp.agentId !== 'string' || !resp.agentId) return null;
+    const toolUseId = str(p.raw?.tool_use_id);
+    return { agentId: resp.agentId, toolUseId, model: str(resp.resolvedModel) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 子代理返回通知：UserPromptSubmit 且 prompt 以 <task-notification> 开头
+ * （含 task-id=agentId、tool-use-id=派发调用、status=completed/killed）。
+ * 这不是一次用户 prompt——分组不开新组、图上作为派发环的闭环证据。
+ */
+export interface TaskNotification {
+  taskId: string | null;
+  toolUseId: string | null;
+  status: string | null;
+  summary: string | null;
+}
+
+export function taskNotificationOf(payload: string): TaskNotification | null {
+  try {
+    const raw = (JSON.parse(payload) as { raw?: { prompt?: unknown } }).raw;
+    const prompt = str(raw?.prompt);
+    if (!prompt || !prompt.startsWith('<task-notification>')) return null;
+    const pick = (tag: string): string | null => {
+      const m = prompt.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
+      return m ? m[1]!.trim() || null : null;
+    };
+    return {
+      taskId: pick('task-id'),
+      toolUseId: pick('tool-use-id'),
+      status: pick('status'),
+      summary: pick('summary'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 按 hook 类型提取该事件的关键信息（完整展示，不只路径）：prompt 原文 /
  * tool 参数与结果首行 / 通知消息 / 子代理结束消息 / 会话标记。
  * 空串 = 该类型无正文（展示方退化为类型 tag + 时间）。事件链与思维导图共用。
@@ -81,8 +140,14 @@ export function summarizeEvent(event: HookEventRow): string {
   const raw = rawOf(event);
   const detail = parseDetail(event.payload);
   switch (event.eventType) {
-    case 'UserPromptSubmit':
+    case 'UserPromptSubmit': {
+      // task-notification（子代理返回）：提取 status/summary，不展示整段 XML
+      const notif = taskNotificationOf(event.payload);
+      if (notif) {
+        return [notif.status, notif.summary].filter(Boolean).join(' · ');
+      }
       return flat(str(raw.prompt) ?? '');
+    }
     case 'PreToolUse':
     case 'PostToolUse': {
       const input = (detail.toolInput ?? {}) as Record<string, unknown>;
