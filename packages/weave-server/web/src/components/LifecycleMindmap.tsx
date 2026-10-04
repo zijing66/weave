@@ -702,6 +702,7 @@ export function LifecycleMindmap({
   sessions,
   onSelect,
   focusGroupId,
+  focusGroup,
 }: {
   projectId: number;
   sessionId: string;
@@ -712,6 +713,11 @@ export function LifecycleMindmap({
    * ——「思维导图与事件链的一个 prompt 放在一起」的合体形态。
    */
   focusGroupId?: string;
+  /**
+   * 单组模式的权威组切片（调用方分组结果直传）：组内事件可能整段早于本组件
+   * 自拉的最新 300 窗口（历史 turn / 会话引导组），按 id 过滤会落空误报空态。
+   */
+  focusGroup?: LifecycleGroup;
 }) {
   const t = useT();
   const [events, setEvents] = useState<HookEventRow[] | null>(null);
@@ -772,6 +778,9 @@ export function LifecycleMindmap({
   }, [load]);
 
   const groups = useMemo(() => {
+    // 单组直传：调用方的组就是权威切片（含翻页加载的更早事件），
+    // 不再按本组件自拉的最新 300 窗口重建——历史组 id 不在窗口内会过滤落空。
+    if (focusGroupId && focusGroup) return [focusGroup];
     if (!events || !dispatches) return [];
     const eventIds = new Set(events.map((e) => e.id));
     // 归本会话的指令 + 由本会话事件触发但尚未投送（sessionId null）的指令。
@@ -787,7 +796,7 @@ export function LifecycleMindmap({
       (g) => g.id !== ORPHAN_GROUP_ID && !(g.preSession && headTruncated),
     );
     return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
-  }, [events, dispatches, sessionId, focusGroupId]);
+  }, [events, dispatches, sessionId, focusGroupId, focusGroup]);
 
   // 会话当前 model：最新一条 SessionStart.raw.model（无则不显示 tag）。
   const sessionModel = useMemo(() => {
@@ -1033,7 +1042,7 @@ export function LifecycleMindmap({
         )}
         onClick={() => setDetailNode(null)}
       >
-        {events === null ? (
+        {events === null && !focusGroup ? (
           <div className="flex h-full items-center justify-center text-xs text-neutral-500">
             {t('hooks.loading')}
           </div>

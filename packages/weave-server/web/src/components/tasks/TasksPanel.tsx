@@ -620,6 +620,7 @@ export function TasksPanel({
                           projectId={projectId}
                           sessionId={selectedId}
                           focusGroupId={g.id}
+                          focusGroup={g}
                         />
                         <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
                           {t('tasks.legendNote')}
