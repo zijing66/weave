@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import {
   api,
-  type LibraryRow,
+  type MarketItem,
   type SkillAsset,
   type McpTemplate,
   type McpServerConfig,
@@ -33,6 +33,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   ChevronsDownUp,
+  GitBranch,
 } from 'lucide-react';
 
 interface LibraryPanelProps {
@@ -68,7 +69,7 @@ export function LibraryPanel({
   assetTab,
   scope,
 }: LibraryPanelProps) {
-  const [libraries, setLibraries] = useState<LibraryRow[]>([]);
+  const [market, setMarket] = useState<MarketItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [skills, setSkills] = useState<SkillAsset[]>([]);
   const [fileTemplates, setFileTemplates] = useState<FileAssetTemplate[]>([]);
@@ -76,12 +77,18 @@ export function LibraryPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** git 导入输入与进行中标记。 */
+  const [gitUrl, setGitUrl] = useState('');
+  const [importingGit, setImportingGit] = useState(false);
   /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
   const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
   const t = useT();
 
+  const refreshMarket = () =>
+    api.listMarket().then(setMarket).catch((e) => setError(String(e)));
+
   useEffect(() => {
-    api.listLibraries().then(setLibraries).catch((e) => setError(String(e)));
+    void refreshMarket();
   }, []);
 
   useEffect(() => {
@@ -104,26 +111,54 @@ export function LibraryPanel({
       .finally(() => setLoading(false));
   }, [selectedId]);
 
-  /** Add every picked folder as a library (invoked by the directory picker
-   * modal; paths arrive pre-validated). */
+  /** 本地目录引入：每个选中目录复制进市场，随后刷新清单。 */
   async function handlePicked(paths: string[]) {
+    let lastId: number | null = null;
     for (const p of paths) {
       try {
-        const lib = await api.addLibrary(p, 'skill');
-        setLibraries((prev) => [lib, ...prev.filter((l) => l.path !== lib.path)]);
-        setSelectedId(lib.id);
+        const item = await api.importMarketDir(p);
+        lastId = item.id;
       } catch (e) {
         setError(String(e));
       }
     }
+    await refreshMarket();
+    if (lastId !== null) setSelectedId(lastId);
   }
 
-  function removeLibrary(id: number) {
+  /** git URL 导入（服务端做协议白名单与 containment）。 */
+  async function handleGitImport() {
+    const url = gitUrl.trim();
+    if (!url || importingGit) return;
+    setImportingGit(true);
+    setError(null);
+    try {
+      const item = await api.importMarketGit(url);
+      setGitUrl('');
+      await refreshMarket();
+      setSelectedId(item.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setImportingGit(false);
+    }
+  }
+
+  /** legacy 外部源显式迁入市场（复制 + 改写相对路径）。 */
+  function migrateLibrary(id: number) {
     api
-      .removeLibrary(id)
+      .migrateLibrary(id)
+      .then((item) => refreshMarket().then(() => setSelectedId(item.id)))
+      .catch((e) => setError(String(e)));
+  }
+
+  /** managed → 删市场副本；legacy → 只摘行（外部目录保留）。 */
+  function removeItem(item: MarketItem) {
+    const req = item.managed ? api.removeMarket(item.id) : api.removeLibrary(item.id);
+    req
       .then(() => {
-        setLibraries((prev) => prev.filter((l) => l.id !== id));
-        if (selectedId === id) setSelectedId(null);
+        if (selectedId === item.id) setSelectedId(null);
+        return refreshMarket();
       })
       .catch((e) => setError(String(e)));
   }
@@ -224,7 +259,7 @@ export function LibraryPanel({
           <span className="ml-auto text-[11px] text-neutral-600">{t('library.followsSelection')}</span>
         </div>
 
-        {/* Add libraries via the in-browser cross-platform directory picker */}
+        {/* 本地目录引入：跨平台目录选择器（复制进市场） */}
         <button
           onClick={() => setPickerOpen(true)}
           className="w-full flex items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700"
@@ -233,6 +268,27 @@ export function LibraryPanel({
           <FolderOpen className="h-3.5 w-3.5" />
           {t('library.addFolders')}
         </button>
+        {/* git 引入（服务端 URL 白名单 + clone 进市场） */}
+        <div className="flex items-center gap-1">
+          <input
+            value={gitUrl}
+            onChange={(e) => setGitUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleGitImport();
+            }}
+            placeholder={t('library.gitPlaceholder')}
+            className="flex-1 min-w-0 bg-neutral-900 rounded px-2 py-1.5 text-xs font-mono"
+          />
+          <button
+            onClick={() => void handleGitImport()}
+            disabled={!gitUrl.trim() || importingGit}
+            className="shrink-0 inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
+            title={t('library.importGitTip')}
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            {importingGit ? t('library.scanning') : t('library.importGit')}
+          </button>
+        </div>
         <DirectoryPickerModal
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
@@ -240,25 +296,51 @@ export function LibraryPanel({
             setPickerOpen(false);
             void handlePicked(paths);
           }}
-          existingPaths={libraries.map((l) => l.path)}
+          existingPaths={market.map((l) => l.path)}
         />
-        {libraries.length > 0 && (
+        {market.length > 0 && (
           <ul className="space-y-0.5">
-            {libraries.map((lib) => (
-              <li key={lib.id} className="flex items-center gap-1">
+            {market.map((item) => (
+              <li key={item.id} className="flex items-center gap-1">
                 <button
-                  onClick={() => setSelectedId(lib.id)}
+                  onClick={() => setSelectedId(item.id)}
                   className={cn(
-                    'flex-1 min-w-0 text-left text-xs truncate rounded px-1.5 py-1',
-                    selectedId === lib.id ? 'bg-neutral-800' : 'hover:bg-neutral-900',
+                    'flex-1 min-w-0 text-left rounded px-1.5 py-1',
+                    selectedId === item.id ? 'bg-neutral-800' : 'hover:bg-neutral-900',
                   )}
-                  title={lib.path}
+                  title={item.path}
                 >
-                  {lib.path}
+                  <span className="flex items-center gap-1 min-w-0">
+                    <span className="text-xs truncate">
+                      {item.managed && item.resourceId ? item.resourceId : item.path}
+                    </span>
+                    <MarketSourceBadge source={item.source} />
+                  </span>
+                  {item.source === 'git' && (item.origin || item.importedAt) && (
+                    <span className="block text-[10px] text-neutral-600 truncate">
+                      {item.origin}
+                      {item.origin && item.importedAt ? ' · ' : ''}
+                      {item.importedAt
+                        ? t('library.importedAt', { date: item.importedAt.slice(0, 10) })
+                        : ''}
+                    </span>
+                  )}
                 </button>
+                {item.legacy && (
+                  <button
+                    onClick={() => migrateLibrary(item.id)}
+                    title={t('library.migrateTip')}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50"
+                  >
+                    {t('library.migrate')}
+                  </button>
+                )}
                 <button
-                  onClick={() => removeLibrary(lib.id)}
-                  className="text-neutral-500 hover:text-red-400"
+                  onClick={() => removeItem(item)}
+                  title={
+                    item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
+                  }
+                  className="text-neutral-500 hover:text-red-400 shrink-0"
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
@@ -512,6 +594,21 @@ function categoryLabel(category: MainCategory, t: TFunc): string {
     case 'tasks':
       return t('catbar.tasks');
   }
+}
+
+/** 市场行来源徽标：git 导入 / 本地目录导入 / legacy 外部源。 */
+function MarketSourceBadge({ source }: { source: MarketItem['source'] }) {
+  const t = useT();
+  const cfg = {
+    git: { label: t('library.badgeGit'), variant: 'command' },
+    dir: { label: t('library.badgeDir'), variant: 'skill' },
+    legacy: { label: t('library.badgeExternal'), variant: 'other' },
+  }[source];
+  return (
+    <Badge variant={cfg.variant} className="shrink-0 px-1.5 text-[10px]">
+      {cfg.label}
+    </Badge>
+  );
 }
 
 /** Collapse-state keys for the template sections. */

@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, cp, rm, access, stat, realpath, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, access, stat, realpath, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
@@ -9,6 +9,7 @@ import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-t
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
+import { linkOrCopy, removeInstalled } from '../market/install-link.js';
 
 /**
  * Global (user-scope) Claude Code configuration.
@@ -203,7 +204,8 @@ export async function readGlobalSkills(): Promise<string[]> {
 }
 
 /** Install a skill directory to the agent's global skills root
- * (`~/.claude/skills/<name>/` or `~/.agents/skills/<name>/`). */
+ * (`~/.claude/skills/<name>/` or `~/.agents/skills/<name>/`).
+ * 批 9：symlink 优先（指向市场/原目录），EPERM 等回退复制（install-link 单点）。 */
 export async function installGlobalSkill(
   sourceDir: string,
   name: string,
@@ -214,19 +216,18 @@ export async function installGlobalSkill(
   if (await pathExists(target)) {
     throw new Error(`Global ${agent} skill "${name}" already exists`);
   }
-  await cp(sourceDir, target, { recursive: true });
+  await linkOrCopy(sourceDir, target);
   return target;
 }
 
-/** Remove a global skill directory from the agent's skills root. */
+/** Remove a global skill directory from the agent's skills root.
+ * 批 9：先 lstat——链接只删链接（防删穿市场源），复制体才递归删。 */
 export async function uninstallGlobalSkill(
   name: string,
   agent: Harness = 'claude',
 ): Promise<void> {
   const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
-  const target = path.join(root, name);
-  if (!(await pathExists(target))) return;
-  await rm(target, { recursive: true, force: true });
+  await removeInstalled(path.join(root, name));
 }
 
 // --- global skill groups (personal + plugin, Claude + Codex) ---

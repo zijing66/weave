@@ -283,6 +283,27 @@ export interface LibraryRow {
   addedAt: string;
 }
 
+/** 资源市场清单行（GET /market）：libraries 行 + resolve 后有效路径 + 清单元数据。 */
+export interface MarketItem {
+  id: number;
+  kind: LibraryRow['kind'];
+  addedAt: string;
+  /** resolve 后的有效绝对路径。 */
+  path: string;
+  /** 相对 dataDir 的 posix 形（外部源为 null）。 */
+  relPath: string | null;
+  /** 市场目录名（managed 资源）。 */
+  resourceId: string | null;
+  /** 是否收纳在 `<dataDir>/market/` 内。 */
+  managed: boolean;
+  /** 无清单 → legacy 外部/未收纳源（显示「迁入市场」）。 */
+  legacy: boolean;
+  source: 'git' | 'dir' | 'legacy';
+  origin: string | null;
+  importedAt: string | null;
+  commit: string | null;
+}
+
 /** Browse starting point for the directory picker (home, drives, …). */
 export interface BrowseRoot {
   path: string;
@@ -804,6 +825,30 @@ export const api = {
     apiFetch<{ ok: boolean }>(`/libraries/${id}`, { method: 'DELETE' }).then(
       () => undefined,
     ),
+
+  // --- 资源市场（批 9） ---
+  listMarket: (): Promise<MarketItem[]> =>
+    apiFetch<{ items: MarketItem[] }>('/market').then((r) => r.items),
+  /** 本地目录引入（复制进 `<dataDir>/market/`）。 */
+  importMarketDir: (path: string): Promise<MarketItem> =>
+    apiFetch<{ item: MarketItem }>('/market', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'dir', path }),
+    }).then((r) => r.item),
+  /** git URL 导入（clone 进市场）。 */
+  importMarketGit: (url: string): Promise<MarketItem> =>
+    apiFetch<{ item: MarketItem }>('/market', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'git', url }),
+    }).then((r) => r.item),
+  /** 删除市场资源（只删市场目录与行，装面副本不级联）。 */
+  removeMarket: (id: number): Promise<void> =>
+    apiFetch<{ ok: boolean }>(`/market/${id}`, { method: 'DELETE' }).then(() => undefined),
+  /** legacy 外部源显式迁入市场（复制 + 改写为相对路径）。 */
+  migrateLibrary: (id: number): Promise<MarketItem> =>
+    apiFetch<{ item: MarketItem }>(`/libraries/${id}/market-import`, {
+      method: 'POST',
+    }).then((r) => r.item),
   /** Cross-platform browse roots for the directory picker modal. */
   listFsRoots: (): Promise<BrowseRoot[]> =>
     apiFetch<{ roots: BrowseRoot[] }>('/fs/roots').then((r) => r.roots),
