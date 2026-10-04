@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Background,
   Controls,
@@ -27,7 +28,6 @@ import {
 import type { Harness } from '@weave/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -127,7 +127,6 @@ type SourceData = { event: string };
 type RuleData = {
   rule: HookRule;
   scopeLabel: string;
-  onToggle: (id: string, enabled: boolean) => void;
 };
 type HandlerData = { handlerType: HandlerConfig['type']; count: number };
 
@@ -165,11 +164,6 @@ function RuleNode({ data }: NodeProps<RuleFlowNode>) {
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
           {rule.name}
         </span>
-        <Switch
-          checked={rule.enabled}
-          title={t('hooks.toggleTip', { name: rule.name })}
-          onChange={(v) => data.onToggle(rule.id, v)}
-        />
       </div>
       <div className="mt-1.5 flex items-center gap-1.5">
         <Badge variant="command" className="gap-1">
@@ -216,15 +210,10 @@ const nodeTypes = {
 const COL_X = { source: 0, rule: 320, handler: 640 };
 const ROW_Y = 100;
 
-interface GraphCallbacks {
-  onToggle: (id: string, enabled: boolean) => void;
-}
-
 function buildGraph(
   rules: HookRule[],
   projectById: Map<number, string>,
   t: ReturnType<typeof useT>,
-  cb: GraphCallbacks,
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodes: FlowNode[] = [];
   const edges: FlowEdge[] = [];
@@ -254,7 +243,7 @@ function buildGraph(
       id: `rule:${rule.id}`,
       type: 'rule',
       position: { x: COL_X.rule, y: i * ROW_Y },
-      data: { rule, scopeLabel, onToggle: cb.onToggle },
+      data: { rule, scopeLabel },
     });
     const src = normalizeHookRuleSource(rule.source);
     if (src.kind === 'hook-event') {
@@ -407,19 +396,6 @@ export function HooksPanel({
   }, [refreshRules]);
 
   // ---- 规则操作 ----
-  const toggleRule = useCallback(
-    async (id: string, enabled: boolean) => {
-      try {
-        await api.toggleHookRule(id, enabled);
-        await refreshRules();
-        notifyRulesChanged();
-      } catch (e) {
-        setError(errMsg(e));
-      }
-    },
-    [refreshRules],
-  );
-
   const deleteRule = useCallback(
     async (id: string) => {
       // 两段式确认：第一次点击进入确认态，再次点击才删除。
@@ -451,7 +427,6 @@ export function HooksPanel({
       rules.filter((r) => r.enabled),
       projectById,
       t,
-      { onToggle: toggleRule },
     );
     // 保留用户拖出来的节点位置，只更新数据 / 集合。
     setNodes((prev) => {
@@ -462,32 +437,17 @@ export function HooksPanel({
       });
     });
     setEdges(built.edges);
-  }, [rules, projectById, t, toggleRule, setNodes]);
+  }, [rules, projectById, t, setNodes]);
 
   // ---- 表单 ----
-  const formRef = useRef<HTMLDivElement>(null);
-  /** 仅在打开表单时递增 — 表单内容变化不重触滚动。 */
-  const [formOpenTick, setFormOpenTick] = useState(0);
-
   const openCreate = (): void => {
     setFormError(null);
     setForm({ editingId: null, state: emptyForm(mode === 'project' ? projectId : null) });
-    setFormOpenTick((n) => n + 1);
   };
   const openEdit = (rule: HookRule): void => {
     setFormError(null);
     setForm({ editingId: rule.id, state: formFromRule(rule) });
-    setFormOpenTick((n) => n + 1);
   };
-
-  // 表单挂在区块最底部，打开后滚进视口；关闭时不回滚滚动位置。
-  useEffect(() => {
-    if (formOpenTick === 0) return;
-    const el = formRef.current;
-    if (!el) return;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
-  }, [formOpenTick]);
 
   const closeForm = (): void => {
     setForm(null);
@@ -711,268 +671,273 @@ export function HooksPanel({
         </CardContent>
       </Card>
 
-      {/* 规则表单（新建 / 行内编辑共用） */}
-      {form && (
-        <Card ref={formRef}>
-          <CardHeader className="items-center justify-between">
-            <CardTitle>
-              {form.editingId ? t('hooks.form.editTitle') : t('hooks.form.createTitle')}
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              {!form.editingId && (
+      {/* 规则表单（新建 / 行内编辑共用）— modal；蒙版不绑 onClick：点击不关闭，防编辑丢失 */}
+      {form &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-white/[0.08] bg-neutral-900 shadow-mac">
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold text-neutral-200">
+                    {form.editingId ? t('hooks.form.editTitle') : t('hooks.form.createTitle')}
+                  </h3>
+                  {!form.editingId && (
+                    <button
+                      type="button"
+                      onClick={applyQuickTemplate}
+                      title={t('hooks.quickTemplateTip')}
+                      className="rounded-md border border-white/[0.08] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                    >
+                      {t('hooks.quickTemplate')}
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
-                  onClick={applyQuickTemplate}
-                  title={t('hooks.quickTemplateTip')}
-                  className="rounded-md border border-white/[0.08] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                  onClick={closeForm}
+                  title={t('hooks.cancel')}
+                  className="rounded-md p-1 text-neutral-500 transition-colors hover:text-neutral-200"
                 >
-                  {t('hooks.quickTemplate')}
+                  <X className="h-3.5 w-3.5" />
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={closeForm}
-                title={t('hooks.cancel')}
-                className="rounded-md p-1 text-neutral-500 transition-colors hover:text-neutral-200"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {formError && <p className="text-xs text-red-400">{formError}</p>}
+              </div>
+              <div className="space-y-3 overflow-y-auto px-4 py-3">
+                {formError && <p className="text-xs text-red-400">{formError}</p>}
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.name')}</span>
-                <input
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.name}
-                  onChange={(e) => patchForm({ name: e.target.value })}
-                  placeholder={t('hooks.namePlaceholder')}
-                />
-              </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.name')}</span>
+                    <input
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.name}
+                      onChange={(e) => patchForm({ name: e.target.value })}
+                      placeholder={t('hooks.namePlaceholder')}
+                    />
+                  </label>
 
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.project')}</span>
-                <select
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.projectId === null ? '' : String(form.state.projectId)}
-                  onChange={(e) =>
-                    patchForm({ projectId: e.target.value === '' ? null : Number(e.target.value) })
-                  }
-                >
-                  <option value="">{t('hooks.projectGlobal')}</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={String(p.id)}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
-                <select
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.sourceKind}
-                  onChange={(e) =>
-                    patchForm({ sourceKind: e.target.value as RuleFormState['sourceKind'] })
-                  }
-                >
-                  {SOURCE_KINDS.map((kind) => (
-                    <option key={kind} value={kind}>
-                      {kind === 'hook-event'
-                        ? t('hooks.sourceKind.hookEvent')
-                        : t('hooks.sourceKind.legacy')}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {form.state.sourceKind === 'hook-event' && (
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
-                  <select
-                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={form.state.harness}
-                    onChange={(e) =>
-                      patchForm({ harness: e.target.value as Harness | 'any' })
-                    }
-                  >
-                    {HARNESS_OPTIONS.map((h) => (
-                      <option key={h} value={h}>
-                        {t(`hooks.harness.${h}`)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
-                <select
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.event}
-                  onChange={(e) => patchForm({ event: e.target.value })}
-                >
-                  {(form.state.handlerType === 'inject'
-                    ? INJECTABLE_HOOK_EVENTS
-                    : CLAUDE_HOOK_EVENTS
-                  ).map((ev) => (
-                    <option key={ev} value={ev}>
-                      {ev}
-                    </option>
-                  ))}
-                </select>
-                {form.state.handlerType === 'inject' && (
-                  <span className="block text-[10px] text-amber-400/80">
-                    {t('hooks.eventInjectHint', { events: INJECTABLE_HOOK_EVENTS.join(', ') })}
-                  </span>
-                )}
-              </label>
-
-              <div className="space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.handler')}</span>
-                <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-white/[0.06] bg-neutral-900/60 p-0.5">
-                  {HANDLER_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      title={t(HANDLER_TIP_KEYS[type])}
-                      onClick={() => setHandlerType(type)}
-                      className={cn(
-                        'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150',
-                        form.state.handlerType === type
-                          ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
-                          : 'text-neutral-500 hover:text-neutral-300',
-                      )}
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.project')}</span>
+                    <select
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.projectId === null ? '' : String(form.state.projectId)}
+                      onChange={(e) =>
+                        patchForm({ projectId: e.target.value === '' ? null : Number(e.target.value) })
+                      }
                     >
-                      {t(HANDLER_LABEL_KEYS[type])}
-                    </button>
-                  ))}
+                      <option value="">{t('hooks.projectGlobal')}</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
+                    <select
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.sourceKind}
+                      onChange={(e) =>
+                        patchForm({ sourceKind: e.target.value as RuleFormState['sourceKind'] })
+                      }
+                    >
+                      {SOURCE_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {kind === 'hook-event'
+                            ? t('hooks.sourceKind.hookEvent')
+                            : t('hooks.sourceKind.legacy')}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {form.state.sourceKind === 'hook-event' && (
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
+                      <select
+                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={form.state.harness}
+                        onChange={(e) =>
+                          patchForm({ harness: e.target.value as Harness | 'any' })
+                        }
+                      >
+                        {HARNESS_OPTIONS.map((h) => (
+                          <option key={h} value={h}>
+                            {t(`hooks.harness.${h}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
+                    <select
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.event}
+                      onChange={(e) => patchForm({ event: e.target.value })}
+                    >
+                      {(form.state.handlerType === 'inject'
+                        ? INJECTABLE_HOOK_EVENTS
+                        : CLAUDE_HOOK_EVENTS
+                      ).map((ev) => (
+                        <option key={ev} value={ev}>
+                          {ev}
+                        </option>
+                      ))}
+                    </select>
+                    {form.state.handlerType === 'inject' && (
+                      <span className="block text-[10px] text-amber-400/80">
+                        {t('hooks.eventInjectHint', { events: INJECTABLE_HOOK_EVENTS.join(', ') })}
+                      </span>
+                    )}
+                  </label>
+
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.handler')}</span>
+                    <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-white/[0.06] bg-neutral-900/60 p-0.5">
+                      {HANDLER_TYPES.map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          title={t(HANDLER_TIP_KEYS[type])}
+                          onClick={() => setHandlerType(type)}
+                          className={cn(
+                            'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150',
+                            form.state.handlerType === type
+                              ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
+                              : 'text-neutral-500 hover:text-neutral-300',
+                          )}
+                        >
+                          {t(HANDLER_LABEL_KEYS[type])}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {form.state.handlerType === 'webhook' && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-neutral-500">{t('hooks.field.url')}</span>
+                      <input
+                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={form.state.url}
+                        onChange={(e) => patchForm({ url: e.target.value })}
+                        placeholder={t('hooks.urlPlaceholder')}
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-neutral-500">{t('hooks.field.secret')}</span>
+                      <input
+                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={form.state.secret}
+                        onChange={(e) => patchForm({ secret: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {form.state.handlerType === 'plugin' && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-neutral-500">{t('hooks.field.pluginId')}</span>
+                      <input
+                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={form.state.pluginId}
+                        onChange={(e) => patchForm({ pluginId: e.target.value })}
+                        placeholder={t('hooks.pluginIdPlaceholder')}
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-[11px] text-neutral-500">
+                        {t('hooks.field.pluginHandlerType')}
+                      </span>
+                      <input
+                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={form.state.pluginHandlerType}
+                        onChange={(e) => patchForm({ pluginHandlerType: e.target.value })}
+                        placeholder={t('hooks.pluginHandlerPlaceholder')}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {(form.state.handlerType === 'inject' || form.state.handlerType === 'manual') && (
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.template')}</span>
+                    <textarea
+                      rows={3}
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.template}
+                      onChange={(e) => patchForm({ template: e.target.value })}
+                      placeholder={t('hooks.templatePlaceholder')}
+                    />
+                  </label>
+                )}
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.toolNames')}</span>
+                    <input
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.toolNames}
+                      onChange={(e) => patchForm({ toolNames: e.target.value })}
+                      placeholder={t('hooks.toolNamesPlaceholder')}
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-neutral-500">{t('hooks.field.pathGlobs')}</span>
+                    <input
+                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={form.state.pathGlobs}
+                      onChange={(e) => patchForm({ pathGlobs: e.target.value })}
+                      placeholder={t('hooks.pathGlobsPlaceholder')}
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <CheckField
+                    label={t('hooks.field.crossProjectOnly')}
+                    checked={form.state.crossProjectOnly}
+                    onChange={(v) => patchForm({ crossProjectOnly: v })}
+                  />
+                  <CheckField
+                    label={t('hooks.field.record')}
+                    checked={form.state.record}
+                    onChange={(v) => patchForm({ record: v })}
+                  />
+                  <CheckField
+                    label={t('hooks.field.enabled')}
+                    checked={form.state.enabled}
+                    onChange={(v) => patchForm({ enabled: v })}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void submitForm()}
+                    className="rounded-lg bg-blue-600/80 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+                  >
+                    {t('hooks.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeForm}
+                    className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800"
+                  >
+                    {t('hooks.cancel')}
+                  </button>
                 </div>
               </div>
             </div>
-
-            {form.state.handlerType === 'webhook' && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-neutral-500">{t('hooks.field.url')}</span>
-                  <input
-                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={form.state.url}
-                    onChange={(e) => patchForm({ url: e.target.value })}
-                    placeholder={t('hooks.urlPlaceholder')}
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-neutral-500">{t('hooks.field.secret')}</span>
-                  <input
-                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={form.state.secret}
-                    onChange={(e) => patchForm({ secret: e.target.value })}
-                  />
-                </label>
-              </div>
-            )}
-
-            {form.state.handlerType === 'plugin' && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-neutral-500">{t('hooks.field.pluginId')}</span>
-                  <input
-                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={form.state.pluginId}
-                    onChange={(e) => patchForm({ pluginId: e.target.value })}
-                    placeholder={t('hooks.pluginIdPlaceholder')}
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-neutral-500">
-                    {t('hooks.field.pluginHandlerType')}
-                  </span>
-                  <input
-                    className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={form.state.pluginHandlerType}
-                    onChange={(e) => patchForm({ pluginHandlerType: e.target.value })}
-                    placeholder={t('hooks.pluginHandlerPlaceholder')}
-                  />
-                </label>
-              </div>
-            )}
-
-            {(form.state.handlerType === 'inject' || form.state.handlerType === 'manual') && (
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.template')}</span>
-                <textarea
-                  rows={3}
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.template}
-                  onChange={(e) => patchForm({ template: e.target.value })}
-                  placeholder={t('hooks.templatePlaceholder')}
-                />
-              </label>
-            )}
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.toolNames')}</span>
-                <input
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.toolNames}
-                  onChange={(e) => patchForm({ toolNames: e.target.value })}
-                  placeholder={t('hooks.toolNamesPlaceholder')}
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-[11px] text-neutral-500">{t('hooks.field.pathGlobs')}</span>
-                <input
-                  className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={form.state.pathGlobs}
-                  onChange={(e) => patchForm({ pathGlobs: e.target.value })}
-                  placeholder={t('hooks.pathGlobsPlaceholder')}
-                />
-              </label>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <CheckField
-                label={t('hooks.field.crossProjectOnly')}
-                checked={form.state.crossProjectOnly}
-                onChange={(v) => patchForm({ crossProjectOnly: v })}
-              />
-              <CheckField
-                label={t('hooks.field.record')}
-                checked={form.state.record}
-                onChange={(v) => patchForm({ record: v })}
-              />
-              <CheckField
-                label={t('hooks.field.enabled')}
-                checked={form.state.enabled}
-                onChange={(v) => patchForm({ enabled: v })}
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void submitForm()}
-                className="rounded-lg bg-blue-600/80 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-              >
-                {t('hooks.save')}
-              </button>
-              <button
-                type="button"
-                onClick={closeForm}
-                className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800"
-              >
-                {t('hooks.cancel')}
-              </button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* 规则列表 */}
       <Card>
@@ -1009,11 +974,6 @@ export function HooksPanel({
                       {rule.name}
                     </span>
                     <Badge variant="helper">{eventLabel}</Badge>
-                    <Switch
-                      checked={rule.enabled}
-                      title={t('hooks.toggleTip', { name: rule.name })}
-                      onChange={(v) => void toggleRule(rule.id, v)}
-                    />
                     <button
                       type="button"
                       title={t('hooks.edit')}
