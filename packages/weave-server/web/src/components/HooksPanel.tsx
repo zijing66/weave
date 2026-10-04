@@ -32,7 +32,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
-import { ToolkitSection } from '@/components/ToolkitSection';
 import { getDispatchDrag, setDispatchDrag } from '@/lib/dnd';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -62,9 +61,11 @@ import {
 } from 'lucide-react';
 
 /**
- * Weave 规则面板：链路图（事件源 → 规则 → 处理器 + 会话列 + 指令列）+ 规则列表。
- * 会话列是指令投送目标（拖拽指令节点 / 节点上选择会话执行），指令列展示
- * dispatch（待指派簇在列顶）。实时高亮与指令刷新挂在 App 转发的 `weave:hook` window 事件上。
+ * Weave 规则面板：链路图（事件源 → 规则 → 处理器 + 指令管理列）+ 规则列表。
+ * 全局形态 = 纯拓扑（源→规则→处理器）+ 指令管理，不画会话；项目形态额外带
+ * 本项目会话列（指令投送目标，拖拽/节点选择会话执行）。指令不与会话连线——
+ * 会话关联的可视化最终体现在任务视图的图中。实时高亮与指令刷新挂在 App
+ * 转发的 `weave:hook` window 事件上。
  * 双形态：全局 = 插件管理（安装/卸载 + 默认启用开关）；项目 = 项目启用列表（effective）。
  */
 
@@ -501,6 +502,8 @@ function buildGraph(
   dispatches: HookDispatch[],
   projectById: Map<number, string>,
   t: ReturnType<typeof useT>,
+  /** 全局形态不画会话列（纯拓扑）；项目形态画本项目会话作投送目标。 */
+  showSessions: boolean,
   cb: GraphCallbacks,
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodes: FlowNode[] = [];
@@ -565,56 +568,46 @@ function buildGraph(
     },
   );
 
-  // 会话列：独立展示（指令投送目标，不连边）。
-  const drawnSessions = sessions.slice(0, MAX_SESSION_NODES);
-  if (sessions.length === 0) {
-    nodes.push({
-      id: 'sessions:empty',
-      type: 'ph',
-      position: { x: COL_X.session, y: 0 },
-      data: { label: t('hooks.sessionsEmpty') },
-    });
-  } else {
-    drawnSessions.forEach((s, i) => {
+  // 会话列：仅项目形态，独立展示（指令投送目标，不连边）。
+  const drawnSessions = showSessions ? sessions.slice(0, MAX_SESSION_NODES) : [];
+  if (showSessions) {
+    if (sessions.length === 0) {
       nodes.push({
-        id: `sess:${s.sessionId}`,
-        type: 'session',
-        position: { x: COL_X.session, y: i * ROW_Y },
-        data: {
-          sessionId: s.sessionId,
-          label: sessionLabel(s),
-          titleValue: s.title ?? '',
-          pendingTitle: s.pendingTitle,
-          projectLabel:
-            s.projectId === null
-              ? null
-              : (projectById.get(s.projectId) ?? `#${s.projectId}`),
-          onRename: cb.onRename,
-          onDropPrompt: cb.onDropPrompt,
-        },
+        id: 'sessions:empty',
+        type: 'ph',
+        position: { x: COL_X.session, y: 0 },
+        data: { label: t('hooks.sessionsEmpty') },
       });
-    });
+    } else {
+      drawnSessions.forEach((s, i) => {
+        nodes.push({
+          id: `sess:${s.sessionId}`,
+          type: 'session',
+          position: { x: COL_X.session, y: i * ROW_Y },
+          data: {
+            sessionId: s.sessionId,
+            label: sessionLabel(s),
+            titleValue: s.title ?? '',
+            pendingTitle: s.pendingTitle,
+            projectLabel:
+              s.projectId === null
+                ? null
+                : (projectById.get(s.projectId) ?? `#${s.projectId}`),
+            onRename: cb.onRename,
+            onDropPrompt: cb.onDropPrompt,
+          },
+        });
+      });
+    }
   }
 
-  // 指令列：待指派（无 sessionId / 目标会话未画出）在列顶成簇，其余对齐目标
-  // 会话行；同一会话多条时向下顺延占位，不与会话列约束耦合。
-  const sessionIndex = new Map(drawnSessions.map((s, i) => [s.sessionId, i]));
-  const ruleNameById = new Map(rules.map((r) => [r.id, r.name]));
+  // 指令列：按时间序平铺的管理列表——不对齐会话、不连会话边（会话关联的
+  // 可视化在任务视图）；执行仍经节点内「选择会话 ▶」或拖拽到会话节点。
   const sessionOptions = drawnSessions.map((s) => ({
     sessionId: s.sessionId,
     label: sessionLabel(s),
   }));
-  const unassigned: HookDispatch[] = [];
-  const bySession = new Map<string, HookDispatch[]>();
-  for (const d of dispatches) {
-    if (d.sessionId && sessionIndex.has(d.sessionId)) {
-      const list = bySession.get(d.sessionId) ?? [];
-      list.push(d);
-      bySession.set(d.sessionId, list);
-    } else {
-      unassigned.push(d);
-    }
-  }
+  const ruleNameById = new Map(rules.map((r) => [r.id, r.name]));
 
   const pushDispatch = (d: HookDispatch, y: number): void => {
     nodes.push({
@@ -639,30 +632,7 @@ function buildGraph(
       data: { label: t('hooks.poolEmpty') },
     });
   } else {
-    if (unassigned.length > 0) {
-      nodes.push({
-        id: 'dispatch:unassigned',
-        type: 'ph',
-        position: { x: COL_X.dispatch, y: -(unassigned.length + 1) * ROW_Y },
-        data: { label: t('hooks.poolTitle') },
-      });
-      unassigned.forEach((d, i) => pushDispatch(d, -(unassigned.length - i) * ROW_Y));
-    }
-    let slot = 0;
-    drawnSessions.forEach((s, i) => {
-      const list = bySession.get(s.sessionId);
-      if (!list?.length) return;
-      slot = Math.max(slot, i);
-      for (const d of list) {
-        pushDispatch(d, slot * ROW_Y);
-        slot += 1;
-        edges.push({
-          id: `e:dispatch:${d.id}->sess:${s.sessionId}`,
-          source: `dispatch:${d.id}`,
-          target: `sess:${s.sessionId}`,
-        });
-      }
-    });
+    dispatches.forEach((d, i) => pushDispatch(d, i * ROW_Y));
   }
 
   return { nodes, edges };
@@ -795,12 +765,18 @@ export function HooksPanel({
   }, []);
 
   const refreshSessions = useCallback(async () => {
+    // 全局形态画布没有会话列，不必拉取；项目形态只拉本项目会话，
+    // 其他项目的会话不得混入。
+    if (mode !== 'project') {
+      setSessions([]);
+      return;
+    }
     try {
-      setSessions(await api.listSessions());
+      setSessions(await api.listSessions(projectId));
     } catch (e) {
       setError(errMsg(e));
     }
-  }, []);
+  }, [mode, projectId]);
 
   useEffect(() => {
     void refreshRules();
@@ -915,7 +891,11 @@ export function HooksPanel({
 
   useEffect(() => {
     if (!rules || !sessions || !dispatches) return;
-    const built = buildGraph(rules, sessions, dispatches, projectById, t, {
+    // 项目画布只展示作用于本项目的指令：dispatch 按当前规则集（本项目 +
+    // 全局规则）过滤，其他项目的指令不混入。
+    const ruleIds = new Set(rules.map((r) => r.id));
+    const scoped = dispatches.filter((d) => ruleIds.has(d.ruleId));
+    const built = buildGraph(rules, sessions, scoped, projectById, t, mode === 'project', {
       onToggle: toggleRule,
       onRename: renameSession,
       onDropPrompt: askRun,
@@ -929,7 +909,7 @@ export function HooksPanel({
       });
     });
     setBaseEdges(built.edges);
-  }, [rules, sessions, dispatches, projectById, t, toggleRule, renameSession, askRun, setNodes]);
+  }, [rules, sessions, dispatches, projectById, t, mode, toggleRule, renameSession, askRun, setNodes]);
 
   // SSE 高亮覆盖在静态图之上：触发规则节点边框闪烁 500ms、新指令节点入场波纹 900ms。
   const { viewNodes, edges } = useMemo<{ viewNodes: FlowNode[]; edges: FlowEdge[] }>(() => {
@@ -1103,7 +1083,10 @@ export function HooksPanel({
   };
 
   // ---- 渲染 ----
-  const pendingCount = dispatches?.filter((d) => d.sessionId === null).length ?? 0;
+  // 待处理计数与画布同一口径：只算作用于当前规则集的指令。
+  const scopedDispatches =
+    dispatches && rules ? dispatches.filter((d) => rules.some((r) => r.id === d.ruleId)) : dispatches;
+  const pendingCount = scopedDispatches?.filter((d) => d.sessionId === null).length ?? 0;
   return (
     <div className="space-y-3">
       {error && (
@@ -1150,18 +1133,9 @@ export function HooksPanel({
         </CardContent>
       </Card>
 
-      {/* 工具箱区段（批 10：内置/外置工具包的项目级开关） */}
-      <Card>
-        <CardHeader className="flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-sm">{t('toolkit.title')}</CardTitle>
-          <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          <ToolkitSection projectId={projectId} />
-        </CardContent>
-      </Card>
+      {/* 工具箱归文件资产 ▸ Plugins（批 A 重组：Weave 分类只留 weave 插件） */}
 
-      {/* 链路图：事件源 → 规则 → 处理器 + 会话列 + 指令列 */}
+      {/* 链路图：事件源 → 规则 → 处理器 + 指令管理列（项目态另带会话列） */}
       <Card>
         <CardHeader className="flex-col gap-1.5">
           <div className="flex w-full items-center gap-2">
@@ -1182,7 +1156,9 @@ export function HooksPanel({
             <LegendChip icon={Zap} tone="text-amber-400" label={t('hooks.colSource')} />
             <LegendChip icon={Workflow} tone="text-blue-400" label={t('hooks.colRule')} />
             <LegendChip icon={ScrollText} tone="text-purple-300" label={t('hooks.colHandler')} />
-            <LegendChip icon={Inbox} tone="text-cyan-400" label={t('hooks.colSession')} />
+            {mode === 'project' && (
+              <LegendChip icon={Inbox} tone="text-cyan-400" label={t('hooks.colSession')} />
+            )}
             <LegendChip icon={Send} tone="text-emerald-400" label={t('hooks.colDispatch')} />
           </div>
         </CardHeader>
