@@ -693,10 +693,18 @@ export const api = {
   /** Machine-level harness files (~/.claude, ~/.codex) for the global tree. */
   listGlobalFileAssets: (): Promise<AssetEntry[]> =>
     apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
-  /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。 */
-  listSessionHooks: (projectId: number, sessionId: string, limit = 300): Promise<HookEventRow[]> =>
+  /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。
+   *  `beforeId` 游标翻页：只取比游更早的事件（组头「加载更早」向前翻）。 */
+  listSessionHooks: (
+    projectId: number,
+    sessionId: string,
+    limit = 300,
+    beforeId?: number,
+  ): Promise<HookEventRow[]> =>
     apiFetch<{ events: HookEventRow[] }>(
-      `/projects/${projectId}/hooks?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}`,
+      `/projects/${projectId}/hooks?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}${
+        beforeId === undefined ? '' : `&beforeId=${beforeId}`
+      }`,
     ).then((r) => r.events),
 
   // --- hooks rules / dispatches / sessions ---

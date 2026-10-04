@@ -62,6 +62,8 @@ export function TasksPanel({
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
   const [groupWindow, setGroupWindow] = useState(10);
+  /** 事件游标已翻到最早（最新窗口不满一条完整批，或更早批次拉空）。 */
+  const [olderExhausted, setOlderExhausted] = useState(false);
   const scrollThrottle = useRef<number | null>(null);
 
   const refreshSessions = useCallback(async () => {
@@ -85,7 +87,10 @@ export function TasksPanel({
   const refreshEvents = useCallback(
     async (sessionId: string) => {
       try {
-        setEvents(await api.listSessionHooks(projectId, sessionId));
+        const list = await api.listSessionHooks(projectId, sessionId);
+        setEvents(list);
+        // 最新窗口不满一整批 = 已是该会话最早的事件，无需再翻页。
+        setOlderExhausted(list.length < 300);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -285,15 +290,47 @@ export function TasksPanel({
     }
   };
 
-  // 组头列表滚动窗口（折叠条级）：滚动到顶自动加载更早 10 条，600ms 节流。
+  // 组头列表滚动窗口（折叠条级）：滚动到顶自动加载——先扩渲染窗口（10 条/批），
+  // 组已全渲染且事件游标还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
   const shownGroups = groups.slice(-groupWindow);
   const olderRemaining = groups.length - shownGroups.length;
+  const canLoadOlderEvents = !olderExhausted && events.length > 0;
+  const hasOlder = olderRemaining > 0 || canLoadOlderEvents;
+  const loadOlderGroups = async (): Promise<void> => {
+    if (olderRemaining > 0) {
+      setGroupWindow((w) => w + 10);
+      return;
+    }
+    if (!canLoadOlderEvents || !selectedId) return;
+    try {
+      const older = await api.listSessionHooks(projectId, selectedId, 300, events[0]?.id);
+      if (older.length === 0) {
+        setOlderExhausted(true);
+        return;
+      }
+      // 去重：旧版 daemon 忽略 beforeId 返回重复窗口时按 id 收敛（幂等）。
+      const seen = new Set(events.map((x) => x.id));
+      const fresh = older.filter((x) => !seen.has(x.id));
+      if (fresh.length === 0) {
+        setOlderExhausted(true);
+        return;
+      }
+      if (older.length < 300) setOlderExhausted(true);
+      setEvents((prev) => {
+        const ids = new Set(prev.map((x) => x.id));
+        return [...older.filter((x) => !ids.has(x.id)), ...prev];
+      });
+      setGroupWindow((w) => w + 10);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const onListScroll = (e: React.UIEvent<HTMLDivElement>): void => {
-    if (olderRemaining <= 0 || e.currentTarget.scrollTop > 8) return;
+    if (!hasOlder || e.currentTarget.scrollTop > 8) return;
     const now = Date.now();
     if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
     scrollThrottle.current = now;
-    setGroupWindow((w) => w + 10);
+    void loadOlderGroups();
   };
 
   const onDropDispatch = (dispatchId: number, sessionId: string): void => {
@@ -426,17 +463,19 @@ export function TasksPanel({
             onScroll={onListScroll}
           >
             {/* 顶部渐变遮罩：更早 prompt 未加载的 affordance——向上滚动自动加载，
-                也可点击按钮增量/全量加载（默认只展示最新 10 条折叠条） */}
-            {olderRemaining > 0 && (
+                也可点击按钮（组窗口余量 → 扩窗；否则 beforeId 拉更早事件） */}
+            {hasOlder && (
               <div className="pointer-events-none sticky top-0 z-10 -mx-1 bg-gradient-to-b from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-5 pt-1 text-center">
                 <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
                 <span className="pointer-events-auto mt-1 inline-flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setGroupWindow((w) => w + 10)}
+                    onClick={() => void loadOlderGroups()}
                     className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
                   >
-                    {t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })}
+                    {olderRemaining > 0
+                      ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
+                      : t('tasks.loadOlderEvents')}
                   </button>
                   <button
                     type="button"
