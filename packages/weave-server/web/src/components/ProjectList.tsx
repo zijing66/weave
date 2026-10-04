@@ -154,9 +154,7 @@ export function ProjectList({
                       : 'text-neutral-500',
                   )}
                 />
-                {/* flex-1 + hover 时右侧让位（约 4 按钮簇宽），文本截断不与
-                    absolute 快捷簇重叠；padding 过渡与徽标淡出同拍防跳动 */}
-                <span className="min-w-0 flex-1 transition-[padding] duration-150 group-hover:pr-24">
+                <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm" title={p.name}>
                     {p.name}
                   </span>
@@ -164,15 +162,14 @@ export function ProjectList({
                     {p.path}
                   </span>
                 </span>
-                {/* 徽标淡出把右端位置让给快捷按钮簇（尺寸不变，防 hover 跳动）；
-                    淡出后禁指针事件，避免隐形徽标的 tooltip 与按钮 tooltip 打架 */}
-                <span className="ml-auto flex shrink-0 transition-opacity duration-150 group-hover:opacity-0 group-hover:pointer-events-none">
+                <span className="ml-auto flex shrink-0">
                   <HealthBadge projectId={p.id} />
                 </span>
               </button>
-              {/* 快捷操作簇（批 8）：hover 显现、挂健康徽标位。簇是行按钮的兄弟节点
-                  而非后代，点击本就不会冒泡进 onSelect —— stopPropagation 是双保险。 */}
-              <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              {/* 快捷操作簇（批 8）：独立一行换行展示，不与文字同行重叠。
+                  始终占位（opacity 控显隐）——行高恒定，hover 无跳动。簇是行
+                  按钮的兄弟节点，stopPropagation 在 QuickButton 内双保险。 */}
+              <div className="flex items-center gap-0.5 px-2 pb-1 pl-6 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
                 <QuickButton
                   title={autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}
                   pressed={autoSync}
