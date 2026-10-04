@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type ToolkitPack } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -179,9 +180,7 @@ export function ToolkitSection({
             title={t('toolkit.claudeGroupHint')}
           >
             {t('toolkit.groupClaude')}
-            <Badge className="shrink-0 bg-neutral-800 text-neutral-300">
-              {t('toolkit.claudeTag')}
-            </Badge>
+            <AgentBadge agent="claude" />
           </p>
           {claudePacks.map(renderPack)}
         </div>
