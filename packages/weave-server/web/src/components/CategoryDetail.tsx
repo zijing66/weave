@@ -229,8 +229,10 @@ export function CategoryDetail({
     <div
       ref={setNodeRef}
       className={cn(
-        'space-y-4 h-full',
-        isOver && 'ring-1 ring-blue-500/60 rounded-md p-2 -m-2 bg-blue-950/20',
+        // px-2/pt-2 对齐分类卡的 p-2（内容左缘/上缘与卡区同基准，任务两栏
+        // 不再贴主区边）；拖拽高亮用 -m-2 外扩，不改内容 padding。
+        'space-y-4 h-full px-2 pt-2',
+        isOver && 'ring-1 ring-blue-500/60 rounded-md -m-2 bg-blue-950/20',
       )}
     >
       {showRuntimeTabs && (
