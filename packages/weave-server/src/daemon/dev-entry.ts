@@ -26,6 +26,7 @@ import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
+import { setDaemonSettingsDb } from './settings.js';
 import { resolveStaticDir } from './static.js';
 
 // daemon 若启于 Claude Code 会话内，环境携带的 CLAUDE_CODE_CHILD_SESSION 会
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   });
 
   const db = openDatabase();
+  setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const projects = new ProjectRepository(db);
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);

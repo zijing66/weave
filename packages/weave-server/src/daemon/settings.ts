@@ -1,16 +1,15 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { getDataDir } from '../db/paths.js';
+import type { DatabaseSync } from 'node:sqlite';
+import { openDatabase } from '../db/db.js';
+import { getDbPath } from '../db/paths.js';
 
 /**
  * Daemon-level settings (as opposed to per-project or harness settings):
- * machine-local preferences for the dashboard itself. Currently only the
- * terminal used by "open in terminal" lives here.
+ * machine-local preferences for the dashboard itself.
  *
- * Stored as `<configDir>/weave/settings.json` next to the daemon database —
- * plain JSON, read-modify-write, defaults merged on read (same pattern as the
- * statusline config).
+ * Stored in the daemon database — a generic `settings` key-value table
+ * (config unified into the DB; no config files are written or read).
+ * Values are text; reads run mergeDefaults so missing/corrupt entries
+ * heal to the defaults. Keys are declared in KEYS and written as a full set.
  */
 
 /** Which terminal "open in terminal" launches. `auto` probes per platform. */
@@ -40,8 +39,8 @@ export interface TerminalSettings {
 }
 
 /**
- * UI/CLI language. Machine-level and stored in daemon settings.json so the
- * dashboard and the `weave` CLI read the same value.
+ * UI/CLI language. Machine-level and stored in the daemon settings table so
+ * the dashboard and the `weave` CLI read the same value.
  *
  * Extending: add the tag here and to SUPPORTED_LOCALES, then provide the
  * matching web/CLI dictionaries — both are `Record<Locale, …>`, so a new
@@ -175,45 +174,120 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   };
 }
 
-/** Settings directory; overridable for tests (defaults to the weave data dir). */
-let settingsDir: string | null = null;
+// ---------------------------------------------------------------------------
+// 存储：daemon 数据库 settings key-value 表（不写任何配置文件）
+// ---------------------------------------------------------------------------
 
-/** Point the settings file elsewhere (tests use a temp dir). */
-export function setDaemonSettingsDir(dir: string | null): void {
-  settingsDir = dir;
+/** 配置 key 约定（读写单点，避免字面量散落）。 */
+const KEYS = {
+  terminalPreset: 'terminal.preset',
+  terminalCustomCommand: 'terminal.customCommand',
+  locale: 'locale',
+  hooksEnabled: 'hooks.enabled',
+  eventRetentionDays: 'events.retentionDays',
+} as const;
+
+/** 测试注入（内存库）；null = 未注入。 */
+let settingsDb: DatabaseSync | null = null;
+
+export function setDaemonSettingsDb(db: DatabaseSync | null): void {
+  settingsDb = db;
 }
 
-/** Settings file path (`<configDir>/weave/settings.json`). */
-function settingsPath(): string {
-  return path.join(settingsDir ?? getDataDir(), 'settings.json');
-}
-
-/** Read daemon settings; missing/corrupt file falls back to defaults. */
-export async function readDaemonSettings(): Promise<DaemonSettings> {
+/**
+ * 取库执行：注入库直用（生命周期归注入方）；未注入（CLI/隔离 e2e）开
+ * 短连接用完即关——不缓存句柄，避免 Windows 上文件句柄占用阻断清理。
+ */
+function withDb<T>(fn: (db: DatabaseSync) => T): T {
+  if (settingsDb) return fn(settingsDb);
+  const db = openDatabase(getDbPath());
   try {
-    const raw = await readFile(settingsPath(), 'utf-8');
-    return mergeDefaults(JSON.parse(raw));
-  } catch {
-    return DEFAULT_DAEMON_SETTINGS;
+    return fn(db);
+  } finally {
+    db.close();
   }
+}
+
+/** 全表读为 map（配置体量小，整读即可）。 */
+function readMap(db: DatabaseSync): Map<string, string> {
+  const rows = db.prepare('SELECT key, value FROM settings').all() as {
+    key: string;
+    value: string;
+  }[];
+  return new Map(rows.map((r) => [r.key, r.value]));
+}
+
+/** map → DaemonSettings：缺 key 不传该段（mergeDefaults 落默认），坏值自愈。 */
+function fromMap(map: Map<string, string>): DaemonSettings {
+  return mergeDefaults({
+    terminal: {
+      preset: map.get(KEYS.terminalPreset),
+      customCommand: map.get(KEYS.terminalCustomCommand),
+    },
+    locale: map.get(KEYS.locale),
+    ...(map.has(KEYS.hooksEnabled)
+      ? { hooks: { enabled: map.get(KEYS.hooksEnabled) === 'true' } }
+      : {}),
+    ...(map.has(KEYS.eventRetentionDays)
+      ? { events: { retentionDays: Number(map.get(KEYS.eventRetentionDays)) } }
+      : {}),
+  });
+}
+
+/** DaemonSettings → 全量 key 条目（写入是整体覆盖）。 */
+function toEntries(settings: DaemonSettings): [string, string][] {
+  return [
+    [KEYS.terminalPreset, settings.terminal.preset],
+    [KEYS.terminalCustomCommand, settings.terminal.customCommand],
+    [KEYS.locale, settings.locale],
+    [KEYS.hooksEnabled, String(settings.hooks.enabled)],
+    [
+      KEYS.eventRetentionDays,
+      String(settings.events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS),
+    ],
+  ];
+}
+
+/** 事务全量 upsert（整体覆盖，避免半套配置）。 */
+function writeMap(db: DatabaseSync, entries: [string, string][]): void {
+  const stmt = db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  );
+  db.exec('BEGIN');
+  try {
+    for (const [key, value] of entries) stmt.run(key, value);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
+function read(): DaemonSettings {
+  try {
+    return withDb((db) => fromMap(readMap(db)));
+  } catch {
+    return DEFAULT_DAEMON_SETTINGS; // 库不可用/表缺行：回默认，绝不抛
+  }
+}
+
+/** Read daemon settings; missing/corrupt entries fall back to defaults. */
+export async function readDaemonSettings(): Promise<DaemonSettings> {
+  return read();
 }
 
 /**
  * 同步读（hook_events 被动清理用：insert 是同步写路径，且仅跨天首条
- * 写入时读一次——一天一次的小文件 IO）。语义与 readDaemonSettings 一致。
+ * 写入时读一次）。语义与 readDaemonSettings 一致。
  */
 export function readDaemonSettingsSync(): DaemonSettings {
-  try {
-    return mergeDefaults(JSON.parse(readFileSync(settingsPath(), 'utf-8')));
-  } catch {
-    return DEFAULT_DAEMON_SETTINGS;
-  }
+  return read();
 }
 
 /** Persist daemon settings (defaults merged over the input). */
 export async function writeDaemonSettings(settings: DaemonSettings): Promise<DaemonSettings> {
   const normalized = mergeDefaults(settings);
-  await mkdir(getDataDir(), { recursive: true });
-  await writeFile(settingsPath(), `${JSON.stringify(normalized, null, 2)}\n`, 'utf-8');
+  withDb((db) => writeMap(db, toEntries(normalized)));
   return normalized;
 }

@@ -19,6 +19,7 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { createWeaveServer } from './server.js';
 import { DAEMON_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
+import { setDaemonSettingsDb } from './settings.js';
 import { resolveStaticDir } from './static.js';
 
 // 同 dev-entry：入口剥离 Claude Code child-session 标记，防污染派生物。
@@ -43,6 +44,7 @@ export function startDaemon(): void {
 
   const daemonToken = process.env.WEAVE_DAEMON_TOKEN ?? state.token;
   const db = openDatabase();
+  setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const projects = new ProjectRepository(db);
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);

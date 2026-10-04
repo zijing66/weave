@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_seen_at);
+
+-- 全局静态配置（key-value 单表，原 <dataDir>/settings.json 文件——配置
+-- 统一落库）。配置项以约定 key 落行（如 terminal.preset / locale /
+-- hooks.enabled / events.retentionDays），新增配置零表结构迁移；
+-- 值为文本，读时经 mergeDefaults 归一化，坏值自愈回落默认。
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 /** Open (creating + migrating if needed) the weave database. */

@@ -15,7 +15,7 @@ import { HookRuleRegistry } from '../registry.js';
 import { HookEventBus } from '../bus.js';
 import { HookDispatcher } from '../dispatcher.js';
 import { WeavePluginLoader } from '../plugin-loader.js';
-import { setDaemonSettingsDir, writeDaemonSettings } from '../../daemon/settings.js';
+import { setDaemonSettingsDb, writeDaemonSettings } from '../../daemon/settings.js';
 
 async function writePlugin(
   root: string,
@@ -417,14 +417,12 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
   let dispatcher: HookDispatcher;
   let hookEvents: HookEventRepository;
   let project: ProjectRow;
-  let settingsDir: string;
 
   const fixturesDir = fileURLToPath(new URL('./fixtures/', import.meta.url));
 
   beforeEach(async () => {
-    // dispatcher 读 daemon 总开关——测试用独立 settings 目录，隔离真实用户配置
-    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-ai-gen-'));
-    setDaemonSettingsDir(settingsDir);
+    // dispatcher 读 daemon 总开关——注入内存库隔离真实用户配置
+    setDaemonSettingsDb(openDatabase(':memory:'));
     await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'zh-CN',
@@ -456,7 +454,7 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDb(null);
     db.close();
     delete (globalThis as Record<string, unknown>).__changelogReminderEvents;
   });

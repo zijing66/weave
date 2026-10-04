@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
-import { setDaemonSettingsDir, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
+import {
+  setDaemonSettingsDb,
+  writeDaemonSettings,
+  DEFAULT_EVENT_RETENTION_DAYS,
+} from '../daemon/settings.js';
 
 /**
  * hook_events 被动清理（无定时任务）：每个 UTC 天的首条写入触发一次
@@ -15,16 +16,13 @@ import { setDaemonSettingsDir, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/se
 describe('hook_events passive retention', () => {
   const dayMs = 86_400_000;
   const agoIso = (days: number): string => new Date(Date.now() - days * dayMs).toISOString();
-  let settingsDir: string;
-
-  beforeEach(async () => {
-    // 隔离全局设置文件：不落到真实 daemon 配置（保留期可测、互不污染）
-    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-retention-'));
-    setDaemonSettingsDir(settingsDir);
+  beforeEach(() => {
+    // 隔离全局配置：注入内存库，不落到真实 daemon 配置
+    setDaemonSettingsDb(openDatabase(':memory:'));
   });
 
   afterEach(() => {
-    setDaemonSettingsDir(null);
+    setDaemonSettingsDb(null);
   });
 
   const setup = (): {
@@ -78,11 +76,12 @@ describe('hook_events passive retention', () => {
   });
 
   it('保留期走全局配置：events.retentionDays 覆盖默认天数', async () => {
-    await writeFile(
-      path.join(settingsDir, 'settings.json'),
-      JSON.stringify({ events: { retentionDays: 7 } }),
-      'utf-8',
-    );
+    await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      events: { retentionDays: 7 },
+    });
     const { db, hooks, projectId, seed, count } = setup();
     seed(agoIso(8)); // 超过配置的 7 天 → 应删（默认 90 天则保留）
     seed(agoIso(6)); // 配置期内 → 保留
@@ -94,11 +93,12 @@ describe('hook_events passive retention', () => {
   });
 
   it('配置非法（<1/非整数）回落默认保留期', async () => {
-    await writeFile(
-      path.join(settingsDir, 'settings.json'),
-      JSON.stringify({ events: { retentionDays: 0 } }),
-      'utf-8',
-    );
+    await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      events: { retentionDays: 0 as never },
+    });
     const { db, hooks, projectId, seed, count } = setup();
     seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS - 1)); // 默认期内 → 保留
     hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
