@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import {
   api,
@@ -67,10 +67,11 @@ export default function App() {
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>({ claude: {}, codex: {} });
-  const [projectConfig, setProjectConfig] = useState<ProjectConfig>({
-    autoSync: false,
-    lastSyncAt: null,
-  });
+  // Per-project config cache (autoSync etc.) — single source for the top bar
+  // chip (selected project) and the row quick-action toggles alike.
+  const [configMap, setConfigMap] = useState<Record<number, ProjectConfig>>({});
+  // Row pending-update counts — hover-lazy + cached per project id.
+  const [updatesMap, setUpdatesMap] = useState<Record<number, number>>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -133,6 +134,14 @@ export default function App() {
     api.listUpdates(p.id).then(setUpdates).catch(() => {});
   }, []);
 
+  // 选中项目的既有 updates 刷新结果回填行计数缓存 —— 顶栏/任务页与行内按钮
+  // 共用同一份取数，不为行列表单独再拉。
+  useEffect(() => {
+    if (selected && updates) {
+      setUpdatesMap((prev) => ({ ...prev, [selected.id]: updates.available }));
+    }
+  }, [updates, selected]);
+
   const refreshGlobalSkills = useCallback((p: ProjectRow) => {
     api.listGlobalSkills(p.id).then(setGlobalSkillGroups).catch(() => {});
   }, []);
@@ -141,8 +150,41 @@ export default function App() {
   }, []);
 
   const refreshConfig = useCallback((p: ProjectRow) => {
-    api.getProjectConfig(p.id).then(setProjectConfig).catch(() => {});
+    api.getProjectConfig(p.id)
+      .then((c) => setConfigMap((prev) => ({ ...prev, [p.id]: c })))
+      .catch(() => {});
   }, []);
+
+  // 行内 autoSync 供给：项目列表到达时按 id 各拉一次 config 并缓存（已有/在途
+  // 跳过）——一次批量轻拉后全程复用，避免每行渲染各发一请求。
+  const configInFlight = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    for (const p of projects) {
+      if (configMap[p.id] || configInFlight.current.has(p.id)) continue;
+      configInFlight.current.add(p.id);
+      api.getProjectConfig(p.id)
+        .then((c) => setConfigMap((prev) => ({ ...prev, [p.id]: c })))
+        .catch(() => configInFlight.current.delete(p.id));
+    }
+  }, [projects, configMap]);
+
+  // 行内 updates 计数：行 hover 懒加载 + 按 id 缓存（listUpdates 要算指纹，
+  // 不做全量预拉）；force 供行同步后重拉。
+  const updatesInFlight = useRef<Set<number>>(new Set());
+  const ensureUpdates = useCallback(
+    (projectId: number, force = false) => {
+      if (updatesInFlight.current.has(projectId)) return;
+      if (!force && updatesMap[projectId] !== undefined) return;
+      updatesInFlight.current.add(projectId);
+      api.listUpdates(projectId)
+        .then((r) => {
+          updatesInFlight.current.delete(projectId);
+          setUpdatesMap((prev) => ({ ...prev, [projectId]: r.available }));
+        })
+        .catch(() => updatesInFlight.current.delete(projectId));
+    },
+    [updatesMap],
+  );
 
   /** Refresh the hooks rule set (card count). */
   const refreshHookRules = useCallback(() => {
@@ -322,7 +364,7 @@ export default function App() {
       ).length,
       sessions: sessions.length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected, sessions, globalSessions]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, sessions, globalSessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -551,18 +593,28 @@ export default function App() {
     [t, selected, projects, refreshAssets, refreshMcp, refreshUpdates],
   );
 
-  const handleSyncAll = useCallback(async () => {
-    const target = selected ?? projects[0];
-    if (!target) return;
-    setError(null);
-    const res = await api.syncAll(target.id);
-    if (!res.ok) {
-      setError(t('errors.syncFailed', { error: `${res.status} ${await res.text()}` }));
-      return;
-    }
-    refreshUpdates(target);
-    refreshAssets(target);
-  }, [t, selected, projects, refreshUpdates, refreshAssets]);
+  // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。
+  const handleSyncAll = useCallback(
+    async (target?: ProjectRow) => {
+      const p = target ?? selected ?? projects[0];
+      if (!p) return;
+      setError(null);
+      const res = await api.syncAll(p.id);
+      if (!res.ok) {
+        setError(t('errors.syncFailed', { error: `${res.status} ${await res.text()}` }));
+        return;
+      }
+      // 只有当前视图项目才刷新共享的 updates/assets 状态；其他行只回填自己的
+      // 计数缓存（assets 是选中项目的镜像，别行同步不得覆盖）。
+      if (!globalMode && selected && p.id === selected.id) {
+        refreshUpdates(p);
+        refreshAssets(p);
+      } else {
+        ensureUpdates(p.id, true);
+      }
+    },
+    [t, selected, projects, globalMode, refreshUpdates, refreshAssets, ensureUpdates],
+  );
 
   const handleUpdateAsset = useCallback(
     async (
@@ -592,17 +644,22 @@ export default function App() {
     [t, selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
   );
 
-  const handleToggleAutoSync = useCallback(async () => {
-    if (!selected) return;
-    setError(null);
-    const next = { ...projectConfig, autoSync: !projectConfig.autoSync };
-    setProjectConfig(next);
-    const res = await api.putProjectConfig(selected.id, next);
-    if (!res.ok) {
-      setError(t('errors.configUpdateFailed', { error: `${res.status} ${await res.text()}` }));
-      refreshConfig(selected);
-    }
-  }, [t, selected, projectConfig, refreshConfig]);
+  const handleToggleAutoSync = useCallback(
+    async (target?: ProjectRow) => {
+      const p = target ?? selected;
+      if (!p) return;
+      const current = configMap[p.id] ?? { autoSync: false, lastSyncAt: null };
+      const next = { ...current, autoSync: !current.autoSync };
+      setError(null);
+      setConfigMap((prev) => ({ ...prev, [p.id]: next }));
+      const res = await api.putProjectConfig(p.id, next);
+      if (!res.ok) {
+        setError(t('errors.configUpdateFailed', { error: `${res.status} ${await res.text()}` }));
+        refreshConfig(p);
+      }
+    },
+    [t, selected, configMap, refreshConfig],
+  );
 
   /** Context-menu action: open a project's folder in the file manager / terminal. */
   const handleOpenProject = useCallback(
@@ -692,6 +749,8 @@ export default function App() {
   const mode: Mode = globalMode ? 'global' : 'project';
   const activeProject = selected ?? projects[0];
   const noAnchor = globalMode && !activeProject;
+  // 顶栏自动同步开关：与行内按钮同读 configMap（选中项目一条数据源）。
+  const autoSyncOn = selected ? (configMap[selected.id]?.autoSync ?? false) : false;
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -726,6 +785,11 @@ export default function App() {
                 onSelectGlobal={selectGlobal}
                 onOpenExplorer={(p) => void handleOpenProject(p, 'explorer')}
                 onOpenTerminal={(p) => void handleOpenProject(p, 'terminal')}
+                onHoverProject={ensureUpdates}
+                autoSyncOf={(id) => configMap[id]?.autoSync}
+                updatesOf={(id) => updatesMap[id]}
+                onToggleAutoSync={(p) => void handleToggleAutoSync(p)}
+                onSyncNow={(p) => void handleSyncAll(p)}
               />
             </aside>
             <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />
@@ -753,7 +817,7 @@ export default function App() {
                     )}
                     {!globalMode && updates && updates.available > 0 && (
                       <button
-                        onClick={handleSyncAll}
+                        onClick={() => void handleSyncAll()}
                         title={t('app.syncAllTooltip', { n: updates.available })}
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                       >
@@ -771,21 +835,21 @@ export default function App() {
                           {t('app.scopeCoverageChip')}
                         </span>
                         <button
-                          onClick={handleToggleAutoSync}
-                          aria-pressed={projectConfig.autoSync}
+                          onClick={() => void handleToggleAutoSync()}
+                          aria-pressed={autoSyncOn}
                           title={
-                            projectConfig.autoSync
+                            autoSyncOn
                               ? t('app.autoSyncOnTooltip')
                               : t('app.autoSyncOffTooltip')
                           }
                           className={cn(
                             'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
-                            projectConfig.autoSync
+                            autoSyncOn
                               ? 'bg-emerald-900/40 text-emerald-300'
                               : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
                           )}
                         >
-                          {projectConfig.autoSync ? t('app.autoSyncOn') : t('app.autoSyncOff')}
+                          {autoSyncOn ? t('app.autoSyncOn') : t('app.autoSyncOff')}
                         </button>
                       </>
                     )}
