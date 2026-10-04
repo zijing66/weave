@@ -19,6 +19,9 @@ export function classifyAsset(relPath: string): AssetCategory {
   if (p.startsWith('.claude/workflows/')) return 'workflow';
   if (p.startsWith('.claude/rules/')) return 'rule';
   if (p.startsWith('.claude/output-styles/')) return 'output-style';
+  // 插件包前缀必须先于下方 base-name 回落：包内的 CLAUDE.md / AGENTS.md
+  // 属于插件包自身，不能逃逸成 instructions。
+  if (p.startsWith('.claude/plugins/') || p.startsWith('.weave/plugins/')) return 'plugin';
   // Instruction files may live at any depth (nested CLAUDE.md / AGENTS.md),
   // not just the project root. Directory prefixes above win first, so a
   // CLAUDE.md inside a skill or command folder stays part of that folder.

@@ -22,6 +22,10 @@ export type AssetCategory =
   | 'rule'
   | 'output-style'
   | 'instructions'
+  // plugin = 插件包内一切文件；mods = 含非空 modules 的插件包全部文件
+  // （同一文件的双 tag 由 web 表达，server 只给 sniff 后的单一 verdict）。
+  | 'plugin'
+  | 'mods'
   | 'other';
 
 /** Which coding agent an asset belongs to (`.claude/` vs `.codex/` + AGENTS.md). */

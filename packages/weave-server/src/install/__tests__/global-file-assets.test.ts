@@ -13,8 +13,20 @@ describe('listGlobalFileAssets', () => {
     mkdirSync(path.join(claude, 'commands', 'nested'), { recursive: true });
     mkdirSync(path.join(claude, 'skills', 'foo'), { recursive: true });
     mkdirSync(path.join(claude, 'plugins', 'demo'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'demo', 'commands'), { recursive: true });
     mkdirSync(path.join(claude, 'projects', 'session-x'), { recursive: true });
     mkdirSync(path.join(home, '.codex', 'prompts'), { recursive: true });
+    // Plugin subtree fixture: registry data (skipped), a mods package, a
+    // plain package, and a file deep enough to require the plugins depth budget.
+    mkdirSync(path.join(claude, 'plugins', 'marketplaces', 'acme'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'data', 'blob'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', '.in_use', 'x'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'mods-pkg', '.claude-plugin'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'mods-pkg', 'hooks'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'mods-pkg', 'commands'), { recursive: true });
+    mkdirSync(path.join(claude, 'plugins', 'cache', 'm', 'k', '1.0.0', 'src', 'deep'), {
+      recursive: true,
+    });
 
     writeFileSync(path.join(claude, 'commands', 'review.md'), '# review');
     writeFileSync(path.join(claude, 'commands', 'nested', 'deep.md'), '# deep');
@@ -27,6 +39,25 @@ describe('listGlobalFileAssets', () => {
     writeFileSync(path.join(home, '.codex', 'prompts', 'old.md'), '# legacy');
     writeFileSync(path.join(home, '.codex', 'AGENTS.real.md'), '# agents');
     symlinkSync('AGENTS.real.md', path.join(home, '.codex', 'AGENTS.md'));
+
+    writeFileSync(path.join(claude, 'plugins', 'installed_plugins.json'), '{}');
+    writeFileSync(path.join(claude, 'plugins', 'marketplaces', 'acme', 'marketplace.json'), '{}');
+    writeFileSync(path.join(claude, 'plugins', 'data', 'blob', 'cache.json'), '{}');
+    writeFileSync(path.join(claude, 'plugins', '.in_use', 'x', 'marker'), '{}');
+    writeFileSync(
+      path.join(claude, 'plugins', 'mods-pkg', '.claude-plugin', 'plugin.json'),
+      '{}',
+    );
+    writeFileSync(
+      path.join(claude, 'plugins', 'mods-pkg', 'hooks', 'hooks.json'),
+      JSON.stringify({ modules: [{ x: 1 }] }),
+    );
+    writeFileSync(path.join(claude, 'plugins', 'mods-pkg', 'commands', 'run.md'), '# run');
+    writeFileSync(path.join(claude, 'plugins', 'demo', 'commands', 'run.md'), '# run');
+    writeFileSync(
+      path.join(claude, 'plugins', 'cache', 'm', 'k', '1.0.0', 'src', 'deep', 'file.ts'),
+      'x',
+    );
   });
 
   afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -46,11 +77,30 @@ describe('listGlobalFileAssets', () => {
     expect(byRel.get('.codex/prompts/old.md')?.agent).toBe('codex');
   });
 
-  it('never descends into skills, plugins or internal Claude trees', async () => {
-    const rels = (await listGlobalFileAssets(home)).map((a) => a.relPath);
+  it('descends into plugins but still skips skills and internal Claude trees', async () => {
+    const assets = await listGlobalFileAssets(home);
+    const rels = assets.map((a) => a.relPath);
+    const byRel = new Map(assets.map((a) => [a.relPath, a]));
+
     expect(rels.some((r) => r.includes('skills'))).toBe(false);
-    expect(rels.some((r) => r.includes('plugins'))).toBe(false);
     expect(rels.some((r) => r.includes('projects'))).toBe(false);
+
+    // plugins/ is now included …
+    expect(rels).toContain('.claude/plugins/installed_plugins.json');
+    expect(byRel.get('.claude/plugins/installed_plugins.json')?.category).toBe('plugin');
+    expect(byRel.get('.claude/plugins/demo/plugin.json')?.category).toBe('plugin');
+    // … registry data under plugins stays out …
+    expect(rels.some((r) => r.includes('plugins/marketplaces'))).toBe(false);
+    expect(rels.some((r) => r.includes('plugins/data'))).toBe(false);
+    expect(rels.some((r) => r.includes('plugins/.in_use'))).toBe(false);
+    // … and the deeper plugins budget reaches a file beyond depth 6.
+    expect(rels).toContain('.claude/plugins/cache/m/k/1.0.0/src/deep/file.ts');
+    // A package with non-empty hooks modules is tagged mods as a whole.
+    expect(byRel.get('.claude/plugins/mods-pkg/commands/run.md')?.category).toBe('mods');
+    expect(byRel.get('.claude/plugins/mods-pkg/hooks/hooks.json')?.category).toBe('mods');
+    expect(byRel.get('.claude/plugins/mods-pkg/.claude-plugin/plugin.json')?.category).toBe(
+      'mods',
+    );
   });
 
   it('flags symlinked files and resolves through them', async () => {

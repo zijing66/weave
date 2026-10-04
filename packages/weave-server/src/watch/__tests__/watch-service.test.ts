@@ -102,6 +102,46 @@ describe('WatchService', () => {
     );
   });
 
+  it('classifies files of a mods plugin package as mods in cache and event frames', async () => {
+    const pkg = path.join(projectDir, '.claude', 'plugins', 'foo');
+    mkdirSync(path.join(pkg, '.claude-plugin'), { recursive: true });
+    mkdirSync(path.join(pkg, 'hooks'), { recursive: true });
+    mkdirSync(path.join(pkg, 'commands'), { recursive: true });
+    writeFileSync(path.join(pkg, '.claude-plugin', 'plugin.json'), '{}');
+    writeFileSync(path.join(pkg, 'hooks', 'hooks.json'), JSON.stringify({ modules: [{ x: 1 }] }));
+    writeFileSync(path.join(pkg, 'commands', 'run.md'), '# run');
+
+    const frames: Array<{ relPath: string; category: string }> = [];
+    const unsub = watch.subscribe((e) => frames.push(e));
+    watch.start();
+
+    const rel = '.claude/plugins/foo/commands/run.md';
+    await vi.waitFor(
+      () => expect(watch.getAssets(projectDir).find((a) => a.relPath === rel)?.category).toBe('mods'),
+      { timeout: 8000 },
+    );
+    await vi.waitFor(() => expect(frames.some((f) => f.relPath === rel && f.category === 'mods')).toBe(true), {
+      timeout: 8000,
+    });
+    unsub();
+    expect(watch.getAssets(projectDir).find((a) => a.relPath === rel)?.category).toBe('mods');
+  });
+
+  it('keeps a plain plugin package as plugin', async () => {
+    const pkg = path.join(projectDir, '.claude', 'plugins', 'plain');
+    mkdirSync(path.join(pkg, '.claude-plugin'), { recursive: true });
+    mkdirSync(path.join(pkg, 'commands'), { recursive: true });
+    writeFileSync(path.join(pkg, '.claude-plugin', 'plugin.json'), '{}');
+    writeFileSync(path.join(pkg, 'commands', 'run.md'), '# run');
+
+    watch.start();
+    const rel = '.claude/plugins/plain/commands/run.md';
+    await vi.waitFor(
+      () => expect(watch.getAssets(projectDir).find((a) => a.relPath === rel)?.category).toBe('plugin'),
+      { timeout: 8000 },
+    );
+  });
+
   it('reconcile stops watchers for projects removed from the registry', async () => {
     mkdirSync(path.join(projectDir, '.claude', 'skills', 'foo'), { recursive: true });
     writeFileSync(path.join(projectDir, '.claude', 'skills', 'foo', 'SKILL.md'), '# Foo');

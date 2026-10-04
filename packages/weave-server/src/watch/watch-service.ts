@@ -6,6 +6,7 @@ import type { FSWatcher } from 'chokidar';
 import type { ProjectRepository } from '../repositories/projects.js';
 import { WatchCache } from './cache.js';
 import { classifyAgent, classifyAsset, normalizeRelPath } from './classifier.js';
+import { PluginModsSniffer } from './plugin-mods.js';
 import type { AssetChangeEvent, AssetChangeKind, AssetEntry, ProjectChangeEvent } from './types.js';
 import { globalPersonalSkillRoots } from '../install/global-config.js';
 import { assetSurfaceFor } from '../surfaces.js';
@@ -17,6 +18,9 @@ import { assetSurfaceFor } from '../surfaces.js';
  * tied to any registered project — App.tsx ignores them for its project asset
  * cache (projectPath mismatch) and the skill drawer listens on its own. */
 const GLOBAL_SENTINEL = '<global>';
+
+/** 模块级 sniff 缓存：watch 全生命周期共用（mtime 失效保证 hooks.json 改写可翻转）。 */
+const pluginModsSniffer = new PluginModsSniffer();
 
 /**
  * Decide whether a project-relative path (posix separators) should be ignored
@@ -274,7 +278,10 @@ export class WatchService {
   ): void {
     const relPath = normalizeRelPath(rawPath);
     const absPath = path.join(projectPath, relPath);
-    const category = classifyAsset(relPath);
+    let category = classifyAsset(relPath);
+    if (kind !== 'unlink' && category === 'plugin') {
+      category = pluginModsSniffer.refine(category, relPath, absPath);
+    }
     const agent = classifyAgent(relPath);
 
     let isSymlink: boolean | undefined;
