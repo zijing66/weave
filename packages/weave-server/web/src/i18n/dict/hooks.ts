@@ -6,16 +6,11 @@ export const hooksZh = {
   // —— 面板框架 / 链路图 ——
   'hooks.title': 'Weave 规则与数据流',
   'hooks.flowTitle': '数据流画布',
-  'hooks.flowHint': '拖动指令节点到会话节点执行，或悬停节点选择会话',
-  'hooks.flowHintGlobal': '事件源 → 规则 → 处理器的链路总览；指令在此仅作管理，执行在项目视图',
-  'hooks.viewTopology': '拓扑',
-  'hooks.viewLifecycle': '生命周期',
   // —— 生命周期思维导图 ——
   'hooks.mindmap.pickSession': '会话',
   'hooks.mindmap.hint': '每次 prompt 一个折叠根 · 展开看 hook / subagent / 指令子节点',
   'hooks.mindmap.empty': '该会话暂无 hook 事件',
   'hooks.mindmap.preSession': '会话引导',
-  'hooks.mindmap.orphan': '游离指令',
   'hooks.mindmap.openTag': '未正常结束',
   'hooks.mindmap.subagentCount': 'subagent ×{n}',
   'hooks.mindmap.dispatchTag': '指令',
@@ -24,10 +19,7 @@ export const hooksZh = {
   'hooks.colSource': '事件源',
   'hooks.colRule': '规则',
   'hooks.colHandler': '处理器',
-  'hooks.colSession': '会话',
-  'hooks.colDispatch': '指令',
   'hooks.emptyFlow': '还没有任何规则，链路图为空',
-  'hooks.sessionsEmpty': '暂无会话',
   'hooks.loading': '加载中…',
   'hooks.loadFailed': '加载失败：{error}',
   'hooks.actionFailed': '操作失败：{error}',
@@ -108,31 +100,15 @@ export const hooksZh = {
   'hooks.errUrlRequired': '请填写合法的回调 URL',
   'hooks.errPluginRequired': '请填写 pluginId 与 handlerType',
 
-  // —— 指令列（画布第 5 列）——
-  'hooks.poolTitle': '待指派',
-  'hooks.poolCount': '{n} 条',
-  'hooks.poolEmpty': '画布指令列为空：注入 / 手动规则命中后会在这里出现待执行指令。',
+  // —— 指令状态（任务视图引用）——
   'hooks.status.pending': '待执行',
   'hooks.status.injected': '已注入',
   'hooks.status.running': '运行中',
   'hooks.status.succeeded': '成功',
   'hooks.status.failed': '失败',
   'hooks.status.timeout': '超时',
-  'hooks.byRule': '规则：{name}',
-  'hooks.unknownRule': '未知规则',
-  'hooks.copy': '复制',
-  'hooks.copied': '已复制',
-  'hooks.run': '执行',
-  'hooks.selectSession': '选择会话…',
-  'hooks.noSessions': '暂无会话，无法执行',
   'hooks.runConfirm': '将指令 #{id} 执行到会话「{session}」？',
   'hooks.runConfirmYes': '确认执行',
-  'hooks.runFailed': '执行失败：{error}',
-
-  // —— 会话节点 ——
-  'hooks.renameTip': '双击标题或点铅笔改名',
-  'hooks.renamePlaceholder': '会话标题',
-  'hooks.pendingTitle': '待生效',
 
   // —— 插件区段（SPI）——
   'hooks.plugins.title': '插件',
@@ -163,16 +139,11 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   // —— Panel frame / flow graph ——
   'hooks.title': 'Weave rules & data flow',
   'hooks.flowTitle': 'Data flow canvas',
-  'hooks.flowHint': 'Drag a prompt node onto a session, or hover one to pick a session',
-  'hooks.flowHintGlobal': 'Source → rule → handler overview; dispatches are managed here, executed in the project view',
-  'hooks.viewTopology': 'Topology',
-  'hooks.viewLifecycle': 'Lifecycle',
   // —— Lifecycle mindmap ——
   'hooks.mindmap.pickSession': 'Session',
   'hooks.mindmap.hint': 'One collapsible root per prompt · expand for hook / subagent / dispatch children',
   'hooks.mindmap.empty': 'No hook events in this session',
   'hooks.mindmap.preSession': 'Session intro',
-  'hooks.mindmap.orphan': 'Orphan dispatch',
   'hooks.mindmap.openTag': 'Interrupted',
   'hooks.mindmap.subagentCount': 'subagent ×{n}',
   'hooks.mindmap.dispatchTag': 'Dispatch',
@@ -181,10 +152,7 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.colSource': 'Sources',
   'hooks.colRule': 'Rules',
   'hooks.colHandler': 'Handlers',
-  'hooks.colSession': 'Sessions',
-  'hooks.colDispatch': 'Prompts',
   'hooks.emptyFlow': 'No rules yet — the flow graph is empty',
-  'hooks.sessionsEmpty': 'No sessions',
   'hooks.loading': 'Loading…',
   'hooks.loadFailed': 'Failed to load: {error}',
   'hooks.actionFailed': 'Action failed: {error}',
@@ -265,32 +233,15 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.errUrlRequired': 'Please enter a valid webhook URL',
   'hooks.errPluginRequired': 'Please fill in pluginId and handlerType',
 
-  // —— Prompt column (5th canvas column) ——
-  'hooks.poolTitle': 'Unassigned',
-  'hooks.poolCount': '{n} items',
-  'hooks.poolEmpty':
-    'The prompt column is empty: inject / manual rules land here as prompt nodes when they fire.',
+  // —— Dispatch status (referenced by the tasks view) ——
   'hooks.status.pending': 'Pending',
   'hooks.status.injected': 'Injected',
   'hooks.status.running': 'Running',
   'hooks.status.succeeded': 'Succeeded',
   'hooks.status.failed': 'Failed',
   'hooks.status.timeout': 'Timeout',
-  'hooks.byRule': 'Rule: {name}',
-  'hooks.unknownRule': 'Unknown rule',
-  'hooks.copy': 'Copy',
-  'hooks.copied': 'Copied',
-  'hooks.run': 'Run',
-  'hooks.selectSession': 'Select a session…',
-  'hooks.noSessions': 'No sessions available to run into',
   'hooks.runConfirm': 'Run prompt #{id} into session "{session}"?',
   'hooks.runConfirmYes': 'Run',
-  'hooks.runFailed': 'Run failed: {error}',
-
-  // —— Session node ——
-  'hooks.renameTip': 'Double-click the title or hit the pencil to rename',
-  'hooks.renamePlaceholder': 'Session title',
-  'hooks.pendingTitle': 'Pending apply',
 
   // —— Plugins section (SPI) ——
   'hooks.plugins.title': 'Plugins',

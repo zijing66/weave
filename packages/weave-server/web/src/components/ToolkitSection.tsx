@@ -39,9 +39,16 @@ const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
 export function ToolkitSection({
   projectId,
   runtimeTab = 'all',
+  scope = 'harness',
 }: {
   projectId: number;
   runtimeTab?: 'claude' | 'codex' | 'all';
+  /**
+   * 成分分域（用户边界）：'harness'（文件资产 ▸ Plugins）只显示非 weave 成分
+   * 的 pack（Claude 插件 + harness 表面）；'weave'（Weave 分类）只显示含
+   * weave 规则成分的 pack（Markdown Lint 注入一类是 weave 功能，不进文件资产）。
+   */
+  scope?: 'harness' | 'weave';
 }) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
@@ -140,10 +147,12 @@ export function ToolkitSection({
     </div>
   );
 
-  const claudePacks = packs.filter((p) => p.ccPack);
-  const toolPacks = packs.filter((p) => !p.ccPack);
-  const showClaudeGroup = runtimeTab !== 'codex' && claudePacks.length > 0;
+  const base = packs.filter((p) => (scope === 'weave' ? p.weavePack : !p.weavePack));
+  const claudePacks = base.filter((p) => p.ccPack);
+  const toolPacks = base.filter((p) => !p.ccPack);
+  const showClaudeGroup = scope === 'harness' && runtimeTab !== 'codex' && claudePacks.length > 0;
   const showPacksGroup = toolPacks.length > 0;
+  const showNothing = scope === 'weave' ? !showPacksGroup : !showClaudeGroup && !showPacksGroup;
 
   return (
     <div className="space-y-2">
@@ -169,8 +178,13 @@ export function ToolkitSection({
         </div>
       )}
 
-      {!showClaudeGroup && !showPacksGroup && (
+      {showNothing && (
         <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>
+      )}
+
+      {/* weave 域：weavePack 成分单列直排（规则/注入类是 weave 功能，不分 Claude 组） */}
+      {scope === 'weave' && showPacksGroup && (
+        <div className="space-y-2">{toolPacks.map(renderPack)}</div>
       )}
 
       {showClaudeGroup && (
@@ -186,7 +200,7 @@ export function ToolkitSection({
         </div>
       )}
 
-      {showPacksGroup && (
+      {scope === 'harness' && showPacksGroup && (
         <div className="space-y-2">
           <p className="text-xs font-medium text-neutral-400">{t('toolkit.groupPacks')}</p>
           {toolPacks.map(renderPack)}
