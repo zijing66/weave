@@ -16,7 +16,8 @@ import {
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
-import { deriveSessionStatus, STATUS_KEY, type SessionStatus } from './session-status';
+import { deriveSessionStatus, type SessionStatus } from './session-status';
+import { HarnessIcon } from './HarnessIcon';
 import { Activity, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 
 /** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
@@ -375,6 +376,11 @@ export function TasksPanel({
     }
   };
 
+  // 组头状态展示：进行中（执行中/进行中）显示 harness 跑马灯动效图标，
+  // 已结束/空闲/失败不显示——去掉原文字状态 tag（会话状态与组头信息重复）。
+  const activeStatus = statuses.get(selectedId ?? '') ?? 'idle';
+  const selectedHarness = sessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
+
   return (
     <div className="flex h-full min-h-0 gap-3">
       {/* 左栏：会话列表 */}
@@ -561,9 +567,11 @@ export function TasksPanel({
                     <span className="shrink-0 text-[10px] text-neutral-500">
                       {t('tasks.groupDispatches', { n: g.dispatches.length })}
                     </span>
-                    <Badge className="shrink-0 bg-neutral-800 text-neutral-400">
-                      {t(STATUS_KEY[statuses.get(selectedId) ?? 'idle'])}
-                    </Badge>
+                    {(activeStatus === 'running' || activeStatus === 'active') && (
+                      <span className="shrink-0">
+                        <HarnessIcon harness={selectedHarness} running />
+                      </span>
+                    )}
                   </button>
                   {expanded && (
                     <div className="h-[420px] shrink-0 border-t border-white/[0.06] p-1.5">
