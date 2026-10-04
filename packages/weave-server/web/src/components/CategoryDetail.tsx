@@ -369,7 +369,7 @@ export function CategoryDetail({
       )}
 
       {category === 'files' && assetTab === 'plugins' && (
-        <PluginAssetsPanel projectId={projectId} mode={mode} />
+        <PluginAssetsPanel projectId={projectId} mode={mode} runtimeTab={runtimeTab} />
       )}
 
       {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}

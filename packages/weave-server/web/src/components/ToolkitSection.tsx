@@ -32,9 +32,16 @@ const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
  * 工具箱区段（批 10，批 3 增旧副本警示）：包清单（provenance/类型徽标 + 目标面）
  * + 项目级开关（CC 原生包 = 全局安装 + 项目启用）+ 项目插件位旧副本警示/清理 +
  * 外置目录展示（add-dir/remove-dir 走 CLI，文案指引）。开关调用幂等端点，
- * 返回后置状态后刷新。
+ * 返回后置状态后刷新。pack 按成分分两组渲染（ccPack = Claude Plugins 组，
+ * 其余 = 工具包组）；codex 运行态下 Claude 组整组隐藏。
  */
-export function ToolkitSection({ projectId }: { projectId: number }) {
+export function ToolkitSection({
+  projectId,
+  runtimeTab = 'all',
+}: {
+  projectId: number;
+  runtimeTab?: 'claude' | 'codex' | 'all';
+}) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
@@ -86,6 +93,57 @@ export function ToolkitSection({ projectId }: { projectId: number }) {
     return <p className="text-xs text-neutral-600">{t('toolkit.loading')}</p>;
   }
 
+  // 只分渲染组，不动数据：pack 列表仍单次拉取，toggle/清理逻辑共享同一份。
+  const renderPack = (p: ToolkitPack) => (
+    <div
+      key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
+      className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
+    >
+      <Package
+        className={cn('h-3.5 w-3.5 shrink-0', p.enabled ? 'text-emerald-400' : 'text-neutral-600')}
+      />
+      <span className="shrink-0 text-xs font-medium text-neutral-200">{p.name}</span>
+      <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+      <Badge className={cn('shrink-0', KIND_STYLES[p.kind])}>{t(KIND_KEY[p.kind])}</Badge>
+      <Badge
+        className={cn(
+          'shrink-0',
+          p.provenance === 'builtin'
+            ? 'bg-amber-900/40 text-amber-300'
+            : 'bg-neutral-800 text-neutral-300',
+        )}
+      >
+        {t(PROV_KEY[p.provenance])}
+      </Badge>
+      <span className="shrink-0 text-[10px] text-neutral-600">v{p.version}</span>
+      <span className="shrink-0 text-[10px] text-neutral-600">
+        {t('toolkit.targets', { targets: p.targets.join('+') })}
+      </span>
+      {p.weave && (
+        <span className="shrink-0 text-[10px] text-neutral-600">
+          {t('toolkit.weaveRules', { n: p.weave.ruleCount })}
+        </span>
+      )}
+      {p.description && (
+        <span className="min-w-0 truncate text-[11px] text-neutral-500" title={p.description}>
+          {p.description}
+        </span>
+      )}
+      <span className="ml-auto shrink-0">
+        <Switch
+          checked={p.enabled}
+          onChange={(v) => void toggle(p, v)}
+          title={t('toolkit.toggleTip')}
+        />
+      </span>
+    </div>
+  );
+
+  const claudePacks = packs.filter((p) => p.ccPack);
+  const toolPacks = packs.filter((p) => !p.ccPack);
+  const showClaudeGroup = runtimeTab !== 'codex' && claudePacks.length > 0;
+  const showPacksGroup = toolPacks.length > 0;
+
   return (
     <div className="space-y-2">
       {/* 存量项目插件位旧副本（CC 不加载的死数据）警示 + 显式清理 */}
@@ -110,51 +168,31 @@ export function ToolkitSection({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {packs.length === 0 && <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>}
-      {packs.map((p) => (
-        <div
-          key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
-          className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
-        >
-          <Package
-            className={cn('h-3.5 w-3.5 shrink-0', p.enabled ? 'text-emerald-400' : 'text-neutral-600')}
-          />
-          <span className="shrink-0 text-xs font-medium text-neutral-200">{p.name}</span>
-          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
-          <Badge className={cn('shrink-0', KIND_STYLES[p.kind])}>{t(KIND_KEY[p.kind])}</Badge>
-          <Badge
-            className={cn(
-              'shrink-0',
-              p.provenance === 'builtin'
-                ? 'bg-amber-900/40 text-amber-300'
-                : 'bg-neutral-800 text-neutral-300',
-            )}
+      {!showClaudeGroup && !showPacksGroup && (
+        <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>
+      )}
+
+      {showClaudeGroup && (
+        <div className="space-y-2">
+          <p
+            className="flex items-center gap-1.5 text-xs font-medium text-neutral-400"
+            title={t('toolkit.claudeGroupHint')}
           >
-            {t(PROV_KEY[p.provenance])}
-          </Badge>
-          <span className="shrink-0 text-[10px] text-neutral-600">v{p.version}</span>
-          <span className="shrink-0 text-[10px] text-neutral-600">
-            {t('toolkit.targets', { targets: p.targets.join('+') })}
-          </span>
-          {p.weave && (
-            <span className="shrink-0 text-[10px] text-neutral-600">
-              {t('toolkit.weaveRules', { n: p.weave.ruleCount })}
-            </span>
-          )}
-          {p.description && (
-            <span className="min-w-0 truncate text-[11px] text-neutral-500" title={p.description}>
-              {p.description}
-            </span>
-          )}
-          <span className="ml-auto shrink-0">
-            <Switch
-              checked={p.enabled}
-              onChange={(v) => void toggle(p, v)}
-              title={t('toolkit.toggleTip')}
-            />
-          </span>
+            {t('toolkit.groupClaude')}
+            <Badge className="shrink-0 bg-neutral-800 text-neutral-300">
+              {t('toolkit.claudeTag')}
+            </Badge>
+          </p>
+          {claudePacks.map(renderPack)}
         </div>
-      ))}
+      )}
+
+      {showPacksGroup && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-neutral-400">{t('toolkit.groupPacks')}</p>
+          {toolPacks.map(renderPack)}
+        </div>
+      )}
 
       {msg && <p className="text-[11px] text-amber-400/90">{msg}</p>}
 
