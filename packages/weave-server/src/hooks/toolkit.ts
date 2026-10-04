@@ -385,11 +385,17 @@ export class ToolkitService {
       // 目标已存在且非本包记录 → 用户文件：append-only，不覆盖不记账。
     }
 
-    // 记录文件 = 文件管线的落盘事实（weave-only 包无落盘成分、CC-only 包仅
-    // 记启用出处，均不带文件条目）。
-    if (recordChanged && (plan.length > 0 || ccLanded)) {
-      await mkdir(path.dirname(recPath), { recursive: true });
-      await writeFile(recPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
+    // 记录文件 = 文件管线的落盘账本（改写保护 + 禁用按 checksum 删除）。
+    // 只有向项目落文件的包才需要：CC 原生包的生效链在 installed_plugins +
+    // 项目 enabledPlugins（computeEnabled 对其不读记录），weave-only 包走
+    // meta/effective——两者均不落 `.weave/toolkit/`；存量旧账本顺手清除。
+    if (plan.length > 0) {
+      if (recordChanged) {
+        await mkdir(path.dirname(recPath), { recursive: true });
+        await writeFile(recPath, JSON.stringify(record, null, 2) + '\n', 'utf8');
+      }
+    } else if (existing) {
+      await rm(recPath, { force: true });
     }
 
     // 管线③：weave 规则成分按项目开关（D3：写 meta.plugins.enabled，
@@ -468,7 +474,9 @@ export class ToolkitService {
       const metaIds = this.enabledIndex(project);
       for (const pack of dirPacks) {
         const record = await readRecord(recordPathFor(project.path, pack.id));
-        const fromThisDir = record !== null && path.resolve(record.sourceRoot) === abs;
+        // 归属判定用扫描结果的 sourceRoot（不依赖记录——CC-only 包不写账本）；
+        // weaveOnlyEnabled 兜「无记录但 meta 索引启用」的 weave 成分。
+        const fromThisDir = path.resolve(pack.sourceRoot) === abs;
         const weaveOnlyEnabled = !record && metaIds.includes(pack.id) && pack.weavePack;
         if (!fromThisDir && !weaveOnlyEnabled) continue;
         await this.removePackFiles(project, pack, abs);
