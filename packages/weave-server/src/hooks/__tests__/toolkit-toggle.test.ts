@@ -180,15 +180,16 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     await rm(base, { recursive: true, force: true });
   });
 
-  it('闸①：enable 全局安装+项目启用（项目零副本、记录仍写）；disable 关项目启用、全局保留', async () => {
+  it('闸①：enable 全局安装+项目启用（项目零副本、CC-only 不写 toolkit 账本）；disable 关项目启用、全局保留', async () => {
     const before = await snapshot(projectDir);
     const { pack } = await service.enable(project.id, 'docs-reminder');
     expect(pack.enabled).toBe(true);
     const landed = await snapshot(projectDir);
     // 项目零 CC 副本（宿主不扫描项目插件位）
     expect(Object.keys(landed).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
-    // toolkit 记录仍写（文件条目为空——不再复制进项目）
-    expect(landed['.weave/toolkit/docs-reminder.json']).toBeTruthy();
+    // CC-only 包不写 `.weave/toolkit/` 账本——生效链只在 installed_plugins +
+    // 项目 enabledPlugins（用户边界：mod 启用与 weave 装配账本无关）
+    expect(landed['.weave/toolkit/docs-reminder.json']).toBeUndefined();
     // 全局位落盘：weave marketplace 拷贝 + installed_plugins 登记
     const mktCopy = JSON.parse(
       await readFile(
