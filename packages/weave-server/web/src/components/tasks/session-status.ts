@@ -60,3 +60,12 @@ export const STATUS_DOT: Record<SessionStatus, string> = {
   completed: 'bg-emerald-600',
   idle: 'bg-neutral-600',
 };
+
+/** 状态 → 文字徽标配色（活跃/失败彩色醒目，完成/空闲收敛）。 */
+export const STATUS_BADGE: Record<SessionStatus, string> = {
+  running: 'bg-orange-900/50 text-orange-300',
+  active: 'bg-emerald-900/50 text-emerald-300',
+  failed: 'bg-red-900/50 text-red-300',
+  completed: 'bg-neutral-800 text-neutral-400',
+  idle: 'bg-neutral-900 text-neutral-500',
+};

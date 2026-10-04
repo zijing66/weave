@@ -136,6 +136,35 @@
   animation-delay: 150ms;
 }
 
+/* 会话执行中：harness 自身的跑马灯动效——claude 星芒匀速旋转带辉光，
+   codex 六边形脉动缩放旋转（各 harness 一套，静态时由状态点接管）。 */
+@keyframes harness-run-claude {
+  from {
+    transform: rotate(0deg);
+    filter: drop-shadow(0 0 2px rgba(251, 146, 60, 0.7));
+  }
+  to {
+    transform: rotate(360deg);
+    filter: drop-shadow(0 0 4px rgba(251, 146, 60, 0.9));
+  }
+}
+.harness-run-claude {
+  animation: harness-run-claude 2.4s linear infinite;
+}
+
+@keyframes harness-run-codex {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.25) rotate(90deg);
+  }
+}
+.harness-run-codex {
+  animation: harness-run-codex 1.2s ease-in-out infinite;
+}
+
 /* ReactFlow 左下角 Controls（zoom±/fitView）暗色主题覆盖：
    xyflow 默认白底浅色按钮，在暗色仪表盘上看不清。
    选择器加 .react-flow__controls 前缀提升特异性，保证覆盖 import 进

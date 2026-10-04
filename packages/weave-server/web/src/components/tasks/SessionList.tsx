@@ -4,8 +4,10 @@ import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
-import { Check, Copy, Loader2, Pencil } from 'lucide-react';
-import { STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
+import { AgentBadge } from '@/components/AgentBadge';
+import { Check, Copy, Pencil } from 'lucide-react';
+import { STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
+import { HarnessIcon } from './HarnessIcon';
 
 /**
  * 任务视图左栏：会话列表。行内元素 = 名称（title 回退 sessionId 前 8 位，
@@ -92,9 +94,10 @@ export function SessionList({
                 droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
               )}
             >
-              {/* 状态图标：running = Claude 风格 spinner；active = 呼吸点 */}
+              {/* 状态图标：running = harness 自身跑马灯动效（claude 星芒旋 /
+                  codex 六边形脉动），其余 = 状态点 */}
               {status === 'running' ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-400" />
+                <HarnessIcon harness={s.harness} running />
               ) : (
                 <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />
               )}
@@ -126,7 +129,10 @@ export function SessionList({
                   <span className="shrink-0 text-[10px] text-neutral-500">
                     {t('tasks.events', { n: s.eventCount ?? 0 })}
                   </span>
-                  <Badge className="shrink-0 bg-neutral-800 text-neutral-400">
+                  {s.harness && (
+                    <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+                  )}
+                  <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
                     {t(STATUS_KEY[status])}
                   </Badge>
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

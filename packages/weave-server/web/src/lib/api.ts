@@ -253,6 +253,8 @@ export interface SessionRow {
   createdAt: string;
   /** 该会话 hook 事件数（GET /sessions 的 listWithCounts 填充）。 */
   eventCount?: number;
+  /** 会话归属 harness（最新事件 source；listWithCounts 填充，其余查询 undefined）。 */
+  harness?: 'claude' | 'codex' | null;
 }
 
 /** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */
