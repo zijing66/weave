@@ -155,4 +155,41 @@ describe('buildLifecycleGroups', () => {
     );
     expect('prompt' in broken[0]!).toBe(false);
   });
+
+  it('并发：新 prompt 不提前关旧组——旧组等自己的 Stop（按 prompt_id 归属）才正常结束', () => {
+    const pid = (id: number, p: string): HookEventRow =>
+      event(id, 'PreToolUse', JSON.stringify({ raw: { prompt_id: p } }));
+    const ups = (id: number, p: string): HookEventRow =>
+      event(id, 'UserPromptSubmit', JSON.stringify({ raw: { prompt_id: p, prompt: `P-${p}` } }));
+    const stop = (id: number, p: string): HookEventRow =>
+      event(id, 'Stop', JSON.stringify({ raw: { prompt_id: p } }));
+
+    // A 执行中用户提前提交 B：Stop_A 晚于 UPS_B 到达
+    const groups = buildLifecycleGroups(
+      [ups(1, 'A'), pid(2, 'A'), ups(3, 'B'), pid(4, 'B'), pid(5, 'A'), stop(6, 'A'), stop(7, 'B')],
+      [],
+      claude,
+    );
+    expect(groups.map((g) => g.id)).toEqual(['turn:1', 'turn:3']);
+    const a = groups[0]!;
+    const b = groups[1]!;
+    expect(a.events.map((e) => e.id)).toEqual([1, 2, 5, 6]); // Stop_A 精确归回 A 组
+    expect(b.events.map((e) => e.id)).toEqual([3, 4, 7]);
+    expect(a.promptId).toBe('A');
+    // 等到了自己的 Stop = 正常结束，不误标「未正常结束」
+    expect(a.open).toBeUndefined();
+    expect(b.open).toBeUndefined();
+  });
+
+  it('并发中断：旧组始终没等到自己的 Stop → 才标未正常结束', () => {
+    const ups = (id: number, p: string): HookEventRow =>
+      event(id, 'UserPromptSubmit', JSON.stringify({ raw: { prompt_id: p } }));
+    const stop = (id: number, p: string): HookEventRow =>
+      event(id, 'Stop', JSON.stringify({ raw: { prompt_id: p } }));
+
+    const groups = buildLifecycleGroups([ups(1, 'A'), ups(2, 'B'), stop(3, 'B')], [], claude);
+    expect(groups.map((g) => g.id)).toEqual(['turn:1', 'turn:2']);
+    expect(groups[0]).toMatchObject({ open: true }); // A 没有 Stop → 未正常结束
+    expect(groups[1]!.open).toBeUndefined(); // B 正常
+  });
 });
