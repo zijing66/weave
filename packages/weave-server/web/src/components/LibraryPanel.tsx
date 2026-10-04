@@ -18,6 +18,7 @@ import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { type MainCategory } from '@/components/CategoryBar';
+import { type AssetTab } from '@/components/CategoryDetail';
 import {
   GripVertical,
   Trash2,
@@ -50,6 +51,8 @@ interface LibraryPanelProps {
   ) => void;
   /** Which main category is active — the panel shows matching installable lists. */
   category: MainCategory;
+  /** Files-page asset tab: splits the skills/MCP template sections. */
+  assetTab: AssetTab;
   /** Install-to scope, driven by the current project/global context. */
   scope: AssetScope;
 }
@@ -62,6 +65,7 @@ export function LibraryPanel({
   updates,
   onUpdateAsset,
   category,
+  assetTab,
   scope,
 }: LibraryPanelProps) {
   const [libraries, setLibraries] = useState<LibraryRow[]>([]);
@@ -148,17 +152,19 @@ export function LibraryPanel({
   const outdatedMcp = (updates?.mcp ?? []).filter((u) => u.outdated);
   const outdatedFiles = (updates?.files ?? []).filter((u) => u.outdated);
 
-  // The installable list shown depends on the active main category.
-  // 文件资产卡暂三区全显（批 2 才按 assetTab 互斥）。
-  const showFiles = category === 'files';
-  const showSkills = showFiles;
-  const showMcp = showFiles;
-  const noTemplates = !showSkills && !showMcp && !showFiles;
+  // The installable list shown depends on the active main category and, on the
+  // 文件资产 page, the asset tab: skills/MCP templates are tab-exclusive; file
+  // templates are generic assets so they follow every tab except plugins.
+  const isFiles = category === 'files';
+  const showSkills = isFiles && assetTab === 'skills';
+  const showFileTemplates = isFiles && assetTab !== 'plugins';
+  const showMcp = isFiles && assetTab === 'mcp';
+  const noTemplates = !showSkills && !showMcp && !showFileTemplates;
 
   // Sections and groups that are currently rendered — collapse-all targets.
   const visibleSections = [
     ...(showSkills ? [SECTION_SKILLS] : []),
-    ...(showFiles ? [SECTION_FILES] : []),
+    ...(showFileTemplates ? [SECTION_FILES] : []),
     ...(showMcp ? [SECTION_MCP] : []),
     ...(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0
       ? [SECTION_UPDATES]
@@ -351,7 +357,7 @@ export function LibraryPanel({
         )}
 
         {/* File templates — commands / agents / workflows / rules / output-styles */}
-        {showFiles && (
+        {showFileTemplates && (
           <TemplateSection
             icon={<FileCode className="h-3.5 w-3.5 text-blue-400" />}
             title={t('library.sectionFiles')}

@@ -31,11 +31,33 @@ import {
 } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
+import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { type MainCategory } from '@/components/CategoryBar';
+import type { MessageKey } from '@/i18n/dict';
 import { Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
+
+/** Second-level tab on the 文件资产 page: which exclusive asset panel shows. */
+export type AssetTab = 'skills' | 'mcp' | 'plugins';
+
+const ASSET_TABS: AssetTab[] = ['skills', 'mcp', 'plugins'];
+
+/** Tab labels stay the raw English terms (术语纪律一致). */
+const ASSET_TAB_LABELS: Record<AssetTab, MessageKey> = {
+  skills: 'assetTab.skills',
+  mcp: 'assetTab.mcp',
+  plugins: 'assetTab.plugins',
+};
+
+/** D2 并集规则：通用类（instructions…other，含 other 里的 plugins/toolkit 路径）
+ * 任何 tab 保留；skill/mcp 专属文件按 tab 显隐。 */
+function tabKeepsCategory(category: string, tab: AssetTab): boolean {
+  if (category === 'skill') return tab === 'skills';
+  if (category === 'mcp') return tab === 'mcp';
+  return true;
+}
 
 /** Runtime surface of an asset row. Rows scanned before the agent field
  * existed fall back to the server's path rule (Codex owns .codex/ and
@@ -53,6 +75,8 @@ export function CategoryDetail({
   projectId,
   mode,
   category,
+  assetTab,
+  onAssetTabChange,
   statuslineNonce,
   assets,
   globalAssets,
@@ -72,6 +96,9 @@ export function CategoryDetail({
   projectId: number;
   mode: Mode;
   category: MainCategory;
+  /** Files-page asset tab (lifted to App so it survives category switches). */
+  assetTab: AssetTab;
+  onAssetTabChange: (tab: AssetTab) => void;
   /** Bumped when re-entering the statusline panel → remounts with a fresh tab. */
   statuslineNonce: number;
   assets: AssetEntry[];
@@ -166,23 +193,26 @@ export function CategoryDetail({
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
-  // Project 文件资产: everything that is neither a skill nor MCP, for the
-  // active runtime tab.
+  // 文件资产树（D2 并集过滤）：通用类任何 tab 保留，专属类按 tab 增减。
   const treeAssets = useMemo(
     () =>
       assets.filter(
         (a) =>
-          a.category !== 'skill' &&
-          a.category !== 'mcp' &&
+          tabKeepsCategory(a.category, assetTab) &&
           (runtimeTab === 'all' || agentOf(a) === runtimeTab),
       ),
-    [assets, runtimeTab],
+    [assets, runtimeTab, assetTab],
   );
 
   // Global 文件资产: the same filter over ~/.claude + ~/.codex rows.
   const globalTreeAssets = useMemo(
-    () => globalAssets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
-    [globalAssets, runtimeTab],
+    () =>
+      globalAssets.filter(
+        (a) =>
+          tabKeepsCategory(a.category, assetTab) &&
+          (runtimeTab === 'all' || agentOf(a) === runtimeTab),
+      ),
+    [globalAssets, runtimeTab, assetTab],
   );
 
   return (
@@ -219,45 +249,7 @@ export function CategoryDetail({
         </div>
       )}
 
-      {/* 文件资产页：skills/mcp/文件树三区顺序渲染（批 2 才改 tab 互斥） */}
-      {category === 'files' && (
-        <SkillGrid
-          skills={skills}
-          groups={isGlobal ? groups : undefined}
-          globalGroupsReadOnly={isGlobal ? undefined : groups}
-          updates={skillUpdates}
-          empty={
-            runtimeTab === 'codex'
-              ? isGlobal
-                ? t('category.emptySkillsGlobalCodex')
-                : t('category.emptySkillsProjectCodex')
-              : isGlobal
-                ? t('category.emptySkillsGlobal')
-                : t('category.emptySkillsProject')
-          }
-          onUninstallSkill={onUninstallSkill}
-          onOpenDetail={onOpenSkillDetail}
-          onTogglePlugin={onTogglePlugin}
-        />
-      )}
-
-      {category === 'files' && (
-        <McpGrid
-          projectId={projectId}
-          servers={mcp}
-          scope={scope}
-          updates={mcpUpdates}
-          empty={
-            runtimeTab === 'codex'
-              ? t('category.emptyMcpCodex')
-              : isGlobal
-                ? t('category.emptyMcpGlobal')
-                : t('category.emptyMcpProject')
-          }
-          onUninstallMcp={onUninstallMcp}
-        />
-      )}
-
+      {/* 文件资产页：目录树（D2 并集过滤）→ AssetTab 行 → 对应面板（互斥） */}
       {category === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
@@ -282,15 +274,23 @@ export function CategoryDetail({
       {category === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
-            <PackageX className="h-8 w-8 text-neutral-600" />
-            <div>
-              <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
-              <p className="text-xs text-neutral-500 mt-1 max-w-xs">
-                {t('category.emptyFilesGlobalDesc')}
-              </p>
+          assetTab === 'plugins' ? (
+            // 全局扫描跳过 plugins/：树空时指向下方面板
+            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+              <PackageX className="h-8 w-8 text-neutral-600" />
+              <p className="text-xs text-neutral-500">{t('fileTree.emptyGlobalPlugins')}</p>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+              <PackageX className="h-8 w-8 text-neutral-600" />
+              <div>
+                <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
+                <p className="text-xs text-neutral-500 mt-1 max-w-xs">
+                  {t('category.emptyFilesGlobalDesc')}
+                </p>
+              </div>
+            </div>
+          )
         ) : (
           <FileAssetTree
             scope={scope}
@@ -300,6 +300,67 @@ export function CategoryDetail({
             onOpenFile={onOpenFile}
           />
         ))}
+
+      {category === 'files' && (
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
+          {ASSET_TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => onAssetTabChange(tab)}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
+                assetTab === tab
+                  ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
+                  : 'text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {t(ASSET_TAB_LABELS[tab])}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {category === 'files' && assetTab === 'skills' && (
+        <SkillGrid
+          skills={skills}
+          groups={isGlobal ? groups : undefined}
+          globalGroupsReadOnly={isGlobal ? undefined : groups}
+          updates={skillUpdates}
+          empty={
+            runtimeTab === 'codex'
+              ? isGlobal
+                ? t('category.emptySkillsGlobalCodex')
+                : t('category.emptySkillsProjectCodex')
+              : isGlobal
+                ? t('category.emptySkillsGlobal')
+                : t('category.emptySkillsProject')
+          }
+          onUninstallSkill={onUninstallSkill}
+          onOpenDetail={onOpenSkillDetail}
+          onTogglePlugin={onTogglePlugin}
+        />
+      )}
+
+      {category === 'files' && assetTab === 'mcp' && (
+        <McpGrid
+          projectId={projectId}
+          servers={mcp}
+          scope={scope}
+          updates={mcpUpdates}
+          empty={
+            runtimeTab === 'codex'
+              ? t('category.emptyMcpCodex')
+              : isGlobal
+                ? t('category.emptyMcpGlobal')
+                : t('category.emptyMcpProject')
+          }
+          onUninstallMcp={onUninstallMcp}
+        />
+      )}
+
+      {category === 'files' && assetTab === 'plugins' && (
+        <PluginAssetsPanel projectId={projectId} mode={mode} />
+      )}
 
       {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}
 

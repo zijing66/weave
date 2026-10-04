@@ -25,15 +25,6 @@ export const assetsZh = {
   'skillGrid.off': '关',
 
   // —— FileAssetTree ——
-  'fileTree.kind.instructions': '说明',
-  'fileTree.kind.command': '命令',
-  'fileTree.kind.agent': '智能体',
-  'fileTree.kind.workflow': '工作流',
-  'fileTree.kind.rule': '规则',
-  'fileTree.kind.outputStyle': '输出样式',
-  'fileTree.kind.helper': '辅助脚本',
-  'fileTree.kind.settings': '设置',
-  'fileTree.kind.other': '其他',
   'fileTree.all': '全部',
   'fileTree.scopeGlobal': '全局',
   'fileTree.scopeProject': '项目',
@@ -45,10 +36,16 @@ export const assetsZh = {
   'fileTree.expandAll': '全展开',
   'fileTree.collapseAll': '全折叠',
   'fileTree.emptyFiltered': '没有匹配当前筛选的文件',
+  'fileTree.emptyGlobalPlugins': '全局扫描不含插件文件，插件内容在下方面板',
   'fileTree.symlinkTitle': '{path} — 符号链接',
   'fileTree.uninstall': '卸载 {name}',
   'fileTree.update': '待更新',
   'fileTree.custom': '自定义',
+
+  // —— 文件资产页 AssetTab（标签用英文原文，与术语纪律一致） ——
+  'assetTab.skills': 'Skills',
+  'assetTab.mcp': 'MCP',
+  'assetTab.plugins': 'Plugins',
 
   // —— McpGrid ——
   'mcp.headingGlobal': '全局 MCP Servers',
@@ -110,15 +107,6 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.off': 'OFF',
 
   // —— FileAssetTree ——
-  'fileTree.kind.instructions': 'Instructions',
-  'fileTree.kind.command': 'Commands',
-  'fileTree.kind.agent': 'Agents',
-  'fileTree.kind.workflow': 'Workflows',
-  'fileTree.kind.rule': 'Rules',
-  'fileTree.kind.outputStyle': 'Output Styles',
-  'fileTree.kind.helper': 'Helpers',
-  'fileTree.kind.settings': 'Settings',
-  'fileTree.kind.other': 'Other',
   'fileTree.all': 'All',
   'fileTree.scopeGlobal': 'Global',
   'fileTree.scopeProject': 'Project',
@@ -130,10 +118,16 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'fileTree.expandAll': 'Expand all',
   'fileTree.collapseAll': 'Collapse all',
   'fileTree.emptyFiltered': 'No files match the current filter',
+  'fileTree.emptyGlobalPlugins': 'The global scan skips plugin files — see the panel below',
   'fileTree.symlinkTitle': '{path} — symlink',
   'fileTree.uninstall': 'Uninstall {name}',
   'fileTree.update': 'update',
   'fileTree.custom': 'custom',
+
+  // —— AssetTab on the 文件资产 page (labels stay English terms) ——
+  'assetTab.skills': 'Skills',
+  'assetTab.mcp': 'MCP',
+  'assetTab.plugins': 'Plugins',
 
   // —— McpGrid ——
   'mcp.headingGlobal': 'Global MCP Servers',
