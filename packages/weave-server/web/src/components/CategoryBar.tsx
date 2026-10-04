@@ -103,10 +103,10 @@ export function CategoryBar({
   };
 
   return (
-    // One row of cards, always. Each card keeps a sane minimum width; when the
-    // row can no longer fit them all it scrolls sideways rather than squeezing
-    // every card down to a width where its content collides.
-    <div className="flex gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
+    // Cards equal-fill a single row whenever they all fit (six cards fit a
+    // 1280px viewport); below that the row wraps instead of clipping the
+    // first/last card at the container edges.
+    <div className="flex flex-wrap gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
       {MAIN_CATEGORIES.filter((c) => !hidden?.has(c.key)).map(({ key, labelKey, icon: Icon }) => {
         const active = category === key;
         return (
@@ -118,8 +118,8 @@ export function CategoryBar({
               // is room and lets them flow onto a second one when there is not
               // — the personalization card carries two badges, which would
               // otherwise collide with its label. The floor is low enough that
-              // wrapping happens before the row has to scroll.
-              'flex-1 min-w-[9rem] flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-2.5 py-2 text-left',
+              // the row wraps before labels start truncating.
+              'flex-1 min-w-[6.5rem] flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-2 py-2 text-left',
               'border border-white/[0.08] transition-all duration-200 ease-mac',
               active
                 ? 'bg-neutral-800/90 ring-1 ring-blue-500/50 shadow-mac-sm'
