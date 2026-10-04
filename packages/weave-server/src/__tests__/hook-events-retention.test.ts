@@ -1,15 +1,31 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
-import { HookEventRepository, HOOK_EVENT_RETENTION_DAYS } from '../repositories/hook-events.js';
+import { HookEventRepository } from '../repositories/hook-events.js';
+import { setDaemonSettingsDir, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
 
 /**
  * hook_events 被动清理（无定时任务）：每个 UTC 天的首条写入触发一次
- * DELETE，清掉超过保留期的日志；同天后续写入不再扫表。
+ * DELETE，清掉超过保留期的日志；保留期读全局 daemon settings
+ * （events.retentionDays），同天后续写入不再扫表。
  */
 describe('hook_events passive retention', () => {
   const dayMs = 86_400_000;
   const agoIso = (days: number): string => new Date(Date.now() - days * dayMs).toISOString();
+  let settingsDir: string;
+
+  beforeEach(async () => {
+    // 隔离全局设置文件：不落到真实 daemon 配置（保留期可测、互不污染）
+    settingsDir = await mkdtemp(path.join(tmpdir(), 'weave-retention-'));
+    setDaemonSettingsDir(settingsDir);
+  });
+
+  afterEach(() => {
+    setDaemonSettingsDir(null);
+  });
 
   const setup = (): {
     db: ReturnType<typeof openDatabase>;
@@ -39,9 +55,9 @@ describe('hook_events passive retention', () => {
 
   it('首条写入触发清理：过期日志被删，保留期内与新事件存活', () => {
     const { db, hooks, projectId, seed, count } = setup();
-    seed(agoIso(HOOK_EVENT_RETENTION_DAYS + 1)); // 过期
-    seed(agoIso(HOOK_EVENT_RETENTION_DAYS + 5)); // 过期
-    seed(agoIso(HOOK_EVENT_RETENTION_DAYS - 1)); // 保留期内
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS + 1)); // 过期
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS + 5)); // 过期
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS - 1)); // 保留期内
     expect(count()).toBe(3);
 
     hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
@@ -55,9 +71,49 @@ describe('hook_events passive retention', () => {
     hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
 
     // 清理已执行过：此后种入的过期行不被删（同天不再扫表）
-    seed(agoIso(HOOK_EVENT_RETENTION_DAYS + 10));
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS + 10));
     hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
     expect(count()).toBe(3);
+    db.close();
+  });
+
+  it('保留期走全局配置：events.retentionDays 覆盖默认天数', async () => {
+    await writeFile(
+      path.join(settingsDir, 'settings.json'),
+      JSON.stringify({ events: { retentionDays: 7 } }),
+      'utf-8',
+    );
+    const { db, hooks, projectId, seed, count } = setup();
+    seed(agoIso(8)); // 超过配置的 7 天 → 应删（默认 90 天则保留）
+    seed(agoIso(6)); // 配置期内 → 保留
+    expect(count()).toBe(2);
+
+    hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
+    expect(count()).toBe(2); // 8 天前行被删：6 天前 + 新事件
+    db.close();
+  });
+
+  it('配置非法（<1/非整数）回落默认保留期', async () => {
+    await writeFile(
+      path.join(settingsDir, 'settings.json'),
+      JSON.stringify({ events: { retentionDays: 0 } }),
+      'utf-8',
+    );
+    const { db, hooks, projectId, seed, count } = setup();
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS - 1)); // 默认期内 → 保留
+    hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
+    expect(count()).toBe(2);
+    db.close();
+  });
+
+  it('resetPrune：同天内重置后下一条写入立即按新配置重扫', async () => {
+    const { db, hooks, projectId, seed, count } = setup();
+    hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
+    // 清理已执行：种入过期行本不会被删
+    seed(agoIso(DEFAULT_EVENT_RETENTION_DAYS + 10));
+    hooks.resetPrune(); // 模拟设置保存后 server 调用
+    hooks.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: '{}' });
+    expect(count()).toBe(2); // 过期行被立即清掉
     db.close();
   });
 });

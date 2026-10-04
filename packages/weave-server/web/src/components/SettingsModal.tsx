@@ -4,8 +4,14 @@ import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/li
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
-import { Languages, Settings, Terminal, X, Zap } from 'lucide-react';
+import { Languages, Settings, Terminal, X, Zap, Database } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+
+/** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events——本地扩展。 */
+type DaemonSettingsExt = DaemonSettings & { events?: { retentionDays: number } };
+
+/** 与 server DEFAULT_EVENT_RETENTION_DAYS 一致的展示兜底。 */
+const DEFAULT_RETENTION_DAYS = 90;
 
 interface SettingsModalProps {
   open: boolean;
@@ -21,7 +27,7 @@ interface SettingsModalProps {
  */
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { locale, t, setLocale } = useI18n();
-  const [settings, setSettings] = useState<DaemonSettings | null>(null);
+  const [settings, setSettings] = useState<DaemonSettingsExt | null>(null);
   const [presets, setPresets] = useState<Array<{ id: TerminalPreset; label: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -32,7 +38,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     api
       .getDaemonSettings()
       .then((r) => {
-        setSettings(r.settings);
+        setSettings(r.settings as DaemonSettingsExt); // 运行时含 events（server 归一化回传）
         setPresets(r.presets);
       })
       .catch((e) => setError(String(e)));
@@ -49,7 +55,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setError(null);
     try {
       const saved = await api.putDaemonSettings(settings);
-      setSettings(saved);
+      setSettings(saved as DaemonSettingsExt);
       setLocale(saved.locale);
       onClose();
     } catch (e) {
@@ -164,6 +170,38 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </span>
             </div>
             <p className="text-[11px] text-neutral-500">{t('settings.hooksHint')}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Database className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.retentionDays')}
+            </label>
+            <p className="text-[11px] text-neutral-500">{t('settings.retentionDaysHint')}</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={settings?.events?.retentionDays ?? DEFAULT_RETENTION_DAYS}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  setSettings((s) =>
+                    s
+                      ? {
+                          ...s,
+                          events: {
+                            retentionDays:
+                              Number.isFinite(n) && n >= 1 ? Math.min(n, 3650) : 1,
+                          },
+                        }
+                      : s,
+                  );
+                }}
+                className="w-24 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
+            </div>
           </div>
 
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}

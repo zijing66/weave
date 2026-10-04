@@ -92,6 +92,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       terminal: { preset: 'wt', customCommand: '' },
       locale: 'zh-CN',
       hooks: { enabled: true },
+      events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
     });
     // A follow-up GET reads the same value back through the injected dir.
     const get = await fetch(`http://127.0.0.1:${port}/settings`, {
