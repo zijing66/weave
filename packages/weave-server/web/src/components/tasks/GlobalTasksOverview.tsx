@@ -4,7 +4,9 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
 import { formatTime } from '@/lib/hook-payload';
-import { deriveSessionStatus, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
+import { deriveSessionStatus, STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
+import { HarnessIcon } from './HarnessIcon';
+import { AgentBadge } from '@/components/AgentBadge';
 import { Globe, Loader2 } from 'lucide-react';
 
 /** 时间段快捷档（按 lastSeenAt 过滤）；custom = 起止日期双输入。 */
@@ -285,9 +287,19 @@ export function GlobalTasksOverview({
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
                       {s.title ?? s.sessionId.slice(0, 8)}
                     </span>
+                    {s.harness && (
+                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+                    )}
                     <span className="flex w-20 shrink-0 items-center gap-1.5">
-                      <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />
-                      <span className="text-[10px] text-neutral-400">{t(STATUS_KEY[status])}</span>
+                      {status === 'running' ? (
+                        <HarnessIcon harness={s.harness} running />
+                      ) : (
+                        <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />
+                      )}
+                      {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
+                      <span className={cn('text-[10px]', STATUS_BADGE[status].split(' ')[1])}>
+                        {t(STATUS_KEY[status])}
+                      </span>
                     </span>
                     <span className="w-16 shrink-0 text-right text-[10px] text-neutral-500">
                       {t('tasks.events', { n: s.eventCount ?? 0 })}

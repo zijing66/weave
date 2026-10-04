@@ -11,6 +11,8 @@ export interface SessionRow {
   createdAt: string;
   /** 该会话的 hook 事件数（listWithCounts 查询填充；其他查询为 undefined）。 */
   eventCount?: number;
+  /** 会话归属 harness = 最新一条 hook 事件的 source（listWithCounts 查询填充）。 */
+  harness?: 'claude' | 'codex' | null;
 }
 
 /**
@@ -59,7 +61,11 @@ export class SessionRepository {
    * 计数不过滤项目（会话可能有跨项目事件），与事件链的 sessionId-only 语义一致。
    */
   listWithCounts(projectId?: number): SessionRow[] {
-    const base = 'SELECT s.*, COUNT(e.id) AS event_count FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
+    // harness = 最新事件的 source（计算字段，sessions 表零 schema 变更）。
+    const base =
+      'SELECT s.*, COUNT(e.id) AS event_count, ' +
+      '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness ' +
+      'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
     const rows =
       projectId === undefined
         ? this.db
@@ -70,10 +76,14 @@ export class SessionRepository {
               `${base} WHERE s.project_id = ? GROUP BY s.session_id ORDER BY s.last_seen_at DESC LIMIT 200`,
             )
             .all(projectId);
-    return rows.map((row) => ({
-      ...toSession(row),
-      eventCount: Number((row as { event_count: number }).event_count ?? 0),
-    }));
+    return rows.map((row) => {
+      const raw = (row as { harness?: unknown }).harness;
+      return {
+        ...toSession(row),
+        eventCount: Number((row as { event_count: number }).event_count ?? 0),
+        harness: raw === 'claude' || raw === 'codex' ? raw : null,
+      };
+    });
   }
 
   /** dashboard 改名：挂 pending（生效延迟一轮/一次 resume）。 */
