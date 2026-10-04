@@ -291,7 +291,7 @@ export function GlobalTasksOverview({
                       <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
                     )}
                     <span className="flex w-20 shrink-0 items-center gap-1.5">
-                      {status === 'running' ? (
+                      {status === 'running' || status === 'active' ? (
                         <HarnessIcon harness={s.harness} running />
                       ) : (
                         <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />

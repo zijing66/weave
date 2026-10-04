@@ -94,9 +94,9 @@ export function SessionList({
                 droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
               )}
             >
-              {/* 状态图标：running = harness 自身跑马灯动效（claude 星芒旋 /
-                  codex 六边形脉动），其余 = 状态点 */}
-              {status === 'running' ? (
+              {/* 状态图标：执行中/进行中 = harness 自身跑马灯动效（claude 星芒
+                  旋 / codex 六边形脉动），其余 = 状态点 */}
+              {status === 'running' || status === 'active' ? (
                 <HarnessIcon harness={s.harness} running />
               ) : (
                 <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />

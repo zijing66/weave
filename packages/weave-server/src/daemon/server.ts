@@ -295,10 +295,12 @@ async function handleRequest(
     const projectId = Number(hooksMatch[1]);
     const limit = clampLimit(url.searchParams.get('limit'));
     const sessionId = url.searchParams.get('sessionId');
+    const beforeIdRaw = url.searchParams.get('beforeId');
+    const beforeId = beforeIdRaw ? Number(beforeIdRaw) : undefined;
     // sessionId 过滤语义（任务视图按会话画事件链）：projectId 仅作鉴权锚点——
     // 会话可能采集到跨项目事件，双条件过滤会丢事件。
     if (sessionId) {
-      sendJson(200, { events: deps.hookEvents.listBySession(sessionId, limit ?? 300) });
+      sendJson(200, { events: deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId) });
       return;
     }
     sendJson(200, { events: deps.hookEvents.listByProject(projectId, limit) });
