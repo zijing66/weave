@@ -753,14 +753,30 @@ export function HooksPanel({
   );
 
   // ---- 表单 ----
+  const formRef = useRef<HTMLDivElement>(null);
+  /** 仅在打开表单时递增 — 表单内容变化不重触滚动。 */
+  const [formOpenTick, setFormOpenTick] = useState(0);
+
   const openCreate = (): void => {
     setFormError(null);
     setForm({ editingId: null, state: emptyForm(mode === 'project' ? projectId : null) });
+    setFormOpenTick((n) => n + 1);
   };
   const openEdit = (rule: HookRule): void => {
     setFormError(null);
     setForm({ editingId: rule.id, state: formFromRule(rule) });
+    setFormOpenTick((n) => n + 1);
   };
+
+  // 表单挂在区块最底部，打开后滚进视口；关闭时不回滚滚动位置。
+  useEffect(() => {
+    if (formOpenTick === 0) return;
+    const el = formRef.current;
+    if (!el) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+  }, [formOpenTick]);
+
   const closeForm = (): void => {
     setForm(null);
     setFormError(null);
@@ -1006,7 +1022,7 @@ export function HooksPanel({
 
       {/* 规则表单（新建 / 行内编辑共用） */}
       {form && (
-        <Card>
+        <Card ref={formRef}>
           <CardHeader className="items-center justify-between">
             <CardTitle>
               {form.editingId ? t('hooks.form.editTitle') : t('hooks.form.createTitle')}
