@@ -12,6 +12,11 @@ const SCOPE_STYLES: Record<HookPlugin['scope'], string> = {
   project: 'bg-emerald-900/40 text-emerald-300',
 };
 
+/** 插件变更级联了其规则（增删/启停）→ 通知规则面板与分类计数刷新。 */
+function notifyRulesChanged(): void {
+  window.dispatchEvent(new Event('weave:rules-changed'));
+}
+
 /**
  * 插件区段（SPI 扫描结果）：列插件、开关（级联启停其规则）、校验错误。
  * 全局态 = 插件管理（安装/卸载 + 默认启用开关）；带 projectId = 项目态，
@@ -44,7 +49,10 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
     refresh();
     const onHook = (e: Event) => {
       const detail = (e as CustomEvent<{ kind?: string }>).detail;
-      if (detail?.kind === 'plugin.reloaded' || detail?.kind === 'plugin.toggled') refresh();
+      if (detail?.kind === 'plugin.reloaded' || detail?.kind === 'plugin.toggled') {
+        refresh();
+        notifyRulesChanged(); // 级联规则变化 → 数据流画布随规则集合更新
+      }
     };
     window.addEventListener('weave:hook', onHook);
     return () => window.removeEventListener('weave:hook', onHook);
@@ -54,6 +62,7 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
     try {
       await api.toggleHookPlugin(p.id, enabled, projectId);
       refresh();
+      notifyRulesChanged(); // 插件级联启停其规则
     } catch {
       // 网络失败保持原状，下次帧/手动刷新校准
     }
@@ -69,6 +78,7 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
       setInstallMsg(t('hooks.plugins.installOk', { id: result.installed.map((p) => p.id).join(', ') }));
       setInstallSrc('');
       refresh();
+      notifyRulesChanged(); // 新装插件的规则进画布
     } catch (e) {
       setInstallMsg(t('hooks.plugins.installFail', { error: e instanceof Error ? e.message : String(e) }));
     } finally {
@@ -81,6 +91,7 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
     try {
       await api.uninstallHookPlugin(p.id);
       refresh();
+      notifyRulesChanged(); // 卸载插件的规则出画布
     } catch {
       // 失败保持原状
     }

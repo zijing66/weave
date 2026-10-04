@@ -19,6 +19,7 @@ import {
   hookSourceHarness,
   normalizeHookRuleSource,
   type HandlerConfig,
+  type HookPlugin,
   type HookRule,
   type HookRuleFilter,
   type HookRuleInput,
@@ -367,6 +368,8 @@ export function HooksPanel({
   const t = useT();
 
   const [rules, setRules] = useState<HookRule[] | null>(null);
+  /** 项目模式：插件 effective 状态（`/hooks/plugins?projectId=` 已按项目级开关裁决）。 */
+  const [pluginStatus, setPluginStatus] = useState<Map<string, HookPlugin['status']>>(new Map());
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<OpenForm | null>(null);
@@ -381,11 +384,26 @@ export function HooksPanel({
   // ---- 数据拉取 ----
   const refreshRules = useCallback(async () => {
     try {
-      setRules(await api.listHooksRules(mode === 'project' ? projectId : undefined));
+      const projectMode = mode === 'project';
+      const [list, plugins] = await Promise.all([
+        api.listHooksRules(projectMode ? projectId : undefined),
+        projectMode ? api.listHookPlugins(projectId) : Promise.resolve(null),
+      ]);
+      setRules(list);
+      setPluginStatus(new Map(plugins?.map((p) => [p.id, p.status]) ?? []));
     } catch (e) {
       setError(errMsg(e));
     }
   }, [mode, projectId]);
+
+  /** 画布「当前生效」判定：项目模式的插件规则随项目级开关（effective），其余看规则级 enabled。 */
+  const isActiveRule = useCallback(
+    (r: HookRule): boolean =>
+      mode === 'project' && r.pluginId != null
+        ? pluginStatus.get(r.pluginId) === 'active'
+        : r.enabled,
+    [mode, pluginStatus],
+  );
 
   useEffect(() => {
     void refreshRules();
@@ -393,6 +411,15 @@ export function HooksPanel({
       .listProjects()
       .then(setProjects)
       .catch(() => {});
+  }, [refreshRules]);
+
+  // 规则变更事件（本面板 CRUD + 插件段级联启停/装卸）→ 重拉并重建数据流画布。
+  useEffect(() => {
+    const onRulesChanged = (): void => {
+      void refreshRules();
+    };
+    window.addEventListener('weave:rules-changed', onRulesChanged);
+    return () => window.removeEventListener('weave:rules-changed', onRulesChanged);
   }, [refreshRules]);
 
   // ---- 规则操作 ----
@@ -407,13 +434,12 @@ export function HooksPanel({
         await api.deleteHookRule(id);
         setConfirmDeleteId(null);
         if (form?.editingId === id) setForm(null);
-        await refreshRules();
-        notifyRulesChanged();
+        notifyRulesChanged(); // 监听器统一重拉（画布随规则集合更新）
       } catch (e) {
         setError(errMsg(e));
       }
     },
-    [confirmDeleteId, form, refreshRules],
+    [confirmDeleteId, form],
   );
 
   // ---- 链路图 ----
@@ -422,12 +448,10 @@ export function HooksPanel({
 
   useEffect(() => {
     if (!rules) return;
-    // 数据流画布只展示当前生效（enabled）的规则；停用规则留在规则列表里管理。
-    const built = buildGraph(
-      rules.filter((r) => r.enabled),
-      projectById,
-      t,
-    );
+    // 数据流画布只展示当前生效的规则：项目模式的插件规则随项目级开关
+    // （effective：项目显式启用可复活全局停用、显式停用否决全局启用）；
+    // 其余（非插件规则 / 全局模式）看规则级 enabled。停用规则留在列表里管理。
+    const built = buildGraph(rules.filter(isActiveRule), projectById, t);
     // 保留用户拖出来的节点位置，只更新数据 / 集合。
     setNodes((prev) => {
       const pos = new Map(prev.map((n) => [n.id, n.position]));
@@ -437,7 +461,7 @@ export function HooksPanel({
       });
     });
     setEdges(built.edges);
-  }, [rules, projectById, t, setNodes]);
+  }, [rules, isActiveRule, projectById, t, setNodes]);
 
   // ---- 表单 ----
   const openCreate = (): void => {
@@ -562,8 +586,7 @@ export function HooksPanel({
       else await api.createHookRule(body);
       closeForm();
       setError(null);
-      await refreshRules();
-      notifyRulesChanged();
+      notifyRulesChanged(); // 监听器统一重拉（启用/停用后画布随之更新）
     } catch (e) {
       setFormError(errMsg(e));
     }
@@ -627,7 +650,7 @@ export function HooksPanel({
             {rules && rules.length === 0 && (
               <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlow')}</span>
             )}
-            {rules && rules.length > 0 && !rules.some((r) => r.enabled) && (
+            {rules && rules.length > 0 && !rules.some(isActiveRule) && (
               <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlowDisabled')}</span>
             )}
           </div>
@@ -662,7 +685,7 @@ export function HooksPanel({
               </ReactFlow>
             ) : (
               <div className="flex h-full items-center justify-center text-xs text-neutral-500">
-                {rules !== null && !rules.some((r) => r.enabled)
+                {rules !== null && !rules.some(isActiveRule)
                   ? t(rules.length === 0 ? 'hooks.emptyFlow' : 'hooks.emptyFlowDisabled')
                   : t('hooks.loading')}
               </div>
