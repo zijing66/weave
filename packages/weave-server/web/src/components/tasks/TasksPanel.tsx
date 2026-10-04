@@ -210,6 +210,17 @@ export function TasksPanel({
 
   const statuses = useMemo(() => {
     const map = new Map<string, SessionStatus>();
+    // 当前 turn 开合（仅选中会话有事件序列）：尾部扫到 UserPromptSubmit=开、
+    // Stop=关——Stop 后 30s 内只是「打开」等输入，不是进行中。
+    const turnOpenOf = (sessionId: string): boolean | undefined => {
+      if (sessionId !== selectedId) return undefined;
+      for (let i = events.length - 1; i >= 0; i--) {
+        const ty = events[i].eventType;
+        if (ty === 'Stop') return false;
+        if (ty === 'UserPromptSubmit') return true;
+      }
+      return undefined;
+    };
     for (const s of sessions ?? []) {
       const mine = dispatchBySession.get(s.sessionId) ?? [];
       const latest = mine[0]; // 全局列表按 startedAt 倒序，组内首条最新
@@ -225,6 +236,7 @@ export function TasksPanel({
           latestDispatchFailed:
             latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
           overlay: overlay.get(s.sessionId),
+          turnOpen: turnOpenOf(s.sessionId),
         }),
       );
     }
@@ -294,12 +306,15 @@ export function TasksPanel({
     }
   };
 
-  // 组头列表滚动窗口（折叠条级）：滚动到顶自动加载——先扩渲染窗口（10 条/批），
-  // 组已全渲染且事件游标还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
-  const shownGroups = groups.slice(-groupWindow);
+  // 组头列表滚动窗口（折叠条级）：**倒序**（最新组在顶），更早的向列表底部
+  // 方向滚——触底自动加载：先扩渲染窗口（10 条/批），组已全渲染且事件游标
+  // 还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
+  const shownGroups = groups.slice(-groupWindow).reverse();
   const olderRemaining = groups.length - shownGroups.length;
   const canLoadOlderEvents = !olderExhausted && events.length > 0;
   const hasOlder = olderRemaining > 0 || canLoadOlderEvents;
+  const atListEnd = (el: HTMLElement): boolean =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= 8;
   const loadOlderGroups = async (): Promise<void> => {
     if (olderRemaining > 0) {
       setGroupWindow((w) => w + 10);
@@ -329,21 +344,20 @@ export function TasksPanel({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const onListScroll = (e: React.UIEvent<HTMLDivElement>): void => {
-    if (!hasOlder || e.currentTarget.scrollTop > 8) return;
+  const throttleLoad = (): void => {
     const now = Date.now();
     if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
     scrollThrottle.current = now;
     void loadOlderGroups();
   };
-  /** 触顶后继续上滚：内容不再位移 → scroll 不再触发，须由 wheel 补触发。 */
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>): void => {
+    if (!hasOlder || !atListEnd(e.currentTarget)) return;
+    throttleLoad();
+  };
+  /** 触底后继续下滚：内容不再位移 → scroll 不再触发，须由 wheel 补触发。 */
   const onListWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
-    const el = e.currentTarget;
-    if (!hasOlder || e.deltaY >= 0 || el.scrollTop > 8) return;
-    const now = Date.now();
-    if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
-    scrollThrottle.current = now;
-    void loadOlderGroups();
+    if (!hasOlder || e.deltaY <= 0 || !atListEnd(e.currentTarget)) return;
+    throttleLoad();
   };
 
   // 自动补拉：默认承诺「最新 10 条」——头部截断导致窗口内真组不足 10 时，
@@ -490,36 +504,14 @@ export function TasksPanel({
             onScroll={onListScroll}
             onWheel={onListWheel}
           >
-            {/* 顶部渐变遮罩：更早 prompt 未加载的 affordance——向上滚动自动加载，
-                也可点击按钮（组窗口余量 → 扩窗；否则 beforeId 拉更早事件） */}
-            {hasOlder && (
-              <div className="pointer-events-none sticky top-0 z-10 -mx-1 bg-gradient-to-b from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-5 pt-1 text-center">
-                <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
-                <span className="pointer-events-auto mt-1 inline-flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void loadOlderGroups()}
-                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
-                  >
-                    {olderRemaining > 0
-                      ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
-                      : t('tasks.loadOlderEvents')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setGroupWindow((w) => w + groups.length)}
-                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-                  >
-                    {t('tasks.loadAll')}
-                  </button>
-                </span>
-              </div>
-            )}
             {shownGroups.map((g) => {
               const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
               const lastEvent = g.events[g.events.length - 1];
               const timeIso = lastEvent?.createdAt ?? g.dispatches[0]?.startedAt;
               const expanded = activeGroupId === g.id;
+              // 进行中 = **只有最新组**且未 Stop（g.open）且会话活跃——历史组
+              // 无论 open 与否都不再亮（旧组 open 是中断，不是进行中）。
+              const isLatestGroup = groups.length > 0 && g.id === groups[groups.length - 1]!.id;
               return (
                 <div
                   key={g.id}
@@ -567,7 +559,9 @@ export function TasksPanel({
                     <span className="shrink-0 text-[10px] text-neutral-500">
                       {t('tasks.groupDispatches', { n: g.dispatches.length })}
                     </span>
-                    {(activeStatus === 'running' || activeStatus === 'active') && (
+                    {(isLatestGroup &&
+                      g.open &&
+                      (activeStatus === 'running' || activeStatus === 'active')) && (
                       <span className="shrink-0">
                         <HarnessIcon harness={selectedHarness} running />
                       </span>
@@ -594,6 +588,31 @@ export function TasksPanel({
                 </div>
               );
             })}
+            {/* 底部渐变遮罩：倒序列表（最新在顶），更早 prompt 向底部滚——
+                触底自动加载，也可点击按钮（组窗口余量 → 扩窗；否则 beforeId） */}
+            {hasOlder && (
+              <div className="pointer-events-none sticky bottom-0 z-10 -mx-1 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-5 text-center">
+                <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
+                <span className="pointer-events-auto mt-1 inline-flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadOlderGroups()}
+                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
+                  >
+                    {olderRemaining > 0
+                      ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
+                      : t('tasks.loadOlderEvents')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupWindow((w) => w + groups.length)}
+                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+                  >
+                    {t('tasks.loadAll')}
+                  </button>
+                </span>
+              </div>
+            )}
           </div>
         )}
       </section>
