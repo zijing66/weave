@@ -52,6 +52,10 @@ export default function App() {
   // when the global 文件资产 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  // 全局模式任务卡计数的跨项目会话（D1 聚合；总览组件自拉自己的那份）。
+  const [globalSessions, setGlobalSessions] = useState<SessionRow[]>([]);
+  // 全局总览跳进项目任务视图的初始选中会话（离开任务视图即失效）。
+  const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
   // All hook rules (global + per project) — drives the Weave card count; the
   // panel refetches its own copy after every mutation.
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
@@ -169,6 +173,7 @@ export default function App() {
       setSelectedFile(null);
       setDrawerSkill(null);
       setMainCategory('files');
+      setInitialSessionId(null);
       setStatuslineSource(null);
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
@@ -195,6 +200,7 @@ export default function App() {
     setSelectedFile(null);
     setDrawerSkill(null);
     setMainCategory('files');
+    setInitialSessionId(null);
     setStatuslineSource(null); // no source badge/sub-text in the template view
     setError(null);
     // One bounded whitelist walk of ~/.claude + ~/.codex — cheap enough to
@@ -203,6 +209,8 @@ export default function App() {
       .listGlobalFileAssets()
       .then(setGlobalAssets)
       .catch((e) => setError(String(e)));
+    // 任务卡计数：跨项目会话（无参 listSessions）
+    api.listSessions().then(setGlobalSessions).catch(() => {});
     refreshGlobalSkills(anchor);
     refreshPluginEnabled(anchor);
     refreshMcp(anchor);
@@ -290,7 +298,7 @@ export default function App() {
         // The global view IS the template — a 跟随全局 badge would be noise.
         statuslineSource: null,
         hooksRules: hookRules.length,
-        sessions: 0, // 全局模式任务卡隐藏（hidden prop），字段仅满足类型
+        sessions: globalSessions.length,
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -314,7 +322,7 @@ export default function App() {
       ).length,
       sessions: sessions.length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected, sessions]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected, sessions, globalSessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -328,9 +336,13 @@ export default function App() {
   // 分类卡会话计数的刷新入口：SSE hook 帧防抖调用（任务视图内部数据
   // 由 TasksPanel 自拉，这里只维护左栏分类卡的 sessions 镜像）。
   const refreshSessions = useCallback(() => {
+    if (globalMode) {
+      api.listSessions().then(setGlobalSessions).catch(() => {});
+      return;
+    }
     if (!selected) return;
     api.listSessions(selected.id).then(setSessions).catch(() => {});
-  }, [selected]);
+  }, [selected, globalMode]);
 
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
@@ -627,10 +639,24 @@ export default function App() {
 
   const selectCategory = useCallback((c: MainCategory) => {
     setMainCategory(c);
+    // 初始选中会话只在任务视图内有效（回看时回落默认最新组/会话）
+    if (c !== 'tasks') setInitialSessionId(null);
     if (c === 'personalization') setStatuslineNonce((n) => n + 1);
     // reopen → pick up rule changes made elsewhere before the card count shows
     if (c === 'weave') refreshHookRules();
   }, [refreshHookRules]);
+
+  /** 全局任务总览行点击：退出全局 → 载入对应项目 → 任务视图选中该会话。 */
+  const openSessionInProject = useCallback(
+    (projectId: number, sessionId: string) => {
+      const target = projects.find((p) => p.id === projectId);
+      if (!target) return;
+      loadProject(target); // 同批内会把 mainCategory 置回 files，随后覆写为 tasks
+      setInitialSessionId(sessionId);
+      setMainCategory('tasks');
+    },
+    [projects, loadProject],
+  );
 
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
@@ -769,7 +795,6 @@ export default function App() {
                     category={mainCategory}
                     onSelect={selectCategory}
                     data={categoryData}
-                    hidden={globalMode ? new Set(['tasks'] as const) : undefined}
                   />
 
                   {/* 任务视图自管两栏内部滚动（全高），其余分类沿用外层滚动 */}
@@ -812,6 +837,9 @@ export default function App() {
                           setSelectedFile(null);
                           setDrawerSkill({ name, scope: sc, source, pluginKey, agent });
                         }}
+                        projects={projects}
+                        onOpenSession={openSessionInProject}
+                        initialSessionId={initialSessionId ?? undefined}
                       />
                     )}
                   </div>

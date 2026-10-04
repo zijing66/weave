@@ -8,11 +8,18 @@ import {
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
+import { formatTime } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
 import { buildSessionChain } from './build-session-chain';
+import {
+  buildLifecycleGroups,
+  ORPHAN_GROUP_ID,
+  type LifecycleGroup,
+} from './build-lifecycle-groups';
+import { HARNESS_LIFECYCLE } from './lifecycle';
 import { SessionFlowCanvas } from './SessionFlowCanvas';
-import { deriveSessionStatus, type SessionStatus } from './session-status';
-import { Activity, Loader2 } from 'lucide-react';
+import { deriveSessionStatus, STATUS_KEY, type SessionStatus } from './session-status';
+import { Activity, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 
 /** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
 interface HookFrame {
@@ -34,11 +41,31 @@ function LegendDot({ className, label }: { className: string; label: string }) {
 }
 
 /**
- * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
- * 右 = 选中会话的事件链画布。SSE（App 转发的 weave:hook 帧）驱动：
- * 500ms 防抖 refetch + overlay 即时状态 + 边脉冲/注入波纹动效。
+ * 默认展开组：最新组（events 是 D6 最新窗口，末组数据最完整；orphan 垫底无
+ * 事件不作默认，全 orphan 时取首组）。未手动点过则跟随最新——新开 turn 时
+ * 自动切过去；一旦点击即固定该组（同会话切组保持）。
  */
-export function TasksPanel({ projectId }: { projectId: number }) {
+function defaultGroupId(groups: LifecycleGroup[]): string | null {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i]!.id !== ORPHAN_GROUP_ID) return groups[i]!.id;
+  }
+  return groups[0]?.id ?? null;
+}
+
+/**
+ * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
+ * 右 = 选中会话的分组组头列表 + 单组事件链画布（D8 accordion，每组一图）。
+ * SSE（App 转发的 weave:hook 帧）驱动：500ms 防抖 refetch + overlay 即时状态 +
+ * 边脉冲/注入波纹动效。
+ */
+export function TasksPanel({
+  projectId,
+  initialSessionId,
+}: {
+  projectId: number;
+  /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
+  initialSessionId?: string;
+}) {
   const t = useT();
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [rules, setRules] = useState<HookRule[]>([]);
@@ -57,6 +84,8 @@ export function TasksPanel({ projectId }: { projectId: number }) {
   const [pulseEdgeId, setPulseEdgeId] = useState<string | null>(null);
   /** 正在波纹的派发 id（dispatch.created status=injected，900ms）。 */
   const [rippleId, setRippleId] = useState<number | null>(null);
+  /** 展开组：null = 自动跟随最新组，'' = 用户全部折叠，其余 = 固定该组。 */
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -88,16 +117,21 @@ export function TasksPanel({ projectId }: { projectId: number }) {
   );
 
   useEffect(() => {
-    setSelectedId(null);
+    setSelectedId(initialSessionId ?? null);
     setEvents([]);
     void refreshSessions();
     void refreshDispatches();
     api.listHooksRules(projectId).then(setRules).catch(() => {});
-  }, [projectId, refreshSessions, refreshDispatches]);
+  }, [projectId, initialSessionId, refreshSessions, refreshDispatches]);
 
   useEffect(() => {
     if (selectedId) void refreshEvents(selectedId);
   }, [selectedId, refreshEvents]);
+
+  // 切会话：展开态重置回默认（跟随最新组）；同会话内切组由点击驱动保持。
+  useEffect(() => {
+    setExpandedGroupId(null);
+  }, [selectedId]);
 
   // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
   useEffect(() => {
@@ -221,11 +255,37 @@ export function TasksPanel({ projectId }: { projectId: number }) {
     return map;
   }, [sessions, dispatchBySession, events, selectedId, overlay]);
 
+  // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
+  // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、
+  // 窗口尾无 open 归最后组——组 id 稳定（turn:<事件id>），展开态不跳。
+  const groups = useMemo(
+    () =>
+      selectedId
+        ? buildLifecycleGroups(
+            events,
+            dispatchBySession.get(selectedId) ?? [],
+            HARNESS_LIFECYCLE.claude,
+          )
+        : [],
+    [selectedId, events, dispatchBySession],
+  );
+
+  const activeGroupId = useMemo(() => {
+    if (!groups.length) return null;
+    if (expandedGroupId === '') return null; // 用户全部折叠
+    if (expandedGroupId !== null && groups.some((g) => g.id === expandedGroupId)) {
+      return expandedGroupId;
+    }
+    return defaultGroupId(groups);
+  }, [groups, expandedGroupId]);
+
+  const activeGroup = groups.find((g) => g.id === activeGroupId) ?? null;
+
   const chain = useMemo(() => {
-    if (!selectedId) return { nodes: [], edges: [], truncated: false };
+    if (!selectedId || !activeGroup) return { nodes: [], edges: [], truncated: false };
     const graph = buildSessionChain({
-      events,
-      dispatches: dispatchBySession.get(selectedId) ?? [],
+      events: activeGroup.events,
+      dispatches: activeGroup.dispatches,
       rules,
     });
     return {
@@ -239,7 +299,7 @@ export function TasksPanel({ projectId }: { projectId: number }) {
           : n,
       ),
     };
-  }, [selectedId, events, dispatchBySession, rules, pulseEdgeId, rippleId]);
+  }, [selectedId, activeGroup, rules, pulseEdgeId, rippleId]);
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
@@ -312,7 +372,7 @@ export function TasksPanel({ projectId }: { projectId: number }) {
         )}
       </aside>
 
-      {/* 右栏：事件链画布 */}
+      {/* 右栏：组头列表 + 单组画布（D8 accordion，每组一图） */}
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2 pb-2">
           <Activity className="h-3.5 w-3.5 text-rose-400" />
@@ -329,30 +389,108 @@ export function TasksPanel({ projectId }: { projectId: number }) {
             <LegendDot className="bg-neutral-400" label={t('tasks.legendDispatch')} />
           </span>
         </div>
-        <div className="relative min-h-0 flex-1 rounded-lg border border-white/[0.06] bg-neutral-950/40">
-          {!selectedId ? (
-            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
-              {t('tasks.selectHint')}
-            </p>
-          ) : chain.nodes.length === 0 ? (
-            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
-              {t('tasks.chainEmpty')}
-            </p>
-          ) : (
-            <SessionFlowCanvas
-              nodes={chain.nodes}
-              edges={chain.edges}
-              viewKey={selectedId}
-              emptyHint={t('tasks.chainEmpty')}
-            />
-          )}
-          {/* log 规则命中不落库的图例缺口说明 */}
-          {chain.nodes.length > 0 && (
-            <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
-              {t('tasks.legendNote')}
-            </p>
-          )}
-        </div>
+        {!selectedId ? (
+          <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
+            {t('tasks.selectHint')}
+          </p>
+        ) : groups.length === 0 ? (
+          <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
+            {t('tasks.chainEmpty')}
+          </p>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
+            {groups.map((g) => {
+              const title =
+                g.prompt ??
+                (g.preSession || g.id === ORPHAN_GROUP_ID
+                  ? null
+                  : g.events[0]?.eventType ?? g.id);
+              const lastEvent = g.events[g.events.length - 1];
+              const timeIso = lastEvent?.createdAt ?? g.dispatches[0]?.startedAt;
+              const expanded = activeGroupId === g.id;
+              return (
+                <div
+                  key={g.id}
+                  className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.015]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setExpandedGroupId(expanded ? '' : g.id)}
+                    className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
+                  >
+                    {expanded ? (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                    )}
+                    <span
+                      className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200"
+                      title={title ?? undefined}
+                    >
+                      {title ?? ''}
+                    </span>
+                    {g.preSession && (
+                      <Badge className="shrink-0 bg-sky-900/40 text-sky-300">
+                        {t('tasks.groupPreSession')}
+                      </Badge>
+                    )}
+                    {g.id === ORPHAN_GROUP_ID && (
+                      <Badge className="shrink-0 bg-neutral-800 text-neutral-300">
+                        {t('tasks.groupOrphan')}
+                      </Badge>
+                    )}
+                    {g.open && (
+                      <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
+                        {t('tasks.groupOpen')}
+                      </Badge>
+                    )}
+                    {g.subagentStops > 0 && (
+                      <Badge className="shrink-0 bg-purple-900/40 text-purple-300">
+                        {t('tasks.groupSubagent', { n: g.subagentStops })}
+                      </Badge>
+                    )}
+                    {timeIso && (
+                      <span className="shrink-0 text-[10px] text-neutral-500">
+                        {formatTime(timeIso)}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-[10px] text-neutral-500">
+                      {t('tasks.events', { n: g.events.length })}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-neutral-500">
+                      {t('tasks.groupDispatches', { n: g.dispatches.length })}
+                    </span>
+                    <Badge className="shrink-0 bg-neutral-800 text-neutral-400">
+                      {t(STATUS_KEY[statuses.get(selectedId) ?? 'idle'])}
+                    </Badge>
+                  </button>
+                  {expanded && (
+                    <div className="h-[420px] shrink-0 border-t border-white/[0.06] p-1.5">
+                      {chain.nodes.length === 0 ? (
+                        <p className="flex h-full items-center justify-center text-xs text-neutral-600">
+                          {t('tasks.chainEmpty')}
+                        </p>
+                      ) : (
+                        <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
+                          <SessionFlowCanvas
+                            nodes={chain.nodes}
+                            edges={chain.edges}
+                            viewKey={`${selectedId}:${g.id}`}
+                            emptyHint={t('tasks.chainEmpty')}
+                          />
+                          {/* log 规则命中不落库的图例缺口说明 */}
+                          <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
+                            {t('tasks.legendNote')}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* 拖拽执行确认 */}
