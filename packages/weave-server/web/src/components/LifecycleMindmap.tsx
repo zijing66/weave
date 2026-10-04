@@ -12,7 +12,15 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, type HookDispatch, type HookEventRow, type SessionRow } from '@/lib/api';
-import { EVENT_TYPE_STYLES, formatTime, parseDetail, rawOf, summarizeEvent } from '@/lib/hook-payload';
+import {
+  EVENT_TYPE_STYLES,
+  agentDispatchOf,
+  formatTime,
+  parseDetail,
+  rawOf,
+  summarizeEvent,
+  taskNotificationOf,
+} from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -40,6 +48,7 @@ export type MindmapKind =
   | 'group'
   | 'event'
   | 'subagent'
+  | 'notification'
   | 'rule'
   | 'handler'
   | 'dispatch';
@@ -60,6 +69,12 @@ export interface LaidNode {
   ruleName?: string | null;
   /** kind=handler：处理器类型。 */
   handlerType?: string;
+  /** 派发子代理 id / 子代理结束的 agent_id（环成员回溯证据）。 */
+  agentId?: string;
+  /** 当前使用的 model（派发 resolvedModel / SessionStart raw.model）。 */
+  model?: string;
+  /** 派发环状态：true=子代理未返回（环不闭环）。仅派发事件节点有。 */
+  agentRunning?: boolean;
   /** 真有（潜在）子节点才渲染折叠按钮——明细改点击节点右上面板承载。 */
   expandable: boolean;
   expanded: boolean;
@@ -70,6 +85,13 @@ export interface LaidNode {
 const COL_W = 320;
 /** 行距大于节点高度：父子边的 smoothstep 折线才有可见竖直段（DAG 连线）。 */
 const ROW_H = 128;
+
+/** SessionStart 携带的会话 model（其余事件类型无 model 字段）。 */
+function sessionModelOf(event: HookEventRow): string | undefined {
+  if (event.eventType !== 'SessionStart') return undefined;
+  const m = rawOf(event).model;
+  return typeof m === 'string' && m ? m : undefined;
+}
 
 /** 边：closure=true 是闭环回边（末事件 → prompt 根，成环）；vertical=true
  *  是同列时序链（底出顶入，防跨列锚点绕行交叉）。 */
@@ -92,6 +114,7 @@ export function layoutMindmap(
   groups: LifecycleGroup[],
   expanded: ReadonlySet<string>,
   ruleInfo: ReadonlyMap<string, RuleInfo> = new Map(),
+  sessionModel?: string,
 ): { nodes: LaidNode[]; edges: LaidEdge[] } {
   interface TNode {
     key: string;
@@ -102,6 +125,10 @@ export function layoutMindmap(
     ruleId?: string;
     ruleName?: string | null;
     handlerType?: string;
+    agentId?: string;
+    model?: string;
+    /** 派发环：true=子代理尚未返回（不画闭环）。 */
+    agentRunning?: boolean;
     children: TNode[];
     /** 有（潜在）子节点——折叠按钮只给这类块。 */
     hasPotential: boolean;
@@ -167,30 +194,79 @@ export function layoutMindmap(
   };
 
   const roots: TNode[] = [];
+  /** 派发环收集（walk 后重构成链）：锚节点 + 环成员 + 是否已返回（可闭环）。 */
+  const rings: { anchor: TNode; members: TNode[]; closed: boolean }[] = [];
   for (const g of groups) {
     const gKey = `g:${g.id}`;
     const children: TNode[] = [];
     if (expanded.has(gKey)) {
       if (g.events.length > 0) {
-        // 主链 = 非 SubagentStop 事件（时序）；SubagentStop 作为**时序前驱的
-        // 分叉子节点**挂入其 children（调用链分叉，不再与主链事件并列）——
-        // 恒显示于该分支（branch 先于可折叠的规则子树）。
+        // 主链 = 非环成员事件（时序）。三类节点：
+        // ① 派发锚（PostToolUse + toolResponse.agentId）——进主链，登记锚表；
+        // ② 环成员：SubagentStop.agent_id / task-notification 匹配锚 → 挂锚下
+        //    不进主链（子代理的生命周期挂回派发节点，成独立环）；
+        // ③ 其余 SubagentStop → 时序前驱分叉（同步子代理，无派发证据）。
         const chain: TNode[] = [];
         const nodesByRow = new Map<number, TNode>();
+        /** 派发锚索引：agentId / tool_use_id → 锚节点。 */
+        const anchors = new Map<string, TNode>();
+        const ringMembers = new Map<TNode, TNode[]>();
         let prevRow: HookEventRow | null = null;
         for (const e of g.events) {
           const eKey = `e:${e.id}`;
           const hits = g.dispatches.filter((d) => d.eventId === e.id);
           const kids = expanded.has(eKey) ? hitChain(e.id, hits) : [];
           const isSub = e.eventType === HARNESS_LIFECYCLE.claude.subagentStop;
+          const ad = agentDispatchOf(e);
+          const notif = taskNotificationOf(e.payload);
+
+          // 环成员归锚：先于主链判定（匹配则挂锚、不占主链）
+          if (notif || isSub) {
+            const raw = rawOf(e);
+            const agentId =
+              notif?.taskId ?? (typeof raw.agent_id === 'string' ? raw.agent_id : null);
+            const anchor =
+              (notif?.toolUseId ? anchors.get(notif.toolUseId) : undefined) ??
+              (agentId ? anchors.get(agentId) : undefined);
+            if (anchor) {
+              const member: TNode = {
+                key: eKey,
+                kind: notif ? 'notification' : 'subagent',
+                event: e,
+                children: kids,
+                hasPotential: kids.length > 0,
+                highlight: kids.some((k) => k.highlight),
+                // 环成员继承派发锚的 model（子代理实际使用的模型）
+                model: anchor.model,
+                agentId: anchor.agentId,
+              };
+              const list = ringMembers.get(anchor) ?? [];
+              list.push(member);
+              ringMembers.set(anchor, list);
+              nodesByRow.set(e.id, member);
+              if (notif) anchor.agentRunning = false; // 收到返回 → 环可闭环
+              continue;
+            }
+            // 通知挂不上锚（派发在窗口外）：留主链作普通事件，不丢证据
+          }
+
           const node: TNode = {
             key: eKey,
-            kind: isSub ? 'subagent' : 'event',
+            kind: notif ? 'notification' : isSub ? 'subagent' : 'event',
             event: e,
             children: kids,
             hasPotential: hits.length > 0, // 无触发指令的事件是叶子——不给折叠按钮
             highlight: kids.some((k) => k.highlight),
+            agentId: ad?.agentId ?? notif?.taskId ?? undefined,
+            model: ad?.model ?? sessionModelOf(e), // 派发=resolvedModel；SessionStart=会话 model
+            agentRunning: ad ? true : undefined,
           };
+          if (ad) {
+            anchors.set(ad.agentId, node);
+            if (ad.toolUseId) anchors.set(ad.toolUseId, node);
+            ringMembers.set(node, []);
+          }
+
           if (isSub) {
             const prevNode = prevRow ? nodesByRow.get(prevRow.id) : undefined;
             if (prevNode) {
@@ -205,6 +281,14 @@ export function layoutMindmap(
           chain.push(node);
           nodesByRow.set(e.id, node);
           prevRow = e;
+        }
+        // 环成员挂锚前部（分叉语义，先于命中链子树展示）
+        for (const [anchor, members] of ringMembers) {
+          if (members.length > 0) {
+            anchor.children = [...members, ...anchor.children];
+            anchor.highlight = anchor.highlight || members.some((m) => m.highlight);
+            rings.push({ anchor, members, closed: !anchor.agentRunning });
+          }
         }
         children.push(...chain);
       } else {
@@ -221,6 +305,7 @@ export function layoutMindmap(
       children,
       hasPotential: g.events.length > 0 || g.dispatches.length > 0,
       highlight: hl,
+      model: sessionModel,
     });
   }
 
@@ -251,6 +336,9 @@ export function layoutMindmap(
       ruleId: n.ruleId,
       ruleName: n.ruleName,
       handlerType: n.handlerType,
+      agentId: n.agentId,
+      model: n.model,
+      agentRunning: n.agentRunning,
       expandable: n.hasPotential,
       expanded: expanded.has(n.key),
       highlight: n.highlight,
@@ -264,7 +352,9 @@ export function layoutMindmap(
   // 成环（可成环，非 DAG）；事件的规则/指令子树边保留。
   for (const r of roots) {
     if (r.kind !== 'group') continue;
-    const evs = r.children.filter((c) => c.kind === 'event' || c.kind === 'subagent');
+    const evs = r.children.filter(
+      (c) => c.kind === 'event' || c.kind === 'subagent' || c.kind === 'notification',
+    );
     if (evs.length === 0) continue; // orphan 直挂 dispatch 维持放射
     const evKeys = new Set(evs.map((c) => c.key));
     for (let i = edges.length - 1; i >= 0; i--) {
@@ -281,12 +371,35 @@ export function layoutMindmap(
         vertical: true,
       });
     }
-    edges.push({
-      id: `${evs[evs.length - 1]!.key}->${r.key}`,
-      source: evs[evs.length - 1]!.key,
-      target: r.key,
-      closure: true,
-    });
+    // 闭环回根 = 该 prompt 已等到自己的 Stop（正常结束）；进行中/中断
+    //（open，没有 Stop 这一闭环事件）不画回边。
+    if (!r.group?.open) {
+      edges.push({
+        id: `${evs[evs.length - 1]!.key}->${r.key}`,
+        source: evs[evs.length - 1]!.key,
+        target: r.key,
+        closure: true,
+      });
+    }
+  }
+
+  // 派发环：删 walk 给环成员生成的 锚→成员 放射边，改 锚→SubagentStop?→
+  // task-notification 链；**收到返回通知才补 环→锚 闭环回边**——执行中的
+  // 子代理（未返回）保持开环。
+  for (const { anchor, members, closed } of rings) {
+    const memberKeys = new Set(members.map((m) => m.key));
+    for (let i = edges.length - 1; i >= 0; i--) {
+      const e = edges[i]!;
+      if (e.source === anchor.key && memberKeys.has(e.target)) edges.splice(i, 1);
+    }
+    let prev = anchor.key;
+    for (const m of members) {
+      edges.push({ id: `${prev}->${m.key}`, source: prev, target: m.key, vertical: prev !== anchor.key });
+      prev = m.key;
+    }
+    if (closed) {
+      edges.push({ id: `${prev}->${anchor.key}`, source: prev, target: anchor.key, closure: true });
+    }
   }
   return { nodes, edges };
 }
@@ -308,6 +421,19 @@ type MindmapFlowNode = Node<MindmapData, 'mindmap'>;
 
 function tagCls(base: string): string {
   return `${base} rounded px-1 py-px text-[10px] leading-tight`;
+}
+
+/** 当前使用的 model 显著 tag（会话 SessionStart / 子代理 resolvedModel）。 */
+function ModelTag({ model }: { model: string }) {
+  const short = model.replace(/\[.*$/, '');
+  return (
+    <span
+      className="rounded border border-indigo-500/40 bg-indigo-500/15 px-1 py-px text-[10px] font-medium leading-tight text-indigo-200"
+      title={model}
+    >
+      {short}
+    </span>
+  );
 }
 
 function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
@@ -359,11 +485,17 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
               {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
             </span>
           )}
+          {g.agentsDispatched > 0 && (
+            <span className={tagCls('bg-fuchsia-900/40 text-fuchsia-300')}>
+              {t('hooks.mindmap.agentDispatched', { n: g.agentsDispatched })}
+            </span>
+          )}
           {g.dispatches.length > 0 && (
             <span className={tagCls('bg-emerald-900/40 text-emerald-300')}>
               {t('hooks.mindmap.dispatchCount', { n: g.dispatches.length })}
             </span>
           )}
+          {node.model && <ModelTag model={node.model} />}
           <span className="text-[10px] text-neutral-500">
             {t('catbar.items', { n: g.events.length })}
             {startedAt ? ` · ${formatTime(startedAt)}` : ''}
@@ -371,12 +503,13 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
         </span>
       </>
     );
-  } else if ((node.kind === 'event' || node.kind === 'subagent') && node.event) {
+  } else if (
+    (node.kind === 'event' || node.kind === 'subagent' || node.kind === 'notification') &&
+    node.event
+  ) {
     const e = node.event;
     const isSub = node.kind === 'subagent';
     const summary = summarizeEvent(e);
-    const raw = isSub ? rawOf(e) : null;
-    const agentId = raw && typeof raw.agent_id === 'string' ? raw.agent_id : null;
     body = (
       <>
         <span className="flex flex-wrap items-center gap-1">
@@ -390,8 +523,19 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
               subagent
             </span>
           )}
-          {agentId && (
-            <span className="text-[10px] text-neutral-500">agent …{agentId.slice(-8)}</span>
+          {node.kind === 'notification' && (
+            <span className={tagCls('border border-teal-700/50 bg-teal-950/60 text-teal-300')}>
+              {t('hooks.mindmap.notifyTag')}
+            </span>
+          )}
+          {node.agentId && (
+            <span className="text-[10px] text-neutral-500">agent …{node.agentId.slice(-8)}</span>
+          )}
+          {node.model && <ModelTag model={node.model} />}
+          {node.agentRunning && (
+            <span className={tagCls('bg-amber-900/50 text-amber-300')}>
+              {t('hooks.mindmap.agentRunning')}
+            </span>
           )}
           <span className="text-[10px] text-neutral-500">{formatTime(e.createdAt)}</span>
         </span>
@@ -607,9 +751,19 @@ export function LifecycleMindmap({
     return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
   }, [events, dispatches, sessionId, focusGroupId]);
 
+  // 会话当前 model：最新一条 SessionStart.raw.model（无则不显示 tag）。
+  const sessionModel = useMemo(() => {
+    if (!events) return undefined;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const m = sessionModelOf(events[i]!);
+      if (m) return m;
+    }
+    return undefined;
+  }, [events]);
+
   const laid = useMemo(
-    () => layoutMindmap(groups, expanded, ruleInfo),
-    [groups, expanded, ruleInfo],
+    () => layoutMindmap(groups, expanded, ruleInfo, sessionModel),
+    [groups, expanded, ruleInfo, sessionModel],
   );
 
   const onToggle = useCallback((key: string) => {
@@ -697,17 +851,24 @@ export function LifecycleMindmap({
                 {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
               </span>
             )}
+            {g.agentsDispatched > 0 && (
+              <span className="rounded bg-fuchsia-900/40 px-1 text-[10px] text-fuchsia-300">
+                {t('hooks.mindmap.agentDispatched', { n: g.agentsDispatched })}
+              </span>
+            )}
+            {n.model && <ModelTag model={n.model} />}
           </div>
           {row(t('tasks.events', { n: g.events.length }), '')}
           {row(t('tasks.groupDispatches', { n: g.dispatches.length }), '')}
         </>
       );
     }
-    if ((n.kind === 'event' || n.kind === 'subagent') && n.event) {
+    if (
+      (n.kind === 'event' || n.kind === 'subagent' || n.kind === 'notification') &&
+      n.event
+    ) {
       const e = n.event;
       const d = parseDetail(e.payload);
-      const raw = rawOf(e);
-      const agentId = typeof raw.agent_id === 'string' ? raw.agent_id : null;
       return (
         <>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -716,9 +877,15 @@ export function LifecycleMindmap({
             >
               {e.eventType}
             </span>
-            {n.kind === 'subagent' && agentId && (
+            {n.agentId && (
               <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
-                agent …{agentId.slice(-8)}
+                agent …{n.agentId.slice(-8)}
+              </span>
+            )}
+            {n.model && <ModelTag model={n.model} />}
+            {n.agentRunning && (
+              <span className={tagCls('bg-amber-900/50 text-amber-300')}>
+                {t('hooks.mindmap.agentRunning')}
               </span>
             )}
             <span className="text-neutral-500">{formatTime(e.createdAt)}</span>

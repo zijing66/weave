@@ -192,4 +192,76 @@ describe('buildLifecycleGroups', () => {
     expect(groups[0]).toMatchObject({ open: true }); // A 没有 Stop → 未正常结束
     expect(groups[1]!.open).toBeUndefined(); // B 正常
   });
+
+  it('派发子代理：PostToolUse.agentId 计入 agentsDispatched 并登记归组锚', () => {
+    const dispatch = (id: number, agentId: string, toolUseId: string): HookEventRow =>
+      event(
+        id,
+        'PostToolUse',
+        JSON.stringify({
+          toolResponse: { isAsync: true, agentId, resolvedModel: 'm1' },
+          raw: { tool_use_id: toolUseId },
+        }),
+      );
+    const groups = buildLifecycleGroups(
+      [promptEvent(1, '派发'), dispatch(2, 'agent-x', 'call-1'), event(3, 'Stop')],
+      [],
+      claude,
+    );
+    expect(groups[0]!.agentsDispatched).toBe(1);
+    expect(groups[0]!.agentsDispatched).toBeDefined();
+  });
+
+  it('task-notification 不开新组：按 tool-use-id 归回派发所在组（与原事件闭环）', () => {
+    const dispatch = (id: number, agentId: string, toolUseId: string): HookEventRow =>
+      event(
+        id,
+        'PostToolUse',
+        JSON.stringify({
+          toolResponse: { isAsync: true, agentId, resolvedModel: 'm1' },
+          raw: { tool_use_id: toolUseId },
+        }),
+      );
+    const notif = (id: number, agentId: string, toolUseId: string): HookEventRow =>
+      event(
+        id,
+        'UserPromptSubmit',
+        JSON.stringify({
+          raw: {
+            prompt: `<task-notification>\n<task-id>${agentId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<status>completed</status>\n</task-notification>`,
+          },
+        }),
+      );
+    // 派发在 turn:1；通知晚到（甚至在下一轮之后）也归回 turn:1，不开「通知 prompt」组
+    const groups = buildLifecycleGroups(
+      [
+        promptEvent(1, '派发'),
+        dispatch(2, 'agent-x', 'call-1'),
+        event(3, 'Stop'),
+        promptEvent(4, '下一轮'),
+        notif(5, 'agent-x', 'call-1'),
+        event(6, 'Stop'),
+      ],
+      [],
+      claude,
+    );
+    expect(groups.map((g) => g.id)).toEqual(['turn:1', 'turn:4']); // 通知不成组
+    expect(groups[0]!.events.map((e) => e.id)).toEqual([1, 2, 3, 5]); // 归回派发组
+    expect(groups[1]!.events.map((e) => e.id)).toEqual([4, 6]);
+    expect(groups[1]!.prompt).toBe('下一轮'); // 组头不被 XML 污染
+  });
+
+  it('task-notification 匹配不到派发（窗口外）：回落挂靠仍不开组', () => {
+    const orphanNotif = event(
+      2,
+      'UserPromptSubmit',
+      JSON.stringify({
+        raw: { prompt: '<task-notification>\n<task-id>ghost</task-id>\n</task-notification>' },
+      }),
+    );
+    const groups = buildLifecycleGroups([promptEvent(1, 'hi'), orphanNotif, event(3, 'Stop')], [], claude);
+    expect(groups).toHaveLength(1); // 不因通知多出一组
+    expect(groups[0]!.events.map((e) => e.id)).toEqual([1, 2, 3]);
+    expect(groups[0]!.prompt).toBe('hi');
+  });
 });

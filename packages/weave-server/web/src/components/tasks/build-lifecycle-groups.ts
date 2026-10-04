@@ -1,4 +1,5 @@
 import type { HookDispatch, HookEventRow } from '@/lib/api';
+import { agentDispatchOf, taskNotificationOf } from '@/lib/hook-payload';
 import type { HarnessLifecycle } from '@weave/core/harness';
 
 /**
@@ -22,6 +23,8 @@ export interface LifecycleGroup {
   preSession?: boolean;
   /** 组内 SubagentStop 计数（不独立成组，组头「子代理完成 ×n」）。 */
   subagentStops: number;
+  /** 组内派发的异步子代理数（PostToolUse.toolResponse.agentId，组头「子代理 ×n」）。 */
+  agentsDispatched: number;
 }
 
 export const PRE_SESSION_GROUP_ID = 'pre-session';
@@ -34,6 +37,9 @@ export const ORPHAN_GROUP_ID = 'orphan';
  *   才在收尾标「未正常结束」（用户提前提交 prompt 时旧组仍在执行的场景）。
  * - 无 prompt_id（旧数据/坏 payload）回落原包夹行为：事件挂 current→last→pre。
  * - dispatch 仍按 eventId ∈ 组事件集归组；null/窗口外 → orphan 游离组。
+ * - **task-notification 不开组**：UserPromptSubmit 携带 <task-notification>
+ *   时按 tool-use-id/task-id 归回派发所在的组（子代理返回与原派发闭环，
+ *   不产生独立的「通知 prompt」组）；匹配不到则回落 attach。
  */
 export function buildLifecycleGroups(
   events: HookEventRow[],
@@ -52,6 +58,9 @@ export function buildLifecycleGroups(
   let last: LifecycleGroup | null = null;
   /** prompt_id → 组（并发锚：Stop/事件按 pid 精确回组）。 */
   const byPid = new Map<string, LifecycleGroup>();
+  /** 派发子代理证据 → 组（agentId / tool_use_id，task-notification 归组锚）。 */
+  const byAgent = new Map<string, LifecycleGroup>();
+  const byToolUse = new Map<string, LifecycleGroup>();
 
   const closeGroup = (group: LifecycleGroup, openEnded: boolean): void => {
     if (closed.has(group)) return;
@@ -73,17 +82,37 @@ export function buildLifecycleGroups(
         dispatches: [],
         preSession: true,
         subagentStops: 0,
+        agentsDispatched: 0,
       });
       closed.add(g); // 引导组不是 turn——收尾不标「未正常结束」
     }
     g.events.push(event);
     if (event.eventType === lifecycle.subagentStop) g.subagentStops++;
+    const ad = agentDispatchOf(event);
+    if (ad) {
+      g.agentsDispatched++;
+      byAgent.set(ad.agentId, g);
+      if (ad.toolUseId) byToolUse.set(ad.toolUseId, g);
+    }
   };
 
   for (const event of events) {
     const type = event.eventType;
     const pid = extractPromptId(event.payload);
     if (type === lifecycle.open) {
+      // 子代理返回通知：不是用户 prompt——归回派发所在组闭环，不开新组。
+      const notif = taskNotificationOf(event.payload);
+      if (notif) {
+        const target =
+          (notif.toolUseId ? byToolUse.get(notif.toolUseId) : undefined) ??
+          (notif.taskId ? byAgent.get(notif.taskId) : undefined);
+        if (target) {
+          target.events.push(event);
+        } else {
+          attach(event, pid); // 派发事件在窗口外：回落挂靠，仍不切组
+        }
+        continue;
+      }
       // 同 prompt 重复开组事件（resume 补报）→ 续接原组；新 prompt → 开新组。
       // **不关旧组**：并发下旧 turn 还在执行，等它自己的 Stop 按 pid 关回。
       if (pid) {
@@ -94,7 +123,13 @@ export function buildLifecycleGroups(
           continue;
         }
       }
-      const group = push({ id: `turn:${event.id}`, events: [], dispatches: [], subagentStops: 0 });
+      const group = push({
+        id: `turn:${event.id}`,
+        events: [],
+        dispatches: [],
+        subagentStops: 0,
+        agentsDispatched: 0,
+      });
       if (pid) {
         group.promptId = pid;
         byPid.set(pid, group);
@@ -156,6 +191,7 @@ export function buildLifecycleGroups(
       events: [],
       dispatches: [],
       subagentStops: 0,
+      agentsDispatched: 0,
     });
     closed.add(orphan); // 游离组不是 turn——不标「未正常结束」
     orphan.dispatches.push(dispatch);
