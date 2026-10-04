@@ -134,7 +134,7 @@
 ### 批 3 —— CC 原生包全局安装纠正（harness 能力槽 + server 管线）
 - 架构：PluginSurface 定义 driver.ts、实现 claude/plugins.ts、codex 不注册；global-config 的 CC enabledPlugins/installed_plugins **实现迁入 claude/、server 薄委托**；server 零新增 CC 硬编码。
 - 改：driver.ts（capability+'plugins'、接口）、**新 claude/plugins.ts**（H1-H5 结论落这）、claude/index 补槽、codex/index 不注册、harness 导出、toolkit.ts（buildFilePlan 删 ccPack :162-171、enable/disable 接 surface、computeEnabled 改判据、record 自愈清副本、list 报 legacyCopies、头注释改写）、global-config 薄委托（导出名不变）、toolkit-routes（`POST /toolkit/legacy-copies/cleanup`）、ToolkitSection+dict/toolkit、**新 harness __tests__/plugins.test.ts**。
-- 硬闸（**显式修订组**）：toolkit-toggle 闸①（:119-135 `.claude/plugins` 落项目断言→「项目零副本+全局位落盘+toolkit 记录仍写」）、闸②（:139-148 改写保护对象改全局位）、闸④（:195 无 CC 条目）、闸⑤（:323 → 两项目全局位一致+各自 enabledPlugins）；**mod 版本闸 :152-176 零改**；global-config.test:195-211 零改；harness assets.test 零改；toolkit-server/toolkit-loader 预期零改执行核查。
+- 硬闸（**显式修订组**）：toolkit-toggle 闸①（:119-135 `.claude/plugins` 落项目断言→「项目零副本+全局位落盘+toolkit 记录仍写」）、闸②（:139-148 改写保护对象改全局位）、闸④（:195 无 CC 条目）、闸⑤（:323 → 两项目全局位一致+各自 enabledPlugins）；**mod 版本闸 :203-242 零改**（勘误：原 :152-176 已漂移，实测锚点见 cc-plugin-verification.md）；global-config.test:195-211 零改；harness assets.test 零改；toolkit-server/toolkit-loader 预期零改执行核查。
 - **前置 H1-H5 验证不过不进批**。
 
 ### 批 4 —— 插件启用按项目隔离 + 同步扩展（server 自身状态）
