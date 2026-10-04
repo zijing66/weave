@@ -29,7 +29,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
-import { ToolkitSection } from '@/components/ToolkitSection';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -648,18 +647,6 @@ export function HooksPanel({
         </CardHeader>
         <CardContent className="space-y-1">
           <HooksPluginsSection projectId={mode === 'project' ? projectId : undefined} />
-        </CardContent>
-      </Card>
-
-      {/* 工具箱（weave 成分域）：含 weave 规则成分的 pack（Markdown Lint 注入一类
-          是 weave 功能）在此启停；Claude 插件与 harness 表面在文件资产 ▸ Plugins */}
-      <Card>
-        <CardHeader className="flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-sm">{t('toolkit.title')}</CardTitle>
-          <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          <ToolkitSection projectId={projectId} scope="weave" />
         </CardContent>
       </Card>
 
