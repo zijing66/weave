@@ -702,14 +702,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }).then((r) => r.rule),
-  /** SPI 扫描的插件列表（内置预设/全局/项目三根）。 */
-  listHookPlugins: (): Promise<HookPlugin[]> =>
-    apiFetch<{ plugins: HookPlugin[] }>('/hooks/plugins').then((r) => r.plugins),
-  /** 插件级开关（级联启停其全部规则）。 */
-  toggleHookPlugin: (id: string, enabled: boolean): Promise<void> =>
+  /** SPI 扫描的插件列表（内置预设/全局/项目三根）。带 projectId = 该项目 effective 态。 */
+  listHookPlugins: (projectId?: number): Promise<HookPlugin[]> =>
+    apiFetch<{ plugins: HookPlugin[] }>(
+      `/hooks/plugins${projectId === undefined ? '' : `?projectId=${projectId}`}`,
+    ).then((r) => r.plugins),
+  /** 插件级开关（级联启停其全部规则）；带 projectId = 项目覆盖（不写全局默认）。 */
+  toggleHookPlugin: (id: string, enabled: boolean, projectId?: number): Promise<void> =>
     apiFetch<{ ok: boolean }>(`/hooks/plugins/${encodeURIComponent(id)}/toggle`, {
       method: 'POST',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(projectId === undefined ? { enabled } : { enabled, projectId }),
     }).then(() => undefined),
   /** 安装插件（本地目录 | git URL）→ daemon 复制进全局插件根并立即重扫。 */
   installHookPlugin: (src: string): Promise<{ installed: Array<{ id: string }>; warnings: string[] }> =>

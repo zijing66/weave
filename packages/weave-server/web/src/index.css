@@ -94,6 +94,20 @@
   animation: weave-edge-flash 500ms ease-out;
 }
 
+/* 规则节点边框闪烁（dispatch.created 触发，className 一次性挂 500ms 后摘除）。 */
+@keyframes weave-node-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.85);
+  }
+}
+.weave-node-flash {
+  animation: weave-node-flash 500ms ease-out;
+}
+
 /* 注入（workflow 触发）节点双环波纹，900ms 两环错峰 150ms。 */
 @keyframes weave-ripple {
   from {
