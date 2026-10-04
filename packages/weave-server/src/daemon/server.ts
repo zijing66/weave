@@ -228,29 +228,61 @@ async function handleRequest(
     if (deps.hookSessions && input.sessionId) {
       deps.hookSessions.touch(input.sessionId, project.id);
     }
+    // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次。
+    let payload: NormalizedHookPayload | null = null;
+    try {
+      payload = JSON.parse(input.payload) as NormalizedHookPayload;
+    } catch {
+      payload = null;
+    }
+    const raw = payload?.raw;
+    const agentId =
+      raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).agent_id === 'string'
+        ? ((raw as Record<string, unknown>).agent_id as string)
+        : undefined;
+    // 后台子 agent 出生信号：Agent 工具的异步返回带子 agent id。
+    let spawnAgentId: string | undefined;
+    if (input.eventType === 'PostToolUse' && payload?.toolName === 'Agent') {
+      const resp = payload.toolResponse as { isAsync?: unknown; agentId?: unknown } | null;
+      if (resp?.isAsync && typeof resp.agentId === 'string') spawnAgentId = resp.agentId;
+    }
+    // Stop/SubagentStop 帧透出 background_tasks 快照（仅保留 id/status 字符串）。
+    let backgroundTasks: Array<{ id: string; status: string }> | undefined;
+    if (Array.isArray(raw && typeof raw === 'object' ? (raw as Record<string, unknown>).background_tasks : undefined)) {
+      backgroundTasks = ((raw as Record<string, unknown>).background_tasks as Array<Record<string, unknown>>)
+        .filter((x) => x && typeof x.id === 'string' && typeof x.status === 'string')
+        .map((x) => ({ id: x.id as string, status: x.status as string }));
+    }
     // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
     deps.hookBus?.emit({
       kind: 'event.ingested',
       eventId: id,
       projectId: project.id,
       sessionId: input.sessionId ?? null,
+      eventType: input.eventType,
+      ...(agentId ? { agentId } : {}),
+      ...(spawnAgentId ? { spawnAgentId } : {}),
+      ...(backgroundTasks ? { backgroundTasks } : {}),
       at: new Date().toISOString(),
     });
     // D3 分发：在响应路径上同步匹配规则——命中 inject 时把 additionalContext
     // 放进响应体，由 hook-handler.cjs 输出给会话。失败降级为无动作（201 不变）。
     let outcome: { additionalContext?: string; sessionTitle?: string } = {};
     if (deps.hookDispatcher) {
-      let payload: NormalizedHookPayload;
-      try {
-        payload = JSON.parse(input.payload) as NormalizedHookPayload;
-      } catch {
-        payload = { eventType: input.eventType, toolName: null, toolInput: null, toolResponse: null, cwd: null, transcriptPath: null, raw: null };
-      }
       outcome = await deps.hookDispatcher.onIngest({
         eventId: id,
         project,
         sessionId: input.sessionId ?? null,
-        payload,
+        payload:
+          payload ?? {
+            eventType: input.eventType,
+            toolName: null,
+            toolInput: null,
+            toolResponse: null,
+            cwd: null,
+            transcriptPath: null,
+            raw: null,
+          },
         source: input.source,
       });
     }

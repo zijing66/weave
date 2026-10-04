@@ -16,7 +16,7 @@ import {
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
-import { deriveSessionStatus, type SessionStatus } from './session-status';
+import { deriveSessionStatus, STALE_SUBAGENT_MS, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
 
@@ -24,6 +24,13 @@ import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucid
 interface HookFrame {
   kind?: string;
   sessionId?: string | null;
+  eventType?: string;
+  /** 事件源子 agent id（raw.agent_id；SubagentStop 时 = 刚结束的子 agent）。 */
+  agentId?: string;
+  /** 后台子 agent 出生信号（PostToolUse Agent isAsync 的 tool_response.agentId）。 */
+  spawnAgentId?: string;
+  /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
+  backgroundTasks?: Array<{ id: string; status: string }>;
   ruleId?: string;
   eventId?: number;
   dispatchId?: number;
@@ -58,6 +65,12 @@ export function TasksPanel({
   } | null>(null);
   /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
   const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
+  /** 后台子 agent 存活账（sessionId → agentId → 最近事件时刻）：spawn/自身事件续期、
+   *  Stop/SubagentStop 的 background_tasks 快照整集对账；读取侧 STALE_SUBAGENT_MS 兜底。
+   *  回合开合不用帧态——以 listWithCounts 的 turnOpen 服务端基线为权威（丢帧/重挂载免疫）。 */
+  const [subagentsBySession, setSubagentsBySession] = useState<Map<string, Map<string, number>>>(
+    new Map(),
+  );
   /** 展开组：null = 自动跟随最新组，'' = 用户全部折叠，其余 = 固定该组。 */
   /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
@@ -143,6 +156,49 @@ export function TasksPanel({
       switch (f.kind) {
         case 'event.ingested': {
           if (f.sessionId) {
+            // 后台子 agent 存活账：background_tasks 快照（Stop/SubagentStop 全带）
+            // 整集对账——集合 = 快照中 running 的 id 减去本帧刚停的 agent（快照滞后
+            // 一拍会把自己列成 running）；无快照的 SubagentStop 按 agent_id 兜底删除
+            // （中间回合 stop 的 id 不在账上，删除为空操作）。spawn 出生、自身工具
+            // 事件续期（顺带补录面板中途打开漏掉的）。
+            const sid = f.sessionId as string;
+            if (f.backgroundTasks) {
+              const stopped = f.agentId;
+              const nextSession = new Map<string, number>();
+              const now = Date.now();
+              for (const task of f.backgroundTasks) {
+                if (task.status === 'running' && task.id !== stopped) {
+                  nextSession.set(task.id, now);
+                }
+              }
+              setSubagentsBySession((prev) => {
+                const next = new Map(prev);
+                if (nextSession.size) next.set(sid, nextSession);
+                else next.delete(sid);
+                return next;
+              });
+            } else if (f.eventType === 'SubagentStop' && f.agentId) {
+              const dead = f.agentId;
+              setSubagentsBySession((prev) => {
+                const forSession = prev.get(sid);
+                if (!forSession?.has(dead)) return prev;
+                const nextSession = new Map(forSession);
+                nextSession.delete(dead);
+                const next = new Map(prev);
+                if (nextSession.size) next.set(sid, nextSession);
+                else next.delete(sid);
+                return next;
+              });
+            } else if (f.spawnAgentId || f.agentId) {
+              const alive = (f.spawnAgentId ?? f.agentId) as string;
+              setSubagentsBySession((prev) => {
+                const next = new Map(prev);
+                const forSession = new Map(next.get(sid) ?? []);
+                forSession.set(alive, Date.now());
+                next.set(sid, forSession);
+                return next;
+              });
+            }
             // 左栏计数/lastSeen 本地即时 +1（refetch 兜底校准）
             setSessions((prev) =>
               prev?.map((s) =>
@@ -210,22 +266,23 @@ export function TasksPanel({
 
   const statuses = useMemo(() => {
     const map = new Map<string, SessionStatus>();
-    // 当前 turn 开合（仅选中会话有事件序列）：尾部扫到 UserPromptSubmit=开、
-    // Stop=关——Stop 后 30s 内只是「打开」等输入，不是进行中。
-    const turnOpenOf = (sessionId: string): boolean | undefined => {
-      if (sessionId !== selectedId) return undefined;
-      for (let i = events.length - 1; i >= 0; i--) {
-        const ty = events[i].eventType;
-        if (ty === 'Stop') return false;
-        if (ty === 'UserPromptSubmit') return true;
-      }
-      return undefined;
-    };
     for (const s of sessions ?? []) {
       const mine = dispatchBySession.get(s.sessionId) ?? [];
       const latest = mine[0]; // 全局列表按 startedAt 倒序，组内首条最新
       // events 为时间升序，末条最新（仅选中会话已加载）
       const newestEvent = s.sessionId === selectedId ? events[events.length - 1] : undefined;
+      // 后台子 agent 进行中（读取侧过期：10 分钟无该 agent 事件 = 失联兜底）
+      const alive = subagentsBySession.get(s.sessionId);
+      let hasRunningSubagent = false;
+      if (alive) {
+        const nowMs = Date.now();
+        for (const seenAt of alive.values()) {
+          if (nowMs - seenAt < STALE_SUBAGENT_MS) {
+            hasRunningSubagent = true;
+            break;
+          }
+        }
+      }
       map.set(
         s.sessionId,
         deriveSessionStatus({
@@ -233,15 +290,18 @@ export function TasksPanel({
           latestEventAt: newestEvent?.createdAt,
           latestEventType: newestEvent?.eventType,
           hasRunningDispatch: mine.some((d) => d.status === 'running'),
+          hasRunningSubagent,
           latestDispatchFailed:
             latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
           overlay: overlay.get(s.sessionId),
-          turnOpen: turnOpenOf(s.sessionId),
+          // 回合开合以服务端基线为权威（帧态丢失/重挂载免疫）；旧 daemon 无此字段时
+          // 回落 undefined → 维持 30s 呼吸窗语义。
+          turnOpen: s.turnOpen,
         }),
       );
     }
     return map;
-  }, [sessions, dispatchBySession, events, selectedId, overlay]);
+  }, [sessions, dispatchBySession, events, selectedId, overlay, subagentsBySession]);
 
   // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
   // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、

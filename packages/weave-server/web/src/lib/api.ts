@@ -255,6 +255,8 @@ export interface SessionRow {
   eventCount?: number;
   /** 会话归属 harness（最新事件 source；listWithCounts 填充，其余查询 undefined）。 */
   harness?: 'claude' | 'codex' | null;
+  /** 回合开合服务端基线：最后 UPS 晚于最后 Stop/SessionEnd（listWithCounts 填充）。 */
+  turnOpen?: boolean;
 }
 
 /** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */
@@ -728,11 +730,6 @@ export const api = {
     apiFetch<{ ok: boolean }>(`/hooks/rules/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }).then(() => undefined),
-  toggleHookRule: (id: string, enabled: boolean): Promise<HookRule> =>
-    apiFetch<{ rule: HookRule }>(`/hooks/rules/${encodeURIComponent(id)}/toggle`, {
-      method: 'POST',
-      body: JSON.stringify({ enabled }),
-    }).then((r) => r.rule),
   /** SPI 扫描的插件列表（内置预设/全局/项目三根）。带 projectId = 该项目 effective 态。 */
   listHookPlugins: (projectId?: number): Promise<HookPlugin[]> =>
     apiFetch<{ plugins: HookPlugin[] }>(

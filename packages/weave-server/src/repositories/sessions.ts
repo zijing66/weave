@@ -13,6 +13,9 @@ export interface SessionRow {
   eventCount?: number;
   /** 会话归属 harness = 最新一条 hook 事件的 source（listWithCounts 查询填充）。 */
   harness?: 'claude' | 'codex' | null;
+  /** 回合开合的服务端基线：最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd
+   *  （listWithCounts 查询填充）——前端帧态丢失/重挂载时的权威兜底。 */
+  turnOpen?: boolean;
 }
 
 /**
@@ -65,7 +68,9 @@ export class SessionRepository {
     // harness = 最新事件的 source（计算字段，sessions 表零 schema 变更）。
     const base =
       'SELECT s.*, COUNT(e.id) AS event_count, ' +
-      '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness ' +
+      '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, ' +
+      '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
+      '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
     const rows =
       projectId === undefined
@@ -81,22 +86,30 @@ export class SessionRepository {
             .all(projectId);
     return rows.map((row) => {
       const raw = (row as { harness?: unknown }).harness;
+      const lastUps = (row as { last_ups?: number | null }).last_ups;
+      const lastStop = (row as { last_stop?: number | null }).last_stop;
       return {
         ...toSession(row),
         eventCount: Number((row as { event_count: number }).event_count ?? 0),
         harness: raw === 'claude' || raw === 'codex' ? raw : null,
+        turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
       };
     });
   }
 
   /**
-   * dashboard 改名：挂 pending（生效延迟一轮/一次 resume）。
+   * dashboard 改名：display 名（title）立即落，pending_title 负责把新名同步给
+   * Claude 侧（下次 SessionStart(resume)/UserPromptSubmit 经 hook 下发）——dashboard
+   * 不再替闲置会话代持旧名，徽标只表示「Claude 侧还没同步」。
    * 幂等短路：title 与当前生效名相同 → 不进待生效态（已有 pending 视为撤销，一并清掉）；
    * 与当前 pending 相同 → 维持 pending 原样返回。只有名称实际变化才写 pending。
    */
   setPendingTitle(sessionId: string, title: string): SessionRow | undefined {
     const row = this.getBySessionId(sessionId);
     if (!row) return undefined;
+    // 与当前 pending 相同 → 幂等维持（须先于同名判断：title 已随写入同步为新值）。
+    if (row.pendingTitle === title) return row;
+    // 传入当前生效名（无 pending）→ 真同名 no-op；有 pending → 改回生效名 = 撤销。
     if (row.title === title) {
       if (row.pendingTitle != null) {
         this.db.prepare('UPDATE sessions SET pending_title = NULL WHERE session_id = ?').run(sessionId);
@@ -104,8 +117,8 @@ export class SessionRepository {
       return this.getBySessionId(sessionId);
     }
     this.db
-      .prepare('UPDATE sessions SET pending_title = ? WHERE session_id = ?')
-      .run(title, sessionId);
+      .prepare('UPDATE sessions SET title = ?, pending_title = ? WHERE session_id = ?')
+      .run(title, title, sessionId);
     return this.getBySessionId(sessionId);
   }
 

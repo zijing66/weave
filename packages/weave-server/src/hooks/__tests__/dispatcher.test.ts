@@ -296,25 +296,55 @@ describe('HookDispatcher', () => {
     expect(row.error).toContain('ECONNREFUSED');
   });
 
-  it('rename 双向：session_title diff 采纳外部改名；pending 随响应下发 sessionTitle', async () => {
+  it('rename 双向：session_title diff 采纳外部改名；pending 交付即落定并广播', async () => {
     // 无任何规则也要跑 rename 逻辑
     const first = await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: '外部改名' } }) }));
     expect(first.sessionTitle).toBeUndefined();
     // applyReportedTitle 落定由 sessions 完成——经 repo 直接验证
     const sessions = new SessionRepository(db);
     expect(sessions.getBySessionId('s1')?.title).toBe('外部改名');
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1);
 
-    // dashboard 挂 pending → 下一次事件的响应带 sessionTitle（hook 输出后原生改名）
+    // dashboard 挂 pending：title 立即更新（display 不代持旧名）
     sessions.setPendingTitle('s1', 'dashboard改名');
-    const second = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
-    expect(second.sessionTitle).toBe('dashboard改名');
-    // 未确认前 pending 保留、外部旧值不采纳
-    await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: '旧外部' } }) }));
-    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '外部改名', pendingTitle: 'dashboard改名' });
-    // 外部回带 pending 值 → 落定并清 pending
-    await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: 'dashboard改名' } }) }));
-    expect(sessions.getBySessionId('s1')).toMatchObject({ title: 'dashboard改名', pendingTitle: null });
-    const third = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard改名',
+      pendingTitle: 'dashboard改名',
+    });
+
+    // 工具事件（不携带 session_title 上报）：照常下发 sessionTitle 但不落定——
+    // pending 保留，否则下一 UPS 会以旧名经 diff 把 title 自纠回去（改名被吞）
+    const tool = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
+    expect(tool.sessionTitle).toBe('dashboard改名');
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard改名',
+      pendingTitle: 'dashboard改名',
+    });
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1); // 未广播
+
+    // 携带 session_title 上报的事件（UserPromptSubmit）：下发 + 落定 + 广播
+    const ups = await dispatcher.onIngest(
+      ctx({ payload: payload({ eventType: 'UserPromptSubmit', raw: { session_title: '旧名' } }) }),
+    );
+    expect(ups.sessionTitle).toBe('dashboard改名');
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard改名',
+      pendingTitle: null,
+    });
+    const renamedEvents = messages.filter((m) => m.kind === 'session.renamed');
+    expect(renamedEvents).toHaveLength(2);
+    expect(renamedEvents[1]).toMatchObject({ sessionId: 's1', title: 'dashboard改名' });
+
+    // 自纠兜底：会话若未真正应用改名，下一次上报的旧标题经 diff 通道改回
+    await dispatcher.onIngest(
+      ctx({ payload: payload({ eventType: 'UserPromptSubmit', raw: { session_title: '旧名' } }) }),
+    );
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '旧名', pendingTitle: null });
+
+    // pending 已清 → 后续事件不再下发 sessionTitle
+    const third = await dispatcher.onIngest(
+      ctx({ payload: payload({ eventType: 'UserPromptSubmit', raw: {} }) }),
+    );
     expect(third.sessionTitle).toBeUndefined();
   });
 
