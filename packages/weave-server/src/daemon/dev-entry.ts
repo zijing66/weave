@@ -89,6 +89,7 @@ async function main(): Promise<void> {
     projects,
     sessions: hookSessions,
     plugins: hookPlugins,
+    pluginStates: new PluginStateRepository(db),
   });
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     hookPlugins,
+    pluginStates: new PluginStateRepository(db),
     toolkit,
   });
 

@@ -84,6 +84,7 @@ export function startDaemon(): void {
     projects,
     sessions: hookSessions,
     plugins: pluginHostHolder,
+    pluginStates: new PluginStateRepository(db),
   });
   void loadAllPlugins(
     {
@@ -110,7 +111,10 @@ export function startDaemon(): void {
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
-  const syncScheduler = new SyncScheduler(projects, libraries, { cache: fingerprintCache });
+  const syncScheduler = new SyncScheduler(projects, libraries, {
+    cache: fingerprintCache,
+    plugins: pluginManager,
+  });
   syncScheduler.start();
   const staticDir = resolveStaticDir();
 
@@ -132,6 +136,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     hookPlugins: pluginManager,
+    pluginStates: new PluginStateRepository(db),
     toolkit,
   });
 

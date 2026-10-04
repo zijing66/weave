@@ -8,6 +8,7 @@ import {
 } from '@weave/core';
 import type { WeaveServerDeps } from './server.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
+import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -30,6 +31,9 @@ const CreateRuleBody = z.object({
 const UpdateRuleBody = CreateRuleBody.partial();
 
 const ToggleBody = z.object({ enabled: z.boolean() });
+
+/** 插件级开关：可选 projectId = 项目覆盖（写 meta.plugins.enabled，不动全局）。 */
+const PluginToggleBody = z.object({ enabled: z.boolean(), projectId: z.number().int().optional() });
 
 const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
@@ -141,7 +145,28 @@ export async function handleHooksRoutes(
   // ---- 插件管理面（SPI 加载结果 + 插件级开关 + 安装/卸载）----
   if (pathname === '/hooks/plugins') {
     if (req.method === 'GET') {
-      sendJson(200, { plugins: deps.hookPlugins?.list() ?? [] });
+      const projectIdRaw = url.searchParams.get('projectId');
+      if (projectIdRaw == null || projectIdRaw === '') {
+        sendJson(200, { plugins: deps.hookPlugins?.list() ?? [] });
+        return true;
+      }
+      const project = deps.projects.getById(Number(projectIdRaw));
+      if (!project) {
+        sendJson(404, { error: 'Project not found' });
+        return true;
+      }
+      if (!deps.pluginStates) {
+        sendJson(503, { error: 'Plugin states unavailable' });
+        return true;
+      }
+      const states = deps.pluginStates;
+      sendJson(200, {
+        plugins: (deps.hookPlugins?.list() ?? []).map((info) => {
+          if (info.status === 'rejected') return info;
+          const status = effective(project, info.id, { states }) ? 'active' : 'disabled';
+          return status === info.status ? info : { ...info, status };
+        }),
+      });
       return true;
     }
     if (req.method === 'POST') {
@@ -186,8 +211,23 @@ export async function handleHooksRoutes(
       return true;
     }
     try {
-      const body = ToggleBody.parse(await readJson());
-      const ok = deps.hookPlugins.setPluginEnabled(decodeURIComponent(pluginToggleMatch[1]!), body.enabled);
+      const body = PluginToggleBody.parse(await readJson());
+      const id = decodeURIComponent(pluginToggleMatch[1]!);
+      if (body.projectId !== undefined) {
+        const project = deps.projects.getById(body.projectId);
+        if (!project) {
+          sendJson(404, { error: 'Project not found' });
+          return true;
+        }
+        if (!deps.hookPlugins.list().some((p) => p.id === id)) {
+          sendJson(404, { error: 'Plugin not found' });
+          return true;
+        }
+        setProjectEnabled(project, id, body.enabled, { projects: deps.projects });
+        sendJson(200, { ok: true });
+        return true;
+      }
+      const ok = deps.hookPlugins.setPluginEnabled(id, body.enabled);
       if (!ok) {
         sendJson(404, { error: 'Plugin not found' });
         return true;
