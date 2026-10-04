@@ -154,9 +154,15 @@ export function ProjectList({
                       : 'text-neutral-500',
                   )}
                 />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm">{p.name}</span>
-                  <span className="block text-[11px] text-neutral-500">{p.path}</span>
+                {/* flex-1 + hover 时右侧让位（约 4 按钮簇宽），文本截断不与
+                    absolute 快捷簇重叠；padding 过渡与徽标淡出同拍防跳动 */}
+                <span className="min-w-0 flex-1 transition-[padding] duration-150 group-hover:pr-24">
+                  <span className="block truncate text-sm" title={p.name}>
+                    {p.name}
+                  </span>
+                  <span className="block truncate text-[11px] text-neutral-500" title={p.path}>
+                    {p.path}
+                  </span>
                 </span>
                 {/* 徽标淡出把右端位置让给快捷按钮簇（尺寸不变，防 hover 跳动）；
                     淡出后禁指针事件，避免隐形徽标的 tooltip 与按钮 tooltip 打架 */}
