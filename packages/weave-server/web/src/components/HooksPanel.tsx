@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
+import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { getDispatchDrag, setDispatchDrag } from '@/lib/dnd';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -888,6 +889,21 @@ export function HooksPanel({
   // ---- 链路图 ----
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
   const [baseEdges, setBaseEdges] = useState<FlowEdge[]>([]);
+  /** 项目形态画布双视图：拓扑（静态链路）| 生命周期（prompt 思维导图）。 */
+  const [flowView, setFlowView] = useState<'topology' | 'lifecycle'>('topology');
+  /** 思维导图当前会话（默认最近活跃）。 */
+  const [mindmapSessionId, setMindmapSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode !== 'project') return;
+    if (!sessions?.length) {
+      setMindmapSessionId(null);
+      return;
+    }
+    setMindmapSessionId((prev) =>
+      prev && sessions.some((s) => s.sessionId === prev) ? prev : sessions[0].sessionId,
+    );
+  }, [mode, sessions]);
 
   useEffect(() => {
     if (!rules || !sessions || !dispatches) return;
@@ -1148,22 +1164,61 @@ export function HooksPanel({
                 ? t('hooks.loading')
                 : `${t('hooks.poolTitle')} ${t('hooks.poolCount', { n: pendingCount })}`}
             </span>
-            <span className="ml-auto text-[11px] text-neutral-500">
-              {t('hooks.flowHint')}
+            <span className="ml-auto flex items-center gap-1">
+              {mode === 'project' && (
+                <span className="flex overflow-hidden rounded-md border border-white/[0.08]">
+                  {(['topology', 'lifecycle'] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setFlowView(v)}
+                      className={cn(
+                        'px-2 py-0.5 text-[11px] transition-colors',
+                        flowView === v
+                          ? 'bg-neutral-800 text-neutral-100'
+                          : 'text-neutral-500 hover:bg-neutral-800/50',
+                      )}
+                    >
+                      {t(v === 'topology' ? 'hooks.viewTopology' : 'hooks.viewLifecycle')}
+                    </button>
+                  ))}
+                </span>
+              )}
+              <span className="text-[11px] text-neutral-500">
+                {mode === 'project' ? t('hooks.flowHint') : t('hooks.flowHintGlobal')}
+              </span>
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
-            <LegendChip icon={Zap} tone="text-amber-400" label={t('hooks.colSource')} />
-            <LegendChip icon={Workflow} tone="text-blue-400" label={t('hooks.colRule')} />
-            <LegendChip icon={ScrollText} tone="text-purple-300" label={t('hooks.colHandler')} />
-            {mode === 'project' && (
-              <LegendChip icon={Inbox} tone="text-cyan-400" label={t('hooks.colSession')} />
-            )}
-            <LegendChip icon={Send} tone="text-emerald-400" label={t('hooks.colDispatch')} />
-          </div>
+          {flowView === 'topology' && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
+              <LegendChip icon={Zap} tone="text-amber-400" label={t('hooks.colSource')} />
+              <LegendChip icon={Workflow} tone="text-blue-400" label={t('hooks.colRule')} />
+              <LegendChip icon={ScrollText} tone="text-purple-300" label={t('hooks.colHandler')} />
+              {mode === 'project' && (
+                <LegendChip icon={Inbox} tone="text-cyan-400" label={t('hooks.colSession')} />
+              )}
+              <LegendChip icon={Send} tone="text-emerald-400" label={t('hooks.colDispatch')} />
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-2">
-          <div className="h-80 rounded-lg border border-white/[0.06] bg-neutral-950/40">
+          {mode === 'project' && flowView === 'lifecycle' ? (
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950/40 p-2">
+              {mindmapSessionId && sessions ? (
+                <LifecycleMindmap
+                  projectId={projectId}
+                  sessionId={mindmapSessionId}
+                  sessions={sessions}
+                  onSelect={setMindmapSessionId}
+                />
+              ) : (
+                <div className="flex h-96 items-center justify-center text-xs text-neutral-500">
+                  {t('hooks.mindmap.empty')}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="h-80 rounded-lg border border-white/[0.06] bg-neutral-950/40">
             {/* 数据到位后才挂 ReactFlow — fitView 首帧就能对上铺满的图。 */}
             {nodes.length > 0 ? (
               <ReactFlow
@@ -1190,7 +1245,8 @@ export function HooksPanel({
                 {t('hooks.loading')}
               </div>
             )}
-          </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
