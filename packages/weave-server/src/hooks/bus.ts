@@ -11,6 +11,13 @@ export type HookBusMessage =
       eventId: number;
       projectId: number;
       sessionId: string | null;
+      eventType: string;
+      /** 事件源子 agent（raw.agent_id；SubagentStop 时 = 刚结束的那个子 agent）。 */
+      agentId?: string;
+      /** 出生信号：PostToolUse(Agent, isAsync) 的 tool_response.agentId（后台子 agent）。 */
+      spawnAgentId?: string;
+      /** Stop/SubagentStop 携带的后台任务快照（status 全为 running）——存活集权威对账源。 */
+      backgroundTasks?: Array<{ id: string; status: string }>;
       at: string;
     }
   | { kind: 'rule.matched'; ruleId: string; eventId: number; sessionId: string | null; at: string }

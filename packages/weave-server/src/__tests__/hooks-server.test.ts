@@ -339,17 +339,42 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     });
 
     const list = (await (await get('/sessions')).json()) as {
-      sessions: Array<{ sessionId: string; pendingTitle: string | null; eventCount?: number }>;
+      sessions: Array<{
+        sessionId: string;
+        pendingTitle: string | null;
+        eventCount?: number;
+        turnOpen?: boolean;
+      }>;
     };
     const row = list.sessions.find((s) => s.sessionId === 'sess-rename');
     expect(row).toBeDefined();
     expect(row!.pendingTitle).toBeNull();
     // 事件计数（任务视图左栏，LEFT JOIN 一次查出）
     expect(row!.eventCount).toBe(1);
+    // 回合开合基线：只有 Stop（无 UPS）→ 回合已关
+    expect(row!.turnOpen).toBe(false);
+
+    // 再来一条 UserPromptSubmit → 基线翻为回合开着（最后 UPS 晚于最后 Stop）
+    await fetch(`http://127.0.0.1:${port}/hooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({
+        source: 'claude',
+        eventType: 'UserPromptSubmit',
+        sessionId: 'sess-rename',
+        payload: '{}',
+      }),
+    });
+    const list2 = (await (await get('/sessions')).json()) as {
+      sessions: Array<{ sessionId: string; turnOpen?: boolean }>;
+    };
+    expect(list2.sessions.find((s) => s.sessionId === 'sess-rename')!.turnOpen).toBe(true);
 
     const renamed = await post('/sessions/sess-rename', { title: '新标题' }, 'PATCH');
     expect(renamed.status).toBe(200);
-    expect(((await renamed.json()) as { session: { pendingTitle: string } }).session.pendingTitle).toBe('新标题');
+    expect(
+      ((await renamed.json()) as { session: { pendingTitle: string; title: string } }).session,
+    ).toMatchObject({ pendingTitle: '新标题', title: '新标题' }); // display 名立即落
 
     expect((await post('/sessions/nope', { title: 'x' }, 'PATCH')).status).toBe(404);
     expect((await post('/sessions/sess-rename', { title: '' }, 'PATCH')).status).toBe(400);

@@ -74,6 +74,11 @@ export function SessionList({
                   onSelect(s.sessionId);
                 }
               }}
+              onDoubleClick={(e) => {
+                // tooltip 承诺「双击改名」——行上直接双击即进编辑（铅笔为 hover 备选）
+                e.stopPropagation();
+                if (editingId !== s.sessionId) startRename(s);
+              }}
               onDragOver={(e) => {
                 e.preventDefault();
                 setDroppingId(s.sessionId);
@@ -87,7 +92,7 @@ export function SessionList({
               }}
               title={droppingId === s.sessionId ? t('tasks.dropTip') : s.sessionId}
               className={cn(
-                'group flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 transition-colors',
+                'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-md border px-2 py-1.5 transition-colors',
                 selected
                   ? 'border-blue-500/50 bg-blue-500/10'
                   : 'border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]',
@@ -118,26 +123,10 @@ export function SessionList({
                 />
               ) : (
                 <>
+                  {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行） */}
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
                     {s.title ?? s.sessionId.slice(0, 8)}
                   </span>
-                  {s.pendingTitle && (
-                    <Badge
-                      title={t('tasks.renamePendingTip')}
-                      className="shrink-0 bg-amber-900/40 text-amber-300"
-                    >
-                      {t('tasks.pendingTitle')}
-                    </Badge>
-                  )}
-                  <span className="shrink-0 text-[10px] text-neutral-500">
-                    {t('tasks.events', { n: s.eventCount ?? 0 })}
-                  </span>
-                  {s.harness && (
-                    <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
-                  )}
-                  <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
-                    {t(STATUS_KEY[status])}
-                  </Badge>
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     <button
                       type="button"
@@ -166,6 +155,26 @@ export function SessionList({
                       )}
                     </button>
                   </span>
+                  {/* 第 2 行：徽标组（basis-full 恒换行，状态 Badge 固定第 2 行） */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 basis-full">
+                    {s.pendingTitle && (
+                      <Badge
+                        title={t('tasks.renamePendingTip')}
+                        className="shrink-0 bg-amber-900/40 text-amber-300"
+                      >
+                        {t('tasks.pendingTitle')}
+                      </Badge>
+                    )}
+                    <span className="shrink-0 text-[10px] text-neutral-500">
+                      {t('tasks.events', { n: s.eventCount ?? 0 })}
+                    </span>
+                    {s.harness && (
+                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+                    )}
+                    <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
+                      {t(STATUS_KEY[status])}
+                    </Badge>
+                  </div>
                 </>
               )}
             </div>

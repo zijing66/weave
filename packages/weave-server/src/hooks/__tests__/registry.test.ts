@@ -197,18 +197,53 @@ describe('SessionRepository', () => {
     expect(sessions.getBySessionId('s1')?.title).toBe('新名字');
     expect(sessions.applyReportedTitle('s1', '新名字')).toBe(false); // 无变化
 
-    // dashboard 改名：挂 pending，外部旧值不采纳
+    // dashboard 改名：display 名立即落 + 挂 pending，外部旧值不采纳
     sessions.setPendingTitle('s1', 'dashboard名');
     expect(sessions.applyReportedTitle('s1', '旧外部名')).toBe(false);
     expect(sessions.getBySessionId('s1')).toMatchObject({
-      title: '新名字',
+      title: 'dashboard名',
       pendingTitle: 'dashboard名',
     });
 
-    // 通道 A：hook 下发生效后，下一次上报的 session_title 回带 pending 值 → 落定并清 pending
-    expect(sessions.applyReportedTitle('s1', 'dashboard名')).toBe(true);
-    expect(sessions.getBySessionId('s1')).toMatchObject({ title: 'dashboard名', pendingTitle: null });
-    expect(sessions.applyReportedTitle('s1', 'dashboard名')).toBe(false); // 已一致
+    // 幂等：与当前 pending 相同 → 维持原样
+    sessions.setPendingTitle('s1', 'dashboard名');
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard名',
+      pendingTitle: 'dashboard名',
+    });
+
+    // 交付确认：pending 落定清空、title 不变
+    expect(sessions.confirmPendingTitle('s1', 'dashboard名')).toBe(true);
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard名',
+      pendingTitle: null,
+    });
+
+    // 真同名（无 pending）→ 不进待生效态
+    expect(sessions.setPendingTitle('s1', 'dashboard名')).toMatchObject({
+      title: 'dashboard名',
+      pendingTitle: null,
+    });
+
+    // 换新名 → title 与 pending 同步写
+    sessions.setPendingTitle('s1', '新名字');
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: '新名字',
+      pendingTitle: '新名字',
+    });
+
+    // 兜底通道：reported == pending → diff 落定清 pending（title 已同步，无变化）
+    expect(sessions.applyReportedTitle('s1', '新名字')).toBe(false);
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '新名字', pendingTitle: null });
+
+    // 交付确认：sessionTitle 已随响应下发，pending 落定为生效标题
+    sessions.setPendingTitle('s1', '新标题');
+    expect(sessions.confirmPendingTitle('s1', '新标题')).toBe(true);
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '新标题', pendingTitle: null });
+    // pending 不存在/不匹配 → false 且行不变
+    expect(sessions.confirmPendingTitle('s1', '新标题')).toBe(false);
+    expect(sessions.confirmPendingTitle('nope', '新标题')).toBe(false);
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '新标题', pendingTitle: null });
     db.close();
   });
 });

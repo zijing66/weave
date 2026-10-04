@@ -87,7 +87,9 @@ export class HookDispatcher {
       // 会话 rename 双向（独立于规则匹配）：
       // 读——payload 的 session_title（/rename 或 --name 后下一次上报）做 diff 采纳；
       // 写——dashboard 挂的 pending_title 随响应下发（sessionTitle 与 /rename 同效），
-      // 生效确认仍靠下一次上报的 reported title（不乐观落定，避免新旧标题打架）。
+      // 落定闸门 = 本事件确实携带 session_title 上报（UserPromptSubmit 等——Claude 只在
+      // 这类事件上处理/回报标题）；工具事件照常下发但保留 pending，否则落定后下一 UPS
+      // 会以旧名经 diff 通道把 title 自纠回去（改名被吞）。reported diff 兼作自纠兜底。
       const outcome: IngestOutcome = {};
       if (ctx.sessionId) {
         this.deps.sessions.touch(ctx.sessionId, ctx.project.id); // 幂等 upsert
@@ -106,7 +108,19 @@ export class HookDispatcher {
           });
         }
         const pending = this.deps.sessions.getBySessionId(ctx.sessionId)?.pendingTitle;
-        if (pending) outcome.sessionTitle = pending;
+        if (pending) {
+          outcome.sessionTitle = pending;
+          // 携带标题上报的事件上交付即落定（同响应把新名交给会话）；未实际应用时
+          // 下一次上报的旧标题经 diff 通道改回（自纠）。
+          if (reported !== null && this.deps.sessions.confirmPendingTitle(ctx.sessionId, pending)) {
+            this.deps.bus.emit({
+              kind: 'session.renamed',
+              sessionId: ctx.sessionId,
+              title: pending,
+              at: new Date().toISOString(),
+            });
+          }
+        }
       }
 
       const rules = this.match(ctx);
