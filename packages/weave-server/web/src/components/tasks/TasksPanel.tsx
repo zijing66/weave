@@ -152,6 +152,12 @@ export function TasksPanel({
           }
           break;
         }
+        case 'session.renamed': {
+          // 生效确认帧：reported title 已落库——立即刷新，行内名字切换、
+          // 「改名待生效」徽标消失（即「实际是否更名」的校验闭环）。
+          void refreshSessions();
+          break;
+        }
         case 'dispatch.started': {
           if (f.sessionId) {
             setOverlay((prev) => new Map(prev).set(f.sessionId as string, 'running'));
@@ -244,7 +250,13 @@ export function TasksPanel({
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
-      await api.renameSession(sessionId, title);
+      const row = await api.renameSession(sessionId, title);
+      // 实际更名校验：服务器确认挂起（pendingTitle）或已直接生效（title），
+      // 两者都不匹配 = 写入未落地——明确报错而不是静默显示「待生效」。
+      if (row.pendingTitle !== title && row.title !== title) {
+        setError(t('tasks.renameVerifyFail'));
+        return;
+      }
       await refreshSessions();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

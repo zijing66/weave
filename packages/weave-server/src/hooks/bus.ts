@@ -41,7 +41,10 @@ export type HookBusMessage =
       removed?: boolean;
       at: string;
     }
-  | { kind: 'plugin.toggled'; pluginId: string; enabled: boolean; at: string };
+  | { kind: 'plugin.toggled'; pluginId: string; enabled: boolean; at: string }
+  /** 更名生效确认：reported title 落库（pending 清除）后广播，dashboard 据此
+   *  把「改名待生效」徽标切换为已生效的新名字。 */
+  | { kind: 'session.renamed'; sessionId: string; title: string; at: string };
 
 export class HookEventBus {
   private readonly emitter = new EventEmitter();
