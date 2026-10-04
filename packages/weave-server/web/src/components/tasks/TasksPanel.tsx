@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   type HookDispatch,
@@ -13,7 +13,6 @@ import { SessionList } from './SessionList';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
-  type LifecycleGroup,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
@@ -31,22 +30,10 @@ interface HookFrame {
 }
 
 /**
- * 默认展开组：最新组（events 是 D6 最新窗口，末组数据最完整；orphan 垫底无
- * 事件不作默认，全 orphan 时取首组）。未手动点过则跟随最新——新开 turn 时
- * 自动切过去；一旦点击即固定该组（同会话切组保持）。
- */
-function defaultGroupId(groups: LifecycleGroup[]): string | null {
-  for (let i = groups.length - 1; i >= 0; i--) {
-    if (groups[i]!.id !== ORPHAN_GROUP_ID) return groups[i]!.id;
-  }
-  return groups[0]?.id ?? null;
-}
-
-/**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
- * 右 = 选中会话的分组组头列表 + 单组事件链画布（D8 accordion，每组一图）。
- * SSE（App 转发的 weave:hook 帧）驱动：500ms 防抖 refetch + overlay 即时状态 +
- * 边脉冲/注入波纹动效。
+ * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
+ * + 单组合体事件链画布（默认全折叠，点击展开才按需挂载导图）。
+ * SSE（App 转发的 weave:hook 帧）驱动：500ms 防抖 refetch + overlay 即时状态。
  */
 export function TasksPanel({
   projectId,
@@ -71,7 +58,11 @@ export function TasksPanel({
   /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
   const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
   /** 展开组：null = 自动跟随最新组，'' = 用户全部折叠，其余 = 固定该组。 */
-  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
+  const [expandedGroupId, setExpandedGroupId] = useState<string>('');
+  /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
+  const [groupWindow, setGroupWindow] = useState(10);
+  const scrollThrottle = useRef<number | null>(null);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -114,9 +105,10 @@ export function TasksPanel({
     if (selectedId) void refreshEvents(selectedId);
   }, [selectedId, refreshEvents]);
 
-  // 切会话：展开态重置回默认（跟随最新组）；同会话内切组由点击驱动保持。
+  // 切会话：全折叠 + 窗口重置回最新 10 条（画布按需点开）。
   useEffect(() => {
-    setExpandedGroupId(null);
+    setExpandedGroupId('');
+    setGroupWindow(10);
   }, [selectedId]);
 
   // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
@@ -244,12 +236,10 @@ export function TasksPanel({
   );
 
   const activeGroupId = useMemo(() => {
-    if (!groups.length) return null;
-    if (expandedGroupId === '') return null; // 用户全部折叠
-    if (expandedGroupId !== null && groups.some((g) => g.id === expandedGroupId)) {
+    if (expandedGroupId && groups.some((g) => g.id === expandedGroupId)) {
       return expandedGroupId;
     }
-    return defaultGroupId(groups);
+    return null; // 默认全折叠：画布点击展开才按需挂载
   }, [groups, expandedGroupId]);
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
@@ -281,6 +271,17 @@ export function TasksPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  // 组头列表滚动窗口（折叠条级）：滚动到顶自动加载更早 10 条，600ms 节流。
+  const shownGroups = groups.slice(-groupWindow);
+  const olderRemaining = groups.length - shownGroups.length;
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>): void => {
+    if (olderRemaining <= 0 || e.currentTarget.scrollTop > 8) return;
+    const now = Date.now();
+    if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
+    scrollThrottle.current = now;
+    setGroupWindow((w) => w + 10);
   };
 
   const onDropDispatch = (dispatchId: number, sessionId: string): void => {
@@ -408,8 +409,34 @@ export function TasksPanel({
             {t('tasks.chainEmpty')}
           </p>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
-            {groups.map((g) => {
+          <div
+            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1"
+            onScroll={onListScroll}
+          >
+            {/* 顶部渐变遮罩：更早 prompt 未加载的 affordance——向上滚动自动加载，
+                也可点击按钮增量/全量加载（默认只展示最新 10 条折叠条） */}
+            {olderRemaining > 0 && (
+              <div className="pointer-events-none sticky top-0 z-10 -mx-1 bg-gradient-to-b from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-5 pt-1 text-center">
+                <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
+                <span className="pointer-events-auto mt-1 inline-flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setGroupWindow((w) => w + 10)}
+                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
+                  >
+                    {t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupWindow((w) => w + groups.length)}
+                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+                  >
+                    {t('tasks.loadAll')}
+                  </button>
+                </span>
+              </div>
+            )}
+            {shownGroups.map((g) => {
               const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
               const lastEvent = g.events[g.events.length - 1];
               const timeIso = lastEvent?.createdAt ?? g.dispatches[0]?.startedAt;
