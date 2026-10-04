@@ -19,6 +19,10 @@ export interface StatusInput {
   latestDispatchFailed?: boolean;
   /** SSE 帧即时覆盖（dispatch.started/finished 已到，refetch 未回）。 */
   overlay?: SessionStatus;
+  /** 当前 turn 是否开着：从尾部扫到 UserPromptSubmit=true / Stop=false（未
+   *  知=undefined，不改判）。Stop 后 30s 窗口内有事件也只是「打开」等输入，
+   *  不是进行中。 */
+  turnOpen?: boolean;
   /** 注入时间（默认 Date.now()，测试可注入）。 */
   now?: number;
 }
@@ -37,6 +41,8 @@ export function deriveSessionStatus(input: StatusInput): SessionStatus {
   if (freshest > 0 && now - freshest < ACTIVE_WINDOW_MS) {
     // 30s 窗口内：若最新事件是会话收尾，优先显示完成而非活跃
     if (input.latestEventType === 'SessionEnd') return 'completed';
+    // turn 已 Stop（本轮回合已结束）→ 会话只是「打开」等输入，不是进行中
+    if (input.turnOpen === false) return 'idle';
     return 'active';
   }
   if (input.latestEventType === 'SessionEnd') return 'completed';
