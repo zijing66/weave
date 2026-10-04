@@ -52,7 +52,7 @@ export default function App() {
   // when the global 文件资产 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  // All hook rules (global + per project) — drives the Hooks card count; the
+  // All hook rules (global + per project) — drives the Weave card count; the
   // panel refetches its own copy after every mutation.
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerMap>({
@@ -72,7 +72,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Main area
-  const [mainCategory, setMainCategory] = useState<MainCategory>('skills');
+  const [mainCategory, setMainCategory] = useState<MainCategory>('files');
   const [statuslineNonce, setStatuslineNonce] = useState(0);
   const [statuslineSource, setStatuslineSource] = useState<StatuslineSource | null>(null);
   const [drawerSkill, setDrawerSkill] = useState<{
@@ -165,7 +165,7 @@ export default function App() {
       setPluginEnabled({ claude: {}, codex: {} });
       setSelectedFile(null);
       setDrawerSkill(null);
-      setMainCategory('skills');
+      setMainCategory('files');
       setStatuslineSource(null);
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
@@ -191,7 +191,7 @@ export default function App() {
     setGlobalMode(true);
     setSelectedFile(null);
     setDrawerSkill(null);
-    setMainCategory('skills');
+    setMainCategory('files');
     setStatuslineSource(null); // no source badge/sub-text in the template view
     setError(null);
     // One bounded whitelist walk of ~/.claude + ~/.codex — cheap enough to
@@ -269,13 +269,21 @@ export default function App() {
     // both).
     const codexMcp = Object.keys(mcpServers.codex).length;
     if (globalMode) {
+      const outdatedSkills = (updates?.skills ?? []).filter(
+        (u) => u.scope === 'global' && u.outdated,
+      ).length;
+      const outdatedMcp = (updates?.mcp ?? []).filter(
+        (u) => u.scope === 'global' && u.outdated,
+      ).length;
       return {
-        skills: effectiveGlobalSkills,
-        mcp: Object.keys(mcpServers.global).length + codexMcp,
-        // machine-level file assets (~/.claude, ~/.codex) — the global tree
-        commands: globalAssets.length,
-        outdatedSkills: (updates?.skills ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
-        outdatedMcp: (updates?.mcp ?? []).filter((u) => u.scope === 'global' && u.outdated).length,
+        // machine-wide skills in effect + MCP servers + the global file tree
+        // (~/.claude, ~/.codex) — the merged 文件资产 card count
+        files:
+          effectiveGlobalSkills +
+          Object.keys(mcpServers.global).length +
+          codexMcp +
+          globalAssets.length,
+        outdated: outdatedSkills + outdatedMcp,
         // The global view IS the template — a 跟随全局 badge would be noise.
         statuslineSource: null,
         hooksRules: hookRules.length,
@@ -284,15 +292,18 @@ export default function App() {
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
     return {
-      // project skills + machine-wide skills in effect — the page shows both
-      // sections, so the card counts what they contain together
-      skills: assetCounts.skill + effectiveGlobalSkills,
-      // this view's Claude scope (project), matching what the MCP page shows
-      // under the Claude tab, plus the machine-wide Codex surface
-      mcp: Object.keys(mcpServers.project).length + codexMcp,
-      commands: otherCount,
-      outdatedSkills: (updates?.skills ?? []).filter((u) => u.outdated).length,
-      outdatedMcp: (updates?.mcp ?? []).filter((u) => u.outdated).length,
+      // project skills + machine-wide skills in effect + this view's MCP
+      // servers + every other file asset — the page shows them together under
+      // the 文件资产 card
+      files:
+        assetCounts.skill +
+        effectiveGlobalSkills +
+        Object.keys(mcpServers.project).length +
+        codexMcp +
+        otherCount,
+      outdated:
+        (updates?.skills ?? []).filter((u) => u.outdated).length +
+        (updates?.mcp ?? []).filter((u) => u.outdated).length,
       statuslineSource,
       // same rule as the server's ?projectId= filter: global rules + own rules
       hooksRules: hookRules.filter(
@@ -300,7 +311,7 @@ export default function App() {
       ).length,
       sessions: sessions.length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, projectConfig, statuslineSource, hookRules, selected, sessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -615,7 +626,7 @@ export default function App() {
     setMainCategory(c);
     if (c === 'personalization') setStatuslineNonce((n) => n + 1);
     // reopen → pick up rule changes made elsewhere before the card count shows
-    if (c === 'hooks') refreshHookRules();
+    if (c === 'weave') refreshHookRules();
   }, [refreshHookRules]);
 
   function onDragEnd(e: DragEndEvent) {

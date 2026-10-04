@@ -1,7 +1,7 @@
 /** Hooks 规则面板与数据流可视化词条（批 5 填充）。 */
 export const hooksZh = {
   // —— 分类卡 ——
-  'catbar.hooks': 'Hooks 规则',
+  'catbar.hooks': 'Weave',
 
   // —— 面板框架 / 链路图 ——
   'hooks.title': '规则与数据流',
@@ -139,7 +139,7 @@ export const hooksZh = {
 
 export const hooksEn: Record<keyof typeof hooksZh, string> = {
   // —— Category card ——
-  'catbar.hooks': 'Hooks rules',
+  'catbar.hooks': 'Weave',
 
   // —— Panel frame / flow graph ——
   'hooks.title': 'Rules & data flow',

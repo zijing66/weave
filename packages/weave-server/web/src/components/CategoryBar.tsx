@@ -4,8 +4,6 @@ import { Badge } from '@/components/ui/badge';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
-  FileCode,
-  Server,
   Terminal,
   Sparkles,
   Workflow,
@@ -13,7 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-export type MainCategory = 'skills' | 'mcp' | 'commands' | 'personalization' | 'hooks' | 'tasks';
+export type MainCategory = 'files' | 'personalization' | 'tasks' | 'weave';
 
 export const MAIN_CATEGORIES: {
   key: MainCategory;
@@ -21,28 +19,20 @@ export const MAIN_CATEGORIES: {
   labelKey: MessageKey;
   icon: LucideIcon;
 }[] = [
-  { key: 'skills', labelKey: 'catbar.skills', icon: FileCode },
-  { key: 'mcp', labelKey: 'catbar.mcp', icon: Server },
-  // The count on this card is every project asset that is not a skill or MCP
-  // (instructions, file assets, settings, helpers …), so the label says 文件
-  // 资产 rather than implying it counts commands alone.
-  { key: 'commands', labelKey: 'catbar.commands', icon: Terminal },
+  // The count on this card is every file asset (skills, MCP, instructions,
+  // settings, helpers …), so the label says 文件资产 rather than implying it
+  // counts any one of them alone.
+  { key: 'files', labelKey: 'catbar.files', icon: Terminal },
   { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
-  { key: 'hooks', labelKey: 'catbar.hooks', icon: Workflow },
   { key: 'tasks', labelKey: 'catbar.tasks', icon: ListTodo },
+  { key: 'weave', labelKey: 'catbar.hooks', icon: Workflow },
 ];
 
 export interface CategoryBarData {
-  /** Installed skill count (project + global). */
-  skills: number;
-  /** MCP server count (project + global). */
-  mcp: number;
-  /** Commands + agents + helpers + settings + other file count. */
-  commands: number;
-  /** Number of outdated skills (update hint badge). */
-  outdatedSkills: number;
-  /** Number of outdated MCP servers. */
-  outdatedMcp: number;
+  /** Skills + MCP + other file assets — the merged 文件资产 card count. */
+  files: number;
+  /** Outdated skills + MCP servers, shown as one warning badge. */
+  outdated: number;
   /** Hook rules effective in the current view (global rules + own rules). */
   hooksRules: number;
   /** 项目会话数（任务卡计数）。 */
@@ -66,15 +56,11 @@ export function CategoryBar({
   const t = useT();
   const countFor = (c: MainCategory): number => {
     switch (c) {
-      case 'skills':
-        return data.skills;
-      case 'mcp':
-        return data.mcp;
-      case 'commands':
-        return data.commands;
+      case 'files':
+        return data.files;
       case 'personalization':
         return 1; // the Claude statusline config is always present
-      case 'hooks':
+      case 'weave':
         return data.hooksRules;
       case 'tasks':
         return data.sessions;
@@ -83,13 +69,9 @@ export function CategoryBar({
 
   const badgeFor = (c: MainCategory): ReactNode => {
     switch (c) {
-      case 'skills':
-        return data.outdatedSkills > 0 ? (
-          <Badge variant="warning">{t('catbar.updateBadge', { n: data.outdatedSkills })}</Badge>
-        ) : null;
-      case 'mcp':
-        return data.outdatedMcp > 0 ? (
-          <Badge variant="warning">{t('catbar.updateBadge', { n: data.outdatedMcp })}</Badge>
+      case 'files':
+        return data.outdated > 0 ? (
+          <Badge variant="warning">{t('catbar.updateBadge', { n: data.outdated })}</Badge>
         ) : null;
       case 'personalization':
         return data.statuslineSource ? (
@@ -103,7 +85,7 @@ export function CategoryBar({
   };
 
   return (
-    // Cards equal-fill a single row whenever they all fit (six cards fit a
+    // Cards equal-fill a single row whenever they all fit (four cards fit a
     // 1280px viewport); below that the row wraps instead of clipping the
     // first/last card at the container edges.
     <div className="flex flex-wrap gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
@@ -129,12 +111,10 @@ export function CategoryBar({
             <Icon
               className={cn(
                 'h-4 w-4 shrink-0',
-                key === 'skills' && 'text-emerald-400',
-                key === 'mcp' && 'text-blue-400',
-                key === 'commands' && 'text-purple-400',
+                key === 'files' && 'text-purple-400',
                 key === 'personalization' && 'text-cyan-400',
-                key === 'hooks' && 'text-amber-400',
                 key === 'tasks' && 'text-rose-400',
+                key === 'weave' && 'text-amber-400',
               )}
             />
             {/* `flex-auto` (basis: auto) rather than `flex-1` (basis: 0) is

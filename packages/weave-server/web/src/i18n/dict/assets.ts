@@ -61,9 +61,7 @@ export const assetsZh = {
   'mcp.enableTip': '{state} — 点击切换',
 
   // —— CategoryBar ——
-  'catbar.skills': 'Skills',
-  'catbar.mcp': 'MCP',
-  'catbar.commands': '文件资产',
+  'catbar.files': '文件资产',
   'catbar.personalization': '个性化配置',
   'catbar.updateBadge': '{n} 待更新',
   'catbar.custom': '自定义',
@@ -148,9 +146,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'mcp.enableTip': '{state} — click to cycle',
 
   // —— CategoryBar ——
-  'catbar.skills': 'Skills',
-  'catbar.mcp': 'MCP',
-  'catbar.commands': 'File assets',
+  'catbar.files': 'File Assets',
   'catbar.personalization': 'Personalization',
   'catbar.updateBadge': '{n} update',
   'catbar.custom': 'Custom',

@@ -46,7 +46,7 @@ function agentOf(a: AssetEntry): AssetAgent {
   return base === 'AGENTS.md' || a.relPath.startsWith('.codex/') ? 'codex' : 'claude';
 }
 
-/** Harness-tool filter for the asset categories (skills / mcp / commands). */
+/** Harness-tool filter for the sections on the 文件资产 page. */
 export type RuntimeTab = Harness | 'all';
 
 export function CategoryDetail({
@@ -98,11 +98,7 @@ export function CategoryDetail({
   // Harness-tool tab: globally effective skills differ per tool (Claude vs
   // Codex), so the asset categories filter by runtime instead of mixing them.
   const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>('claude');
-  const showRuntimeTabs =
-    category === 'skills' ||
-    category === 'mcp' ||
-    category === 'commands' ||
-    category === 'personalization';
+  const showRuntimeTabs = category === 'files' || category === 'personalization';
 
   // Project mode: a flat skill list from the project's own .claude/skills/ and
   // .codex/skills/, filtered by the runtime tab.
@@ -223,7 +219,8 @@ export function CategoryDetail({
         </div>
       )}
 
-      {category === 'skills' && (
+      {/* 文件资产页：skills/mcp/文件树三区顺序渲染（批 2 才改 tab 互斥） */}
+      {category === 'files' && (
         <SkillGrid
           skills={skills}
           groups={isGlobal ? groups : undefined}
@@ -244,7 +241,7 @@ export function CategoryDetail({
         />
       )}
 
-      {category === 'mcp' && (
+      {category === 'files' && (
         <McpGrid
           projectId={projectId}
           servers={mcp}
@@ -261,7 +258,7 @@ export function CategoryDetail({
         />
       )}
 
-      {category === 'commands' &&
+      {category === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
           runtimeTab === 'codex' ? (
@@ -282,7 +279,7 @@ export function CategoryDetail({
           />
         ))}
 
-      {category === 'commands' &&
+      {category === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
@@ -304,7 +301,7 @@ export function CategoryDetail({
           />
         ))}
 
-      {category === 'hooks' && <HooksPanel projectId={projectId} mode={mode} />}
+      {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}
 
       {/* 任务视图仅项目级（全局模式由 CategoryBar hidden 卡 + 此处兜底双保险） */}
       {category === 'tasks' && !isGlobal && <TasksPanel projectId={projectId} />}
