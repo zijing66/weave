@@ -31,6 +31,10 @@ export const appZh = {
   'project.noneRegistered': '尚未注册任何项目',
   'project.openInExplorer': '在资源管理器中打开',
   'project.openInTerminal': '在终端中打开',
+  // 行内快捷操作（批 8）：autoSync 开关与打开两项复用上方 app.autoSync* /
+  // project.openIn* 词条，不重复新增。
+  'project.syncNow': '立即同步',
+  'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
 
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
@@ -96,6 +100,8 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.noneRegistered': 'No projects registered',
   'project.openInExplorer': 'Open in Explorer',
   'project.openInTerminal': 'Open in terminal',
+  'project.syncNow': 'Sync now',
+  'project.syncPending': '{n} update(s) pending — click to sync now',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',

@@ -4,7 +4,16 @@ import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
-import { Circle, FolderOpen, Globe, Terminal, TriangleAlert } from 'lucide-react';
+import {
+  Circle,
+  FolderOpen,
+  Globe,
+  RefreshCw,
+  Terminal,
+  ToggleLeft,
+  ToggleRight,
+  TriangleAlert,
+} from 'lucide-react';
 
 interface ProjectListProps {
   projects: ProjectRow[];
@@ -17,6 +26,16 @@ interface ProjectListProps {
   onOpenExplorer: (p: ProjectRow) => void;
   /** Context-menu action: open a terminal at the project folder. */
   onOpenTerminal: (p: ProjectRow) => void;
+  /** Row hover → lazily fetch + cache that project's pending-update count. */
+  onHoverProject?: (projectId: number) => void;
+  /** Row quick action: autoSync flag (undefined until the config cache loads). */
+  autoSyncOf?: (projectId: number) => boolean | undefined;
+  /** Row quick action: pending update count (undefined until hover-loaded). */
+  updatesOf?: (projectId: number) => number | undefined;
+  /** Row quick action: flip autoSync for the row's project. */
+  onToggleAutoSync?: (p: ProjectRow) => void;
+  /** Row quick action: run one sync for the row's project. */
+  onSyncNow?: (p: ProjectRow) => void;
 }
 
 /** One open context-menu instance: screen position + target project. */
@@ -34,6 +53,11 @@ export function ProjectList({
   onSelectGlobal,
   onOpenExplorer,
   onOpenTerminal,
+  onHoverProject,
+  autoSyncOf,
+  updatesOf,
+  onToggleAutoSync,
+  onSyncNow,
 }: ProjectListProps) {
   const t = useT();
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
@@ -99,34 +123,84 @@ export function ProjectList({
         <p className="p-3 text-xs text-neutral-500">{t('project.noneRegistered')}</p>
       )}
       <ul className="p-2 space-y-1">
-        {projects.map((p) => (
-          <li key={p.id}>
-            <button
-              onClick={() => onSelect(p)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setMenu({ x: e.clientX, y: e.clientY, project: p });
-              }}
-              className={cn(
-                'w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-200',
-                !globalActive && selectedId === p.id ? 'bg-neutral-800/80' : 'hover:bg-neutral-800/50',
-              )}
+        {projects.map((p) => {
+          const autoSync = autoSyncOf?.(p.id);
+          const pending = updatesOf?.(p.id);
+          return (
+            <li
+              key={p.id}
+              className="group relative"
+              onMouseEnter={() => onHoverProject?.(p.id)}
             >
-              <Circle
+              <button
+                onClick={() => onSelect(p)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenu({ x: e.clientX, y: e.clientY, project: p });
+                }}
                 className={cn(
-                  'h-2 w-2 mt-1.5 shrink-0',
-                  !globalActive && selectedId === p.id ? 'text-emerald-400' : 'text-neutral-500',
+                  'w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-200',
+                  !globalActive && selectedId === p.id
+                    ? 'bg-neutral-800/80'
+                    : 'hover:bg-neutral-800/50',
                 )}
-              />
-              <span className="min-w-0">
-                <span className="block truncate text-sm">{p.name}</span>
-                <span className="block text-[11px] text-neutral-500">{p.path}</span>
-              </span>
-              <HealthBadge projectId={p.id} />
-            </button>
-          </li>
-        ))}
+              >
+                <Circle
+                  className={cn(
+                    'h-2 w-2 mt-1.5 shrink-0',
+                    !globalActive && selectedId === p.id
+                      ? 'text-emerald-400'
+                      : 'text-neutral-500',
+                  )}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm">{p.name}</span>
+                  <span className="block text-[11px] text-neutral-500">{p.path}</span>
+                </span>
+                {/* 徽标淡出把右端位置让给快捷按钮簇（尺寸不变，防 hover 跳动）；
+                    淡出后禁指针事件，避免隐形徽标的 tooltip 与按钮 tooltip 打架 */}
+                <span className="ml-auto flex shrink-0 transition-opacity duration-150 group-hover:opacity-0 group-hover:pointer-events-none">
+                  <HealthBadge projectId={p.id} />
+                </span>
+              </button>
+              {/* 快捷操作簇（批 8）：hover 显现、挂健康徽标位。簇是行按钮的兄弟节点
+                  而非后代，点击本就不会冒泡进 onSelect —— stopPropagation 是双保险。 */}
+              <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                <QuickButton
+                  title={autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}
+                  pressed={autoSync}
+                  onClick={() => onToggleAutoSync?.(p)}
+                >
+                  {autoSync ? (
+                    <ToggleRight className="h-3.5 w-3.5 text-emerald-400" />
+                  ) : (
+                    <ToggleLeft className="h-3.5 w-3.5 text-neutral-400" />
+                  )}
+                </QuickButton>
+                <span className="relative">
+                  <QuickButton
+                    title={pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}
+                    onClick={() => onSyncNow?.(p)}
+                  >
+                    <RefreshCw
+                      className={cn('h-3.5 w-3.5', pending ? 'text-orange-300' : 'text-neutral-400')}
+                    />
+                  </QuickButton>
+                  {Boolean(pending) && (
+                    <span className="pointer-events-none absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-orange-500" />
+                  )}
+                </span>
+                <QuickButton title={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </QuickButton>
+                <QuickButton title={t('project.openInTerminal')} onClick={() => onOpenTerminal(p)}>
+                  <Terminal className="h-3.5 w-3.5" />
+                </QuickButton>
+              </div>
+            </li>
+          );
+        })}
       </ul>
 
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
@@ -188,6 +262,35 @@ function MenuButton({
   );
 }
 
+/** Row quick-action icon button — tooltip 与 aria-label 同词，点击不触发行选中。 */
+function QuickButton({
+  title,
+  pressed,
+  onClick,
+  children,
+}: {
+  title: string;
+  pressed?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      aria-pressed={pressed}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="pointer-events-auto p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-white/[0.08] transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
 /** check id → web 词典 key（core 只回结构，文案由词典渲染）。 */
 const HEALTH_KEYS: Record<string, MessageKey> = {
   'instruction-link-not-materialised': 'health.check.instructionLinkNotMaterialised',
@@ -225,7 +328,7 @@ function HealthBadge({ projectId }: { projectId: number }) {
 
   if (fails.length === 0) {
     return (
-      <span title={t('health.okTip')} className="ml-auto mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+      <span title={t('health.okTip')} className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
     );
   }
 
@@ -238,7 +341,7 @@ function HealthBadge({ projectId }: { projectId: number }) {
   ].join('\n');
 
   return (
-    <span title={tip} className="ml-auto mt-1 shrink-0">
+    <span title={tip} className="mt-1 shrink-0">
       <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
     </span>
   );
