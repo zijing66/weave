@@ -32,7 +32,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 // 布局（纯函数，可单测）
 // ---------------------------------------------------------------------------
 
-export type MindmapKind = 'group' | 'event' | 'dispatch' | 'detail';
+export type MindmapKind = 'group' | 'event' | 'subagent' | 'dispatch' | 'detail';
 
 export interface LaidNode {
   key: string;
@@ -97,7 +97,11 @@ export function layoutMindmap(
               ? dispatchNodes(g.dispatches.filter((d) => d.eventId === e.id))
               : [];
           const hl = kids.some((k) => k.highlight);
-          children.push({ key: eKey, kind: 'event', event: e, children: kids, highlight: hl });
+          // SubagentStop 独立成「子代理」层节点（与普通 hook 事件分型），
+          // 从属关系 = prompt 组 → 子代理 → 其触发的指令。
+          const kind: MindmapKind =
+            e.eventType === HARNESS_LIFECYCLE.claude.subagentStop ? 'subagent' : 'event';
+          children.push({ key: eKey, kind, event: e, children: kids, highlight: hl });
         }
       } else {
         // 游离指令组（orphan）：无事件边界，指令直挂 prompt 根下。
@@ -140,10 +144,11 @@ export function layoutMindmap(
     return y;
   };
   // expandable 判定需要「有可展开的潜在子级」：group 总可展开（事件/指令可能为空仍
-  // 给入口由调用方空态兜底）——折叠的 group/dispatch/event 一律给 chevron。
+  // 给入口由调用方空态兜底）——折叠的 group/dispatch/event/subagent 一律给 chevron。
   function expandable(n: TNode): boolean {
     if (n.kind === 'group') return true;
     if (n.kind === 'event') return true;
+    if (n.kind === 'subagent') return true;
     if (n.kind === 'dispatch') return true;
     return false;
   }
@@ -154,6 +159,70 @@ export function layoutMindmap(
 // ---------------------------------------------------------------------------
 // 节点渲染
 // ---------------------------------------------------------------------------
+
+function rawOf(event: HookEventRow): Record<string, unknown> {
+  try {
+    const p = JSON.parse(event.payload) as { raw?: unknown };
+    return p.raw && typeof p.raw === 'object' ? (p.raw as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const flat = (v: string): string => v.replace(/\s+/g, ' ').trim();
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+/**
+ * 按 hook 类型提取该事件的关键信息（完整展示，不只路径）：prompt 原文 /
+ * tool 参数与结果首行 / 通知消息 / 子代理结束消息。空串 = 该类型无正文，
+ * 节点退化为类型 tag + 时间。
+ */
+export function summarizeEvent(event: HookEventRow): string {
+  const raw = rawOf(event);
+  const detail = parseDetail(event.payload);
+  switch (event.eventType) {
+    case 'UserPromptSubmit':
+      return flat(str(raw.prompt) ?? '');
+    case 'PreToolUse':
+    case 'PostToolUse': {
+      const input = (detail.toolInput ?? {}) as Record<string, unknown>;
+      const arg =
+        str(input.file_path) ??
+        str(input.path) ??
+        str(input.description) ??
+        str(input.pattern) ??
+        str(input.url) ??
+        str(input.command) ??
+        '';
+      const head = flat([detail.toolName, arg].filter(Boolean).join(' '));
+      if (event.eventType === 'PostToolUse') {
+        const r = detail.toolResponse as Record<string, unknown> | null;
+        const out =
+          r && typeof r === 'object'
+            ? (str((r as Record<string, unknown>).stdout) ??
+              str((r as Record<string, unknown>).type))
+            : null;
+        if (out) return `${head} → ${flat(out).slice(0, 90)}`;
+      }
+      return head;
+    }
+    case 'Notification': {
+      const msg = str(raw.message) ?? '';
+      const nt = str(raw.notification_type);
+      return nt && msg ? `${nt} · ${msg}` : (nt ?? msg);
+    }
+    case 'SubagentStop':
+      return flat(str(raw.last_assistant_message) ?? '');
+    case 'SessionStart':
+    case 'SessionEnd': {
+      const title = str(raw.session_title) ?? '';
+      const source = str(raw.source) ?? '';
+      return [title, source].filter(Boolean).join(' · ');
+    }
+    default:
+      return '';
+  }
+}
 
 type MindmapData = {
   node: LaidNode;
@@ -233,35 +302,38 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
         </span>
       </>
     );
-  } else if (node.kind === 'event' && node.event) {
+  } else if ((node.kind === 'event' || node.kind === 'subagent') && node.event) {
     const e = node.event;
-    const detail = parseDetail(e.payload);
-    const path =
-      detail.toolName &&
-      typeof detail.toolInput === 'object' &&
-      detail.toolInput !== null &&
-      'file_path' in detail.toolInput &&
-      typeof (detail.toolInput as { file_path?: unknown }).file_path === 'string'
-        ? (detail.toolInput as { file_path: string }).file_path
-        : null;
-    const summary = path ? `${detail.toolName} ${path}` : (detail.toolName ?? '');
+    const isSub = node.kind === 'subagent';
+    const summary = summarizeEvent(e);
+    const raw = isSub ? rawOf(e) : null;
+    const agentId = raw ? str(raw.agent_id) : null;
     body = (
       <>
-        <span className="flex items-center gap-1">
+        <span className="flex flex-wrap items-center gap-1">
           <span
             className={tagCls(EVENT_TYPE_STYLES[e.eventType] ?? 'bg-neutral-800 text-neutral-300')}
           >
             {e.eventType}
           </span>
-          {e.eventType === HARNESS_LIFECYCLE.claude.subagentStop && (
-            <span className={tagCls('bg-neutral-800 text-neutral-200')}>
-              {t('hooks.mindmap.subagentTag')}
+          {isSub && (
+            <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
+              subagent
             </span>
+          )}
+          {agentId && (
+            <span className="text-[10px] text-neutral-500">agent …{agentId.slice(-8)}</span>
           )}
           <span className="text-[10px] text-neutral-500">{formatTime(e.createdAt)}</span>
         </span>
         {summary && (
-          <span className="mt-0.5 block truncate text-[11px] text-neutral-400" title={summary}>
+          <span
+            className={cn(
+              'mt-0.5 block text-[11px] text-neutral-400',
+              isSub ? 'line-clamp-2 text-orange-100/70' : 'truncate',
+            )}
+            title={summary}
+          >
             {summary}
           </span>
         )}
@@ -432,9 +504,10 @@ export function LifecycleMindmap({
     if (!events || !dispatches) return [];
     const eventIds = new Set(events.map((e) => e.id));
     // 归本会话的指令 + 由本会话事件触发但尚未投送（sessionId null）的指令。
-    const mine = dispatches.filter(
-      (d) => d.sessionId === sessionId || (d.eventId != null && eventIds.has(d.eventId)),
-    );
+    // 服务端指令池按最新在前返回——归组前升序，组内子节点才与事件同为时间升序。
+    const mine = dispatches
+      .filter((d) => d.sessionId === sessionId || (d.eventId != null && eventIds.has(d.eventId)))
+      .sort((a, b) => a.id - b.id);
     return buildLifecycleGroups(events, mine, HARNESS_LIFECYCLE.claude);
   }, [events, dispatches, sessionId]);
 

@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import type { HookDispatch, HookEventRow } from '@/lib/api';
 import type { LifecycleGroup } from '@/components/tasks/build-lifecycle-groups';
-import { layoutMindmap } from './LifecycleMindmap';
+import { layoutMindmap, summarizeEvent } from './LifecycleMindmap';
 
-const ev = (id: number, eventType = 'PostToolUse'): HookEventRow => ({
+const ev = (id: number, eventType = 'PostToolUse', payload = '{}'): HookEventRow => ({
   id,
   projectId: 1,
   source: 'claude',
   eventType,
   sessionId: 's1',
-  payload: '{}',
+  payload,
   createdAt: '2026-10-04T10:00:00.000Z',
 });
 
@@ -105,5 +105,53 @@ describe('layoutMindmap', () => {
     const groups = [group({ id: 'orphan', dispatches: [dispatch(10, null)] })];
     const { nodes } = layoutMindmap(groups, new Set(['g:orphan']));
     expect(nodes.find((n) => n.key === 'd:10')?.depth).toBe(1);
+  });
+
+  it('SubagentStop 分型为 subagent 层节点，普通事件仍为 event', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        events: [ev(1, 'UserPromptSubmit'), ev(2, 'PostToolUse'), ev(3, 'SubagentStop')],
+      }),
+    ];
+    const { nodes } = layoutMindmap(groups, new Set(['g:turn:1']));
+    expect(nodes.find((n) => n.key === 'e:1')?.kind).toBe('event');
+    expect(nodes.find((n) => n.key === 'e:2')?.kind).toBe('event');
+    expect(nodes.find((n) => n.key === 'e:3')?.kind).toBe('subagent');
+    // 子代理节点同样可展开挂指令（可展开层）
+    expect(nodes.find((n) => n.key === 'e:3')?.expandable).toBe(true);
+  });
+});
+
+describe('summarizeEvent — 按 hook 类型提取完整信息', () => {
+  it('UserPromptSubmit 取 raw.prompt', () => {
+    const e = ev(1, 'UserPromptSubmit', JSON.stringify({ raw: { prompt: '修复 403 报错' } }));
+    expect(summarizeEvent(e)).toBe('修复 403 报错');
+  });
+
+  it('PostToolUse 展示 tool 参数与结果首行（不只路径）', () => {
+    const e = ev(
+      2,
+      'PostToolUse',
+      JSON.stringify({
+        toolName: 'Bash',
+        toolInput: { command: 'pnpm test\n' },
+        toolResponse: { stdout: '870 passed' },
+      }),
+    );
+    expect(summarizeEvent(e)).toBe('Bash pnpm test → 870 passed');
+  });
+
+  it('Notification 取 message；SubagentStop 取结束消息', () => {
+    expect(
+      summarizeEvent(
+        ev(3, 'Notification', JSON.stringify({ raw: { message: 'waiting for input', notification_type: 'idle_prompt' } })),
+      ),
+    ).toBe('idle_prompt · waiting for input');
+    expect(
+      summarizeEvent(
+        ev(4, 'SubagentStop', JSON.stringify({ raw: { last_assistant_message: '梳理完毕' } })),
+      ),
+    ).toBe('梳理完毕');
   });
 });
