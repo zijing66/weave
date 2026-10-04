@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { HookDispatch, HookEventRow } from '@/lib/api';
+import { summarizeEvent } from '@/lib/hook-payload';
 import type { LifecycleGroup } from '@/components/tasks/build-lifecycle-groups';
-import { layoutMindmap, summarizeEvent } from './LifecycleMindmap';
+import { layoutMindmap } from './LifecycleMindmap';
 
 const ev = (id: number, eventType = 'PostToolUse', payload = '{}'): HookEventRow => ({
   id,
@@ -67,7 +68,7 @@ describe('layoutMindmap', () => {
     ]);
   });
 
-  it('展开事件挂指令，展开指令出执行详情：depth 逐层 +1', () => {
+  it('命中链层级：事件 → 规则 → 指令 → 执行详情，逐层 +1；已知类型时插入处理器层', () => {
     const groups = [
       group({
         id: 'turn:1',
@@ -75,13 +76,23 @@ describe('layoutMindmap', () => {
         dispatches: [dispatch(10, 1)],
       }),
     ];
+    // ruleInfo 缺省：跳过处理器层，event(1) → rule(2) → dispatch(3) → detail(4)
     const { nodes } = layoutMindmap(groups, new Set(['g:turn:1', 'e:1']));
-    expect(nodes.find((n) => n.key === 'd:10')?.depth).toBe(2);
+    expect(nodes.find((n) => n.key === 'e:1:r:r1')?.depth).toBe(2);
+    expect(nodes.find((n) => n.key === 'd:10')?.depth).toBe(3);
     const { nodes: deeper } = layoutMindmap(
       groups,
       new Set(['g:turn:1', 'e:1', 'd:10']),
     );
-    expect(deeper.find((n) => n.key === 'd:10:detail')?.depth).toBe(3);
+    expect(deeper.find((n) => n.key === 'd:10:detail')?.depth).toBe(4);
+
+    // 已知 handler 类型：rule 与 dispatch 之间插入 handler 层
+    const info = new Map([['r1', { name: '规则一', handlerType: 'inject' }]]);
+    const { nodes: withHandler } = layoutMindmap(groups, new Set(['g:turn:1', 'e:1']), info);
+    expect(withHandler.find((n) => n.key === 'e:1:r:r1:h')?.kind).toBe('handler');
+    expect(withHandler.find((n) => n.key === 'e:1:r:r1:h')?.depth).toBe(3);
+    expect(withHandler.find((n) => n.key === 'd:10')?.depth).toBe(4);
+    expect(withHandler.find((n) => n.key === 'e:1:r:r1')?.ruleName).toBe('规则一');
   });
 
   it('pending 指令路径高光沿 event → group 回传', () => {

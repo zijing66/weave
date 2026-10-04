@@ -58,3 +58,68 @@ export function sessionLabel(title: string | null, sessionId: string): string {
 export function newestEventAt(events: HookEventRow[]): string | undefined {
   return events[events.length - 1]?.createdAt;
 }
+
+/** payload.raw 原始对象（坏 JSON / 缺失返回空对象）。 */
+export function rawOf(event: HookEventRow): Record<string, unknown> {
+  try {
+    const p = JSON.parse(event.payload) as { raw?: unknown };
+    return p.raw && typeof p.raw === 'object' ? (p.raw as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const flat = (v: string): string => v.replace(/\s+/g, ' ').trim();
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+/**
+ * 按 hook 类型提取该事件的关键信息（完整展示，不只路径）：prompt 原文 /
+ * tool 参数与结果首行 / 通知消息 / 子代理结束消息 / 会话标记。
+ * 空串 = 该类型无正文（展示方退化为类型 tag + 时间）。事件链与思维导图共用。
+ */
+export function summarizeEvent(event: HookEventRow): string {
+  const raw = rawOf(event);
+  const detail = parseDetail(event.payload);
+  switch (event.eventType) {
+    case 'UserPromptSubmit':
+      return flat(str(raw.prompt) ?? '');
+    case 'PreToolUse':
+    case 'PostToolUse': {
+      const input = (detail.toolInput ?? {}) as Record<string, unknown>;
+      const arg =
+        str(input.file_path) ??
+        str(input.path) ??
+        str(input.description) ??
+        str(input.pattern) ??
+        str(input.url) ??
+        str(input.command) ??
+        '';
+      const head = flat([detail.toolName, arg].filter(Boolean).join(' '));
+      if (event.eventType === 'PostToolUse') {
+        const r = detail.toolResponse as Record<string, unknown> | null;
+        const out =
+          r && typeof r === 'object'
+            ? (str((r as Record<string, unknown>).stdout) ??
+              str((r as Record<string, unknown>).type))
+            : null;
+        if (out) return `${head} → ${flat(out).slice(0, 90)}`;
+      }
+      return head;
+    }
+    case 'Notification': {
+      const msg = str(raw.message) ?? '';
+      const nt = str(raw.notification_type);
+      return nt && msg ? `${nt} · ${msg}` : (nt ?? msg);
+    }
+    case 'SubagentStop':
+      return flat(str(raw.last_assistant_message) ?? '');
+    case 'SessionStart':
+    case 'SessionEnd': {
+      const title = str(raw.session_title) ?? '';
+      const source = str(raw.source) ?? '';
+      return [title, source].filter(Boolean).join(' · ');
+    }
+    default:
+      return '';
+  }
+}
