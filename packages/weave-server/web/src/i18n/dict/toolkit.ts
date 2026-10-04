@@ -4,7 +4,6 @@ export const toolkitZh = {
   'toolkit.hint': '内置出厂 + 外置目录同一条扫描管线，按包成分启用/禁用',
   'toolkit.groupClaude': 'Claude Plugins',
   'toolkit.groupPacks': '工具包',
-  'toolkit.claudeTag': 'claude',
   'toolkit.claudeGroupHint':
     'Claude Code 原生插件与 mod——仅 claude harness 生效，codex 运行态隐藏',
   'toolkit.empty': '暂无工具包',
@@ -34,7 +33,6 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.hint': 'Built-in and external dirs share one scan pipeline; toggle by pack component',
   'toolkit.groupClaude': 'Claude Plugins',
   'toolkit.groupPacks': 'Toolkit Packs',
-  'toolkit.claudeTag': 'claude',
   'toolkit.claudeGroupHint':
     'Claude Code native plugins and mods — effective only on the claude harness; hidden under the codex runtime',
   'toolkit.empty': 'No toolkit packs',
