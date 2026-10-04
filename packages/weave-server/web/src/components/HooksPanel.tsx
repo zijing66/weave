@@ -446,7 +446,13 @@ export function HooksPanel({
 
   useEffect(() => {
     if (!rules) return;
-    const built = buildGraph(rules, projectById, t, { onToggle: toggleRule });
+    // 数据流画布只展示当前生效（enabled）的规则；停用规则留在规则列表里管理。
+    const built = buildGraph(
+      rules.filter((r) => r.enabled),
+      projectById,
+      t,
+      { onToggle: toggleRule },
+    );
     // 保留用户拖出来的节点位置，只更新数据 / 集合。
     setNodes((prev) => {
       const pos = new Map(prev.map((n) => [n.id, n.position]));
@@ -617,23 +623,26 @@ export function HooksPanel({
         <span className="text-[11px] text-neutral-500">
           {rules === null ? t('hooks.loading') : t('catbar.items', { n: rules.length })}
         </span>
-        <button
-          type="button"
-          onClick={() => (form && form.editingId === null ? closeForm() : openCreate())}
-          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-blue-600/80 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-        >
-          {form && form.editingId === null ? (
-            <>
-              <X className="h-3.5 w-3.5" />
-              {t('hooks.cancel')}
-            </>
-          ) : (
-            <>
-              <Plus className="h-3.5 w-3.5" />
-              {t('hooks.newRule')}
-            </>
-          )}
-        </button>
+        {/* 项目级不能新增规则：隐藏新建入口（启用走编辑表单的 enabled 开关） */}
+        {mode === 'global' && (
+          <button
+            type="button"
+            onClick={() => (form && form.editingId === null ? closeForm() : openCreate())}
+            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-blue-600/80 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+          >
+            {form && form.editingId === null ? (
+              <>
+                <X className="h-3.5 w-3.5" />
+                {t('hooks.cancel')}
+              </>
+            ) : (
+              <>
+                <Plus className="h-3.5 w-3.5" />
+                {t('hooks.newRule')}
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {/* 插件区段（SPI 扫描：内置预设/全局/项目三根，热重载自动刷新）。
@@ -657,6 +666,9 @@ export function HooksPanel({
             <CardTitle>{t('hooks.flowTitle')}</CardTitle>
             {rules && rules.length === 0 && (
               <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlow')}</span>
+            )}
+            {rules && rules.length > 0 && !rules.some((r) => r.enabled) && (
+              <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlowDisabled')}</span>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
@@ -690,7 +702,9 @@ export function HooksPanel({
               </ReactFlow>
             ) : (
               <div className="flex h-full items-center justify-center text-xs text-neutral-500">
-                {t('hooks.loading')}
+                {rules !== null && !rules.some((r) => r.enabled)
+                  ? t(rules.length === 0 ? 'hooks.emptyFlow' : 'hooks.emptyFlowDisabled')
+                  : t('hooks.loading')}
               </div>
             )}
           </div>
