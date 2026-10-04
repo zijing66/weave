@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { Harness } from '@weave/core';
+import { readDaemonSettingsSync, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
 
 export interface HookEventInput {
   projectId: number;
@@ -20,14 +21,19 @@ export interface HookEventRow {
   createdAt: string;
 }
 
-/** 事件日志保留天数（被动清理阈值——与总览「大于30天」档兼容，留足回溯）。 */
-export const HOOK_EVENT_RETENTION_DAYS = 90;
-
 export class HookEventRepository {
   /** 上次被动清理的 UTC 天序号（进程内标记；-1=本进程尚未清理过）。 */
   private lastPruneDay = -1;
 
   constructor(private readonly db: DatabaseSync) {}
+
+  /**
+   * 重置被动清理的天标记：全局设置保存保留期后调用——下一条事件写入
+   * 立即按新配置清理（否则要等次日跨天才重扫）。
+   */
+  resetPrune(): void {
+    this.lastPruneDay = -1;
+  }
 
   /** Append-only insert. Returns the new row id. */
   insert(input: HookEventInput): number {
@@ -50,15 +56,18 @@ export class HookEventRepository {
 
   /**
    * 被动清理（无定时任务）：每个 UTC 天只在本进程的首条写入时执行一次
-   * DELETE——「下一次写入新一天日志时清理过期日志」。created_at 为 ISO
-   * 字符串，字典序即时间序，直接比较即可；DELETE 留下的空页由后续写入复用
-   * （不做 VACUUM，避免写路径上的大段停顿）。
+   * DELETE——「下一次写入新一天日志时清理过期日志」。保留期读全局设置
+   * （daemon settings.json → events.retentionDays，默认 90 天）。
+   * created_at 为 ISO 字符串，字典序即时间序，直接比较即可；DELETE 留下
+   * 的空页由后续写入复用（不做 VACUUM，避免写路径上的大段停顿）。
    */
   private pruneExpired(): void {
     const day = Math.floor(Date.now() / 86_400_000);
     if (day === this.lastPruneDay) return;
     this.lastPruneDay = day;
-    const cutoff = new Date((day - HOOK_EVENT_RETENTION_DAYS) * 86_400_000).toISOString();
+    const retentionDays =
+      readDaemonSettingsSync().events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS;
+    const cutoff = new Date((day - retentionDays) * 86_400_000).toISOString();
     this.db.prepare('DELETE FROM hook_events WHERE created_at < ?').run(cutoff);
   }
 

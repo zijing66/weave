@@ -327,6 +327,9 @@ async function handleRequest(
         return;
       }
       const saved = await writeDaemonSettings(body as DaemonSettings);
+      // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
+      // 就按新配置重扫（否则要等次日跨天）。
+      deps.hookEvents?.resetPrune();
       sendJson(200, saved);
       return;
     }

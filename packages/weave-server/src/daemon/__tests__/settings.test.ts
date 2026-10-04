@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   DEFAULT_DAEMON_SETTINGS,
+  DEFAULT_EVENT_RETENTION_DAYS,
   readDaemonSettings,
+  readDaemonSettingsSync,
   writeDaemonSettings,
   setDaemonSettingsDir,
   terminalPresetsFor,
@@ -97,6 +99,26 @@ describe('daemon settings persistence', () => {
       hooks: { enabled: 'yes' as never },
     });
     expect(bad.hooks.enabled).toBe(true);
+  });
+
+  it('events.retentionDays round-trips（含同步读）；非法值回落默认', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      events: { retentionDays: 7 },
+    });
+    expect(saved.events?.retentionDays).toBe(7);
+    expect((await readDaemonSettings()).events?.retentionDays).toBe(7);
+    expect(readDaemonSettingsSync().events?.retentionDays).toBe(7);
+
+    const bad = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      events: { retentionDays: 0 as never },
+    });
+    expect(bad.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
   });
 });
 

@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getDataDir } from '../db/paths.js';
 
@@ -58,10 +59,17 @@ export interface DaemonSettings {
   locale: Locale;
   /** D3 hooks 系统总开关（规则级 enabled 另控；关掉后 dispatcher 全量短路）。 */
   hooks: HooksSettings;
+  /** 事件日志（hook_events）保留策略——缺省走默认值（读时归一化）。 */
+  events?: EventsSettings;
 }
 
 export interface HooksSettings {
   enabled: boolean;
+}
+
+/** hook_events 被动清理保留天数（跨天首条写入时删除更早日志）。 */
+export interface EventsSettings {
+  retentionDays: number;
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -71,10 +79,18 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
 
 export const DEFAULT_HOOKS_SETTINGS: HooksSettings = { enabled: true };
 
+/** 保留 90 天：与总览「大于30天」档兼容，留足回溯窗口。 */
+export const DEFAULT_EVENT_RETENTION_DAYS = 90;
+
+export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
+  retentionDays: DEFAULT_EVENT_RETENTION_DAYS,
+};
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
   hooks: DEFAULT_HOOKS_SETTINGS,
+  events: DEFAULT_EVENTS_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -139,6 +155,11 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const obj = (raw ?? {}) as Partial<DaemonSettings>;
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
   const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
+  const events = (obj.events ?? {}) as Partial<EventsSettings>;
+  const retention =
+    Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
+      ? (events.retentionDays as number)
+      : DEFAULT_EVENTS_SETTINGS.retentionDays;
   return {
     terminal: {
       preset: ALL_TERMINAL_PRESETS.includes(term.preset as TerminalPreset)
@@ -150,6 +171,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     hooks: {
       enabled: typeof hooks.enabled === 'boolean' ? hooks.enabled : DEFAULT_HOOKS_SETTINGS.enabled,
     },
+    events: { retentionDays: retention },
   };
 }
 
@@ -171,6 +193,18 @@ export async function readDaemonSettings(): Promise<DaemonSettings> {
   try {
     const raw = await readFile(settingsPath(), 'utf-8');
     return mergeDefaults(JSON.parse(raw));
+  } catch {
+    return DEFAULT_DAEMON_SETTINGS;
+  }
+}
+
+/**
+ * 同步读（hook_events 被动清理用：insert 是同步写路径，且仅跨天首条
+ * 写入时读一次——一天一次的小文件 IO）。语义与 readDaemonSettings 一致。
+ */
+export function readDaemonSettingsSync(): DaemonSettings {
+  try {
+    return mergeDefaults(JSON.parse(readFileSync(settingsPath(), 'utf-8')));
   } catch {
     return DEFAULT_DAEMON_SETTINGS;
   }
