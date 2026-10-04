@@ -35,6 +35,13 @@ describe('classifyAsset', () => {
     // stays part of that skill instead of escaping to the instructions bucket.
     ['.claude/skills/foo/CLAUDE.md', 'skill'],
     ['.claude/commands/CLAUDE.md', 'command'],
+    // Plugin package prefixes win over the base-name instruction fallback …
+    ['.claude/plugins/cache/m/k/1.0.0/src/x.ts', 'plugin'],
+    ['.claude/plugins/installed_plugins.json', 'plugin'],
+    ['.weave/plugins/foo/weave-plugin.json', 'plugin'],
+    ['.claude/plugins/foo/CLAUDE.md', 'plugin'],
+    // … while non-package paths under .claude keep their own rules.
+    ['.claude/hooks/x.sh', 'other'],
   ])('classifies %s as %s', (relPath, category) => {
     expect(classifyAsset(relPath)).toBe(category);
   });

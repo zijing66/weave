@@ -9,6 +9,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
+import { BUCKET_ORDER, tagsOf } from '@/lib/file-tags';
 import { useT } from '@/i18n/I18nProvider';
 import {
   ChevronDown,
@@ -31,47 +32,7 @@ export interface FileAssetRow {
   agent?: AssetAgent;
 }
 
-/** 抽象工具大类（筛选概念）：chips 与行 tag 只暴露 harness 工具的抽象概念，
- *  绠向细节（helper 就是 hook 脚本、workflow 并入 rules 等）折叠进大类。
- *  skill/mcp 是 tab 专属维度，不进 chips（tab 已管）。 */
-const BUCKET_ORDER = [
-  'instructions',
-  'command',
-  'agent',
-  'hooks',
-  'rules',
-  'style',
-  'settings',
-  'other',
-] as const;
-
-/** tab 专属类别：不参与大类 chips/计数（Skills|MCP tab 各自过滤）。 */
-const TAB_KINDS = new Set(['skill', 'mcp']);
-
-/** 原始扫描 category（+路径细判）→ 抽象大类；未知未来类目归 other。 */
-function bucketOf(category: string, relPath: string): string {
-  switch (category) {
-    case 'helper':
-      return 'hooks'; // .claude/helpers/ = hook 处理脚本
-    case 'rule':
-    case 'workflow':
-      return 'rules';
-    case 'output-style':
-      return 'style';
-    case 'instructions':
-    case 'command':
-    case 'agent':
-    case 'settings':
-      return category;
-    default:
-      break;
-  }
-  if (TAB_KINDS.has(category)) return category;
-  if (relPath.startsWith('.claude/hooks/')) return 'hooks';
-  return 'other';
-}
-
-/* One colour family per bucket, expressed in TEXT COLOUR ONLY: both the
+/* One colour family per tag, expressed in TEXT COLOUR ONLY: both the
  * filter chips and the row tags keep the same grey background, so the hue is
  * what distinguishes buckets. Selected chips additionally get a highlight ring.
  * (Tailwind needs literal class strings, hence no template.) */
@@ -84,10 +45,16 @@ const KIND_COLORS: Record<string, { on: string; off: string }> = {
   agent: { on: 'text-emerald-200', off: 'text-emerald-300/50 hover:text-emerald-200' },
   hooks: { on: 'text-amber-200', off: 'text-amber-300/50 hover:text-amber-200' },
   rules: { on: 'text-rose-200', off: 'text-rose-300/50 hover:text-rose-200' },
-  style: { on: 'text-fuchsia-200', off: 'text-fuchsia-300/50 hover:text-fuchsia-200' },
+  'output-style': {
+    on: 'text-fuchsia-200',
+    off: 'text-fuchsia-300/50 hover:text-fuchsia-200',
+  },
+  workflow: { on: 'text-orange-200', off: 'text-orange-300/50 hover:text-orange-200' },
   settings: { on: 'text-cyan-200', off: 'text-cyan-300/50 hover:text-cyan-200' },
+  plugin: { on: 'text-indigo-200', off: 'text-indigo-300/50 hover:text-indigo-200' },
+  mods: { on: 'text-violet-200', off: 'text-violet-300/50 hover:text-violet-200' },
   other: { on: 'text-neutral-200', off: 'text-neutral-400/70 hover:text-neutral-200' },
-  // tab 专属类别只做行 tag 配色（chips 不列）
+  // tab 专属类别同样进 chips 与行 tag
   skill: { on: 'text-lime-200', off: 'text-lime-300/50 hover:text-lime-200' },
   mcp: { on: 'text-sky-200', off: 'text-sky-300/50 hover:text-sky-200' },
 };
@@ -244,6 +211,7 @@ function AssetTreeNode({
       scope === 'global'
         ? GLOBAL_UNINSTALLABLE.has(a.category) && a.agent !== 'codex'
         : UNINSTALLABLE.has(a.category);
+    const tags = tagsOf(a.category, a.relPath);
     return (
       <div className="group/row relative">
         <button
@@ -264,14 +232,17 @@ function AssetTreeNode({
           )}
           <span className="truncate">{name}</span>
           {/* Agent + kind tags sit AFTER the name (no leading dot): the same
-              chip colours as the filter bar, so rows and filters agree. */}
+              chip colours as the filter bar, so rows and filters agree. A file
+              renders ALL of its tags (mods rows show plugin + mods). */}
           <AgentBadge
             agent={a.agent ?? 'claude'}
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
-          <span className={cn(ROW_TAG_BASE, kindColor(bucketOf(a.category, a.relPath)).on)}>
-            {bucketOf(a.category, a.relPath)}
-          </span>
+          {tags.map((tag) => (
+            <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
+              {tag}
+            </span>
+          ))}
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
               {t('fileTree.update')}
@@ -341,9 +312,11 @@ function AssetTreeNode({
 }
 
 /**
- * The 文件资产 view: every non-skill, non-MCP project asset in one file tree
- * (instructions, commands, agents, workflows, rules, output styles, helpers,
- * settings …), filtered by multi-select type chips. Clicking a file opens the
+ * The 文件资产 view: every project asset in one file tree (skills, MCP,
+ * instructions, commands, agents, workflows, rules, hooks, plugins, mods,
+ * settings …), filtered by multi-select type chips — one chip per bucket in
+ * `BUCKET_ORDER`; a file matches a selection when ANY of its tags is active
+ * (mods files carry both plugin and mods). Clicking a file opens the
  * right-side preview drawer; uninstallable kinds expose a hover trash.
  */
 export function FileAssetTree({
@@ -364,13 +337,14 @@ export function FileAssetTree({
   const t = useT();
   // Counts cover every known kind — kinds with no files show as 0-count chips
   // rather than disappearing, so the filter bar always reads the full taxonomy.
+  // Multi-tag files (mods) count toward each of their tags.
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const k of BUCKET_ORDER) m.set(k, 0);
     for (const a of assets) {
-      if (TAB_KINDS.has(a.category)) continue; // skill/mcp 归 tab 维度，不进 chips
-      const b = bucketOf(a.category, a.relPath);
-      m.set(b, (m.get(b) ?? 0) + 1);
+      for (const tag of tagsOf(a.category, a.relPath)) {
+        m.set(tag, (m.get(tag) ?? 0) + 1);
+      }
     }
     return m;
   }, [assets]);
@@ -386,7 +360,7 @@ export function FileAssetTree({
   const visible = useMemo(
     () =>
       active.size
-        ? assets.filter((a) => active.has(bucketOf(a.category, a.relPath)))
+        ? assets.filter((a) => tagsOf(a.category, a.relPath).some((tag) => active.has(tag)))
         : assets,
     [assets, active],
   );

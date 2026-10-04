@@ -53,14 +53,6 @@ const ASSET_TAB_LABELS: Record<AssetTab, MessageKey> = {
   plugins: 'assetTab.plugins',
 };
 
-/** D2 并集规则：通用类（instructions…other，含 other 里的 plugins/toolkit 路径）
- * 任何 tab 保留；skill/mcp 专属文件按 tab 显隐。 */
-function tabKeepsCategory(category: string, tab: AssetTab): boolean {
-  if (category === 'skill') return tab === 'skills';
-  if (category === 'mcp') return tab === 'mcp';
-  return true;
-}
-
 /** Runtime surface of an asset row. Rows scanned before the agent field
  * existed fall back to the server's path rule (Codex owns .codex/ and
  * AGENTS.md anywhere in the tree). */
@@ -203,26 +195,16 @@ export function CategoryDetail({
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
-  // 文件资产树（D2 并集过滤）：通用类任何 tab 保留，专属类按 tab 增减。
+  // 文件资产树：只按 runtime tab 过滤，类型显隐交给树内 chips（tagsOf）。
   const treeAssets = useMemo(
-    () =>
-      assets.filter(
-        (a) =>
-          tabKeepsCategory(a.category, assetTab) &&
-          (runtimeTab === 'all' || agentOf(a) === runtimeTab),
-      ),
-    [assets, runtimeTab, assetTab],
+    () => assets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
+    [assets, runtimeTab],
   );
 
   // Global 文件资产: the same filter over ~/.claude + ~/.codex rows.
   const globalTreeAssets = useMemo(
-    () =>
-      globalAssets.filter(
-        (a) =>
-          tabKeepsCategory(a.category, assetTab) &&
-          (runtimeTab === 'all' || agentOf(a) === runtimeTab),
-      ),
-    [globalAssets, runtimeTab, assetTab],
+    () => globalAssets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
+    [globalAssets, runtimeTab],
   );
 
   return (
@@ -261,7 +243,7 @@ export function CategoryDetail({
         </div>
       )}
 
-      {/* 文件资产页：目录树（D2 并集过滤）→ AssetTab 行 → 对应面板（互斥） */}
+      {/* 文件资产页：目录树（chips 类型筛选）→ AssetTab 行 → 对应面板（互斥） */}
       {category === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
@@ -286,23 +268,15 @@ export function CategoryDetail({
       {category === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
-          assetTab === 'plugins' ? (
-            // 全局扫描跳过 plugins/：树空时指向下方面板
-            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
-              <PackageX className="h-8 w-8 text-neutral-600" />
-              <p className="text-xs text-neutral-500">{t('fileTree.emptyGlobalPlugins')}</p>
+          <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+            <PackageX className="h-8 w-8 text-neutral-600" />
+            <div>
+              <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
+              <p className="text-xs text-neutral-500 mt-1 max-w-xs">
+                {t('category.emptyFilesGlobalDesc')}
+              </p>
             </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
-              <PackageX className="h-8 w-8 text-neutral-600" />
-              <div>
-                <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
-                <p className="text-xs text-neutral-500 mt-1 max-w-xs">
-                  {t('category.emptyFilesGlobalDesc')}
-                </p>
-              </div>
-            </div>
-          )
+          </div>
         ) : (
           <FileAssetTree
             scope={scope}
