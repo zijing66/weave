@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   Controls,
+  Handle,
   MarkerType,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -10,7 +12,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, type HookDispatch, type HookEventRow, type SessionRow } from '@/lib/api';
-import { EVENT_TYPE_STYLES, formatTime, rawOf, summarizeEvent } from '@/lib/hook-payload';
+import { EVENT_TYPE_STYLES, formatTime, parseDetail, rawOf, summarizeEvent } from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -20,7 +22,7 @@ import {
   type LifecycleGroup,
 } from '@/components/tasks/build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from '@/components/tasks/lifecycle';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 
 /**
  * 生命周期思维导图（Weave 画布第二视图，项目形态）：每个折叠根 = 一次
@@ -40,8 +42,7 @@ export type MindmapKind =
   | 'subagent'
   | 'rule'
   | 'handler'
-  | 'dispatch'
-  | 'detail';
+  | 'dispatch';
 
 /** 规则最小信息（命中链层级用；handlerType 缺失时跳过处理器层）。 */
 export type RuleInfo = { name: string | null; handlerType: string | null };
@@ -59,6 +60,7 @@ export interface LaidNode {
   ruleName?: string | null;
   /** kind=handler：处理器类型。 */
   handlerType?: string;
+  /** 真有（潜在）子节点才渲染折叠按钮——明细改点击节点右上面板承载。 */
   expandable: boolean;
   expanded: boolean;
   /** 本节点或其子路径上存在 pending 指令 — amber 高光。 */
@@ -66,18 +68,31 @@ export interface LaidNode {
 }
 
 const COL_W = 320;
-const ROW_H = 84;
+/** 行距大于节点高度：父子边的 smoothstep 折线才有可见竖直段（DAG 连线）。 */
+const ROW_H = 128;
+
+/** 边：closure=true 是闭环回边（末事件 → prompt 根，成环）；vertical=true
+ *  是同列时序链（底出顶入，防跨列锚点绕行交叉）。 */
+export interface LaidEdge {
+  id: string;
+  source: string;
+  target: string;
+  closure?: boolean;
+  vertical?: boolean;
+}
 
 /**
- * 展开集驱动的可见树 + 分层布局：depth 列、叶子顺序流、父居子中。
+ * 展开集驱动的可见树 + 分层布局（depth 列、叶子顺序流、父居子中）：
  * 层级 = prompt 组 → hook 事件（SubagentStop=子代理分型）→ 命中规则 →
- * 处理器（handlerType 已知时）→ 派发结果 → 执行详情——四列命中链的层级化合体。
+ * 处理器（handlerType 已知时）→ 派发结果。**组内事件按实际调用时序成链**：
+ * 根→首事件→…→末事件→根（虚线闭环）——一次 prompt 完成闭环，非放射 DAG。
+ * 节点明细走点击右上角浮层。
  */
 export function layoutMindmap(
   groups: LifecycleGroup[],
   expanded: ReadonlySet<string>,
   ruleInfo: ReadonlyMap<string, RuleInfo> = new Map(),
-): { nodes: LaidNode[]; edges: { id: string; source: string; target: string }[] } {
+): { nodes: LaidNode[]; edges: LaidEdge[] } {
   interface TNode {
     key: string;
     kind: MindmapKind;
@@ -88,25 +103,24 @@ export function layoutMindmap(
     ruleName?: string | null;
     handlerType?: string;
     children: TNode[];
+    /** 有（潜在）子节点——折叠按钮只给这类块。 */
+    hasPotential: boolean;
     /** 自身或子树含 pending 指令（回传高光）。 */
     highlight: boolean;
   }
 
   const dispatchNodes = (list: HookDispatch[]): TNode[] =>
     list.map((d) => {
-      const key = `d:${d.id}`;
       const pending = d.status === 'pending';
-      const children: TNode[] = [];
-      if (expanded.has(key)) {
-        children.push({
-          key: `${key}:detail`,
-          kind: 'detail',
-          dispatch: d,
-          children: [],
-          highlight: pending,
-        });
-      }
-      return { key, kind: 'dispatch', dispatch: d, children, highlight: pending };
+      // 派发是叶子：明细由点击节点的右上面板承载（不再有 detail 子层）。
+      return {
+        key: `d:${d.id}`,
+        kind: 'dispatch' as const,
+        dispatch: d,
+        children: [],
+        hasPotential: false,
+        highlight: pending,
+      };
     });
 
   /** 事件的命中链子树：按 ruleId 去重 → rule →（已知类型时）handler → dispatch。 */
@@ -132,6 +146,7 @@ export function layoutMindmap(
             kind: 'handler',
             handlerType: info.handlerType,
             children: dispatchKids,
+            hasPotential: dispatchKids.length > 0,
             highlight: pending,
           },
         ];
@@ -144,6 +159,7 @@ export function layoutMindmap(
         ruleId,
         ruleName: info ? info.name : null,
         children: kids,
+        hasPotential: kids.length > 0,
         highlight: pending,
       });
     }
@@ -156,18 +172,41 @@ export function layoutMindmap(
     const children: TNode[] = [];
     if (expanded.has(gKey)) {
       if (g.events.length > 0) {
+        // 主链 = 非 SubagentStop 事件（时序）；SubagentStop 作为**时序前驱的
+        // 分叉子节点**挂入其 children（调用链分叉，不再与主链事件并列）——
+        // 恒显示于该分支（branch 先于可折叠的规则子树）。
+        const chain: TNode[] = [];
+        const nodesByRow = new Map<number, TNode>();
+        let prevRow: HookEventRow | null = null;
         for (const e of g.events) {
           const eKey = `e:${e.id}`;
-          const kids = expanded.has(eKey)
-            ? hitChain(e.id, g.dispatches.filter((d) => d.eventId === e.id))
-            : [];
-          const hl = kids.some((k) => k.highlight);
-          // SubagentStop 独立成「子代理」层节点（与普通 hook 事件分型），
-          // 从属关系 = prompt 组 → 子代理 → 其触发的指令。
-          const kind: MindmapKind =
-            e.eventType === HARNESS_LIFECYCLE.claude.subagentStop ? 'subagent' : 'event';
-          children.push({ key: eKey, kind, event: e, children: kids, highlight: hl });
+          const hits = g.dispatches.filter((d) => d.eventId === e.id);
+          const kids = expanded.has(eKey) ? hitChain(e.id, hits) : [];
+          const isSub = e.eventType === HARNESS_LIFECYCLE.claude.subagentStop;
+          const node: TNode = {
+            key: eKey,
+            kind: isSub ? 'subagent' : 'event',
+            event: e,
+            children: kids,
+            hasPotential: hits.length > 0, // 无触发指令的事件是叶子——不给折叠按钮
+            highlight: kids.some((k) => k.highlight),
+          };
+          if (isSub) {
+            const prevNode = prevRow ? nodesByRow.get(prevRow.id) : undefined;
+            if (prevNode) {
+              prevNode.children.unshift(node); // 分叉：挂前驱下、恒显示
+              prevNode.highlight = prevNode.highlight || node.highlight;
+              prevRow = e;
+              nodesByRow.set(e.id, node);
+              continue;
+            }
+            // 首事件即 SubagentStop（无前驱）：退化并入主链
+          }
+          chain.push(node);
+          nodesByRow.set(e.id, node);
+          prevRow = e;
         }
+        children.push(...chain);
       } else {
         // 游离指令组（orphan，调用方已过滤）：指令直挂 prompt 根下。
         children.push(...dispatchNodes(g.dispatches));
@@ -175,12 +214,19 @@ export function layoutMindmap(
     }
     const hl =
       children.some((c) => c.highlight) || g.dispatches.some((d) => d.status === 'pending');
-    roots.push({ key: gKey, kind: 'group', group: g, children, highlight: hl });
+    roots.push({
+      key: gKey,
+      kind: 'group',
+      group: g,
+      children,
+      hasPotential: g.events.length > 0 || g.dispatches.length > 0,
+      highlight: hl,
+    });
   }
 
   // 后序分配 y：叶子占槽递增，父取子中点；边构建随遍历走。
   const nodes: LaidNode[] = [];
-  const edges: { id: string; source: string; target: string }[] = [];
+  const edges: LaidEdge[] = [];
   let cursor = 0;
   const walk = (n: TNode, depth: number, parentKey: string | null): number => {
     if (parentKey) edges.push({ id: `${parentKey}->${n.key}`, source: parentKey, target: n.key });
@@ -205,23 +251,43 @@ export function layoutMindmap(
       ruleId: n.ruleId,
       ruleName: n.ruleName,
       handlerType: n.handlerType,
-      expandable: n.children.length > 0 || expandable(n),
+      expandable: n.hasPotential,
       expanded: expanded.has(n.key),
       highlight: n.highlight,
     });
     return y;
   };
-  // 折叠态的可展开节点一律给 chevron（内容为空由用户自行折叠回去）。
-  function expandable(n: TNode): boolean {
-    if (n.kind === 'group') return true;
-    if (n.kind === 'event') return true;
-    if (n.kind === 'subagent') return true;
-    if (n.kind === 'rule') return true;
-    if (n.kind === 'handler') return true;
-    if (n.kind === 'dispatch') return true;
-    return false;
-  }
   for (const r of roots) walk(r, 0, null);
+
+  // 组内事件改为**实际调用时序链 + 闭环**：删 walk 生成的根→事件放射边，
+  // 改 根→首事件→…→末事件→根（closure 虚线回边）——一次 prompt 首尾相接
+  // 成环（可成环，非 DAG）；事件的规则/指令子树边保留。
+  for (const r of roots) {
+    if (r.kind !== 'group') continue;
+    const evs = r.children.filter((c) => c.kind === 'event' || c.kind === 'subagent');
+    if (evs.length === 0) continue; // orphan 直挂 dispatch 维持放射
+    const evKeys = new Set(evs.map((c) => c.key));
+    for (let i = edges.length - 1; i >= 0; i--) {
+      const e = edges[i]!;
+      if (e.source === r.key && evKeys.has(e.target)) edges.splice(i, 1);
+    }
+    edges.push({ id: `${r.key}->${evs[0]!.key}`, source: r.key, target: evs[0]!.key });
+    for (let i = 0; i + 1 < evs.length; i++) {
+      // 同列时序链：底出顶入直连（vertical），不走跨列锚点绕行
+      edges.push({
+        id: `${evs[i]!.key}->${evs[i + 1]!.key}`,
+        source: evs[i]!.key,
+        target: evs[i + 1]!.key,
+        vertical: true,
+      });
+    }
+    edges.push({
+      id: `${evs[evs.length - 1]!.key}->${r.key}`,
+      source: evs[evs.length - 1]!.key,
+      target: r.key,
+      closure: true,
+    });
+  }
   return { nodes, edges };
 }
 
@@ -235,6 +301,8 @@ type MindmapData = {
   /** dispatch 节点的规则显示名（规则名映射由组件算好传入）。 */
   ruleName?: string;
   onToggle: (key: string) => void;
+  /** 点击节点 → 右上角独立明细面板。 */
+  onOpenDetail: (node: LaidNode) => void;
 };
 type MindmapFlowNode = Node<MindmapData, 'mindmap'>;
 
@@ -244,7 +312,7 @@ function tagCls(base: string): string {
 
 function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
   const t = useT();
-  const { node, flash, onToggle } = data;
+  const { node, flash, onToggle, onOpenDetail } = data;
   const chevron = node.expandable ? (
     <button
       type="button"
@@ -377,39 +445,28 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
         </span>
       </>
     );
-  } else if (node.kind === 'detail' && node.dispatch) {
-    const d = node.dispatch;
-    body = (
-      <span className="block space-y-0.5 text-[11px] text-neutral-400">
-        <span className="flex items-center gap-1.5">
-          <StatusDot status={d.status} />
-          <span className="text-neutral-500">{formatTime(d.startedAt)}</span>
-          {d.finishedAt && (
-            <span className="text-neutral-600">→ {formatTime(d.finishedAt)}</span>
-          )}
-        </span>
-        <span className="block whitespace-pre-wrap break-all line-clamp-4" title={d.prompt}>
-          {d.prompt}
-        </span>
-        {d.output && (
-          <span className="block whitespace-pre-wrap break-all line-clamp-4 text-neutral-500">
-            {d.output}
-          </span>
-        )}
-        {d.error && <span className="block text-red-400/80 line-clamp-2">{d.error}</span>}
-      </span>
-    );
   }
 
   return (
     <div
       className={cn(
-        'flex w-[280px] items-start gap-1 rounded-lg border border-white/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac',
+        'flex w-[280px] cursor-pointer items-start gap-1 rounded-lg border border-white/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac transition-colors hover:border-white/[0.18]',
         node.highlight && 'ring-1 ring-amber-400/70',
         flash && 'weave-node-flash',
       )}
       title={node.highlight ? t('hooks.mindmap.pendingTip') : undefined}
+      onClick={(e) => {
+        e.stopPropagation(); // 阻止冒泡到画布的「关闭明细」
+        onOpenDetail(node);
+      }}
     >
+      {/* 锚点分向（隐藏仅作连线锚定）：跨列层级右出左入；同列时序链底出顶入
+          （防 U 型绕行大交叉）；闭环回边左侧出 → 根左侧入（走外侧通道） */}
+      <Handle type="target" id="l" position={Position.Left} style={{ visibility: 'hidden' }} />
+      <Handle type="target" id="t" position={Position.Top} style={{ visibility: 'hidden' }} />
+      <Handle type="source" id="r" position={Position.Right} style={{ visibility: 'hidden' }} />
+      <Handle type="source" id="b" position={Position.Bottom} style={{ visibility: 'hidden' }} />
+      <Handle type="source" id="c" position={Position.Left} style={{ visibility: 'hidden' }} />
       {chevron}
       <div className="min-w-0 flex-1">{body}</div>
     </div>
@@ -481,6 +538,8 @@ export function LifecycleMindmap({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   /** 新建指令入场闪烁的节点 key（900ms 摘除）。 */
   const [flashKey, setFlashKey] = useState<string | null>(null);
+  /** 点击节点打开的右上角明细面板（点面板外关闭）。 */
+  const [detailNode, setDetailNode] = useState<LaidNode | null>(null);
   const flashTimer = useRef<number | null>(null);
   const refreshTimer = useRef<number | null>(null);
 
@@ -506,6 +565,7 @@ export function LifecycleMindmap({
     setDispatches(null);
     // 单组模式根默认展开（进入即见该 prompt 的事件序）；会话模式全折叠。
     setExpanded(focusGroupId ? new Set([`g:${focusGroupId}`]) : new Set());
+    setDetailNode(null);
     void load();
   }, [load, focusGroupId]);
 
@@ -558,7 +618,15 @@ export function LifecycleMindmap({
       if (!next.delete(key)) next.add(key);
       return next;
     });
+    // 用户每次展开/折叠 → 重挂画布并重新 fit（位置与缩放重算）
+    setFitEpoch((n) => n + 1);
   }, []);
+
+  const openDetail = useCallback((n: LaidNode) => setDetailNode(n), []);
+
+  // 展开/折叠后重新计算位置与缩放：epoch++ → ReactFlow 重挂并 fitView
+  // （maxZoom 1 防长列压糊）；初始 epoch=0 不 fit——保持顶部 0.75 可读视口。
+  const [fitEpoch, setFitEpoch] = useState(0);
 
   const flowNodes: MindmapFlowNode[] = useMemo(
     () =>
@@ -571,25 +639,140 @@ export function LifecycleMindmap({
           flash: flashKey === n.key,
           ruleName: n.dispatch ? (ruleInfo.get(n.dispatch.ruleId)?.name ?? undefined) : undefined,
           onToggle,
+          onOpenDetail: openDetail,
         },
         draggable: true,
       })),
-    [laid.nodes, flashKey, ruleInfo, onToggle],
+    [laid.nodes, flashKey, ruleInfo, onToggle, openDetail],
   );
-  // 箭头 + 流动动效 + 亮蓝加粗：显著表达 prompt 生命周期的调用关系。
+  // 箭头 + 流动动效 + 亮蓝加粗：显著表达调用方向；闭环回边（closure）虚线。
+  // 锚点三分：同列时序链底出顶入（纵向直连）；跨列层级右出左入；闭环左侧回环。
   const flowEdges: Edge[] = useMemo(
     () =>
       laid.edges.map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
+        sourceHandle: e.closure ? 'c' : e.vertical ? 'b' : 'r',
+        targetHandle: e.closure ? 'l' : e.vertical ? 't' : 'l',
         type: 'smoothstep',
         animated: true,
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-        style: { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
+        style: e.closure
+          ? {
+              stroke: 'rgba(96,165,250,0.55)',
+              strokeWidth: 1.5,
+              strokeDasharray: '7 5',
+            }
+          : { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
       })),
     [laid.edges],
   );
+
+  /** 右上角明细面板内容：按节点 kind 渲染该节点的完整信息。 */
+  const renderDetail = (n: LaidNode): React.ReactNode => {
+    const row = (label: string, value: React.ReactNode): React.ReactNode => (
+      <p className="flex gap-2">
+        <span className="shrink-0 text-neutral-500">{label}</span>
+        <span className="min-w-0 break-all text-neutral-300">{value}</span>
+      </p>
+    );
+    const json = (value: unknown): string =>
+      value == null ? '—' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    if (n.kind === 'group' && n.group) {
+      const g = n.group;
+      return (
+        <>
+          <p className="whitespace-pre-wrap break-all text-neutral-100">
+            {g.prompt ?? t('hooks.mindmap.preSession')}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {g.open && (
+              <span className="rounded bg-red-900/40 px-1 text-[10px] text-red-300">
+                {t('hooks.mindmap.openTag')}
+              </span>
+            )}
+            {g.subagentStops > 0 && (
+              <span className="rounded bg-orange-900/40 px-1 text-[10px] text-orange-300">
+                {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
+              </span>
+            )}
+          </div>
+          {row(t('tasks.events', { n: g.events.length }), '')}
+          {row(t('tasks.groupDispatches', { n: g.dispatches.length }), '')}
+        </>
+      );
+    }
+    if ((n.kind === 'event' || n.kind === 'subagent') && n.event) {
+      const e = n.event;
+      const d = parseDetail(e.payload);
+      const raw = rawOf(e);
+      const agentId = typeof raw.agent_id === 'string' ? raw.agent_id : null;
+      return (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={tagCls(EVENT_TYPE_STYLES[e.eventType] ?? 'bg-neutral-800 text-neutral-300')}
+            >
+              {e.eventType}
+            </span>
+            {n.kind === 'subagent' && agentId && (
+              <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
+                agent …{agentId.slice(-8)}
+              </span>
+            )}
+            <span className="text-neutral-500">{formatTime(e.createdAt)}</span>
+          </div>
+          {/* 只给语义信息（prompt/tool/结束消息…），不展示 cwd/transcript 日志路径 */}
+          <p className="whitespace-pre-wrap break-all text-neutral-100">{summarizeEvent(e)}</p>
+          {d.toolInput != null && (
+            <div>
+              <p className="text-[9px] uppercase tracking-wide text-neutral-600">input</p>
+              <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-400">
+                {json(d.toolInput)}
+              </pre>
+            </div>
+          )}
+          {d.toolResponse != null && (
+            <div>
+              <p className="text-[9px] uppercase tracking-wide text-neutral-600">response</p>
+              <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-400">
+                {json(d.toolResponse)}
+              </pre>
+            </div>
+          )}
+        </>
+      );
+    }
+    if (n.kind === 'dispatch' && n.dispatch) {
+      const d = n.dispatch;
+      return (
+        <>
+          <div className="flex items-center gap-2">
+            <StatusDot status={d.status} />
+            <span className="text-neutral-500">{formatTime(d.startedAt)}</span>
+            {d.finishedAt && (
+              <span className="text-neutral-600">→ {formatTime(d.finishedAt)}</span>
+            )}
+          </div>
+          {row('rule', n.ruleName ?? d.ruleId)}
+          <p className="whitespace-pre-wrap break-all text-neutral-100">{d.prompt}</p>
+          {d.output && (
+            <div>
+              <p className="text-[9px] uppercase tracking-wide text-neutral-600">output</p>
+              <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-500">
+                {d.output}
+              </pre>
+            </div>
+          )}
+          {d.error && <p className="whitespace-pre-wrap break-all text-red-400/80">{d.error}</p>}
+        </>
+      );
+    }
+    if (n.kind === 'rule') return row('rule', n.ruleName ?? n.ruleId ?? '—');
+    if (n.kind === 'handler') return row('handler', n.handlerType ?? '—');
+    return null;
+  };
 
   return (
     <div className={cn('space-y-2', focusGroupId && 'h-full')}>
@@ -616,9 +799,10 @@ export function LifecycleMindmap({
 
       <div
         className={cn(
-          'rounded-lg bg-neutral-950/40',
+          'relative rounded-lg bg-neutral-950/40',
           focusGroupId ? 'h-full border-0' : 'h-96 border border-white/[0.06]',
         )}
+        onClick={() => setDetailNode(null)}
       >
         {events === null ? (
           <div className="flex h-full items-center justify-center text-xs text-neutral-500">
@@ -630,10 +814,17 @@ export function LifecycleMindmap({
           </div>
         ) : (
           <ReactFlow
+            key={fitEpoch}
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
-            fitView
+            // 单组动辄上百事件：初始停在顶部 0.75 倍（节点可读、连线可见）；
+            // 展开/折叠（epoch>0）重挂后 fitView 全图（maxZoom 1 防糊）。
+            fitView={!focusGroupId || fitEpoch > 0}
+            fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
+            {...(focusGroupId && fitEpoch === 0
+              ? { defaultViewport: { x: 24, y: 12, zoom: 0.75 } }
+              : {})}
             minZoom={0.15}
             maxZoom={1.5}
             nodesDraggable
@@ -649,6 +840,32 @@ export function LifecycleMindmap({
             <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />
             <Controls showInteractive={false} />
           </ReactFlow>
+        )}
+
+        {/* 右上角独立明细区：点节点打开；点面板外（画布空白/其它区域）关闭 */}
+        {detailNode && (
+          <div
+            className="absolute right-2 top-2 z-20 flex max-h-[78%] w-80 flex-col overflow-hidden rounded-lg border border-white/[0.14] bg-neutral-900/95 shadow-mac"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 border-b border-white/[0.08] px-3 py-2">
+              <span className="text-xs font-semibold text-neutral-200">
+                {t('hooks.mindmap.detailTitle')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDetailNode(null)}
+                title={t('hooks.mindmap.closeDetail')}
+                aria-label={t('hooks.mindmap.closeDetail')}
+                className="ml-auto rounded p-0.5 text-neutral-500 transition-colors hover:text-neutral-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="space-y-2 overflow-y-auto px-3 py-2 text-[11px]">
+              {renderDetail(detailNode)}
+            </div>
+          </div>
         )}
       </div>
     </div>

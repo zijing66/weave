@@ -499,11 +499,14 @@ export function TasksPanel({
             {t('tasks.chainEmpty')}
           </p>
         ) : (
-          <div
-            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1"
-            onScroll={onListScroll}
-            onWheel={onListWheel}
-          >
+          /* 事件区域：relative 外壳——遮罩 absolute 固定在区域底边（不随滚动
+              流），内层滚动列表 flex-1 撑满可用高度 */
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1"
+              onScroll={onListScroll}
+              onWheel={onListWheel}
+            >
             {shownGroups.map((g) => {
               const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
               const lastEvent = g.events[g.events.length - 1];
@@ -568,10 +571,9 @@ export function TasksPanel({
                     )}
                   </button>
                   {expanded && (
-                    <div className="h-[420px] shrink-0 border-t border-white/[0.06] p-1.5">
-                      {/* 合体形态：该 prompt 的思维导图即事件链——层级 =
-                          prompt → hook 事件（subagent 分型）→ 命中规则 → 处理器 →
-                          派发结果（箭头流动动效），逐级点开。 */}
+                    <div className="h-[calc(100vh-330px)] min-h-[420px] max-h-[760px] shrink-0 border-t border-white/[0.06] p-1.5">
+                      {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；
+                          合体形态 = 该 prompt 的思维导图即事件链，逐级点开。 */}
                       <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
                         <LifecycleMindmap
                           key={`${selectedId}:${g.id}`}
@@ -588,10 +590,11 @@ export function TasksPanel({
                 </div>
               );
             })}
-            {/* 底部渐变遮罩：倒序列表（最新在顶），更早 prompt 向底部滚——
-                触底自动加载，也可点击按钮（组窗口余量 → 扩窗；否则 beforeId） */}
+            </div>
+            {/* 底部渐变遮罩：absolute 固定在事件区域底边（不占滚动流）——
+                倒序列表（最新在顶），更早 prompt 向底部滚触底自动加载 */}
             {hasOlder && (
-              <div className="pointer-events-none sticky bottom-0 z-10 -mx-1 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-5 text-center">
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-6 text-center">
                 <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
                 <span className="pointer-events-auto mt-1 inline-flex gap-2">
                   <button
