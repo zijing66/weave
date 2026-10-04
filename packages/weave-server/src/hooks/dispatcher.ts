@@ -92,7 +92,19 @@ export class HookDispatcher {
       if (ctx.sessionId) {
         this.deps.sessions.touch(ctx.sessionId, ctx.project.id); // 幂等 upsert
         const reported = extractReportedTitle(ctx.payload);
-        if (reported !== null) this.deps.sessions.applyReportedTitle(ctx.sessionId, reported);
+        if (
+          reported !== null &&
+          this.deps.sessions.applyReportedTitle(ctx.sessionId, reported)
+        ) {
+          // 更名生效确认：pending 落地/外部改名被采纳 → 广播，dashboard 校验
+          // 「实际是否更名」并把待生效徽标切换为新名字。
+          this.deps.bus.emit({
+            kind: 'session.renamed',
+            sessionId: ctx.sessionId,
+            title: reported,
+            at: new Date().toISOString(),
+          });
+        }
         const pending = this.deps.sessions.getBySessionId(ctx.sessionId)?.pendingTitle;
         if (pending) outcome.sessionTitle = pending;
       }

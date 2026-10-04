@@ -122,7 +122,10 @@ export function SessionList({
                     {s.title ?? s.sessionId.slice(0, 8)}
                   </span>
                   {s.pendingTitle && (
-                    <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
+                    <Badge
+                      title={t('tasks.renamePendingTip')}
+                      className="shrink-0 bg-amber-900/40 text-amber-300"
+                    >
                       {t('tasks.pendingTitle')}
                     </Badge>
                   )}
