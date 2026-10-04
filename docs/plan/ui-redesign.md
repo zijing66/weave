@@ -121,48 +121,48 @@
 
 **依赖 DAG**：批1→批2→批6→批8；批3→批4→批7；批5→批6；批2/批4→批9。可并发对：{批1,批3}、{批2,批3,批5}、{批6,批7}、{批9,批6/7}。
 
-### 批 1 —— 信息架构收敛：4 分类卡（纯 web）
+### ☑ 批 1 —— 信息架构收敛：4 分类卡（纯 web）
 - 改：CategoryBar（4 key/四卡/countFor·badgeFor 合并）、App（初始重置 `skills→files` :75/:168/:194、`hooks→weave` :614-619、categoryData :266-303、hidden 暂留 tasks）、CategoryDetail（分支收敛，skills/mcp 先整体移入 files 分支保功能，AssetTab 留批2）、LibraryPanel（files 暂三区全显、categoryLabel 4 key）、dict/assets（删 catbar.skills/mcp/commands 增 catbar.files）、dict/hooks（catbar.hooks value→Weave，key 不动）。
 - 硬闸：dict.test 键对齐（zh/en 同批同改）；无分类卡快照测试→绿；skill-stats 零改。
 - 与批3 并发 OK。
 
-### 批 2 —— 文件资产页核心入口（web）
+### ☑ 批 2 —— 文件资产页核心入口（web）
 - 改：FileAssetTree（删 KIND_LABELS :37-47 翻译层裸 token 直出、树 `max-h-[45vh] overflow-y-auto`）、CategoryDetail（AssetTab 受控、D2 并集过滤、三面板互斥、runtime tab 不动）、App（assetTab 上提重置）、LibraryPanel（files 分区按 assetTab 互斥）、**新 PluginAssetsPanel.tsx**、dict/assets（删 fileTree.kind.* 18 条成对、增 tab 词条与空态）。
 - 硬闸：dict.test 成对删加；**global-file-assets.test:49-53 零改**；skill-stats/harness assets.test 零改。
 - 可与批3/批5 并发；批9 依赖本批。
 
-### 批 3 —— CC 原生包全局安装纠正（harness 能力槽 + server 管线）
+### ☑ 批 3 —— CC 原生包全局安装纠正（harness 能力槽 + server 管线）
 - 架构：PluginSurface 定义 driver.ts、实现 claude/plugins.ts、codex 不注册；global-config 的 CC enabledPlugins/installed_plugins **实现迁入 claude/、server 薄委托**；server 零新增 CC 硬编码。
 - 改：driver.ts（capability+'plugins'、接口）、**新 claude/plugins.ts**（H1-H5 结论落这）、claude/index 补槽、codex/index 不注册、harness 导出、toolkit.ts（buildFilePlan 删 ccPack :162-171、enable/disable 接 surface、computeEnabled 改判据、record 自愈清副本、list 报 legacyCopies、头注释改写）、global-config 薄委托（导出名不变）、toolkit-routes（`POST /toolkit/legacy-copies/cleanup`）、ToolkitSection+dict/toolkit、**新 harness __tests__/plugins.test.ts**。
 - 硬闸（**显式修订组**）：toolkit-toggle 闸①（:119-135 `.claude/plugins` 落项目断言→「项目零副本+全局位落盘+toolkit 记录仍写」）、闸②（:139-148 改写保护对象改全局位）、闸④（:195 无 CC 条目）、闸⑤（:323 → 两项目全局位一致+各自 enabledPlugins）；**mod 版本闸 :203-242 零改**（勘误：原 :152-176 已漂移，实测锚点见 cc-plugin-verification.md）；global-config.test:195-211 零改；harness assets.test 零改；toolkit-server/toolkit-loader 预期零改执行核查。
 - **前置 H1-H5 验证不过不进批**。
 
-### 批 4 —— 插件启用按项目隔离 + 同步扩展（server 自身状态）
+### ☑ 批 4 —— 插件启用按项目隔离 + 同步扩展（server 自身状态）
 - 改：**新 hooks/plugin-project-state.ts**（effective 三分支 + syncPlugins 写 syncedAt/补 false）、dispatcher match 加 plugin_id 项目门控、hooks-routes（GET ?projectId=、toggle 可选 projectId，路径不变）、toolkit.ts（weave 成分 enable/disable 改写 meta、移除 :386-408 全局级联）、sync-scheduler（tick 追加 syncPlugins，同 autoSync 同 60s）、daemon/server.ts sync-all（:875-896 追加插件同步，返回 additive）。
 - 硬闸：plugin-loader.test:188/265、hooks-server.test:435-470 **零改**；**toolkit-toggle:254-266 显式修订**（states→meta+effective）；新增 plugin-project-state.test + dispatcher 门控用例。
 - 批3 后；与批5 可并发。
 
-### 批 5 —— 事件取数最新窗口 + 分组算法（server + core + web）
+### ☑ 批 5 —— 事件取数最新窗口 + 分组算法（server + core + web）
 - 改：hook-events.ts（DESC + reverse 升序）、core/harness.ts（HARNESS_LIFECYCLE 表+导出+表测试）、**新 web tasks/lifecycle.ts**（镜像+锚定注释）、**新 tasks/build-lifecycle-groups.ts+单测**（四类边界用例）；TasksPanel/SessionFlowCanvas 不动。
 - 硬闸：data.test:40 零改；hooks-server 事件端点预期零改；build-session-chain/session-status 零改。
 - 与批1-3 并发 OK。
 
-### 批 6 —— 项目任务分层视图 + 全局总览（web）
+### ☑ 批 6 —— 项目任务分层视图 + 全局总览（web）
 - 改：TasksPanel（组头列表+单组画布、chain 输入换组切片、dispatches 归组、SSE 落组、initialSessionId、viewKey 会话id:组id）、SessionFlowCanvas（key 注释/最小改）、**新 GlobalTasksOverview.tsx**、CategoryDetail（tasks 分支 `isGlobal ? Overview : TasksPanel`）、App（hidden 移 tasks :758、openSessionInProject 跳转、全局 sessions 跨项目计数）、dict/tasks（成对新增）。
 - 硬闸：session-status、build-session-chain、dict.test 全零改（词条只增）。
 - 批1、2、5 后；**可与批7 并发**。
 
-### 批 7 —— Weave 分类双形态（画布 dispatch 列 + 指令可视化 + 文案改名）
+### ☑ 批 7 —— Weave 分类双形态（画布 dispatch 列 + 指令可视化 + 文案改名）
 - 改：HooksPanel（COL_X+DispatchNode+nodeTypes；buildGraph 接 dispatches 对齐 session 行/pending 待指派簇+边；删 :1404-1507 指令池与右卡，runDrafts/copyPrompt 迁节点；Header 待指计数；SSE pulseRuleId 复用+新 ripple；global/project 形态分区）、HooksPluginsSection（可选 projectId，项目态显 effective 开关，安装/卸载仅全局）、lib/api.ts（listHookPlugins/toggleHookPlugin 参数扩展）、dict/hooks（约 10-20 条 value 调整 key 全保留）+dict/settings（settings.hooks value 提法）。
 - 硬闸：**hooks-server.test 零改**（API 向后兼容）；dict.test 值改不影响键。
 - 批1+批4+批3 文案后；与批6 并发 OK。
 
-### 批 8 —— 左栏快捷操作 + CLAUDE.md 架构落档
+### ☑ 批 8 —— 左栏快捷操作 + CLAUDE.md 架构落档
 - 改：ProjectList（行 :102-129 hover 按钮簇挂 HealthBadge ml-auto 位：①autoSync 开关 ②手动同步（updates>0 换有更新形态+角标）③资源管理器 ④终端；opacity-0 group-hover 显现，**右键菜单保留**；新 props autoSyncOf/updatesOf/onToggleAutoSync/onSyncNow，explorer/terminal 复用既有回调）、App（handleSyncAll:528-539/handleToggleAutoSync:569-579 参数化、configMap 批量轻拉+updatesMap hover 懒加载、顶栏 :707-751 改同回调）、dict/app 词条。
 - **CLAUDE.md 落档**：`weave:start` **标记块外**（文件末尾）新增 `## Architecture`——唯一 abstract class=InitPipeline、能力槽与 harness 目录归属、`@weave/harness → @weave/core` 唯一依赖与 core 纯表、web 仅 import type；块外人工维护 init 不覆盖。
 - 硬闸：dict.test 成对加词条；CLAUDE.md 无测试。W1 链尾（批6 后）；CLAUDE.md 部分可提前单独提交。
 
-### 批 9 —— 资源市场（Resource Market）
+### ☑ 批 9 —— 资源市场（Resource Market）
 - 架构：server daemon 自身能力（新 src/market/，不进 harness）；装面路径全经 AssetSurface；web 仅 LibraryPanel+dict/library。
 - 改：**新 src/market/**：import.ts（本地复制+git clone：execFile 数组、URL 白名单、超时、containment）、resolve.ts（相对/绝对兼容+惰性改写）、manifest.ts（.weave-market.json）、install-link.ts（symlink 优先+cp 回退+卸载 lstat 区分）；repositories/libraries（读侧接 resolve）、library-index（消费 resolved）、daemon/server.ts（/market 路由组+market-import；POST /libraries 保留 legacy）、global-config/installer 全局装改 install-link（目标经 AssetSurface）、LibraryPanel（改名、git/本地双入口、来源徽标、legacy 迁入按钮、git 元数据）、dict/library、lib/api.ts（market 客户端）、**新 market/__tests__**（导入/解析与惰性改写/containment/symlink 成功与 EPERM 回退双分支/卸载 lstat 区分/git URL 校验——假 execFile 不联网）。
 - 硬闸：**迁移兼容闸**——data.test libraries 幂等零改；library-index/installer/updates-server/apply-update/fs-server「预期零改执行核查」；若全局装 symlink 触碰 installer.test cp 断言→**显式修订组**（改「链接或回退复制」双形态）声明；dataDir 内/外绝对路径迁移用例新增。
@@ -190,6 +190,33 @@
 - **R9 symlink 跨平台**：Windows EPERM 回退分支双分支断言；卸载先 lstat——把链接当目录递归删会删穿市场源，install-link 单点+专项测试。
 - **R10 git 导入安全**：白名单+execFile 无 shell+超时+输出截断+dataDir containment+slug 白名单；测试假 execFile 断言参数数组。
 - **R11 libraries 双语义错位**：resolve 单点收 repositories/libraries 读侧；惰性改写仅限 dataDir 内；外部绝对路径永不改写、显式迁入才复制。
+
+---
+
+## 执行状态（2026-10-04 完成）
+
+全部 9 批 + 计划外批 4b 已实施完毕，每批三门禁全 0 + 中文提交：
+
+| 批 | commit | 备注 |
+|---|---|---|
+| 计划落盘 | `a37d338` | 本文件 |
+| H1-H5 前置验证 | `23714a5` | 结论见 `cc-plugin-verification.md`，批 3 实现依据 |
+| ☑ 批 1 | `f0010c1` | |
+| ☑ 批 2 | `5249d03` | |
+| ☑ 批 3 | `8088726` | 修订组 toolkit-toggle 四闸同批 |
+| ☑ 批 5 | `1df882e` | 与批 2 并发 |
+| ☑ 批 6 | `00aed94` | P1-1 正式替代（分层替代截断） |
+| ☑ 批 4 | `6f15a8c` | 修订组 toolkit 级联例同批 |
+| ☑ 批 8 | `40ba2a5` | 含 CLAUDE.md Architecture 块外落档 |
+| ☑ 批 4b（计划外） | `8565e82` | 批 4 报出的反向闭环缺口：candidates includeDisabled + 项目显式启用限定绕过（修正「纯全权」推理漏洞——presets 无 states 行时 rule.enabled=manifest 值） |
+| ☑ 批 7 | `d1071ba` | 指令池列表移除、节点化完成 |
+| ☑ 批 9 | `3249f50` | 修订组 0 条；最终 82 文件 870 测试 |
+
+**遗留（非阻塞）**：
+- 人工走查项（第四章第 5 条）待 daemon 手测；仓库根 `wf-*.png` 走查截图待清理。
+- 批 4 报出、待 server additive：`GET /hooks/plugins?projectId=` 暴露 `syncedAt`，使批 7 徽标从「跟随全局/已单独设置」近似升级为「已同步未启用/未同步跟随全局」精确语义。
+- 批 7 报出：`PluginAssetsPanel`（文件资产页 Plugins tab）项目态仍显示安装/卸载入口（批 2 范围，建议后续对齐 HooksPluginsSection 的 projectId 口径）；dispatch→session 边路由走查。
+- BACKLOG（第四章第 6 条）两条不变。
 
 ---
 
