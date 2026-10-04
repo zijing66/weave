@@ -24,7 +24,7 @@ import {
 } from '@/lib/api';
 import { ProjectList } from '@/components/ProjectList';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
-import { CategoryDetail, type Mode } from '@/components/CategoryDetail';
+import { CategoryDetail, type Mode, type AssetTab } from '@/components/CategoryDetail';
 import { type FileAssetRow } from '@/components/FileAssetTree';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { LibraryPanel } from '@/components/LibraryPanel';
@@ -73,6 +73,9 @@ export default function App() {
 
   // Main area
   const [mainCategory, setMainCategory] = useState<MainCategory>('files');
+  // Files-page asset tab: lifted here so it survives category switches
+  // (leaving files and coming back keeps the tab; starts on skills).
+  const [assetTab, setAssetTab] = useState<AssetTab>('skills');
   const [statuslineNonce, setStatuslineNonce] = useState(0);
   const [statuslineSource, setStatuslineSource] = useState<StatuslineSource | null>(null);
   const [drawerSkill, setDrawerSkill] = useState<{
@@ -787,6 +790,8 @@ export default function App() {
                         projectId={activeProject!.id}
                         mode={mode}
                         category={mainCategory}
+                        assetTab={assetTab}
+                        onAssetTabChange={setAssetTab}
                         statuslineNonce={statuslineNonce}
                         assets={assets}
                         globalAssets={globalAssets}
@@ -869,6 +874,7 @@ export default function App() {
                   updates={updates}
                   onUpdateAsset={handleUpdateAsset}
                   category={mainCategory}
+                  assetTab={assetTab}
                   scope={mode}
                 />
               ) : (

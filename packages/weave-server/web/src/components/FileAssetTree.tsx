@@ -9,8 +9,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
-import { useT, type TFunc } from '@/i18n/I18nProvider';
-import type { MessageKey } from '@/i18n/dict';
+import { useT } from '@/i18n/I18nProvider';
 import {
   ChevronDown,
   ChevronRight,
@@ -32,25 +31,8 @@ export interface FileAssetRow {
   agent?: AssetAgent;
 }
 
-/** Tag label per asset kind — every non-skill/non-mcp category the scan emits.
- * Values are dict keys (module scope can't call hooks); translate at render. */
-const KIND_LABELS: Record<string, MessageKey> = {
-  instructions: 'fileTree.kind.instructions',
-  command: 'fileTree.kind.command',
-  agent: 'fileTree.kind.agent',
-  workflow: 'fileTree.kind.workflow',
-  rule: 'fileTree.kind.rule',
-  'output-style': 'fileTree.kind.outputStyle',
-  helper: 'fileTree.kind.helper',
-  settings: 'fileTree.kind.settings',
-  other: 'fileTree.kind.other',
-};
-
-/** Translated kind label — unknown future kinds fall back to the raw token. */
-const kindLabel = (kind: string, t: TFunc): string =>
-  kind in KIND_LABELS ? t(KIND_LABELS[kind] as MessageKey) : kind;
-
-/** Stable filter-chip order (every kind is shown, even with a 0 count). */
+/** Stable filter-chip order (every kind is shown, even with a 0 count).
+ *  Chips and row tags show the raw scan token — no translation layer. */
 const KIND_ORDER = [
   'instructions',
   'command',
@@ -260,7 +242,7 @@ function AssetTreeNode({
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
           <span className={cn(ROW_TAG_BASE, kindColor(a.category).on)}>
-            {kindLabel(a.category, t)}
+            {a.category}
           </span>
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
@@ -452,7 +434,7 @@ export function FileAssetTree({
         </KindChip>
         {chipKinds.map((k) => (
           <KindChip key={k} kind={k} active={active.has(k)} onClick={() => toggleKind(k)}>
-            {kindLabel(k, t)}
+            {k}
             <span className="tabular-nums text-[10px] opacity-70">{counts.get(k) ?? 0}</span>
           </KindChip>
         ))}
@@ -463,7 +445,9 @@ export function FileAssetTree({
           {t('fileTree.emptyFiltered')}
         </p>
       ) : (
-        <div className="rounded-lg border border-white/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
+        // Fixed max height: the tree scrolls inside itself instead of
+        // stretching the page (chips + panel below stay reachable).
+        <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-white/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
           {tree.map((node) => (
             <AssetTreeNode
               key={node.type === 'dir' ? node.path : node.asset.relPath}
