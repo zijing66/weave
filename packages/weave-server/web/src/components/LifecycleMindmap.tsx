@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   Controls,
+  MarkerType,
   ReactFlow,
   type Edge,
   type Node,
@@ -9,12 +10,13 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, type HookDispatch, type HookEventRow, type SessionRow } from '@/lib/api';
-import { EVENT_TYPE_STYLES, formatTime, parseDetail } from '@/lib/hook-payload';
+import { EVENT_TYPE_STYLES, formatTime, rawOf, summarizeEvent } from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
   buildLifecycleGroups,
+  ORPHAN_GROUP_ID,
   type LifecycleGroup,
 } from '@/components/tasks/build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from '@/components/tasks/lifecycle';
@@ -32,7 +34,17 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 // 布局（纯函数，可单测）
 // ---------------------------------------------------------------------------
 
-export type MindmapKind = 'group' | 'event' | 'subagent' | 'dispatch' | 'detail';
+export type MindmapKind =
+  | 'group'
+  | 'event'
+  | 'subagent'
+  | 'rule'
+  | 'handler'
+  | 'dispatch'
+  | 'detail';
+
+/** 规则最小信息（命中链层级用；handlerType 缺失时跳过处理器层）。 */
+export type RuleInfo = { name: string | null; handlerType: string | null };
 
 export interface LaidNode {
   key: string;
@@ -42,6 +54,11 @@ export interface LaidNode {
   group?: LifecycleGroup;
   event?: HookEventRow;
   dispatch?: HookDispatch;
+  /** kind=rule：命中规则展示名（null → 显示 ruleId 短名）。 */
+  ruleId?: string;
+  ruleName?: string | null;
+  /** kind=handler：处理器类型。 */
+  handlerType?: string;
   expandable: boolean;
   expanded: boolean;
   /** 本节点或其子路径上存在 pending 指令 — amber 高光。 */
@@ -51,10 +68,15 @@ export interface LaidNode {
 const COL_W = 320;
 const ROW_H = 84;
 
-/** 展开集驱动的可见树 + 分层布局：depth 列、叶子顺序流、父居子中。 */
+/**
+ * 展开集驱动的可见树 + 分层布局：depth 列、叶子顺序流、父居子中。
+ * 层级 = prompt 组 → hook 事件（SubagentStop=子代理分型）→ 命中规则 →
+ * 处理器（handlerType 已知时）→ 派发结果 → 执行详情——四列命中链的层级化合体。
+ */
 export function layoutMindmap(
   groups: LifecycleGroup[],
   expanded: ReadonlySet<string>,
+  ruleInfo: ReadonlyMap<string, RuleInfo> = new Map(),
 ): { nodes: LaidNode[]; edges: { id: string; source: string; target: string }[] } {
   interface TNode {
     key: string;
@@ -62,6 +84,9 @@ export function layoutMindmap(
     group?: LifecycleGroup;
     event?: HookEventRow;
     dispatch?: HookDispatch;
+    ruleId?: string;
+    ruleName?: string | null;
+    handlerType?: string;
     children: TNode[];
     /** 自身或子树含 pending 指令（回传高光）。 */
     highlight: boolean;
@@ -84,6 +109,47 @@ export function layoutMindmap(
       return { key, kind: 'dispatch', dispatch: d, children, highlight: pending };
     });
 
+  /** 事件的命中链子树：按 ruleId 去重 → rule →（已知类型时）handler → dispatch。 */
+  const hitChain = (eventId: number, dispatches: HookDispatch[]): TNode[] => {
+    const byRule = new Map<string, HookDispatch[]>();
+    for (const d of dispatches) {
+      const list = byRule.get(d.ruleId) ?? [];
+      list.push(d);
+      byRule.set(d.ruleId, list);
+    }
+    const out: TNode[] = [];
+    for (const [ruleId, ds] of byRule) {
+      const rKey = `e:${eventId}:r:${ruleId}`;
+      const info = ruleInfo.get(ruleId);
+      const pending = ds.some((d) => d.status === 'pending');
+      const dispatchKids = dispatchNodes(ds);
+      let kids: TNode[];
+      if (info?.handlerType) {
+        const hKey = `${rKey}:h`;
+        kids = [
+          {
+            key: hKey,
+            kind: 'handler',
+            handlerType: info.handlerType,
+            children: dispatchKids,
+            highlight: pending,
+          },
+        ];
+      } else {
+        kids = dispatchKids; // 规则已删/类型未知：跳过处理器层
+      }
+      out.push({
+        key: rKey,
+        kind: 'rule',
+        ruleId,
+        ruleName: info ? info.name : null,
+        children: kids,
+        highlight: pending,
+      });
+    }
+    return out;
+  };
+
   const roots: TNode[] = [];
   for (const g of groups) {
     const gKey = `g:${g.id}`;
@@ -92,10 +158,9 @@ export function layoutMindmap(
       if (g.events.length > 0) {
         for (const e of g.events) {
           const eKey = `e:${e.id}`;
-          const kids =
-            expanded.has(eKey)
-              ? dispatchNodes(g.dispatches.filter((d) => d.eventId === e.id))
-              : [];
+          const kids = expanded.has(eKey)
+            ? hitChain(e.id, g.dispatches.filter((d) => d.eventId === e.id))
+            : [];
           const hl = kids.some((k) => k.highlight);
           // SubagentStop 独立成「子代理」层节点（与普通 hook 事件分型），
           // 从属关系 = prompt 组 → 子代理 → 其触发的指令。
@@ -104,7 +169,7 @@ export function layoutMindmap(
           children.push({ key: eKey, kind, event: e, children: kids, highlight: hl });
         }
       } else {
-        // 游离指令组（orphan）：无事件边界，指令直挂 prompt 根下。
+        // 游离指令组（orphan，调用方已过滤）：指令直挂 prompt 根下。
         children.push(...dispatchNodes(g.dispatches));
       }
     }
@@ -137,18 +202,22 @@ export function layoutMindmap(
       group: n.group,
       event: n.event,
       dispatch: n.dispatch,
+      ruleId: n.ruleId,
+      ruleName: n.ruleName,
+      handlerType: n.handlerType,
       expandable: n.children.length > 0 || expandable(n),
       expanded: expanded.has(n.key),
       highlight: n.highlight,
     });
     return y;
   };
-  // expandable 判定需要「有可展开的潜在子级」：group 总可展开（事件/指令可能为空仍
-  // 给入口由调用方空态兜底）——折叠的 group/dispatch/event/subagent 一律给 chevron。
+  // 折叠态的可展开节点一律给 chevron（内容为空由用户自行折叠回去）。
   function expandable(n: TNode): boolean {
     if (n.kind === 'group') return true;
     if (n.kind === 'event') return true;
     if (n.kind === 'subagent') return true;
+    if (n.kind === 'rule') return true;
+    if (n.kind === 'handler') return true;
     if (n.kind === 'dispatch') return true;
     return false;
   }
@@ -159,70 +228,6 @@ export function layoutMindmap(
 // ---------------------------------------------------------------------------
 // 节点渲染
 // ---------------------------------------------------------------------------
-
-function rawOf(event: HookEventRow): Record<string, unknown> {
-  try {
-    const p = JSON.parse(event.payload) as { raw?: unknown };
-    return p.raw && typeof p.raw === 'object' ? (p.raw as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-const flat = (v: string): string => v.replace(/\s+/g, ' ').trim();
-const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
-
-/**
- * 按 hook 类型提取该事件的关键信息（完整展示，不只路径）：prompt 原文 /
- * tool 参数与结果首行 / 通知消息 / 子代理结束消息。空串 = 该类型无正文，
- * 节点退化为类型 tag + 时间。
- */
-export function summarizeEvent(event: HookEventRow): string {
-  const raw = rawOf(event);
-  const detail = parseDetail(event.payload);
-  switch (event.eventType) {
-    case 'UserPromptSubmit':
-      return flat(str(raw.prompt) ?? '');
-    case 'PreToolUse':
-    case 'PostToolUse': {
-      const input = (detail.toolInput ?? {}) as Record<string, unknown>;
-      const arg =
-        str(input.file_path) ??
-        str(input.path) ??
-        str(input.description) ??
-        str(input.pattern) ??
-        str(input.url) ??
-        str(input.command) ??
-        '';
-      const head = flat([detail.toolName, arg].filter(Boolean).join(' '));
-      if (event.eventType === 'PostToolUse') {
-        const r = detail.toolResponse as Record<string, unknown> | null;
-        const out =
-          r && typeof r === 'object'
-            ? (str((r as Record<string, unknown>).stdout) ??
-              str((r as Record<string, unknown>).type))
-            : null;
-        if (out) return `${head} → ${flat(out).slice(0, 90)}`;
-      }
-      return head;
-    }
-    case 'Notification': {
-      const msg = str(raw.message) ?? '';
-      const nt = str(raw.notification_type);
-      return nt && msg ? `${nt} · ${msg}` : (nt ?? msg);
-    }
-    case 'SubagentStop':
-      return flat(str(raw.last_assistant_message) ?? '');
-    case 'SessionStart':
-    case 'SessionEnd': {
-      const title = str(raw.session_title) ?? '';
-      const source = str(raw.source) ?? '';
-      return [title, source].filter(Boolean).join(' · ');
-    }
-    default:
-      return '';
-  }
-}
 
 type MindmapData = {
   node: LaidNode;
@@ -263,11 +268,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
   let body: React.ReactNode = null;
   if (node.kind === 'group' && node.group) {
     const g = node.group;
-    const head = g.preSession
-      ? t('hooks.mindmap.preSession')
-      : g.id === 'orphan'
-        ? t('hooks.mindmap.orphan')
-        : (g.prompt ?? t('hooks.mindmap.preSession'));
+    const head = g.preSession ? t('hooks.mindmap.preSession') : (g.prompt ?? '');
     const startedAt = g.events[0]?.createdAt;
     body = (
       <>
@@ -275,7 +276,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           {head}
         </span>
         <span className="mt-1 flex flex-wrap items-center gap-1">
-          {g.preSession || g.id === 'orphan' ? (
+          {g.preSession ? (
             <span className={tagCls('bg-neutral-800 text-neutral-300')}>{head}</span>
           ) : (
             <span className={tagCls('bg-cyan-900/40 text-cyan-300')}>prompt</span>
@@ -307,7 +308,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
     const isSub = node.kind === 'subagent';
     const summary = summarizeEvent(e);
     const raw = isSub ? rawOf(e) : null;
-    const agentId = raw ? str(raw.agent_id) : null;
+    const agentId = raw && typeof raw.agent_id === 'string' ? raw.agent_id : null;
     body = (
       <>
         <span className="flex flex-wrap items-center gap-1">
@@ -338,6 +339,25 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           </span>
         )}
       </>
+    );
+  } else if (node.kind === 'rule') {
+    body = (
+      <span className="flex items-center gap-1">
+        <span className={tagCls('bg-blue-900/40 text-blue-300')}>rule</span>
+        <span
+          className="truncate text-xs text-blue-200"
+          title={node.ruleName ?? node.ruleId ?? ''}
+        >
+          {node.ruleName ?? (node.ruleId ? `#${node.ruleId.slice(0, 12)}` : '')}
+        </span>
+      </span>
+    );
+  } else if (node.kind === 'handler') {
+    body = (
+      <span className="flex items-center gap-1">
+        <span className={tagCls('bg-purple-900/40 text-purple-300')}>handler</span>
+        <span className="truncate text-xs text-purple-200">{node.handlerType}</span>
+      </span>
     );
   } else if (node.kind === 'dispatch' && node.dispatch) {
     const d = node.dispatch;
@@ -442,16 +462,22 @@ export function LifecycleMindmap({
   sessionId,
   sessions,
   onSelect,
+  focusGroupId,
 }: {
   projectId: number;
   sessionId: string;
-  sessions: SessionRow[];
-  onSelect: (sessionId: string) => void;
+  sessions?: SessionRow[];
+  onSelect?: (sessionId: string) => void;
+  /**
+   * 单组模式（任务视图组展开）：只渲染该 prompt 组、根默认展开，隐藏会话下拉
+   * ——「思维导图与事件链的一个 prompt 放在一起」的合体形态。
+   */
+  focusGroupId?: string;
 }) {
   const t = useT();
   const [events, setEvents] = useState<HookEventRow[] | null>(null);
   const [dispatches, setDispatches] = useState<HookDispatch[] | null>(null);
-  const [ruleNames, setRuleNames] = useState<Map<string, string>>(new Map());
+  const [ruleInfo, setRuleInfo] = useState<Map<string, RuleInfo>>(new Map());
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   /** 新建指令入场闪烁的节点 key（900ms 摘除）。 */
   const [flashKey, setFlashKey] = useState<string | null>(null);
@@ -467,7 +493,9 @@ export function LifecycleMindmap({
       ]);
       setEvents(ev);
       setDispatches(ds);
-      setRuleNames(new Map(rs.map((r) => [r.id, r.name])));
+      setRuleInfo(
+        new Map(rs.map((r) => [r.id, { name: r.name, handlerType: r.handler.type }])),
+      );
     } catch {
       // daemon 未连：保持上次数据
     }
@@ -476,9 +504,10 @@ export function LifecycleMindmap({
   useEffect(() => {
     setEvents(null);
     setDispatches(null);
-    setExpanded(new Set());
+    // 单组模式根默认展开（进入即见该 prompt 的事件序）；会话模式全折叠。
+    setExpanded(focusGroupId ? new Set([`g:${focusGroupId}`]) : new Set());
     void load();
-  }, [load]);
+  }, [load, focusGroupId]);
 
   // SSE：指令帧 → 闪烁新建节点 + 500ms 防抖重拉（事件与指令一起刷新）。
   useEffect(() => {
@@ -508,10 +537,17 @@ export function LifecycleMindmap({
     const mine = dispatches
       .filter((d) => d.sessionId === sessionId || (d.eventId != null && eventIds.has(d.eventId)))
       .sort((a, b) => a.id - b.id);
-    return buildLifecycleGroups(events, mine, HARNESS_LIFECYCLE.claude);
-  }, [events, dispatches, sessionId]);
+    // 游离指令组不进视图（无生命周期从属、扰乱顺序——由任务「待派发」区承载）。
+    const all = buildLifecycleGroups(events, mine, HARNESS_LIFECYCLE.claude).filter(
+      (g) => g.id !== ORPHAN_GROUP_ID,
+    );
+    return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
+  }, [events, dispatches, sessionId, focusGroupId]);
 
-  const laid = useMemo(() => layoutMindmap(groups, expanded), [groups, expanded]);
+  const laid = useMemo(
+    () => layoutMindmap(groups, expanded, ruleInfo),
+    [groups, expanded, ruleInfo],
+  );
 
   const onToggle = useCallback((key: string) => {
     setExpanded((prev) => {
@@ -530,13 +566,14 @@ export function LifecycleMindmap({
         data: {
           node: n,
           flash: flashKey === n.key,
-          ruleName: n.dispatch ? ruleNames.get(n.dispatch.ruleId) : undefined,
+          ruleName: n.dispatch ? (ruleInfo.get(n.dispatch.ruleId)?.name ?? undefined) : undefined,
           onToggle,
         },
         draggable: true,
       })),
-    [laid.nodes, flashKey, ruleNames, onToggle],
+    [laid.nodes, flashKey, ruleInfo, onToggle],
   );
+  // 箭头 + 流动动效：表达 prompt 生命周期的数据流向。
   const flowEdges: Edge[] = useMemo(
     () =>
       laid.edges.map((e) => ({
@@ -544,33 +581,42 @@ export function LifecycleMindmap({
         source: e.source,
         target: e.target,
         type: 'smoothstep',
-        style: { stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1.5 },
+        animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        style: { stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1.5 },
       })),
     [laid.edges],
   );
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <label className="text-[11px] text-neutral-500">{t('hooks.mindmap.pickSession')}</label>
-        <select
-          value={sessionId}
-          onChange={(e) => onSelect(e.target.value)}
-          className="rounded-md border border-white/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
-        >
-          {sessions.map((s) => (
-            <option key={s.sessionId} value={s.sessionId}>
-              {s.title ?? s.sessionId.slice(0, 8)}
-            </option>
-          ))}
-        </select>
-        <span className="text-[11px] text-neutral-500">
-          {events === null ? t('hooks.loading') : t('catbar.items', { n: groups.length })}
-        </span>
-        <span className="ml-auto text-[11px] text-neutral-600">{t('hooks.mindmap.hint')}</span>
-      </div>
+    <div className={cn('space-y-2', focusGroupId && 'h-full')}>
+      {!focusGroupId && (
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] text-neutral-500">{t('hooks.mindmap.pickSession')}</label>
+          <select
+            value={sessionId}
+            onChange={(e) => onSelect?.(e.target.value)}
+            className="rounded-md border border-white/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+          >
+            {(sessions ?? []).map((s) => (
+              <option key={s.sessionId} value={s.sessionId}>
+                {s.title ?? s.sessionId.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+          <span className="text-[11px] text-neutral-500">
+            {events === null ? t('hooks.loading') : t('catbar.items', { n: groups.length })}
+          </span>
+          <span className="ml-auto text-[11px] text-neutral-600">{t('hooks.mindmap.hint')}</span>
+        </div>
+      )}
 
-      <div className="h-96 rounded-lg border border-white/[0.06] bg-neutral-950/40">
+      <div
+        className={cn(
+          'rounded-lg bg-neutral-950/40',
+          focusGroupId ? 'h-full border-0' : 'h-96 border border-white/[0.06]',
+        )}
+      >
         {events === null ? (
           <div className="flex h-full items-center justify-center text-xs text-neutral-500">
             {t('hooks.loading')}
@@ -592,7 +638,9 @@ export function LifecycleMindmap({
             deleteKeyCode={null}
             defaultEdgeOptions={{
               type: 'smoothstep',
-              style: { stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1.5 },
+              animated: true,
+              markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+              style: { stroke: 'rgba(255,255,255,0.28)', strokeWidth: 1.5 },
             }}
           >
             <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />

@@ -10,14 +10,13 @@ import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { formatTime } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
-import { buildSessionChain } from './build-session-chain';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
   type LifecycleGroup,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
-import { SessionFlowCanvas } from './SessionFlowCanvas';
+import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { deriveSessionStatus, STATUS_KEY, type SessionStatus } from './session-status';
 import { Activity, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 
@@ -29,15 +28,6 @@ interface HookFrame {
   eventId?: number;
   dispatchId?: number;
   status?: string;
-}
-
-function LegendDot({ className, label }: { className: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1">
-      <span className={`h-2 w-2 rounded-full ${className}`} />
-      {label}
-    </span>
-  );
 }
 
 /**
@@ -80,10 +70,6 @@ export function TasksPanel({
   } | null>(null);
   /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
   const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
-  /** 正在脉冲的边 id（rule.matched，500ms）。 */
-  const [pulseEdgeId, setPulseEdgeId] = useState<string | null>(null);
-  /** 正在波纹的派发 id（dispatch.created status=injected，900ms）。 */
-  const [rippleId, setRippleId] = useState<number | null>(null);
   /** 展开组：null = 自动跟随最新组，'' = 用户全部折叠，其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
 
@@ -174,20 +160,6 @@ export function TasksPanel({
           }
           break;
         }
-        case 'rule.matched': {
-          if (f.ruleId && f.eventId) {
-            setPulseEdgeId(`e:ev${f.eventId}->rule:${f.ruleId}`);
-            timers.push(window.setTimeout(() => setPulseEdgeId(null), 500));
-          }
-          break;
-        }
-        case 'dispatch.created': {
-          if (f.status === 'injected' && f.dispatchId) {
-            setRippleId(f.dispatchId);
-            timers.push(window.setTimeout(() => setRippleId(null), 900));
-          }
-          break;
-        }
         case 'dispatch.started': {
           if (f.sessionId) {
             setOverlay((prev) => new Map(prev).set(f.sessionId as string, 'running'));
@@ -258,6 +230,7 @@ export function TasksPanel({
   // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
   // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、
   // 窗口尾无 open 归最后组——组 id 稳定（turn:<事件id>），展开态不跳。
+  // 游离指令组不进组头列表（无生命周期从属、顺序异常——由「待派发」区承载）。
   const groups = useMemo(
     () =>
       selectedId
@@ -265,7 +238,7 @@ export function TasksPanel({
             events,
             dispatchBySession.get(selectedId) ?? [],
             HARNESS_LIFECYCLE.claude,
-          )
+          ).filter((g) => g.id !== ORPHAN_GROUP_ID)
         : [],
     [selectedId, events, dispatchBySession],
   );
@@ -279,32 +252,32 @@ export function TasksPanel({
     return defaultGroupId(groups);
   }, [groups, expandedGroupId]);
 
-  const activeGroup = groups.find((g) => g.id === activeGroupId) ?? null;
-
-  const chain = useMemo(() => {
-    if (!selectedId || !activeGroup) return { nodes: [], edges: [], truncated: false };
-    const graph = buildSessionChain({
-      events: activeGroup.events,
-      dispatches: activeGroup.dispatches,
-      rules,
-    });
-    return {
-      truncated: graph.truncated,
-      edges: graph.edges.map((e) =>
-        e.id === pulseEdgeId ? { ...e, className: 'weave-edge-flash' } : e,
-      ),
-      nodes: graph.nodes.map((n) =>
-        n.type === 'dispatch' && n.data.dispatch?.id === rippleId
-          ? { ...n, data: { ...n.data, ripple: true } }
-          : n,
-      ),
-    };
-  }, [selectedId, activeGroup, rules, pulseEdgeId, rippleId]);
-
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
       await api.renameSession(sessionId, title);
       await refreshSessions();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
+  const [assign, setAssign] = useState<Record<number, string>>({});
+  /** 待派发清单：未投送的 pending 指令，且规则作用于本项目（本项目+全局规则）。 */
+  const pendingToDispatch = useMemo(
+    () =>
+      dispatches.filter(
+        (d) =>
+          d.status === 'pending' &&
+          d.sessionId === null &&
+          rules.some((r) => r.id === d.ruleId),
+      ),
+    [dispatches, rules],
+  );
+  const runDispatch = async (dispatchId: number, sessionId: string): Promise<void> => {
+    try {
+      await api.runHookDispatch(dispatchId, sessionId);
+      await refreshDispatches();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -377,18 +350,55 @@ export function TasksPanel({
         <div className="flex items-center gap-2 pb-2">
           <Activity className="h-3.5 w-3.5 text-rose-400" />
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
-          {chain.truncated && (
-            <Badge className="bg-amber-900/40 text-amber-300">
-              {t('tasks.chainTruncated', { n: chain.nodes.filter((n) => n.type === 'event').length })}
-            </Badge>
-          )}
-          <span className="ml-auto flex items-center gap-2 text-[10px] text-neutral-600">
-            <LegendDot className="bg-blue-400" label={t('tasks.legendEvent')} />
-            <LegendDot className="bg-blue-500" label={t('tasks.legendRule')} />
-            <LegendDot className="bg-purple-400" label={t('tasks.legendHandler')} />
-            <LegendDot className="bg-neutral-400" label={t('tasks.legendDispatch')} />
-          </span>
+          <span className="ml-auto text-[10px] text-neutral-600">{t('tasks.legendNote')}</span>
         </div>
+
+        {/* 待派发区：未投送的 pending 指令——选活跃会话后派发（结果在事件链高亮） */}
+        {pendingToDispatch.length > 0 && (
+          <div className="mb-2 shrink-0 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-amber-300">
+                {t('tasks.dispatchQueue', { n: pendingToDispatch.length })}
+              </span>
+              <span className="text-[10px] text-amber-200/50">{t('tasks.dispatchHint')}</span>
+            </div>
+            <ul className="mt-1 space-y-1">
+              {pendingToDispatch.map((d) => {
+                const target = assign[d.id] ?? sessions?.[0]?.sessionId ?? '';
+                return (
+                  <li key={d.id} className="flex items-center gap-2">
+                    <span
+                      className="min-w-0 flex-1 truncate text-[11px] text-neutral-300"
+                      title={d.prompt}
+                    >
+                      {d.prompt}
+                    </span>
+                    <select
+                      value={target}
+                      onChange={(e) => setAssign((prev) => ({ ...prev, [d.id]: e.target.value }))}
+                      className="shrink-0 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+                    >
+                      {(sessions ?? []).map((s) => (
+                        <option key={s.sessionId} value={s.sessionId}>
+                          {s.title ?? s.sessionId.slice(0, 8)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!target}
+                      onClick={() => void runDispatch(d.id, target)}
+                      className="shrink-0 rounded bg-emerald-700/80 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
+                    >
+                      {t('tasks.dispatchRun')}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
         {!selectedId ? (
           <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
             {t('tasks.selectHint')}
@@ -400,11 +410,7 @@ export function TasksPanel({
         ) : (
           <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
             {groups.map((g) => {
-              const title =
-                g.prompt ??
-                (g.preSession || g.id === ORPHAN_GROUP_ID
-                  ? null
-                  : g.events[0]?.eventType ?? g.id);
+              const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
               const lastEvent = g.events[g.events.length - 1];
               const timeIso = lastEvent?.createdAt ?? g.dispatches[0]?.startedAt;
               const expanded = activeGroupId === g.id;
@@ -434,11 +440,6 @@ export function TasksPanel({
                         {t('tasks.groupPreSession')}
                       </Badge>
                     )}
-                    {g.id === ORPHAN_GROUP_ID && (
-                      <Badge className="shrink-0 bg-neutral-800 text-neutral-300">
-                        {t('tasks.groupOrphan')}
-                      </Badge>
-                    )}
                     {g.open && (
                       <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
                         {t('tasks.groupOpen')}
@@ -466,24 +467,20 @@ export function TasksPanel({
                   </button>
                   {expanded && (
                     <div className="h-[420px] shrink-0 border-t border-white/[0.06] p-1.5">
-                      {chain.nodes.length === 0 ? (
-                        <p className="flex h-full items-center justify-center text-xs text-neutral-600">
-                          {t('tasks.chainEmpty')}
+                      {/* 合体形态：该 prompt 的思维导图即事件链——层级 =
+                          prompt → hook 事件（subagent 分型）→ 命中规则 → 处理器 →
+                          派发结果（箭头流动动效），逐级点开。 */}
+                      <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
+                        <LifecycleMindmap
+                          key={`${selectedId}:${g.id}`}
+                          projectId={projectId}
+                          sessionId={selectedId}
+                          focusGroupId={g.id}
+                        />
+                        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
+                          {t('tasks.legendNote')}
                         </p>
-                      ) : (
-                        <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
-                          <SessionFlowCanvas
-                            nodes={chain.nodes}
-                            edges={chain.edges}
-                            viewKey={`${selectedId}:${g.id}`}
-                            emptyHint={t('tasks.chainEmpty')}
-                          />
-                          {/* log 规则命中不落库的图例缺口说明 */}
-                          <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
-                            {t('tasks.legendNote')}
-                          </p>
-                        </div>
-                      )}
+                      </div>
                     </div>
                   )}
                 </div>
