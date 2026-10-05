@@ -58,7 +58,7 @@ export default function App() {
   const [globalMode, setGlobalMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
-  // when the global 文件资产 page is opened.
+  // when the global 资源管理 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   // 全局模式任务卡计数的跨项目会话（D1 聚合；总览组件自拉自己的那份）。
@@ -89,7 +89,7 @@ export default function App() {
   const [mainCategory, setMainCategory] = useState<MainCategory>('files');
   // Files-page asset tab: lifted here so it survives category switches
   // (leaving files and coming back keeps the tab; starts on skills).
-  const [assetTab, setAssetTab] = useState<AssetTab>('skills');
+  const [assetTab, setAssetTab] = useState<AssetTab>('files');
   const [statuslineNonce, setStatuslineNonce] = useState(0);
   const [statuslineSource, setStatuslineSource] = useState<StatuslineSource | null>(null);
   const [drawerSkill, setDrawerSkill] = useState<{
@@ -264,7 +264,7 @@ export default function App() {
     setStatuslineSource(null); // no source badge/sub-text in the template view
     setError(null);
     // One bounded whitelist walk of ~/.claude + ~/.codex — cheap enough to
-    // run on every entry, and it keeps the 文件资产 card count honest.
+    // run on every entry, and it keeps the 资源管理 card count honest.
     api
       .listGlobalFileAssets()
       .then(setGlobalAssets)
@@ -348,7 +348,7 @@ export default function App() {
       ).length;
       return {
         // machine-wide skills in effect + MCP servers + the global file tree
-        // (~/.claude, ~/.codex) — the merged 文件资产 card count
+        // (~/.claude, ~/.codex) — the merged 资源管理 card count
         files:
           effectiveGlobalSkills +
           Object.keys(mcpServers.global).length +
@@ -365,7 +365,7 @@ export default function App() {
     return {
       // project skills + machine-wide skills in effect + this view's MCP
       // servers + every other file asset — the page shows them together under
-      // the 文件资产 card
+      // the 资源管理 card
       files:
         assetCounts.skill +
         effectiveGlobalSkills +

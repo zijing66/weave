@@ -42,6 +42,7 @@ export const assetsZh = {
   'fileTree.custom': '自定义',
 
   // —— 资源管理页 AssetTab（标签用英文原文，与术语纪律一致） ——
+  'assetTab.files': 'Files',
   'assetTab.skills': 'Skills',
   'assetTab.mcp': 'MCP',
   'assetTab.plugins': 'Plugins',
@@ -123,6 +124,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'fileTree.custom': 'custom',
 
   // —— AssetTab on the resource management page (labels stay English terms) ——
+  'assetTab.files': 'Files',
   'assetTab.skills': 'Skills',
   'assetTab.mcp': 'MCP',
   'assetTab.plugins': 'Plugins',

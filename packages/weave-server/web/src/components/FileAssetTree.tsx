@@ -316,7 +316,7 @@ function AssetTreeNode({
 }
 
 /**
- * The 文件资产 view: every project asset in one file tree (skills, MCP,
+ * The 资源管理 view: every project asset in one file tree (skills, MCP,
  * instructions, commands, agents, workflows, rules, hooks, plugins, mods,
  * settings …), filtered by multi-select type chips — one chip per bucket in
  * `BUCKET_ORDER`; a file matches a selection when ANY of its tags is active

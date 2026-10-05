@@ -20,7 +20,7 @@ export const MAIN_CATEGORIES: {
   icon: LucideIcon;
 }[] = [
   // The count on this card is every file asset (skills, MCP, instructions,
-  // settings, helpers …), so the label says 文件资产 rather than implying it
+  // settings, helpers …), so the label says 资源管理 rather than implying it
   // counts any one of them alone.
   { key: 'files', labelKey: 'catbar.files', icon: Terminal },
   { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
@@ -29,7 +29,7 @@ export const MAIN_CATEGORIES: {
 ];
 
 export interface CategoryBarData {
-  /** Skills + MCP + other file assets — the merged 文件资产 card count. */
+  /** Skills + MCP + other file assets — the merged 资源管理 card count. */
   files: number;
   /** Outdated skills + MCP servers, shown as one warning badge. */
   outdated: number;

@@ -120,6 +120,15 @@ export function McpGrid({
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
                 <CardTitle className="truncate">{s.name}</CardTitle>
                 <AgentBadge agent={s.agent} />
+                {/* Codex rows always live in the user-level config.toml, so
+                    they read 全局 even when rendered inside the project view. */}
+                <Badge variant="settings" className="ml-1">
+                  {t(
+                    s.agent === 'codex' || s.scope === 'global'
+                      ? 'library.scopeGlobal'
+                      : 'library.scopeProject',
+                  )}
+                </Badge>
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
                     {t('mcp.update')}

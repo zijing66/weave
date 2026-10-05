@@ -1,4 +1,4 @@
-/** 文件资产 chips 的单点分类：词表（BUCKET_ORDER）与 category→tags 映射。
+/** 资源管理 chips 的单点分类：词表（BUCKET_ORDER）与 category→tags 映射。
  *  chips 暴露全部抽象大类（含 skill/mcp 的 tab 维度）；mods 文件同时挂
  *  plugin（插件本体的一份可见性），helper 折叠进 hooks、rule 折叠进 rules。 */
 export const BUCKET_ORDER = [

@@ -99,10 +99,16 @@ function SkillCard({
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
           <AgentBadge agent={row.agent} className="ml-1" />
-          {readOnly && (
+          {readOnly ? (
             <Badge variant="settings" className="ml-1">
               {t('skillGrid.globalTag')}
             </Badge>
+          ) : (
+            row.scope === 'project' && (
+              <Badge variant="settings" className="ml-1">
+                {t('library.scopeProject')}
+              </Badge>
+            )
           )}
           {row.files.length > 0 && (
             <Badge variant="skill" className="ml-1">

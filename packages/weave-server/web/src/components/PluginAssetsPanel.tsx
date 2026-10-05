@@ -4,7 +4,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { Mode } from '@/components/CategoryDetail';
 
 /**
- * 文件资产页 Plugins tab：只含工具箱（内部按成分分 Claude Plugins / 工具包
+ * 资源管理页 Plugins tab：只含工具箱（内部按成分分 Claude Plugins / 工具包
  * 两组）；weave 插件区已移至 Weave 分类。key=mode——切全局/项目时重挂载，
  * 按新 scope 重新拉取（对齐 HooksPanel 的 refetch 口径）。
  */

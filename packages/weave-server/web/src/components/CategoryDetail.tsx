@@ -42,13 +42,14 @@ import { Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
 
-/** Second-level tab on the 文件资产 page: which exclusive asset panel shows. */
-export type AssetTab = 'skills' | 'mcp' | 'plugins';
+/** Second-level tab on the 资源管理 page: which exclusive asset panel shows. */
+export type AssetTab = 'files' | 'skills' | 'mcp' | 'plugins';
 
-const ASSET_TABS: AssetTab[] = ['skills', 'mcp', 'plugins'];
+const ASSET_TABS: AssetTab[] = ['files', 'skills', 'mcp', 'plugins'];
 
 /** Tab labels stay the raw English terms (术语纪律一致). */
 const ASSET_TAB_LABELS: Record<AssetTab, MessageKey> = {
+  files: 'assetTab.files',
   skills: 'assetTab.skills',
   mcp: 'assetTab.mcp',
   plugins: 'assetTab.plugins',
@@ -63,7 +64,7 @@ function agentOf(a: AssetEntry): AssetAgent {
   return base === 'AGENTS.md' || a.relPath.startsWith('.codex/') ? 'codex' : 'claude';
 }
 
-/** Harness-tool filter for the sections on the 文件资产 page. */
+/** Harness-tool filter for the sections on the 资源管理 page. */
 export type RuntimeTab = Harness | 'all';
 
 export function CategoryDetail({
@@ -101,7 +102,7 @@ export function CategoryDetail({
   /** Bumped when re-entering the statusline panel → remounts with a fresh tab. */
   statuslineNonce: number;
   assets: AssetEntry[];
-  /** Machine-level harness files for the global 文件资产 tree. */
+  /** Machine-level harness files for the global 资源管理 tree. */
   globalAssets: AssetEntry[];
   mcpServers: McpServerMap;
   updates: UpdateReport | null;
@@ -205,13 +206,13 @@ export function CategoryDetail({
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
-  // 文件资产树：只按 runtime tab 过滤，类型显隐交给树内 chips（tagsOf）。
+  // 资源管理文件树：只按 runtime tab 过滤，类型显隐交给树内 chips（tagsOf）。
   const treeAssets = useMemo(
     () => assets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
     [assets, runtimeTab],
   );
 
-  // Global 文件资产: the same filter over ~/.claude + ~/.codex rows.
+  // 全局资源文件：同一过滤跑在 ~/.claude + ~/.codex 行上。
   const globalTreeAssets = useMemo(
     () => globalAssets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
     [globalAssets, runtimeTab],
@@ -255,8 +256,30 @@ export function CategoryDetail({
         </div>
       )}
 
-      {/* 文件资产页：目录树（chips 类型筛选）→ AssetTab 行 → 对应面板（互斥） */}
+      {/* 资源管理页：AssetTab 行（四个类型 tab 互斥）→ 对应内容 */}
+      {category === 'files' && (
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
+          {ASSET_TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => onAssetTabChange(tab)}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
+                assetTab === tab
+                  ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
+                  : 'text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {t(ASSET_TAB_LABELS[tab])}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 文件 tab：目录树（chips 类型筛选）。修订 ui-redesign D2 并集规则——
+          树不再常驻页顶，只在 files tab 下渲染（提交信息声明）。 */}
       {category === 'files' &&
+        assetTab === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
           runtimeTab === 'codex' ? (
@@ -278,6 +301,7 @@ export function CategoryDetail({
         ))}
 
       {category === 'files' &&
+        assetTab === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
@@ -298,25 +322,6 @@ export function CategoryDetail({
             onOpenFile={onOpenFile}
           />
         ))}
-
-      {category === 'files' && (
-        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
-          {ASSET_TABS.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => onAssetTabChange(tab)}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                assetTab === tab
-                  ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
-                  : 'text-neutral-500 hover:text-neutral-300',
-              )}
-            >
-              {t(ASSET_TAB_LABELS[tab])}
-            </button>
-          ))}
-        </div>
-      )}
 
       {category === 'files' && assetTab === 'skills' && (
         <SkillGrid

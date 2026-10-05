@@ -211,11 +211,12 @@ export function LibraryPanel({
   const outdatedFiles = (updates?.files ?? []).filter((u) => u.outdated);
 
   // The installable list shown depends on the active main category and, on the
-  // 文件资产 page, the asset tab: skills/MCP templates are tab-exclusive; file
-  // templates are generic assets so they follow every tab except plugins.
+  // 资源管理 page, the asset tab: each tab maps 1:1 to its section — skills /
+  // MCP / file templates are tab-exclusive (files tab owns the generic
+  // single-file templates; plugin section lands with the market plugin area).
   const isFiles = category === 'files';
   const showSkills = isFiles && assetTab === 'skills';
-  const showFileTemplates = isFiles && assetTab !== 'plugins';
+  const showFileTemplates = isFiles && assetTab === 'files';
   const showMcp = isFiles && assetTab === 'mcp';
   const noTemplates = !showSkills && !showMcp && !showFileTemplates;
 
