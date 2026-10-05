@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readFile, writeFile, stat, mkdir, lstat, readlink, readdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { executeInit } from '../init/executor';
+import type { PromptPort } from '../init/prompt';
 
 let tmpDir: string;
 
@@ -352,5 +354,132 @@ describe('executeInit', () => {
     });
     expect(result.skipped).toContain(mcpPath);
     expect(await readFile(mcpPath, 'utf-8')).toBe(corrupt);
+  });
+});
+
+// ---- 真实 git 集成：init 后交互式询问 commit（git-commit.ts 的九闸走真 git）----
+describe('executeInit — 询问 commit（真实 git 集成）', () => {
+  const hasGit = (() => {
+    try {
+      return spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
+    } catch {
+      return false;
+    }
+  })();
+
+  const git = (dir: string, ...args: string[]): string =>
+    spawnSync('git', args, { cwd: dir, encoding: 'utf-8' }).stdout ?? '';
+
+  const head = (dir: string): string => git(dir, 'rev-parse', 'HEAD').trim();
+
+  const makePrompt = (confirmAnswer: boolean): PromptPort => ({
+    confirm: vi.fn(async () => confirmAnswer),
+    multiselect: vi.fn(async <T extends string>(_o: readonly T[], d: readonly T[]) => [...d]),
+  });
+
+  /** 临时 git 仓库 + 局部 user 身份 + 基线提交（避免 unborn HEAD 主导语义）。 */
+  async function makeRepo(): Promise<string> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'weave-git-init-'));
+    git(dir, 'init');
+    git(dir, 'config', 'user.name', 'weave-test');
+    git(dir, 'config', 'user.email', 'weave@test.local');
+    await writeFile(path.join(dir, 'README.md'), 'baseline\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-m', 'baseline');
+    return dir;
+  }
+
+  /** 临时把 stdin/stdout 标成 TTY（executor 交互闸），用完还原。 */
+  async function withTTY<T>(run: () => Promise<T>): Promise<T> {
+    const origIn = process.stdin.isTTY;
+    const origOut = process.stdout.isTTY;
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
+    (process.stdout as { isTTY?: boolean }).isTTY = true;
+    try {
+      return await run();
+    } finally {
+      (process.stdin as { isTTY?: boolean }).isTTY = origIn;
+      (process.stdout as { isTTY?: boolean }).isTTY = origOut;
+    }
+  }
+
+  it.skipIf(!hasGit)('confirm=y → 仅 init 产物入库（嵌套 gitignore 裁剪生效）', async () => {
+    const dir = await makeRepo();
+    try {
+      const prompt = makePrompt(true);
+      const before = head(dir);
+      const out = await withTTY(() =>
+        executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, prompt),
+      );
+      expect(out.success).toBe(true);
+      expect(prompt.confirm).toHaveBeenCalledTimes(1);
+      expect(head(dir)).not.toBe(before);
+
+      const files = git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
+      expect(files).toEqual(
+        expect.arrayContaining(['CLAUDE.md', 'AGENTS.md', '.claude/.gitignore', '.weave/.gitignore']),
+      );
+      // 嵌套 .gitignore 内容（* / !.gitignore）阻止其余产物入库
+      expect(files).not.toContain('.claude/settings.json');
+      expect(files).not.toContain('.weave/config.yaml');
+      // 提交后候选路径工作区干净
+      expect(
+        git(dir, 'status', '--porcelain', '--', 'CLAUDE.md', 'AGENTS.md', '.claude', '.weave').trim(),
+      ).toBe('');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('confirm=n → 无新 commit、index 干净（declined 零残留）', async () => {
+    const dir = await makeRepo();
+    try {
+      const prompt = makePrompt(false);
+      const before = head(dir);
+      await withTTY(() =>
+        executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, prompt),
+      );
+      expect(prompt.confirm).toHaveBeenCalledTimes(1);
+      expect(head(dir)).toBe(before);
+      expect(
+        spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: dir }).status,
+      ).toBe(0); // 无任何暂存残留
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('非 TTY → confirm 根本不被调用、无 commit（防静默 true 自动提交）', async () => {
+    const dir = await makeRepo();
+    try {
+      const prompt = makePrompt(true); // 假 confirm 返回 true——非 TTY 仍不得提交
+      const before = head(dir);
+      await executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, prompt);
+      expect(prompt.confirm).not.toHaveBeenCalled();
+      expect(head(dir)).toBe(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('二次 init 幂等 → 候选路径无变化，confirm 不再被调用（只问一次）', async () => {
+    const dir = await makeRepo();
+    try {
+      const first = makePrompt(true);
+      await withTTY(() =>
+        executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, first),
+      );
+      expect(first.confirm).toHaveBeenCalledTimes(1);
+      const afterFirst = head(dir);
+
+      const second = makePrompt(true);
+      await withTTY(() =>
+        executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, second),
+      );
+      expect(second.confirm).not.toHaveBeenCalled(); // status 对候选路径为空 → 不提问
+      expect(head(dir)).toBe(afterFirst); // 也没有产生空 commit
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

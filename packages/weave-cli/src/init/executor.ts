@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, writeFile, stat } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import {
   type InitOptions,
   type InitResult,
@@ -29,6 +29,7 @@ import { ensureInstructionLink } from './instruction-link.js';
 import { buildInitRegistry } from './wiring.js';
 import { type ClaudePipeline } from './harnesses/claude.js';
 import { createPromptPort, type PromptPort } from './prompt.js';
+import { commitInitOutputs, findGitRepoRoot } from './git-commit.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -58,8 +59,8 @@ async function selectHarnesses(options: InitOptions, prompt: PromptPort): Promis
  * init 编排器（图① InitOrchestrator，模板方法 executeInit）：
  * 0 prepare（平台 / 组件 / PromptPort）→ 1 selected → 2 逐 harness runSurface
  * （InitPipeline final 骨架 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config
- * → 10 嵌套 gitignore → 11 汇总。表面步骤（1–7）的实现在 init/harnesses/ 下。
- * `prompt` 可注入（测试用假实现驱动多选优先级）。
+ * → 10 嵌套 gitignore → 11 询问 commit init 生成物 → 12 汇总。表面步骤（1–7）
+ * 的实现在 init/harnesses/ 下。`prompt` 可注入（测试用假实现驱动多选优先级）。
  */
 export async function executeInit(
   options: InitOptions,
@@ -180,6 +181,10 @@ export async function executeInit(
   }
   await ensureNestedGitignore(targetDir, path.join(targetDir, '.weave'), created);
 
+  // ---- Step 11: 询问是否提交 init 生成物（嵌套 gitignore 已落盘，add 才能
+  // 把 harness 目录裁剪到只剩 gitignore 文件本身）——细节与九闸见 git-commit.ts ----
+  await commitInitOutputs({ targetDir, interactive, selected, prompt });
+
   // ---- Aggregate summary ----
   const summary = {
     skillsCount: templateRegistry.getByCategory('skill').length,
@@ -243,27 +248,6 @@ async function ensureNestedGitignore(
   await ensureDir(dir);
   await writeFile(file, NESTED_GITIGNORE, 'utf-8');
   created.files.push(file);
-}
-
-/**
- * Walk up from `startDir` to find the enclosing git repository root (a
- * directory containing `.git`). Returns null when outside a repository, or
- * when `.git` is a file (worktree/submodule) — weave does not resolve gitdirs
- * and leaves those alone.
- */
-async function findGitRepoRoot(startDir: string): Promise<string | null> {
-  let dir = path.resolve(startDir);
-  for (;;) {
-    try {
-      const st = await stat(path.join(dir, '.git'));
-      return st.isDirectory() ? dir : null;
-    } catch {
-      // no .git here — keep walking up
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
 }
 
 /** Read a file's text, or null when absent. Any other error propagates. */
