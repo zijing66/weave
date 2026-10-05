@@ -41,27 +41,36 @@ describe('executeInit', () => {
   });
 
   // ---- P0-2: no overwrite without --force ----
-  it('does not overwrite an existing skill file without force', async () => {
-    // Create a user-modified skill first
-    const skillPath = path.join(tmpDir, '.claude', 'skills', 'code-review', 'SKILL.md');
-    await mkdir(path.dirname(skillPath), { recursive: true });
-    await writeFile(skillPath, '# user custom content');
+  it('does not overwrite an existing template file without force', async () => {
+    // 用内置 command 模板验证 writeFileIfAbsent 语义（内置 skill 模板已移除）
+    const cmdPath = path.join(tmpDir, '.claude', 'commands', 'review.md');
+    await mkdir(path.dirname(cmdPath), { recursive: true });
+    await writeFile(cmdPath, '# user custom content');
 
-    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(result.skipped).toContain(skillPath);
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      components: { commands: true }, // 默认 preset 不含 commands，显式打开以拷模板
+    });
+    expect(result.skipped).toContain(cmdPath);
     // File content preserved
-    const content = await readFile(skillPath, 'utf-8');
+    const content = await readFile(cmdPath, 'utf-8');
     expect(content).toBe('# user custom content');
   });
 
-  it('overwrites an existing skill file with force', async () => {
-    const skillPath = path.join(tmpDir, '.claude', 'skills', 'code-review', 'SKILL.md');
-    await mkdir(path.dirname(skillPath), { recursive: true });
-    await writeFile(skillPath, '# user custom content');
+  it('overwrites an existing template file with force', async () => {
+    const cmdPath = path.join(tmpDir, '.claude', 'commands', 'review.md');
+    await mkdir(path.dirname(cmdPath), { recursive: true });
+    await writeFile(cmdPath, '# user custom content');
 
-    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir, force: true });
-    expect(result.skipped).not.toContain(skillPath);
-    expect(result.created.files).toContain(skillPath);
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      force: true,
+      components: { commands: true },
+    });
+    expect(result.skipped).not.toContain(cmdPath);
+    expect(result.created.files).toContain(cmdPath);
   });
 
   // ---- P0-1: no dangling .mcp.json ----
@@ -74,12 +83,14 @@ describe('executeInit', () => {
     await expect(stat(path.join(tmpDir, '.mcp.json'))).rejects.toThrow();
   });
 
-  it('copies skills, commands, and agents for the full preset', async () => {
+  it('copies commands and agents for the full preset; skills 模板已移除为 0', async () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir, preset: 'full' });
-    expect(result.summary.skillsCount).toBeGreaterThan(0);
+    expect(result.summary.skillsCount).toBe(0);
     expect(result.summary.commandsCount).toBeGreaterThan(0);
     expect(result.summary.agentsCount).toBeGreaterThan(0);
-    expect(result.created.files.some(f => f.includes('.claude') && f.includes('skills'))).toBe(true);
+    expect(result.created.files.some(f => f.includes('.claude') && f.includes('commands'))).toBe(true);
+    // 不再注入任何内置 skill 文件
+    expect(result.created.files.some(f => f.includes(`${path.sep}skills${path.sep}`))).toBe(false);
   });
 
   // ---- Step 10: .weave/ ignore goes to .git/info/exclude, never .gitignore ----

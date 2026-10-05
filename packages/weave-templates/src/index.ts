@@ -13,11 +13,7 @@ export interface TemplateEntry {
 
 /** Map of category → entries. Adding a template = adding one line here + the .md file. */
 const MANIFEST: TemplateEntry[] = [
-  // Skills
-  { name: 'code-review', category: 'skill', sourcePath: 'templates/skills/code-review', description: 'Code review best practices' },
-  { name: 'project-navigation', category: 'skill', sourcePath: 'templates/skills/project-navigation', description: 'Project navigation and code location' },
-  { name: 'testing', category: 'skill', sourcePath: 'templates/skills/testing', description: 'Testing guidelines and strategies' },
-  { name: 'refactoring', category: 'skill', sourcePath: 'templates/skills/refactoring', description: 'Safe refactoring methodology' },
+  // Skills（模板不再自带内置 skill——skills 由工具箱/插件包提供）
   // Commands
   { name: 'review', category: 'command', sourcePath: 'templates/commands/review.md', description: 'Review branch changes' },
   { name: 'scaffold', category: 'command', sourcePath: 'templates/commands/scaffold.md', description: 'Generate component scaffold' },

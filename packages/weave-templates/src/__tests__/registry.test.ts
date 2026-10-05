@@ -2,18 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { TemplateRegistry } from '../index';
 
 describe('TemplateRegistry', () => {
-  it('registers skills, commands, and agents', () => {
+  it('模板不再自带内置 skill，commands/agents 照常注册', () => {
     const reg = new TemplateRegistry();
-    expect(reg.getByCategory('skill').length).toBeGreaterThan(0);
+    expect(reg.getByCategory('skill').length).toBe(0);
     expect(reg.getByCategory('command').length).toBeGreaterThan(0);
     expect(reg.getByCategory('agent').length).toBeGreaterThan(0);
   });
 
   it('finds a template by name', () => {
     const reg = new TemplateRegistry();
-    const skill = reg.getByName('code-review');
-    expect(skill).toBeDefined();
-    expect(skill?.category).toBe('skill');
+    const command = reg.getByName('review');
+    expect(command).toBeDefined();
+    expect(command?.category).toBe('command');
+    // 内置 skill 已移除
+    expect(reg.getByName('code-review')).toBeUndefined();
   });
 
   it('returns undefined for an unknown name', () => {

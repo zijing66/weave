@@ -142,7 +142,7 @@ describe('三级优先级：--harness flag > prompt.multiselect() > 默认 [clau
 });
 
 describe('CodexInitTemplate（仅显式选择 codex 才跑）', () => {
-  it('executeInit(harnesses:["codex"])：建 .codex/skills 拷 skills，不建 .claude', async () => {
+  it('executeInit(harnesses:["codex"])：建 .codex/skills 目录，不建 .claude', async () => {
     const result = await executeInit({
       ...BASE_OPTIONS,
       targetDir: tmpDir,
@@ -153,9 +153,10 @@ describe('CodexInitTemplate（仅显式选择 codex 才跑）', () => {
     expect(result.created.directories).toContain(path.join(tmpDir, '.codex'));
     expect(result.created.directories).toContain(path.join(tmpDir, '.codex', 'skills'));
     expect(result.created.directories).not.toContain(path.join(tmpDir, '.claude'));
+    // 模板不再自带内置 skill → 无 skill 文件拷入
     expect(
       result.created.files.some((f) => f.includes(path.join('.codex', 'skills'))),
-    ).toBe(true);
+    ).toBe(false);
 
     const config = await readFile(path.join(tmpDir, '.weave', 'config.yaml'), 'utf-8');
     expect(config).toContain('harnesses: ["codex"]');
@@ -197,7 +198,7 @@ describe('CodexInitTemplate（仅显式选择 codex 才跑）', () => {
     expect(pipeline.records.created.directories).toContain(path.join(tmpDir, '.codex'));
   });
 
-  it('已有 skill 文件不覆写（与 claude 同 force 语义）', async () => {
+  it('内置 skill 模板已移除：init 不触碰用户已有 skill 文件', async () => {
     const skillPath = path.join(tmpDir, '.codex', 'skills', 'code-review', 'SKILL.md');
     await mkdir(path.dirname(skillPath), { recursive: true });
     await writeFile(skillPath, '# user custom content');
@@ -208,7 +209,8 @@ describe('CodexInitTemplate（仅显式选择 codex 才跑）', () => {
       harnesses: ['codex'],
     });
 
-    expect(result.skipped).toContain(skillPath);
+    // 模板不再自带 skill → 无复制动作，用户文件原样保留且不计入 created
     expect(await readFile(skillPath, 'utf-8')).toBe('# user custom content');
+    expect(result.created.files).not.toContain(skillPath);
   });
 });
