@@ -59,8 +59,10 @@ export async function handleToolkitRoutes(
     return true;
   }
 
-  // ---- 启用 / 禁用（幂等，返回后置状态；?source= 消歧同 id 多来源）----
-  const toggleMatch = pathname.match(/^\/projects\/(\d+)\/toolkit\/([^/]+)\/(enable|disable)$/);
+  // ---- 启用 / 禁用 / 卸载（幂等，返回后置状态；?source= 消歧同 id 多来源）----
+  const toggleMatch = pathname.match(
+    /^\/projects\/(\d+)\/toolkit\/([^/]+)\/(enable|disable|uninstall)$/,
+  );
   if (toggleMatch) {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'Method not allowed' });
@@ -68,12 +70,15 @@ export async function handleToolkitRoutes(
     }
     const projectId = Number(toggleMatch[1]);
     const packId = decodeURIComponent(toggleMatch[2]!);
-    const enable = toggleMatch[3] === 'enable';
+    const action = toggleMatch[3];
     const source = url.searchParams.get('source');
     try {
-      const result = enable
-        ? await deps.toolkit.enable(projectId, packId, source ?? undefined)
-        : await deps.toolkit.disable(projectId, packId, source ?? undefined);
+      const result =
+        action === 'enable'
+          ? await deps.toolkit.enable(projectId, packId, source ?? undefined)
+          : action === 'disable'
+            ? await deps.toolkit.disable(projectId, packId, source ?? undefined)
+            : await deps.toolkit.uninstall(projectId, packId, source ?? undefined);
       sendJson(res, 200, result);
     } catch (err) {
       fail(err);

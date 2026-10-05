@@ -92,6 +92,21 @@ describe('toolkit 启用/禁用（硬闸）', () => {
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, JSON.stringify(json, null, 2));
     }
+    if (args[1] === 'uninstall') {
+      // 模拟 claude plugin uninstall 从 installed_plugins 摘除
+      const key = args[2]!;
+      const file = path.join(base, '.claude', 'plugins', 'installed_plugins.json');
+      try {
+        const json = JSON.parse(await readFile(file, 'utf8')) as {
+          version: number;
+          plugins: Record<string, unknown[]>;
+        };
+        delete json.plugins[key];
+        await writeFile(file, JSON.stringify(json, null, 2));
+      } catch {
+        // 未安装本就不需摘除
+      }
+    }
     return { stdout: '', stderr: '' };
   };
 
@@ -420,6 +435,44 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     await service.disable(project.id, 'hook-mod');
     expect(await enabledPluginsOf(projectDir)).toEqual({ 'hook-mod@weave': false });
     expect(await installedKeys()).toContain('hook-mod@weave');
+  });
+
+  it('uninstall：CC/mod 包从 harness 全局卸载 + 关项目启用；幂等（未安装不发 CLI）；表面包清扫等同 disable', async () => {
+    // ① mods 包（isCcPluginPack）：enable → uninstall → CLI uninstall + 摘注册
+    const modPack = path.join(extRoot, 'mods', 'hook-mod');
+    await mkdir(path.join(modPack, 'hooks'), { recursive: true });
+    await writeFile(path.join(modPack, 'hooks', 'hooks.json'), JSON.stringify({ modules: ['./register.tsx'] }, null, 2));
+    await addToolkitDir(extRoot, sourcesRoot);
+
+    await service.enable(project.id, 'hook-mod');
+    expect(await installedKeys()).toContain('hook-mod@weave');
+
+    const { pack } = await service.uninstall(project.id, 'hook-mod');
+    expect(pack.enabled).toBe(false);
+    // 与 harness CLI 对齐：plugin uninstall <key> --scope user --json
+    expect(execCalls.some((a) => a[1] === 'uninstall' && a[2] === 'hook-mod@weave')).toBe(true);
+    expect(await installedKeys()).not.toContain('hook-mod@weave');
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'hook-mod@weave': false });
+
+    // 幂等：已卸载 → 不再发 CLI（surface 幂等吞掉）
+    const calls = execCalls.length;
+    await service.uninstall(project.id, 'hook-mod');
+    expect(execCalls.length).toBe(calls);
+
+    // ② 裸表面包：uninstall 文件清扫等同 disable，且不发 CLI
+    const bare = path.join(extRoot, 'bare-cmd');
+    await mkdir(path.join(bare, 'commands'), { recursive: true });
+    await writeFile(path.join(bare, 'commands', 'hello.md'), '# hello\n');
+    await service.enable(project.id, 'bare-cmd');
+    const enabledLanded = await snapshot(projectDir);
+    expect(enabledLanded['.claude/commands/hello.md']).toBeTruthy();
+
+    const cliCalls = execCalls.length;
+    await service.uninstall(project.id, 'bare-cmd');
+    expect(execCalls.length).toBe(cliCalls); // 非 CC 包不触 CLI
+    const after = await snapshot(projectDir);
+    expect(after['.claude/commands/hello.md']).toBeUndefined();
+    expect(after['.weave/toolkit/bare-cmd.json']).toBeUndefined();
   });
 
   it('mod 版本闸纯函数：semver 比较 / 降级 / 环境跳过', () => {

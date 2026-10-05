@@ -92,22 +92,31 @@ async function readJson(p: string): Promise<Record<string, unknown> | null> {
 
 /** 目录是否为一个工具包包位（四种识别任一命中）。 */
 export async function isToolkitPackDir(dir: string): Promise<boolean> {
+  if (await isStrictPackDir(dir)) return true;
+  return (
+    (await isDir(path.join(dir, 'skills'))) ||
+    (await isDir(path.join(dir, 'commands'))) ||
+    (await isDir(path.join(dir, 'agents')))
+  );
+}
+
+/**
+ * 严格包位：manifest（CC/weave）或 mods 谓词命中——不含裸表面识别。
+ * 用于 market 源根层判定：库根只因 `skills/` 等裸表面命中时是「容器」而非
+ * 包（skill 仓库根常带 skills/），当包会吞掉整棵树、嵌套包（mods）永远
+ * 发现不了 → 资源市场 plugin 卡有、toolkit 清单无 → 「—」。
+ */
+async function isStrictPackDir(dir: string): Promise<boolean> {
   if (await readJson(path.join(dir, CC_MANIFEST_DIR, CC_MANIFEST))) return true;
   // weave manifest 只判断存在性（合法性交给 plugin-loader 校验，rejected 也是信息）
   try {
     await stat(path.join(dir, WEAVE_PLUGIN_MANIFEST));
     return true;
   } catch {
-    // 继续判 mods / 裸表面
+    // 继续判 mods
   }
-  // mods-only 包（无 manifest、仅 hooks.json 非空 modules）：不认则 toolkit
-  // 列表缺此包 → 资源市场 plugin 区 mods 卡无安装按钮
-  if (hasNonEmptyModules(await readJson(path.join(dir, 'hooks', 'hooks.json')))) return true;
-  return (
-    (await isDir(path.join(dir, 'skills'))) ||
-    (await isDir(path.join(dir, 'commands'))) ||
-    (await isDir(path.join(dir, 'agents')))
-  );
+  // mods-only 包（无 manifest、仅 hooks.json 非空 modules）
+  return hasNonEmptyModules(await readJson(path.join(dir, 'hooks', 'hooks.json')));
 }
 
 async function listDirNames(dir: string): Promise<string[]> {
@@ -219,15 +228,22 @@ function skipEntry(name: string): boolean {
  * 递归发现扫描根下的全部包：根自身可为包（外置目录直接指到包），
  * 否则下钻到 level ≤ 2（root → scope → pack；market 源放宽到 10 对齐
  * 市场扫描）；命中包即停（包不嵌套）。
+ * 例外：market 源根层仅裸表面命中 → 视为容器继续下钻（见 isStrictPackDir）。
  */
 export async function discoverToolkitPacks(source: ToolkitSource): Promise<ToolkitPack[]> {
   const out: ToolkitPack[] = [];
-  const maxLevel = source.provenance === 'market' ? MARKET_MAX_SCAN_LEVEL : MAX_SCAN_LEVEL;
+  const market = source.provenance === 'market';
+  const maxLevel = market ? MARKET_MAX_SCAN_LEVEL : MAX_SCAN_LEVEL;
   const walk = async (dir: string, level: number, scope: string): Promise<void> => {
     if (await isToolkitPackDir(dir)) {
-      const pack = await parseToolkitPack(dir, source, scope);
-      if (pack) out.push(pack);
-      return;
+      // market 根层裸表面（如 skill 仓库根的 skills/）= 容器而非包：
+      // 当包会 return 吞掉整棵树，嵌套 mods/manifest 包永远不被发现。
+      const bareSurfaceContainer = level === 0 && market && !(await isStrictPackDir(dir));
+      if (!bareSurfaceContainer) {
+        const pack = await parseToolkitPack(dir, source, scope);
+        if (pack) out.push(pack);
+        return;
+      }
     }
     if (level >= maxLevel) return;
     let entries;

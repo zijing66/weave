@@ -241,6 +241,18 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       return !!records && records.length > 0;
     },
 
+    async uninstall(name) {
+      const key = pluginKey(name);
+      // 幂等：未安装直接返回（marketplace 源保留——卸载≠移除市场，可重装）
+      const existing = (await readInstalled())[key];
+      if (!existing || existing.length === 0) return;
+      const { stdout } = await run(['plugin', 'uninstall', key, '--scope', 'user', '--json']);
+      const outcome = safeJson(stdout);
+      if (outcome?.['outcome'] === 'failed') {
+        throw new Error(truncate(String(outcome['message'] ?? 'plugin uninstall failed')));
+      }
+    },
+
     async readProjectEnabled(projectPath, name) {
       const enabled = enabledOf(await readJson(projectSettingsFile(projectPath)));
       return enabled[pluginKey(name)] ?? false;

@@ -142,6 +142,8 @@ export interface PluginSurface {
   readInstalled(): Promise<Record<string, InstalledPluginRecord[]>>;
   /** 插件是否已全局安装（`name` 为插件名，marketplace 后缀由实现补）。 */
   isInstalled(name: string): Promise<boolean>;
+  /** 全局卸载（与 harness CLI 对齐；幂等——未安装直接返回；marketplace 源保留）。 */
+  uninstall(name: string): Promise<void>;
   /** 项目 settings 的 enabledPlugins（键 `name@<marketplace>`；缺省 false）。 */
   readProjectEnabled(projectPath: string, name: string): Promise<boolean>;
   /** 写项目 enabledPlugins 单键（其余键保留，文件可创建）。 */

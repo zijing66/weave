@@ -198,6 +198,8 @@ export interface ToolkitPack {
   weavePack: boolean;
   skills: string[];
   enabled: boolean;
+  /** 是否已安装（CC/mod = harness 全局安装态；表面包 = 本项目落盘；weave 恒 true）。 */
+  installed: boolean;
   weave?: { status: 'active' | 'rejected' | 'disabled'; ruleCount: number; error?: string };
 }
 
@@ -823,6 +825,18 @@ export const api = {
     apiFetch<{ removed: string[] }>(`/projects/${projectId}/toolkit/legacy-copies/cleanup`, {
       method: 'POST',
     }),
+  /** 卸载工具包（与 harness 对齐：CC 插件/mod 走 claude plugin uninstall，表面包清扫文件）。 */
+  uninstallToolkit: (
+    projectId: number,
+    id: string,
+    source?: string,
+  ): Promise<ToolkitToggleResult> =>
+    apiFetch<ToolkitToggleResult>(
+      `/projects/${projectId}/toolkit/${encodeURIComponent(id)}/uninstall${
+        source ? `?source=${encodeURIComponent(source)}` : ''
+      }`,
+      { method: 'POST' },
+    ),
   listToolkitDirs: (): Promise<{ dirs: string[]; indexes: string[] }> =>
     apiFetch<{ dirs: string[]; indexes: string[] }>('/toolkit/dirs'),
   addToolkitDir: (path: string): Promise<{ dirs: string[] }> =>

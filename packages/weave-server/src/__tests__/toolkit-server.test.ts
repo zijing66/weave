@@ -108,7 +108,7 @@ describe('daemon /toolkit routes', () => {
     const res = await fetch(url(`/projects/${projectId}/toolkit`), { headers: auth });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      packs: Array<{ id: string; enabled: boolean; provenance: string; kind: string }>;
+      packs: Array<{ id: string; enabled: boolean; installed: boolean; provenance: string; kind: string }>;
       dirs: string[];
     };
     expect(data.packs.map((p) => p.id).sort()).toEqual([
@@ -123,6 +123,10 @@ describe('daemon /toolkit routes', () => {
     ]);
     expect(data.packs.every((p) => p.provenance === 'builtin')).toBe(true);
     expect(data.packs.every((p) => p.enabled === false)).toBe(true);
+    // installed 字段恒在（CC/mod=全局安装态、表面包=落盘记录、weave=装载即源）
+    expect(data.packs.every((p) => typeof p.installed === 'boolean')).toBe(true);
+    expect(data.packs.find((p) => p.id === 'code-review')!.installed).toBe(false);
+    expect(data.packs.find((p) => p.id === 'md-lint')!.installed).toBe(true); // weave 装载即源
     expect(data.dirs).toEqual([]);
   });
 
@@ -132,29 +136,53 @@ describe('daemon /toolkit routes', () => {
   });
 
   it('POST enable→disable：幂等、返回后置状态', async () => {
-    const enable = async (): Promise<{ pack: { enabled: boolean }; warnings: string[] }> => {
+    const enable = async (): Promise<{ pack: { enabled: boolean; installed: boolean }; warnings: string[] }> => {
       const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/enable`), {
         method: 'POST',
         headers: auth,
       });
       expect(res.status).toBe(200);
-      return (await res.json()) as { pack: { enabled: boolean }; warnings: string[] };
+      return (await res.json()) as { pack: { enabled: boolean; installed: boolean }; warnings: string[] };
     };
     const first = await enable();
     expect(first.pack.enabled).toBe(true);
+    expect(first.pack.installed).toBe(true); // enable = 首装（假 CLI 写注册表）
     const second = await enable(); // 幂等：无副作用
     expect(second.pack.enabled).toBe(true);
 
-    const disable = async (): Promise<{ pack: { enabled: boolean } }> => {
+    const disable = async (): Promise<{ pack: { enabled: boolean; installed: boolean } }> => {
       const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/disable`), {
         method: 'POST',
         headers: auth,
       });
       expect(res.status).toBe(200);
-      return (await res.json()) as { pack: { enabled: boolean } };
+      return (await res.json()) as { pack: { enabled: boolean; installed: boolean } };
     };
     expect((await disable()).pack.enabled).toBe(false);
+    expect((await disable()).pack.installed).toBe(true); // 停用保留 harness 全局安装
     expect((await disable()).pack.enabled).toBe(false); // 幂等
+  });
+
+  it('POST uninstall：200 返回后置状态；未知包 404；未鉴权 401', async () => {
+    const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/uninstall`), {
+      method: 'POST',
+      headers: auth,
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { pack: { enabled: boolean } };
+    expect(data.pack.enabled).toBe(false);
+
+    const notFound = await fetch(url(`/projects/${projectId}/toolkit/no-such-pack/uninstall`), {
+      method: 'POST',
+      headers: auth,
+    });
+    expect(notFound.status).toBe(404);
+
+    const unauth = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/uninstall`), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(unauth.status).toBe(401);
   });
 
   it('POST 未知包 404；GET on enable 路径 405', async () => {

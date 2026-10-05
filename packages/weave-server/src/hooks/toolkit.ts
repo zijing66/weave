@@ -64,6 +64,8 @@ export interface ToolkitRecord {
 export interface ToolkitPackInfo extends ToolkitPack {
   /** 读侧：落盘/级联事实校验后的启用态。 */
   enabled: boolean;
+  /** 是否已安装（CC/mod = harness 全局安装态；表面包 = 本项目落盘记录；weave 装载即源恒 true）。 */
+  installed: boolean;
   /** weave 成分的装载状态（loader 未就绪时缺省）。 */
   weave?: { status: LoadedPluginInfo['status']; ruleCount: number; error?: string };
 }
@@ -441,6 +443,13 @@ export class ToolkitService {
   async disable(projectId: number, packId: string, sourceRoot?: string): Promise<ToolkitToggleResult> {
     const project = this.requireProject(projectId);
     const pack = await this.resolvePack(packId, sourceRoot);
+    await this.applyDisabled(project, pack);
+    return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
+  }
+
+  /** disable/uninstall 共用清理（与原 disable 主体逐段等价）：表面文件按
+   * checksum 删除（改写保留）、CC 关项目启用、weave 关 meta、清启用索引。 */
+  private async applyDisabled(project: ProjectRow, pack: ToolkitPack): Promise<void> {
     await this.removePackFiles(project, pack, pack.sourceRoot);
 
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
@@ -450,6 +459,18 @@ export class ToolkitService {
       setProjectEnabled(project, pack.id, false, { projects: this.deps.projects });
     }
     this.rememberEnabled(project, pack.id, false);
+  }
+
+  /** 卸载 = disable 全部清理 + CC/mod 包从 harness 全局卸载（与 `claude plugin
+   * uninstall` 对齐；未安装由 surface 幂等吞掉；marketplace 源保留可重装）。
+   * mod 宿主版本闸不适用（卸载不加载宿主）。 */
+  async uninstall(projectId: number, packId: string, sourceRoot?: string): Promise<ToolkitToggleResult> {
+    const project = this.requireProject(projectId);
+    const pack = await this.resolvePack(packId, sourceRoot);
+    await this.applyDisabled(project, pack);
+    if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
+      await this.pluginSurface().uninstall(pack.name);
+    }
     return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
   }
 
@@ -580,7 +601,7 @@ export class ToolkitService {
 
   private async packInfo(project: ProjectRow, pack: ToolkitPack): Promise<ToolkitPackInfo> {
     const enabled = await this.computeEnabled(project, pack);
-    const info: ToolkitPackInfo = { ...pack, enabled };
+    const info: ToolkitPackInfo = { ...pack, enabled, installed: await this.computeInstalled(project, pack, enabled) };
     if (pack.weavePack) {
       const loaded = this.deps.plugins.list().find((p) => p.id === pack.id);
       if (loaded) {
@@ -592,6 +613,22 @@ export class ToolkitService {
       }
     }
     return info;
+  }
+
+  /**
+   * 安装态（市场「安装/已装」判定）：CC/mod 看 harness 全局安装记录；
+   * weave 成分随扫描源热载无安装概念；表面包看本项目落盘账本（启用即已装）。
+   */
+  private async computeInstalled(
+    project: ProjectRow,
+    pack: ToolkitPack,
+    enabled: boolean,
+  ): Promise<boolean> {
+    if (pack.weavePack && !isCcPluginPack(pack)) return true;
+    if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
+      return this.pluginSurface().isInstalled(pack.name);
+    }
+    return enabled || !!(await this.readRecordHealed(project.path, pack.id));
   }
 
   private enabledIndex(project: ProjectRow): string[] {

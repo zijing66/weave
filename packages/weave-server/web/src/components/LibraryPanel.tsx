@@ -753,7 +753,7 @@ export function LibraryPanel({
           <TemplateSection
             icon={<Puzzle className="h-3.5 w-3.5 text-violet-400" />}
             title={t('library.sectionPlugins')}
-            hint={t('toolkit.toggleTip')}
+            hint={t('library.pluginsSectionHint')}
             count={plugins.length}
             open={!sectionsCollapsed.has(SECTION_PLUGINS)}
             onToggle={() => toggleSection(SECTION_PLUGINS)}
@@ -831,12 +831,33 @@ export function LibraryPanel({
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
+                      {/* 市场 = 安装入口：weave 规则包无安装概念保留启用 Switch；
+                          其余未装 → 「安装」，已装 → 徽标（启停/卸载去资源管理·工具箱） */}
                       {pack ? (
-                        <Switch
-                          checked={pack.enabled}
-                          onChange={(v) => void togglePluginPack(pack, v)}
-                          title={t('toolkit.toggleTip')}
-                        />
+                        pl.weavePack && !(pl.ccPack || pl.kind === 'mod') ? (
+                          <Switch
+                            checked={pack.enabled}
+                            onChange={(v) => void togglePluginPack(pack, v)}
+                            title={t('library.weavePluginTip')}
+                          />
+                        ) : pack.installed ? (
+                          <Badge
+                            className="bg-emerald-900/40 text-emerald-300"
+                            title={t('library.installedManageTip')}
+                          >
+                            {t('library.installed')} ✓
+                          </Badge>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={pluginBusy !== null}
+                            title={t('library.installPackTip')}
+                            onClick={() => void togglePluginPack(pack, true)}
+                            className="rounded bg-blue-900/50 px-2 py-0.5 text-[10px] text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
+                          >
+                            {t('library.install')}
+                          </button>
+                        )
                       ) : (
                         <span
                           className="text-[10px] text-neutral-600"

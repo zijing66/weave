@@ -1,23 +1,23 @@
 /** 工具包区段词条（批 10）。 */
 export const toolkitZh = {
   'toolkit.title': '工具箱',
-  'toolkit.hint': '内置出厂 + 外置目录同一条扫描管线，按包成分启用/禁用',
+  'toolkit.hint': '内置 · 外置目录 · 市场导入共用同一条扫描管线；CC 插件与 mod 整包装，其余按包成分启停',
   'toolkit.groupClaude': 'Claude Plugins',
-  'toolkit.groupPacks': '工具包',
+  'toolkit.groupPacks': '表面工具包',
   'toolkit.claudeGroupHint':
     'Claude Code 原生插件与 mod——仅 claude harness 生效，codex 运行态隐藏',
   'toolkit.empty': '暂无工具包',
   'toolkit.loading': '加载中…',
   'toolkit.loadFailed': '加载失败：{error}',
   'toolkit.toggleFailed': '操作失败：{error}',
-  'toolkit.toggleTip': '启用或停用该工具包',
+  'toolkit.toggleTip': '启用/停用本项目（CC 插件与 mod 首次启用会先安装到全局）',
   'toolkit.kind.skill': 'skill',
   'toolkit.kind.hook': 'hook',
   'toolkit.kind.mod': 'mod',
   'toolkit.kind.rule': 'rule',
   'toolkit.kind.surface': 'surface',
   'toolkit.prov.builtin': '内置',
-  'toolkit.prov.external-dir': '外置',
+  'toolkit.prov.external-dir': '外置目录',
   'toolkit.prov.market': '市场',
   'toolkit.targets': '目标：{targets}',
   'toolkit.weaveRules': '规则 {n}',
@@ -26,28 +26,34 @@ export const toolkitZh = {
   'toolkit.legacyCleanup': '清理',
   'toolkit.dirsTitle': '外置目录',
   'toolkit.dirsEmpty': '未注册外置目录',
-  'toolkit.dirsHint': '添加：终端运行 weave toolkit add-dir <目录>；移除：weave toolkit remove-dir <目录>（级联卸载已启用包）',
+  'toolkit.dirsHint':
+    '本地文件夹注册为扫描源，与内置 · 市场同一管线。添加：终端运行 weave toolkit add-dir <目录>；移除：weave toolkit remove-dir <目录>（级联卸载已启用包）',
+  'toolkit.uninstall': '卸载',
+  'toolkit.uninstallTip':
+    '从 harness 彻底卸载（CC 插件与 mod 执行 claude plugin uninstall；表面包清扫已复制文件；预置源保留可重装）',
 };
 
 export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.title': 'Toolkit',
-  'toolkit.hint': 'Built-in and external dirs share one scan pipeline; toggle by pack component',
+  'toolkit.hint':
+    'Builtin, external dirs and market imports share one scan pipeline; CC plugins & mods install as a whole, others toggle by component',
   'toolkit.groupClaude': 'Claude Plugins',
-  'toolkit.groupPacks': 'Toolkit Packs',
+  'toolkit.groupPacks': 'Surface packs',
   'toolkit.claudeGroupHint':
     'Claude Code native plugins and mods — effective only on the claude harness; hidden under the codex runtime',
   'toolkit.empty': 'No toolkit packs',
   'toolkit.loading': 'Loading…',
   'toolkit.loadFailed': 'Load failed: {error}',
   'toolkit.toggleFailed': 'Operation failed: {error}',
-  'toolkit.toggleTip': 'Enable or disable this toolkit pack',
+  'toolkit.toggleTip':
+    'Enable/disable in this project (CC plugins & mods install globally on first enable)',
   'toolkit.kind.skill': 'skill',
   'toolkit.kind.hook': 'hook',
   'toolkit.kind.mod': 'mod',
   'toolkit.kind.rule': 'rule',
   'toolkit.kind.surface': 'surface',
   'toolkit.prov.builtin': 'builtin',
-  'toolkit.prov.external-dir': 'external-dir',
+  'toolkit.prov.external-dir': 'external',
   'toolkit.prov.market': 'market',
   'toolkit.targets': 'Targets: {targets}',
   'toolkit.weaveRules': 'rules {n}',
@@ -58,5 +64,8 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.dirsTitle': 'External dirs',
   'toolkit.dirsEmpty': 'No external dirs registered',
   'toolkit.dirsHint':
-    'Add: run `weave toolkit add-dir <dir>` in a terminal; remove: `weave toolkit remove-dir <dir>` (cascade-disables its enabled packs)',
+    'Local folders registered as scan sources — same pipeline as builtin and market. Add: run `weave toolkit add-dir <dir>` in a terminal; remove: `weave toolkit remove-dir <dir>` (cascade-uninstalls its enabled packs)',
+  'toolkit.uninstall': 'Uninstall',
+  'toolkit.uninstallTip':
+    'Uninstall from the harness (CC plugins & mods run claude plugin uninstall; surface packs clean copied files; shipped sources stay and can be reinstalled)',
 };

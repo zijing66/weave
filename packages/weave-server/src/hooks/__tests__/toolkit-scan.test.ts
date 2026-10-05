@@ -189,6 +189,38 @@ describe('toolkit-scan 识别与发现', () => {
     expect(ext).toHaveLength(0);
   });
 
+  it('market 根层裸表面视为容器（不吞并）：嵌套 mods 包被发现；external/manifest 根即包零变', async () => {
+    // 布局：库根带 skills/（skill 仓库常态）+ 嵌套 mods 包
+    await mkdir(path.join(root, 'skills', 'top'), { recursive: true });
+    await writeFile(path.join(root, 'skills', 'top', 'SKILL.md'), '# top');
+    const mods = path.join(root, 'tools/mods-pkg');
+    await writeJson(path.join(mods, 'hooks', 'hooks.json'), { modules: ['./register.tsx'] });
+
+    // market 源：根仅裸表面命中 → 容器下钻，嵌套 mods 包发现（根不产出包）
+    const market = await discoverToolkitPacks({ root, provenance: 'market' });
+    expect(market.map((p) => p.id)).toEqual(['mods-pkg']);
+    expect(market[0]).toMatchObject({ kind: 'mod', provenance: 'market' });
+
+    // external 源同布局：根即包语义零变（吞并为单个裸表面包，嵌套不可见）
+    const ext = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    expect(ext).toHaveLength(1);
+    expect(ext[0]).toMatchObject({ components: ['skill'], dir: root });
+
+    // market 根带 manifest → 仍当包（严格谓词命中不下钻）
+    const root2 = await mkdtemp(path.join(tmpdir(), 'weave-tk-rootpack-'));
+    try {
+      await writeJson(path.join(root2, '.claude-plugin/plugin.json'), { name: 'root-cc', version: '1.0.0' });
+      await mkdir(path.join(root2, 'skills', 's'), { recursive: true });
+      await writeFile(path.join(root2, 'skills', 's', 'SKILL.md'), '# s');
+      const m2 = await discoverToolkitPacks({ root: root2, provenance: 'market' });
+      expect(m2).toHaveLength(1);
+      // id 无 weave manifest 时回落目录名，name 取 CC manifest
+      expect(m2[0]).toMatchObject({ name: 'root-cc', ccPack: true, dir: root2 });
+    } finally {
+      await rm(root2, { recursive: true, force: true });
+    }
+  });
+
   it('内置真实树冒烟：8 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();
