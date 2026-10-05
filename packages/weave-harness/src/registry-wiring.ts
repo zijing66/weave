@@ -1,6 +1,6 @@
 import { CLAUDE_DRIVER } from './claude/index.js';
 import { CODEX_DRIVER } from './codex/index.js';
-import type { HarnessRegistry } from './driver.js';
+import { HarnessRegistry } from './driver.js';
 
 /**
  * 运行时驱动注册点：批 4a 已补 assets 槽、批 4b 已补 events/resume、
@@ -10,4 +10,11 @@ import type { HarnessRegistry } from './driver.js';
 export function registerRuntimeDrivers(reg: HarnessRegistry): void {
   reg.register(CLAUDE_DRIVER);
   reg.register(CODEX_DRIVER);
+}
+
+/** 新建注册表并灌入运行时驱动（消费方一行装配样板的唯一出处）。 */
+export function createRuntimeRegistry(): HarnessRegistry {
+  const reg = new HarnessRegistry();
+  registerRuntimeDrivers(reg);
+  return reg;
 }

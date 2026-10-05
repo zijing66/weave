@@ -15,7 +15,7 @@ import { HookRuleRepository } from '../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
-import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
+import { createRuntimeRegistry } from '@weave/harness';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -56,8 +56,7 @@ async function main(): Promise<void> {
   const libraries = new LibraryRepository(db);
   // 图② 装配：registry 注册运行时驱动 → adapters 由 events 能力槽派生
   //（== 旧 [new ClaudeCodeAdapter()]），resume 规格同源注入。
-  const harnesses = new HarnessRegistry();
-  registerRuntimeDrivers(harnesses);
+  const harnesses = createRuntimeRegistry();
   const adapters = harnesses.byCapability('events').flatMap((d) => d.events ?? []);
   const hookRegistry = new HookRuleRegistry(new HookRuleRepository(db));
   const hookDispatches = new HookDispatchRepository(db);

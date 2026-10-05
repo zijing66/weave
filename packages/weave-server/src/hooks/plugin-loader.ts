@@ -45,6 +45,16 @@ export interface PluginHandler {
   ): Promise<PluginHandlerResult | void> | PluginHandlerResult | void;
 }
 
+/** 插件日志器：统一 `[plugin:<id>]` 前缀（loader 订阅转发与 dispatcher 处理器共用）。 */
+export function createPluginLogger(pluginId: string): PluginHandlerContext['logger'] {
+  return {
+    debug: (msg: string) => console.debug(`[plugin:${pluginId}] ${msg}`),
+    info: (msg: string) => console.info(`[plugin:${pluginId}] ${msg}`),
+    warn: (msg: string) => console.warn(`[plugin:${pluginId}] ${msg}`),
+    error: (msg: string) => console.error(`[plugin:${pluginId}] ${msg}`),
+  };
+}
+
 /** 订阅模块（扩展点⑦）default 导出形状：只读观察采集事件流。 */
 export interface PluginSubscriber {
   onEvent(ctx: {
@@ -346,12 +356,7 @@ export class WeavePluginLoader implements PluginHost {
           payload,
           sessionId,
           config: cfg,
-          logger: {
-            debug: (msg: string) => console.debug(`[plugin:${pluginId}] ${msg}`),
-            info: (msg: string) => console.info(`[plugin:${pluginId}] ${msg}`),
-            warn: (msg: string) => console.warn(`[plugin:${pluginId}] ${msg}`),
-            error: (msg: string) => console.error(`[plugin:${pluginId}] ${msg}`),
-          },
+          logger: createPluginLogger(pluginId),
         });
       })().catch(() => {});
     }

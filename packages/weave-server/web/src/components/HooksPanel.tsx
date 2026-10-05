@@ -91,21 +91,9 @@ const SOURCE_KINDS: Array<HookRuleSource['kind']> = ['hook-event', 'claude-event
 
 const HARNESS_OPTIONS: Array<Harness | 'any'> = ['claude', 'codex', 'any'];
 
-/** 面板内所有用户操作的成功/失败提示统一走这里。 */
+/** 面板内所有用户操作的成功/失败提示统一走这里（apiFetch 已抛人话错误）。 */
 function errMsg(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
-  // apiFetch 抛出 `400 {"error":"…"}` — 服务端 message 优先展示。
-  const brace = raw.indexOf('{');
-  if (brace >= 0 && raw.trimEnd().endsWith('}')) {
-    try {
-      const parsed = JSON.parse(raw.slice(brace)) as { error?: string; message?: string };
-      if (parsed.error) return parsed.error;
-      if (parsed.message) return parsed.message;
-    } catch {
-      // not JSON — fall through to the raw text
-    }
-  }
-  return raw;
+  return e instanceof Error ? e.message : String(e);
 }
 
 function splitList(s: string): string[] {
@@ -202,7 +190,7 @@ const nodeTypes = {
   handler: HandlerNode,
 };
 
-// macOS 风格迷你开关已提炼到 ui/switch.tsx（与插件区段共用）。
+const NO_FLOW_EDGES: FlowEdge[] = [];
 
 // ---------------------------------------------------------------------------
 // 链路图布局（静态：列 x = 0/320/640，行 y 递增 100）
@@ -444,14 +432,18 @@ export function HooksPanel({
 
   // ---- 链路图 ----
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
-  const [edges, setEdges] = useState<FlowEdge[]>([]);
+  // 数据流画布只展示当前生效的规则：项目模式的插件规则随项目级开关
+  // （effective：项目显式启用可复活全局停用、显式停用否决全局启用）；
+  // 其余（非插件规则 / 全局模式）看规则级 enabled。停用规则留在列表里管理。
+  const built = useMemo(
+    () => (rules ? buildGraph(rules.filter(isActiveRule), projectById, t) : null),
+    [rules, isActiveRule, projectById, t],
+  );
+  // edges 无拖拽编辑（未接 onEdgesChange）→ 纯派生，不进 state；nodes 要保留拖拽位置。
+  const edges = built?.edges ?? NO_FLOW_EDGES;
 
   useEffect(() => {
-    if (!rules) return;
-    // 数据流画布只展示当前生效的规则：项目模式的插件规则随项目级开关
-    // （effective：项目显式启用可复活全局停用、显式停用否决全局启用）；
-    // 其余（非插件规则 / 全局模式）看规则级 enabled。停用规则留在列表里管理。
-    const built = buildGraph(rules.filter(isActiveRule), projectById, t);
+    if (!built) return;
     // 保留用户拖出来的节点位置，只更新数据 / 集合。
     setNodes((prev) => {
       const pos = new Map(prev.map((n) => [n.id, n.position]));
@@ -460,8 +452,7 @@ export function HooksPanel({
         return p ? ({ ...n, position: p } as FlowNode) : n;
       });
     });
-    setEdges(built.edges);
-  }, [rules, isActiveRule, projectById, t, setNodes]);
+  }, [built, setNodes]);
 
   // ---- 表单 ----
   const openCreate = (): void => {

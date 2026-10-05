@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { ensureDaemonRunning } from './daemon.js';
+import { call } from './daemon.js';
 import { t } from '../i18n/index.js';
 import type { Command, CommandContext } from '../parser.js';
 import { renderTable } from './hooks.js';
@@ -24,21 +24,6 @@ interface ToolkitPackRow {
 interface ProjectRowLite {
   id: number;
   path: string;
-}
-
-async function call<T>(route: string, init?: RequestInit): Promise<T> {
-  const handle = await ensureDaemonRunning();
-  const res = await fetch(`http://127.0.0.1:${handle.port}${route}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${handle.token}`,
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `${res.status}`);
-  return data;
 }
 
 /** 解析目标项目：--project 路径 > 当前目录；须已注册（init/scan）。 */

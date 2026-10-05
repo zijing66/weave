@@ -7,6 +7,7 @@ import {
   HookDispatchStatusSchema,
 } from '@weave/core';
 import type { WeaveServerDeps } from './server.js';
+import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 
@@ -55,37 +56,30 @@ export async function handleHooksRoutes(
     pathname.startsWith('/sessions/');
   if (!isHooksPath) return false;
 
-  const sendJson = (status: number, data: unknown): void => {
-    res.statusCode = status;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify(data));
-  };
-  const readJson = async (): Promise<unknown> => JSON.parse(await readBody(req));
-
   if (!isAuthed) {
-    sendJson(401, { error: 'Unauthorized' });
+    sendJson(res, 401, { error: 'Unauthorized' });
     return true;
   }
 
   // ---- 规则 CRUD ----
   if (pathname === '/hooks/rules') {
     if (!deps.hookRegistry) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     if (req.method === 'GET') {
       const projectIdRaw = url.searchParams.get('projectId');
       const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
-      sendJson(200, { rules: deps.hookRegistry.list(projectId) });
+      sendJson(res, 200, { rules: deps.hookRegistry.list(projectId) });
       return true;
     }
     if (req.method === 'POST') {
       try {
-        const body = CreateRuleBody.parse(await readJson());
+        const body = CreateRuleBody.parse(await readJson(req));
         const rule = deps.hookRegistry.create(body);
-        sendJson(201, { rule });
+        sendJson(res, 201, { rule });
       } catch (err) {
-        sendJson(400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
       }
       return true;
     }
@@ -94,30 +88,30 @@ export async function handleHooksRoutes(
   const ruleMatch = pathname.match(/^\/hooks\/rules\/([^/]+)$/);
   if (ruleMatch) {
     if (!deps.hookRegistry) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     const id = decodeURIComponent(ruleMatch[1]!);
     if (req.method === 'PUT') {
       try {
-        const patch = UpdateRuleBody.parse(await readJson());
+        const patch = UpdateRuleBody.parse(await readJson(req));
         const rule = deps.hookRegistry.update(id, patch);
         if (!rule) {
-          sendJson(404, { error: 'Rule not found' });
+          sendJson(res, 404, { error: 'Rule not found' });
           return true;
         }
-        sendJson(200, { rule });
+        sendJson(res, 200, { rule });
       } catch (err) {
-        sendJson(400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
       }
       return true;
     }
     if (req.method === 'DELETE') {
       if (!deps.hookRegistry.remove(id)) {
-        sendJson(404, { error: 'Rule not found' });
+        sendJson(res, 404, { error: 'Rule not found' });
         return true;
       }
-      sendJson(200, { ok: true });
+      sendJson(res, 200, { ok: true });
       return true;
     }
   }
@@ -125,19 +119,19 @@ export async function handleHooksRoutes(
   const toggleMatch = pathname.match(/^\/hooks\/rules\/([^/]+)\/toggle$/);
   if (toggleMatch && req.method === 'POST') {
     if (!deps.hookRegistry) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     try {
-      const body = ToggleBody.parse(await readJson());
+      const body = ToggleBody.parse(await readJson(req));
       const rule = deps.hookRegistry.setEnabled(decodeURIComponent(toggleMatch[1]!), body.enabled);
       if (!rule) {
-        sendJson(404, { error: 'Rule not found' });
+        sendJson(res, 404, { error: 'Rule not found' });
         return true;
       }
-      sendJson(200, { rule });
+      sendJson(res, 200, { rule });
     } catch (err) {
-      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
     }
     return true;
   }
@@ -147,20 +141,20 @@ export async function handleHooksRoutes(
     if (req.method === 'GET') {
       const projectIdRaw = url.searchParams.get('projectId');
       if (projectIdRaw == null || projectIdRaw === '') {
-        sendJson(200, { plugins: deps.hookPlugins?.list() ?? [] });
+        sendJson(res, 200, { plugins: deps.hookPlugins?.list() ?? [] });
         return true;
       }
       const project = deps.projects.getById(Number(projectIdRaw));
       if (!project) {
-        sendJson(404, { error: 'Project not found' });
+        sendJson(res, 404, { error: 'Project not found' });
         return true;
       }
       if (!deps.pluginStates) {
-        sendJson(503, { error: 'Plugin states unavailable' });
+        sendJson(res, 503, { error: 'Plugin states unavailable' });
         return true;
       }
       const states = deps.pluginStates;
-      sendJson(200, {
+      sendJson(res, 200, {
         plugins: (deps.hookPlugins?.list() ?? []).map((info) => {
           if (info.status === 'rejected') return info;
           const status = effective(project, info.id, { states }) ? 'active' : 'disabled';
@@ -172,16 +166,16 @@ export async function handleHooksRoutes(
     if (req.method === 'POST') {
       // 安装：body { src } = 本地路径 | git URL → 复制进全局插件根 → 立即重扫
       if (!deps.hookPlugins) {
-        sendJson(503, { error: 'Plugin loader unavailable' });
+        sendJson(res, 503, { error: 'Plugin loader unavailable' });
         return true;
       }
       try {
-        const body = InstallBody.parse(await readJson());
+        const body = InstallBody.parse(await readJson(req));
         const result = await installPlugin(body.src);
         await deps.hookPlugins.reloadAll();
-        sendJson(201, result);
+        sendJson(res, 201, result);
       } catch (err) {
-        sendJson(400, { error: err instanceof Error ? err.message : 'Install failed' });
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Install failed' });
       }
       return true;
     }
@@ -190,51 +184,51 @@ export async function handleHooksRoutes(
   const pluginUninstallMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/uninstall$/);
   if (pluginUninstallMatch && req.method === 'POST') {
     if (!deps.hookPlugins) {
-      sendJson(503, { error: 'Plugin loader unavailable' });
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
       return true;
     }
     const id = decodeURIComponent(pluginUninstallMatch[1]!);
     const removed = await uninstallPlugin(id);
     if (!removed) {
-      sendJson(404, { error: 'Plugin directory not found' });
+      sendJson(res, 404, { error: 'Plugin directory not found' });
       return true;
     }
     await deps.hookPlugins.reloadAll();
-    sendJson(200, { ok: true });
+    sendJson(res, 200, { ok: true });
     return true;
   }
 
   const pluginToggleMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/toggle$/);
   if (pluginToggleMatch && req.method === 'POST') {
     if (!deps.hookPlugins) {
-      sendJson(503, { error: 'Plugin loader unavailable' });
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
       return true;
     }
     try {
-      const body = PluginToggleBody.parse(await readJson());
+      const body = PluginToggleBody.parse(await readJson(req));
       const id = decodeURIComponent(pluginToggleMatch[1]!);
       if (body.projectId !== undefined) {
         const project = deps.projects.getById(body.projectId);
         if (!project) {
-          sendJson(404, { error: 'Project not found' });
+          sendJson(res, 404, { error: 'Project not found' });
           return true;
         }
         if (!deps.hookPlugins.list().some((p) => p.id === id)) {
-          sendJson(404, { error: 'Plugin not found' });
+          sendJson(res, 404, { error: 'Plugin not found' });
           return true;
         }
         setProjectEnabled(project, id, body.enabled, { projects: deps.projects });
-        sendJson(200, { ok: true });
+        sendJson(res, 200, { ok: true });
         return true;
       }
       const ok = deps.hookPlugins.setPluginEnabled(id, body.enabled);
       if (!ok) {
-        sendJson(404, { error: 'Plugin not found' });
+        sendJson(res, 404, { error: 'Plugin not found' });
         return true;
       }
-      sendJson(200, { ok: true });
+      sendJson(res, 200, { ok: true });
     } catch (err) {
-      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
     }
     return true;
   }
@@ -242,7 +236,7 @@ export async function handleHooksRoutes(
   // ---- 派发记录 ----
   if (pathname === '/hooks/dispatches' && req.method === 'GET') {
     if (!deps.hookDispatches) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     const ruleId = url.searchParams.get('ruleId') ?? undefined;
@@ -251,7 +245,7 @@ export async function handleHooksRoutes(
     const sessionId = url.searchParams.get('sessionId') ?? undefined;
     const limitRaw = url.searchParams.get('limit');
     const limit = limitRaw ? Number(limitRaw) : undefined;
-    sendJson(200, {
+    sendJson(res, 200, {
       dispatches: deps.hookDispatches.list({
         ruleId,
         status,
@@ -266,21 +260,21 @@ export async function handleHooksRoutes(
   const runMatch = pathname.match(/^\/hooks\/dispatches\/(\d+)\/run$/);
   if (runMatch && req.method === 'POST') {
     if (!deps.hookRunner) {
-      sendJson(503, { error: 'Resume runner unavailable' });
+      sendJson(res, 503, { error: 'Resume runner unavailable' });
       return true;
     }
     let sessionId: string;
     try {
-      sessionId = RunDispatchBody.parse(await readJson()).sessionId;
+      sessionId = RunDispatchBody.parse(await readJson(req)).sessionId;
     } catch (err) {
-      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
       return true;
     }
     const result = await deps.hookRunner.run(Number(runMatch[1]!), sessionId);
     if (result.ok) {
-      sendJson(200, { ok: true, dispatchId: result.dispatchId });
+      sendJson(res, 200, { ok: true, dispatchId: result.dispatchId });
     } else {
-      sendJson(result.status, { error: result.error });
+      sendJson(res, result.status, { error: result.error });
     }
     return true;
   }
@@ -288,44 +282,35 @@ export async function handleHooksRoutes(
   // ---- 会话列表 / 改名 ----
   if (pathname === '/sessions' && req.method === 'GET') {
     if (!deps.hookSessions) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
-    sendJson(200, { sessions: deps.hookSessions.listWithCounts(projectId) });
+    sendJson(res, 200, { sessions: deps.hookSessions.listWithCounts(projectId) });
     return true;
   }
 
   const sessionMatch = pathname.match(/^\/sessions\/([^/]+)$/);
   if (sessionMatch && req.method === 'PATCH') {
     if (!deps.hookSessions) {
-      sendJson(503, { error: 'Hooks subsystem unavailable' });
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
       return true;
     }
     const sessionId = decodeURIComponent(sessionMatch[1]!);
     if (!deps.hookSessions.getBySessionId(sessionId)) {
-      sendJson(404, { error: 'Session not found' });
+      sendJson(res, 404, { error: 'Session not found' });
       return true;
     }
     try {
-      const body = RenameSessionBody.parse(await readJson());
+      const body = RenameSessionBody.parse(await readJson(req));
       const session = deps.hookSessions.setPendingTitle(sessionId, body.title);
-      sendJson(200, { session });
+      sendJson(res, 200, { session });
     } catch (err) {
-      sendJson(400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
     }
     return true;
   }
 
   return false;
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
 }

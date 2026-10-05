@@ -18,6 +18,7 @@ import {
   formatTime,
   parseDetail,
   rawOf,
+  sessionLabel,
   summarizeEvent,
   taskNotificationOf,
 } from '@/lib/hook-payload';
@@ -218,7 +219,7 @@ export function layoutMindmap(
           const kids = expanded.has(eKey) ? hitChain(e.id, hits) : [];
           const isSub = e.eventType === HARNESS_LIFECYCLE.claude.subagentStop;
           const ad = agentDispatchOf(e);
-          const notif = taskNotificationOf(e.payload);
+          const notif = taskNotificationOf(e);
 
           // 环成员归锚：先于主链判定（匹配则挂锚、不占主链）
           if (notif || isSub) {
@@ -1024,7 +1025,7 @@ export function LifecycleMindmap({
           >
             {(sessions ?? []).map((s) => (
               <option key={s.sessionId} value={s.sessionId}>
-                {s.title ?? s.sessionId.slice(0, 8)}
+                {sessionLabel(s.title, s.sessionId)}
               </option>
             ))}
           </select>

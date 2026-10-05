@@ -101,7 +101,7 @@ export function buildLifecycleGroups(
     const pid = extractPromptId(event.payload);
     if (type === lifecycle.open) {
       // 子代理返回通知：不是用户 prompt——归回派发所在组闭环，不开新组。
-      const notif = taskNotificationOf(event.payload);
+      const notif = taskNotificationOf(event);
       if (notif) {
         const target =
           (notif.toolUseId ? byToolUse.get(notif.toolUseId) : undefined) ??

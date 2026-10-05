@@ -59,14 +59,29 @@ export function newestEventAt(events: HookEventRow[]): string | undefined {
   return events[events.length - 1]?.createdAt;
 }
 
+/** 同一 event 的 payload 解析缓存——rawOf/agentDispatchOf/taskNotificationOf
+ *  共用一次 JSON.parse；events refetch 换新对象即自动失效（WeakMap）。 */
+const parseCache = new WeakMap<HookEventRow, Record<string, unknown>>();
+
+/** payload 的 JSON.parse 结果（坏 JSON / 非对象 → 空对象，不抛）。 */
+function parsedOf(event: HookEventRow): Record<string, unknown> {
+  const hit = parseCache.get(event);
+  if (hit !== undefined) return hit;
+  let out: Record<string, unknown> = {};
+  try {
+    const p: unknown = JSON.parse(event.payload);
+    if (p && typeof p === 'object') out = p as Record<string, unknown>;
+  } catch {
+    // 坏 JSON → 空对象（各解析函数照常回落）
+  }
+  parseCache.set(event, out);
+  return out;
+}
+
 /** payload.raw 原始对象（坏 JSON / 缺失返回空对象）。 */
 export function rawOf(event: HookEventRow): Record<string, unknown> {
-  try {
-    const p = JSON.parse(event.payload) as { raw?: unknown };
-    return p.raw && typeof p.raw === 'object' ? (p.raw as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
+  const p = parsedOf(event);
+  return p.raw && typeof p.raw === 'object' ? (p.raw as Record<string, unknown>) : {};
 }
 
 const flat = (v: string): string => v.replace(/\s+/g, ' ').trim();
@@ -85,18 +100,11 @@ export interface AgentDispatch {
 
 export function agentDispatchOf(event: HookEventRow): AgentDispatch | null {
   if (event.eventType !== 'PostToolUse') return null;
-  try {
-    const p = JSON.parse(event.payload) as {
-      toolResponse?: unknown;
-      raw?: { tool_use_id?: unknown };
-    };
-    const resp = p.toolResponse as { agentId?: unknown; resolvedModel?: unknown } | null;
-    if (!resp || typeof resp.agentId !== 'string' || !resp.agentId) return null;
-    const toolUseId = str(p.raw?.tool_use_id);
-    return { agentId: resp.agentId, toolUseId, model: str(resp.resolvedModel) };
-  } catch {
-    return null;
-  }
+  const p = parsedOf(event);
+  const resp = p.toolResponse as { agentId?: unknown; resolvedModel?: unknown } | null;
+  if (!resp || typeof resp.agentId !== 'string' || !resp.agentId) return null;
+  const raw = p.raw as { tool_use_id?: unknown } | undefined;
+  return { agentId: resp.agentId, toolUseId: str(raw?.tool_use_id), model: str(resp.resolvedModel) };
 }
 
 /**
@@ -111,24 +119,20 @@ export interface TaskNotification {
   summary: string | null;
 }
 
-export function taskNotificationOf(payload: string): TaskNotification | null {
-  try {
-    const raw = (JSON.parse(payload) as { raw?: { prompt?: unknown } }).raw;
-    const prompt = str(raw?.prompt);
-    if (!prompt || !prompt.startsWith('<task-notification>')) return null;
-    const pick = (tag: string): string | null => {
-      const m = prompt.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
-      return m ? m[1]!.trim() || null : null;
-    };
-    return {
-      taskId: pick('task-id'),
-      toolUseId: pick('tool-use-id'),
-      status: pick('status'),
-      summary: pick('summary'),
-    };
-  } catch {
-    return null;
-  }
+export function taskNotificationOf(event: HookEventRow): TaskNotification | null {
+  const raw = parsedOf(event).raw as { prompt?: unknown } | undefined;
+  const prompt = str(raw?.prompt);
+  if (!prompt || !prompt.startsWith('<task-notification>')) return null;
+  const pick = (tag: string): string | null => {
+    const m = prompt.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
+    return m ? m[1]!.trim() || null : null;
+  };
+  return {
+    taskId: pick('task-id'),
+    toolUseId: pick('tool-use-id'),
+    status: pick('status'),
+    summary: pick('summary'),
+  };
 }
 
 /**
@@ -142,7 +146,7 @@ export function summarizeEvent(event: HookEventRow): string {
   switch (event.eventType) {
     case 'UserPromptSubmit': {
       // task-notification（子代理返回）：提取 status/summary，不展示整段 XML
-      const notif = taskNotificationOf(event.payload);
+      const notif = taskNotificationOf(event);
       if (notif) {
         return [notif.status, notif.summary].filter(Boolean).join(' · ');
       }

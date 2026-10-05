@@ -1,7 +1,6 @@
 import type { Harness } from '@weave/core';
 import {
-  HarnessRegistry,
-  registerRuntimeDrivers,
+  createRuntimeRegistry,
   type AssetSurface,
   type PluginSurface,
 } from '@weave/harness';
@@ -18,8 +17,7 @@ import {
  * 独立实例、内容一致，行为等价。
  * 批 3：plugins 面同范式取（toolkit 等编排方经此取，零 CC 路径硬编码）。
  */
-const registry = new HarnessRegistry();
-registerRuntimeDrivers(registry);
+const registry = createRuntimeRegistry();
 
 /** 按 harness 取资产表面；未注册或未补 assets 槽抛错。 */
 export function assetSurfaceFor(harness: Harness): AssetSurface {

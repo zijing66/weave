@@ -149,7 +149,7 @@ function skipDir(rel: string, name: string): boolean {
  * whitelist above. `home` is injectable for tests.
  */
 export async function listGlobalFileAssets(home: string = homedir()): Promise<AssetEntry[]> {
-  const sniffer = new PluginModsSniffer(); // 请求级 sniff 缓存
+  const sniffer = new PluginModsSniffer({ revalidate: false }); // 请求级：同请求内复用结论
   const out: AssetEntry[] = [];
   for (const root of ROOTS) {
     const base = path.join(home, ...root.prefix.split('/'));

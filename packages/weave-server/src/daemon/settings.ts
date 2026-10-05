@@ -190,8 +190,12 @@ const KEYS = {
 /** 测试注入（内存库）；null = 未注入。 */
 let settingsDb: DatabaseSync | null = null;
 
+/** hooks.enabled 热路径缓存（ingest 每事件读）：键 = 注入库实例，写入即失效。 */
+let hooksEnabledCache: { db: DatabaseSync | null; value: boolean } | null = null;
+
 export function setDaemonSettingsDb(db: DatabaseSync | null): void {
   settingsDb = db;
+  hooksEnabledCache = null;
 }
 
 /**
@@ -285,9 +289,22 @@ export function readDaemonSettingsSync(): DaemonSettings {
   return read();
 }
 
+/**
+ * hooks.enabled 快速读（POST /hooks 每事件调用）：进程内唯一写点是
+ * writeDaemonSettings（写即失效），故缓存与全量读等值，省一次 SELECT+merge。
+ */
+export function readHooksEnabled(): boolean {
+  const cached = hooksEnabledCache;
+  if (cached && cached.db === settingsDb) return cached.value;
+  const value = read().hooks.enabled;
+  hooksEnabledCache = { db: settingsDb, value };
+  return value;
+}
+
 /** Persist daemon settings (defaults merged over the input). */
 export async function writeDaemonSettings(settings: DaemonSettings): Promise<DaemonSettings> {
   const normalized = mergeDefaults(settings);
   withDb((db) => writeMap(db, toEntries(normalized)));
+  hooksEnabledCache = null;
   return normalized;
 }

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import type { WeaveServerDeps } from './server.js';
+import { readJson, sendJson } from './http.js';
 import { ToolkitError } from '../hooks/toolkit.js';
 
 /**
@@ -26,40 +27,32 @@ export async function handleToolkitRoutes(
 ): Promise<boolean> {
   if (!pathname.includes('/toolkit')) return false;
 
-  const sendJson = (status: number, data: unknown): void => {
-    res.statusCode = status;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify(data));
-  };
-
   if (!isAuthed) {
-    sendJson(401, { error: 'Unauthorized' });
+    sendJson(res, 401, { error: 'Unauthorized' });
     return true;
   }
   if (!deps.toolkit) {
-    sendJson(503, { error: 'Toolkit unavailable' });
+    sendJson(res, 503, { error: 'Toolkit unavailable' });
     return true;
   }
 
-  const readJson = async (): Promise<unknown> => JSON.parse(await readBody(req));
-
   const fail = (err: unknown): void => {
     if (err instanceof ToolkitError) {
-      sendJson(err.code === 'not-found' ? 404 : 400, { error: err.message, code: err.code });
+      sendJson(res, err.code === 'not-found' ? 404 : 400, { error: err.message, code: err.code });
       return;
     }
-    sendJson(400, { error: err instanceof Error ? err.message : 'Toolkit operation failed' });
+    sendJson(res, 400, { error: err instanceof Error ? err.message : 'Toolkit operation failed' });
   };
 
   // ---- 包清单 ----
   const listMatch = pathname.match(/^\/projects\/(\d+)\/toolkit$/);
   if (listMatch) {
     if (req.method !== 'GET') {
-      sendJson(405, { error: 'Method not allowed' });
+      sendJson(res, 405, { error: 'Method not allowed' });
       return true;
     }
     try {
-      sendJson(200, await deps.toolkit.list(Number(listMatch[1])));
+      sendJson(res, 200, await deps.toolkit.list(Number(listMatch[1])));
     } catch (err) {
       fail(err);
     }
@@ -70,7 +63,7 @@ export async function handleToolkitRoutes(
   const toggleMatch = pathname.match(/^\/projects\/(\d+)\/toolkit\/([^/]+)\/(enable|disable)$/);
   if (toggleMatch) {
     if (req.method !== 'POST') {
-      sendJson(405, { error: 'Method not allowed' });
+      sendJson(res, 405, { error: 'Method not allowed' });
       return true;
     }
     const projectId = Number(toggleMatch[1]);
@@ -81,7 +74,7 @@ export async function handleToolkitRoutes(
       const result = enable
         ? await deps.toolkit.enable(projectId, packId, source ?? undefined)
         : await deps.toolkit.disable(projectId, packId, source ?? undefined);
-      sendJson(200, result);
+      sendJson(res, 200, result);
     } catch (err) {
       fail(err);
     }
@@ -92,11 +85,11 @@ export async function handleToolkitRoutes(
   const cleanupMatch = pathname.match(/^\/projects\/(\d+)\/toolkit\/legacy-copies\/cleanup$/);
   if (cleanupMatch) {
     if (req.method !== 'POST') {
-      sendJson(405, { error: 'Method not allowed' });
+      sendJson(res, 405, { error: 'Method not allowed' });
       return true;
     }
     try {
-      sendJson(200, await deps.toolkit.cleanupLegacyCopies(Number(cleanupMatch[1])));
+      sendJson(res, 200, await deps.toolkit.cleanupLegacyCopies(Number(cleanupMatch[1])));
     } catch (err) {
       fail(err);
     }
@@ -108,7 +101,7 @@ export async function handleToolkitRoutes(
     if (req.method === 'GET') {
       try {
         const { dirs, indexes } = await deps.toolkit.listDirs();
-        sendJson(200, { dirs, indexes });
+        sendJson(res, 200, { dirs, indexes });
       } catch (err) {
         fail(err);
       }
@@ -116,25 +109,25 @@ export async function handleToolkitRoutes(
     }
     if (req.method === 'POST') {
       try {
-        const body = DirBody.parse(await readJson());
-        sendJson(201, await deps.toolkit.addDir(body.path));
+        const body = DirBody.parse(await readJson(req));
+        sendJson(res, 201, await deps.toolkit.addDir(body.path));
       } catch (err) {
         fail(err);
       }
       return true;
     }
-    sendJson(405, { error: 'Method not allowed' });
+    sendJson(res, 405, { error: 'Method not allowed' });
     return true;
   }
 
   if (pathname === '/toolkit/dirs/remove') {
     if (req.method !== 'POST') {
-      sendJson(405, { error: 'Method not allowed' });
+      sendJson(res, 405, { error: 'Method not allowed' });
       return true;
     }
     try {
-      const body = DirBody.parse(await readJson());
-      sendJson(200, await deps.toolkit.removeDir(body.path));
+      const body = DirBody.parse(await readJson(req));
+      sendJson(res, 200, await deps.toolkit.removeDir(body.path));
     } catch (err) {
       fail(err);
     }
@@ -142,13 +135,4 @@ export async function handleToolkitRoutes(
   }
 
   return false;
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
 }

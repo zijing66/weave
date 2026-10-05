@@ -8,7 +8,7 @@ import {
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
-import { formatTime } from '@/lib/hook-payload';
+import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
 import {
   buildLifecycleGroups,
@@ -71,7 +71,6 @@ export function TasksPanel({
   const [subagentsBySession, setSubagentsBySession] = useState<Map<string, Map<string, number>>>(
     new Map(),
   );
-  /** 展开组：null = 自动跟随最新组，'' = 用户全部折叠，其余 = 固定该组。 */
   /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
@@ -132,7 +131,6 @@ export function TasksPanel({
 
   // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
   useEffect(() => {
-    const timers: number[] = [];
     let refreshTimer: number | null = null;
 
     const refetchAll = (): void => {
@@ -248,7 +246,6 @@ export function TasksPanel({
     window.addEventListener('weave:hook', onHook);
     return () => {
       window.removeEventListener('weave:hook', onHook);
-      for (const id of timers) window.clearTimeout(id);
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
   }, [refreshSessions, refreshDispatches, refreshEvents, selectedId]);
@@ -434,7 +431,7 @@ export function TasksPanel({
     setPendingRun({
       dispatchId,
       sessionId,
-      sessionLabel: session?.title ?? sessionId.slice(0, 8),
+      sessionLabel: sessionLabel(session?.title ?? null, sessionId),
     });
   };
 
@@ -541,7 +538,7 @@ export function TasksPanel({
                     >
                       {(sessions ?? []).map((s) => (
                         <option key={s.sessionId} value={s.sessionId}>
-                          {s.title ?? s.sessionId.slice(0, 8)}
+                          {sessionLabel(s.title, s.sessionId)}
                         </option>
                       ))}
                     </select>

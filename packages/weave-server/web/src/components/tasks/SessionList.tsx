@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
+import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
@@ -125,7 +126,7 @@ export function SessionList({
                 <>
                   {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行） */}
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
-                    {s.title ?? s.sessionId.slice(0, 8)}
+                    {sessionLabel(s.title, s.sessionId)}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     <button

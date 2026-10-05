@@ -83,3 +83,52 @@ export class ClaudeEventSource implements EventSource {
 
 /** 事件接入实例（driver events 槽消费；normalize 无状态，单例安全）。 */
 export const CLAUDE_EVENT_SOURCE = new ClaudeEventSource();
+
+/** SSE event.ingested 帧的 Claude 协议扩展字段（web 任务面板子 agent 对账消费）。 */
+export interface ClaudeFrameFacts {
+  agentId?: string;
+  spawnAgentId?: string;
+  backgroundTasks?: Array<{ id: string; status: string }>;
+}
+
+/** frameFacts 所需的归一化 payload 形状（server NormalizedHookPayload 结构兼容）。 */
+export interface FramePayloadLike {
+  eventType: string;
+  toolName: string | null;
+  toolResponse: unknown;
+  raw: unknown;
+}
+
+/**
+ * 从归一化 payload 提取 SSE 帧的 Claude 协议字段（协议知识留在 harness 侧，
+ * server 路由只透传）：
+ * - agentId：子 agent 自身工具事件的 raw.agent_id（归属父会话，活性续期）；
+ * - spawnAgentId：Agent 工具异步返回 isAsync+agentId（后台子 agent 出生信号）；
+ * - backgroundTasks：Stop/SubagentStop 的 background_tasks 快照（仅 id/status）。
+ * 缺失字段不入返回对象——server 直接展开进帧，与旧 `...(x ? {x} : {})` 等价。
+ */
+export function frameFacts(payload: FramePayloadLike | null): ClaudeFrameFacts {
+  const raw = payload?.raw;
+  const agentId =
+    raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).agent_id === 'string'
+      ? ((raw as Record<string, unknown>).agent_id as string)
+      : undefined;
+  // 后台子 agent 出生信号：Agent 工具的异步返回带子 agent id。
+  let spawnAgentId: string | undefined;
+  if (payload?.eventType === 'PostToolUse' && payload.toolName === 'Agent') {
+    const resp = payload.toolResponse as { isAsync?: unknown; agentId?: unknown } | null;
+    if (resp?.isAsync && typeof resp.agentId === 'string') spawnAgentId = resp.agentId;
+  }
+  // Stop/SubagentStop 帧透出 background_tasks 快照（仅保留 id/status 字符串）。
+  let backgroundTasks: Array<{ id: string; status: string }> | undefined;
+  if (Array.isArray(raw && typeof raw === 'object' ? (raw as Record<string, unknown>).background_tasks : undefined)) {
+    backgroundTasks = ((raw as Record<string, unknown>).background_tasks as Array<Record<string, unknown>>)
+      .filter((x) => x && typeof x.id === 'string' && typeof x.status === 'string')
+      .map((x) => ({ id: x.id as string, status: x.status as string }));
+  }
+  const facts: ClaudeFrameFacts = {};
+  if (agentId) facts.agentId = agentId;
+  if (spawnAgentId) facts.spawnAgentId = spawnAgentId;
+  if (backgroundTasks) facts.backgroundTasks = backgroundTasks;
+  return facts;
+}

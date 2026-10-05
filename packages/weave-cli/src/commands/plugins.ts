@@ -1,4 +1,4 @@
-import { ensureDaemonRunning } from './daemon.js';
+import { call } from './daemon.js';
 import { t } from '../i18n/index.js';
 import type { Command, CommandContext } from '../parser.js';
 import { renderTable } from './hooks.js';
@@ -19,21 +19,6 @@ interface PluginRow {
   status: string;
   ruleCount: number;
   error?: string;
-}
-
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const handle = await ensureDaemonRunning();
-  const res = await fetch(`http://127.0.0.1:${handle.port}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${handle.token}`,
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `${res.status}`);
-  return data;
 }
 
 async function list(): Promise<void> {

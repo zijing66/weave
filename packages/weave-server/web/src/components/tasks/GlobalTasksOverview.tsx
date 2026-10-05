@@ -3,7 +3,7 @@ import { api, type HookDispatch, type SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
-import { formatTime } from '@/lib/hook-payload';
+import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { deriveSessionStatus, STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
 import { AgentBadge } from '@/components/AgentBadge';
@@ -285,7 +285,7 @@ export function GlobalTasksOverview({
                       {projectName}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
-                      {s.title ?? s.sessionId.slice(0, 8)}
+                      {sessionLabel(s.title, s.sessionId)}
                     </span>
                     {s.harness && (
                       <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />

@@ -297,11 +297,13 @@ describe('HookDispatcher', () => {
   });
 
   it('rename 双向：session_title diff 采纳外部改名；pending 交付即落定并广播', async () => {
+    // 会话行由 server 路由 ingest 前 touch（单一 owner）——单测显式建行
+    const sessions = new SessionRepository(db);
+    sessions.touch('s1', project.id);
     // 无任何规则也要跑 rename 逻辑
     const first = await dispatcher.onIngest(ctx({ payload: payload({ raw: { session_title: '外部改名' } }) }));
     expect(first.sessionTitle).toBeUndefined();
     // applyReportedTitle 落定由 sessions 完成——经 repo 直接验证
-    const sessions = new SessionRepository(db);
     expect(sessions.getBySessionId('s1')?.title).toBe('外部改名');
     expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1);
 

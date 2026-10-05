@@ -3,6 +3,7 @@ import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weave/core';
 import { checkHarness } from '@weave/core';
 import type { EventSource, HarnessRegistry } from '@weave/harness';
+import { frameFacts } from '@weave/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -86,6 +87,7 @@ import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
+import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
@@ -150,8 +152,13 @@ export function createWeaveServer(deps: WeaveServerDeps): Server {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
   const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache };
+  // 批 4b：分派列表优先由 harness registry 派生（图②），回退 deps.adapters
+  //（测试/兼容注入）——装配期算一次，不在每请求重建。
+  const eventSources: readonly EventSource[] = serverDeps.harnesses
+    ? serverDeps.harnesses.byCapability('events').flatMap((d) => d.events ?? [])
+    : (serverDeps.adapters ?? []);
   return http.createServer((req, res) => {
-    void handleRequest(req, res, serverDeps);
+    void handleRequest(req, res, serverDeps, eventSources);
   });
 }
 
@@ -159,13 +166,9 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WeaveServerDeps,
+  eventSources: readonly EventSource[],
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${DAEMON_HOST}`);
-  const sendJson = (status: number, data: unknown): void => {
-    res.statusCode = status;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify(data));
-  };
 
   // The SPA calls /api/<route>; strip the prefix so existing routes work for
   // both the CLI (which calls /<route> directly) and the frontend.
@@ -175,7 +178,7 @@ async function handleRequest(
 
   // /health — unauthenticated; used for port probing and single-instance checks.
   if (pathname === '/health' && req.method === 'GET') {
-    sendJson(200, {
+    sendJson(res, 200, {
       service: 'weave-daemon',
       version: DAEMON_VERSION,
       pid: process.pid,
@@ -192,32 +195,28 @@ async function handleRequest(
     const token = extractBearerToken(req);
     const project = token ? deps.projects.getByToken(token) : undefined;
     if (!project) {
-      sendJson(401, { error: 'Unauthorized' });
+      sendJson(res, 401, { error: 'Unauthorized' });
       return;
     }
     if (!deps.hookEvents || (!deps.adapters && !deps.harnesses)) {
-      sendJson(503, { error: 'Hook ingestion unavailable' });
+      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
       return;
     }
     let report: HookReport;
     try {
       report = JSON.parse(await readBody(req)) as HookReport;
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     if (!report.source || !report.eventType) {
-      sendJson(400, { error: 'Missing "source" or "eventType"' });
+      sendJson(res, 400, { error: 'Missing "source" or "eventType"' });
       return;
     }
-    // 批 4b：分派列表优先由 harness registry 派生（图②），回退 deps.adapters
-    //（测试/兼容注入）——当前仅 claude 一个 source，两路查找结果一致。
-    const sources: readonly EventSource[] = deps.harnesses
-      ? deps.harnesses.byCapability('events').flatMap((d) => d.events ?? [])
-      : (deps.adapters ?? []);
-    const adapter = sources.find((a) => a.source === report.source);
+    // 批 4b：查找在装配期派生的 eventSources（harnesses 优先，回退 deps.adapters）。
+    const adapter = eventSources.find((a) => a.source === report.source);
     if (!adapter) {
-      sendJson(400, { error: `Unknown hook source: ${report.source}` });
+      sendJson(res, 400, { error: `Unknown hook source: ${report.source}` });
       return;
     }
     // EventSource.normalize 返回 unknown（harness 不依赖 server 类型）；
@@ -228,30 +227,13 @@ async function handleRequest(
     if (deps.hookSessions && input.sessionId) {
       deps.hookSessions.touch(input.sessionId, project.id);
     }
-    // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次。
+    // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次；
+    // 帧字段的 Claude 协议知识在 harness 侧（frameFacts），路由只透传。
     let payload: NormalizedHookPayload | null = null;
     try {
       payload = JSON.parse(input.payload) as NormalizedHookPayload;
     } catch {
       payload = null;
-    }
-    const raw = payload?.raw;
-    const agentId =
-      raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).agent_id === 'string'
-        ? ((raw as Record<string, unknown>).agent_id as string)
-        : undefined;
-    // 后台子 agent 出生信号：Agent 工具的异步返回带子 agent id。
-    let spawnAgentId: string | undefined;
-    if (input.eventType === 'PostToolUse' && payload?.toolName === 'Agent') {
-      const resp = payload.toolResponse as { isAsync?: unknown; agentId?: unknown } | null;
-      if (resp?.isAsync && typeof resp.agentId === 'string') spawnAgentId = resp.agentId;
-    }
-    // Stop/SubagentStop 帧透出 background_tasks 快照（仅保留 id/status 字符串）。
-    let backgroundTasks: Array<{ id: string; status: string }> | undefined;
-    if (Array.isArray(raw && typeof raw === 'object' ? (raw as Record<string, unknown>).background_tasks : undefined)) {
-      backgroundTasks = ((raw as Record<string, unknown>).background_tasks as Array<Record<string, unknown>>)
-        .filter((x) => x && typeof x.id === 'string' && typeof x.status === 'string')
-        .map((x) => ({ id: x.id as string, status: x.status as string }));
     }
     // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
     deps.hookBus?.emit({
@@ -260,9 +242,7 @@ async function handleRequest(
       projectId: project.id,
       sessionId: input.sessionId ?? null,
       eventType: input.eventType,
-      ...(agentId ? { agentId } : {}),
-      ...(spawnAgentId ? { spawnAgentId } : {}),
-      ...(backgroundTasks ? { backgroundTasks } : {}),
+      ...frameFacts(payload),
       at: new Date().toISOString(),
     });
     // D3 分发：在响应路径上同步匹配规则——命中 inject 时把 additionalContext
@@ -286,7 +266,7 @@ async function handleRequest(
         source: input.source,
       });
     }
-    sendJson(201, {
+    sendJson(res, 201, {
       id,
       projectId: project.id,
       source: input.source,
@@ -304,7 +284,7 @@ async function handleRequest(
   const isAuthed = token === deps.daemonToken;
   const requireAuth = (): boolean => {
     if (!isAuthed) {
-      sendJson(401, { error: 'Unauthorized' });
+      sendJson(res, 401, { error: 'Unauthorized' });
       return false;
     }
     return true;
@@ -321,7 +301,7 @@ async function handleRequest(
   if (hooksMatch && req.method === 'GET') {
     if (!requireAuth()) return;
     if (!deps.hookEvents) {
-      sendJson(503, { error: 'Hook ingestion unavailable' });
+      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
       return;
     }
     const projectId = Number(hooksMatch[1]);
@@ -332,10 +312,10 @@ async function handleRequest(
     // sessionId 过滤语义（任务视图按会话画事件链）：projectId 仅作鉴权锚点——
     // 会话可能采集到跨项目事件，双条件过滤会丢事件。
     if (sessionId) {
-      sendJson(200, { events: deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId) });
+      sendJson(res, 200, { events: deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId) });
       return;
     }
-    sendJson(200, { events: deps.hookEvents.listByProject(projectId, limit) });
+    sendJson(res, 200, { events: deps.hookEvents.listByProject(projectId, limit) });
     return;
   }
 
@@ -343,7 +323,7 @@ async function handleRequest(
   if (pathname === '/settings') {
     if (!requireAuth()) return;
     if (req.method === 'GET') {
-      sendJson(200, {
+      sendJson(res, 200, {
         settings: await readDaemonSettings(),
         presets: terminalPresetsFor(process.platform),
         platform: process.platform,
@@ -355,14 +335,14 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as Partial<DaemonSettings>;
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       const saved = await writeDaemonSettings(body as DaemonSettings);
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。
       deps.hookEvents?.resetPrune();
-      sendJson(200, saved);
+      sendJson(res, 200, saved);
       return;
     }
   }
@@ -373,18 +353,18 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(openMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     let body: { target?: string };
     try {
       body = JSON.parse(await readBody(req)) as { target?: string };
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     if (body.target !== 'explorer' && body.target !== 'terminal') {
-      sendJson(400, { error: 'Invalid "target" (explorer|terminal)' });
+      sendJson(res, 400, { error: 'Invalid "target" (explorer|terminal)' });
       return;
     }
     const opener = deps.opener ?? defaultProjectOpener;
@@ -397,9 +377,9 @@ async function handleRequest(
         const settings = await readDaemonSettings();
         await opener.openTerminal(project.path, settings.terminal);
       }
-      sendJson(200, { ok: true, target: body.target, path: project.path });
+      sendJson(res, 200, { ok: true, target: body.target, path: project.path });
     } catch (e) {
-      sendJson(400, { error: e instanceof Error ? e.message : 'Open failed' });
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }
     return;
   }
@@ -409,21 +389,21 @@ async function handleRequest(
     if (!requireAuth()) return;
     const libraryPaths = deps.libraries ? deps.libraries.list().map((l) => l.path) : [];
     const roots = await listBrowseRoots(libraryPaths);
-    sendJson(200, { roots });
+    sendJson(res, 200, { roots });
     return;
   }
   if (pathname === '/fs/children' && req.method === 'GET') {
     if (!requireAuth()) return;
     const dirPath = url.searchParams.get('path');
     if (!dirPath) {
-      sendJson(400, { error: 'Missing "path" query parameter' });
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
       return;
     }
     try {
       const children = await listDirectoryChildren(dirPath);
-      sendJson(200, { children });
+      sendJson(res, 200, { children });
     } catch (err) {
-      sendJson(400, { error: `Cannot list directory: ${String(err)}` });
+      sendJson(res, 400, { error: `Cannot list directory: ${String(err)}` });
     }
     return;
   }
@@ -431,47 +411,47 @@ async function handleRequest(
   // --- libraries (asset sources for the install panel) ---
   if (pathname === '/libraries' && req.method === 'GET') {
     if (!requireAuth()) return;
-    sendJson(200, { libraries: deps.libraries ? deps.libraries.list() : [] });
+    sendJson(res, 200, { libraries: deps.libraries ? deps.libraries.list() : [] });
     return;
   }
   if (pathname === '/libraries' && req.method === 'POST') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     let body: { path?: string; kind?: string };
     try {
       body = JSON.parse(await readBody(req)) as { path?: string; kind?: string };
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     if (!body.path || !body.kind) {
-      sendJson(400, { error: 'Missing "path" or "kind"' });
+      sendJson(res, 400, { error: 'Missing "path" or "kind"' });
       return;
     }
     if (!['skill', 'mcp', 'both'].includes(body.kind)) {
-      sendJson(400, { error: 'Invalid "kind" (skill|mcp|both)' });
+      sendJson(res, 400, { error: 'Invalid "kind" (skill|mcp|both)' });
       return;
     }
     const row = deps.libraries.add({
       path: body.path,
       kind: body.kind as 'skill' | 'mcp' | 'both',
     });
-    sendJson(201, row);
+    sendJson(res, 201, row);
     return;
   }
   const libAssetsMatch = pathname.match(/^\/libraries\/(\d+)\/assets$/);
   if (libAssetsMatch && req.method === 'GET') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     const lib = deps.libraries.getById(Number(libAssetsMatch[1]));
     if (!lib) {
-      sendJson(404, { error: 'Library not found' });
+      sendJson(res, 404, { error: 'Library not found' });
       return;
     }
     const skills = await scanLibrarySkills(lib.path);
@@ -479,18 +459,18 @@ async function handleRequest(
       lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path) : [];
     const files =
       lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryFileAssets(lib.path) : null;
-    sendJson(200, { library: lib, skills, mcp, files });
+    sendJson(res, 200, { library: lib, skills, mcp, files });
     return;
   }
   const libMatch = pathname.match(/^\/libraries\/(\d+)$/);
   if (libMatch && req.method === 'DELETE') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     deps.libraries.remove(Number(libMatch[1]));
-    sendJson(200, { ok: true });
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -498,39 +478,39 @@ async function handleRequest(
   if (pathname === '/market' && req.method === 'GET') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     const items = await Promise.all(deps.libraries.list().map((row) => marketItem(row)));
-    sendJson(200, { items });
+    sendJson(res, 200, { items });
     return;
   }
   if (pathname === '/market' && req.method === 'POST') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     let body: { kind?: string; path?: string; url?: string };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     const importDeps = { libraries: deps.libraries };
     try {
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
-        sendJson(201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+        sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
-        sendJson(201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+        sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
       } else {
-        sendJson(400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
+        sendJson(res, 400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
       }
     } catch (e) {
-      sendJson(400, { error: e instanceof Error ? e.message : 'Import failed' });
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });
     }
     return;
   }
@@ -538,22 +518,22 @@ async function handleRequest(
   if (marketMatch && req.method === 'DELETE') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     const row = deps.libraries.getById(Number(marketMatch[1]));
     if (!row) {
-      sendJson(404, { error: 'Library not found' });
+      sendJson(res, 404, { error: 'Library not found' });
       return;
     }
     if (!isInsideDir(row.path, marketDir())) {
-      sendJson(400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
+      sendJson(res, 400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
       return;
     }
     await fs.promises.rm(row.path, { recursive: true, force: true });
     deps.libraries.remove(row.id);
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
-    sendJson(200, {
+    sendJson(res, 200, {
       ok: true,
       removed: row.path,
       installedCopiesKept: true,
@@ -565,19 +545,19 @@ async function handleRequest(
   if (migrateMatch && req.method === 'POST') {
     if (!requireAuth()) return;
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     const row = deps.libraries.getById(Number(migrateMatch[1]));
     if (!row) {
-      sendJson(404, { error: 'Library not found' });
+      sendJson(res, 404, { error: 'Library not found' });
       return;
     }
     try {
       const imported = await importLibraryIntoMarket(row, { libraries: deps.libraries });
-      sendJson(200, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+      sendJson(res, 200, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
     } catch (e) {
-      sendJson(400, { error: e instanceof Error ? e.message : 'Import failed' });
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });
     }
     return;
   }
@@ -588,20 +568,20 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(installMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     let body: InstallBody;
     try {
       body = JSON.parse(await readBody(req)) as InstallBody;
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     try {
       if (body.category === 'skill') {
         if (!body.name || !body.sourceDir) {
-          sendJson(400, { error: 'Missing "name" or "sourceDir"' });
+          sendJson(res, 400, { error: 'Missing "name" or "sourceDir"' });
           return;
         }
         const agent = body.agent ?? 'claude';
@@ -609,10 +589,10 @@ async function handleRequest(
           body.scope === 'global'
             ? await installGlobalSkill(body.sourceDir, body.name, agent)
             : await installSkill(project.path, body.sourceDir, body.name, agent);
-        sendJson(201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
+        sendJson(res, 201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name || !body.sourceFile) {
-          sendJson(400, { error: 'Missing "name" or "sourceFile"' });
+          sendJson(res, 400, { error: 'Missing "name" or "sourceFile"' });
           return;
         }
         const agent = body.agent ?? 'claude';
@@ -625,16 +605,16 @@ async function handleRequest(
           agent,
           scope,
         );
-        sendJson(201, { category: body.category, name: body.name, scope, agent, path: target });
+        sendJson(res, 201, { category: body.category, name: body.name, scope, agent, path: target });
       } else if (body.category === 'mcp') {
         if (!body.name || !body.mcpConfig) {
-          sendJson(400, { error: 'Missing "name" or "mcpConfig"' });
+          sendJson(res, 400, { error: 'Missing "name" or "mcpConfig"' });
           return;
         }
         if (body.agent === 'codex') {
           // Codex MCP servers live in ~/.codex/config.toml (user-level only)
           if (body.scope === 'project') {
-            sendJson(400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "global"' });
+            sendJson(res, 400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "global"' });
             return;
           }
           if (await codexMcpExists(body.name)) {
@@ -647,14 +627,14 @@ async function handleRequest(
         } else {
           await installMcp(project.path, body.name, body.mcpConfig as McpServerConfig);
         }
-        sendJson(201, {
+        sendJson(res, 201, {
           category: 'mcp',
           name: body.name,
           scope: body.agent === 'codex' ? 'global' : (body.scope ?? 'project'),
           agent: body.agent ?? 'claude',
         });
       } else {
-        sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
+        sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
       }
     } catch (e) {
       sendInstallError(res, e);
@@ -666,7 +646,7 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(uninstallMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     let body: {
@@ -678,13 +658,13 @@ async function handleRequest(
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     try {
       if (body.category === 'skill') {
         if (!body.name) {
-          sendJson(400, { error: 'Missing "name"' });
+          sendJson(res, 400, { error: 'Missing "name"' });
           return;
         }
         const agent = body.agent ?? 'claude';
@@ -692,7 +672,7 @@ async function handleRequest(
         else await uninstallSkill(project.path, body.name, agent);
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name) {
-          sendJson(400, { error: 'Missing "name"' });
+          sendJson(res, 400, { error: 'Missing "name"' });
           return;
         }
         await uninstallFileAsset(
@@ -704,7 +684,7 @@ async function handleRequest(
         );
       } else if (body.category === 'mcp') {
         if (!body.name) {
-          sendJson(400, { error: 'Missing "name"' });
+          sendJson(res, 400, { error: 'Missing "name"' });
           return;
         }
         if (body.agent === 'codex') {
@@ -718,10 +698,10 @@ async function handleRequest(
         } else if (body.scope === 'global') await removeGlobalMcpServer(body.name);
         else await uninstallMcp(project.path, body.name);
       } else {
-        sendJson(400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
+        sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
         return;
       }
-      sendJson(200, { ok: true });
+      sendJson(res, 200, { ok: true });
     } catch (e) {
       sendInstallError(res, e);
     }
@@ -734,17 +714,17 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(fileMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     const relPath = url.searchParams.get('path');
     if (!relPath) {
-      sendJson(400, { error: 'Missing "path" query parameter' });
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
       return;
     }
     try {
       const file = await readProjectFile(project.path, relPath);
-      sendJson(200, { path: relPath, content: file.content, size: file.size });
+      sendJson(res, 200, { path: relPath, content: file.content, size: file.size });
     } catch (e) {
       sendReaderError(res, e);
     }
@@ -756,12 +736,12 @@ async function handleRequest(
     if (!requireAuth()) return;
     const relPath = url.searchParams.get('path');
     if (!relPath) {
-      sendJson(400, { error: 'Missing "path" query parameter' });
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
       return;
     }
     try {
       const file = await readGlobalFile(relPath);
-      sendJson(200, { path: relPath, content: file.content, size: file.size });
+      sendJson(res, 200, { path: relPath, content: file.content, size: file.size });
     } catch (e) {
       sendReaderError(res, e);
     }
@@ -774,7 +754,7 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(mcpMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     const [projectServers, globalServers, codexServers] = await Promise.all([
@@ -782,7 +762,7 @@ async function handleRequest(
       safeReadGlobalMcp(),
       readCodexMcpServers().catch(() => ({})),
     ]);
-    sendJson(200, {
+    sendJson(res, 200, {
       project: projectServers,
       global: globalServers,
       codex: codexServers,
@@ -797,10 +777,10 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(harnessChecksMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
-    sendJson(200, { checks: await checkHarness(project.path) });
+    sendJson(res, 200, { checks: await checkHarness(project.path) });
     return;
   }
 
@@ -808,7 +788,7 @@ async function handleRequest(
   const globalSkillsMatch = pathname.match(/^\/projects\/(\d+)\/skills\/global$/);
   if (globalSkillsMatch && req.method === 'GET') {
     if (!requireAuth()) return;
-    sendJson(200, { groups: await readGlobalSkillGroups() });
+    sendJson(res, 200, { groups: await readGlobalSkillGroups() });
     return;
   }
 
@@ -821,15 +801,15 @@ async function handleRequest(
     const name = url.searchParams.get('name');
     const pluginKey = url.searchParams.get('pluginKey') ?? undefined;
     if (!source || !name) {
-      sendJson(400, { error: 'Missing "source" or "name" query parameter' });
+      sendJson(res, 400, { error: 'Missing "source" or "name" query parameter' });
       return;
     }
     const dir = await resolveGlobalSkillDir(source, name, pluginKey);
     if (!dir) {
-      sendJson(404, { error: 'Skill not found' });
+      sendJson(res, 404, { error: 'Skill not found' });
       return;
     }
-    sendJson(200, { files: await listGlobalSkillFiles(dir) });
+    sendJson(res, 200, { files: await listGlobalSkillFiles(dir) });
     return;
   }
 
@@ -843,17 +823,17 @@ async function handleRequest(
     const pluginKey = url.searchParams.get('pluginKey') ?? undefined;
     const relPath = url.searchParams.get('path');
     if (!source || !name || !relPath) {
-      sendJson(400, { error: 'Missing "source", "name" or "path" query parameter' });
+      sendJson(res, 400, { error: 'Missing "source", "name" or "path" query parameter' });
       return;
     }
     const dir = await resolveGlobalSkillDir(source, name, pluginKey);
     if (!dir) {
-      sendJson(404, { error: 'Skill not found' });
+      sendJson(res, 404, { error: 'Skill not found' });
       return;
     }
     try {
       const file = await readGlobalSkillFile(dir, relPath);
-      sendJson(200, { path: relPath, content: file.content, size: file.size });
+      sendJson(res, 200, { path: relPath, content: file.content, size: file.size });
     } catch (e) {
       sendReaderError(res, e);
     }
@@ -869,7 +849,7 @@ async function handleRequest(
         readClaudePluginEnabled(),
         readCodexPluginEnabled(),
       ]);
-      sendJson(200, { claude, codex });
+      sendJson(res, 200, { claude, codex });
       return;
     }
     if (req.method === 'PUT') {
@@ -877,7 +857,7 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as typeof body;
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       if (
@@ -885,12 +865,12 @@ async function handleRequest(
         typeof body.enabled !== 'boolean' ||
         (body.runtime !== 'claude' && body.runtime !== 'codex')
       ) {
-        sendJson(400, { error: 'Missing or invalid "runtime"/"key"/"enabled"' });
+        sendJson(res, 400, { error: 'Missing or invalid "runtime"/"key"/"enabled"' });
         return;
       }
       if (body.runtime === 'claude') await writeClaudePluginEnabled(body.key, body.enabled);
       else await writeCodexPluginEnabled(body.key, body.enabled);
-      sendJson(200, { ok: true });
+      sendJson(res, 200, { ok: true });
       return;
     }
   }
@@ -901,11 +881,11 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(mcpEnableMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (req.method === 'GET') {
-      sendJson(200, await readMcpEnableMap(project.path));
+      sendJson(res, 200, await readMcpEnableMap(project.path));
       return;
     }
     if (req.method === 'PUT') {
@@ -913,19 +893,19 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as { name?: string; state?: string };
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       if (!body.name || !body.state) {
-        sendJson(400, { error: 'Missing "name" or "state"' });
+        sendJson(res, 400, { error: 'Missing "name" or "state"' });
         return;
       }
       if (!['enabled', 'disabled', 'default'].includes(body.state)) {
-        sendJson(400, { error: 'Invalid "state" (enabled|disabled|default)' });
+        sendJson(res, 400, { error: 'Invalid "state" (enabled|disabled|default)' });
         return;
       }
       await setMcpEnableState(project.path, body.name, body.state as McpEnableState);
-      sendJson(200, { ok: true });
+      sendJson(res, 200, { ok: true });
       return;
     }
   }
@@ -936,11 +916,11 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(updatesMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (!deps.libraries) {
-      sendJson(200, { skills: [], mcp: [], files: [], available: 0 });
+      sendJson(res, 200, { skills: [], mcp: [], files: [], available: 0 });
       return;
     }
     const report = await detectUpdates(
@@ -948,7 +928,7 @@ async function handleRequest(
       deps.libraries.list(),
       deps.fingerprintCache ?? new FingerprintCache(),
     );
-    sendJson(200, report);
+    sendJson(res, 200, report);
     return;
   }
 
@@ -958,11 +938,11 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(updateMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     let body: {
@@ -974,16 +954,16 @@ async function handleRequest(
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
-      sendJson(400, { error: 'Invalid JSON body' });
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
     if (!body.category || !body.name || !body.scope) {
-      sendJson(400, { error: 'Missing "category", "name", or "scope"' });
+      sendJson(res, 400, { error: 'Missing "category", "name", or "scope"' });
       return;
     }
     const validCategories = ['skill', 'mcp', 'command', 'agent', 'workflow', 'rule', 'output-style'];
     if (!validCategories.includes(body.category)) {
-      sendJson(400, { error: 'Invalid "category"' });
+      sendJson(res, 400, { error: 'Invalid "category"' });
       return;
     }
     try {
@@ -998,9 +978,9 @@ async function handleRequest(
         },
         index,
       );
-      sendJson(200, { ok: true, category: body.category, name: body.name, scope: body.scope });
+      sendJson(res, 200, { ok: true, category: body.category, name: body.name, scope: body.scope });
     } catch (e) {
-      sendJson(400, { error: e instanceof Error ? e.message : 'Update failed' });
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Update failed' });
     }
     return;
   }
@@ -1011,11 +991,11 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(syncMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (!deps.libraries) {
-      sendJson(503, { error: 'Libraries unavailable' });
+      sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
     try {
@@ -1030,9 +1010,9 @@ async function handleRequest(
       } catch {
         // 失败只丢附加字段，不改资产同步结果（R8）
       }
-      sendJson(200, payload);
+      sendJson(res, 200, payload);
     } catch (e) {
-      sendJson(400, { error: e instanceof Error ? e.message : 'Sync failed' });
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Sync failed' });
     }
     return;
   }
@@ -1043,11 +1023,11 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(configMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (req.method === 'GET') {
-      sendJson(200, await readProjectConfig(project.path));
+      sendJson(res, 200, await readProjectConfig(project.path));
       return;
     }
     if (req.method === 'PUT') {
@@ -1055,7 +1035,7 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as Partial<ProjectConfig>;
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       const current = await readProjectConfig(project.path);
@@ -1064,7 +1044,7 @@ async function handleRequest(
         lastSyncAt: body.lastSyncAt ?? current.lastSyncAt,
       };
       await writeProjectConfig(project.path, next);
-      sendJson(200, next);
+      sendJson(res, 200, next);
       return;
     }
   }
@@ -1075,7 +1055,7 @@ async function handleRequest(
   if (pathname === '/statusline/global') {
     if (!requireAuth()) return;
     if (req.method === 'GET') {
-      sendJson(200, { config: await readGlobalStatuslineConfig() });
+      sendJson(res, 200, { config: await readGlobalStatuslineConfig() });
       return;
     }
     if (req.method === 'PUT') {
@@ -1083,7 +1063,7 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as StatuslineConfig;
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       try {
@@ -1095,9 +1075,9 @@ async function handleRequest(
             await applyStatuslineConfig(p.path, eff);
           }
         }
-        sendJson(200, { ok: true });
+        sendJson(res, 200, { ok: true });
       } catch (e) {
-        sendJson(400, { error: e instanceof Error ? e.message : 'Global statusline update failed' });
+        sendJson(res, 400, { error: e instanceof Error ? e.message : 'Global statusline update failed' });
       }
       return;
     }
@@ -1107,7 +1087,7 @@ async function handleRequest(
   // reset target always comes from the server (single source of truth).
   if (pathname === '/statusline/default' && req.method === 'GET') {
     if (!requireAuth()) return;
-    sendJson(200, { config: DEFAULT_STATUSLINE_CONFIG });
+    sendJson(res, 200, { config: DEFAULT_STATUSLINE_CONFIG });
     return;
   }
 
@@ -1116,7 +1096,7 @@ async function handleRequest(
     if (!requireAuth()) return;
     const project = deps.projects.getById(Number(statuslineMatch[1]));
     if (!project) {
-      sendJson(404, { error: 'Project not found' });
+      sendJson(res, 404, { error: 'Project not found' });
       return;
     }
     if (req.method === 'GET') {
@@ -1125,7 +1105,7 @@ async function handleRequest(
         readStatuslineScript(project.path),
         readGlobalStatuslineConfig(),
       ]);
-      sendJson(200, { config, script, globalConfig });
+      sendJson(res, 200, { config, script, globalConfig });
       return;
     }
     if (req.method === 'PUT') {
@@ -1133,14 +1113,14 @@ async function handleRequest(
       try {
         body = JSON.parse(await readBody(req)) as StatuslineConfig;
       } catch {
-        sendJson(400, { error: 'Invalid JSON body' });
+        sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
       try {
         await applyStatuslineConfig(project.path, body);
-        sendJson(200, { ok: true });
+        sendJson(res, 200, { ok: true });
       } catch (e) {
-        sendJson(400, { error: e instanceof Error ? e.message : 'Statusline update failed' });
+        sendJson(res, 400, { error: e instanceof Error ? e.message : 'Statusline update failed' });
       }
       return;
     }
@@ -1158,14 +1138,14 @@ async function handleRequest(
     if (!requireAuth()) return;
     const projectPath = url.searchParams.get('path');
     if (!projectPath) {
-      sendJson(400, { error: 'Missing "path" query parameter' });
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
       return;
     }
     if (!deps.watch) {
-      sendJson(503, { error: 'Watch service unavailable' });
+      sendJson(res, 503, { error: 'Watch service unavailable' });
       return;
     }
-    sendJson(200, { projectPath, assets: deps.watch.getAssets(projectPath) });
+    sendJson(res, 200, { projectPath, assets: deps.watch.getAssets(projectPath) });
     return;
   }
 
@@ -1174,13 +1154,13 @@ async function handleRequest(
   // home-directory scan.
   if (pathname === '/global-file-assets' && req.method === 'GET') {
     if (!requireAuth()) return;
-    sendJson(200, { assets: await listGlobalFileAssets() });
+    sendJson(res, 200, { assets: await listGlobalFileAssets() });
     return;
   }
 
   if (pathname === '/projects' && req.method === 'GET') {
     if (!requireAuth()) return;
-    sendJson(200, { projects: deps.projects.list() });
+    sendJson(res, 200, { projects: deps.projects.list() });
     return;
   }
 
@@ -1191,7 +1171,7 @@ async function handleRequest(
     return;
   }
 
-  sendJson(404, { error: 'Not found' });
+  sendJson(res, 404, { error: 'Not found' });
 }
 
 /** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
@@ -1282,16 +1262,6 @@ function clampLimit(raw: string | null): number {
   const n = Number(raw ?? '100');
   if (!Number.isFinite(n) || n <= 0) return 100;
   return Math.min(Math.floor(n), 500);
-}
-
-/** Collect the request body into a string. */
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
 }
 
 interface InstallBody {

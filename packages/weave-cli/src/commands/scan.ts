@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerProject } from '@weave/server';
 import { logger } from '@weave/core';
-import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
+import { createRuntimeRegistry } from '@weave/harness';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
@@ -11,8 +11,7 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'co
 
 /** detect 槽探测器（批 5）：`.claude`/`CLAUDE.md`、`.codex`/`AGENTS.md`。 */
 const DETECTORS = (() => {
-  const reg = new HarnessRegistry();
-  registerRuntimeDrivers(reg);
+  const reg = createRuntimeRegistry();
   return reg
     .byCapability('detect')
     .map((d) => d.detect)

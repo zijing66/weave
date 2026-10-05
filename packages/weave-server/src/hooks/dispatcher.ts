@@ -1,14 +1,15 @@
-import type { HookRule } from '@weave/core';
+import type { HookRule, HookDispatchStatus, HookDispatchMode } from '@weave/core';
 import { INJECTABLE_EVENTS, hookSourceHarness, type Harness } from '@weave/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { PluginHost, PluginHandler, PluginHandlerResult } from './plugin-loader.js';
-import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
+import { createPluginLogger } from './plugin-loader.js';
+import type { HookDispatchRepository, HookDispatchRow } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookEventBus } from './bus.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
-import { readDaemonSettings } from '../daemon/settings.js';
+import { readHooksEnabled } from '../daemon/settings.js';
 import { effective, pluginsStateOf } from './plugin-project-state.js';
 import { runWebhook, type EventSummary } from './handlers/webhook.js';
 import {
@@ -78,8 +79,7 @@ export class HookDispatcher {
 
   async onIngest(ctx: IngestContext): Promise<IngestOutcome> {
     try {
-      const settings = await readDaemonSettings();
-      if (!settings.hooks.enabled) return {};
+      if (!readHooksEnabled()) return {};
 
       // ⑦ 事件订阅转发：所有采集事件（不只命中规则的）fire-and-forget 通知插件。
       this.deps.plugins?.notifyEvent?.(ctx.payload.eventType, ctx.payload, ctx.sessionId);
@@ -92,7 +92,7 @@ export class HookDispatcher {
       // 会以旧名经 diff 通道把 title 自纠回去（改名被吞）。reported diff 兼作自纠兜底。
       const outcome: IngestOutcome = {};
       if (ctx.sessionId) {
-        this.deps.sessions.touch(ctx.sessionId, ctx.project.id); // 幂等 upsert
+        // 会话行由 server 路由 ingest 前 touch（单一 owner），此处只读。
         const reported = extractReportedTitle(ctx.payload);
         if (
           reported !== null &&
@@ -142,11 +142,7 @@ export class HookDispatcher {
 
         if (rule.handler.type === 'manual' || rule.handler.type === 'inject') {
           // 同 rule × session 60s 去重（防注入指令再触发事件造成递归风暴）
-          const key = `${rule.id}:${ctx.sessionId ?? ''}`;
-          const last = this.recentPool.get(key);
-          if (last !== undefined && now - last < DEDUPE_WINDOW_MS) continue;
-          this.recentPool.set(key, now);
-          this.trimDedupe(now);
+          if (this.dedupe(rule, ctx, now)) continue;
 
           const prompt =
             renderTemplate(
@@ -162,23 +158,11 @@ export class HookDispatcher {
               }),
             ) + `\n${DISPATCH_MARKER}`;
 
-          const status = rule.handler.type === 'inject' ? 'injected' : 'pending';
-          const row = this.deps.dispatches.insert({
-            ruleId: rule.id,
-            eventId: ctx.eventId,
-            sessionId: ctx.sessionId,
+          const status: HookDispatchStatus = rule.handler.type === 'inject' ? 'injected' : 'pending';
+          this.createDispatch(rule, ctx, {
             prompt,
             status,
             mode: rule.handler.type === 'inject' ? 'auto' : 'manual',
-          });
-          this.deps.bus.emit({
-            kind: 'dispatch.created',
-            ruleId: rule.id,
-            dispatchId: row.id,
-            status,
-            mode: row.mode,
-            sessionId: ctx.sessionId,
-            at: row.startedAt,
           });
           if (rule.handler.type === 'inject') injected.push(prompt);
           continue;
@@ -187,22 +171,10 @@ export class HookDispatcher {
         if (rule.handler.type === 'webhook') {
           if (this.runningWebhooks.has(rule.id)) continue; // 每规则防重入
           this.runningWebhooks.add(rule.id);
-          const row = this.deps.dispatches.insert({
-            ruleId: rule.id,
-            eventId: ctx.eventId,
-            sessionId: ctx.sessionId,
+          const row = this.createDispatch(rule, ctx, {
             prompt: `webhook ${rule.handler.url}`,
             status: 'running',
             mode: 'auto',
-          });
-          this.deps.bus.emit({
-            kind: 'dispatch.created',
-            ruleId: rule.id,
-            dispatchId: row.id,
-            status: 'running',
-            mode: 'auto',
-            sessionId: ctx.sessionId,
-            at: row.startedAt,
           });
           this.deps.bus.emit({
             kind: 'dispatch.started',
@@ -224,31 +196,15 @@ export class HookDispatcher {
           const impl = host.getHandler(rule.handler.pluginId, rule.handler.handlerType);
           if (!impl) continue;
 
-          const key = `${rule.id}:${ctx.sessionId ?? ''}`;
-          const last = this.recentPool.get(key);
-          if (last !== undefined && now - last < DEDUPE_WINDOW_MS) continue;
-          this.recentPool.set(key, now);
-          this.trimDedupe(now);
+          if (this.dedupe(rule, ctx, now)) continue;
 
           const result = await this.runPluginHandler(rule, ctx, host, impl);
           if (!result) continue;
           if (result.prompt) {
-            const row = this.deps.dispatches.insert({
-              ruleId: rule.id,
-              eventId: ctx.eventId,
-              sessionId: ctx.sessionId,
+            this.createDispatch(rule, ctx, {
               prompt: result.prompt + `\n${DISPATCH_MARKER}`,
               status: 'pending',
               mode: 'auto',
-            });
-            this.deps.bus.emit({
-              kind: 'dispatch.created',
-              ruleId: rule.id,
-              dispatchId: row.id,
-              status: 'pending',
-              mode: 'auto',
-              sessionId: ctx.sessionId,
-              at: row.startedAt,
             });
           }
           if (
@@ -268,12 +224,48 @@ export class HookDispatcher {
     }
   }
 
+  /** 入池 + 广播 dispatch.created（inject/manual/webhook/plugin 四路共用的建池路径）。 */
+  private createDispatch(
+    rule: HookRule,
+    ctx: IngestContext,
+    input: { prompt: string; status: HookDispatchStatus; mode: HookDispatchMode },
+  ): HookDispatchRow {
+    const row = this.deps.dispatches.insert({
+      ruleId: rule.id,
+      eventId: ctx.eventId,
+      sessionId: ctx.sessionId,
+      ...input,
+    });
+    this.deps.bus.emit({
+      kind: 'dispatch.created',
+      ruleId: rule.id,
+      dispatchId: row.id,
+      status: input.status,
+      mode: row.mode,
+      sessionId: ctx.sessionId,
+      at: row.startedAt,
+    });
+    return row;
+  }
+
+  /** 同 rule × session 60s 去重：true = 应跳过本规则（防注入指令再触发事件的递归风暴）。 */
+  private dedupe(rule: HookRule, ctx: IngestContext, now: number): boolean {
+    const key = `${rule.id}:${ctx.sessionId ?? ''}`;
+    const last = this.recentPool.get(key);
+    if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return true;
+    this.recentPool.set(key, now);
+    this.trimDedupe(now);
+    return false;
+  }
+
   /** 候选规则：事件索引（启用+priority 降序）→ 项目归属 → 过滤条件。 */
   private match(ctx: IngestContext): HookRule[] {
     const states = this.deps.pluginStates;
     // 插件规则反向闭环：全局关时 loader 已把 rule.enabled 级联为 false，项目级显式
     // 启用必须能复活它——门控在场时候选含停用规则，enabled 与 effective 在此裁决。
     const projectPlugins = states ? pluginsStateOf(ctx.project.meta).enabled : null;
+    // crossProjectOnly 需要的「其他项目路径」按 match 惰性取一次（避免每规则全表查）。
+    let otherPaths: string[] | null = null;
     return this.deps.registry
       .candidates(ctx.payload.eventType, states ? { includeDisabled: true } : undefined)
       .filter((rule) => {
@@ -301,11 +293,11 @@ export class HookDispatcher {
         if (f.crossProjectOnly) {
           const fp = extractFilePath(ctx.payload.toolInput) ?? ctx.payload.cwd;
           if (!fp) return false;
-          const others = this.deps.projects
+          otherPaths ??= this.deps.projects
             .list()
             .map((p) => p.path)
             .filter((p) => p !== ctx.project.path);
-          if (!isCrossProjectPath(fp, ctx.project.path, others)) return false;
+          if (!isCrossProjectPath(fp, ctx.project.path, otherPaths)) return false;
         }
         return true;
       });
@@ -320,12 +312,7 @@ export class HookDispatcher {
   ): Promise<PluginHandlerResult | undefined> {
     if (rule.handler.type !== 'plugin') return undefined;
     const { pluginId } = rule.handler;
-    const logger = {
-      debug: (msg: string) => console.debug(`[plugin:${pluginId}] ${msg}`),
-      info: (msg: string) => console.info(`[plugin:${pluginId}] ${msg}`),
-      warn: (msg: string) => console.warn(`[plugin:${pluginId}] ${msg}`),
-      error: (msg: string) => console.error(`[plugin:${pluginId}] ${msg}`),
-    };
+    const logger = createPluginLogger(pluginId);
     let timer: NodeJS.Timeout | undefined;
     try {
       const execution = Promise.resolve(

@@ -93,7 +93,14 @@ const UNINSTALLABLE = new Set([
 const GLOBAL_UNINSTALLABLE = new Set(['command', 'agent', 'output-style']);
 
 type FileNode = { type: 'file'; asset: AssetEntry };
-type DirNode = { type: 'dir'; name: string; path: string; children: TreeNode[] };
+type DirNode = {
+  type: 'dir';
+  name: string;
+  path: string;
+  children: TreeNode[];
+  /** Recursive file count — computed once in buildTree (render is O(1)). */
+  fileCount: number;
+};
 type TreeNode = FileNode | DirNode;
 
 function lastSegment(relPath: string): string {
@@ -109,7 +116,7 @@ function fileStem(relPath: string): string {
  * at every level, both alphabetically — the whole project surface (.claude/,
  * .codex/, root instruction files …) in one hierarchy. */
 function buildTree(assets: AssetEntry[]): TreeNode[] {
-  const root: DirNode = { type: 'dir', name: '', path: '', children: [] };
+  const root: DirNode = { type: 'dir', name: '', path: '', children: [], fileCount: 0 };
   for (const asset of assets) {
     const parts = asset.relPath.split('/');
     let node = root;
@@ -122,7 +129,7 @@ function buildTree(assets: AssetEntry[]): TreeNode[] {
       } else {
         let dir = node.children.find((c): c is DirNode => c.type === 'dir' && c.name === part);
         if (!dir) {
-          dir = { type: 'dir', name: part, path: acc, children: [] };
+          dir = { type: 'dir', name: part, path: acc, children: [], fileCount: 0 };
           node.children.push(dir);
         }
         node = dir;
@@ -141,16 +148,14 @@ function buildTree(assets: AssetEntry[]): TreeNode[] {
     dir.children.forEach((c) => {
       if (c.type === 'dir') sort(c);
     });
+    // 排序后自底向上汇总（与逐层递归计数等价，只算一次）
+    dir.fileCount = dir.children.reduce(
+      (n, c) => n + (c.type === 'file' ? 1 : c.fileCount),
+      0,
+    );
   };
   sort(root);
   return root.children;
-}
-
-/** Files under a directory, recursively — shown as a dim count on dir rows. */
-function countFiles(node: DirNode): number {
-  let n = 0;
-  for (const c of node.children) n += c.type === 'file' ? 1 : countFiles(c);
-  return n;
 }
 
 function KindChip({
@@ -182,7 +187,7 @@ function AssetTreeNode({
   node,
   depth,
   scope,
-  updates,
+  updateMap,
   collapsed,
   onToggle,
   onOpenFile,
@@ -191,7 +196,8 @@ function AssetTreeNode({
   node: TreeNode;
   depth: number;
   scope: AssetScope;
-  updates?: FileAssetUpdate[];
+  /** key = fileStem + category（构建时一次成 Map，避免每行线性 find）。 */
+  updateMap?: Map<string, FileAssetUpdate>;
   collapsed: Set<string>;
   onToggle: (path: string) => void;
   onOpenFile: (relPath: string) => void;
@@ -204,9 +210,7 @@ function AssetTreeNode({
     const a = node.asset;
     const name = lastSegment(a.relPath);
     const isMd = a.relPath.toLowerCase().endsWith('.md');
-    const update = updates?.find(
-      (u) => u.name === fileStem(a.relPath) && u.category === a.category,
-    );
+    const update = updateMap?.get(`${fileStem(a.relPath)}::${a.category}`);
     const uninstallable =
       scope === 'global'
         ? GLOBAL_UNINSTALLABLE.has(a.category) && a.agent !== 'codex'
@@ -291,7 +295,7 @@ function AssetTreeNode({
         )}
         <Folder className="h-3 w-3 shrink-0 text-neutral-500" />
         <span className="truncate">{node.name}</span>
-        <span className="text-[10px] text-neutral-600 tabular-nums">{countFiles(node)}</span>
+        <span className="text-[10px] text-neutral-600 tabular-nums">{node.fileCount}</span>
       </button>
       {!isCollapsed &&
         node.children.map((c) => (
@@ -300,7 +304,7 @@ function AssetTreeNode({
             node={c}
             depth={depth + 1}
             scope={scope}
-            updates={updates}
+            updateMap={updateMap}
             collapsed={collapsed}
             onToggle={onToggle}
             onOpenFile={onOpenFile}
@@ -366,6 +370,12 @@ export function FileAssetTree({
   );
 
   const tree = useMemo(() => buildTree(visible), [visible]);
+  const updateMap = useMemo(() => {
+    if (!updates) return undefined;
+    const m = new Map<string, FileAssetUpdate>();
+    for (const u of updates) m.set(`${u.name}::${u.category}`, u);
+    return m;
+  }, [updates]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (path: string) =>
     setCollapsed((prev) => {
@@ -468,7 +478,7 @@ export function FileAssetTree({
               node={node}
               depth={0}
               scope={scope}
-              updates={updates}
+              updateMap={updateMap}
               collapsed={collapsed}
               onToggle={toggle}
               onOpenFile={onOpenFile}

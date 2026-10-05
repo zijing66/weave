@@ -117,4 +117,27 @@ describe('PluginModsSniffer', () => {
     expect(refine('.weave/plugins/bar/commands/run.md')).toBe('plugin');
     expect(refine('.weave/plugins/bar/weave-plugin.json')).toBe('plugin');
   });
+
+  it('revalidate:false 复用 startDir 结论（请求级实例），新实例仍重走', () => {
+    write('.claude/plugins/foo/.claude-plugin/plugin.json', '{}');
+    const hooks = write(
+      '.claude/plugins/foo/hooks/hooks.json',
+      JSON.stringify({ modules: [{ x: 1 }] }),
+    );
+    write('.claude/plugins/foo/commands/run.md', '# run');
+    const rel = '.claude/plugins/foo/commands/run.md';
+    const requestScoped = new PluginModsSniffer({ revalidate: false });
+
+    expect(requestScoped.refine('plugin', rel, path.join(root, ...rel.split('/')))).toBe('mods');
+
+    // 同请求内结论稳定：mtime 变化不触发重走（请求内文件视为稳定）
+    writeFileSync(hooks, JSON.stringify({ modules: [] }));
+    const future = new Date(Date.now() + 5000);
+    utimesSync(hooks, future, future);
+    expect(requestScoped.refine('plugin', rel, path.join(root, ...rel.split('/')))).toBe('mods');
+
+    // 新实例（下一请求）重走 → 拾取最新 hooks.json
+    const next = new PluginModsSniffer({ revalidate: false });
+    expect(next.refine('plugin', rel, path.join(root, ...rel.split('/')))).toBe('plugin');
+  });
 });

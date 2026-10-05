@@ -1,7 +1,8 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, type Harness } from '@weave/core';
+import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, HARNESS_KEYS, type Harness } from '@weave/core';
+import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 import { readSourcesFile } from './plugin-installer.js';
 
 /**
@@ -56,7 +57,8 @@ const CC_MANIFEST = 'plugin.json';
 const TOOLKIT_MANIFEST = 'weave.json';
 /** 扫描深度：root(0) → scope 容器(1) → pack(2)，对应 depth-3 树。 */
 const MAX_SCAN_LEVEL = 2;
-const KNOWN_HARNESSES: Harness[] = ['claude', 'codex'];
+/** targets 缺省/全无效时的回落。 */
+const DEFAULT_TARGETS: Harness[] = ['claude'];
 
 /** 内置工具包源根（随 copy-presets.mjs 递归拷入 dist，depth-3 无需适配）。 */
 export function builtinToolkitRoot(): string {
@@ -121,9 +123,9 @@ async function listMarkdownNames(dir: string): Promise<string[]> {
 }
 
 function normalizeTargets(raw: unknown): Harness[] {
-  if (!Array.isArray(raw) || raw.length === 0) return ['claude'];
-  const out = raw.filter((h): h is Harness => KNOWN_HARNESSES.includes(h as Harness));
-  return out.length > 0 ? out : ['claude'];
+  if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_TARGETS;
+  const out = raw.filter((h): h is Harness => HARNESS_KEYS.includes(h as Harness));
+  return out.length > 0 ? out : DEFAULT_TARGETS;
 }
 
 /** 解析单个包目录；三种识别全未命中（无可装载成分）→ null。 */
@@ -141,7 +143,7 @@ export async function parseToolkitPack(
   const commands = await listMarkdownNames(path.join(dir, 'commands'));
   const agents = await listMarkdownNames(path.join(dir, 'agents'));
   const hooksJson = await readJson(path.join(dir, 'hooks', 'hooks.json'));
-  const modules = Array.isArray(hooksJson?.['modules']) ? (hooksJson['modules'] as unknown[]) : [];
+  const isModPack = hasNonEmptyModules(hooksJson);
   const hasClassicHooks =
     !!hooksJson && typeof hooksJson['hooks'] === 'object' && hooksJson['hooks'] !== null;
 
@@ -149,7 +151,7 @@ export async function parseToolkitPack(
   if (skills.length > 0) components.push('skill');
   if (commands.length > 0) components.push('command');
   if (agents.length > 0) components.push('agent');
-  if (modules.length > 0) components.push('mod');
+  if (isModPack) components.push('mod');
   else if (hasClassicHooks) components.push('hook');
   if (weaveRaw) components.push('rule');
   if (components.length === 0) return null;
@@ -158,7 +160,7 @@ export async function parseToolkitPack(
   const kind: ToolkitKind =
     kindRaw && ['skill', 'hook', 'mod', 'rule', 'surface'].includes(kindRaw)
       ? (kindRaw as ToolkitKind)
-      : modules.length > 0
+      : isModPack
         ? 'mod'
         : hasClassicHooks
           ? 'hook'

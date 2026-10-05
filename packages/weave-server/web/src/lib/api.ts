@@ -35,8 +35,21 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as T;
+}
+
+/** 错误信息取 daemon 的 {error|message} 字段；非 JSON / 无字段回落状态码+原文。 */
+async function errorText(res: Response): Promise<string> {
+  const body = await res.text();
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+    if (typeof parsed.error === 'string' && parsed.error) return parsed.error;
+    if (typeof parsed.message === 'string' && parsed.message) return parsed.message;
+  } catch {
+    // 非 JSON 错误体（代理/网络层）→ 保留状态码前缀
+  }
+  return body ? `${res.status} ${body}` : String(res.status);
 }
 
 export interface ProjectRow {

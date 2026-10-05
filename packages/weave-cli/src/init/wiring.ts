@@ -2,7 +2,7 @@ import {
   CLAUDE_DRIVER,
   CODEX_DRIVER,
   HarnessRegistry,
-  registerRuntimeDrivers,
+  createRuntimeRegistry,
   type HarnessDriver,
 } from '@weave/harness';
 import { ClaudeInitTemplate } from './harnesses/claude.js';
@@ -28,8 +28,7 @@ const CODEX_INIT_DRIVER: HarnessDriver = {
  * 故各 id 先 unregister 再携带 init 槽重新注册。
  */
 export function buildInitRegistry(): HarnessRegistry {
-  const reg = new HarnessRegistry();
-  registerRuntimeDrivers(reg);
+  const reg = createRuntimeRegistry();
   reg.unregister('claude');
   reg.register(CLAUDE_INIT_DRIVER);
   reg.unregister('codex');

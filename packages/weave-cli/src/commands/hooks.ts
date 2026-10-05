@@ -1,4 +1,4 @@
-import { ensureDaemonRunning } from './daemon.js';
+import { call } from './daemon.js';
 import { t } from '../i18n/index.js';
 import type { MessageKey } from '../i18n/dict/index.js';
 import type { Command, CommandContext } from '../parser.js';
@@ -30,12 +30,7 @@ interface HookRuleRow {
 }
 
 async function fetchRules(): Promise<HookRuleRow[]> {
-  const handle = await ensureDaemonRunning();
-  const res = await fetch(`http://127.0.0.1:${handle.port}/hooks/rules`, {
-    headers: { authorization: `Bearer ${handle.token}` },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  const data = (await res.json()) as { rules: HookRuleRow[] };
+  const data = await call<{ rules: HookRuleRow[] }>('/hooks/rules');
   return data.rules;
 }
 
@@ -69,16 +64,10 @@ async function toggle(context: CommandContext, enabled: boolean): Promise<void> 
       console.error(t('out.hooks.notFound', { id }));
       process.exit(1);
     }
-    const handle = await ensureDaemonRunning();
-    const res = await fetch(`http://127.0.0.1:${handle.port}/hooks/rules/${rule.id}/toggle`, {
+    await call(`/hooks/rules/${rule.id}/toggle`, {
       method: 'POST',
-      headers: {
-        authorization: `Bearer ${handle.token}`,
-        'content-type': 'application/json',
-      },
       body: JSON.stringify({ enabled }),
     });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const key: MessageKey = enabled ? 'out.hooks.enabled' : 'out.hooks.disabled';
     console.log(t(key, { name: rule.name }));
   } catch (err) {
@@ -98,12 +87,7 @@ interface PluginRow {
 }
 
 async function fetchPlugins(): Promise<PluginRow[]> {
-  const handle = await ensureDaemonRunning();
-  const res = await fetch(`http://127.0.0.1:${handle.port}/hooks/plugins`, {
-    headers: { authorization: `Bearer ${handle.token}` },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  const data = (await res.json()) as { plugins: PluginRow[] };
+  const data = await call<{ plugins: PluginRow[] }>('/hooks/plugins');
   return data.plugins;
 }
 

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileExists, logger, formatTable } from '@weave/core';
-import { HarnessRegistry, registerRuntimeDrivers } from '@weave/harness';
+import { createRuntimeRegistry } from '@weave/harness';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
@@ -60,8 +60,7 @@ export const statusCommand: Command = {
 
     // harness 识别经 Detector（批 5）：认 `.claude`/`CLAUDE.md` 与 `.codex`/`AGENTS.md`，
     // 不再硬编码 marker；下方存量 claude 表面行与 checkHarness 健康检查保持不动。
-    const reg = new HarnessRegistry();
-    registerRuntimeDrivers(reg);
+    const reg = createRuntimeRegistry();
     const detected = reg
       .byCapability('detect')
       .flatMap((d) =>
