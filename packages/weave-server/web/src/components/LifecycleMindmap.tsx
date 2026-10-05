@@ -11,6 +11,7 @@ import {
   type EdgeProps,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, type HookDispatch, type HookEventRow, type SessionRow } from '@/lib/api';
@@ -91,6 +92,8 @@ export interface LaidNode {
 const COL_W = 400;
 /** 渲染节点宽（与 MindmapNode 的 w-[280px] 对齐）——列间空隙 = COL_W - NODE_W。 */
 const NODE_W = 280;
+/** 节点估高（单 tag 行 + 摘要行 + padding）——视口居中坐标用，非布局值。 */
+const NODE_H = 56;
 /** 行距大于节点高度：父子边的 smoothstep 折线才有可见竖直段（DAG 连线）。 */
 const ROW_H = 128;
 
@@ -1004,21 +1007,36 @@ export function LifecycleMindmap({
     [groups, expanded, ruleInfo, sessionModel],
   );
 
+  const instRef = useRef<ReactFlowInstance<MindmapFlowNode, Edge> | null>(null);
+  /** 最近一次 toggle 的节点 key——布局重算后把该节点平移至视口中心。 */
+  const centerKeyRef = useRef<string | null>(null);
+
   const onToggle = useCallback((key: string) => {
+    centerKeyRef.current = key;
     setExpanded((prev) => {
       const next = new Set(prev);
       if (!next.delete(key)) next.add(key);
       return next;
     });
-    // 用户每次展开/折叠 → 重挂画布并重新 fit（位置与缩放重算）
-    setFitEpoch((n) => n + 1);
   }, []);
 
   const openDetail = useCallback((n: LaidNode) => setDetailNode(n), []);
 
-  // 展开/折叠后重新计算位置与缩放：epoch++ → ReactFlow 重挂并 fitView
-  // （maxZoom 1 防长列压糊）；初始 epoch=0 不 fit——保持顶部 0.75 可读视口。
-  const [fitEpoch, setFitEpoch] = useState(0);
+  // 展开/折叠重布局后：把被操作的节点置于视口中心（替代全图 fitView——
+  // 缩到全图会把刚展开的细节压到边角）。保持当前 zoom 只平移（setCenter
+  // 缺省 zoom 会跳 maxZoom，必须显式传）；key 一次性消费，SSE 重拉不重复居中。
+  useEffect(() => {
+    const key = centerKeyRef.current;
+    if (!key) return;
+    centerKeyRef.current = null;
+    const n = laid.nodes.find((x) => x.key === key);
+    const inst = instRef.current;
+    if (!n || !inst) return;
+    inst.setCenter(n.depth * COL_W + NODE_W / 2, n.y + NODE_H / 2, {
+      zoom: inst.getZoom(),
+      duration: 250,
+    });
+  }, [laid]);
 
   const flowNodes: MindmapFlowNode[] = useMemo(
     () =>
@@ -1275,18 +1293,19 @@ export function LifecycleMindmap({
           </div>
         ) : (
           <ReactFlow
-            key={fitEpoch}
+            onInit={(inst) => {
+              instRef.current = inst as ReactFlowInstance<MindmapFlowNode, Edge>;
+            }}
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            // 单组动辄上百事件：初始停在顶部 0.75 倍（节点可读、连线可见）；
-            // 展开/折叠（epoch>0）重挂后 fitView 全图（maxZoom 1 防糊）。
-            fitView={!focusGroupId || fitEpoch > 0}
+            // 单组动辄上百事件：首帧停在顶部 0.75 倍（节点可读、连线可见）；
+            // 会话模式首帧 fitView 全图。之后的展开/折叠由 setCenter 把被
+            // 操作节点平移到视口中心（保持 zoom），不重挂不全图缩放。
+            fitView={!focusGroupId}
             fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
-            {...(focusGroupId && fitEpoch === 0
-              ? { defaultViewport: { x: 24, y: 12, zoom: 0.75 } }
-              : {})}
+            {...(focusGroupId ? { defaultViewport: { x: 24, y: 12, zoom: 0.75 } } : {})}
             minZoom={0.15}
             maxZoom={1.5}
             nodesDraggable
