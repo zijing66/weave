@@ -101,7 +101,8 @@ export const libraryZh = {
   'library.badgeWeavePlugin': 'Weave 规则包',
   'library.ccPluginTip': 'CC 原生插件：全局安装 + 项目启用，由 Claude Code 加载',
   'library.weavePluginTip': 'Weave 规则包：装载进 weave 引擎，项目级开关',
-  'library.pluginSkillsLabel': '包内 skills · 可单独安装',
+  'library.pluginSkillsLabel': '包内 skills · 随插件启停',
+  'library.pluginSkillsFollowTip': '隶属该插件，不单独安装——随插件启用/停用',
   'library.pluginNotInToolkit': '不在工具箱扫描范围，无法在此启用',
   'library.addLibraryTemplates': '在上方导入资源以浏览模板。',
   'library.noFileTemplates':
@@ -233,7 +234,9 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.badgeWeavePlugin': 'Weave pack',
   'library.ccPluginTip': 'CC native plugin: installed globally, enabled per project, loaded by Claude Code',
   'library.weavePluginTip': 'Weave pack: loaded by the weave engine, toggled per project',
-  'library.pluginSkillsLabel': 'Pack skills · installable individually',
+  'library.pluginSkillsLabel': 'Pack skills · follow plugin enablement',
+  'library.pluginSkillsFollowTip':
+    'Belongs to this plugin — not installed separately; enabled/disabled with it',
   'library.pluginNotInToolkit': 'Outside the toolkit scan scope — cannot enable here',
   'library.addLibraryTemplates': 'Import a resource above to browse templates.',
   'library.noFileTemplates':

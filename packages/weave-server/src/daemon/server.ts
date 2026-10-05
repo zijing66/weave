@@ -464,16 +464,20 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Library not found' });
       return;
     }
-    const skills = await scanLibrarySkills(lib.path);
-    const mcp =
-      lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path) : [];
-    const scanned =
-      lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryFileAssets(lib.path) : null;
-    // 扫描结果按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
-    const files = scanned ? Object.values(scanned).flat() : null;
-    // 插件包属 skill 仓库成分，门控与 files 一致；字段恒在（恒数组）
+    // 先发现插件包：包是原子单元，包内 skill/表面成分/mcp 隶属该包
+    // （随包启停，不独立安装）——包子树作为排除根传给其余三条扫描
     const plugins =
       lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryPlugins(lib.path) : [];
+    const packRoots = plugins.map((p) => p.relPath);
+    const skills = await scanLibrarySkills(lib.path, packRoots);
+    const mcp =
+      lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path, packRoots) : [];
+    const scanned =
+      lib.kind === 'skill' || lib.kind === 'both'
+        ? await scanLibraryFileAssets(lib.path, packRoots)
+        : null;
+    // 扫描结果按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
+    const files = scanned ? Object.values(scanned).flat() : null;
     sendJson(res, 200, { library: lib, skills, mcp, files, plugins });
     return;
   }

@@ -718,7 +718,7 @@ export function LibraryPanel({
           <TemplateSection
             icon={<Puzzle className="h-3.5 w-3.5 text-violet-400" />}
             title={t('library.sectionPlugins')}
-            hint={t('library.hintClickInstall')}
+            hint={t('toolkit.toggleTip')}
             count={plugins.length}
             open={!sectionsCollapsed.has(SECTION_PLUGINS)}
             onToggle={() => toggleSection(SECTION_PLUGINS)}
@@ -807,38 +807,23 @@ export function LibraryPanel({
                   </div>
                   {pl.skills.length > 0 && (
                     <div>
-                      <p className="mb-0.5 text-[10px] text-neutral-600">
+                      <p
+                        className="mb-0.5 text-[10px] text-neutral-600"
+                        title={t('library.pluginSkillsFollowTip')}
+                      >
                         {t('library.pluginSkillsLabel')}
                       </p>
                       <div className="flex flex-wrap gap-1">
-                        {pl.skills.map((sname) =>
-                          installedSkillNames.has(sname) ? (
-                            <Badge key={sname} variant="skill" className="px-1.5 text-[10px]">
-                              {sname} ✓
-                            </Badge>
-                          ) : (
-                            <button
-                              key={sname}
-                              disabled={!skillVerdict.ok}
-                              title={reasonTitle(skillVerdict)}
-                              onClick={() =>
-                                onInstallSkill(
-                                  {
-                                    name: sname,
-                                    dirPath: `${pl.dirPath}/skills/${sname}`,
-                                    relPath: `${pl.relPath ? `${pl.relPath}/` : ''}skills/${sname}`,
-                                    group: `${pl.relPath ? `${pl.relPath}/` : ''}skills`,
-                                  },
-                                  scope,
-                                  installAgent,
-                                )
-                              }
-                              className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-blue-300 hover:bg-neutral-700 disabled:opacity-40"
-                            >
-                              {sname}
-                            </button>
-                          ),
-                        )}
+                        {pl.skills.map((sname) => (
+                          <Badge
+                            key={sname}
+                            variant="skill"
+                            className="px-1.5 text-[10px]"
+                            title={t('library.pluginSkillsFollowTip')}
+                          >
+                            {sname}
+                          </Badge>
+                        ))}
                       </div>
                     </div>
                   )}

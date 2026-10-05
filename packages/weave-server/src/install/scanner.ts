@@ -62,14 +62,14 @@ export interface MarketPluginAsset {
   description?: string;
   /** Absolute path to the pack directory (install / enable source). */
   dirPath: string;
-  /** Pack dir relative to the library root (posix; 包内 skill 双身份前缀匹配键). */
+  /** Pack dir relative to the library root (posix; 包子树排除根的匹配键). */
   relPath: string;
   ccPack: boolean;
   weavePack: boolean;
   kind: ToolkitKind;
   components: ToolkitComponent[];
   targets: Harness[];
-  /** Pack-internal skills carrying a SKILL.md（独立安装时与 skill 条目按名关联）。 */
+  /** Pack-internal skills carrying a SKILL.md（隶属包，随包启停，不独立安装）。 */
   skills: string[];
 }
 
@@ -97,13 +97,16 @@ async function isMarketPluginPack(dir: string): Promise<boolean> {
   }
 }
 
-/** 扫描深度同 toolkit-scan 的 MAX_SCAN_LEVEL（root→容器→包；包不嵌套）。 */
-const MAX_PACK_LEVEL = 2;
+/** 防御性深度上限（病态树兜底）；正常仓库任意深度的包都要能发现。 */
+const MAX_PACK_DEPTH = 10;
 
 /**
- * 扫描库内插件包：窄谓词命中 → 解析委托 `parseToolkitPack` → 停钻。
- * skills/mcp/files 三条既有 walk 不受包影响——包内 skill 仍被独立扫出
- * （双身份），`.claude`/`.codex` 等点目录由各 walk 的既有规则跳过。
+ * 扫描库内插件包：**全递归**遍历任意深度子目录做窄谓词命中 → 解析委托
+ * `parseToolkitPack` → 停钻（包是原子单元，不进包内找嵌套包）。`.claude`/
+ * `.codex` 等点目录与 SKIP_DIRS 由 walk 跳过。
+ *
+ * 包内资源（skill/表面成分/mcp）**隶属该包**——不独立安装、随包启停；
+ * 路由侧把返回的 relPath 集合作为 excludeRelRoots 传给其余三条扫描。
  */
 export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginAsset[]> {
   const out: MarketPluginAsset[] = [];
@@ -131,7 +134,7 @@ export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginA
       }
       return; // 命中包即停钻（包不嵌套）
     }
-    if (level >= MAX_PACK_LEVEL) return;
+    if (level >= MAX_PACK_DEPTH) return;
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -149,6 +152,15 @@ export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginA
 }
 
 /**
+ * 包子树排除：`relPath` 位于任一排除根之内（含等于）→ true。
+ * 排除根为 posix 相对路径；空串表示整库即包（全部资源隶属）。
+ */
+function inExcludedRoot(relPath: string, excludeRelRoots: readonly string[] | undefined): boolean {
+  if (!excludeRelRoots || excludeRelRoots.length === 0) return false;
+  return excludeRelRoots.some((r) => r === '' || relPath === r || relPath.startsWith(`${r}/`));
+}
+
+/**
  * Recursively scan a library directory for skills. A skill is any directory
  * that directly contains a `SKILL.md` file. Once a skill directory is found we
  * do NOT descend into it (its `assets/`, `scripts/`, `references/` subtrees are
@@ -156,14 +168,26 @@ export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginA
  *
  * Handles both library layouts: weave-templates (`templates/skills/<name>/SKILL.md`)
  * and personal libraries like zj-skills (`<name>/SKILL.md` at the top level).
+ *
+ * `excludeRelRoots`：位于插件包子树内的 skill 不产出——skill 隶属 plugin，
+ * 随包启停、不独立安装（缺省空数组 = 现状行为，存量调用零改）。
  */
-export async function scanLibrarySkills(libPath: string): Promise<SkillAsset[]> {
+export async function scanLibrarySkills(
+  libPath: string,
+  excludeRelRoots?: string[],
+): Promise<SkillAsset[]> {
   const results: SkillAsset[] = [];
-  await walk(libPath, libPath, results);
+  await walk(libPath, libPath, results, excludeRelRoots);
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function walk(root: string, dir: string, out: SkillAsset[]): Promise<void> {
+async function walk(
+  root: string,
+  dir: string,
+  out: SkillAsset[],
+  excludeRelRoots?: string[],
+): Promise<void> {
+  if (inExcludedRoot(relative(root, dir).replace(/\\/g, '/'), excludeRelRoots)) return;
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -184,7 +208,7 @@ async function walk(root: string, dir: string, out: SkillAsset[]): Promise<void>
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
-    await walk(root, join(dir, entry.name), out);
+    await walk(root, join(dir, entry.name), out, excludeRelRoots);
   }
 }
 
@@ -195,9 +219,12 @@ async function walk(root: string, dir: string, out: SkillAsset[]): Promise<void>
  * layouts are recognised: `<lib>/mcp/<name>.json` and `<lib>/<name>.mcp.json`.
  * Files that fail to parse are skipped (never throw).
  */
-export async function scanLibraryMcp(libPath: string): Promise<McpTemplate[]> {
+export async function scanLibraryMcp(
+  libPath: string,
+  excludeRelRoots?: string[],
+): Promise<McpTemplate[]> {
   const files: { abs: string; rel: string }[] = [];
-  await collectMcpFiles(libPath, libPath, files);
+  await collectMcpFiles(libPath, libPath, files, excludeRelRoots);
   const out: McpTemplate[] = [];
   for (const f of files) {
     try {
@@ -210,7 +237,13 @@ export async function scanLibraryMcp(libPath: string): Promise<McpTemplate[]> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function collectMcpFiles(root: string, dir: string, out: { abs: string; rel: string }[]): Promise<void> {
+async function collectMcpFiles(
+  root: string,
+  dir: string,
+  out: { abs: string; rel: string }[],
+  excludeRelRoots?: string[],
+): Promise<void> {
+  if (inExcludedRoot(relative(root, dir).replace(/\\/g, '/'), excludeRelRoots)) return;
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -220,7 +253,7 @@ async function collectMcpFiles(root: string, dir: string, out: { abs: string; re
   for (const e of entries) {
     if (e.isDirectory()) {
       if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
-      await collectMcpFiles(root, join(dir, e.name), out);
+      await collectMcpFiles(root, join(dir, e.name), out, excludeRelRoots);
     } else if (e.isFile()) {
       const stem = e.name.replace(/\.mcp\.json$/i, '').replace(/\.json$/i, '');
       // accept *.mcp.json anywhere, or *.json directly under a `mcp/` dir
@@ -290,10 +323,11 @@ const KIND_DIR_NAMES: Record<string, FileAssetCategory> = Object.fromEntries(
  */
 export async function scanLibraryFileAssets(
   libPath: string,
+  excludeRelRoots?: string[],
 ): Promise<Record<FileAssetCategory, FileAssetTemplate[]>> {
   const out = {} as Record<FileAssetCategory, FileAssetTemplate[]>;
   for (const c of FILE_ASSET_CATEGORIES) out[c] = [];
-  await walkFileAssets(libPath, libPath, out);
+  await walkFileAssets(libPath, libPath, out, excludeRelRoots);
   for (const c of FILE_ASSET_CATEGORIES) {
     out[c].sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -304,7 +338,9 @@ async function walkFileAssets(
   root: string,
   dir: string,
   out: Record<FileAssetCategory, FileAssetTemplate[]>,
+  excludeRelRoots?: string[],
 ): Promise<void> {
+  if (inExcludedRoot(relative(root, dir).replace(/\\/g, '/'), excludeRelRoots)) return;
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -335,6 +371,6 @@ async function walkFileAssets(
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
-    await walkFileAssets(root, join(dir, entry.name), out);
+    await walkFileAssets(root, join(dir, entry.name), out, excludeRelRoots);
   }
 }
