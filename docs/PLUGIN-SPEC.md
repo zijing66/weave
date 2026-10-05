@@ -166,7 +166,8 @@ export default {
 ## 7. 分发
 
 - **目录拷贝 / git 仓库**：直接放进扫描位置即生效（项目级随 git 分发）。
-- `weave plugins install <src>` / `export` / `search`：见 CLI（分发通道批次落地）。
+- 安装 / 导出 / 搜索：经 dashboard 插件区段与 REST `POST /hooks/plugins`
+  （导出/搜索为 server API `exportPlugin`/`searchPlugins`，见分发通道批次落地）。
 - 分发包 = 插件目录本身（含 manifest/rules/prompts/handler，剔除 node_modules）。
 
 ## 8. 完整示例（AI 生成基准）
@@ -256,12 +257,12 @@ export default {
    > 输出全部文件内容（weave-plugin.json / rules.json / prompts/ / handler.mjs）。
 2. **落盘**：把生成的目录放进任一扫描位置
    （`<configDir>/weave/plugins/`、项目 `.weave/plugins//`）。
-3. **验证**：daemon 1 秒内热重载（或 `weave hooks plugins` 查看状态）——
+3. **验证**：daemon 1 秒内热重载（或 dashboard 插件区段查看状态）——
    `active` 即通过 smoke；`rejected` 的 error 字段会给出具体失败项。
 4. **联调**：dashboard Hooks 面板启用插件规则 → 触发对应事件 →
    看指令池/注入效果；改文件即热重载，无需重启。
-5. **分发**：`weave plugins export <id> [outDir]` 打包给他人，
-   对方 `weave plugins install <目录|git URL>` 即用。
+5. **分发**：server `exportPlugin` 导出插件目录打包给他人，
+   对方经 `POST /hooks/plugins` 安装（或直接放入扫描位置）即用。
 
 **回归基准**：仓库内 `packages/weave-server/src/hooks/__tests__/fixtures/changelog-reminder/`
 即「AI 按本文档生成」的验收样本（规则 + `@file:` 模板 + 事件订阅组合），

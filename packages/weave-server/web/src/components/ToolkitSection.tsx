@@ -35,7 +35,7 @@ const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
  * 工具箱区段（批 10，批 3 增旧副本警示）：包清单（provenance/类型徽标 + 目标面）
  * + 项目级开关（CC 原生包 = 全局安装 + 项目启用）+ 卸载按钮（与 harness 对齐：
  * CC/mod 走 claude plugin uninstall，表面包清扫文件）+ 项目插件位旧副本警示/清理 +
- * 外置目录展示（add-dir/remove-dir 走 CLI，文案指引）。开关/卸载调用幂等端点，
+ * 外置目录展示（增删走 REST /toolkit/dirs，文案指引）。开关/卸载调用幂等端点，
  * 返回后置状态后刷新；行级 busy 防重入。pack 按成分分两组渲染（ccPack = Claude Plugins 组，
  * 其余 = 工具包组）；codex 运行态下 Claude 组整组隐藏。
  */

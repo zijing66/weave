@@ -378,7 +378,6 @@ weave add helper hook-handler
 **管理面**：
 - dashboard Hooks 面板（@xyflow/react 数据流链路图：事件源→规则→处理器→会话，SSE 高亮）
 - REST：`/hooks/rules` CRUD+toggle、`/hooks/dispatches`、`/hooks/dispatches/:id/run`、`/sessions`
-- CLI：`weave hooks list|enable|disable`（ID 支持唯一前缀）
 
 **标记清扫**：weave 生成物全部带标记（settings.json 组=路径 marker、helper 脚本=`@version weave@`）；
 re-init 时按标记清除多余/过期条目（`mergeSettingsJson` 组级清扫 + executor 目录清扫，记入 `removed`）。
@@ -409,9 +408,10 @@ re-init 时按标记清除多余/过期条目（`mergeSettingsJson` 组级清扫
 - **热重载**：三根目录 chokidar 监听防抖 1s 重扫；消失/重载失败的插件级联
   删规则卸处理器；SSE `plugin.reloaded/plugin.toggled` 帧。
 - **管理面**：`GET/POST /hooks/plugins`（安装/卸载）、`POST …/toggle`（级联开关）、
-  dashboard 插件区段、CLI `weave hooks plugins`。
-- **分发四通道**：目录扫描 / `weave plugins install <本地|git URL>`
-  （installed.json 清单）/ `search`（sources.json 索引源）/ `export` 打包分享。
+  dashboard 插件区段。
+- **分发四通道**：目录扫描 / `POST /hooks/plugins` 安装（installed.json 清单）/
+  `search`（sources.json 索引源）/ `exportPlugin` 打包分享（后两者为 server API，
+  无 CLI 入口）。
 - **workflow 结合**：inject 模板注入指令 → Claude 会话内原生 Workflow/子 agent
   编排（无自有引擎）；防递归走既有 DISPATCH_MARKER + 60s 去重。
 - **AI 验收**：`fixtures/changelog-reminder`（按规范生成的样本）+ 固定回归测试；

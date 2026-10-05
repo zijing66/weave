@@ -211,8 +211,8 @@ export interface PluginIndexEntry {
 
 /**
  * sources.json 结构（批 10 schema 演进）：旧形为 index URL 字符串数组，
- * 新形为 `{ indexes, dirs }`——`dirs` 是 `weave toolkit add-dir` 注册的本地
- * 工具包目录，**不进远程搜索源**。读侧两种形都接受，写侧统一落新形。
+ * 新形为 `{ indexes, dirs }`——`dirs` 是经 REST `POST /toolkit/dirs` 注册的
+ * 本地工具包目录，**不进远程搜索源**。读侧两种形都接受，写侧统一落新形。
  */
 export interface SourcesFileShape {
   indexes: string[];
@@ -251,7 +251,7 @@ export async function writeSourcesFile(sources: SourcesFileShape, root?: string)
   await writeFile(sourcesPath(root), JSON.stringify(sources, null, 2) + '\n', 'utf8');
 }
 
-/** 注册外置工具包目录（批 10 `weave toolkit add-dir`）；已存在则幂等。 */
+/** 注册外置工具包目录（批 10，REST `POST /toolkit/dirs`）；已存在则幂等。 */
 export async function addToolkitDir(dir: string, root?: string): Promise<SourcesFileShape> {
   const abs = path.resolve(dir);
   if (!existsSync(abs)) throw new Error(`目录不存在: ${abs}`);

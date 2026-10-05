@@ -191,7 +191,7 @@ export {
  */
 export const daemonEntryUrl = new URL('./daemon/entry.ts', import.meta.url).href;
 
-// 插件分发通道（A3）：CLI 的 weave plugins install/uninstall/export/search 直调。
+// 插件分发通道（A3）：供 dashboard / REST 层调用（install/uninstall/export/search）。
 export {
   installPlugin,
   uninstallPlugin,

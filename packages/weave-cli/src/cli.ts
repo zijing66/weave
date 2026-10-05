@@ -8,9 +8,6 @@ import { daemonCommand } from './commands/daemon.js';
 import { dashboardCommand } from './commands/dashboard.js';
 import { scanCommand } from './commands/scan.js';
 import { statuslineCommand } from './commands/statusline.js';
-import { hooksCommand } from './commands/hooks.js';
-import { pluginsCommand } from './commands/plugins.js';
-import { toolkitCommand } from './commands/toolkit.js';
 import type { Command, CommandContext } from './parser.js';
 import { initCliLocale, t } from './i18n/index.js';
 import type { MessageKey } from './i18n/dict/index.js';
@@ -59,9 +56,6 @@ export class CLI {
     this.parser.registerCommand(dashboardCommand);
     this.parser.registerCommand(scanCommand);
     this.parser.registerCommand(statuslineCommand);
-    this.parser.registerCommand(hooksCommand);
-    this.parser.registerCommand(pluginsCommand);
-    this.parser.registerCommand(toolkitCommand);
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {

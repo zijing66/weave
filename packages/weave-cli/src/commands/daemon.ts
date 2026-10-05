@@ -75,22 +75,6 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
   return { port, token, started: true };
 }
 
-/** 经 daemon API 发请求：自动拉起 daemon、带 token，错误体 `{error}` 转异常。 */
-export async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const handle = await ensureDaemonRunning();
-  const res = await fetch(`http://127.0.0.1:${handle.port}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${handle.token}`,
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `${res.status}`);
-  return data;
-}
-
 async function startAction(): Promise<void> {
   const handle = await ensureDaemonRunning();
   if (!handle.started) {

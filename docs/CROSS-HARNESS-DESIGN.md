@@ -153,8 +153,7 @@ validateHandler/plugin-loader/索引注释全要为「名不副实的 kind」打
 
 插件身份统一为 **`<id>@<source>`**（`builtin | global-dir | project-dir | inline |
 git | npm`），替代「origin 枚举 + installed.json 附带信息」的分裂表达。落点：
-`plugin-loader.ts` 的插件状态结构、`plugin-installer.ts` installed.json、CLI
-`weave plugins list` 与 dashboard 徽标同源渲染。
+`plugin-loader.ts` 的插件状态结构、`plugin-installer.ts` installed.json、dashboard 徽标同源渲染。
 
 **三正交原则**（全文反复引用的设计约束）：
 
@@ -225,7 +224,7 @@ git | npm`），替代「origin 枚举 + installed.json 附带信息」的分裂
   通道共用 file-assets 解析层，**不新建第三套落盘逻辑**。
 - **插件模板生命周期决策 = 保持「安装时刻拷贝」，不做 daemon 持续下发**：
   与 weave「落盘即拥有、标记清扫、用户可改」的资产哲学一致；同步 = 三通道显式刷新
-  （init 拷贝 / `weave plugins install` 重装 / `weave add` 按需补拷），用户修改由
+  （init 拷贝 / `POST /hooks/plugins` 重装 / `weave add` 按需补拷），用户修改由
   checksum 保护。代价（写明为产品语义）：插件更新后模板不自动同步。
 
 **复用**：扩展点③动态注册（register/getPluginEntries）、instruction-link 成对文件范式、codex-toml 增量编辑器、`codexUserDir` 字段位。

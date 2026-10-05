@@ -27,7 +27,7 @@ export const toolkitZh = {
   'toolkit.dirsTitle': '外置目录',
   'toolkit.dirsEmpty': '未注册外置目录',
   'toolkit.dirsHint':
-    '本地文件夹注册为扫描源，与内置 · 市场同一管线。添加：终端运行 weave toolkit add-dir <目录>；移除：weave toolkit remove-dir <目录>（级联卸载已启用包）',
+    '本地文件夹注册为扫描源，与内置 · 市场同一管线。增删经 REST 端点 POST /toolkit/dirs 与 /toolkit/dirs/remove 完成（移除时级联卸载已启用包）。',
   'toolkit.uninstall': '卸载',
   'toolkit.uninstallTip':
     '从 harness 彻底卸载（CC 插件与 mod 执行 claude plugin uninstall；表面包清扫已复制文件；预置源保留可重装）',
@@ -64,7 +64,7 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.dirsTitle': 'External dirs',
   'toolkit.dirsEmpty': 'No external dirs registered',
   'toolkit.dirsHint':
-    'Local folders registered as scan sources — same pipeline as builtin and market. Add: run `weave toolkit add-dir <dir>` in a terminal; remove: `weave toolkit remove-dir <dir>` (cascade-uninstalls its enabled packs)',
+    'Local folders registered as scan sources — same pipeline as builtin and market. Add/remove via the REST endpoints `POST /toolkit/dirs` and `/toolkit/dirs/remove` (removal cascade-uninstalls enabled packs)',
   'toolkit.uninstall': 'Uninstall',
   'toolkit.uninstallTip':
     'Uninstall from the harness (CC plugins & mods run claude plugin uninstall; surface packs clean copied files; shipped sources stay and can be reinstalled)',
