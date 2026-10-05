@@ -247,6 +247,125 @@ describe('resolveTerminalLaunch', () => {
       resolveTerminalLaunch('/tmp/p', { preset: 'custom', customCommand: '  ' }, 'linux'),
     ).toEqual([]);
   });
+
+  // ---- run 模式：终端内执行命令（在默认终端打开会话 = claude --resume ----
+  it('run: wt passes the argv after -d', () => {
+    expect(
+      resolveTerminalLaunch('D:\\proj', { preset: 'wt', customCommand: '' }, 'win32', [
+        'claude',
+        '--resume',
+        'abc-123',
+      ]),
+    ).toEqual([{ command: 'wt.exe', args: ['-d', 'D:\\proj', 'claude', '--resume', 'abc-123'] }]);
+  });
+
+  it('run: powershell/cmd get a joined command line, cwd stays the project dir', () => {
+    const ps = resolveTerminalLaunch(
+      'D:\\proj',
+      { preset: 'powershell', customCommand: '' },
+      'win32',
+      ['claude', '--resume', 'abc-123'],
+    );
+    expect(ps).toEqual([
+      {
+        command: 'powershell.exe',
+        args: ['-NoExit', '-Command', 'claude --resume abc-123'],
+        cwd: 'D:\\proj',
+      },
+    ]);
+    const cmd = resolveTerminalLaunch('D:\\proj', { preset: 'cmd', customCommand: '' }, 'win32', [
+      'claude',
+      '--resume',
+      'abc-123',
+    ]);
+    expect(cmd).toEqual([
+      { command: 'cmd.exe', args: ['/K', 'claude --resume abc-123'], cwd: 'D:\\proj' },
+    ]);
+  });
+
+  it('run: auto on Windows keeps the probe order with command variants', () => {
+    const launches = resolveTerminalLaunch(
+      'D:\\proj',
+      { preset: 'auto', customCommand: '' },
+      'win32',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(launches.map((l) => l.command)).toEqual(['wt.exe', 'powershell.exe', 'cmd.exe']);
+    expect(launches[0]!.args).toEqual(['-d', 'D:\\proj', 'claude', '--resume', 'abc']);
+    expect(launches[2]!.args).toEqual(['/K', 'claude --resume abc']);
+  });
+
+  it('run: linux presets append the argv (-e / --)', () => {
+    const gnome = resolveTerminalLaunch(
+      '/tmp/p',
+      { preset: 'gnome', customCommand: '' },
+      'linux',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(gnome[0]!.args).toEqual([
+      '--working-directory=/tmp/p',
+      '--',
+      'claude',
+      '--resume',
+      'abc',
+    ]);
+    const konsole = resolveTerminalLaunch(
+      '/tmp/p',
+      { preset: 'konsole', customCommand: '' },
+      'linux',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(konsole[0]!.args).toEqual(['--workdir', '/tmp/p', '-e', 'claude', '--resume', 'abc']);
+  });
+
+  it('run: macOS presets open via AppleScript with cd + command', () => {
+    const launches = resolveTerminalLaunch(
+      '/tmp/p',
+      { preset: 'terminal', customCommand: '' },
+      'darwin',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(launches).toHaveLength(1);
+    expect(launches[0]!.command).toBe('osascript');
+    expect(launches[0]!.args.join(' ')).toContain('do script "cd \'/tmp/p\' && claude --resume abc"');
+    // 无 run 的既有行为不受影响
+    const openOnly = resolveTerminalLaunch('/tmp/p', { preset: 'terminal', customCommand: '' }, 'darwin');
+    expect(openOnly[0]!.command).toBe('open');
+  });
+
+  it('run: custom template substitutes {command}, or appends when absent', () => {
+    const withPlace = resolveTerminalLaunch(
+      '/tmp/p',
+      { preset: 'custom', customCommand: 'myterm -e {path} {command}' },
+      'linux',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(withPlace[0]!.command).toBe("myterm -e '/tmp/p' claude --resume abc");
+    const appended = resolveTerminalLaunch(
+      'D:\\proj',
+      { preset: 'custom', customCommand: 'wt -d {path}' },
+      'win32',
+      ['claude', '--resume', 'abc'],
+    );
+    expect(appended[0]!.command).toBe('wt -d "D:\\proj" claude --resume abc');
+    // 无 run 时残留的 {command} 占位符清空
+    const noRun = resolveTerminalLaunch(
+      '/tmp/p',
+      { preset: 'custom', customCommand: 'myterm {command}' },
+      'linux',
+    );
+    expect(noRun[0]!.command).toBe('myterm ');
+  });
+
+  it('run: ghostty on macOS goes through the bundle, which cannot run a command → empty', () => {
+    expect(
+      resolveTerminalLaunch('/tmp/p', { preset: 'ghostty', customCommand: '' }, 'darwin', [
+        'claude',
+        '--resume',
+        'abc',
+      ]),
+    ).toEqual([]);
+  });
 });
 
 describe('resolveExplorerLaunch', () => {

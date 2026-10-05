@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { stat } from 'node:fs/promises';
 import { z } from 'zod';
 import {
   HookRuleFilterSchema,
@@ -10,6 +11,8 @@ import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
+import { readDaemonSettings } from './settings.js';
+import { defaultProjectOpener } from './opener.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -308,6 +311,60 @@ export async function handleHooksRoutes(
       sendJson(res, 200, { session });
     } catch (err) {
       sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
+    return true;
+  }
+
+  // ---- 在默认终端打开会话：spawn 独立终端跑 harness 交互式 resume（如
+  // `claude --resume <id>`）——opener 的 detached+unref 保证进程不随 daemon 退出 ----
+  const openTermMatch = pathname.match(/^\/sessions\/([^/]+)\/open-terminal$/);
+  if (openTermMatch && req.method === 'POST') {
+    const sessionId = decodeURIComponent(openTermMatch[1]!);
+    if (!deps.hookSessions) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    const session = deps.hookSessions.getBySessionId(sessionId);
+    if (!session) {
+      sendJson(res, 404, { error: 'Session not found' });
+      return true;
+    }
+    if (!deps.hookEvents) {
+      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
+      return true;
+    }
+    // harness 归属 = 最新事件 source（与 sessions 列表的计算字段同口径）
+    const latest = deps.hookEvents.listBySession(sessionId, 1);
+    const src = latest[latest.length - 1]?.source;
+    if (src !== 'claude' && src !== 'codex') {
+      sendJson(res, 400, { error: 'Session has no hook events to determine its harness' });
+      return true;
+    }
+    // 交互式 resume 形态来自 harness 能力槽（server 不写 harness 命令硬编码）
+    const spec = deps.harnesses?.get(src)?.resume;
+    if (!spec?.supported || !spec.openArgs) {
+      sendJson(res, 501, { error: `Harness "${src}" does not support interactive resume` });
+      return true;
+    }
+    if (!session.projectId) {
+      sendJson(res, 400, { error: 'Session is not bound to a project' });
+      return true;
+    }
+    const project = deps.projects.getById(session.projectId);
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    try {
+      const info = await stat(project.path);
+      if (!info.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+      const settings = await readDaemonSettings();
+      const argv = [spec.bin, ...spec.openArgs(sessionId)];
+      await opener.runInTerminal(project.path, argv, settings.terminal);
+      sendJson(res, 200, { ok: true, sessionId, command: argv.join(' '), cwd: project.path });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }
     return true;
   }

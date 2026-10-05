@@ -39,6 +39,7 @@ export {
   resolveExplorerLaunch,
   openInExplorer,
   openInTerminal,
+  runInTerminal,
   defaultProjectOpener,
 } from './daemon/opener.js';
 export type { ProjectOpener, TerminalLaunch } from './daemon/opener.js';

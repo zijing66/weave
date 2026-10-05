@@ -6,7 +6,7 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Check, Copy, Pencil } from 'lucide-react';
+import { Check, Copy, Pencil, SquareTerminal } from 'lucide-react';
 import { STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
 
@@ -22,6 +22,7 @@ export function SessionList({
   onSelect,
   onRename,
   onDropDispatch,
+  onOpenTerminal,
 }: {
   sessions: SessionRow[];
   statuses: Map<string, SessionStatus>;
@@ -29,6 +30,7 @@ export function SessionList({
   onSelect: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => void;
   onDropDispatch: (dispatchId: number, sessionId: string) => void;
+  onOpenTerminal: (sessionId: string) => void;
 }) {
   const t = useT();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -129,6 +131,21 @@ export function SessionList({
                     {sessionLabel(s.title, s.sessionId)}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
+                        codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验 */}
+                    {s.harness === 'claude' && (
+                      <button
+                        type="button"
+                        title={t('tasks.openSessionTerminal')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenTerminal(s.sessionId);
+                        }}
+                        className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                      >
+                        <SquareTerminal className="h-3 w-3" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       title={t('tasks.renameTip')}

@@ -341,6 +341,16 @@ export function TasksPanel({
     }
   };
 
+  /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
+      独立进程不随 daemon 退出；失败走行内错误条。 */
+  const onOpenTerminal = async (sessionId: string): Promise<void> => {
+    try {
+      await api.openSessionTerminal(sessionId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
   const [assign, setAssign] = useState<Record<number, string>>({});
   /** 待派发清单：未投送的 pending 指令，且规则作用于本项目（本项目+全局规则）。 */
@@ -499,6 +509,7 @@ export function TasksPanel({
             onSelect={setSelectedId}
             onRename={(id, title) => void onRename(id, title)}
             onDropDispatch={onDropDispatch}
+            onOpenTerminal={(id) => void onOpenTerminal(id)}
           />
         )}
       </aside>

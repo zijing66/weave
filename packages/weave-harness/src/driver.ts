@@ -75,6 +75,11 @@ export interface ResumeCommandSpec {
   bin: string;
   /** 拼 spawn 参数，如 `['--resume', sessionId, '-p', prompt]`。 */
   args(sessionId: string, prompt: string): string[];
+  /**
+   * 交互式终端打开参数（无 `-p` prompt），如 `['--resume', sessionId]`——
+   * 「在默认终端打开会话」消费；缺省 = 该 harness 不支持交互式打开（501）。
+   */
+  openArgs?(sessionId: string): string[];
 }
 
 /** detect 返回结构（批 5 定）：harness 标识 + `dir` 下是否命中其标记。 */

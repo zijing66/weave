@@ -9,4 +9,6 @@ export const CLAUDE_RESUME: ResumeCommandSpec = {
   supported: true,
   bin: 'claude',
   args: (sessionId, prompt) => ['--resume', sessionId, '-p', prompt],
+  // 交互式打开：无 -p，进终端后由用户继续对话。
+  openArgs: (sessionId) => ['--resume', sessionId],
 };

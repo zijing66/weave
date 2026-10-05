@@ -22,6 +22,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   let opener: ProjectOpener & {
     explorerCalls: string[];
     terminalCalls: Array<{ dir: string; terminal: TerminalSettings }>;
+    runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
   };
 
   beforeAll(async () => {
@@ -32,11 +33,15 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     opener = {
       explorerCalls: [],
       terminalCalls: [],
+      runCalls: [],
       openExplorer: async (dir) => {
         opener.explorerCalls.push(dir);
       },
       openTerminal: async (dir, terminal) => {
         opener.terminalCalls.push({ dir, terminal });
+      },
+      runInTerminal: async (dir, argv, terminal) => {
+        opener.runCalls.push({ dir, argv, terminal });
       },
     };
     setDaemonSettingsDb(db);

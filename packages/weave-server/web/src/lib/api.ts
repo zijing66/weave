@@ -871,6 +871,12 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'PATCH', body: JSON.stringify({ title }) },
     ).then((r) => r.session),
+  /** 在默认终端打开会话（独立进程跑 `claude --resume <id>`，不随 daemon 退出）。 */
+  openSessionTerminal: (sessionId: string): Promise<{ ok: boolean; command: string }> =>
+    apiFetch<{ ok: boolean; command: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
+      { method: 'POST' },
+    ),
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>
