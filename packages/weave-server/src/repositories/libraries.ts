@@ -13,7 +13,8 @@ export interface LibraryRow {
 export class LibraryRepository {
   constructor(
     private readonly db: DatabaseSync,
-    private readonly dataDir: string = getDataDir(),
+    /** 该库实例绑定的 dataDir（市场路由的 import/refresh 须与读侧同根）。 */
+    readonly dataDir: string = getDataDir(),
   ) {}
 
   /** Add a library path. Idempotent on `path` (INSERT OR IGNORE). */

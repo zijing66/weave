@@ -30,10 +30,10 @@ export interface FingerprintCacheEntry {
  * their path relative to `dir`, and each contributes `${relPath}\0${content}`.
  * Empty / missing directories hash to a constant.
  */
-export async function hashSkillDir(dir: string): Promise<string> {
+export async function hashSkillDir(dir: string, skipNames: Set<string> = SKIP_NAMES): Promise<string> {
   const h = createHash('sha256');
   const files: { rel: string; abs: string }[] = [];
-  await collect(dir, dir, files);
+  await collect(dir, dir, files, skipNames);
   files.sort((a, b) => a.rel.localeCompare(b.rel));
   for (const f of files) {
     h.update(f.rel);
@@ -50,7 +50,12 @@ export async function hashSkillDir(dir: string): Promise<string> {
   return h.digest('hex');
 }
 
-async function collect(root: string, dir: string, out: { rel: string; abs: string }[]): Promise<void> {
+async function collect(
+  root: string,
+  dir: string,
+  out: { rel: string; abs: string }[],
+  skipNames: Set<string>,
+): Promise<void> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -58,9 +63,9 @@ async function collect(root: string, dir: string, out: { rel: string; abs: strin
     return;
   }
   for (const e of entries) {
-    if (e.name.startsWith('.') && SKIP_NAMES.has(e.name)) continue;
-    if (!SKIP_NAMES.has(e.name) && e.isDirectory()) {
-      await collect(root, path.join(dir, e.name), out);
+    if (e.name.startsWith('.') && skipNames.has(e.name)) continue;
+    if (!skipNames.has(e.name) && e.isDirectory()) {
+      await collect(root, path.join(dir, e.name), out, skipNames);
     } else if (e.isFile()) {
       out.push({ rel: path.relative(root, dir).replace(/\\/g, '/') + '/' + e.name, abs: path.join(dir, e.name) });
     }
@@ -68,7 +73,7 @@ async function collect(root: string, dir: string, out: { rel: string; abs: strin
 }
 
 /** Max mtime (ms) across all files in a tree — cache-invalidation signal. */
-export async function maxMtimeDir(dir: string): Promise<number> {
+export async function maxMtimeDir(dir: string, skipNames: Set<string> = SKIP_NAMES): Promise<number> {
   let max = 0;
   let entries;
   try {
@@ -77,10 +82,10 @@ export async function maxMtimeDir(dir: string): Promise<number> {
     return 0;
   }
   for (const e of entries) {
-    if (e.name.startsWith('.') && SKIP_NAMES.has(e.name)) continue;
+    if (e.name.startsWith('.') && skipNames.has(e.name)) continue;
     const abs = path.join(dir, e.name);
     if (e.isDirectory()) {
-      max = Math.max(max, await maxMtimeDir(abs));
+      max = Math.max(max, await maxMtimeDir(abs, skipNames));
     } else if (e.isFile()) {
       try {
         const s = await stat(abs);

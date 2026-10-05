@@ -85,11 +85,17 @@ describe('importFromDir（本地目录 → 市场）', () => {
     expect(second.id).toBe('same-2');
     expect(second.reused).toBe(false);
 
-    // 同一来源再次导入 → 复用既有目录，不产生第三份
+    // 同一来源再次导入 = 覆盖刷新（M4 修订组：原断言「复用不重拷」已随
+    // 覆盖重导语义改为「复用同一行 + 缓存内容更新」）
+    writeFileSync(path.join(a, 'skills', 'same-skill', 'SKILL.md'), '# skill v2');
     const again = await importFromDir(a, { libraries: libs, dataDir });
     expect(again.reused).toBe(true);
+    expect(again.refreshed).toBe(true);
     expect(again.id).toBe(first.id);
-    expect(libs.list()).toHaveLength(2);
+    expect(libs.list()).toHaveLength(2); // 不新增行
+    expect(
+      readFileSync(path.join(again.dir, 'skills', 'same-skill', 'SKILL.md'), 'utf-8'),
+    ).toBe('# skill v2'); // 缓存被源内容覆盖
   });
 
   it('非目录 / 缺失路径直接拒绝', async () => {

@@ -17,6 +17,7 @@ import {
 import { detectUpdates } from './updates.js';
 import { FingerprintCache } from './fingerprint.js';
 import { FILE_ASSET_SPECS, fileAssetTargetDir, isFileAssetCategory } from './file-assets.js';
+import { assetSurfaceFor } from '../surfaces.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -58,7 +59,9 @@ export async function applyUpdate(
     if (!src) throw new Error(`No library source for skill "${input.name}"`);
     const skillsRoot =
       input.scope === 'global'
-        ? path.join(homedir(), agent === 'codex' ? '.codex' : '.claude', 'skills')
+        ? // 全局根经 surface 取（codex current 根 = ~/.agents/skills，原硬编码
+          // ~/.codex/skills 是批 4a 欠账）
+          assetSurfaceFor(agent).globalSkillsRoots(homedir())[0]
         : path.join(projectPath, agent === 'codex' ? '.codex' : '.claude', 'skills');
     const targetDir = path.join(skillsRoot, input.name);
     await rm(targetDir, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weave/core';
@@ -15,6 +15,7 @@ import { readGlobalMcpServers, readGlobalSkills } from './global-config.js';
 import { readCodexMcpServers } from './codex-toml.js';
 import { FILE_ASSET_CATEGORIES, FILE_ASSET_SPECS } from './file-assets.js';
 import type { FileAssetCategory } from './file-assets.js';
+import { assetSurfaceFor } from '../surfaces.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -98,15 +99,26 @@ export async function detectUpdates(
   return { skills, mcp, files, available };
 }
 
-/** List installed skill names under a skills root (dirs, symlinks followed). */
+/** List installed skill names under a skills root (dirs + symlinks to dirs —
+ * global installs are symlinks, which `Dirent.isDirectory()` alone misses
+ * because it reports the link type, not the target). */
 async function listSkillNames(dir: string): Promise<string[]> {
+  let entries;
   try {
-    return (await readdir(dir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
+    entries = await readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory() && !e.isSymbolicLink()) continue;
+    try {
+      if ((await stat(path.join(dir, e.name))).isDirectory()) out.push(e.name);
+    } catch {
+      // vanished or broken link — skip
+    }
+  }
+  return out;
 }
 
 /** Detect skill updates (project + global, Claude + Codex) against the index. */
@@ -115,12 +127,13 @@ export async function detectSkillUpdates(
   cache: FingerprintCache,
   idx: LibraryIndex,
 ): Promise<SkillUpdate[]> {
-  const homes = [homedir(), homedir()];
+  const home = homedir();
   const surfaces: { dir: string; scope: 'project' | 'global'; agent: Harness }[] = [
     { dir: path.join(projectPath, '.claude', 'skills'), scope: 'project', agent: 'claude' },
     { dir: path.join(projectPath, '.codex', 'skills'), scope: 'project', agent: 'codex' },
-    { dir: path.join(homes[0], '.claude', 'skills'), scope: 'global', agent: 'claude' },
-    { dir: path.join(homes[1], '.codex', 'skills'), scope: 'global', agent: 'codex' },
+    { dir: path.join(home, '.claude', 'skills'), scope: 'global', agent: 'claude' },
+    // codex 全局装在 current 根（~/.agents/skills）；原硬编码 ~/.codex/skills 是批 4a 欠账
+    { dir: assetSurfaceFor('codex').globalSkillsRoots(home)[0], scope: 'global', agent: 'codex' },
   ];
   const out: SkillUpdate[] = [];
   for (const surface of surfaces) {

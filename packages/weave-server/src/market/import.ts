@@ -1,5 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process';
-import { cp, mkdir, readdir, stat } from 'node:fs/promises';
+import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { getDataDir } from '../db/paths.js';
@@ -49,8 +49,10 @@ export interface ImportedResource {
   relPath: string;
   manifest: MarketManifest;
   libraryId: number;
-  /** 复用了既有市场目录（同一来源重复导入）。 */
+  /** 同一来源重复导入 → 复用同一市场目录与 libraries 行（不新增）。 */
   reused: boolean;
+  /** 同源再导入时覆盖刷新了缓存内容（M4：覆盖重导 + 触发重扫）。 */
+  refreshed: boolean;
 }
 
 /** resourceId slug：白名单 `[a-z0-9-]`，其余字符折叠为 `-`；空结果回落 `resource`（防穿越）。 */
@@ -131,6 +133,7 @@ async function register(
   manifest: MarketManifest,
   deps: ImportDeps,
   reused: boolean,
+  refreshed = false,
 ): Promise<ImportedResource> {
   const dataDir = deps.dataDir ?? getDataDir();
   const relPath = toRelPosix(dir, dataDir);
@@ -142,7 +145,18 @@ async function register(
     manifest,
     libraryId: row.id,
     reused,
+    refreshed,
   };
+}
+
+/** 同源覆盖刷新：内容先落到 `*.refresh-tmp` 再整目录换入（拷贝失败不丢缓存）。 */
+async function replaceWithCopy(src: string, existing: string, root: string): Promise<void> {
+  const tmp = `${existing}.refresh-tmp`;
+  await rm(tmp, { recursive: true, force: true });
+  await cp(src, tmp, { recursive: true });
+  assertContained(path.resolve(tmp), root);
+  await rm(existing, { recursive: true, force: true });
+  await rename(tmp, existing);
 }
 
 /** 本地目录 → 复制进市场 + 写清单 + 登记 libraries 行。 */
@@ -155,8 +169,13 @@ export async function importFromDir(srcPath: string, deps: ImportDeps): Promise<
   const root = marketDir(dataDir);
   const existing = await findByOrigin(root, src);
   if (existing) {
-    const manifest = (await readManifest(existing))!;
-    return register(existing, manifest, deps, true);
+    const prev = (await readManifest(existing))!;
+    // 同源再导入 = 覆盖刷新（M4）：重拷缓存并更新 importedAt；src 已在函数
+    // 开头 stat 校验存在，origin 缺失时不会走到这里（不会先删缓存）。
+    await replaceWithCopy(src, existing, root);
+    const manifest: MarketManifest = { ...prev, importedAt: nowIso() };
+    await writeManifest(existing, manifest);
+    return register(existing, manifest, deps, true, true);
   }
 
   const target = await uniqueMarketDir(slugifyResourceId(path.basename(src)), root);
@@ -177,8 +196,27 @@ export async function importFromGit(rawUrl: string, deps: ImportDeps): Promise<I
   const root = marketDir(dataDir);
   const existing = await findByOrigin(root, url);
   if (existing) {
-    const manifest = (await readManifest(existing))!;
-    return register(existing, manifest, deps, true);
+    const prev = (await readManifest(existing))!;
+    // 同源再导入 = 覆盖刷新（M4）：clone 到 *.refresh-tmp 再整目录换入，
+    // 网络失败时旧缓存仍在（rm 在 clone 成功之后）。
+    const tmp = `${existing}.refresh-tmp`;
+    await rm(tmp, { recursive: true, force: true });
+    const cloneArgs = ['clone', '--depth', '1', url, tmp];
+    try {
+      await (deps.execGit ?? defaultGitExec)('git', cloneArgs, {
+        timeout: CLONE_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+      });
+    } catch (e) {
+      throw new Error(`git clone failed: ${truncate(gitErrorText(e))}`);
+    }
+    assertContained(path.resolve(tmp), root);
+    await rm(existing, { recursive: true, force: true });
+    await rename(tmp, existing);
+    const manifest: MarketManifest = { ...prev, importedAt: nowIso() };
+    await writeManifest(existing, manifest);
+    return register(existing, manifest, deps, true, true);
   }
 
   const target = await uniqueMarketDir(slugifyResourceId(gitDirName(url)), root);
@@ -225,6 +263,7 @@ export async function importLibraryIntoMarket(
       manifest,
       libraryId: row.id,
       reused: true,
+      refreshed: false,
     };
   }
 
@@ -242,6 +281,7 @@ export async function importLibraryIntoMarket(
     manifest,
     libraryId: row.id,
     reused: false,
+    refreshed: false,
   };
 }
 
@@ -261,7 +301,7 @@ function gitErrorText(e: unknown): string {
   return text.trim() || 'unknown error';
 }
 
-const defaultGitExec: GitExec = async (file, args, options) => {
+export const defaultGitExec: GitExec = async (file, args, options) => {
   const { stdout, stderr } = await execFileAsync(file, args, options);
   return { stdout: String(stdout), stderr: String(stderr) };
 };

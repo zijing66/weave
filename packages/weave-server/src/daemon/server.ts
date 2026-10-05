@@ -69,6 +69,8 @@ import { getDataDir } from '../db/paths.js';
 import { importFromDir, importFromGit, importLibraryIntoMarket } from '../market/import.js';
 import { marketDir, readManifest } from '../market/manifest.js';
 import { isInsideDir, toRelPosix } from '../market/resolve.js';
+import { checkMarketUpdates } from '../market/updates.js';
+import { refreshMarketItems } from '../market/refresh.js';
 import {
   readProjectFile,
   readGlobalFile,
@@ -503,13 +505,16 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
-    const importDeps = { libraries: deps.libraries };
+    // dataDir 跟随库实例（生产 = getDataDir()；测试可注入临时根，读写两侧同根）
+    const importDeps = { libraries: deps.libraries, dataDir: deps.libraries.dataDir };
     try {
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
+        if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir); // 覆盖重导 → 指纹失效
         sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
+        if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir);
         sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
       } else {
         sendJson(res, 400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
@@ -517,6 +522,65 @@ async function handleRequest(
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });
     }
+    return;
+  }
+  // 批量检查市场缓存更新（M4）：比对 origin，只读不落库；body 可空 = 全量。
+  if (pathname === '/market/check-updates' && req.method === 'POST') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(res, 503, { error: 'Libraries unavailable' });
+      return;
+    }
+    let body: { ids?: number[] } = {};
+    const raw = (await readBody(req)).trim();
+    if (raw) {
+      try {
+        body = JSON.parse(raw) as typeof body;
+      } catch {
+        sendJson(res, 400, { error: 'Invalid JSON body' });
+        return;
+      }
+    }
+    const rows = deps.libraries
+      .list()
+      .filter((r) => !body.ids?.length || body.ids.includes(r.id));
+    const results = await checkMarketUpdates(rows.map((r) => ({ id: r.id, dir: r.path })));
+    sendJson(res, 200, { results });
+    return;
+  }
+  // 刷新市场缓存（M4 一键更新）：dir 重拷 / git 重 clone + 回写 commit；body 可空 = 全量。
+  if (pathname === '/market/refresh' && req.method === 'POST') {
+    if (!requireAuth()) return;
+    if (!deps.libraries) {
+      sendJson(res, 503, { error: 'Libraries unavailable' });
+      return;
+    }
+    let body: { ids?: number[] } = {};
+    const raw = (await readBody(req)).trim();
+    if (raw) {
+      try {
+        body = JSON.parse(raw) as typeof body;
+      } catch {
+        sendJson(res, 400, { error: 'Invalid JSON body' });
+        return;
+      }
+    }
+    const targets = deps.libraries
+      .list()
+      .filter((r) => !body.ids?.length || body.ids.includes(r.id))
+      .map((r) => ({ id: r.id, dir: r.path }));
+    const results = await refreshMarketItems(targets, {
+      libraries: deps.libraries,
+      dataDir: deps.libraries.dataDir,
+    });
+    const dirOf = new Map(targets.map((t) => [t.id, t.dir]));
+    for (const r of results) {
+      if (r.status === 'refreshed') {
+        const dir = dirOf.get(r.id);
+        if (dir) deps.fingerprintCache?.invalidate(dir);
+      }
+    }
+    sendJson(res, 200, { results });
     return;
   }
   const marketMatch = pathname.match(/^\/market\/(\d+)$/);
@@ -559,7 +623,10 @@ async function handleRequest(
       return;
     }
     try {
-      const imported = await importLibraryIntoMarket(row, { libraries: deps.libraries });
+      const imported = await importLibraryIntoMarket(row, {
+        libraries: deps.libraries,
+        dataDir: deps.libraries.dataDir,
+      });
       sendJson(res, 200, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });

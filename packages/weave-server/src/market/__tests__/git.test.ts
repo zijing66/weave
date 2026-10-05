@@ -140,7 +140,7 @@ describe('importFromGit（假 exec，不真联网）', () => {
     expect(libs.list()).toHaveLength(0); // 失败不登记
   });
 
-  it('同一 URL 重复导入 → 复用既有目录', async () => {
+  it('同一 URL 重复导入 → 覆盖刷新既有目录（M4 修订组：原「恰一次 clone」断言随覆盖重导语义改为两次——首次 + 同源重刷）', async () => {
     let n = 0;
     const execGit: GitExec = async (_file, args) => {
       n += 1;
@@ -149,8 +149,9 @@ describe('importFromGit（假 exec，不真联网）', () => {
     };
     const first = await importFromGit(url, { libraries: libs, dataDir, execGit });
     const second = await importFromGit(url, { libraries: libs, dataDir, execGit });
-    expect(n).toBe(1);
+    expect(n).toBe(2);
     expect(second.reused).toBe(true);
+    expect(second.refreshed).toBe(true);
     expect(second.id).toBe(first.id);
     expect(libs.list()).toHaveLength(1);
   });
