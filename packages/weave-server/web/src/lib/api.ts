@@ -189,7 +189,7 @@ export interface ToolkitPack {
   description?: string;
   scope: string;
   dir: string;
-  provenance: 'builtin' | 'external-dir';
+  provenance: 'builtin' | 'external-dir' | 'market';
   sourceRoot: string;
   targets: string[];
   kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
@@ -298,6 +298,14 @@ export interface LibraryRow {
   path: string;
   kind: 'skill' | 'mcp' | 'both';
   addedAt: string;
+}
+
+/** mirror of server `market/updates.ts` 的检查结果（POST /market/check-updates）。 */
+export type MarketUpdateStatus = 'uptodate' | 'update-available' | 'origin-missing' | 'unknown';
+export interface MarketUpdateCheck {
+  id: number;
+  status: MarketUpdateStatus;
+  checkedAt: string;
 }
 
 /** 资源市场清单行（GET /market）：libraries 行 + resolve 后有效路径 + 清单元数据。 */
@@ -897,6 +905,18 @@ export const api = {
   /** 删除市场资源（只删市场目录与行，装面副本不级联）。 */
   removeMarket: (id: number): Promise<void> =>
     apiFetch<{ ok: boolean }>(`/market/${id}`, { method: 'DELETE' }).then(() => undefined),
+  /** 批量检查市场缓存更新（M4）：比对 origin，只读不落库；缺省全量。 */
+  checkMarketUpdates: (ids?: number[]): Promise<MarketUpdateCheck[]> =>
+    apiFetch<{ results: MarketUpdateCheck[] }>('/market/check-updates', {
+      method: 'POST',
+      body: JSON.stringify(ids?.length ? { ids } : {}),
+    }).then((r) => r.results),
+  /** 刷新市场缓存（一键更新第一步）：dir 重拷 / git 重 clone。 */
+  refreshMarketCache: (ids?: number[]): Promise<Array<{ id: number; status: string }>> =>
+    apiFetch<{ results: Array<{ id: number; status: string }> }>('/market/refresh', {
+      method: 'POST',
+      body: JSON.stringify(ids?.length ? { ids } : {}),
+    }).then((r) => r.results),
   /** legacy 外部源显式迁入市场（复制 + 改写为相对路径）。 */
   migrateLibrary: (id: number): Promise<MarketItem> =>
     apiFetch<{ item: MarketItem }>(`/libraries/${id}/market-import`, {

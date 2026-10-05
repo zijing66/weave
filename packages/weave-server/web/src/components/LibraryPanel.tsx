@@ -3,6 +3,7 @@ import { useDraggable } from '@dnd-kit/core';
 import {
   api,
   type MarketItem,
+  type MarketUpdateStatus,
   type SkillAsset,
   type McpTemplate,
   type McpServerConfig,
@@ -12,6 +13,8 @@ import {
   type FileAssetCategory,
   type UpdateReport,
   type InstallCapabilities,
+  type MarketPluginAsset,
+  type ToolkitPack,
   FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
 import {
@@ -22,6 +25,8 @@ import {
   type DragPayload,
 } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
@@ -42,6 +47,8 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   GitBranch,
+  Puzzle,
+  Download,
 } from 'lucide-react';
 
 interface LibraryPanelProps {
@@ -66,6 +73,10 @@ interface LibraryPanelProps {
   scope: AssetScope;
   /** 安装属性矩阵（GET /capabilities）；未加载时谓词全放行。 */
   capabilities: InstallCapabilities | null;
+  /** 当前锚定项目（插件包启用走 toolkit enable 端点）。 */
+  projectId: number;
+  /** 一键更新第二步：App 侧 syncAll（含 updates/assets 刷新编排）。 */
+  onSyncAll: () => void | Promise<void>;
 }
 
 export function LibraryPanel({
@@ -79,12 +90,15 @@ export function LibraryPanel({
   assetTab,
   scope,
   capabilities,
+  projectId,
+  onSyncAll,
 }: LibraryPanelProps) {
   const [market, setMarket] = useState<MarketItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [skills, setSkills] = useState<SkillAsset[]>([]);
   const [fileTemplates, setFileTemplates] = useState<FileAssetTemplate[]>([]);
   const [mcp, setMcp] = useState<McpTemplate[]>([]);
+  const [plugins, setPlugins] = useState<MarketPluginAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -93,6 +107,15 @@ export function LibraryPanel({
   const [importingGit, setImportingGit] = useState(false);
   /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
   const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
+  /** 覆盖导入 / 缓存刷新后 +1 → 同 id 资产重扫（M8 scanNonce）。 */
+  const [scanNonce, setScanNonce] = useState(0);
+  /** 批量检查结果（POST /market/check-updates，不落库）。 */
+  const [marketStatus, setMarketStatus] = useState<Map<number, MarketUpdateStatus>>(new Map());
+  const [checking, setChecking] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  /** 插件包区的 toolkit 启用态（按 dir 匹配）。 */
+  const [toolkitPacks, setToolkitPacks] = useState<ToolkitPack[] | null>(null);
+  const [pluginBusy, setPluginBusy] = useState<string | null>(null);
   const t = useT();
 
   // 安装前置判定（与拖拽 canDrop 共用 lib/install-capabilities 谓词）
@@ -119,6 +142,7 @@ export function LibraryPanel({
       setSkills([]);
       setFileTemplates([]);
       setMcp([]);
+      setPlugins([]);
       return;
     }
     setLoading(true);
@@ -129,10 +153,78 @@ export function LibraryPanel({
         setSkills(r.skills);
         setFileTemplates(r.files ?? []);
         setMcp(r.mcp ?? []);
+        setPlugins(r.plugins ?? []);
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [selectedId]);
+  }, [selectedId, scanNonce]);
+
+  // 插件包启用态：仅 plugins tab 拉 toolkit 清单（市场包 provenance='market'，
+  // M3 后按 pack.dir 与 MarketPluginAsset.dirPath 匹配）。
+  useEffect(() => {
+    if (assetTab !== 'plugins') return;
+    api
+      .listToolkit(projectId)
+      .then((r) => setToolkitPacks(r.packs))
+      .catch(() => setToolkitPacks([]));
+  }, [assetTab, projectId, scanNonce]);
+
+  /** 批量检查更新：比对市场缓存与 origin，只读不落库。 */
+  async function handleCheckUpdates() {
+    if (checking) return;
+    setChecking(true);
+    setError(null);
+    try {
+      const results = await api.checkMarketUpdates();
+      setMarketStatus(new Map(results.map((r) => [r.id, r.status])));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  /** 一键更新：刷市场缓存（update-available 项）→ syncAll 追平复制型装面 → 重查。 */
+  async function handleRefreshAll() {
+    const ids = [...marketStatus.entries()]
+      .filter(([, s]) => s === 'update-available')
+      .map(([id]) => id);
+    if (!ids.length || refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await api.refreshMarketCache(ids);
+      await onSyncAll();
+      await refreshMarket();
+      setScanNonce((n) => n + 1);
+      const recheck = await api.checkMarketUpdates(ids);
+      setMarketStatus((prev) => {
+        const next = new Map(prev);
+        for (const r of recheck) next.set(r.id, r.status);
+        return next;
+      });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  /** 插件包启用/停用（toolkit enable 管线；sourceRoot 消歧扫描根）。 */
+  async function togglePluginPack(pack: ToolkitPack, enabled: boolean) {
+    if (pluginBusy !== null) return; // Switch 无 disabled，busy 期间防重入
+    setPluginBusy(pack.id);
+    setError(null);
+    try {
+      await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
+      const r = await api.listToolkit(projectId);
+      setToolkitPacks(r.packs);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPluginBusy(null);
+    }
+  }
 
   /** 本地目录引入：每个选中目录复制进市场，随后刷新清单。 */
   async function handlePicked(paths: string[]) {
@@ -146,6 +238,7 @@ export function LibraryPanel({
       }
     }
     await refreshMarket();
+    setScanNonce((n) => n + 1); // 同名覆盖导入后同 id 重扫
     if (lastId !== null) setSelectedId(lastId);
   }
 
@@ -159,6 +252,7 @@ export function LibraryPanel({
       const item = await api.importMarketGit(url);
       setGitUrl('');
       await refreshMarket();
+      setScanNonce((n) => n + 1);
       setSelectedId(item.id);
     } catch (e) {
       setError(String(e));
@@ -209,6 +303,10 @@ export function LibraryPanel({
   const outdatedSkills = (updates?.skills ?? []).filter((u) => u.outdated);
   const outdatedMcp = (updates?.mcp ?? []).filter((u) => u.outdated);
   const outdatedFiles = (updates?.files ?? []).filter((u) => u.outdated);
+  /** 批量检查出的可更新市场资源数（一键更新按钮的启用条件）。 */
+  const marketUpdateCount = [...marketStatus.values()].filter(
+    (s) => s === 'update-available',
+  ).length;
 
   // The installable list shown depends on the active main category and, on the
   // 资源管理 page, the asset tab: each tab maps 1:1 to its section — skills /
@@ -218,13 +316,15 @@ export function LibraryPanel({
   const showSkills = isFiles && assetTab === 'skills';
   const showFileTemplates = isFiles && assetTab === 'files';
   const showMcp = isFiles && assetTab === 'mcp';
-  const noTemplates = !showSkills && !showMcp && !showFileTemplates;
+  const showPlugins = isFiles && assetTab === 'plugins';
+  const noTemplates = !showSkills && !showMcp && !showFileTemplates && !showPlugins;
 
   // Sections and groups that are currently rendered — collapse-all targets.
   const visibleSections = [
     ...(showSkills ? [SECTION_SKILLS] : []),
     ...(showFileTemplates ? [SECTION_FILES] : []),
     ...(showMcp ? [SECTION_MCP] : []),
+    ...(showPlugins ? [SECTION_PLUGINS] : []),
     ...(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0
       ? [SECTION_UPDATES]
       : []),
@@ -323,6 +423,33 @@ export function LibraryPanel({
           existingPaths={market.map((l) => l.path)}
         />
         {market.length > 0 && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => void handleCheckUpdates()}
+              disabled={checking}
+              title={t('library.checkUpdatesTip')}
+              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', checking && 'animate-spin')} />
+              {checking ? t('library.checking') : t('library.checkUpdates')}
+            </button>
+            <button
+              onClick={() => void handleRefreshAll()}
+              disabled={marketUpdateCount === 0 || refreshing}
+              title={t('library.refreshUpdatesTip')}
+              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-blue-900/40 text-blue-300 px-2 py-1.5 text-xs hover:bg-blue-900/60 disabled:opacity-40"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {refreshing ? t('library.scanning') : t('library.refreshUpdates')}
+              {marketUpdateCount > 0 && (
+                <Badge variant="other" className="px-1">
+                  {marketUpdateCount}
+                </Badge>
+              )}
+            </button>
+          </div>
+        )}
+        {market.length > 0 && (
           <ul className="space-y-0.5">
             {market.map((item) => (
               <li key={item.id} className="flex items-center gap-1">
@@ -350,6 +477,7 @@ export function LibraryPanel({
                     </span>
                   )}
                 </button>
+                <MarketStatusBadge status={marketStatus.get(item.id)} />
                 {item.legacy && (
                   <button
                     onClick={() => migrateLibrary(item.id)}
@@ -585,6 +713,141 @@ export function LibraryPanel({
           </TemplateSection>
         )}
 
+        {/* Plugin packs — CC 原生 / Weave 规则双徽标；启用走 toolkit enable 管线 */}
+        {showPlugins && (
+          <TemplateSection
+            icon={<Puzzle className="h-3.5 w-3.5 text-violet-400" />}
+            title={t('library.sectionPlugins')}
+            hint={t('library.hintClickInstall')}
+            count={plugins.length}
+            open={!sectionsCollapsed.has(SECTION_PLUGINS)}
+            onToggle={() => toggleSection(SECTION_PLUGINS)}
+          >
+            {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
+            {!loading && selectedId === null && (
+              <p className="text-xs text-neutral-600">{t('library.addLibraryPlugins')}</p>
+            )}
+            {!loading && selectedId !== null && plugins.length === 0 && (
+              <p className="text-xs text-neutral-600">{t('library.noPlugins')}</p>
+            )}
+            {plugins.map((pl) => {
+              const pack = toolkitPacks?.find((p) => p.dir === pl.dirPath) ?? null;
+              return (
+                <div
+                  key={pl.relPath || pl.name}
+                  className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5 space-y-1"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Puzzle
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0',
+                        pack?.enabled ? 'text-violet-400' : 'text-neutral-600',
+                      )}
+                    />
+                    <span className="min-w-0 truncate text-xs font-medium text-neutral-200">
+                      {pl.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+                      v{pl.version}
+                    </span>
+                    {pl.ccPack && (
+                      <span
+                        className="shrink-0"
+                        title={t('library.ccPluginTip')}
+                      >
+                        <Badge className="bg-blue-900/40 text-blue-300">
+                          {t('library.badgeCcPlugin')}
+                        </Badge>
+                      </span>
+                    )}
+                    {pl.weavePack && (
+                      <span
+                        className="shrink-0"
+                        title={t('library.weavePluginTip')}
+                      >
+                        <Badge className="bg-violet-900/40 text-violet-300">
+                          {t('library.badgeWeavePlugin')}
+                        </Badge>
+                      </span>
+                    )}
+                    <Badge className={cn('shrink-0', KIND_STYLES[pl.kind])}>
+                      {t(KIND_KEY[pl.kind])}
+                    </Badge>
+                    <span className="shrink-0 text-[10px] text-neutral-600">
+                      {t('toolkit.targets', { targets: pl.targets.join('+') })}
+                    </span>
+                    <span className="ml-auto shrink-0">
+                      {pack ? (
+                        <Switch
+                          checked={pack.enabled}
+                          onChange={(v) => void togglePluginPack(pack, v)}
+                          title={t('toolkit.toggleTip')}
+                        />
+                      ) : (
+                        <span
+                          className="text-[10px] text-neutral-600"
+                          title={t('library.pluginNotInToolkit')}
+                        >
+                          —
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {pl.description && (
+                    <p className="truncate text-[11px] text-neutral-500" title={pl.description}>
+                      {pl.description}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-1">
+                    {pl.components.map((c) => (
+                      <Badge key={c} variant="other" className="px-1 text-[10px]">
+                        {c}
+                      </Badge>
+                    ))}
+                  </div>
+                  {pl.skills.length > 0 && (
+                    <div>
+                      <p className="mb-0.5 text-[10px] text-neutral-600">
+                        {t('library.pluginSkillsLabel')}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {pl.skills.map((sname) =>
+                          installedSkillNames.has(sname) ? (
+                            <Badge key={sname} variant="skill" className="px-1.5 text-[10px]">
+                              {sname} ✓
+                            </Badge>
+                          ) : (
+                            <button
+                              key={sname}
+                              disabled={!skillVerdict.ok}
+                              title={reasonTitle(skillVerdict)}
+                              onClick={() =>
+                                onInstallSkill(
+                                  {
+                                    name: sname,
+                                    dirPath: `${pl.dirPath}/skills/${sname}`,
+                                    relPath: `${pl.relPath ? `${pl.relPath}/` : ''}skills/${sname}`,
+                                    group: `${pl.relPath ? `${pl.relPath}/` : ''}skills`,
+                                  },
+                                  scope,
+                                  installAgent,
+                                )
+                              }
+                              className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-blue-300 hover:bg-neutral-700 disabled:opacity-40"
+                            >
+                              {sname}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </TemplateSection>
+        )}
+
         {/* Update hints */}
         {(outdatedSkills.length > 0 || outdatedMcp.length > 0 || outdatedFiles.length > 0) && (
           <TemplateSection
@@ -667,7 +930,29 @@ function MarketSourceBadge({ source }: { source: MarketItem['source'] }) {
 const SECTION_SKILLS = 'skill-templates';
 const SECTION_FILES = 'file-templates';
 const SECTION_MCP = 'mcp-templates';
+const SECTION_PLUGINS = 'plugin-packs';
 const SECTION_UPDATES = 'update-hints';
+
+/** 市场行更新检查状态徽标（批量检查更新后显示）。 */
+function MarketStatusBadge({ status }: { status?: MarketUpdateStatus }) {
+  const t = useT();
+  if (!status) return null;
+  const cfg = {
+    uptodate: { label: t('library.statusUptodate'), cls: 'text-emerald-300 bg-emerald-900/30' },
+    'update-available': {
+      label: t('library.statusUpdateAvailable'),
+      cls: 'text-orange-300 bg-orange-900/30',
+    },
+    'origin-missing': {
+      label: t('library.statusOriginMissing'),
+      cls: 'text-amber-300 bg-amber-900/30',
+    },
+    unknown: { label: t('library.statusUnknown'), cls: 'text-neutral-400 bg-neutral-800' },
+  }[status];
+  return (
+    <Badge className={cn('shrink-0 px-1.5 text-[10px]', cfg.cls)}>{cfg.label}</Badge>
+  );
+}
 
 /**
  * Group skills by their parent `skills/` directory so a library with multiple

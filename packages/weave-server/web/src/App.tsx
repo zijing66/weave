@@ -1010,6 +1010,8 @@ export default function App() {
                   assetTab={assetTab}
                   scope={mode}
                   capabilities={installCaps}
+                  projectId={activeProject.id}
+                  onSyncAll={() => handleSyncAll()}
                 />
               ) : (
                 <div className="p-3 text-xs text-neutral-500">

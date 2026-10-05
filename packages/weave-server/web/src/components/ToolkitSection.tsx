@@ -8,7 +8,8 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { FolderOpen, Package, TriangleAlert, Wrench } from 'lucide-react';
 
-const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
+/** 导出给 LibraryPanel 插件包区复用（同一 kind 徽标语言）。 */
+export const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
   skill: 'toolkit.kind.skill',
   hook: 'toolkit.kind.hook',
   mod: 'toolkit.kind.mod',
@@ -16,7 +17,7 @@ const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
   surface: 'toolkit.kind.surface',
 };
 
-const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
+export const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
   skill: 'bg-emerald-900/40 text-emerald-300',
   hook: 'bg-blue-900/40 text-blue-300',
   mod: 'bg-purple-900/40 text-purple-300',
@@ -27,6 +28,7 @@ const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
 const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
   builtin: 'toolkit.prov.builtin',
   'external-dir': 'toolkit.prov.external-dir',
+  market: 'toolkit.prov.market',
 };
 
 /**
