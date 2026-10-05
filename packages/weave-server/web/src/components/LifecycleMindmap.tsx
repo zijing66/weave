@@ -106,11 +106,10 @@ function sessionModelOf(event: HookEventRow): string | undefined {
 
 /** 边：closure=true 是闭环回边（末事件 → prompt 根，成环，左出左入走外侧
  *  通道，实线）；vertical=true 是同列时序链（底出顶入，防跨列锚点绕行交叉）；
- *  dashed=true 是弱化从属连线（虚线，展开簇的首边）；clusterLoop=true 是
- *  展开簇的尾回环（虚线，右出右入 + waypoints 走列间空隙——xyflow 内置
- *  smoothstep 的右→右折线固定贴 source 右侧、在 target 高度横穿成员列，
- *  必须手算绕行点才成环）；waypoints 给出自定义折点（仅 clusterLoop 用，
- *  配 waypoint edge type 渲染）。一律静态描边（无 animated 流光）。 */
+ *  dashed=true 是弱化从属连线（虚线，展开簇的首边）；clusterLoop / ringLoop
+ *  是「子回父」环（簇尾回环虚线、派发环回锚实线）：子端左连接点出（与父
+ *  节点邻近）、列间空隙手算折点、父端右 78% 入点（与父的出点错开防交叉）
+ *  ——内置 smoothstep 会横穿成员列，waypoints 绕行才成环。静态描边。 */
 export interface LaidEdge {
   id: string;
   source: string;
@@ -119,6 +118,7 @@ export interface LaidEdge {
   vertical?: boolean;
   dashed?: boolean;
   clusterLoop?: boolean;
+  ringLoop?: boolean;
   waypoints?: { x: number; y: number }[];
 }
 
@@ -497,16 +497,15 @@ export function layoutMindmap(
         vertical: true,
       });
     }
-    // 尾回环手算折点：右出 → 下折（末成员底缘外，成员列下方无节点）→
-    // 左进列间空隙 → 上至簇入点高 → 左入簇右。内置 smoothstep 右→右会横穿
-    // 成员列（水平段固定在 target 高度），waypoints 绕行才成环。
-    // y 对齐 handle 实际锚点：源=节点中线（'r' 中点），目标=右缘 78%
-    //（'rt' handle），首尾段才水平不斜。
+    // 尾回环手算折点：末成员**左出**（与父节点邻近的连接点——左缘直对
+    // 簇列，进空隙即朝父方向）→ 空隙内上行至簇入点高 → 左入簇右 78%。
+    // 内置 smoothstep 会横穿成员列（水平段固定在 target 高度），手算绕行
+    // 才成环。y 对齐 handle 实际锚点：源=节点中线（'c' 左出中点），
+    // 目标=右缘 78%（'rt'），首尾段才水平不斜。
     const lastKid = c.children[c.children.length - 1]!;
     const ys = (yOf.get(lastKid.key) ?? 0) + NODE_H / 2;
     const yt = (yOf.get(c.key) ?? 0) + NODE_H * 0.78;
     const cDepth = depthOf.get(c.key) ?? 0;
-    const srcRight = (cDepth + 1) * COL_W + NODE_W;
     const gapX = cDepth * COL_W + NODE_W + (COL_W - NODE_W) / 2;
     edges.push({
       id: `${lastKid.key}->${c.key}`,
@@ -514,9 +513,7 @@ export function layoutMindmap(
       target: c.key,
       clusterLoop: true,
       waypoints: [
-        { x: srcRight + 36, y: ys },
-        { x: srcRight + 36, y: ys + 48 },
-        { x: gapX, y: ys + 48 },
+        { x: gapX, y: ys },
         { x: gapX, y: yt },
       ],
     });
@@ -534,7 +531,22 @@ export function layoutMindmap(
       prev = m.key;
     }
     if (closed) {
-      edges.push({ id: `${prev}->${anchor.key}`, source: prev, target: anchor.key, closure: true });
+      // 回锚与工具调用簇环同构：尾成员左出（与锚邻近）→ 空隙上行/下行 →
+      // 锚右 78% 入（与锚的出点错开）；实线（clusterLoop 才虚线）。
+      const aDepth = depthOf.get(anchor.key) ?? 0;
+      const ys = (yOf.get(prev) ?? 0) + NODE_H / 2;
+      const yt = (yOf.get(anchor.key) ?? 0) + NODE_H * 0.78;
+      const gapX = aDepth * COL_W + NODE_W + (COL_W - NODE_W) / 2;
+      edges.push({
+        id: `${prev}->${anchor.key}`,
+        source: prev,
+        target: anchor.key,
+        ringLoop: true,
+        waypoints: [
+          { x: gapX, y: ys },
+          { x: gapX, y: yt },
+        ],
+      });
     }
   }
   return { nodes, edges };
@@ -1063,9 +1075,9 @@ export function LifecycleMindmap({
     [laid.nodes, flashKey, ruleInfo, onToggle, openDetail],
   );
   // 箭头 + 亮蓝加粗：显著表达调用方向。锚点四分：同列时序链底出顶入；
-  // 跨列层级右出左入；closure（组闭环/派发环回锚）左出左入走外侧通道、
-  // 实线成环；dashed/clusterLoop（簇首尾）虚线弱化从属，尾回环走 waypoint
-  // 折点绕列间空隙。静态描边（无 animated 流光）——流动效果破坏实线观感。
+  // 跨列层级右出左入；closure（组闭环）左出左入走外侧通道、实线成环；
+  // 簇/派发「子回父」环（clusterLoop 虚线 / ringLoop 实线）子端左出、
+  // waypoints 走列间空隙、父端右 78% 入点错开。静态描边（无流光）。
   const flowEdges: Edge[] = useMemo(
     () =>
       laid.edges.map((e) => ({
@@ -1073,8 +1085,8 @@ export function LifecycleMindmap({
         ...(e.waypoints ? { data: { waypoints: e.waypoints } } : {}),
         source: e.source,
         target: e.target,
-        sourceHandle: e.closure ? 'c' : e.vertical ? 'b' : 'r',
-        targetHandle: e.closure ? 'l' : e.clusterLoop ? 'rt' : e.vertical ? 't' : 'l',
+        sourceHandle: e.closure || e.clusterLoop || e.ringLoop ? 'c' : e.vertical ? 'b' : 'r',
+        targetHandle: e.closure ? 'l' : e.clusterLoop || e.ringLoop ? 'rt' : e.vertical ? 't' : 'l',
         type: e.waypoints ? 'waypoint' : 'smoothstep',
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         style: e.dashed || e.clusterLoop

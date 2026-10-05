@@ -224,15 +224,11 @@ describe('layoutMindmap', () => {
     const loop = open.edges.find((e) => e.id === 'e:5->c:2')!;
     expect(loop.clusterLoop).toBe(true);
     expect(loop.closure).toBeUndefined();
-    // 手算折点：右出 → 下折 → 左进列间空隙 → 上至簇高（内置 smoothstep 会横穿成员列）
-    expect(loop.waypoints).toHaveLength(4);
-    const [p0, p1, p2, p3] = loop.waypoints!;
-    expect(p0!.x).toBe(p1!.x); // 右出后的垂直下折段
-    expect(p1!.y).toBeGreaterThan(p0!.y);
-    expect(p1!.x).toBeGreaterThan(p2!.x); // 水平左移进列间空隙
-    expect(p2!.y).toBe(p1!.y);
-    expect(p3!.x).toBe(p2!.x); // 空隙内垂直上行
-    expect(p3!.y).toBeLessThan(p2!.y);
+    // 手算折点：子端左出进空隙 → 垂直上行 → 父端右 78% 入（内置 smoothstep 会横穿成员列）
+    expect(loop.waypoints).toHaveLength(2);
+    const [p0, p1] = loop.waypoints!;
+    expect(p0!.x).toBe(p1!.x); // 列间空隙内垂直走线
+    expect(p1!.y).toBeLessThan(p0!.y); // 上行至簇入点（簇在末成员上方）
     expect(open.edges.find((e) => e.id === 'e:2->e:3')?.vertical).toBe(true);
     expect(open.edges.find((e) => e.id === 'e:2->e:3')?.dashed).toBeUndefined();
     // 收起态无尾回边（成员隐藏，链路保持现状）
@@ -293,7 +289,12 @@ describe('layoutMindmap', () => {
         'e:5->e:2',
       ]),
     );
-    expect(edges.find((e) => e.id === 'e:5->e:2')?.closure).toBe(true);
+    // 回锚与簇环同构：ringLoop（非 closure）+ 空隙折点，实线保持
+    const back = edges.find((e) => e.id === 'e:5->e:2')!;
+    expect(back.ringLoop).toBe(true);
+    expect(back.closure).toBeUndefined();
+    expect(back.waypoints).toHaveLength(2);
+    expect(back.waypoints![0]!.x).toBe(back.waypoints![1]!.x); // 空隙内垂直走线
     expect(edges.find((e) => e.id === 'e:4->e:5')?.vertical).toBe(true);
     // 组根 model tag（会话级）
     expect(nodes.find((n) => n.key === 'g:turn:1')?.model).toBe('sess-model');
@@ -315,6 +316,8 @@ describe('layoutMindmap', () => {
     expect(edges.some((e) => e.closure && e.source === 'e:4')).toBe(false);
     // 主链同理：组 open（未等到 Stop）→ 末事件不闭环回根
     expect(edges.some((e) => e.closure && e.target === 'g:turn:1')).toBe(false);
+    // 环未闭环 → 无 ringLoop 回锚边
+    expect(edges.some((e) => e.ringLoop && e.source === 'e:4')).toBe(false);
   });
 
   it('派发即生子节点：环空且执行中 → 占位子代理节点挂在锚下', () => {
