@@ -1,5 +1,7 @@
 import path from 'node:path';
 import { getDataDir } from '../db/paths.js';
+import type { LibraryRepository } from '../repositories/libraries.js';
+import { marketDir } from './manifest.js';
 
 /**
  * 批 9（R11 迁移兼容闸）：`libraries.path` 的读侧单点。
@@ -27,4 +29,21 @@ export function isInsideDir(target: string, dir: string): boolean {
 /** 绝对路径 → 相对 dataDir 的 posix 形（markets.path 的规范存储形）。 */
 export function toRelPosix(absPath: string, dataDir: string = getDataDir()): string {
   return path.relative(path.resolve(dataDir), path.resolve(absPath)).split(path.sep).join('/');
+}
+
+/**
+ * managed 市场资源根（位于 `<dataDir>/market/` 内的库行）——toolkit 扫描源与
+ * plugin-loader 装载源共用的同一口径（M3 装载桥）；legacy 外部源不入内。
+ */
+export function marketLibraryRoots(
+  libraries: Pick<LibraryRepository, 'list'>,
+  dataDir: string = getDataDir(),
+): string[] {
+  const md = path.resolve(marketDir(dataDir));
+  const out = new Set<string>();
+  for (const row of libraries.list()) {
+    const abs = path.resolve(row.path); // list() 读侧已 resolve，此处归一兜底
+    if (abs !== md && isInsideDir(abs, md)) out.add(abs);
+  }
+  return [...out];
 }

@@ -7,7 +7,9 @@ import { hashFile } from '../install/fingerprint.js';
 import { fileAssetTargetDir } from '../install/file-assets.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
+import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
+import { marketLibraryRoots } from '../market/resolve.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
 import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
@@ -285,6 +287,8 @@ export interface ToolkitServiceDeps {
   builtinRoot?: string;
   /** 覆盖 sources.json 所在根（测试；缺省全局插件根）。 */
   sourcesRoot?: string;
+  /** managed 市场资源（M3 装载桥：市场根同管线入扫描源）；缺省不扫市场。 */
+  libraries?: Pick<LibraryRepository, 'list'>;
   /** 覆盖宿主版本探测（测试）。 */
   claudeVersion?: () => Promise<string | null>;
   /** 插件安装面（测试注入假 exec 的 surface；缺省经 registry 取 Claude 面）。 */
@@ -294,13 +298,25 @@ export interface ToolkitServiceDeps {
 export class ToolkitService {
   constructor(private readonly deps: ToolkitServiceDeps) {}
 
-  /** 扫描源：内置根（测试可覆盖）+ sources.json 注册的外置目录。 */
+  /** 扫描源：内置根（测试可覆盖）+ sources.json 外置目录 + managed 市场资源根。 */
   private async sources(): Promise<ToolkitSource[]> {
     const builtin = this.deps.builtinRoot ?? builtinToolkitRoot();
     const sources: ToolkitSource[] = [{ root: builtin, provenance: 'builtin' }];
     const { dirs } = await readSourcesFile(this.deps.sourcesRoot);
     for (const dir of dirs) sources.push({ root: dir, provenance: 'external-dir' });
-    return sources;
+    if (this.deps.libraries) {
+      for (const root of marketLibraryRoots(this.deps.libraries)) {
+        sources.push({ root, provenance: 'market' });
+      }
+    }
+    // 按解析形去重（市场根可能同时被 add-dir 注册）；首见优先 = builtin > external > market
+    const seen = new Set<string>();
+    return sources.filter((s) => {
+      const key = path.resolve(s.root);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   private async allPacks(): Promise<ToolkitPack[]> {

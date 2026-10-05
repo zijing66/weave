@@ -13,7 +13,9 @@ import {
 } from '@weave/core';
 import { getDataDir } from '../db/paths.js';
 import type { HookRuleRepository } from '../repositories/hook-rules.js';
+import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
+import { marketLibraryRoots } from '../market/resolve.js';
 import type { HookEventBus } from './bus.js';
 import { validateHandler, type HookRuleRegistry } from './registry.js';
 import { builtinToolkitRoot, discoverToolkitSources, discoverWeavePackDirs } from './toolkit-scan.js';
@@ -589,9 +591,9 @@ function patchPluginHandler(handler: unknown, pluginId: string): unknown {
 }
 
 /**
- * SPI 全量加载：工具包扫描根（内置 harness-tools + `add-dir` 外置目录，批 10）
- * → 内置 presets → 全局 `<configDir>/weave/plugins/` → 各注册项目
- * `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
+ * SPI 全量加载：工具包扫描根（内置 harness-tools + `add-dir` 外置目录 + M3
+ * managed 市场资源根，批 10/装载桥）→ 内置 presets → 全局 `<configDir>/weave/plugins/`
+ * → 各注册项目 `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
  * 工具包根先注册：浅层 presets 根扫描据此跳过 `harness-tools` 容器目录。
  * 任一根目录失败不抛（loadRoot 内部已吞 readdir 错误）。
  */
@@ -601,14 +603,26 @@ export async function loadAllPlugins(
     registry: HookRuleRegistry;
     states: PluginStateRepository;
     bus?: HookEventBus;
+    /** managed 市场资源（M3 装载桥）；缺省不装载市场根。 */
+    libraries?: Pick<LibraryRepository, 'list'>;
   },
   projects: ReadonlyArray<{ id: number; path: string }>,
 ): Promise<{ loader: WeavePluginLoader; loaded: LoadedPluginInfo[] }> {
   const loader = new WeavePluginLoader(deps);
   const loaded: LoadedPluginInfo[] = [];
 
-  // 批 10：工具包深度根（内置 + 外置）——weave 成分走本加载器，天然停用待开关。
-  for (const source of await discoverToolkitSources()) {
+  // 批 10：工具包深度根（内置 + 外置 + 市场）——weave 成分走本加载器，天然停用待开关。
+  const toolkitSources = await discoverToolkitSources();
+  if (deps.libraries) {
+    for (const root of marketLibraryRoots(deps.libraries)) {
+      toolkitSources.push({ root, provenance: 'market' });
+    }
+  }
+  const seenRoots = new Set<string>(); // 幂等：同根（如市场根同时被 add-dir 注册）只装一次
+  for (const source of toolkitSources) {
+    const key = path.resolve(source.root);
+    if (seenRoots.has(key)) continue;
+    seenRoots.add(key);
     loaded.push(
       ...(await loader.loadToolkitRoot(
         source.root,

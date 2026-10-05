@@ -77,6 +77,7 @@ export function startDaemon(): void {
     projects,
     states: new PluginStateRepository(db),
     plugins: pluginManager,
+    libraries,
   });
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
@@ -93,6 +94,7 @@ export function startDaemon(): void {
       registry: hookRegistry,
       states: new PluginStateRepository(db),
       bus: hookBus,
+      libraries,
     },
     projects.list(),
   ).then(({ loader }) => {

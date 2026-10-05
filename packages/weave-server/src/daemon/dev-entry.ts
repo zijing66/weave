@@ -68,6 +68,7 @@ async function main(): Promise<void> {
       registry: hookRegistry,
       states: new PluginStateRepository(db),
       bus: hookBus,
+      libraries,
     },
     projects.list(),
   );
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
     projects,
     states: new PluginStateRepository(db),
     plugins: hookPlugins,
+    libraries,
   });
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
