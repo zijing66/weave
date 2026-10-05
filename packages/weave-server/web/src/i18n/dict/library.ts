@@ -103,6 +103,12 @@ export const libraryZh = {
   'library.mcpCommandPlaceholder': '命令（如 npx）',
   'library.mcpArgsPlaceholder': '参数（空格分隔）',
   'library.mcpEnvPlaceholder': '环境变量（每行 KEY=value）',
+
+  // —— 安装属性拒绝原因（capability.reason.*，与服务端 capabilities 矩阵配套） ——
+  'capability.reason.projectOnly': '该资源仅支持项目安装',
+  'capability.reason.globalOnly': '该资源仅支持全局安装',
+  'capability.reason.claudeOnly': '该资源不支持 Codex',
+  'capability.reason.codexOnly': '该资源不支持 Claude',
 };
 
 export const libraryEn: Record<keyof typeof libraryZh, string> = {
@@ -209,4 +215,10 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.mcpCommandPlaceholder': 'command (e.g. npx)',
   'library.mcpArgsPlaceholder': 'args (space-separated)',
   'library.mcpEnvPlaceholder': 'env (KEY=value per line)',
+
+  // —— Install-capability rejection reasons (paired with server capabilities) ——
+  'capability.reason.projectOnly': 'This resource only installs into a project',
+  'capability.reason.globalOnly': 'This resource only installs globally',
+  'capability.reason.claudeOnly': 'This resource does not support Codex',
+  'capability.reason.codexOnly': 'This resource does not support Claude',
 };

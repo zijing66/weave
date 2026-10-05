@@ -59,6 +59,26 @@ describe('daemon server', () => {
     expect(data.projects.map((p) => p.path)).toContain('/test');
   });
 
+  it('GET /capabilities 需要 token 且返回安装属性矩阵', async () => {
+    const unauth = await fetch(`http://127.0.0.1:${port}/capabilities`);
+    expect(unauth.status).toBe(401);
+    const res = await fetch(`http://127.0.0.1:${port}/capabilities`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      categories: Record<string, { surfaces: Array<{ harness: string; scopes: string[] }> }>;
+    };
+    // workflow 仅项目（无 userDir）；mcp × codex 强制 global
+    expect(data.categories.workflow.surfaces).toEqual([
+      { harness: 'claude', scopes: ['project'] },
+    ]);
+    expect(
+      data.categories.mcp.surfaces.find((s) => s.harness === 'codex')?.scopes,
+    ).toEqual(['global']);
+    expect(data.categories.skill.surfaces).toHaveLength(2);
+  });
+
   it('unknown routes return 404', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/nope`, {
       headers: { authorization: `Bearer ${TOKEN}` },

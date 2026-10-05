@@ -21,6 +21,7 @@ import {
   type PluginEnabledMap,
   type PluginRuntime,
   type GlobalSkillSource,
+  type InstallCapabilities,
 } from '@/lib/api';
 import { ProjectList } from '@/components/ProjectList';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -106,6 +107,12 @@ export default function App() {
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch((e) => setError(String(e)));
+  }, []);
+
+  // 安装属性矩阵（静态）：启动拉一次，下发 LibraryPanel（M6 拖拽 canDrop 也用）。
+  const [installCaps, setInstallCaps] = useState<InstallCapabilities | null>(null);
+  useEffect(() => {
+    api.capabilities().then(setInstallCaps).catch(() => {});
   }, []);
 
   // 项目列表刷新：SSE project 帧（另一进程 weave init/scan 落库 → daemon
@@ -724,7 +731,7 @@ export default function App() {
     if (data?.sourceDir && data?.name) {
       void handleInstallSkill(
         { name: data.name, dirPath: data.sourceDir } as SkillAsset,
-        'project',
+        globalMode ? 'global' : 'project',
         data.agent ?? 'claude',
       );
     }
@@ -968,6 +975,7 @@ export default function App() {
                   category={mainCategory}
                   assetTab={assetTab}
                   scope={mode}
+                  capabilities={installCaps}
                 />
               ) : (
                 <div className="p-3 text-xs text-neutral-500">

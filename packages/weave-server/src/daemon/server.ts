@@ -35,6 +35,7 @@ import {
 } from '../install/installer.js';
 import type { McpServerConfig, InstallAgent } from '../install/installer.js';
 import { isFileAssetCategory } from '../install/file-assets.js';
+import { installCapabilities } from '../install/capabilities.js';
 import {
   readGlobalMcpServers,
   writeGlobalMcpServer,
@@ -407,6 +408,13 @@ async function handleRequest(
     } catch (err) {
       sendJson(res, 400, { error: `Cannot list directory: ${String(err)}` });
     }
+    return;
+  }
+
+  // --- 安装属性矩阵（harness 适配 × 安装范围；web 拖拽/点击禁用共用） ---
+  if (pathname === '/capabilities' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    sendJson(res, 200, installCapabilities());
     return;
   }
 

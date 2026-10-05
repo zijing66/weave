@@ -423,6 +423,17 @@ export interface InstallBody {
 
 export type AssetScope = 'project' | 'global';
 
+/** Mirror of server `install/capabilities.ts`（安装属性矩阵唯一事实源在服务端）。 */
+export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;
+
+export interface CategoryCapability {
+  surfaces: Array<{ harness: AssetAgent; scopes: AssetScope[] }>;
+}
+
+export interface InstallCapabilities {
+  categories: Record<InstallCategory, CategoryCapability>;
+}
+
 export interface SkillUpdate {
   name: string;
   scope: AssetScope;
@@ -850,6 +861,10 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'PATCH', body: JSON.stringify({ title }) },
     ).then((r) => r.session),
+
+  /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
+  capabilities: (): Promise<InstallCapabilities> =>
+    apiFetch<InstallCapabilities>('/capabilities'),
 
   // --- libraries (asset sources) ---
   listLibraries: (): Promise<LibraryRow[]> =>

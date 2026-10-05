@@ -11,8 +11,10 @@ import {
   type FileAssetTemplate,
   type FileAssetCategory,
   type UpdateReport,
+  type InstallCapabilities,
   FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
+import { capabilitiesOf, canInstall, type InstallVerdict } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
@@ -56,6 +58,8 @@ interface LibraryPanelProps {
   assetTab: AssetTab;
   /** Install-to scope, driven by the current project/global context. */
   scope: AssetScope;
+  /** 安装属性矩阵（GET /capabilities）；未加载时谓词全放行。 */
+  capabilities: InstallCapabilities | null;
 }
 
 export function LibraryPanel({
@@ -68,6 +72,7 @@ export function LibraryPanel({
   category,
   assetTab,
   scope,
+  capabilities,
 }: LibraryPanelProps) {
   const [market, setMarket] = useState<MarketItem[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -83,6 +88,18 @@ export function LibraryPanel({
   /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
   const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
   const t = useT();
+
+  // 安装前置判定（与拖拽 canDrop 共用 lib/install-capabilities 谓词）
+  const skillVerdict = canInstall(capabilitiesOf('skill', capabilities), {
+    scope,
+    agent: installAgent,
+  });
+  const mcpVerdict = canInstall(capabilitiesOf('mcp', capabilities), {
+    scope,
+    agent: installAgent,
+  });
+  const reasonTitle = (v: InstallVerdict): string | undefined =>
+    v.ok || !v.reasonKey ? undefined : t(v.reasonKey);
 
   const refreshMarket = () =>
     api.listMarket().then(setMarket).catch((e) => setError(String(e)));
@@ -428,6 +445,8 @@ export function LibraryPanel({
                           agent={installAgent}
                           installed={installedSkillNames.has(s.name)}
                           onInstall={() => onInstallSkill(s, scope, installAgent)}
+                          installDisabled={!skillVerdict.ok}
+                          installReason={reasonTitle(skillVerdict)}
                         />
                       ))}
                     </div>
@@ -466,22 +485,30 @@ export function LibraryPanel({
                     <Badge className="shrink-0">{items.length}</Badge>
                   </div>
                   <div className="space-y-0.5">
-                    {items.map((f) => (
-                      <div
-                        key={f.filePath}
-                        className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
-                        title={f.filePath}
-                      >
-                        <FileCode className="h-3 w-3 shrink-0 text-blue-400" />
-                        <span className="truncate">{f.name}</span>
-                        <button
-                          onClick={() => onInstallFileAsset(f, scope)}
-                          className="ml-auto text-xs text-blue-400 hover:text-blue-300"
+                    {items.map((f) => {
+                      const verdict = canInstall(capabilitiesOf(f.category, capabilities), {
+                        scope,
+                        agent: 'claude',
+                      });
+                      return (
+                        <div
+                          key={f.filePath}
+                          className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
+                          title={f.filePath}
                         >
-                          {t('library.install')}
-                        </button>
-                      </div>
-                    ))}
+                          <FileCode className="h-3 w-3 shrink-0 text-blue-400" />
+                          <span className="truncate">{f.name}</span>
+                          <button
+                            disabled={!verdict.ok}
+                            title={reasonTitle(verdict)}
+                            onClick={() => onInstallFileAsset(f, scope)}
+                            className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
+                          >
+                            {t('library.install')}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -513,6 +540,8 @@ export function LibraryPanel({
                 <Server className="h-3 w-3 shrink-0 text-blue-400" />
                 <span className="truncate">{srv.name}</span>
                 <button
+                  disabled={!mcpVerdict.ok}
+                  title={reasonTitle(mcpVerdict)}
                   onClick={() =>
                     onInstallMcp(
                       srv.name,
@@ -525,7 +554,7 @@ export function LibraryPanel({
                       installAgent,
                     )
                   }
-                  className="ml-auto text-xs text-blue-400 hover:text-blue-300"
+                  className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
                 >
                   {t('library.install')}
                 </button>
@@ -577,6 +606,7 @@ export function LibraryPanel({
       {showMcp && (
         <McpForm
           onInstall={(name, config) => onInstallMcp(name, config, scope, installAgent)}
+          blockedTitle={reasonTitle(mcpVerdict)}
         />
       )}
     </div>
@@ -684,7 +714,7 @@ function AgentToggle({
         <span className="text-[10px] text-neutral-600">
           {kind === 'skills'
             ? globalHint
-              ? '→ ~/.codex/skills/'
+              ? '→ ~/.agents/skills/'
               : '→ .codex/skills/'
             : t('library.codexMcpPathHint')}
         </span>
@@ -782,12 +812,17 @@ function DraggableSkill({
   agent,
   installed,
   onInstall,
+  installDisabled,
+  installReason,
 }: {
   skill: SkillAsset;
   /** Install target carried through the drag payload. */
   agent: AssetAgent;
   installed: boolean;
   onInstall: () => void;
+  /** 点击安装前置禁用（capabilities 谓词；拖拽判定归 M6 canDrop）。 */
+  installDisabled?: boolean;
+  installReason?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `lib-skill-${skill.name}`,
@@ -823,7 +858,9 @@ function DraggableSkill({
             e.stopPropagation();
             onInstall();
           }}
-          className="ml-auto text-xs text-blue-400 hover:text-blue-300"
+          disabled={installDisabled}
+          title={installReason}
+          className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
         >
           {t('library.install')}
         </button>
@@ -834,8 +871,11 @@ function DraggableSkill({
 
 function McpForm({
   onInstall,
+  blockedTitle,
 }: {
   onInstall: (name: string, config: McpServerConfig) => void;
+  /** capabilities 谓词拒绝时的原因文案（非空 = 表单提交禁用）。 */
+  blockedTitle?: string;
 }) {
   const [name, setName] = useState('');
   const [command, setCommand] = useState('');
@@ -844,6 +884,7 @@ function McpForm({
   const t = useT();
 
   function submit() {
+    if (blockedTitle) return;
     if (!name.trim() || !command.trim()) return;
     const argList = args.trim() ? args.trim().split(/\s+/) : undefined;
     const envMap = parseEnv(env);
@@ -890,7 +931,8 @@ function McpForm({
       />
       <button
         onClick={submit}
-        disabled={!name.trim() || !command.trim()}
+        disabled={!name.trim() || !command.trim() || !!blockedTitle}
+        title={blockedTitle}
         className="w-full rounded bg-blue-900/40 text-blue-300 py-1 text-xs disabled:opacity-40"
       >
         {t('library.addMcpServer')}
