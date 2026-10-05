@@ -457,8 +457,10 @@ async function handleRequest(
     const skills = await scanLibrarySkills(lib.path);
     const mcp =
       lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path) : [];
-    const files =
+    const scanned =
       lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryFileAssets(lib.path) : null;
+    // 扫描结果按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
+    const files = scanned ? Object.values(scanned).flat() : null;
     sendJson(res, 200, { library: lib, skills, mcp, files });
     return;
   }

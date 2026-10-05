@@ -39,6 +39,8 @@ describe('daemon server — libraries + install/uninstall', () => {
     skillDir = join(libDir, 'src-skill');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '# src');
+    mkdirSync(join(libDir, 'commands'), { recursive: true });
+    writeFileSync(join(libDir, 'commands', 'hello.md'), '# hello');
     const lib = libraries.add({ path: libDir, kind: 'skill' });
     libId = lib.id;
 
@@ -74,8 +76,16 @@ describe('daemon server — libraries + install/uninstall', () => {
       headers: auth,
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { skills: Array<{ name: string }> };
+    const data = (await res.json()) as {
+      skills: Array<{ name: string }>;
+      files: Array<{ name: string; category: string }>;
+    };
     expect(data.skills.map((s) => s.name)).toEqual(['src-skill']);
+    // files 是扁平数组（web 契约），不是按分类分组的对象
+    expect(Array.isArray(data.files)).toBe(true);
+    expect(data.files).toEqual([
+      expect.objectContaining({ name: 'hello', category: 'command' }),
+    ]);
   });
 
   it('POST /projects/:id/install skill copies files into the project', async () => {
