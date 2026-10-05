@@ -392,6 +392,24 @@ export interface FileAssetTemplate {
   category: FileAssetCategory;
 }
 
+/** Mirror of server `install/scanner.ts` MarketPluginAsset（插件包发现于库内）。 */
+export interface MarketPluginAsset {
+  name: string;
+  version: string;
+  description?: string;
+  /** Absolute path to the pack directory (install / enable source). */
+  dirPath: string;
+  /** Pack dir relative to the library root (posix; 包内 skill 双身份前缀匹配键). */
+  relPath: string;
+  ccPack: boolean;
+  weavePack: boolean;
+  kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
+  components: ('skill' | 'command' | 'agent' | 'hook' | 'mod' | 'rule')[];
+  targets: Harness[];
+  /** Pack-internal skills carrying a SKILL.md. */
+  skills: string[];
+}
+
 export interface InstallBody {
   category: 'skill' | 'mcp' | FileAssetCategory;
   name: string;
@@ -1032,12 +1050,14 @@ export const api = {
     skills: SkillAsset[];
     files: FileAssetTemplate[];
     mcp: McpTemplate[];
+    plugins: MarketPluginAsset[];
   }> =>
     apiFetch<{
       library: LibraryRow;
       skills: SkillAsset[];
       files: FileAssetTemplate[];
       mcp: McpTemplate[];
+      plugins: MarketPluginAsset[];
     }>(`/libraries/${id}/assets`),
 
   /** EventSource cannot set headers; pass the token as a query param instead. */

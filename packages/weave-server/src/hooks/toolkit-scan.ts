@@ -15,7 +15,7 @@ import { readSourcesFile } from './plugin-installer.js';
  * 一个包可同时命中 ①②。
  */
 
-export type ToolkitProvenance = 'builtin' | 'external-dir';
+export type ToolkitProvenance = 'builtin' | 'external-dir' | 'market';
 
 /** 工具箱类型徽标：weave.json 显式标注优先，缺省由包内容推导。 */
 export type ToolkitKind = 'skill' | 'hook' | 'mod' | 'rule' | 'surface';

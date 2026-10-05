@@ -21,7 +21,7 @@ import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
 import type { WatchService } from '../watch/watch-service.js';
-import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from '../install/scanner.js';
+import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets, scanLibraryPlugins } from '../install/scanner.js';
 import {
   installSkill,
   uninstallSkill,
@@ -461,7 +461,10 @@ async function handleRequest(
       lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryFileAssets(lib.path) : null;
     // 扫描结果按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
     const files = scanned ? Object.values(scanned).flat() : null;
-    sendJson(res, 200, { library: lib, skills, mcp, files });
+    // 插件包属 skill 仓库成分，门控与 files 一致；字段恒在（恒数组）
+    const plugins =
+      lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryPlugins(lib.path) : [];
+    sendJson(res, 200, { library: lib, skills, mcp, files, plugins });
     return;
   }
   const libMatch = pathname.match(/^\/libraries\/(\d+)$/);

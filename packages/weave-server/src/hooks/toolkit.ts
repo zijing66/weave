@@ -19,6 +19,7 @@ import {
   builtinToolkitRoot,
   discoverToolkitPacks,
   type ToolkitPack,
+  type ToolkitProvenance,
   type ToolkitSource,
 } from './toolkit-scan.js';
 
@@ -50,7 +51,7 @@ export class ToolkitError extends Error {
 /** 启用时写入的包级记录（marker + checksum，`.weave/toolkit/<id>.json`）。 */
 export interface ToolkitRecord {
   packId: string;
-  provenance: 'builtin' | 'external-dir';
+  provenance: ToolkitProvenance;
   sourceRoot: string;
   sourceDir: string;
   enabledAt: string;

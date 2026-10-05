@@ -1,6 +1,9 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, basename, relative, dirname } from 'node:path';
+import type { Harness } from '@weave/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
+import { hasNonEmptyModules } from '../watch/plugin-mods.js';
+import { parseToolkitPack, type ToolkitKind, type ToolkitComponent } from '../hooks/toolkit-scan.js';
 
 export interface SkillAsset {
   /** Skill name — the containing directory's basename. */
@@ -51,6 +54,99 @@ const SKIP_DIRS = new Set([
   'coverage',
   '.cache',
 ]);
+
+/** 插件包发现于注册库内（市场扫描出口；web/src/lib/api.ts 镜像同形）。 */
+export interface MarketPluginAsset {
+  name: string;
+  version: string;
+  description?: string;
+  /** Absolute path to the pack directory (install / enable source). */
+  dirPath: string;
+  /** Pack dir relative to the library root (posix; 包内 skill 双身份前缀匹配键). */
+  relPath: string;
+  ccPack: boolean;
+  weavePack: boolean;
+  kind: ToolkitKind;
+  components: ToolkitComponent[];
+  targets: Harness[];
+  /** Pack-internal skills carrying a SKILL.md（独立安装时与 skill 条目按名关联）。 */
+  skills: string[];
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 窄包谓词——与 toolkit 的 `isToolkitPackDir` 刻意不同：裸表面（仅 skills/
+ * 等目录）不算包，否则普通 skill 仓库会幻影出一个 plugin。mods（hooks.json
+ * 非空 modules）归 plugin。
+ */
+async function isMarketPluginPack(dir: string): Promise<boolean> {
+  if (await fileExists(join(dir, '.claude-plugin', 'plugin.json'))) return true;
+  if (await fileExists(join(dir, 'weave-plugin.json'))) return true;
+  try {
+    const raw: unknown = JSON.parse(await readFile(join(dir, 'hooks', 'hooks.json'), 'utf8'));
+    return hasNonEmptyModules(raw);
+  } catch {
+    return false;
+  }
+}
+
+/** 扫描深度同 toolkit-scan 的 MAX_SCAN_LEVEL（root→容器→包；包不嵌套）。 */
+const MAX_PACK_LEVEL = 2;
+
+/**
+ * 扫描库内插件包：窄谓词命中 → 解析委托 `parseToolkitPack` → 停钻。
+ * skills/mcp/files 三条既有 walk 不受包影响——包内 skill 仍被独立扫出
+ * （双身份），`.claude`/`.codex` 等点目录由各 walk 的既有规则跳过。
+ */
+export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginAsset[]> {
+  const out: MarketPluginAsset[] = [];
+  const walk = async (dir: string, level: number): Promise<void> => {
+    if (await isMarketPluginPack(dir)) {
+      const pack = await parseToolkitPack(dir, { root: libPath, provenance: 'market' }, '');
+      if (pack) {
+        const skills: string[] = [];
+        for (const n of pack.skills) {
+          if (await fileExists(join(dir, 'skills', n, 'SKILL.md'))) skills.push(n);
+        }
+        out.push({
+          name: pack.name,
+          version: pack.version,
+          ...(pack.description ? { description: pack.description } : {}),
+          dirPath: pack.dir,
+          relPath: relative(libPath, dir).replace(/\\/g, '/'),
+          ccPack: pack.ccPack,
+          weavePack: pack.weavePack,
+          kind: pack.kind,
+          components: pack.components,
+          targets: pack.targets,
+          skills,
+        });
+      }
+      return; // 命中包即停钻（包不嵌套）
+    }
+    if (level >= MAX_PACK_LEVEL) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+      await walk(join(dir, entry.name), level + 1);
+    }
+  };
+  await walk(libPath, 0);
+  return out.sort((a, b) => a.relPath.localeCompare(b.relPath));
+}
 
 /**
  * Recursively scan a library directory for skills. A skill is any directory
