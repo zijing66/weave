@@ -498,11 +498,13 @@ export function layoutMindmap(
       });
     }
     // 尾回环手算折点：右出 → 下折（末成员底缘外，成员列下方无节点）→
-    // 左进列间空隙 → 上至簇高 → 左入簇右。内置 smoothstep 右→右会横穿
+    // 左进列间空隙 → 上至簇入点高 → 左入簇右。内置 smoothstep 右→右会横穿
     // 成员列（水平段固定在 target 高度），waypoints 绕行才成环。
+    // y 对齐 handle 实际锚点：源=节点中线（'r' 中点），目标=右缘 78%
+    //（'rt' handle），首尾段才水平不斜。
     const lastKid = c.children[c.children.length - 1]!;
-    const ys = yOf.get(lastKid.key) ?? 0;
-    const yt = yOf.get(c.key) ?? 0;
+    const ys = (yOf.get(lastKid.key) ?? 0) + NODE_H / 2;
+    const yt = (yOf.get(c.key) ?? 0) + NODE_H * 0.78;
     const cDepth = depthOf.get(c.key) ?? 0;
     const srcRight = (cDepth + 1) * COL_W + NODE_W;
     const gapX = cDepth * COL_W + NODE_W + (COL_W - NODE_W) / 2;
@@ -792,10 +794,15 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
     >
       {/* 锚点分向（隐藏仅作连线锚定）：跨列层级右出左入；同列时序链底出顶入
           （防 U 型绕行大交叉）；closure 回边左侧出 → 根左侧入（走外侧通道）；
-          簇尾回环右出右入（clusterLoop 的 target 锚点） */}
+          簇右缘出在中点、回环入在 78%（同侧出进错开成 2 个连接点，防交叉） */}
       <Handle type="target" id="l" position={Position.Left} style={{ visibility: 'hidden' }} />
       <Handle type="target" id="t" position={Position.Top} style={{ visibility: 'hidden' }} />
-      <Handle type="target" id="rt" position={Position.Right} style={{ visibility: 'hidden' }} />
+      <Handle
+        type="target"
+        id="rt"
+        position={Position.Right}
+        style={{ visibility: 'hidden', top: '78%' }}
+      />
       <Handle type="source" id="r" position={Position.Right} style={{ visibility: 'hidden' }} />
       <Handle type="source" id="b" position={Position.Bottom} style={{ visibility: 'hidden' }} />
       <Handle type="source" id="c" position={Position.Left} style={{ visibility: 'hidden' }} />
