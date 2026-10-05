@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
@@ -86,7 +88,9 @@ export interface LaidNode {
   highlight: boolean;
 }
 
-const COL_W = 320;
+const COL_W = 400;
+/** 渲染节点宽（与 MindmapNode 的 w-[280px] 对齐）——列间空隙 = COL_W - NODE_W。 */
+const NODE_W = 280;
 /** 行距大于节点高度：父子边的 smoothstep 折线才有可见竖直段（DAG 连线）。 */
 const ROW_H = 128;
 
@@ -97,9 +101,13 @@ function sessionModelOf(event: HookEventRow): string | undefined {
   return typeof m === 'string' && m ? m : undefined;
 }
 
-/** 边：closure=true 是闭环回边（末事件 → prompt 根，成环）；vertical=true
- *  是同列时序链（底出顶入，防跨列锚点绕行交叉）；dashed=true 是弱化从属
- *  连线（虚线，如展开簇的首边——子节点时序链仍实线）。 */
+/** 边：closure=true 是闭环回边（末事件 → prompt 根，成环，左出左入走外侧
+ *  通道，实线）；vertical=true 是同列时序链（底出顶入，防跨列锚点绕行交叉）；
+ *  dashed=true 是弱化从属连线（虚线，展开簇的首边）；clusterLoop=true 是
+ *  展开簇的尾回环（虚线，右出右入 + waypoints 走列间空隙——xyflow 内置
+ *  smoothstep 的右→右折线固定贴 source 右侧、在 target 高度横穿成员列，
+ *  必须手算绕行点才成环）；waypoints 给出自定义折点（仅 clusterLoop 用，
+ *  配 waypoint edge type 渲染）。一律静态描边（无 animated 流光）。 */
 export interface LaidEdge {
   id: string;
   source: string;
@@ -107,6 +115,8 @@ export interface LaidEdge {
   closure?: boolean;
   vertical?: boolean;
   dashed?: boolean;
+  clusterLoop?: boolean;
+  waypoints?: { x: number; y: number }[];
 }
 
 /**
@@ -460,6 +470,8 @@ export function layoutMindmap(
     ...(n.kind === 'cluster' ? [n] : []),
     ...n.children.flatMap(collectClusters),
   ];
+  const yOf = new Map(nodes.map((n) => [n.key, n.y]));
+  const depthOf = new Map(nodes.map((n) => [n.key, n.depth]));
   for (const c of roots.flatMap(collectClusters)) {
     if (c.children.length === 0) continue;
     const kidKeys = new Set(c.children.map((k) => k.key));
@@ -482,11 +494,26 @@ export function layoutMindmap(
         vertical: true,
       });
     }
+    // 尾回环手算折点：右出 → 下折（末成员底缘外，成员列下方无节点）→
+    // 左进列间空隙 → 上至簇高 → 左入簇右。内置 smoothstep 右→右会横穿
+    // 成员列（水平段固定在 target 高度），waypoints 绕行才成环。
+    const lastKid = c.children[c.children.length - 1]!;
+    const ys = yOf.get(lastKid.key) ?? 0;
+    const yt = yOf.get(c.key) ?? 0;
+    const cDepth = depthOf.get(c.key) ?? 0;
+    const srcRight = (cDepth + 1) * COL_W + NODE_W;
+    const gapX = cDepth * COL_W + NODE_W + (COL_W - NODE_W) / 2;
     edges.push({
-      id: `${c.children[c.children.length - 1]!.key}->${c.key}`,
-      source: c.children[c.children.length - 1]!.key,
+      id: `${lastKid.key}->${c.key}`,
+      source: lastKid.key,
       target: c.key,
-      closure: true,
+      clusterLoop: true,
+      waypoints: [
+        { x: srcRight + 36, y: ys },
+        { x: srcRight + 36, y: ys + 48 },
+        { x: gapX, y: ys + 48 },
+        { x: gapX, y: yt },
+      ],
     });
   }
 
@@ -761,9 +788,11 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
       }}
     >
       {/* 锚点分向（隐藏仅作连线锚定）：跨列层级右出左入；同列时序链底出顶入
-          （防 U 型绕行大交叉）；闭环回边左侧出 → 根左侧入（走外侧通道） */}
+          （防 U 型绕行大交叉）；closure 回边左侧出 → 根左侧入（走外侧通道）；
+          簇尾回环右出右入（clusterLoop 的 target 锚点） */}
       <Handle type="target" id="l" position={Position.Left} style={{ visibility: 'hidden' }} />
       <Handle type="target" id="t" position={Position.Top} style={{ visibility: 'hidden' }} />
+      <Handle type="target" id="rt" position={Position.Right} style={{ visibility: 'hidden' }} />
       <Handle type="source" id="r" position={Position.Right} style={{ visibility: 'hidden' }} />
       <Handle type="source" id="b" position={Position.Bottom} style={{ visibility: 'hidden' }} />
       <Handle type="source" id="c" position={Position.Left} style={{ visibility: 'hidden' }} />
@@ -804,6 +833,50 @@ function StatusDot({ status }: { status: string }) {
 }
 
 const nodeTypes = { mindmap: MindmapNode };
+
+/** 折点序列 → 圆角折线 path（拐点用二次贝塞尔，圆角半径受邻段半长约束）。 */
+function polylinePath(pts: { x: number; y: number }[], r = 14): string {
+  let d = `M${pts[0]!.x} ${pts[0]!.y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1]!;
+    const p = pts[i]!;
+    const b = pts[i + 1]!;
+    const len = (u: { x: number; y: number }, v: { x: number; y: number }): number =>
+      Math.hypot(v.x - u.x, v.y - u.y);
+    const rr = Math.min(r, len(a, p) / 2, len(p, b) / 2);
+    const enter = { x: p.x + (a.x - p.x) * (rr / len(a, p)), y: p.y + (a.y - p.y) * (rr / len(a, p)) };
+    const exit = { x: p.x + (b.x - p.x) * (rr / len(p, b)), y: p.y + (b.y - p.y) * (rr / len(p, b)) };
+    d += ` L${enter.x} ${enter.y} Q${p.x} ${p.y} ${exit.x} ${exit.y}`;
+  }
+  const last = pts[pts.length - 1]!;
+  return `${d} L${last.x} ${last.y}`;
+}
+
+/** 自定义边：按 layout 给出的 waypoints 画折线（簇尾回环——内置 smoothstep
+ *  的右→右折线会横穿成员列，手算绕行点才能成环）。 */
+function WaypointEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  markerEnd,
+  style,
+  data,
+}: EdgeProps): React.ReactElement {
+  const waypoints = (data?.waypoints as { x: number; y: number }[] | undefined) ?? [];
+  const pts = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }];
+  return (
+    <BaseEdge
+      id={id}
+      path={polylinePath(pts)}
+      markerEnd={markerEnd}
+      style={style}
+    />
+  );
+}
+
+const edgeTypes = { waypoint: WaypointEdge };
 
 // ---------------------------------------------------------------------------
 // 组件
@@ -964,20 +1037,22 @@ export function LifecycleMindmap({
       })),
     [laid.nodes, flashKey, ruleInfo, onToggle, openDetail],
   );
-  // 箭头 + 流动动效 + 亮蓝加粗：显著表达调用方向；闭环回边（closure）虚线。
-  // 锚点三分：同列时序链底出顶入（纵向直连）；跨列层级右出左入；闭环左侧回环。
+  // 箭头 + 亮蓝加粗：显著表达调用方向。锚点四分：同列时序链底出顶入；
+  // 跨列层级右出左入；closure（组闭环/派发环回锚）左出左入走外侧通道、
+  // 实线成环；dashed/clusterLoop（簇首尾）虚线弱化从属，尾回环走 waypoint
+  // 折点绕列间空隙。静态描边（无 animated 流光）——流动效果破坏实线观感。
   const flowEdges: Edge[] = useMemo(
     () =>
       laid.edges.map((e) => ({
         id: e.id,
+        ...(e.waypoints ? { data: { waypoints: e.waypoints } } : {}),
         source: e.source,
         target: e.target,
         sourceHandle: e.closure ? 'c' : e.vertical ? 'b' : 'r',
-        targetHandle: e.closure ? 'l' : e.vertical ? 't' : 'l',
-        type: 'smoothstep',
-        animated: true,
+        targetHandle: e.closure ? 'l' : e.clusterLoop ? 'rt' : e.vertical ? 't' : 'l',
+        type: e.waypoints ? 'waypoint' : 'smoothstep',
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-        style: e.closure || e.dashed
+        style: e.dashed || e.clusterLoop
           ? {
               stroke: 'rgba(96,165,250,0.55)',
               strokeWidth: 1.5,
@@ -1204,6 +1279,7 @@ export function LifecycleMindmap({
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             // 单组动辄上百事件：初始停在顶部 0.75 倍（节点可读、连线可见）；
             // 展开/折叠（epoch>0）重挂后 fitView 全图（maxZoom 1 防糊）。
             fitView={!focusGroupId || fitEpoch > 0}
@@ -1218,7 +1294,6 @@ export function LifecycleMindmap({
             deleteKeyCode={null}
             defaultEdgeOptions={{
               type: 'smoothstep',
-              animated: true,
               markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
               style: { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
             }}

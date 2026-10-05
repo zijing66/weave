@@ -219,13 +219,24 @@ describe('layoutMindmap', () => {
         'e:6->g:turn:1',
       ]),
     );
-    // 首尾（簇↔子节点）虚线，子节点之间实线时序
+    // 首尾（簇↔子节点）虚线，子节点之间实线时序；尾回环走右侧 + 绕行折点
     expect(open.edges.find((e) => e.id === 'c:2->e:2')?.dashed).toBe(true);
-    expect(open.edges.find((e) => e.id === 'e:5->c:2')?.closure).toBe(true);
+    const loop = open.edges.find((e) => e.id === 'e:5->c:2')!;
+    expect(loop.clusterLoop).toBe(true);
+    expect(loop.closure).toBeUndefined();
+    // 手算折点：右出 → 下折 → 左进列间空隙 → 上至簇高（内置 smoothstep 会横穿成员列）
+    expect(loop.waypoints).toHaveLength(4);
+    const [p0, p1, p2, p3] = loop.waypoints!;
+    expect(p0!.x).toBe(p1!.x); // 右出后的垂直下折段
+    expect(p1!.y).toBeGreaterThan(p0!.y);
+    expect(p1!.x).toBeGreaterThan(p2!.x); // 水平左移进列间空隙
+    expect(p2!.y).toBe(p1!.y);
+    expect(p3!.x).toBe(p2!.x); // 空隙内垂直上行
+    expect(p3!.y).toBeLessThan(p2!.y);
     expect(open.edges.find((e) => e.id === 'e:2->e:3')?.vertical).toBe(true);
     expect(open.edges.find((e) => e.id === 'e:2->e:3')?.dashed).toBeUndefined();
     // 收起态无尾回边（成员隐藏，链路保持现状）
-    expect(collapsed.edges.some((e) => e.closure && e.source.startsWith('c:'))).toBe(false);
+    expect(collapsed.edges.some((e) => e.clusterLoop)).toBe(false);
   });
 
   it('孤立工具事件与命中指令的工具事件不进簇', () => {
