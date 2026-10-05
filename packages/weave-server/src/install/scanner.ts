@@ -100,25 +100,40 @@ async function isMarketPluginPack(dir: string): Promise<boolean> {
 /** 防御性深度上限（病态树兜底）；正常仓库任意深度的包都要能发现。 */
 const MAX_PACK_DEPTH = 10;
 
+/** `scanLibraryPlugins` 出参：可展示的包 + 全部排除根（见 packRoots 语义）。 */
+export interface LibraryPluginsScan {
+  /** 可装载成分解析成功的包（web plugin 区展示用）。 */
+  plugins: MarketPluginAsset[];
+  /**
+   * 谓词命中的全部包根 relPath——**含 `parseToolkitPack` 返回 null 的空成分包**
+   * （manifest-only 外壳：plugins 不产出，但其子树资源仍隶属包，必须排除，
+   * 否则壳内嵌套的 skill/表面成分会从 skill 区泄漏）。空串 = 根即包（整库排除）。
+   */
+  packRoots: string[];
+}
+
 /**
  * 扫描库内插件包：**全递归**遍历任意深度子目录做窄谓词命中 → 解析委托
  * `parseToolkitPack` → 停钻（包是原子单元，不进包内找嵌套包）。`.claude`/
  * `.codex` 等点目录与 SKIP_DIRS 由 walk 跳过。
  *
  * 包内资源（skill/表面成分/mcp）**隶属该包**——不独立安装、随包启停；
- * 路由侧把返回的 relPath 集合作为 excludeRelRoots 传给其余三条扫描。
+ * 路由侧把 `packRoots` 作为 excludeRelRoots 传给其余三条扫描。
  */
-export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginAsset[]> {
-  const out: MarketPluginAsset[] = [];
+export async function scanLibraryPlugins(libPath: string): Promise<LibraryPluginsScan> {
+  const plugins: MarketPluginAsset[] = [];
+  const packRoots: string[] = [];
   const walk = async (dir: string, level: number): Promise<void> => {
     if (await isMarketPluginPack(dir)) {
+      // 谓词命中即排除根（无论 parse 成败——停钻与排除必须同源，防 P1 泄漏）
+      packRoots.push(relative(libPath, dir).replace(/\\/g, '/'));
       const pack = await parseToolkitPack(dir, { root: libPath, provenance: 'market' }, '');
       if (pack) {
         const skills: string[] = [];
         for (const n of pack.skills) {
           if (await fileExists(join(dir, 'skills', n, 'SKILL.md'))) skills.push(n);
         }
-        out.push({
+        plugins.push({
           name: pack.name,
           version: pack.version,
           ...(pack.description ? { description: pack.description } : {}),
@@ -148,7 +163,10 @@ export async function scanLibraryPlugins(libPath: string): Promise<MarketPluginA
     }
   };
   await walk(libPath, 0);
-  return out.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  return {
+    plugins: plugins.sort((a, b) => a.relPath.localeCompare(b.relPath)),
+    packRoots: packRoots.sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 /**

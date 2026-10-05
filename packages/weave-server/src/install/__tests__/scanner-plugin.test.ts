@@ -51,6 +51,10 @@ describe('scanLibraryPlugins', () => {
     await write(path.join(root, 'plain', 'helper.mcp.json'), JSON.stringify({ command: 'node', args: ['h.js'] }));
     // 包内的文件模板与 mcp 模板（排除后应被收归 plugin，不独立产出）
     await write(path.join(root, 'plain', 'a', 'b', 'deep-pack', 'server.mcp.json'), JSON.stringify({ command: 'node', args: ['s.js'] }));
+    // manifest-only 空成分外壳（谓词命中但 parseToolkitPack=null → 不进 plugins，
+    // 但必须进 packRoots——壳内嵌套 skill 不得从 skill 区泄漏）
+    await write(path.join(root, 'plain', 'shell', '.claude-plugin', 'plugin.json'), CC_MANIFEST);
+    await write(path.join(root, 'plain', 'shell', 'nested-skill', 'SKILL.md'), '# shell-nested');
 
     // 包内嵌套子包（停钻不重复产出）
     await write(path.join(root, 'nested', 'container', '.claude-plugin', 'plugin.json'), CC_MANIFEST);
@@ -63,9 +67,10 @@ describe('scanLibraryPlugins', () => {
   });
 
   it('CC 包 → ccPack 且 skills 只收带 SKILL.md 的目录', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'cc'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]).toMatchObject({
+    const { plugins, packRoots } = await scanLibraryPlugins(path.join(root, 'cc'));
+    expect(plugins).toHaveLength(1);
+    expect(packRoots).toEqual(['']); // 根即包 → 空串排除根
+    expect(plugins[0]).toMatchObject({
       name: 'CC Pack',
       version: '1.2.0',
       relPath: '',
@@ -74,39 +79,49 @@ describe('scanLibraryPlugins', () => {
       skills: ['foo'],
       targets: ['claude'],
     });
-    expect(packs[0]!.dirPath).toBe(path.join(root, 'cc'));
+    expect(plugins[0]!.dirPath).toBe(path.join(root, 'cc'));
   });
 
   it('weave 包 → weavePack=true / kind=rule', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'weave'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]).toMatchObject({ ccPack: false, weavePack: true, kind: 'rule' });
+    const { plugins } = await scanLibraryPlugins(path.join(root, 'weave'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]).toMatchObject({ ccPack: false, weavePack: true, kind: 'rule' });
   });
 
   it('双 manifest 包 → 两个 flag 皆 true', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'dual'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]).toMatchObject({ ccPack: true, weavePack: true });
+    const { plugins } = await scanLibraryPlugins(path.join(root, 'dual'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]).toMatchObject({ ccPack: true, weavePack: true });
   });
 
   it('mods-only（无 manifest 非空 modules）→ kind=mod，双 flag false', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'mods'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]).toMatchObject({ kind: 'mod', ccPack: false, weavePack: false });
-    expect(packs[0]!.components).toContain('mod');
+    const { plugins } = await scanLibraryPlugins(path.join(root, 'mods'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]).toMatchObject({ kind: 'mod', ccPack: false, weavePack: false });
+    expect(plugins[0]!.components).toContain('mod');
   });
 
   it('裸表面 skills/（无 manifest）不产 plugin；深度 3+ 的包递归发现（修订：原深度上限 2）', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'plain'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]).toMatchObject({ relPath: 'a/b/deep-pack', ccPack: true, skills: ['deep-skill'] });
+    const { plugins } = await scanLibraryPlugins(path.join(root, 'plain'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]).toMatchObject({ relPath: 'a/b/deep-pack', ccPack: true, skills: ['deep-skill'] });
+  });
+
+  it('空成分外壳包：谓词命中 → packRoots，但 parse 为 null → 不进 plugins（堵 P1 泄漏）', async () => {
+    const { plugins, packRoots } = await scanLibraryPlugins(path.join(root, 'plain'));
+    expect(packRoots).toContain('shell'); // 排除根照收（修订：原仅收解析成功的包）
+    expect(packRoots).toContain('a/b/deep-pack');
+    expect(plugins.map((p) => p.relPath)).not.toContain('shell');
+    // 外壳子树的 skill 被排除（修订：原停钻与排除解耦，壳内 skill 会泄漏）
+    const names = (await scanLibrarySkills(path.join(root, 'plain'), packRoots)).map((s) => s.name);
+    expect(names).toContain('plain-skill');
+    expect(names).not.toContain('nested-skill');
   });
 
   it('包内 skill 隶属 plugin：排除根传入后不独立产出，包外 skill 照旧（修订：原「双身份」可独立安装）', async () => {
     const plain = path.join(root, 'plain');
-    const packs = await scanLibraryPlugins(plain);
-    const roots = packs.map((p) => p.relPath);
-    const names = (await scanLibrarySkills(plain, roots)).map((s) => s.name);
+    const { packRoots } = await scanLibraryPlugins(plain);
+    const names = (await scanLibrarySkills(plain, packRoots)).map((s) => s.name);
     expect(names).toContain('plain-skill'); // 包外 skill 不受影响
     expect(names).not.toContain('deep-skill'); // 包内 skill 收归 plugin
     expect(names).not.toContain('inner'); // .claude 排除照旧
@@ -119,8 +134,8 @@ describe('scanLibraryPlugins', () => {
 
   it('包内表面成分不产出独立文件模板；包外照旧', async () => {
     const plain = path.join(root, 'plain');
-    const roots = (await scanLibraryPlugins(plain)).map((p) => p.relPath);
-    const commands = (await scanLibraryFileAssets(plain, roots)).command.map((f) => f.name);
+    const { packRoots } = await scanLibraryPlugins(plain);
+    const commands = (await scanLibraryFileAssets(plain, packRoots)).command.map((f) => f.name);
     expect(commands).toContain('standalone'); // 包外 commands/ 照旧
     expect(commands).not.toContain('deepcmd'); // 包内 commands/ 收归 plugin
     // 缺省不排除 = 存量语义
@@ -130,8 +145,8 @@ describe('scanLibraryPlugins', () => {
 
   it('包内 mcp 模板收归 plugin；包外照旧', async () => {
     const plain = path.join(root, 'plain');
-    const roots = (await scanLibraryPlugins(plain)).map((p) => p.relPath);
-    const names = (await scanLibraryMcp(plain, roots)).map((m) => m.name);
+    const { packRoots } = await scanLibraryPlugins(plain);
+    const names = (await scanLibraryMcp(plain, packRoots)).map((m) => m.name);
     expect(names).toContain('helper'); // 包外 *.mcp.json 照旧
     expect(names).not.toContain('server'); // 包内 *.mcp.json 收归 plugin
   });
@@ -144,15 +159,17 @@ describe('scanLibraryPlugins', () => {
   });
 
   it('根目录自身即包 → 产出且 relPath 为空串', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'dual'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]!.relPath).toBe('');
+    const { plugins, packRoots } = await scanLibraryPlugins(path.join(root, 'dual'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]!.relPath).toBe('');
+    expect(packRoots).toEqual(['']);
   });
 
   it('包内嵌套子包停钻：只产出外层', async () => {
-    const packs = await scanLibraryPlugins(path.join(root, 'nested'));
-    expect(packs).toHaveLength(1);
-    expect(packs[0]!.relPath).toBe('container');
-    expect(packs[0]!.weavePack).toBe(false);
+    const { plugins, packRoots } = await scanLibraryPlugins(path.join(root, 'nested'));
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0]!.relPath).toBe('container');
+    expect(plugins[0]!.weavePack).toBe(false);
+    expect(packRoots).toEqual(['container']); // 停钻 → 内层不产出排除根
   });
 });

@@ -75,4 +75,27 @@ describe('buildLibraryIndex', () => {
     const idx = await buildLibraryIndex([missing, makeLib('A', libA)]);
     expect(idx.skills.has('code-review')).toBe(true); // libA still indexed
   });
+
+  it('包内 skill/文件模板不进更新索引（包子树排除，P6 修订）', async () => {
+    const libC = mkdtempSync(join(tmpdir(), 'weave-libC-'));
+    try {
+      // 插件包：manifest + 包内 skill + 包内 command（隶属包，不作独立更新来源）
+      mkdirSync(join(libC, 'pack', '.claude-plugin'), { recursive: true });
+      writeFileSync(join(libC, 'pack', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'p', version: '1.0.0' }));
+      mkdirSync(join(libC, 'pack', 'skills', 'pack-skill'), { recursive: true });
+      writeFileSync(join(libC, 'pack', 'skills', 'pack-skill', 'SKILL.md'), '# x');
+      mkdirSync(join(libC, 'pack', 'commands'), { recursive: true });
+      writeFileSync(join(libC, 'pack', 'commands', 'x.md'), '# x');
+      // 包外独立 skill 照旧
+      mkdirSync(join(libC, 'solo'), { recursive: true });
+      writeFileSync(join(libC, 'solo', 'SKILL.md'), '# solo');
+
+      const idx = await buildLibraryIndex([makeLib('C', libC)]);
+      expect(idx.skills.has('solo')).toBe(true);
+      expect(idx.skills.has('pack-skill')).toBe(false);
+      expect(idx.files.has('command/x')).toBe(false);
+    } finally {
+      rmSync(libC, { recursive: true, force: true });
+    }
+  });
 });

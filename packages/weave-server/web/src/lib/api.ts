@@ -327,6 +327,8 @@ export interface MarketItem {
   origin: string | null;
   importedAt: string | null;
   commit: string | null;
+  /** 市场目录内的可装载插件包数（managed 且 kind!=='mcp'；legacy/mcp 为 null）。 */
+  packCount: number | null;
 }
 
 /** Browse starting point for the directory picker (home, drives, …). */

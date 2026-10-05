@@ -51,6 +51,9 @@ import {
   Download,
 } from 'lucide-react';
 
+/** 路径归一（反斜杠 → posix）：市场包 dirPath 与 toolkit pack.dir 的匹配键。 */
+const normPath = (p: string) => p.replace(/\\/g, '/');
+
 interface LibraryPanelProps {
   /** Skill names already installed in the selected project (for the ✓ mark). */
   installedSkillNames: Set<string>;
@@ -150,7 +153,12 @@ export function LibraryPanel({
     api
       .listLibraryAssets(selectedId)
       .then((r) => {
-        setSkills(r.skills);
+        // 兜底：包内 skill 不进 skill 区（隶属 plugin，随包启停；server 已按
+        // 包子树排除，此处对同一响应再滤一层防数据源边界泄漏）
+        const roots = (r.plugins ?? []).map((p) => p.relPath);
+        const inPack = (rel: string) =>
+          roots.some((root) => root === '' || rel === root || rel.startsWith(`${root}/`));
+        setSkills(r.skills.filter((s) => !inPack(s.relPath)));
         setFileTemplates(r.files ?? []);
         setMcp(r.mcp ?? []);
         setPlugins(r.plugins ?? []);
@@ -159,15 +167,14 @@ export function LibraryPanel({
       .finally(() => setLoading(false));
   }, [selectedId, scanNonce]);
 
-  // 插件包启用态：仅 plugins tab 拉 toolkit 清单（市场包 provenance='market'，
-  // M3 后按 pack.dir 与 MarketPluginAsset.dirPath 匹配）。
+  // 插件包启用态：选中库/扫描/项目变化即拉（不再绑 plugins tab，避免首帧
+  // 「—」；市场包 provenance='market'，按 pack.dir 与 MarketPluginAsset.dirPath 匹配）。
   useEffect(() => {
-    if (assetTab !== 'plugins') return;
     api
       .listToolkit(projectId)
       .then((r) => setToolkitPacks(r.packs))
       .catch(() => setToolkitPacks([]));
-  }, [assetTab, projectId, scanNonce]);
+  }, [projectId, scanNonce, selectedId]);
 
   /** 批量检查更新：比对市场缓存与 origin，只读不落库。 */
   async function handleCheckUpdates() {
@@ -290,6 +297,17 @@ export function LibraryPanel({
       return next;
     });
 
+  // 插件包折叠条：**展开集**（默认空 = 全部折叠，key = `plugin:${relPath||name}`；
+  // 数据异步到达，展开集比折叠集能保住用户已展开项不因重扫丢失）。
+  const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
+  const togglePlugin = (key: string) =>
+    setExpandedPlugins((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   // Section-level collapse (Skill templates / MCP templates / Update hints).
   const [sectionsCollapsed, setSectionsCollapsed] = useState<Set<string>>(new Set());
   const toggleSection = (key: string) =>
@@ -330,17 +348,21 @@ export function LibraryPanel({
       : []),
   ];
   const groupKeys = groupSkills(skills).map(([g]) => g || '__root__');
+  const pluginKeys = plugins.map((pl) => `plugin:${pl.relPath || pl.name}`);
   const anyCollapsed =
     visibleSections.some((k) => sectionsCollapsed.has(k)) ||
-    groupKeys.some((k) => collapsedGroups.has(k));
+    groupKeys.some((k) => collapsedGroups.has(k)) ||
+    pluginKeys.some((k) => !expandedPlugins.has(k));
   /** One button that flips between expand-all and collapse-all. */
   function toggleAll() {
     if (anyCollapsed) {
       setSectionsCollapsed(new Set());
       setCollapsedGroups(new Set());
+      setExpandedPlugins(new Set(pluginKeys));
     } else {
       setSectionsCollapsed(new Set(visibleSections));
       setCollapsedGroups(new Set(groupKeys));
+      setExpandedPlugins(new Set());
     }
   }
 
@@ -466,6 +488,16 @@ export function LibraryPanel({
                       {item.managed && item.resourceId ? item.resourceId : item.path}
                     </span>
                     <MarketSourceBadge source={item.source} />
+                    {(item.packCount ?? 0) > 0 && (
+                      <span
+                        className="shrink-0"
+                        title={t('library.packCountTip', { n: item.packCount! })}
+                      >
+                        <Badge className="bg-violet-900/40 text-violet-300">
+                          {t('library.packCount', { n: item.packCount! })}
+                        </Badge>
+                      </span>
+                    )}
                   </span>
                   {item.source === 'git' && (item.origin || item.importedAt) && (
                     <span className="block text-[10px] text-neutral-600 truncate">
@@ -731,13 +763,33 @@ export function LibraryPanel({
               <p className="text-xs text-neutral-600">{t('library.noPlugins')}</p>
             )}
             {plugins.map((pl) => {
-              const pack = toolkitPacks?.find((p) => p.dir === pl.dirPath) ?? null;
+              const pack =
+                toolkitPacks?.find((p) => normPath(p.dir) === normPath(pl.dirPath)) ?? null;
+              const pk = `plugin:${pl.relPath || pl.name}`;
+              const expanded = expandedPlugins.has(pk);
               return (
                 <div
-                  key={pl.relPath || pl.name}
+                  key={pk}
                   className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5 space-y-1"
                 >
-                  <div className="flex items-center gap-1.5">
+                  {/* 折叠条头：点击切换展开；Switch/「—」stopPropagation 防误展开 */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => togglePlugin(pk)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        togglePlugin(pk);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+                  >
+                    {expanded ? (
+                      <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+                    )}
                     <Puzzle
                       className={cn(
                         'h-3.5 w-3.5 shrink-0',
@@ -751,20 +803,14 @@ export function LibraryPanel({
                       v{pl.version}
                     </span>
                     {pl.ccPack && (
-                      <span
-                        className="shrink-0"
-                        title={t('library.ccPluginTip')}
-                      >
+                      <span className="shrink-0" title={t('library.ccPluginTip')}>
                         <Badge className="bg-blue-900/40 text-blue-300">
                           {t('library.badgeCcPlugin')}
                         </Badge>
                       </span>
                     )}
                     {pl.weavePack && (
-                      <span
-                        className="shrink-0"
-                        title={t('library.weavePluginTip')}
-                      >
+                      <span className="shrink-0" title={t('library.weavePluginTip')}>
                         <Badge className="bg-violet-900/40 text-violet-300">
                           {t('library.badgeWeavePlugin')}
                         </Badge>
@@ -776,7 +822,11 @@ export function LibraryPanel({
                     <span className="shrink-0 text-[10px] text-neutral-600">
                       {t('toolkit.targets', { targets: pl.targets.join('+') })}
                     </span>
-                    <span className="ml-auto shrink-0">
+                    <span
+                      className="ml-auto shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
                       {pack ? (
                         <Switch
                           checked={pack.enabled}
@@ -793,38 +843,51 @@ export function LibraryPanel({
                       )}
                     </span>
                   </div>
-                  {pl.description && (
-                    <p className="truncate text-[11px] text-neutral-500" title={pl.description}>
-                      {pl.description}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-1">
-                    {pl.components.map((c) => (
-                      <Badge key={c} variant="other" className="px-1 text-[10px]">
-                        {c}
-                      </Badge>
-                    ))}
-                  </div>
-                  {pl.skills.length > 0 && (
-                    <div>
-                      <p
-                        className="mb-0.5 text-[10px] text-neutral-600"
-                        title={t('library.pluginSkillsFollowTip')}
-                      >
-                        {t('library.pluginSkillsLabel')}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {pl.skills.map((sname) => (
-                          <Badge
-                            key={sname}
-                            variant="skill"
-                            className="px-1.5 text-[10px]"
-                            title={t('library.pluginSkillsFollowTip')}
-                          >
-                            {sname}
+                  {/* 展开体：描述 → 成分 → 包内 skills（随包启停）→ 来源目录 */}
+                  {expanded && (
+                    <div className="pl-4 space-y-1">
+                      {pl.description ? (
+                        <p className="text-[11px] text-neutral-500" title={pl.description}>
+                          {pl.description}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-1">
+                        {pl.components.map((c) => (
+                          <Badge key={c} variant="other" className="px-1 text-[10px]">
+                            {c}
                           </Badge>
                         ))}
                       </div>
+                      {pl.skills.length > 0 && (
+                        <div>
+                          <p
+                            className="mb-0.5 text-[10px] text-neutral-600"
+                            title={t('library.pluginSkillsFollowTip')}
+                          >
+                            {t('library.pluginSkillsLabel')}
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {pl.skills.map((sname) => (
+                              <Badge
+                                key={sname}
+                                variant="skill"
+                                className="px-1.5 text-[10px]"
+                                title={t('library.pluginSkillsFollowTip')}
+                              >
+                                {sname}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-neutral-600">
+                        <span className="text-neutral-500">
+                          {t('library.pluginSourceDir')}
+                        </span>{' '}
+                        <span className="font-mono" title={pl.dirPath}>
+                          {pl.relPath || '.'}
+                        </span>
+                      </p>
                     </div>
                   )}
                 </div>

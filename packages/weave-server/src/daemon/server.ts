@@ -66,7 +66,6 @@ import { readProjectConfig, writeProjectConfig } from '../install/project-config
 import type { ProjectConfig } from '../install/project-config.js';
 import { applyUpdate, syncAll } from '../install/apply-update.js';
 import { buildLibraryIndex } from '../install/library-index.js';
-import { getDataDir } from '../db/paths.js';
 import { importFromDir, importFromGit, importLibraryIntoMarket } from '../market/import.js';
 import { marketDir, readManifest } from '../market/manifest.js';
 import { isInsideDir, toRelPosix } from '../market/resolve.js';
@@ -465,10 +464,11 @@ async function handleRequest(
       return;
     }
     // 先发现插件包：包是原子单元，包内 skill/表面成分/mcp 隶属该包
-    // （随包启停，不独立安装）——包子树作为排除根传给其余三条扫描
-    const plugins =
-      lib.kind === 'skill' || lib.kind === 'both' ? await scanLibraryPlugins(lib.path) : [];
-    const packRoots = plugins.map((p) => p.relPath);
+    // （随包启停，不独立安装）——packRoots 含谓词命中但解析为空的外壳包。
+    // packRoots 恒算（与 kind 门控解耦：mcp 库的包内 skill 同样不泄漏）；
+    // plugins 展示字段维持 skill|both 门控。
+    const { plugins: allPlugins, packRoots } = await scanLibraryPlugins(lib.path);
+    const plugins = lib.kind === 'skill' || lib.kind === 'both' ? allPlugins : [];
     const skills = await scanLibrarySkills(lib.path, packRoots);
     const mcp =
       lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path, packRoots) : [];
@@ -500,7 +500,9 @@ async function handleRequest(
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
-    const items = await Promise.all(deps.libraries.list().map((row) => marketItem(row)));
+    const items = await Promise.all(
+      deps.libraries.list().map((row) => marketItem(row, deps.libraries!.dataDir)),
+    );
     sendJson(res, 200, { items });
     return;
   }
@@ -523,11 +525,17 @@ async function handleRequest(
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir); // 覆盖重导 → 指纹失效
-        sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+        clearPackCountCache(); // 磁盘已变 → packCount 缓存失效（响应前清，防回 stale）
+        sendJson(res, 201, {
+          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+        });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir);
-        sendJson(res, 201, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+        clearPackCountCache();
+        sendJson(res, 201, {
+          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+        });
       } else {
         sendJson(res, 400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
       }
@@ -592,6 +600,7 @@ async function handleRequest(
         if (dir) deps.fingerprintCache?.invalidate(dir);
       }
     }
+    if (results.some((r) => r.status === 'refreshed')) clearPackCountCache();
     sendJson(res, 200, { results });
     return;
   }
@@ -613,6 +622,7 @@ async function handleRequest(
     }
     await fs.promises.rm(row.path, { recursive: true, force: true });
     deps.libraries.remove(row.id);
+    clearPackCountCache();
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
     sendJson(res, 200, {
       ok: true,
@@ -639,7 +649,10 @@ async function handleRequest(
         libraries: deps.libraries,
         dataDir: deps.libraries.dataDir,
       });
-      sendJson(res, 200, { item: await marketItem(deps.libraries.getById(imported.libraryId)!) });
+      clearPackCountCache(); // 迁入 = 新落盘内容
+      sendJson(res, 200, {
+        item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+      });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });
     }
@@ -1393,9 +1406,9 @@ async function safeReadGlobalMcp(): Promise<Record<string, McpServerConfig>> {
 /**
  * 资源市场清单行（批 9）：libraries 行 + resolve 后有效路径 + 清单元数据 +
  * legacy 外部源标记。repo 读侧已把 path 解析为绝对路径（R11）。
+ * dataDir 由调用方传库实例值（生产 = getDataDir()；测试注入临时根）。
  */
-async function marketItem(row: LibraryRow): Promise<Record<string, unknown>> {
-  const dataDir = getDataDir();
+async function marketItem(row: LibraryRow, dataDir: string): Promise<Record<string, unknown>> {
   const managed = isInsideDir(row.path, marketDir(dataDir));
   const manifest = managed ? await readManifest(row.path) : null;
   return {
@@ -1411,7 +1424,27 @@ async function marketItem(row: LibraryRow): Promise<Record<string, unknown>> {
     origin: manifest?.origin ?? null,
     importedAt: manifest?.importedAt ?? null,
     commit: manifest?.commit ?? null,
+    // 市场行「含工具」tag 数据源：托管行的插件包数（legacy/mcp 行 null 不打标）
+    packCount: managed && row.kind !== 'mcp' ? await packCountOf(row.path) : null,
   };
+}
+
+/**
+ * packCount 缓存（递归扫描贵、行数少）：导入/刷新/删除/迁入改写磁盘后
+ * clear-all 重算；键为解析后的绝对路径。
+ */
+const packCountCache = new Map<string, number>();
+
+function clearPackCountCache(): void {
+  packCountCache.clear();
+}
+
+async function packCountOf(dir: string): Promise<number> {
+  const hit = packCountCache.get(dir);
+  if (hit !== undefined) return hit;
+  const n = (await scanLibraryPlugins(dir)).plugins.length;
+  packCountCache.set(dir, n);
+  return n;
 }
 
 /** Map reader errors to HTTP statuses (403 escape / 413 too large / 404 missing). */

@@ -153,6 +153,42 @@ describe('toolkit-scan 识别与发现', () => {
     expect(pack).toMatchObject({ targets: ['claude'] }); // 默认 ['claude']
   });
 
+  it('mods-only 包（无 manifest 非空 modules）进 toolkit 列表（修：mods 无安装按钮）', async () => {
+    const dir = path.join(root, 'm/mods-only');
+    await writeJson(path.join(dir, 'hooks', 'hooks.json'), { modules: ['./register.tsx'] });
+    // 空 modules 不算包（与市场窄谓词同口径）
+    const empty = path.join(root, 'm/empty-hooks');
+    await writeJson(path.join(empty, 'hooks', 'hooks.json'), { modules: [] });
+
+    expect(await isToolkitPackDir(dir)).toBe(true);
+    expect(await isToolkitPackDir(empty)).toBe(false);
+
+    const packs = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    expect(packs).toHaveLength(1);
+    expect(packs[0]).toMatchObject({
+      kind: 'mod',
+      components: ['mod'],
+      ccPack: false,
+      weavePack: false,
+      // 无 manifest 包的 name/id 推导回落目录名
+      id: 'mods-only',
+      name: 'mods-only',
+    });
+  });
+
+  it('market 源深度对齐市场扫描（depth>3 深包发现）；external 深度行为零变', async () => {
+    const deep = path.join(root, 'a/b/c/deep-pack'); // root0→a1→b2→c3→pack4
+    await writeJson(path.join(deep, '.claude-plugin/plugin.json'), { name: 'deep-pack', version: '1.0.0' });
+    await mkdir(path.join(deep, 'skills', 's'), { recursive: true });
+    await writeFile(path.join(deep, 'skills', 's', 'SKILL.md'), '# s');
+
+    const market = await discoverToolkitPacks({ root, provenance: 'market' });
+    expect(market.map((p) => p.id)).toContain('deep-pack');
+    // builtin/external 维持 depth-3（level ≥ 2 截断）：深包不可见
+    const ext = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    expect(ext).toHaveLength(0);
+  });
+
   it('内置真实树冒烟：8 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();

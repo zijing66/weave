@@ -58,6 +58,7 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+  const get = (p: string) => fetch(`http://127.0.0.1:${port}/api${p}`, { headers: auth });
 
   it('无 token 401', async () => {
     expect((await post('/market/check-updates', {}, {})).status).toBe(401);
@@ -96,5 +97,33 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
       body: 'not-json',
     });
     expect(res.status).toBe(400);
+  });
+
+  it('GET /market：packCount 计数 + refresh 后缓存失效重算', async () => {
+    interface MarketItemsJson {
+      items: Array<{ id: number; packCount: number | null }>;
+    }
+    const pick = (json: MarketItemsJson) => json.items.find((i) => i.id === libId)?.packCount;
+    // 初始：托管行恒算（源无包 → 0；legacy/mcp 行才是 null）
+    const r1 = await get('/market');
+    expect(r1.status).toBe(200);
+    expect(pick((await r1.json()) as MarketItemsJson)).toBe(0);
+
+    // 源新增可装载包 → refresh 覆盖缓存 → clearPackCountCache 后重算为 1
+    mkdirSync(path.join(src, 'pkg', '.claude-plugin'), { recursive: true });
+    writeFileSync(
+      path.join(src, 'pkg', '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'pkg', version: '1.0.0' }),
+    );
+    mkdirSync(path.join(src, 'pkg', 'commands'), { recursive: true });
+    writeFileSync(path.join(src, 'pkg', 'commands', 'c.md'), '# c');
+    const r2 = await post('/market/refresh', { ids: [libId] });
+    expect(r2.status).toBe(200);
+    expect(((await r2.json()) as { results: Array<{ status: string }> }).results[0]!.status).toBe(
+      'refreshed',
+    );
+
+    const r3 = await get('/market');
+    expect(pick((await r3.json()) as MarketItemsJson)).toBe(1);
   });
 });

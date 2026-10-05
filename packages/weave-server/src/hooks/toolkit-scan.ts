@@ -57,6 +57,12 @@ const CC_MANIFEST = 'plugin.json';
 const TOOLKIT_MANIFEST = 'weave.json';
 /** 扫描深度：root(0) → scope 容器(1) → pack(2)，对应 depth-3 树。 */
 const MAX_SCAN_LEVEL = 2;
+/**
+ * market 源深度对齐市场扫描（install/scanner.ts MAX_PACK_DEPTH=10）：
+ * 市场侧按 10 层发现的深包若 toolkit 侧 depth-2 截断，会因「toolkit 列表
+ * 无此包」在资源市场 plugin 区显示为不可启用（mods 无安装按钮的成因之一）。
+ */
+const MARKET_MAX_SCAN_LEVEL = 10;
 /** targets 缺省/全无效时的回落。 */
 const DEFAULT_TARGETS: Harness[] = ['claude'];
 
@@ -84,7 +90,7 @@ async function readJson(p: string): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** 目录是否为一个工具包包位（三种识别任一命中）。 */
+/** 目录是否为一个工具包包位（四种识别任一命中）。 */
 export async function isToolkitPackDir(dir: string): Promise<boolean> {
   if (await readJson(path.join(dir, CC_MANIFEST_DIR, CC_MANIFEST))) return true;
   // weave manifest 只判断存在性（合法性交给 plugin-loader 校验，rejected 也是信息）
@@ -92,8 +98,11 @@ export async function isToolkitPackDir(dir: string): Promise<boolean> {
     await stat(path.join(dir, WEAVE_PLUGIN_MANIFEST));
     return true;
   } catch {
-    // 继续判裸表面
+    // 继续判 mods / 裸表面
   }
+  // mods-only 包（无 manifest、仅 hooks.json 非空 modules）：不认则 toolkit
+  // 列表缺此包 → 资源市场 plugin 区 mods 卡无安装按钮
+  if (hasNonEmptyModules(await readJson(path.join(dir, 'hooks', 'hooks.json')))) return true;
   return (
     (await isDir(path.join(dir, 'skills'))) ||
     (await isDir(path.join(dir, 'commands'))) ||
@@ -208,17 +217,19 @@ function skipEntry(name: string): boolean {
 
 /**
  * 递归发现扫描根下的全部包：根自身可为包（外置目录直接指到包），
- * 否则下钻到 level ≤ 2（root → scope → pack）；命中包即停（包不嵌套）。
+ * 否则下钻到 level ≤ 2（root → scope → pack；market 源放宽到 10 对齐
+ * 市场扫描）；命中包即停（包不嵌套）。
  */
 export async function discoverToolkitPacks(source: ToolkitSource): Promise<ToolkitPack[]> {
   const out: ToolkitPack[] = [];
+  const maxLevel = source.provenance === 'market' ? MARKET_MAX_SCAN_LEVEL : MAX_SCAN_LEVEL;
   const walk = async (dir: string, level: number, scope: string): Promise<void> => {
     if (await isToolkitPackDir(dir)) {
       const pack = await parseToolkitPack(dir, source, scope);
       if (pack) out.push(pack);
       return;
     }
-    if (level >= MAX_SCAN_LEVEL) return;
+    if (level >= maxLevel) return;
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });

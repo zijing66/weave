@@ -2,6 +2,7 @@ import {
   scanLibrarySkills,
   scanLibraryMcp,
   scanLibraryFileAssets,
+  scanLibraryPlugins,
   type SkillAsset,
   type McpTemplate,
   type FileAssetTemplate,
@@ -83,9 +84,17 @@ export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<Librar
   for (const lib of libraries) {
     const wantSkill = lib.kind === 'skill' || lib.kind === 'both';
     const wantMcp = lib.kind === 'mcp' || lib.kind === 'both';
+    // 包子树排除与 kind 门控解耦（恒算）：包内资源隶属包，不作为独立更新
+    // 来源（否则包内 skill 会进更新提示区）；包排除为空时三条扫描行为零变。
+    let packRoots: string[] = [];
+    try {
+      packRoots = (await scanLibraryPlugins(lib.path)).packRoots;
+    } catch {
+      // unreadable library — 无排除根，各扫描自身再容错
+    }
     if (wantSkill) {
       try {
-        const scanned: SkillAsset[] = await scanLibrarySkills(lib.path);
+        const scanned: SkillAsset[] = await scanLibrarySkills(lib.path, packRoots);
         for (const s of scanned) {
           if (!skills.has(s.name)) {
             skills.set(s.name, {
@@ -102,7 +111,7 @@ export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<Librar
     }
     if (wantMcp) {
       try {
-        const scanned: McpTemplate[] = await scanLibraryMcp(lib.path);
+        const scanned: McpTemplate[] = await scanLibraryMcp(lib.path, packRoots);
         for (const t of scanned) {
           if (!mcp.has(t.name)) {
             const { name, command, args, env, sourcePath } = t;
@@ -118,7 +127,7 @@ export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<Librar
     // skill kind gate — they are content templates, not MCP configs.
     if (wantSkill) {
       try {
-        const scanned = await scanLibraryFileAssets(lib.path);
+        const scanned = await scanLibraryFileAssets(lib.path, packRoots);
         for (const templates of Object.values(scanned) as FileAssetTemplate[][]) {
           for (const t of templates) {
             const key = `${t.category}/${t.name}`;
