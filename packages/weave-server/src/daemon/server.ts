@@ -34,7 +34,7 @@ import {
   AssetNotFoundError,
 } from '../install/installer.js';
 import type { McpServerConfig, InstallAgent } from '../install/installer.js';
-import { isFileAssetCategory } from '../install/file-assets.js';
+import { isFileAssetCategory, type FileAssetCategory } from '../install/file-assets.js';
 import { installCapabilities } from '../install/capabilities.js';
 import {
   readGlobalMcpServers,
@@ -525,14 +525,14 @@ async function handleRequest(
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir); // 覆盖重导 → 指纹失效
-        clearPackCountCache(); // 磁盘已变 → packCount 缓存失效（响应前清，防回 stale）
+        clearAssetTagsCache(); // 磁盘已变 → tag 计数缓存失效（响应前清，防回 stale）
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir);
-        clearPackCountCache();
+        clearAssetTagsCache();
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
@@ -600,7 +600,7 @@ async function handleRequest(
         if (dir) deps.fingerprintCache?.invalidate(dir);
       }
     }
-    if (results.some((r) => r.status === 'refreshed')) clearPackCountCache();
+    if (results.some((r) => r.status === 'refreshed')) clearAssetTagsCache();
     sendJson(res, 200, { results });
     return;
   }
@@ -622,7 +622,7 @@ async function handleRequest(
     }
     await fs.promises.rm(row.path, { recursive: true, force: true });
     deps.libraries.remove(row.id);
-    clearPackCountCache();
+    clearAssetTagsCache();
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
     sendJson(res, 200, {
       ok: true,
@@ -649,7 +649,7 @@ async function handleRequest(
         libraries: deps.libraries,
         dataDir: deps.libraries.dataDir,
       });
-      clearPackCountCache(); // 迁入 = 新落盘内容
+      clearAssetTagsCache(); // 迁入 = 新落盘内容
       sendJson(res, 200, {
         item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
       });
@@ -1424,27 +1424,65 @@ async function marketItem(row: LibraryRow, dataDir: string): Promise<Record<stri
     origin: manifest?.origin ?? null,
     importedAt: manifest?.importedAt ?? null,
     commit: manifest?.commit ?? null,
-    // 市场行「含工具」tag 数据源：托管行的插件包数（legacy/mcp 行 null 不打标）
-    packCount: managed && row.kind !== 'mcp' ? await packCountOf(row.path) : null,
+    // 市场行资产类型 tag（skill/plugin/mods/mcp/…，0 计数不出现）；legacy 行同样扫
+    tags: await assetTagsOf(row.path),
   };
 }
 
 /**
- * packCount 缓存（递归扫描贵、行数少）：导入/刷新/删除/迁入改写磁盘后
- * clear-all 重算；键为解析后的绝对路径。
+ * 资产类型 tag 聚合：一次编排四扫描（plugins 先算 → packRoots 排除包内资源，
+ * skill 归 plugin 隶属），产出与资源管理文件树同词表的计数（0 计数不出现）。
  */
-const packCountCache = new Map<string, number>();
+const FILE_TAG: Record<FileAssetCategory, string> = {
+  command: 'command',
+  agent: 'agent',
+  workflow: 'workflow',
+  rule: 'rules',
+  'output-style': 'output-style',
+};
 
-function clearPackCountCache(): void {
-  packCountCache.clear();
+async function scanAssetTags(libPath: string): Promise<Record<string, number>> {
+  const { plugins, packRoots } = await scanLibraryPlugins(libPath);
+  const [skills, mcp, files] = await Promise.all([
+    scanLibrarySkills(libPath, packRoots),
+    scanLibraryMcp(libPath, packRoots),
+    scanLibraryFileAssets(libPath, packRoots),
+  ]);
+  const tags: Record<string, number> = {};
+  const add = (tag: string, n: number) => {
+    if (n > 0) tags[tag] = (tags[tag] ?? 0) + n;
+  };
+  add('skill', skills.length);
+  add('mcp', mcp.length);
+  for (const [cat, list] of Object.entries(files)) add(FILE_TAG[cat as FileAssetCategory] ?? cat, list.length);
+  add('plugin', plugins.length);
+  // mods ⊂ plugin（双 tag 语义，与 web file-tags mods→[plugin,mods] 一致）
+  add('mods', plugins.filter((p) => p.kind === 'mod' || p.components.includes('mod')).length);
+  return tags;
 }
 
-async function packCountOf(dir: string): Promise<number> {
-  const hit = packCountCache.get(dir);
+/**
+ * tag 计数缓存（四扫描贵、行数少）：导入/刷新/删除/迁入改写磁盘后
+ * clear-all 重算；键为库行的绝对路径。
+ */
+const assetTagsCache = new Map<string, Record<string, number>>();
+
+function clearAssetTagsCache(): void {
+  assetTagsCache.clear();
+}
+
+async function assetTagsOf(dir: string): Promise<Record<string, number>> {
+  const hit = assetTagsCache.get(dir);
   if (hit !== undefined) return hit;
-  const n = (await scanLibraryPlugins(dir)).plugins.length;
-  packCountCache.set(dir, n);
-  return n;
+  // legacy 外部源可能已被删除/不可读：降级为空 tag，不让整张清单 500
+  let tags: Record<string, number> = {};
+  try {
+    tags = await scanAssetTags(dir);
+  } catch {
+    /* 空 tag */
+  }
+  assetTagsCache.set(dir, tags);
+  return tags;
 }
 
 /** Map reader errors to HTTP statuses (403 escape / 413 too large / 404 missing). */

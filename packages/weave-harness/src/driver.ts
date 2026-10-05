@@ -117,6 +117,9 @@ export interface PluginInstallInfo {
 export interface GlobalInstallOptions {
   /** 插件名覆盖（缺省读 srcDir 的 `.claude-plugin/plugin.json`）。 */
   name?: string;
+  /** 无 manifest 包在 marketplace 目标副本合成最小 plugin.json 用（不写源目录）。 */
+  version?: string;
+  description?: string;
 }
 
 /**

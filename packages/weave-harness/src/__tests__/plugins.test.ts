@@ -169,6 +169,38 @@ describe('globalInstall（两步 CLI 链，幂等）', () => {
     expect(calls.filter((args) => args[1] === 'install')).toHaveLength(2);
   });
 
+  it('无 manifest 包（opts.name）：marketplace 目标副本合成最小 plugin.json，不写源目录；有 manifest 不覆盖', async () => {
+    const src = path.join(home, 'packs', 'bare-mod');
+    await mkdir(path.join(src, 'hooks'), { recursive: true });
+    await writeFile(path.join(src, 'hooks', 'hooks.json'), JSON.stringify({ modules: ['./register.tsx'] }, null, 2));
+
+    const info = await surface.globalInstall(src, { name: 'bare-mod', version: '1.4.0', description: 'desc' });
+    expect(info.key).toBe(`bare-mod@${WEAVE_MARKETPLACE}`);
+    const synthesized = JSON.parse(
+      await readFile(path.join(mktRoot(), 'plugins', 'bare-mod', '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(synthesized).toEqual({ name: 'bare-mod', version: '1.4.0', description: 'desc' });
+    // 源目录保持无 manifest（只写目标副本）
+    await expect(readFile(path.join(src, '.claude-plugin', 'plugin.json'), 'utf8')).rejects.toThrow();
+
+    // 缺省 version → '0.0.0'
+    const src2 = path.join(home, 'packs', 'bare-two');
+    await mkdir(path.join(src2, 'hooks'), { recursive: true });
+    await writeFile(path.join(src2, 'hooks', 'hooks.json'), JSON.stringify({ modules: [] }, null, 2));
+    await surface.globalInstall(src2, { name: 'bare-two' });
+    const two = JSON.parse(
+      await readFile(path.join(mktRoot(), 'plugins', 'bare-two', '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(two).toEqual({ name: 'bare-two', version: '0.0.0' });
+
+    // 有 manifest 的包零行为变化：原 manifest 保留（opts.version 不覆盖）
+    await surface.globalInstall(await makePack('demo'), { name: 'demo', version: '9.9.9' });
+    const demo = JSON.parse(
+      await readFile(path.join(mktRoot(), 'plugins', 'demo', '.claude-plugin', 'plugin.json'), 'utf8'),
+    ) as { version?: string };
+    expect(demo.version).toBe('1.2.3');
+  });
+
   it('已装幂等：直接返回安装信息，不 spawn CLI', async () => {
     await writeInstalled({
       'demo@weave': [

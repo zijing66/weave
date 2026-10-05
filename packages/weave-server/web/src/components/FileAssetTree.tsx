@@ -9,7 +9,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
-import { BUCKET_ORDER, tagsOf } from '@/lib/file-tags';
+import { BUCKET_ORDER, tagsOf, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT } from '@/i18n/I18nProvider';
 import {
   ChevronDown,
@@ -32,36 +32,6 @@ export interface FileAssetRow {
   agent?: AssetAgent;
 }
 
-/* One colour family per tag, expressed in TEXT COLOUR ONLY: both the
- * filter chips and the row tags keep the same grey background, so the hue is
- * what distinguishes buckets. Selected chips additionally get a highlight ring.
- * (Tailwind needs literal class strings, hence no template.) */
-const KIND_COLORS: Record<string, { on: string; off: string }> = {
-  instructions: {
-    on: 'text-teal-200',
-    off: 'text-teal-300/50 hover:text-teal-200',
-  },
-  command: { on: 'text-purple-200', off: 'text-purple-300/50 hover:text-purple-200' },
-  agent: { on: 'text-emerald-200', off: 'text-emerald-300/50 hover:text-emerald-200' },
-  hooks: { on: 'text-amber-200', off: 'text-amber-300/50 hover:text-amber-200' },
-  rules: { on: 'text-rose-200', off: 'text-rose-300/50 hover:text-rose-200' },
-  'output-style': {
-    on: 'text-fuchsia-200',
-    off: 'text-fuchsia-300/50 hover:text-fuchsia-200',
-  },
-  workflow: { on: 'text-orange-200', off: 'text-orange-300/50 hover:text-orange-200' },
-  settings: { on: 'text-cyan-200', off: 'text-cyan-300/50 hover:text-cyan-200' },
-  plugin: { on: 'text-indigo-200', off: 'text-indigo-300/50 hover:text-indigo-200' },
-  mods: { on: 'text-violet-200', off: 'text-violet-300/50 hover:text-violet-200' },
-  other: { on: 'text-neutral-200', off: 'text-neutral-400/70 hover:text-neutral-200' },
-  // tab 专属类别同样进 chips 与行 tag
-  skill: { on: 'text-lime-200', off: 'text-lime-300/50 hover:text-lime-200' },
-  mcp: { on: 'text-sky-200', off: 'text-sky-300/50 hover:text-sky-200' },
-};
-
-/** Palette for a kind — unknown future kinds fall back to neutral. */
-const kindColor = (kind: string) => KIND_COLORS[kind] ?? KIND_COLORS.other;
-
 /* The 全部 chip is an action, not a kind — primary-blue text on the same
  * grey background as every other chip. */
 const ALL_ON = 'text-blue-200';
@@ -73,10 +43,6 @@ const CHIP_BASE =
 
 /** Highlight for a chip in the filtered (selected) state. */
 const CHIP_ACTIVE_HL = 'bg-neutral-700 ring-1 ring-blue-500/50 hover:bg-neutral-700';
-
-/** Shared grey tag shell for rows — same background as the filter chips. */
-const ROW_TAG_BASE =
-  'shrink-0 rounded-full border border-transparent bg-neutral-800/60 px-1.5 py-0 text-[10px] font-medium font-sans';
 
 /** Kinds the daemon's uninstall route accepts in a project
  * (mirrors isFileAssetCategory). */

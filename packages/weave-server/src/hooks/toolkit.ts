@@ -158,9 +158,13 @@ async function walkFiles(
   }
 }
 
+/** 管线①判定：CC 原生插件包，或 mods-only 包（mods 是 Claude 插件的一种，
+ * 同走「全局安装 + 项目启用」，不落表面解包）。 */
+const isCcPluginPack = (pack: ToolkitPack): boolean => pack.ccPack || pack.kind === 'mod';
+
 /**
  * 启用落盘计划（五闸④的唯一事实源）：按 `targets` 分流——
- * - CC 原生包 × claude → **零项目落盘**（全局安装 + 项目 enabledPlugins，
+ * - CC 原生包（含 mods）× claude → **零项目落盘**（全局安装 + 项目 enabledPlugins，
  *   见 enable；宿主不加载项目插件位副本）；
  * - skills × codex → `.codex/skills/`（Codex 无插件机制，只能表面解包）；
  * - 裸表面 × claude → `.claude/skills|commands|agents/`；非 `targets` 内的
@@ -172,7 +176,7 @@ async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<Fi
 
   if (pack.skills.length > 0) {
     for (const harness of pack.targets) {
-      if (harness === 'claude' && pack.ccPack) continue; // CC 插件由全局安装覆盖
+      if (harness === 'claude' && isCcPluginPack(pack)) continue; // CC 插件（含 mods）由全局安装覆盖
       // 批 4a：skills 表面单一事实源 = AssetSurface.projectSkillsDir()
       const skillsBase = assetSurfaceFor(harness).projectSkillsDir();
       for (const skill of pack.skills) {
@@ -186,7 +190,7 @@ async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<Fi
   }
 
   // 裸表面包的单文件资产（claude-only：codex 无对应项目表面）
-  if (claude && !pack.ccPack) {
+  if (claude && !isCcPluginPack(pack)) {
     for (const [dirName, category] of [
       ['commands', 'command'],
       ['agents', 'agent'],
@@ -361,11 +365,17 @@ export class ToolkitService {
 
     const projectPath = project.path;
 
-    // 管线①：CC 原生包全局安装（幂等两步 CLI）+ 项目启用；项目插件位零副本。
-    const ccLanded = pack.ccPack && pack.targets.includes('claude');
+    // 管线①：CC 原生包（含 mods-only——mods 是 Claude 插件的一种）全局安装
+    // （幂等两步 CLI，无 manifest 包在 marketplace 副本合成）+ 项目启用；
+    // 项目插件位零副本。
+    const ccLanded = isCcPluginPack(pack) && pack.targets.includes('claude');
     if (ccLanded) {
       const surface = this.pluginSurface();
-      await surface.globalInstall(pack.dir, { name: pack.name });
+      await surface.globalInstall(pack.dir, {
+        name: pack.name,
+        version: pack.version,
+        description: pack.description,
+      });
       await surface.setProjectEnabled(projectPath, pack.name, true);
     }
 
@@ -433,7 +443,7 @@ export class ToolkitService {
     const pack = await this.resolvePack(packId, sourceRoot);
     await this.removePackFiles(project, pack, pack.sourceRoot);
 
-    if (pack.ccPack && pack.targets.includes('claude')) {
+    if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
       await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
     }
     if (pack.weavePack) {
@@ -497,7 +507,7 @@ export class ToolkitService {
         const weaveOnlyEnabled = !record && metaIds.includes(pack.id) && pack.weavePack;
         if (!fromThisDir && !weaveOnlyEnabled) continue;
         await this.removePackFiles(project, pack, abs);
-        if (pack.ccPack && pack.targets.includes('claude')) {
+        if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
           await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
         }
         if (pack.weavePack) {
@@ -555,7 +565,7 @@ export class ToolkitService {
       }
       facts.push(present);
     }
-    if (pack.ccPack && pack.targets.includes('claude')) {
+    if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
       const surface = this.pluginSurface();
       facts.push(
         (await surface.isInstalled(pack.name)) &&

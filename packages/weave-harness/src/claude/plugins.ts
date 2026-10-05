@@ -151,8 +151,14 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
     };
   };
 
-  /** 同步 weave marketplace 目录源：包拷贝进 `plugins/<name>` + upsert 条目。 */
-  const syncMarketplace = async (srcDir: string, name: string): Promise<string> => {
+  /** 同步 weave marketplace 目录源：包拷贝进 `plugins/<name>` + upsert 条目；
+   * 目标副本缺 `.claude-plugin/plugin.json` 时就地合成最小 manifest（CC CLI
+   * install 必需；mods-only 等无 manifest 包走此兜底，绝不回写源目录）。 */
+  const syncMarketplace = async (
+    srcDir: string,
+    name: string,
+    opts: Pick<GlobalInstallOptions, 'version' | 'description'> = {},
+  ): Promise<string> => {
     const root = marketplaceRoot();
     const target = path.join(root, 'plugins', name);
     await rm(target, { recursive: true, force: true });
@@ -164,6 +170,29 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
         return base !== 'node_modules' && base !== '.git';
       },
     });
+    const manifestFile = path.join(target, '.claude-plugin', 'plugin.json');
+    let hasManifest = true;
+    try {
+      await readFile(manifestFile, 'utf8');
+    } catch {
+      hasManifest = false;
+    }
+    if (!hasManifest) {
+      await mkdir(path.dirname(manifestFile), { recursive: true });
+      await writeFile(
+        manifestFile,
+        JSON.stringify(
+          {
+            name,
+            version: opts.version ?? '0.0.0',
+            ...(opts.description ? { description: opts.description } : {}),
+          },
+          null,
+          2,
+        ) + '\n',
+        'utf8',
+      );
+    }
     const mktFile = path.join(root, '.claude-plugin', 'marketplace.json');
     const mkt = await readJson(mktFile);
     const plugins = Array.isArray(mkt.plugins)
@@ -195,7 +224,7 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       const existing = (await readInstalled())[key];
       if (existing && existing.length > 0) return infoOf(key, existing, true);
 
-      const mktDir = await syncMarketplace(srcDir, name);
+      const mktDir = await syncMarketplace(srcDir, name, opts);
       await run(['plugin', 'marketplace', 'add', mktDir]);
       const { stdout } = await run(['plugin', 'install', key, '--scope', 'user', '--json']);
       const outcome = safeJson(stdout);

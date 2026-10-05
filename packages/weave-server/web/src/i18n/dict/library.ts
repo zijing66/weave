@@ -104,8 +104,6 @@ export const libraryZh = {
   'library.pluginSkillsLabel': '包内 skills · 随插件启停',
   'library.pluginSkillsFollowTip': '隶属该插件，不单独安装——随插件启用/停用',
   'library.pluginNotInToolkit': '不在工具箱扫描范围，无法在此启用',
-  'library.packCount': '含工具 ×{n}',
-  'library.packCountTip': '该目录包含 {n} 个插件包，可在 Plugins 分区启用',
   'library.pluginSourceDir': '来源目录',
   'library.addLibraryTemplates': '在上方导入资源以浏览模板。',
   'library.noFileTemplates':
@@ -241,8 +239,6 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.pluginSkillsFollowTip':
     'Belongs to this plugin — not installed separately; enabled/disabled with it',
   'library.pluginNotInToolkit': 'Outside the toolkit scan scope — cannot enable here',
-  'library.packCount': 'Tools ×{n}',
-  'library.packCountTip': 'This directory contains {n} plugin pack(s) — enable in the Plugins section',
   'library.pluginSourceDir': 'Source path',
   'library.addLibraryTemplates': 'Import a resource above to browse templates.',
   'library.noFileTemplates':

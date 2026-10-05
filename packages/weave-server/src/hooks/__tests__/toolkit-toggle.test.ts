@@ -379,6 +379,49 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     expect(res2.warnings).toEqual([]);
   });
 
+  it('mods-only 无 manifest 包按 CC 插件安装（管线①）：globalInstall + 项目启用、零表面落盘', async () => {
+    // 外置目录放 mods-only 包：仅 hooks/hooks.json（非空 modules），无
+    // .claude-plugin/plugin.json → ccPack=false，但 kind='mod'（mods 是
+    // Claude 插件的一种，用户裁决走管线①而非表面解包）
+    const modPack = path.join(extRoot, 'mods', 'hook-mod');
+    await mkdir(path.join(modPack, 'hooks'), { recursive: true });
+    await writeFile(path.join(modPack, 'hooks', 'hooks.json'), JSON.stringify({ modules: ['./register.tsx'] }, null, 2));
+    await writeFile(path.join(modPack, 'hooks', 'register.tsx'), 'export default {};\n');
+    await addToolkitDir(extRoot, sourcesRoot);
+
+    const { packs } = await service.list(project.id);
+    expect(packs.find((p) => p.id === 'hook-mod')).toMatchObject({ kind: 'mod', ccPack: false });
+
+    const before = await snapshot(projectDir);
+    const { pack } = await service.enable(project.id, 'hook-mod');
+    expect(pack.enabled).toBe(true);
+
+    // 管线①：fake CLI 收到 install key@weave，installed_plugins 登记
+    expect(execCalls.some((a) => a[1] === 'install' && a[2] === 'hook-mod@weave')).toBe(true);
+    expect(await installedKeys()).toContain('hook-mod@weave');
+    // marketplace 目标副本合成最小 manifest（源无 manifest）
+    const mktCopy = JSON.parse(
+      await readFile(
+        path.join(base, '.claude', 'weave-marketplace', 'plugins', 'hook-mod', '.claude-plugin', 'plugin.json'),
+        'utf8',
+      ),
+    ) as { name?: string; version?: string };
+    expect(mktCopy).toMatchObject({ name: 'hook-mod', version: '0.0.0' });
+    // 项目 enabledPlugins 开
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'hook-mod@weave': true });
+    // 零表面落盘、不写 toolkit 账本（plan 为空，避免双腿）
+    const landed = await snapshot(projectDir);
+    expect(landed['.weave/toolkit/hook-mod.json']).toBeUndefined();
+    expect(Object.keys(landed).some((f) => f.includes('register.tsx'))).toBe(false);
+    expect(Object.keys(landed).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
+    expect(await snapshot(projectDir)).not.toEqual(before);
+
+    // disable：关项目启用、全局安装保留
+    await service.disable(project.id, 'hook-mod');
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'hook-mod@weave': false });
+    expect(await installedKeys()).toContain('hook-mod@weave');
+  });
+
   it('mod 版本闸纯函数：semver 比较 / 降级 / 环境跳过', () => {
     expect(isVersionAtLeast('2.1.287', MIN_MOD_HOST_VERSION)).toBe(true);
     expect(isVersionAtLeast('2.2.0', MIN_MOD_HOST_VERSION)).toBe(true);

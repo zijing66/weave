@@ -29,6 +29,7 @@ import { Switch } from '@/components/ui/switch';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
+import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { type MainCategory } from '@/components/CategoryBar';
 import { type AssetTab } from '@/components/CategoryDetail';
@@ -488,16 +489,18 @@ export function LibraryPanel({
                       {item.managed && item.resourceId ? item.resourceId : item.path}
                     </span>
                     <MarketSourceBadge source={item.source} />
-                    {(item.packCount ?? 0) > 0 && (
-                      <span
-                        className="shrink-0"
-                        title={t('library.packCountTip', { n: item.packCount! })}
-                      >
-                        <Badge className="bg-violet-900/40 text-violet-300">
-                          {t('library.packCount', { n: item.packCount! })}
-                        </Badge>
-                      </span>
-                    )}
+                    {/* 资产类型 tag（与资源管理文件树同款样式/词表），多个计 ×N */}
+                    {item.tags &&
+                      BUCKET_ORDER.filter((tag) => item.tags![tag] !== undefined).map((tag) => (
+                        <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
+                          {tag}
+                          {item.tags![tag]! > 1 && (
+                            <span className="ml-1 tabular-nums text-[10px] opacity-70">
+                              ×{item.tags![tag]}
+                            </span>
+                          )}
+                        </span>
+                      ))}
                   </span>
                   {item.source === 'git' && (item.origin || item.importedAt) && (
                     <span className="block text-[10px] text-neutral-600 truncate">
@@ -802,7 +805,8 @@ export function LibraryPanel({
                     <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                       v{pl.version}
                     </span>
-                    {pl.ccPack && (
+                    {/* mods 按 CC 插件管线安装（toolkit isCcPluginPack），徽标同口径 */}
+                    {(pl.ccPack || pl.kind === 'mod') && (
                       <span className="shrink-0" title={t('library.ccPluginTip')}>
                         <Badge className="bg-blue-900/40 text-blue-300">
                           {t('library.badgeCcPlugin')}

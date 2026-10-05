@@ -99,17 +99,19 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
     expect(res.status).toBe(400);
   });
 
-  it('GET /market：packCount 计数 + refresh 后缓存失效重算', async () => {
+  it('GET /market：tags 资产类型计数 + refresh 后缓存失效重算', async () => {
     interface MarketItemsJson {
-      items: Array<{ id: number; packCount: number | null }>;
+      items: Array<{ id: number; tags: Record<string, number> | null }>;
     }
-    const pick = (json: MarketItemsJson) => json.items.find((i) => i.id === libId)?.packCount;
-    // 初始：托管行恒算（源无包 → 0；legacy/mcp 行才是 null）
+    const pick = (json: MarketItemsJson) => json.items.find((i) => i.id === libId)?.tags;
+    // 初始：fixture 只有 skills/s1 → 只有 skill tag（0 计数 key 不出现）
     const r1 = await get('/market');
     expect(r1.status).toBe(200);
-    expect(pick((await r1.json()) as MarketItemsJson)).toBe(0);
+    const t1 = pick((await r1.json()) as MarketItemsJson)!;
+    expect(t1.skill).toBe(1);
+    expect(t1.plugin).toBeUndefined();
 
-    // 源新增可装载包 → refresh 覆盖缓存 → clearPackCountCache 后重算为 1
+    // 源新增可装载包 → refresh 覆盖缓存 → clearAssetTagsCache 后重算
     mkdirSync(path.join(src, 'pkg', '.claude-plugin'), { recursive: true });
     writeFileSync(
       path.join(src, 'pkg', '.claude-plugin', 'plugin.json'),
@@ -124,6 +126,9 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
     );
 
     const r3 = await get('/market');
-    expect(pick((await r3.json()) as MarketItemsJson)).toBe(1);
+    const t3 = pick((await r3.json()) as MarketItemsJson)!;
+    expect(t3.plugin).toBe(1);
+    expect(t3.skill).toBe(1); // 包内 commands 归 plugin，不产独立 tag；包外 skill 不受影响
+    expect(t3.command).toBeUndefined(); // 包子树被 packRoots 排除
   });
 });
