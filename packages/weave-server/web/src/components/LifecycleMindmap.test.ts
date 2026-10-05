@@ -214,11 +214,18 @@ describe('layoutMindmap', () => {
         'e:2->e:3',
         'e:3->e:4',
         'e:4->e:5',
+        'e:5->c:2',
         'c:2->e:6',
         'e:6->g:turn:1',
       ]),
     );
+    // 首尾（簇↔子节点）虚线，子节点之间实线时序
+    expect(open.edges.find((e) => e.id === 'c:2->e:2')?.dashed).toBe(true);
+    expect(open.edges.find((e) => e.id === 'e:5->c:2')?.closure).toBe(true);
     expect(open.edges.find((e) => e.id === 'e:2->e:3')?.vertical).toBe(true);
+    expect(open.edges.find((e) => e.id === 'e:2->e:3')?.dashed).toBeUndefined();
+    // 收起态无尾回边（成员隐藏，链路保持现状）
+    expect(collapsed.edges.some((e) => e.closure && e.source.startsWith('c:'))).toBe(false);
   });
 
   it('孤立工具事件与命中指令的工具事件不进簇', () => {

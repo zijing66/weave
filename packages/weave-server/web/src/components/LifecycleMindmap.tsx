@@ -98,13 +98,15 @@ function sessionModelOf(event: HookEventRow): string | undefined {
 }
 
 /** 边：closure=true 是闭环回边（末事件 → prompt 根，成环）；vertical=true
- *  是同列时序链（底出顶入，防跨列锚点绕行交叉）。 */
+ *  是同列时序链（底出顶入，防跨列锚点绕行交叉）；dashed=true 是弱化从属
+ *  连线（虚线，如展开簇的首边——子节点时序链仍实线）。 */
 export interface LaidEdge {
   id: string;
   source: string;
   target: string;
   closure?: boolean;
   vertical?: boolean;
+  dashed?: boolean;
 }
 
 /**
@@ -465,7 +467,13 @@ export function layoutMindmap(
       const e = edges[i]!;
       if (e.source === c.key && kidKeys.has(e.target)) edges.splice(i, 1);
     }
-    edges.push({ id: `${c.key}->${c.children[0]!.key}`, source: c.key, target: c.children[0]!.key });
+    // 首尾虚线（簇↔子节点的从属连线弱化）+ 成员间实线时序链，成下探闭环。
+    edges.push({
+      id: `${c.key}->${c.children[0]!.key}`,
+      source: c.key,
+      target: c.children[0]!.key,
+      dashed: true,
+    });
     for (let i = 0; i + 1 < c.children.length; i++) {
       edges.push({
         id: `${c.children[i]!.key}->${c.children[i + 1]!.key}`,
@@ -474,6 +482,12 @@ export function layoutMindmap(
         vertical: true,
       });
     }
+    edges.push({
+      id: `${c.children[c.children.length - 1]!.key}->${c.key}`,
+      source: c.children[c.children.length - 1]!.key,
+      target: c.key,
+      closure: true,
+    });
   }
 
   for (const { anchor, members, closed } of rings) {
@@ -963,7 +977,7 @@ export function LifecycleMindmap({
         type: 'smoothstep',
         animated: true,
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-        style: e.closure
+        style: e.closure || e.dashed
           ? {
               stroke: 'rgba(96,165,250,0.55)',
               strokeWidth: 1.5,
