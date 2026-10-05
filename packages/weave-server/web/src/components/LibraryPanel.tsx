@@ -14,7 +14,13 @@ import {
   type InstallCapabilities,
   FILE_ASSET_CATEGORIES,
 } from '@/lib/api';
-import { capabilitiesOf, canInstall, type InstallVerdict } from '@/lib/install-capabilities';
+import {
+  capabilitiesOf,
+  canInstall,
+  buildDragPayload,
+  type InstallVerdict,
+  type DragPayload,
+} from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { cn } from '@/lib/utils';
@@ -442,7 +448,16 @@ export function LibraryPanel({
                         <DraggableSkill
                           key={s.name}
                           skill={s}
-                          agent={installAgent}
+                          payload={buildDragPayload(
+                            {
+                              installKind: 'skill',
+                              category: 'skill',
+                              name: s.name,
+                              sourceDir: s.dirPath,
+                              targetAgent: installAgent,
+                            },
+                            capabilities,
+                          )}
                           installed={installedSkillNames.has(s.name)}
                           onInstall={() => onInstallSkill(s, scope, installAgent)}
                           installDisabled={!skillVerdict.ok}
@@ -491,22 +506,23 @@ export function LibraryPanel({
                         agent: 'claude',
                       });
                       return (
-                        <div
+                        <DraggableFileRow
                           key={f.filePath}
-                          className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
-                          title={f.filePath}
-                        >
-                          <FileCode className="h-3 w-3 shrink-0 text-blue-400" />
-                          <span className="truncate">{f.name}</span>
-                          <button
-                            disabled={!verdict.ok}
-                            title={reasonTitle(verdict)}
-                            onClick={() => onInstallFileAsset(f, scope)}
-                            className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
-                          >
-                            {t('library.install')}
-                          </button>
-                        </div>
+                          file={f}
+                          payload={buildDragPayload(
+                            {
+                              installKind: 'file',
+                              category: f.category,
+                              name: f.name,
+                              sourceFile: f.filePath,
+                              targetAgent: 'claude',
+                            },
+                            capabilities,
+                          )}
+                          verdict={verdict}
+                          reason={reasonTitle(verdict)}
+                          onInstall={() => onInstallFileAsset(f, scope)}
+                        />
                       );
                     })}
                   </div>
@@ -532,33 +548,38 @@ export function LibraryPanel({
             {/* Install-to runtime: Claude (.mcp.json / ~/.claude.json) or Codex (~/.codex/config.toml) */}
             <AgentToggle agent={installAgent} onChange={setInstallAgent} kind="mcp" />
             {mcp.map((srv) => (
-              <div
+              <DraggableMcpRow
                 key={srv.name}
-                className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900"
-                title={srv.sourcePath}
-              >
-                <Server className="h-3 w-3 shrink-0 text-blue-400" />
-                <span className="truncate">{srv.name}</span>
-                <button
-                  disabled={!mcpVerdict.ok}
-                  title={reasonTitle(mcpVerdict)}
-                  onClick={() =>
-                    onInstallMcp(
-                      srv.name,
-                      {
-                        command: srv.command,
-                        ...(srv.args && { args: srv.args }),
-                        ...(srv.env && { env: srv.env }),
-                      },
-                      scope,
-                      installAgent,
-                    )
-                  }
-                  className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
-                >
-                  {t('library.install')}
-                </button>
-              </div>
+                srv={srv}
+                payload={buildDragPayload(
+                  {
+                    installKind: 'mcp',
+                    category: 'mcp',
+                    name: srv.name,
+                    mcpConfig: {
+                      command: srv.command,
+                      ...(srv.args && { args: srv.args }),
+                      ...(srv.env && { env: srv.env }),
+                    },
+                    targetAgent: installAgent,
+                  },
+                  capabilities,
+                )}
+                verdict={mcpVerdict}
+                reason={reasonTitle(mcpVerdict)}
+                onInstall={() =>
+                  onInstallMcp(
+                    srv.name,
+                    {
+                      command: srv.command,
+                      ...(srv.args && { args: srv.args }),
+                      ...(srv.env && { env: srv.env }),
+                    },
+                    scope,
+                    installAgent,
+                  )
+                }
+              />
             ))}
           </TemplateSection>
         )}
@@ -809,24 +830,24 @@ function UpdateHintRow({
 
 function DraggableSkill({
   skill,
-  agent,
+  payload,
   installed,
   onInstall,
   installDisabled,
   installReason,
 }: {
   skill: SkillAsset;
-  /** Install target carried through the drag payload. */
-  agent: AssetAgent;
+  /** Unified drag payload (attrs via capabilitiesOf — built by the caller). */
+  payload: DragPayload;
   installed: boolean;
   onInstall: () => void;
-  /** 点击安装前置禁用（capabilities 谓词；拖拽判定归 M6 canDrop）。 */
+  /** 点击安装前置禁用（capabilities 谓词；拖拽判定见 App onDragEnd guard）。 */
   installDisabled?: boolean;
   installReason?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `lib-skill-${skill.name}`,
-    data: { sourceDir: skill.dirPath, name: skill.name, agent },
+    data: payload,
   });
   const t = useT();
   const style = transform
@@ -865,6 +886,110 @@ function DraggableSkill({
           {t('library.install')}
         </button>
       )}
+    </div>
+  );
+}
+
+/** 文件模板行：可拖（payload 携 attrs）+ 点击安装同谓词禁用。 */
+function DraggableFileRow({
+  file,
+  payload,
+  verdict,
+  reason,
+  onInstall,
+}: {
+  file: FileAssetTemplate;
+  payload: DragPayload;
+  verdict: InstallVerdict;
+  reason?: string;
+  onInstall: () => void;
+}) {
+  const t = useT();
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `lib-file-${file.filePath}`,
+    data: payload,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+    : undefined;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        'flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900 cursor-grab transition-colors duration-200',
+        isDragging && 'opacity-40',
+      )}
+      title={file.filePath}
+    >
+      <FileCode className="h-3 w-3 shrink-0 text-blue-400" />
+      <span className="truncate">{file.name}</span>
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onInstall();
+        }}
+        disabled={!verdict.ok}
+        title={reason}
+        className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
+      >
+        {t('library.install')}
+      </button>
+    </div>
+  );
+}
+
+/** MCP 模板行：可拖（payload 带 mcpConfig）+ 点击安装同谓词禁用。 */
+function DraggableMcpRow({
+  srv,
+  payload,
+  verdict,
+  reason,
+  onInstall,
+}: {
+  srv: McpTemplate;
+  payload: DragPayload;
+  verdict: InstallVerdict;
+  reason?: string;
+  onInstall: () => void;
+}) {
+  const t = useT();
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `lib-mcp-${srv.name}`,
+    data: payload,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+    : undefined;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        'flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900 cursor-grab transition-colors duration-200',
+        isDragging && 'opacity-40',
+      )}
+      title={srv.sourcePath}
+    >
+      <Server className="h-3 w-3 shrink-0 text-blue-400" />
+      <span className="truncate">{srv.name}</span>
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onInstall();
+        }}
+        disabled={!verdict.ok}
+        title={reason}
+        className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
+      >
+        {t('library.install')}
+      </button>
     </div>
   );
 }

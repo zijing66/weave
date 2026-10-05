@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
 import {
   api,
   type AssetEntry,
@@ -23,6 +30,7 @@ import {
   type GlobalSkillSource,
   type InstallCapabilities,
 } from '@/lib/api';
+import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { ProjectList } from '@/components/ProjectList';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type AssetTab } from '@/components/CategoryDetail';
@@ -114,6 +122,9 @@ export default function App() {
   useEffect(() => {
     api.capabilities().then(setInstallCaps).catch(() => {});
   }, []);
+
+  // 拖拽中的统一 payload（onDragStart 提升）：落点 canInstall 判定与落定分派共用。
+  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
 
   // 项目列表刷新：SSE project 帧（另一进程 weave init/scan 落库 → daemon
   // reconcile 检出）触发整表重拉；visibilitychange 兜底 ≤5s reconcile 窗口。
@@ -722,18 +733,35 @@ export default function App() {
     [projects, loadProject],
   );
 
+  function onDragStart(e: DragStartEvent) {
+    setDragPayload((e.active.data.current as DragPayload | undefined) ?? null);
+  }
+
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
-    if (!over || over.id !== 'project-assets') return;
-    const data = active.data.current as
-      | { sourceDir?: string; name?: string; agent?: AssetAgent }
-      | undefined;
-    if (data?.sourceDir && data?.name) {
+    const data = active.data.current as DragPayload | undefined;
+    setDragPayload(null);
+    if (!over || over.id !== 'project-assets' || !data) return;
+    const scope: AssetScope = globalMode ? 'global' : 'project';
+    // 属性判定单点：不合法 → 顶栏报因、不安装（与按钮 disabled 同谓词）。
+    const verdict = canInstall(data.attrs, { scope, agent: data.targetAgent });
+    if (!verdict.ok) {
+      if (verdict.reasonKey) setError(t(verdict.reasonKey));
+      return;
+    }
+    if (data.installKind === 'skill' && data.sourceDir && data.name) {
       void handleInstallSkill(
         { name: data.name, dirPath: data.sourceDir } as SkillAsset,
-        globalMode ? 'global' : 'project',
-        data.agent ?? 'claude',
+        scope,
+        data.targetAgent,
       );
+    } else if (data.installKind === 'file' && data.sourceFile && data.name) {
+      void handleInstallFileAsset(
+        { name: data.name, filePath: data.sourceFile, category: data.category } as FileAssetTemplate,
+        scope,
+      );
+    } else if (data.installKind === 'mcp' && data.mcpConfig && data.name) {
+      void handleInstallMcp(data.name, data.mcpConfig, scope, data.targetAgent);
     }
   }
 
@@ -760,7 +788,12 @@ export default function App() {
   const autoSyncOn = selected ? (configMap[selected.id]?.autoSync ?? false) : false;
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={() => setDragPayload(null)}
+    >
       <div className="h-screen p-4 bg-neutral-950">
         <div className="h-full flex flex-col rounded-2xl border border-white/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
           <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-white/[0.06] frosted">
@@ -911,6 +944,7 @@ export default function App() {
                         projects={projects}
                         onOpenSession={openSessionInProject}
                         initialSessionId={initialSessionId ?? undefined}
+                        dragPayload={dragPayload}
                       />
                     )}
                   </div>

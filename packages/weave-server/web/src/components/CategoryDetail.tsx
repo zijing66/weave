@@ -15,6 +15,7 @@ import {
   type ProjectRow,
 } from '@/lib/api';
 import type { Harness } from '@weave/core/harness';
+import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import {
@@ -88,6 +89,7 @@ export function CategoryDetail({
   projects,
   onOpenSession,
   initialSessionId,
+  dragPayload,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
   projectId: number;
@@ -118,11 +120,19 @@ export function CategoryDetail({
   onOpenSession: (projectId: number, sessionId: string) => void;
   /** 全局总览跳进项目任务视图时的初始选中会话。 */
   initialSessionId?: string;
+  /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
+  dragPayload: DragPayload | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
   const scope: AssetScope = isGlobal ? 'global' : 'project';
   const t = useT();
+
+  // 落点属性判定（与按钮 disabled 同谓词）：拖拽中且不合法 → 红圈 + not-allowed + 原因。
+  const dropVerdict = dragPayload
+    ? canInstall(dragPayload.attrs, { scope, agent: dragPayload.targetAgent })
+    : null;
+  const dropBlocked = dragPayload !== null && dropVerdict !== null && !dropVerdict.ok;
 
   // Harness-tool tab: globally effective skills differ per tool (Claude vs
   // Codex), so the asset categories filter by runtime instead of mixing them.
@@ -214,7 +224,9 @@ export function CategoryDetail({
         // px-2/pt-2 对齐分类卡的 p-2（内容左缘/上缘与卡区同基准，任务两栏
         // 不再贴主区边）；拖拽高亮用 -m-2 外扩，不改内容 padding。
         'space-y-4 h-full px-2 pt-2',
-        isOver && 'ring-1 ring-blue-500/60 rounded-md -m-2 bg-blue-950/20',
+        dropBlocked
+          ? 'ring-1 ring-red-500/60 rounded-md -m-2 bg-red-950/20 cursor-not-allowed'
+          : (isOver && 'ring-1 ring-blue-500/60 rounded-md -m-2 bg-blue-950/20'),
       )}
     >
       {showRuntimeTabs && (
@@ -387,7 +399,12 @@ export function CategoryDetail({
         <CodexPlaceholder text={t('category.codexPersonalizationPlaceholder')} />
       )}
 
-      {isOver && <p className="text-xs text-blue-300">{t('category.dropToInstall')}</p>}
+      {dropBlocked && dropVerdict?.reasonKey && (
+        <p className="text-xs text-red-300">{t(dropVerdict.reasonKey)}</p>
+      )}
+      {!dropBlocked && isOver && (
+        <p className="text-xs text-blue-300">{t('category.dropToInstall')}</p>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { capabilitiesOf, canInstall } from '../install-capabilities';
+import { capabilitiesOf, canInstall, buildDragPayload } from '../install-capabilities';
 import type { InstallCapabilities } from '../api';
 
 /** 与服务端 installCapabilities() 同构的矩阵（服务端另有 capabilities.test 锚定派生）。 */
@@ -69,6 +69,55 @@ describe('canInstall', () => {
     );
     expect(canInstall(capabilitiesOf('skill', undefined), { scope: 'project', agent: 'codex' }).ok).toBe(
       true,
+    );
+  });
+});
+
+describe('buildDragPayload', () => {
+  it('attrs 经 capabilitiesOf 取自 table——workflow payload 在全局落点被同谓词拒', () => {
+    const payload = buildDragPayload(
+      {
+        installKind: 'file',
+        category: 'workflow',
+        name: 'deploy',
+        sourceFile: 'workflows/deploy.js',
+        targetAgent: 'claude',
+      },
+      table,
+    );
+    expect(payload.attrs).toEqual(capabilitiesOf('workflow', table));
+    expect(canInstall(payload.attrs, { scope: 'global', agent: 'claude' })).toEqual({
+      ok: false,
+      reasonKey: 'capability.reason.projectOnly',
+    });
+  });
+
+  it('其余字段原样透传（kind/category/name/来源句柄/targetAgent）', () => {
+    const skill = buildDragPayload(
+      { installKind: 'skill', category: 'skill', name: 'foo', sourceDir: '/lib/foo', targetAgent: 'codex' },
+      table,
+    );
+    expect(skill).toMatchObject({
+      installKind: 'skill',
+      category: 'skill',
+      name: 'foo',
+      sourceDir: '/lib/foo',
+      targetAgent: 'codex',
+    });
+    const mcp = buildDragPayload(
+      {
+        installKind: 'mcp',
+        category: 'mcp',
+        name: 'srv',
+        mcpConfig: { command: 'npx', args: ['-y', 'x'] },
+        targetAgent: 'claude',
+      },
+      table,
+    );
+    expect(mcp.mcpConfig).toEqual({ command: 'npx', args: ['-y', 'x'] });
+    // mcp × codex × project：payload attrs 携带的面表让落点直接判 globalOnly
+    expect(canInstall(mcp.attrs, { scope: 'project', agent: 'codex' }).reasonKey).toBe(
+      'capability.reason.globalOnly',
     );
   });
 });

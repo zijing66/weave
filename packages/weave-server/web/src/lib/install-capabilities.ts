@@ -9,6 +9,7 @@ import type {
   AssetAgent,
   InstallCapabilities,
   InstallCategory,
+  McpServerConfig,
 } from './api';
 
 export type { InstallCategory };
@@ -66,4 +67,26 @@ export function canInstall(
     };
   }
   return { ok: true, reasonKey: null };
+}
+
+/** 统一拖拽 payload：拖源封装、落点 canInstall 判定、onDragEnd 分派共用一形。 */
+export interface DragPayload {
+  installKind: 'skill' | 'mcp' | 'file';
+  category: InstallCategory;
+  name: string;
+  sourceDir?: string;
+  sourceFile?: string;
+  mcpConfig?: McpServerConfig;
+  /** 由 buildDragPayload 经 capabilitiesOf 取得（组件禁止字面构造）。 */
+  attrs: InstallAttrs;
+  /** 拖源区选定的安装目标 harness（skill/mcp = AgentToggle；file 恒 claude）。 */
+  targetAgent: AssetAgent;
+}
+
+/** 拖拽 payload 的唯一构造点：attrs 一律经 capabilitiesOf（组件不直接拼 payload）。 */
+export function buildDragPayload(
+  p: Omit<DragPayload, 'attrs'>,
+  table?: InstallCapabilities | null,
+): DragPayload {
+  return { ...p, attrs: capabilitiesOf(p.category, table) };
 }
