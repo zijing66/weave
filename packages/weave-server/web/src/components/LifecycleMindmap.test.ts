@@ -173,6 +173,69 @@ describe('layoutMindmap', () => {
     expect(sub.expandable).toBe(false);
   });
 
+  it('连续 Pre/PostToolUse 折成簇默认收起，展开还原成员时序竖链', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        events: [
+          ev(1, 'UserPromptSubmit'),
+          ev(2, 'PreToolUse'),
+          ev(3, 'PostToolUse'),
+          ev(4, 'PreToolUse'),
+          ev(5, 'PostToolUse'),
+          ev(6, 'Stop'),
+        ],
+      }),
+    ];
+    // 收起态：主链 = 根 → e:1 → 簇 c:2 → e:6 → 根（成员不占位）
+    const collapsed = layoutMindmap(groups, new Set(['g:turn:1']));
+    const cluster = collapsed.nodes.find((n) => n.key === 'c:2')!;
+    expect(cluster.kind).toBe('cluster');
+    expect(cluster.depth).toBe(1);
+    expect(cluster.expandable).toBe(true);
+    expect(cluster.expanded).toBe(false);
+    expect(cluster.clusterEvents?.map((e) => e.id)).toEqual([2, 3, 4, 5]);
+    expect(collapsed.nodes.some((n) => n.key === 'e:2')).toBe(false);
+    expect(new Set(collapsed.edges.map((e) => e.id))).toEqual(
+      new Set(['g:turn:1->e:1', 'e:1->c:2', 'c:2->e:6', 'e:6->g:turn:1']),
+    );
+
+    // 展开态：成员回树（depth2）+ 簇→成员竖链（时序，vertical）
+    const open = layoutMindmap(groups, new Set(['g:turn:1', 'c:2']));
+    expect(open.nodes.find((n) => n.key === 'e:2')?.depth).toBe(2);
+    expect(
+      open.nodes.filter((n) => ['e:2', 'e:3', 'e:4', 'e:5'].includes(n.key)),
+    ).toHaveLength(4);
+    expect(new Set(open.edges.map((e) => e.id))).toEqual(
+      new Set([
+        'g:turn:1->e:1',
+        'e:1->c:2',
+        'c:2->e:2',
+        'e:2->e:3',
+        'e:3->e:4',
+        'e:4->e:5',
+        'c:2->e:6',
+        'e:6->g:turn:1',
+      ]),
+    );
+    expect(open.edges.find((e) => e.id === 'e:2->e:3')?.vertical).toBe(true);
+  });
+
+  it('孤立工具事件与命中指令的工具事件不进簇', () => {
+    const groups = [
+      group({
+        id: 'turn:1',
+        events: [ev(1, 'UserPromptSubmit'), ev(2), ev(3), ev(4, 'Stop')],
+        dispatches: [dispatch(10, 3)],
+      }),
+    ];
+    const { nodes } = layoutMindmap(groups, new Set(['g:turn:1']));
+    // e:3 有命中指令（业务信息）不入簇；e:2 因段被打断退化为孤立节点 → 无簇
+    expect(nodes.some((n) => n.kind === 'cluster')).toBe(false);
+    expect(nodes.find((n) => n.key === 'e:2')).toBeTruthy();
+    expect(nodes.find((n) => n.key === 'e:3')?.expandable).toBe(true);
+  });
+
   it('派发环：agentId 证据节点挂 SubagentStop 与 task-notification，已返回成闭环', () => {
     const groups = [
       group({

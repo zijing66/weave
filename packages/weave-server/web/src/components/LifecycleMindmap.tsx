@@ -48,6 +48,7 @@ import { ChevronDown, ChevronRight, X } from 'lucide-react';
 export type MindmapKind =
   | 'group'
   | 'event'
+  | 'cluster'
   | 'subagent'
   | 'notification'
   | 'rule'
@@ -70,6 +71,8 @@ export interface LaidNode {
   ruleName?: string | null;
   /** kind=handler：处理器类型。 */
   handlerType?: string;
+  /** kind=cluster：簇内工具事件（收起态摘要与明细面板用）。 */
+  clusterEvents?: HookEventRow[];
   /** 派发子代理 id / 子代理结束的 agent_id（环成员回溯证据）。 */
   agentId?: string;
   /** 当前使用的 model（派发 resolvedModel / SessionStart raw.model）。 */
@@ -126,6 +129,7 @@ export function layoutMindmap(
     ruleId?: string;
     ruleName?: string | null;
     handlerType?: string;
+    clusterEvents?: HookEventRow[];
     agentId?: string;
     model?: string;
     /** 派发环：true=子代理尚未返回（不画闭环）。 */
@@ -213,7 +217,7 @@ export function layoutMindmap(
         const anchors = new Map<string, TNode>();
         const ringMembers = new Map<TNode, TNode[]>();
         let prevRow: HookEventRow | null = null;
-        for (const e of g.events) {
+        const emit = (e: HookEventRow): void => {
           const eKey = `e:${e.id}`;
           const hits = g.dispatches.filter((d) => d.eventId === e.id);
           const kids = expanded.has(eKey) ? hitChain(e.id, hits) : [];
@@ -246,7 +250,7 @@ export function layoutMindmap(
               ringMembers.set(anchor, list);
               nodesByRow.set(e.id, member);
               if (notif) anchor.agentRunning = false; // 收到返回 → 环可闭环
-              continue;
+              return;
             }
             // 通知挂不上锚（派发在窗口外）：留主链作普通事件，不丢证据
           }
@@ -275,14 +279,57 @@ export function layoutMindmap(
               prevNode.highlight = prevNode.highlight || node.highlight;
               prevRow = e;
               nodesByRow.set(e.id, node);
-              continue;
+              return;
             }
             // 首事件即 SubagentStop（无前驱）：退化并入主链
           }
           chain.push(node);
           nodesByRow.set(e.id, node);
           prevRow = e;
+        };
+        // 连续 Pre/PostToolUse（无派发证据、无命中指令）折成簇默认收起——
+        // 工具调用是事件链噪音主体，点簇展开还原为成员事件（时序竖链）。
+        let buf: HookEventRow[] = [];
+        const flushBuf = (): void => {
+          if (buf.length === 0) return;
+          if (buf.length >= 2) {
+            const cKey = `c:${buf[0]!.id}`;
+            chain.push({
+              key: cKey,
+              kind: 'cluster',
+              children: expanded.has(cKey)
+                ? buf.map((ev) => ({
+                    key: `e:${ev.id}`,
+                    kind: 'event' as const,
+                    event: ev,
+                    children: [],
+                    hasPotential: false,
+                    highlight: false,
+                  }))
+                : [],
+              hasPotential: true,
+              highlight: false,
+              clusterEvents: buf,
+            });
+            prevRow = null; // 簇是主链断点：其后 SubagentStop 前驱不可见 → 退化进主链
+          } else {
+            emit(buf[0]!); // 孤立工具事件不折（与散事件同形）
+          }
+          buf = [];
+        };
+        for (const e of g.events) {
+          const isToolNoise =
+            (e.eventType === 'PreToolUse' || e.eventType === 'PostToolUse') &&
+            !agentDispatchOf(e) &&
+            !g.dispatches.some((d) => d.eventId === e.id);
+          if (isToolNoise) {
+            buf.push(e);
+            continue;
+          }
+          flushBuf();
+          emit(e);
         }
+        flushBuf();
         // 环成员挂锚前部（分叉语义，先于命中链子树展示）。
         // 派发即生子节点：锚下尚无成员且子代理执行中 → 先生成占位子节点
         //（SubagentStop/task-notification 到达后由真实事件节点替换）。
@@ -351,6 +398,7 @@ export function layoutMindmap(
       ruleId: n.ruleId,
       ruleName: n.ruleName,
       handlerType: n.handlerType,
+      clusterEvents: n.clusterEvents,
       agentId: n.agentId,
       model: n.model,
       agentRunning: n.agentRunning,
@@ -368,7 +416,11 @@ export function layoutMindmap(
   for (const r of roots) {
     if (r.kind !== 'group') continue;
     const evs = r.children.filter(
-      (c) => c.kind === 'event' || c.kind === 'subagent' || c.kind === 'notification',
+      (c) =>
+        c.kind === 'event' ||
+        c.kind === 'cluster' ||
+        c.kind === 'subagent' ||
+        c.kind === 'notification',
     );
     if (evs.length === 0) continue; // orphan 直挂 dispatch 维持放射
     const evKeys = new Set(evs.map((c) => c.key));
@@ -401,6 +453,29 @@ export function layoutMindmap(
   // 派发环：删 walk 给环成员生成的 锚→成员 放射边，改 锚→SubagentStop?→
   // task-notification 链；**收到返回通知才补 环→锚 闭环回边**——执行中的
   // 子代理（未返回）保持开环。
+  // 簇展开：簇→成员的放射边改竖链（成员同列时序，底出顶入，防绕行）。
+  const collectClusters = (n: TNode): TNode[] => [
+    ...(n.kind === 'cluster' ? [n] : []),
+    ...n.children.flatMap(collectClusters),
+  ];
+  for (const c of roots.flatMap(collectClusters)) {
+    if (c.children.length === 0) continue;
+    const kidKeys = new Set(c.children.map((k) => k.key));
+    for (let i = edges.length - 1; i >= 0; i--) {
+      const e = edges[i]!;
+      if (e.source === c.key && kidKeys.has(e.target)) edges.splice(i, 1);
+    }
+    edges.push({ id: `${c.key}->${c.children[0]!.key}`, source: c.key, target: c.children[0]!.key });
+    for (let i = 0; i + 1 < c.children.length; i++) {
+      edges.push({
+        id: `${c.children[i]!.key}->${c.children[i + 1]!.key}`,
+        source: c.children[i]!.key,
+        target: c.children[i + 1]!.key,
+        vertical: true,
+      });
+    }
+  }
+
   for (const { anchor, members, closed } of rings) {
     const memberKeys = new Set(members.map((m) => m.key));
     for (let i = edges.length - 1; i >= 0; i--) {
@@ -565,6 +640,34 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             {summary}
           </span>
         )}
+      </>
+    );
+  } else if (node.kind === 'cluster' && node.clusterEvents) {
+    const evs = node.clusterEvents;
+    const counts = new Map<string, number>();
+    for (const e of evs) {
+      const name = parseDetail(e.payload).toolName ?? e.eventType;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const all = ranked.map(([n, c]) => `${n} ×${c}`).join(' · ');
+    const top = ranked
+      .slice(0, 3)
+      .map(([n, c]) => (c > 1 ? `${n} ×${c}` : n))
+      .join(' · ');
+    body = (
+      <>
+        <span className="flex flex-wrap items-center gap-1">
+          <span className={tagCls('bg-amber-900/40 text-amber-300')}>
+            {t('hooks.mindmap.toolCluster')}
+          </span>
+          <span className="text-[10px] text-neutral-400">×{evs.length}</span>
+          <span className="text-[10px] text-neutral-500">{formatTime(evs[0]!.createdAt)}</span>
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-neutral-400" title={all}>
+          {top}
+          {ranked.length > 3 ? ` · +${ranked.length - 3}` : ''}
+        </span>
       </>
     );
   } else if (node.kind === 'subagent' && !node.event) {
@@ -980,6 +1083,36 @@ export function LifecycleMindmap({
               </pre>
             </div>
           )}
+        </>
+      );
+    }
+    if (n.kind === 'cluster' && n.clusterEvents) {
+      const evs = n.clusterEvents;
+      const counts = new Map<string, number>();
+      for (const e of evs) {
+        const name = parseDetail(e.payload).toolName ?? e.eventType;
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+      }
+      return (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {[...counts.entries()].map(([name, c]) => (
+              <span key={name} className="rounded bg-amber-900/40 px-1 text-[10px] text-amber-300">
+                {name} ×{c}
+              </span>
+            ))}
+          </div>
+          <p className="text-neutral-500">
+            {formatTime(evs[0]!.createdAt)} → {formatTime(evs[evs.length - 1]!.createdAt)}
+          </p>
+          <ul className="space-y-1">
+            {evs.map((e) => (
+              <li key={e.id} className="truncate text-neutral-300" title={summarizeEvent(e)}>
+                <span className="text-neutral-600">{formatTime(e.createdAt)}</span>{' '}
+                {summarizeEvent(e) || e.eventType}
+              </li>
+            ))}
+          </ul>
         </>
       );
     }
