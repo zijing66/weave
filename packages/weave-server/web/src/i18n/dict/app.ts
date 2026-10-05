@@ -14,7 +14,7 @@ export const appZh = {
   'app.syncAll': '全部同步',
   'app.scopeCoverageTooltip':
     '自动同步（Sync all 相同）覆盖：Skills、MCP，以及 commands / agents / workflows / rules / output-styles 这些单文件资产。本地改过（custom）的条目会跳过，不会被覆盖。',
-  'app.scopeCoverageChip': '覆盖 Skills · MCP · 文件资产',
+  'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理',
   'app.autoSyncOnTooltip': '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动',
   'app.autoSyncOffTooltip':
     '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）',
@@ -82,7 +82,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.syncAll': 'Sync all',
   'app.scopeCoverageTooltip':
     'Auto-sync (same as Sync all) covers: Skills, MCP, and single-file assets such as commands / agents / workflows / rules / output-styles. Locally modified (custom) entries are skipped and never overwritten.',
-  'app.scopeCoverageChip': 'Covers Skills · MCP · file assets',
+  'app.scopeCoverageChip': 'Covers Skills · MCP · resources',
   'app.autoSyncOnTooltip':
     'Auto-sync is ON — the daemon applies outdated asset updates about every 60 seconds; click to switch to manual',
   'app.autoSyncOffTooltip':

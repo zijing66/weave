@@ -32,11 +32,11 @@ export const libraryZh = {
   'category.emptyMcpGlobal': '未配置全局 MCP',
   'category.emptyMcpProject': '该项目未配置 MCP',
   'category.codexFilesPlaceholder':
-    '该项目暂无 Codex 文件资产（AGENTS.md、.codex/config.toml 等会展示在文件树中）。Codex 自定义 prompts（~/.codex/prompts/）已被官方移除。',
-  'category.emptyFilesProject': '该项目暂无文件资产',
-  'category.globalFilesTitle': '全局文件资产',
+    '该项目暂无 Codex 资源（AGENTS.md、.codex/config.toml 等会展示在文件树中）。Codex 自定义 prompts（~/.codex/prompts/）已被官方移除。',
+  'category.emptyFilesProject': '该项目暂无资源',
+  'category.globalFilesTitle': '全局资源',
   'category.emptyFilesGlobalDesc':
-    '~/.claude 与 ~/.codex 下暂无匹配的文件资产（skills 与 MCP 有各自页面）。',
+    '~/.claude 与 ~/.codex 下暂无匹配的资源（skills 与 MCP 有各自页面）。',
   'category.personalizationGlobal': '全局 Claude 个性化配置（模板）',
   'category.personalizationProject': 'Claude Code 个性化配置',
   'category.statuslineSource': 'statusline：{source}',
@@ -138,11 +138,11 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'category.emptyMcpGlobal': 'No global MCP configured',
   'category.emptyMcpProject': 'No MCP configured in this project',
   'category.codexFilesPlaceholder':
-    'This project has no Codex file assets yet (AGENTS.md, .codex/config.toml, etc. show up in the file tree). Codex custom prompts (~/.codex/prompts/) were removed upstream.',
-  'category.emptyFilesProject': 'This project has no file assets yet',
-  'category.globalFilesTitle': 'Global file assets',
+    'This project has no Codex resources yet (AGENTS.md, .codex/config.toml, etc. show up in the file tree). Codex custom prompts (~/.codex/prompts/) were removed upstream.',
+  'category.emptyFilesProject': 'This project has no resources yet',
+  'category.globalFilesTitle': 'Global resources',
   'category.emptyFilesGlobalDesc':
-    'No matching file assets under ~/.claude and ~/.codex (skills and MCP have their own pages).',
+    'No matching resources under ~/.claude and ~/.codex (skills and MCP have their own pages).',
   'category.personalizationGlobal': 'Global Claude personalization config (templates)',
   'category.personalizationProject': 'Claude Code personalization config',
   'category.statuslineSource': 'statusline: {source}',

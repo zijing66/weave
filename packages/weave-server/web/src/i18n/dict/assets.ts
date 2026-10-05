@@ -1,4 +1,4 @@
-/** skill 网格、文件资产树、MCP、分类栏等词条（批次 3d 填充）。 */
+/** skill 网格、资源管理文件树、MCP、分类栏等词条（批次 3d 填充）。 */
 export const assetsZh = {
   // —— SkillGrid ——
   'skillGrid.projectHeading': '项目 Skills',
@@ -28,7 +28,7 @@ export const assetsZh = {
   'fileTree.all': '全部',
   'fileTree.scopeGlobal': '全局',
   'fileTree.scopeProject': '项目',
-  'fileTree.title': '文件资产',
+  'fileTree.title': '资源管理',
   'fileTree.pathsGlobal': '~/.claude/ · ~/.codex/',
   'fileTree.pathsProject': '.claude/ · .codex/ · 根目录',
   'fileTree.expandAllDirs': '展开全部目录',
@@ -41,7 +41,7 @@ export const assetsZh = {
   'fileTree.update': '待更新',
   'fileTree.custom': '自定义',
 
-  // —— 文件资产页 AssetTab（标签用英文原文，与术语纪律一致） ——
+  // —— 资源管理页 AssetTab（标签用英文原文，与术语纪律一致） ——
   'assetTab.skills': 'Skills',
   'assetTab.mcp': 'MCP',
   'assetTab.plugins': 'Plugins',
@@ -57,7 +57,7 @@ export const assetsZh = {
   'mcp.enableTip': '{state} — 点击切换',
 
   // —— CategoryBar ——
-  'catbar.files': '文件资产',
+  'catbar.files': '资源管理',
   'catbar.personalization': '个性化配置',
   'catbar.updateBadge': '{n} 待更新',
   'catbar.custom': '自定义',
@@ -109,7 +109,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'fileTree.all': 'All',
   'fileTree.scopeGlobal': 'Global',
   'fileTree.scopeProject': 'Project',
-  'fileTree.title': 'File Assets',
+  'fileTree.title': 'Resource Management',
   'fileTree.pathsGlobal': '~/.claude/ · ~/.codex/',
   'fileTree.pathsProject': '.claude/ · .codex/ · root dir',
   'fileTree.expandAllDirs': 'Expand all folders',
@@ -122,7 +122,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'fileTree.update': 'update',
   'fileTree.custom': 'custom',
 
-  // —— AssetTab on the 文件资产 page (labels stay English terms) ——
+  // —— AssetTab on the resource management page (labels stay English terms) ——
   'assetTab.skills': 'Skills',
   'assetTab.mcp': 'MCP',
   'assetTab.plugins': 'Plugins',
@@ -138,7 +138,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'mcp.enableTip': '{state} — click to cycle',
 
   // —— CategoryBar ——
-  'catbar.files': 'File Assets',
+  'catbar.files': 'Resource Management',
   'catbar.personalization': 'Personalization',
   'catbar.updateBadge': '{n} update',
   'catbar.custom': 'Custom',
