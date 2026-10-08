@@ -16,7 +16,18 @@ export function FeedbackIcon({
   icon?: React.ReactNode;
   className?: string;
 }) {
-  if (state === 'loading') return <Loader2 className={cn('animate-spin', className)} />;
-  if (state === 'success') return <Check className={cn('text-emerald-400', className)} />;
-  return <>{icon ?? null}</>;
+  // pointer-events-none：图标是一块独立的 SVG 盒子，光标落在它上面时它就是 hover
+  // 目标——某些引擎下按钮的 title 不会回退显示。让图标对指针透明，按钮任意位置的
+  // 目标都只有一个（按钮本身），tooltip/点击/悬停样式才一致。
+  return (
+    <span className="pointer-events-none inline-flex items-center">
+      {state === 'loading' ? (
+        <Loader2 className={cn('animate-spin', className)} />
+      ) : state === 'success' ? (
+        <Check className={cn('text-emerald-400', className)} />
+      ) : (
+        (icon ?? null)
+      )}
+    </span>
+  );
 }

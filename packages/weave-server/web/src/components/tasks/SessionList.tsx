@@ -134,7 +134,7 @@ export function SessionList({
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
                     {sessionLabel(s.title, s.sessionId)}
                   </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [&_svg]:pointer-events-none">
                     {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
                         codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验 */}
                     {s.harness === 'claude' && (

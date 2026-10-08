@@ -316,7 +316,7 @@ function QuickButton({
         e.stopPropagation();
         onClick();
       }}
-      className="pointer-events-auto p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-white/[0.08] transition-colors"
+      className="pointer-events-auto [&_svg]:pointer-events-none p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-white/[0.08] transition-colors"
     >
       {children}
     </button>
