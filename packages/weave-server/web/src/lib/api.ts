@@ -896,6 +896,14 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
       { method: 'POST' },
     ),
+  /** 删除会话：连带其采集事件与指令池派发（不可撤销）。 */
+  deleteSession: (
+    sessionId: string,
+  ): Promise<{ ok: boolean; events: number; dispatches: number }> =>
+    apiFetch<{ ok: boolean; events: number; dispatches: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    ),
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>

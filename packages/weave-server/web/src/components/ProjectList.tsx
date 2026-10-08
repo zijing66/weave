@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import type { ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
   Circle,
@@ -38,6 +40,9 @@ interface ProjectListProps {
   onToggleAutoSync?: (p: ProjectRow) => void;
   /** Row quick action: run one sync for the row's project. */
   onSyncNow?: (p: ProjectRow) => void;
+  /** 行内按钮反馈态（loading → ✅ → 2s 复原），由 App 的 useActionFeedback 供。 */
+  autoSyncStateOf?: (projectId: number) => ActionState;
+  syncStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
 }
@@ -62,6 +67,8 @@ export function ProjectList({
   updatesOf,
   onToggleAutoSync,
   onSyncNow,
+  autoSyncStateOf,
+  syncStateOf,
   sessionStatsOf,
 }: ProjectListProps) {
   const t = useT();
@@ -182,19 +189,34 @@ export function ProjectList({
                   pressed={autoSync}
                   onClick={() => onToggleAutoSync?.(p)}
                 >
-                  {autoSync ? (
-                    <ToggleRight className="h-3.5 w-3.5 text-emerald-400" />
-                  ) : (
-                    <ToggleLeft className="h-3.5 w-3.5 text-neutral-400" />
-                  )}
+                  <FeedbackIcon
+                    state={autoSyncStateOf?.(p.id) ?? 'idle'}
+                    className="h-3.5 w-3.5"
+                    icon={
+                      autoSync ? (
+                        <ToggleRight className="h-3.5 w-3.5 text-emerald-400" />
+                      ) : (
+                        <ToggleLeft className="h-3.5 w-3.5 text-neutral-400" />
+                      )
+                    }
+                  />
                 </QuickButton>
                 <span className="relative">
                   <QuickButton
                     title={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}
                     onClick={() => onSyncNow?.(p)}
                   >
-                    <RefreshCw
-                      className={cn('h-3.5 w-3.5', pending ? 'text-orange-300' : 'text-neutral-400')}
+                    <FeedbackIcon
+                      state={syncStateOf?.(p.id) ?? 'idle'}
+                      className="h-3.5 w-3.5"
+                      icon={
+                        <RefreshCw
+                          className={cn(
+                            'h-3.5 w-3.5',
+                            pending ? 'text-orange-300' : 'text-neutral-400',
+                          )}
+                        />
+                      }
                     />
                   </QuickButton>
                   {Boolean(pending) && (

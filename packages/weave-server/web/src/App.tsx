@@ -44,6 +44,9 @@ import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { useT } from '@/i18n/I18nProvider';
 import { Settings } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
@@ -82,7 +85,17 @@ export default function App() {
   // Row pending-update counts — hover-lazy + cached per project id.
   const [updatesMap, setUpdatesMap] = useState<Record<number, number>>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // 统一消息提示：原先是顶栏下一行小红字（滚走就看不见）→ 一律走 toast。
+  // setError 保留原名，全部既有调用点自动改道（一次改，处处统一）。
+  const { show } = useToast();
+  const setError = useCallback(
+    (message: string | null) => {
+      if (message) show('error', message);
+    },
+    [show],
+  );
+  /** 按钮反馈（loading → ✅ → 2s 复原），按 key 记状态。 */
+  const fb = useActionFeedback();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Main area
@@ -589,17 +602,16 @@ export default function App() {
     [t, selected, projects, refreshAssets, refreshMcp, refreshUpdates],
   );
 
-  // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。
+  // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。失败抛出，由
+  // 调用方的 fb.run 统一报错（toast）；成功返回服务端 payload 的更新条数——此前
+  // 这个 payload 被整个丢掉，才出现"点了立即同步看不到效果"。
   const handleSyncAll = useCallback(
-    async (target?: ProjectRow) => {
+    async (target?: ProjectRow): Promise<{ updated: number }> => {
       const p = target ?? selected ?? projects[0];
-      if (!p) return;
-      setError(null);
+      if (!p) return { updated: 0 };
       const res = await api.syncAll(p.id);
-      if (!res.ok) {
-        setError(t('errors.syncFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      const data = (await res.json().catch(() => null)) as { updated?: unknown } | null;
       // 只有当前视图项目才刷新共享的 updates/assets 状态；其他行只回填自己的
       // 计数缓存（assets 是选中项目的镜像，别行同步不得覆盖）。
       if (!globalMode && selected && p.id === selected.id) {
@@ -608,8 +620,9 @@ export default function App() {
       } else {
         ensureUpdates(p.id, true);
       }
+      return { updated: Array.isArray(data?.updated) ? data.updated.length : 0 };
     },
-    [t, selected, projects, globalMode, refreshUpdates, refreshAssets, ensureUpdates],
+    [selected, projects, globalMode, refreshUpdates, refreshAssets, ensureUpdates],
   );
 
   const handleUpdateAsset = useCallback(
@@ -641,20 +654,51 @@ export default function App() {
   );
 
   const handleToggleAutoSync = useCallback(
-    async (target?: ProjectRow) => {
+    async (target?: ProjectRow): Promise<boolean> => {
       const p = target ?? selected;
-      if (!p) return;
-      const current = configMap[p.id] ?? { autoSync: false, lastSyncAt: null };
+      if (!p) return false;
+      // 配置缓存未加载时先取真值——否则会拿 {autoSync:false,lastSyncAt:null} 兜底，
+      // 把 lastSyncAt 覆写成 null（服务端的 `??` 救不了显式 null）。
+      const current = configMap[p.id] ?? (await api.getProjectConfig(p.id));
       const next = { ...current, autoSync: !current.autoSync };
-      setError(null);
       setConfigMap((prev) => ({ ...prev, [p.id]: next }));
       const res = await api.putProjectConfig(p.id, next);
       if (!res.ok) {
-        setError(t('errors.configUpdateFailed', { error: `${res.status} ${await res.text()}` }));
         refreshConfig(p);
+        throw new Error(`${res.status} ${await res.text()}`);
       }
+      return next.autoSync;
     },
-    [t, selected, configMap, refreshConfig],
+    [selected, configMap, refreshConfig],
+  );
+
+  // 行内与顶栏共用的反馈包装：state 按 key 记（行内按项目 id，顶栏用 current/all）。
+  const autoSyncActionStateOf = useCallback((id: number) => fb.stateOf(`auto:${id}`), [fb]);
+  const syncActionStateOf = useCallback((id: number) => fb.stateOf(`sync:${id}`), [fb]);
+  const toggleAutoSyncWithFeedback = useCallback(
+    (p: ProjectRow) =>
+      fb.run(
+        `auto:${p.id}`,
+        async () => {
+          const on = await handleToggleAutoSync(p);
+          show('success', on ? t('toast.autoSyncOn') : t('toast.autoSyncOff'));
+        },
+        { fail: (e) => t('errors.configUpdateFailed', { error: errorText(e) }) },
+      ),
+    [fb, handleToggleAutoSync, show, t],
+  );
+  const syncNowWithFeedback = useCallback(
+    (p: ProjectRow) =>
+      fb.run(
+        `sync:${p.id}`,
+        async () => {
+          const { updated } = await handleSyncAll(p);
+          if (updated > 0) show('success', t('toast.synced', { n: updated }));
+          else show('info', t('toast.nothingToSync'));
+        },
+        { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
+      ),
+    [fb, handleSyncAll, show, t],
   );
 
   /** Context-menu action: open a project's folder in the file manager / terminal. */
@@ -806,8 +850,10 @@ export default function App() {
                 onHoverProject={ensureUpdates}
                 autoSyncOf={(id) => configMap[id]?.autoSync}
                 updatesOf={(id) => updatesMap[id]}
-                onToggleAutoSync={(p) => void handleToggleAutoSync(p)}
-                onSyncNow={(p) => void handleSyncAll(p)}
+                autoSyncStateOf={autoSyncActionStateOf}
+                syncStateOf={syncActionStateOf}
+                onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
+                onSyncNow={(p) => void syncNowWithFeedback(p)}
                 sessionStatsOf={(id) => projectStats.get(id)}
               />
             </aside>
@@ -815,7 +861,6 @@ export default function App() {
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
-              {error && <p className="text-red-400 text-xs px-3 py-1">{error}</p>}
               {activeProject ? (
                 <>
                   <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-3">
@@ -836,10 +881,21 @@ export default function App() {
                     )}
                     {!globalMode && updates && updates.available > 0 && (
                       <button
-                        onClick={() => void handleSyncAll()}
+                        onClick={() =>
+                          void fb.run(
+                            'sync:all',
+                            async () => {
+                              const { updated } = await handleSyncAll();
+                              if (updated > 0) show('success', t('toast.synced', { n: updated }));
+                              else show('info', t('toast.nothingToSync'));
+                            },
+                            { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
+                          )
+                        }
                         title={`${t('app.syncAllTooltip', { n: updates.available })}\n\n${t('app.scopeCoverageTooltip')}`}
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                       >
+                        <FeedbackIcon state={fb.stateOf('sync:all')} className="h-3 w-3" />
                         {t('app.syncAll')}
                       </button>
                     )}
@@ -854,7 +910,16 @@ export default function App() {
                           {t('app.scopeCoverageChip')}
                         </span>
                         <button
-                          onClick={() => void handleToggleAutoSync()}
+                          onClick={() =>
+                            void fb.run(
+                              'auto:current',
+                              async () => {
+                                const on = await handleToggleAutoSync();
+                                show('success', on ? t('toast.autoSyncOn') : t('toast.autoSyncOff'));
+                              },
+                              { fail: (e) => t('errors.configUpdateFailed', { error: errorText(e) }) },
+                            )
+                          }
                           aria-pressed={autoSyncOn}
                           title={`${autoSyncOn ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                           className={cn(
@@ -864,6 +929,7 @@ export default function App() {
                               : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
                           )}
                         >
+                          <FeedbackIcon state={fb.stateOf('auto:current')} className="h-3 w-3" />
                           {autoSyncOn ? t('app.autoSyncOn') : t('app.autoSyncOff')}
                         </button>
                       </>
@@ -986,7 +1052,7 @@ export default function App() {
                   scope={mode}
                   capabilities={installCaps}
                   projectId={activeProject.id}
-                  onSyncAll={() => handleSyncAll()}
+                  onSyncAll={() => void syncNowWithFeedback(activeProject)}
                 />
               ) : (
                 <div className="p-3 text-xs text-neutral-500">

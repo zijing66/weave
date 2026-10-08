@@ -63,6 +63,18 @@ export const appZh = {
   'errors.mcpInstallFailed': 'MCP 安装失败：{error}',
   'errors.uninstallFailed': '卸载失败：{error}',
   'errors.mcpUninstallFailed': 'MCP 卸载失败：{error}',
+  // —— 全局消息提示（toast）——
+  'toast.synced': '已同步 {n} 项',
+  'toast.nothingToSync': '没有需要同步的项',
+  'toast.sessionDeleted': '已删除会话（{n} 条事件）',
+  'toast.autoSyncOn': '自动同步已开启',
+  'toast.autoSyncOff': '自动同步已关闭',
+
+  // —— 会话删除 ——
+  'session.delete': '删除会话',
+  'session.deleteTooltip': '删除该会话及其全部事件（不可撤销）',
+  'session.deleteConfirm': '删除会话 {id} 及其全部事件？此操作不可撤销。',
+
   'errors.syncFailed': '同步失败：{error}',
   'errors.updateFailed': '更新失败：{error}',
   'errors.configUpdateFailed': '配置更新失败：{error}',
@@ -135,6 +147,18 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'errors.mcpInstallFailed': 'MCP install failed: {error}',
   'errors.uninstallFailed': 'Uninstall failed: {error}',
   'errors.mcpUninstallFailed': 'MCP uninstall failed: {error}',
+  // —— Global message toasts ——
+  'toast.synced': 'Synced {n} item(s)',
+  'toast.nothingToSync': 'Nothing needs syncing',
+  'toast.sessionDeleted': 'Session deleted ({n} events)',
+  'toast.autoSyncOn': 'Auto-sync turned ON',
+  'toast.autoSyncOff': 'Auto-sync turned OFF',
+
+  // —— Session deletion ——
+  'session.delete': 'Delete session',
+  'session.deleteTooltip': 'Delete this session and all its events (cannot be undone)',
+  'session.deleteConfirm': 'Delete session {id} and all its events? This cannot be undone.',
+
   'errors.syncFailed': 'Sync failed: {error}',
   'errors.updateFailed': 'Update failed: {error}',
   'errors.configUpdateFailed': 'Config update failed: {error}',
