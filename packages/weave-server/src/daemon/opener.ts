@@ -47,6 +47,17 @@ function joinCmd(argv: string[], platform: NodeJS.Platform): string {
 }
 
 /**
+ * win32：`wt.exe` / `wezterm` 是直接 CreateProcess 派发，**不做 PATHEXT 解析** ——
+ * 裸 `claude`（Windows 上只有 .cmd/.ps1 shim，没有同名 .exe）会报
+ * `0x80070002 找不到文件`。统一经 cmd.exe 转发（cmd/powershell 预设本来就经 shell，
+ * 所以只有这几个直发的预设需要）。`/k` 保留窗口：启动失败时用户看得见原因。
+ */
+function throughCmd(run: string[] | undefined, win: boolean): string[] | undefined {
+  if (!win || !run || run.length === 0) return run;
+  return ['cmd.exe', '/k', joinCmd(run, 'win32')];
+}
+
+/**
  * macOS: build an AppleScript launch that opens a new window at `dir` running
  * `argv` (the `open -a` handlers cannot pass a command).
  */
@@ -93,7 +104,7 @@ export function resolveTerminalLaunch(
 
   switch (terminal.preset) {
     case 'wt':
-      return win ? [{ command: 'wt.exe', args: ['-d', dir, ...(run ?? [])] }] : [];
+      return win ? [{ command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, win) ?? [])] }] : [];
     case 'powershell':
       return win
         ? [
@@ -130,7 +141,7 @@ export function resolveTerminalLaunch(
     case 'wezterm':
       // `start` opens the GUI (or a new window in an existing one) and `--cwd`
       // applies to the first program it spawns. Cross-platform.
-      return [{ command: 'wezterm', args: ['start', '--cwd', dir, ...(run ?? [])] }];
+      return [{ command: 'wezterm', args: ['start', '--cwd', dir, ...(throughCmd(run, win) ?? [])] }];
     case 'ghostty':
       // No Windows build, so nothing to launch there.
       if (win) return [];
@@ -163,7 +174,7 @@ export function resolveTerminalLaunch(
     default:
       if (win) {
         return [
-          { command: 'wt.exe', args: ['-d', dir, ...(run ?? [])] },
+          { command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, win) ?? [])] },
           run
             ? { command: 'powershell.exe', args: ['-NoExit', '-Command', joinCmd(run, 'win32')], cwd: dir }
             : { command: 'powershell.exe', args: ['-NoExit'], cwd: dir },

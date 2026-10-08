@@ -256,7 +256,36 @@ describe('resolveTerminalLaunch', () => {
         '--resume',
         'abc-123',
       ]),
-    ).toEqual([{ command: 'wt.exe', args: ['-d', 'D:\\proj', 'claude', '--resume', 'abc-123'] }]);
+    ).toEqual([
+      {
+        command: 'wt.exe',
+        args: ['-d', 'D:\\proj', 'cmd.exe', '/k', 'claude --resume abc-123'],
+      },
+    ]);
+  });
+
+  it('run: wezterm 在 Windows 经 cmd.exe 转发（裸 claude 会 0x80070002），POSIX 直发', () => {
+    expect(
+      resolveTerminalLaunch('D:\\proj', { preset: 'wezterm', customCommand: '' }, 'win32', [
+        'claude',
+        '--resume',
+        'abc-123',
+      ]),
+    ).toEqual([
+      {
+        command: 'wezterm',
+        args: ['start', '--cwd', 'D:\\proj', 'cmd.exe', '/k', 'claude --resume abc-123'],
+      },
+    ]);
+    expect(
+      resolveTerminalLaunch('/tmp/p', { preset: 'wezterm', customCommand: '' }, 'linux', [
+        'claude',
+        '--resume',
+        'abc',
+      ]),
+    ).toEqual([
+      { command: 'wezterm', args: ['start', '--cwd', '/tmp/p', 'claude', '--resume', 'abc'] },
+    ]);
   });
 
   it('run: powershell/cmd get a joined command line, cwd stays the project dir', () => {
@@ -291,7 +320,13 @@ describe('resolveTerminalLaunch', () => {
       ['claude', '--resume', 'abc'],
     );
     expect(launches.map((l) => l.command)).toEqual(['wt.exe', 'powershell.exe', 'cmd.exe']);
-    expect(launches[0]!.args).toEqual(['-d', 'D:\\proj', 'claude', '--resume', 'abc']);
+    expect(launches[0]!.args).toEqual([
+      '-d',
+      'D:\\proj',
+      'cmd.exe',
+      '/k',
+      'claude --resume abc',
+    ]);
     expect(launches[2]!.args).toEqual(['/K', 'claude --resume abc']);
   });
 
