@@ -16,6 +16,7 @@ import { readCodexMcpServers } from './codex-toml.js';
 import { FILE_ASSET_CATEGORIES, FILE_ASSET_SPECS } from './file-assets.js';
 import type { FileAssetCategory } from './file-assets.js';
 import { assetSurfaceFor } from '../surfaces.js';
+import { readInstalledLedger } from './install-ledger.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -46,6 +47,8 @@ export interface SkillUpdate {
   outdated: boolean;
   /** true = no library source found (cannot update). */
   custom: boolean;
+  /** true = 账本登记过但盘上已不在（补齐路径会重装）。 */
+  missing?: boolean;
   /** Resolved source directory when not custom. */
   sourceDir?: string;
   libraryId?: number;
@@ -58,6 +61,8 @@ export interface McpUpdate {
   agent?: Harness;
   outdated: boolean;
   custom: boolean;
+  /** true = 账本登记过但配置已不在（补齐路径会重新写回）。 */
+  missing?: boolean;
   libraryId?: number;
 }
 
@@ -67,6 +72,8 @@ export interface FileAssetUpdate {
   scope: 'project' | 'global';
   outdated: boolean;
   custom: boolean;
+  /** true = 账本登记过但盘上已不在（补齐路径会重装）。 */
+  missing?: boolean;
   libraryId?: number;
 }
 
@@ -93,10 +100,68 @@ export async function detectUpdates(
   const skills = await detectSkillUpdates(projectPath, cache, idx);
   const mcp = await detectMcpUpdates(projectPath, idx);
   const files = await detectFileAssetUpdates(projectPath, cache, idx);
+  // 账本补齐：报告是按盘面枚举的，"账上有、报告里没有"就等于盘上已被删除。
+  await mergeMissingFromLedger(projectPath, { skills, mcp, files }, idx);
   const available = skills.filter((s) => !s.custom && s.outdated).length
     + mcp.filter((s) => !s.custom && s.outdated).length
     + files.filter((s) => !s.custom && s.outdated).length;
   return { skills, mcp, files, available };
+}
+
+/**
+ * 把账本里"账上有、盘上无"的资产并进报告（标记 `missing` + `outdated`，复用
+ * syncAll 已有的重装路径）。库源已消失的条目跳过——无从重装，标出来只会让
+ * 同步报错。scope 只认 project：全局资产是用户级共享，不随项目同步走。
+ */
+async function mergeMissingFromLedger(
+  projectPath: string,
+  report: { skills: SkillUpdate[]; mcp: McpUpdate[]; files: FileAssetUpdate[] },
+  idx: LibraryIndex,
+): Promise<void> {
+  for (const record of await readInstalledLedger(projectPath)) {
+    if (record.category === 'skill') {
+      if (!findSkillSource(idx, record.name)) continue;
+      const present = report.skills.some(
+        (s) => s.scope === 'project' && s.name === record.name && s.agent === record.agent,
+      );
+      if (present) continue;
+      report.skills.push({
+        name: record.name,
+        scope: 'project',
+        agent: record.agent,
+        outdated: true,
+        custom: false,
+        missing: true,
+      });
+      continue;
+    }
+    if (record.category === 'mcp') {
+      if (!findMcpSource(idx, record.name)) continue;
+      if (report.mcp.some((m) => m.scope === 'project' && m.name === record.name)) continue;
+      report.mcp.push({
+        name: record.name,
+        scope: 'project',
+        outdated: true,
+        custom: false,
+        missing: true,
+      });
+      continue;
+    }
+    const assetCategory = record.assetCategory;
+    if (assetCategory === undefined || !findFileAssetSource(idx, assetCategory, record.name)) continue;
+    const present = report.files.some(
+      (f) => f.scope === 'project' && f.category === assetCategory && f.name === record.name,
+    );
+    if (present) continue;
+    report.files.push({
+      category: assetCategory,
+      name: record.name,
+      scope: 'project',
+      outdated: true,
+      custom: false,
+      missing: true,
+    });
+  }
 }
 
 /** List installed skill names under a skills root (dirs + symlinks to dirs —

@@ -8,6 +8,7 @@ import {
   type FileAssetCategory,
 } from './file-assets.js';
 import { assetSurfaceFor } from '../surfaces.js';
+import { forgetInstalled, recordInstalled } from './install-ledger.js';
 
 /**
  * Asset install/uninstall — pure filesystem operations, no sqlite writes.
@@ -87,6 +88,7 @@ export async function installSkill(
     );
   }
   await cp(sourceDir, target, { recursive: true });
+  await recordInstalled(projectPath, { category: 'skill', name, agent });
   return target;
 }
 
@@ -104,6 +106,7 @@ export async function uninstallSkill(
     );
   }
   await rm(target, { recursive: true, force: true });
+  await forgetInstalled(projectPath, { category: 'skill', name, agent });
 }
 
 /**
@@ -128,6 +131,9 @@ export async function installFileAsset(
   }
   await mkdir(targetDir, { recursive: true });
   await cp(sourceFile, target);
+  if (scope === 'project') {
+    await recordInstalled(projectPath, { category: 'file', name, agent, assetCategory: category });
+  }
   return target;
 }
 
@@ -146,6 +152,9 @@ export async function uninstallFileAsset(
     throw new AssetNotFoundError(`${category} "${name}" is not installed`);
   }
   await rm(target, { force: true });
+  if (scope === 'project') {
+    await forgetInstalled(projectPath, { category: 'file', name, agent, assetCategory: category });
+  }
 }
 
 /** Add a `mcpServers[name]` entry to `.mcp.json`, preserving existing entries. */
@@ -164,6 +173,7 @@ export async function installMcp(
   servers[name] = config;
   json.mcpServers = servers;
   await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+  await recordInstalled(projectPath, { category: 'mcp', name, agent: 'claude' });
 }
 
 /** Remove the `mcpServers[name]` entry from `.mcp.json`. */
@@ -178,6 +188,7 @@ export async function uninstallMcp(projectPath: string, name: string): Promise<v
   delete servers[name];
   json.mcpServers = servers;
   await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+  await forgetInstalled(projectPath, { category: 'mcp', name, agent: 'claude' });
 }
 
 /** Read and parse `.mcp.json`; a missing/invalid file yields an empty object. */
