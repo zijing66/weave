@@ -13,6 +13,8 @@ import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
@@ -30,6 +32,8 @@ export function TasksPanel({
   initialSessionId?: string;
 }) {
   const t = useT();
+  const { show } = useToast();
+  const fb = useActionFeedback();
   const { sessions: allSessions, dispatches, statuses, refresh: refreshStatus } = useSessionStatus();
   const [rules, setRules] = useState<HookRule[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
@@ -288,6 +292,29 @@ export function TasksPanel({
     }
   };
 
+  /** 删会话（手动）：确认 → 删（连带事件与派发）→ 刷新列表 → toast。
+   *  删掉的若是当前选中项，一并清选择，避免右栏挂在已消失的会话上。 */
+  const handleDeleteSession = useCallback(
+    (sessionId: string) => {
+      const row = sessions?.find((s) => s.sessionId === sessionId);
+      const label = row ? sessionLabel(row.title, row.sessionId) : sessionId.slice(0, 8);
+      if (!window.confirm(t('tasks.deleteConfirm', { id: label }))) return;
+      void fb.run(
+        `del:${sessionId}`,
+        async () => {
+          const res = await api.deleteSession(sessionId);
+          if (selectedId === sessionId) setSelectedId(null);
+          await refreshStatus();
+          show('success', t('toast.sessionDeleted', { n: res.events }));
+        },
+        { fail: (e) => t('tasks.deleteFailed', { error: errorText(e) }) },
+      );
+    },
+    [sessions, t, fb, selectedId, refreshStatus, show],
+  );
+
+  const deleteStateOf = useCallback((sessionId: string) => fb.stateOf(`del:${sessionId}`), [fb]);
+
   // 组头状态展示：运行中显示 harness 跑马灯动效图标，打开/关闭/失败不显示
   // ——去掉原文字状态 tag（会话状态与组头信息重复）。
   const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
@@ -331,6 +358,8 @@ export function TasksPanel({
             onRename={(id, title) => void onRename(id, title)}
             onDropDispatch={onDropDispatch}
             onOpenTerminal={(id) => void onOpenTerminal(id)}
+            onDelete={handleDeleteSession}
+            deleteStateOf={deleteStateOf}
           />
         )}
       </aside>

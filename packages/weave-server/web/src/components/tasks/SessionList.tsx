@@ -6,7 +6,9 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Check, Copy, Pencil, SquareTerminal } from 'lucide-react';
+import { Check, Copy, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 
@@ -23,6 +25,8 @@ export function SessionList({
   onRename,
   onDropDispatch,
   onOpenTerminal,
+  onDelete,
+  deleteStateOf,
 }: {
   sessions: SessionRow[];
   statuses: Map<string, SessionStatus>;
@@ -31,6 +35,10 @@ export function SessionList({
   onRename: (sessionId: string, title: string) => void;
   onDropDispatch: (dispatchId: number, sessionId: string) => void;
   onOpenTerminal: (sessionId: string) => void;
+  /** 删除该会话（含事件与派发；调用方负责确认与报错）。 */
+  onDelete: (sessionId: string) => void;
+  /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
+  deleteStateOf?: (sessionId: string) => ActionState;
 }) {
   const t = useT();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -167,6 +175,22 @@ export function SessionList({
                       ) : (
                         <Copy className="h-3 w-3" />
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      title={t('tasks.deleteTooltip')}
+                      aria-label={t('tasks.deleteSession')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(s.sessionId);
+                      }}
+                      className="rounded p-0.5 text-neutral-500 hover:text-red-400"
+                    >
+                      <FeedbackIcon
+                        state={deleteStateOf?.(s.sessionId) ?? 'idle'}
+                        className="h-3 w-3"
+                        icon={<Trash2 className="h-3 w-3" />}
+                      />
                     </button>
                   </span>
                   {/* 第 2 行：徽标组（basis-full 恒换行，状态 Badge 固定第 2 行） */}

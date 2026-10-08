@@ -70,11 +70,6 @@ export const appZh = {
   'toast.autoSyncOn': '自动同步已开启',
   'toast.autoSyncOff': '自动同步已关闭',
 
-  // —— 会话删除 ——
-  'session.delete': '删除会话',
-  'session.deleteTooltip': '删除该会话及其全部事件（不可撤销）',
-  'session.deleteConfirm': '删除会话 {id} 及其全部事件？此操作不可撤销。',
-
   'errors.syncFailed': '同步失败：{error}',
   'errors.updateFailed': '更新失败：{error}',
   'errors.configUpdateFailed': '配置更新失败：{error}',
@@ -153,11 +148,6 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.sessionDeleted': 'Session deleted ({n} events)',
   'toast.autoSyncOn': 'Auto-sync turned ON',
   'toast.autoSyncOff': 'Auto-sync turned OFF',
-
-  // —— Session deletion ——
-  'session.delete': 'Delete session',
-  'session.deleteTooltip': 'Delete this session and all its events (cannot be undone)',
-  'session.deleteConfirm': 'Delete session {id} and all its events? This cannot be undone.',
 
   'errors.syncFailed': 'Sync failed: {error}',
   'errors.updateFailed': 'Update failed: {error}',
