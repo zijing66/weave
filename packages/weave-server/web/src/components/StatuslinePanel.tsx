@@ -45,6 +45,7 @@ import type { MessageKey } from '@/i18n/dict';
 const SEGMENTS: { key: SegmentKey; labelKey: MessageKey; sample: string }[] = [
   { key: 'project', labelKey: 'seg.project', sample: 'my-project' },
   { key: 'git', labelKey: 'seg.git', sample: 'main' },
+  { key: 'git_user', labelKey: 'seg.gitUser', sample: 'yao <yao@weave.dev>' },
   { key: 'changes', labelKey: 'seg.changes', sample: '3' },
   { key: 'model', labelKey: 'seg.model', sample: 'claude-sonnet-5' },
   { key: 'thinking', labelKey: 'seg.thinking', sample: 'high' },
@@ -363,6 +364,7 @@ const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
   // Both keys: the default layout renders {path}, older configs use {name}.
   project: { name: 'my-project', path: '/workspace/my-project' },
   git: { branch: 'main', repo: 'acme/weave' },
+  git_user: { user: 'yao', email: 'yao@weave.dev' },
   changes: { added: '1', deleted: '1', files: '3' },
   model: { model: 'claude-sonnet-5' },
   thinking: { level: 'high' },

@@ -608,6 +608,7 @@ export const NAMED_COLORS: readonly StatuslineNamedColor[] = [
 export type SegmentKey =
   | 'project'
   | 'git'
+  | 'git_user'
   | 'changes'
   | 'model'
   | 'thinking'
@@ -692,6 +693,7 @@ export interface StatuslineConfig {
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
   git: ['branch', 'repo'],
+  git_user: ['user', 'email'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
   thinking: ['level'],
@@ -715,6 +717,7 @@ export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
 export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   project: '{name}',
   git: '{branch}',
+  git_user: '{user} <{email}>',
   changes: '{files}',
   model: '{model}',
   thinking: '{level}',

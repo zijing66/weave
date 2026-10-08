@@ -252,6 +252,16 @@ function gitNumstat(dir) {
   return null;
 }
 
+// One git config value. 'git config <key>' resolves precedence itself (repo
+// config overrides the global one), so this always yields the EFFECTIVE value.
+function gitConfigValue(dir, key) {
+  try {
+    return require('child_process').execFileSync('git', ['config', key], {
+      cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true,
+    }).toString().trim();
+  } catch (e) { return ''; }
+}
+
 // Cumulative session tokens, read from the transcript Claude Code points us at.
 //
 // The scan is incremental: a small cache keyed by transcript path records how
@@ -370,6 +380,12 @@ function segmentTokens(key, seg) {
           repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
         };
       } catch (e) { return null; }
+    case 'git_user': {
+      // Both fields must be set — a partial identity would render 'name <>'
+      var gitUser = gitConfigValue(cwd, 'user.name');
+      var gitEmail = gitConfigValue(cwd, 'user.email');
+      return gitUser && gitEmail ? { user: gitUser, email: gitEmail } : null;
+    }
     case 'changes': {
       var diff = gitNumstat(cwd);
       if (!diff) return null;

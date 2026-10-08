@@ -72,6 +72,7 @@ const LABEL_SEPARATORS = [': ', ' ', ':  ', ' » '];
 const ICONS: Partial<Record<SegmentKey, string[]>> = {
   project: ['', '📁'],
   git: ['', '🌿'],
+  git_user: ['', '👤'],
   changes: ['', '✏️'],
   model: ['', '🤖'],
   thinking: ['', '🧩'],

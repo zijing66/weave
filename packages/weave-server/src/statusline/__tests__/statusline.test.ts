@@ -572,6 +572,56 @@ describe('statusline — data segments', () => {
     expect(out).toContain('(+1, -1)');
   });
 
+  it('git_user renders the repo identity and drops outside a repository', () => {
+    const idCfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git_user']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git_user: { ...DEFAULT_STATUSLINE_CONFIG.segments.git_user, enabled: true },
+      },
+    };
+    const repo = tmp('weave-sl-id-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.name', 'Test User');
+    git('config', 'user.email', 'test@example.com');
+
+    const out = runScript(generateStatuslineScript(idCfg), {
+      workspace: { current_dir: repo },
+    });
+    expect(out).toContain('Test User <test@example.com>');
+
+    const outside = runScript(generateStatuslineScript(idCfg), {
+      workspace: { current_dir: tmp('weave-sl-noid-') },
+    });
+    expect(outside).not.toContain('test@example.com');
+  });
+
+  it('a missing git binary drops the git blocks instead of crashing', () => {
+    // PATH pointed at an empty dir: the git lookups fail with ENOENT, which
+    // every git call site must swallow — the script still renders and exits 0.
+    const emptyPath = tmp('weave-sl-emptybin-');
+    const dir = tmp('weave-sl-nogit-');
+    const file = join(dir, 'statusline.cjs');
+    writeFileSync(file, generateStatuslineScript(DEFAULT_STATUSLINE_CONFIG));
+    const r = spawnSync(process.execPath, [file], {
+      input: JSON.stringify({
+        model: { display_name: 'claude-sonnet-5' },
+        workspace: { current_dir: process.cwd() }, // a real repo; only the binary is missing
+        terminal: { columns: 200 },
+      }),
+      encoding: 'utf8',
+      env: { ...process.env, PATH: emptyPath },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toContain('claude-sonnet-5'); // non-git rows still render
+  });
+
   it('hides the changes segment outside a git repository', () => {
     const out = runScript(generateStatuslineScript(changesCfg), {
       workspace: { current_dir: tmp('weave-sl-nogit-') },
@@ -656,8 +706,11 @@ describe('statusline — shipped default layout', () => {
     expect(DEFAULT_STATUSLINE_CONFIG.lines).toEqual([
       ['model', 'thinking', 'time'],
       ['context', 'tokens', 'cost', 'rate'],
-      ['git', 'changes', 'project'],
+      ['git', 'git_user', 'changes', 'project'],
     ]);
+    // git identity ships on: `git config` resolves repo-over-global, so the
+    // block always shows the effective identity and drops outside a repo
+    expect(DEFAULT_STATUSLINE_CONFIG.segments.git_user.enabled).toBe(true);
     // the clock ships enabled with its blue block (baked from the live config)
     expect(DEFAULT_STATUSLINE_CONFIG.segments.time.enabled).toBe(true);
     expect(DEFAULT_STATUSLINE_CONFIG.segments.time.backgroundColor).toBe('blue');

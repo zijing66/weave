@@ -66,6 +66,7 @@ export const NAMED_COLORS: readonly StatuslineNamedColor[] = [
 export type SegmentKey =
   | 'project' // current-working-dir basename
   | 'git' // git-branch
+  | 'git_user' // effective git user.name/user.email (conditional)
   | 'changes' // git-changes (uncommitted file count)
   | 'model'
   | 'thinking' // thinking-effort
@@ -206,6 +207,7 @@ export interface StatuslineConfig {
 export const SEGMENT_ORDER: SegmentKey[] = [
   'project',
   'git',
+  'git_user',
   'changes',
   'model',
   'thinking',
@@ -265,7 +267,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
   lines: [
     ['model', 'thinking', 'time'],
     ['context', 'tokens', 'cost', 'rate'],
-    ['git', 'changes', 'project'],
+    ['git', 'git_user', 'changes', 'project'],
   ],
   refreshInterval: 10,
   source: 'global',
@@ -287,6 +289,12 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
       format: '[{bar}] {used}/{total} ({percent}%)',
     }),
     git: seg({ color: '#1f2335', backgroundColor: '#9ece6a', icon: '🌿', format: '{branch}' }),
+    git_user: seg({
+      color: '#1f2335',
+      backgroundColor: '#7dcfff',
+      icon: '👤',
+      format: '{user} <{email}>',
+    }),
     changes: seg({
       color: '#1f2335',
       backgroundColor: '#e0af68',
@@ -360,6 +368,7 @@ export const PLAIN_STATUSLINE_CONFIG: StatuslineConfig = {
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
   git: ['branch', 'repo'],
+  git_user: ['user', 'email'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
   thinking: ['level'],
@@ -390,6 +399,7 @@ export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
 export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   project: '{name}',
   git: '{branch}',
+  git_user: '{user} <{email}>',
   changes: '{files}',
   model: '{model}',
   thinking: '{level}',

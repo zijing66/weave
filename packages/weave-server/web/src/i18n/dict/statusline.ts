@@ -118,6 +118,7 @@ export const statuslineZh = {
   // 段类型展示名
   'seg.project': '项目',
   'seg.git': 'Git',
+  'seg.gitUser': 'Git 身份',
   'seg.changes': '变更',
   'seg.model': '模型',
   'seg.thinking': '思考',
@@ -272,6 +273,7 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   // Segment type display names
   'seg.project': 'Project',
   'seg.git': 'Git',
+  'seg.gitUser': 'Git Identity',
   'seg.changes': 'Changes',
   'seg.model': 'Model',
   'seg.thinking': 'Thinking',
