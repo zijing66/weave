@@ -153,6 +153,32 @@ describe('generateSettingsJson', () => {
     expect(hooks.PreToolUse[0].hooks[0].type).toBe('command');
     expect(hooks.PreToolUse[0].hooks[0].command).toContain('hook-handler.cjs');
   });
+
+  it('采集类事件（PreToolUse/Notification）标 async，可注入事件保持同步', () => {
+    const settings = generateSettingsJson({
+      components: FULL_COMPONENTS,
+      hooks: DEFAULT_HOOKS,
+      platform: unixPlatform,
+      helpersDir: '/proj/.claude/helpers',
+    });
+    const hooks = settings.hooks as Record<
+      string,
+      Array<{ hooks: Array<{ async?: boolean }> }>
+    >;
+    // 不可注入 → 宿主 fire-and-forget（口径 = INJECTABLE_EVENTS.claude 的补集）
+    expect(hooks.PreToolUse[0].hooks[0].async).toBe(true);
+    expect(hooks.Notification[0].hooks[0].async).toBe(true);
+    // 能注入的必须同步——注入内容靠 hookSpecificOutput 回传
+    for (const event of [
+      'PostToolUse',
+      'UserPromptSubmit',
+      'SessionStart',
+      'Stop',
+      'SubagentStop',
+    ]) {
+      expect(hooks[event]![0]!.hooks[0]!.async).toBeUndefined();
+    }
+  });
 });
 
 describe('mergeSettingsJson', () => {

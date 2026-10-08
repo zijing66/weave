@@ -35,18 +35,27 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
     // where the outer key is the event type, matcher filters tools ('*' = all),
     // and hooks lists the commands to run.
     const command = `node "${hookHandlerPath}"`;
-    const hookEntry = (): unknown[] => [
-      { matcher: '*', hooks: [{ type: 'command' as const, command }] },
+    // 采集类（不可注入）事件标 `async: true`：宿主 fire-and-forget，不必等 hook
+    // 进程与往返。实测 CC 2.1.289 支持该字段——20s 的探针 hook 同步跑 +18s，
+    // 标 async 后与基线持平。其余事件必须同步：注入通道靠 hookSpecificOutput
+    // 回传。口径与 harness 的 INJECTABLE_EVENTS.claude 同源（能注入的 =
+    // PostToolUse/UserPromptSubmit/SessionStart/Stop/SubagentStop），故
+    // PreToolUse / Notification 可异步。
+    const hookEntry = (background = false): unknown[] => [
+      {
+        matcher: '*',
+        hooks: [{ type: 'command' as const, command, ...(background ? { async: true } : {}) }],
+      },
     ];
 
     const hooksMap: Record<string, unknown> = {};
-    if (hooks.preToolUse) hooksMap['PreToolUse'] = hookEntry();
+    if (hooks.preToolUse) hooksMap['PreToolUse'] = hookEntry(true);
     if (hooks.postToolUse) hooksMap['PostToolUse'] = hookEntry();
     if (hooks.userPromptSubmit) hooksMap['UserPromptSubmit'] = hookEntry();
     if (hooks.sessionStart) hooksMap['SessionStart'] = hookEntry();
     if (hooks.stop) hooksMap['Stop'] = hookEntry();
     if (hooks.subagentStop) hooksMap['SubagentStop'] = hookEntry();
-    if (hooks.notification) hooksMap['Notification'] = hookEntry();
+    if (hooks.notification) hooksMap['Notification'] = hookEntry(true);
 
     // 即使全被裁剪也写空对象：merge 语义靠「键存在」判定 helpers 是否启用，
     // 从而把 weave 的旧 hook 组整体清掉（weave 组 = 本次生成结果，空即清光）。
