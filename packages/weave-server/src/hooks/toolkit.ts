@@ -10,6 +10,7 @@ import type { ProjectRepository, ProjectRow } from '../repositories/projects.js'
 import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { marketLibraryRoots } from '../market/resolve.js';
+import { marketDir } from '../market/manifest.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
 import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
@@ -80,6 +81,18 @@ export interface ToolkitListResult {
 export interface ToolkitToggleResult {
   pack: ToolkitPackInfo;
   warnings: string[];
+}
+
+/**
+ * 包所属的市场身份：包目录落在 `<dataDir>/market/<id>/…` 里 → 该市场 id（外部市场
+ * 导入的包：按它自己的市场身份安装/启停/卸载，不占 weave 自建市场）；否则 undefined
+ * = weave 自己的包（内置根 `presets/harness-tools`、SPI 插件）→ 走 weave 自建市场。
+ */
+function marketIdOf(packDir: string): string | undefined {
+  const rel = path.relative(path.resolve(marketDir()), path.resolve(packDir));
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+  const id = rel.split(path.sep)[0];
+  return id ? id : undefined;
 }
 
 /** mod 类包的宿主版本下限（Claude Code ≥ 2.1.287 契约，EARLY ACCESS）。 */
@@ -389,12 +402,15 @@ export class ToolkitService {
     const ccLanded = isCcPluginPack(pack) && pack.targets.includes('claude');
     if (ccLanded) {
       const surface = this.pluginSurface();
+      const market = marketIdOf(pack.dir);
       await surface.globalInstall(pack.dir, {
         name: pack.name,
         version: pack.version,
         description: pack.description,
+        // 外部市场来源：按该市场身份安装（文件留在数据目录，不占 weave 自建市场）
+        ...(market ? { marketplace: { name: market, dir: path.join(marketDir(), market) } } : {}),
       });
-      await surface.setProjectEnabled(projectPath, pack.name, true);
+      await surface.setProjectEnabled(projectPath, pack.name, true, market);
     }
 
     const recPath = recordPathFor(projectPath, pack.id);
@@ -469,7 +485,7 @@ export class ToolkitService {
     await this.removePackFiles(project, pack, pack.sourceRoot);
 
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
-      await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
+      await this.pluginSurface().setProjectEnabled(project.path, pack.name, false, marketIdOf(pack.dir));
     }
     if (pack.weavePack) {
       setProjectEnabled(project, pack.id, false, { projects: this.deps.projects });
@@ -485,7 +501,7 @@ export class ToolkitService {
     const pack = await this.resolvePack(packId, sourceRoot);
     await this.applyDisabled(project, pack);
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
-      await this.pluginSurface().uninstall(pack.name);
+      await this.pluginSurface().uninstall(pack.name, marketIdOf(pack.dir));
     }
     return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
   }
@@ -545,7 +561,7 @@ export class ToolkitService {
         if (!fromThisDir && !weaveOnlyEnabled) continue;
         await this.removePackFiles(project, pack, abs);
         if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
-          await this.pluginSurface().setProjectEnabled(project.path, pack.name, false);
+          await this.pluginSurface().setProjectEnabled(project.path, pack.name, false, marketIdOf(pack.dir));
         }
         if (pack.weavePack) {
           const cascaded = this.deps.plugins.setPluginEnabled(pack.id, false);
@@ -604,9 +620,10 @@ export class ToolkitService {
     }
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
       const surface = this.pluginSurface();
+      const market = marketIdOf(pack.dir);
       facts.push(
-        (await surface.isInstalled(pack.name)) &&
-          (await surface.readProjectEnabled(project.path, pack.name)),
+        (await surface.isInstalled(pack.name, market)) &&
+          (await surface.readProjectEnabled(project.path, pack.name, market)),
       );
     }
     if (pack.weavePack) {
@@ -642,7 +659,7 @@ export class ToolkitService {
   ): Promise<boolean> {
     if (pack.weavePack && !isCcPluginPack(pack)) return true;
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
-      return this.pluginSurface().isInstalled(pack.name);
+      return this.pluginSurface().isInstalled(pack.name, marketIdOf(pack.dir));
     }
     return enabled || !!(await this.readRecordHealed(project.path, pack.id));
   }
