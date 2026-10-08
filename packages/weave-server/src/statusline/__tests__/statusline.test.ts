@@ -706,7 +706,7 @@ describe('statusline — shipped default layout', () => {
     expect(DEFAULT_STATUSLINE_CONFIG.lines).toEqual([
       ['model', 'thinking', 'time'],
       ['context', 'tokens', 'cost', 'rate'],
-      ['git', 'git_user', 'changes', 'project'],
+      ['git_user', 'git', 'changes', 'project'],
     ]);
     // git identity ships on: `git config` resolves repo-over-global, so the
     // block always shows the effective identity and drops outside a repo

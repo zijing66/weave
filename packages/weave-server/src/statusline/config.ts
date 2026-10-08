@@ -206,8 +206,8 @@ export interface StatuslineConfig {
 /** Default order in which enabled segments render left-to-right. */
 export const SEGMENT_ORDER: SegmentKey[] = [
   'project',
-  'git',
   'git_user',
+  'git',
   'changes',
   'model',
   'thinking',
@@ -267,7 +267,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
   lines: [
     ['model', 'thinking', 'time'],
     ['context', 'tokens', 'cost', 'rate'],
-    ['git', 'git_user', 'changes', 'project'],
+    ['git_user', 'git', 'changes', 'project'],
   ],
   refreshInterval: 10,
   source: 'global',
