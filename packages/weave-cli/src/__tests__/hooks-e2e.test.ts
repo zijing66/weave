@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -159,7 +159,42 @@ describe('hook-handler.cjs → daemon end-to-end', () => {
         { ...process.env, CLAUDE_PROJECT_DIR: projectDir },
       ),
     ).resolves.toBeUndefined();
-    // No new row was persisted (daemon unreachable).
+    // No new row was persisted (daemon unreachable) — but the report was
+    // spooled to the project instead of dropped.
     expect(hookEvents.listByProject(projectId)).toHaveLength(1);
+    const spool = readFileSync(path.join(projectDir, '.weave', 'spool.jsonl'), 'utf8');
+    expect(spool.trim()).toContain('"eventType":"PreToolUse"');
+  });
+
+  it('flushes the spooled backlog into the daemon (WEAVE_FLUSH=1 mode)', async () => {
+    // Daemon back up — point the state file at the live server again.
+    writeFileSync(
+      path.join(configRoot, 'weave', 'daemon.json'),
+      JSON.stringify({ pid: 0, port, token: 'dtok', startedAt: 'x' }),
+    );
+    // Add a second spooled event by hand (offline run), then run the handler
+    // in flush mode — deterministic, no detached child to wait on.
+    appendFileSync(
+      path.join(projectDir, '.weave', 'spool.jsonl'),
+      JSON.stringify({
+        source: 'claude',
+        eventType: 'Stop',
+        sessionId: 'e2e-sess',
+        cwd: projectDir,
+        payload: JSON.stringify({ hook_event_name: 'Stop', session_id: 'e2e-sess' }),
+      }) + '\n',
+    );
+    await runHandler(handlerPath, '', {
+      ...process.env,
+      WEAVE_FLUSH: '1',
+      CLAUDE_PROJECT_DIR: projectDir,
+    });
+
+    // Backlog (PreToolUse + Stop) landed, the spool is drained and removed.
+    const rows = hookEvents.listByProject(projectId);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.eventType).sort()).toEqual(['PostToolUse', 'PreToolUse', 'Stop']);
+    expect(existsSync(path.join(projectDir, '.weave', 'spool.jsonl'))).toBe(false);
+    expect(existsSync(path.join(projectDir, '.weave', 'spool.claim.jsonl'))).toBe(false);
   });
 });

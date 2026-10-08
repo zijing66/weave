@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Harness } from '@weave/core';
 import { readDaemonSettingsSync, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
 
@@ -24,8 +24,18 @@ export interface HookEventRow {
 export class HookEventRepository {
   /** 上次被动清理的 UTC 天序号（进程内标记；-1=本进程尚未清理过）。 */
   private lastPruneDay = -1;
+  private readonly insertEvent: StatementSync;
+  private readonly pruneByCutoff: StatementSync;
 
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync) {
+    // 预编译语句复用：insert 是每 hook 事件的热路径（spool 回灌可达千条），
+    // 不再逐次 prepare。
+    this.insertEvent = db.prepare(
+      `INSERT INTO hook_events (project_id, source, event_type, session_id, payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    this.pruneByCutoff = db.prepare('DELETE FROM hook_events WHERE created_at < ?');
+  }
 
   /**
    * 重置被动清理的天标记：全局设置保存保留期后调用——下一条事件写入
@@ -38,20 +48,40 @@ export class HookEventRepository {
   /** Append-only insert. Returns the new row id. */
   insert(input: HookEventInput): number {
     this.pruneExpired();
-    const result = this.db
-      .prepare(
-        `INSERT INTO hook_events (project_id, source, event_type, session_id, payload, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.projectId,
-        input.source,
-        input.eventType,
-        input.sessionId ?? null,
-        input.payload,
-        new Date().toISOString(),
-      );
+    const result = this.insertEvent.run(
+      input.projectId,
+      input.source,
+      input.eventType,
+      input.sessionId ?? null,
+      input.payload,
+      new Date().toISOString(),
+    );
     return Number(result.lastInsertRowid);
+  }
+
+  /** 批量插入（spool 积压回灌）：单事务 + 一次 prune，返回新行 id 列表。 */
+  insertMany(inputs: readonly HookEventInput[]): number[] {
+    this.pruneExpired();
+    const ids: number[] = [];
+    this.db.exec('BEGIN');
+    try {
+      for (const input of inputs) {
+        const result = this.insertEvent.run(
+          input.projectId,
+          input.source,
+          input.eventType,
+          input.sessionId ?? null,
+          input.payload,
+          new Date().toISOString(),
+        );
+        ids.push(Number(result.lastInsertRowid));
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return ids;
   }
 
   /**
@@ -68,7 +98,7 @@ export class HookEventRepository {
     const retentionDays =
       readDaemonSettingsSync().events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS;
     const cutoff = new Date((day - retentionDays) * 86_400_000).toISOString();
-    this.db.prepare('DELETE FROM hook_events WHERE created_at < ?').run(cutoff);
+    this.pruneByCutoff.run(cutoff);
   }
 
   listByProject(projectId: number, limit = 100): HookEventRow[] {

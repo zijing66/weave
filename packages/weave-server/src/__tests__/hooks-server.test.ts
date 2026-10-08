@@ -158,6 +158,75 @@ describe('daemon server /hooks endpoint', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it('POST /hooks/batch 批量回灌：坏行 skipped，好行同步落库', async () => {
+    const before = hookEvents.listByProject(projectId).length;
+    const res = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({
+        events: [
+          { source: 'claude', eventType: 'Stop', sessionId: 'batch-1', payload: '{}' },
+          { source: 'claude', eventType: 'SessionStart', sessionId: 'batch-1', payload: '{}' },
+          { source: 'codex', eventType: 'X', payload: '{}' }, // 未知 source → skipped
+          { eventType: 'NoSource', payload: '{}' }, // 无 source → skipped
+        ],
+      }),
+    });
+    expect(res.status).toBe(202);
+    expect((await res.json()) as { accepted: number; skipped: number }).toMatchObject({
+      accepted: 2,
+      skipped: 2,
+    });
+    // 先落库再 ack：响应返回时行已在，无需轮询
+    const rows = hookEvents.listByProject(projectId);
+    expect(rows).toHaveLength(before + 2);
+    expect(rows.filter((r) => r.sessionId === 'batch-1').map((r) => r.eventType).sort()).toEqual([
+      'SessionStart',
+      'Stop',
+    ]);
+  });
+
+  it('POST /hooks/batch 400：缺 events / 超上限', async () => {
+    const noArray = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({ events: 'nope' }),
+    });
+    expect(noArray.status).toBe(400);
+
+    const tooMany = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({
+        events: Array.from({ length: 501 }, () => ({
+          source: 'claude',
+          eventType: 'Stop',
+          payload: '{}',
+        })),
+      }),
+    });
+    expect(tooMany.status).toBe(400);
+    expect((await tooMany.json()) as { error: string }).toMatchObject({
+      error: expect.stringContaining('max 500'),
+    });
+  });
+
+  it('POST /hooks/batch 401：无 token / daemon token 也不行（要项目 token）', async () => {
+    const noToken = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [] }),
+    });
+    expect(noToken.status).toBe(401);
+
+    const daemonToken = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${DAEMON_TOKEN}` },
+      body: JSON.stringify({ events: [] }),
+    });
+    expect(daemonToken.status).toBe(401);
+  });
 });
 
 describe('daemon server hooks rules/dispatch/sessions API', () => {

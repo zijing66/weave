@@ -8,6 +8,7 @@ import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weave/harness';
 import { SessionSweeper } from '../hooks/session-sweeper.js';
+import { sweepProjectSpools } from '../hooks/spool.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -160,5 +161,22 @@ export function startDaemon(): void {
   server.listen(state.port, DAEMON_HOST, () => {
     // Record the real pid + resolved token now that we are listening.
     writeDaemonState({ ...state, token: daemonToken, pid: process.pid });
+    // spool 积压回灌：daemon 不在期间 hook 落盘的事件，起服务就补上
+    //（客户端 flusher 只在下一 hook 成功后才跑，这里覆盖 server 恢复但
+    // 用户空闲的场景）。失败不阻断启动。
+    try {
+      const flushed = sweepProjectSpools({
+        projects,
+        hookEvents,
+        hookSessions,
+        hookBus,
+        eventSources: adapters,
+      });
+      if (flushed > 0) {
+        console.log(`[weave] spool backlog ingested: ${flushed} event(s)`);
+      }
+    } catch (e) {
+      console.error('[weave] spool sweep failed:', e);
+    }
   });
 }

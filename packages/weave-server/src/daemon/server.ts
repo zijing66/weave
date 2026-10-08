@@ -91,6 +91,7 @@ import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
+import { ingestBacklog } from '../hooks/spool.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
@@ -104,6 +105,9 @@ import { defaultProjectOpener, type ProjectOpener } from './opener.js';
 import { DAEMON_HOST } from './port.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
+
+/** POST /hooks/batch 单请求事件上限（客户端按 100 分片，留余量防滥用）。 */
+const MAX_BATCH_EVENTS = 500;
 
 export interface WeaveServerDeps {
   projects: ProjectRepository;
@@ -307,6 +311,69 @@ async function handleRequest(
       eventType: input.eventType,
       ...outcome,
     });
+    return;
+  }
+
+  // /hooks/batch — spool 积压回灌：hook-handler 断连期落盘的事件，server
+  // 恢复后分片批量上报到这里。鉴权与 /hooks 同一套 per-project token；坏行
+  // 跳过计 skipped；先入库再 2xx（失败 500，客户端保留 claim 重试）。
+  if (pathname === '/hooks/batch' && req.method === 'POST') {
+    const token = extractBearerToken(req);
+    const project = token ? deps.projects.getByToken(token) : undefined;
+    if (!project) {
+      sendJson(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+    if (!deps.hookEvents || eventSources.length === 0) {
+      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
+      return;
+    }
+    let body: { events?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as { events?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    const events = Array.isArray(body.events) ? (body.events as HookReport[]) : null;
+    if (!events) {
+      sendJson(res, 400, { error: 'Missing "events" array' });
+      return;
+    }
+    if (events.length > MAX_BATCH_EVENTS) {
+      sendJson(res, 400, { error: `Too many events (max ${MAX_BATCH_EVENTS} per request)` });
+      return;
+    }
+    const inputs: HookEventInput[] = [];
+    for (const report of events) {
+      const adapter =
+        report && typeof report === 'object'
+          ? eventSources.find((a) => a.source === report.source)
+          : undefined;
+      if (!adapter || !report.eventType) continue;
+      try {
+        inputs.push(adapter.normalize(report, project.id) as HookEventInput);
+      } catch {
+        // 单条坏报告不拖垮整批。
+      }
+    }
+    // 先落库再 ack（同步、量级毫秒）：ingest 失败回 500，客户端保留 claim
+    // 等下次重试——比「202 后台入库失败即丢数据」语义更稳。
+    try {
+      ingestBacklog(
+        {
+          hookEvents: deps.hookEvents,
+          hookSessions: deps.hookSessions,
+          hookBus: deps.hookBus,
+        },
+        project,
+        inputs,
+      );
+    } catch {
+      sendJson(res, 500, { error: 'Batch ingest failed' });
+      return;
+    }
+    sendJson(res, 202, { accepted: inputs.length, skipped: events.length - inputs.length });
     return;
   }
 
