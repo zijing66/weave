@@ -38,6 +38,8 @@ import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
+import { useToast } from '@/components/Toast';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
@@ -110,10 +112,14 @@ export function CategoryDetail({
   pluginEnabled: PluginEnabledMap;
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
-  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
-  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
-  onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void;
-  onTogglePlugin: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void | Promise<void>;
+  onTogglePlugin: (
+    runtime: PluginRuntime,
+    key: string,
+    enabled: boolean,
+  ) => void | Promise<void>;
   onOpenFile: (relPath: string) => void;
   onOpenSkillDetail: OpenDetailFn;
   /** 全局任务总览的项目名映射与跳转入口。 */
@@ -128,6 +134,53 @@ export function CategoryDetail({
   const isGlobal = mode === 'global';
   const scope: AssetScope = isGlobal ? 'global' : 'project';
   const t = useT();
+
+  // 资产面板动作按钮的反馈接线：skill / MCP 卸载与插件开关的按钮本体在
+  // SkillGrid / McpGrid 里，反馈包在回调下发这一层——行级 key loading 防重入，
+  // 成功/失败一律 toast（网络级失败原先被静默吞掉）。文件树卸载的按钮级反馈
+  // （FeedbackIcon 三态）在 FileAssetTree 内部自洽，这里只透传。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const busy = (key: string) => fb.stateOf(key) === 'loading';
+
+  const uninstallSkill = (name: string, scope: AssetScope, agent?: AssetAgent) => {
+    const key = `skill-uninstall:${scope}:${agent ?? 'claude'}:${name}`;
+    if (busy(key)) return;
+    void fb.run(
+      key,
+      async () => {
+        await onUninstallSkill(name, scope, agent);
+        show('success', t('skillGrid.uninstalled', { name }));
+      },
+      { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+    );
+  };
+
+  const uninstallMcp = (name: string, scope: AssetScope, agent?: AssetAgent) => {
+    const key = `mcp-uninstall:${agent ?? 'claude'}:${scope}:${name}`;
+    if (busy(key)) return;
+    void fb.run(
+      key,
+      async () => {
+        await onUninstallMcp(name, scope, agent);
+        show('success', t('mcp.uninstalled', { name }));
+      },
+      { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
+    );
+  };
+
+  // 插件开关成功由开关徽标就地翻转呈现（同 HooksPluginsSection.toggle），只兜失败。
+  const togglePlugin = (runtime: PluginRuntime, pluginKey: string, enabled: boolean) => {
+    const key = `plugin-toggle:${runtime}:${pluginKey}`;
+    if (busy(key)) return;
+    void fb.run(
+      key,
+      async () => {
+        await onTogglePlugin(runtime, pluginKey, enabled);
+      },
+      { fail: (e) => t('errors.pluginToggleFailed', { error: errorText(e) }) },
+    );
+  };
 
   // 落点属性判定（与按钮 disabled 同谓词）：拖拽中且不合法 → 红圈 + not-allowed + 原因。
   const dropVerdict = dragPayload
@@ -338,9 +391,9 @@ export function CategoryDetail({
                 ? t('category.emptySkillsGlobal')
                 : t('category.emptySkillsProject')
           }
-          onUninstallSkill={onUninstallSkill}
+          onUninstallSkill={uninstallSkill}
           onOpenDetail={onOpenSkillDetail}
-          onTogglePlugin={onTogglePlugin}
+          onTogglePlugin={togglePlugin}
         />
       )}
 
@@ -357,7 +410,7 @@ export function CategoryDetail({
                 ? t('category.emptyMcpGlobal')
                 : t('category.emptyMcpProject')
           }
-          onUninstallMcp={onUninstallMcp}
+          onUninstallMcp={uninstallMcp}
         />
       )}
 

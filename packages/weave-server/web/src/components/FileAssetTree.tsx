@@ -11,6 +11,9 @@ import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, tagsOf, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT } from '@/i18n/I18nProvider';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import {
   ChevronDown,
   ChevronRight,
@@ -167,9 +170,11 @@ function AssetTreeNode({
   collapsed: Set<string>;
   onToggle: (path: string) => void;
   onOpenFile: (relPath: string) => void;
-  onUninstall: (row: FileAssetRow) => void;
+  onUninstall: (row: FileAssetRow) => void | Promise<void>;
 }) {
   const t = useT();
+  const { show } = useToast();
+  const fb = useActionFeedback();
   const pad = 8 + depth * 14;
 
   if (node.type === 'file') {
@@ -182,13 +187,21 @@ function AssetTreeNode({
         ? GLOBAL_UNINSTALLABLE.has(a.category) && a.agent !== 'codex'
         : UNINSTALLABLE.has(a.category);
     const tags = tagsOf(a.category, a.relPath);
+    const row: FileAssetRow = {
+      name: fileStem(a.relPath),
+      category: a.category as FileAssetCategory,
+      relPath: a.relPath,
+      ...(a.agent ? { agent: a.agent } : {}),
+    };
+    const uninstallKey = `uninstall:${a.relPath}`;
+    const uninstallState = fb.stateOf(uninstallKey);
     return (
       <div className="group/row relative">
         <button
           type="button"
           onClick={() => onOpenFile(a.relPath)}
           style={{ paddingLeft: pad, paddingRight: 30 }}
-          className="w-full flex items-center gap-1.5 rounded-md py-1 text-left text-xs font-mono text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
+          className="w-full flex items-center gap-1.5 rounded-md py-1 text-left text-xs font-mono text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50 [&_svg]:pointer-events-none"
           title={
             a.isSymlink ? t('fileTree.symlinkTitle', { path: a.absPath }) : a.absPath
           }
@@ -227,18 +240,25 @@ function AssetTreeNode({
         {uninstallable && (
           <button
             type="button"
+            disabled={uninstallState === 'loading'}
             onClick={() =>
-              onUninstall({
-                name: fileStem(a.relPath),
-                category: a.category as FileAssetCategory,
-                relPath: a.relPath,
-                ...(a.agent ? { agent: a.agent } : {}),
-              })
+              void fb.run(
+                uninstallKey,
+                async () => {
+                  await onUninstall(row);
+                  show('success', t('fileTree.uninstalled', { name }));
+                },
+                { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+              )
             }
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 hover:text-red-400 hover:bg-neutral-800"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 hover:text-red-400 hover:bg-neutral-800 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
             title={t('fileTree.uninstall', { name })}
           >
-            <Trash2 className="h-3 w-3" />
+            <FeedbackIcon
+              state={uninstallState}
+              className="h-3 w-3"
+              icon={<Trash2 className="h-3 w-3" />}
+            />
           </button>
         )}
       </div>
@@ -301,7 +321,7 @@ export function FileAssetTree({
   assets: AssetEntry[];
   /** Update info already filtered to this mode's scope. */
   updates?: FileAssetUpdate[];
-  onUninstall: (row: FileAssetRow) => void;
+  onUninstall: (row: FileAssetRow) => void | Promise<void>;
   onOpenFile: (relPath: string) => void;
 }) {
   const t = useT();
@@ -403,7 +423,7 @@ export function FileAssetTree({
           <button
             type="button"
             onClick={toggleAll}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
+            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
             title={anyCollapsed ? t('fileTree.expandAllDirs') : t('fileTree.collapseAllDirs')}
           >
             {anyCollapsed ? (
