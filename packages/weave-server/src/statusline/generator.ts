@@ -159,8 +159,9 @@ function dim(text) {
   return '\\x1b[2;90m' + text + '\\x1b[0m';
 }
 
+function main(raw) {
 var input = {};
-try { input = JSON.parse(require('fs').readFileSync(0, 'utf8')); } catch (e) {}
+try { input = JSON.parse(raw || ''); } catch (e) {}
 
 var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
 var path = require('path');
@@ -634,5 +635,24 @@ for (var li = 0; li < rows.length; li++) {
   if (li < rows.length - 1 && CONFIG.divider) renderedLines.push(dim(CONFIG.divider));
 }
 process.stdout.write(renderedLines.join('\\n'));
+}
+
+// stdin: 宿主写完即关闭。原先用同步 readFileSync(0) —— 宿主不关闭 stdin 时它会把
+// 事件循环堵死（连守卫 timer 都救不了），进程永久滞留（实测 3 小时攒了 77 个孤儿）。
+// 改异步读 + 兜底 timer，使下面的守卫真正生效。
+var raw = '';
+var flushed = false;
+function flush() {
+  if (flushed) return;
+  flushed = true;
+  try { main(raw); } catch (e) {}
+  process.exit(0);
+}
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', function (c) { raw += c; });
+process.stdin.on('end', flush);
+setTimeout(flush, 700).unref();
+// 硬守卫：任何路径都不许赖着不走（正常一次渲染是毫秒级）。
+setTimeout(function () { process.exit(0); }, 5000).unref();
 `;
 }

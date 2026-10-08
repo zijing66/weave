@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +33,30 @@ function runScript(script: string, stdin: unknown): string {
   rmSync(dir, { recursive: true, force: true });
   return r.stdout;
 }
+
+describe('statusline — stdin 不关闭时仍须自行退出（孤儿回归）', () => {
+  // 旧实现用同步 readFileSync(0) 读 stdin：宿主不关闭 stdin 时事件循环被堵死，
+  // 守卫 timer 也救不回来，进程永久滞留（本机实测 3.5h 攒了 77 个孤儿、跨 3 个仓库）。
+  it('stdin 一直开着也不滞留', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'weave-sl-hang-'));
+    const file = join(dir, 'statusline.cjs');
+    writeFileSync(file, generateStatuslineScript(DEFAULT_STATUSLINE_CONFIG));
+    const child = spawn(process.execPath, [file], { stdio: ['pipe', 'ignore', 'ignore'] });
+    // 故意不写、不关 stdin
+    const code = await new Promise<number | null>((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve(null);
+      }, 8000);
+      child.on('exit', (c) => {
+        clearTimeout(timer);
+        resolve(c);
+      });
+    });
+    rmSync(dir, { recursive: true, force: true });
+    expect(code).toBe(0);
+  }, 15_000);
+});
 
 describe('statusline — generator', () => {
   it('emits a shebanged node script embedding the config', () => {
