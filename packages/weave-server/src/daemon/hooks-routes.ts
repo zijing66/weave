@@ -10,6 +10,7 @@ import {
 import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
+import { purgeSession } from '../hooks/session-purge.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener } from './opener.js';
@@ -312,6 +313,25 @@ export async function handleHooksRoutes(
     } catch (err) {
       sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
     }
+    return true;
+  }
+
+  // ---- 删会话（手动）：会话行 + 该会话的采集事件 + 指令池派发一并清 ----
+  if (sessionMatch && req.method === 'DELETE') {
+    if (!deps.hookSessions || !deps.hookEvents) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(sessionMatch[1]!);
+    if (!deps.hookSessions.getBySessionId(sessionId)) {
+      sendJson(res, 404, { error: 'Session not found' });
+      return true;
+    }
+    const purged = purgeSession(
+      { sessions: deps.hookSessions, events: deps.hookEvents, dispatches: deps.hookDispatches },
+      sessionId,
+    );
+    sendJson(res, 200, { ok: true, sessionId, ...purged });
     return true;
   }
 

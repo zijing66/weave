@@ -410,6 +410,38 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect((await post('/sessions/nope', { title: 'x' }, 'PATCH')).status).toBe(404);
     expect((await post('/sessions/sess-rename', { title: '' }, 'PATCH')).status).toBe(400);
   });
+
+  it('DELETE /sessions/:id 清会话行 + 事件 + 派发；重复删 404', async () => {
+    const hookPost = (sessionId: string, eventType: string) =>
+      fetch(`http://127.0.0.1:${port}/hooks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+        body: JSON.stringify({ source: 'claude', eventType, sessionId, payload: '{}' }),
+      });
+    // 两个可注入事件 → 走同步落库路径，计数确定
+    await hookPost('sess-del', 'SessionStart');
+    await hookPost('sess-del', 'UserPromptSubmit');
+
+    const before = (await (await get('/sessions')).json()) as {
+      sessions: Array<{ sessionId: string; eventCount?: number }>;
+    };
+    expect(before.sessions.find((s) => s.sessionId === 'sess-del')?.eventCount).toBe(2);
+
+    const del = (method = 'DELETE') =>
+      fetch(`http://127.0.0.1:${port}/sessions/sess-del`, { method, headers: auth });
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { ok: boolean; events: number }).toMatchObject({
+      ok: true,
+      events: 2,
+    });
+
+    const after = (await (await get('/sessions')).json()) as {
+      sessions: Array<{ sessionId: string }>;
+    };
+    expect(after.sessions.some((s) => s.sessionId === 'sess-del')).toBe(false);
+    expect((await del()).status).toBe(404);
+  });
 });
 
 describe('daemon server /hooks/plugins API', () => {

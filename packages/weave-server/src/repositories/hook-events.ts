@@ -86,6 +86,13 @@ export class HookEventRepository {
    * 返回序与原 ORDER BY created_at ASC 一致，调用方零适配。
    * `beforeId` 游标翻页：只取比游标更早的事件（组头「加载更早」向前翻 prompt）。
    */
+  /** 删会话时连带清事件（append-only 表只有「删会话」与「保留期」两条删除路径）。 */
+  deleteBySession(sessionId: string): number {
+    return Number(
+      this.db.prepare('DELETE FROM hook_events WHERE session_id = ?').run(sessionId).changes,
+    );
+  }
+
   listBySession(sessionId: string, limit = 300, beforeId?: number): HookEventRow[] {
     const rows =
       beforeId == null

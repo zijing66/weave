@@ -7,6 +7,7 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weave/harness';
+import { SessionSweeper } from '../hooks/session-sweeper.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -119,6 +120,9 @@ export function startDaemon(): void {
     plugins: pluginManager,
   });
   syncScheduler.start();
+  // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
+  // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
+  new SessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches }).start();
   const staticDir = resolveStaticDir();
 
   const server = createWeaveServer({

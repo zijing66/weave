@@ -107,6 +107,13 @@ export class HookDispatchRepository {
   }
 
   /** 同一 rule × session 在窗口内的最近一条 auto 记录（防递归去重用）。 */
+  /** 删会话时连带清指令池派发——否则留下指向已消失会话的孤行。 */
+  deleteBySession(sessionId: string): number {
+    return Number(
+      this.db.prepare('DELETE FROM hook_dispatches WHERE session_id = ?').run(sessionId).changes,
+    );
+  }
+
   findRecentAuto(ruleId: string, sessionId: string, sinceIso: string): HookDispatchRow | undefined {
     const row = this.db
       .prepare(
