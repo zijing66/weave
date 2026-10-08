@@ -4,6 +4,8 @@ import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
+import { HarnessIcon } from '@/components/tasks/HarnessIcon';
+import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
   Circle,
   FolderOpen,
@@ -36,6 +38,8 @@ interface ProjectListProps {
   onToggleAutoSync?: (p: ProjectRow) => void;
   /** Row quick action: run one sync for the row's project. */
   onSyncNow?: (p: ProjectRow) => void;
+  /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
+  sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
 }
 
 /** One open context-menu instance: screen position + target project. */
@@ -58,6 +62,7 @@ export function ProjectList({
   updatesOf,
   onToggleAutoSync,
   onSyncNow,
+  sessionStatsOf,
 }: ProjectListProps) {
   const t = useT();
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
@@ -126,6 +131,7 @@ export function ProjectList({
         {projects.map((p) => {
           const autoSync = autoSyncOf?.(p.id);
           const pending = updatesOf?.(p.id);
+          const stats = sessionStatsOf?.(p.id) ?? [];
           return (
             <li
               key={p.id}
@@ -162,7 +168,8 @@ export function ProjectList({
                     {p.path}
                   </span>
                 </span>
-                <span className="ml-auto flex shrink-0">
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 mt-1.5">
+                  <SessionBadges counts={stats} />
                   <HealthBadge projectId={p.id} />
                 </span>
               </button>
@@ -294,6 +301,41 @@ function QuickButton({
   );
 }
 
+/**
+ * 项目行会话徽标（跑马灯）：按 harness 分桶——运行中 = 该 harness 图标动效 + 数量
+ * （橙），打开 = 同形静态图标 + 数量（暗）。同一 harness 两种状态同时存在则两枚并排
+ * （一静一动），不同 harness 各自一枚。计数与状态由全局状态总线统一推导。
+ */
+function SessionBadges({ counts }: { counts: HarnessSessionCounts[] }) {
+  const t = useT();
+  return (
+    <>
+      {counts.map((c) => (
+        <span key={c.harness ?? 'unknown'} className="flex shrink-0 items-center gap-1">
+          {c.running > 0 && (
+            <span
+              className="flex items-center gap-0.5"
+              title={t('project.sessionsRunning', { n: c.running })}
+            >
+              <HarnessIcon harness={c.harness} running />
+              <span className="text-[10px] font-medium text-orange-300">{c.running}</span>
+            </span>
+          )}
+          {c.open > 0 && (
+            <span
+              className="flex items-center gap-0.5"
+              title={t('project.sessionsOpen', { n: c.open })}
+            >
+              <HarnessIcon harness={c.harness} />
+              <span className="text-[10px] font-medium text-neutral-400">{c.open}</span>
+            </span>
+          )}
+        </span>
+      ))}
+    </>
+  );
+}
+
 /** check id → web 词典 key（core 只回结构，文案由词典渲染）。 */
 const HEALTH_KEYS: Record<string, MessageKey> = {
   'instruction-link-not-materialised': 'health.check.instructionLinkNotMaterialised',
@@ -330,9 +372,7 @@ function HealthBadge({ projectId }: { projectId: number }) {
   if (fails === null) return null;
 
   if (fails.length === 0) {
-    return (
-      <span title={t('health.okTip')} className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-    );
+    return <span title={t('health.okTip')} className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />;
   }
 
   const tip = [
@@ -344,7 +384,7 @@ function HealthBadge({ projectId }: { projectId: number }) {
   ].join('\n');
 
   return (
-    <span title={tip} className="mt-1 shrink-0">
+    <span title={tip} className="shrink-0">
       <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
     </span>
   );

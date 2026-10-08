@@ -272,6 +272,8 @@ export interface SessionRow {
   harness?: 'claude' | 'codex' | null;
   /** 回合开合服务端基线：最后 UPS 晚于最后 Stop/SessionEnd（listWithCounts 填充）。 */
   turnOpen?: boolean;
+  /** 最新一条 hook 事件类型（listWithCounts 填充）——状态总线判「关闭」用。 */
+  lastEventType?: string | null;
 }
 
 /** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */

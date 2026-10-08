@@ -1,15 +1,16 @@
 /**
- * 会话状态机（纯函数，可单测）。
- * 优先级：SSE overlay（帧已到、refetch 未回的即时覆盖）→ running（派发执行中
- * 或后台子 agent 进行中）→ failed → completed（最新事件 SessionEnd，无条件）
- * → active → idle。
- * active 两档：turnOpen 且静默 < STALE_TURN_MS（无视 30s 窗口——长工具/长思考
- * 不丢状态）；或 30s 窗口内有事件。turnOpen 但静默超 STALE_TURN_MS = 异常退出
- * 兜底 → idle（不永久卡死）。
- * 5 态：active = 呼吸点（刚有事件），running = spinner（派发/子 agent 执行中）。
+ * 会话状态机（纯函数，可单测）。四态：运行中 / 失败 / 打开 / 关闭。
+ *
+ * 优先级：SSE overlay（帧已到、refetch 未回的即时覆盖）→ 运行中（派发执行中 /
+ * 后台子 agent 进行中 / 回合开着且有近期活动）→ 失败（最新派发 failed/timeout）
+ * → 关闭（最新事件 SessionEnd）→ 打开。
+ *
+ * 「打开」= 会话仍在（未收到 SessionEnd）且当前不在干活——等输入或已静默；
+ * 无 SessionEnd 的旧会话一律「打开」（不按静默时长兜底），「关闭」只由
+ * SessionEnd 判定（语义严格，不做时间猜测）。
  */
 
-export type SessionStatus = 'running' | 'active' | 'failed' | 'completed' | 'idle';
+export type SessionStatus = 'running' | 'failed' | 'open' | 'closed';
 
 export interface StatusInput {
   /** sessions.last_seen_at（ingest touch，可信）。 */
@@ -26,16 +27,15 @@ export interface StatusInput {
   latestDispatchFailed?: boolean;
   /** SSE 帧即时覆盖（dispatch.started/finished 已到，refetch 未回）。 */
   overlay?: SessionStatus;
-  /** 当前 turn 是否开着：从尾部扫到 UserPromptSubmit=true / Stop=false（未
-   *  知=undefined，不改判）。Stop 后 30s 窗口内有事件也只是「打开」等输入，
-   *  不是进行中。 */
+  /** 当前 turn 是否开着（服务端基线）：最后 UPS 晚于最后 Stop/SessionEnd。
+   *  未知（undefined）= 旧 daemon 或该会话无 UPS 事件，不改判。 */
   turnOpen?: boolean;
   /** 注入时间（默认 Date.now()，测试可注入）。 */
   now?: number;
 }
 
 const ACTIVE_WINDOW_MS = 30_000;
-/** turn 开着但静默超此时长 = 异常退出兜底（回 idle，不永久卡死）。 */
+/** 回合开着但静默超此时长 = 长工具/长思考兜底窗口；超窗不再算运行中（回打开）。 */
 const STALE_TURN_MS = 5 * 60_000;
 /** 子 agent 条目超此时长无该 agent 的事件 = 失联兜底（崩溃不永久卡 running）。 */
 export const STALE_SUBAGENT_MS = 10 * 60_000;
@@ -45,48 +45,91 @@ export function deriveSessionStatus(input: StatusInput): SessionStatus {
   if (input.hasRunningDispatch) return 'running';
   if (input.hasRunningSubagent) return 'running';
   if (input.latestDispatchFailed) return 'failed';
-  if (input.latestEventType === 'SessionEnd') return 'completed';
+  if (input.latestEventType === 'SessionEnd') return 'closed';
 
   const now = input.now ?? Date.now();
   const lastEvent = input.latestEventAt ? Date.parse(input.latestEventAt) : NaN;
   const lastSeen = Date.parse(input.lastSeenAt);
-  const freshest = Math.max(Number.isNaN(lastEvent) ? 0 : lastEvent, Number.isNaN(lastSeen) ? 0 : lastSeen);
+  const freshest = Math.max(
+    Number.isNaN(lastEvent) ? 0 : lastEvent,
+    Number.isNaN(lastSeen) ? 0 : lastSeen,
+  );
+  const quietMs = freshest > 0 ? now - freshest : Number.POSITIVE_INFINITY;
 
-  // turn 开着且未静默超时 → 进行中（长工具/长思考无视 30s 窗口）
-  if (input.turnOpen === true && freshest > 0 && now - freshest < STALE_TURN_MS) {
-    return 'active';
-  }
-  if (freshest > 0 && now - freshest < ACTIVE_WINDOW_MS) {
-    // 30s 窗口内：turn 已 Stop → 会话只是「打开」等输入，不是进行中
-    if (input.turnOpen === false) return 'idle';
-    return 'active';
-  }
-  return 'idle';
+  // 回合开着且未静默超时 → 运行中（无视 30s 窗口——长工具/长思考不丢状态）
+  if (input.turnOpen === true && quietMs < STALE_TURN_MS) return 'running';
+  // 回合已关（收到 Stop）→ 会话只是打开等输入，不是进行中
+  if (input.turnOpen === false) return 'open';
+  // 回合开合未知（旧 daemon / 无 UPS 事件）：30s 窗口内有活动视为运行中
+  if (quietMs < ACTIVE_WINDOW_MS) return 'running';
+  return 'open';
 }
 
 /** 状态 → 展示文案的 dict key。 */
-export const STATUS_KEY: Record<SessionStatus, 'tasks.statusRunning' | 'tasks.statusActive' | 'tasks.statusFailed' | 'tasks.statusCompleted' | 'tasks.statusIdle'> = {
+export const STATUS_KEY: Record<
+  SessionStatus,
+  'tasks.statusRunning' | 'tasks.statusFailed' | 'tasks.statusOpen' | 'tasks.statusClosed'
+> = {
   running: 'tasks.statusRunning',
-  active: 'tasks.statusActive',
   failed: 'tasks.statusFailed',
-  completed: 'tasks.statusCompleted',
-  idle: 'tasks.statusIdle',
+  open: 'tasks.statusOpen',
+  closed: 'tasks.statusClosed',
 };
 
-/** 状态 → 圆点/spinner 颜色（running 的 spinner 由渲染层用 Loader2）。 */
+/** 状态 → 圆点颜色（运行中由渲染层用 HarnessIcon 动效，打开用其静态形）。 */
 export const STATUS_DOT: Record<SessionStatus, string> = {
   running: 'bg-orange-400',
-  active: 'bg-emerald-400 animate-pulse',
   failed: 'bg-red-500',
-  completed: 'bg-emerald-600',
-  idle: 'bg-neutral-600',
+  open: 'bg-neutral-500',
+  closed: 'bg-neutral-700',
 };
 
-/** 状态 → 文字徽标配色（活跃/失败彩色醒目，完成/空闲收敛）。 */
+/** 状态 → 文字徽标配色（运行中/失败彩色醒目，打开/关闭收敛）。 */
 export const STATUS_BADGE: Record<SessionStatus, string> = {
   running: 'bg-orange-900/50 text-orange-300',
-  active: 'bg-emerald-900/50 text-emerald-300',
   failed: 'bg-red-900/50 text-red-300',
-  completed: 'bg-neutral-800 text-neutral-400',
-  idle: 'bg-neutral-900 text-neutral-500',
+  open: 'bg-neutral-800 text-neutral-300',
+  closed: 'bg-neutral-900 text-neutral-500',
 };
+
+export type HarnessKey = 'claude' | 'codex';
+
+/** 只取状态计数所需的最小结构——SessionRow 结构化满足（避免 lib/api 进纯测试）。 */
+export interface SessionLike {
+  sessionId: string;
+  harness?: HarnessKey | null;
+}
+
+export interface HarnessSessionCounts {
+  harness: HarnessKey | null;
+  running: number;
+  open: number;
+}
+
+/**
+ * 项目维度会话计数（项目行徽标用）：按 harness 分桶，只计「运行中」与「打开」
+ * 两类（失败/关闭 不在项目行提示——失败由任务视图承载，关闭无需提醒）。
+ * 桶序 claude → codex → 未知，同项目徽标顺序稳定。
+ */
+export function countSessionsByHarness(
+  sessions: readonly SessionLike[],
+  statuses: ReadonlyMap<string, SessionStatus>,
+): HarnessSessionCounts[] {
+  const buckets = new Map<HarnessKey | null, HarnessSessionCounts>();
+  for (const s of sessions) {
+    const status = statuses.get(s.sessionId) ?? 'open';
+    if (status !== 'running' && status !== 'open') continue;
+    const key: HarnessKey | null =
+      s.harness === 'claude' || s.harness === 'codex' ? s.harness : null;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { harness: key, running: 0, open: 0 };
+      buckets.set(key, bucket);
+    }
+    if (status === 'running') bucket.running += 1;
+    else bucket.open += 1;
+  }
+  const rank = (h: HarnessKey | null): number =>
+    h === 'claude' ? 0 : h === 'codex' ? 1 : 2;
+  return [...buckets.values()].sort((a, b) => rank(a.harness) - rank(b.harness));
+}

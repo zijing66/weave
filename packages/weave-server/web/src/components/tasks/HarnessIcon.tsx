@@ -1,31 +1,41 @@
 import { Asterisk, Hexagon, Loader2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /**
- * 会话行前的 harness 执行动效图标：claude = 星芒匀速旋转（辉光），codex =
- * 六边形脉动缩放旋转——各 harness 一套跑马灯动效（index.css harness-run-*）。
- * harness 未知时回退通用 spinner；非执行态由调用方渲染状态点。
+ * harness 图标：claude = 星芒、codex = 六边形（各 harness 一套形态），harness
+ * 未知回退通用 spinner 形。running = 动效（index.css harness-run-*，即跑马灯）；
+ * 非 running = 同形静态暗色——「有打开的会话」用它，与动效形成开/跑对照。
  */
 export function HarnessIcon({
   harness,
-  running,
+  running = false,
+  className,
 }: {
   harness?: 'claude' | 'codex' | null;
-  running: boolean;
+  running?: boolean;
+  className?: string;
 }) {
-  if (!running) return null;
   if (harness === 'codex') {
     return (
-      <span className="harness-run-codex inline-flex shrink-0">
-        <Hexagon className="h-3.5 w-3.5 text-cyan-400" />
+      <span className={cn('inline-flex shrink-0', running && 'harness-run-codex', className)}>
+        <Hexagon className={cn('h-3.5 w-3.5', running ? 'text-cyan-400' : 'text-cyan-400/45')} />
       </span>
     );
   }
   if (harness === 'claude') {
     return (
-      <span className="harness-run-claude inline-flex shrink-0">
-        <Asterisk className="h-3.5 w-3.5 text-orange-400" />
+      <span className={cn('inline-flex shrink-0', running && 'harness-run-claude', className)}>
+        <Asterisk className={cn('h-3.5 w-3.5', running ? 'text-orange-400' : 'text-orange-400/45')} />
       </span>
     );
   }
-  return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-400" />;
+  return (
+    <Loader2
+      className={cn(
+        'h-3.5 w-3.5 shrink-0',
+        running ? 'animate-spin text-orange-400' : 'text-neutral-500',
+        className,
+      )}
+    />
+  );
 }

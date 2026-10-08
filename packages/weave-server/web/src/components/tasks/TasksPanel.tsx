@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  api,
-  type HookDispatch,
-  type HookEventRow,
-  type HookRule,
-  type SessionRow,
-} from '@/lib/api';
+import { api, type HookDispatch, type HookEventRow, type HookRule } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
@@ -16,32 +10,16 @@ import {
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
-import { deriveSessionStatus, STALE_SUBAGENT_MS, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
+import { useSessionStatus, type HookFrame } from './session-status-store';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
-
-/** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
-interface HookFrame {
-  kind?: string;
-  sessionId?: string | null;
-  eventType?: string;
-  /** 事件源子 agent id（raw.agent_id；SubagentStop 时 = 刚结束的子 agent）。 */
-  agentId?: string;
-  /** 后台子 agent 出生信号（PostToolUse Agent isAsync 的 tool_response.agentId）。 */
-  spawnAgentId?: string;
-  /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
-  backgroundTasks?: Array<{ id: string; status: string }>;
-  ruleId?: string;
-  eventId?: number;
-  dispatchId?: number;
-  status?: string;
-}
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
  * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
  * + 单组合体事件链画布（默认全折叠，点击展开才按需挂载导图）。
- * SSE（App 转发的 weave:hook 帧）驱动：500ms 防抖 refetch + overlay 即时状态。
+ * 会话列表与状态来自全局状态总线（SessionStatusProvider）；本面板只自管事件链
+ * 明细：SSE（App 转发的 weave:hook 帧）驱动选中会话的事件按需刷新。
  */
 export function TasksPanel({
   projectId,
@@ -52,9 +30,8 @@ export function TasksPanel({
   initialSessionId?: string;
 }) {
   const t = useT();
-  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
+  const { sessions: allSessions, dispatches, statuses, refresh: refreshStatus } = useSessionStatus();
   const [rules, setRules] = useState<HookRule[]>([]);
-  const [dispatches, setDispatches] = useState<HookDispatch[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,14 +40,6 @@ export function TasksPanel({
     sessionId: string;
     sessionLabel: string;
   } | null>(null);
-  /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
-  const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
-  /** 后台子 agent 存活账（sessionId → agentId → 最近事件时刻）：spawn/自身事件续期、
-   *  Stop/SubagentStop 的 background_tasks 快照整集对账；读取侧 STALE_SUBAGENT_MS 兜底。
-   *  回合开合不用帧态——以 listWithCounts 的 turnOpen 服务端基线为权威（丢帧/重挂载免疫）。 */
-  const [subagentsBySession, setSubagentsBySession] = useState<Map<string, Map<string, number>>>(
-    new Map(),
-  );
   /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
@@ -79,23 +48,11 @@ export function TasksPanel({
   const [olderExhausted, setOlderExhausted] = useState(false);
   const scrollThrottle = useRef<number | null>(null);
 
-  const refreshSessions = useCallback(async () => {
-    try {
-      const list = await api.listSessions(projectId);
-      setSessions(list);
-      setSelectedId((prev) => prev ?? list[0]?.sessionId ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [projectId]);
-
-  const refreshDispatches = useCallback(async () => {
-    try {
-      setDispatches(await api.listHookDispatches({ limit: 200 }));
-    } catch {
-      // 派发列表失败不阻断面板（状态推导降级为 lastSeenAt）
-    }
-  }, []);
+  /** 本项目会话：总线全量列表按 projectId 过滤（null = 首次加载中，沿用总线状态）。 */
+  const sessions = useMemo(
+    () => (allSessions === null ? null : allSessions.filter((s) => s.projectId === projectId)),
+    [allSessions, projectId],
+  );
 
   const refreshEvents = useCallback(
     async (sessionId: string) => {
@@ -114,10 +71,13 @@ export function TasksPanel({
   useEffect(() => {
     setSelectedId(initialSessionId ?? null);
     setEvents([]);
-    void refreshSessions();
-    void refreshDispatches();
     api.listHooksRules(projectId).then(setRules).catch(() => {});
-  }, [projectId, initialSessionId, refreshSessions, refreshDispatches]);
+  }, [projectId, initialSessionId]);
+
+  // 会话列表就绪后补默认选中（初始选中会话优先；用户点击后 prev 非空，不再覆盖）。
+  useEffect(() => {
+    setSelectedId((prev) => prev ?? sessions?.[0]?.sessionId ?? null);
+  }, [sessions]);
 
   useEffect(() => {
     if (selectedId) void refreshEvents(selectedId);
@@ -130,125 +90,25 @@ export function TasksPanel({
   }, [selectedId]);
 
   // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
+  // 会话状态、会话行计数、派发列表都由全局状态总线按同一批帧维护；本面板只
+  // 按需刷新选中会话的事件链（总线的防抖 refetch 会把派发/会话行一并带上）。
   useEffect(() => {
     let refreshTimer: number | null = null;
-
-    const refetchAll = (): void => {
-      void (async () => {
-        await Promise.allSettled([refreshSessions(), refreshDispatches()]);
-        if (selectedId) await refreshEvents(selectedId).catch(() => {});
-        // API 数据已回，overlay 完成使命（started/finished 的行状态已落库）
-        setOverlay(new Map());
-      })();
-    };
-    const debounceRefetch = (): void => {
+    const onHook = (e: Event): void => {
+      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+      if (!selectedId || f.sessionId !== selectedId) return;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
         refreshTimer = null;
-        refetchAll();
+        void refreshEvents(selectedId);
       }, 500);
     };
-
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
-      switch (f.kind) {
-        case 'event.ingested': {
-          if (f.sessionId) {
-            // 后台子 agent 存活账：background_tasks 快照（Stop/SubagentStop 全带）
-            // 整集对账——集合 = 快照中 running 的 id 减去本帧刚停的 agent（快照滞后
-            // 一拍会把自己列成 running）；无快照的 SubagentStop 按 agent_id 兜底删除
-            // （中间回合 stop 的 id 不在账上，删除为空操作）。spawn 出生、自身工具
-            // 事件续期（顺带补录面板中途打开漏掉的）。
-            const sid = f.sessionId as string;
-            if (f.backgroundTasks) {
-              const stopped = f.agentId;
-              const nextSession = new Map<string, number>();
-              const now = Date.now();
-              for (const task of f.backgroundTasks) {
-                if (task.status === 'running' && task.id !== stopped) {
-                  nextSession.set(task.id, now);
-                }
-              }
-              setSubagentsBySession((prev) => {
-                const next = new Map(prev);
-                if (nextSession.size) next.set(sid, nextSession);
-                else next.delete(sid);
-                return next;
-              });
-            } else if (f.eventType === 'SubagentStop' && f.agentId) {
-              const dead = f.agentId;
-              setSubagentsBySession((prev) => {
-                const forSession = prev.get(sid);
-                if (!forSession?.has(dead)) return prev;
-                const nextSession = new Map(forSession);
-                nextSession.delete(dead);
-                const next = new Map(prev);
-                if (nextSession.size) next.set(sid, nextSession);
-                else next.delete(sid);
-                return next;
-              });
-            } else if (f.spawnAgentId || f.agentId) {
-              const alive = (f.spawnAgentId ?? f.agentId) as string;
-              setSubagentsBySession((prev) => {
-                const next = new Map(prev);
-                const forSession = new Map(next.get(sid) ?? []);
-                forSession.set(alive, Date.now());
-                next.set(sid, forSession);
-                return next;
-              });
-            }
-            // 左栏计数/lastSeen 本地即时 +1（refetch 兜底校准）
-            setSessions((prev) =>
-              prev?.map((s) =>
-                s.sessionId === f.sessionId
-                  ? {
-                      ...s,
-                      eventCount: (s.eventCount ?? 0) + 1,
-                      lastSeenAt: new Date().toISOString(),
-                    }
-                  : s,
-              ) ?? prev,
-            );
-          }
-          break;
-        }
-        case 'session.renamed': {
-          // 生效确认帧：reported title 已落库——立即刷新，行内名字切换、
-          // 「改名待生效」徽标消失（即「实际是否更名」的校验闭环）。
-          void refreshSessions();
-          break;
-        }
-        case 'dispatch.started': {
-          if (f.sessionId) {
-            setOverlay((prev) => new Map(prev).set(f.sessionId as string, 'running'));
-          }
-          break;
-        }
-        case 'dispatch.finished': {
-          if (!f.sessionId) break;
-          setOverlay((prev) => {
-            const next = new Map(prev);
-            if (f.status === 'failed' || f.status === 'timeout') {
-              next.set(f.sessionId as string, 'failed');
-            } else {
-              next.delete(f.sessionId as string); // succeeded → 交还 API 数据
-            }
-            return next;
-          });
-          break;
-        }
-        default:
-          break;
-      }
-      debounceRefetch();
-    };
-
     window.addEventListener('weave:hook', onHook);
     return () => {
       window.removeEventListener('weave:hook', onHook);
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [refreshSessions, refreshDispatches, refreshEvents, selectedId]);
+  }, [refreshEvents, selectedId]);
 
   const dispatchBySession = useMemo(() => {
     const m = new Map<string, HookDispatch[]>();
@@ -260,45 +120,6 @@ export function TasksPanel({
     }
     return m;
   }, [dispatches]);
-
-  const statuses = useMemo(() => {
-    const map = new Map<string, SessionStatus>();
-    for (const s of sessions ?? []) {
-      const mine = dispatchBySession.get(s.sessionId) ?? [];
-      const latest = mine[0]; // 全局列表按 startedAt 倒序，组内首条最新
-      // events 为时间升序，末条最新（仅选中会话已加载）
-      const newestEvent = s.sessionId === selectedId ? events[events.length - 1] : undefined;
-      // 后台子 agent 进行中（读取侧过期：10 分钟无该 agent 事件 = 失联兜底）
-      const alive = subagentsBySession.get(s.sessionId);
-      let hasRunningSubagent = false;
-      if (alive) {
-        const nowMs = Date.now();
-        for (const seenAt of alive.values()) {
-          if (nowMs - seenAt < STALE_SUBAGENT_MS) {
-            hasRunningSubagent = true;
-            break;
-          }
-        }
-      }
-      map.set(
-        s.sessionId,
-        deriveSessionStatus({
-          lastSeenAt: s.lastSeenAt,
-          latestEventAt: newestEvent?.createdAt,
-          latestEventType: newestEvent?.eventType,
-          hasRunningDispatch: mine.some((d) => d.status === 'running'),
-          hasRunningSubagent,
-          latestDispatchFailed:
-            latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
-          overlay: overlay.get(s.sessionId),
-          // 回合开合以服务端基线为权威（帧态丢失/重挂载免疫）；旧 daemon 无此字段时
-          // 回落 undefined → 维持 30s 呼吸窗语义。
-          turnOpen: s.turnOpen,
-        }),
-      );
-    }
-    return map;
-  }, [sessions, dispatchBySession, events, selectedId, overlay, subagentsBySession]);
 
   // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
   // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、
@@ -335,7 +156,7 @@ export function TasksPanel({
         setError(t('tasks.renameVerifyFail'));
         return;
       }
-      await refreshSessions();
+      await refreshStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -367,7 +188,7 @@ export function TasksPanel({
   const runDispatch = async (dispatchId: number, sessionId: string): Promise<void> => {
     try {
       await api.runHookDispatch(dispatchId, sessionId);
-      await refreshDispatches();
+      await refreshStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -459,7 +280,7 @@ export function TasksPanel({
     if (!pendingRun) return;
     try {
       await api.runHookDispatch(pendingRun.dispatchId, pendingRun.sessionId);
-      await refreshDispatches();
+      await refreshStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -467,9 +288,9 @@ export function TasksPanel({
     }
   };
 
-  // 组头状态展示：进行中（执行中/进行中）显示 harness 跑马灯动效图标，
-  // 已结束/空闲/失败不显示——去掉原文字状态 tag（会话状态与组头信息重复）。
-  const activeStatus = statuses.get(selectedId ?? '') ?? 'idle';
+  // 组头状态展示：运行中显示 harness 跑马灯动效图标，打开/关闭/失败不显示
+  // ——去掉原文字状态 tag（会话状态与组头信息重复）。
+  const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
   const selectedHarness = sessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
 
   return (
@@ -483,7 +304,7 @@ export function TasksPanel({
           </span>
           <button
             type="button"
-            onClick={() => void refreshSessions()}
+            onClick={() => void refreshStatus()}
             className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-200"
           >
             {t('tasks.refresh')}
@@ -670,9 +491,7 @@ export function TasksPanel({
                         )}
                       </button>
                     )}
-                    {(isLatestGroup &&
-                      g.open &&
-                      (activeStatus === 'running' || activeStatus === 'active')) && (
+                    {(isLatestGroup && g.open && activeStatus === 'running') && (
                       <span className="shrink-0">
                         <HarnessIcon harness={selectedHarness} running />
                       </span>

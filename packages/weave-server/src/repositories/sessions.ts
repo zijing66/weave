@@ -16,6 +16,9 @@ export interface SessionRow {
   /** 回合开合的服务端基线：最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd
    *  （listWithCounts 查询填充）——前端帧态丢失/重挂载时的权威兜底。 */
   turnOpen?: boolean;
+  /** 最新一条 hook 事件类型（listWithCounts 查询填充）——web 状态总线判「关闭」
+   *  （SessionEnd）不必再为每个会话拉事件。 */
+  lastEventType?: string | null;
 }
 
 /**
@@ -69,6 +72,7 @@ export class SessionRepository {
     const base =
       'SELECT s.*, COUNT(e.id) AS event_count, ' +
       '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, ' +
+      '(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type, ' +
       '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
       '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
@@ -88,11 +92,13 @@ export class SessionRepository {
       const raw = (row as { harness?: unknown }).harness;
       const lastUps = (row as { last_ups?: number | null }).last_ups;
       const lastStop = (row as { last_stop?: number | null }).last_stop;
+      const lastEventType = (row as { last_event_type?: string | null }).last_event_type;
       return {
         ...toSession(row),
         eventCount: Number((row as { event_count: number }).event_count ?? 0),
         harness: raw === 'claude' || raw === 'codex' ? raw : null,
         turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
+        lastEventType: lastEventType ?? null,
       };
     });
   }

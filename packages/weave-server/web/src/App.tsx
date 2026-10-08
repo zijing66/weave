@@ -15,7 +15,6 @@ import {
   type AssetScope,
   type FileAssetCategory,
   type FileAssetTemplate,
-  type SessionRow,
   type HookRule,
   type McpServerConfig,
   type McpServerMap,
@@ -32,6 +31,7 @@ import {
 } from '@/lib/api';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { ProjectList } from '@/components/ProjectList';
+import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type AssetTab } from '@/components/CategoryDetail';
 import { type FileAssetRow } from '@/components/FileAssetTree';
@@ -60,9 +60,9 @@ export default function App() {
   // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
   // when the global 资源管理 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  // 全局模式任务卡计数的跨项目会话（D1 聚合；总览组件自拉自己的那份）。
-  const [globalSessions, setGlobalSessions] = useState<SessionRow[]>([]);
+  // 会话与状态全部来自全局状态总线（Provider 挂在 main.tsx）——App 只读计数，
+  // 不再自拉一份（与项目行徽标/任务视图同源，状态不会各页漂移）。
+  const { sessions: allSessions, projectStats } = useSessionStatus();
   // 全局总览跳进项目任务视图的初始选中会话（离开任务视图即失效）。
   const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
   // All hook rules (global + per project) — drives the Weave card count; the
@@ -225,7 +225,6 @@ export default function App() {
       setSelected(p);
       setGlobalMode(false);
       setAssets([]);
-      setSessions([]);
       setMcpServers({ project: {}, global: {}, codex: {} });
       setUpdates(null);
       setGlobalSkillGroups([]);
@@ -237,7 +236,6 @@ export default function App() {
       setStatuslineSource(null);
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
-      api.listSessions(p.id).then(setSessions).catch(() => {});
       refreshMcp(p);
       refreshUpdates(p);
       refreshGlobalSkills(p);
@@ -269,8 +267,6 @@ export default function App() {
       .listGlobalFileAssets()
       .then(setGlobalAssets)
       .catch((e) => setError(String(e)));
-    // 任务卡计数：跨项目会话（无参 listSessions）
-    api.listSessions().then(setGlobalSessions).catch(() => {});
     refreshGlobalSkills(anchor);
     refreshPluginEnabled(anchor);
     refreshMcp(anchor);
@@ -358,7 +354,7 @@ export default function App() {
         // The global view IS the template — a 跟随全局 badge would be noise.
         statuslineSource: null,
         hooksRules: hookRules.length,
-        sessions: globalSessions.length,
+        sessions: allSessions?.length ?? 0,
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -380,9 +376,9 @@ export default function App() {
       hooksRules: hookRules.filter(
         (r) => r.projectId === null || r.projectId === selected?.id,
       ).length,
-      sessions: sessions.length,
+      sessions: (allSessions ?? []).filter((s) => s.projectId === selected?.id).length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, sessions, globalSessions]);
+  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -393,22 +389,10 @@ export default function App() {
   }, [globalMode, globalAssets, assets, selectedFile]);
 
 
-  // 分类卡会话计数的刷新入口：SSE hook 帧防抖调用（任务视图内部数据
-  // 由 TasksPanel 自拉，这里只维护左栏分类卡的 sessions 镜像）。
-  const refreshSessions = useCallback(() => {
-    if (globalMode) {
-      api.listSessions().then(setGlobalSessions).catch(() => {});
-      return;
-    }
-    if (!selected) return;
-    api.listSessions(selected.id).then(setSessions).catch(() => {});
-  }, [selected, globalMode]);
-
   // SSE: live asset updates. The daemon's watch service detects the files
   // written by install/uninstall/statusline and pushes changes here automatically.
   useEffect(() => {
     const es = new EventSource(api.eventsUrl());
-    let sessionTimer: number | null = null;
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data) as AssetChangeEvent & { type?: string };
@@ -420,14 +404,9 @@ export default function App() {
         }
         // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
         // stream; the Hooks / Tasks panels listen for them on `weave:hook`.
+        // 会话状态/计数由全局状态总线按同一批帧维护（main.tsx 挂的 Provider）。
         if (data.type === 'hook') {
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: data }));
-          // 分类卡会话计数防抖刷新（与 TasksPanel 各自监听互不干扰）
-          if (sessionTimer !== null) window.clearTimeout(sessionTimer);
-          sessionTimer = window.setTimeout(() => {
-            sessionTimer = null;
-            refreshSessions();
-          }, 500);
           return;
         }
         const change = data;
@@ -463,9 +442,8 @@ export default function App() {
     };
     return () => {
       es.close();
-      if (sessionTimer !== null) window.clearTimeout(sessionTimer);
     };
-  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshSessions, refreshProjects]);
+  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshProjects]);
 
   const handleInstallSkill = useCallback(
     async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
@@ -830,6 +808,7 @@ export default function App() {
                 updatesOf={(id) => updatesMap[id]}
                 onToggleAutoSync={(p) => void handleToggleAutoSync(p)}
                 onSyncNow={(p) => void handleSyncAll(p)}
+                sessionStatsOf={(id) => projectStats.get(id)}
               />
             </aside>
             <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />

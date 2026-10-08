@@ -344,6 +344,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
         pendingTitle: string | null;
         eventCount?: number;
         turnOpen?: boolean;
+        lastEventType?: string | null;
       }>;
     };
     const row = list.sessions.find((s) => s.sessionId === 'sess-rename');
@@ -353,6 +354,8 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect(row!.eventCount).toBe(1);
     // 回合开合基线：只有 Stop（无 UPS）→ 回合已关
     expect(row!.turnOpen).toBe(false);
+    // 最新事件类型（web 状态总线判「关闭」用）
+    expect(row!.lastEventType).toBe('Stop');
 
     // 再来一条 UserPromptSubmit → 基线翻为回合开着（最后 UPS 晚于最后 Stop）
     await fetch(`http://127.0.0.1:${port}/hooks`, {
@@ -366,9 +369,11 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       }),
     });
     const list2 = (await (await get('/sessions')).json()) as {
-      sessions: Array<{ sessionId: string; turnOpen?: boolean }>;
+      sessions: Array<{ sessionId: string; turnOpen?: boolean; lastEventType?: string | null }>;
     };
-    expect(list2.sessions.find((s) => s.sessionId === 'sess-rename')!.turnOpen).toBe(true);
+    const row2 = list2.sessions.find((s) => s.sessionId === 'sess-rename')!;
+    expect(row2.turnOpen).toBe(true);
+    expect(row2.lastEventType).toBe('UserPromptSubmit');
 
     const renamed = await post('/sessions/sess-rename', { title: '新标题' }, 'PATCH');
     expect(renamed.status).toBe(200);

@@ -35,6 +35,9 @@ export const appZh = {
   // project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
+  // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
+  'project.sessionsRunning': '{n} 个会话运行中',
+  'project.sessionsOpen': '{n} 个会话已打开（等输入）',
 
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
@@ -102,6 +105,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInTerminal': 'Open in terminal',
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
+  // Project-row session badges (marquee): animated icon = running, static = open
+  'project.sessionsRunning': '{n} session(s) running',
+  'project.sessionsOpen': '{n} session(s) open (awaiting input)',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',

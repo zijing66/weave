@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type HookDispatch, type SessionRow } from '@/lib/api';
+import { useMemo, useState } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
-import { deriveSessionStatus, STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
-import { HarnessIcon } from './HarnessIcon';
+import { STATUS_BADGE, STATUS_KEY } from './session-status';
+import { SessionStatusIcon } from './SessionStatusIcon';
+import { useSessionStatus } from './session-status-store';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Globe, Loader2 } from 'lucide-react';
 
@@ -25,10 +25,9 @@ const RANGE_LABEL: Record<RangeKey, MessageKey> = {
 };
 
 /**
- * 全局任务总览（D9 只读跨项目聚合，不新造 API）：listSessions() 无参 +
- * listHookDispatches 全局窗口，按 projectId 分组展示；行点击 → App 跳进
- * 对应项目任务视图（initialSessionId）。状态推导复用 deriveSessionStatus，
- * dispatch 按会话归并（等价于按该项目的 dispatch 过滤）。
+ * 全局任务总览（D9 只读跨项目聚合，不新造 API）：会话与状态全部取全局状态
+ * 总线（SessionStatusProvider，与项目行徽标/任务视图同一份推导），按 projectId
+ * 分组展示；行点击 → App 跳进对应项目任务视图（initialSessionId）。
  * 查询条件：项目下拉 + 时间段（当天/1·3·7·30 天内/大于 30 天/自定义起止），
  * 全部客户端过滤（列表本就是最新窗口，不新造查询 API）。
  */
@@ -40,29 +39,11 @@ export function GlobalTasksOverview({
   onOpenSession: (projectId: number, sessionId: string) => void;
 }) {
   const t = useT();
-  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
-  const [dispatches, setDispatches] = useState<HookDispatch[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { sessions, statuses, error, refresh } = useSessionStatus();
   const [projectFilter, setProjectFilter] = useState<number | 'all'>('all');
   const [range, setRange] = useState<RangeKey>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-
-  const load = useCallback(() => {
-    api
-      .listSessions()
-      .then(setSessions)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    api
-      .listHookDispatches({ limit: 200 })
-      .then(setDispatches)
-      .catch(() => {}); // 派发列表失败不阻断总览（状态降级为 lastSeenAt）
-  }, []);
-
-  useEffect(() => {
-    setSessions(null);
-    load();
-  }, [load]);
 
   /** 项目 + 时间段过滤（lastSeenAt 落入区间才保留）。 */
   const filtered = useMemo(() => {
@@ -103,36 +84,11 @@ export function GlobalTasksOverview({
     });
   }, [sessions, projectFilter, range, fromDate, toDate]);
 
-  const statuses = useMemo(() => {
-    const bySession = new Map<string, HookDispatch[]>();
-    for (const d of dispatches) {
-      if (!d.sessionId) continue;
-      const list = bySession.get(d.sessionId) ?? [];
-      list.push(d);
-      bySession.set(d.sessionId, list);
-    }
-    const map = new Map<string, SessionStatus>();
-    for (const s of filtered) {
-      const mine = bySession.get(s.sessionId) ?? [];
-      const latest = mine[0]; // 全局列表按 startedAt 倒序，首条最新
-      map.set(
-        s.sessionId,
-        deriveSessionStatus({
-          lastSeenAt: s.lastSeenAt,
-          hasRunningDispatch: mine.some((d) => d.status === 'running'),
-          latestDispatchFailed:
-            latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
-        }),
-      );
-    }
-    return map;
-  }, [filtered, dispatches]);
-
   // 按 projectId 分组：会话本就按活跃倒序，按首次出现分桶即「同项目相邻 + 组间按最新活跃」。
   const rows = useMemo(() => {
     const nameOf = new Map(projects.map((p) => [p.id, p.name]));
     const order: number[] = [];
-    const buckets = new Map<number, SessionRow[]>();
+    const buckets = new Map<number, NonNullable<typeof sessions>>();
     for (const s of filtered) {
       const key = s.projectId ?? -1;
       if (!buckets.has(key)) {
@@ -166,7 +122,7 @@ export function GlobalTasksOverview({
         </span>
         <button
           type="button"
-          onClick={load}
+          onClick={() => void refresh()}
           className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-200"
         >
           {t('tasks.refresh')}
@@ -248,7 +204,7 @@ export function GlobalTasksOverview({
           </div>
           <ul className="space-y-1">
             {rows.map(({ session: s, projectName }) => {
-              const status = statuses.get(s.sessionId) ?? 'idle';
+              const status = statuses.get(s.sessionId) ?? 'open';
               const clickable = s.projectId != null;
               return (
                 <li key={s.sessionId}>
@@ -291,11 +247,7 @@ export function GlobalTasksOverview({
                       <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
                     )}
                     <span className="flex w-20 shrink-0 items-center gap-1.5">
-                      {status === 'running' || status === 'active' ? (
-                        <HarnessIcon harness={s.harness} running />
-                      ) : (
-                        <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />
-                      )}
+                      <SessionStatusIcon status={status} harness={s.harness} />
                       {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
                       <span className={cn('text-[10px]', STATUS_BADGE[status].split(' ')[1])}>
                         {t(STATUS_KEY[status])}

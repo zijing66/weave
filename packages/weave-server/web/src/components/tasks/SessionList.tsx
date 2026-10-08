@@ -7,12 +7,12 @@ import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Check, Copy, Pencil, SquareTerminal } from 'lucide-react';
-import { STATUS_BADGE, STATUS_DOT, STATUS_KEY, type SessionStatus } from './session-status';
-import { HarnessIcon } from './HarnessIcon';
+import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
+import { SessionStatusIcon } from './SessionStatusIcon';
 
 /**
  * 任务视图左栏：会话列表。行内元素 = 名称（title 回退 sessionId 前 8 位，
- * hover 出完整值可复制）+ 状态图标（running 转 spinner）+ 事件计数 +
+ * hover 出完整值可复制）+ 状态图标（运行中动效 / 打开静态）+ 事件计数 +
  * pendingTitle 徽标 + 行内改名 + 指令拖拽落点。
  */
 export function SessionList({
@@ -63,7 +63,7 @@ export function SessionList({
   return (
     <ul className="space-y-1">
       {sessions.map((s) => {
-        const status = statuses.get(s.sessionId) ?? 'idle';
+        const status = statuses.get(s.sessionId) ?? 'open';
         const selected = s.sessionId === selectedId;
         return (
           <li key={s.sessionId}>
@@ -102,13 +102,9 @@ export function SessionList({
                 droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
               )}
             >
-              {/* 状态图标：执行中/进行中 = harness 自身跑马灯动效（claude 星芒
-                  旋 / codex 六边形脉动），其余 = 状态点 */}
-              {status === 'running' || status === 'active' ? (
-                <HarnessIcon harness={s.harness} running />
-              ) : (
-                <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])} />
-              )}
+              {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
+                  codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
+              <SessionStatusIcon status={status} harness={s.harness} />
 
               {editingId === s.sessionId ? (
                 <input
