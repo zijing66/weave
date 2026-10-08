@@ -20,3 +20,6 @@ dist/
 # claude
 .claude/settings.local.json
 .claude/plans/
+
+# codegraph
+.codegraph/
