@@ -345,10 +345,16 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       // 幂等：未安装直接返回（marketplace 源保留——卸载≠移除市场，可重装）
       const existing = (await readInstalled())[key];
       if (!existing || existing.length === 0) return;
-      const { stdout } = await run(['plugin', 'uninstall', key, '--scope', 'user', '--json']);
-      const outcome = safeJson(stdout);
-      if (outcome?.['outcome'] === 'failed') {
-        throw new Error(truncate(String(outcome['message'] ?? 'plugin uninstall failed')));
+      // 同一键可能同时有 user 与 project 两条记录（装过两次、scope 不同）——必须
+      // 逐个 scope 卸：只卸 user 会留下 project 那条，宿主继续把插件列为"已安装"，
+      // 而面板按新口径判"未装"，两边对不上。
+      const scopes = [...new Set(existing.map((r) => r.scope).filter((s): s is string => !!s))];
+      for (const scope of scopes.length > 0 ? scopes : ['user']) {
+        const { stdout } = await run(['plugin', 'uninstall', key, '--scope', scope, '--json']);
+        const outcome = safeJson(stdout);
+        if (outcome?.['outcome'] === 'failed') {
+          throw new Error(truncate(String(outcome['message'] ?? 'plugin uninstall failed')));
+        }
       }
     },
 

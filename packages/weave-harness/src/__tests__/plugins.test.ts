@@ -131,6 +131,27 @@ describe('globalInstall：外部市场身份（不占 weave 自建市场）', ()
   });
 });
 
+describe('uninstall：多 scope 记录必须逐 scope 卸', () => {
+  it('同一键的 user + project 两条记录 → 两次 uninstall，各自带对 scope', async () => {
+    await writeInstalled({
+      'demo@weave': [
+        { scope: 'user', installPath: '/c/demo', version: '1.0.0' },
+        { scope: 'project', installPath: '/c/demo', version: '1.0.0' },
+      ],
+    });
+    await surface.uninstall('demo');
+    expect(calls).toEqual([
+      ['plugin', 'uninstall', 'demo@weave', '--scope', 'user', '--json'],
+      ['plugin', 'uninstall', 'demo@weave', '--scope', 'project', '--json'],
+    ]);
+  });
+
+  it('未安装 → 幂等不发 CLI', async () => {
+    await surface.uninstall('nope');
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('claudeCommandLine（win32 命令行拼装）', () => {
   it('参数逐个加引号，反斜杠绝对路径原样保留', () => {
     expect(
