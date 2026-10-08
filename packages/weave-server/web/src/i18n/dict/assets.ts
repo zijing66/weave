@@ -59,6 +59,7 @@ export const assetsZh = {
   'mcp.enableOn': '启用',
   'mcp.enableOff': '禁用',
   'mcp.enableTip': '{state} — 点击切换',
+  'mcp.enableFailed': 'MCP 启用状态切换失败：{error}',
 
   // —— CategoryBar ——
   'catbar.files': '资源管理',
@@ -144,6 +145,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'mcp.enableOn': 'Enabled',
   'mcp.enableOff': 'Disabled',
   'mcp.enableTip': '{state} — click to cycle',
+  'mcp.enableFailed': 'MCP enable state toggle failed: {error}',
 
   // —— CategoryBar ——
   'catbar.files': 'Resource Management',

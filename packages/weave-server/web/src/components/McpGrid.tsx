@@ -14,6 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Power, Server, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 export interface McpRow {
   name: string;
@@ -53,10 +56,14 @@ export function McpGrid({
   /** Update info already filtered to this mode's scope. */
   updates?: McpUpdate[];
   empty: string;
-  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
+  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
 }) {
   const t = useT();
   const [enableMap, setEnableMap] = useState<McpEnableMap | null>(null);
+  // 按钮本体自持三态反馈：卸载 loading 转圈 + 成功/失败 toast；cycleEnable 失败
+  // 回滚乐观覆盖并报错（原先 .catch 静默吞掉）。
+  const { show } = useToast();
+  const fb = useActionFeedback();
 
   // Enable overrides live in the project's .claude/settings.json, so only the
   // project view reads them (global / Codex rows have no such semantics).
@@ -80,10 +87,23 @@ export function McpGrid({
   const stateOf = (name: string): McpEnableState => enableMap?.overrides[name] ?? 'default';
 
   const cycleEnable = (name: string): void => {
+    const key = `mcp-enable:${name}`;
+    if (fb.stateOf(key) === 'loading') return;
     const prev = enableMap;
     const next = NEXT_STATE[stateOf(name)];
     setEnableMap(prev ? { ...prev, overrides: { ...prev.overrides, [name]: next } } : prev);
-    api.putMcpEnable(projectId, name, next).catch(() => setEnableMap(prev));
+    void fb.run(
+      key,
+      async () => {
+        try {
+          await api.putMcpEnable(projectId, name, next);
+        } catch (e) {
+          setEnableMap(prev); // 失败回滚乐观覆盖，再抛给 fb.run 报 toast
+          throw e;
+        }
+      },
+      { fail: (e) => t('mcp.enableFailed', { error: errorText(e) }) },
+    );
   };
 
   if (servers.length === 0) {
@@ -114,6 +134,10 @@ export function McpGrid({
           const outdated = isOutdated(s.name, s.agent);
           const toggleable = s.scope === 'project' && (s.agent ?? 'claude') !== 'codex';
           const state = stateOf(s.name);
+          const enableKey = `mcp-enable:${s.name}`;
+          const enableState = fb.stateOf(enableKey);
+          const uninstallKey = `mcp-uninstall:${s.agent ?? 'claude'}:${s.scope}:${s.name}`;
+          const uninstallState = fb.stateOf(uninstallKey);
           return (
             <Card key={`${s.agent ?? 'claude'}-${s.scope}-${s.name}`}>
               <CardHeader className="items-center gap-2">
@@ -137,25 +161,46 @@ export function McpGrid({
                 <div className="ml-auto flex items-center gap-1.5 shrink-0">
                   {toggleable && (
                     <button
+                      type="button"
+                      disabled={enableState === 'loading'}
                       onClick={() => cycleEnable(s.name)}
                       title={t('mcp.enableTip', { state: t(STATE_LABEL[state]) })}
                       className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                         state === 'enabled'
                           ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
                           : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
                       )}
                     >
-                      <Power className="h-3 w-3" />
+                      <FeedbackIcon
+                        state={enableState}
+                        className="h-3 w-3"
+                        icon={<Power className="h-3 w-3" />}
+                      />
                       {t(STATE_LABEL[state])}
                     </button>
                   )}
                   <button
-                    onClick={() => onUninstallMcp(s.name, s.scope, s.agent)}
-                    className="text-neutral-500 hover:text-red-400"
+                    type="button"
+                    disabled={uninstallState === 'loading'}
+                    onClick={() =>
+                      void fb.run(
+                        uninstallKey,
+                        async () => {
+                          await onUninstallMcp(s.name, s.scope, s.agent);
+                          show('success', t('mcp.uninstalled', { name: s.name }));
+                        },
+                        { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
+                      )
+                    }
+                    className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
                     title={t('mcp.remove', { name: s.name })}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <FeedbackIcon
+                      state={uninstallState}
+                      className="h-3.5 w-3.5"
+                      icon={<Trash2 className="h-3.5 w-3.5" />}
+                    />
                   </button>
                 </div>
               </CardHeader>

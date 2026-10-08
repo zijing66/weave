@@ -23,6 +23,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 export interface SkillRow {
   name: string;
@@ -82,10 +85,16 @@ function SkillCard({
   /** Read-only context (project view showing global skills): show a 全局 tag,
    * never an uninstall button. */
   readOnly?: boolean;
-  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
 }) {
   const t = useT();
+  // 卸载按钮本体自持三态反馈（同 FileAssetTree 行节点）：loading 转圈 + 防重入，
+  // 成功/失败一律 toast——handler（App）失败必抛，文案在按钮这里给。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const uninstallKey = `skill-uninstall:${row.scope}:${row.agent ?? 'claude'}:${row.name}`;
+  const uninstallState = fb.stateOf(uninstallKey);
   return (
     <Card>
       <CardHeader className="items-center gap-2">
@@ -128,11 +137,26 @@ function SkillCard({
         </button>
         {canUninstall && !readOnly && (
           <button
-            onClick={() => onUninstallSkill(row.name, row.scope, row.agent)}
-            className="text-neutral-500 hover:text-red-400 shrink-0"
+            type="button"
+            disabled={uninstallState === 'loading'}
+            onClick={() =>
+              void fb.run(
+                uninstallKey,
+                async () => {
+                  await onUninstallSkill(row.name, row.scope, row.agent);
+                  show('success', t('skillGrid.uninstalled', { name: row.name }));
+                },
+                { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+              )
+            }
+            className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
             title={t('skillGrid.uninstall', { name: row.name })}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <FeedbackIcon
+              state={uninstallState}
+              className="h-3.5 w-3.5"
+              icon={<Trash2 className="h-3.5 w-3.5" />}
+            />
           </button>
         )}
       </CardHeader>
@@ -160,9 +184,13 @@ export function SkillGrid({
   /** Update info already filtered to this mode's scope. */
   updates?: SkillUpdate[];
   empty: string;
-  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
-  onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
+  onTogglePlugin?: (
+    runtime: PluginRuntime,
+    key: string,
+    enabled: boolean,
+  ) => void | Promise<void>;
 }) {
   const t = useT();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
@@ -272,13 +300,20 @@ function GroupedSkills({
 }: {
   groups: SkillGroup[];
   updates?: SkillUpdate[];
-  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
-  onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void;
+  onTogglePlugin?: (
+    runtime: PluginRuntime,
+    key: string,
+    enabled: boolean,
+  ) => void | Promise<void>;
   /** Read-only context (project view): no enable toggle, cards tagged 全局. */
   readOnly?: boolean;
 }) {
   const t = useT();
+  // 插件开关的按钮级反馈：成功由徽标就地翻转呈现（同 HooksPluginsSection.toggle），
+  // 只兜失败 toast + loading 期防重入。
+  const fb = useActionFeedback();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
   // One collapse flag per group, keyed by source+pluginKey (stable across re-renders).
   const groupKeys = useMemo(
@@ -347,6 +382,8 @@ function GroupedSkills({
           // is either all of its skills or none. Shown anyway so every group
           // reads the same as the section heading above.
           const groupStats = countEffectiveSkills([g]);
+          const toggleKey = `plugin-toggle:${runtime}:${g.pluginKey ?? '-'}`;
+          const toggleState = fb.stateOf(toggleKey);
           return (
             <div
               key={key}
@@ -381,19 +418,31 @@ function GroupedSkills({
                  * Hidden in read-only (project) mode: global config is not edited from a project view. */}
                 {isPlugin && runtime && onTogglePlugin && !readOnly && g.enabled !== undefined && (
                   <button
+                    type="button"
+                    disabled={toggleState === 'loading'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onTogglePlugin(runtime, g.pluginKey!, !g.enabled);
+                      void fb.run(
+                        toggleKey,
+                        async () => {
+                          await onTogglePlugin(runtime, g.pluginKey!, !g.enabled);
+                        },
+                        { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
+                      );
                     }}
                     title={g.enabled ? t('skillGrid.pluginOn') : t('skillGrid.pluginOff')}
                     className={cn(
-                      'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                      'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                       g.enabled
                         ? 'bg-emerald-900/40 text-emerald-300'
                         : 'bg-neutral-800 text-neutral-500',
                     )}
                   >
-                    <Power className="h-3 w-3" />
+                    <FeedbackIcon
+                      state={toggleState}
+                      className="h-3 w-3"
+                      icon={<Power className="h-3 w-3" />}
+                    />
                     {g.enabled ? t('skillGrid.on') : t('skillGrid.off')}
                   </button>
                 )}

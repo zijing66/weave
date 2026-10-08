@@ -458,12 +458,13 @@ export default function App() {
     };
   }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshProjects]);
 
+  // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /
+  // 兜底 catch——handler 内先报错又正常 resolve 的话，调用方会在失败时也弹成功。
   const handleInstallSkill = useCallback(
     async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       const res = await api.install(target.id, {
         category: 'skill',
         name: skill.name,
@@ -471,15 +472,12 @@ export default function App() {
         scope,
         agent,
       });
-      if (!res.ok) {
-        setError(t('errors.installFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshGlobalSkills(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
   /** Install a single-file asset (command / agent / workflow / rule / output-style). */
@@ -488,21 +486,17 @@ export default function App() {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       const res = await api.install(target.id, {
         category: file.category,
         name: file.name,
         sourceFile: file.filePath,
         scope,
       });
-      if (!res.ok) {
-        setError(t('errors.installFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, globalMode, refreshAssets, refreshUpdates],
+    [selected, projects, globalMode, refreshAssets, refreshUpdates],
   );
 
   const handleInstallMcp = useCallback(
@@ -515,7 +509,6 @@ export default function App() {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       // Codex MCP servers only live in ~/.codex/config.toml (user-level).
       const effectiveScope = agent === 'codex' ? 'global' : scope;
       const res = await api.install(target.id, {
@@ -525,65 +518,53 @@ export default function App() {
         scope: effectiveScope,
         agent,
       });
-      if (!res.ok) {
-        setError(t('errors.mcpInstallFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshMcp(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
+    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   const handleUninstallSkill = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       const res = await api.uninstall(target.id, {
         category: 'skill',
         name,
         scope,
         agent: agent ?? 'claude',
       });
-      if (!res.ok) {
-        setError(t('errors.uninstallFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshGlobalSkills(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
   const handleUninstallFileAsset = useCallback(
     async (row: FileAssetRow, scope: AssetScope = 'project') => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       const res = await api.uninstall(target.id, {
         category: row.category as FileAssetCategory,
         name: row.name,
         scope,
         ...(row.agent ? { agent: row.agent } : {}),
       });
-      if (!res.ok) {
-        setError(t('errors.uninstallFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, refreshAssets, refreshUpdates],
+    [selected, projects, refreshAssets, refreshUpdates],
   );
 
   const handleUninstallMcp = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       // Codex servers are user-level — uninstall always targets the TOML file.
       const res = await api.uninstall(target.id, {
         category: 'mcp',
@@ -591,15 +572,12 @@ export default function App() {
         scope: agent === 'codex' ? 'global' : scope,
         ...(agent ? { agent } : {}),
       });
-      if (!res.ok) {
-        setError(t('errors.mcpUninstallFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
       refreshMcp(target);
       refreshUpdates(target);
     },
-    [t, selected, projects, refreshAssets, refreshMcp, refreshUpdates],
+    [selected, projects, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。失败抛出，由
@@ -634,23 +612,19 @@ export default function App() {
     ) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       const res = await api.updateAsset(target.id, {
         category,
         name,
         scope,
         ...(category === 'skill' || category === 'mcp' ? { agent: agent ?? 'claude' } : {}),
       });
-      if (!res.ok) {
-        setError(t('errors.updateFailed', { error: `${res.status} ${await res.text()}` }));
-        return;
-      }
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshUpdates(target);
       refreshAssets(target);
       if (category === 'mcp') refreshMcp(target);
       if (category === 'skill') refreshGlobalSkills(target);
     },
-    [t, selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
+    [selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
   );
 
   const handleToggleAutoSync = useCallback(
@@ -716,22 +690,70 @@ export default function App() {
 
   /** Toggle a plugin's enable state in the host config (Claude settings.json or
    * Codex config.toml). Optimistically updates the local map, then persists;
-   * reloads groups on success so enable badges stay in sync. */
+   * reloads groups on success so enable badges stay in sync. On failure refetches
+   * to revert the optimistic flip and throws (caller reports). */
   const handleTogglePlugin = useCallback(
     async (runtime: PluginRuntime, key: string, enabled: boolean) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setError(null);
       setPluginEnabled((prev) => ({ ...prev, [runtime]: { ...prev[runtime], [key]: enabled } }));
       const res = await api.putPluginEnabled(target.id, { runtime, key, enabled });
       if (!res.ok) {
-        setError(t('errors.pluginToggleFailed', { error: `${res.status} ${await res.text()}` }));
         refreshPluginEnabled(target);
-        return;
+        throw new Error(`${res.status} ${await res.text()}`);
       }
       refreshGlobalSkills(target);
     },
-    [t, selected, projects, refreshPluginEnabled, refreshGlobalSkills],
+    [selected, projects, refreshPluginEnabled, refreshGlobalSkills],
+  );
+
+  // 直连 fire-and-forget 调用点（拖拽落定 / 库面板安装·更新 / 抽屉卸载）没有
+  // 按钮本体可挂三态反馈，就地兜一条错误 toast：失败必有一条提示、也不产生
+  // unhandled rejection；成功维持无 toast（由 SSE 刷新与 ✓ 标呈现）。
+  const installSkillSafely = useCallback(
+    (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => {
+      void handleInstallSkill(skill, scope, agent).catch((e) =>
+        show('error', t('errors.installFailed', { error: errorText(e) })),
+      );
+    },
+    [handleInstallSkill, show, t],
+  );
+  const installFileAssetSafely = useCallback(
+    (file: FileAssetTemplate, scope: AssetScope) => {
+      void handleInstallFileAsset(file, scope).catch((e) =>
+        show('error', t('errors.installFailed', { error: errorText(e) })),
+      );
+    },
+    [handleInstallFileAsset, show, t],
+  );
+  const installMcpSafely = useCallback(
+    (name: string, config: McpServerConfig, scope: AssetScope, agent?: AssetAgent) => {
+      void handleInstallMcp(name, config, scope, agent).catch((e) =>
+        show('error', t('errors.mcpInstallFailed', { error: errorText(e) })),
+      );
+    },
+    [handleInstallMcp, show, t],
+  );
+  const updateAssetSafely = useCallback(
+    (
+      category: 'skill' | 'mcp' | FileAssetCategory,
+      name: string,
+      scope: AssetScope,
+      agent?: AssetAgent,
+    ) => {
+      void handleUpdateAsset(category, name, scope, agent).catch((e) =>
+        show('error', t('errors.updateFailed', { error: errorText(e) })),
+      );
+    },
+    [handleUpdateAsset, show, t],
+  );
+  const uninstallSkillSafely = useCallback(
+    (name: string, scope: AssetScope, agent?: AssetAgent) => {
+      void handleUninstallSkill(name, scope, agent).catch((e) =>
+        show('error', t('errors.uninstallFailed', { error: errorText(e) })),
+      );
+    },
+    [handleUninstallSkill, show, t],
   );
 
   const selectCategory = useCallback((c: MainCategory) => {
@@ -772,18 +794,18 @@ export default function App() {
       return;
     }
     if (data.installKind === 'skill' && data.sourceDir && data.name) {
-      void handleInstallSkill(
+      installSkillSafely(
         { name: data.name, dirPath: data.sourceDir } as SkillAsset,
         scope,
         data.targetAgent,
       );
     } else if (data.installKind === 'file' && data.sourceFile && data.name) {
-      void handleInstallFileAsset(
+      installFileAssetSafely(
         { name: data.name, filePath: data.sourceFile, category: data.category } as FileAssetTemplate,
         scope,
       );
     } else if (data.installKind === 'mcp' && data.mcpConfig && data.name) {
-      void handleInstallMcp(data.name, data.mcpConfig, scope, data.targetAgent);
+      installMcpSafely(data.name, data.mcpConfig, scope, data.targetAgent);
     }
   }
 
@@ -1022,7 +1044,7 @@ export default function App() {
                   outdated={drawerUpdate?.outdated ?? false}
                   custom={drawerUpdate?.custom ?? false}
                   onUninstall={() => {
-                    void handleUninstallSkill(drawerSkill.name, drawerSkill.scope, drawerSkill.agent);
+                    uninstallSkillSafely(drawerSkill.name, drawerSkill.scope, drawerSkill.agent);
                     setDrawerSkill(null);
                   }}
                   onClose={() => setDrawerSkill(null)}
@@ -1042,11 +1064,11 @@ export default function App() {
               {activeProject ? (
                 <LibraryPanel
                   installedSkillNames={installedSkillNames}
-                  onInstallSkill={handleInstallSkill}
-                  onInstallFileAsset={handleInstallFileAsset}
-                  onInstallMcp={handleInstallMcp}
+                  onInstallSkill={installSkillSafely}
+                  onInstallFileAsset={installFileAssetSafely}
+                  onInstallMcp={installMcpSafely}
                   updates={updates}
-                  onUpdateAsset={handleUpdateAsset}
+                  onUpdateAsset={updateAssetSafely}
                   category={mainCategory}
                   assetTab={assetTab}
                   scope={mode}
