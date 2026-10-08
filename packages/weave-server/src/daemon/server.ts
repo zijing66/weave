@@ -1,13 +1,13 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weave/core';
-import { checkHarness } from '@weave/core';
+import { checkHarness, INJECTABLE_EVENTS } from '@weave/core';
 import type { EventSource, HarnessRegistry } from '@weave/harness';
 import { frameFacts } from '@weave/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { ProjectRepository } from '../repositories/projects.js';
+import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
 import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
@@ -149,6 +149,68 @@ export interface WeaveServerDeps {
   toolkit?: ToolkitService;
 }
 
+/** 该事件能否把注入内容带回响应体（白名单按 harness 分表，与 dispatcher 同源）。 */
+function injectableEvent(source: Harness, eventType: string): boolean {
+  const allowed = INJECTABLE_EVENTS[source] as readonly string[] | undefined;
+  return allowed !== undefined && allowed.includes(eventType);
+}
+
+/**
+ * 采集事件落库 + 会话 touch + SSE 广播 + 规则分发。响应路径（可注入事件，需要
+ * 把 additionalContext/sessionTitle 带回去）与后台路径（不可注入事件）共用。
+ */
+async function ingestEvent(
+  deps: WeaveServerDeps,
+  project: ProjectRow,
+  input: HookEventInput,
+): Promise<{ id: number; outcome: { additionalContext?: string; sessionTitle?: string } }> {
+  const id = deps.hookEvents!.insert(input);
+  // 会话 upsert：刷新 last_seen_at（rename 双向在 dispatcher/批3 中消费 session_title）。
+  if (deps.hookSessions && input.sessionId) {
+    deps.hookSessions.touch(input.sessionId, project.id);
+  }
+  // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次；
+  // 帧字段的 Claude 协议知识在 harness 侧（frameFacts），路由只透传。
+  let payload: NormalizedHookPayload | null = null;
+  try {
+    payload = JSON.parse(input.payload) as NormalizedHookPayload;
+  } catch {
+    payload = null;
+  }
+  // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
+  deps.hookBus?.emit({
+    kind: 'event.ingested',
+    eventId: id,
+    projectId: project.id,
+    sessionId: input.sessionId ?? null,
+    eventType: input.eventType,
+    ...frameFacts(payload),
+    at: new Date().toISOString(),
+  });
+  // D3 分发：命中 inject 时把 additionalContext 放进返回体，由 hook-handler.cjs
+  // 输出给会话。失败降级为无动作。
+  let outcome: { additionalContext?: string; sessionTitle?: string } = {};
+  if (deps.hookDispatcher) {
+    outcome = await deps.hookDispatcher.onIngest({
+      eventId: id,
+      project,
+      sessionId: input.sessionId ?? null,
+      payload:
+        payload ?? {
+          eventType: input.eventType,
+          toolName: null,
+          toolInput: null,
+          toolResponse: null,
+          cwd: null,
+          transcriptPath: null,
+          raw: null,
+        },
+      source: input.source,
+    });
+  }
+  return { id, outcome };
+}
+
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
 export function createWeaveServer(deps: WeaveServerDeps): Server {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
@@ -224,50 +286,20 @@ async function handleRequest(
     // EventSource.normalize 返回 unknown（harness 不依赖 server 类型）；
     // 落库行结构由 ClaudeEventSource 保证，同源断言后 insert。
     const input = adapter.normalize(report, project.id) as HookEventInput;
-    const id = deps.hookEvents.insert(input);
-    // 会话 upsert：刷新 last_seen_at（rename 双向在 dispatcher/批3 中消费 session_title）。
-    if (deps.hookSessions && input.sessionId) {
-      deps.hookSessions.touch(input.sessionId, project.id);
-    }
-    // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次；
-    // 帧字段的 Claude 协议知识在 harness 侧（frameFacts），路由只透传。
-    let payload: NormalizedHookPayload | null = null;
-    try {
-      payload = JSON.parse(input.payload) as NormalizedHookPayload;
-    } catch {
-      payload = null;
-    }
-    // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
-    deps.hookBus?.emit({
-      kind: 'event.ingested',
-      eventId: id,
-      projectId: project.id,
-      sessionId: input.sessionId ?? null,
-      eventType: input.eventType,
-      ...frameFacts(payload),
-      at: new Date().toISOString(),
-    });
-    // D3 分发：在响应路径上同步匹配规则——命中 inject 时把 additionalContext
-    // 放进响应体，由 hook-handler.cjs 输出给会话。失败降级为无动作（201 不变）。
-    let outcome: { additionalContext?: string; sessionTitle?: string } = {};
-    if (deps.hookDispatcher) {
-      outcome = await deps.hookDispatcher.onIngest({
-        eventId: id,
-        project,
-        sessionId: input.sessionId ?? null,
-        payload:
-          payload ?? {
-            eventType: input.eventType,
-            toolName: null,
-            toolInput: null,
-            toolResponse: null,
-            cwd: null,
-            transcriptPath: null,
-            raw: null,
-          },
+    // 不可注入事件（PreToolUse/Notification 等）：响应体里带不走 additionalContext，
+    // 落库/touch/SSE/分发与这次 hook 的返回无关 → 先 ack，后台做完，别把写路径
+    // 压在 Claude Code 的同步等待上（hook 是同步模型，响应越短越安全）。
+    if (!injectableEvent(input.source, input.eventType)) {
+      void ingestEvent(deps, project, input).catch(() => {});
+      sendJson(res, 202, {
+        accepted: true,
+        projectId: project.id,
         source: input.source,
+        eventType: input.eventType,
       });
+      return;
     }
+    const { id, outcome } = await ingestEvent(deps, project, input);
     sendJson(res, 201, {
       id,
       projectId: project.id,

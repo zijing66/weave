@@ -43,6 +43,13 @@ export interface IngestOutcome {
 
 const DEDUPE_WINDOW_MS = 60_000;
 const MAX_CONCURRENT_WEBHOOKS = 4;
+/** 插件执行并发闸（与 webhook 同形）：超出排队，避免慢处理器无界堆积。 */
+const MAX_CONCURRENT_PLUGINS = 4;
+/**
+ * 插件注入阶段总预算：可注入事件必须同步等待（注入靠响应体），但多规则串行
+ * 不得把响应时间叠加到 CC 的 hook 窗口之上（原先每条规则各自 timeoutMs 默认 10s）。
+ */
+const PLUGIN_INJECT_BUDGET_MS = 3_000;
 
 /**
  * 事件分发器：ingest 后在响应路径上同步匹配（纯内存索引）并按 handler 分发。
@@ -51,6 +58,9 @@ const MAX_CONCURRENT_WEBHOOKS = 4;
  * - manual：入池 status=pending（等 dashboard 复制/拖拽执行）
  * - inject：入池 status=injected + 经响应体返回 additionalContext 注入当前会话
  * - webhook：入池 status=running 后异步出站（不阻塞响应），信号量限并发
+ * - plugin：可注入事件在响应路径上同步执行（注入靠响应体）但整段共享预算；
+ *   不可注入事件（PreToolUse/Notification 等）additionalContext 反正进不了响应，
+ *   与 webhook 同款 fire-and-forget——prompt 照常入池，只是晚一步落库
  *
  * 一切异常在内部吞掉并降级为「无动作」——分发失败永不影响 ingest（201 语义不变）。
  */
@@ -59,6 +69,8 @@ export class HookDispatcher {
   private readonly recentPool = new Map<string, number>();
   private activeWebhooks = 0;
   private readonly pendingWebhooks: Array<() => void> = [];
+  private activePlugins = 0;
+  private readonly pendingPlugins: Array<() => void> = [];
 
   constructor(
     private readonly deps: {
@@ -128,6 +140,7 @@ export class HookDispatcher {
 
       const injected: string[] = [];
       const now = Date.now();
+      const pluginDeadline = now + PLUGIN_INJECT_BUDGET_MS;
 
       for (const rule of rules) {
         this.deps.bus.emit({
@@ -198,7 +211,16 @@ export class HookDispatcher {
 
           if (this.dedupe(rule, ctx, now)) continue;
 
-          const result = await this.runPluginHandler(rule, ctx, host, impl);
+          // 不可注入：响应体里带不走任何东西 → 不占响应路径（同 webhook）。
+          if (!this.injectable(ctx)) {
+            void this.runPluginDetached(rule, ctx, host, impl);
+            continue;
+          }
+
+          // 可注入：注入必须同步，但受整段预算约束，超预算即放弃本条注入。
+          const budgetMs = pluginDeadline - Date.now();
+          if (budgetMs <= 0) continue;
+          const result = await this.runPluginHandler(rule, ctx, host, impl, budgetMs);
           if (!result) continue;
           if (result.prompt) {
             this.createDispatch(rule, ctx, {
@@ -207,13 +229,7 @@ export class HookDispatcher {
               mode: 'auto',
             });
           }
-          if (
-            result.additionalContext &&
-            ctx.payload.eventType &&
-            (INJECTABLE_EVENTS[ctx.source] as readonly string[]).includes(ctx.payload.eventType)
-          ) {
-            injected.push(result.additionalContext);
-          }
+          if (result.additionalContext) injected.push(result.additionalContext);
         }
       }
 
@@ -303,30 +319,47 @@ export class HookDispatcher {
       });
   }
 
-  /** 执行插件处理器：timeoutMs 竞速超时，任何异常/超时返回 undefined（不注入不入池）。 */
+  /** 该事件能否把插件的 additionalContext 交给会话（白名单按 harness 分表）。 */
+  private injectable(ctx: IngestContext): boolean {
+    const event = ctx.payload.eventType;
+    return event !== null && (INJECTABLE_EVENTS[ctx.source] as readonly string[]).includes(event);
+  }
+
+  /**
+   * 执行插件处理器：timeoutMs 竞速超时（`budgetMs` = 本次可用预算，取两者更小者），
+   * 任何异常/超时返回 undefined（不注入不入池）。并发闸的排队时间计入同一次竞速，
+   * 排到后照常执行，超时被弃的那次由自己 finally 释放槽位（不会漏槽）。
+   */
   private async runPluginHandler(
     rule: HookRule,
     ctx: IngestContext,
     host: PluginHost,
     impl: PluginHandler,
+    budgetMs?: number,
   ): Promise<PluginHandlerResult | undefined> {
     if (rule.handler.type !== 'plugin') return undefined;
     const { pluginId } = rule.handler;
     const logger = createPluginLogger(pluginId);
+    const timeoutMs = budgetMs === undefined ? rule.timeoutMs : Math.min(rule.timeoutMs, budgetMs);
     let timer: NodeJS.Timeout | undefined;
     try {
-      const execution = Promise.resolve(
-        impl.execute({
-          event: ctx.payload,
-          rule,
-          config: host.getConfig(pluginId),
-          logger,
-        }),
-      );
+      const execution = (async () => {
+        await this.acquirePluginSlot();
+        try {
+          return await impl.execute({
+            event: ctx.payload,
+            rule,
+            config: host.getConfig(pluginId),
+            logger,
+          });
+        } finally {
+          this.releasePluginSlot();
+        }
+      })();
       const result = await Promise.race([
         execution,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('plugin handler timeout')), rule.timeoutMs);
+          timer = setTimeout(() => reject(new Error('plugin handler timeout')), timeoutMs);
         }),
       ]);
       if (result && typeof result === 'object') return result as PluginHandlerResult;
@@ -335,6 +368,26 @@ export class HookDispatcher {
       return undefined; // 插件失败永不影响 ingest（与 catch-all 语义一致）
     } finally {
       if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** 不可注入事件的插件执行：fire-and-forget，prompt 照常入池（晚一步落库）。 */
+  private async runPluginDetached(
+    rule: HookRule,
+    ctx: IngestContext,
+    host: PluginHost,
+    impl: PluginHandler,
+  ): Promise<void> {
+    try {
+      const result = await this.runPluginHandler(rule, ctx, host, impl);
+      if (!result?.prompt) return;
+      this.createDispatch(rule, ctx, {
+        prompt: result.prompt + `\n${DISPATCH_MARKER}`,
+        status: 'pending',
+        mode: 'auto',
+      });
+    } catch {
+      // fire-and-forget：失败不冒泡（对齐「分发失败永不影响 ingest」）
     }
   }
 
@@ -407,6 +460,26 @@ export class HookDispatcher {
   private releaseWebhookSlot(): void {
     this.activeWebhooks--;
     const next = this.pendingWebhooks.shift();
+    if (next) next();
+  }
+
+  /** 插件执行并发闸（默认 4）：超出则排队等待。 */
+  private acquirePluginSlot(): Promise<void> {
+    if (this.activePlugins < MAX_CONCURRENT_PLUGINS) {
+      this.activePlugins++;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.pendingPlugins.push(() => {
+        this.activePlugins++;
+        resolve();
+      });
+    });
+  }
+
+  private releasePluginSlot(): void {
+    this.activePlugins--;
+    const next = this.pendingPlugins.shift();
     if (next) next();
   }
 

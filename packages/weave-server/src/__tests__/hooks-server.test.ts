@@ -88,6 +88,32 @@ describe('daemon server /hooks endpoint', () => {
     expect(rows[0].sessionId).toBe('s1');
   });
 
+  it('不可注入事件（PreToolUse）先 ack 202，落库转到后台完成', async () => {
+    const before = hookEvents.listByProject(projectId).length;
+    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({
+        source: 'claude',
+        eventType: 'PreToolUse',
+        sessionId: 's-pre',
+        cwd: '/proj',
+        payload: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+      }),
+    });
+    // 响应不再等写路径：202 + 无注入内容
+    expect(res.status).toBe(202);
+    expect((await res.json()) as { accepted: boolean }).toMatchObject({ accepted: true });
+
+    let rows = hookEvents.listByProject(projectId);
+    const deadline = Date.now() + 2000;
+    while (rows.length === before && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+      rows = hookEvents.listByProject(projectId);
+    }
+    expect(rows.some((r) => r.eventType === 'PreToolUse')).toBe(true);
+  });
+
   it('rejects the daemon token (a project token is required)', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
       method: 'POST',

@@ -131,7 +131,11 @@ export const HookRuleSchema = z.object({
   source: HookRuleSourceSchema,
   filter: HookRuleFilterSchema.default({}),
   handler: HandlerConfigSchema,
-  timeoutMs: z.number().int().positive().default(10_000),
+  /**
+   * 单次执行上限。默认 5s：hook 是 Claude Code 的同步等待模型，规则预算必须
+   * 明显小于宿主的 hook 窗口（否则一个慢处理器就会把会话卡到超时丢输出）。
+   */
+  timeoutMs: z.number().int().positive().default(5_000),
   /** 是否落 hook_dispatches（log 默认 false）。 */
   record: z.boolean().default(true),
   /** 来源标记；插件/预设规则由加载器 upsert，用户规则经 dashboard/CLI 创建。 */
