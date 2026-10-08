@@ -5,6 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import { Package, RotateCw } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 const SCOPE_STYLES: Record<HookPlugin['scope'], string> = {
   builtin: 'bg-amber-900/40 text-amber-300',
@@ -30,8 +33,11 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
   const [plugins, setPlugins] = useState<HookPlugin[] | null>(null);
   const [globalPlugins, setGlobalPlugins] = useState<HookPlugin[] | null>(null);
   const [installSrc, setInstallSrc] = useState('');
-  const [installing, setInstalling] = useState(false);
-  const [installMsg, setInstallMsg] = useState<string | null>(null);
+  // 统一反馈：动作状态走 useActionFeedback，消息（含失败）走 toast——原先安装结果
+  // 只在面板里一行小字，插件开关/卸载失败是**静默吞掉**的。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const installing = fb.stateOf('plugin-install') === 'loading';
 
   const refresh = useCallback(() => {
     Promise.all([
@@ -58,43 +64,49 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
     return () => window.removeEventListener('weave:hook', onHook);
   }, [refresh]);
 
-  const toggle = async (p: HookPlugin, enabled: boolean): Promise<void> => {
-    try {
-      await api.toggleHookPlugin(p.id, enabled, projectId);
-      refresh();
-      notifyRulesChanged(); // 插件级联启停其规则
-    } catch {
-      // 网络失败保持原状，下次帧/手动刷新校准
-    }
+  const toggle = (p: HookPlugin, enabled: boolean): void => {
+    void fb.run(
+      `toggle:${p.id}`,
+      async () => {
+        await api.toggleHookPlugin(p.id, enabled, projectId);
+        refresh();
+        notifyRulesChanged(); // 插件级联启停其规则
+      },
+      { fail: (e) => t('hooks.plugins.toggleFail', { error: errorText(e) }) },
+    );
   };
 
   const install = async (): Promise<void> => {
     const src = installSrc.trim();
     if (!src || installing) return;
-    setInstalling(true);
-    setInstallMsg(null);
-    try {
-      const result = await api.installHookPlugin(src);
-      setInstallMsg(t('hooks.plugins.installOk', { id: result.installed.map((p) => p.id).join(', ') }));
-      setInstallSrc('');
-      refresh();
-      notifyRulesChanged(); // 新装插件的规则进画布
-    } catch (e) {
-      setInstallMsg(t('hooks.plugins.installFail', { error: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setInstalling(false);
-    }
+    await fb.run(
+      'plugin-install',
+      async () => {
+        const result = await api.installHookPlugin(src);
+        setInstallSrc('');
+        refresh();
+        notifyRulesChanged(); // 新装插件的规则进画布
+        show(
+          'success',
+          t('hooks.plugins.installOk', { id: result.installed.map((p) => p.id).join(', ') }),
+        );
+      },
+      { fail: (e) => t('hooks.plugins.installFail', { error: errorText(e) }) },
+    );
   };
 
   const uninstall = async (p: HookPlugin): Promise<void> => {
     if (!window.confirm(t('hooks.plugins.uninstallConfirm', { id: p.id }))) return;
-    try {
-      await api.uninstallHookPlugin(p.id);
-      refresh();
-      notifyRulesChanged(); // 卸载插件的规则出画布
-    } catch {
-      // 失败保持原状
-    }
+    await fb.run(
+      `uninstall:${p.id}`,
+      async () => {
+        await api.uninstallHookPlugin(p.id);
+        refresh();
+        notifyRulesChanged(); // 卸载插件的规则出画布
+        show('success', t('hooks.plugins.uninstallOk', { id: p.id }));
+      },
+      { fail: (e) => t('hooks.plugins.uninstallFail', { error: errorText(e) }) },
+    );
   };
 
   if (plugins === null) return null;
@@ -150,9 +162,13 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
                   type="button"
                   onClick={() => void uninstall(p)}
                   title={t('hooks.plugins.uninstallTip')}
-                  className="rounded px-1 text-[11px] text-neutral-600 hover:text-red-400"
+                  className="rounded px-1 text-[11px] text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
                 >
-                  ✕
+                  <FeedbackIcon
+                    state={fb.stateOf(`uninstall:${p.id}`)}
+                    className="h-3 w-3"
+                    icon={<span className="text-[11px]">✕</span>}
+                  />
                 </button>
               )}
               <Switch
@@ -191,7 +207,6 @@ export function HooksPluginsSection({ projectId }: { projectId?: number }) {
               {installing ? t('hooks.plugins.installing') : t('hooks.plugins.install')}
             </button>
           </div>
-          {installMsg && <p className="text-[11px] text-neutral-500">{installMsg}</p>}
         </>
       )}
       <p className="flex items-center gap-1 text-[10px] text-neutral-600">

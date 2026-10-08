@@ -138,6 +138,9 @@ export const hooksZh = {
   'hooks.plugins.installFail': '安装失败：{error}',
   'hooks.plugins.uninstallTip': '卸载插件（删除目录）',
   'hooks.plugins.uninstallConfirm': '确定卸载插件 {id}？其规则将被级联移除。',
+  'hooks.plugins.toggleFail': '插件开关失败：{error}',
+  'hooks.plugins.uninstallOk': '已卸载：{id}',
+  'hooks.plugins.uninstallFail': '卸载失败：{error}',
 };
 
 export const hooksEn: Record<keyof typeof hooksZh, string> = {
@@ -280,4 +283,7 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.plugins.installFail': 'Install failed: {error}',
   'hooks.plugins.uninstallTip': 'Uninstall plugin (remove directory)',
   'hooks.plugins.uninstallConfirm': 'Uninstall plugin {id}? Its rules will be cascade-removed.',
+  'hooks.plugins.toggleFail': 'Failed to toggle plugin: {error}',
+  'hooks.plugins.uninstallOk': 'Uninstalled: {id}',
+  'hooks.plugins.uninstallFail': 'Uninstall failed: {error}',
 };

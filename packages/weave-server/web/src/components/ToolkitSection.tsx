@@ -7,6 +7,9 @@ import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { FolderOpen, Package, Trash2, TriangleAlert, Wrench } from 'lucide-react';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 /** 导出给 LibraryPanel 插件包区复用（同一 kind 徽标语言）。 */
 export const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
@@ -50,11 +53,13 @@ export function ToolkitSection({
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
   const [legacyCopies, setLegacyCopies] = useState<string[]>([]);
-  const [msg, setMsg] = useState<string | null>(null);
-  /** 行级防重入：toggle 与卸载共用（值 = 忙碌中的 pack key）。 */
-  const [busy, setBusy] = useState<string | null>(null);
+  // 统一反馈：动作状态走 useActionFeedback（每行一个 key，toggle 与卸载共用一个 =
+  // 行级防重入），消息一律走 toast——原先面板底部一行小字，滚走就看不见。
+  const { show } = useToast();
+  const fb = useActionFeedback();
 
   const rowKey = (p: ToolkitPack) => `${p.provenance}:${p.sourceRoot}:${p.id}`;
+  const rowBusy = (key: string) => fb.stateOf(key) === 'loading';
 
   const refresh = useCallback(() => {
     api
@@ -66,58 +71,54 @@ export function ToolkitSection({
       })
       .catch((e) => {
         setPacks((prev) => prev ?? []);
-        setMsg(t('toolkit.loadFailed', { error: e instanceof Error ? e.message : String(e) }));
+        show('error', t('toolkit.loadFailed', { error: errorText(e) }));
       });
-  }, [projectId, t]);
+  }, [projectId, t, show]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const toggle = async (pack: ToolkitPack, enabled: boolean): Promise<void> => {
-    if (busy !== null) return;
     const key = rowKey(pack);
-    setBusy(key);
-    setMsg(null);
-    try {
-      const result = await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
-      if (result.warnings.length > 0) setMsg(result.warnings.join('；'));
-      refresh();
-    } catch (e) {
-      setMsg(t('toolkit.toggleFailed', { error: e instanceof Error ? e.message : String(e) }));
-      refresh();
-    } finally {
-      setBusy(null);
-    }
+    if (rowBusy(key)) return;
+    await fb.run(
+      key,
+      async () => {
+        const result = await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
+        if (result.warnings.length > 0) show('info', result.warnings.join('；'));
+        refresh();
+      },
+      { fail: (e) => t('toolkit.toggleFailed', { error: errorText(e) }) },
+    );
   };
 
   /** 卸载：与 harness 对齐（CC/mod = claude plugin uninstall；表面包清扫文件）。 */
   const uninstall = async (pack: ToolkitPack): Promise<void> => {
-    if (busy !== null) return;
     const key = rowKey(pack);
-    setBusy(key);
-    setMsg(null);
-    try {
-      const result = await api.uninstallToolkit(projectId, pack.id, pack.sourceRoot);
-      if (result.warnings.length > 0) setMsg(result.warnings.join('；'));
-      refresh();
-    } catch (e) {
-      setMsg(t('toolkit.toggleFailed', { error: e instanceof Error ? e.message : String(e) }));
-      refresh();
-    } finally {
-      setBusy(null);
-    }
+    if (rowBusy(key)) return;
+    await fb.run(
+      key,
+      async () => {
+        const result = await api.uninstallToolkit(projectId, pack.id, pack.sourceRoot);
+        if (result.warnings.length > 0) show('info', result.warnings.join('；'));
+        refresh();
+        show('success', t('toolkit.uninstalled', { name: pack.name }));
+      },
+      { fail: (e) => t('toolkit.uninstallFailed', { error: errorText(e) }) },
+    );
   };
 
   const cleanupLegacy = async (): Promise<void> => {
-    setMsg(null);
-    try {
-      await api.cleanupToolkitLegacyCopies(projectId);
-      refresh();
-    } catch (e) {
-      setMsg(t('toolkit.toggleFailed', { error: e instanceof Error ? e.message : String(e) }));
-      refresh();
-    }
+    await fb.run(
+      'legacy-cleanup',
+      async () => {
+        await api.cleanupToolkitLegacyCopies(projectId);
+        refresh();
+        show('success', t('toolkit.legacyCleaned'));
+      },
+      { fail: (e) => t('toolkit.toggleFailed', { error: errorText(e) }) },
+    );
   };
 
   if (packs === null) {
@@ -126,7 +127,7 @@ export function ToolkitSection({
 
   // 只分渲染组，不动数据：pack 列表仍单次拉取，toggle/清理逻辑共享同一份。
   const renderPack = (p: ToolkitPack) => {
-    const isBusy = busy === rowKey(p);
+    const isBusy = rowBusy(rowKey(p));
     return (
       <div
         key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
@@ -168,9 +169,13 @@ export function ToolkitSection({
             title={t('toolkit.uninstallTip')}
             disabled={isBusy}
             onClick={() => void uninstall(p)}
-            className="rounded p-1 text-neutral-500 hover:bg-red-950/40 hover:text-red-300 disabled:opacity-40"
+            className="rounded p-1 text-neutral-500 hover:bg-red-950/40 hover:text-red-300 disabled:opacity-40 [&_svg]:pointer-events-none"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <FeedbackIcon
+              state={fb.stateOf(rowKey(p))}
+              className="h-3.5 w-3.5"
+              icon={<Trash2 className="h-3.5 w-3.5" />}
+            />
           </button>
           <Switch
             checked={p.enabled}
@@ -241,7 +246,6 @@ export function ToolkitSection({
         </div>
       )}
 
-      {msg && <p className="text-[11px] text-amber-400/90">{msg}</p>}
 
       {/* 外置目录：list 展示 + CLI 文案指引（编辑交互从简） */}
       <div className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5">
