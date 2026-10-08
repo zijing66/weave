@@ -837,7 +837,7 @@ export default function App() {
                     {!globalMode && updates && updates.available > 0 && (
                       <button
                         onClick={() => void handleSyncAll()}
-                        title={t('app.syncAllTooltip', { n: updates.available })}
+                        title={`${t('app.syncAllTooltip', { n: updates.available })}\n\n${t('app.scopeCoverageTooltip')}`}
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                       >
                         {t('app.syncAll')}
@@ -856,11 +856,7 @@ export default function App() {
                         <button
                           onClick={() => void handleToggleAutoSync()}
                           aria-pressed={autoSyncOn}
-                          title={
-                            autoSyncOn
-                              ? t('app.autoSyncOnTooltip')
-                              : t('app.autoSyncOffTooltip')
-                          }
+                          title={`${autoSyncOn ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                           className={cn(
                             'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
                             autoSyncOn

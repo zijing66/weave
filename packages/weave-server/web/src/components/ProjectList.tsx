@@ -178,7 +178,7 @@ export function ProjectList({
                   按钮的兄弟节点，stopPropagation 在 QuickButton 内双保险。 */}
               <div className="flex items-center gap-0.5 px-2 pb-1 pl-6 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
                 <QuickButton
-                  title={autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}
+                  title={`${autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                   pressed={autoSync}
                   onClick={() => onToggleAutoSync?.(p)}
                 >
@@ -190,7 +190,7 @@ export function ProjectList({
                 </QuickButton>
                 <span className="relative">
                   <QuickButton
-                    title={pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}
+                    title={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}
                     onClick={() => onSyncNow?.(p)}
                   >
                     <RefreshCw

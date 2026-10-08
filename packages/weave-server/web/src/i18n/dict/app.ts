@@ -10,10 +10,10 @@ export const appZh = {
   'app.globalSubtitle': '机器级 harness 默认模板 · 作用于所有项目',
   'app.updateCountOne': '1 个更新',
   'app.updateCount': '{n} 个更新',
-  'app.syncAllTooltip': '立即应用全部 {n} 个过期资产（等同于让自动同步跑一轮）',
+  'app.syncAllTooltip': '立即同步全部可同步项（{n}）：更新过期资产 + 装回被删除的已安装资产',
   'app.syncAll': '全部同步',
   'app.scopeCoverageTooltip':
-    '自动同步（Sync all 相同）覆盖：Skills、MCP，以及 commands / agents / workflows / rules / output-styles 这些单文件资产。本地改过（custom）的条目会跳过，不会被覆盖。',
+    '同步范围 = 库资产：Skills、MCP、单文件资产（commands / agents / workflows / rules / output-styles）。① 有新版的更新；② 被删除的已安装资产会装回；③ 本地改过（custom）的跳过。不含 statusline（状态栏面板自己管保存/覆盖）与 init 产物（helpers / hooks / CLAUDE.md，需 weave init）。',
   'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理',
   'app.autoSyncOnTooltip': '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动',
   'app.autoSyncOffTooltip':
@@ -81,10 +81,11 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.globalSubtitle': 'Machine-level harness default template · applies to all projects',
   'app.updateCountOne': '1 update',
   'app.updateCount': '{n} updates',
-  'app.syncAllTooltip': 'Apply all {n} outdated assets now (equivalent to one auto-sync run)',
+  'app.syncAllTooltip':
+    'Sync everything syncable now ({n}): update outdated assets and reinstall deleted ones',
   'app.syncAll': 'Sync all',
   'app.scopeCoverageTooltip':
-    'Auto-sync (same as Sync all) covers: Skills, MCP, and single-file assets such as commands / agents / workflows / rules / output-styles. Locally modified (custom) entries are skipped and never overwritten.',
+    'Sync scope = library assets: Skills, MCP, single-file assets (commands / agents / workflows / rules / output-styles). (1) newer versions are applied; (2) installed assets that were deleted are reinstalled; (3) locally modified (custom) entries are skipped. Excludes the statusline (the statusline panel owns save/overwrite) and init artefacts (helpers / hooks / CLAUDE.md — those need `weave init`).',
   'app.scopeCoverageChip': 'Covers Skills · MCP · resources',
   'app.autoSyncOnTooltip':
     'Auto-sync is ON — the daemon applies outdated asset updates about every 60 seconds; click to switch to manual',
