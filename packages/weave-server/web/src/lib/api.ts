@@ -558,6 +558,8 @@ export interface DaemonSettings {
   locale: Locale;
   /** mirror of packages/weave-server/src/daemon/settings.ts — 保持同步。 */
   hooks: { enabled: boolean };
+  /** 开机自启 daemon（默认关）。 */
+  startup?: { launchOnLogin: boolean };
 }
 
 export interface TerminalPresetMeta {

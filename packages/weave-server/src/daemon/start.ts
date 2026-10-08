@@ -22,6 +22,7 @@ import { createWeaveServer } from './server.js';
 import { DAEMON_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
 import { setDaemonSettingsDb } from './settings.js';
+import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
 
 // 同 dev-entry：入口剥离 Claude Code child-session 标记，防污染派生物。
@@ -161,6 +162,8 @@ export function startDaemon(): void {
   server.listen(state.port, DAEMON_HOST, () => {
     // Record the real pid + resolved token now that we are listening.
     writeDaemonState({ ...state, token: daemonToken, pid: process.pid });
+    // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
+    syncLaunchOnLogin();
     // spool 积压回灌：daemon 不在期间 hook 落盘的事件，起服务就补上
     //（客户端 flusher 只在下一 hook 成功后才跑，这里覆盖 server 恢复但
     // 用户空闲的场景）。失败不阻断启动。

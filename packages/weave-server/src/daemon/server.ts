@@ -102,6 +102,7 @@ import {
   type DaemonSettings,
 } from './settings.js';
 import { defaultProjectOpener, type ProjectOpener } from './opener.js';
+import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
@@ -132,6 +133,8 @@ export interface WeaveServerDeps {
   staticDir?: string;
   /** Directory-opening backend for the project context menu; spied in tests. */
   opener?: ProjectOpener;
+  /** 开机自启注册器；默认落系统自启动项（PUT /settings 即时生效），测试注入 spy。 */
+  autoStart?: (enabled: boolean) => void;
   // ---- D3 hooks subsystem (all optional so existing tests can omit them) ----
   /** In-memory rule index (match candidates + CRUD facade). */
   hookRegistry?: HookRuleRegistry;
@@ -443,6 +446,8 @@ async function handleRequest(
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。
       deps.hookEvents?.resetPrune();
+      // 开机自启即刻注册/注销（内部吞错，不阻塞保存响应）。
+      (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
       sendJson(res, 200, saved);
       return;
     }

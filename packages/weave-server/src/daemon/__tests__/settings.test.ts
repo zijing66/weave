@@ -126,6 +126,40 @@ describe('daemon settings persistence (db key-value)', () => {
     });
     expect(bad.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
   });
+
+  it('startup.launchOnLogin round-trips；缺省/非法值回落 false（默认关）', async () => {
+    // 存量库缺 key → 默认关
+    expect((await readDaemonSettings()).startup?.launchOnLogin).toBe(false);
+
+    const on = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      startup: { launchOnLogin: true },
+    });
+    expect(on.startup?.launchOnLogin).toBe(true);
+    expect((await readDaemonSettings()).startup?.launchOnLogin).toBe(true);
+    const rows = db.prepare('SELECT value FROM settings WHERE key = ?').all(
+      'startup.launchOnLogin',
+    ) as { value: string }[];
+    expect(rows[0]?.value).toBe('true');
+
+    const off = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      startup: { launchOnLogin: false },
+    });
+    expect(off.startup?.launchOnLogin).toBe(false);
+
+    const bad = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      startup: { launchOnLogin: 'yes' as never },
+    });
+    expect(bad.startup?.launchOnLogin).toBe(false);
+  });
 });
 
 describe('terminalPresetsFor', () => {

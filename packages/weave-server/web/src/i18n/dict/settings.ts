@@ -9,6 +9,9 @@ export const settingsZh = {
   'settings.pathHint': '会被替换为带引号的项目路径，例如：',
   'settings.hooks': 'Weave 总开关',
   'settings.hooksHint': 'Weave daemon 总开关（规则级开关另控）；关闭后规则命中直接短路。',
+  'settings.launchOnLogin': '开机自启 daemon',
+  'settings.launchOnLoginHint':
+    '登录系统时自动拉起 weave 后台服务（Windows 注册表 Run 项 / macOS LaunchAgent / Linux XDG 自启动），默认关闭。',
   'settings.retentionDays': '事件日志保留天数',
   'settings.retentionDaysHint':
     'hook 事件日志的被动清理阈值：超过该天数的日志在下一次跨天写入时删除（无定时任务）；保存后下一条事件即按新值清理。',
@@ -27,6 +30,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.hooks': 'Weave master switch',
   'settings.hooksHint':
     'Weave daemon master switch (rule-level switches stay independent); when off, rule matching short-circuits.',
+  'settings.launchOnLogin': 'Launch daemon on login',
+  'settings.launchOnLoginHint':
+    'Start the weave daemon automatically at login (Windows Run key / macOS LaunchAgent / Linux XDG autostart). Off by default.',
   'settings.retentionDays': 'Event log retention (days)',
   'settings.retentionDaysHint':
     'Passive cleanup threshold for hook event logs: older logs are deleted on the first write after the next day boundary (no scheduled job); saving takes effect on the next event.',

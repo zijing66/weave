@@ -4,7 +4,7 @@ import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/li
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
-import { Languages, Settings, Terminal, X, Zap, Database } from 'lucide-react';
+import { Languages, Settings, Terminal, X, Zap, Database, Power } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
 /** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events——本地扩展。 */
@@ -20,10 +20,11 @@ interface SettingsModalProps {
 
 /**
  * Daemon settings dialog (top-right gear): UI language, the terminal
- * "open in terminal" launches, and the daemon hooks master switch. Presets
- * offered come from the server, so the dropdown only shows options valid for
- * the daemon's platform. Everything is persisted together on 保存 — one atomic
- * PUT, then the whole UI switches immediately via the i18n context.
+ * "open in terminal" launches, the daemon hooks master switch, the login
+ * autostart toggle, and event retention. Presets offered come from the
+ * server, so the dropdown only shows options valid for the daemon's platform.
+ * Everything is persisted together on 保存 — one atomic PUT, then the whole
+ * UI switches immediately via the i18n context.
  */
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { locale, t, setLocale } = useI18n();
@@ -170,6 +171,25 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </span>
             </div>
             <p className="text-[11px] text-neutral-500">{t('settings.hooksHint')}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Power className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="text-xs font-medium text-neutral-300">
+                {t('settings.launchOnLogin')}
+              </label>
+              <span className="ml-auto">
+                <Switch
+                  checked={settings?.startup?.launchOnLogin ?? false}
+                  onChange={(v) =>
+                    setSettings((s) => (s ? { ...s, startup: { launchOnLogin: v } } : s))
+                  }
+                  title={t('settings.launchOnLogin')}
+                />
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-500">{t('settings.launchOnLoginHint')}</p>
           </div>
 
           <div className="space-y-1.5">

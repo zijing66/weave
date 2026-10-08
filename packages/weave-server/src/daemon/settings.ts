@@ -60,6 +60,8 @@ export interface DaemonSettings {
   hooks: HooksSettings;
   /** 事件日志（hook_events）保留策略——缺省走默认值（读时归一化）。 */
   events?: EventsSettings;
+  /** 开机自启动 daemon（系统级自启动项；缺省关闭——读时归一化）。 */
+  startup?: StartupSettings;
 }
 
 export interface HooksSettings {
@@ -69,6 +71,11 @@ export interface HooksSettings {
 /** hook_events 被动清理保留天数（跨天首条写入时删除更早日志）。 */
 export interface EventsSettings {
   retentionDays: number;
+}
+
+/** daemon 是否随系统登录自启（默认关）。 */
+export interface StartupSettings {
+  launchOnLogin: boolean;
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -85,11 +92,14 @@ export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
   retentionDays: DEFAULT_EVENT_RETENTION_DAYS,
 };
 
+export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
   hooks: DEFAULT_HOOKS_SETTINGS,
   events: DEFAULT_EVENTS_SETTINGS,
+  startup: DEFAULT_STARTUP_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -155,6 +165,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
   const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
   const events = (obj.events ?? {}) as Partial<EventsSettings>;
+  const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -171,6 +182,12 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       enabled: typeof hooks.enabled === 'boolean' ? hooks.enabled : DEFAULT_HOOKS_SETTINGS.enabled,
     },
     events: { retentionDays: retention },
+    startup: {
+      launchOnLogin:
+        typeof startup.launchOnLogin === 'boolean'
+          ? startup.launchOnLogin
+          : DEFAULT_STARTUP_SETTINGS.launchOnLogin,
+    },
   };
 }
 
@@ -185,6 +202,7 @@ const KEYS = {
   locale: 'locale',
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
+  startupLaunchOnLogin: 'startup.launchOnLogin',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -235,6 +253,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.eventRetentionDays)
       ? { events: { retentionDays: Number(map.get(KEYS.eventRetentionDays)) } }
       : {}),
+    ...(map.has(KEYS.startupLaunchOnLogin)
+      ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
+      : {}),
   });
 }
 
@@ -249,6 +270,7 @@ function toEntries(settings: DaemonSettings): [string, string][] {
       KEYS.eventRetentionDays,
       String(settings.events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS),
     ],
+    [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
   ];
 }
 

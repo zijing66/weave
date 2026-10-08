@@ -24,6 +24,11 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     terminalCalls: Array<{ dir: string; terminal: TerminalSettings }>;
     runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
   };
+  // spy：否则 PUT /settings 会真的去注册系统自启动项（默认实现打 reg/launchctl）
+  const autoStartCalls: boolean[] = [];
+  const autoStart = (enabled: boolean): void => {
+    autoStartCalls.push(enabled);
+  };
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
@@ -45,7 +50,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       },
     };
     setDaemonSettingsDb(db);
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
+    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener, autoStart });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -94,7 +99,10 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       locale: 'zh-CN',
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
+      startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
     });
+    // 保存即对账自启动项（spy 记录；缺省 false → 注销）
+    expect(autoStartCalls).toEqual([false]);
     // A follow-up GET reads the same value back through the injected dir.
     const get = await fetch(`http://127.0.0.1:${port}/settings`, {
       headers: { authorization: `Bearer ${TOKEN}` },
@@ -117,9 +125,15 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     const bad = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ terminal: { preset: 'auto', customCommand: '' }, locale: 'fr' }),
+      body: JSON.stringify({
+        terminal: { preset: 'auto', customCommand: '' },
+        locale: 'fr',
+        startup: { launchOnLogin: true },
+      }),
     });
     expect(((await bad.json()) as { locale: string }).locale).toBe('zh-CN');
+    // 自启开关随保存透传给注册器（第一次 PUT 未带 → false）
+    expect(autoStartCalls).toEqual([false, false, true]);
   });
 
   it('POST /projects/:id/open with target=explorer opens the project directory', async () => {
