@@ -113,7 +113,7 @@ function FileTreeNode({
         onClick={() => onSelect(node.file)}
         style={{ paddingLeft: pad }}
         className={cn(
-          'w-full flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-left text-xs font-mono truncate',
+          'w-full flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-left text-xs font-mono truncate [&_svg]:pointer-events-none',
           active
             ? 'bg-neutral-800 text-neutral-100'
             : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50',
@@ -348,9 +348,12 @@ export function SkillDetailDrawer({
         {custom && <Badge variant="other">{t('skillDetail.custom')}</Badge>}
         <div className="ml-auto flex items-center gap-2 shrink-0">
           {!readOnly && (
+            /* 无按钮三态：App 侧 onUninstall 即关抽屉（组件随卸载卸载），且失败
+               toast 已由 App 的 *Safely 包装兜底——此处再发成功 toast 会与真实
+               结果脱节（fire-and-forget），成功由列表行消失呈现。 */
             <button
               onClick={onUninstall}
-              className="text-neutral-500 hover:text-red-400"
+              className="text-neutral-500 hover:text-red-400 [&_svg]:pointer-events-none"
               title={t('skillDetail.uninstallTitle')}
             >
               <Trash2 className="h-4 w-4" />
@@ -369,7 +372,7 @@ export function SkillDetailDrawer({
             <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-white/[0.06]">
               <button
                 onClick={toggleAll}
-                className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
                 title={
                   anyCollapsed
                     ? t('skillDetail.expandAllDirs')

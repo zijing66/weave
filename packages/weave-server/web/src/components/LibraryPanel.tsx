@@ -28,6 +28,9 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
@@ -54,6 +57,9 @@ import {
 
 /** 路径归一（反斜杠 → posix）：市场包 dirPath 与 toolkit pack.dir 的匹配键。 */
 const normPath = (p: string) => p.replace(/\\/g, '/');
+
+/** 插件包行级反馈 key（与 ToolkitSection.rowKey 同口径：provenance+sourceRoot 消歧）。 */
+const packKey = (p: ToolkitPack) => `${p.provenance}:${p.sourceRoot}:${p.id}`;
 
 interface LibraryPanelProps {
   /** Skill names already installed in the selected project (for the ✓ mark). */
@@ -104,23 +110,30 @@ export function LibraryPanel({
   const [mcp, setMcp] = useState<McpTemplate[]>([]);
   const [plugins, setPlugins] = useState<MarketPluginAsset[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  /** git 导入输入与进行中标记。 */
+  /** git 导入输入。 */
   const [gitUrl, setGitUrl] = useState('');
-  const [importingGit, setImportingGit] = useState(false);
   /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
   const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
   /** 覆盖导入 / 缓存刷新后 +1 → 同 id 资产重扫（M8 scanNonce）。 */
   const [scanNonce, setScanNonce] = useState(0);
   /** 批量检查结果（POST /market/check-updates，不落库）。 */
   const [marketStatus, setMarketStatus] = useState<Map<number, MarketUpdateStatus>>(new Map());
-  const [checking, setChecking] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   /** 插件包区的 toolkit 启用态（按 dir 匹配）。 */
   const [toolkitPacks, setToolkitPacks] = useState<ToolkitPack[] | null>(null);
-  const [pluginBusy, setPluginBusy] = useState<string | null>(null);
   const t = useT();
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  /** 数据加载错误（市场 / 库清单拉取）也统一走 toast——原先是面板顶一行小红字，
+   *  滚走就看不见。保留 setError 名字，既有调用点不动。 */
+  const setError = (message: string | null): void => {
+    if (message) show('error', message);
+  };
+  // 四套各自为政的 busy（git 导入 / 检查更新 / 一键更新 / 插件包行）并入统一
+  // 反馈层：状态由 fb key 驱动（按钮三态），失败一律 toast。
+  const gitImporting = fb.stateOf('lib-git-import') === 'loading';
+  const checking = fb.stateOf('lib-check-updates') === 'loading';
+  const refreshing = fb.stateOf('lib-refresh-all') === 'loading';
 
   // 安装前置判定（与拖拽 canDrop 共用 lib/install-capabilities 谓词）
   const skillVerdict = canInstall(capabilitiesOf('skill', capabilities), {
@@ -180,16 +193,20 @@ export function LibraryPanel({
   /** 批量检查更新：比对市场缓存与 origin，只读不落库。 */
   async function handleCheckUpdates() {
     if (checking) return;
-    setChecking(true);
-    setError(null);
-    try {
-      const results = await api.checkMarketUpdates();
-      setMarketStatus(new Map(results.map((r) => [r.id, r.status])));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setChecking(false);
-    }
+    await fb.run(
+      'lib-check-updates',
+      async () => {
+        const results = await api.checkMarketUpdates();
+        setMarketStatus(new Map(results.map((r) => [r.id, r.status])));
+        show(
+          'success',
+          t('library.checkDone', {
+            n: results.filter((r) => r.status === 'update-available').length,
+          }),
+        );
+      },
+      { fail: (e) => t('library.checkFailed', { error: errorText(e) }) },
+    );
   }
 
   /** 一键更新：刷市场缓存（update-available 项）→ syncAll 追平复制型装面 → 重查。 */
@@ -198,94 +215,116 @@ export function LibraryPanel({
       .filter(([, s]) => s === 'update-available')
       .map(([id]) => id);
     if (!ids.length || refreshing) return;
-    setRefreshing(true);
-    setError(null);
-    try {
-      await api.refreshMarketCache(ids);
-      await onSyncAll();
-      await refreshMarket();
-      setScanNonce((n) => n + 1);
-      const recheck = await api.checkMarketUpdates(ids);
-      setMarketStatus((prev) => {
-        const next = new Map(prev);
-        for (const r of recheck) next.set(r.id, r.status);
-        return next;
-      });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRefreshing(false);
-    }
+    await fb.run(
+      'lib-refresh-all',
+      async () => {
+        await api.refreshMarketCache(ids);
+        await onSyncAll(); // App 侧自带成功/失败 toast，且失败不抛（不会双报）
+        await refreshMarket();
+        setScanNonce((n) => n + 1);
+        const recheck = await api.checkMarketUpdates(ids);
+        setMarketStatus((prev) => {
+          const next = new Map(prev);
+          for (const r of recheck) next.set(r.id, r.status);
+          return next;
+        });
+        show('success', t('library.refreshDone', { n: ids.length }));
+      },
+      { fail: (e) => t('library.refreshFailed', { error: errorText(e) }) },
+    );
   }
 
-  /** 插件包启用/停用（toolkit enable 管线；sourceRoot 消歧扫描根）。 */
-  async function togglePluginPack(pack: ToolkitPack, enabled: boolean) {
-    if (pluginBusy !== null) return; // Switch 无 disabled，busy 期间防重入
-    setPluginBusy(pack.id);
-    setError(null);
-    try {
-      await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
-      const r = await api.listToolkit(projectId);
-      setToolkitPacks(r.packs);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setPluginBusy(null);
-    }
+  /** 插件包启用/停用（toolkit enable 管线；sourceRoot 消歧扫描根）。Switch 就地
+   * 翻转即成功反馈（只兜失败）；「安装」按钮经 onSuccess 另发成功 toast。 */
+  async function togglePluginPack(pack: ToolkitPack, enabled: boolean, onSuccess?: () => void) {
+    const key = packKey(pack);
+    if (fb.stateOf(key) === 'loading') return; // Switch 与安装按钮共用行级 key 防重入
+    await fb.run(
+      key,
+      async () => {
+        const result = await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
+        if (result.warnings.length > 0) show('info', result.warnings.join('；'));
+        const r = await api.listToolkit(projectId);
+        setToolkitPacks(r.packs);
+        onSuccess?.();
+      },
+      { fail: (e) => t('toolkit.toggleFailed', { error: errorText(e) }) },
+    );
   }
 
-  /** 本地目录引入：每个选中目录复制进市场，随后刷新清单。 */
+  /** 本地目录引入：每个选中目录复制进市场，随后刷新清单；逐目录失败逐条 toast。 */
   async function handlePicked(paths: string[]) {
-    let lastId: number | null = null;
-    for (const p of paths) {
-      try {
-        const item = await api.importMarketDir(p);
-        lastId = item.id;
-      } catch (e) {
-        setError(String(e));
-      }
-    }
-    await refreshMarket();
-    setScanNonce((n) => n + 1); // 同名覆盖导入后同 id 重扫
-    if (lastId !== null) setSelectedId(lastId);
+    await fb.run(
+      'lib-import-dirs',
+      async () => {
+        let lastId: number | null = null;
+        let ok = 0;
+        for (const p of paths) {
+          try {
+            const item = await api.importMarketDir(p);
+            lastId = item.id;
+            ok++;
+          } catch (e) {
+            show('error', t('library.importDirFail', { path: p, error: errorText(e) }));
+          }
+        }
+        if (ok > 0) show('success', t('library.importDirOk', { n: ok }));
+        await refreshMarket();
+        setScanNonce((n) => n + 1); // 同名覆盖导入后同 id 重扫
+        if (lastId !== null) setSelectedId(lastId);
+      },
+      { fail: (e) => t('library.importFailed', { error: errorText(e) }) },
+    );
   }
 
   /** git URL 导入（服务端做协议白名单与 containment）。 */
   async function handleGitImport() {
     const url = gitUrl.trim();
-    if (!url || importingGit) return;
-    setImportingGit(true);
-    setError(null);
-    try {
-      const item = await api.importMarketGit(url);
-      setGitUrl('');
-      await refreshMarket();
-      setScanNonce((n) => n + 1);
-      setSelectedId(item.id);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setImportingGit(false);
-    }
+    if (!url || gitImporting) return;
+    await fb.run(
+      'lib-git-import',
+      async () => {
+        const item = await api.importMarketGit(url);
+        setGitUrl('');
+        await refreshMarket();
+        setScanNonce((n) => n + 1);
+        setSelectedId(item.id);
+        show('success', t('library.importGitOk', { name: item.resourceId ?? item.path }));
+      },
+      { fail: (e) => t('library.importFailed', { error: errorText(e) }) },
+    );
   }
 
   /** legacy 外部源显式迁入市场（复制 + 改写相对路径）。 */
-  function migrateLibrary(id: number) {
-    api
-      .migrateLibrary(id)
-      .then((item) => refreshMarket().then(() => setSelectedId(item.id)))
-      .catch((e) => setError(String(e)));
+  async function migrateLibrary(item: MarketItem) {
+    const key = `lib-migrate:${item.id}`;
+    if (fb.stateOf(key) === 'loading') return;
+    await fb.run(
+      key,
+      async () => {
+        const migrated = await api.migrateLibrary(item.id);
+        await refreshMarket();
+        setSelectedId(migrated.id);
+        show('success', t('library.migratedOk', { name: item.resourceId ?? item.path }));
+      },
+      { fail: (e) => t('library.migrateFailed', { error: errorText(e) }) },
+    );
   }
 
   /** managed → 删市场副本；legacy → 只摘行（外部目录保留）。 */
-  function removeItem(item: MarketItem) {
-    const req = item.managed ? api.removeMarket(item.id) : api.removeLibrary(item.id);
-    req
-      .then(() => {
+  async function removeItem(item: MarketItem) {
+    const key = `lib-remove:${item.id}`;
+    if (fb.stateOf(key) === 'loading') return;
+    await fb.run(
+      key,
+      async () => {
+        await (item.managed ? api.removeMarket(item.id) : api.removeLibrary(item.id));
         if (selectedId === item.id) setSelectedId(null);
-        return refreshMarket();
-      })
-      .catch((e) => setError(String(e)));
+        await refreshMarket();
+        show('success', t('library.removedOk', { name: item.resourceId ?? item.path }));
+      },
+      { fail: (e) => t('library.removeFailed', { error: errorText(e) }) },
+    );
   }
 
   // Per-group (skills/ directory) collapse in the Skill templates list.
@@ -375,7 +414,7 @@ export function LibraryPanel({
           {!noTemplates && (
             <button
               onClick={toggleAll}
-              className="ml-auto inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700"
+              className="ml-auto inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
               title={
                 anyCollapsed ? t('library.expandAllTip') : t('library.collapseAllTip')
               }
@@ -406,13 +445,18 @@ export function LibraryPanel({
           <span className="ml-auto text-[11px] text-neutral-600">{t('library.followsSelection')}</span>
         </div>
 
-        {/* 本地目录引入：跨平台目录选择器（复制进市场） */}
+        {/* 本地目录引入：跨平台目录选择器（复制进市场）。导入动作用选择器按钮
+            承载三态（确认后转圈 → 绿勾）。 */}
         <button
           onClick={() => setPickerOpen(true)}
-          className="w-full flex items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700"
+          className="w-full flex items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 [&_svg]:pointer-events-none"
           title={t('library.addFoldersTip')}
         >
-          <FolderOpen className="h-3.5 w-3.5" />
+          <FeedbackIcon
+            state={fb.stateOf('lib-import-dirs')}
+            className="h-3.5 w-3.5"
+            icon={<FolderOpen className="h-3.5 w-3.5" />}
+          />
           {t('library.addFolders')}
         </button>
         {/* git 引入（服务端 URL 白名单 + clone 进市场） */}
@@ -428,12 +472,16 @@ export function LibraryPanel({
           />
           <button
             onClick={() => void handleGitImport()}
-            disabled={!gitUrl.trim() || importingGit}
-            className="shrink-0 inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
+            disabled={!gitUrl.trim() || gitImporting}
+            className="shrink-0 inline-flex items-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40 [&_svg]:pointer-events-none"
             title={t('library.importGitTip')}
           >
-            <GitBranch className="h-3.5 w-3.5" />
-            {importingGit ? t('library.scanning') : t('library.importGit')}
+            <FeedbackIcon
+              state={fb.stateOf('lib-git-import')}
+              className="h-3.5 w-3.5"
+              icon={<GitBranch className="h-3.5 w-3.5" />}
+            />
+            {gitImporting ? t('library.scanning') : t('library.importGit')}
           </button>
         </div>
         <DirectoryPickerModal
@@ -451,18 +499,26 @@ export function LibraryPanel({
               onClick={() => void handleCheckUpdates()}
               disabled={checking}
               title={t('library.checkUpdatesTip')}
-              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
+              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40 [&_svg]:pointer-events-none"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', checking && 'animate-spin')} />
+              <FeedbackIcon
+                state={fb.stateOf('lib-check-updates')}
+                className="h-3.5 w-3.5"
+                icon={<RefreshCw className="h-3.5 w-3.5" />}
+              />
               {checking ? t('library.checking') : t('library.checkUpdates')}
             </button>
             <button
               onClick={() => void handleRefreshAll()}
               disabled={marketUpdateCount === 0 || refreshing}
               title={t('library.refreshUpdatesTip')}
-              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-blue-900/40 text-blue-300 px-2 py-1.5 text-xs hover:bg-blue-900/60 disabled:opacity-40"
+              className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-blue-900/40 text-blue-300 px-2 py-1.5 text-xs hover:bg-blue-900/60 disabled:opacity-40 [&_svg]:pointer-events-none"
             >
-              <Download className="h-3.5 w-3.5" />
+              <FeedbackIcon
+                state={fb.stateOf('lib-refresh-all')}
+                className="h-3.5 w-3.5"
+                icon={<Download className="h-3.5 w-3.5" />}
+              />
               {refreshing ? t('library.scanning') : t('library.refreshUpdates')}
               {marketUpdateCount > 0 && (
                 <Badge variant="other" className="px-1">
@@ -474,70 +530,79 @@ export function LibraryPanel({
         )}
         {market.length > 0 && (
           <ul className="space-y-0.5">
-            {market.map((item) => (
-              <li key={item.id} className="flex items-center gap-1">
-                <button
-                  onClick={() => setSelectedId(item.id)}
-                  className={cn(
-                    'flex-1 min-w-0 text-left rounded px-1.5 py-1',
-                    selectedId === item.id ? 'bg-neutral-800' : 'hover:bg-neutral-900',
-                  )}
-                  title={item.path}
-                >
-                  <span className="flex items-center gap-1 min-w-0">
-                    <span className="text-xs truncate">
-                      {item.managed && item.resourceId ? item.resourceId : item.path}
-                    </span>
-                    <MarketSourceBadge source={item.source} />
-                    {/* 资产类型 tag（与资源管理文件树同款样式/词表），多个计 ×N */}
-                    {item.tags &&
-                      BUCKET_ORDER.filter((tag) => item.tags![tag] !== undefined).map((tag) => (
-                        <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
-                          {tag}
-                          {item.tags![tag]! > 1 && (
-                            <span className="ml-1 tabular-nums text-[10px] opacity-70">
-                              ×{item.tags![tag]}
-                            </span>
-                          )}
-                        </span>
-                      ))}
-                  </span>
-                  {item.source === 'git' && (item.origin || item.importedAt) && (
-                    <span className="block text-[10px] text-neutral-600 truncate">
-                      {item.origin}
-                      {item.origin && item.importedAt ? ' · ' : ''}
-                      {item.importedAt
-                        ? t('library.importedAt', { date: item.importedAt.slice(0, 10) })
-                        : ''}
-                    </span>
-                  )}
-                </button>
-                <MarketStatusBadge status={marketStatus.get(item.id)} />
-                {item.legacy && (
+            {market.map((item) => {
+              const migrateBusy = fb.stateOf(`lib-migrate:${item.id}`) === 'loading';
+              const removeState = fb.stateOf(`lib-remove:${item.id}`);
+              return (
+                <li key={item.id} className="flex items-center gap-1">
                   <button
-                    onClick={() => migrateLibrary(item.id)}
-                    title={t('library.migrateTip')}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50"
+                    onClick={() => setSelectedId(item.id)}
+                    className={cn(
+                      'flex-1 min-w-0 text-left rounded px-1.5 py-1',
+                      selectedId === item.id ? 'bg-neutral-800' : 'hover:bg-neutral-900',
+                    )}
+                    title={item.path}
                   >
-                    {t('library.migrate')}
+                    <span className="flex items-center gap-1 min-w-0">
+                      <span className="text-xs truncate">
+                        {item.managed && item.resourceId ? item.resourceId : item.path}
+                      </span>
+                      <MarketSourceBadge source={item.source} />
+                      {/* 资产类型 tag（与资源管理文件树同款样式/词表），多个计 ×N */}
+                      {item.tags &&
+                        BUCKET_ORDER.filter((tag) => item.tags![tag] !== undefined).map((tag) => (
+                          <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
+                            {tag}
+                            {item.tags![tag]! > 1 && (
+                              <span className="ml-1 tabular-nums text-[10px] opacity-70">
+                                ×{item.tags![tag]}
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                    </span>
+                    {item.source === 'git' && (item.origin || item.importedAt) && (
+                      <span className="block text-[10px] text-neutral-600 truncate">
+                        {item.origin}
+                        {item.origin && item.importedAt ? ' · ' : ''}
+                        {item.importedAt
+                          ? t('library.importedAt', { date: item.importedAt.slice(0, 10) })
+                          : ''}
+                      </span>
+                    )}
                   </button>
-                )}
-                <button
-                  onClick={() => removeItem(item)}
-                  title={
-                    item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
-                  }
-                  className="text-neutral-500 hover:text-red-400 shrink-0"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </li>
-            ))}
+                  <MarketStatusBadge status={marketStatus.get(item.id)} />
+                  {item.legacy && (
+                    <button
+                      onClick={() => void migrateLibrary(item)}
+                      disabled={migrateBusy}
+                      title={t('library.migrateTip')}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50 disabled:opacity-40"
+                    >
+                      {migrateBusy ? t('library.migrating') : t('library.migrate')}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void removeItem(item)}
+                    disabled={removeState === 'loading'}
+                    title={
+                      item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
+                    }
+                    className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                  >
+                    <FeedbackIcon
+                      state={removeState}
+                      className="h-3 w-3"
+                      icon={<Trash2 className="h-3 w-3" />}
+                    />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
 
-      {error && <p className="text-red-400 text-xs px-3 py-1">{error}</p>}
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {noTemplates && (
@@ -591,7 +656,7 @@ export function LibraryPanel({
                         toggleGroup(key);
                       }
                     }}
-                    className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+                    className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none"
                     title={group || t('library.rootName')}
                   >
                     {collapsed ? (
@@ -770,6 +835,7 @@ export function LibraryPanel({
                 toolkitPacks?.find((p) => normPath(p.dir) === normPath(pl.dirPath)) ?? null;
               const pk = `plugin:${pl.relPath || pl.name}`;
               const expanded = expandedPlugins.has(pk);
+              const packBusy = pack !== null && fb.stateOf(packKey(pack)) === 'loading';
               return (
                 <div
                   key={pk}
@@ -831,12 +897,14 @@ export function LibraryPanel({
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
-                      {/* 市场 = 安装入口：weave 规则包无安装概念保留启用 Switch；
-                          其余未装 → 「安装」，已装 → 徽标（启停/卸载去资源管理·工具箱） */}
+                      {/* 市场 = 安装入口：weave 规则包无安装概念保留启用 Switch（状态
+                          就地翻转即反馈，只兜失败）；其余未装 → 「安装」（成功 toast），
+                          已装 → 徽标（启停/卸载去资源管理·工具箱） */}
                       {pack ? (
                         pl.weavePack && !(pl.ccPack || pl.kind === 'mod') ? (
                           <Switch
                             checked={pack.enabled}
+                            disabled={packBusy}
                             onChange={(v) => void togglePluginPack(pack, v)}
                             title={t('library.weavePluginTip')}
                           />
@@ -850,12 +918,16 @@ export function LibraryPanel({
                         ) : (
                           <button
                             type="button"
-                            disabled={pluginBusy !== null}
+                            disabled={packBusy}
                             title={t('library.installPackTip')}
-                            onClick={() => void togglePluginPack(pack, true)}
+                            onClick={() =>
+                              void togglePluginPack(pack, true, () =>
+                                show('success', t('library.packInstalled', { name: pack.name })),
+                              )
+                            }
                             className="rounded bg-blue-900/50 px-2 py-0.5 text-[10px] text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
                           >
-                            {t('library.install')}
+                            {packBusy ? t('library.installing') : t('library.install')}
                           </button>
                         )
                       ) : (
@@ -1135,7 +1207,7 @@ function TemplateSection({
             onToggle();
           }
         }}
-        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none"
         title={open ? t('common.collapse') : t('common.expand')}
       >
         {open ? (
@@ -1165,6 +1237,11 @@ function UpdateHintRow({
   onUpdate: () => void;
 }) {
   const t = useT();
+  // onUpdate 是 App 侧 updateAssetSafely 预包装（失败已 toast、成功不发）：
+  // 只补三态 + 成功 toast，fail 仅兜底不会触发（避免双报）。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const updateState = fb.stateOf('update');
   return (
     <div className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900">
       <RefreshCw className="h-3 w-3 shrink-0 text-orange-400" />
@@ -1178,8 +1255,18 @@ function UpdateHintRow({
         {scope}
       </Badge>
       <button
-        onClick={onUpdate}
-        className="ml-auto text-xs text-blue-400 hover:text-blue-300 shrink-0"
+        onClick={() =>
+          void fb.run(
+            'update',
+            async () => {
+              await onUpdate();
+              show('success', t('library.updatedOk', { name: label }));
+            },
+            { fail: (e) => t('errors.updateFailed', { error: errorText(e) }) },
+          )
+        }
+        disabled={updateState === 'loading'}
+        className="ml-auto text-xs text-blue-400 hover:text-blue-300 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
       >
         {t('library.update')}
       </button>
@@ -1209,6 +1296,11 @@ function DraggableSkill({
     data: payload,
   });
   const t = useT();
+  // onInstall 是 App 侧 *Safely 预包装（失败已 toast、成功不发）：只补三态 + 成功
+  // toast，fail 仅兜底不会触发（避免双报）。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const installState = fb.stateOf('install');
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
@@ -1236,9 +1328,16 @@ function DraggableSkill({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            onInstall();
+            void fb.run(
+              'install',
+              async () => {
+                await onInstall();
+                show('success', t('library.installedOk', { name: skill.name }));
+              },
+              { fail: (err) => t('errors.installFailed', { error: errorText(err) }) },
+            );
           }}
-          disabled={installDisabled}
+          disabled={installDisabled || installState === 'loading'}
           title={installReason}
           className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
         >
@@ -1268,6 +1367,10 @@ function DraggableFileRow({
     id: `lib-file-${file.filePath}`,
     data: payload,
   });
+  // 同 DraggableSkill：onInstall 是 App 侧 *Safely 预包装，只补三态 + 成功 toast。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const installState = fb.stateOf('install');
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
@@ -1289,9 +1392,16 @@ function DraggableFileRow({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
-          onInstall();
+          void fb.run(
+            'install',
+            async () => {
+              await onInstall();
+              show('success', t('library.installedOk', { name: file.name }));
+            },
+            { fail: (err) => t('errors.installFailed', { error: errorText(err) }) },
+          );
         }}
-        disabled={!verdict.ok}
+        disabled={!verdict.ok || installState === 'loading'}
         title={reason}
         className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
       >
@@ -1320,6 +1430,10 @@ function DraggableMcpRow({
     id: `lib-mcp-${srv.name}`,
     data: payload,
   });
+  // 同 DraggableSkill：onInstall 是 App 侧 *Safely 预包装，只补三态 + 成功 toast。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const installState = fb.stateOf('install');
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
@@ -1341,9 +1455,16 @@ function DraggableMcpRow({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
-          onInstall();
+          void fb.run(
+            'install',
+            async () => {
+              await onInstall();
+              show('success', t('library.installedOk', { name: srv.name }));
+            },
+            { fail: (err) => t('errors.mcpInstallFailed', { error: errorText(err) }) },
+          );
         }}
-        disabled={!verdict.ok}
+        disabled={!verdict.ok || installState === 'loading'}
         title={reason}
         className="ml-auto text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-blue-400"
       >
@@ -1366,17 +1487,31 @@ function McpForm({
   const [args, setArgs] = useState('');
   const [env, setEnv] = useState('');
   const t = useT();
+  // onInstall 链到 App 侧 installMcpSafely 预包装（失败已 toast、成功不发）：
+  // 只补三态 + 成功 toast，fail 仅兜底不会触发（避免双报）。
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const submitState = fb.stateOf('submit');
 
   function submit() {
     if (blockedTitle) return;
-    if (!name.trim() || !command.trim()) return;
+    const n = name.trim();
+    const cmd = command.trim();
+    if (!n || !cmd || submitState === 'loading') return;
     const argList = args.trim() ? args.trim().split(/\s+/) : undefined;
     const envMap = parseEnv(env);
-    onInstall(name.trim(), {
-      command: command.trim(),
-      ...(argList && { args: argList }),
-      ...(envMap && { env: envMap }),
-    });
+    void fb.run(
+      'submit',
+      async () => {
+        await onInstall(n, {
+          command: cmd,
+          ...(argList && { args: argList }),
+          ...(envMap && { env: envMap }),
+        });
+        show('success', t('library.installedOk', { name: n }));
+      },
+      { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
+    );
     setName('');
     setCommand('');
     setArgs('');
@@ -1415,9 +1550,9 @@ function McpForm({
       />
       <button
         onClick={submit}
-        disabled={!name.trim() || !command.trim() || !!blockedTitle}
+        disabled={!name.trim() || !command.trim() || !!blockedTitle || submitState === 'loading'}
         title={blockedTitle}
-        className="w-full rounded bg-blue-900/40 text-blue-300 py-1 text-xs disabled:opacity-40"
+        className="w-full rounded bg-blue-900/40 text-blue-300 py-1 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {t('library.addMcpServer')}
       </button>
