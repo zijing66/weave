@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,8 +24,10 @@ import { CLAUDE_ASSETS } from './assets.js';
  */
 export const WEAVE_MARKETPLACE = 'weave';
 const MARKETPLACE_DIRNAME = 'weave-marketplace';
-const CLI_TIMEOUT_MS = 30_000;
+/** 冷启动的 CLI（读 settings/插件索引）+ marketplace 落盘，30s 会误杀。 */
+const CLI_TIMEOUT_MS = 60_000;
 const OUTPUT_LIMIT = 2_000;
+const OUTPUT_KEEP = 64 * 1024;
 
 export interface PluginExecResult {
   stdout: string;
@@ -33,14 +35,42 @@ export interface PluginExecResult {
 }
 
 /**
- * CLI 执行器：args 数组传参（默认实现 POSIX 无 shell；win32 上 `claude` 是
- * .cmd shim、无 shell ENOENT，沿用 detectClaudeVersion 前例走 shell 且参数
- * 逐个加双引号——参数只含固定字面与本方路径）。失败 reject。
+ * CLI 执行器：args 数组传参（默认实现 POSIX 直连；win32 上 `claude` 是 .cmd
+ * shim、无 shell 会 EINVAL/ENOENT，经 ComSpec 转发并自行拼命令行）。失败 reject。
  */
 export type PluginExecutor = (
   args: string[],
   opts: { timeoutMs: number },
 ) => Promise<PluginExecResult>;
+
+/**
+ * win32 命令行：`claude "plugin" "marketplace" "add" "D:\a\weave-marketplace"`。
+ * 不用 `shell: true`——Node 对 shell 参数做二次转义会把路径里的反斜杠吃掉
+ * （`D:\Users\x` 变成 `D:Usersx`，CLI 报 invalid marketplace source format）；
+ * 改由本函数加引号，CmdSpec 侧不做转义（windowsVerbatimArguments）。引号内的
+ * cmd 元字符不生效，只需转义参数字面量里的 `"`。
+ */
+export function claudeCommandLine(args: string[]): string {
+  return ['claude', ...args.map((a) => `"${a.replace(/"/g, '\\"')}"`)].join(' ');
+}
+
+/**
+ * win32 上杀进程只到得到 cmd.exe 外壳：孙进程 claude.exe 会吊住 stdout/stderr
+ * 管道，close 事件永不触发（调用方看到的是一句空 stderr 的 Command failed）。
+ */
+function killTree(child: ChildProcess): void {
+  // 外壳自身已退出（孙进程吊住管道）时它的 pid 可能已被系统复用——/t 杀树会误伤
+  // 无关进程，这种情形宁可不杀。
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    }).unref();
+    return;
+  }
+  child.kill('SIGKILL');
+}
 
 function truncate(text: string): string {
   return text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text;
@@ -59,21 +89,52 @@ function safeJson(text: string): Record<string, unknown> | null {
 
 const execCli: PluginExecutor = (args, opts) =>
   new Promise((resolve, reject) => {
-    const useShell = process.platform === 'win32';
-    execFile(
-      'claude',
-      useShell ? args.map((a) => `"${a}"`) : args,
-      { shell: useShell, timeout: opts.timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          const detail =
-            truncate([stderr, stdout].filter(Boolean).join('\n').trim()) || err.message;
-          reject(new Error(truncate(`claude ${args.join(' ')}: ${detail}`)));
-          return;
-        }
-        resolve({ stdout: String(stdout), stderr: String(stderr) });
+    const win = process.platform === 'win32';
+    // stdin 关死：CLI 的交互式确认不该吊住调用方（weave 全程只走非交互参数）。
+    const child = spawn(
+      win ? process.env['ComSpec'] || 'cmd.exe' : 'claude',
+      win ? ['/d', '/s', '/c', claudeCommandLine(args)] : args,
+      {
+        windowsHide: true,
+        windowsVerbatimArguments: win,
+        stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
+    const label = `claude ${args.join(' ')}`;
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const fail = (message: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(truncate(message)));
+    };
+    const timer = setTimeout(() => {
+      killTree(child);
+      fail(`${label}: timed out after ${opts.timeoutMs}ms`);
+    }, opts.timeoutMs);
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      if (stdout.length < OUTPUT_KEEP) stdout += chunk;
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      if (stderr.length < OUTPUT_KEEP) stderr += chunk;
+    });
+    child.on('error', (err) => fail(`${label}: ${err.message}`));
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      const detail = [stderr, stdout].filter(Boolean).join('\n').trim() || `exit ${code}`;
+      reject(new Error(truncate(`${label}: ${detail}`)));
+    });
   });
 
 export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}): PluginSurface {

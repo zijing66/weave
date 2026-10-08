@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { PluginSurface } from '@weave/harness';
@@ -96,7 +96,22 @@ export function isVersionAtLeast(version: string, min: readonly number[]): boole
   return true;
 }
 
-let cachedVersion: { value: string | null; at: number } | undefined;
+let cachedVersion: { value: string; at: number } | undefined;
+
+/** win32 上只杀得到 cmd.exe 外壳：孙进程 claude.exe 会吊住 stdout 管道，close 不触发。 */
+function killTree(child: ChildProcess): void {
+  // 外壳自身已退出（孙进程吊住管道）时它的 pid 可能已被系统复用——/t 杀树会误伤
+  // 无关进程，这种情形宁可不杀。
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    }).unref();
+    return;
+  }
+  child.kill('SIGKILL');
+}
 
 /**
  * 宿主 Claude Code 版本（mod 启用闸）。`claude --version` 解析首个 semver，
@@ -114,7 +129,7 @@ export async function detectClaudeVersion(): Promise<string | null> {
         ? spawn('claude --version', { windowsHide: true, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
         : spawn('claude', ['--version'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const timer = setTimeout(() => {
-      child.kill();
+      killTree(child);
       resolve(null);
     }, 5000);
     child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
@@ -128,7 +143,8 @@ export async function detectClaudeVersion(): Promise<string | null> {
       resolve(m ? m[1]! : null);
     });
   });
-  cachedVersion = { value, at: Date.now() };
+  // 只缓存成功值：一次探测超时不得把版本闸的降级（放行）状态锁死 10 分钟。
+  if (value !== null) cachedVersion = { value, at: Date.now() };
   return value;
 }
 

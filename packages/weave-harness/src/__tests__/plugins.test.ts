@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  claudeCommandLine,
   createClaudePluginSurface,
   WEAVE_MARKETPLACE,
   type PluginExecutor,
@@ -67,6 +68,20 @@ afterEach(async () => {
   else process.env.USERPROFILE = prevUserProfile;
   await rm(home, { recursive: true, force: true });
   await rm(project, { recursive: true, force: true });
+});
+
+describe('claudeCommandLine（win32 命令行拼装）', () => {
+  it('参数逐个加引号，反斜杠绝对路径原样保留', () => {
+    expect(
+      claudeCommandLine(['plugin', 'marketplace', 'add', 'D:\\Users\\x\\.claude\\weave-marketplace']),
+    ).toBe('claude "plugin" "marketplace" "add" "D:\\Users\\x\\.claude\\weave-marketplace"');
+  });
+
+  it('参数内的双引号转义为 \\"，空格路径仍单参', () => {
+    expect(claudeCommandLine(['install', 'a"b', 'C:\\Program Files\\p'])).toBe(
+      'claude "install" "a\\"b" "C:\\Program Files\\p"',
+    );
+  });
 });
 
 describe('路径与 installed 判定', () => {
