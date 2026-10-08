@@ -119,12 +119,26 @@ export interface PluginInstallInfo {
   version?: string;
 }
 
+/**
+ * 市场身份：**外部市场导入**的包按它自己所属的市场安装（键形 `<name>@<market>`），
+ * 不占 weave 的自建市场。缺省（不带）= weave 自己的包（内置包 / SPI 插件）→
+ * 走自建市场 `@weave`。
+ */
+export interface MarketplaceRef {
+  /** 市场名 = CC 键 `<name>@<market>` 的后半段（如 `claude-code-playground`）。 */
+  name: string;
+  /** 市场目录（内含 `.claude-plugin/marketplace.json`）；仅 globalInstall 消费。 */
+  dir?: string;
+}
+
 export interface GlobalInstallOptions {
   /** 插件名覆盖（缺省读 srcDir 的 `.claude-plugin/plugin.json`）。 */
   name?: string;
   /** 无 manifest 包在 marketplace 目标副本合成最小 plugin.json 用（不写源目录）。 */
   version?: string;
   description?: string;
+  /** 市场身份：给出即按该市场安装（缺省走 weave 自建市场）。 */
+  marketplace?: MarketplaceRef;
 }
 
 /**
@@ -140,14 +154,19 @@ export interface PluginSurface {
   globalInstall(srcDir: string, opts?: GlobalInstallOptions): Promise<PluginInstallInfo>;
   /** 读 installed_plugins.json 的插件映射（缺失/损坏 → 空对象）。 */
   readInstalled(): Promise<Record<string, InstalledPluginRecord[]>>;
-  /** 插件是否已全局安装（`name` 为插件名，marketplace 后缀由实现补）。 */
-  isInstalled(name: string): Promise<boolean>;
+  /** 插件是否已全局安装（`market` 缺省 = weave 自建市场）。 */
+  isInstalled(name: string, market?: string): Promise<boolean>;
   /** 全局卸载（与 harness CLI 对齐；幂等——未安装直接返回；marketplace 源保留）。 */
-  uninstall(name: string): Promise<void>;
-  /** 项目 settings 的 enabledPlugins（键 `name@<marketplace>`；缺省 false）。 */
-  readProjectEnabled(projectPath: string, name: string): Promise<boolean>;
+  uninstall(name: string, market?: string): Promise<void>;
+  /** 项目 settings 的 enabledPlugins（键 `name@<market>`；缺省 false）。 */
+  readProjectEnabled(projectPath: string, name: string, market?: string): Promise<boolean>;
   /** 写项目 enabledPlugins 单键（其余键保留，文件可创建）。 */
-  setProjectEnabled(projectPath: string, name: string, enabled: boolean): Promise<void>;
+  setProjectEnabled(
+    projectPath: string,
+    name: string,
+    enabled: boolean,
+    market?: string,
+  ): Promise<void>;
   /** 全局 settings 的 enabledPlugins 全量读（键为 `name@marketplace`）。 */
   readGlobalEnabled(): Promise<Record<string, boolean>>;
   /** 全局 settings 单键写（其余键保留，文件可创建）。 */

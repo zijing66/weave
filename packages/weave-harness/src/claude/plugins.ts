@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
   GlobalInstallOptions,
   InstalledPluginRecord,
+  MarketplaceRef,
   PluginInstallInfo,
   PluginSurface,
 } from '../driver.js';
@@ -148,7 +149,9 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
   const marketplaceRoot = (): string => path.join(homedir(), '.claude', MARKETPLACE_DIRNAME);
   const projectSettingsFile = (projectPath: string): string =>
     path.join(projectPath, '.claude', 'settings.json');
-  const pluginKey = (name: string): string => `${name}@${WEAVE_MARKETPLACE}`;
+  /** 注册键：缺省 weave 自建市场；给出市场身份则用该市场（外部市场导入的包）。 */
+  const pluginKey = (name: string, market?: string): string =>
+    `${name}@${market ?? WEAVE_MARKETPLACE}`;
 
   /** JSON 读：缺失/损坏/非对象一律空对象（不写坏文件的读侧口径同 server）。 */
   const readJson = async (file: string): Promise<Record<string, unknown>> => {
@@ -270,6 +273,33 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
     return root;
   };
 
+  /**
+   * 外部市场包：市场目录（`<dataDir>/market/<id>`，包文件已由市场导入复制进来）
+   * 就地维护一份 CC 市场清单——`plugins[]` upsert 该包、`source` 用市场内相对路径
+   * （整目录搬走仍可解析 = 可整体迁移），`name` 强制归一为该市场 id（键形可预测）。
+   */
+  const ensureMarketManifest = async (
+    market: MarketplaceRef,
+    name: string,
+    srcDir: string,
+  ): Promise<void> => {
+    if (!market.dir) throw new Error(`marketplace dir required for ${name}@${market.name}`);
+    const file = path.join(market.dir, '.claude-plugin', 'marketplace.json');
+    const mkt = await readJson(file);
+    const plugins = Array.isArray(mkt.plugins)
+      ? [...(mkt.plugins as Array<Record<string, unknown>>)]
+      : [];
+    const source = `./${path.relative(market.dir, srcDir).split(path.sep).join('/')}`;
+    const entry = { name, source };
+    const idx = plugins.findIndex((p) => p?.['name'] === name);
+    if (idx >= 0) plugins[idx] = entry;
+    else plugins.push(entry);
+    mkt.name = market.name;
+    if (!mkt.owner) mkt.owner = { name: 'weave' };
+    mkt.plugins = plugins;
+    await writeJson(file, mkt);
+  };
+
   return {
     projectPluginDir: (projectPath) => path.join(projectPath, '.claude', 'plugins'),
 
@@ -280,13 +310,21 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
         name = typeof manifest.name === 'string' ? manifest.name : undefined;
       }
       if (!name) throw new Error(`plugin manifest missing name: ${srcDir}`);
-      const key = pluginKey(name);
+      const market = opts.marketplace;
+      const key = pluginKey(name, market?.name);
 
       const existing = (await readInstalled())[key];
       if (existing && existing.length > 0) return infoOf(key, existing, true);
 
-      const mktDir = await syncMarketplace(srcDir, name, opts);
-      await run(['plugin', 'marketplace', 'add', mktDir]);
+      // 外部市场包：文件已在数据目录的市场副本里就地维护清单（不再拷进 weave 市场）；
+      // weave 自己的包（内置 / SPI）：仍走自建市场的拷贝 + 合成清单。
+      if (market) {
+        await ensureMarketManifest(market, name, srcDir);
+        await run(['plugin', 'marketplace', 'add', market.dir ?? '']);
+      } else {
+        const mktDir = await syncMarketplace(srcDir, name, opts);
+        await run(['plugin', 'marketplace', 'add', mktDir]);
+      }
       const { stdout } = await run(['plugin', 'install', key, '--scope', 'user', '--json']);
       const outcome = safeJson(stdout);
       if (outcome?.['outcome'] === 'failed') {
@@ -297,13 +335,13 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
 
     readInstalled,
 
-    async isInstalled(name) {
-      const records = (await readInstalled())[pluginKey(name)];
+    async isInstalled(name, market) {
+      const records = (await readInstalled())[pluginKey(name, market)];
       return !!records && records.length > 0;
     },
 
-    async uninstall(name) {
-      const key = pluginKey(name);
+    async uninstall(name, market) {
+      const key = pluginKey(name, market);
       // 幂等：未安装直接返回（marketplace 源保留——卸载≠移除市场，可重装）
       const existing = (await readInstalled())[key];
       if (!existing || existing.length === 0) return;
@@ -314,15 +352,18 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       }
     },
 
-    async readProjectEnabled(projectPath, name) {
+    async readProjectEnabled(projectPath, name, market) {
       const enabled = enabledOf(await readJson(projectSettingsFile(projectPath)));
-      return enabled[pluginKey(name)] ?? false;
+      return enabled[pluginKey(name, market)] ?? false;
     },
 
-    async setProjectEnabled(projectPath, name, enabled) {
+    async setProjectEnabled(projectPath, name, enabled, market) {
       const file = projectSettingsFile(projectPath);
       const settings = await readJson(file);
-      settings.enabledPlugins = { ...rawEnabledOf(settings), [pluginKey(name)]: enabled };
+      settings.enabledPlugins = {
+        ...rawEnabledOf(settings),
+        [pluginKey(name, market)]: enabled,
+      };
       await writeJson(file, settings);
     },
 

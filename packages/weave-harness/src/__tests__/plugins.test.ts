@@ -70,6 +70,67 @@ afterEach(async () => {
   await rm(project, { recursive: true, force: true });
 });
 
+describe('globalInstall：外部市场身份（不占 weave 自建市场）', () => {
+  /** 数据目录里的市场副本（市场导入已把包复制进来），清单就地维护。 */
+  const marketDir = (): string =>
+    path.join(home, 'weave', 'market', 'claude-code-playground');
+  const packInMarket = async (): Promise<string> => {
+    const dir = path.join(marketDir(), 'claude-code', 'mods', 'demo');
+    await mkdir(path.join(dir, '.claude-plugin'), { recursive: true });
+    await writeFile(
+      path.join(dir, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'demo', version: '9.9.9' }),
+    );
+    return dir;
+  };
+
+  it('按市场身份安装：键 name@market + 清单就地 upsert + 不拷进 weave 市场', async () => {
+    const srcDir = await packInMarket();
+    const info = await surface.globalInstall(srcDir, {
+      name: 'demo',
+      marketplace: { name: 'claude-code-playground', dir: marketDir() },
+    });
+
+    expect(info.key).toBe('demo@claude-code-playground');
+    expect(calls).toEqual([
+      ['plugin', 'marketplace', 'add', marketDir()],
+      ['plugin', 'install', 'demo@claude-code-playground', '--scope', 'user', '--json'],
+    ]);
+    const mkt = JSON.parse(
+      await readFile(path.join(marketDir(), '.claude-plugin', 'marketplace.json'), 'utf8'),
+    ) as { name: string; plugins: Array<{ name: string; source: string }> };
+    expect(mkt.name).toBe('claude-code-playground');
+    // 相对 source：整目录搬走仍可解析（可整体迁移）
+    expect(mkt.plugins).toEqual([{ name: 'demo', source: './claude-code/mods/demo' }]);
+    // weave 自建市场里不该有这个包的副本
+    await expect(
+      readFile(path.join(mktRoot(), 'plugins', 'demo', '.claude-plugin', 'plugin.json'), 'utf8'),
+    ).rejects.toThrow();
+  });
+
+  it('marketplace.dir 缺失 → 明确报错，不静默退回 weave 市场', async () => {
+    const src = await makePack('demo');
+    await expect(
+      surface.globalInstall(src, { name: 'demo', marketplace: { name: 'm' } }),
+    ).rejects.toThrow(/marketplace dir required/);
+    expect(calls).toEqual([]);
+  });
+
+  it('项目启用的键形按市场区分（直接断言落盘的键，不经 homedir）', async () => {
+    await surface.setProjectEnabled(project, 'demo', true, 'claude-code-playground');
+    await surface.setProjectEnabled(project, 'other', false);
+
+    // 项目目录是显式传入的临时目录 → 这条断言不依赖 homedir，测的是键形本身
+    const json = JSON.parse(await readFile(projectSettings(), 'utf8')) as {
+      enabledPlugins: Record<string, boolean>;
+    };
+    expect(json.enabledPlugins).toEqual({
+      'demo@claude-code-playground': true,
+      'other@weave': false,
+    });
+  });
+});
+
 describe('claudeCommandLine（win32 命令行拼装）', () => {
   it('参数逐个加引号，反斜杠绝对路径原样保留', () => {
     expect(
@@ -255,7 +316,7 @@ describe('globalInstall（两步 CLI 链，幂等）', () => {
     expect(seenTimeout).toBeGreaterThan(0);
   });
 
-  it('manifest 缺 name → 拒绝', async () => {
+  it('manifest 缺 name → 拒绝（保留）', async () => {
     const dir = path.join(home, 'broken');
     await mkdir(path.join(dir, '.claude-plugin'), { recursive: true });
     await writeFile(path.join(dir, '.claude-plugin', 'plugin.json'), '{}');
