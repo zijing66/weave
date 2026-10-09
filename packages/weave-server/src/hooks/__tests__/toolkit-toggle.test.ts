@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { createClaudePluginSurface, type PluginExecutor } from '@weave/harness';
+import { createClaudePluginSurface, type PluginExecutor } from '@weavecode/harness';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';

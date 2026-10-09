@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { HarnessRegistry, registerRuntimeDrivers, ClaudeEventSource } from '@weave/harness';
-import { HARNESS_EVENTS } from '@weave/core';
+import { HarnessRegistry, registerRuntimeDrivers, ClaudeEventSource } from '@weavecode/harness';
+import { HARNESS_EVENTS } from '@weavecode/core';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';

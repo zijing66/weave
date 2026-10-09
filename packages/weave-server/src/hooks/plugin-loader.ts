@@ -10,7 +10,7 @@ import {
   WeavePluginManifestSchema,
   type HookRule,
   type WeavePluginManifest,
-} from '@weave/core';
+} from '@weavecode/core';
 import { getDataDir } from '../db/paths.js';
 import type { HookRuleRepository } from '../repositories/hook-rules.js';
 import type { LibraryRepository } from '../repositories/libraries.js';

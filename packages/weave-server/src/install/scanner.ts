@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, basename, relative, dirname } from 'node:path';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 import { parseToolkitPack, type ToolkitKind, type ToolkitComponent } from '../hooks/toolkit-scan.js';

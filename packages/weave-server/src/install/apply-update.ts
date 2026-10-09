@@ -1,7 +1,7 @@
 import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import { installMcp, uninstallMcp } from './installer.js';
 import { writeGlobalMcpServer } from './global-config.js';
 import { writeCodexMcpServer } from './codex-toml.js';

@@ -7,7 +7,7 @@ import {
   type HookRuleFilter,
   type HookRuleOrigin,
   type HookRuleSource,
-} from '@weave/core';
+} from '@weavecode/core';
 
 export interface CreateHookRuleInput {
   name: string;

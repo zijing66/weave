@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { frameFacts, type EventSource } from '@weave/harness';
+import { frameFacts, type EventSource } from '@weavecode/harness';
 import type { ProjectRow, ProjectRepository } from '../repositories/projects.js';
 import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
 import type { SessionRepository } from '../repositories/sessions.js';

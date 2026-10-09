@@ -4,16 +4,17 @@
  * itself and statically hosts the SPA for everything else.
  */
 
-import type { Harness } from '@weave/core/harness';
+import type { Harness } from '@weavecode/core/harness';
 
 /**
  * The daemon token.
  *
  * Read from `?token=` first, falling back to the value baked in at build time.
- * The query param matters because the build-time value is a fixed default while
- * `weave daemon start` mints a random token per machine — `weave dashboard`
- * opens the console with the running daemon's own token, so the two always
- * agree. (`/events` uses the same param because EventSource cannot set headers.)
+ * The query param is the production path: `weave daemon start` mints a random
+ * token per machine, and `weave dashboard` opens the console with it. The
+ * build-time fallback is only set in dev builds (empty in the published bundle,
+ * so it never ships a known credential). (`/events` uses the same param because
+ * EventSource cannot set headers.)
  */
 function resolveToken(): string {
   if (typeof window !== 'undefined') {
@@ -596,7 +597,7 @@ export type StatuslineNamedColor =
 
 /**
  * Mirror of `StatuslineColor` in packages/weave-server/src/statusline/config.ts.
- * The web app does not depend on @weave/server, so this file is a hand-copied
+ * The web app does not depend on @weavecode/server, so this file is a hand-copied
  * duplicate — keep the two in lockstep (a mismatch breaks `tsc && vite build`).
  * A colour is a named ANSI colour, `ansi256:0-255`, or `#rgb`/`#rrggbb`.
  */

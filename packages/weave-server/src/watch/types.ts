@@ -1,5 +1,5 @@
 /**
- * @weave/server — watch service types.
+ * @weavecode/server — watch service types.
  *
  * The watch service observes each registered project's harness asset
  * directories (Claude Code `.claude/` + `.mcp.json` + CLAUDE.md, Codex
@@ -8,7 +8,7 @@
  * (persistence boundary: see weave-dashboard-architecture).
  */
 
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 
 /** Coarse classification of an observed asset file. */
 export type AssetCategory =

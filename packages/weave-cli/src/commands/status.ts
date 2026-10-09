@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { fileExists, logger, formatTable } from '@weave/core';
-import { createRuntimeRegistry } from '@weave/harness';
+import { fileExists, logger, formatTable } from '@weavecode/core';
+import { createRuntimeRegistry } from '@weavecode/harness';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';

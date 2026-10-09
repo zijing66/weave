@@ -1,6 +1,6 @@
 import type { HookDispatch, HookEventRow } from '@/lib/api';
 import { agentDispatchOf, taskNotificationOf } from '@/lib/hook-payload';
-import type { HarnessLifecycle } from '@weave/core/harness';
+import type { HarnessLifecycle } from '@weavecode/core/harness';
 
 /**
  * 任务分组（D7：prompt_id 精确归属 + 包夹启发式回落，零 schema）：

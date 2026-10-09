@@ -1,5 +1,5 @@
 {
-  "name": "@weave/cli",
+  "name": "@weavecode/cli",
   "version": "0.1.0",
   "description": "CLI entry point for weave — parser, commands, and init executor",
   "type": "module",
@@ -18,7 +18,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "author": "zijing66",
   "license": "Apache-2.0",
@@ -38,7 +39,8 @@
     "url": "https://github.com/zijing66/weave/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc",
@@ -47,10 +49,10 @@
     "dev": "tsx watch --conditions=development src/main.ts"
   },
   "dependencies": {
-    "@weave/core": "workspace:*",
-    "@weave/harness": "workspace:*",
-    "@weave/server": "workspace:*",
-    "@weave/templates": "workspace:*",
+    "@weavecode/core": "workspace:^",
+    "@weavecode/harness": "workspace:^",
+    "@weavecode/server": "workspace:^",
+    "@weavecode/templates": "workspace:^",
     "ink": "^5.0.0",
     "react": "^18.3.1"
   },
@@ -61,6 +63,6 @@
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   }
 }

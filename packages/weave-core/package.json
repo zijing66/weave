@@ -1,5 +1,5 @@
 {
-  "name": "@weave/core",
+  "name": "@weavecode/core",
   "version": "0.1.0",
   "description": "Core types, schemas, and utilities for weave",
   "type": "module",
@@ -19,7 +19,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": false,
   "author": "zijing66",
@@ -40,7 +41,8 @@
     "url": "https://github.com/zijing66/weave/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc",
@@ -55,6 +57,6 @@
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   }
 }

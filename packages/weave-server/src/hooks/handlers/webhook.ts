@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import type { HookRule } from '@weave/core';
+import type { HookRule } from '@weavecode/core';
 
 /** 事件摘要——出站 webhook body 只带这些字段（不透传全量 toolResponse，收窄外泄面）。 */
 export interface EventSummary {

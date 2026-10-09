@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import type { FileAssetCategory } from './file-assets.js';
 
 /**

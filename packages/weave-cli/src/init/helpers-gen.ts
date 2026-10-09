@@ -1,4 +1,4 @@
-import { WEAVE_VERSION } from '@weave/server';
+import { WEAVE_VERSION } from '@weavecode/server';
 
 export function generateHookHandler(): string {
   return `#!/usr/bin/env node

@@ -1,4 +1,4 @@
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 
 /** 安装范围（与 InstallBody.scope 同形）。 */

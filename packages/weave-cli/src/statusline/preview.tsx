@@ -10,7 +10,7 @@ import {
   type SegmentKey,
   type StatuslineColor,
   type StatuslineConfig,
-} from '@weave/server';
+} from '@weavecode/server';
 import { parseAnsiSpans, toInkColor } from './ansi.js';
 import { buildMockInput, writeFixtureTranscript } from './mock-input.js';
 import { t } from '../i18n/index.js';

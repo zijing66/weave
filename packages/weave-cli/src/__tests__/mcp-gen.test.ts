@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateMcpJson, mergeMcpJson } from '../init/mcp-gen';
-import type { PlatformInfo } from '@weave/core';
+import type { PlatformInfo } from '@weavecode/core';
 
 const unix: PlatformInfo = { os: 'linux', arch: 'x64', nodeVersion: 'v20', shell: 'bash', homeDir: '/u', configDir: '/u/.config' };
 const windows: PlatformInfo = { os: 'windows', arch: 'x64', nodeVersion: 'v20', shell: 'powershell', homeDir: 'C:\\u', configDir: 'C:\\u\\AppData' };

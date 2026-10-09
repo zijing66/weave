@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { templateRegistry } from '@weave/templates';
+import { templateRegistry } from '@weavecode/templates';
 import { registerPluginTemplates, collectPluginMcpServers } from '../init/plugin-templates.js';
 
 // templateRegistry 是模块级单例：用唯一 id 避免跨用例同名冲突。

@@ -6,12 +6,12 @@ import path from 'node:path';
 // :6420, stripping the /api prefix (the daemon serves its routes unprefixed).
 // Production: the daemon itself statically hosts the built bundle and applies
 // the same /api-prefix stripping in server.ts.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
       // 源码直引（批 1）：web 不依赖 workspace 包运行时，别名指到 core 源文件。
-      '@weave/core/harness': path.resolve(__dirname, '../../weave-core/src/harness.ts'),
+      '@weavecode/core/harness': path.resolve(__dirname, '../../weave-core/src/harness.ts'),
       '@': path.resolve(__dirname, 'src'),
     },
   },
@@ -26,8 +26,10 @@ export default defineConfig({
     },
   },
   define: {
+    // 生产构建不落任何默认 token（公开包里不能带已知凭据）；dev 才用 dev-entry
+    // 的固定 token。生产 daemon 随机 token 只能走 `?token=` 传入。
     'import.meta.env.V_DAEMON_TOKEN': JSON.stringify(
-      process.env.V_DAEMON_TOKEN ?? 'weave-dev-token',
+      process.env.V_DAEMON_TOKEN ?? (mode === 'development' ? 'weave-dev-token' : ''),
     ),
   },
-});
+}));

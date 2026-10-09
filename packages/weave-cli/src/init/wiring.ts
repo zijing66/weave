@@ -4,7 +4,7 @@ import {
   HarnessRegistry,
   createRuntimeRegistry,
   type HarnessDriver,
-} from '@weave/harness';
+} from '@weavecode/harness';
 import { ClaudeInitTemplate } from './harnesses/claude.js';
 import { CodexInitTemplate } from './harnesses/codex.js';
 

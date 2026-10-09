@@ -1,4 +1,4 @@
-import type { InitComponents, HooksConfig, PlatformInfo } from '@weave/core';
+import type { InitComponents, HooksConfig, PlatformInfo } from '@weavecode/core';
 
 export interface SettingsGeneratorInput {
   components: InitComponents;

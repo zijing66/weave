@@ -1,5 +1,5 @@
-import type { HookRule, HookDispatchStatus, HookDispatchMode } from '@weave/core';
-import { INJECTABLE_EVENTS, hookSourceHarness, type Harness } from '@weave/core';
+import type { HookRule, HookDispatchStatus, HookDispatchMode } from '@weavecode/core';
+import { INJECTABLE_EVENTS, hookSourceHarness, type Harness } from '@weavecode/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { PluginHost, PluginHandler, PluginHandlerResult } from './plugin-loader.js';

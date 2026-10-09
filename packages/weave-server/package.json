@@ -1,5 +1,5 @@
 {
-  "name": "@weave/server",
+  "name": "@weavecode/server",
   "version": "0.1.0",
   "description": "Weave daemon — HTTP server, SQLite data layer, and hook ingestion",
   "type": "module",
@@ -14,7 +14,9 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md",
+    "web/dist"
   ],
   "sideEffects": false,
   "author": "zijing66",
@@ -35,18 +37,19 @@
     "url": "https://github.com/zijing66/weave/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc && node copy-presets.mjs",
-    "prepack": "pnpm build",
+    "prepack": "pnpm build && pnpm build:web",
     "test": "vitest run",
     "build:web": "cd web && tsc && vite build",
     "dev:web": "cd web && vite"
   },
   "dependencies": {
-    "@weave/core": "workspace:*",
-    "@weave/harness": "workspace:*",
+    "@weavecode/core": "workspace:^",
+    "@weavecode/harness": "workspace:^",
     "chokidar": "^4.0.0",
     "smol-toml": "^1.3.0",
     "zod": "^3.23.0"

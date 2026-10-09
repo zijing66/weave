@@ -26,17 +26,17 @@ importers:
 
   packages/weave-cli:
     dependencies:
-      '@weave/core':
-        specifier: workspace:*
+      '@weavecode/core':
+        specifier: workspace:^
         version: link:../weave-core
-      '@weave/harness':
-        specifier: workspace:*
+      '@weavecode/harness':
+        specifier: workspace:^
         version: link:../weave-harness
-      '@weave/server':
-        specifier: workspace:*
+      '@weavecode/server':
+        specifier: workspace:^
         version: link:../weave-server
-      '@weave/templates':
-        specifier: workspace:*
+      '@weavecode/templates':
+        specifier: workspace:^
         version: link:../weave-templates
       ink:
         specifier: ^5.0.0
@@ -73,8 +73,8 @@ importers:
 
   packages/weave-harness:
     dependencies:
-      '@weave/core':
-        specifier: workspace:*
+      '@weavecode/core':
+        specifier: workspace:^
         version: link:../weave-core
     devDependencies:
       typescript:
@@ -86,11 +86,11 @@ importers:
 
   packages/weave-server:
     dependencies:
-      '@weave/core':
-        specifier: workspace:*
+      '@weavecode/core':
+        specifier: workspace:^
         version: link:../weave-core
-      '@weave/harness':
-        specifier: workspace:*
+      '@weavecode/harness':
+        specifier: workspace:^
         version: link:../weave-harness
       chokidar:
         specifier: ^4.0.0
@@ -180,8 +180,8 @@ importers:
 
   packages/weave-templates:
     dependencies:
-      '@weave/core':
-        specifier: workspace:*
+      '@weavecode/core':
+        specifier: workspace:^
         version: link:../weave-core
     devDependencies:
       typescript:

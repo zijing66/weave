@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { PluginScope, PluginSurface } from '@weave/harness';
+import type { PluginScope, PluginSurface } from '@weavecode/harness';
 import { hashFile } from '../install/fingerprint.js';
 import { fileAssetTargetDir } from '../install/file-assets.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';

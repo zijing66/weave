@@ -1,5 +1,5 @@
 /**
- * @weave/server — Weave daemon.
+ * @weavecode/server — Weave daemon.
  *
  * Data layer, HTTP server, and hook ingestion are implemented across the
  * db/, repositories/, and daemon/ modules. This file re-exports the public

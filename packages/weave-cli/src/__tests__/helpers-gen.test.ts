@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WEAVE_VERSION } from '@weave/server';
+import { WEAVE_VERSION } from '@weavecode/server';
 import { generateHookHandler, generateAutoMemoryHook } from '../init/helpers-gen';
 
 describe('generateHookHandler', () => {

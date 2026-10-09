@@ -1,11 +1,11 @@
-import { checkHarness as checkHarnessCore, type HarnessCheck as StructuredCheck } from '@weave/core';
+import { checkHarness as checkHarnessCore, type HarnessCheck as StructuredCheck } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import type { MessageKey } from '../i18n/dict/index.js';
 
 /**
  * Thin CLI adapter over the core structured health checks.
  *
- * Core (`@weave/core`) detects the failures and returns `{ id, params, ok }`
+ * Core (`@weavecode/core`) detects the failures and returns `{ id, params, ok }`
  * with zero text; this layer filters the failures and renders message/fix from
  * the CLI dictionary, so `weave status` keeps its exact output. Surfaced by
  * `weave status`.

@@ -1,5 +1,5 @@
 /**
- * @weave/server — hook ingestion types.
+ * @weavecode/server — hook ingestion types.
  *
  * The injected project hook script (hook-handler.cjs) is a thin forwarder: it
  * reads the agent's stdin JSON and POSTs a {@link HookReport} to the daemon.
@@ -7,7 +7,7 @@
  * {@link NormalizedHookPayload} before persisting to hook_events.
  */
 
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 
 /** Payload posted by an injected project hook script. */
 export interface HookReport {

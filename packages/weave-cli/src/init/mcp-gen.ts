@@ -1,4 +1,4 @@
-import type { PlatformInfo } from '@weave/core';
+import type { PlatformInfo } from '@weavecode/core';
 
 export interface McpGeneratorInput {
   platform: PlatformInfo;

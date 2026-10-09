@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
-import { CLAUDE_RESUME, type ResumeCommandSpec } from '@weave/harness';
+import { CLAUDE_RESUME, type ResumeCommandSpec } from '@weavecode/harness';
 import type { HookDispatchRepository, HookDispatchRow } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -10,7 +10,7 @@ import type { HookEventBus } from './bus.js';
  * `claude --resume <sessionId> -p <prompt>` 在项目根下异步执行，
  * 退出后回写 succeeded/failed/timeout 并广播 bus dispatch.finished。
  *
- * 批 4b：bin/args 规格迁入 `@weave/harness` 的 `CLAUDE_RESUME`
+ * 批 4b：bin/args 规格迁入 `@weavecode/harness` 的 `CLAUDE_RESUME`
  * （ResumeCommandSpec 注入，缺省 = 现行为）；claudeBin / WEAVE_CLAUDE_BIN
  * 覆盖窗保留。
  *

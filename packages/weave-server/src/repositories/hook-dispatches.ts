@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { HookDispatchMode, HookDispatchStatus } from '@weave/core';
+import type { HookDispatchMode, HookDispatchStatus } from '@weavecode/core';
 
 export interface HookDispatchInput {
   ruleId: string;

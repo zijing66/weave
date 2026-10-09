@@ -1,6 +1,6 @@
 import { zh } from './zh.js';
 import { en } from './en.js';
-import type { Locale } from '@weave/server';
+import type { Locale } from '@weavecode/server';
 
 export { zh, en };
 export type MessageKey = keyof typeof zh;

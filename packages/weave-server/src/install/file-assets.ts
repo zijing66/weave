@@ -1,5 +1,5 @@
-import type { Harness } from '@weave/core';
-import type { FileAssetCategory } from '@weave/harness';
+import type { Harness } from '@weavecode/core';
+import type { FileAssetCategory } from '@weavecode/harness';
 import { assetSurfaceFor } from '../surfaces.js';
 
 /**
@@ -7,7 +7,7 @@ import { assetSurfaceFor } from '../surfaces.js';
  * that installs as ONE file (unlike skills, which install as a directory).
  *
  * 批 4a：矩阵本体（FileAssetCategory / FileAssetSpec / FILE_ASSET_SPECS /
- * FILE_ASSET_CATEGORIES / isFileAssetCategory）迁至 `@weave/harness` 的
+ * FILE_ASSET_CATEGORIES / isFileAssetCategory）迁至 `@weavecode/harness` 的
  * `shared/file-specs.ts`，此处 re-export 保持存量 import 与测试零改动；
  * `fileAssetTargetDir` 保留原名原签名，内部委托 AssetSurface（经 registry 查 surface）。
  *
@@ -21,7 +21,7 @@ export {
   isFileAssetCategory,
   type FileAssetCategory,
   type FileAssetSpec,
-} from '@weave/harness';
+} from '@weavecode/harness';
 
 /** Resolve the install target directory for a file asset.
  * `agent` + `scope` decide the surface; kinds without a matching surface throw

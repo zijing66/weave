@@ -1,7 +1,7 @@
-import type { Harness, HarnessLifecycle } from '@weave/core/harness';
+import type { Harness, HarnessLifecycle } from '@weavecode/core/harness';
 
 /**
- * mirror @weave/core/harness.ts HARNESS_LIFECYCLE，改那边同步这里
+ * mirror @weavecode/core/harness.ts HARNESS_LIFECYCLE，改那边同步这里
  * （web 运行时不能 import core 值——import type 纪律，故常量镜像而非 re-export；
  * 先例：TasksPanel.tsx:17-25 mirror HookBusMessage）。
  */

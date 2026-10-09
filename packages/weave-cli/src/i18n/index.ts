@@ -3,7 +3,7 @@ import {
   SUPPORTED_LOCALES,
   readDaemonSettings,
   type Locale,
-} from '@weave/server';
+} from '@weavecode/server';
 import { DICTS, type MessageKey } from './dict/index.js';
 import { makeT, type Params, type TFunc } from './t.js';
 

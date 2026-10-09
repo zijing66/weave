@@ -7,9 +7,9 @@ import {
   logger,
   formatTable,
   resolveComponents,
-} from '@weave/core';
+} from '@weavecode/core';
 import { executeInit } from '../init/executor.js';
-import { registerProject } from '@weave/server';
+import { registerProject } from '@weavecode/server';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 

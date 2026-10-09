@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { DAEMON_HOST, resolveStaticDir } from '@weave/server';
-import { logger } from '@weave/core';
+import { DAEMON_HOST, resolveStaticDir } from '@weavecode/server';
+import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
 import type { Command } from '../parser.js';

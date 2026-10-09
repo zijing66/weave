@@ -1,4 +1,4 @@
-import { logger } from '@weave/core';
+import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 
 /**

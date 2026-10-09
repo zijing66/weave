@@ -14,7 +14,7 @@ import {
   type PluginRuntime,
   type ProjectRow,
 } from '@/lib/api';
-import type { Harness } from '@weave/core/harness';
+import type { Harness } from '@weavecode/core/harness';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';

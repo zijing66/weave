@@ -1,9 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { registerProject } from '@weave/server';
-import { logger } from '@weave/core';
-import { createRuntimeRegistry } from '@weave/harness';
+import { registerProject } from '@weavecode/server';
+import { logger } from '@weavecode/core';
+import { createRuntimeRegistry } from '@weavecode/harness';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 

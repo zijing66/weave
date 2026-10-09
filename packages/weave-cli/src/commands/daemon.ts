@@ -10,8 +10,8 @@ import {
   clearDaemonState,
   generateToken,
   daemonEntryUrl,
-} from '@weave/server';
-import { logger } from '@weave/core';
+} from '@weavecode/server';
+import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 

@@ -15,7 +15,7 @@ import { HookRuleRepository } from '../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
-import { createRuntimeRegistry } from '@weave/harness';
+import { createRuntimeRegistry } from '@weavecode/harness';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';

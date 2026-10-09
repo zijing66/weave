@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { logger } from '@weave/core';
+import { logger } from '@weavecode/core';
 import { executeInit } from '../init/executor';
 import { parseHarnessFlag } from '../commands/init';
 import { CodexInitTemplate } from '../init/harnesses/codex';
 import type { PromptPort } from '../init/prompt';
-import type { InitContext } from '@weave/harness';
+import type { InitContext } from '@weavecode/harness';
 import { t } from '../i18n';
 
 let tmpDir: string;

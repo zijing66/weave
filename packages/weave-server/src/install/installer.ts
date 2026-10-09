@@ -1,7 +1,7 @@
 import { cp, rm, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import {
   FILE_ASSET_SPECS,
   fileAssetTargetDir,

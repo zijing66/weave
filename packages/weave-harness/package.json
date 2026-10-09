@@ -1,5 +1,5 @@
 {
-  "name": "@weave/harness",
+  "name": "@weavecode/harness",
   "version": "0.1.0",
   "description": "Pluggable harness drivers — registry, init pipeline template method, and harness integration modules",
   "type": "module",
@@ -14,7 +14,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": false,
   "author": "zijing66",
@@ -35,7 +36,8 @@
     "url": "https://github.com/zijing66/weave/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc",
@@ -43,13 +45,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@weave/core": "workspace:*"
+    "@weavecode/core": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.5.0"
   }
 }

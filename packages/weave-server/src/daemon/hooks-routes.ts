@@ -6,7 +6,7 @@ import {
   HookRuleSourceSchema,
   HandlerConfigSchema,
   HookDispatchStatusSchema,
-} from '@weave/core';
+} from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';

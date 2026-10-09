@@ -26,7 +26,7 @@ import {
   type HookRuleSource,
   type ProjectRow,
 } from '@/lib/api';
-import type { Harness } from '@weave/core/harness';
+import type { Harness } from '@weavecode/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';

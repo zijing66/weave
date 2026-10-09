@@ -1,4 +1,4 @@
-import { HARNESS_EVENTS, type Harness } from '@weave/core';
+import { HARNESS_EVENTS, type Harness } from '@weavecode/core';
 import type { EventSource } from '../driver.js';
 
 /**

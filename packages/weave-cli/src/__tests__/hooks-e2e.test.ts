@@ -11,7 +11,7 @@ import {
   ProjectRepository,
   HookEventRepository,
   ClaudeCodeAdapter,
-} from '@weave/server';
+} from '@weavecode/server';
 import { generateHookHandler } from '../init/helpers-gen';
 
 vi.setConfig({ testTimeout: 20000 });

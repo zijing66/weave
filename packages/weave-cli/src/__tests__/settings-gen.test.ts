@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateSettingsJson, mergeSettingsJson } from '../init/settings-gen';
-import type { PlatformInfo } from '@weave/core';
-import { FULL_COMPONENTS, DEFAULT_HOOKS } from '@weave/core';
+import type { PlatformInfo } from '@weavecode/core';
+import { FULL_COMPONENTS, DEFAULT_HOOKS } from '@weavecode/core';
 
 const unixPlatform: PlatformInfo = {
   os: 'linux',

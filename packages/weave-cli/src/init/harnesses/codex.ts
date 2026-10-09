@@ -9,11 +9,11 @@ import {
   logger,
   resolveComponents,
   writeFileIfAbsent,
-} from '@weave/core';
+} from '@weavecode/core';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
-import { templateRegistry } from '@weave/templates';
-import { InitPipeline, type InitContext } from '@weave/harness';
+import { templateRegistry } from '@weavecode/templates';
+import { InitPipeline, type InitContext } from '@weavecode/harness';
 import { type SurfaceRecords } from './claude.js';
 import { t } from '../../i18n/index.js';
 

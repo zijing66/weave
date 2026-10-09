@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema } from '@weave/core';
+import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema } from '@weavecode/core';
 import { getDataDir } from '../db/paths.js';
 
 /**

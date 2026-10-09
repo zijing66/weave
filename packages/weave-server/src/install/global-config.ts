@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, access, stat, realpath, mkdir } from 'nod
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
 import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';

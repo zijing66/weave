@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { SpawnOptions } from 'node:child_process';
-import type { HookDispatchStatus } from '@weave/core';
+import type { HookDispatchStatus } from '@weavecode/core';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';

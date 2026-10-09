@@ -1,9 +1,9 @@
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import {
   createRuntimeRegistry,
   type AssetSurface,
   type PluginSurface,
-} from '@weave/harness';
+} from '@weavecode/harness';
 
 /**
  * 批 4a：server 经 registry 查 AssetSurface——模块级运行时注册表，

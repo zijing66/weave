@@ -1,9 +1,9 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
-import type { Harness } from '@weave/core';
-import { checkHarness, INJECTABLE_EVENTS } from '@weave/core';
-import type { EventSource, HarnessRegistry } from '@weave/harness';
-import { frameFacts } from '@weave/harness';
+import type { Harness } from '@weavecode/core';
+import { checkHarness, INJECTABLE_EVENTS } from '@weavecode/core';
+import type { EventSource, HarnessRegistry } from '@weavecode/harness';
+import { frameFacts } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';

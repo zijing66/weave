@@ -6,7 +6,7 @@ import {
   type HookRule,
   type HookRuleFilter,
   type HookRuleSource,
-} from '@weave/core';
+} from '@weavecode/core';
 import type { CreateHookRuleInput, HookRuleRepository } from '../repositories/hook-rules.js';
 
 /**

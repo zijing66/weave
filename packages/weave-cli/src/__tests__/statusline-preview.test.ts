@@ -10,7 +10,7 @@ import {
   PLAIN_STATUSLINE_CONFIG,
   type StatuslineConfig,
   type SegmentKey,
-} from '@weave/server';
+} from '@weavecode/server';
 import {
   runPreviewLines,
   COLOR_CYCLE,

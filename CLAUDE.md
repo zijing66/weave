@@ -39,9 +39,9 @@ skill with a `SKILL.md`). Invoke a skill by name when the task matches one.
 
 ## Architecture
 
-- 全仓唯一 abstract class = `InitPipeline`（`weave-harness/src/init/pipeline.ts`，经 `@weave/harness` 导出），模板方法范式；不新增其他抽象类。
+- 全仓唯一 abstract class = `InitPipeline`（`weave-harness/src/init/pipeline.ts`，经 `@weavecode/harness` 导出），模板方法范式；不新增其他抽象类。
 - 六能力槽（init / events / assets / resume / detect / plugins）+ `HarnessRegistry` 统一装配；harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。
-- 依赖硬约束：`@weave/harness → @weave/core` 是唯一 harness 外向依赖；core 只放纯类型与表（`HARNESS_*` 注册表）。
+- 依赖硬约束：`@weavecode/harness → @weavecode/core` 是唯一 harness 外向依赖；core 只放纯类型与表（`HARNESS_*` 注册表）。
 - web（`packages/weave-server/web`）仅 `import type` 引用 core/harness（tsconfig paths + vite alias 源码直引）。
 - 面向抽象与接口编程、避免硬编码：harness 专属格式/路径/键形不得在 server、cli、web 内自拼或散写，一律经能力面（`PluginSurface` / `AssetSurface` 等）取；server 只传语义参数（如「包名 + 市场身份」），harness 负责自己的表示法。
 - 插件注册键形 `<name>@<marketplace>` 是 harness 知识，唯一拼装点 = `PluginSurface.pluginKey(name, market?)`（`weave-harness/src/driver.ts`）；server/cli 不自拼键形，web 只渲染不解析（`@` 后 = 所属市场 = 插件的 namespace）。

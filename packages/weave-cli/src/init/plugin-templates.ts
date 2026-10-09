@@ -5,8 +5,8 @@ import {
   WEAVE_PLUGIN_MANIFEST,
   WeavePluginManifestSchema,
   type WeavePluginManifest,
-} from '@weave/core';
-import { templateRegistry, type TemplateEntry } from '@weave/templates';
+} from '@weavecode/core';
+import { templateRegistry, type TemplateEntry } from '@weavecode/templates';
 
 /** 遍历两个插件根（全局 + 项目）的一级子目录，产出合法 manifest。 */
 async function* iteratePluginManifests(

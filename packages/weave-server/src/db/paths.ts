@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { detectPlatform } from '@weave/core';
+import { detectPlatform } from '@weavecode/core';
 
 /** Absolute path to the global weave data directory (`<configDir>/weave`). */
 export function getDataDir(): string {

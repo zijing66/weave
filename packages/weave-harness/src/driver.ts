@@ -1,10 +1,10 @@
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import type { InitContext, InitPipeline } from './init/pipeline.js';
 import type { FileAssetCategory } from './shared/file-specs.js';
 
 /**
  * 抽象定义的家：六种能力接口 + HarnessDriver + HarnessRegistry + supports。
- * 依赖硬约束：本包仅依赖 @weave/core（永不依赖 server/cli，防 statusline/i18n 成环）。
+ * 依赖硬约束：本包仅依赖 @weavecode/core（永不依赖 server/cli，防 statusline/i18n 成环）。
  */
 
 /** 六种可插拔能力槽——driver 声明持有哪些，注册表按能力检索。 */

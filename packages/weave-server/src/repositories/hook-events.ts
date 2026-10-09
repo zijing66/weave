@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Harness } from '@weave/core';
+import type { Harness } from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
 
 export interface HookEventInput {

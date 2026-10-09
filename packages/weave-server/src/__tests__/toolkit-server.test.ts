@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
-import { createClaudePluginSurface, type PluginExecutor } from '@weave/harness';
+import { createClaudePluginSurface, type PluginExecutor } from '@weavecode/harness';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
