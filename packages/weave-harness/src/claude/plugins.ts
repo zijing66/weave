@@ -302,6 +302,7 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
 
   return {
     projectPluginDir: (projectPath) => path.join(projectPath, '.claude', 'plugins'),
+    pluginKey,
 
     async globalInstall(srcDir: string, opts: GlobalInstallOptions = {}) {
       let name = opts.name;
@@ -345,11 +346,11 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       // 幂等：未安装直接返回（marketplace 源保留——卸载≠移除市场，可重装）
       const existing = (await readInstalled())[key];
       if (!existing || existing.length === 0) return;
-      // 同一键可能同时有 user 与 project 两条记录（装过两次、scope 不同）——必须
-      // 逐个 scope 卸：只卸 user 会留下 project 那条，宿主继续把插件列为"已安装"，
-      // 而面板按新口径判"未装"，两边对不上。
-      const scopes = [...new Set(existing.map((r) => r.scope).filter((s): s is string => !!s))];
-      for (const scope of scopes.length > 0 ? scopes : ['user']) {
+      // 逐 scope 卸，每条记录按**它自己的** scope 删（全局记录 --scope user、项目
+      // 记录 --scope project）：同一键可能同时挂两条（装过两次、scope 不同），漏删
+      // 任何一条宿主都会继续把插件列为"已安装"。
+      const scopes = [...new Set(existing.map((r) => r.scope ?? 'user'))];
+      for (const scope of scopes) {
         const { stdout } = await run(['plugin', 'uninstall', key, '--scope', scope, '--json']);
         const outcome = safeJson(stdout);
         if (outcome?.['outcome'] === 'failed') {

@@ -153,6 +153,14 @@ export function ToolkitSection({
         <span className="shrink-0 text-[10px] text-neutral-600">
           {t('toolkit.targets', { targets: p.targets.join('+') })}
         </span>
+        {p.key && (
+          <span
+            className="shrink-0 font-mono text-[10px] text-neutral-500"
+            title={t('toolkit.keyTip', { scopes: p.scopes?.join('+') || t('toolkit.scopesNone') })}
+          >
+            {p.key}
+          </span>
+        )}
         {p.weave && (
           <span className="shrink-0 text-[10px] text-neutral-600">
             {t('toolkit.weaveRules', { n: p.weave.ruleCount })}

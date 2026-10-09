@@ -131,8 +131,8 @@ describe('globalInstall：外部市场身份（不占 weave 自建市场）', ()
   });
 });
 
-describe('uninstall：多 scope 记录必须逐 scope 卸', () => {
-  it('同一键的 user + project 两条记录 → 两次 uninstall，各自带对 scope', async () => {
+describe('uninstall：逐 scope 卸——每条记录按它自己的 scope 删', () => {
+  it('user + project 两条都在 → 各按各的 scope 发两次 CLI（漏一条宿主就仍列着）', async () => {
     await writeInstalled({
       'demo@weave': [
         { scope: 'user', installPath: '/c/demo', version: '1.0.0' },
@@ -146,9 +146,19 @@ describe('uninstall：多 scope 记录必须逐 scope 卸', () => {
     ]);
   });
 
-  it('未安装 → 幂等不发 CLI', async () => {
+  it('只有 project 那条 → 用 --scope project 删（缺省 user 删不动它）', async () => {
+    await writeInstalled({
+      'demo@weave': [{ scope: 'project', installPath: '/c/demo', version: '1.0.0' }],
+    });
+    await surface.uninstall('demo');
+    expect(calls).toEqual([['plugin', 'uninstall', 'demo@weave', '--scope', 'project', '--json']]);
+  });
+
+  it('记录缺 scope 字段 → 按 user 处理；未装 → 幂等不发 CLI', async () => {
+    await writeInstalled({ 'demo@weave': [{ installPath: '/c/demo', version: '1.0.0' }] });
+    await surface.uninstall('demo');
     await surface.uninstall('nope');
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([['plugin', 'uninstall', 'demo@weave', '--scope', 'user', '--json']]);
   });
 });
 

@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { PluginSurface } from '@weave/harness';
+import type { PluginScope, PluginSurface } from '@weave/harness';
 import { hashFile } from '../install/fingerprint.js';
 import { fileAssetTargetDir } from '../install/file-assets.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
@@ -11,6 +11,7 @@ import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { marketLibraryRoots } from '../market/resolve.js';
 import { marketDir } from '../market/manifest.js';
+import { marketIdOf } from '../market/identity.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
 import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
@@ -67,6 +68,10 @@ export interface ToolkitPackInfo extends ToolkitPack {
   enabled: boolean;
   /** 是否已安装（CC/mod = harness 全局安装态；表面包 = 本项目落盘记录；weave 装载即源恒 true）。 */
   installed: boolean;
+  /** CC 注册键 `<name>@<市场>`：仅 CC 落地包（targets 含 claude）有；表面/纯 SPI 包无。 */
+  key?: string;
+  /** 该键已登记的安装 scope（`user` = 全局装、`project` = 项目内装）；未装为空。 */
+  scopes?: PluginScope[];
   /** weave 成分的装载状态（loader 未就绪时缺省）。 */
   weave?: { status: LoadedPluginInfo['status']; ruleCount: number; error?: string };
 }
@@ -81,18 +86,6 @@ export interface ToolkitListResult {
 export interface ToolkitToggleResult {
   pack: ToolkitPackInfo;
   warnings: string[];
-}
-
-/**
- * 包所属的市场身份：包目录落在 `<dataDir>/market/<id>/…` 里 → 该市场 id（外部市场
- * 导入的包：按它自己的市场身份安装/启停/卸载，不占 weave 自建市场）；否则 undefined
- * = weave 自己的包（内置根 `presets/harness-tools`、SPI 插件）→ 走 weave 自建市场。
- */
-function marketIdOf(packDir: string): string | undefined {
-  const rel = path.relative(path.resolve(marketDir()), path.resolve(packDir));
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
-  const id = rel.split(path.sep)[0];
-  return id ? id : undefined;
 }
 
 /** mod 类包的宿主版本下限（Claude Code ≥ 2.1.287 契约，EARLY ACCESS）。 */
@@ -501,6 +494,8 @@ export class ToolkitService {
     const pack = await this.resolvePack(packId, sourceRoot);
     await this.applyDisabled(project, pack);
     if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
+      // 逐 scope 卸（surface 内按各记录自己的 scope 发 CLI）——全局记录与项目记录
+      // 一起摘掉，宿主才不会再把插件列为"已安装"。
       await this.pluginSurface().uninstall(pack.name, marketIdOf(pack.dir));
     }
     return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
@@ -632,9 +627,29 @@ export class ToolkitService {
     return facts.length > 0 ? facts.every(Boolean) : false;
   }
 
+  /** 该键已登记的安装 scope（读 installed_plugins.json；UI 用来显示"装在哪一处"）。 */
+  private async installedScopes(key: string): Promise<PluginScope[] | undefined> {
+    const records = (await this.pluginSurface().readInstalled())[key];
+    if (!records || records.length === 0) return undefined;
+    const scopes = [...new Set(records.map((r) => r.scope ?? 'user'))] as PluginScope[];
+    return scopes;
+  }
+
   private async packInfo(project: ProjectRow, pack: ToolkitPack): Promise<ToolkitPackInfo> {
     const enabled = await this.computeEnabled(project, pack);
-    const info: ToolkitPackInfo = { ...pack, enabled, installed: await this.computeInstalled(project, pack, enabled) };
+    // 键形由 harness 的 surface 拼（server 只给"包名 + 市场身份"）
+    const ccKey =
+      isCcPluginPack(pack) && pack.targets.includes('claude')
+        ? this.pluginSurface().pluginKey(pack.name, marketIdOf(pack.dir))
+        : undefined;
+    const scopes = ccKey ? await this.installedScopes(ccKey) : undefined;
+    const info: ToolkitPackInfo = {
+      ...pack,
+      enabled,
+      installed: await this.computeInstalled(project, pack, enabled),
+      ...(ccKey ? { key: ccKey } : {}),
+      ...(scopes && scopes.length > 0 ? { scopes } : {}),
+    };
     if (pack.weavePack) {
       const loaded = this.deps.plugins.list().find((p) => p.id === pack.id);
       if (loaded) {

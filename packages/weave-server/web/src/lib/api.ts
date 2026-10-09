@@ -200,6 +200,10 @@ export interface ToolkitPack {
   enabled: boolean;
   /** 是否已安装（CC/mod = harness 全局安装态；表面包 = 本项目落盘；weave 恒 true）。 */
   installed: boolean;
+  /** CC 注册键 `name@<市场>`（仅 CC 落地包有）：@后为所属市场 = 插件的 namespace。 */
+  key?: string;
+  /** 该键已登记的安装 scope（user = 全局装、project = 项目内装）；未装为空。 */
+  scopes?: string[];
   weave?: { status: 'active' | 'rejected' | 'disabled'; ruleCount: number; error?: string };
 }
 
@@ -411,6 +415,8 @@ export interface MarketPluginAsset {
   name: string;
   version: string;
   description?: string;
+  /** CC 注册键 `name@<市场>`（仅 CC 落地包有）：@后为所属市场 = 插件的 namespace。 */
+  key?: string;
   /** Absolute path to the pack directory (install / enable source). */
   dirPath: string;
   /** Pack dir relative to the library root (posix; 包内 skill 双身份前缀匹配键). */

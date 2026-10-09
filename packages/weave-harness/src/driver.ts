@@ -100,12 +100,15 @@ export interface Detector {
 
 /** installed_plugins.json（schema v2）单键值：安装记录数组（每键可多版本）。 */
 export interface InstalledPluginRecord {
-  scope?: string;
+  scope?: PluginScope;
   installPath?: string;
   version?: string;
   installedAt?: string;
   lastUpdated?: string;
 }
+
+/** 安装 scope（宿主三分：user / project / local）——每条安装记录按自己的 scope 卸。 */
+export type PluginScope = 'user' | 'project' | 'local';
 
 /** 全局安装结果（幂等命中已装时同样返回）。 */
 export interface PluginInstallInfo {
@@ -150,13 +153,18 @@ export interface GlobalInstallOptions {
 export interface PluginSurface {
   /** 项目插件位（绝对路径）。宿主不扫描该目录——仅存量副本与清理语义消费。 */
   projectPluginDir(projectPath: string): string;
+  /** 注册键 `<name>@<marketplace>`（键形是 harness 知识，实现期就已定，不外泄给
+   *  调用方拼装）；`market` 缺省 = weave 自建市场。 */
+  pluginKey(name: string, market?: string): string;
   /** 全局安装（两步 CLI 链；幂等：已装直接返回安装信息）。 */
   globalInstall(srcDir: string, opts?: GlobalInstallOptions): Promise<PluginInstallInfo>;
   /** 读 installed_plugins.json 的插件映射（缺失/损坏 → 空对象）。 */
   readInstalled(): Promise<Record<string, InstalledPluginRecord[]>>;
   /** 插件是否已全局安装（`market` 缺省 = weave 自建市场）。 */
   isInstalled(name: string, market?: string): Promise<boolean>;
-  /** 全局卸载（与 harness CLI 对齐；幂等——未安装直接返回；marketplace 源保留）。 */
+  /** 卸载（与 harness CLI 对齐；幂等——未安装直接返回；marketplace 源保留）。
+   *  逐 scope 卸：每条安装记录按**它自己的** scope 删（全局记录 `--scope user`、
+   *  项目记录 `--scope project`）——漏删的残留记录会让宿主继续列出"已安装"。 */
   uninstall(name: string, market?: string): Promise<void>;
   /** 项目 settings 的 enabledPlugins（键 `name@<market>`；缺省 false）。 */
   readProjectEnabled(projectPath: string, name: string, market?: string): Promise<boolean>;

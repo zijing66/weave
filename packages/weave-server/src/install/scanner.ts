@@ -4,6 +4,14 @@ import type { Harness } from '@weave/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 import { parseToolkitPack, type ToolkitKind, type ToolkitComponent } from '../hooks/toolkit-scan.js';
+import { marketIdOf } from '../market/identity.js';
+import { pluginSurfaceFor } from '../surfaces.js';
+
+/** CC 落地包（含 mods）且目标含 claude 才有注册键——SPI/表面包不占 CC 键位。 */
+function packKey(pack: { name: string; dir: string; ccPack: boolean; kind: ToolkitKind; targets: Harness[] }): string | undefined {
+  if (!(pack.ccPack || pack.kind === 'mod') || !pack.targets.includes('claude')) return undefined;
+  return pluginSurfaceFor('claude').pluginKey(pack.name, marketIdOf(pack.dir));
+}
 
 export interface SkillAsset {
   /** Skill name — the containing directory's basename. */
@@ -60,6 +68,10 @@ export interface MarketPluginAsset {
   name: string;
   version: string;
   description?: string;
+  /** CC 注册键 `name@<市场>`（仅 CC 落地包有）：UI 直接展示「是哪个市场的插件」。
+   *  键形由 harness 的 `pluginKey` 拼（server 不写 harness 硬编码）；非市场来源
+   *  落 weave 自建市场。 */
+  key?: string;
   /** Absolute path to the pack directory (install / enable source). */
   dirPath: string;
   /** Pack dir relative to the library root (posix; 包子树排除根的匹配键). */
@@ -133,10 +145,12 @@ export async function scanLibraryPlugins(libPath: string): Promise<LibraryPlugin
         for (const n of pack.skills) {
           if (await fileExists(join(dir, 'skills', n, 'SKILL.md'))) skills.push(n);
         }
+        const key = packKey(pack);
         plugins.push({
           name: pack.name,
           version: pack.version,
           ...(pack.description ? { description: pack.description } : {}),
+          ...(key ? { key } : {}),
           dirPath: pack.dir,
           relPath: relative(libPath, dir).replace(/\\/g, '/'),
           ccPack: pack.ccPack,

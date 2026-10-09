@@ -871,6 +871,14 @@ export function LibraryPanel({
                     <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                       v{pl.version}
                     </span>
+                    {pl.key && (
+                      <span
+                        className="shrink-0 font-mono text-[10px] text-neutral-500"
+                        title={t('toolkit.keyTip', { scopes: pack?.scopes?.join('+') || t('toolkit.scopesNone') })}
+                      >
+                        {pl.key}
+                      </span>
+                    )}
                     {/* mods 按 CC 插件管线安装（toolkit isCcPluginPack），徽标同口径 */}
                     {(pl.ccPack || pl.kind === 'mod') && (
                       <span className="shrink-0" title={t('library.ccPluginTip')}>

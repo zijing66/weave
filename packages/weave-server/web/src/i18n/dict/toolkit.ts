@@ -24,6 +24,9 @@ export const toolkitZh = {
   'toolkit.prov.market': '市场',
   'toolkit.targets': '目标：{targets}',
   'toolkit.weaveRules': '规则 {n}',
+  'toolkit.keyTip':
+    'CC 注册键 name@marketplace——@后为所属市场（插件 namespace）；安装 scope：{scopes}',
+  'toolkit.scopesNone': '未安装',
   'toolkit.legacyTitle': '发现 {n} 个 Weave 旧插件副本',
   'toolkit.legacyHint': '旧管线复制进项目插件位的死数据（Claude Code 不加载），可安全清理',
   'toolkit.legacyCleanup': '清理',
@@ -63,6 +66,9 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.prov.market': 'market',
   'toolkit.targets': 'Targets: {targets}',
   'toolkit.weaveRules': 'rules {n}',
+  'toolkit.keyTip':
+    'CC plugin key name@marketplace — the part after @ is its marketplace (plugin namespace); install scope: {scopes}',
+  'toolkit.scopesNone': 'not installed',
   'toolkit.legacyTitle': 'Found {n} stale Weave plugin copies',
   'toolkit.legacyHint':
     'Dead data the old pipeline copied into the project plugin dir (Claude Code does not load it); safe to clean up',
