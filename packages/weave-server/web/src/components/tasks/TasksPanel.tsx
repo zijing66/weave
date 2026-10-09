@@ -50,6 +50,8 @@ export function TasksPanel({
   const [groupWindow, setGroupWindow] = useState(10);
   /** 事件游标已翻到最早（最新窗口不满一条完整批，或更早批次拉空）。 */
   const [olderExhausted, setOlderExhausted] = useState(false);
+  /** 事件拉取中——空窗期不得冒充「该会话还没有采集到事件」。 */
+  const [loading, setLoading] = useState(false);
   const scrollThrottle = useRef<number | null>(null);
 
   /** 本项目会话：总线全量列表按 projectId 过滤（null = 首次加载中，沿用总线状态）。 */
@@ -60,13 +62,22 @@ export function TasksPanel({
 
   const refreshEvents = useCallback(
     async (sessionId: string) => {
+      setLoading(true);
       try {
         const list = await api.listSessionHooks(projectId, sessionId);
-        setEvents(list);
-        // 最新窗口不满一整批 = 已是该会话最早的事件，无需再翻页。
-        setOlderExhausted(list.length < 300);
+        // SSE 刷新只替换「最新窗口」尾部，保留已向前翻到的更早批次——否则长 turn
+        // 把窗口截成尾巴时，补拉永远被下一条 hook 帧打回原点、收不了敛。
+        setEvents((prev) => {
+          if (prev.length === 0) return list;
+          const head = list[0]?.id ?? Number.POSITIVE_INFINITY;
+          return [...prev.filter((x) => x.id < head), ...list];
+        });
+        // 已翻到最早后不再被满批窗口「复活」；不满一批 = 确实到头。
+        setOlderExhausted((was) => was || list.length < 300);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
       }
     },
     [projectId],
@@ -74,7 +85,6 @@ export function TasksPanel({
 
   useEffect(() => {
     setSelectedId(initialSessionId ?? null);
-    setEvents([]);
     api.listHooksRules(projectId).then(setRules).catch(() => {});
   }, [projectId, initialSessionId]);
 
@@ -83,15 +93,15 @@ export function TasksPanel({
     setSelectedId((prev) => prev ?? sessions?.[0]?.sessionId ?? null);
   }, [sessions]);
 
+  // 切会话：清空上一会话的事件与游标，全折叠 + 窗口重置回最新 10 条
+  // （画布按需点开）——不清会闪现上一会话的组头。
   useEffect(() => {
-    if (selectedId) void refreshEvents(selectedId);
-  }, [selectedId, refreshEvents]);
-
-  // 切会话：全折叠 + 窗口重置回最新 10 条（画布按需点开）。
-  useEffect(() => {
+    setEvents([]);
+    setOlderExhausted(false);
     setExpandedGroupId('');
     setGroupWindow(10);
-  }, [selectedId]);
+    if (selectedId) void refreshEvents(selectedId);
+  }, [selectedId, refreshEvents]);
 
   // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
   // 会话状态、会话行计数、派发列表都由全局状态总线按同一批帧维护；本面板只
@@ -422,9 +432,21 @@ export function TasksPanel({
           <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
             {t('tasks.selectHint')}
           </p>
-        ) : groups.length === 0 ? (
+        ) : loading && events.length === 0 ? (
+          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {t('hooks.loading')}
+          </p>
+        ) : events.length === 0 ? (
           <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
             {t('tasks.chainEmpty')}
+          </p>
+        ) : groups.length === 0 ? (
+          /* 有事件、但最新窗口被长 turn 截成尾巴（没有 prompt 可开组）——正在向
+             前补拉更早批次，不得冒充「该会话还没有采集到事件」。 */
+          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {t('tasks.chainCatchUp')}
           </p>
         ) : (
           /* 事件区域：relative 外壳——遮罩 absolute 固定在区域底边（不随滚动
