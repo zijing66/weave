@@ -26,7 +26,7 @@ import {
 } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
+import { KIND_KEY, KIND_STYLES, KEY_STYLE } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -852,7 +852,7 @@ export function LibraryPanel({
                         togglePlugin(pk);
                       }
                     }}
-                    className="flex items-center gap-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+                    className="flex flex-wrap items-center gap-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
                   >
                     {expanded ? (
                       <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
@@ -872,12 +872,12 @@ export function LibraryPanel({
                       v{pl.version}
                     </span>
                     {pl.key && (
-                      <span
-                        className="shrink-0 font-mono text-[10px] text-neutral-500"
+                      <Badge
+                        className={cn('shrink-0 px-1.5 text-[10px]', KEY_STYLE)}
                         title={t('toolkit.keyTip', { scopes: pack?.scopes?.join('+') || t('toolkit.scopesNone') })}
                       >
                         {pl.key}
-                      </span>
+                      </Badge>
                     )}
                     {/* mods 按 CC 插件管线安装（toolkit isCcPluginPack），徽标同口径 */}
                     {(pl.ccPack || pl.kind === 'mod') && (
