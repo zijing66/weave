@@ -24,6 +24,7 @@ export const assetsZh = {
   'skillGrid.pluginOff': '已禁用 — 点击切换',
   'skillGrid.on': '开',
   'skillGrid.off': '关',
+  'skillGrid.keyTip': '插件注册键 name@marketplace——@后为所属市场（插件 namespace）',
 
   // —— FileAssetTree ——
   'fileTree.all': '全部',
@@ -110,6 +111,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.pluginOff': 'Disabled — click to toggle',
   'skillGrid.on': 'ON',
   'skillGrid.off': 'OFF',
+  'skillGrid.keyTip': 'Plugin key name@marketplace — the part after @ is its marketplace (plugin namespace)',
 
   // —— FileAssetTree ——
   'fileTree.all': 'All',

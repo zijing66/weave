@@ -327,6 +327,15 @@ export function SkillDetailDrawer({
       <div className="flex items-center gap-2 p-3 border-b border-white/[0.06]">
         <FileCode className="h-4 w-4 shrink-0 text-blue-400" />
         <span className="text-sm font-semibold truncate">{name}</span>
+        {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace */}
+        {pluginKey && (
+          <span
+            className="shrink-0 font-mono text-[10px] text-neutral-500"
+            title={t('skillGrid.keyTip')}
+          >
+            {pluginKey}
+          </span>
+        )}
         {scope === 'project' ? (
           <Badge variant="default">project</Badge>
         ) : (

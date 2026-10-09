@@ -408,6 +408,15 @@ function GroupedSkills({
                 )}
                 <FolderTree className="h-3.5 w-3.5 shrink-0 text-blue-400" />
                 <span className="text-xs font-semibold text-neutral-300 truncate">{g.label}</span>
+                {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace（同工具箱行） */}
+                {g.pluginKey && (
+                  <span
+                    className="shrink-0 font-mono text-[10px] text-neutral-500"
+                    title={t('skillGrid.keyTip')}
+                  >
+                    {g.pluginKey}
+                  </span>
+                )}
                 {/* prominent source tag: 插件 / 本地 + runtime */}
                 <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
                   {isPlugin ? t('skillGrid.plugin') : t('skillGrid.local')}
