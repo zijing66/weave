@@ -26,7 +26,7 @@ import {
 } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { KIND_KEY, KIND_STYLES, KEY_STYLE } from '@/components/ToolkitSection';
+import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -865,20 +865,23 @@ export function LibraryPanel({
                         pack?.enabled ? 'text-violet-400' : 'text-neutral-600',
                       )}
                     />
-                    <span className="min-w-0 truncate text-xs font-medium text-neutral-200">
-                      {pl.name}
+                    {/* 名称即注册键（name@marketplace，@后 = 所属市场 = 插件 namespace）——
+                        身份只此一处，不再另排键徽标重复一遍。 */}
+                    <span
+                      className="min-w-0 truncate text-xs font-medium text-neutral-200"
+                      title={
+                        pl.key
+                          ? t('toolkit.keyTip', {
+                              scopes: pack?.scopes?.join('+') || t('toolkit.scopesNone'),
+                            })
+                          : undefined
+                      }
+                    >
+                      {pl.key ?? pl.name}
                     </span>
                     <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                       v{pl.version}
                     </span>
-                    {pl.key && (
-                      <Badge
-                        className={cn('shrink-0 px-1.5 text-[10px]', KEY_STYLE)}
-                        title={t('toolkit.keyTip', { scopes: pack?.scopes?.join('+') || t('toolkit.scopesNone') })}
-                      >
-                        {pl.key}
-                      </Badge>
-                    )}
                     {/* mods 按 CC 插件管线安装（toolkit isCcPluginPack），徽标同口径 */}
                     {(pl.ccPack || pl.kind === 'mod') && (
                       <span className="shrink-0" title={t('library.ccPluginTip')}>

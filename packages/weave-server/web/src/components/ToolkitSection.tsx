@@ -28,9 +28,6 @@ export const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
   surface: 'bg-neutral-800 text-neutral-300',
 };
 
-/** 注册键徽标（name@marketplace，@后 = 所属市场 = 插件 namespace）——与 KIND 同级的可见身份位。 */
-export const KEY_STYLE = 'bg-indigo-900/40 text-indigo-300 font-mono';
-
 const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
   builtin: 'toolkit.prov.builtin',
   'external-dir': 'toolkit.prov.external-dir',
@@ -139,8 +136,21 @@ export function ToolkitSection({
         <Package
           className={cn('h-3.5 w-3.5 shrink-0', p.enabled ? 'text-emerald-400' : 'text-neutral-600')}
         />
-        <span className="shrink-0 text-xs font-medium text-neutral-200">{p.name}</span>
-        <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+        {/* 名称即注册键（name@marketplace，@后 = 所属市场 = 插件 namespace）——
+            身份只此一处，不再另排 id / 键徽标造成三重重复。 */}
+        <span
+          className="shrink-0 text-xs font-medium text-neutral-200"
+          title={
+            p.key
+              ? t('toolkit.keyTip', { scopes: p.scopes?.join('+') || t('toolkit.scopesNone') })
+              : undefined
+          }
+        >
+          {p.key ?? p.name}
+        </span>
+        {p.id !== p.name && (
+          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+        )}
         <Badge className={cn('shrink-0', KIND_STYLES[p.kind])}>{t(KIND_KEY[p.kind])}</Badge>
         <Badge
           className={cn(
@@ -156,14 +166,6 @@ export function ToolkitSection({
         <span className="shrink-0 text-[10px] text-neutral-600">
           {t('toolkit.targets', { targets: p.targets.join('+') })}
         </span>
-        {p.key && (
-          <Badge
-            className={cn('shrink-0 px-1.5 text-[10px]', KEY_STYLE)}
-            title={t('toolkit.keyTip', { scopes: p.scopes?.join('+') || t('toolkit.scopesNone') })}
-          >
-            {p.key}
-          </Badge>
-        )}
         {p.weave && (
           <span className="shrink-0 text-[10px] text-neutral-600">
             {t('toolkit.weaveRules', { n: p.weave.ruleCount })}
