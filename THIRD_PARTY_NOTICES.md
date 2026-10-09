@@ -3,6 +3,23 @@
 本仓库的 `weave-core`、`weave-cli`、`weave-templates` 的设计理念与部分实现
 参考了以下开源项目。依据各自许可证，在此声明归属。
 
+## JetBrains Mono + Nerd Fonts（随包发布的字体资源）
+
+`@weavecode/server` 的 dashboard bundle（`web/dist/fonts/*.woff`）包含字体：
+
+- **JetBrains Mono**（Version 2.304）— Copyright 2020 The JetBrains Mono
+  Project Authors（<https://github.com/JetBrains/JetBrainsMono>），
+  **SIL Open Font License 1.1**。修改：经 Nerd Fonts 3.4.0 打补丁 + 子集化，
+  文件名改为 `WeaveNerdMono`（原 family 名 `JetBrainsMono NFM`）。JetBrains Mono
+  未声明 Reserved Font Name，改名后仍受 OFL 1.1 约束、随包携带许可全文。
+- **Nerd Fonts 3.4.0**（<https://github.com/ryanoasis/nerd-fonts>）补丁带入的
+  图标字形来自多个符号集（Font Awesome Free、Material Design Icons、
+  Octicons、Codicons、Weather Icons、Devicons 等），各符号集保留原许可
+  （MIT / Apache 2.0 / SIL OFL / CC BY 4.0），权威清单见上游仓库。
+
+许可全文与完整署名随字体一同发布：`web/dist/fonts/OFL.txt`、
+`web/dist/fonts/ATTRIBUTION.md`。
+
 ## ruflo (claude-flow)
 
 - **项目**：ruflo — Claude Code 编排框架（claude-flow v3.34.0）
