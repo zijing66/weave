@@ -21,7 +21,7 @@ import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
 import type { WatchService } from '../watch/watch-service.js';
-import { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets, scanLibraryPlugins } from '../install/scanner.js';
+import { getLibraryScan, invalidateScan } from '../install/scan-cache.js';
 import {
   installSkill,
   uninstallSkill,
@@ -567,21 +567,16 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Library not found' });
       return;
     }
-    // 先发现插件包：包是原子单元，包内 skill/表面成分/mcp 隶属该包
-    // （随包启停，不独立安装）——packRoots 含谓词命中但解析为空的外壳包。
-    // packRoots 恒算（与 kind 门控解耦：mcp 库的包内 skill 同样不泄漏）；
-    // plugins 展示字段维持 skill|both 门控。
-    const { plugins: allPlugins, packRoots } = await scanLibraryPlugins(lib.path);
+    // 四扫描编排收编在 scan-cache（plugins 先行 → packRoots 排除：包内
+    // skill/表面成分/mcp 隶属包，随包启停不独立安装）。缓存存原料，kind
+    // 门控在此：plugins/files/mcp 门控、skills 不门控（维持现状）。
+    const { plugins: allPlugins, skills, mcp: allMcp, files: allFiles } = await getLibraryScan(
+      lib.path,
+    );
     const plugins = lib.kind === 'skill' || lib.kind === 'both' ? allPlugins : [];
-    const skills = await scanLibrarySkills(lib.path, packRoots);
-    const mcp =
-      lib.kind === 'mcp' || lib.kind === 'both' ? await scanLibraryMcp(lib.path, packRoots) : [];
-    const scanned =
-      lib.kind === 'skill' || lib.kind === 'both'
-        ? await scanLibraryFileAssets(lib.path, packRoots)
-        : null;
-    // 扫描结果按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
-    const files = scanned ? Object.values(scanned).flat() : null;
+    const mcp = lib.kind === 'mcp' || lib.kind === 'both' ? allMcp : [];
+    // files 按分类分组，出参按 web 契约摊平为扁平数组（每项自带 category）
+    const files = lib.kind === 'skill' || lib.kind === 'both' ? Object.values(allFiles).flat() : null;
     sendJson(res, 200, { library: lib, skills, mcp, files, plugins });
     return;
   }
@@ -592,7 +587,10 @@ async function handleRequest(
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
     }
-    deps.libraries.remove(Number(libMatch[1]));
+    const libId = Number(libMatch[1]);
+    const libRow = deps.libraries.getById(libId);
+    if (libRow) await invalidateScan(libRow.path); // 外部目录不删库不删目录，清掉缓存文件
+    deps.libraries.remove(libId);
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -629,14 +627,14 @@ async function handleRequest(
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir); // 覆盖重导 → 指纹失效
-        clearAssetTagsCache(); // 磁盘已变 → tag 计数缓存失效（响应前清，防回 stale）
+        await invalidateScan(imported.dir); // 源目录可能带旧 scans.json，导入后一律作废重扫
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir);
-        clearAssetTagsCache();
+        await invalidateScan(imported.dir);
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
@@ -668,6 +666,7 @@ async function handleRequest(
     const rows = deps.libraries
       .list()
       .filter((r) => !body.ids?.length || body.ids.includes(r.id));
+    for (const r of rows) await invalidateScan(r.path); // 检查即重扫事件：之后同路径取新结果
     const results = await checkMarketUpdates(rows.map((r) => ({ id: r.id, dir: r.path })));
     sendJson(res, 200, { results });
     return;
@@ -701,10 +700,12 @@ async function handleRequest(
     for (const r of results) {
       if (r.status === 'refreshed') {
         const dir = dirOf.get(r.id);
-        if (dir) deps.fingerprintCache?.invalidate(dir);
+        if (dir) {
+          deps.fingerprintCache?.invalidate(dir);
+          await invalidateScan(dir);
+        }
       }
     }
-    if (results.some((r) => r.status === 'refreshed')) clearAssetTagsCache();
     sendJson(res, 200, { results });
     return;
   }
@@ -726,7 +727,7 @@ async function handleRequest(
     }
     await fs.promises.rm(row.path, { recursive: true, force: true });
     deps.libraries.remove(row.id);
-    clearAssetTagsCache();
+    await invalidateScan(row.path); // 目录已带走 scans.json，此处兜底热层
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
     sendJson(res, 200, {
       ok: true,
@@ -749,11 +750,13 @@ async function handleRequest(
       return;
     }
     try {
+      const oldPath = row.path;
       const imported = await importLibraryIntoMarket(row, {
         libraries: deps.libraries,
         dataDir: deps.libraries.dataDir,
       });
-      clearAssetTagsCache(); // 迁入 = 新落盘内容
+      await invalidateScan(oldPath); // 外部源残留的 scans.json 清掉
+      await invalidateScan(imported.dir); // 拷贝可能带进旧 scans.json，不作数
       sendJson(res, 200, {
         item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
       });
@@ -1546,12 +1549,7 @@ const FILE_TAG: Record<FileAssetCategory, string> = {
 };
 
 async function scanAssetTags(libPath: string): Promise<Record<string, number>> {
-  const { plugins, packRoots } = await scanLibraryPlugins(libPath);
-  const [skills, mcp, files] = await Promise.all([
-    scanLibrarySkills(libPath, packRoots),
-    scanLibraryMcp(libPath, packRoots),
-    scanLibraryFileAssets(libPath, packRoots),
-  ]);
+  const { plugins, skills, mcp, files } = await getLibraryScan(libPath);
   const tags: Record<string, number> = {};
   const add = (tag: string, n: number) => {
     if (n > 0) tags[tag] = (tags[tag] ?? 0) + n;
@@ -1565,28 +1563,13 @@ async function scanAssetTags(libPath: string): Promise<Record<string, number>> {
   return tags;
 }
 
-/**
- * tag 计数缓存（四扫描贵、行数少）：导入/刷新/删除/迁入改写磁盘后
- * clear-all 重算；键为库行的绝对路径。
- */
-const assetTagsCache = new Map<string, Record<string, number>>();
-
-function clearAssetTagsCache(): void {
-  assetTagsCache.clear();
-}
-
 async function assetTagsOf(dir: string): Promise<Record<string, number>> {
-  const hit = assetTagsCache.get(dir);
-  if (hit !== undefined) return hit;
   // legacy 外部源可能已被删除/不可读：降级为空 tag，不让整张清单 500
-  let tags: Record<string, number> = {};
   try {
-    tags = await scanAssetTags(dir);
+    return await scanAssetTags(dir);
   } catch {
-    /* 空 tag */
+    return {};
   }
-  assetTagsCache.set(dir, tags);
-  return tags;
 }
 
 /** Map reader errors to HTTP statuses (403 escape / 413 too large / 404 missing). */

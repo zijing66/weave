@@ -1,12 +1,4 @@
-import {
-  scanLibrarySkills,
-  scanLibraryMcp,
-  scanLibraryFileAssets,
-  scanLibraryPlugins,
-  type SkillAsset,
-  type McpTemplate,
-  type FileAssetTemplate,
-} from './scanner.js';
+import { getLibraryScan, type LibraryScan } from './scan-cache.js';
 import type { FileAssetCategory } from './file-assets.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 import type { McpServerConfig } from './installer.js';
@@ -84,66 +76,48 @@ export async function buildLibraryIndex(libraries: LibraryRow[]): Promise<Librar
   for (const lib of libraries) {
     const wantSkill = lib.kind === 'skill' || lib.kind === 'both';
     const wantMcp = lib.kind === 'mcp' || lib.kind === 'both';
-    // 包子树排除与 kind 门控解耦（恒算）：包内资源隶属包，不作为独立更新
-    // 来源（否则包内 skill 会进更新提示区）；包排除为空时三条扫描行为零变。
-    let packRoots: string[] = [];
+    // 包子树排除在 scanLibrary 内恒算（与 kind 门控解耦）：包内资源隶属包，
+    // 不作为独立更新来源。扫描缓存命中与否对本函数透明；装没装/内容漂移
+    // 仍由 FingerprintCache 的 live 哈希判定，不走这份缓存。
+    let scan: LibraryScan;
     try {
-      packRoots = (await scanLibraryPlugins(lib.path)).packRoots;
+      scan = await getLibraryScan(lib.path);
     } catch {
-      // unreadable library — 无排除根，各扫描自身再容错
+      continue; // unreadable library — skip
     }
     if (wantSkill) {
-      try {
-        const scanned: SkillAsset[] = await scanLibrarySkills(lib.path, packRoots);
-        for (const s of scanned) {
-          if (!skills.has(s.name)) {
-            skills.set(s.name, {
-              name: s.name,
+      for (const s of scan.skills) {
+        if (!skills.has(s.name)) {
+          skills.set(s.name, {
+            name: s.name,
+            libraryId: lib.id,
+            libraryPath: lib.path,
+            dirPath: s.dirPath,
+          });
+        }
+      }
+      for (const templates of Object.values(scan.files)) {
+        for (const t of templates) {
+          const key = `${t.category}/${t.name}`;
+          if (!files.has(key)) {
+            files.set(key, {
+              name: t.name,
+              category: t.category,
               libraryId: lib.id,
               libraryPath: lib.path,
-              dirPath: s.dirPath,
+              filePath: t.filePath,
             });
           }
         }
-      } catch {
-        // unreadable library — skip
       }
     }
     if (wantMcp) {
-      try {
-        const scanned: McpTemplate[] = await scanLibraryMcp(lib.path, packRoots);
-        for (const t of scanned) {
-          if (!mcp.has(t.name)) {
-            const { name, command, args, env, sourcePath } = t;
-            const config: McpServerConfig = { command, ...(args && { args }), ...(env && { env }) };
-            mcp.set(t.name, { name, libraryId: lib.id, libraryPath: lib.path, config, sourcePath });
-          }
+      for (const t of scan.mcp) {
+        if (!mcp.has(t.name)) {
+          const { name, command, args, env, sourcePath } = t;
+          const config: McpServerConfig = { command, ...(args && { args }), ...(env && { env }) };
+          mcp.set(t.name, { name, libraryId: lib.id, libraryPath: lib.path, config, sourcePath });
         }
-      } catch {
-        // unreadable library — skip
-      }
-    }
-    // File assets (commands/agents/workflows/rules/output-styles) follow the
-    // skill kind gate — they are content templates, not MCP configs.
-    if (wantSkill) {
-      try {
-        const scanned = await scanLibraryFileAssets(lib.path, packRoots);
-        for (const templates of Object.values(scanned) as FileAssetTemplate[][]) {
-          for (const t of templates) {
-            const key = `${t.category}/${t.name}`;
-            if (!files.has(key)) {
-              files.set(key, {
-                name: t.name,
-                category: t.category,
-                libraryId: lib.id,
-                libraryPath: lib.path,
-                filePath: t.filePath,
-              });
-            }
-          }
-        }
-      } catch {
-        // unreadable library — skip
       }
     }
   }
