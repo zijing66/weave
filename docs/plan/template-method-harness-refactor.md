@@ -352,7 +352,7 @@ flowchart TD
 | **7 前端接线**（W 后零依赖；与批 1 同触 `api.ts`，按批序 1→7 错峰） | McpGrid 启停开关接 `get/putMcpEnable`；SettingsModal 加 `hooks.enabled` 开关（一次原子 PUT 语义不变）；清理零调用 helper（`listHooks`/`getGlobalStatusline`）；i18n dict 补键 | 纯 `server/web` ≈4–5 文件 | **零新后端端点**；`build:web` 过；settings PUT round-trip 存量测试零改动；`grep -rn "getGlobalStatusline\|\.listHooks(" packages/weave-web/src` 零命中 |
 | **8 特性对应** | `checkHarness` 从 cli 下沉 weave-core：**改为结构化返回（check id + 参数 + ok）**，文案由各端词典渲染（cli `status` 用 CLI dict、web 用 web dict——`harness-checks.ts:3` 的 `t()` 依赖随迁处置，符合 i18n 纪律）；cli `status` 改调（承接批 5 改造后的 status.ts）；server 新增只读健康端点 **`GET /projects/:id/harness-checks`**（避开既有 `GET /health`）；ProjectList 健康徽标；Codex personalization 占位文案明确 | cli（status/harness-checks）、server、web ≈5 文件 | 仅接受 GET + 新增只读用例；**check id 断言零改动**；文案断言（`.message`/`.fix`，`harness-checks.test.ts:48` 一处）随结构化改造同步改写为「dict 渲染结果」断言（两词典各留一条），其余用例零改动；i18n 两 chunk key 对齐编译过 |
 | **9 跨 harness 视图**（依赖 CROSS，挂起不阻塞） | ① 事件流按 harness 筛选 + 徽标（`hook_events.source` 消费）② 插件 `targets`/provenance 徽标 ③ 任务视图投送目标统一（dispatch/session 自带 project+harness）④ 跨项目总览视图（复用 `GlobalSkillSource` 四分组，六分类卡不动）⑤ agent 双 harness 视图 | web ≈6–8 文件 + 对应 CROSS 端 | 每项前置**可验信号**：①③ = DB 三列合入且事件/带 harness 字段出 API（CROSS 批 2 commit 可查）；② = manifest schema 含 `targets` 生效（CROSS 批 1）；④ = `GET /inventory` 路由存在（CROSS 批 4）；⑤ = `TemplateEntry.targets` 落地（CROSS 批 3）；**信号未出现 = 该项挂起，不写死编码** |
-| **10 工具包扫描管理**（详设见第五章） | `presets/harness-tools/<scope>/` 内置原生插件包 + **外置目录注册（`add-dir` → sources.json 独立字段）** + 同一扫描识别（CC 插件包 / weave 规则包 / 裸表面包三格式，harness-tools 树注册新扫描根）+ 项目级 enable/disable（插件位整体装/表面解包/规则级联三条管线）；`toolkit` HTTP + `weave toolkit` 命令族；web 工具箱区段；i18n chunk | server、presets、cli、web ≈12–14 文件（含 sources.json schema 演进） | 依赖批 4a/W/7；**闸①**无改写主用例逐字节还原 **闸②**改写分支保留该文件、其余按 marker 还原 **闸③**幂等 **闸④**非 `targets` 表面零写入 **闸⑤**内置与外置同包结果一致（provenance 除外） |
+| **10 工具包扫描管理**（详设见第五章） | `presets/harness-tools/<scope>/` 内置原生插件包 + **managed 市场资源根**（`<dataDir>/market/<id>/`，与内置同一条扫描管线） + 同一扫描识别（CC 插件包 / weave 规则包 / 裸表面包三格式，harness-tools 树注册新扫描根）+ 项目级 enable/disable（插件位整体装/表面解包/规则级联三条管线）；`toolkit` HTTP + `weave toolkit` 命令族；web 工具箱区段；i18n chunk | server、presets、cli、web ≈12–14 文件 | 依赖批 4a/W/7；**闸①**无改写主用例逐字节还原 **闸②**改写分支保留该文件、其余按 marker 还原 **闸③**幂等 **闸④**非 `targets` 表面零写入 **闸⑤**内置与市场同包结果一致（provenance/注册键随来源） |
 
 **前端手抄镜像纪律**：`api.ts` 约 15 组类型镜像**本计划仅随批 1 收敛 Harness 族**，
 其余镜像（statusline 渲染、skill-stats、locale 等）维持现状不扩——治理归 BACKLOG §9.2 另案
@@ -368,9 +368,11 @@ flowchart TD
 插件化机制的插件代码包**——Claude 侧用官方插件约定（`.claude-plugin/plugin.json` +
 `skills/ commands/ agents/ hooks/hooks.json`（含 mods `modules`）），Codex 侧按其
 表面约定解包（Codex 无正式插件机制，BACKLOG 已载明）。**一批不同功能范围的工具
-独立一个内置目录**随 dist 发货；weave 扫描后直接管理。**内置目录与用户指定的
-外置目录走同一条扫描/装载管线，唯一区别是 provenance（`builtin` vs `external-dir`）**
-——即「引入外部插件代码包」与「内置出厂」是同一机制的两个来源。
+独立一个内置目录**随 dist 发货；weave 扫描后直接管理。**内置目录与 managed
+市场资源根走同一条扫描/装载管线，唯一区别是 provenance（`builtin` vs `market`）**
+——即「市场导入的外部插件代码包」与「内置出厂」是同一机制的两个来源。本地文件夹
+一律经「市场 → 文件夹导入」进 `<dataDir>/market/<id>/`（拷进数据目录、可迁移、
+namespace 判据唯一），**不设独立的外置目录注册**。
 
 **启用 = 按该 harness 的插件引入机制把包装进项目**（优先整体落项目插件位保持包
 结构原生加载；无法原生加载的按包声明分表面解包）+ 合并相关配置；
@@ -382,7 +384,7 @@ flowchart TD
 |---|---|---|---|
 | weave 插件（`weave-plugin.json`，D3.1） | **daemon** 规则/处理器 | 否（进库，`plugin_states` 开关） | 一个包**可同时**带 rules/handler 成分：扫描时识别，harness 成分走表面装载、weave 成分走既有 plugin-loader，两管线并行 |
 | init components（全局 preset） | 一次性注入 | 是 | 互补：init 时刻；toolkit 是 init **后**运行时增减 |
-| LibraryPanel 资产安装 | daemon API | 是 | 同管线复用；toolkit 源=内置/外置包目录，库源=用户资产目录 |
+| LibraryPanel 资产安装 | daemon API | 是 | 同管线复用；toolkit 源=内置/市场包目录，库源=用户资产目录 |
 | **批 10 工具包** | **harness 原生**（CC 自己加载） | **是** | 本体：daemon 死了也生效 |
 
 **mods 定位**（沿用本计划裁决）：只做**安装层代管**——包内的 Claude hooks module
@@ -426,11 +428,11 @@ packages/weave-server/src/hooks/presets/harness-tools/<scope>/<pack>/  # 内置�
   规则/处理器装载复用既有 plugin-loader）；
   ③ 仅有 `skills/` 等裸表面目录 → 按表面约定解包（Codex 及简易包）。
   一个包可同时命中 ①②（两管线各取所需）。
-- **外置目录**：`weave toolkit add-dir <path>` 注册进 `sources.json` 的**独立字段**
-  （schema 演进向后兼容：`{ "indexes": [原 URL 字符串数组], "dirs": [本地路径] }`，
-  读侧同时接受旧 `string[]` 形；`searchPlugins` 只遍历 `indexes`、跳过 `dirs`，
-  **不污染远程搜索源**），该目录下同构包被同一条扫描管线发现；`remove-dir` 移除并
-  卸载其已启用包。**内置 `presets/harness-tools/` 与外置目录仅 provenance 不同。**
+- **managed 市场资源根**：`<dataDir>/market/<id>/`（市场导入落地位）下的同构包被同一条
+  扫描管线发现，provenance=`market`。`sources.json` **只存插件分发索引 URL**（`{ indexes }`；
+  读侧兼容旧 `string[]` 形，旧 `dirs` 字段读到即丢弃），**不再承载本地目录**——
+  本地文件夹一律走「市场 → 文件夹导入」进数据目录。**内置
+  `presets/harness-tools/` 与市场根仅 provenance 不同。**
 - **`weave.json` 补充字段克制**：原生 manifest 能表达的绝不重复声明；仅
   `targets`（默认 `['claude']`，与 CROSS manifest targets 同构）、Codex 映射、
   工具箱分类标注三类。
@@ -453,14 +455,14 @@ packages/weave-server/src/hooks/presets/harness-tools/<scope>/<pack>/  # 内置�
 
 ### 5.4 API / CLI / UI
 
-- **HTTP**：`GET /projects/:id/toolkit`（内置+已注册外置目录的包清单 + 启用态，
+- **HTTP**：`GET /projects/:id/toolkit`（内置 + managed 市场资源根的包清单 + 启用态，
   读盘+meta）；`POST /projects/:id/toolkit/:id/enable|disable`（幂等，返回后置状态）。
-- **CLI**：`weave toolkit list|enable|disable <id> [--project]` +
-  **`weave toolkit add-dir <path>` / `remove-dir <path>`**（注册/移除外置工具目录
-  → `sources.json`，与插件分发索引源同存储位；移除时级联卸载其已启用包）。
+  **不设目录注册端点**——本地目录经「市场 → 文件夹导入」，其数据由
+  `/market` 路由面承担。
+- **CLI**：`weave toolkit list|enable|disable <id> [--project]`。
 - **web**：hooks 分类下新增「工具箱」区段（或 LibraryPanel 新分组，实施时按
   六分类不动原则定）；开关组件 + 类型徽标（skill/hook/mod）+ provenance 徽标
-  （builtin / external-dir）+ 外置目录管理入口。
+  （builtin / market）。
 - **i18n**：dict 新 chunk `toolkit`（zh/en key 对齐编译闸）。
 
 ### 5.5 内置工具功能范围规划（首批定稿）
@@ -510,15 +512,15 @@ Codex 面 skill 补充——按首批落地效果再定。
 ### 5.6 批次归属与硬闸
 
 - **批 10**：触达 ≈ server（routes + 扫描识别 loader/新扫描根 + 装载/卸载器 +
-  sources.json schema 演进与 `searchPlugins` 兼容）、`presets/harness-tools/`
-  内置包新增、cli（toolkit 命令族 + add-dir）、web 区段、i18n ≈ 12–14 文件。
+  sources.json 只存索引 URL）、`presets/harness-tools/`
+  内置包新增、cli（toolkit 命令族）、web 区段、i18n ≈ 12–14 文件。
 - **依赖**：批 4a（AssetSurface 落盘解析）、批 W（web 位置）、批 7（前端接线范式）；
   `targets` 本地先行**不依赖 CROSS**。
 - **硬闸**（五闸，与 4.3 批 10 行、验证节同口径）：① **无改写主用例**：启用→禁用后
   settings.json / hooks.json / 文件树**逐字节**回到启用前；② **改写分支**：启用后
   改写任一落盘文件→禁用，该文件保留、其余条目按 marker 完全还原；③ 幂等（重复
-  enable 无副作用）；④ 非 `targets` 内 harness 表面零写入；⑤ 内置与外置同包
-  enable 结果逐字段一致（provenance 除外）；另：三门禁 + 新增 loader/toggle 单测。
+  enable 无副作用）；④ 非 `targets` 内 harness 表面零写入；⑤ 内置与市场同包
+  enable 结果一致（provenance / 注册键随来源，其余逐字段零差）；另：三门禁 + 新增 loader/toggle 单测。
 - **mod 验证**：`claude plugin validate <mod folder>` 过 + `tsc -p` 过 +
   每个 mod 至少一个 `*.test.ts`（`claude plugin test`）；**宿主版本闸**：启用前检测
   Claude Code ≥ 2.1.287，低版本给明确提示不落盘；**静态闸**：
@@ -540,7 +542,7 @@ Codex 面 skill 补充——按首批落地效果再定。
   provenance `<id>@<source>`、PLUGIN-SPEC 同步。
 - DB 三列（能力 B）、add/remove（能力 C）按原文档独立推进。
 - **插件市场（D2 扩展）不入本计划**（已裁决）：维持与 skill 类似的目录安装方式。
-  本地目录的**扫描与包管理已由批 10 承载**（内置 + `add-dir` 外置，原生包格式）；
+  本地目录的**扫描与包管理已由批 10 承载**（内置 + managed 市场资源根，原生包格式）；
   市场仅指远程索引/浏览/分发，仍另案。未来方向记为设计注记——「目录即插件市场」：
   选择一个目录注册为 claude 或其他
   harness 的插件源，安装时按 harness 自动关联资源（manifest `targets` 展开、
@@ -585,7 +587,7 @@ Codex 面 skill 补充——按首批落地效果再定。
   Codex 项目 personalization 占位文案正确。
 - 批 10 后手测：无改写主用例 enable→disable 后 settings/hooks.json/文件树逐字节还原；
   改写分支文件保留且其余按 marker 还原；重复 enable 幂等用例过；同一包 builtin vs
-  `add-dir` 外置启用结果 diff 仅 provenance 字段；非 `targets` 表面零写入用例过；
+  managed 市场根启用结果 diff 仅 provenance / 注册键；非 `targets` 表面零写入用例过；
   mod 静态闸 grep 零命中 + `claude plugin validate/test` 过并在 CC 内原生加载
   （风险 9 路径实测结论回写本计划）。
 - 等价断言：`GET /hooks/rules`、`POST /hooks` 响应体重构前后逐字一致（批 4b 装配等价用例）。

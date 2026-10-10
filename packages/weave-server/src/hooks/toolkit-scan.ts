@@ -3,11 +3,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, HARNESS_KEYS, type Harness } from '@weavecode/core';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
-import { readSourcesFile } from './plugin-installer.js';
 
 /**
- * 批 10 工具包扫描：内置 `presets/harness-tools/<scope>/<pack>/` 与用户
- * `add-dir` 注册的外置目录走同一条扫描管线，唯一区别是 provenance。
+ * 批 10 工具包扫描：内置 `presets/harness-tools/<scope>/<pack>/` 与 managed
+ * 市场资源根走同一条扫描管线，唯一区别是 provenance。
  * 不发明新格式——三种识别沿用既有约定：
  *   ① `.claude-plugin/plugin.json` → CC 插件包（组件清单由原生约定推导）
  *   ② `weave-plugin.json`          → weave 规则包（装载复用 plugin-loader）
@@ -15,7 +14,7 @@ import { readSourcesFile } from './plugin-installer.js';
  * 一个包可同时命中 ①②。
  */
 
-export type ToolkitProvenance = 'builtin' | 'external-dir' | 'market';
+export type ToolkitProvenance = 'builtin' | 'market';
 
 /** 工具箱类型徽标：weave.json 显式标注优先，缺省由包内容推导。 */
 export type ToolkitKind = 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
@@ -23,7 +22,7 @@ export type ToolkitKind = 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
 export type ToolkitComponent = 'skill' | 'command' | 'agent' | 'hook' | 'mod' | 'rule';
 
 export interface ToolkitSource {
-  /** 扫描根：内置 harness-tools 根，或 add-dir 注册的本地目录。 */
+  /** 扫描根：内置 harness-tools 根，或 managed 市场资源根。 */
   root: string;
   provenance: ToolkitProvenance;
 }
@@ -39,7 +38,7 @@ export interface ToolkitPack {
   /** 源包目录（绝对路径）。 */
   dir: string;
   provenance: ToolkitProvenance;
-  /** 所属扫描根（provenance 判别 + add-dir 级联卸载用）。 */
+  /** 所属扫描根（同 id 多来源时消歧）。 */
   sourceRoot: string;
   targets: Harness[];
   kind: ToolkitKind;
@@ -261,12 +260,9 @@ export async function discoverToolkitPacks(source: ToolkitSource): Promise<Toolk
   return out;
 }
 
-/** 内置根 + sources.json 注册的外置目录（同一管线，仅 provenance 不同）。 */
-export async function discoverToolkitSources(): Promise<ToolkitSource[]> {
-  const sources: ToolkitSource[] = [{ root: builtinToolkitRoot(), provenance: 'builtin' }];
-  const { dirs } = await readSourcesFile();
-  for (const dir of dirs) sources.push({ root: dir, provenance: 'external-dir' });
-  return sources;
+/** 内置扫描根；managed 市场资源根由调用方按 libraries 补入（同一管线，仅 provenance 不同）。 */
+export function discoverToolkitSources(): ToolkitSource[] {
+  return [{ root: builtinToolkitRoot(), provenance: 'builtin' }];
 }
 
 /**

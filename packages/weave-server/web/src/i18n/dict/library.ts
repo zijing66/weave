@@ -116,7 +116,7 @@ export const libraryZh = {
   'library.weavePluginTip': 'Weave 规则包：装载进 weave 引擎，项目级开关',
   'library.pluginSkillsLabel': '包内 skills · 随插件启停',
   'library.pluginSkillsFollowTip': '隶属该插件，不单独安装——随插件启用/停用',
-  'library.pluginNotInToolkit': '未纳入工具箱扫描源（内置 · 外置目录 · 市场导入）——无法在此安装',
+  'library.pluginNotInToolkit': '未纳入工具箱扫描源（内置 · 市场导入）——无法在此安装',
   'library.pluginsSectionHint':
     '「安装」= CC 插件与 mod 装到全局并在当前项目启用（表面包复制进本项目）；weave 规则包直接启用。启停与卸载在 资源管理 · 工具箱',
   'library.installPackTip':
@@ -274,7 +274,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.pluginSkillsFollowTip':
     'Belongs to this plugin — not installed separately; enabled/disabled with it',
   'library.pluginNotInToolkit':
-    'Not covered by any toolkit scan source (builtin / external dirs / market imports) — cannot install here',
+    'Not covered by any toolkit scan source (builtin / market imports) — cannot install here',
   'library.pluginsSectionHint':
     '"Install" adds CC plugins & mods globally and enables them in this project (surface packs copy in); Weave packs enable directly. Manage enable/uninstall in Resource Management · Toolkit',
   'library.installPackTip':

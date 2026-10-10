@@ -6,7 +6,7 @@ import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
-import { FolderOpen, Package, Trash2, TriangleAlert, Wrench } from 'lucide-react';
+import { Package, Trash2, TriangleAlert } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -30,16 +30,14 @@ export const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
 
 const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
   builtin: 'toolkit.prov.builtin',
-  'external-dir': 'toolkit.prov.external-dir',
   market: 'toolkit.prov.market',
 };
 
 /**
  * 工具箱区段（批 10，批 3 增旧副本警示）：包清单（provenance/类型徽标 + 目标面）
  * + 项目级开关（CC 原生包 = 全局安装 + 项目启用）+ 卸载按钮（与 harness 对齐：
- * CC/mod 走 claude plugin uninstall，表面包清扫文件）+ 项目插件位旧副本警示/清理 +
- * 外置目录展示（增删走 REST /toolkit/dirs，文案指引）。开关/卸载调用幂等端点，
- * 返回后置状态后刷新；行级 busy 防重入。pack 按成分分两组渲染（ccPack = Claude Plugins 组，
+ * CC/mod 走 claude plugin uninstall，表面包清扫文件）+ 项目插件位旧副本警示/清理。
+ * 开关/卸载调用幂等端点，返回后置状态后刷新；行级 busy 防重入。pack 按成分分两组渲染（ccPack = Claude Plugins 组，
  * 其余 = 工具包组）；codex 运行态下 Claude 组整组隐藏。
  */
 export function ToolkitSection({
@@ -51,7 +49,6 @@ export function ToolkitSection({
 }) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
-  const [dirs, setDirs] = useState<string[]>([]);
   const [legacyCopies, setLegacyCopies] = useState<string[]>([]);
   // 统一反馈：动作状态走 useActionFeedback（每行一个 key，toggle 与卸载共用一个 =
   // 行级防重入），消息一律走 toast——原先面板底部一行小字，滚走就看不见。
@@ -66,7 +63,6 @@ export function ToolkitSection({
       .listToolkit(projectId)
       .then((data) => {
         setPacks(data.packs);
-        setDirs(data.dirs);
         setLegacyCopies(data.legacyCopies ?? []);
       })
       .catch((e) => {
@@ -258,30 +254,6 @@ export function ToolkitSection({
           {toolPacks.map(renderPack)}
         </div>
       )}
-
-
-      {/* 外置目录：list 展示 + CLI 文案指引（编辑交互从简） */}
-      <div className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5">
-        <p className="flex items-center gap-1.5 text-[11px] font-medium text-neutral-300">
-          <FolderOpen className="h-3.5 w-3.5 text-neutral-500" />
-          {t('toolkit.dirsTitle')}
-        </p>
-        {dirs.length === 0 ? (
-          <p className="mt-0.5 text-[10px] text-neutral-600">{t('toolkit.dirsEmpty')}</p>
-        ) : (
-          <ul className="mt-0.5 space-y-0.5">
-            {dirs.map((d) => (
-              <li key={d} className="truncate font-mono text-[10px] text-neutral-500" title={d}>
-                {d}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-1 flex items-start gap-1 text-[10px] text-neutral-600">
-          <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
-          {t('toolkit.dirsHint')}
-        </p>
-      </div>
     </div>
   );
 }

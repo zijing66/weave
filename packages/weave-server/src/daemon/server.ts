@@ -152,7 +152,7 @@ export interface WeaveServerDeps {
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
   pluginStates?: PluginStateRepository;
-  /** 批 10 工具包服务；/projects/:id/toolkit 与 /toolkit/dirs 依赖它。 */
+  /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
 }
 
@@ -397,7 +397,7 @@ async function handleRequest(
   // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。
   if (await handleHooksRoutes(req, res, deps, pathname, url, isAuthed)) return;
 
-  // 批 10 工具包子路由（包清单/开关/外置目录）——未命中返回 false，主链继续。
+  // 批 10 工具包子路由（包清单/开关）——未命中返回 false，主链继续。
   if (await handleToolkitRoutes(req, res, deps, pathname, url, isAuthed)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).

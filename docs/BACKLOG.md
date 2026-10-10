@@ -166,11 +166,3 @@ Codex 支持声明额外回退文件名，把 `CLAUDE.md` 列进去即可让 Cod
 
 **6. §2「Codex hooks 是实验特性」的前提可能已过时**
 Codex 源码里是 11+ 事件的完整体系（`PreToolUse`/`PostToolUse`/`PermissionRequest`/`SubagentStart`/`SubagentStop`/`Interrupt`/`PreCompact`/`PostCompact`/`SessionStart`/`SessionEnd`/`UserPromptSubmit`/`Stop`），handler 类型还多出 `McpTool` 与 `Agent`。重新评估是否值得接入。
-
----
-
-## 11. toolkit 外置目录注册的 dashboard 入口
-
-**背景**：`weave toolkit add-dir|remove-dir` CLI 命令已随「CLI 瘦身」批次删除（dashboard 已覆盖的功能不保留 CLI 命令），REST 端点 `POST /toolkit/dirs` 与 `/toolkit/dirs/remove` 仍可用（web `api.ts` 已有封装但无 UI 调用）。
-
-**待做**：ToolkitSection 增加外置目录「注册 / 移除」表单（复用既有 `addToolkitDir`/`removeToolkitDir` 封装），否则外置工具包目录注册目前没有任何用户入口。文案已改为 REST 表述（`toolkit.dirsHint`）。

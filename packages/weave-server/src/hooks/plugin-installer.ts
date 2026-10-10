@@ -210,38 +210,34 @@ export interface PluginIndexEntry {
 }
 
 /**
- * sources.json 结构（批 10 schema 演进）：旧形为 index URL 字符串数组，
- * 新形为 `{ indexes, dirs }`——`dirs` 是经 REST `POST /toolkit/dirs` 注册的
- * 本地工具包目录，**不进远程搜索源**。读侧两种形都接受，写侧统一落新形。
+ * sources.json 结构：旧形为 index URL 字符串数组，新形为 `{ indexes }`。
+ * 读侧两种形都接受，写侧统一落对象形。
  */
 export interface SourcesFileShape {
   indexes: string[];
-  dirs: string[];
 }
 
 function sourcesPath(root?: string): string {
   return path.join(root ?? globalPluginRoot(), 'sources.json');
 }
 
-/** 解析 sources.json 原始值：旧 `string[]` 与新 `{indexes, dirs}` 双形兼容。 */
+/** 解析 sources.json 原始值：旧 `string[]` 与新 `{indexes}` 双形兼容。 */
 export function parseSources(raw: unknown): SourcesFileShape {
   if (Array.isArray(raw)) {
-    return { indexes: raw.filter((s): s is string => typeof s === 'string'), dirs: [] };
+    return { indexes: raw.filter((s): s is string => typeof s === 'string') };
   }
   if (raw && typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const pick = (v: unknown): string[] =>
-      Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
-    return { indexes: pick(obj['indexes']), dirs: pick(obj['dirs']) };
+    const v = (raw as Record<string, unknown>)['indexes'];
+    return { indexes: Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [] };
   }
-  return { indexes: [], dirs: [] };
+  return { indexes: [] };
 }
 
 export async function readSourcesFile(root?: string): Promise<SourcesFileShape> {
   try {
     return parseSources(JSON.parse(await readFile(sourcesPath(root), 'utf8')));
   } catch {
-    return { indexes: [], dirs: [] };
+    return { indexes: [] };
   }
 }
 
@@ -251,31 +247,9 @@ export async function writeSourcesFile(sources: SourcesFileShape, root?: string)
   await writeFile(sourcesPath(root), JSON.stringify(sources, null, 2) + '\n', 'utf8');
 }
 
-/** 注册外置工具包目录（批 10，REST `POST /toolkit/dirs`）；已存在则幂等。 */
-export async function addToolkitDir(dir: string, root?: string): Promise<SourcesFileShape> {
-  const abs = path.resolve(dir);
-  if (!existsSync(abs)) throw new Error(`目录不存在: ${abs}`);
-  const sources = await readSourcesFile(root);
-  if (!sources.dirs.includes(abs)) {
-    sources.dirs.push(abs);
-    await writeSourcesFile(sources, root);
-  }
-  return sources;
-}
-
-/** 移除外置工具包目录注册；级联卸载由调用方（toolkit service）负责。 */
-export async function removeToolkitDir(dir: string, root?: string): Promise<SourcesFileShape> {
-  const abs = path.resolve(dir);
-  const sources = await readSourcesFile(root);
-  const next = { ...sources, dirs: sources.dirs.filter((d) => d !== abs) };
-  if (next.dirs.length !== sources.dirs.length) await writeSourcesFile(next, root);
-  return next;
-}
-
 /**
  * marketplace 搜索：读 sources.json（`<configDir>/weave/plugins/sources.json`）
  * 逐 index 源拉取，按 term 过滤 id/name/description。
- * 批 10：只遍历 `indexes`、跳过 `dirs`（外置工具包目录不是远程搜索源）。
  */
 export async function searchPlugins(term: string): Promise<PluginIndexEntry[]> {
   const { indexes } = await readSourcesFile();

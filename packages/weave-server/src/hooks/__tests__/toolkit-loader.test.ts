@@ -10,7 +10,7 @@ import { HookRuleRegistry } from '../registry.js';
 import { WeavePluginLoader, loadAllPlugins } from '../plugin-loader.js';
 
 /**
- * 批 10：plugin-loader 深度扫描根（harness-tools / add-dir 树）。
+ * 批 10：plugin-loader 深度扫描根（harness-tools / managed 市场资源根）。
  * depth-3 weave 成分装载、首见默认停用、浅层根与深度根互不误删、
  * 消失包级联摘除。既有 plugin-loader.test.ts 零改动（新用例独立成文件）。
  */

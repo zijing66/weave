@@ -15,11 +15,6 @@ import { marketIdOf } from '../market/identity.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
 import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
-  addToolkitDir,
-  readSourcesFile,
-  removeToolkitDir,
-} from './plugin-installer.js';
-import {
   builtinToolkitRoot,
   discoverToolkitPacks,
   type ToolkitPack,
@@ -78,7 +73,6 @@ export interface ToolkitPackInfo extends ToolkitPack {
 
 export interface ToolkitListResult {
   packs: ToolkitPackInfo[];
-  dirs: string[];
   /** 项目插件位残留（Weave 旧副本；宿主不加载，可安全清理）。 */
   legacyCopies: string[];
 }
@@ -309,12 +303,9 @@ export interface ToolkitServiceDeps {
   projects: ProjectRepository;
   states: PluginStateRepository;
   /** loader 门面（daemon 侧为 PluginManager；测试可注入桩）。 */
-  plugins: Pick<PluginManager, 'list' | 'setPluginEnabled'> &
-    Partial<Pick<PluginManager, 'loadToolkitRoot' | 'reloadAll'>>;
+  plugins: Pick<PluginManager, 'list' | 'setPluginEnabled'>;
   /** 覆盖内置扫描根（测试）。 */
   builtinRoot?: string;
-  /** 覆盖 sources.json 所在根（测试；缺省全局插件根）。 */
-  sourcesRoot?: string;
   /** managed 市场资源（M3 装载桥：市场根同管线入扫描源）；缺省不扫市场。 */
   libraries?: Pick<LibraryRepository, 'list'>;
   /** 覆盖宿主版本探测（测试）。 */
@@ -326,18 +317,16 @@ export interface ToolkitServiceDeps {
 export class ToolkitService {
   constructor(private readonly deps: ToolkitServiceDeps) {}
 
-  /** 扫描源：内置根（测试可覆盖）+ sources.json 外置目录 + managed 市场资源根。 */
-  private async sources(): Promise<ToolkitSource[]> {
+  /** 扫描源：内置根（测试可覆盖）+ managed 市场资源根。 */
+  private sources(): ToolkitSource[] {
     const builtin = this.deps.builtinRoot ?? builtinToolkitRoot();
     const sources: ToolkitSource[] = [{ root: builtin, provenance: 'builtin' }];
-    const { dirs } = await readSourcesFile(this.deps.sourcesRoot);
-    for (const dir of dirs) sources.push({ root: dir, provenance: 'external-dir' });
     if (this.deps.libraries) {
       for (const root of marketLibraryRoots(this.deps.libraries)) {
         sources.push({ root, provenance: 'market' });
       }
     }
-    // 按解析形去重（市场根可能同时被 add-dir 注册）；首见优先 = builtin > external > market
+    // 按解析形去重；首见优先 = builtin > market
     const seen = new Set<string>();
     return sources.filter((s) => {
       const key = path.resolve(s.root);
@@ -349,7 +338,7 @@ export class ToolkitService {
 
   private async allPacks(): Promise<ToolkitPack[]> {
     const packs: ToolkitPack[] = [];
-    for (const source of await this.sources()) {
+    for (const source of this.sources()) {
       packs.push(...(await discoverToolkitPacks(source)));
     }
     return packs;
@@ -357,7 +346,7 @@ export class ToolkitService {
 
   /**
    * 包清单 + 启用态（读侧以落盘/级联校验），顺带把 meta 索引自愈到事实、
-   * 清扫存量项目插件副本。`source` 消歧：同 id 可同时来自内置与外置
+   * 清扫存量项目插件副本。`source` 消歧：同 id 可同时来自内置与市场
    * （provenance 不同），精确匹配 sourceRoot，缺省 builtin 优先。
    */
   async list(projectId: number): Promise<ToolkitListResult> {
@@ -366,8 +355,7 @@ export class ToolkitService {
     const infos: ToolkitPackInfo[] = [];
     for (const pack of packs) infos.push(await this.packInfo(project, pack));
     await this.healMeta(project, infos);
-    const { dirs } = await readSourcesFile(this.deps.sourcesRoot);
-    return { packs: infos, dirs, legacyCopies: await this.scanLegacyCopies(project) };
+    return { packs: infos, legacyCopies: await this.scanLegacyCopies(project) };
   }
 
   /** 幂等启用：已启用（记录在且文件齐）→ 无任何写入，直接回后置状态。 */
@@ -501,7 +489,7 @@ export class ToolkitService {
     return { pack: await this.packInfo(this.requireProject(projectId), pack), warnings: [] };
   }
 
-  /** 文件管线清扫（disable 与 remove-dir 级联共用）。 */
+  /** 文件管线清扫（disable 与 uninstall 共用）。 */
   private async removePackFiles(
     project: ProjectRow,
     pack: ToolkitPack,
@@ -524,51 +512,6 @@ export class ToolkitService {
     }
     await rm(recPath, { force: true });
     await pruneEmptyDirs(project.path, removed);
-  }
-
-  /** 外置目录管理：list / add-dir / remove-dir（级联卸载该目录来源的已启用包）。 */
-  async listDirs(): Promise<{ dirs: string[]; indexes: string[] }> {
-    return readSourcesFile(this.deps.sourcesRoot);
-  }
-
-  async addDir(dir: string): Promise<{ dirs: string[] }> {
-    const abs = path.resolve(dir);
-    const sources = await addToolkitDir(abs, this.deps.sourcesRoot);
-    // 登记即入 loader（loader 未就绪则跳过——下次 daemon 启动/reloadAll 补上）。
-    await this.deps.plugins.loadToolkitRoot?.(abs, 'global', null);
-    return { dirs: sources.dirs };
-  }
-
-  async removeDir(dir: string): Promise<{ dirs: string[]; disabled: string[] }> {
-    const abs = path.resolve(dir);
-    const dirPacks = await discoverToolkitPacks({ root: abs, provenance: 'external-dir' });
-    const sources = await removeToolkitDir(abs, this.deps.sourcesRoot);
-
-    const disabled: string[] = [];
-    for (const project of this.deps.projects.list()) {
-      const metaIds = this.enabledIndex(project);
-      for (const pack of dirPacks) {
-        const record = await readRecord(recordPathFor(project.path, pack.id));
-        // 归属判定用扫描结果的 sourceRoot（不依赖记录——CC-only 包不写账本）；
-        // weaveOnlyEnabled 兜「无记录但 meta 索引启用」的 weave 成分。
-        const fromThisDir = path.resolve(pack.sourceRoot) === abs;
-        const weaveOnlyEnabled = !record && metaIds.includes(pack.id) && pack.weavePack;
-        if (!fromThisDir && !weaveOnlyEnabled) continue;
-        await this.removePackFiles(project, pack, abs);
-        if (isCcPluginPack(pack) && pack.targets.includes('claude')) {
-          await this.pluginSurface().setProjectEnabled(project.path, pack.name, false, marketIdOf(pack.dir));
-        }
-        if (pack.weavePack) {
-          const cascaded = this.deps.plugins.setPluginEnabled(pack.id, false);
-          if (!cascaded) this.deps.states.setEnabled(pack.id, false);
-        }
-        this.rememberEnabled(project, pack.id, false);
-        if (!disabled.includes(pack.id)) disabled.push(pack.id);
-      }
-    }
-    // 空根重扫 → 该根下残余 weave 成分（若目录已物理消失）级联摘除。
-    await this.deps.plugins.loadToolkitRoot?.(abs, 'global', null);
-    return { dirs: sources.dirs, disabled };
   }
 
   // ---- 内部：启用态计算 / meta 索引 / 包解析 ----
@@ -697,7 +640,7 @@ export class ToolkitService {
   private async healMeta(project: ProjectRow, infos: ToolkitPackInfo[]): Promise<void> {
     const actual = [...new Set(infos.filter((i) => i.enabled).map((i) => i.id))].sort();
     const indexed = [...new Set(this.enabledIndex(project))].sort();
-    // 已从扫描面消失但仍被索引的 id 保留在索引里（外置目录暂离线时不误清）。
+    // 已从扫描面消失但仍被索引的 id 保留在索引里（市场资源暂离线时不误清）。
     const visible = new Set(infos.map((i) => i.id));
     const merged = [...new Set([...indexed.filter((id) => !visible.has(id)), ...actual])].sort();
     if (merged.join('\n') !== indexed.join('\n')) {

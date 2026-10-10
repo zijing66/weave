@@ -14,7 +14,7 @@ import { ToolkitService } from '../hooks/toolkit.js';
 
 /**
  * 批 10 HTTP 面：GET /projects/:id/toolkit（清单+启用态+旧副本）、
- * POST .../enable|disable（幂等、后置状态、404/400）、/toolkit/dirs 注册与移除、
+ * POST .../enable|disable（幂等、后置状态、404/400）、
  * POST .../legacy-copies/cleanup（批 3 幂等清理）。
  * 路由范式同 /hooks/plugins；无 toolkit 依赖时 503。
  * CC 原生包 enable 走注入的假 CLI surface（home mock 到临时目录），不 spawn claude。
@@ -65,7 +65,6 @@ describe('daemon /toolkit routes', () => {
       projects,
       states,
       builtinRoot: BUILTIN_ROOT,
-      sourcesRoot: path.join(base, 'cfg'),
       claudeVersion,
       pluginSurface: createClaudePluginSurface({ exec: makeFakeExec(base) }),
       plugins: { list: () => [], setPluginEnabled: () => true },
@@ -104,12 +103,11 @@ describe('daemon /toolkit routes', () => {
     expect(res.status).toBe(401);
   });
 
-  it('GET /projects/:id/toolkit 返回包清单 + 启用态 + 空外置目录', async () => {
+  it('GET /projects/:id/toolkit 返回包清单 + 启用态', async () => {
     const res = await fetch(url(`/projects/${projectId}/toolkit`), { headers: auth });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       packs: Array<{ id: string; enabled: boolean; installed: boolean; provenance: string; kind: string }>;
-      dirs: string[];
     };
     expect(data.packs.map((p) => p.id).sort()).toEqual([
       'code-review',
@@ -127,7 +125,6 @@ describe('daemon /toolkit routes', () => {
     expect(data.packs.every((p) => typeof p.installed === 'boolean')).toBe(true);
     expect(data.packs.find((p) => p.id === 'code-review')!.installed).toBe(false);
     expect(data.packs.find((p) => p.id === 'md-lint')!.installed).toBe(true); // weave 装载即源
-    expect(data.dirs).toEqual([]);
   });
 
   it('GET 未知项目 404', async () => {
@@ -202,40 +199,6 @@ describe('daemon /toolkit routes', () => {
     expect(res.status).toBe(404);
   });
 
-  it('/toolkit/dirs 注册与移除', async () => {
-    const dir = path.join(base, 'ext');
-    await mkdir(dir, { recursive: true });
-
-    const add = await fetch(url('/toolkit/dirs'), {
-      method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ path: dir }),
-    });
-    expect(add.status).toBe(201);
-    expect(((await add.json()) as { dirs: string[] }).dirs).toContain(path.resolve(dir));
-
-    const list = await fetch(url('/toolkit/dirs'), { headers: auth });
-    expect(((await list.json()) as { dirs: string[] }).dirs).toContain(path.resolve(dir));
-
-    const remove = await fetch(url('/toolkit/dirs/remove'), {
-      method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ path: dir }),
-    });
-    expect(remove.status).toBe(200);
-    expect(((await remove.json()) as { dirs: string[] }).dirs).not.toContain(path.resolve(dir));
-  });
-
-  it('add-dir 指向不存在目录 → 400', async () => {
-    const res = await fetch(url('/toolkit/dirs'), {
-      method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ path: path.join(base, 'missing-dir') }),
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(/目录不存在/);
-  });
-
   it('legacy-copies：list 报出项目插件位旧副本，POST cleanup 幂等清理', async () => {
     const stale = path.join(base, 'proj', '.claude', 'plugins', 'stale-copy', 'x.txt');
     await mkdir(path.dirname(stale), { recursive: true });
@@ -287,7 +250,6 @@ describe('daemon /toolkit mod 版本闸（低版本不落盘）', () => {
         projects,
         states: new PluginStateRepository(db),
         builtinRoot: BUILTIN_ROOT,
-        sourcesRoot: path.join(base, 'cfg'),
         claudeVersion: async () => '2.1.100',
         plugins: { list: () => [], setPluginEnabled: () => true },
       }),
@@ -334,7 +296,7 @@ describe('daemon /toolkit 无依赖降级', () => {
   });
 
   it('toolkit 缺席 → 503', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/toolkit/dirs`, {
+    const res = await fetch(`http://127.0.0.1:${port}/projects/1/toolkit`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
     expect(res.status).toBe(503);

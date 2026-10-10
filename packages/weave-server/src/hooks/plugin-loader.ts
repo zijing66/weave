@@ -84,8 +84,6 @@ export interface PluginManager {
   setPluginEnabled(pluginId: string, enabled: boolean): boolean;
   /** 重扫全部已登记根（安装/卸载后立即生效，不等热重载防抖）。 */
   reloadAll(): Promise<void>;
-  /** 批 10：动态登记工具包扫描根（`add-dir` 时调用；loader 未就绪则跳过）。 */
-  loadToolkitRoot?(root: string, scope: 'builtin' | 'global' | 'project', projectId: number | null): Promise<LoadedPluginInfo[]>;
 }
 
 export interface LoadedPluginInfo {
@@ -185,8 +183,8 @@ export class WeavePluginLoader implements PluginHost {
   }
 
   /**
-   * 批 10：工具包深度扫描根（`presets/harness-tools/<scope>/<pack>/` 与外置
-   * `add-dir` 目录）。单层 readdir 见不到 depth-3 嵌套——先递归发现含
+   * 批 10：工具包深度扫描根（`presets/harness-tools/<scope>/<pack>/` 与 managed
+   * 市场资源根）。单层 readdir 见不到 depth-3 嵌套——先递归发现含
    * `weave-plugin.json` 的包位再逐包装载；其余成分（CC 原生/裸表面）由
    * toolkit 服务走文件管线，不进本加载器。
    * 首见的 weave 成分行默认 **停用**（工具包 opt-in：包开关 = plugin_states
@@ -591,7 +589,7 @@ function patchPluginHandler(handler: unknown, pluginId: string): unknown {
 }
 
 /**
- * SPI 全量加载：工具包扫描根（内置 harness-tools + `add-dir` 外置目录 + M3
+ * SPI 全量加载：工具包扫描根（内置 harness-tools + M3
  * managed 市场资源根，批 10/装载桥）→ 内置 presets → 全局 `<configDir>/weave/plugins/`
  * → 各注册项目 `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
  * 工具包根先注册：浅层 presets 根扫描据此跳过 `harness-tools` 容器目录。
@@ -611,14 +609,14 @@ export async function loadAllPlugins(
   const loader = new WeavePluginLoader(deps);
   const loaded: LoadedPluginInfo[] = [];
 
-  // 批 10：工具包深度根（内置 + 外置 + 市场）——weave 成分走本加载器，天然停用待开关。
-  const toolkitSources = await discoverToolkitSources();
+  // 批 10：工具包深度根（内置 + 市场）——weave 成分走本加载器，天然停用待开关。
+  const toolkitSources = discoverToolkitSources();
   if (deps.libraries) {
     for (const root of marketLibraryRoots(deps.libraries)) {
       toolkitSources.push({ root, provenance: 'market' });
     }
   }
-  const seenRoots = new Set<string>(); // 幂等：同根（如市场根同时被 add-dir 注册）只装一次
+  const seenRoots = new Set<string>(); // 幂等：同根只装一次
   for (const source of toolkitSources) {
     const key = path.resolve(source.root);
     if (seenRoots.has(key)) continue;

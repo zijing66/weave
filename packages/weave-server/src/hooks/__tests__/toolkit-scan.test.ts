@@ -63,7 +63,7 @@ describe('toolkit-scan 识别与发现', () => {
     expect(await isToolkitPackDir(bareDir)).toBe(true);
     expect(await isToolkitPackDir(root)).toBe(false);
 
-    const packs = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    const packs = await discoverToolkitPacks({ root, provenance: 'builtin' });
     const byId = new Map(packs.map((p) => [p.id, p]));
     expect([...byId.keys()].sort()).toEqual(['bare-pack', 'cc-pack', 'weave-pack']);
     expect(byId.get('cc-pack')).toMatchObject({
@@ -72,7 +72,7 @@ describe('toolkit-scan 识别与发现', () => {
       kind: 'skill',
       components: ['skill'],
       skills: ['s1'],
-      provenance: 'external-dir',
+      provenance: 'builtin',
     });
     expect(byId.get('weave-pack')).toMatchObject({
       ccPack: false,
@@ -163,7 +163,7 @@ describe('toolkit-scan 识别与发现', () => {
     expect(await isToolkitPackDir(dir)).toBe(true);
     expect(await isToolkitPackDir(empty)).toBe(false);
 
-    const packs = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    const packs = await discoverToolkitPacks({ root, provenance: 'builtin' });
     expect(packs).toHaveLength(1);
     expect(packs[0]).toMatchObject({
       kind: 'mod',
@@ -176,7 +176,7 @@ describe('toolkit-scan 识别与发现', () => {
     });
   });
 
-  it('market 源深度对齐市场扫描（depth>3 深包发现）；external 深度行为零变', async () => {
+  it('market 源深度对齐市场扫描（depth>3 深包发现）；builtin 深度行为零变', async () => {
     const deep = path.join(root, 'a/b/c/deep-pack'); // root0→a1→b2→c3→pack4
     await writeJson(path.join(deep, '.claude-plugin/plugin.json'), { name: 'deep-pack', version: '1.0.0' });
     await mkdir(path.join(deep, 'skills', 's'), { recursive: true });
@@ -184,12 +184,12 @@ describe('toolkit-scan 识别与发现', () => {
 
     const market = await discoverToolkitPacks({ root, provenance: 'market' });
     expect(market.map((p) => p.id)).toContain('deep-pack');
-    // builtin/external 维持 depth-3（level ≥ 2 截断）：深包不可见
-    const ext = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    // builtin 维持 depth-3（level ≥ 2 截断）：深包不可见
+    const ext = await discoverToolkitPacks({ root, provenance: 'builtin' });
     expect(ext).toHaveLength(0);
   });
 
-  it('market 根层裸表面视为容器（不吞并）：嵌套 mods 包被发现；external/manifest 根即包零变', async () => {
+  it('market 根层裸表面视为容器（不吞并）：嵌套 mods 包被发现；builtin/manifest 根即包零变', async () => {
     // 布局：库根带 skills/（skill 仓库常态）+ 嵌套 mods 包
     await mkdir(path.join(root, 'skills', 'top'), { recursive: true });
     await writeFile(path.join(root, 'skills', 'top', 'SKILL.md'), '# top');
@@ -201,8 +201,8 @@ describe('toolkit-scan 识别与发现', () => {
     expect(market.map((p) => p.id)).toEqual(['mods-pkg']);
     expect(market[0]).toMatchObject({ kind: 'mod', provenance: 'market' });
 
-    // external 源同布局：根即包语义零变（吞并为单个裸表面包，嵌套不可见）
-    const ext = await discoverToolkitPacks({ root, provenance: 'external-dir' });
+    // builtin 源同布局：根即包语义零变（吞并为单个裸表面包，嵌套不可见）
+    const ext = await discoverToolkitPacks({ root, provenance: 'builtin' });
     expect(ext).toHaveLength(1);
     expect(ext[0]).toMatchObject({ components: ['skill'], dir: root });
 
@@ -247,16 +247,16 @@ describe('toolkit-scan 识别与发现', () => {
     expect(byId.get('file-guard')).toMatchObject({ kind: 'mod', components: ['mod'] });
   });
 
-  it('外置目录镜像内置结构时 scope/字段与内置一致（闸⑤ 扫描面）', async () => {
+  it('市场镜像内置结构时 scope/字段与内置一致（闸⑤ 扫描面）', async () => {
     const ext = path.join(root, 'ext');
     await cp(BUILTIN_ROOT, ext, { recursive: true });
     const builtin = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
-    const external = await discoverToolkitPacks({ root: ext, provenance: 'external-dir' });
+    const market = await discoverToolkitPacks({ root: ext, provenance: 'market' });
     const strip = (p: (typeof builtin)[0]) => {
       const { provenance: _p, sourceRoot: _s, dir: _d, ...rest } = p;
       return rest;
     };
-    expect(external.map(strip).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+    expect(market.map(strip).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
       builtin.map(strip).sort((a, b) => a.id.localeCompare(b.id)),
     );
   });

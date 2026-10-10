@@ -72,10 +72,8 @@ export function startDaemon(): void {
     reloadAll: async () => {
       await pluginLoaderRef?.reloadAll();
     },
-    loadToolkitRoot: async (root, scope, projectId) =>
-      pluginLoaderRef ? pluginLoaderRef.loadToolkitRoot(root, scope, projectId) : [],
   };
-  // 批 10 工具包服务（扫描/开关/外置目录）；states 与 loader 同库同表。
+  // 批 10 工具包服务（扫描/开关）；states 与 loader 同库同表。
   const toolkit = new ToolkitService({
     projects,
     states: new PluginStateRepository(db),

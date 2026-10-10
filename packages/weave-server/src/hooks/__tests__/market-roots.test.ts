@@ -11,12 +11,11 @@ import { HookRuleRegistry } from '../registry.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
 import { ToolkitService } from '../toolkit.js';
 import { loadAllPlugins } from '../plugin-loader.js';
-import { writeSourcesFile } from '../plugin-installer.js';
 import { marketLibraryRoots } from '../../market/resolve.js';
 
 /**
  * M3 装载桥：managed 市场资源根纳入 toolkit 扫描源（provenance='market'）与
- * plugin-loader 装载源（默认停用待开关），同根双注册（市场 + add-dir）幂等。
+ * plugin-loader 装载源（默认停用待开关），同根归一只装一次。
  * dataDir 经 APPDATA/XDG_CONFIG_HOME 重定向到临时目录（同 toolkit-sources.test）。
  */
 
@@ -47,7 +46,6 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
   let marketRoot: string;
   let legacyRoot: string;
   let builtinRoot: string;
-  let sourcesRoot: string;
   let db: DatabaseSync;
   let projects: ProjectRepository;
   let libraries: LibraryRepository;
@@ -68,11 +66,9 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
     marketRoot = path.join(dataDir, 'market', 'mkt-repo');
     legacyRoot = path.join(base, 'legacy-src');
     builtinRoot = path.join(base, 'builtin');
-    sourcesRoot = path.join(base, 'cfg');
     await writePack(marketRoot);
     await writePack(path.join(legacyRoot, 'legacy-pack')); // market 外的库不入源
     await mkdir(builtinRoot, { recursive: true });
-    await mkdir(sourcesRoot, { recursive: true });
 
     db = openDatabase(':memory:');
     projects = new ProjectRepository(db);
@@ -109,7 +105,6 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
       projects,
       states,
       builtinRoot,
-      sourcesRoot,
       libraries,
       plugins: { list: () => [], setPluginEnabled: () => true },
     });
@@ -128,7 +123,6 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
       projects,
       states,
       builtinRoot,
-      sourcesRoot,
       plugins: { list: () => [], setPluginEnabled: () => true },
     });
     const res = await service.list(project.id);
@@ -152,14 +146,15 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
     expect(registry.candidates('Stop').some((r) => r.pluginId === 'market-sample')).toBe(true);
   });
 
-  it('同根双注册（市场 + add-dir）幂等：只装一次、规则唯一', async () => {
-    await writeSourcesFile({ indexes: [], dirs: [path.resolve(marketRoot)] });
-    const { loader, loaded } = await loadAllPlugins(
-      { rules, registry, states, libraries },
-      [],
-    );
-    expect(loaded.filter((p) => p.id === 'market-sample')).toHaveLength(1);
-    expect(loader.list().filter((p) => p.id === 'market-sample')).toHaveLength(1);
-    expect(rules.listByPlugin('market-sample')).toHaveLength(1);
+  it('同根归一：内置根与市场根重合时扫描源去重、包只出一份', async () => {
+    const service = new ToolkitService({
+      projects,
+      states,
+      builtinRoot: marketRoot,
+      libraries,
+      plugins: { list: () => [], setPluginEnabled: () => true },
+    });
+    const res = await service.list(project.id);
+    expect(res.packs.filter((p) => p.id === 'market-sample')).toHaveLength(1);
   });
 });

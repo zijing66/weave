@@ -1,21 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { z } from 'zod';
 import type { WeaveServerDeps } from './server.js';
-import { readJson, sendJson } from './http.js';
+import { sendJson } from './http.js';
 import { ToolkitError } from '../hooks/toolkit.js';
 
 /**
  * 批 10 工具包路由（范式同 hooks-routes）：
- *   GET  /projects/:id/toolkit                        — 包清单 + 启用态 + 外置目录 + 旧副本
+ *   GET  /projects/:id/toolkit                        — 包清单 + 启用态 + 旧副本
  *   POST /projects/:id/toolkit/:packId/enable|disable — 幂等开关，返回后置状态
  *   POST /projects/:id/toolkit/legacy-copies/cleanup  — 幂等清理项目插件位旧副本（批 3）
- *   GET  /toolkit/dirs                                — 外置目录 / 索引源
- *   POST /toolkit/dirs                                — add-dir 注册
- *   POST /toolkit/dirs/remove                         — remove-dir + 级联卸载
  * 返回 false 表示未命中，主链继续分发。
  */
-
-const DirBody = z.object({ path: z.string().min(1) });
 
 export async function handleToolkitRoutes(
   req: IncomingMessage,
@@ -95,44 +89,6 @@ export async function handleToolkitRoutes(
     }
     try {
       sendJson(res, 200, await deps.toolkit.cleanupLegacyCopies(Number(cleanupMatch[1])));
-    } catch (err) {
-      fail(err);
-    }
-    return true;
-  }
-
-  // ---- 外置目录管理 ----
-  if (pathname === '/toolkit/dirs') {
-    if (req.method === 'GET') {
-      try {
-        const { dirs, indexes } = await deps.toolkit.listDirs();
-        sendJson(res, 200, { dirs, indexes });
-      } catch (err) {
-        fail(err);
-      }
-      return true;
-    }
-    if (req.method === 'POST') {
-      try {
-        const body = DirBody.parse(await readJson(req));
-        sendJson(res, 201, await deps.toolkit.addDir(body.path));
-      } catch (err) {
-        fail(err);
-      }
-      return true;
-    }
-    sendJson(res, 405, { error: 'Method not allowed' });
-    return true;
-  }
-
-  if (pathname === '/toolkit/dirs/remove') {
-    if (req.method !== 'POST') {
-      sendJson(res, 405, { error: 'Method not allowed' });
-      return true;
-    }
-    try {
-      const body = DirBody.parse(await readJson(req));
-      sendJson(res, 200, await deps.toolkit.removeDir(body.path));
     } catch (err) {
       fail(err);
     }

@@ -190,7 +190,7 @@ export interface ToolkitPack {
   description?: string;
   scope: string;
   dir: string;
-  provenance: 'builtin' | 'external-dir' | 'market';
+  provenance: 'builtin' | 'market';
   sourceRoot: string;
   targets: string[];
   kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
@@ -211,7 +211,6 @@ export interface ToolkitPack {
 /** mirror of server `ToolkitListResult` / `ToolkitToggleResult`。 */
 export interface ToolkitListResult {
   packs: ToolkitPack[];
-  dirs: string[];
   legacyCopies: string[];
 }
 
@@ -851,18 +850,6 @@ export const api = {
       }`,
       { method: 'POST' },
     ),
-  listToolkitDirs: (): Promise<{ dirs: string[]; indexes: string[] }> =>
-    apiFetch<{ dirs: string[]; indexes: string[] }>('/toolkit/dirs'),
-  addToolkitDir: (path: string): Promise<{ dirs: string[] }> =>
-    apiFetch<{ dirs: string[] }>('/toolkit/dirs', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
-  removeToolkitDir: (path: string): Promise<{ dirs: string[]; disabled: string[] }> =>
-    apiFetch<{ dirs: string[]; disabled: string[] }>('/toolkit/dirs/remove', {
-      method: 'POST',
-      body: JSON.stringify({ path }),
-    }),
   listHookDispatches: (q?: {
     ruleId?: string;
     status?: HookDispatchStatus;
