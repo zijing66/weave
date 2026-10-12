@@ -362,6 +362,34 @@ function normalizeDirKey(raw: string | null, platform: NodeJS.Platform): string 
   return platform === 'win32' ? s.toLowerCase() : s;
 }
 
+/** 跨 mux 摊平的 pane 行：计数只需 (mux 判别键, windowId, cwd)。 */
+export interface WeztermMuxPane {
+  muxKey: string;
+  windowId: number;
+  cwd: string | null;
+}
+
+/**
+ * 已打开终端窗口计数（窗口级口径：distinct (mux, windowId)、任一 pane cwd 命中
+ * 即计——不是分屏 pane 数、也不是会话数）。同一窗口多个 pane 同属一目录只计 1。
+ */
+export function countWindowsByDir(
+  dirs: readonly string[],
+  panes: readonly WeztermMuxPane[],
+  platform: NodeJS.Platform = process.platform,
+): Map<string, number> {
+  const keys = dirs.map((d) => normalizeDirKey(d, platform));
+  const windows = dirs.map(() => new Set<string>());
+  for (const pane of panes) {
+    const cwdKey = normalizeDirKey(pane.cwd, platform);
+    if (!cwdKey) continue;
+    for (let i = 0; i < dirs.length; i++) {
+      if (keys[i] !== null && keys[i] === cwdKey) windows[i]!.add(`${pane.muxKey}#${pane.windowId}`);
+    }
+  }
+  return new Map(dirs.map((d, i) => [d, windows[i]!.size]));
+}
+
 /** 匹配 pane 最多的 tab 复用（平手取最早 tab），tab 内完整 pane 集合参与布局。 */
 function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.Platform) {
   const matches = new Map<number, number>();
