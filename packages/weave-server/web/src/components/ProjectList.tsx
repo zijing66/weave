@@ -200,7 +200,7 @@ export function ProjectList({
                   {...attributes}
                   {...listeners}
                   title={t('project.dragToReorder')}
-                  className="ml-1 mt-1.5 shrink-0 cursor-grab touch-none rounded-md border border-white/[0.08] bg-white/[0.02] p-1 text-neutral-600 transition-colors hover:border-white/[0.16] hover:text-neutral-300 active:cursor-grabbing"
+                  className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
                 >
                   <GripVertical className="h-3.5 w-3.5" />
                 </span>
@@ -425,7 +425,7 @@ function QuickButton({
         e.stopPropagation();
         onClick();
       }}
-      className="pointer-events-auto [&_svg]:pointer-events-none rounded-md border border-white/[0.08] bg-white/[0.02] p-1 text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
+      className="pointer-events-auto [&_svg]:pointer-events-none rounded border border-white/[0.08] bg-white/[0.02] px-1 py-0.5 text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
     >
       {children}
     </button>
