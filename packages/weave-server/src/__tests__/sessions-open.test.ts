@@ -13,7 +13,6 @@ import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from '../daemon/settings.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
-const TOKEN = 'daemon-token';
 const SESSION = 'sess-open-1';
 
 describe('POST /sessions/:id/open-terminal', () => {
@@ -26,10 +25,9 @@ describe('POST /sessions/:id/open-terminal', () => {
     atCalls: Array<{ dir: string; argv: string[]; target: string }>;
   };
 
-  const post = (url: string, auth = `Bearer ${TOKEN}`): Promise<Response> =>
+  const post = (url: string): Promise<Response> =>
     fetch(`http://127.0.0.1:${port}${url}`, {
       method: 'POST',
-      headers: { authorization: auth },
     });
 
   beforeAll(async () => {
@@ -71,7 +69,6 @@ describe('POST /sessions/:id/open-terminal', () => {
     setDaemonSettingsDb(db);
     server = createWeaveServer({
       projects,
-      daemonToken: TOKEN,
       port: 0,
       hookEvents,
       hookSessions: sessions,
@@ -105,7 +102,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     const before = opener.runCalls.length;
     const res = await fetch(`http://127.0.0.1:${port}/sessions/${SESSION}/open-terminal`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'deadbeef:1:2' }),
     });
     expect(res.status).toBe(200);
@@ -125,7 +122,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/sessions/${SESSION}/open-terminal`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ target: 'deadbeef:1:2' }),
       });
       expect(res.status).toBe(400);
@@ -159,9 +156,5 @@ describe('POST /sessions/:id/open-terminal', () => {
   it('returns 400 when the session is not bound to a project', async () => {
     const res = await post('/sessions/sess-no-project/open-terminal');
     expect(res.status).toBe(400);
-  });
-
-  it('requires the daemon token', async () => {
-    expect((await post(`/sessions/${SESSION}/open-terminal`, 'Bearer wrong')).status).toBe(401);
   });
 });

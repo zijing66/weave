@@ -10,7 +10,6 @@ import { HookEventRepository } from '../repositories/hook-events.js';
 import { ClaudeCodeAdapter } from '../hooks/adapter.js';
 import { createWeaveServer } from '../daemon/server.js';
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 describe('daemon server — /api prefix, hooks listing, static hosting', () => {
@@ -58,7 +57,6 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
 
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       hookEvents,
       adapters: [new ClaudeCodeAdapter()],
@@ -74,9 +72,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   });
 
   it('strips the /api prefix so /api/projects works like /projects', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/projects`, {
-      headers: { authorization: `Bearer ${DAEMON_TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/api/projects`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { projects: Array<{ path: string }> };
     expect(data.projects).toHaveLength(1);
@@ -84,10 +80,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   });
 
   it('GET /api/projects/:id/hooks lists hook events for the task view', async () => {
-    const res = await fetch(
-      `http://127.0.0.1:${port}/api/projects/${projectId}/hooks`,
-      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
-    );
+    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/hooks`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       events: Array<{ eventType: string; sessionId: string }>;
@@ -100,17 +93,9 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
     expect(data.events.every((e) => e.sessionId === 's1')).toBe(true);
   });
 
-  it('GET /api/projects/:id/hooks requires the daemon token', async () => {
-    const res = await fetch(
-      `http://127.0.0.1:${port}/api/projects/${projectId}/hooks`,
-    );
-    expect(res.status).toBe(401);
-  });
-
   it('GET /api/projects/:id/hooks honors a limit query param', async () => {
     const res = await fetch(
       `http://127.0.0.1:${port}/api/projects/${projectId}/hooks?limit=1`,
-      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { events: unknown[] };
@@ -129,7 +114,6 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
 
     const s1 = await fetch(
       `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=s1`,
-      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
     );
     const s1Data = (await s1.json()) as { events: Array<{ sessionId: string; eventType: string }> };
     expect(s1Data.events).toHaveLength(2);
@@ -139,7 +123,6 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
 
     const s2 = await fetch(
       `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=s2`,
-      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
     );
     const s2Data = (await s2.json()) as { events: Array<{ eventType: string }> };
     expect(s2Data.events).toHaveLength(1);
@@ -147,7 +130,6 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
 
     const missing = await fetch(
       `http://127.0.0.1:${port}/projects/${projectId}/hooks?sessionId=nope`,
-      { headers: { authorization: `Bearer ${DAEMON_TOKEN}` } },
     );
     expect(((await missing.json()) as { events: unknown[] }).events).toHaveLength(0);
   });

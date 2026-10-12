@@ -12,7 +12,6 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { ResumeRunner, type SpawnLike } from '../hooks/resume-runner.js';
 import { createWeaveServer } from '../daemon/server.js';
 
-const DAEMON_TOKEN = 'run-daemon-token';
 const SESSION_ID = 'sess-run';
 
 /** 结构上满足 SpawnChild 的假子进程（不真调 claude）。 */
@@ -32,12 +31,12 @@ describe('daemon server POST /hooks/dispatches/:id/run', () => {
   let spawnArgs: Array<readonly string[]>;
   let pendingId: number;
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
+  const auth = { 'content-type': 'application/json' };
   const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
-  const runPost = (id: number, body: unknown, headers: Record<string, string> = auth) =>
+  const runPost = (id: number, body: unknown) =>
     fetch(`http://127.0.0.1:${port}/hooks/dispatches/${id}/run`, {
       method: 'POST',
-      headers,
+      headers: auth,
       body: JSON.stringify(body),
     });
 
@@ -88,7 +87,6 @@ describe('daemon server POST /hooks/dispatches/:id/run', () => {
     // 不带 hookDispatcher：run 端点不依赖 dispatcher，也不读 daemon settings。
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       hookRegistry: new HookRuleRegistry(new HookRuleRepository(db)),
       hookDispatches: dispatches,
@@ -103,15 +101,6 @@ describe('daemon server POST /hooks/dispatches/:id/run', () => {
   afterAll(() => {
     server.close();
     db.close();
-  });
-
-  it('无 daemon token 401', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks/dispatches/${pendingId}/run`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: SESSION_ID }),
-    });
-    expect(res.status).toBe(401);
   });
 
   it('body 缺 sessionId → 400', async () => {

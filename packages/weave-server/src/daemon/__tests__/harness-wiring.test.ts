@@ -26,7 +26,6 @@ import type { HookReport } from '../../hooks/types.js';
  * ③ inbox 消费线程自持 registry 派生同一份适配器（hook 文件化后无 HTTP 分派）。
  */
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 const SAMPLE_REPORTS: HookReport[] = [

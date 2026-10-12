@@ -206,6 +206,10 @@ export interface ToolkitPack {
   dir: string;
   provenance: 'builtin' | 'market';
   sourceRoot: string;
+  /** 所属仓库 namespace（服务端 `marketIdOf(pack.dir)`）：内置 = `weave`、外部
+   *  市场 = 该市场 id；不在任何市场下（裸插件/手加目录）缺省 → 前端归「本地」。
+   *  一级折叠块据此分组，**不得自己从路径里推**。 */
+  namespace?: string;
   targets: string[];
   kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
   components: string[];

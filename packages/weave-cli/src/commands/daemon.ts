@@ -8,7 +8,6 @@ import {
   readDaemonState,
   writeDaemonState,
   clearDaemonState,
-  generateToken,
   daemonEntryUrl,
 } from '@weavecode/server';
 import { logger } from '@weavecode/core';
@@ -29,8 +28,6 @@ async function probeDaemon(port: number): Promise<boolean> {
 
 export interface DaemonHandle {
   port: number;
-  /** Empty when a daemon is alive but its token could not be recovered. */
-  token: string;
   /** False when an already-running daemon was reused. */
   started: boolean;
 }
@@ -41,20 +38,15 @@ export interface DaemonHandle {
  * Reuses a live daemon (probing the default port, then whatever the state file
  * records) instead of spawning a second one — the daemon is single-instance by
  * design, and a second copy would fight over the SQLite file.
- *
- * The token comes from the state file, so a daemon started by `pnpm dev:server`
- * (fixed dev token) is usable exactly like one this command spawned.
  */
 export async function ensureDaemonRunning(): Promise<DaemonHandle> {
-  // Reuse a live daemon, preferring the state file's port/token pair.
+  // Reuse a live daemon, preferring the state file's port.
   const existing = readDaemonState();
   if (existing && (await probeDaemon(existing.port))) {
-    return { port: existing.port, token: existing.token, started: false };
+    return { port: existing.port, started: false };
   }
   if (await probeDaemon(DEFAULT_PORT)) {
-    // Alive on the default port but the state file disagrees (or is missing) —
-    // we have no token to authenticate with, so say so rather than 401 later.
-    return { port: DEFAULT_PORT, token: '', started: false };
+    return { port: DEFAULT_PORT, started: false };
   }
 
   // Resolve port: default when free, otherwise scan forward.
@@ -62,8 +54,7 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
     ? DEFAULT_PORT
     : await findFreePort(DEFAULT_PORT + 1);
 
-  const token = generateToken();
-  writeDaemonState({ pid: 0, port, token, startedAt: new Date().toISOString() });
+  writeDaemonState({ pid: 0, port, startedAt: new Date().toISOString() });
 
   const entryPath = fileURLToPath(daemonEntryUrl);
   const child = spawn(process.execPath, ['--import', 'tsx', entryPath], {
@@ -72,7 +63,7 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
   });
   child.unref();
 
-  return { port, token, started: true };
+  return { port, started: true };
 }
 
 async function startAction(): Promise<void> {
@@ -82,7 +73,6 @@ async function startAction(): Promise<void> {
     return;
   }
   logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
-  logger.dim(t('out.daemon.token', { token: handle.token }));
 }
 
 async function stopAction(): Promise<void> {

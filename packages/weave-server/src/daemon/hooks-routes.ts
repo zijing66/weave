@@ -18,8 +18,7 @@ import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
- * 从 server.ts 主路由链中调用（server.ts 在鉴权块后插入一次调用）；
- * 返回 false 表示未命中，主链继续分发。
+ * 从 server.ts 主路由链中调用；返回 false 表示未命中，主链继续分发。
  */
 
 const CreateRuleBody = z.object({
@@ -53,18 +52,12 @@ export async function handleHooksRoutes(
   deps: WeaveServerDeps,
   pathname: string,
   url: URL,
-  isAuthed: boolean,
 ): Promise<boolean> {
   const isHooksPath =
     pathname.startsWith('/hooks/') ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/');
   if (!isHooksPath) return false;
-
-  if (!isAuthed) {
-    sendJson(res, 401, { error: 'Unauthorized' });
-    return true;
-  }
 
   // ---- 规则 CRUD ----
   if (pathname === '/hooks/rules') {

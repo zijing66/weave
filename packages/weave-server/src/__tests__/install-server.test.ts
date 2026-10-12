@@ -9,7 +9,6 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { LibraryRepository } from '../repositories/libraries.js';
 import { createWeaveServer } from '../daemon/server.js';
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 describe('daemon server — libraries + install/uninstall', () => {
@@ -46,7 +45,6 @@ describe('daemon server — libraries + install/uninstall', () => {
 
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       libraries,
     });
@@ -61,10 +59,10 @@ describe('daemon server — libraries + install/uninstall', () => {
     rmSync(libDir, { recursive: true, force: true });
   });
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}` };
+  const auth = { 'content-type': 'application/json' };
 
   it('GET /libraries returns the registered library', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/libraries`, { headers: auth });
+    const res = await fetch(`http://127.0.0.1:${port}/api/libraries`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { libraries: Array<{ path: string }> };
     expect(data.libraries).toHaveLength(1);
@@ -72,9 +70,7 @@ describe('daemon server — libraries + install/uninstall', () => {
   });
 
   it('GET /libraries/:id/assets scans skills', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/libraries/${libId}/assets`, {
-      headers: auth,
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/api/libraries/${libId}/assets`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       skills: Array<{ name: string }>;
@@ -91,7 +87,7 @@ describe('daemon server — libraries + install/uninstall', () => {
   it('POST /projects/:id/install skill copies files into the project', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/install`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify({ category: 'skill', name: 'src', sourceDir: skillDir }),
     });
     expect(res.status).toBe(201);
@@ -101,7 +97,7 @@ describe('daemon server — libraries + install/uninstall', () => {
   it('install skill returns 409 on conflict', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/install`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify({ category: 'skill', name: 'src', sourceDir: skillDir }),
     });
     expect(res.status).toBe(409);
@@ -110,7 +106,7 @@ describe('daemon server — libraries + install/uninstall', () => {
   it('uninstall skill returns 200 then 404', async () => {
     const ok = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/uninstall`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify({ category: 'skill', name: 'src' }),
     });
     expect(ok.status).toBe(200);
@@ -120,7 +116,7 @@ describe('daemon server — libraries + install/uninstall', () => {
       `http://127.0.0.1:${port}/api/projects/${projectId}/uninstall`,
       {
         method: 'POST',
-        headers: { ...auth, 'content-type': 'application/json' },
+        headers: auth,
         body: JSON.stringify({ category: 'skill', name: 'src' }),
       },
     );
@@ -130,7 +126,7 @@ describe('daemon server — libraries + install/uninstall', () => {
   it('POST /projects/:id/install mcp adds a .mcp.json entry', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/install`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify({
         category: 'mcp',
         name: 'demo',
@@ -140,19 +136,10 @@ describe('daemon server — libraries + install/uninstall', () => {
     expect(res.status).toBe(201);
   });
 
-  it('install requires the daemon token', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/install`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ category: 'skill', name: 'x', sourceDir: skillDir }),
-    });
-    expect(res.status).toBe(401);
-  });
-
   it('install on an unknown project returns 404', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/9999/install`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify({ category: 'skill', name: 'x', sourceDir: skillDir }),
     });
     expect(res.status).toBe(404);

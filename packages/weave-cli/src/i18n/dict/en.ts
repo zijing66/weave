@@ -43,7 +43,6 @@ export const en: Record<keyof typeof zh, string> = {
   // --- daemon command output ---
   'out.daemon.alreadyRunning': 'Daemon already running on port {port}',
   'out.daemon.started': 'Daemon started on http://{host}:{port}',
-  'out.daemon.token': 'Token: {token}',
   'out.daemon.noState': 'No daemon state found — daemon is not running.',
   'out.daemon.stopped': 'Daemon stopped (pid {pid}).',
   'out.daemon.statusNotRunning': 'Daemon: not running',
@@ -52,9 +51,6 @@ export const en: Record<keyof typeof zh, string> = {
   // --- dashboard command output ---
   'out.dash.browserFailed': '(could not launch a browser automatically — open it manually)',
   'out.dash.stopHint': 'Stop it later with `weave daemon stop`.',
-  'out.dash.tokenUnknown':
-    'A daemon is running on the default port but its token is unknown, so the console cannot authenticate.',
-  'out.dash.restartHint': '  Restart it with `weave daemon stop` then `weave dashboard`.',
   'out.dash.noBundle': 'The web bundle is not built, so the daemon has nothing to serve.',
   'out.dash.buildHint':
     '  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (http://localhost:9527).',

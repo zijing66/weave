@@ -10,8 +10,6 @@ import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, type TerminalSettings } from '../daemon/settings.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
-const TOKEN = 'daemon-token';
-
 describe('daemon /settings and /projects/:id/open routes', () => {
   let db: DatabaseSync;
   let server: Server;
@@ -50,7 +48,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       },
     };
     setDaemonSettingsDb(db);
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener, autoStart });
+    server = createWeaveServer({ projects, port: 0, opener, autoStart });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -66,9 +64,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   });
 
   it('GET /settings returns defaults plus platform presets', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/settings`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/settings`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       settings: { terminal: { preset: string } };
@@ -81,16 +77,11 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(typeof data.platform).toBe('string');
   });
 
-  it('GET /settings rejects a missing token', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/settings`);
-    expect(res.status).toBe(401);
-  });
-
   it('PUT /settings persists and returns the normalized settings', async () => {
     setDaemonSettingsDb(openDatabase(':memory:'));
     const put = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ terminal: { preset: 'wt' } }),
     });
     expect(put.status).toBe(200);
@@ -104,9 +95,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
     expect(autoStartCalls).toEqual([false]);
     // A follow-up GET reads the same value back through the injected dir.
-    const get = await fetch(`http://127.0.0.1:${port}/settings`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const get = await fetch(`http://127.0.0.1:${port}/settings`);
     const data = (await get.json()) as { settings: { terminal: { preset: string }; locale: string } };
     expect(data.settings.terminal.preset).toBe('wt');
     expect(data.settings.locale).toBe('zh-CN');
@@ -116,7 +105,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     setDaemonSettingsDb(openDatabase(':memory:'));
     const put = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ terminal: { preset: 'auto', customCommand: '' }, locale: 'en' }),
     });
     expect(put.status).toBe(200);
@@ -124,7 +113,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     // An unsupported locale is normalized back to the default, never persisted raw.
     const bad = await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         terminal: { preset: 'auto', customCommand: '' },
         locale: 'fr',
@@ -139,7 +128,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   it('POST /projects/:id/open with target=explorer opens the project directory', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'explorer' }),
     });
     expect(res.status).toBe(200);
@@ -155,12 +144,12 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     setDaemonSettingsDb(openDatabase(':memory:'));
     await fetch(`http://127.0.0.1:${port}/settings`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ terminal: { preset: 'custom', customCommand: 'myterm {path}' } }),
     });
     const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'terminal' }),
     });
     expect(res.status).toBe(200);
@@ -172,7 +161,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   it('POST /open rejects an invalid target', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'vscode' }),
     });
     expect(res.status).toBe(400);
@@ -183,7 +172,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
   it('POST /open returns 404 for an unknown project', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects/999/open`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'explorer' }),
     });
     expect(res.status).toBe(404);
@@ -196,7 +185,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     const id = projects2.list()[0].id;
     const res = await fetch(`http://127.0.0.1:${port}/projects/${id}/open`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target: 'explorer' }),
     });
     expect(res.status).toBe(400);

@@ -2,10 +2,9 @@
  * Foreground dev entry for `pnpm dev:server`.
  *
  * Unlike the production entry (spawned by `weave daemon start`, which reads
- * the daemon state file), this binds the default port with a FIXED dev token
- * and logs to stdout so `tsx watch` can hot-reload during development. The
- * fixed token matches the Vite default (V_DAEMON_TOKEN='weave-dev-token') so
- * the SPA can call the daemon with zero configuration.
+ * the daemon state file), this binds the default port and logs to stdout so
+ * `tsx watch` can hot-reload during development. The daemon has no auth token
+ * — it binds 127.0.0.1 only, so the machine boundary is the trust boundary.
  */
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
@@ -39,8 +38,6 @@ import { resolveStaticDir } from './static.js';
 const hadChildMarker = 'CLAUDE_CODE_CHILD_SESSION' in process.env;
 delete process.env.CLAUDE_CODE_CHILD_SESSION;
 
-const DEV_TOKEN = 'weave-dev-token';
-
 async function main(): Promise<void> {
   const port = (await isPortFree(DEFAULT_PORT))
     ? DEFAULT_PORT
@@ -48,7 +45,6 @@ async function main(): Promise<void> {
   writeDaemonState({
     pid: process.pid,
     port,
-    token: DEV_TOKEN,
     startedAt: new Date().toISOString(),
   });
 
@@ -132,7 +128,6 @@ async function main(): Promise<void> {
 
   const server = createWeaveServer({
     projects,
-    daemonToken: DEV_TOKEN,
     port,
     watch,
     hookEvents,
@@ -162,8 +157,7 @@ async function main(): Promise<void> {
 
   server.listen(port, DAEMON_HOST, () => {
     console.log(`[dev] weave daemon listening on http://${DAEMON_HOST}:${port}`);
-  console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
-    console.log(`[dev] token: ${DEV_TOKEN}`);
+    console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
     if (staticDir) console.log(`[dev] static: ${staticDir}`);
     else console.log('[dev] static: (web/dist not built — run pnpm build:web)');
   });

@@ -30,14 +30,11 @@ import { resolveStaticDir } from './static.js';
 delete process.env.CLAUDE_CODE_CHILD_SESSION;
 
 /**
- * Start the daemon in the current process. Reads port/token from the daemon
- * state file (written by `weave daemon start`), binds the HTTP server, starts
+ * Start the daemon in the current process. Reads port from the daemon state
+ * file (written by `weave daemon start`), binds the HTTP server (127.0.0.1
+ * only — no auth token, the machine boundary is the trust boundary), starts
  * watching all registered projects, wires up hook ingestion, and statically
  * hosts the built SPA if present.
- *
- * The daemon token defaults to the one in the state file; set
- * WEAVE_DAEMON_TOKEN to pin it (e.g. to match the value baked into a
- * production SPA build).
  */
 export function startDaemon(): void {
   const state = readDaemonState();
@@ -45,8 +42,6 @@ export function startDaemon(): void {
     console.error('Daemon state not found. Run `weave daemon start` first.');
     process.exit(1);
   }
-
-  const daemonToken = process.env.WEAVE_DAEMON_TOKEN ?? state.token;
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const projects = new ProjectRepository(db);
@@ -148,7 +143,6 @@ export function startDaemon(): void {
 
   const server = createWeaveServer({
     projects,
-    daemonToken,
     port: state.port,
     watch,
     hookEvents,
@@ -181,8 +175,8 @@ export function startDaemon(): void {
   process.on('SIGINT', shutdown);
 
   server.listen(state.port, DAEMON_HOST, () => {
-    // Record the real pid + resolved token now that we are listening.
-    writeDaemonState({ ...state, token: daemonToken, pid: process.pid });
+    // Record the real pid now that we are listening.
+    writeDaemonState({ ...state, pid: process.pid });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
   });

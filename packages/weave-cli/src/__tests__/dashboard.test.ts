@@ -5,20 +5,12 @@ import { zh, en, type MessageKey } from '../i18n/dict';
 import { makeT } from '../i18n/t';
 
 describe('dashboardUrl', () => {
-  it('carries the token as a query param', () => {
-    expect(dashboardUrl(6420, 'abc123')).toBe('http://127.0.0.1:6420/?token=abc123');
-  });
-
-  it('omits the param when there is no token', () => {
-    expect(dashboardUrl(6420, '')).toBe('http://127.0.0.1:6420/');
-  });
-
-  it('encodes tokens that need escaping', () => {
-    expect(dashboardUrl(7000, 'a b&c')).toBe('http://127.0.0.1:7000/?token=a%20b%26c');
+  it('is the loopback origin on the given port', () => {
+    expect(dashboardUrl(6420)).toBe('http://127.0.0.1:6420/');
   });
 
   it('uses the actual port, not the default', () => {
-    expect(dashboardUrl(6421, 't')).toContain(':6421/');
+    expect(dashboardUrl(6421)).toContain(':6421/');
   });
 });
 

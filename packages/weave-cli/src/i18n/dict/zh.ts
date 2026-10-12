@@ -41,7 +41,6 @@ export const zh = {
   // --- daemon 命令运行时输出 ---
   'out.daemon.alreadyRunning': '守护进程已在 {port} 端口运行',
   'out.daemon.started': '守护进程已启动：http://{host}:{port}',
-  'out.daemon.token': '访问令牌：{token}',
   'out.daemon.noState': '未找到守护进程状态文件——守护进程未在运行。',
   'out.daemon.stopped': '守护进程已停止（pid {pid}）。',
   'out.daemon.statusNotRunning': '守护进程：未运行',
@@ -50,8 +49,6 @@ export const zh = {
   // --- dashboard 命令运行时输出 ---
   'out.dash.browserFailed': '（无法自动启动浏览器——请手动打开）',
   'out.dash.stopHint': '稍后可用 `weave daemon stop` 停止它。',
-  'out.dash.tokenUnknown': '默认端口上有守护进程在运行，但其令牌未知，控制台无法完成认证。',
-  'out.dash.restartHint': '  可先运行 `weave daemon stop`，再运行 `weave dashboard` 重启。',
   'out.dash.noBundle': 'Web 资源包尚未构建，守护进程没有可提供的内容。',
   'out.dash.buildHint': '  可用 `pnpm build:web` 构建，或运行 Vite 开发服务器：`pnpm dev:web`（http://localhost:9527）。',
   'out.dash.url': '\n  控制台：{url}\n',

@@ -4,7 +4,6 @@ import { getDataDir, getDaemonStatePath } from '../db/paths.js';
 export interface DaemonState {
   pid: number;
   port: number;
-  token: string;
   startedAt: string;
 }
 

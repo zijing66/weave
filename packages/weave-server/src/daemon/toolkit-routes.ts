@@ -17,14 +17,9 @@ export async function handleToolkitRoutes(
   deps: WeaveServerDeps,
   pathname: string,
   url: URL,
-  isAuthed: boolean,
 ): Promise<boolean> {
   if (!pathname.includes('/toolkit')) return false;
 
-  if (!isAuthed) {
-    sendJson(res, 401, { error: 'Unauthorized' });
-    return true;
-  }
   if (!deps.toolkit) {
     sendJson(res, 503, { error: 'Toolkit unavailable' });
     return true;

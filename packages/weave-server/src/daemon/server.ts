@@ -89,7 +89,6 @@ import {
 import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/config.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
-import { extractBearerToken } from './auth.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
@@ -109,7 +108,6 @@ export const DAEMON_VERSION = WEAVE_VERSION;
 
 export interface WeaveServerDeps {
   projects: ProjectRepository;
-  daemonToken: string;
   port: number;
   /** File watch service; optional so tests can run without chokidar. */
   watch?: WatchService;
@@ -190,30 +188,18 @@ async function handleRequest(
     return;
   }
 
-  // API routes below require the daemon token. EventSource cannot set headers,
-  // so accept the token as a query param too (used by /events). Static SPA
-  // assets (served further down) are intentionally unauthenticated — the
-  // browser loads index.html and its bundles before any token is available.
-  const token = extractBearerToken(req) ?? url.searchParams.get('token');
-  const isAuthed = token === deps.daemonToken;
-  const requireAuth = (): boolean => {
-    if (!isAuthed) {
-      sendJson(res, 401, { error: 'Unauthorized' });
-      return false;
-    }
-    return true;
-  };
+  // 无 daemon token：daemon 只绑 127.0.0.1（port.ts DAEMON_HOST），本机即边界。
+  // 项目级鉴权（hooks 采集 ptoken）在各自的采集链路里，与此处无关。
 
   // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。
-  if (await handleHooksRoutes(req, res, deps, pathname, url, isAuthed)) return;
+  if (await handleHooksRoutes(req, res, deps, pathname, url)) return;
 
   // 批 10 工具包子路由（包清单/开关）——未命中返回 false，主链继续。
-  if (await handleToolkitRoutes(req, res, deps, pathname, url, isAuthed)) return;
+  if (await handleToolkitRoutes(req, res, deps, pathname, url)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).
   const hooksMatch = pathname.match(/^\/projects\/(\d+)\/hooks$/);
   if (hooksMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     if (!deps.hookEvents) {
       sendJson(res, 503, { error: 'Hook ingestion unavailable' });
       return;
@@ -235,7 +221,6 @@ async function handleRequest(
 
   // --- daemon settings (terminal preset for "open in terminal") ---
   if (pathname === '/settings') {
-    if (!requireAuth()) return;
     if (req.method === 'GET') {
       sendJson(res, 200, {
         settings: await readDaemonSettings(),
@@ -266,7 +251,6 @@ async function handleRequest(
   // --- open a project directory in the file manager or a terminal ---
   const openMatch = pathname.match(/^\/projects\/(\d+)\/open$/);
   if (openMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(openMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -302,14 +286,12 @@ async function handleRequest(
 
   // --- cross-platform directory browsing (powers the web folder picker) ---
   if (pathname === '/fs/roots' && req.method === 'GET') {
-    if (!requireAuth()) return;
     const libraryPaths = deps.libraries ? deps.libraries.list().map((l) => l.path) : [];
     const roots = await listBrowseRoots(libraryPaths);
     sendJson(res, 200, { roots });
     return;
   }
   if (pathname === '/fs/children' && req.method === 'GET') {
-    if (!requireAuth()) return;
     const dirPath = url.searchParams.get('path');
     if (!dirPath) {
       sendJson(res, 400, { error: 'Missing "path" query parameter' });
@@ -326,19 +308,16 @@ async function handleRequest(
 
   // --- 安装属性矩阵（harness 适配 × 安装范围；web 拖拽/点击禁用共用） ---
   if (pathname === '/capabilities' && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, installCapabilities());
     return;
   }
 
   // --- libraries (asset sources for the install panel) ---
   if (pathname === '/libraries' && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, { libraries: deps.libraries ? deps.libraries.list() : [] });
     return;
   }
   if (pathname === '/libraries' && req.method === 'POST') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -367,7 +346,6 @@ async function handleRequest(
   }
   const libAssetsMatch = pathname.match(/^\/libraries\/(\d+)\/assets$/);
   if (libAssetsMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -392,7 +370,6 @@ async function handleRequest(
   }
   const libMatch = pathname.match(/^\/libraries\/(\d+)$/);
   if (libMatch && req.method === 'DELETE') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -407,7 +384,6 @@ async function handleRequest(
 
   // --- 资源市场（批 9）：清单 / 双导入 / 删除 / legacy 外部源迁入 ---
   if (pathname === '/market' && req.method === 'GET') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -419,7 +395,6 @@ async function handleRequest(
     return;
   }
   if (pathname === '/market' && req.method === 'POST') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -458,7 +433,6 @@ async function handleRequest(
   }
   // 批量检查市场缓存更新（M4）：比对 origin，只读不落库；body 可空 = 全量。
   if (pathname === '/market/check-updates' && req.method === 'POST') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -485,7 +459,6 @@ async function handleRequest(
   }
   // 刷新市场缓存（M4 一键更新）：dir 重拷 / git 重 clone + 回写 commit；body 可空 = 全量。
   if (pathname === '/market/refresh' && req.method === 'POST') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -535,7 +508,6 @@ async function handleRequest(
   }
   const marketMatch = pathname.match(/^\/market\/(\d+)$/);
   if (marketMatch && req.method === 'DELETE') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -572,7 +544,6 @@ async function handleRequest(
   }
   const migrateMatch = pathname.match(/^\/libraries\/(\d+)\/market-import$/);
   if (migrateMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     if (!deps.libraries) {
       sendJson(res, 503, { error: 'Libraries unavailable' });
       return;
@@ -602,7 +573,6 @@ async function handleRequest(
   // --- install / uninstall assets (filesystem ops; SSE auto-refreshes the UI) ---
   const installMatch = pathname.match(/^\/projects\/(\d+)\/install$/);
   if (installMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(installMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -680,7 +650,6 @@ async function handleRequest(
   }
   const uninstallMatch = pathname.match(/^\/projects\/(\d+)\/uninstall$/);
   if (uninstallMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(uninstallMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -748,7 +717,6 @@ async function handleRequest(
   // --- project file reader (e.g. a skill's SKILL.md) ---
   const fileMatch = pathname.match(/^\/projects\/(\d+)\/file$/);
   if (fileMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(fileMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -770,7 +738,6 @@ async function handleRequest(
 
   // --- machine-level file reader (~/.claude/…, ~/.codex/…) for the global tree ---
   if (pathname === '/global-file' && req.method === 'GET') {
-    if (!requireAuth()) return;
     const relPath = url.searchParams.get('path');
     if (!relPath) {
       sendJson(res, 400, { error: 'Missing "path" query parameter' });
@@ -788,7 +755,6 @@ async function handleRequest(
   // --- mcp servers (project .mcp.json + global ~/.claude.json) ---
   const mcpMatch = pathname.match(/^\/projects\/(\d+)\/mcp$/);
   if (mcpMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(mcpMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -811,7 +777,6 @@ async function handleRequest(
   // rendered by each client's own dictionary ---
   const harnessChecksMatch = pathname.match(/^\/projects\/(\d+)\/harness-checks$/);
   if (harnessChecksMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(harnessChecksMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -824,7 +789,6 @@ async function handleRequest(
   // --- global skills (grouped: personal + plugin, Claude + Codex) ---
   const globalSkillsMatch = pathname.match(/^\/projects\/(\d+)\/skills\/global$/);
   if (globalSkillsMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, { groups: await readGlobalSkillGroups() });
     return;
   }
@@ -833,7 +797,6 @@ async function handleRequest(
   // identify the skill so the client never supplies an arbitrary path) ---
   const globalSkillFilesMatch = pathname.match(/^\/projects\/(\d+)\/skills\/global\/files$/);
   if (globalSkillFilesMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const source = url.searchParams.get('source') as GlobalSkillSource | null;
     const name = url.searchParams.get('name');
     const pluginKey = url.searchParams.get('pluginKey') ?? undefined;
@@ -854,7 +817,6 @@ async function handleRequest(
   // to the resolved skill dir and confined to it) ---
   const globalSkillFileMatch = pathname.match(/^\/projects\/(\d+)\/skills\/global\/file$/);
   if (globalSkillFileMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const source = url.searchParams.get('source') as GlobalSkillSource | null;
     const name = url.searchParams.get('name');
     const pluginKey = url.searchParams.get('pluginKey') ?? undefined;
@@ -880,7 +842,6 @@ async function handleRequest(
   // --- plugin enable state (Claude settings.json + Codex config.toml) ---
   const pluginEnabledMatch = pathname.match(/^\/projects\/(\d+)\/plugins\/enabled$/);
   if (pluginEnabledMatch) {
-    if (!requireAuth()) return;
     if (req.method === 'GET') {
       const [claude, codex] = await Promise.all([
         readClaudePluginEnabled(),
@@ -915,7 +876,6 @@ async function handleRequest(
   // --- MCP enable/disable overrides (project settings.json) ---
   const mcpEnableMatch = pathname.match(/^\/projects\/(\d+)\/mcp\/enable$/);
   if (mcpEnableMatch) {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(mcpEnableMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -950,7 +910,6 @@ async function handleRequest(
   // --- update detection (installed assets vs library sources) ---
   const updatesMatch = pathname.match(/^\/projects\/(\d+)\/updates$/);
   if (updatesMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(updatesMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -972,7 +931,6 @@ async function handleRequest(
   // --- apply a single update (overwrite one asset from its source) ---
   const updateMatch = pathname.match(/^\/projects\/(\d+)\/update$/);
   if (updateMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(updateMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -1025,7 +983,6 @@ async function handleRequest(
   // --- sync all outdated assets ---
   const syncMatch = pathname.match(/^\/projects\/(\d+)\/sync-all$/);
   if (syncMatch && req.method === 'POST') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(syncMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -1057,7 +1014,6 @@ async function handleRequest(
   // --- project weave config (auto-sync toggle) ---
   const configMatch = pathname.match(/^\/projects\/(\d+)\/config$/);
   if (configMatch) {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(configMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -1090,7 +1046,6 @@ async function handleRequest(
   // Global default template. Editing it re-renders every following project,
   // which is the per-project auto-sync mechanism.
   if (pathname === '/statusline/global') {
-    if (!requireAuth()) return;
     if (req.method === 'GET') {
       sendJson(res, 200, { config: await readGlobalStatuslineConfig() });
       return;
@@ -1123,14 +1078,12 @@ async function handleRequest(
   // Shipped factory defaults — the panel's 恢复出厂 fetches these, so the
   // reset target always comes from the server (single source of truth).
   if (pathname === '/statusline/default' && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, { config: DEFAULT_STATUSLINE_CONFIG });
     return;
   }
 
   const statuslineMatch = pathname.match(/^\/projects\/(\d+)\/statusline$/);
   if (statuslineMatch) {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(statuslineMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -1165,14 +1118,12 @@ async function handleRequest(
 
   // /events — Server-Sent Events stream of asset change events.
   if (pathname === '/events' && req.method === 'GET') {
-    if (!requireAuth()) return;
     handleSse(req, res, deps);
     return;
   }
 
   // /assets?path=<encodedProjectPath> — read cached asset entries for a project.
   if (pathname === '/assets' && req.method === 'GET') {
-    if (!requireAuth()) return;
     const projectPath = url.searchParams.get('path');
     if (!projectPath) {
       sendJson(res, 400, { error: 'Missing "path" query parameter' });
@@ -1190,13 +1141,11 @@ async function handleRequest(
   // ~/.codex) for the global 文件资产 tree. A bounded whitelist walk, never a
   // home-directory scan.
   if (pathname === '/global-file-assets' && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, { assets: await listGlobalFileAssets() });
     return;
   }
 
   if (pathname === '/projects' && req.method === 'GET') {
-    if (!requireAuth()) return;
     sendJson(res, 200, { projects: deps.projects.list() });
     return;
   }
@@ -1204,7 +1153,6 @@ async function handleRequest(
   // PUT /projects/order — dashboard 拖动排序持久化：payload = 完整目标顺序
   // （id 全量列表），repo 事务内全清重排，幂等。
   if (pathname === '/projects/order' && req.method === 'PUT') {
-    if (!requireAuth()) return;
     let body: { ids?: unknown };
     try {
       body = JSON.parse(await readBody(req)) as { ids?: unknown };
@@ -1225,7 +1173,6 @@ async function handleRequest(
   // 按最近活跃排序的可附加目标（窗口内的 tab）；非 wezterm preset 无枚举通道 → 空表。
   const terminalsMatch = pathname.match(/^\/projects\/(\d+)\/terminals$/);
   if (terminalsMatch && req.method === 'GET') {
-    if (!requireAuth()) return;
     const project = deps.projects.getById(Number(terminalsMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
@@ -1244,7 +1191,6 @@ async function handleRequest(
   // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
   // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
-    if (!requireAuth()) return;
     const projects = deps.projects.list();
     const opener = deps.opener ?? defaultProjectOpener;
     const count = opener.countTerminals ?? countOpenTerminals;

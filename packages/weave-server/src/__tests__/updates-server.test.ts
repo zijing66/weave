@@ -9,7 +9,6 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { LibraryRepository } from '../repositories/libraries.js';
 import { createWeaveServer } from '../daemon/server.js';
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 describe('daemon server — /updates', () => {
@@ -48,7 +47,7 @@ describe('daemon server — /updates', () => {
     });
     projectId = row.id;
 
-    server = createWeaveServer({ projects, daemonToken: DAEMON_TOKEN, port: 0, libraries });
+    server = createWeaveServer({ projects, port: 0, libraries });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -60,11 +59,10 @@ describe('daemon server — /updates', () => {
     rmSync(libDir, { recursive: true, force: true });
   });
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}` };
   const base = () => `http://127.0.0.1:${port}`;
 
   it('reports up-to-date installed skill as not outdated', async () => {
-    const res = await fetch(`${base()}/api/projects/${projectId}/updates`, { headers: auth });
+    const res = await fetch(`${base()}/api/projects/${projectId}/updates`);
     expect(res.status).toBe(200);
     const data = await res.json();
     const foo = data.skills.find((s: { name: string }) => s.name === 'foo');
@@ -75,7 +73,7 @@ describe('daemon server — /updates', () => {
   });
 
   it('reports custom skill (no source) as custom, not outdated', async () => {
-    const res = await fetch(`${base()}/api/projects/${projectId}/updates`, { headers: auth });
+    const res = await fetch(`${base()}/api/projects/${projectId}/updates`);
     const data = await res.json();
     const custom = data.skills.find((s: { name: string }) => s.name === 'custom');
     expect(custom).toBeDefined();
@@ -86,20 +84,15 @@ describe('daemon server — /updates', () => {
   it('reports outdated after source changes', async () => {
     // mutate the library source
     writeFileSync(join(libDir, 'foo', 'SKILL.md'), '# Foo v2\n\nchanged body');
-    const res = await fetch(`${base()}/api/projects/${projectId}/updates`, { headers: auth });
+    const res = await fetch(`${base()}/api/projects/${projectId}/updates`);
     const data = await res.json();
     const foo = data.skills.find((s: { name: string }) => s.name === 'foo');
     expect(foo.outdated).toBe(true);
     expect(data.available).toBeGreaterThanOrEqual(1);
   });
 
-  it('requires the daemon token', async () => {
-    const res = await fetch(`${base()}/api/projects/${projectId}/updates`);
-    expect(res.status).toBe(401);
-  });
-
   it('404 for unknown project', async () => {
-    const res = await fetch(`${base()}/api/projects/9999/updates`, { headers: auth });
+    const res = await fetch(`${base()}/api/projects/9999/updates`);
     expect(res.status).toBe(404);
   });
 });

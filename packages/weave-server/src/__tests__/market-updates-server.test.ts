@@ -10,8 +10,6 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { importFromDir } from '../market/import.js';
 import { createWeaveServer } from '../daemon/server.js';
 
-const DAEMON_TOKEN = 'daemon-token';
-
 describe('daemon server — /market/check-updates + /market/refresh', () => {
   let server: Server;
   let db: DatabaseSync;
@@ -37,7 +35,6 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
 
     server = createWeaveServer({
       projects: new ProjectRepository(db),
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       libraries,
     });
@@ -51,19 +48,14 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
     for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   });
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
-  const post = (p: string, body?: unknown, headers: Record<string, string> = auth) =>
+  const auth = { 'content-type': 'application/json' };
+  const post = (p: string, body?: unknown) =>
     fetch(`http://127.0.0.1:${port}/api${p}`, {
       method: 'POST',
-      headers,
+      headers: auth,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   const get = (p: string) => fetch(`http://127.0.0.1:${port}/api${p}`, { headers: auth });
-
-  it('无 token 401', async () => {
-    expect((await post('/market/check-updates', {}, {})).status).toBe(401);
-    expect((await post('/market/refresh', {}, {})).status).toBe(401);
-  });
 
   it('check-updates：空 body = 全量，源未变 → uptodate；源变更 → update-available', async () => {
     const res = await post('/market/check-updates');

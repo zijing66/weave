@@ -9,7 +9,6 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setCodexConfigFileOverride } from '../install/codex-toml.js';
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 /** Hand-written config the routes must preserve around [mcp_servers.*]. */
@@ -50,7 +49,6 @@ describe('daemon server — codex MCP (config.toml)', () => {
 
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -63,24 +61,22 @@ describe('daemon server — codex MCP (config.toml)', () => {
     setCodexConfigFileOverride(null);
   });
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}` };
+  const auth = { 'content-type': 'application/json' };
   const install = (body: unknown) =>
     fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/install`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify(body),
     });
   const uninstall = (body: unknown) =>
     fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/uninstall`, {
       method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
+      headers: auth,
       body: JSON.stringify(body),
     });
 
   it('GET /projects/:id/mcp includes codex servers from config.toml', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`, {
-      headers: auth,
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       codex: Record<string, { command: string }>;
@@ -109,9 +105,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
   });
 
   it('GET /mcp reflects the installed codex server', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`, {
-      headers: auth,
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`);
     const data = (await res.json()) as {
       codex: Record<string, { command: string; args?: string[] }>;
     };

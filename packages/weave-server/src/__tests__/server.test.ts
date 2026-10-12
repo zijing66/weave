@@ -10,8 +10,6 @@ import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js'
 import type { ProjectOpener } from '../daemon/opener.js';
 import type { DatabaseSync } from 'node:sqlite';
 
-const TOKEN = 'daemon-token';
-
 describe('daemon server', () => {
   let db: DatabaseSync;
   let server: Server;
@@ -29,7 +27,7 @@ describe('daemon server', () => {
     await writeFile(path.join(brokenDir, 'AGENTS.md'), '# Project\n');
     brokenId = projects.register({ path: brokenDir, name: 'broken', token: 'btoken', source: 'scan' })
       .id;
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0 });
+    server = createWeaveServer({ projects, port: 0 });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -40,33 +38,22 @@ describe('daemon server', () => {
     await rm(brokenDir, { recursive: true, force: true });
   });
 
-  it('GET /health is unauthenticated', async () => {
+  it('GET /health returns service info', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { service: string };
     expect(data.service).toBe('weave-daemon');
   });
 
-  it('GET /projects rejects a missing token', async () => {
+  it('GET /projects returns projects', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects`);
-    expect(res.status).toBe(401);
-  });
-
-  it('GET /projects with a valid token returns projects', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { projects: Array<{ path: string }> };
     expect(data.projects.map((p) => p.path)).toContain('/test');
   });
 
-  it('GET /capabilities 需要 token 且返回安装属性矩阵', async () => {
-    const unauth = await fetch(`http://127.0.0.1:${port}/capabilities`);
-    expect(unauth.status).toBe(401);
-    const res = await fetch(`http://127.0.0.1:${port}/capabilities`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+  it('GET /capabilities 返回安装属性矩阵', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/capabilities`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       categories: Record<string, { surfaces: Array<{ harness: string; scopes: string[] }> }>;
@@ -82,44 +69,29 @@ describe('daemon server', () => {
   });
 
   it('unknown routes return 404', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/nope`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/nope`);
     expect(res.status).toBe(404);
   });
 
   it('GET /assets returns 503 without a watch service', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/assets?path=/test`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/assets?path=/test`);
     expect(res.status).toBe(503);
   });
 
   it('GET /assets requires a path query', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/assets`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/assets`);
     expect(res.status).toBe(400);
   });
 
   it('GET /events returns 503 without a watch service', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/events`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/events`);
     expect(res.status).toBe(503);
   });
 
   // --- 批 8：GET /projects/:id/harness-checks（只读健康端点） ---
 
-  it('GET harness-checks rejects a missing token', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects/${brokenId}/harness-checks`);
-    expect(res.status).toBe(401);
-  });
-
   it('GET harness-checks returns structured check results', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects/${brokenId}/harness-checks`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/projects/${brokenId}/harness-checks`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       checks: Array<{ id: string; params: Record<string, unknown>; ok: boolean }>;
@@ -142,16 +114,13 @@ describe('daemon server', () => {
   });
 
   it('GET harness-checks 404s for an unknown project', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects/9999/harness-checks`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/projects/9999/harness-checks`);
     expect(res.status).toBe(404);
   });
 
   it('POST harness-checks is not allowed', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects/${brokenId}/harness-checks`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${TOKEN}` },
     });
     expect(res.status).toBe(404);
   });
@@ -171,7 +140,7 @@ describe('daemon server PUT /projects/order（拖动排序持久化）', () => {
     p1 = projects.register({ path: '/ord-a', name: 'a', token: 't1', source: 'init' }).id;
     p2 = projects.register({ path: '/ord-b', name: 'b', token: 't2', source: 'init' }).id;
     p3 = projects.register({ path: '/ord-c', name: 'c', token: 't3', source: 'init' }).id;
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0 });
+    server = createWeaveServer({ projects, port: 0 });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -184,14 +153,12 @@ describe('daemon server PUT /projects/order（拖动排序持久化）', () => {
   const putOrder = (ids: unknown) =>
     fetch(`http://127.0.0.1:${port}/projects/order`, {
       method: 'PUT',
-      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ids }),
     });
 
   const listedIds = async (): Promise<number[]> => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/projects`);
     return ((await res.json()) as { projects: Array<{ id: number }> }).projects.map((p) => p.id);
   };
 
@@ -242,7 +209,7 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
         { id: 'deadbeef:1:2', windowId: 1, tabId: 2, title: dir, matchCount: 2, paneCount: 3, active: true },
       ],
     };
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
+    server = createWeaveServer({ projects, port: 0, opener });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -253,22 +220,17 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
     db.close();
   });
 
-  it('projectId → 已开终端窗口数；缺 token 401', async () => {
+  it('projectId → 已开终端窗口数', async () => {
     openedByPath.set('/term-a', 3);
-    const res = await fetch(`http://127.0.0.1:${port}/terminals/counts`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/terminals/counts`);
     expect(res.status).toBe(200);
     const { counts } = (await res.json()) as { counts: Record<string, number> };
     expect(counts[ids[0]!]).toBe(3);
     expect(counts[ids[1]!]).toBe(0); // 无终端 → 0（角标不显示）
-    expect((await fetch(`http://127.0.0.1:${port}/terminals/counts`)).status).toBe(401);
   });
 
   it('GET /projects/:id/terminals 返回可附加目标（wezterm preset 才枚举）；未知项目 404', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/terminals`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/terminals`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       projectId: number;
@@ -278,9 +240,7 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
     expect(body.terminals).toHaveLength(1);
     expect(body.terminals[0]).toMatchObject({ id: 'deadbeef:1:2', matchCount: 2, active: true });
     expect(
-      (await fetch(`http://127.0.0.1:${port}/projects/9999/terminals`, {
-        headers: { authorization: `Bearer ${TOKEN}` },
-      })).status,
+      (await fetch(`http://127.0.0.1:${port}/projects/9999/terminals`)).status,
     ).toBe(404);
   });
 });

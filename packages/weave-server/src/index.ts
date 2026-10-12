@@ -23,7 +23,7 @@ export type { LibraryRow } from './repositories/libraries.js';
 export { DEFAULT_PORT, DAEMON_HOST, isPortFree, findFreePort } from './daemon/port.js';
 export { readDaemonState, writeDaemonState, clearDaemonState } from './daemon/state.js';
 export type { DaemonState } from './daemon/state.js';
-export { generateToken, extractBearerToken } from './daemon/auth.js';
+export { generateToken } from './daemon/auth.js';
 export { createWeaveServer, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
 export {

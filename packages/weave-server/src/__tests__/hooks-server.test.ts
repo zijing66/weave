@@ -20,7 +20,6 @@ import { handleIngestedRecords, type InboxRecord } from '../hooks/inbox-worker.j
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js';
 
-const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
 describe('daemon server hooks rules/dispatch/sessions API', () => {
@@ -37,7 +36,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   let hooksDir: string;
   let projectId: number;
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
+  const auth = { 'content-type': 'application/json' };
   const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
   const post = (p: string, body: unknown, method = 'POST') =>
     fetch(`http://127.0.0.1:${port}${p}`, { method, headers: auth, body: JSON.stringify(body) });
@@ -81,7 +80,6 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     });
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       hookEvents,
       adapters: [new ClaudeCodeAdapter()],
@@ -100,11 +98,6 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     db.close();
     setDaemonSettingsDb(null);
     void rm(hooksDir, { recursive: true, force: true });
-  });
-
-  it('未带 daemon token 的规则请求 401', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks/rules`);
-    expect(res.status).toBe(401);
   });
 
   it('规则 CRUD + toggle 全流程', async () => {
@@ -188,7 +181,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   it('每条采集记录都经 SSE 推出 event.ingested 帧（任务面板实时刷新源）', async () => {
     const ctrl = new AbortController();
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/events?token=${DAEMON_TOKEN}`, {
+      const res = await fetch(`http://127.0.0.1:${port}/events`, {
         signal: ctrl.signal,
       });
       expect(res.headers.get('content-type')).toContain('text/event-stream');
@@ -290,7 +283,7 @@ describe('daemon server /hooks/plugins API', () => {
   let root: string;
   let loader: WeavePluginLoader;
 
-  const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
+  const auth = { 'content-type': 'application/json' };
   const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
 
   beforeAll(async () => {
@@ -333,7 +326,6 @@ describe('daemon server /hooks/plugins API', () => {
 
     server = createWeaveServer({
       projects,
-      daemonToken: DAEMON_TOKEN,
       port: 0,
       hookRegistry: registry,
       hookPlugins: loader,
@@ -356,14 +348,7 @@ describe('daemon server /hooks/plugins API', () => {
     expect(data.plugins[0]).toMatchObject({ id: "demo-plugin", status: "active", ruleCount: 1 });
   });
 
-  it('POST toggle 级联启停插件规则（401 无 token / 404 未知插件）', async () => {
-    const unauth = await fetch(`http://127.0.0.1:${port}/hooks/plugins/demo-plugin/toggle`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: false }),
-    });
-    expect(unauth.status).toBe(401);
-
+  it('POST toggle 级联启停插件规则（404 未知插件）', async () => {
     const notFound = await fetch(`http://127.0.0.1:${port}/hooks/plugins/nope/toggle`, {
       method: 'POST',
       headers: auth,

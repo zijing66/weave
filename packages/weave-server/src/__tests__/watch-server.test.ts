@@ -11,8 +11,6 @@ import { createWeaveServer } from '../daemon/server.js';
 
 vi.setConfig({ testTimeout: 20000 });
 
-const TOKEN = 'daemon-token';
-
 describe('daemon server watch endpoints', () => {
   let db: DatabaseSync;
   let server: Server;
@@ -31,7 +29,7 @@ describe('daemon server watch endpoints', () => {
 
     watch = new WatchService(projects, { debounceMs: 30, reconcileMs: 60_000 });
     watch.start();
-    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, watch });
+    server = createWeaveServer({ projects, port: 0, watch });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
 
@@ -51,7 +49,6 @@ describe('daemon server watch endpoints', () => {
   it('GET /assets returns cached entries for a project', async () => {
     const res = await fetch(
       `http://127.0.0.1:${port}/assets?path=${encodeURIComponent(projectDir)}`,
-      { headers: { authorization: `Bearer ${TOKEN}` } },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -66,31 +63,21 @@ describe('daemon server watch endpoints', () => {
   });
 
   it('GET /assets requires a path query', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/assets`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/assets`);
     expect(res.status).toBe(400);
   });
 
   it('GET /assets for an unknown project returns an empty list', async () => {
     const res = await fetch(
       `http://127.0.0.1:${port}/assets?path=${encodeURIComponent('/nonexistent')}`,
-      { headers: { authorization: `Bearer ${TOKEN}` } },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { assets: unknown[] };
     expect(data.assets).toHaveLength(0);
   });
 
-  it('GET /events rejects a missing token', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/events`);
-    expect(res.status).toBe(401);
-  });
-
   it('GET /events upgrades to an SSE stream and greets', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/events`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/events`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/event-stream');
 
