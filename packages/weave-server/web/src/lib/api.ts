@@ -278,6 +278,8 @@ export interface SessionRow {
   turnOpen?: boolean;
   /** 最新一条 hook 事件类型（listWithCounts 填充）——状态总线判「关闭」用。 */
   lastEventType?: string | null;
+  /** claude 注册表判活：false=进程确死（判 terminated）；null=查不到登记（codex 等）不猜。 */
+  pidAlive?: boolean | null;
 }
 
 /** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */

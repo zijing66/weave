@@ -88,6 +88,29 @@ describe('deriveSessionStatus', () => {
       deriveSessionStatus({ ...base, latestEventAt: ago(1_000), latestEventType: 'PostToolUse' }),
     ).toBe('running');
   });
+
+  it('claude 注册表判死（无 SessionEnd）→ terminated', () => {
+    expect(deriveSessionStatus({ ...base, pidAlive: false })).toBe('terminated');
+    // 压过回合新鲜度——进程都死了就不是运行中
+    expect(
+      deriveSessionStatus({ ...base, pidAlive: false, lastSeenAt: ago(1_000), turnOpen: true }),
+    ).toBe('terminated');
+  });
+
+  it('terminated 只认明确 false：SessionEnd 优先 closed；running/failed、未知不猜', () => {
+    expect(
+      deriveSessionStatus({ ...base, pidAlive: false, latestEventType: 'SessionEnd' }),
+    ).toBe('closed');
+    expect(
+      deriveSessionStatus({ ...base, pidAlive: false, hasRunningDispatch: true }),
+    ).toBe('running');
+    expect(deriveSessionStatus({ ...base, pidAlive: false, latestDispatchFailed: true })).toBe(
+      'failed',
+    );
+    // null/undefined = 查不到登记（codex/旧会话）→ 不判死
+    expect(deriveSessionStatus({ ...base, pidAlive: null, turnOpen: false })).toBe('open');
+    expect(deriveSessionStatus({ ...base, pidAlive: true, turnOpen: false })).toBe('open');
+  });
 });
 
 describe('countSessionsByHarness', () => {

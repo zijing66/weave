@@ -14,6 +14,7 @@ import { purgeSession } from '../hooks/session-purge.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener } from './opener.js';
+import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -291,7 +292,12 @@ export async function handleHooksRoutes(
     }
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
-    sendJson(res, 200, { sessions: deps.hookSessions.listWithCounts(projectId) });
+    const sessions = deps.hookSessions.listWithCounts(projectId);
+    // claude 注册表判活随返回：true/false=判得动，null=判不动（codex/新鲜会话）不猜
+    const liveness = claudeLivenessById();
+    sendJson(res, 200, {
+      sessions: sessions.map((s) => ({ ...s, pidAlive: pidAliveOf(s, liveness) })),
+    });
     return true;
   }
 

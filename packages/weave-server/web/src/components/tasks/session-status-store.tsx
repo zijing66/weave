@@ -211,6 +211,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
           lastSeenAt: s.lastSeenAt,
           // 服务端基线（listWithCounts）——不必为每个会话拉事件即可判「关闭」
           latestEventType: s.lastEventType ?? undefined,
+          pidAlive: s.pidAlive ?? undefined,
           hasRunningDispatch: mine.some((d) => d.status === 'running'),
           hasRunningSubagent,
           latestDispatchFailed:
