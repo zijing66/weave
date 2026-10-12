@@ -22,7 +22,6 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import type { ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
-  Circle,
   FolderOpen,
   Globe,
   GripVertical,
@@ -62,6 +61,8 @@ interface ProjectListProps {
   openTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
+  /** Row 快速操作：该项目已打开的终端窗口数（0 = 无角标）。 */
+  terminalsOf?: (projectId: number) => number;
   /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
   onReorder?: (ids: number[]) => void;
 }
@@ -91,6 +92,7 @@ export function ProjectList({
   openExplorerStateOf,
   openTerminalStateOf,
   sessionStatsOf,
+  terminalsOf,
   onReorder,
 }: ProjectListProps) {
   const t = useT();
@@ -175,6 +177,7 @@ export function ProjectList({
           const autoSync = autoSyncOf?.(p.id);
           const pending = updatesOf?.(p.id);
           const stats = sessionStatsOf?.(p.id) ?? [];
+          const terminals = terminalsOf?.(p.id) ?? 0;
           return (
             <SortableProjectLi key={p.id} id={p.id}>
               {({ setNodeRef, style, attributes, listeners, isDragging }) => (
@@ -197,7 +200,7 @@ export function ProjectList({
                   {...attributes}
                   {...listeners}
                   title={t('project.dragToReorder')}
-                  className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
+                  className="ml-1 mt-1.5 shrink-0 cursor-grab touch-none rounded-md border border-white/[0.08] bg-white/[0.02] p-1 text-neutral-600 transition-colors hover:border-white/[0.16] hover:text-neutral-300 active:cursor-grabbing"
                 >
                   <GripVertical className="h-3.5 w-3.5" />
                 </span>
@@ -213,14 +216,6 @@ export function ProjectList({
                   'hover:bg-white/[0.04]',
                 )}
               >
-                <Circle
-                  className={cn(
-                    'h-2 w-2 mt-1.5 shrink-0',
-                    !globalActive && selectedId === p.id
-                      ? 'text-emerald-400'
-                      : 'text-neutral-500',
-                  )}
-                />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm" title={p.name}>
                     {p.name}
@@ -237,7 +232,7 @@ export function ProjectList({
               </div>
               {/* 快捷操作簇（批 8）：卡内独立一行换行展示，不与文字同行重叠。
                   stopPropagation 在 QuickButton 内双保险。 */}
-              <div className="flex items-center gap-0.5 px-2 pb-1 pl-9">
+              <div className="flex items-center gap-1 px-2 pb-1 pl-9">
                 <QuickButton
                   title={`${autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                   pressed={autoSync}
@@ -284,13 +279,33 @@ export function ProjectList({
                     icon={<FolderOpen className="h-3.5 w-3.5" />}
                   />
                 </QuickButton>
-                <QuickButton title={t('project.openInTerminal')} onClick={() => onOpenTerminal(p)}>
-                  <FeedbackIcon
-                    state={openTerminalStateOf?.(p.id) ?? 'idle'}
-                    className="h-3.5 w-3.5"
-                    icon={<Terminal className="h-3.5 w-3.5" />}
-                  />
-                </QuickButton>
+                {/* 终端：该项目已有终端窗口开着 → 图标转绿 + 角标示数
+                    （窗口级口径；分屏 pane 与会话都不计）。 */}
+                <span className="relative">
+                  <QuickButton
+                    title={
+                      terminals > 0
+                        ? `${t('project.terminalsOpen', { n: terminals })}\n\n${t('project.openInTerminal')}`
+                        : t('project.openInTerminal')
+                    }
+                    onClick={() => onOpenTerminal(p)}
+                  >
+                    <FeedbackIcon
+                      state={openTerminalStateOf?.(p.id) ?? 'idle'}
+                      className="h-3.5 w-3.5"
+                      icon={
+                        <Terminal
+                          className={cn('h-3.5 w-3.5', terminals > 0 && 'text-emerald-400')}
+                        />
+                      }
+                    />
+                  </QuickButton>
+                  {terminals > 0 && (
+                    <span className="pointer-events-none absolute -top-1 -right-1.5 rounded-full bg-emerald-900/80 px-1 text-[9px] leading-3 text-emerald-300">
+                      {terminals}
+                    </span>
+                  )}
+                </span>
               </div>
             </li>
               )}
@@ -410,7 +425,7 @@ function QuickButton({
         e.stopPropagation();
         onClick();
       }}
-      className="pointer-events-auto [&_svg]:pointer-events-none p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-white/[0.08] transition-colors"
+      className="pointer-events-auto [&_svg]:pointer-events-none rounded-md border border-white/[0.08] bg-white/[0.02] p-1 text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
     >
       {children}
     </button>

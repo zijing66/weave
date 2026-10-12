@@ -163,6 +163,26 @@ export default function App() {
     [refreshProjects, t],
   );
 
+  // 项目卡终端角标（已开终端窗口数）：挂载 + 5s 轮询 + 焦点回归刷新。
+  // 5s 是体感与开销的折中——daemon 侧枚举另有 2.5s 缓存，突发多枪不重探。
+  const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
+  const refreshTerminalCounts = useCallback(() => {
+    api.getTerminalCounts().then(setTerminalCounts).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshTerminalCounts();
+    const timer = window.setInterval(refreshTerminalCounts, 5000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshTerminalCounts();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshTerminalCounts]);
+
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') refreshProjects();
@@ -701,10 +721,12 @@ export default function App() {
         `open-${target}:${p.id}`,
         async () => {
           await api.openProject(p.id, target);
+          // 新窗落地到 cwd 上报有一拍延迟：略等再拉角标（轮询也会兜住）。
+          if (target === 'terminal') window.setTimeout(refreshTerminalCounts, 600);
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       ),
-    [fb, t],
+    [fb, t, refreshTerminalCounts],
   );
   const openExplorerStateOf = useCallback((id: number) => fb.stateOf(`open-explorer:${id}`), [fb]);
   const openTerminalProjectStateOf = useCallback(
@@ -903,6 +925,7 @@ export default function App() {
                 onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
                 onSyncNow={(p) => void syncNowWithFeedback(p)}
                 sessionStatsOf={(id) => projectStats.get(id)}
+                terminalsOf={(id) => terminalCounts[id] ?? 0}
                 onReorder={handleProjectReorder}
               />
             </aside>

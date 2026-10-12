@@ -32,13 +32,14 @@ export const appZh = {
   'project.openInExplorer': '在资源管理器中打开',
   'project.openInTerminal': '在终端中打开',
   'project.dragToReorder': '拖动调整顺序',
+  'project.terminalsOpen': '{n} 个终端已打开',
   // 行内快捷操作（批 8）：autoSync 开关与打开两项复用上方 app.autoSync* /
   // project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
-  'project.sessionsOpen': '{n} 个会话已打开（等输入）',
+  'project.sessionsOpen': '{n} 个会话闲置（等输入）',
 
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
@@ -114,11 +115,12 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInExplorer': 'Open in Explorer',
   'project.openInTerminal': 'Open in terminal',
   'project.dragToReorder': 'Drag to reorder',
+  'project.terminalsOpen': '{n} terminal(s) open',
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
-  'project.sessionsOpen': '{n} session(s) open (awaiting input)',
+  'project.sessionsOpen': '{n} session(s) idle (awaiting input)',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',
