@@ -8,8 +8,6 @@ import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { SessionSweeper } from '../hooks/session-sweeper.js';
-import { sweepProjectSpools } from '../hooks/spool.js';
-import { hooksRoot } from '../hooks/mirror.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
@@ -154,7 +152,6 @@ export function startDaemon(): void {
     hookRunner,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
-    hookInboxDir: hooksRoot(),
     pluginStates: new PluginStateRepository(db),
     toolkit,
   });
@@ -175,24 +172,5 @@ export function startDaemon(): void {
     writeDaemonState({ ...state, token: daemonToken, pid: process.pid });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
-    // spool 积压回灌【弃用口，旧版脚本存量兜底】：daemon 不在期间旧版 hook
-    // 落项目本地 spool 的事件，起服务就补上；新版 hook 落全局 inbox，由
-    // inbox 消费线程接管（先 tick 一次）
-    //（客户端 flusher 只在下一 hook 成功后才跑，这里覆盖 server 恢复但
-    // 用户空闲的场景）。失败不阻断启动。
-    try {
-      const flushed = sweepProjectSpools({
-        projects,
-        hookEvents,
-        hookSessions,
-        hookBus,
-        eventSources: adapters,
-      });
-      if (flushed > 0) {
-        console.log(`[weave] spool backlog ingested: ${flushed} event(s)`);
-      }
-    } catch (e) {
-      console.error('[weave] spool sweep failed:', e);
-    }
   });
 }

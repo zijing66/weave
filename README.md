@@ -19,7 +19,10 @@ weave dashboard     # open the local dashboard
   stores sessions, and serves the dashboard. Hooks never call it over HTTP:
   events append to `<configDir>/weave/hooks/inbox/` (a daemon worker thread
   claims and ingests them, then deletes the file), so collection and rule-driven
-  injection keep working while the daemon is down.
+  injection keep working while the daemon is down. Upgrade note: a project's
+  `.claude/helpers/hook-handler.cjs` is only refreshed by `weave init`, so
+  re-run it in projects initialized before this change (older scripts post to a
+  removed endpoint and would report nothing).
 - **`weave dashboard`** — a web UI for projects, sessions, hooks, plugins, and
   installs. Served by the daemon itself.
 - **`weave scan` / `weave status` / `weave statusline`** — project discovery,

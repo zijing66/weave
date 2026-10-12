@@ -1,8 +1,7 @@
 # @weavecode/server
 
 Weave daemon — HTTP API, SQLite data layer, hook ingestion (a file-based inbox
-consumed by a worker thread, plus deprecated HTTP endpoints for pre-upgrade
-projects), and static hosting for the dashboard SPA.
+consumed by a worker thread), and static hosting for the dashboard SPA.
 
 Part of [weave](https://github.com/zijing66/weave). Usually installed through
 [`@weavecode/cli`](https://www.npmjs.com/package/@weavecode/cli) rather than

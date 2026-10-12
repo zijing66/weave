@@ -1,12 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { join } from 'node:path';
-import { hookShardId } from '../hooks/mirror.js';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -25,148 +22,6 @@ import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js'
 
 const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
-
-describe('daemon server /hooks/batch（弃用回灌口：旧版 hook 的积压）', () => {
-  let db: DatabaseSync;
-  let server: Server;
-  let port: number;
-  let hookEvents: HookEventRepository;
-  let projectId: number;
-  let hooksDir: string;
-
-  beforeAll(async () => {
-    db = openDatabase(':memory:');
-    const projects = new ProjectRepository(db);
-    const row = projects.register({
-      path: '/proj',
-      name: 'test',
-      token: PROJECT_TOKEN,
-      source: 'init',
-    });
-    projectId = row.id;
-    hookEvents = new HookEventRepository(db);
-    hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-hooks-legacy-'));
-    server = createWeaveServer({
-      projects,
-      daemonToken: DAEMON_TOKEN,
-      port: 0,
-      hookEvents,
-      adapters: [new ClaudeCodeAdapter()],
-      hookInboxDir: hooksDir,
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    port = (server.address() as { port: number }).port;
-  });
-
-  afterAll(async () => {
-    server.close();
-    db.close();
-    await rm(hooksDir, { recursive: true, force: true });
-  });
-
-  it('POST /hooks/batch 批量回灌：坏行 skipped，好行同步落库', async () => {
-    const before = hookEvents.listByProject(projectId).length;
-    const res = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({
-        events: [
-          { source: 'claude', eventType: 'Stop', sessionId: 'batch-1', payload: '{}' },
-          { source: 'claude', eventType: 'SessionStart', sessionId: 'batch-1', payload: '{}' },
-          { source: 'codex', eventType: 'X', payload: '{}' }, // 未知 source → skipped
-          { eventType: 'NoSource', payload: '{}' }, // 无 source → skipped
-        ],
-      }),
-    });
-    expect(res.status).toBe(202);
-    expect((await res.json()) as { accepted: number; skipped: number }).toMatchObject({
-      accepted: 2,
-      skipped: 2,
-    });
-    // 先落库再 ack：响应返回时行已在，无需轮询
-    const rows = hookEvents.listByProject(projectId);
-    expect(rows).toHaveLength(before + 2);
-    expect(rows.filter((r) => r.sessionId === 'batch-1').map((r) => r.eventType).sort()).toEqual([
-      'SessionStart',
-      'Stop',
-    ]);
-  });
-
-  it('POST /hooks/batch 400：缺 events / 超上限', async () => {
-    const noArray = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ events: 'nope' }),
-    });
-    expect(noArray.status).toBe(400);
-
-    const tooMany = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({
-        events: Array.from({ length: 501 }, () => ({
-          source: 'claude',
-          eventType: 'Stop',
-          payload: '{}',
-        })),
-      }),
-    });
-    expect(tooMany.status).toBe(400);
-    expect((await tooMany.json()) as { error: string }).toMatchObject({
-      error: expect.stringContaining('max 500'),
-    });
-  });
-
-  it('POST /hooks/batch 401：无 token / daemon token 也不行（要项目 token）', async () => {
-    const noToken = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ events: [] }),
-    });
-    expect(noToken.status).toBe(401);
-
-    const daemonToken = await fetch(`http://127.0.0.1:${port}/hooks/batch`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${DAEMON_TOKEN}` },
-      body: JSON.stringify({ events: [] }),
-    });
-    expect(daemonToken.status).toBe(401);
-  });
-
-  it('POST /hooks 弃用兼容口：旧脚本的报告转投 inbox（同一条采集管道）', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse', sessionId: 's-legacy', payload: '{}' }),
-    });
-    expect(res.status).toBe(202);
-    // 不再同步落库（响应不带注入内容）——报告在 inbox 里等消费线程
-    expect((await res.json()) as { accepted: boolean }).toMatchObject({ accepted: true });
-    const file = join(hooksDir, 'inbox', `${hookShardId(PROJECT_TOKEN)}.jsonl`);
-    const line = JSON.parse(readFileSync(file, 'utf8').trim()) as {
-      v: number;
-      token: string;
-      report: { eventType: string };
-    };
-    expect(line).toMatchObject({ v: 1, token: PROJECT_TOKEN });
-    expect(line.report.eventType).toBe('PostToolUse');
-  });
-
-  it('POST /hooks 兼容口 401/400：无 token、缺字段都不入 inbox', async () => {
-    const noToken = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse' }),
-    });
-    expect(noToken.status).toBe(401);
-    const bad = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'claude' }),
-    });
-    expect(bad.status).toBe(400);
-  });
-});
 
 describe('daemon server hooks rules/dispatch/sessions API', () => {
   let db: DatabaseSync;

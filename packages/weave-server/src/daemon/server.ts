@@ -7,14 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ProjectRepository } from '../repositories/projects.js';
-import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
+import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
-import type { HookReport } from '../hooks/types.js';
 import type { HookRuleRegistry } from '../hooks/registry.js';
 import type { MirrorWriter } from '../hooks/mirror.js';
-import { appendInbox, hooksRoot } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
@@ -92,7 +90,6 @@ import { detectUpdates } from '../install/updates.js';
 import { extractBearerToken } from './auth.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
-import { ingestBacklog } from '../hooks/spool.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
@@ -107,9 +104,6 @@ import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
-
-/** POST /hooks/batch 单请求事件上限（客户端按 100 分片，留余量防滥用）。 */
-const MAX_BATCH_EVENTS = 500;
 
 export interface WeaveServerDeps {
   projects: ProjectRepository;
@@ -155,8 +149,6 @@ export interface WeaveServerDeps {
   pluginStates?: PluginStateRepository;
   /** hook 注入计划镜像（规则/标题变更后重写 mirror 文件，缺省不同步 = 无注入）。 */
   hookMirror?: Pick<MirrorWriter, 'syncProject' | 'syncAll'>;
-  /** 全局 hook 文件管道根（<dataDir>/hooks）；测试可注入临时根。 */
-  hookInboxDir?: string;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
 }
@@ -166,13 +158,8 @@ export function createWeaveServer(deps: WeaveServerDeps): Server {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
   const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache };
-  // 批 4b：分派列表优先由 harness registry 派生（图②），回退 deps.adapters
-  //（测试/兼容注入）——装配期算一次，不在每请求重建。
-  const eventSources: readonly EventSource[] = serverDeps.harnesses
-    ? serverDeps.harnesses.byCapability('events').flatMap((d) => d.events ?? [])
-    : (serverDeps.adapters ?? []);
   return http.createServer((req, res) => {
-    void handleRequest(req, res, serverDeps, eventSources);
+    void handleRequest(req, res, serverDeps);
   });
 }
 
@@ -180,7 +167,6 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WeaveServerDeps,
-  eventSources: readonly EventSource[],
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${DAEMON_HOST}`);
 
@@ -199,107 +185,6 @@ async function handleRequest(
       port: deps.port,
       uptimeMs: Math.round(process.uptime() * 1000),
     });
-    return;
-  }
-
-  // /hooks — 【弃用兼容口】旧版 hook-handler.cjs（未重跑 weave init 的存量项目）
-  // 的直投入口：报告追加进全局 inbox，与新版文件管道同一条采集管道，由
-  // inbox-worker 消费。202 且不带注入内容——旧项目的采集不丢，注入/标题需换
-  // 新脚本（mirror 通道）。新版 hook 不再调这里；下个版本连同 batch 一起移除。
-  if (pathname === '/hooks' && req.method === 'POST') {
-    const token = extractBearerToken(req);
-    const project = token ? deps.projects.getByToken(token) : undefined;
-    if (!project) {
-      sendJson(res, 401, { error: 'Unauthorized' });
-      return;
-    }
-    let report: HookReport;
-    try {
-      report = JSON.parse(await readBody(req)) as HookReport;
-    } catch {
-      sendJson(res, 400, { error: 'Invalid JSON body' });
-      return;
-    }
-    if (!report.source || !report.eventType) {
-      sendJson(res, 400, { error: 'Missing "source" or "eventType"' });
-      return;
-    }
-    try {
-      appendInbox(deps.hookInboxDir ?? hooksRoot(), project.token, report);
-    } catch {
-      // 落盘失败只能回 500 并留日志：旧脚本只在网络错误/超时才 spool，非 2xx
-      // 不重试——这条事件对它就是丢了（新脚本自己写盘，不会有这个缺口）。
-      sendJson(res, 500, { error: 'Inbox append failed' });
-      return;
-    }
-    sendJson(res, 202, { accepted: true, projectId: project.id, source: report.source, eventType: report.eventType });
-    return;
-  }
-
-  // /hooks/batch — 【弃用回灌口】旧版 hook-handler.cjs（升级前存量项目）的
-  // spool 积压回灌：断连期落盘的事件，server 恢复后分片批量上报到这里。
-  // 新版 hook 直接写全局 inbox（hooks/inbox-worker.ts 消费），不经 HTTP。
-  // 鉴权为 per-project token；坏行跳过计 skipped；先入库再 2xx（失败 500，
-  // 客户端保留 claim 重试）。server
-  // 恢复后分片批量上报到这里。鉴权与 /hooks 同一套 per-project token；坏行
-  // 跳过计 skipped；先入库再 2xx（失败 500，客户端保留 claim 重试）。
-  if (pathname === '/hooks/batch' && req.method === 'POST') {
-    const token = extractBearerToken(req);
-    const project = token ? deps.projects.getByToken(token) : undefined;
-    if (!project) {
-      sendJson(res, 401, { error: 'Unauthorized' });
-      return;
-    }
-    if (!deps.hookEvents || eventSources.length === 0) {
-      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
-      return;
-    }
-    let body: { events?: unknown };
-    try {
-      body = JSON.parse(await readBody(req)) as { events?: unknown };
-    } catch {
-      sendJson(res, 400, { error: 'Invalid JSON body' });
-      return;
-    }
-    const events = Array.isArray(body.events) ? (body.events as HookReport[]) : null;
-    if (!events) {
-      sendJson(res, 400, { error: 'Missing "events" array' });
-      return;
-    }
-    if (events.length > MAX_BATCH_EVENTS) {
-      sendJson(res, 400, { error: `Too many events (max ${MAX_BATCH_EVENTS} per request)` });
-      return;
-    }
-    const inputs: HookEventInput[] = [];
-    for (const report of events) {
-      const adapter =
-        report && typeof report === 'object'
-          ? eventSources.find((a) => a.source === report.source)
-          : undefined;
-      if (!adapter || !report.eventType) continue;
-      try {
-        inputs.push(adapter.normalize(report, project.id) as HookEventInput);
-      } catch {
-        // 单条坏报告不拖垮整批。
-      }
-    }
-    // 先落库再 ack（同步、量级毫秒）：ingest 失败回 500，客户端保留 claim
-    // 等下次重试——比「202 后台入库失败即丢数据」语义更稳。
-    try {
-      ingestBacklog(
-        {
-          hookEvents: deps.hookEvents,
-          hookSessions: deps.hookSessions,
-          hookBus: deps.hookBus,
-        },
-        project,
-        inputs,
-      );
-    } catch {
-      sendJson(res, 500, { error: 'Batch ingest failed' });
-      return;
-    }
-    sendJson(res, 202, { accepted: inputs.length, skipped: events.length - inputs.length });
     return;
   }
 

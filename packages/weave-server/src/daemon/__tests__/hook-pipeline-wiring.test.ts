@@ -21,7 +21,7 @@ describe('hook 文件管道装配：单一实现点', () => {
     }
   });
 
-  it('入口不得自行 new MirrorWriter/startInboxWorker（否则又会漏一环）', () => {
+  it('入口不得自行 new MirrorWriter/startInboxWorker/sweep（否则又会漏一环）', () => {
     for (const entry of ['start.ts', 'dev-entry.ts']) {
       const src = read(entry);
       expect(src).not.toContain('new MirrorWriter');
@@ -30,7 +30,7 @@ describe('hook 文件管道装配：单一实现点', () => {
     }
   });
 
-  it('单一实现点内三环齐全：mirror 重写、worker 消费、记录回主线程处理', () => {
+  it('单一实现点内各环齐全：mirror 重写、worker 消费、记录回主线程处理', () => {
     const src = read('hook-pipeline.ts');
     expect(src).toContain('new MirrorWriter');
     expect(src).toContain('startInboxWorker(');

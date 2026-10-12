@@ -9,7 +9,6 @@ import { SessionRepository } from '../repositories/sessions.js';
 import type { HookEventBus } from './bus.js';
 import type { HookDispatcher } from './dispatcher.js';
 import { appendOutbox } from './mirror.js';
-import { ingestBacklog } from './spool.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 
 /**
@@ -126,11 +125,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
     if (!group.project || group.inputs.length === 0) continue;
     try {
       // worker 无 bus：SSE 由主线程按返回记录补发
-      const ids = ingestBacklog(
-        { hookEvents: deps.hookEvents, hookSessions: deps.hookSessions },
-        group.project,
-        group.inputs,
-      );
+      const ids = insertBatch(deps, group.project, group.inputs);
       for (let i = 0; i < group.inputs.length; i++) {
         records.push({ eventId: ids[i]!, projectId: group.project.id, input: group.inputs[i]! });
       }
@@ -162,6 +157,22 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
     writeFileSync(claimPath, failedLines.join('\n') + '\n');
   } catch {}
   return records;
+}
+
+/**
+ * 一组事件的批量落库：单事务 insertMany + 会话 touch 按 sessionId 去重。
+ * 返回与 inputs 对齐的新行 id 列表（主线程按记录补 SSE / 规则分发）。
+ */
+function insertBatch(deps: InboxDrainDeps, project: ProjectRow, inputs: HookEventInput[]): number[] {
+  const ids = deps.hookEvents.insertMany(inputs);
+  const touched = new Set<string>();
+  for (const input of inputs) {
+    if (input.sessionId && !touched.has(input.sessionId)) {
+      touched.add(input.sessionId);
+      deps.hookSessions.touch(input.sessionId, project.id);
+    }
+  }
+  return ids;
 }
 
 /** 行形 `{v, token, report}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
