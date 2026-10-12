@@ -461,11 +461,24 @@ L1 仓库 namespace 折叠块
 | 门禁 | `pnpm build` / `pnpm build:web` 全 0；全仓 **106 文件 / 1122 测试全绿**。 |
 | 协作事故 | 本批与并行会话共用一个工作区：我用 `git update-index --cacheinfo` 只想暂存 api.ts 的**单个 hunk**，却覆盖了并行会话刚暂存的同文件条目 → 其 `ef1eebb`（移除 daemon token 鉴权）的 api.ts 那 4 行被我的 hunk 顶替、token 移除随之回退。已在 00c591f 一并恢复。**教训：共享工作区不做索引级操作**（对方 `git commit` 提交的是整个索引）。 |
 
-### ☐ 批 7 —— Files 合并视图 namespace 标记 + 右栏口径对齐（D8）
+### ☑ 批 7 —— Files 合并视图 namespace 标记 + 右栏口径对齐（D8）
 - 改：`lib/file-tags.ts`（namespace tag）、`FileAssetTree.tsx`、`server.ts` 的
   `/assets`+`/global-file-assets`（补 `namespace`）、`LibraryPanel.tsx`（右栏口径与新
   仓库维度对齐；用户已定 **保留右栏面板**）。
 - 硬闸：`global-file-assets.test:49-53` 零改；`file-tags.test` 按新增 tag 同批补。
+
+**实施记录（批 7 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 归属判据（全局） | `installedPluginNamespaces(home)`（`install/global-config.ts` 新增导出）：从宿主安装记录 `installed_plugins.json` 的 `installPath` + `parsePluginKey` 取「目录 → 市场」，`listGlobalFileAssets` 按**最长前缀**给命中文件挂 `namespace`。**不猜缓存目录形状**（`cache/<market>/<plugin>/<version>` 是 CC 的实现细节）——装了哪些版本、装在哪儿全随记录走。 |
+| 归属判据（项目） | `projectFileNamespaces(projectPath)`（`hooks/toolkit.ts` 新增导出）：落盘记录 `.weave/toolkit/<id>.json` 是唯一能回答「谁铺的」的事实（记录里有 `sourceDir`，市场身份经 `marketIdOf`）。`/assets` 据此给命中文件挂 `namespace`。 |
+| 无仓库可归的 | 用户自己写的文件、init 铺的文件（不在记录内）、手加目录的包（`marketIdOf` = undefined）——**不打标记**（而不是统统标「本地」：Files 里的标记语义是「哪个仓库铺的」，没有就不标）。 |
+| 前端标记 | `lib/file-tags.ts` 新增 `NAMESPACE_TAG`：与类别 tag 同壳但换描边（`border-neutral-700` + 透明底）——类别是固定词表（彩字），namespace 是**数据**（仓库名），它不进 `BUCKET_ORDER`、不进 chips 计数、不吃 `KIND_COLORS`。`FileAssetTree` 行内排在类别 tag 之后，tooltip 复用 `repo.namespaceTip`。 |
+| 右栏口径对齐 | `marketItem` 载荷补 `builtin` / `namespace`（`namespace` = `marketIdOf(row.path, marketDir)`，内置仓 = `weave` —— 与左侧那一级块同名）；`MarketItem.source` 增 `'builtin'` 值。右栏内置仓行：徽标由「外部源」改「内置」（同 `toolkit.prov.builtin` 文案与配色）、**不摆「迁入市场」与删除按钮**（服务端对此恒 409 / 拒绝，落点还是指向包内容的链接）、行名 tooltip 指向 `repo.namespaceTip` 说明它就是左侧那个块名。 |
+| 硬闸 | 零改：`hooks-server` / `toolkit-scan` / `/market` 路由语义 / `AssetEntry` 既有字段。`global-file-assets.test` 的既有断言（含 mods 判定、symlink 判定）逐条未动；只把夹具 `installed_plugins.json` 由 `{}` 换成真实安装记录（原用例只断言该文件存在且 category=plugin，故不受影响）+ 新增一条 namespace 用例。 |
+| 门禁 | `pnpm build` 全 0；全仓 **107 文件 / 1133 测试全绿**（含并行会话新增的 `terminal-counts-refresher.test` 6 例）。`pnpm build:web` 的 `tsc` 只报 `web/src/App.tsx:726/730 refreshTerminalCounts` 未定义 —— **并行会话的未完成改动**（`M App.tsx`，非本批文件），本批 web 文件单独 `tsc --noEmit` 无错。 |
+| 协作约束 | `daemon/server.ts` 同时承载并行会话的 WIP（`dataBus` / `terminalRefresher` / `readTerminalCounts`）与批 7 的两处 hunk（`/assets` 装饰、`marketItem`）。本批**不提交该文件**（提交它会连带未完成的实现，且它 import 的两个新模块仍未跟踪）；其 hunk 留在工作区，随对方提交落地。 |
 
 ### ☐ 批 8 —— 收尾
 - `README.md`（根 + `weave-server`）写「改内置 = 改 `resources/weave-market/`」的入口说明。

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { BUCKET_ORDER, tagsOf } from '../file-tags';
+import { BUCKET_ORDER, NAMESPACE_TAG, ROW_TAG_BASE, tagsOf } from '../file-tags';
+import { cn } from '../utils';
 
 describe('BUCKET_ORDER', () => {
   it('holds the 13-word taxonomy in lexical order', () => {
@@ -49,5 +50,15 @@ describe('tagsOf', () => {
 
   it('passes plugin straight through', () => {
     expect(tagsOf('plugin', '.claude/plugins/p.md')).toEqual(['plugin']);
+  });
+});
+
+describe('NAMESPACE_TAG', () => {
+  it('overrides the row shell instead of stacking with it', () => {
+    // 行壳自带实底与透明描边；namespace 得把它们换掉才认得出是两个维度
+    const merged = cn(ROW_TAG_BASE, NAMESPACE_TAG);
+    expect(merged).not.toContain('bg-neutral-800/60');
+    expect(merged).not.toContain('border-transparent');
+    expect(merged).toContain('border-neutral-700');
   });
 });

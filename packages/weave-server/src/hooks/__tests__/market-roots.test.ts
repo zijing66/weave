@@ -9,7 +9,7 @@ import { LibraryRepository } from '../../repositories/libraries.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookRuleRegistry } from '../registry.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
-import { ToolkitService } from '../toolkit.js';
+import { ToolkitService, projectFileNamespaces } from '../toolkit.js';
 import { loadAllPlugins } from '../plugin-loader.js';
 import { marketLibraryRoots } from '../../market/resolve.js';
 
@@ -134,6 +134,53 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
     const res = await service.list(project.id);
     const pack = res.packs.find((p) => p.provenance === 'builtin' && p.scope === 'core-skills');
     expect(pack).toMatchObject({ namespace: 'weave', provenance: 'builtin' });
+  });
+
+  it('projectFileNamespaces：文件归哪个仓库按落盘记录反查（无来源的包与坏记录不打标）', async () => {
+    const dir = path.join(project.path, '.weave', 'toolkit');
+    await mkdir(dir, { recursive: true });
+    const record = (packId: string, sourceDir: string, files: string[]) => ({
+      packId,
+      provenance: 'market',
+      sourceRoot: sourceDir,
+      sourceDir,
+      enabledAt: '2026-01-01T00:00:00.000Z',
+      files: Object.fromEntries(files.map((f) => [f, 'sha'])),
+    });
+    await writeFile(
+      path.join(dir, 'mkt.json'),
+      JSON.stringify(
+        record('market-sample', marketRoot, [
+          '.claude/rules/market-sample.md',
+          '.weave/market-cache.json',
+        ]),
+      ),
+    );
+    await writeFile(
+      path.join(dir, 'builtin.json'),
+      JSON.stringify(
+        record('builtin-sample', path.join(dataDir, 'market', 'weave', 'plugins', 'core-skills'), [
+          '.claude/rules/weave-stop-summary.md',
+        ]),
+      ),
+    );
+    // 手加目录（不在任何市场下）与损坏记录：无仓库可归
+    await writeFile(
+      path.join(dir, 'local.json'),
+      JSON.stringify(record('hand-added', path.join(base, 'hand-added'), ['AGENTS.md'])),
+    );
+    await writeFile(path.join(dir, 'broken.json'), '{ not json');
+
+    const namespaces = await projectFileNamespaces(project.path);
+    expect(namespaces.get('.claude/rules/market-sample.md')).toBe('mkt-repo');
+    expect(namespaces.get('.weave/market-cache.json')).toBe('mkt-repo');
+    expect(namespaces.get('.claude/rules/weave-stop-summary.md')).toBe('weave');
+    expect(namespaces.get('AGENTS.md')).toBeUndefined();
+    expect(namespaces.size).toBe(3);
+  });
+
+  it('项目没启用过任何包（无记录目录）：空表，不抛', async () => {
+    expect((await projectFileNamespaces(project.path)).size).toBe(0);
   });
 
   it('缺省 libraries（存量装配）：不扫市场，行为不变', async () => {

@@ -43,6 +43,10 @@ export interface AssetEntry {
   mtimeMs: number;
   /** True when the file itself is a symbolic link (its target is watched). */
   isSymlink?: boolean;
+  /** 所属仓库 namespace（该文件是哪个仓库铺下来的）：插件安装记录 / 项目包落盘记录
+   *  反查得到；用户自己写的、init 铺的文件不属于任何仓库，故缺省无此字段。
+   *  只有服务端能判（装在哪由 harness 记录决定），web 只渲染不推导。 */
+  namespace?: string;
 }
 
 /** Kind of change observed for a file. */

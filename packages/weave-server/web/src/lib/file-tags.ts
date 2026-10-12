@@ -76,3 +76,9 @@ export const kindColor = (kind: string) => KIND_COLORS[kind] ?? KIND_COLORS.othe
 /** Shared grey tag shell for rows — same background as the filter chips. */
 export const ROW_TAG_BASE =
   'shrink-0 rounded-full border border-transparent bg-neutral-800/60 px-1.5 py-0 text-[10px] font-medium font-sans';
+
+/* 仓库 namespace 标记（行内，排在类别 tag 之后）。namespace 是**数据**（仓库名），
+ * 不是 BUCKET_ORDER 那套固定类别词表的一员，所以它既不进 chips 计数，也不吃
+ * KIND_COLORS；与类别 tag 同壳但换成描边——一列彩字说「这是什么」，一个描边说
+ * 「谁铺的」，不靠猜。 */
+export const NAMESPACE_TAG = 'border-neutral-700 bg-transparent text-neutral-400';

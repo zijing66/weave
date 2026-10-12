@@ -81,8 +81,8 @@ function claudeJsonPath(): string {
 function globalSkillsPath(): string {
   return assetSurfaceFor('claude').globalSkillsRoots(homedir())[0];
 }
-function claudePluginsJsonPath(): string {
-  return path.join(homedir(), CLAUDE_PLUGINS_JSON);
+function claudePluginsJsonPath(home: string = homedir()): string {
+  return path.join(home, CLAUDE_PLUGINS_JSON);
 }
 /** Claude 用户级配置（`~/.claude/settings.json`）——经 AssetSurface 查询。 */
 function claudeSettingsPath(): string {
@@ -239,8 +239,10 @@ export async function uninstallGlobalSkill(
 // --- global skill groups (personal + plugin, Claude + Codex) ---
 
 /** Read `~/.claude/plugins/installed_plugins.json` (empty if absent/corrupt). */
-async function readClaudePluginManifest(): Promise<Record<string, unknown>> {
-  const file = claudePluginsJsonPath();
+async function readClaudePluginManifest(
+  home: string = homedir(),
+): Promise<Record<string, unknown>> {
+  const file = claudePluginsJsonPath(home);
   if (!(await pathExists(file))) return {};
   try {
     const parsed = JSON.parse(await readFile(file, 'utf-8'));
@@ -278,6 +280,27 @@ async function listSkillSubdirs(dir: string): Promise<GlobalSkillEntry[]> {
 interface ClaudePluginRecord {
   installPath?: string;
   version?: string;
+}
+
+/** 已装 Claude 插件的安装目录 → 所属市场 namespace（全局文件树给每个文件打仓库
+ *  标记用）。installPath 与键形都取自宿主记录、经 `parsePluginKey` 拆解点取市场，
+ *  不在这里猜缓存目录的形状——装了哪些版本、装在哪儿都随记录走。 */
+export async function installedPluginNamespaces(
+  home: string = homedir(),
+): Promise<Array<{ dir: string; namespace: string }>> {
+  const manifest = await readClaudePluginManifest(home);
+  const plugins = manifest.plugins;
+  if (!plugins || typeof plugins !== 'object' || Array.isArray(plugins)) return [];
+  const out: Array<{ dir: string; namespace: string }> = [];
+  for (const [key, raw] of Object.entries(plugins as Record<string, unknown>)) {
+    const { market } = pluginSurfaceFor('claude').parsePluginKey(key);
+    for (const rec of Array.isArray(raw) ? (raw as ClaudePluginRecord[]) : []) {
+      if (rec && typeof rec.installPath === 'string') {
+        out.push({ dir: rec.installPath, namespace: market });
+      }
+    }
+  }
+  return out;
 }
 
 /** Skills shipped by an installed Claude plugin. Each plugin key maps to one

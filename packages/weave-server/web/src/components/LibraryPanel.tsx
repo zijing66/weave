@@ -544,7 +544,9 @@ export function LibraryPanel({
                     title={item.path}
                   >
                     <span className="flex items-center gap-1 min-w-0">
-                      <span className="text-xs truncate">
+                      {/* 名字即仓库名：资源管理里那一级折叠块用的就是它（服务端给的
+                          namespace），两处必须同名才认得出是同一个仓库。 */}
+                      <span className="text-xs truncate" title={t('repo.namespaceTip')}>
                         {item.managed && item.resourceId ? item.resourceId : item.path}
                       </span>
                       <MarketSourceBadge source={item.source} />
@@ -572,6 +574,8 @@ export function LibraryPanel({
                     )}
                   </button>
                   <MarketStatusBadge status={marketStatus.get(item.id)} />
+                  {/* 内置仓例外：它不是导入来的（无源可迁、无副本可删，落点还是指向
+                      包内容的链接）——服务端对此恒 409/拒绝，此处不摆按钮。 */}
                   {item.legacy && (
                     <button
                       onClick={() => void migrateLibrary(item)}
@@ -582,20 +586,22 @@ export function LibraryPanel({
                       {migrateBusy ? t('library.migrating') : t('library.migrate')}
                     </button>
                   )}
-                  <button
-                    onClick={() => void removeItem(item)}
-                    disabled={removeState === 'loading'}
-                    title={
-                      item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
-                    }
-                    className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                  >
-                    <FeedbackIcon
-                      state={removeState}
-                      className="h-3 w-3"
-                      icon={<Trash2 className="h-3 w-3" />}
-                    />
-                  </button>
+                  {!item.builtin && (
+                    <button
+                      onClick={() => void removeItem(item)}
+                      disabled={removeState === 'loading'}
+                      title={
+                        item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
+                      }
+                      className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                    >
+                      <FeedbackIcon
+                        state={removeState}
+                        className="h-3 w-3"
+                        icon={<Trash2 className="h-3 w-3" />}
+                      />
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -1075,6 +1081,8 @@ function MarketSourceBadge({ source }: { source: MarketItem['source'] }) {
     git: { label: t('library.badgeGit'), variant: 'command' },
     dir: { label: t('library.badgeDir'), variant: 'skill' },
     legacy: { label: t('library.badgeExternal'), variant: 'other' },
+    // 内置仓：随包发布、不是导入来的（与资源管理里那一级的「内置」同款配色）
+    builtin: { label: t('toolkit.prov.builtin'), variant: 'helper' },
   }[source];
   return (
     <Badge variant={cfg.variant} className="shrink-0 px-1.5 text-[10px]">

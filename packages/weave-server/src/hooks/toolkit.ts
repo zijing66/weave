@@ -247,6 +247,31 @@ async function readRecord(p: string): Promise<ToolkitRecord | null> {
   }
 }
 
+/**
+ * 项目内「哪个文件是哪个仓库铺下来的」——落盘记录（`.weave/toolkit/<id>.json`）
+ * 是唯一能回答此问的事实：记录写着包从哪个目录装来（`sourceDir`），市场身份经
+ * `marketIdOf` 取。不在任何市场下的包（手加目录）没有仓库可归，不打标记；用户
+ * 自己写的文件同样不在记录里，也就不打标记。
+ */
+export async function projectFileNamespaces(projectPath: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const dir = path.join(projectPath, '.weave', 'toolkit');
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return out; // 从未启用过任何包
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const record = await readRecord(path.join(dir, name));
+    const namespace = record ? marketIdOf(record.sourceDir) : undefined;
+    if (!record || !namespace) continue;
+    for (const rel of Object.keys(record.files)) out.set(rel, namespace);
+  }
+  return out;
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await readFile(p);

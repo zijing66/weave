@@ -40,7 +40,21 @@ describe('listGlobalFileAssets', () => {
     writeFileSync(path.join(home, '.codex', 'AGENTS.real.md'), '# agents');
     symlinkSync('AGENTS.real.md', path.join(home, '.codex', 'AGENTS.md'));
 
-    writeFileSync(path.join(claude, 'plugins', 'installed_plugins.json'), '{}');
+    // 宿主安装记录：键 `k@m` 装在 cache/m/k/1.0.0 —— 全局文件树的仓库标记据此判
+    writeFileSync(
+      path.join(claude, 'plugins', 'installed_plugins.json'),
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          'k@m': [
+            {
+              scope: 'user',
+              installPath: path.join(claude, 'plugins', 'cache', 'm', 'k', '1.0.0'),
+            },
+          ],
+        },
+      }),
+    );
     writeFileSync(path.join(claude, 'plugins', 'marketplaces', 'acme', 'marketplace.json'), '{}');
     writeFileSync(path.join(claude, 'plugins', 'data', 'blob', 'cache.json'), '{}');
     writeFileSync(path.join(claude, 'plugins', '.in_use', 'x', 'marker'), '{}');
@@ -101,6 +115,17 @@ describe('listGlobalFileAssets', () => {
     expect(byRel.get('.claude/plugins/mods-pkg/.claude-plugin/plugin.json')?.category).toBe(
       'mods',
     );
+  });
+
+  it('tags plugin-laid files with their repo namespace, and only those', async () => {
+    const assets = await listGlobalFileAssets(home);
+    const byRel = new Map(assets.map((a) => [a.relPath, a]));
+    // 落在安装记录的 installPath 里 → 键 `k@m` 的市场名
+    expect(byRel.get('.claude/plugins/cache/m/k/1.0.0/src/deep/file.ts')?.namespace).toBe('m');
+    // 用户自己写的文件、没进任何安装记录的插件目录：无仓库可归
+    expect(byRel.get('.claude/commands/review.md')?.namespace).toBeUndefined();
+    expect(byRel.get('.claude/settings.json')?.namespace).toBeUndefined();
+    expect(byRel.get('.claude/plugins/mods-pkg/commands/run.md')?.namespace).toBeUndefined();
   });
 
   it('flags symlinked files and resolves through them', async () => {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { classifyAgent, classifyAsset } from '../watch/classifier.js';
 import { PluginModsSniffer } from '../watch/plugin-mods.js';
 import type { AssetEntry } from '../watch/types.js';
+import { installedPluginNamespaces } from './global-config.js';
 
 /**
  * Machine-level file assets backing the global 文件资产 tree.
@@ -163,6 +164,26 @@ export async function listGlobalFileAssets(home: string = homedir()): Promise<As
       await walk(path.join(base, d), relDir, 1, out, maxDepth, sniffer);
     }
   }
+  // 仓库标记：插件铺下来的文件按安装记录归属（同一份记录里的目录可能嵌套，取最长
+  // 命中的那个）；用户自己写的配置不属于任何仓库，不打标记。
+  const plugins = await installedPluginNamespaces(home);
   out.sort((a, b) => a.relPath.localeCompare(b.relPath));
-  return out;
+  return out.map((e) => {
+    const ns = namespaceOf(e.absPath, plugins);
+    return ns ? { ...e, namespace: ns } : e;
+  });
+}
+
+/** `abs` 落在哪个已装插件目录里（最长前缀；命中处即该插件的市场身份）。 */
+function namespaceOf(
+  abs: string,
+  plugins: Array<{ dir: string; namespace: string }>,
+): string | undefined {
+  let best: { dir: string; namespace: string } | undefined;
+  for (const p of plugins) {
+    const rel = path.relative(path.resolve(p.dir), path.resolve(abs));
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+    if (!best || p.dir.length > best.dir.length) best = p;
+  }
+  return best?.namespace;
 }

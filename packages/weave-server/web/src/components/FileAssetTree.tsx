@@ -9,7 +9,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
-import { BUCKET_ORDER, tagsOf, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
+import { BUCKET_ORDER, tagsOf, NAMESPACE_TAG, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -226,6 +226,13 @@ function AssetTreeNode({
               {tag}
             </span>
           ))}
+          {/* 所属仓库（服务端给的 namespace）：谁铺的与「这是什么」是两个维度，
+              故排在类别 tag 之后、用描边区分，缺省（用户自己写的文件）不显示。 */}
+          {a.namespace && (
+            <span className={cn(ROW_TAG_BASE, NAMESPACE_TAG)} title={t('repo.namespaceTip')}>
+              {a.namespace}
+            </span>
+          )}
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
               {t('fileTree.update')}

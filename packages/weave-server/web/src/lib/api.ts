@@ -76,6 +76,9 @@ export interface AssetEntry {
   agent?: AssetAgent;
   /** True when the file itself is a symbolic link (its target is watched). */
   isSymlink?: boolean;
+  /** 所属仓库 namespace（该文件是哪个仓库铺下来的）：用户自己写的文件不属于任何
+   *  仓库，故缺省。服务端判定，web 只渲染。 */
+  namespace?: string;
 }
 
 export interface AssetChangeEvent {
@@ -329,9 +332,14 @@ export interface MarketItem {
   resourceId: string | null;
   /** 是否收纳在 `<dataDir>/market/` 内。 */
   managed: boolean;
+  /** 内置仓（weave 自己随包发布的那一份）：不是导入来的，不可迁入/删除/查更新。 */
+  builtin: boolean;
+  /** 仓库 namespace = 资源管理里那一级的块名（内置仓 = `weave`）；不在市场内的
+   *  legacy 外部源没有仓库可归。web 只渲染，不自己从路径推。 */
+  namespace?: string;
   /** 无清单 → legacy 外部/未收纳源（显示「迁入市场」）。 */
   legacy: boolean;
-  source: 'git' | 'dir' | 'legacy';
+  source: 'git' | 'dir' | 'legacy' | 'builtin';
   origin: string | null;
   importedAt: string | null;
   commit: string | null;
