@@ -28,6 +28,37 @@ weave dashboard     # open the local dashboard
 - **`weave scan` / `weave status` / `weave statusline`** — project discovery,
   harness status, and a statusline preview.
 
+## Built-in resources
+
+Everything weave ships — the `weave init` commands and agents, the built-in
+skills/hooks/rules plugin packs, and the rule packs loaded into the engine —
+lives in one marketplace-shaped directory:
+
+```
+packages/weave-templates/resources/weave-market/
+├── .claude-plugin/marketplace.json   # the repo's own manifest
+├── plugins/<scope>/<pack>/           # toolkit packages (skills, hooks, mods)
+├── rules/<pack>/                     # rule packs loaded by the weave engine
+└── init/{commands,agents}/           # what `weave init` copies in
+```
+
+On daemon start it is materialized at `<configDir>/weave/market/weave/` as a
+**link to that directory** (a copy where links are unavailable), and it is the
+single source for scanning, listing and installing:
+
+- **to change what weave ships, edit that directory** — nothing is generated
+  from code-side lists any more;
+- a dev checkout links to `src/resources/…`, so content edits are live for the
+  next scan/restart; `pnpm build` copies it to `dist/resources/…` for the
+  published package;
+- from the dashboard it can only be browsed and toggled: migrating, deleting and
+  update-checking are refused — it is owned by weave and re-materialized on
+  every daemon start.
+
+External repos are separate: import them through the dashboard's resource market
+(`<configDir>/weave/market/<id>/`), and their packages show up as their own
+namespace block next to the built-in `weave` one.
+
 ## Commands
 
 | Command | What it does |

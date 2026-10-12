@@ -312,9 +312,9 @@ L1 仓库 namespace 折叠块
 `--maxWorkers=1`，bash 通道会挂死→走 PowerShell）+ 中文 commit（正文写本批硬闸：
 零改 X 条 / 修订 Y 条及理由）。
 
-### ☐ 批 0 —— 前置验证 H1–H5（含 H1 独立数据丢失修复）
+### ☑ 批 0 —— 前置验证 H1–H5（H1 不成立，无前置修复批）
 - 只在必要时改代码；**H1 若命中，其修复作为本方案前置的独立 commit**。
-- 产物：`docs/plan/builtin-market-verification.md`。
+- 产物：`docs/plan/builtin-market-verification.md`（H1–H5 逐项实测；H1 结论 = 无删穿风险）。
 
 ### ☑ 批 1 —— 内置仓成立（搬迁 + 重指内置根，行为零变）—— `9691518`
 
@@ -480,9 +480,34 @@ L1 仓库 namespace 折叠块
 | 门禁 | `pnpm build` 全 0；全仓 **107 文件 / 1133 测试全绿**（含并行会话新增的 `terminal-counts-refresher.test` 6 例）。`pnpm build:web` 的 `tsc` 只报 `web/src/App.tsx:726/730 refreshTerminalCounts` 未定义 —— **并行会话的未完成改动**（`M App.tsx`，非本批文件），本批 web 文件单独 `tsc --noEmit` 无错。 |
 | 协作约束 | `daemon/server.ts` 同时承载并行会话的 WIP（`dataBus` / `terminalRefresher` / `readTerminalCounts`）与批 7 的两处 hunk（`/assets` 装饰、`marketItem`）。本批**不提交该文件**（提交它会连带未完成的实现，且它 import 的两个新模块仍未跟踪）；其 hunk 留在工作区，随对方提交落地。 |
 
-### ☐ 批 8 —— 收尾
+### ☑ 批 8 —— 收尾
 - `README.md`（根 + `weave-server`）写「改内置 = 改 `resources/weave-market/`」的入口说明。
 - `.claude/plans/` → `docs/plan/`（本方案归档），执行状态回写。
+
+**实施记录（批 8 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 根 `README.md` | 新增 `## Built-in resources`：画出仓的布局（`.claude-plugin/marketplace.json` + `plugins/<scope>/<pack>` + `rules/<pack>` + `init/{commands,agents}`），写明落点 `<configDir>/weave/market/weave/` 是**指向该目录的链接**、所以「改内置 = 改那个目录」；并声明内置仓不可迁入/删除/查更新，外部仓走资源市场、以自己的 namespace 块并列。 |
+| `packages/weave-server/README.md` | 新增 `## Built-in resources` 段（daemon 视角：启动按 `@weavecode/templates` 的 `resources/weave-market/` 落地并当内置市场扫描），指向根 README 那一节。 |
+| 归档口径 | 方案与验证记录的**规范副本在 `docs/plan/`（随仓跟踪、已提交）**；`.claude/plans/` 只留本地草稿副本（`.claude/.gitignore` 内、不入库），不再是事实源。 |
+| 执行状态 | 批 0 ☑（H1 **不成立**：win32 下 `lstat(junction).isSymbolicLink()` 为 true，`removeInstalled` 走 unlink，无删穿风险，故无前置修复批；产物 = `docs/plan/builtin-market-verification.md`）；批 3 并入批 1（☒）；批 1/2/4/5/6/7/8 全 ☑。 |
+| 遗留（不属本方案范围） | ① `daemon/server.ts` 里批 7 的两处 hunk 尚未提交（该文件正被并行会话的 WIP 占用，见批 7 记录）；② 早期 `weave init` 过的项目仍跑旧 HTTP hook 脚本（`.claude/helpers/hook-handler.cjs` 只由 init 刷新）→ 需在那些项目重跑 `weave init`；启动时的陈旧脚本检测尚未做。 |
+
+---
+
+## 状态总览（全部完成）
+
+| 批 | 内容 | 状态 |
+|---|---|---|
+| 0 | H1–H5 前置验证（H1 不成立，无修复批） | ☑ |
+| 1 | 内置仓成立：搬迁 + 重指内置根（含批 3 的 init 供源切换） | ☑ `9691518` |
+| 2 | 落地 `<dataDir>/market/weave/` + 扫描源切换 | ☑ `4100282` |
+| 4 | 链接优先 + 装面形态暴露（原语上迁 harness） | ☑ `afe2d06` |
+| 5 | UI：Skills 仓库维度三级折叠 | ☑ `bc1f914` |
+| 6 | UI：Plugins 仓库块 + weave 页插件/规则合并 + 移除粘贴安装 | ☑ `00c591f` `60ee9bd` |
+| 7 | Files 合并视图 namespace 标记 + 右栏内置仓口径对齐 | ☑ `d298658` |
+| 8 | README 入口说明 + 归档与状态回写 | ☑ |
 
 ---
 

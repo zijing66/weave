@@ -13,6 +13,15 @@ npm install @weavecode/server
 
 Requires Node.js >= 22.5 (uses `node:sqlite`).
 
+## Built-in resources
+
+Weave's built-in commands, agents, plugin packs and rule packs are one
+marketplace-shaped repo shipped by `@weavecode/templates` under
+`resources/weave-market/`. On start the daemon materializes it at
+`<configDir>/weave/market/weave/` (a link to that directory) and scans it as the
+built-in market: **changing what weave ships means editing that directory**, not
+code-side lists. See the root [README](../../README.md#built-in-resources).
+
 ## License
 
 Apache-2.0
