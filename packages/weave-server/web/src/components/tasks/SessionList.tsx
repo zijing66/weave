@@ -76,7 +76,7 @@ export function SessionList({
   };
 
   return (
-    <ul className="space-y-1">
+    <ul className="space-y-1.5">
       {sessions.map((s) => {
         const status = statuses.get(s.sessionId) ?? 'open';
         const selected = s.sessionId === selectedId;
@@ -110,10 +110,10 @@ export function SessionList({
               }}
               title={droppingId === s.sessionId ? t('tasks.dropTip') : s.sessionId}
               className={cn(
-                'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-md border px-2 py-1.5 transition-colors',
+                'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
                 selected
                   ? 'border-blue-500/50 bg-blue-500/10'
-                  : 'border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]',
+                  : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10] hover:bg-white/[0.04]',
                 droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
               )}
             >

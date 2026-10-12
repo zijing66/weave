@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type HookDispatch, type HookEventRow, type HookRule } from '@/lib/api';
+import {
+  api,
+  type HookDispatch,
+  type HookEventRow,
+  type HookRule,
+  type TerminalTarget,
+} from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
+import { TerminalPicker } from './TerminalPicker';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -179,18 +186,45 @@ export function TasksPanel({
 
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
       独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
-      spawn），成功无 toast（窗口弹出即反馈），失败 toast。 */
-  const onOpenTerminal = useCallback(
-    (sessionId: string): void => {
+      spawn），成功无 toast（窗口弹出即反馈），失败 toast。
+      `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。 */
+  const runOpenTerminal = useCallback(
+    (sessionId: string, target?: string): void => {
       void fb.run(
         `openTerm:${sessionId}`,
         async () => {
-          await api.openSessionTerminal(sessionId);
+          await api.openSessionTerminal(sessionId, target);
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       );
     },
     [fb, t],
+  );
+
+  /** 多终端选择弹窗（项目开着多个终端时才现形）。 */
+  const [terminalPicker, setTerminalPicker] = useState<{
+    sessionId: string;
+    targets: TerminalTarget[];
+  } | null>(null);
+
+  /** 点终端按钮：现拉可附加目标（实时枚举，不复用角标轮询数据）——
+   *  多个 → 弹窗选；0/1 个 → 直接开（拉不到列表也不阻塞打开）。 */
+  const onOpenTerminal = useCallback(
+    (sessionId: string): void => {
+      const projectId = sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null;
+      if (projectId == null) {
+        runOpenTerminal(sessionId);
+        return;
+      }
+      api
+        .listProjectTerminals(projectId)
+        .then((targets) => {
+          if (targets.length > 1) setTerminalPicker({ sessionId, targets });
+          else runOpenTerminal(sessionId);
+        })
+        .catch(() => runOpenTerminal(sessionId));
+    },
+    [sessions, runOpenTerminal],
   );
   const openTerminalStateOf = useCallback(
     (sessionId: string) => fb.stateOf(`openTerm:${sessionId}`),
@@ -656,6 +690,20 @@ export function TasksPanel({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 会话终端附加：项目开着多个终端时才弹窗选（列表按最近活跃排序） */}
+      {terminalPicker && (
+        <TerminalPicker
+          targets={terminalPicker.targets}
+          busy={fb.stateOf(`openTerm:${terminalPicker.sessionId}`) === 'loading'}
+          onPick={(targetId) => {
+            const { sessionId } = terminalPicker;
+            setTerminalPicker(null);
+            runOpenTerminal(sessionId, targetId);
+          }}
+          onClose={() => setTerminalPicker(null)}
+        />
       )}
     </div>
   );

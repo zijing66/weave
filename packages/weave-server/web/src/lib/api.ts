@@ -64,6 +64,20 @@ export interface ProjectRow {
   meta: string | null;
 }
 
+/** 会话终端可附加目标（wezterm 一个窗口内的一个 tab，按最近活跃排序）。 */
+export interface TerminalTarget {
+  /** 不透明 id（回传给 openSessionTerminal）。 */
+  id: string;
+  windowId: number;
+  tabId: number;
+  /** 聚焦 pane 的标题（claude 的 OSC 标题）；null → 前端回落窗口/Tab 号文案。 */
+  title: string | null;
+  /** cwd 命中该项目的 pane 数 / 该 tab 总 pane 数。 */
+  matchCount: number;
+  paneCount: number;
+  active: boolean;
+}
+
 /** Structured result of one harness health check (core 返回，文案由 web 词典渲染). */
 export interface HarnessCheck {
   id: string;
@@ -899,11 +913,20 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'PATCH', body: JSON.stringify({ title }) },
     ).then((r) => r.session),
-  /** 在默认终端打开会话（独立进程跑 `claude --resume <id>`，不随 daemon 退出）。 */
-  openSessionTerminal: (sessionId: string): Promise<{ ok: boolean; command: string }> =>
+  /** 在默认终端打开会话（独立进程跑 `claude --resume <id>`，不随 daemon 退出）。
+   *  `target` = 多终端弹窗选定的附加目标（`listProjectTerminals` 的 id）；缺省自动选落点。 */
+  openSessionTerminal: (
+    sessionId: string,
+    target?: string,
+  ): Promise<{ ok: boolean; command: string }> =>
     apiFetch<{ ok: boolean; command: string }>(
       `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
-      { method: 'POST' },
+      { method: 'POST', body: JSON.stringify(target ? { target } : {}) },
+    ),
+  /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。 */
+  listProjectTerminals: (projectId: number): Promise<TerminalTarget[]> =>
+    apiFetch<{ terminals: TerminalTarget[] }>(`/projects/${projectId}/terminals`).then(
+      (r) => r.terminals,
     ),
   /** 删除会话：连带其采集事件与指令池派发（不可撤销）。 */
   deleteSession: (
