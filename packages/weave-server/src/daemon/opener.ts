@@ -283,12 +283,13 @@ export async function runInTerminal(
   );
 }
 
-// ---- wezterm mux 通道：同项目复用分屏，否则新窗口；失败回退 start 直发 ----
+// ---- wezterm mux 通道：同项目复用分屏，否则新窗口；失败要喊出来 ----
 //
 // `wezterm start -- PROG` 会绕过 default_prog 直派子进程（用户的 shell 配置、
 // job 包裹、OSC 7 全部丢失），所以 run 路径首选 mux：panes 在 mux 里以
-// default_prog 起，命令经 send-text 打进去。mux 不在（wezterm 没开）时
-// cli 调用快速失败，落到候选单里的 `start` 老行为。
+// default_prog 起，命令经 send-text 打进去。仅在 mux 不可达（wezterm 没开）时
+// 落到候选单里的 `start` 老行为；mux 可达而任一步失败必须 throw——mux 在时
+// `start` 会挂死且 trySpawn 只见 spawn 事件就报成功，静默落过去就是假 200。
 
 /** `cli list` 里与布局决策相关的字段（left_col/top_row 是单元格坐标）。 */
 export interface WeztermPaneInfo {
@@ -445,8 +446,16 @@ export function weztermActiveWorkspaceOf(jsonText: string | null): string | null
 
 const WEZTERM_CLI_TIMEOUT_MS = 5000;
 
-/** wezterm cli 子调用：返回 stdout；非零退出/超时/不可执行 → null。 */
-function weztermCli(args: string[]): Promise<string | null> {
+/** wezterm cli 调用结果：ok=rc0 且未超时；out/err 供上层拼错误文案。 */
+interface WeztermCliResult {
+  ok: boolean;
+  out: string;
+  err: string;
+  timedOut: boolean;
+}
+
+/** wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。 */
+function weztermCli(args: string[]): Promise<WeztermCliResult | null> {
   return new Promise((resolve) => {
     let child;
     try {
@@ -456,12 +465,17 @@ function weztermCli(args: string[]): Promise<string | null> {
       return;
     }
     let out = '';
+    let err = '';
+    let timedOut = false;
     child.stdout.on('data', (d: Buffer) => {
       out += d.toString();
     });
+    child.stderr?.on('data', (d: Buffer) => {
+      err += d.toString();
+    });
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill();
-      resolve(null);
     }, WEZTERM_CLI_TIMEOUT_MS);
     timer.unref();
     child.on('error', () => {
@@ -470,19 +484,32 @@ function weztermCli(args: string[]): Promise<string | null> {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve(code === 0 ? out : null);
+      resolve({ ok: code === 0 && !timedOut, out, err: err.trim(), timedOut });
     });
   });
 }
 
-/** wezterm run 主通道：同项目 → 分屏复用；否则 → 新窗口；命令一律 send-text。 */
+/** cli 步骤失败的诊断文案：命令 + stderr/超时，经路由 400 → 前端 toast。 */
+function weztermStepError(args: string[], r: WeztermCliResult | null): string {
+  const cmd = `wezterm ${args.join(' ')}`;
+  if (r === null) return `${cmd}: executable not found`;
+  if (r.timedOut) return `${cmd}: timed out after ${WEZTERM_CLI_TIMEOUT_MS}ms`;
+  return r.err ? `${cmd}: ${r.err}` : `${cmd}: exited with failure`;
+}
+
+/**
+ * wezterm run 主通道：同项目 → 分屏复用；否则 → 新窗口；命令一律 send-text。
+ * false = mux 不可达（wezterm 未运行），交给 start 候选冷启动；
+ * mux 可达而某步失败 → throw（绝不能静默落到会假成功的 start 直发）。
+ */
 async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
   const platform = process.platform;
-  const panes = parseWeztermPanes(await weztermCli(['cli', 'list', '--format', 'json']));
-  const split = planWeztermReuse(dir, panes, platform);
-  let paneOut: string | null;
+  const listed = await weztermCli(['cli', 'list', '--format', 'json']);
+  if (!listed?.ok) return false;
+  const split = planWeztermReuse(dir, parseWeztermPanes(listed.out), platform);
+  let spawnArgs: string[];
   if (split) {
-    paneOut = await weztermCli([
+    spawnArgs = [
       'cli',
       'split-pane',
       '--pane-id',
@@ -490,24 +517,29 @@ async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
       `--${split.direction}`,
       '--cwd',
       dir,
-    ]);
+    ];
   } else {
-    const workspace = weztermActiveWorkspaceOf(
-      await weztermCli(['cli', 'list-clients', '--format', 'json']),
-    );
-    paneOut = await weztermCli(planWeztermNewWindow(dir, workspace));
+    const clients = await weztermCli(['cli', 'list-clients', '--format', 'json']);
+    const workspace = clients?.ok ? weztermActiveWorkspaceOf(clients.out) : null;
+    spawnArgs = planWeztermNewWindow(dir, workspace);
   }
-  const paneId = paneOut?.trim() ?? '';
-  if (!/^\d+$/.test(paneId)) return false;
-  const sent = await weztermCli([
+  const spawned = await weztermCli(spawnArgs);
+  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, spawned));
+  const paneId = spawned.out.trim();
+  if (!/^\d+$/.test(paneId)) {
+    throw new Error(`wezterm ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
+  }
+  const sendArgs = [
     'cli',
     'send-text',
     '--pane-id',
     paneId,
     '--no-paste',
     `${joinCmd(argv, platform)}\r`,
-  ]);
-  return sent !== null;
+  ];
+  const sent = await weztermCli(sendArgs);
+  if (!sent?.ok) throw new Error(weztermStepError(sendArgs, sent));
+  return true;
 }
 
 /** Injection seam for the open routes — tests substitute a spy. */
