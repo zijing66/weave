@@ -1,10 +1,14 @@
+import { readdirSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { getDbPath } from '../db/paths.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
-import { MirrorWriter, hooksRoot } from '../hooks/mirror.js';
+import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
 import {
   startInboxWorker,
   handleIngestedRecords,
+  INBOX_CLAIM_SUFFIX,
+  INBOX_FAILED_SUFFIX,
   type InboxRecord,
 } from '../hooks/inbox-worker.js';
 import type { HookRuleRegistry } from '../hooks/registry.js';
@@ -17,6 +21,74 @@ export interface HookPipelineDeps {
   sessions: SessionRepository;
   bus: HookEventBus;
   dispatcher: HookDispatcher;
+}
+
+/** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox）。 */
+function pipelineFilesOf(hooksDir: string, shardId: string): string[] {
+  return [
+    join(hooksDir, 'inbox', `${shardId}.jsonl`),
+    join(hooksDir, 'inbox', `${shardId}${INBOX_CLAIM_SUFFIX}`),
+    join(hooksDir, 'inbox', `${shardId}${INBOX_FAILED_SUFFIX}`),
+    mirrorPathOf(hooksDir, shardId),
+    outboxPathOf(hooksDir, shardId),
+  ];
+}
+
+/** 删除一个项目的全部管道文件（忽略不存在）。删项目路由落地时一行调用。 */
+export function purgeProjectPipeline(hooksDir: string, token: string): void {
+  for (const file of pipelineFilesOf(hooksDir, hookShardId(token))) {
+    try {
+      unlinkSync(file);
+    } catch {
+      // 不存在即已达目的
+    }
+  }
+}
+
+/** 文件名 → shard（先剥 tmp 中间产物，再剥已知后缀）。 */
+function shardOfFileName(name: string): string {
+  const base = name.endsWith('.tmp') ? name.slice(0, -'.tmp'.length) : name;
+  return base
+    .replace(new RegExp(`(${INBOX_CLAIM_SUFFIX}|${INBOX_FAILED_SUFFIX})$`), '')
+    .replace(/\.(jsonl|json)$/, '');
+}
+
+/** shard 形（sha256 前 16 位 hex）——只回收长得像 shard 的文件，别误删目录里的其他东西。 */
+const SHARD_SHAPE = /^[0-9a-f]{16}$/;
+
+/**
+ * 孤儿管道文件回收：项目行已删（或历史上删过）留下的 shard 文件不会有人再消费
+ * ——启动时扫一遍三个目录，shard 不匹配任何已注册项目 token 的直接删。
+ *
+ * 安全性：命中即「DB 里没这个 token」，这类文件的行无论谁消费都归因不到项目
+ * （消费侧按 token 查不到项目即丢行），所以删除不损失任何可入库的数据。
+ * 只在启动时跑一次（装配点），避免与运行中的 hook 写侧互相追尾。
+ */
+export function purgeOrphanPipelineFiles(deps: {
+  projects: Pick<ProjectRepository, 'list'>;
+  hooksDir: string;
+}): number {
+  const live = new Set(deps.projects.list().map((p) => hookShardId(p.token)));
+  let removed = 0;
+  for (const dir of ['inbox', 'mirror', 'outbox']) {
+    let names: string[];
+    try {
+      names = readdirSync(join(deps.hooksDir, dir));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const shard = shardOfFileName(name);
+      if (!SHARD_SHAPE.test(shard) || live.has(shard)) continue;
+      try {
+        unlinkSync(join(deps.hooksDir, dir, name));
+        removed++;
+      } catch {
+        // 已被并发清掉即算达成
+      }
+    }
+  }
+  return removed;
 }
 
 export interface HookPipeline {
@@ -34,6 +106,11 @@ export interface HookPipeline {
  * 必须调用本函数，不要各自手写装配（dev-entry 曾因此静默漏掉整条链路）。
  */
 export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
+  const hooksDir = hooksRoot();
+  // 先回收孤儿文件（已删项目的残留），再起消费线程——顺序避免与运行中的写侧追尾
+  const purged = purgeOrphanPipelineFiles({ projects: deps.projects, hooksDir });
+  if (purged > 0) console.log(`[weave] hook pipeline: purged ${purged} orphan file(s)`);
+
   const mirror = new MirrorWriter({
     projects: deps.projects,
     rules: deps.rules,
@@ -43,7 +120,6 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
   mirror.attachToBus(deps.bus);
   mirror.syncAll();
 
-  const hooksDir = hooksRoot();
   const worker = startInboxWorker({ dbPath: getDbPath(), hooksDir });
   worker.on('message', (records: InboxRecord[]) => {
     handleIngestedRecords(
