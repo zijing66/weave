@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
@@ -6,6 +6,7 @@ import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import { Languages, Settings, Terminal, X, Zap, Database, Power } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { registerInvalidator } from '@/lib/sse';
 
 /** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events——本地扩展。 */
 type DaemonSettingsExt = DaemonSettings & { events?: { retentionDays: number } };
@@ -33,8 +34,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
+  const loadSettings = useCallback(() => {
     setError(null);
     api
       .getDaemonSettings()
@@ -43,7 +43,19 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         setPresets(r.presets);
       })
       .catch((e) => setError(String(e)));
-  }, [open]);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    loadSettings();
+  }, [open, loadSettings]);
+
+  // 设置被别处写（另一个页签保存）→ 服务端推 invalidate('settings')；只在弹窗
+  // 打开时重拉，关着不用管。写路径自身的刷新在 handleSave 里，不必等这一枪。
+  useEffect(() => {
+    if (!open) return;
+    return registerInvalidator('settings', loadSettings);
+  }, [open, loadSettings]);
 
   if (!open) return null;
 
