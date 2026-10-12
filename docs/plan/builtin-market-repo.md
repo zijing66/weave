@@ -193,6 +193,12 @@ packages/weave-templates/resources/weave-market/
 - **链接判定结果写进 UI**（批 6）：全局资源行尾徽标 `链接` / `副本`；副本态给一次性提示
   「Windows 可在『设置 ▸ 系统 ▸ 开发者选项』开启开发者模式后重装以改用链接」。
   文案须准确：**目录**链接在 Windows 走 junction 免特权，只有**文件级**符号链接才需要开发者模式。
+- ⚠**提示的作用域（批 4 实机踩出）**：`form` 只陈述事实，不等于「可操作」。实机
+  `GET /projects/10/skills/global` 显示：CC 插件所带技能（`claude-plugin` / `codex-plugin`
+  分组，落在 `~/.claude/plugins/cache/**`、`~/.codex/plugins/cache/**`）**全是 copy** ——
+  那是 CC 解引用后自行复制的，weave 无法决定（H3 已确认）。故「副本 → 开开发者模式重装」
+  这句提示**只能出现在 weave 能决定形态的地方**（全局 skill 安装、weave 市场铺包），
+  对 CC 自有缓存区的副本不得照搬，否则是误导。
 
 ### D6 UI：仓库维度折叠块（三级）
 
@@ -389,12 +395,26 @@ L1 仓库 namespace 折叠块
   与 init 相关用例（复制来源路径变化）；`init-no-overwrite` 语义零改。
 - 新增：`<仓>/init/` 不被 `isToolkitPackDir` 命中的守卫用例（确认工具包列表仍是 8 个）。
 
-### ☐ 批 4 —— 链接优先 + 形态暴露（D5）
+### ☑ 批 4 —— 链接优先 + 形态暴露（D5）—— `afe2d06`
+
 - 改：`harness/src/claude/plugins.ts` 的 `syncMarketplace` cp → `linkOrCopy`（同包引用）。
 - 新增：`installForm(absPath)`（lstat 判定，只读、无新状态）并接到既有枚举端点。
 - 硬闸：`harness/src/__tests__/plugins.test.ts`（假 exec 断言，链接形态不影响参数数组）
   —— 预期零改，执行核查；`install-link` 既有测试零改。
 - 前置：H3 通过。
+
+**实施记录（批 4 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 原语上迁 | `weave-harness/src/shared/install-link.ts`（`linkOrCopy` / `removeInstalled` / 新增 `installForm`），经 `@weavecode/harness` 导出；server 的 `market/install-link.ts` 变**同名薄委托**，既有 2 个消费点零改；测试随原语迁 harness（git 识别为 R073 重命名）。 |
+| 铺包改链接 | `syncMarketplace` 链接优先。**两处必须退回复制**：① 缺 CC 清单（要就地合成 manifest）；② 源带 `node_modules`/`.git`（复制会 filter 掉，链接会原样暴露）。 |
+| 配套加固 | ① `syncMarketplace` 清旧目标：裸 `rm -rf` → `removeInstalled`；② `ensureMarketManifest` 对链接形态的市场目录直接返回（就地写清单会穿过链接写进包内；内置仓的清单随包发布，无需维护）。 |
+| 形态暴露 | `installForm`（lstat 读侧判定、不落状态）→ `GlobalSkillEntry.form`，经既有 `GET /projects/:id/skills/global` 下发。两处构造点（个人组 / 插件组）同批补齐。 |
+| 新增测试 | harness `install-link.test.ts` +2 例（`installForm` 三分支、用户手改后判定随之变）；`plugins.test.ts` +3 例（链接形态、带依赖树退回复制、**重装不删穿源**）。 |
+| 硬闸 | 零改：`hooks-server` / `toolkit-*` / install-updater 全零改。显式修订组 1 条：`GlobalSkillEntry` 增字段。 |
+| 门禁 | `build` / `build:web` 全 0；全仓 **105 文件 / 1123 测试全绿**。 |
+| 实机 | `form` 已下发。**发现**：CC 插件所带技能全是 `copy`（CC 解引用后自行复制，weave 不可控）→ 已把「开发者模式提示」的作用域限定写进 D5。 |
 
 ### ☐ 批 5 —— UI：Skills 仓库维度三级折叠（D6）
 - 改：`SkillGrid.tsx`（L1 仓库块 + L2 包块 + L3 现有卡片；开关粒度按表）、
