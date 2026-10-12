@@ -9,6 +9,8 @@ export interface ProjectRow {
   registeredAt: string;
   lastSeenAt: string | null;
   meta: string | null;
+  /** dashboard 手动拖出的位置（NULL = 未手动排序，列表里垫在已排序块之后）。 */
+  sortOrder: number | null;
 }
 
 export interface RegisterProjectInput {
@@ -53,10 +55,34 @@ export class ProjectRepository {
   }
 
   list(): ProjectRow[] {
+    // 排序口径：手动序块在前（sort_order 升序），未手动排序的按注册时间倒序
+    // 垫尾——拖过的顺序权威，新注册项目照旧冒头在尾部可见位置。
     return this.db
-      .prepare('SELECT * FROM projects ORDER BY registered_at DESC')
+      .prepare(
+        'SELECT * FROM projects ORDER BY sort_order IS NULL, sort_order ASC, registered_at DESC',
+      )
       .all()
       .map((row) => toProject(row));
+  }
+
+  /**
+   * dashboard 拖动排序的持久化：payload 即完整目标顺序（id 全量列表）。
+   * 幂等自愈——事务内先全清再按位写入，重复同一 payload 落同一状态；
+   * 未知 id（并发删除）静默跳过，缺席的 id 回到未排序块。
+   */
+  setOrder(ids: number[]): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.exec('UPDATE projects SET sort_order = NULL');
+      const stmt = this.db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?');
+      ids.forEach((id, pos) => {
+        stmt.run(pos, id);
+      });
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   touch(id: number): void {
@@ -103,5 +129,6 @@ function toProject(row: Record<string, unknown>): ProjectRow {
     registeredAt: String(row.registered_at),
     lastSeenAt: row.last_seen_at == null ? null : String(row.last_seen_at),
     meta: row.meta == null ? null : String(row.meta),
+    sortOrder: row.sort_order == null ? null : Number(row.sort_order),
   };
 }

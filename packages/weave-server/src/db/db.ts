@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS projects (
   source        TEXT NOT NULL DEFAULT 'init',
   registered_at TEXT NOT NULL,
   last_seen_at  TEXT,
-  meta          TEXT
+  meta          TEXT,
+  sort_order    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS hook_events (
@@ -117,7 +118,25 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
   migrateHookRulesColumns(db);
+  migrateProjectsColumns(db);
   return db;
+}
+
+/**
+ * 与 migrateHookRulesColumns 同款的列级兜底：给既有库补 projects.sort_order
+ * （dashboard 拖动排序的持久化）。幂等：列已存在则跳过。
+ */
+function migrateProjectsColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(projects)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
+  if (!cols.has('sort_order')) {
+    db.exec('ALTER TABLE projects ADD COLUMN sort_order INTEGER');
+  }
 }
 
 /**

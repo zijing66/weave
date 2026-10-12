@@ -1176,6 +1176,26 @@ async function handleRequest(
     return;
   }
 
+  // PUT /projects/order — dashboard 拖动排序持久化：payload = 完整目标顺序
+  // （id 全量列表），repo 事务内全清重排，幂等。
+  if (pathname === '/projects/order' && req.method === 'PUT') {
+    if (!requireAuth()) return;
+    let body: { ids?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as { ids?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (!Array.isArray(body.ids) || !body.ids.every((id) => Number.isInteger(id))) {
+      sendJson(res, 400, { error: 'Invalid "ids" (integer array expected)' });
+      return;
+    }
+    deps.projects.setOrder(body.ids as number[]);
+    sendJson(res, 200, { projects: deps.projects.list() });
+    return;
+  }
+
   // Static SPA hosting (GET only, unauthenticated). Non-file paths fall back
   // to index.html so client-side routing works on deep links.
   if (req.method === 'GET' && deps.staticDir) {

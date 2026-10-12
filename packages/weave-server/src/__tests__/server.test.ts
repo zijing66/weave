@@ -154,3 +154,58 @@ describe('daemon server', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('daemon server PUT /projects/order（拖动排序持久化）', () => {
+  let db: DatabaseSync;
+  let server: Server;
+  let port: number;
+  let p1: number;
+  let p2: number;
+  let p3: number;
+
+  beforeAll(async () => {
+    db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    p1 = projects.register({ path: '/ord-a', name: 'a', token: 't1', source: 'init' }).id;
+    p2 = projects.register({ path: '/ord-b', name: 'b', token: 't2', source: 'init' }).id;
+    p3 = projects.register({ path: '/ord-c', name: 'c', token: 't3', source: 'init' }).id;
+    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0 });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    server.close();
+    db.close();
+  });
+
+  const putOrder = (ids: unknown) =>
+    fetch(`http://127.0.0.1:${port}/projects/order`, {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+
+  const listedIds = async (): Promise<number[]> => {
+    const res = await fetch(`http://127.0.0.1:${port}/projects`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    return ((await res.json()) as { projects: Array<{ id: number }> }).projects.map((p) => p.id);
+  };
+
+  it('全量 payload 落定新序；未排入的项目垫尾；重复写幂等', async () => {
+    expect((await putOrder([p3, p1])).status).toBe(200);
+    expect(await listedIds()).toEqual([p3, p1, p2]); // p2 未排序 → 垫尾
+    expect((await putOrder([p3, p1])).status).toBe(200);
+    expect(await listedIds()).toEqual([p3, p1, p2]); // 幂等
+    expect((await putOrder([p2, p3])).status).toBe(200);
+    expect(await listedIds()).toEqual([p2, p3, p1]); // 重排覆盖，p1 回落尾部
+  });
+
+  it('未知 id 静默跳过（并发删除安全）；坏 body 400', async () => {
+    expect((await putOrder([9999, p2])).status).toBe(200);
+    expect((await listedIds())[0]).toBe(p2);
+    expect((await putOrder(['x'])).status).toBe(400);
+    expect((await putOrder('not-array')).status).toBe(400);
+  });
+});
