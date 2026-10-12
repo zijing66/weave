@@ -49,6 +49,10 @@ export class SessionSweeper {
 
   /** 起定时器。unref：定时器不吊住 daemon 退出。 */
   start(): NodeJS.Timeout {
+    // 启动即扫一轮：首个 tick 要等完整间隔，而 dev 下 tsx watch 随文件改动
+    // 频繁重启（重启周期常短于间隔）→ 只靠间隔的清扫器永远赶不上第一拍，
+    // 存量空会话一直挂在会话列表。清理判据自带 10 分钟保活窗，起手扫安全。
+    this.sweep();
     const timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     timer.unref();
     return timer;

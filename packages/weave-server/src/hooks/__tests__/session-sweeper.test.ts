@@ -94,4 +94,14 @@ describe('SessionSweeper.sweep', () => {
     expect(sessions.getBySessionId('b-used')).toBeDefined();
     expect(later.sweep()).toBe(0);
   });
+
+  it('start() 启动即扫一轮（不等首个 5 分钟间隔——dev 重启周期常短于间隔）', () => {
+    seed('a-boot', ['SessionStart']);
+    const sweeper = new SessionSweeper(
+      { sessions, events, dispatches },
+      () => Date.now() + EMPTY_SESSION_GRACE_MS + 60_000,
+    );
+    clearInterval(sweeper.start());
+    expect(sessions.getBySessionId('a-boot')).toBeUndefined();
+  });
 });
