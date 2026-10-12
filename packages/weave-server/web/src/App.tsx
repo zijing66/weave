@@ -30,7 +30,7 @@ import {
   type InstallCapabilities,
 } from '@/lib/api';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
-import { subscribeSse } from '@/lib/sse';
+import { registerInvalidator, subscribeSse } from '@/lib/sse';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -444,6 +444,10 @@ export default function App() {
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+
+  // 服务端写操作后推 invalidate('projects')（如 PUT /projects/order 排序落定），
+  // 接到既有的重拉函数上——不再写「成功后手动 refresh」的胶水。
+  useEffect(() => registerInvalidator('projects', refreshProjects), [refreshProjects]);
 
   useEffect(
     () =>

@@ -39,6 +39,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { registerInvalidator } from '@/lib/sse';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 
@@ -508,6 +509,10 @@ export function StatuslinePanel({
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  // statusline 配置被写（本窗口、或别的窗口改了全局模板让跟随的项目重渲染）
+  // → 收到服务端 invalidate('statusline') 帧时重拉当前视图。
+  useEffect(() => registerInvalidator('statusline', loadProject), [loadProject]);
 
   // Disarm a pending factory reset after a few seconds of hesitation.
   useEffect(() => {

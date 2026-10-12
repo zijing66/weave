@@ -255,6 +255,7 @@ async function handleRequest(
       deps.hookEvents?.resetPrune();
       // 开机自启即刻注册/注销（内部吞错，不阻塞保存响应）。
       (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
+      deps.dataBus?.emit({ key: 'settings' });
       sendJson(res, 200, saved);
       return;
     }
@@ -1081,6 +1082,7 @@ async function handleRequest(
             await applyStatuslineConfig(p.path, eff);
           }
         }
+        deps.dataBus?.emit({ key: 'statusline' });
         sendJson(res, 200, { ok: true });
       } catch (e) {
         sendJson(res, 400, { error: e instanceof Error ? e.message : 'Global statusline update failed' });
@@ -1122,6 +1124,7 @@ async function handleRequest(
       }
       try {
         await applyStatuslineConfig(project.path, body);
+        deps.dataBus?.emit({ key: 'statusline', projectPath: project.path });
         sendJson(res, 200, { ok: true });
       } catch (e) {
         sendJson(res, 400, { error: e instanceof Error ? e.message : 'Statusline update failed' });
@@ -1185,6 +1188,7 @@ async function handleRequest(
       return;
     }
     deps.projects.setOrder(body.ids as number[]);
+    deps.dataBus?.emit({ key: 'projects' });
     sendJson(res, 200, { projects: deps.projects.list() });
     return;
   }

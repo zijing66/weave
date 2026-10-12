@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
+import { subscribeSse } from '@/lib/sse';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 
 type FileNode = { type: 'file'; file: AssetEntry };
@@ -298,22 +299,15 @@ export function SkillDetailDrawer({
   // Live watch (global only): the daemon watches the personal skill roots
   // (following symlinks), so edits to a symlinked skill's ORIGINAL files push
   // events here. A match on the open file's absPath re-fetches the preview.
+  // 走全站共享的那条 SSE（lib/sse）——不再自己 new 一条 EventSource。
   useEffect(() => {
     if (!isGlobal) return;
-    const es = new EventSource(api.eventsUrl());
-    es.onmessage = (ev) => {
-      try {
-        const change = JSON.parse(ev.data) as AssetChangeEvent;
-        const sel = selectedRef.current;
-        if (sel && change.absPath === sel.absPath) setRefreshNonce((n) => n + 1);
-      } catch {
-        // ignore malformed frames
-      }
-    };
-    es.onerror = () => {
-      // EventSource auto-reconnects; nothing to do.
-    };
-    return () => es.close();
+    return subscribeSse((frame) => {
+      if (frame.type !== 'asset') return;
+      const change = frame as unknown as AssetChangeEvent;
+      const sel = selectedRef.current;
+      if (sel && change.absPath === sel.absPath) setRefreshNonce((n) => n + 1);
+    });
   }, [isGlobal]);
 
   const isMarkdown = selected?.relPath.toLowerCase().endsWith('.md') ?? false;

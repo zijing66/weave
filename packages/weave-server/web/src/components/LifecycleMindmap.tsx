@@ -913,7 +913,8 @@ const edgeTypes = { waypoint: WaypointEdge };
 // 组件
 // ---------------------------------------------------------------------------
 
-interface SseFrame {
+/** `weave:hook` 事件里我们实际读的字段（/events 的信封见 lib/sse.ts 的 SseFrame）。 */
+interface HookFrame {
   kind?: string;
   dispatchId?: number;
 }
@@ -985,7 +986,7 @@ export function LifecycleMindmap({
   // SSE：指令帧 → 闪烁新建节点 + 500ms 防抖重拉（事件与指令一起刷新）。
   useEffect(() => {
     const onHook = (ev: Event): void => {
-      const frame = (ev as CustomEvent<SseFrame>).detail;
+      const frame = (ev as CustomEvent<HookFrame>).detail;
       if (frame.kind === 'dispatch.created' && frame.dispatchId != null) {
         setFlashKey(`d:${frame.dispatchId}`);
         if (flashTimer.current) window.clearTimeout(flashTimer.current);
