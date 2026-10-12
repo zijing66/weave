@@ -187,18 +187,21 @@ export function TasksPanel({
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
       独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
       spawn），成功无 toast（窗口弹出即反馈），失败 toast。
-      `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。 */
+      `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。
+      开完补一次会话行刷新：pidAlive 尽早转绿（绿 = 已开且按钮禁用），
+      缩短「已打开但图标还没变」的可重复点击窗口。 */
   const runOpenTerminal = useCallback(
     (sessionId: string, target?: string): void => {
       void fb.run(
         `openTerm:${sessionId}`,
         async () => {
           await api.openSessionTerminal(sessionId, target);
+          await refreshStatus();
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       );
     },
-    [fb, t],
+    [fb, t, refreshStatus],
   );
 
   /** 多终端选择弹窗（项目开着多个终端时才现形）。 */

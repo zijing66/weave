@@ -145,10 +145,12 @@ export function SessionList({
                     {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
                         codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
                         该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
-                        图标转绿：与项目卡同款「有终端在跑」信号。 */}
+                        图标转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮
+                        一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。 */}
                     {s.harness === 'claude' && (
                       <button
                         type="button"
+                        disabled={!!s.pidAlive}
                         title={
                           s.pidAlive
                             ? t('tasks.sessionTerminalRunning')
@@ -158,7 +160,12 @@ export function SessionList({
                           e.stopPropagation();
                           onOpenTerminal(s.sessionId);
                         }}
-                        className={ACTION_BTN}
+                        className={cn(
+                          ACTION_BTN,
+                          // 已打开：不吃 hover 反馈（否则看着还能点）
+                          s.pidAlive &&
+                            'cursor-default hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
+                        )}
                       >
                         <FeedbackIcon
                           state={openTerminalStateOf?.(s.sessionId) ?? 'idle'}

@@ -20,7 +20,7 @@ export const tasksZh = {
   'tasks.copySessionId': '复制完整 sessionId',
   'tasks.copied': '已复制',
   'tasks.openSessionTerminal': '在默认终端打开会话（claude --resume）',
-  'tasks.sessionTerminalRunning': '该会话的终端正在运行（claude --resume）',
+  'tasks.sessionTerminalRunning': '该会话已在终端运行（claude --resume）——不可重复打开',
   'tasks.terminalPickTitle': '选择要附加到的终端',
   'tasks.terminalPickCancel': '取消',
   'tasks.terminalTargetFallback': '窗口 {w} · Tab {t}',
@@ -93,7 +93,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.copySessionId': 'Copy full session id',
   'tasks.copied': 'Copied',
   'tasks.openSessionTerminal': 'Open in default terminal (claude --resume)',
-  'tasks.sessionTerminalRunning': 'A terminal is running this session (claude --resume)',
+  'tasks.sessionTerminalRunning':
+    'A terminal is already running this session (claude --resume) — cannot open again',
   'tasks.terminalPickTitle': 'Choose a terminal to attach to',
   'tasks.terminalPickCancel': 'Cancel',
   'tasks.terminalTargetFallback': 'Window {w} · Tab {t}',
