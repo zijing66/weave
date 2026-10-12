@@ -80,7 +80,7 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
       type: 'command' as const,
       command: platform.os === 'windows' ? `node "${helpersDir}/statusline.cjs"` : 'node ' + helpersDir + '/statusline.cjs',
       padding: 0,
-      refreshInterval: 10,
+      refreshInterval: 30,
     };
   }
 

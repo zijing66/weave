@@ -269,7 +269,7 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
     ['context', 'tokens', 'cost', 'rate'],
     ['git_user', 'git', 'changes', 'project'],
   ],
-  refreshInterval: 10,
+  refreshInterval: 30,
   source: 'global',
   bar: { cells: 12, fill: '█', empty: '░' },
   divider: '',

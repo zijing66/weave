@@ -150,7 +150,7 @@ describe('statusline — manager', () => {
     expect(cfg.lines).toHaveLength(3);
     expect(cfg.lines[0]).toEqual(['model', 'thinking', 'time']);
     expect(cfg.lines[1]).toContain('context');
-    expect(cfg.refreshInterval).toBe(10);
+    expect(cfg.refreshInterval).toBe(30);
   });
 
   it('defaults new powerline/source/lines fields on a legacy partial config', async () => {

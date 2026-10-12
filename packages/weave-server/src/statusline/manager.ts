@@ -154,7 +154,7 @@ export async function readStatuslineScript(projectPath: string): Promise<string>
  */
 export async function ensureSettingsStatusLine(
   projectPath: string,
-  refreshInterval = 10,
+  refreshInterval = 30,
 ): Promise<void> {
   const file = path.join(projectPath, SETTINGS_FILE);
   const isWindows = process.platform === 'win32';
