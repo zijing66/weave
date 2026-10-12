@@ -34,8 +34,9 @@ export const hooksZh = {
   'hooks.actionFailed': '操作失败：{error}',
 
   // —— 规则列表 ——
+  'hooks.pluginsAndRules': '插件与规则',
+  'hooks.localRules': '本地规则',
   'hooks.newRule': '新建规则',
-  'hooks.rulesTitle': '规则',
   'hooks.rulesEmpty': '还没有规则，点击「新建规则」创建第一条。',
   'hooks.thName': '名称',
   'hooks.thEvent': '事件',
@@ -120,23 +121,19 @@ export const hooksZh = {
   'hooks.runConfirmYes': '确认执行',
 
   // —— 插件区段（SPI）——
-  'hooks.plugins.title': '插件',
   'hooks.plugins.hint': '全局开关 = 各项目默认启用 · 放入约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
   'hooks.plugins.projectHint': '本项目启用状态（未单独设置则跟随全局）· 安装 / 卸载在全局侧操作',
   'hooks.plugins.followGlobal': '跟随全局',
   'hooks.plugins.projectOverride': '已单独设置',
   'hooks.plugins.empty':
-    '暂无插件——把插件目录放入全局 weave/plugins/ 或项目 .weave/plugins/ 即自动加载。',
+    '暂无插件——内置仓与资源市场是唯一安装来源（`<dataDir>/market/` 下的仓库自动加载）。',
   'hooks.plugins.rules': '{n} 条规则',
   'hooks.plugins.toggleTip':
     '默认启用开关：启停该插件全部规则（各项目可单独覆盖，规则级开关保留）',
   'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
   'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
-  'hooks.plugins.installPlaceholder': '粘贴本地目录或 git URL 后回车安装',
-  'hooks.plugins.install': '安装',
-  'hooks.plugins.installing': '安装中…',
-  'hooks.plugins.installOk': '已安装：{id}',
-  'hooks.plugins.installFail': '安装失败：{error}',
+  'hooks.plugins.expand': '展开该插件的规则',
+  'hooks.plugins.collapse': '折叠该插件的规则',
   'hooks.plugins.uninstallTip': '卸载插件（删除目录）',
   'hooks.plugins.uninstallConfirm': '确定卸载插件 {id}？其规则将被级联移除。',
   'hooks.plugins.toggleFail': '插件开关失败：{error}',
@@ -179,8 +176,9 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.actionFailed': 'Action failed: {error}',
 
   // —— Rule list ——
+  'hooks.pluginsAndRules': 'Plugins & rules',
+  'hooks.localRules': 'Local rules',
   'hooks.newRule': 'New rule',
-  'hooks.rulesTitle': 'Rules',
   'hooks.rulesEmpty': 'No rules yet — click "New rule" to create the first one.',
   'hooks.thName': 'Name',
   'hooks.thEvent': 'Event',
@@ -265,24 +263,20 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.runConfirmYes': 'Run',
 
   // —— Plugins section (SPI) ——
-  'hooks.plugins.title': 'Plugins',
   'hooks.plugins.hint': 'Global switch = default state for every project · drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
   'hooks.plugins.projectHint':
     'Enabled state for this project (follows global until overridden) · install / uninstall at global scope',
   'hooks.plugins.followGlobal': 'Follows global',
   'hooks.plugins.projectOverride': 'Set for this project',
   'hooks.plugins.empty':
-    'No plugins yet — drop a plugin directory into the global weave/plugins/ or the project .weave/plugins/.',
+    'No plugins yet — the builtin repository and resource markets are the only install sources (repositories under `<dataDir>/market/` load automatically).',
   'hooks.plugins.rules': '{n} rules',
   'hooks.plugins.toggleTip':
     'Default switch: enable/disable all rules of this plugin (projects can override; per-rule switches are kept)',
   'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
   'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
-  'hooks.plugins.installPlaceholder': 'Paste a local directory or git URL, press Enter to install',
-  'hooks.plugins.install': 'Install',
-  'hooks.plugins.installing': 'Installing…',
-  'hooks.plugins.installOk': 'Installed: {id}',
-  'hooks.plugins.installFail': 'Install failed: {error}',
+  'hooks.plugins.expand': "Expand this plugin's rules",
+  'hooks.plugins.collapse': "Collapse this plugin's rules",
   'hooks.plugins.uninstallTip': 'Uninstall plugin (remove directory)',
   'hooks.plugins.uninstallConfirm': 'Uninstall plugin {id}? Its rules will be cascade-removed.',
   'hooks.plugins.toggleFail': 'Failed to toggle plugin: {error}',

@@ -28,12 +28,12 @@
 | 右栏资源市场面板 | **保留右栏面板** |
 | 链接失败策略 | **回退 cp + UI 标出形态**（链接/副本徽标 + 开发者模式提示） |
 
-### ⚠ 待用户确认的矛盾点
+### ✅ 右栏口径（已定，2026-02 用户复述确认）
 
-用户先前的原话是「**不展示右侧资源市场**」，但在选项中选择了「**保留右栏面板**」
-（该选项文字已明确标注与此前说法相悖）。本方案**按选项执行**（右栏保留，中栏另加
-仓库维度折叠块）。若实为要去掉右栏，只影响**批 7** 的一处（撤 `App.tsx:1087-1111`
-的 `LibraryPanel` 挂载 + 导入入口须先迁入中栏折叠块），不影响前 6 批。
+用户先前的原话是「**不展示右侧资源市场**」，但在选项中选择了「**保留右栏面板**」。
+**用户已最终确认：保留右侧栏面板** —— 矛盾消解，本方案按「右栏保留」执行。
+批 7 因此**不是**撤挂载，而是把 `App.tsx:1087-1111` 的 `LibraryPanel` 口径与新的
+仓库维度块对齐（R9 关闭）。
 
 ### 范围红线（全程不动）
 
@@ -436,7 +436,7 @@ L1 仓库 namespace 折叠块
 | 硬闸 | 零改：项目态技能网格 / `skill-stats` / `file-tags` / `dict.test`。 |
 | 门禁 | `build` / `build:web` 全 0；全仓 **106 文件 / 1134 测试全绿**。 |
 
-### ☐ 批 6 —— UI：Plugins 仓库块 + weave 页合并 + 移除粘贴安装（D6/D7）
+### ☑ 批 6 —— UI：Plugins 仓库块 + weave 页合并 + 移除粘贴安装（D6/D7）
 - 改：`ToolkitSection.tsx`（去「工具箱」标题、市场为一级、裸插件归一类、形态徽标）、
   `PluginAssetsPanel.tsx`、`HooksPanel.tsx`（插件区与规则编辑合并、裸规则归「本地规则」）、
   `HooksPluginsSection.tsx`（**删 :188-211 粘贴安装输入** + `installSrc`/`install()`）、
@@ -445,10 +445,25 @@ L1 仓库 namespace 折叠块
 - 硬闸：`hooks-server.test.ts`（API 向后兼容，唯一受影响的是 `POST /hooks/plugins` 失去
   前端调用方 —— **端点保留**，只撤 UI 入口）。
 
-### ☐ 批 7 —— Files 合并视图 namespace 标记 + 右栏口径对齐（D8 + 矛盾点处置）
+**实施记录（批 6 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 一级维度抽取 | L1 分组从 `SkillGrid` 抽到 `web/src/lib/repo-groups.ts`（`groupByRepo` / `toggleIn` / `LOCAL_REPO_KEY`）——Skills 与 Plugins 讲同一个维度，两份实现必然漂移。`SkillGrid.test.ts` 随实现迁为 `lib/__tests__/repo-groups.test.ts`（+`toggleIn` 用例）。 |
+| Plugins 三级 | `ToolkitSection`：L1 仓库 namespace（内置仓显示为 `weave` + 「内置」徽标）→ L2 scope 文件夹（父级文件夹作汇总单位）→ L3 包行。**默认全展开**（包行本身是可操作面，藏起来反而要点两下）+ 「全部展开/折叠」。移除「工具箱」总标题与「Claude Plugins / 表面工具包」成分分组（那切法看不出包属于哪个市场）；无市场归属的包（裸插件/手加目录）并成一块「本地」。codex 运行态隐藏 CC 包的旧过滤原样保留。 |
+| namespace 供给 | `ToolkitPackInfo.namespace` = `marketIdOf(pack.dir)`（内置落地在 `market/weave/` → 天然 `weave`，与市场列表的仓库行同名）；web 只读字段，不解析路径。 |
+| 装面形态徽标 | 只出现在 **weave 决定得了形态** 的地方：全局个人技能行（`~/.claude/skills`、`~/.agents/skills`）标「链接/副本」，「本地」块头带一行图例与提示。文案按 D5 的准确性要求写：目录链接在 Windows 走 junction、**通常无需**开发者模式，只有链接创建被环境禁用时才提开发者模式；CC 自有 `plugins/cache/**` 的副本（H3 实测全为 copy）不标——那是 CC 解引用后自己复制的。 |
+| weave 页合并 | 插件卡 + 规则列表卡合并为「插件与规则」一块：块内先「本地规则」（`plugin_id` 空的裸规则——新建的规则都落这里），后按插件包成块，**每块的规则就在该块内**（可折叠、默认展开，无规则的插件不给折叠头）。画布卡保留（它是数据流可视化，不是重复编辑面）。 |
+| 移除粘贴安装 | `HooksPluginsSection` 删 :188-211 输入框 + `installSrc` / `install()` / `installing` 与 5 条词条；新增 `renderRules(plugin)` 插槽（规则 JSX 与增删改交互留在 HooksPanel，它已持有表单与编辑态）。**`POST /hooks/plugins` 端点保留**（硬闸）。 |
+| i18n | 新增 `repo.*`（共享一级维度）、`hooks.pluginsAndRules` / `hooks.localRules` / `hooks.plugins.expand,│collapse`、`toolkit.scopeRoot` / `toolkit.expandAll*`；删 `toolkit.title` / `toolkit.groupClaude` / `toolkit.groupPacks` / `toolkit.claudeGroupHint`、`hooks.rulesTitle` / `hooks.plugins.title`、`hooks.plugins.install*`。`library.*` 与 `platform` 文案里的「资源管理 · 工具箱」改「资源管理 ▸ Plugins」。`dict.test` zh/en 成对。 |
+| 副作用修复 | 门禁逼出一处**写穿链接**：`importLibraryIntoMarket` 对已在市场内的库补清单时，若该库是内置仓（落点 = 指向包内容的链接）会把 `.weave-market.json` **写进 `packages/weave-templates/src/resources/weave-market/`**（实测已在包目录里留下一份，已清除）。同批加拒入 + 回归用例（D2「写入风险为零」的前提由此闭合）。 |
+| 硬闸 | 零改：`hooks-server` / `toolkit-scan` / `install-capabilities` / `skill-stats` / `file-tags` / 项目态技能网格。显式修订组 2 条：`toolkit-toggle.test.ts` 闸⑤ 的 strip 集合加 `namespace`（与 `key` 同源，随来源而异）；`market-roots.test.ts` 补 `namespace` 断言 + 新增「内置仓落地后 namespace = weave」用例。 |
+| 门禁 | `pnpm build` / `pnpm build:web` 全 0；全仓 **106 文件 / 1139 测试全绿**。 |
+
+### ☐ 批 7 —— Files 合并视图 namespace 标记 + 右栏口径对齐（D8）
 - 改：`lib/file-tags.ts`（namespace tag）、`FileAssetTree.tsx`、`server.ts` 的
   `/assets`+`/global-file-assets`（补 `namespace`）、`LibraryPanel.tsx`（右栏口径与新
-  仓库维度对齐；**若用户改判去掉右栏，本批改为撤挂载并迁导入入口**）。
+  仓库维度对齐；用户已定 **保留右栏面板**）。
 - 硬闸：`global-file-assets.test:49-53` 零改；`file-tags.test` 按新增 tag 同批补。
 
 ### ☐ 批 8 —— 收尾

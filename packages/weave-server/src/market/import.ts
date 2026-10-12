@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { getDataDir } from '../db/paths.js';
 import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import { isInsideDir, toRelPosix } from './resolve.js';
+import { isBuiltinMarketDir } from './builtin.js';
 import { marketDir, readManifest, writeManifest, type MarketManifest } from './manifest.js';
 
 /**
@@ -248,6 +249,14 @@ export async function importLibraryIntoMarket(
   const abs = path.resolve(src);
   const root = marketDir(dataDir);
   if (!(await exists(abs))) throw new Error(`Source directory not found: ${abs}`);
+
+  // 内置仓的落点是**指向包内仓的链接**：在这儿写清单会穿过链接写进随包发布的
+  // 内容（已实测：`<dataDir>/market/weave/.weave-market.json` 落在
+  // `packages/weave-templates/src/resources/weave-market/` 里），而且它本就没有
+  // 外部来源可登记。与 DELETE /market/weave → 409 同一条口径。
+  if (isBuiltinMarketDir(abs, dataDir)) {
+    throw new Error('内置仓不可迁入：它随包发布、无外部来源，且落点是链接（写入会改到包内容）');
+  }
 
   if (isInsideDir(abs, root)) {
     // 已在市场内：补清单（幂等迁入），不重复复制。

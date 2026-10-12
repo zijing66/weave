@@ -910,7 +910,8 @@ export function LibraryPanel({
                     >
                       {/* 市场 = 安装入口：weave 规则包无安装概念保留启用 Switch（状态
                           就地翻转即反馈，只兜失败）；其余未装 → 「安装」（成功 toast），
-                          已装 → 徽标（启停/卸载去资源管理·工具箱） */}
+                          已装 → 徽标（启停/卸载去 资源管理 ▸ Plugins；weave 规则包的
+                          开停归 Weave 分类的插件块，那里是它的唯一承载） */}
                       {pack ? (
                         pl.weavePack && !(pl.ccPack || pl.kind === 'mod') ? (
                           <Switch

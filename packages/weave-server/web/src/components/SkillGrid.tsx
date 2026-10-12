@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { countEffectiveSkills } from '@/lib/skill-stats';
+import { groupByRepo, toggleIn, LOCAL_REPO_KEY } from '@/lib/repo-groups';
 import {
   Trash2,
   FileCode,
@@ -62,7 +63,8 @@ export interface SkillGroup {
   source: GlobalSkillSource;
   /** `plugin@marketplace` for plugin groups; undefined for personal groups. */
   pluginKey?: string;
-  /** 所属市场 = 仓库 namespace（服务端拆键得来）；个人组 undefined → 归「本地」。 */
+  /** 所属市场 = 仓库 namespace（服务端拆键得来）；个人组 undefined → 归「本地」。
+   *  L1 分组与 Plugins 页同源（`lib/repo-groups.ts`）。 */
   namespace?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
@@ -100,6 +102,12 @@ function SkillCard({
   const fb = useActionFeedback();
   const uninstallKey = `skill-uninstall:${row.scope}:${row.agent ?? 'claude'}:${row.name}`;
   const uninstallState = fb.stateOf(uninstallKey);
+  // 装面形态只在全局位置有意义，且只在 weave 自己铺的那两处（个人技能根）——
+  // 项目技能按设计一律是副本，插件缓存是 CC 的，都不该标「副本」让人以为可改。
+  const showForm =
+    row.scope === 'global' &&
+    (row.source === 'claude-personal' || row.source === 'codex-personal') &&
+    row.form !== undefined;
   return (
     <Card>
       <CardHeader className="items-center gap-2">
@@ -138,6 +146,19 @@ function SkillCard({
             <Badge variant="other" className="ml-1">
               {t('skillGrid.custom')}
             </Badge>
+          )}
+          {showForm && (
+            <span
+              className={cn(
+                'ml-1 shrink-0 rounded px-1 py-0.5 text-[10px]',
+                row.form === 'link'
+                  ? 'bg-neutral-800 text-neutral-400'
+                  : 'bg-amber-900/30 text-amber-300',
+              )}
+              title={t('repo.formTip')}
+            >
+              {row.form === 'link' ? t('repo.formLink') : t('repo.formCopy')}
+            </span>
           )}
         </button>
         {canUninstall && !readOnly && (
@@ -295,46 +316,6 @@ function EffectivePill({ effective, total }: { effective: number; total: number 
   );
 }
 
-/** L1 折叠块：仓库 namespace。个人技能（无 namespace）并成一块「本地」。 */
-interface RepoGroup {
-  key: string;
-  /** undefined = 本地（手动装的独立 skill，非任何市场所出）。 */
-  namespace?: string;
-  groups: SkillGroup[];
-}
-
-const LOCAL_REPO_KEY = '__local__';
-
-/** 按仓库 namespace 聚合；「本地」排最前，其余按市场名排序。 */
-export function groupByRepo(groups: SkillGroup[]): RepoGroup[] {
-  const byRepo = new Map<string, RepoGroup>();
-  for (const g of groups) {
-    const key = g.namespace ?? LOCAL_REPO_KEY;
-    const entry = byRepo.get(key) ?? {
-      key,
-      ...(g.namespace ? { namespace: g.namespace } : {}),
-      groups: [],
-    };
-    entry.groups.push(g);
-    byRepo.set(key, entry);
-  }
-  return [...byRepo.values()].sort((a, b) =>
-    a.namespace === undefined
-      ? -1
-      : b.namespace === undefined
-        ? 1
-        : a.namespace.localeCompare(b.namespace),
-  );
-}
-
-/** 折叠集切换（L1/L2 共用）。 */
-function toggleIn(set: Set<string>, key: string): Set<string> {
-  const next = new Set(set);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  return next;
-}
-
 /** L2 折叠块：一个插件包（市场里的一个插件文件夹）。 */
 function PackBlock({
   group,
@@ -396,7 +377,7 @@ function PackBlock({
         )}
         {/* prominent source tag: 插件 / 本地 + runtime */}
         <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
-          {isPlugin ? t('skillGrid.plugin') : t('skillGrid.local')}
+          {isPlugin ? t('skillGrid.plugin') : t('repo.local')}
         </Badge>
         <AgentBadge agent={group.source.startsWith('claude') ? 'claude' : 'codex'} />
         <EffectivePill effective={stats.effective} total={stats.total} />
@@ -573,14 +554,25 @@ function GroupedSkills({
                 <Package className="h-3.5 w-3.5 shrink-0 text-violet-400" />
                 {/* 一级 = 仓库 namespace：市场名原样显示，本地则是一块收敛的个人技能。 */}
                 <span className="text-xs font-semibold text-neutral-200 truncate">
-                  {isLocal ? t('skillGrid.local') : namespace}
+                  {isLocal ? t('repo.local') : namespace}
                 </span>
                 {!isLocal && (
                   <span
                     className="shrink-0 text-[10px] text-neutral-600"
-                    title={t('skillGrid.namespaceTip')}
+                    title={t('repo.namespaceTip')}
                   >
-                    {t('skillGrid.packCount', { n: repo.groups.length })}
+                    {t('repo.packCount', { n: repo.groups.length })}
+                  </span>
+                )}
+                {/* 「本地」= weave 亲手装到全局位置的技能，只有这里我们才决定得了
+                    链接还是副本——CC 自有的 plugins/cache 副本不在此列（那是 CC 解引用
+                    后自己复制的，提示用户改设置是误导）。 */}
+                {isLocal && (
+                  <span
+                    className="shrink-0 text-[10px] text-neutral-600"
+                    title={t('repo.formTip')}
+                  >
+                    {t('repo.formLegend')}
                   </span>
                 )}
                 <Badge variant="skill" className="ml-1">

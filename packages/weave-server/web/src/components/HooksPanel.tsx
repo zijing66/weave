@@ -35,6 +35,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
   Bot,
+  FileCode,
   FileText,
   GitBranch,
   Hand,
@@ -583,6 +584,108 @@ export function HooksPanel({
     }
   };
 
+  // ---- 规则行（插件块内与「本地规则」块共用同一份渲染） ----
+  const renderRule = (rule: HookRule) => {
+    const tools = rule.filter.toolNames ?? [];
+    const globs = rule.filter.pathGlobs ?? [];
+    const src = normalizeHookRuleSource(rule.source);
+    const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
+    const HandlerIcon = HANDLER_ICONS[rule.handler.type];
+    return (
+      <div
+        key={rule.id}
+        className={cn(
+          'rounded-lg border px-3 py-2 transition-colors',
+          rule.enabled
+            ? 'border-white/[0.08] bg-neutral-900/40'
+            : 'border-white/[0.05] bg-neutral-900/20 opacity-70',
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+            {rule.name}
+          </span>
+          <Badge variant="helper">{eventLabel}</Badge>
+          <button
+            type="button"
+            title={t('hooks.edit')}
+            onClick={() => openEdit(rule)}
+            className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
+            onClick={() => void deleteRule(rule.id)}
+            className={cn(
+              'rounded px-1.5 py-1 text-[11px] font-medium transition-colors',
+              confirmDeleteId === rule.id
+                ? 'bg-red-900/60 text-red-300'
+                : 'text-neutral-500 hover:text-red-300',
+            )}
+          >
+            {confirmDeleteId === rule.id ? (
+              t('hooks.confirmDelete')
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-neutral-500">
+          <Badge variant="command" className="gap-1">
+            <HandlerIcon className="h-3 w-3" />
+            {t(HANDLER_LABEL_KEYS[rule.handler.type])}
+          </Badge>
+          <Badge variant="default">
+            {rule.projectId === null
+              ? t('hooks.scopeGlobal')
+              : projectById.has(rule.projectId)
+                ? t('hooks.scopeProjectName', { name: projectById.get(rule.projectId)! })
+                : t('hooks.scopeProjectId', { id: rule.projectId })}
+          </Badge>
+          {tools.length > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5"
+              title={t('hooks.filterToolTip', { names: tools.join(', ') })}
+            >
+              <Wrench className="h-3 w-3" />
+              {tools.length}
+            </span>
+          )}
+          {globs.length > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5"
+              title={t('hooks.filterPathTip', { paths: globs.join(', ') })}
+            >
+              <FileText className="h-3 w-3" />
+              {globs.length}
+            </span>
+          )}
+          {rule.filter.crossProjectOnly && (
+            <span className="inline-flex items-center gap-0.5" title={t('hooks.filterCrossTip')}>
+              <GitBranch className="h-3 w-3" />
+            </span>
+          )}
+          {tools.length === 0 && globs.length === 0 && !rule.filter.crossProjectOnly && (
+            <span>{t('hooks.filterNone')}</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // 规则按归属分桶：plugin_id 有值 = 该插件包的规则（随包成块展示与编辑），
+  // 无值 = 「本地规则」（新建的规则都落这里）。
+  const localRules = (rules ?? []).filter((r) => !r.pluginId);
+  const pluginRules = new Map<string, HookRule[]>();
+  for (const r of rules ?? []) {
+    if (!r.pluginId) continue;
+    const list = pluginRules.get(r.pluginId) ?? [];
+    list.push(r);
+    pluginRules.set(r.pluginId, list);
+  }
+
   // ---- 渲染 ----
   return (
     <div className="space-y-3">
@@ -619,17 +722,43 @@ export function HooksPanel({
         )}
       </div>
 
-      {/* 插件区段（SPI 扫描：内置预设/全局/项目三根，热重载自动刷新）。
-          全局 = 插件管理（安装/卸载 + 默认启用开关）；项目 = effective 启用列表 */}
+      {/* 插件与规则合并成一块（批 6）：SPI 规则本就隶属某个插件包，原先「插件卡 +
+          规则卡」是同一份数据读两遍。块内同时承载「包的开停」与「包的规则 + 编辑」；
+          无归属插件的裸规则（新建的规则都落这里）归「本地规则」一块。
+          插件扫描 = 内置仓/全局/项目三根（热重载自动刷新） */}
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
-          <CardTitle className="text-sm">{t('hooks.plugins.title')}</CardTitle>
+          <CardTitle className="text-sm">{t('hooks.pluginsAndRules')}</CardTitle>
           <span className="text-[11px] text-neutral-500">
             {mode === 'project' ? t('hooks.plugins.projectHint') : t('hooks.plugins.hint')}
           </span>
         </CardHeader>
-        <CardContent className="space-y-1">
-          <HooksPluginsSection projectId={mode === 'project' ? projectId : undefined} />
+        <CardContent className="space-y-3">
+          {/* 本地规则：无插件归属的裸规则 */}
+          <div className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+            <div className="flex items-center gap-2 px-3 py-2">
+              <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+              <span className="text-xs font-medium text-neutral-200">{t('hooks.localRules')}</span>
+              <Badge variant="skill">{localRules.length}</Badge>
+            </div>
+            <div className="space-y-2 px-3 pb-3">
+              {rules === null ? (
+                <p className="py-2 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
+              ) : localRules.length === 0 ? (
+                <p className="py-2 text-center text-xs text-neutral-500">{t('hooks.rulesEmpty')}</p>
+              ) : (
+                localRules.map(renderRule)
+              )}
+            </div>
+          </div>
+          <HooksPluginsSection
+            projectId={mode === 'project' ? projectId : undefined}
+            renderRules={(p) =>
+              (pluginRules.get(p.id) ?? []).length === 0 ? null : (
+                <div className="space-y-2">{(pluginRules.get(p.id) ?? []).map(renderRule)}</div>
+              )
+            }
+          />
         </CardContent>
       </Card>
 
@@ -953,117 +1082,6 @@ export function HooksPanel({
           document.body,
         )}
 
-      {/* 规则列表 */}
-      <Card>
-        <CardHeader className="items-center justify-between">
-          <CardTitle>{t('hooks.rulesTitle')}</CardTitle>
-          <span className="text-[11px] text-neutral-500">
-            {rules === null ? t('hooks.loading') : t('catbar.items', { n: rules.length })}
-          </span>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {rules === null ? (
-            <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
-          ) : rules.length === 0 ? (
-            <p className="py-4 text-center text-xs text-neutral-500">{t('hooks.rulesEmpty')}</p>
-          ) : (
-            rules.map((rule) => {
-              const tools = rule.filter.toolNames ?? [];
-              const globs = rule.filter.pathGlobs ?? [];
-              const src = normalizeHookRuleSource(rule.source);
-              const eventLabel = src.kind === 'webhook' ? src.routeId : src.event;
-              const HandlerIcon = HANDLER_ICONS[rule.handler.type];
-              return (
-                <div
-                  key={rule.id}
-                  className={cn(
-                    'rounded-lg border px-3 py-2 transition-colors',
-                    rule.enabled
-                      ? 'border-white/[0.08] bg-neutral-900/40'
-                      : 'border-white/[0.05] bg-neutral-900/20 opacity-70',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
-                      {rule.name}
-                    </span>
-                    <Badge variant="helper">{eventLabel}</Badge>
-                    <button
-                      type="button"
-                      title={t('hooks.edit')}
-                      onClick={() => openEdit(rule)}
-                      className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
-                      onClick={() => void deleteRule(rule.id)}
-                      className={cn(
-                        'rounded px-1.5 py-1 text-[11px] font-medium transition-colors',
-                        confirmDeleteId === rule.id
-                          ? 'bg-red-900/60 text-red-300'
-                          : 'text-neutral-500 hover:text-red-300',
-                      )}
-                    >
-                      {confirmDeleteId === rule.id ? (
-                        t('hooks.confirmDelete')
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-neutral-500">
-                    <Badge variant="command" className="gap-1">
-                      <HandlerIcon className="h-3 w-3" />
-                      {t(HANDLER_LABEL_KEYS[rule.handler.type])}
-                    </Badge>
-                    <Badge variant="default">
-                      {rule.projectId === null
-                        ? t('hooks.scopeGlobal')
-                        : projectById.has(rule.projectId)
-                          ? t('hooks.scopeProjectName', {
-                              name: projectById.get(rule.projectId)!,
-                            })
-                          : t('hooks.scopeProjectId', { id: rule.projectId })}
-                    </Badge>
-                    {tools.length > 0 && (
-                      <span
-                        className="inline-flex items-center gap-0.5"
-                        title={t('hooks.filterToolTip', { names: tools.join(', ') })}
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {tools.length}
-                      </span>
-                    )}
-                    {globs.length > 0 && (
-                      <span
-                        className="inline-flex items-center gap-0.5"
-                        title={t('hooks.filterPathTip', { paths: globs.join(', ') })}
-                      >
-                        <FileText className="h-3 w-3" />
-                        {globs.length}
-                      </span>
-                    )}
-                    {rule.filter.crossProjectOnly && (
-                      <span
-                        className="inline-flex items-center gap-0.5"
-                        title={t('hooks.filterCrossTip')}
-                      >
-                        <GitBranch className="h-3 w-3" />
-                      </span>
-                    )}
-                    {tools.length === 0 && globs.length === 0 && !rule.filter.crossProjectOnly && (
-                      <span>{t('hooks.filterNone')}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

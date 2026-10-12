@@ -303,8 +303,12 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     const a = await service.enable(project.id, 'code-review', BUILTIN_ROOT);
     const b = await service.enable(project2.id, 'code-review', extRoot);
 
+    // namespace 与 key 同源（都由来源根经 marketIdOf 决定）：随来源而异的字段
+    // 一并剔除，剩下的是「包内容推出来的东西」。⚠ 本用例的内置根是**包内源码目录**
+    // （不在 `<dataDir>/market/` 下）→ namespace 为 undefined，与真实落地态
+    // （`market/weave` → `weave`）不同，故其值在 market-roots.test 里断言。
     const strip = (p: typeof a.pack) => {
-      const { provenance: _p, sourceRoot: _s, dir: _d, key: _k, ...rest } = p;
+      const { provenance: _p, sourceRoot: _s, dir: _d, key: _k, namespace: _n, ...rest } = p;
       return rest;
     };
     expect(strip(b.pack)).toEqual(strip(a.pack));

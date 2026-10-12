@@ -1,11 +1,11 @@
-/** 工具包区段词条（批 10）。 */
+/** 工具包区段词条（批 10，批 6 改仓库维度：去掉「工具箱」总标题与成分分组）。 */
 export const toolkitZh = {
-  'toolkit.title': '工具箱',
   'toolkit.hint': '内置 · 市场导入共用同一条扫描管线；CC 插件与 mod 整包装，其余按包成分启停',
-  'toolkit.groupClaude': 'Claude Plugins',
-  'toolkit.groupPacks': '表面工具包',
-  'toolkit.claudeGroupHint':
-    'Claude Code 原生插件与 mod——仅 claude harness 生效，codex 运行态隐藏',
+  'toolkit.scopeRoot': '未分目录',
+  'toolkit.expandAll': '全部展开',
+  'toolkit.collapseAll': '全部折叠',
+  'toolkit.expandAllGroups': '展开全部分组',
+  'toolkit.collapseAllGroups': '折叠全部分组',
   'toolkit.empty': '暂无工具包',
   'toolkit.loading': '加载中…',
   'toolkit.loadFailed': '加载失败：{error}',
@@ -35,13 +35,13 @@ export const toolkitZh = {
 };
 
 export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
-  'toolkit.title': 'Toolkit',
   'toolkit.hint':
     'Builtin and market imports share one scan pipeline; CC plugins & mods install as a whole, others toggle by component',
-  'toolkit.groupClaude': 'Claude Plugins',
-  'toolkit.groupPacks': 'Surface packs',
-  'toolkit.claudeGroupHint':
-    'Claude Code native plugins and mods — effective only on the claude harness; hidden under the codex runtime',
+  'toolkit.scopeRoot': 'Ungrouped',
+  'toolkit.expandAll': 'Expand all',
+  'toolkit.collapseAll': 'Collapse all',
+  'toolkit.expandAllGroups': 'Expand all groups',
+  'toolkit.collapseAllGroups': 'Collapse all groups',
   'toolkit.empty': 'No toolkit packs',
   'toolkit.loading': 'Loading…',
   'toolkit.loadFailed': 'Load failed: {error}',

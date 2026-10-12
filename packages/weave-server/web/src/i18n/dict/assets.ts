@@ -19,14 +19,21 @@ export const assetsZh = {
   'skillGrid.expandAll': '全部展开',
   'skillGrid.collapseAll': '全部折叠',
   'skillGrid.plugin': '插件',
-  'skillGrid.local': '本地',
   'skillGrid.pluginOn': '已启用 — 点击切换',
   'skillGrid.pluginOff': '已禁用 — 点击切换',
   'skillGrid.on': '开',
   'skillGrid.off': '关',
   'skillGrid.keyTip': '插件注册键 name@marketplace——@后为所属市场（插件 namespace）',
-  'skillGrid.namespaceTip': '仓库 namespace：该市场下所有插件都归这一块',
-  'skillGrid.packCount': '{n} 个包',
+
+  // —— 仓库维度折叠（Skills 与 Plugins 两页同源的一级维度） ——
+  'repo.local': '本地',
+  'repo.namespaceTip': '仓库 namespace：该市场下所有插件都归这一块',
+  'repo.packCount': '{n} 个包',
+  'repo.formLink': '链接',
+  'repo.formCopy': '副本',
+  'repo.formLegend': '链接 / 副本',
+  'repo.formTip':
+    'weave 装在全局位置时的形态：链接 = 该处不存副本（改源即改生效）；副本 = 建立链接失败已回退复制。Windows 的目录链接用 junction、通常无需开发者模式——若你的环境禁用了链接创建，可在「设置 ▸ 系统 ▸ 开发者选项」启用开发者模式后重装',
 
   // —— FileAssetTree ——
   'fileTree.all': '全部',
@@ -108,14 +115,21 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.expandAll': 'Expand all',
   'skillGrid.collapseAll': 'Collapse all',
   'skillGrid.plugin': 'Plugin',
-  'skillGrid.local': 'Local',
   'skillGrid.pluginOn': 'Enabled — click to toggle',
   'skillGrid.pluginOff': 'Disabled — click to toggle',
   'skillGrid.on': 'ON',
   'skillGrid.off': 'OFF',
   'skillGrid.keyTip': 'Plugin key name@marketplace — the part after @ is its marketplace (plugin namespace)',
-  'skillGrid.namespaceTip': 'Repository namespace: every plugin from this marketplace groups here',
-  'skillGrid.packCount': '{n} packs',
+
+  // —— Repository-dimension grouping (one L1 dimension shared by Skills & Plugins) ——
+  'repo.local': 'Local',
+  'repo.namespaceTip': 'Repository namespace: every plugin from this marketplace groups here',
+  'repo.packCount': '{n} packs',
+  'repo.formLink': 'linked',
+  'repo.formCopy': 'copied',
+  'repo.formLegend': 'linked / copied',
+  'repo.formTip':
+    'How weave laid it down at the global location: linked = no copy lives there (edits to the source take effect); copied = creating a link failed and weave fell back to copying. Directory links on Windows use junctions and normally need no Developer Mode — if link creation is disabled in your environment, enable Developer Mode under Settings ▸ System ▸ For developers and reinstall',
 
   // —— FileAssetTree ——
   'fileTree.all': 'All',

@@ -59,6 +59,9 @@ export interface ToolkitRecord {
 }
 
 export interface ToolkitPackInfo extends ToolkitPack {
+  /** 所属仓库 namespace（市场身份，`marketIdOf(pack.dir)`）：内置包 = `weave`、
+   *  外部市场包 = 该市场 id、不在任何市场下的包缺省（前端归「本地」）。 */
+  namespace?: string;
   /** 读侧：落盘/级联事实校验后的启用态。 */
   enabled: boolean;
   /** 是否已安装（CC/mod = harness 全局安装态；表面包 = 本项目落盘记录；weave 装载即源恒 true）。 */
@@ -580,14 +583,18 @@ export class ToolkitService {
 
   private async packInfo(project: ProjectRow, pack: ToolkitPack): Promise<ToolkitPackInfo> {
     const enabled = await this.computeEnabled(project, pack);
+    // 市场身份判据的唯一实现（`market/identity.ts`）；内置包落 `<dataDir>/market/weave/`
+    // 下 → 天然得出 `weave`，与市场列表的仓库名同形。
+    const namespace = marketIdOf(pack.dir);
     // 键形由 harness 的 surface 拼（server 只给"包名 + 市场身份"）
     const ccKey =
       isCcPluginPack(pack) && pack.targets.includes('claude')
-        ? this.pluginSurface().pluginKey(pack.name, marketIdOf(pack.dir))
+        ? this.pluginSurface().pluginKey(pack.name, namespace)
         : undefined;
     const scopes = ccKey ? await this.installedScopes(ccKey) : undefined;
     const info: ToolkitPackInfo = {
       ...pack,
+      ...(namespace ? { namespace } : {}),
       enabled,
       installed: await this.computeInstalled(project, pack, enabled),
       ...(ccKey ? { key: ccKey } : {}),

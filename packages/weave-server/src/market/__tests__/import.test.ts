@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { importFromDir, importLibraryIntoMarket, slugifyResourceId } from '../import.js';
+import { builtinMarketDir } from '../builtin.js';
 import { marketDir, readManifest } from '../manifest.js';
 import { isInsideDir } from '../resolve.js';
 import { openDatabase } from '../../db/db.js';
@@ -168,5 +169,15 @@ describe('importLibraryIntoMarket（legacy 外部源显式迁入）', () => {
     await expect(
       importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataDir }),
     ).rejects.toThrow(/not found/i);
+  });
+
+  it('内置仓落点 → 拒绝迁入（落点是指向包内容的链接，写清单会改到包里）', async () => {
+    const dir = builtinMarketDir(dataDir);
+    mkdirSync(dir, { recursive: true });
+    const row = libs.add({ path: dir, kind: 'both' });
+    await expect(
+      importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataDir }),
+    ).rejects.toThrow(/内置仓/);
+    expect(await readManifest(dir)).toBeNull(); // 一个字节都没往落点写
   });
 });

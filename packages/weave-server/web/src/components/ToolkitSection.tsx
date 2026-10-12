@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type ToolkitPack } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -6,10 +6,20 @@ import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
-import { Package, Trash2, TriangleAlert } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FolderTree,
+  Package,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { groupByRepo, toggleIn } from '@/lib/repo-groups';
 
 /** 导出给 LibraryPanel 插件包区复用（同一 kind 徽标语言）。 */
 export const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
@@ -33,12 +43,39 @@ const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
   market: 'toolkit.prov.market',
 };
 
+/** 包直接放在扫描根下（`scope` 为空）= 没有父级文件夹可作汇总单位 → 单列一块。 */
+const SCOPE_ROOT_KEY = '__root__';
+
+/** 只显示非 weave 成分的 pack：weave 规则包（Markdown Lint 注入一类）由
+ * Weave 分类唯一承载（SPI 扫描同一目录——两处展示=重复开关）。
+ * mods 按 CC 插件管线安装（与 server isCcPluginPack 同口径）→ 视为 CC 包。 */
+const isCcPack = (p: ToolkitPack) => p.ccPack || p.kind === 'mod';
+
+/** L2 折叠块：一个 scope 文件夹（扫描根的直接子目录 = 父级文件夹汇总单位）。 */
+interface ScopeGroup {
+  key: string;
+  scope: string;
+  packs: ToolkitPack[];
+}
+
+function groupByScope(packs: ToolkitPack[]): ScopeGroup[] {
+  const byScope = new Map<string, ScopeGroup>();
+  for (const p of packs) {
+    const key = p.scope || SCOPE_ROOT_KEY;
+    const entry = byScope.get(key) ?? { key, scope: p.scope, packs: [] };
+    entry.packs.push(p);
+    byScope.set(key, entry);
+  }
+  return [...byScope.values()];
+}
+
 /**
- * 工具箱区段（批 10，批 3 增旧副本警示）：包清单（provenance/类型徽标 + 目标面）
- * + 项目级开关（CC 原生包 = 全局安装 + 项目启用）+ 卸载按钮（与 harness 对齐：
- * CC/mod 走 claude plugin uninstall，表面包清扫文件）+ 项目插件位旧副本警示/清理。
- * 开关/卸载调用幂等端点，返回后置状态后刷新；行级 busy 防重入。pack 按成分分两组渲染（ccPack = Claude Plugins 组，
- * 其余 = 工具包组）；codex 运行态下 Claude 组整组隐藏。
+ * 工具包区段（批 10，批 3 增旧副本警示，仓库维度改批 6）：**以仓库 namespace 为一级**
+ * 折叠块（与外层 Skills 同源），市场里的包文件夹为二级，包行为三级——不再按
+ * 「Claude Plugins / 表面工具包」这种成分切法分堆（那种切法看不出包属于哪个市场）。
+ * 形态与开关粒度不变：CC 原生包 + mods 走「全局安装 + 项目启用」的整包 Switch，
+ * 其余按本项目落盘；行尾卸载按钮 + 热重载由 daemon 负责。codex 运行态下 CC 包隐藏
+ * （它们只在 claude harness 生效）。
  */
 export function ToolkitSection({
   projectId,
@@ -50,6 +87,8 @@ export function ToolkitSection({
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
   const [legacyCopies, setLegacyCopies] = useState<string[]>([]);
+  // 折叠集记「折叠起来的」：默认全展开（包行本身就是可操作面，藏起来反而要点两下）。
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // 统一反馈：动作状态走 useActionFeedback（每行一个 key，toggle 与卸载共用一个 =
   // 行级防重入），消息一律走 toast——原先面板底部一行小字，滚走就看不见。
   const { show } = useToast();
@@ -117,11 +156,31 @@ export function ToolkitSection({
     );
   };
 
+  // 只分渲染组，不动数据：pack 列表仍单次拉取，toggle/清理逻辑共享同一份。
+  const visible = useMemo(() => {
+    if (!packs) return [];
+    // codex 运行态隐藏 CC 原生包与 mods（它们只在 claude harness 生效）
+    return packs.filter((p) => !p.weavePack && !(runtimeTab === 'codex' && isCcPack(p)));
+  }, [packs, runtimeTab]);
+
+  const repos = useMemo(() => groupByRepo(visible), [visible]);
+  /** 每个仓的二级块；仓内包全部直接落在扫描根下 → 没有父级文件夹可当汇总单位，
+   *  直接铺包行（免套一层同名空壳）。 */
+  const scopesOf = (repo: (typeof repos)[number]) => groupByScope(repo.groups);
+  const isFlat = (repo: (typeof repos)[number]) => {
+    const scopes = scopesOf(repo);
+    return scopes.length === 1 && scopes[0]!.key === SCOPE_ROOT_KEY;
+  };
+  const allFoldKeys = repos.flatMap((r) => [
+    r.key,
+    ...(isFlat(r) ? [] : scopesOf(r).map((s) => `${r.key}:${s.key}`)),
+  ]);
+  const anyExpanded = collapsed.size === 0;
+
   if (packs === null) {
     return <p className="text-xs text-neutral-600">{t('toolkit.loading')}</p>;
   }
 
-  // 只分渲染组，不动数据：pack 列表仍单次拉取，toggle/清理逻辑共享同一份。
   const renderPack = (p: ToolkitPack) => {
     const isBusy = rowBusy(rowKey(p));
     return (
@@ -197,16 +256,6 @@ export function ToolkitSection({
     );
   };
 
-  // 只显示非 weave 成分的 pack：weave 规则包（Markdown Lint 注入一类）由
-  // Weave 分类的插件区唯一承载（SPI 扫描同一目录——两处展示=重复开关）。
-  // mods 按 CC 插件管线安装（与 server isCcPluginPack 同口径）→ 归 Claude Plugins 组。
-  const base = packs.filter((p) => !p.weavePack);
-  const isCc = (p: ToolkitPack) => p.ccPack || p.kind === 'mod';
-  const claudePacks = base.filter(isCc);
-  const toolPacks = base.filter((p) => !isCc(p));
-  const showClaudeGroup = runtimeTab !== 'codex' && claudePacks.length > 0;
-  const showPacksGroup = toolPacks.length > 0;
-
   return (
     <div className="space-y-2">
       {/* 存量项目插件位旧副本（CC 不加载的死数据）警示 + 显式清理 */}
@@ -231,29 +280,117 @@ export function ToolkitSection({
         </div>
       )}
 
-      {!showClaudeGroup && !showPacksGroup && (
-        <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>
-      )}
+      {visible.length === 0 && <p className="text-xs text-neutral-600">{t('toolkit.empty')}</p>}
 
-      {showClaudeGroup && (
-        <div className="space-y-2">
-          <p
-            className="flex items-center gap-1.5 text-xs font-medium text-neutral-400"
-            title={t('toolkit.claudeGroupHint')}
+      {visible.length > 0 && (
+        <div className="flex items-center gap-1">
+          <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
+          <button
+            type="button"
+            onClick={() => setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set())}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
+            title={anyExpanded ? t('toolkit.collapseAllGroups') : t('toolkit.expandAllGroups')}
           >
-            {t('toolkit.groupClaude')}
-            <AgentBadge agent="claude" />
-          </p>
-          {claudePacks.map(renderPack)}
+            {anyExpanded ? (
+              <ChevronsDownUp className="h-3 w-3" />
+            ) : (
+              <ChevronsUpDown className="h-3 w-3" />
+            )}
+            {anyExpanded ? t('toolkit.collapseAll') : t('toolkit.expandAll')}
+          </button>
         </div>
       )}
 
-      {showPacksGroup && (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-neutral-400">{t('toolkit.groupPacks')}</p>
-          {toolPacks.map(renderPack)}
-        </div>
-      )}
+      {repos.map((repo) => {
+        const isLocal = repo.namespace === undefined;
+        const repoCollapsed = collapsed.has(repo.key);
+        const packCount = repo.groups.length;
+        const allBuiltin = repo.groups.every((p) => p.provenance === 'builtin');
+        return (
+          <div
+            key={repo.key}
+            className="rounded-2xl border border-white/[0.08] bg-neutral-900/60 overflow-hidden"
+          >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setCollapsed((prev) => toggleIn(prev, repo.key))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setCollapsed((prev) => toggleIn(prev, repo.key));
+                }
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] cursor-pointer"
+            >
+              {repoCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+              )}
+              <Package className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+              {/* 一级 = 仓库 namespace：市场名原样显示，无市场归属的包（裸插件/
+                  手加目录）并成一块「本地」——否则整页分不清包属于哪个市场。 */}
+              <span className="text-xs font-semibold text-neutral-200 truncate">
+                {isLocal ? t('repo.local') : repo.namespace}
+              </span>
+              {allBuiltin && <Badge className="bg-amber-900/40 text-amber-300">{t('toolkit.prov.builtin')}</Badge>}
+              <span className="shrink-0 text-[10px] text-neutral-600" title={t('repo.namespaceTip')}>
+                {t('repo.packCount', { n: packCount })}
+              </span>
+            </div>
+            {!repoCollapsed && (
+              <div className="px-3 pb-3 pt-1 space-y-2">
+                {isFlat(repo) ? (
+                  <div className="space-y-1.5">{repo.groups.map(renderPack)}</div>
+                ) : (
+                  scopesOf(repo).map((scope) => {
+                    const scopeKey = `${repo.key}:${scope.key}`;
+                    const scopeCollapsed = collapsed.has(scopeKey);
+                    return (
+                      <div
+                        key={scopeKey}
+                        className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden"
+                      >
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setCollapsed((prev) => toggleIn(prev, scopeKey))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setCollapsed((prev) => toggleIn(prev, scopeKey));
+                            }
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02] cursor-pointer"
+                        >
+                          {scopeCollapsed ? (
+                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                          )}
+                          <FolderTree className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                          {/* 二级 = 市场里的包文件夹（父级文件夹作汇总单位） */}
+                          <span className="text-xs font-semibold text-neutral-300 truncate">
+                            {scope.key === SCOPE_ROOT_KEY ? t('toolkit.scopeRoot') : scope.scope}
+                          </span>
+                          <Badge variant="skill">{scope.packs.length}</Badge>
+                          {scope.packs.some(isCcPack) && <AgentBadge agent="claude" />}
+                        </div>
+                        {!scopeCollapsed && (
+                          <div className="px-3 pb-3 pt-1 space-y-1.5">
+                            {scope.packs.map(renderPack)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

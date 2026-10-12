@@ -114,8 +114,26 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
       provenance: 'market',
       sourceRoot: path.resolve(marketRoot),
       weavePack: true,
+      // 一级折叠块的仓库名 = 市场身份（`marketIdOf(pack.dir)`）
+      namespace: 'mkt-repo',
     });
     expect(res.packs.some((p) => p.id === 'legacy-pack')).toBe(false);
+  });
+
+  it('内置仓落地后的包 namespace = weave（与市场列表里的仓库行同名）', async () => {
+    // 真实落地态：内置仓落在 `<dataDir>/market/weave/`（ensureBuiltinMarket 的落点）
+    const builtinPacks = path.join(dataDir, 'market', 'weave', 'plugins');
+    await writePack(path.join(builtinPacks, 'core-skills', 'builtin-sample'));
+    const service = new ToolkitService({
+      projects,
+      states,
+      builtinRoot: builtinPacks,
+      libraries,
+      plugins: { list: () => [], setPluginEnabled: () => true },
+    });
+    const res = await service.list(project.id);
+    const pack = res.packs.find((p) => p.provenance === 'builtin' && p.scope === 'core-skills');
+    expect(pack).toMatchObject({ namespace: 'weave', provenance: 'builtin' });
   });
 
   it('缺省 libraries（存量装配）：不扫市场，行为不变', async () => {

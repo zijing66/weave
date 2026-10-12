@@ -6,25 +6,6 @@
 
 import type { Harness } from '@weavecode/core/harness';
 
-/**
- * The daemon token.
- *
- * Read from `?token=` first, falling back to the value baked in at build time.
- * The query param is the production path: `weave daemon start` mints a random
- * token per machine, and `weave dashboard` opens the console with it. The
- * build-time fallback is only set in dev builds (empty in the published bundle,
- * so it never ships a known credential). (`/events` uses the same param because
- * EventSource cannot set headers.)
- */
-function resolveToken(): string {
-  if (typeof window !== 'undefined') {
-    const fromUrl = new URLSearchParams(window.location.search).get('token');
-    if (fromUrl) return fromUrl;
-  }
-  return import.meta.env.V_DAEMON_TOKEN;
-}
-
-const TOKEN = resolveToken();
 const BASE = '/api';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -32,7 +13,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${TOKEN}`,
       ...init?.headers,
     },
   });
@@ -1012,13 +992,13 @@ export const api = {
   install: (projectId: number, body: InstallBody): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/install`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
   uninstall: (projectId: number, body: InstallBody): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/uninstall`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
 
@@ -1043,7 +1023,7 @@ export const api = {
   putStatusline: (projectId: number, config: StatuslineConfig): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/statusline`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(config),
     }),
   /** Shipped factory defaults for the statusline panel's 恢复出厂. */
@@ -1052,7 +1032,7 @@ export const api = {
   putGlobalStatusline: (config: StatuslineConfig): Promise<Response> =>
     fetch(`${BASE}/statusline/global`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(config),
     }),
 
@@ -1070,11 +1050,11 @@ export const api = {
   ): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/update`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
   syncAll: (projectId: number): Promise<Response> =>
-    fetch(`${BASE}/projects/${projectId}/sync-all`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } }),
+    fetch(`${BASE}/projects/${projectId}/sync-all`, { method: 'POST' }),
   listGlobalSkills: (projectId: number): Promise<GlobalSkillGroup[]> =>
     apiFetch<{ groups: GlobalSkillGroup[] }>(`/projects/${projectId}/skills/global`).then(
       (r) => r.groups,
@@ -1109,7 +1089,7 @@ export const api = {
   ): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/plugins/enabled`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
   getMcpEnable: (projectId: number): Promise<McpEnableMap> =>
@@ -1121,7 +1101,7 @@ export const api = {
   ): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/mcp/enable`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, state }),
     }),
   getProjectConfig: (projectId: number): Promise<ProjectConfig> =>
@@ -1152,7 +1132,7 @@ export const api = {
   putProjectConfig: (projectId: number, config: ProjectConfig): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(config),
     }),
   listLibraryAssets: (
@@ -1172,6 +1152,5 @@ export const api = {
       plugins: MarketPluginAsset[];
     }>(`/libraries/${id}/assets`),
 
-  /** EventSource cannot set headers; pass the token as a query param instead. */
-  eventsUrl: (): string => `${BASE}/events?token=${encodeURIComponent(TOKEN)}`,
+  eventsUrl: (): string => `${BASE}/events`,
 };
