@@ -145,6 +145,24 @@ export default function App() {
     api.listProjects().then(setProjects).catch(() => {});
   }, []);
 
+  // 项目行拖拽排序落定：乐观重排（落点即时反馈），持久化失败回滚到服务端
+  // 真值并报因（失败不静默）。
+  const handleProjectReorder = useCallback(
+    (ids: number[]) => {
+      setProjects((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]));
+        const next = ids.map((id) => byId.get(id)).filter((p): p is ProjectRow => !!p);
+        for (const p of prev) if (!ids.includes(p.id)) next.push(p);
+        return next;
+      });
+      api.reorderProjects(ids).catch((e) => {
+        setError(t('errors.projectReorderFailed', { error: String(e) }));
+        refreshProjects();
+      });
+    },
+    [refreshProjects, t],
+  );
+
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible') refreshProjects();
@@ -885,6 +903,7 @@ export default function App() {
                 onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
                 onSyncNow={(p) => void syncNowWithFeedback(p)}
                 sessionStatsOf={(id) => projectStats.get(id)}
+                onReorder={handleProjectReorder}
               />
             </aside>
             <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />

@@ -755,6 +755,12 @@ export const CONTEXT_STYLE_FORMAT: Record<'percent' | 'bar' | 'both', string> = 
 export const api = {
   listProjects: (): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects').then((r) => r.projects),
+  /** 项目列表拖动排序持久化：payload = 完整目标顺序（id 全量列表），幂等。 */
+  reorderProjects: (ids: number[]): Promise<ProjectRow[]> =>
+    apiFetch<{ projects: ProjectRow[] }>('/projects/order', {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    }).then((r) => r.projects),
   listAssets: (projectPath: string): Promise<AssetEntry[]> =>
     apiFetch<{ projectPath: string; assets: AssetEntry[] }>(
       `/assets?path=${encodeURIComponent(projectPath)}`,

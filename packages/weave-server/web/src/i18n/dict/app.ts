@@ -31,6 +31,7 @@ export const appZh = {
   'project.noneRegistered': '尚未注册任何项目',
   'project.openInExplorer': '在资源管理器中打开',
   'project.openInTerminal': '在终端中打开',
+  'project.dragToReorder': '拖动调整顺序',
   // 行内快捷操作（批 8）：autoSync 开关与打开两项复用上方 app.autoSync* /
   // project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
@@ -63,6 +64,7 @@ export const appZh = {
   'errors.mcpInstallFailed': 'MCP 安装失败：{error}',
   'errors.uninstallFailed': '卸载失败：{error}',
   'errors.mcpUninstallFailed': 'MCP 卸载失败：{error}',
+  'errors.projectReorderFailed': '项目排序保存失败：{error}',
   // —— 全局消息提示（toast）——
   'toast.synced': '已同步 {n} 项',
   'toast.nothingToSync': '没有需要同步的项',
@@ -111,6 +113,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.noneRegistered': 'No projects registered',
   'project.openInExplorer': 'Open in Explorer',
   'project.openInTerminal': 'Open in terminal',
+  'project.dragToReorder': 'Drag to reorder',
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   // Project-row session badges (marquee): animated icon = running, static = open
@@ -142,6 +145,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'errors.mcpInstallFailed': 'MCP install failed: {error}',
   'errors.uninstallFailed': 'Uninstall failed: {error}',
   'errors.mcpUninstallFailed': 'MCP uninstall failed: {error}',
+  'errors.projectReorderFailed': 'Failed to save project order: {error}',
   // —— Global message toasts ——
   'toast.synced': 'Synced {n} item(s)',
   'toast.nothingToSync': 'Nothing needs syncing',

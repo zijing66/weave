@@ -1,5 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -12,6 +25,7 @@ import {
   Circle,
   FolderOpen,
   Globe,
+  GripVertical,
   RefreshCw,
   Terminal,
   ToggleLeft,
@@ -48,6 +62,8 @@ interface ProjectListProps {
   openTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
+  /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
+  onReorder?: (ids: number[]) => void;
 }
 
 /** One open context-menu instance: screen position + target project. */
@@ -75,8 +91,21 @@ export function ProjectList({
   openExplorerStateOf,
   openTerminalStateOf,
   sessionStatsOf,
+  onReorder,
 }: ProjectListProps) {
   const t = useT();
+  const sortSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // 项目行拖拽排序：内嵌 DndContext 与 App 级资产拖拽完全隔离（draggable
+  // 只绑最近 context）；落定只算目标顺序，持久化/失败回滚都归 App。
+  const onSortEnd = (e: DragEndEvent): void => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = projects.findIndex((p) => p.id === Number(active.id));
+    const to = projects.findIndex((p) => p.id === Number(over.id));
+    if (from < 0 || to < 0) return;
+    onReorder?.(arrayMove(projects, from, to).map((p) => p.id));
+  };
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -140,16 +169,38 @@ export function ProjectList({
         <p className="p-3 text-xs text-neutral-500">{t('project.noneRegistered')}</p>
       )}
       <ul className="p-2 space-y-1">
+        <DndContext sensors={sortSensors} onDragEnd={onSortEnd}>
+          <SortableContext items={projects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
         {projects.map((p) => {
           const autoSync = autoSyncOf?.(p.id);
           const pending = updatesOf?.(p.id);
           const stats = sessionStatsOf?.(p.id) ?? [];
           return (
+            <SortableProjectLi key={p.id} id={p.id}>
+              {({ setNodeRef, style, attributes, listeners, isDragging }) => (
             <li
-              key={p.id}
-              className="group relative"
+              ref={setNodeRef}
+              style={style}
+              className={cn(
+                'group relative rounded-xl border transition-colors duration-200',
+                !globalActive && selectedId === p.id
+                  ? 'border-white/[0.14] bg-neutral-800/60'
+                  : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10]',
+                isDragging && 'z-10 opacity-80',
+              )}
               onMouseEnter={() => onHoverProject?.(p.id)}
             >
+              <div className="flex items-start">
+                {/* 拖拽手柄：「这张卡可拖」的显式 affordance；listeners 只挂它，
+                    行点选/右键不误触（PointerSensor 5px 位移阈值激活）。 */}
+                <span
+                  {...attributes}
+                  {...listeners}
+                  title={t('project.dragToReorder')}
+                  className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
+                >
+                  <GripVertical className="h-3.5 w-3.5" />
+                </span>
               <button
                 onClick={() => onSelect(p)}
                 onContextMenu={(e) => {
@@ -158,10 +209,8 @@ export function ProjectList({
                   setMenu({ x: e.clientX, y: e.clientY, project: p });
                 }}
                 className={cn(
-                  'w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors duration-200',
-                  !globalActive && selectedId === p.id
-                    ? 'bg-neutral-800/80'
-                    : 'hover:bg-neutral-800/50',
+                  'min-w-0 flex-1 flex items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors duration-200',
+                  'hover:bg-white/[0.04]',
                 )}
               >
                 <Circle
@@ -185,9 +234,10 @@ export function ProjectList({
                   <HealthBadge projectId={p.id} />
                 </span>
               </button>
-              {/* 快捷操作簇（批 8）：独立一行换行展示，不与文字同行重叠。
-                  簇是行按钮的兄弟节点，stopPropagation 在 QuickButton 内双保险。 */}
-              <div className="flex items-center gap-0.5 px-2 pb-1 pl-6">
+              </div>
+              {/* 快捷操作簇（批 8）：卡内独立一行换行展示，不与文字同行重叠。
+                  stopPropagation 在 QuickButton 内双保险。 */}
+              <div className="flex items-center gap-0.5 px-2 pb-1 pl-9">
                 <QuickButton
                   title={`${autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                   pressed={autoSync}
@@ -243,8 +293,12 @@ export function ProjectList({
                 </QuickButton>
               </div>
             </li>
+              )}
+            </SortableProjectLi>
           );
         })}
+          </SortableContext>
+        </DndContext>
       </ul>
 
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
@@ -284,6 +338,34 @@ export function ProjectList({
         )}
     </div>
   );
+}
+
+/**
+ * 项目行的 sortable 接线：li 拿 ref/位移样式，主按钮拿激活 attributes/listeners
+ * （点选/右键不受影响——PointerSensor 以 5px 位移阈值激活拖拽）。
+ */
+function SortableProjectLi({
+  id,
+  children,
+}: {
+  id: number;
+  children: (bind: {
+    setNodeRef: (el: HTMLElement | null) => void;
+    style: React.CSSProperties;
+    attributes: ReturnType<typeof useSortable>['attributes'];
+    listeners: ReturnType<typeof useSortable>['listeners'];
+    isDragging: boolean;
+  }) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  const style: React.CSSProperties = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transition: transition ?? undefined,
+    position: 'relative',
+  };
+  return children({ setNodeRef, style, attributes, listeners, isDragging });
 }
 
 function MenuButton({
