@@ -20,6 +20,9 @@ import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { createWeaveServer } from './server.js';
+import { DataBus } from './data-bus.js';
+import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { readTerminalCounts } from './opener.js';
 import { DAEMON_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
 import { setDaemonSettingsDb } from './settings.js';
@@ -128,6 +131,16 @@ export function startDaemon(): void {
     plugins: pluginManager,
   });
   syncScheduler.start();
+  // 数据变更帧总线 + 终端角标的隐藏刷新：前端不再轮询角标，改由后端「有人看时
+  // 每 30s 探一次、只在值变化时推」。探测本身要 spawn `wezterm cli`，所以绑
+  // SSE 客户端数——没人开看板就一次都不探。
+  const dataBus = new DataBus();
+  const terminalRefresher = new TerminalCountsRefresher(
+    () => readTerminalCounts(projects.list()),
+    dataBus,
+    { shouldRun: () => dataBus.hasSubscribers() },
+  );
+  terminalRefresher.start();
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
   startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
@@ -155,6 +168,8 @@ export function startDaemon(): void {
     hookDispatches,
     hookSessions,
     hookBus,
+    dataBus,
+    terminalRefresher,
     hookDispatcher,
     hookRunner,
     hookPlugins: pluginManager,
@@ -165,6 +180,7 @@ export function startDaemon(): void {
 
   const shutdown = (): void => {
     stopPluginWatch?.();
+    terminalRefresher.stop();
     syncScheduler.stop();
     watch.stop();
     void hookPipeline.stop();

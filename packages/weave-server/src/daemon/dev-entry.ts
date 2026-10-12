@@ -25,6 +25,9 @@ import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
+import { DataBus } from './data-bus.js';
+import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
@@ -113,6 +116,15 @@ async function main(): Promise<void> {
   });
   const watch = new WatchService(projects);
   watch.start();
+  // 数据变更帧总线 + 终端角标隐藏刷新：前端不再轮询角标，改由后端「有人看时每
+  // 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，绑 SSE 客户端数。
+  const dataBus = new DataBus();
+  const terminalRefresher = new TerminalCountsRefresher(
+    () => readTerminalCounts(projects.list()),
+    dataBus,
+    { shouldRun: () => dataBus.hasSubscribers() },
+  );
+  terminalRefresher.start();
   // 空会话自动清理（与生产入口同一装配点）：dev 入口此前漏挂 → 只残留一条
   // SessionStart 的会话在 dev 下永不消失，一直挂在会话列表里显示「就绪」。
   startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
@@ -139,6 +151,8 @@ async function main(): Promise<void> {
     hookDispatches,
     hookSessions,
     hookBus,
+    dataBus,
+    terminalRefresher,
     hookDispatcher,
     hookRunner,
     hookPlugins,
@@ -148,6 +162,7 @@ async function main(): Promise<void> {
   });
 
   const shutdown = (): void => {
+    terminalRefresher.stop();
     void hookPipeline.stop();
     server.close();
     process.exit(0);

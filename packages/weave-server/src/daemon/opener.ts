@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { TerminalSettings } from './settings.js';
+import { readDaemonSettings, type TerminalPreset, type TerminalSettings } from './settings.js';
 
 /**
  * Cross-platform "open this directory" helpers behind the project context
@@ -88,10 +88,288 @@ function osascriptRun(
   ];
 }
 
+// ---- 终端后端：模板方法 ----
+//
+// 骨架固定为「取候选 → 按序尝试 → 全失败抛真相」（TerminalBackend.spawnFirst），
+// 子类只填两处差异：候选表、以及流程真的不同的那个 preset（wezterm 的 run 必须走
+// mux 通道）。**枚举能力也归后端**：「这个 preset 能不能反查已开窗口」不再是调用方
+// 散写的 `preset === 'wezterm'` 白名单，而是后端覆没覆写那两个方法——不支持就走
+// 基类空实现（角标不显示，不谎报）。
+
+/** 终端后端基类。模板方法定义骨架，子类只填候选与真正不同的流程。 */
+export abstract class TerminalBackend {
+  protected constructor(
+    readonly preset: TerminalPreset,
+    /** 能否反查已开窗口 / 可附加目标（默认否：不是每种终端都问得到）。 */
+    readonly enumerable: boolean,
+    protected readonly platform: NodeJS.Platform = process.platform,
+  ) {}
+
+  /** 启动候选（按序尝试，第一个起的算成功）；空 = 本平台不支持该 preset。 */
+  abstract candidates(dir: string, run?: string[]): TerminalLaunch[];
+
+  /** 开一个终端（模板方法）。 */
+  async open(dir: string): Promise<void> {
+    await this.spawnFirst(
+      this.candidates(dir),
+      `Terminal preset "${this.preset}" is unavailable on this platform`,
+    );
+  }
+
+  /**
+   * 开一个终端并把 `argv` 送进去（模板方法）。缺省把命令并进候选参数；wezterm
+   * 覆写为走 mux——唯一流程真正不同的 preset（legacy `start -- PROG` 绕过
+   * default_prog，且 mux 在时会挂死出无窗僵尸而 trySpawn 假成功）。
+   */
+  async run(dir: string, argv: string[]): Promise<void> {
+    await this.spawnFirst(
+      this.candidates(dir, argv),
+      `Terminal preset "${this.preset}" cannot run a command here — pick another preset in settings`,
+    );
+  }
+
+  /** 每目录已开窗口数；不支持的 preset 走这里（空表 = 角标不显示，不谎报）。 */
+  async countWindows(_dirs: readonly string[]): Promise<Map<string, number>> {
+    return new Map();
+  }
+
+  /** 可附加目标（窗口内的 tab）；不支持的 preset 走这里。 */
+  async listTargets(_dir: string): Promise<WeztermAttachTarget[]> {
+    return [];
+  }
+
+  /** 按候选顺序起一个；全失败抛真相（含试过哪些命令）。 */
+  protected async spawnFirst(candidates: TerminalLaunch[], emptyReason: string): Promise<void> {
+    for (const launch of candidates) {
+      if (await trySpawn(launch)) return;
+    }
+    throw new Error(
+      candidates.length === 0
+        ? emptyReason
+        : 'No usable terminal found (tried: ' + candidates.map((c) => c.command).join(', ') + ')',
+    );
+  }
+}
+
+/** 候选数据驱动的后端：绝大多数 preset 只差一张候选表。 */
+class CandidatesBackend extends TerminalBackend {
+  constructor(
+    preset: TerminalPreset,
+    platform: NodeJS.Platform,
+    private readonly make: (
+      dir: string,
+      run: string[] | undefined,
+      platform: NodeJS.Platform,
+    ) => TerminalLaunch[],
+  ) {
+    super(preset, false, platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return this.make(dir, run, this.platform);
+  }
+}
+
+/** 各 preset 的候选表（纯数据）；`auto` 由这些具名条目组合，不再各抄一遍。 */
+const PRESET_CANDIDATES: Record<
+  Exclude<TerminalPreset, 'auto' | 'custom' | 'wezterm'>,
+  (dir: string, run: string[] | undefined, platform: NodeJS.Platform) => TerminalLaunch[]
+> = {
+  wt: (dir, run, platform) =>
+    platform === 'win32'
+      ? [{ command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, platform === 'win32') ?? [])] }]
+      : [],
+  powershell: (dir, run, platform) =>
+    platform === 'win32'
+      ? [
+          run
+            ? { command: 'powershell.exe', args: ['-NoExit', '-Command', joinCmd(run, 'win32')], cwd: dir }
+            : { command: 'powershell.exe', args: ['-NoExit'], cwd: dir },
+        ]
+      : [],
+  cmd: (dir, run, platform) =>
+    platform === 'win32'
+      ? [
+          run
+            ? { command: 'cmd.exe', args: ['/K', joinCmd(run, 'win32')], cwd: dir }
+            : { command: 'cmd.exe', args: ['/K'], cwd: dir },
+        ]
+      : [],
+  terminal: (dir, run, platform) => {
+    if (platform !== 'darwin') return [];
+    return run
+      ? [{ command: 'osascript', args: osascriptRun('Terminal', dir, run) }]
+      : [{ command: 'open', args: ['-a', 'Terminal', dir] }];
+  },
+  iterm: (dir, run, platform) => {
+    if (platform !== 'darwin') return [];
+    return run
+      ? [{ command: 'osascript', args: osascriptRun('iTerm', dir, run) }]
+      : [{ command: 'open', args: ['-a', 'iTerm', dir] }];
+  },
+  // gnome/konsole 不按平台过滤：选项可能来自另一台机器（settings 注释同此口径）。
+  gnome: (dir, run) => [
+    {
+      command: 'gnome-terminal',
+      args: [`--working-directory=${dir}`, ...(run ? ['--', ...run] : [])],
+    },
+  ],
+  konsole: (dir, run) => [
+    { command: 'konsole', args: ['--workdir', dir, ...(run ? ['-e', ...run] : [])] },
+  ],
+  ghostty: (dir, run, platform) => {
+    // No Windows build, so nothing to launch there.
+    if (platform === 'win32') return [];
+    // On macOS the `ghostty` binary is only a helper CLI — it cannot start the
+    // app, so go through the bundle the way the Terminal/iTerm entries do.
+    // Ghostty registers a folder open handler that lands the new window in that
+    // directory. The bundle open cannot run a command.
+    if (platform === 'darwin') {
+      return run ? [] : [{ command: 'open', args: ['-a', 'Ghostty', dir] }];
+    }
+    // On Linux `--working-directory` is a config key, also accepted as a
+    // command-line flag when launching.
+    return [
+      {
+        command: 'ghostty',
+        args: [`--working-directory=${dir}`, ...(run ? ['-e', ...run] : [])],
+      },
+    ];
+  },
+};
+
+/** custom：用户自撰命令模板（唯一需要读 settings 的后端）。 */
+class CustomBackend extends TerminalBackend {
+  constructor(
+    private readonly terminal: TerminalSettings,
+    platform: NodeJS.Platform,
+  ) {
+    super('custom', false, platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    const template = this.terminal.customCommand.trim();
+    if (!template) return [];
+    let command = template.replace(/\{path\}/g, quotePath(dir, this.platform));
+    const cmd = run ? joinCmd(run, this.platform) : '';
+    command = command.includes('{command}')
+      ? command.replace(/\{command\}/g, cmd)
+      : run
+        ? `${command} ${cmd}`
+        : command;
+    return [{ command, args: [], shell: true }];
+  }
+}
+
+/** wezterm：run 走 mux 通道；窗口/pane 反查也只有它问得到。 */
+class WeztermBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('wezterm', true, platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    // `start` opens the GUI (or a new window in an existing one) and `--cwd`
+    // applies to the first program it spawns. Cross-platform.
+    return [
+      {
+        command: 'wezterm',
+        args: ['start', '--cwd', dir, ...(throughCmd(run, this.platform === 'win32') ?? [])],
+      },
+    ];
+  }
+
+  override async run(dir: string, argv: string[]): Promise<void> {
+    await runInWezterm(dir, argv);
+  }
+
+  override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
+    if (dirs.length === 0) return new Map();
+    const muxes = await weztermLiveMuxesCached();
+    if (muxes.length === 0) return new Map(dirs.map((dir) => [dir, 0]));
+    return countWindowsByDir(
+      dirs,
+      muxes.flatMap((mux) =>
+        mux.panes.map((pane) => ({ muxKey: mux.socket, windowId: pane.windowId, cwd: pane.cwd })),
+      ),
+    );
+  }
+
+  override listTargets(dir: string): Promise<WeztermAttachTarget[]> {
+    return listAttachTargets(dir, this.platform);
+  }
+}
+
+/** auto：把本平台的具名 preset 候选按序串起来（与具名条目同源）。 */
+class AutoBackend extends TerminalBackend {
+  private readonly parts: TerminalBackend[];
+
+  constructor(platform: NodeJS.Platform) {
+    super('auto', true, platform);
+    const order: Partial<Record<NodeJS.Platform, TerminalPreset[]>> = {
+      win32: ['wt', 'powershell', 'cmd'],
+      darwin: ['terminal', 'iterm'],
+    };
+    const presets = order[platform] ?? ['gnome', 'konsole'];
+    this.parts = presets.map(
+      (preset) =>
+        new CandidatesBackend(
+          preset,
+          platform,
+          PRESET_CANDIDATES[preset as keyof typeof PRESET_CANDIDATES],
+        ),
+    );
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return this.parts.flatMap((part) => {
+      // macOS 带命令时只用 Terminal：auto 不把命令塞进 iTerm 的 osascript（旧行为）。
+      if (run && part.preset === 'iterm') return [];
+      return part.candidates(dir, run);
+    });
+  }
+
+  /** auto 在有 wezterm 的机器上开的就是 wezterm，反查口径随之。 */
+  override countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
+    return new WeztermBackend(this.platform).countWindows(dirs);
+  }
+
+  override listTargets(dir: string): Promise<WeztermAttachTarget[]> {
+    return new WeztermBackend(this.platform).listTargets(dir);
+  }
+}
+
+const BACKEND_FACTORIES: Record<
+  TerminalPreset,
+  (terminal: TerminalSettings, platform: NodeJS.Platform) => TerminalBackend
+> = {
+  auto: (_terminal, platform) => new AutoBackend(platform),
+  wt: (_terminal, platform) => new CandidatesBackend('wt', platform, PRESET_CANDIDATES.wt),
+  powershell: (_terminal, platform) =>
+    new CandidatesBackend('powershell', platform, PRESET_CANDIDATES.powershell),
+  cmd: (_terminal, platform) => new CandidatesBackend('cmd', platform, PRESET_CANDIDATES.cmd),
+  terminal: (_terminal, platform) =>
+    new CandidatesBackend('terminal', platform, PRESET_CANDIDATES.terminal),
+  iterm: (_terminal, platform) => new CandidatesBackend('iterm', platform, PRESET_CANDIDATES.iterm),
+  gnome: (_terminal, platform) => new CandidatesBackend('gnome', platform, PRESET_CANDIDATES.gnome),
+  konsole: (_terminal, platform) =>
+    new CandidatesBackend('konsole', platform, PRESET_CANDIDATES.konsole),
+  ghostty: (_terminal, platform) =>
+    new CandidatesBackend('ghostty', platform, PRESET_CANDIDATES.ghostty),
+  wezterm: (_terminal, platform) => new WeztermBackend(platform),
+  custom: (terminal, platform) => new CustomBackend(terminal, platform),
+};
+
+/** settings → 后端（未知 preset 回落 auto，与旧的 switch default 一致）。 */
+export function terminalBackendFor(
+  terminal: TerminalSettings,
+  platform: NodeJS.Platform = process.platform,
+): TerminalBackend {
+  return (BACKEND_FACTORIES[terminal.preset] ?? BACKEND_FACTORIES.auto)(terminal, platform);
+}
+
 /**
- * Resolve the spawn candidates that would open a terminal at `dir` for the
- * given settings and platform. Pure function — the actual spawning (and the
- * auto-probe fallback) lives in `openInTerminal`.
+ * Resolve the spawn candidates that would open a terminal at `dir`. 兼容入口：
+ * 候选解析已归后端（`TerminalBackend.candidates`），这里只做分发。
  *
  * `run` = argv of a command to execute inside the new terminal (e.g.
  * `['claude', '--resume', id]`); omitted = just open the directory.
@@ -102,106 +380,7 @@ export function resolveTerminalLaunch(
   platform: NodeJS.Platform = process.platform,
   run?: string[],
 ): TerminalLaunch[] {
-  const win = platform === 'win32';
-  const mac = platform === 'darwin';
-
-  switch (terminal.preset) {
-    case 'wt':
-      return win ? [{ command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, win) ?? [])] }] : [];
-    case 'powershell':
-      return win
-        ? [
-            run
-              ? { command: 'powershell.exe', args: ['-NoExit', '-Command', joinCmd(run, 'win32')], cwd: dir }
-              : { command: 'powershell.exe', args: ['-NoExit'], cwd: dir },
-          ]
-        : [];
-    case 'cmd':
-      return win
-        ? [
-            run
-              ? { command: 'cmd.exe', args: ['/K', joinCmd(run, 'win32')], cwd: dir }
-              : { command: 'cmd.exe', args: ['/K'], cwd: dir },
-          ]
-        : [];
-    case 'terminal':
-      if (run) return mac ? [{ command: 'osascript', args: osascriptRun('Terminal', dir, run) }] : [];
-      return mac ? [{ command: 'open', args: ['-a', 'Terminal', dir] }] : [];
-    case 'iterm':
-      if (run) return mac ? [{ command: 'osascript', args: osascriptRun('iTerm', dir, run) }] : [];
-      return mac ? [{ command: 'open', args: ['-a', 'iTerm', dir] }] : [];
-    case 'gnome':
-      return [
-        {
-          command: 'gnome-terminal',
-          args: [`--working-directory=${dir}`, ...(run ? ['--', ...run] : [])],
-        },
-      ];
-    case 'konsole':
-      return [
-        { command: 'konsole', args: ['--workdir', dir, ...(run ? ['-e', ...run] : [])] },
-      ];
-    case 'wezterm':
-      // `start` opens the GUI (or a new window in an existing one) and `--cwd`
-      // applies to the first program it spawns. Cross-platform.
-      return [{ command: 'wezterm', args: ['start', '--cwd', dir, ...(throughCmd(run, win) ?? [])] }];
-    case 'ghostty':
-      // No Windows build, so nothing to launch there.
-      if (win) return [];
-      // On macOS the `ghostty` binary is only a helper CLI — it cannot start
-      // the app, so go through the bundle the way the Terminal/iTerm entries
-      // do. Ghostty registers a folder open handler that lands the new window
-      // in that directory. The bundle open cannot run a command.
-      if (mac) return run ? [] : [{ command: 'open', args: ['-a', 'Ghostty', dir] }];
-      // On Linux `--working-directory` is a config key, also accepted as a
-      // command-line flag when launching.
-      return [
-        {
-          command: 'ghostty',
-          args: [`--working-directory=${dir}`, ...(run ? ['-e', ...run] : [])],
-        },
-      ];
-    case 'custom': {
-      const template = terminal.customCommand.trim();
-      if (!template) return [];
-      let command = template.replace(/\{path\}/g, quotePath(dir, platform));
-      const cmd = run ? joinCmd(run, platform) : '';
-      command = command.includes('{command}')
-        ? command.replace(/\{command\}/g, cmd)
-        : run
-          ? `${command} ${cmd}`
-          : command;
-      return [{ command, args: [], shell: true }];
-    }
-    case 'auto':
-    default:
-      if (win) {
-        return [
-          { command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, win) ?? [])] },
-          run
-            ? { command: 'powershell.exe', args: ['-NoExit', '-Command', joinCmd(run, 'win32')], cwd: dir }
-            : { command: 'powershell.exe', args: ['-NoExit'], cwd: dir },
-          run
-            ? { command: 'cmd.exe', args: ['/K', joinCmd(run, 'win32')], cwd: dir }
-            : { command: 'cmd.exe', args: ['/K'], cwd: dir },
-        ];
-      }
-      if (mac) {
-        return run
-          ? [{ command: 'osascript', args: osascriptRun('Terminal', dir, run) }]
-          : [
-              { command: 'open', args: ['-a', 'Terminal', dir] },
-              { command: 'open', args: ['-a', 'iTerm', dir] },
-            ];
-      }
-      return [
-        {
-          command: 'gnome-terminal',
-          args: [`--working-directory=${dir}`, ...(run ? ['--', ...run] : [])],
-        },
-        { command: 'konsole', args: ['--workdir', dir, ...(run ? ['-e', ...run] : [])] },
-      ];
-  }
+  return terminalBackendFor(terminal, platform).candidates(dir, run);
 }
 
 /** File-manager command that opens `dir` (per platform). */
@@ -241,16 +420,6 @@ function trySpawn(launch: TerminalLaunch): Promise<boolean> {
 }
 
 /** Try candidates in order until one launches (auto-probe fallback). */
-async function launchFirst(candidates: TerminalLaunch[], unavailable: string): Promise<void> {
-  for (const launch of candidates) {
-    if (await trySpawn(launch)) return;
-  }
-  throw new Error(
-    candidates.length === 0
-      ? unavailable
-      : 'No usable terminal found (tried: ' + candidates.map((c) => c.command).join(', ') + ')',
-  );
-}
 
 /** Open the OS file manager at `dir`. */
 export async function openInExplorer(dir: string): Promise<void> {
@@ -262,14 +431,8 @@ export async function openInExplorer(dir: string): Promise<void> {
 
 /** Open a terminal at `dir` following the configured preset. `auto` tries the
  * platform candidates in order until one launches. */
-export async function openInTerminal(
-  dir: string,
-  terminal: TerminalSettings,
-): Promise<void> {
-  await launchFirst(
-    resolveTerminalLaunch(dir, terminal),
-    `Terminal preset "${terminal.preset}" is unavailable on this platform`,
-  );
+export async function openInTerminal(dir: string, terminal: TerminalSettings): Promise<void> {
+  await terminalBackendFor(terminal).open(dir);
 }
 
 /** Open a terminal at `dir` that runs `argv` (e.g. `claude --resume <id>`).
@@ -281,14 +444,8 @@ export async function runInTerminal(
 ): Promise<void> {
   // wezterm 只走 mux：legacy `start -- PROG` 绕过 default_prog 不说，mux 在时
   // `start` 只会挂死出一个无窗僵尸 + trySpawn 假成功。失败一律抛真相。
-  if (terminal.preset === 'wezterm') {
-    await runInWezterm(dir, argv);
-    return;
-  }
-  await launchFirst(
-    resolveTerminalLaunch(dir, terminal, process.platform, argv),
-    `Terminal preset "${terminal.preset}" cannot run a command here — pick another preset in settings`,
-  );
+  // 这条分流在 WeztermBackend 覆写的 run 里，不在这里 if preset。
+  await terminalBackendFor(terminal).run(dir, argv);
 }
 
 // ---- wezterm mux 通道：同项目复用分屏，否则新窗口；失败要喊出来 ----
@@ -821,28 +978,40 @@ export async function countOpenTerminals(
   dirs: string[],
   terminal: TerminalSettings,
 ): Promise<Map<string, number>> {
-  const zero = new Map(dirs.map((d) => [d, 0]));
-  if (dirs.length === 0) return zero;
-  if (terminal.preset !== 'wezterm' && terminal.preset !== 'auto') return zero;
-  const muxes = await weztermLiveMuxesCached();
-  if (muxes.length === 0) return zero;
-  return countWindowsByDir(
-    dirs,
-    muxes.flatMap((mux) =>
-      mux.panes.map((pane) => ({ muxKey: mux.socket, windowId: pane.windowId, cwd: pane.cwd })),
-    ),
-  );
+  // 「这个 preset 能不能反查」由后端回答（不支持 → 基类空表 → 上游落 0），
+  // 不在调用方列 preset 白名单。
+  return terminalBackendFor(terminal).countWindows(dirs);
 }
 
 /**
- * 探活结果短缓存（2.5s）：角标轮询 + 焦点回归/开窗后刷新会在瞬间打多枪，
- * 每枪重探全部 socket（死 socket 各 5s 超时）会拖慢路由。**只给计数用**——
- * runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到刚关掉的 pane）。
+ * 每项目窗口数（projectId → 窗口数）：/terminals/counts 路由与隐藏刷新器共用
+ * 同一口径，免得两处各自拼 settings/opener 后漂移。
+ */
+export async function readTerminalCounts(
+  projects: readonly { id: number; path: string }[],
+  opener: ProjectOpener = defaultProjectOpener,
+): Promise<Record<number, number>> {
+  const settings = await readDaemonSettings();
+  const count = opener.countTerminals ?? countOpenTerminals;
+  const byPath = await count(
+    projects.map((p) => p.path),
+    settings.terminal,
+  );
+  return Object.fromEntries(projects.map((p) => [p.id, byPath.get(p.path) ?? 0]));
+}
+
+/**
+ * 探活结果短缓存（10s）：角标轮询 + 焦点回归/开窗后刷新会在瞬间打多枪。
+ * TTL 必须**大于**前端轮询间隔（App.tsx 是 5s），否则每枪都穿透、缓存等于
+ * 不存在——而一枪要对**每个存活 socket** spawn 一次 `wezterm cli list`
+ * （实测 wall ~180ms / CPU 62–125ms；机器上残留的幽灵 GUI 会把 socket 数放大）。
+ * **只给计数用**：runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到
+ * 刚关掉的 pane）。
  */
 let muxCache: { at: number; muxes: WeztermMux[] } | null = null;
 
 async function weztermLiveMuxesCached(): Promise<WeztermMux[]> {
-  if (muxCache && Date.now() - muxCache.at < 2500) return muxCache.muxes;
+  if (muxCache && Date.now() - muxCache.at < 10000) return muxCache.muxes;
   const { muxes } = await weztermLiveMuxes();
   muxCache = { at: Date.now(), muxes };
   return muxes;

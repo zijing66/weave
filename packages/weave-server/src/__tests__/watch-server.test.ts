@@ -7,6 +7,7 @@ import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { WatchService } from '../watch/watch-service.js';
+import { DataBus } from '../daemon/data-bus.js';
 import { createWeaveServer } from '../daemon/server.js';
 
 vi.setConfig({ testTimeout: 20000 });
@@ -16,6 +17,7 @@ describe('daemon server watch endpoints', () => {
   let server: Server;
   let port: number;
   let watch: WatchService;
+  let dataBus: DataBus;
   let projectDir: string;
 
   beforeAll(async () => {
@@ -29,7 +31,8 @@ describe('daemon server watch endpoints', () => {
 
     watch = new WatchService(projects, { debounceMs: 30, reconcileMs: 60_000 });
     watch.start();
-    server = createWeaveServer({ projects, port: 0, watch });
+    dataBus = new DataBus();
+    server = createWeaveServer({ projects, port: 0, watch, dataBus });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
 
@@ -84,6 +87,29 @@ describe('daemon server watch endpoints', () => {
     const reader = res.body!.getReader();
     const { value } = await reader.read();
     expect(new TextDecoder().decode(value)).toContain('connected');
+    await reader.cancel();
+  });
+
+  it('数据变更帧走同一条流：带 payload → push，不带 → invalidate', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    await reader.read(); // ': connected' 问候帧（此时订阅已挂上）
+
+    dataBus.emit({ key: 'terminalCounts', payload: { counts: { 1: 2 } } });
+    dataBus.emit({ key: 'assets', projectPath: projectDir });
+
+    let buffer = '';
+    while (!buffer.includes('"type":"invalidate"')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value);
+    }
+    expect(buffer).toContain('"type":"push"');
+    expect(buffer).toContain('"key":"terminalCounts"');
+    expect(buffer).toContain('"counts":{"1":2}');
+    expect(buffer).toContain('"type":"invalidate"');
+    expect(buffer).toContain('"key":"assets"');
     await reader.cancel();
   });
 });

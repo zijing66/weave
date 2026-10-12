@@ -30,6 +30,7 @@ import {
   type InstallCapabilities,
 } from '@/lib/api';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
+import { subscribeSse } from '@/lib/sse';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -163,25 +164,22 @@ export default function App() {
     [refreshProjects, t],
   );
 
-  // 项目卡终端角标（已开终端窗口数）：挂载 + 5s 轮询 + 焦点回归刷新。
-  // 5s 是体感与开销的折中——daemon 侧枚举另有 2.5s 缓存，突发多枪不重探。
+  // 项目卡终端角标（已开终端窗口数）：初值拉一次，之后由服务端 push 帧驱动——
+  // 后端「有人看时每 30s 探一次、只在值变化时推」。前端不再有任何定时器：探测
+  // 本身要 spawn `wezterm cli`，轮询留在前端会按打开的看板数翻倍。
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
-  const refreshTerminalCounts = useCallback(() => {
-    api.getTerminalCounts().then(setTerminalCounts).catch(() => {});
-  }, []);
-
   useEffect(() => {
-    refreshTerminalCounts();
-    const timer = window.setInterval(refreshTerminalCounts, 5000);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refreshTerminalCounts();
-    };
-    document.addEventListener('visibilitychange', onVisible);
+    let cancelled = false;
+    api
+      .getTerminalCounts()
+      .then((counts) => {
+        if (!cancelled) setTerminalCounts(counts);
+      })
+      .catch(() => {});
     return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
+      cancelled = true;
     };
-  }, [refreshTerminalCounts]);
+  }, []);
 
   useEffect(() => {
     const onVisible = () => {
@@ -440,28 +438,39 @@ export default function App() {
   }, [globalMode, globalAssets, assets, selectedFile]);
 
 
-  // SSE: live asset updates. The daemon's watch service detects the files
-  // written by install/uninstall/statusline and pushes changes here automatically.
+  // 全站唯一 SSE 连接（lib/sse）：资产 / 项目 / hook / 数据帧都从这一条来。
+  // selected 走 ref 读、不进依赖数组——否则每切一次项目就断线重连。
+  const selectedRef = useRef(selected);
   useEffect(() => {
-    const es = new EventSource(api.eventsUrl());
-    es.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data) as AssetChangeEvent & { type?: string };
+    selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(
+    () =>
+      subscribeSse((frame) => {
         // 项目注册表变更帧：必须先于 asset 过滤处理（它没有 selected 项目语义），
         // 整表重拉后 ProjectList 自然出现新项目。
-        if (data.type === 'project') {
+        if (frame.type === 'project') {
           refreshProjects();
           return;
         }
         // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
         // stream; the Hooks / Tasks panels listen for them on `weave:hook`.
         // 会话状态/计数由全局状态总线按同一批帧维护（main.tsx 挂的 Provider）。
-        if (data.type === 'hook') {
-          window.dispatchEvent(new CustomEvent('weave:hook', { detail: data }));
+        if (frame.type === 'hook') {
+          window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;
         }
-        const change = data;
-        if (!selected || change.projectPath !== selected.path) return;
+        // 数据帧：后端已算好的载荷直接写状态（目前只有终端角标）。
+        if (frame.type === 'push' && frame.key === 'terminalCounts') {
+          setTerminalCounts((frame.payload as { counts: Record<number, number> }).counts);
+          return;
+        }
+        // 其余数据帧是失效键，收到后按 key 调既有 fetcher 重拉（后续逐个接入）。
+        if (frame.type !== 'asset') return;
+        const change = frame as unknown as AssetChangeEvent;
+        const sel = selectedRef.current;
+        if (!sel || change.projectPath !== sel.path) return;
         setAssets((prev) => {
           if (change.kind === 'unlink') return prev.filter((a) => a.relPath !== change.relPath);
           const entry: AssetEntry = {
@@ -480,21 +489,13 @@ export default function App() {
           }
           return [...prev, entry];
         });
-        if (change.category === 'mcp') refreshMcp(selected);
-        if (change.category === 'skill') refreshGlobalSkills(selected);
+        if (change.category === 'mcp') refreshMcp(sel);
+        if (change.category === 'skill') refreshGlobalSkills(sel);
         // any asset change may affect update availability
-        refreshUpdates(selected);
-      } catch {
-        // ignore malformed frames
-      }
-    };
-    es.onerror = () => {
-      // EventSource auto-reconnects; nothing to do.
-    };
-    return () => {
-      es.close();
-    };
-  }, [selected, refreshMcp, refreshUpdates, refreshGlobalSkills, refreshProjects]);
+        refreshUpdates(sel);
+      }),
+    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshProjects],
+  );
 
   // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /
   // 兜底 catch——handler 内先报错又正常 resolve 的话，调用方会在失败时也弹成功。
@@ -721,12 +722,18 @@ export default function App() {
         `open-${target}:${p.id}`,
         async () => {
           await api.openProject(p.id, target);
-          // 新窗落地到 cwd 上报有一拍延迟：略等再拉角标（轮询也会兜住）。
-          if (target === 'terminal') window.setTimeout(refreshTerminalCounts, 600);
+          // 新窗落地到 cwd 上报有一拍延迟：略等再对一次账。服务端开窗后的对账
+          // 是**立刻**发的，那时 wezterm 还没报出新窗 cwd，所以这里补一枪一次性
+          // 拉取（不是轮询：只在用户点了按钮之后发生一次）。
+          if (target === 'terminal') {
+            window.setTimeout(() => {
+              api.getTerminalCounts().then(setTerminalCounts).catch(() => {});
+            }, 600);
+          }
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       ),
-    [fb, t, refreshTerminalCounts],
+    [fb, t],
   );
   const openExplorerStateOf = useCallback((id: number) => fb.stateOf(`open-explorer:${id}`), [fb]);
   const openTerminalProjectStateOf = useCallback(

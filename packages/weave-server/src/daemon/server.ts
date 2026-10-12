@@ -15,6 +15,8 @@ import type { HookRuleRegistry } from '../hooks/registry.js';
 import type { MirrorWriter } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
+import type { DataBus } from './data-bus.js';
+import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
@@ -67,6 +69,7 @@ import { applyUpdate, syncAll } from '../install/apply-update.js';
 import { buildLibraryIndex } from '../install/library-index.js';
 import { importFromDir, importFromGit, importLibraryIntoMarket } from '../market/import.js';
 import { marketDir, readManifest } from '../market/manifest.js';
+import { marketIdOf } from '../market/identity.js';
 import { isInsideDir, toRelPosix } from '../market/resolve.js';
 import { checkMarketUpdates } from '../market/updates.js';
 import { refreshMarketItems, type RefreshResult } from '../market/refresh.js';
@@ -92,7 +95,7 @@ import { detectUpdates } from '../install/updates.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
-import type { ToolkitService } from '../hooks/toolkit.js';
+import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
   readDaemonSettings,
@@ -100,7 +103,12 @@ import {
   terminalPresetsFor,
   type DaemonSettings,
 } from './settings.js';
-import { countOpenTerminals, defaultProjectOpener, type ProjectOpener } from './opener.js';
+import {
+  defaultProjectOpener,
+  readTerminalCounts,
+  terminalBackendFor,
+  type ProjectOpener,
+} from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
 
@@ -139,6 +147,10 @@ export interface WeaveServerDeps {
   hookSessions?: SessionRepository;
   /** Hook event bus — SSE subscribes alongside the watch service. */
   hookBus?: HookEventBus;
+  /** 数据变更帧总线（SSE 第三订阅源：载荷推送 / 失效键）。 */
+  dataBus?: DataBus;
+  /** 终端角标的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
+  terminalRefresher?: TerminalCountsRefresher;
   /** Event dispatcher; hook 文件化后由 inbox 消费线程（inbox-worker）驱动。 */
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
@@ -276,6 +288,8 @@ async function handleRequest(
       } else {
         const settings = await readDaemonSettings();
         await opener.openTerminal(project.path, settings.terminal);
+        // 角标立刻对账，不等隐藏刷新的下一个周期
+        void deps.terminalRefresher?.refreshNow();
       }
       sendJson(res, 200, { ok: true, target: body.target, path: project.path });
     } catch (e) {
@@ -1133,7 +1147,13 @@ async function handleRequest(
       sendJson(res, 503, { error: 'Watch service unavailable' });
       return;
     }
-    sendJson(res, 200, { projectPath, assets: deps.watch.getAssets(projectPath) });
+    // 仓库标记来自包落盘记录（watch 缓存只知道文件在不在，不知道谁铺的）。
+    const namespaces = await projectFileNamespaces(projectPath);
+    const assets = deps.watch.getAssets(projectPath).map((a) => {
+      const namespace = namespaces.get(a.relPath);
+      return namespace ? { ...a, namespace } : a;
+    });
+    sendJson(res, 200, { projectPath, assets });
     return;
   }
 
@@ -1180,10 +1200,9 @@ async function handleRequest(
     }
     const settings = await readDaemonSettings();
     const list = deps.opener?.listTerminals ?? defaultProjectOpener.listTerminals!;
-    const terminals =
-      settings.terminal.preset === 'wezterm' || settings.terminal.preset === 'auto'
-        ? await list(project.path)
-        : [];
+    const terminals = terminalBackendFor(settings.terminal).enumerable
+      ? await list(project.path)
+      : [];
     sendJson(res, 200, { projectId: project.id, terminals });
     return;
   }
@@ -1191,17 +1210,8 @@ async function handleRequest(
   // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
   // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
-    const projects = deps.projects.list();
     const opener = deps.opener ?? defaultProjectOpener;
-    const count = opener.countTerminals ?? countOpenTerminals;
-    const settings = await readDaemonSettings();
-    const byPath = await count(
-      projects.map((p) => p.path),
-      settings.terminal,
-    );
-    sendJson(res, 200, {
-      counts: Object.fromEntries(projects.map((p) => [p.id, byPath.get(p.path) ?? 0])),
-    });
+    sendJson(res, 200, { counts: await readTerminalCounts(deps.projects.list(), opener) });
     return;
   }
 
@@ -1217,7 +1227,7 @@ async function handleRequest(
 
 /** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
 function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerDeps): void {
-  if (!deps.watch && !deps.hookBus) {
+  if (!deps.watch && !deps.hookBus && !deps.dataBus) {
     res.statusCode = 503;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ error: 'Event stream unavailable' }));
@@ -1251,6 +1261,16 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
     unsubscribes.push(
       deps.hookBus.subscribe((message) => {
         res.write(`data: ${JSON.stringify({ type: 'hook', ...message })}\n\n`);
+      }),
+    );
+  }
+  // 数据变更帧：带 payload = 后端已算好（前端直写状态）；不带 = 失效键
+  // （前端按 key 调既有 fetcher 重拉）。
+  if (deps.dataBus) {
+    unsubscribes.push(
+      deps.dataBus.subscribe((frame) => {
+        const type = frame.payload === undefined ? 'invalidate' : 'push';
+        res.write(`data: ${JSON.stringify({ type, ...frame })}\n\n`);
       }),
     );
   }
@@ -1355,6 +1375,9 @@ async function safeReadGlobalMcp(): Promise<Record<string, McpServerConfig>> {
 async function marketItem(row: LibraryRow, dataDir: string): Promise<Record<string, unknown>> {
   const managed = isInsideDir(row.path, marketDir(dataDir));
   const manifest = managed ? await readManifest(row.path) : null;
+  // 内置仓也登记在 libraries 里（落点是链接），但它既不是导入来的、也不能迁入/
+  // 删除/查更新——右栏据此不摆那些按钮，别让它显示成「外部源」。
+  const builtin = isBuiltinMarketDir(row.path, dataDir);
   return {
     id: row.id,
     kind: row.kind,
@@ -1363,8 +1386,12 @@ async function marketItem(row: LibraryRow, dataDir: string): Promise<Record<stri
     relPath: isInsideDir(row.path, dataDir) ? toRelPosix(row.path, dataDir) : null,
     resourceId: managed ? path.basename(row.path) : null,
     managed,
-    legacy: !manifest,
-    source: manifest?.source ?? 'legacy',
+    builtin,
+    // 仓库 namespace = 资源管理按它分块的那个名字（内置仓 = `weave`）；不在市场
+    // 内的 legacy 外部源没有仓库可归。
+    namespace: managed ? marketIdOf(row.path, marketDir(dataDir)) : undefined,
+    legacy: !manifest && !builtin,
+    source: builtin ? 'builtin' : (manifest?.source ?? 'legacy'),
     origin: manifest?.origin ?? null,
     importedAt: manifest?.importedAt ?? null,
     commit: manifest?.commit ?? null,

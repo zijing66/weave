@@ -407,6 +407,8 @@ export async function handleHooksRoutes(
       } else {
         await opener.runInTerminal(project.path, argv, settings.terminal);
       }
+      // 角标立刻对账，不等隐藏刷新的下一个周期
+      void deps.terminalRefresher?.refreshNow();
       sendJson(res, 200, {
         ok: true,
         sessionId,
