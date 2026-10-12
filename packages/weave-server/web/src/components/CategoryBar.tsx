@@ -45,13 +45,10 @@ export function CategoryBar({
   category,
   onSelect,
   data,
-  hidden,
 }: {
   category: MainCategory;
   onSelect: (c: MainCategory) => void;
   data: CategoryBarData;
-  /** 隐藏的分类卡（全局模式隐藏 tasks——任务视图仅项目级）。 */
-  hidden?: ReadonlySet<MainCategory>;
 }) {
   const t = useT();
   const countFor = (c: MainCategory): number => {
@@ -89,7 +86,7 @@ export function CategoryBar({
     // 1280px viewport); below that the row wraps instead of clipping the
     // first/last card at the container edges.
     <div className="flex flex-wrap gap-2 p-2 border-b border-white/[0.06] overflow-x-auto">
-      {MAIN_CATEGORIES.filter((c) => !hidden?.has(c.key)).map(({ key, labelKey, icon: Icon }) => {
+      {MAIN_CATEGORIES.map(({ key, labelKey, icon: Icon }) => {
         const active = category === key;
         return (
           <button

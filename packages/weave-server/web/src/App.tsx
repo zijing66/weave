@@ -99,7 +99,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Main area
-  const [mainCategory, setMainCategory] = useState<MainCategory>('files');
+  const [mainCategory, setMainCategory] = useState<MainCategory>('tasks');
   // Files-page asset tab: lifted here so it survives category switches
   // (leaving files and coming back keeps the tab; starts on skills).
   const [assetTab, setAssetTab] = useState<AssetTab>('files');
@@ -244,7 +244,7 @@ export default function App() {
       setPluginEnabled({ claude: {}, codex: {} });
       setSelectedFile(null);
       setDrawerSkill(null);
-      setMainCategory('files');
+      setMainCategory('tasks');
       setInitialSessionId(null);
       setStatuslineSource(null);
       setError(null);
@@ -270,7 +270,7 @@ export default function App() {
     setGlobalMode(true);
     setSelectedFile(null);
     setDrawerSkill(null);
-    setMainCategory('files');
+    setMainCategory('tasks');
     setInitialSessionId(null);
     setStatuslineSource(null); // no source badge/sub-text in the template view
     setError(null);
@@ -776,7 +776,7 @@ export default function App() {
     (projectId: number, sessionId: string) => {
       const target = projects.find((p) => p.id === projectId);
       if (!target) return;
-      loadProject(target); // 同批内会把 mainCategory 置回 files，随后覆写为 tasks
+      loadProject(target); // 同批内已把 mainCategory 置为 tasks（默认卡），这里仅选中会话
       setInitialSessionId(sessionId);
       setMainCategory('tasks');
     },
