@@ -497,10 +497,13 @@ export function parseAttachTargetId(
 }
 
 /**
- * 目标列表（纯函数）：按「最近活跃」从上往下排——① 整个 wezterm 实例更近活跃
- * （mux 的 client idle 更小）在前；② 同实例内含聚焦 pane 的 tab 在前；③ 其余
- * 按 tabId 降序（tab 越晚创建越可能更近用过）。`cli list` 不报任何时间戳，
- * 这是可得信号下的最佳近似。
+ * 目标列表（纯函数）：**只列本项目名下的 tab**（至少一个 pane 的 cwd 命中该目录）
+ * ——别的项目的终端不进来，用户不必在一堆无关窗口里挑。空表语义 = 该项目没有
+ * 终端开着（调用方据此直接开新窗，而不是弹一个空选择框）。
+ *
+ * 排序（最近活跃从上往下）：① 整个 wezterm 实例更近活跃（mux 的 client idle
+ * 更小）在前；② 同实例内含聚焦 pane 的 tab 在前；③ 其余按 tabId 降序（tab 越晚
+ * 创建越可能更近用过）。`cli list` 不报任何时间戳，这是可得信号下的最佳近似。
  */
 export function attachTargetsFromMuxes(
   dir: string,
@@ -508,6 +511,7 @@ export function attachTargetsFromMuxes(
   platform: NodeJS.Platform = process.platform,
 ): WeztermAttachTarget[] {
   const key = normalizeDirKey(dir, platform);
+  if (!key) return [];
   const out: WeztermAttachTarget[] = [];
   for (const mux of [...muxes].sort((a, b) => a.idleMs - b.idleMs)) {
     const byTarget = new Map<string, WeztermPaneInfo[]>();
@@ -519,6 +523,8 @@ export function attachTargetsFromMuxes(
     }
     const rows: WeztermAttachTarget[] = [];
     for (const [k, panes] of byTarget) {
+      const matchCount = panes.filter((p) => normalizeDirKey(p.cwd, platform) === key).length;
+      if (matchCount === 0) continue; // 非本项目终端 → 不进候选
       const windowId = Number(k.slice(0, k.indexOf(':')));
       const tabId = Number(k.slice(k.indexOf(':') + 1));
       const focus = panes.find((p) => p.isActive) ?? panes[0]!;
@@ -527,9 +533,7 @@ export function attachTargetsFromMuxes(
         windowId,
         tabId,
         title: focus.title,
-        matchCount: key
-          ? panes.filter((p) => normalizeDirKey(p.cwd, platform) === key).length
-          : 0,
+        matchCount,
         paneCount: panes.length,
         active: panes.some((p) => p.isActive),
       });

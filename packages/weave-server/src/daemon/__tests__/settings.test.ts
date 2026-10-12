@@ -664,6 +664,24 @@ describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹�
     expect(t).toMatchObject({ matchCount: 2, paneCount: 3 });
   });
 
+  it('只列本项目终端：别的项目的 tab 不进候选；项目无终端 → 空表', () => {
+    const muxes = [
+      {
+        socket: '/socks/gui-sock-1',
+        idleMs: 0,
+        panes: [
+          pane(0, 1, 10, 'file:///p/proj'), // 本项目 → 候选
+          pane(0, 2, 20, 'file:///p/other', true, '别的项目'), // 他项目 → 剔除
+          pane(1, 3, 30, 'file:///p/other'), // 他项目 → 剔除
+        ],
+      },
+    ];
+    expect(attachTargetsFromMuxes('/p/proj', muxes, 'linux').map((t) => [t.windowId, t.tabId])).toEqual(
+      [[0, 1]],
+    );
+    expect(attachTargetsFromMuxes('/p/none', muxes, 'linux')).toEqual([]);
+  });
+
   it('parseAttachTargetId 往返；坏 id → null', () => {
     const id = attachTargetsFromMuxes(
       '/p/proj',
