@@ -24,6 +24,7 @@ import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
+import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
 import { setDaemonSettingsDb } from './settings.js';
@@ -104,6 +105,14 @@ async function main(): Promise<void> {
   });
   const watch = new WatchService(projects);
   watch.start();
+  // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
+  const hookPipeline = wireHookFilePipeline({
+    projects,
+    rules: hookRegistry,
+    sessions: hookSessions,
+    bus: hookBus,
+    dispatcher: hookDispatcher,
+  });
   const staticDir = resolveStaticDir();
 
   const server = createWeaveServer({
@@ -123,9 +132,18 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     hookPlugins,
+    hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
     toolkit,
   });
+
+  const shutdown = (): void => {
+    void hookPipeline.stop();
+    server.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 
   server.listen(port, DAEMON_HOST, () => {
     console.log(`[dev] weave daemon listening on http://${DAEMON_HOST}:${port}`);

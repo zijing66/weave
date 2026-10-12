@@ -279,5 +279,8 @@ if (!isMainThread && (workerData as InboxWorkerData | undefined)?.inboxWorker ==
     }
   };
   tick(); // 覆盖「server 恢复但用户没触发任何 hook」的场景
-  setInterval(tick, data.tickMs ?? INBOX_TICK_MS).unref();
+  // 不可 unref：worker 线程里没有别的 ref 句柄，unref 的定时器不阻止事件循环
+  // 退出——worker 会在第一 tick 后静默死掉（表现为「积压只被爆冲一遍，之后
+  // inbox 只涨不消、dashboard 再无事件」）。生命周期由主线程 terminate 掌控。
+  setInterval(tick, data.tickMs ?? INBOX_TICK_MS);
 }

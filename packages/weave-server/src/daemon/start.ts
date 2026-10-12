@@ -1,5 +1,4 @@
 import { openDatabase } from '../db/db.js';
-import { getDbPath } from '../db/paths.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
@@ -10,12 +9,8 @@ import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { SessionSweeper } from '../hooks/session-sweeper.js';
 import { sweepProjectSpools } from '../hooks/spool.js';
-import { MirrorWriter, hooksRoot } from '../hooks/mirror.js';
-import {
-  startInboxWorker,
-  handleIngestedRecords,
-  type InboxRecord,
-} from '../hooks/inbox-worker.js';
+import { hooksRoot } from '../hooks/mirror.js';
+import { wireHookFilePipeline } from './hook-pipeline.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -66,10 +61,6 @@ export function startDaemon(): void {
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
   const hookBus = new HookEventBus();
-  // hook 注入计划镜像：规则变更（onChange）与标题变更（bus）触发重写
-  const hookMirror = new MirrorWriter({ projects, rules: hookRegistry, sessions: hookSessions });
-  hookRegistry.onChange = () => hookMirror.syncAll();
-  hookMirror.attachToBus(hookBus);
   // 插件 SPI 加载是异步的，dispatcher 先持有一个 holder；加载完成后接管查询并开启热重载。
   const pluginHostHolder: PluginHost = {
     getHandler: () => undefined,
@@ -134,16 +125,14 @@ export function startDaemon(): void {
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
   new SessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches }).start();
-  // inbox 消费线程：hook 落盘事件 claim→入库（worker 内独立 db 连接+注册表），
-  // 记录回传主线程补 SSE/规则分发（dispatcher/registry/bus 不跨线程共享）
-  const inboxWorker = startInboxWorker({ dbPath: getDbPath(), hooksDir: hooksRoot() });
-  inboxWorker.on('message', (records: InboxRecord[]) => {
-    handleIngestedRecords(
-      { projects, hooksDir: hooksRoot(), bus: hookBus, dispatcher: hookDispatcher },
-      records,
-    );
+  // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
+  const hookPipeline = wireHookFilePipeline({
+    projects,
+    rules: hookRegistry,
+    sessions: hookSessions,
+    bus: hookBus,
+    dispatcher: hookDispatcher,
   });
-  inboxWorker.on('error', (e) => console.error('[weave] inbox worker failed:', e));
   const staticDir = resolveStaticDir();
 
   const server = createWeaveServer({
@@ -164,7 +153,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     hookPlugins: pluginManager,
-    hookMirror,
+    hookMirror: hookPipeline.mirror,
     hookInboxDir: hooksRoot(),
     pluginStates: new PluginStateRepository(db),
     toolkit,
@@ -174,7 +163,7 @@ export function startDaemon(): void {
     stopPluginWatch?.();
     syncScheduler.stop();
     watch.stop();
-    void inboxWorker.terminate();
+    void hookPipeline.stop();
     server.close();
     process.exit(0);
   };
@@ -186,8 +175,6 @@ export function startDaemon(): void {
     writeDaemonState({ ...state, token: daemonToken, pid: process.pid });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
-    // hook 注入计划镜像首同步（规则/标题后续变更由 onChange + bus 触发）
-    hookMirror.syncAll();
     // spool 积压回灌【弃用口，旧版脚本存量兜底】：daemon 不在期间旧版 hook
     // 落项目本地 spool 的事件，起服务就补上；新版 hook 落全局 inbox，由
     // inbox 消费线程接管（先 tick 一次）
