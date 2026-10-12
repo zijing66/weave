@@ -258,30 +258,40 @@ async function main() {
   var eventType = parsed.hook_event_name || parsed.event || 'unknown';
   var sessionId = parsed.session_id || parsed.sessionId || null;
 
+  // Stop/SubagentStop 续跑守卫：宿主在「上一枪已经让 agent 继续了」之后，会带着
+  // stop_hook_active=true 再问一次；此时必须闭嘴返回成功，否则会把"停止"一直判成
+  // 被阻断，agent 空转（宿主连续 9 次后强制结束并告警）。Claude Code 的显式要求：
+  // "For Stop/SubagentStop hooks, check stop_hook_active in the input and return
+  // success while it's true." 判断提前（回执与下发共用同一条件），退出仍在
+  // 采集之后——事件照收，只是不再注入。
+  var silenced =
+    (eventType === 'Stop' || eventType === 'SubagentStop') &&
+    parsed.stop_hook_active === true;
+  var injectable = INJECTABLE_EVENTS.indexOf(eventType) !== -1;
+
+  // 改名交付回执：本事件确会把 pendingTitle 随响应下发（injectable 且未被
+  // 静默；读不到 mirror = 没下发）。daemon 拿回执落定 pending_title——「改名
+  // 待生效」徽标在生效当拍清除，不必等会话下一次上报标题。
+  var deliveredTitle = null;
+  var mirror = injectable && !silenced ? readMirror(hooksDir(), token) : null;
+  if (mirror && sessionId && mirror.pendingTitles) {
+    var pending = mirror.pendingTitles[sessionId];
+    if (typeof pending === 'string' && pending) deliveredTitle = pending;
+  }
+
   // 1. Collection first: a kill mid-injection still leaves the event on disk.
   appendInbox(path.join(hooksDir(), 'inbox'), token, {
     source: 'claude',
     eventType: eventType,
     sessionId: sessionId,
     cwd: parsed.cwd || projectDir,
-    payload: raw
+    payload: raw,
+    deliveredTitle: deliveredTitle
   });
 
-  // Stop/SubagentStop 续跑守卫：宿主在「上一枪已经让 agent 继续了」之后，会带着
-  // stop_hook_active=true 再问一次；此时必须闭嘴返回成功，否则会把"停止"一直判成
-  // 被阻断，agent 空转（宿主连续 9 次后强制结束并告警）。Claude Code 的显式要求：
-  // "For Stop/SubagentStop hooks, check stop_hook_active in the input and return
-  // success while it's true." 放在采集之后——事件照收，只是不再注入。
-  if (
-    (eventType === 'Stop' || eventType === 'SubagentStop') &&
-    parsed.stop_hook_active === true
-  ) {
-    process.exit(0);
-  }
+  if (silenced) { process.exit(0); }
+  if (!injectable) { process.exit(0); }
 
-  if (INJECTABLE_EVENTS.indexOf(eventType) === -1) { process.exit(0); }
-
-  var mirror = readMirror(hooksDir(), token);
   var parts = [];
   var toolName = parsed.tool_name || parsed.toolName || null;
   var filePath = extractFilePath(parsed.tool_input || parsed.toolInput || null);
@@ -322,7 +332,7 @@ async function main() {
   parts = parts.concat(consumeOutbox(hooksDir(), token, sessionId));
 
   // 4. Pending session rename (dashboard rename lands here via the mirror).
-  var title = mirror && sessionId && mirror.pendingTitles ? mirror.pendingTitles[sessionId] : null;
+  var title = deliveredTitle;
 
   var specific = {};
   if (parts.length > 0) specific.additionalContext = parts.join('\\n\\n');

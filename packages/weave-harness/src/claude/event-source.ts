@@ -15,6 +15,8 @@ export interface ClaudeHookReport {
   cwd?: string;
   /** Agent hook stdin 捕获的原始 JSON。 */
   payload: string;
+  /** 改名交付回执（随响应实际下发的 sessionTitle；未下发 = null）。 */
+  deliveredTitle?: string | null;
 }
 
 /** 归一化后的入库行（结构对齐 server `repositories/hook-events.ts` 的 HookEventInput）。 */

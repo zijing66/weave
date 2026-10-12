@@ -319,8 +319,8 @@ describe('HookDispatcher', () => {
       pendingTitle: 'dashboard改名',
     });
 
-    // 工具事件（不携带 session_title 上报）：照常下发 sessionTitle 但不落定——
-    // pending 保留，否则下一 UPS 会以旧名经 diff 把 title 自纠回去（改名被吞）
+    // 工具事件（无回执 = 旧 handler，且不携带 session_title 上报）：照常下发
+    // sessionTitle 但不落定——pending 保留，等下一次携带上报的事件落定
     const tool = await dispatcher.onIngest(ctx({ payload: payload({ raw: {} }) }));
     expect(tool.sessionTitle).toBe('dashboard改名');
     expect(sessions.getBySessionId('s1')).toMatchObject({
@@ -353,6 +353,24 @@ describe('HookDispatcher', () => {
       ctx({ payload: payload({ eventType: 'UserPromptSubmit', raw: {} }) }),
     );
     expect(third.sessionTitle).toBeUndefined();
+
+    // 交付回执臂（新 handler）：工具事件无 session_title 上报，回执与 pending
+    // 同值 → 生效当拍即落定（改名在 PostToolUse/Stop 等事件上就会生效）
+    sessions.setPendingTitle('s1', '中途改名');
+    const toolAck = await dispatcher.onIngest(ctx({ deliveredTitle: '中途改名' }));
+    expect(toolAck.sessionTitle).toBe('中途改名');
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '中途改名', pendingTitle: null });
+    // 前面已有 3 次广播（外部采纳 / UPS 落定 / 自纠改回），回执落定 = 第 4 次
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(4);
+
+    // 回执与 pending 不同值（hook 之后用户又改过名）→ 旧回执作废，不落定
+    sessions.setPendingTitle('s1', '再改一次');
+    await dispatcher.onIngest(ctx({ deliveredTitle: '中途改名' }));
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: '再改一次',
+      pendingTitle: '再改一次',
+    });
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(4);
   });
 
   it('没有任何规则命中时返回空对象', async () => {

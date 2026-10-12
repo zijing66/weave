@@ -205,4 +205,21 @@ describe('hook-handler.cjs → inbox → 消费线程 end-to-end', () => {
     expect(drain()).toHaveLength(1);
     expect(hookEvents.listByProject(projectId)).toHaveLength(5);
   });
+
+  it('改名交付回执：mirror 的 pendingTitle 随工具事件下发，回执随采集行回传', async () => {
+    mkdirSync(path.join(hooksDir(), 'mirror'), { recursive: true });
+    const shard = createHash('sha256').update('e2e-token').digest('hex').slice(0, 16);
+    writeFileSync(
+      path.join(hooksDir(), 'mirror', `${shard}.json`),
+      JSON.stringify({ version: 1, project: 'e2e', pendingTitles: { 's-rename': '回执名' }, rules: [] }),
+    );
+    await runHandler(
+      handlerPath,
+      JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's-rename', cwd: projectDir }),
+      { ...process.env, CLAUDE_PROJECT_DIR: projectDir },
+    );
+    const records = drain();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.deliveredTitle).toBe('回执名');
+  });
 });

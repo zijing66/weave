@@ -34,6 +34,8 @@ export interface InboxRecord {
   eventId: number;
   projectId: number;
   input: HookEventInput;
+  /** hook-handler 的改名交付回执（未下发 = null）——透传 dispatcher 落定 pending。 */
+  deliveredTitle?: string | null;
 }
 
 export interface InboxDrainDeps {
@@ -95,13 +97,16 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
   } catch {
     return [];
   }
-  const groups = new Map<string, { project?: ProjectRow; lines: string[]; inputs: HookEventInput[] }>();
+  const groups = new Map<
+    string,
+    { project?: ProjectRow; lines: string[]; inputs: HookEventInput[]; delivered: (string | null)[] }
+  >();
   for (const text of lines) {
     const line = text.trim();
     if (!line) continue;
     const parsed = parseLine(line);
     if (!parsed) continue; // 坏行直接丢（重试无意义）
-    const group = groups.get(parsed.token) ?? { lines: [], inputs: [] };
+    const group = groups.get(parsed.token) ?? { lines: [], inputs: [], delivered: [] };
     group.lines.push(line);
     if (!group.project) {
       group.project = deps.projects.getByToken(parsed.token); // 项目已删 → 整组丢
@@ -114,6 +119,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
     if (!adapter || !parsed.report.eventType) continue; // 不可归一化 → 丢此行
     try {
       group.inputs.push(adapter.normalize(parsed.report, group.project.id) as HookEventInput);
+      group.delivered.push(parsed.report.deliveredTitle ?? null);
     } catch {
       // 单条坏报告不拖垮整批
     }
@@ -127,7 +133,12 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       // worker 无 bus：SSE 由主线程按返回记录补发
       const ids = insertBatch(deps, group.project, group.inputs);
       for (let i = 0; i < group.inputs.length; i++) {
-        records.push({ eventId: ids[i]!, projectId: group.project.id, input: group.inputs[i]! });
+        records.push({
+          eventId: ids[i]!,
+          projectId: group.project.id,
+          input: group.inputs[i]!,
+          deliveredTitle: group.delivered[i] ?? null,
+        });
       }
     } catch {
       failedLines.push(...group.lines);
@@ -284,6 +295,7 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
           raw: null,
         },
         source: record.input.source,
+        deliveredTitle: record.deliveredTitle ?? null,
       })
       .then((outcome) => {
         if (outcome.deferred && record.input.sessionId) {

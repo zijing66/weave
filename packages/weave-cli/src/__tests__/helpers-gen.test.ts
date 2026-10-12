@@ -54,6 +54,7 @@ describe('generateHookHandler（脚本形态）', () => {
     expect(out).toContain('hookEventName');
     expect(out).toContain('additionalContext');
     expect(out).toContain('sessionTitle');
+    expect(out).toContain('deliveredTitle');
     expect(out).toContain('DISPATCH_MARKER');
     expect(out).toContain('consumeOutbox');
     expect(out).toContain('DEDUPE_WINDOW_MS = 60000');
@@ -240,6 +241,9 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     expect(payload.hookSpecificOutput.additionalContext).toContain('插件注入内容');
     expect(payload.hookSpecificOutput.additionalContext).not.toContain('别人的');
     expect(payload.hookSpecificOutput.sessionTitle).toBe('新会话名');
+    // 交付回执随采集行带回——daemon 据此落定 pending（「改名待生效」徽标即刻清除）
+    const ackLine = JSON.parse(readFileSync(inboxPath(), 'utf8').trim().split('\n')[0]!);
+    expect(ackLine.report.deliveredTitle).toBe('新会话名');
     // 消费即删：只剩别会话那条
     const kept = readFileSync(outboxPath(), 'utf8').trim().split('\n');
     expect(kept).toHaveLength(1);
@@ -265,8 +269,13 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     });
     expect(again.status).toBe(0);
     expect(again.stdout).toBe('');
-    // 采集不受守卫影响：两枪都进了 inbox
-    expect(readFileSync(inboxPath(), 'utf8').trim().split('\n')).toHaveLength(2);
+    // 采集不受守卫影响：两枪都进了 inbox；且静默枪没有交付回执（没下发就不落定）
+    const shotLines = readFileSync(inboxPath(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { report: { deliveredTitle: string | null } });
+    expect(shotLines).toHaveLength(2);
+    expect(shotLines.map((l) => l.report.deliveredTitle)).toEqual(['待生效名字', null]);
   });
 
   it('stop_hook_active=true 只对 Stop/SubagentStop 生效，别的注入事件不受影响', async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -304,5 +304,47 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ sessionId: 's1' });
     expect(JSON.parse(lines[0]!).text).toContain('cross');
+  });
+
+  it('deliveredTitle 回执随记录透传 dispatcher：同值落定 pending，不同值不动', async () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const sessions = new SessionRepository(db);
+    sessions.touch('s1', project.id);
+    sessions.setPendingTitle('s1', '生效名');
+    const dispatcher = new HookDispatcher({
+      registry: new HookRuleRegistry(new HookRuleRepository(db)),
+      dispatches: new HookDispatchRepository(db),
+      bus,
+      projects,
+      sessions,
+    });
+    const mkInput = () => ({
+      projectId: project.id,
+      source: 'claude' as const,
+      eventType: 'PostToolUse',
+      sessionId: 's1',
+      payload: JSON.stringify({ eventType: 'PostToolUse', toolName: 'Edit', toolInput: null, raw: {} }),
+    });
+    const input = mkInput();
+
+    // 回执与 pending 同值 → 落定（徽标清除的信号源）
+    handleIngestedRecords(
+      { projects, hooksDir, bus, dispatcher },
+      [{ eventId: hookEvents.insert(input), projectId: project.id, input, deliveredTitle: '生效名' }],
+    );
+    await vi.waitFor(() => {
+      expect(sessions.getBySessionId('s1')?.pendingTitle).toBeNull();
+    });
+
+    // 回执与 pending 不同值 → 旧回执作废，pending 原样
+    sessions.setPendingTitle('s1', '又一次');
+    handleIngestedRecords(
+      { projects, hooksDir, bus, dispatcher },
+      [{ eventId: hookEvents.insert(mkInput()), projectId: project.id, input: mkInput(), deliveredTitle: '生效名' }],
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sessions.getBySessionId('s1')?.pendingTitle).toBe('又一次');
   });
 });

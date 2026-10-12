@@ -30,6 +30,8 @@ export interface IngestContext {
   payload: NormalizedHookPayload;
   /** 事件来源 harness（server.ts 传入 input.source）；规则 harness 过滤按此比对。 */
   source: Harness;
+  /** hook-handler 的改名交付回执：随响应实际下发的 sessionTitle（未下发 = null）。 */
+  deliveredTitle?: string | null;
 }
 
 /**
@@ -102,10 +104,13 @@ export class HookDispatcher {
 
       // 会话 rename 双向（独立于规则匹配）：
       // 读——payload 的 session_title（/rename 或 --name 后下一次上报）做 diff 采纳；
-      // 写——dashboard 挂的 pending_title 随响应下发（sessionTitle 与 /rename 同效），
-      // 落定闸门 = 本事件确实携带 session_title 上报（UserPromptSubmit 等——Claude 只在
-      // 这类事件上处理/回报标题）；工具事件照常下发但保留 pending，否则落定后下一 UPS
-      // 会以旧名经 diff 通道把 title 自纠回去（改名被吞）。reported diff 兼作自纠兜底。
+      // 写——dashboard 挂的 pending_title 经 mirror 随 hook 响应下发（hook-handler
+      // 本地渲染，sessionTitle 与 /rename 同效）。落定闸门 = 交付回执（回执值与
+      // pending 同值 = 本事件确实把新名交给了会话——工具事件（PostToolUse/Stop 等）
+      // 生效当拍即落定，不必等会话下一次上报标题）；旧 handler 无回执时维持
+      // 「携带 session_title 上报」启发式（UserPromptSubmit/SessionStart）。
+      // 回执与 pending 不同值（hook 之后用户又改过名）→ 旧回执作废不落定。
+      // 会话未真正应用时，下一次上报的旧标题经 diff 通道把 title 改回（自纠）。
       const outcome: IngestOutcome = {};
       if (ctx.sessionId) {
         // 会话行由 server 路由 ingest 前 touch（单一 owner），此处只读。
@@ -126,9 +131,10 @@ export class HookDispatcher {
         const pending = this.deps.sessions.getBySessionId(ctx.sessionId)?.pendingTitle;
         if (pending) {
           outcome.sessionTitle = pending;
-          // 携带标题上报的事件上交付即落定（同响应把新名交给会话）；未实际应用时
-          // 下一次上报的旧标题经 diff 通道改回（自纠）。
-          if (reported !== null && this.deps.sessions.confirmPendingTitle(ctx.sessionId, pending)) {
+          if (
+            (ctx.deliveredTitle === pending || reported !== null) &&
+            this.deps.sessions.confirmPendingTitle(ctx.sessionId, pending)
+          ) {
             this.deps.bus.emit({
               kind: 'session.renamed',
               sessionId: ctx.sessionId,

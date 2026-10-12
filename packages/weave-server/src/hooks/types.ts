@@ -17,6 +17,9 @@ export interface HookReport {
   cwd?: string;
   /** Raw JSON captured from the agent's hook stdin. */
   payload: string;
+  /** 改名交付回执：本事件随 hook 响应实际下发的 sessionTitle（未下发 = null）。
+   *  daemon 据此落定 pending_title——徽标在生效当拍清除，不待下一次上报。 */
+  deliveredTitle?: string | null;
 }
 
 /**
