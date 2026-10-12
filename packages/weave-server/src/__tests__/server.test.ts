@@ -238,6 +238,9 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
       openTerminal: async () => {},
       runInTerminal: async () => {},
       countTerminals: async (dirs) => new Map(dirs.map((d) => [d, openedByPath.get(d) ?? 0])),
+      listTerminals: async (dir) => [
+        { id: 'deadbeef:1:2', windowId: 1, tabId: 2, title: dir, matchCount: 2, paneCount: 3, active: true },
+      ],
     };
     server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -260,5 +263,24 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
     expect(counts[ids[0]!]).toBe(3);
     expect(counts[ids[1]!]).toBe(0); // 无终端 → 0（角标不显示）
     expect((await fetch(`http://127.0.0.1:${port}/terminals/counts`)).status).toBe(401);
+  });
+
+  it('GET /projects/:id/terminals 返回可附加目标（wezterm preset 才枚举）；未知项目 404', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/terminals`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      projectId: number;
+      terminals: Array<{ id: string; matchCount: number; active: boolean }>;
+    };
+    expect(body.projectId).toBe(ids[0]);
+    expect(body.terminals).toHaveLength(1);
+    expect(body.terminals[0]).toMatchObject({ id: 'deadbeef:1:2', matchCount: 2, active: true });
+    expect(
+      (await fetch(`http://127.0.0.1:${port}/projects/9999/terminals`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      })).status,
+    ).toBe(404);
   });
 });

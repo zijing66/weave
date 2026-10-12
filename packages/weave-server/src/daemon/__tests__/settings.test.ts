@@ -18,6 +18,9 @@ import {
   planWeztermNewWindow,
   weztermActiveWorkspaceOf,
   countWindowsByDir,
+  attachTargetsFromMuxes,
+  parseAttachTargetId,
+  planWeztermGrid,
   type WeztermPaneInfo,
   type WeztermMuxPane,
 } from '../opener.js';
@@ -463,7 +466,7 @@ describe('wezterm mux 会话通道（纯函数）', () => {
     top: number,
     tabId = 0,
     cwd = 'file:///p/proj',
-  ): WeztermPaneInfo => ({ windowId: 0, tabId, paneId, cwd, left, top });
+  ): WeztermPaneInfo => ({ windowId: 0, tabId, paneId, cwd, left, top, isActive: false, title: null });
 
   it('parseWeztermPanes 提取布局字段，坏输入塌成空表', () => {
     expect(parseWeztermPanes(null)).toEqual([]);
@@ -472,10 +475,30 @@ describe('wezterm mux 会话通道（纯函数）', () => {
     const real = JSON.stringify([
       { window_id: 0, tab_id: 0, pane_id: 0, cwd: 'file:///D:/x', left_col: 0, top_row: 0 },
       { window_id: 0, tab_id: 0, pane_id: 2, cwd: null, left_col: 0, top_row: 27 },
+      {
+        window_id: 1,
+        tab_id: 3,
+        pane_id: 5,
+        cwd: 'file:///D:/y',
+        left_col: 0,
+        top_row: 0,
+        is_active: true,
+        title: '✳ 修复登录',
+      },
     ]);
     expect(parseWeztermPanes(real)).toEqual([
-      { windowId: 0, tabId: 0, paneId: 0, cwd: 'file:///D:/x', left: 0, top: 0 },
-      { windowId: 0, tabId: 0, paneId: 2, cwd: null, left: 0, top: 27 },
+      { windowId: 0, tabId: 0, paneId: 0, cwd: 'file:///D:/x', left: 0, top: 0, isActive: false, title: null },
+      { windowId: 0, tabId: 0, paneId: 2, cwd: null, left: 0, top: 27, isActive: false, title: null },
+      {
+        windowId: 1,
+        tabId: 3,
+        paneId: 5,
+        cwd: 'file:///D:/y',
+        left: 0,
+        top: 0,
+        isActive: true,
+        title: '✳ 修复登录',
+      },
     ]);
   });
 
@@ -567,6 +590,105 @@ describe('wezterm mux 会话通道（纯函数）', () => {
         ]),
       ),
     ).toBe('ws-live');
+  });
+});
+
+describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹窗）', () => {
+  const pane = (
+    windowId: number,
+    tabId: number,
+    paneId: number,
+    cwd: string | null,
+    isActive = false,
+    title: string | null = null,
+  ): WeztermPaneInfo => ({
+    windowId,
+    tabId,
+    paneId,
+    cwd,
+    left: 0,
+    top: 0,
+    isActive,
+    title,
+  });
+
+  it('排序：最近活跃的 mux 在前；同 mux 内含聚焦 tab 在前，其余按 tabId 降序', () => {
+    const muxes = [
+      {
+        socket: '/socks/gui-sock-2222',
+        idleMs: 60_000, // 更旧
+        panes: [pane(0, 9, 90, 'file:///p/proj', true, '旧实例')],
+      },
+      {
+        socket: '/socks/gui-sock-1111',
+        idleMs: 1_000, // 最近活跃
+        panes: [
+          pane(0, 2, 20, 'file:///p/proj'),
+          pane(0, 7, 70, 'file:///p/proj', true, '✳ 修复登录'),
+          pane(1, 5, 50, 'file:///p/proj'),
+        ],
+      },
+    ];
+    const targets = attachTargetsFromMuxes('/p/proj', muxes, 'linux');
+    expect(targets.map((t) => [t.windowId, t.tabId])).toEqual([
+      [0, 7], // 活跃 tab 先（同 mux）
+      [1, 5], // 其余按 tabId 降序
+      [0, 2],
+      [0, 9], // 旧 mux 垫底
+    ]);
+    expect(targets[0]).toMatchObject({
+      title: '✳ 修复登录',
+      active: true,
+      matchCount: 1,
+      paneCount: 1,
+    });
+    expect(targets[2]).toMatchObject({ active: false, title: null });
+    // id 不透明：不含本机 socket 路径
+    expect(targets[0]!.id).toMatch(/^[0-9a-f]{8}:\d+:\d+$/);
+    expect(targets[0]!.id).not.toContain('gui-sock');
+  });
+
+  it('matchCount 只数 cwd 命中该目录的 pane（窗口级 tab 计数仍为全量）', () => {
+    const muxes = [
+      {
+        socket: '/socks/gui-sock-1',
+        idleMs: 0,
+        panes: [
+          pane(0, 1, 10, 'file:///p/proj'),
+          pane(0, 1, 11, 'file:///p/proj'),
+          pane(0, 1, 12, 'file:///p/other'),
+        ],
+      },
+    ];
+    const [t] = attachTargetsFromMuxes('/p/proj', muxes, 'linux');
+    expect(t).toMatchObject({ matchCount: 2, paneCount: 3 });
+  });
+
+  it('parseAttachTargetId 往返；坏 id → null', () => {
+    const id = attachTargetsFromMuxes(
+      '/p/proj',
+      [{ socket: '/socks/gui-sock-1', idleMs: 0, panes: [pane(3, 4, 40, 'file:///p/proj')] }],
+      'linux',
+    )[0]!.id;
+    expect(parseAttachTargetId(id)).toEqual({
+      muxKey: id.slice(0, 8),
+      windowId: 3,
+      tabId: 4,
+    });
+    expect(parseAttachTargetId('nope')).toBeNull();
+    expect(parseAttachTargetId('zzz:1:2')).toBeNull();
+    expect(parseAttachTargetId('deadbeef:x:2')).toBeNull();
+  });
+
+  it('planWeztermGrid：指定 tab 内单独推导落点（定点附加复用同一网格规则）', () => {
+    expect(planWeztermGrid([pane(0, 1, 10, 'file:///p/proj')])).toEqual({
+      paneId: 10,
+      direction: 'right',
+    });
+    expect(
+      planWeztermGrid([pane(0, 1, 10, 'file:///p/proj'), pane(0, 1, 11, 'file:///p/proj', false)]),
+    ).toEqual({ paneId: 10, direction: 'right' });
+    expect(planWeztermGrid([])).toBeNull();
   });
 });
 

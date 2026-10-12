@@ -10,7 +10,7 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createWeaveServer } from '../daemon/server.js';
-import { setDaemonSettingsDb, type TerminalSettings } from '../daemon/settings.js';
+import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from '../daemon/settings.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 const TOKEN = 'daemon-token';
@@ -23,6 +23,7 @@ describe('POST /sessions/:id/open-terminal', () => {
   let projectPath: string;
   let opener: ProjectOpener & {
     runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
+    atCalls: Array<{ dir: string; argv: string[]; target: string }>;
   };
 
   const post = (url: string, auth = `Bearer ${TOKEN}`): Promise<Response> =>
@@ -57,10 +58,14 @@ describe('POST /sessions/:id/open-terminal', () => {
 
     opener = {
       runCalls: [],
+      atCalls: [],
       openExplorer: async () => {},
       openTerminal: async () => {},
       runInTerminal: async (dir, argv, terminal) => {
         opener.runCalls.push({ dir, argv, terminal });
+      },
+      runInTerminalAt: async (dir, argv, target) => {
+        opener.atCalls.push({ dir, argv, target });
       },
     };
     setDaemonSettingsDb(db);
@@ -94,6 +99,46 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(opener.runCalls[0]!.dir).toBe(projectPath);
     expect(opener.runCalls[0]!.argv).toEqual(['claude', '--resume', SESSION]);
     expect(opener.runCalls[0]!.terminal.preset).toBe('auto');
+  });
+
+  it('带 target：定点附加走 runInTerminalAt，不落到自动落点', async () => {
+    const before = opener.runCalls.length;
+    const res = await fetch(`http://127.0.0.1:${port}/sessions/${SESSION}/open-terminal`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'deadbeef:1:2' }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { target?: string }).toMatchObject({ target: 'deadbeef:1:2' });
+    expect(opener.atCalls).toEqual([
+      { dir: projectPath, argv: ['claude', '--resume', SESSION], target: 'deadbeef:1:2' },
+    ]);
+    expect(opener.runCalls).toHaveLength(before);
+  });
+
+  it('带 target 但 preset 非 wezterm → 400（明确拒绝，不静默忽略）', async () => {
+    await writeDaemonSettings({
+      terminal: { preset: 'wt', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/sessions/${SESSION}/open-terminal`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ target: 'deadbeef:1:2' }),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain(
+        'cannot attach to a chosen pane',
+      );
+    } finally {
+      await writeDaemonSettings({
+        terminal: { preset: 'auto', customCommand: '' },
+        locale: 'zh-CN',
+        hooks: { enabled: true },
+      });
+    }
   });
 
   it('returns 501 for harness without interactive resume (codex)', async () => {

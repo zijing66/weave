@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { TerminalSettings } from './settings.js';
@@ -307,6 +308,10 @@ export interface WeztermPaneInfo {
   cwd: string | null;
   left: number;
   top: number;
+  /** 该 pane 是否当前聚焦（多终端弹窗的排序信号之一）。 */
+  isActive: boolean;
+  /** pane 标题（claude 的 OSC 标题）——弹窗标签的素材，缺省回落窗口/Tab 号。 */
+  title: string | null;
 }
 
 export type WeztermDirection = 'right' | 'bottom';
@@ -338,6 +343,8 @@ export function parseWeztermPanes(jsonText: string | null): WeztermPaneInfo[] {
       cwd: typeof row.cwd === 'string' ? row.cwd : null,
       left: typeof row.left_col === 'number' ? row.left_col : 0,
       top: typeof row.top_row === 'number' ? row.top_row : 0,
+      isActive: row.is_active === true,
+      title: typeof row.title === 'string' && row.title ? row.title : null,
     });
   }
   return panes;
@@ -410,20 +417,11 @@ function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.
 }
 
 /**
- * 同项目复用布局：网格按 1 2 / 3 4 / 5 6 生长 —— 首个分屏向右开列，之后
- * 矮列的底格向下延伸，等高取左列。坐标用 `cli list` 报的 left_col/top_row，
+ * 一个 tab 内的网格生长：网格按 1 2 / 3 4 / 5 6 生长 —— 首个分屏向右开列，
+ * 之后矮列的底格向下延伸，等高取左列。坐标用 `cli list` 报的 left_col/top_row，
  * 用户手工增删 pane 后依旧推导得出，不落持久状态。
  */
-export function planWeztermReuse(
-  dir: string,
-  panes: WeztermPaneInfo[],
-  platform: NodeJS.Platform = process.platform,
-): WeztermSplitTarget | null {
-  const key = normalizeDirKey(dir, platform);
-  if (!key) return null;
-  const tabId = pickWeztermTab(key, panes, platform);
-  if (tabId === null) return null;
-  const tabPanes = panes.filter((p) => p.tabId === tabId);
+export function planWeztermGrid(tabPanes: WeztermPaneInfo[]): WeztermSplitTarget | null {
   if (tabPanes.length === 0) return null;
   if (tabPanes.length === 1) return { paneId: tabPanes[0]!.paneId, direction: 'right' };
   // 列 = left 值分组（升序）；单列 → 底格向右开第二列；多列 → 矮列底格向下
@@ -446,11 +444,109 @@ export function planWeztermReuse(
   return { paneId: target[0]!.paneId, direction: 'bottom' };
 }
 
+/**
+ * 同项目复用布局：挑「cwd 匹配该项目的 pane 最多」的 tab（平手取最早 tab），
+ * 再按 tab 内网格生长推导落点。
+ */
+export function planWeztermReuse(
+  dir: string,
+  panes: WeztermPaneInfo[],
+  platform: NodeJS.Platform = process.platform,
+): WeztermSplitTarget | null {
+  const key = normalizeDirKey(dir, platform);
+  if (!key) return null;
+  const tabId = pickWeztermTab(key, panes, platform);
+  if (tabId === null) return null;
+  return planWeztermGrid(panes.filter((p) => p.tabId === tabId));
+}
+
 /** 新项目窗：最近活跃 client 的 workspace（拿不到就省略，进 mux 默认 workspace）。 */
 export function planWeztermNewWindow(dir: string, workspace: string | null): string[] {
   const args = ['cli', 'spawn', '--new-window', '--cwd', dir];
   if (workspace) args.push('--workspace', workspace);
   return args;
+}
+
+/** 会话终端可附加目标（多终端弹窗的选项）：wezterm 一个窗口内的一个 tab。 */
+export interface WeztermAttachTarget {
+  /** 不透明 id（`<mux 短哈希>:<windowId>:<tabId>`）——web 只见 id，不见本机 socket 路径。 */
+  id: string;
+  windowId: number;
+  tabId: number;
+  /** tab 聚焦 pane 的标题（claude 的 OSC 标题）；null 由前端回落「窗口 W · Tab T」文案。 */
+  title: string | null;
+  /** cwd 命中请求目录的 pane 数 / 该 tab 总 pane 数。 */
+  matchCount: number;
+  paneCount: number;
+  /** 该 tab 内含聚焦 pane（窗口正看着它）。 */
+  active: boolean;
+}
+
+/** mux socket → 不透明短标识（不回传本机路径）。 */
+export function weztermMuxKey(socket: string): string {
+  return createHash('sha256').update(socket).digest('hex').slice(0, 8);
+}
+
+/** 目标 id ↔ (mux, window, tab) 解码；坏 id → null。 */
+export function parseAttachTargetId(
+  id: string,
+): { muxKey: string; windowId: number; tabId: number } | null {
+  const m = /^([0-9a-f]{8}):(\d+):(\d+)$/.exec(id);
+  if (!m) return null;
+  return { muxKey: m[1]!, windowId: Number(m[2]), tabId: Number(m[3]) };
+}
+
+/**
+ * 目标列表（纯函数）：按「最近活跃」从上往下排——① 整个 wezterm 实例更近活跃
+ * （mux 的 client idle 更小）在前；② 同实例内含聚焦 pane 的 tab 在前；③ 其余
+ * 按 tabId 降序（tab 越晚创建越可能更近用过）。`cli list` 不报任何时间戳，
+ * 这是可得信号下的最佳近似。
+ */
+export function attachTargetsFromMuxes(
+  dir: string,
+  muxes: readonly { socket: string; idleMs: number; panes: WeztermPaneInfo[] }[],
+  platform: NodeJS.Platform = process.platform,
+): WeztermAttachTarget[] {
+  const key = normalizeDirKey(dir, platform);
+  const out: WeztermAttachTarget[] = [];
+  for (const mux of [...muxes].sort((a, b) => a.idleMs - b.idleMs)) {
+    const byTarget = new Map<string, WeztermPaneInfo[]>();
+    for (const p of mux.panes) {
+      const k = `${p.windowId}:${p.tabId}`;
+      const list = byTarget.get(k) ?? [];
+      list.push(p);
+      byTarget.set(k, list);
+    }
+    const rows: WeztermAttachTarget[] = [];
+    for (const [k, panes] of byTarget) {
+      const windowId = Number(k.slice(0, k.indexOf(':')));
+      const tabId = Number(k.slice(k.indexOf(':') + 1));
+      const focus = panes.find((p) => p.isActive) ?? panes[0]!;
+      rows.push({
+        id: `${weztermMuxKey(mux.socket)}:${windowId}:${tabId}`,
+        windowId,
+        tabId,
+        title: focus.title,
+        matchCount: key
+          ? panes.filter((p) => normalizeDirKey(p.cwd, platform) === key).length
+          : 0,
+        paneCount: panes.length,
+        active: panes.some((p) => p.isActive),
+      });
+    }
+    rows.sort((a, b) => Number(b.active) - Number(a.active) || b.tabId - a.tabId);
+    out.push(...rows);
+  }
+  return out;
+}
+
+/** 目标列表（实时枚举，不吃探活缓存——用户手一划就可能关掉窗）。 */
+export async function listAttachTargets(
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<WeztermAttachTarget[]> {
+  const { muxes } = await weztermLiveMuxes();
+  return attachTargetsFromMuxes(dir, muxes, platform);
 }
 
 /** 活跃 client：workspace + idle 毫秒（idle 还用来在多个 mux 之间选最活跃的）。 */
@@ -657,14 +753,29 @@ async function runInWezterm(dir: string, argv: string[]): Promise<void> {
   }
   // 无命中 → 在最近活跃（idle 最小）的 mux 开新窗
   chosen ??= muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
+  await weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
+}
+
+/**
+ * spawn（分屏/新窗）+ send-text 投递：runInWezterm 与定点附加共用的尾部。
+ * split = null → 开新窗口。任何一步失败一律 throw（路由 400 → 前端报因）。
+ */
+async function weztermSpawnAndSend(
+  socket: string,
+  dir: string,
+  argv: string[],
+  split: WeztermSplitTarget | null,
+  workspace: string | null,
+): Promise<void> {
+  const platform = process.platform;
   const spawnArgs = split
     ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
-    : planWeztermNewWindow(dir, chosen.workspace);
-  const spawned = await weztermCli(spawnArgs, chosen.socket);
-  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, chosen.socket, spawned));
+    : planWeztermNewWindow(dir, workspace);
+  const spawned = await weztermCli(spawnArgs, socket);
+  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, socket, spawned));
   const paneId = spawned.out.trim();
   if (!/^\d+$/.test(paneId)) {
-    throw new Error(`wezterm[${basename(chosen.socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
+    throw new Error(`wezterm[${basename(socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
   }
   const sendArgs = [
     'cli',
@@ -674,8 +785,26 @@ async function runInWezterm(dir: string, argv: string[]): Promise<void> {
     '--no-paste',
     `${joinCmd(argv, platform)}\r`,
   ];
-  const sent = await weztermCli(sendArgs, chosen.socket);
-  if (!sent?.ok) throw new Error(weztermStepError(sendArgs, chosen.socket, sent));
+  const sent = await weztermCli(sendArgs, socket);
+  if (!sent?.ok) throw new Error(weztermStepError(sendArgs, socket, sent));
+}
+
+/**
+ * 定点附加（用户在会话终端弹窗里选的 tab）：实时重枚举定位目标，目标不在了
+ * 就 throw——让前端报「该终端已关闭，请重选」，绝不静默换到别处（换了就是
+ * 「我点了 A，命令进了 B」）。
+ */
+export async function runInWeztermAt(dir: string, argv: string[], targetId: string): Promise<void> {
+  const parsed = parseAttachTargetId(targetId);
+  if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
+  const { muxes } = await weztermLiveMuxes();
+  const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
+  if (!mux) throw new Error('wezterm instance is gone — pick a terminal again');
+  const tabPanes = mux.panes.filter(
+    (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
+  );
+  if (tabPanes.length === 0) throw new Error('terminal tab is gone — pick a terminal again');
+  await weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace);
 }
 
 /**
@@ -722,6 +851,10 @@ export interface ProjectOpener {
   runInTerminal(dir: string, argv: string[], terminal: TerminalSettings): Promise<void>;
   /** 已打开终端窗口计数（可选：不实现的 spy 由路由回落到默认实现）。 */
   countTerminals?(dirs: string[], terminal: TerminalSettings): Promise<Map<string, number>>;
+  /** 可附加终端目标列表（可选）：多终端选择弹窗的数据面。 */
+  listTerminals?(dir: string): Promise<WeztermAttachTarget[]>;
+  /** 定点附加到指定目标 tab（可选）：会话终端选择后的落点。 */
+  runInTerminalAt?(dir: string, argv: string[], targetId: string): Promise<void>;
 }
 
 export const defaultProjectOpener: ProjectOpener = {
@@ -729,4 +862,6 @@ export const defaultProjectOpener: ProjectOpener = {
   openTerminal: openInTerminal,
   runInTerminal,
   countTerminals: countOpenTerminals,
+  listTerminals: listAttachTargets,
+  runInTerminalAt: runInWeztermAt,
 };

@@ -1221,6 +1221,26 @@ async function handleRequest(
     return;
   }
 
+  // GET /projects/:id/terminals — 会话终端「选哪个终端」弹窗的数据面：
+  // 按最近活跃排序的可附加目标（窗口内的 tab）；非 wezterm preset 无枚举通道 → 空表。
+  const terminalsMatch = pathname.match(/^\/projects\/(\d+)\/terminals$/);
+  if (terminalsMatch && req.method === 'GET') {
+    if (!requireAuth()) return;
+    const project = deps.projects.getById(Number(terminalsMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const settings = await readDaemonSettings();
+    const list = deps.opener?.listTerminals ?? defaultProjectOpener.listTerminals!;
+    const terminals =
+      settings.terminal.preset === 'wezterm' || settings.terminal.preset === 'auto'
+        ? await list(project.path)
+        : [];
+    sendJson(res, 200, { projectId: project.id, terminals });
+    return;
+  }
+
   // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
   // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
   if (pathname === '/terminals/counts' && req.method === 'GET') {

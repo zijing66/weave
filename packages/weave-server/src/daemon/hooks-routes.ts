@@ -386,13 +386,41 @@ export async function handleHooksRoutes(
       return true;
     }
     const opener = deps.opener ?? defaultProjectOpener;
+    // 多终端弹窗选定的目标（可选）：定点附加到那个 tab；缺省 = 自动选落点。
+    let target: string | undefined;
+    if (req.method === 'POST') {
+      try {
+        const raw = (await readJson(req)) as { target?: unknown };
+        if (typeof raw?.target === 'string' && raw.target) target = raw.target;
+      } catch {
+        // 空 body 合法（老前端不带 body）——不是 JSON 就当没给 target
+      }
+    }
     try {
       const info = await stat(project.path);
       if (!info.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
       const settings = await readDaemonSettings();
       const argv = [spec.bin, ...spec.openArgs(sessionId)];
-      await opener.runInTerminal(project.path, argv, settings.terminal);
-      sendJson(res, 200, { ok: true, sessionId, command: argv.join(' '), cwd: project.path });
+      if (target) {
+        // 定点附加只有 wezterm mux 有 pane 通道；其它 preset 明确拒绝而非静默忽略。
+        if (settings.terminal.preset !== 'wezterm' && settings.terminal.preset !== 'auto') {
+          throw new Error(
+            `Terminal preset "${settings.terminal.preset}" cannot attach to a chosen pane — pick wezterm in settings`,
+          );
+        }
+        const runAt = opener.runInTerminalAt;
+        if (!runAt) throw new Error('Targeted attach is unavailable');
+        await runAt(project.path, argv, target);
+      } else {
+        await opener.runInTerminal(project.path, argv, settings.terminal);
+      }
+      sendJson(res, 200, {
+        ok: true,
+        sessionId,
+        command: argv.join(' '),
+        cwd: project.path,
+        ...(target ? { target } : {}),
+      });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }
