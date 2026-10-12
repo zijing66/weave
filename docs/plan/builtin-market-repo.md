@@ -115,8 +115,9 @@ packages/weave-templates/resources/weave-market/
   `source:'dir'`、`origin` = 包内绝对路径、`importedAt`），不新增格式。
 - 行形态：`libraries.add({ path: 'market/weave', kind: 'both' })`（`toRelPosix` 已有）。
   **`marketIdOf` 天然得出 id `weave`** → 所有内置包键 = `name@weave`，与今日完全一致。
-- **落地用复制而非链接**（与 D5 的装面链接区分）：目标是 npm 包安装目录，跨升级会变址，
-  链接会指向失效路径；仓内容小且随包版本走，复制是稳的。此点写进代码注释（非显然 WHY）。
+- ~~**落地用复制而非链接**~~ → **修订为链接（失败回退复制）**，见批 2 的「D2 修订说明」：
+  落点是只读包内容而非数据，「公共全局位置优先链接」直接适用；变址由「启动比对
+  `realpath`、不一致即重铺」覆盖；写入风险为零（扫描缓存在兄弟目录 `.weave-scans/`）。
 - **守卫**（`daemon/server.ts` 的 market 路由）：
   - `DELETE /market/weave` → 409（内置仓不可删）；
   - `POST /market/refresh` 命中内置仓 → 重新从包落地（= 「更新内置」语义，天然幂等）；
@@ -345,7 +346,8 @@ L1 仓库 namespace 折叠块
 
 **批 3 并入本批**：批 3 的实质内容（`getCommandsSourceDir`/`getAgentsSourceDir` 改指仓内 `init/`、`getSkillsSourceDir` 的 no-op 注释收口）必须与搬迁同批完成，否则 init 会指向不存在的路径；MANIFEST 又决定保持手写。故 **批 3 已由本批吸收，不再单独成批**（下述批 3 条目作废）。
 
-### ☐ 批 2 —— 落地 + 扫描源切换
+### ☑ 批 2 —— 落地 + 扫描源切换 —— `4100282`
+
 - 新增落地模块（落 `packages/weave-server/src/market/`，不进 harness）：
   `ensureBuiltinMarket()`（版本标记比对 → `rm -rf` + `cp` + 写 `.weave-market.json` + upsert
   `libraries` 行）与 `builtinMarketRoot()`。
@@ -358,6 +360,26 @@ L1 仓库 namespace 折叠块
   并加结构守卫断言（入口必须调它、不得各自 `cp`）。
 - 硬闸：**内置包注册键与包 id 零变**；`market-roots.test.ts`（排除内置仓后行为不变）零改；
   libraries 相关断言按 H4 结论处置。
+
+**实施记录（批 2 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 落点形态 | **链接（失败回退复制）**，非计划原定的「复制」。理由见 D2 修订：落点是只读包内容、不是数据，「公共全局位置优先链接」直接适用；且开发态 `__dirname` 落在 `src/`，链接让「改仓即改内置」**无需重建即生效**（实测：`<dataDir>/market/weave` → `packages/weave-templates/src/resources/weave-market`）。 |
+| 幂等 | 落点已指向当前源（`realpath` 相等）→ `changed:false` 不动盘；源变更或落点是旧复制件 → `removeInstalled`（lstat 判定）后重铺。 |
+| 行登记 | `libraries.add({path:'market/weave', kind:'both'})` 幂等（`INSERT OR IGNORE`）；即使 DB 重建也会补回。 |
+| 排除 | `marketLibraryRoots` 按 `isBuiltinMarketDir` 排除 —— 实测「总包数 11、无重复」印证排除生效（否则每个内置包出现两条）。 |
+| 路由守卫 | DELETE 命中内置 → 409；refresh 命中内置 → 重新落地；check-updates 跳过内置。另**加固**：DELETE 的删除原语由裸 `rm -rf` 换成 `removeInstalled`（市场落点现在可能是链接，裸 rm 会删穿到包内/外部源 —— 既有隐患，与引入链接直接相关）。 |
+| 装配 | 两入口都在 `loadAllPlugins` **之前** `await ensureBuiltinMarket`；新增结构守卫测试钉住顺序与「入口不自拼链接原语」。 |
+| 新增测试 | `market/__tests__/builtin.test.ts`（6 例，含「重铺不删穿源」「排除内置仍收其它市场根」）、`daemon/__tests__/builtin-market-wiring.test.ts`（3 例）。 |
+| 硬闸 | 零改：`hooks-server` / `toolkit-toggle` / `toolkit-scan` / `install` / `harness` 全部零改。显式修订组 1 条：`toolkit-loader.test.ts` 的 `loadAllPlugins` 冒烟（须重定向 dataDir 并先落地）。 |
+| 新增不变量 | **库实例的 `dataDir` 必须与 `getDataDir()` 同根**（生产态是默认值）。落地写 `<dataDir>/market/weave`，而装载根由 `getDataDir()` 推导；不同根就错位，表现为「内置包静默消失」。已在测试注释中写明。 |
+| 门禁 | `pnpm build` / `build:web` 全 0；全仓 **105 文件 / 1117 测试全绿**。实机：`/market` 列出内置行（tags: command 4 / agent 4 / plugin 11 / mods 2），内置包仍 8 个。 |
+
+**D2 修订说明**：计划原写「落地用复制而非链接，理由：目标是 npm 包安装目录，跨升级会变址」。
+实测与权衡后改为**链接**：①用户明确要求「公共全局位置优先符号链接」；②复制会在数据目录
+里再存一份内置资源，与该需求的去重初衷相悖；③变址问题由「启动时比对 `realpath`、不一致
+就重铺」覆盖；④写入风险为零（落点是只读包内容，扫描缓存写在兄弟目录 `.weave-scans/`）。
 
 ### ☒ 批 3 —— init 供源切换（D9）·已并入批 1
 
