@@ -458,7 +458,8 @@ L1 仓库 namespace 折叠块
 | i18n | 新增 `repo.*`（共享一级维度）、`hooks.pluginsAndRules` / `hooks.localRules` / `hooks.plugins.expand,│collapse`、`toolkit.scopeRoot` / `toolkit.expandAll*`；删 `toolkit.title` / `toolkit.groupClaude` / `toolkit.groupPacks` / `toolkit.claudeGroupHint`、`hooks.rulesTitle` / `hooks.plugins.title`、`hooks.plugins.install*`。`library.*` 与 `platform` 文案里的「资源管理 · 工具箱」改「资源管理 ▸ Plugins」。`dict.test` zh/en 成对。 |
 | 副作用修复 | 门禁逼出一处**写穿链接**：`importLibraryIntoMarket` 对已在市场内的库补清单时，若该库是内置仓（落点 = 指向包内容的链接）会把 `.weave-market.json` **写进 `packages/weave-templates/src/resources/weave-market/`**（实测已在包目录里留下一份，已清除）。同批加拒入 + 回归用例（D2「写入风险为零」的前提由此闭合）。 |
 | 硬闸 | 零改：`hooks-server` / `toolkit-scan` / `install-capabilities` / `skill-stats` / `file-tags` / 项目态技能网格。显式修订组 2 条：`toolkit-toggle.test.ts` 闸⑤ 的 strip 集合加 `namespace`（与 `key` 同源，随来源而异）；`market-roots.test.ts` 补 `namespace` 断言 + 新增「内置仓落地后 namespace = weave」用例。 |
-| 门禁 | `pnpm build` / `pnpm build:web` 全 0；全仓 **106 文件 / 1139 测试全绿**。 |
+| 门禁 | `pnpm build` / `pnpm build:web` 全 0；全仓 **106 文件 / 1122 测试全绿**。 |
+| 协作事故 | 本批与并行会话共用一个工作区：我用 `git update-index --cacheinfo` 只想暂存 api.ts 的**单个 hunk**，却覆盖了并行会话刚暂存的同文件条目 → 其 `ef1eebb`（移除 daemon token 鉴权）的 api.ts 那 4 行被我的 hunk 顶替、token 移除随之回退。已在 00c591f 一并恢复。**教训：共享工作区不做索引级操作**（对方 `git commit` 提交的是整个索引）。 |
 
 ### ☐ 批 7 —— Files 合并视图 namespace 标记 + 右栏口径对齐（D8）
 - 改：`lib/file-tags.ts`（namespace tag）、`FileAssetTree.tsx`、`server.ts` 的
