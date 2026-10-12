@@ -154,6 +154,44 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(hookEvents.listByProject(other.id)).toHaveLength(1);
     expect(existsSync(file)).toBe(false);
   });
+
+  it('仅 SessionStart 的新会话：事件照收，但不建会话行（空会话不入库）', () => {
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-empty'));
+
+    const records = drainInboxOnce(deps());
+    expect(records).toHaveLength(1); // 事件照收（采集日志完整）
+    expect(hookEvents.listByProject(projectId).map((r) => r.eventType)).toEqual(['SessionStart']);
+    // 核心判据：空会话不建档 → 会话列表永不被它污染
+    expect(hookSessions.list(projectId)).toHaveLength(0);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('带真实事件的那批才建档；早先漏记的 SessionStart 经 session_id 归队', () => {
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-late'));
+    drainInboxOnce(deps());
+    expect(hookSessions.list(projectId)).toHaveLength(0);
+
+    writeFileSync(file, inboxLine(TOKEN, 'UserPromptSubmit', 's-late'));
+    const records = drainInboxOnce(deps());
+    expect(records).toHaveLength(1);
+    expect(hookSessions.list(projectId).map((s) => s.sessionId)).toEqual(['s-late']);
+    // 归队：事件计数把早先漏记的 SessionStart 一并算进（链语义不破）
+    const row = hookSessions.listWithCounts(projectId).find((s) => s.sessionId === 's-late');
+    expect(row?.eventCount).toBe(2);
+    expect(row?.lastEventType).toBe('UserPromptSubmit');
+  });
+
+  it('已有会话行照常 touch（resume 的 SessionStart 放行）', () => {
+    hookSessions.touch('s-res', projectId);
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-res'));
+
+    drainInboxOnce(deps());
+    const rows = hookSessions.list(projectId);
+    expect(rows.map((r) => r.sessionId)).toEqual(['s-res']);
+  });
 });
 
 describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {

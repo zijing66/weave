@@ -169,10 +169,29 @@ function insertBatch(deps: InboxDrainDeps, project: ProjectRow, inputs: HookEven
   for (const input of inputs) {
     if (input.sessionId && !touched.has(input.sessionId)) {
       touched.add(input.sessionId);
-      deps.hookSessions.touch(input.sessionId, project.id);
+      if (needsSessionRow(deps.hookSessions, input.sessionId, inputs)) {
+        deps.hookSessions.touch(input.sessionId, project.id);
+      }
     }
   }
   return ids;
+}
+
+/**
+ * 会话行建档判据（「仅残留 SessionStart 的会话不入库」的唯一拦截点）：
+ * 库里还没有该会话行、且本批属于它的事件全是 SessionStart → 事件照收
+ * （hook_events 是采集日志、保留期统一清理），但不为它建会话行——开了
+ * 就 /resume 走掉的空会话自此不出现在会话列表。携带真实事件的那一批
+ * 才建档，早先漏记的 SessionStart 经 session_id 自然归队（事件序 =
+ * 插入序，链语义不破）；此改动前的存量空行由 session-sweeper 兜底清。
+ */
+function needsSessionRow(
+  sessions: SessionRepository,
+  sessionId: string,
+  inputs: readonly HookEventInput[],
+): boolean {
+  if (sessions.getBySessionId(sessionId)) return true;
+  return inputs.some((i) => i.sessionId === sessionId && i.eventType !== 'SessionStart');
 }
 
 /** 行形 `{v, token, report}`；require 三样齐全（缺 token 无从归因，直接丢）。 */

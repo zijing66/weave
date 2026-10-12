@@ -24,6 +24,10 @@ export function isEmptySession(
 /**
  * 定时清空会话。候选来自 `listWithCounts()`——它已经 LEFT JOIN 出 eventCount 与
  * lastEventType，零新增 SQL、零 schema 变更。
+ *
+ * 注：新入库路径已不再为「仅 SessionStart」会话建行（inbox-worker 的
+ * needsSessionRow 判据——空会话根本不建档）；本清扫器只是该改动之前
+ * 遗留存量行的兜底。
  */
 export class SessionSweeper {
   constructor(
