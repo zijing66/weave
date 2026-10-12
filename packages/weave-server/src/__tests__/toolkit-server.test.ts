@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { builtinPacksRoot } from '@weavecode/templates';
 import type { DatabaseSync } from 'node:sqlite';
 import { createClaudePluginSurface, type PluginExecutor } from '@weavecode/harness';
 import { openDatabase } from '../db/db.js';
@@ -21,7 +21,7 @@ import { ToolkitService } from '../hooks/toolkit.js';
  */
 
 const TOKEN = 'daemon-token';
-const BUILTIN_ROOT = fileURLToPath(new URL('../hooks/presets/harness-tools/', import.meta.url));
+const BUILTIN_ROOT = builtinPacksRoot();
 
 /** 假 CLI：install 时模拟 CC 写 installed_plugins.json，其余步骤空成功。 */
 const makeFakeExec = (home: string): PluginExecutor => async (args) => {

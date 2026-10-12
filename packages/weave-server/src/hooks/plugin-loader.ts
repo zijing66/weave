@@ -1,7 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { watch as fsWatch } from 'chokidar';
+import { builtinRulesRoot } from '@weavecode/templates';
 import {
   CLAUDE_HOOK_EVENTS,
   HookRuleSchema,
@@ -169,7 +170,7 @@ export class WeavePluginLoader implements PluginHost {
     const loaded: LoadedPluginInfo[] = [];
     for (const name of entries) {
       const dir = path.join(normalizedRoot, name);
-      // 已登记的更深扫描根（批 10：presets/ 下的 harness-tools 树）不作包位，
+      // 已登记的更深扫描根（批 10：工具包深度根）不作包位，
       // 否则会生成幽灵 rejected 条目并误删深度根注册的插件。
       if (this.roots.has(path.resolve(dir)) || path.resolve(dir) === builtinToolkitRootResolved()) {
         continue;
@@ -183,7 +184,7 @@ export class WeavePluginLoader implements PluginHost {
   }
 
   /**
-   * 批 10：工具包深度扫描根（`presets/harness-tools/<scope>/<pack>/` 与 managed
+   * 批 10：工具包深度扫描根（内置仓 `plugins/<scope>/<pack>/` 与 managed
    * 市场资源根）。单层 readdir 见不到 depth-3 嵌套——先递归发现含
    * `weave-plugin.json` 的包位再逐包装载；其余成分（CC 原生/裸表面）由
    * toolkit 服务走文件管线，不进本加载器。
@@ -589,10 +590,10 @@ function patchPluginHandler(handler: unknown, pluginId: string): unknown {
 }
 
 /**
- * SPI 全量加载：工具包扫描根（内置 harness-tools + M3
- * managed 市场资源根，批 10/装载桥）→ 内置 presets → 全局 `<configDir>/weave/plugins/`
+ * SPI 全量加载：工具包扫描根（内置仓 `plugins/` + M3 managed 市场资源根，批 10/装载桥）
+ * → 内置规则包根（内置仓 `rules/`）→ 全局 `<configDir>/weave/plugins/`
  * → 各注册项目 `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
- * 工具包根先注册：浅层 presets 根扫描据此跳过 `harness-tools` 容器目录。
+ * 工具包根先注册：浅层根扫描据此跳过已登记的深度根（不生成幽灵包位）。
  * 任一根目录失败不抛（loadRoot 内部已吞 readdir 错误）。
  */
 export async function loadAllPlugins(
@@ -630,14 +631,9 @@ export async function loadAllPlugins(
     );
   }
 
-  // 内置预设随 dist 发货（tsc 不拷 JSON，批 2 的 build 脚本负责复制 presets 目录）。
-  loaded.push(
-    ...(await loader.loadRoot(
-      fileURLToPath(new URL('./presets/', import.meta.url)),
-      'builtin',
-      null,
-    )),
-  );
+  // 内置规则包随 `@weavecode/templates` 的仓发货（tsc 不拷 JSON/MD，
+  // copy-templates.mjs 负责整目录复制）。
+  loaded.push(...(await loader.loadRoot(builtinRulesRoot(), 'builtin', null)));
   loaded.push(
     ...(await loader.loadRoot(path.join(getDataDir(), 'plugins'), 'global', null)),
   );

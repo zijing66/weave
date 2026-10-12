@@ -92,6 +92,9 @@ importers:
       '@weavecode/harness':
         specifier: workspace:^
         version: link:../weave-harness
+      '@weavecode/templates':
+        specifier: workspace:^
+        version: link:../weave-templates
       chokidar:
         specifier: ^4.0.0
         version: 4.0.3

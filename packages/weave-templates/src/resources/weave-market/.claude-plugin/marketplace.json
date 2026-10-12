@@ -1,0 +1,51 @@
+{
+  "name": "weave",
+  "description": "Weave's built-in resource repository: the packs weave ships (core skills, doc hooks, session mods) plus the rule packs loaded by the Weave runtime.",
+  "owner": {
+    "name": "weave"
+  },
+  "plugins": [
+    {
+      "name": "code-review",
+      "description": "Constructive code review workflow: read the diff, verify findings, report most-severe first",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/code-review"
+    },
+    {
+      "name": "project-navigation",
+      "description": "Locate and understand code fast: Glob/Grep first, read before editing",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/project-navigation"
+    },
+    {
+      "name": "refactoring",
+      "description": "Safe restructuring guidance: tests first, one change at a time, delete dead code",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/refactoring"
+    },
+    {
+      "name": "testing",
+      "description": "Test authoring and execution guidance for this project (vitest, behavior verification)",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/testing"
+    },
+    {
+      "name": "docs-reminder",
+      "description": "Remind to check documentation consistency after Markdown edits (classic hooks, derived from the changelog-reminder fixture)",
+      "version": "0.1.0",
+      "source": "./plugins/doc-hooks/docs-reminder"
+    },
+    {
+      "name": "file-guard",
+      "description": "Deny writes to protected files (.env/secrets/keys) and dangerous Bash patterns, with a toast explaining why",
+      "version": "0.1.0",
+      "source": "./plugins/session-mods/file-guard"
+    },
+    {
+      "name": "mission-control",
+      "description": "Mission control: session/turn tool-call counters in a Pane, an AbovePrompt band and a status entry",
+      "version": "0.1.0",
+      "source": "./plugins/session-mods/mission-control"
+    }
+  ]
+}

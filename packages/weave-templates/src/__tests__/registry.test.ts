@@ -31,10 +31,10 @@ describe('TemplateRegistry', () => {
     expect(resolved).toMatch(/^(\/|[A-Za-z]:\\)/); // absolute path
   });
 
-  it('source dirs point inside the package', () => {
+  it('source dirs point inside the built-in repo', () => {
     const reg = new TemplateRegistry();
     for (const dir of [reg.getSkillsSourceDir(), reg.getCommandsSourceDir(), reg.getAgentsSourceDir()]) {
-      expect(dir).toContain('templates');
+      expect(dir).toMatch(/resources[\\/]weave-market/);
     }
   });
 

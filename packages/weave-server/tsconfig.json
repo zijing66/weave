@@ -5,5 +5,5 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["**/__tests__", "src/hooks/presets"]
+  "exclude": ["**/__tests__"]
 }

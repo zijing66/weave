@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, rm, cp, readdir, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { builtinPacksRoot } from '@weavecode/templates';
 import { DatabaseSync } from 'node:sqlite';
 import { createClaudePluginSurface, type PluginExecutor } from '@weavecode/harness';
 import { openDatabase } from '../../db/db.js';
@@ -34,7 +34,7 @@ import {
  * 一律经市场导入入扫描面，dataDir 经 APPDATA/XDG_CONFIG_HOME 重定向。
  */
 
-const BUILTIN_ROOT = fileURLToPath(new URL('../presets/harness-tools/', import.meta.url));
+const BUILTIN_ROOT = builtinPacksRoot();
 
 /** 文件树快照（rel posix → sha256）：闸①③ 的逐字节比较口径。 */
 async function snapshot(dir: string): Promise<Record<string, string>> {

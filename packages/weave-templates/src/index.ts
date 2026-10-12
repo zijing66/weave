@@ -11,19 +11,23 @@ export interface TemplateEntry {
   description: string;
 }
 
-/** Map of category → entries. Adding a template = adding one line here + the .md file. */
+/**
+ * Map of category → entries. Adding a template = adding one line here + the .md file
+ * in the built-in repo's `init/` (commands/agents carry no frontmatter, so the
+ * description is authored here rather than derived).
+ */
 const MANIFEST: TemplateEntry[] = [
-  // Skills（模板不再自带内置 skill——skills 由工具箱/插件包提供）
+  // Skills（仓内不自带可直拷的 skill——skills 由仓内插件包提供）
   // Commands
-  { name: 'review', category: 'command', sourcePath: 'templates/commands/review.md', description: 'Review branch changes' },
-  { name: 'scaffold', category: 'command', sourcePath: 'templates/commands/scaffold.md', description: 'Generate component scaffold' },
-  { name: 'explain', category: 'command', sourcePath: 'templates/commands/explain.md', description: 'Explain selected code' },
-  { name: 'test', category: 'command', sourcePath: 'templates/commands/test.md', description: 'Write or update tests' },
+  { name: 'review', category: 'command', sourcePath: 'resources/weave-market/init/commands/review.md', description: 'Review branch changes' },
+  { name: 'scaffold', category: 'command', sourcePath: 'resources/weave-market/init/commands/scaffold.md', description: 'Generate component scaffold' },
+  { name: 'explain', category: 'command', sourcePath: 'resources/weave-market/init/commands/explain.md', description: 'Explain selected code' },
+  { name: 'test', category: 'command', sourcePath: 'resources/weave-market/init/commands/test.md', description: 'Write or update tests' },
   // Agents
-  { name: 'coder', category: 'agent', sourcePath: 'templates/agents/coder.md', description: 'Focused implementation agent' },
-  { name: 'reviewer', category: 'agent', sourcePath: 'templates/agents/reviewer.md', description: 'Code review specialist' },
-  { name: 'researcher', category: 'agent', sourcePath: 'templates/agents/researcher.md', description: 'Exploration and analysis agent' },
-  { name: 'planner', category: 'agent', sourcePath: 'templates/agents/planner.md', description: 'Architecture and planning agent' },
+  { name: 'coder', category: 'agent', sourcePath: 'resources/weave-market/init/agents/coder.md', description: 'Focused implementation agent' },
+  { name: 'reviewer', category: 'agent', sourcePath: 'resources/weave-market/init/agents/reviewer.md', description: 'Code review specialist' },
+  { name: 'researcher', category: 'agent', sourcePath: 'resources/weave-market/init/agents/researcher.md', description: 'Exploration and analysis agent' },
+  { name: 'planner', category: 'agent', sourcePath: 'resources/weave-market/init/agents/planner.md', description: 'Architecture and planning agent' },
 ];
 
 export class TemplateRegistry {
@@ -65,17 +69,19 @@ export class TemplateRegistry {
 
   /** Get absolute source directory for skill templates (used by init executor) */
   getSkillsSourceDir(): string {
-    return path.join(__dirname, 'templates', 'skills');
+    // 仓内不自带可直拷的 skill 目录：技能一律以包形态供货（plugins/*/skills/），
+    // 经工具箱按项目启停，故此处保持「无此目录」= 该步 no-op。
+    return path.join(builtinMarketRoot(), 'skills');
   }
 
   /** Get absolute source directory for command templates */
   getCommandsSourceDir(): string {
-    return path.join(__dirname, 'templates', 'commands');
+    return path.join(builtinMarketRoot(), 'init', 'commands');
   }
 
   /** Get absolute source directory for agent templates */
   getAgentsSourceDir(): string {
-    return path.join(__dirname, 'templates', 'agents');
+    return path.join(builtinMarketRoot(), 'init', 'agents');
   }
 
   getAll(): TemplateEntry[] {
@@ -84,3 +90,27 @@ export class TemplateRegistry {
 }
 
 export const templateRegistry = new TemplateRegistry();
+
+/**
+ * 内置仓根（市场形态，随本包发布）：`<pkg>/resources/weave-market/`。
+ * 开发态 `__dirname` 落在 `src/`、发布态落在 `dist/`，两侧都拷到同级同名目录，
+ * 故同一表达式两态皆准。
+ *
+ * 布局（层级是硬约束，见 docs/plan/builtin-market-repo.md D1）：
+ * - `plugins/` —— toolkit 扫描根，**其直接子目录必须是 scope**（core-skills 等）；
+ * - `rules/`   —— SPI 平铺装载根（weave 规则包，不走 toolkit 列表）；
+ * - `init/`    —— init 的 commands/agents 供源（非包、无开关）。
+ */
+export function builtinMarketRoot(): string {
+  return path.join(__dirname, 'resources', 'weave-market');
+}
+
+/** 内置工具包扫描根（toolkit 的 `discoverToolkitPacks` 入口）。 */
+export function builtinPacksRoot(): string {
+  return path.join(builtinMarketRoot(), 'plugins');
+}
+
+/** 内置 SPI 规则包的平铺装载根。 */
+export function builtinRulesRoot(): string {
+  return path.join(builtinMarketRoot(), 'rules');
+}

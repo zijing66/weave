@@ -1,11 +1,11 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, HARNESS_KEYS, type Harness } from '@weavecode/core';
+import { builtinPacksRoot } from '@weavecode/templates';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 
 /**
- * 批 10 工具包扫描：内置 `presets/harness-tools/<scope>/<pack>/` 与 managed
+ * 批 10 工具包扫描：内置仓 `plugins/<scope>/<pack>/` 与 managed
  * 市场资源根走同一条扫描管线，唯一区别是 provenance。
  * 不发明新格式——三种识别沿用既有约定：
  *   ① `.claude-plugin/plugin.json` → CC 插件包（组件清单由原生约定推导）
@@ -65,11 +65,11 @@ const MARKET_MAX_SCAN_LEVEL = 10;
 /** targets 缺省/全无效时的回落。 */
 const DEFAULT_TARGETS: Harness[] = ['claude'];
 
-/** 内置工具包源根（随 copy-presets.mjs 递归拷入 dist，depth-3 无需适配）。 */
+/** 内置工具包源根 = `@weavecode/templates` 随包发布的仓内 `plugins/`。 */
 export function builtinToolkitRoot(): string {
-  // resolve 掉 fileURLToPath 可能保留的尾部分隔符——sourceRoot 参与记录与
-  // source 消歧比较，必须是无尾分隔的规范形。
-  return path.resolve(fileURLToPath(new URL('./presets/harness-tools/', import.meta.url)));
+  // resolve 掉可能的尾部分隔符——sourceRoot 参与记录与 source 消歧比较，
+  // 必须是无尾分隔的规范形。
+  return path.resolve(builtinPacksRoot());
 }
 
 async function isDir(p: string): Promise<boolean> {

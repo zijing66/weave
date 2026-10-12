@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { builtinRulesRoot } from '@weavecode/templates';
 import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
@@ -282,7 +283,7 @@ describe('WeavePluginLoader', () => {
   });
 });
 
-describe('内置预设 presets（随包发货的参考实现）', () => {
+describe('内置规则包（仓内 rules/，随 @weavecode/templates 发货）', () => {
   let db: DatabaseSync;
   let rules: HookRuleRepository;
   let registry: HookRuleRegistry;
@@ -302,7 +303,7 @@ describe('内置预设 presets（随包发货的参考实现）', () => {
   });
 
   it('三个预设全部加载成功，origin=builtin，默认禁用不产生候选，启用后可命中', async () => {
-    const presetsDir = fileURLToPath(new URL('../presets/', import.meta.url));
+    const presetsDir = builtinRulesRoot();
     const loaded = await loader.loadRoot(presetsDir, 'builtin', null);
 
     expect(loaded.map((p) => p.id).sort()).toEqual([
@@ -333,7 +334,7 @@ describe('内置预设 presets（随包发货的参考实现）', () => {
   });
 
   it('预设规则引用的 handler 事件与 filter 符合规范（inject 均在白名单事件上）', async () => {
-    const presetsDir = fileURLToPath(new URL('../presets/', import.meta.url));
+    const presetsDir = builtinRulesRoot();
     await loader.loadRoot(presetsDir, 'builtin', null);
     for (const rule of rules.list()) {
       if (rule.handler.type === 'inject') {

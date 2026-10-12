@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { builtinPacksRoot } from '@weavecode/templates';
 import {
   discoverToolkitPacks,
   discoverWeavePackDirs,
@@ -15,9 +15,7 @@ import {
  * 外置目录同构发现 + provenance 标注。内置真实树（harness-tools）冒烟见文末。
  */
 
-const BUILTIN_ROOT = fileURLToPath(
-  new URL('../presets/harness-tools/', import.meta.url),
-);
+const BUILTIN_ROOT = builtinPacksRoot();
 
 async function writeJson(file: string, data: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
