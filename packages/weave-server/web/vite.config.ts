@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     port: 9527,
+    // 启动即后台预转换入口模块图——dev 首开的冷转换（~250 模块）才是首屏
+    // 分钟级卡顿的元凶；warmup 把它挪到「服务起来、用户还没开页面」的空档。
+    warmup: {
+      clientFiles: ['./index.html'],
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:6420',
