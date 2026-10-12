@@ -309,7 +309,8 @@ L1 仓库 namespace 折叠块
 - 只在必要时改代码；**H1 若命中，其修复作为本方案前置的独立 commit**。
 - 产物：`docs/plan/builtin-market-verification.md`。
 
-### ☐ 批 1 —— 内置仓成立（搬迁 + 重指内置根，行为零变）
+### ☑ 批 1 —— 内置仓成立（搬迁 + 重指内置根，行为零变）—— `9691518`
+
 - 新建 `packages/weave-templates/resources/weave-market/`，按 D1 **搬入**（非复制）全部资源，内容零改。
 - 同批把**内置根的指向**改到新位置（否则包会消失）：
   - `toolkit-scan.ts:69-73` 的 `builtinToolkitRoot()` → 包内 `<templates>/resources/weave-market/plugins`；
@@ -326,6 +327,24 @@ L1 仓库 namespace 折叠块
 - **本批只搬位置**：内置包仍从**包内**目录扫描，尚未落地 dataDir（那是批 2）。
   故 `pnpm test` 全绿即证明搬迁无行为变化；`name@weave` 键与包 id 零变（D1 硬闸）。
 
+**实施记录（批 1 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| 落位修正 | 仓落 `packages/weave-templates/src/resources/weave-market/`（**在 `src/` 下**，非包根）。两态 `__dirname` 分别是 `src/`（`--conditions=development`）与 `dist/`（发布），同一表达式 `path.join(__dirname,'resources','weave-market')` 两态皆准。`register.tsx` 是 TS 文件，故 `tsconfig` 加 `exclude: ["src/resources"]`（沿用 server 原先排除 `src/hooks/presets` 的先例）。 |
+| 搬迁 | 45 文件 `git mv`，**全部 100% 相似度**（零内容改动）。 |
+| 新增单点 | 模板包导出 `builtinMarketRoot()` / `builtinPacksRoot()` / `builtinRulesRoot()` —— 仓布局的唯一知情处；server 只取用（`toolkit-scan.ts` 与 `plugin-loader.ts` 各一处），不自拼路径。 |
+| 包边 | 新增 `weave-server → @weavecode/templates`（方向与发布顺序 `core→harness→templates→server→cli` 一致，无环）；`pnpm install` 建链、lockfile 已更新。 |
+| 清理 | 删 `weave-server/copy-presets.mjs` 及根 build 脚本对它的调用；`weave-server/tsconfig.json` 的 `exclude` 去掉已不存在的 `src/hooks/presets`。 |
+| MANIFEST | 保持**手写**（未改扫描）：命令/agent 的 `.md` 无 frontmatter，描述是手写摘要，扫描会丢描述。仅把 `sourcePath` 改指 `resources/weave-market/init/*`。 |
+| 新增测试 | `packages/weave-templates/src/__tests__/builtin-market.test.ts`（6 例）：三区齐备、`plugins/` 直接子目录不得自身是包（钉死层级硬约束）、`rules/` 平铺、`init/` 非包、清单 ↔ CC 包双向一致、每个 `source` 指向仓内**实体**目录（H3：`validate` 不跟随链接须自校）。 |
+| 硬闸 | 零改：`hooks-server` / `toolkit-loader` / `market` / `harness` 全部零改。显式修订组 5 条：4 个测试的 `BUILTIN_ROOT` + `templates/registry.test.ts` 的源目录断言。 |
+| 门禁 | `pnpm build` / `build:web` 全 0；全仓 **1106/1107** —— 唯一失败是并行会话在改的 `web/src/i18n/dict/tasks.ts`（`tasks.status*` 键 zh/en 不一致）与其 `dict.test.ts` 门禁，与本批无关（本批零 i18n 改动）。 |
+
+**踩坑记录**：`weave-server/src/hooks/presets` 目录**无法 rename**（`EPERM`）—— daemon 的 mods watcher（chokidar）握着该目录句柄；同级 `market`/`db`/`statusline`/`handlers` 均可正常改名，`mv`/`git mv` 同目录改名也失败。**绕开办法：逐文件搬迁**（文件级 rename 不受影响），最后用 `rmdir` 回收空目录，未打断运行中的 daemon。
+
+**批 3 并入本批**：批 3 的实质内容（`getCommandsSourceDir`/`getAgentsSourceDir` 改指仓内 `init/`、`getSkillsSourceDir` 的 no-op 注释收口）必须与搬迁同批完成，否则 init 会指向不存在的路径；MANIFEST 又决定保持手写。故 **批 3 已由本批吸收，不再单独成批**（下述批 3 条目作废）。
+
 ### ☐ 批 2 —— 落地 + 扫描源切换
 - 新增落地模块（落 `packages/weave-server/src/market/`，不进 harness）：
   `ensureBuiltinMarket()`（版本标记比对 → `rm -rf` + `cp` + 写 `.weave-market.json` + upsert
@@ -340,7 +359,8 @@ L1 仓库 namespace 折叠块
 - 硬闸：**内置包注册键与包 id 零变**；`market-roots.test.ts`（排除内置仓后行为不变）零改；
   libraries 相关断言按 H4 结论处置。
 
-### ☐ 批 3 —— init 供源切换（D9）
+### ☒ 批 3 —— init 供源切换（D9）·已并入批 1
+
 - 改：`weave-templates/src/index.ts` 的 `getCommandsSourceDir/getAgentsSourceDir`
   → 仓内 `init/{commands,agents}`；`MANIFEST` 改为扫仓；`getSkillsSourceDir` 注释收口。
 - 硬闸：`weave-cli/src/__tests__/executor.test.ts`、`helpers-gen.test.ts`
