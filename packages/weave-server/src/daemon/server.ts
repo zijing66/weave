@@ -356,6 +356,7 @@ async function handleRequest(
       path: body.path,
       kind: body.kind as 'skill' | 'mcp' | 'both',
     });
+    deps.dataBus?.emit({ key: 'libraries' });
     sendJson(res, 201, row);
     return;
   }
@@ -393,6 +394,8 @@ async function handleRequest(
     const libRow = deps.libraries.getById(libId);
     if (libRow) await invalidateScan(libRow.path); // 外部目录不删库不删目录，清掉缓存文件
     deps.libraries.remove(libId);
+    deps.dataBus?.emit({ key: 'libraries' });
+    deps.dataBus?.emit({ key: 'market' });
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -428,6 +431,7 @@ async function handleRequest(
         const imported = await importFromDir(body.path, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir); // 覆盖重导 → 指纹失效
         await invalidateScan(imported.dir); // 源目录可能带旧 scans.json，导入后一律作废重扫
+        deps.dataBus?.emit({ key: 'market' });
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
@@ -435,6 +439,7 @@ async function handleRequest(
         const imported = await importFromGit(body.url, importDeps);
         if (imported.refreshed) deps.fingerprintCache?.invalidate(imported.dir);
         await invalidateScan(imported.dir);
+        deps.dataBus?.emit({ key: 'market' });
         sendJson(res, 201, {
           item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
         });
@@ -469,6 +474,7 @@ async function handleRequest(
       .filter((r) => !body.ids?.length || body.ids.includes(r.id));
     for (const r of rows) await invalidateScan(r.path); // 检查即重扫事件：之后同路径取新结果
     const results = await checkMarketUpdates(rows.map((r) => ({ id: r.id, dir: r.path })));
+    deps.dataBus?.emit({ key: 'market' });
     sendJson(res, 200, { results });
     return;
   }
@@ -518,6 +524,7 @@ async function handleRequest(
         }
       }
     }
+    deps.dataBus?.emit({ key: 'market' });
     sendJson(res, 200, { results });
     return;
   }
@@ -548,6 +555,8 @@ async function handleRequest(
     await removeInstalled(row.path);
     deps.libraries.remove(row.id);
     await invalidateScan(row.path); // 目录已带走 scans.json，此处兜底热层
+    deps.dataBus?.emit({ key: 'market' });
+    deps.dataBus?.emit({ key: 'libraries' });
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
     sendJson(res, 200, {
       ok: true,

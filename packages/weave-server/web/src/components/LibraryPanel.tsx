@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import {
   api,
@@ -25,6 +25,7 @@ import {
   type DragPayload,
 } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
+import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
@@ -147,12 +148,21 @@ export function LibraryPanel({
   const reasonTitle = (v: InstallVerdict): string | undefined =>
     v.ok || !v.reasonKey ? undefined : t(v.reasonKey);
 
-  const refreshMarket = () =>
-    api.listMarket().then(setMarket).catch((e) => setError(String(e)));
+  const refreshMarket = useCallback(
+    () => api.listMarket().then(setMarket).catch((e) => setError(String(e))),
+    [],
+  );
 
   useEffect(() => {
     void refreshMarket();
-  }, []);
+  }, [refreshMarket]);
+
+  // 服务端市场写操作（导入 / 刷新 / 删除 / 批量检查更新）后推 invalidate('market')
+  // → 接到既有的重拉上，调用点不必各自手动刷新。
+  useEffect(
+    () => registerInvalidator('market', () => void refreshMarket()),
+    [refreshMarket],
+  );
 
   useEffect(() => {
     if (selectedId === null) {

@@ -68,6 +68,7 @@ export async function handleToolkitRoutes(
           : action === 'disable'
             ? await deps.toolkit.disable(projectId, packId, source ?? undefined)
             : await deps.toolkit.uninstall(projectId, packId, source ?? undefined);
+      deps.dataBus?.emit({ key: 'toolkit' });
       sendJson(res, 200, result);
     } catch (err) {
       fail(err);
@@ -83,7 +84,9 @@ export async function handleToolkitRoutes(
       return true;
     }
     try {
-      sendJson(res, 200, await deps.toolkit.cleanupLegacyCopies(Number(cleanupMatch[1])));
+      const cleaned = await deps.toolkit.cleanupLegacyCopies(Number(cleanupMatch[1]));
+      deps.dataBus?.emit({ key: 'toolkit' });
+      sendJson(res, 200, cleaned);
     } catch (err) {
       fail(err);
     }

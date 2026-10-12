@@ -112,4 +112,30 @@ describe('daemon server watch endpoints', () => {
     expect(buffer).toContain('"key":"assets"');
     await reader.cancel();
   });
+
+  it('写操作落定即推 invalidate 帧（写→推的点到点验证）', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/events`);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    await reader.read(); // ': connected'（订阅已挂上）
+
+    const listRes = await fetch(`http://127.0.0.1:${port}/projects`);
+    const { projects } = (await listRes.json()) as { projects: Array<{ id: number }> };
+    const ordered = await fetch(`http://127.0.0.1:${port}/projects/order`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: projects.map((p) => p.id).reverse() }),
+    });
+    expect(ordered.status).toBe(200);
+
+    let buffer = '';
+    while (!buffer.includes('"key":"projects"')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value);
+    }
+    expect(buffer).toContain('"type":"invalidate"');
+    expect(buffer).toContain('"key":"projects"');
+    await reader.cancel();
+  });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type ToolkitPack } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { registerInvalidator } from '@/lib/sse';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
@@ -113,6 +114,10 @@ export function ToolkitSection({
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 任一客户端开了/卸了工具包后服务端推 invalidate('toolkit') → 重拉当前项目。
+  // （本组件的开关回调仍会自己 refresh 一次，那是乐观路径；这条覆盖别的页签。）
+  useEffect(() => registerInvalidator('toolkit', refresh), [refresh]);
 
   const toggle = async (pack: ToolkitPack, enabled: boolean): Promise<void> => {
     const key = rowKey(pack);
