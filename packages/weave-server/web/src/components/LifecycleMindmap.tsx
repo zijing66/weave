@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BaseEdge,
@@ -567,6 +567,9 @@ type MindmapData = {
 };
 type MindmapFlowNode = Node<MindmapData, 'mindmap'>;
 
+/** 执行中的组 id 集合（会话状态机是调用方的权威，本组件不自拉推断）。 */
+const RunningGroupsCtx = createContext<ReadonlySet<string>>(new Set());
+
 function tagCls(base: string): string {
   return `${base} rounded px-1 py-px text-[10px] leading-tight`;
 }
@@ -586,6 +589,7 @@ function ModelTag({ model }: { model: string }) {
 
 function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
   const t = useT();
+  const runningGroups = useContext(RunningGroupsCtx);
   const { node, flash, onToggle, onOpenDetail } = data;
   const chevron = node.expandable ? (
     <button
@@ -623,11 +627,16 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           ) : (
             <span className={tagCls('bg-cyan-900/40 text-cyan-300')}>prompt</span>
           )}
-          {g.open && (
-            <span className={tagCls('bg-red-900/40 text-red-300')}>
-              {t('hooks.mindmap.openTag')}
-            </span>
-          )}
+          {g.open &&
+            (runningGroups.has(g.id) ? (
+              <span className={tagCls('bg-emerald-900/40 text-emerald-300')}>
+                {t('hooks.mindmap.runningTag')}
+              </span>
+            ) : (
+              <span className={tagCls('bg-red-900/40 text-red-300')}>
+                {t('hooks.mindmap.openTag')}
+              </span>
+            ))}
           {g.subagentStops > 0 && (
             <span className={tagCls('bg-orange-900/40 text-orange-300')}>
               {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
@@ -916,6 +925,7 @@ export function LifecycleMindmap({
   onSelect,
   focusGroupId,
   focusGroup,
+  running,
 }: {
   projectId: number;
   sessionId: string;
@@ -931,6 +941,8 @@ export function LifecycleMindmap({
    * 自拉的最新 300 窗口（历史 turn / 会话引导组），按 id 过滤会落空误报空态。
    */
   focusGroup?: LifecycleGroup;
+  /** 会话正在干活（最新 turn 未 Stop = 执行中）：组头 tag 显「执行中」而非「未正常结束」。 */
+  running?: boolean;
 }) {
   const t = useT();
   const [events, setEvents] = useState<HookEventRow[] | null>(null);
@@ -1010,6 +1022,12 @@ export function LifecycleMindmap({
     );
     return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
   }, [events, dispatches, sessionId, focusGroupId, focusGroup]);
+
+  /** 执行中的组（仅最新组——历史 open 组是中断落库，不是进行中）。 */
+  const runningGroups = useMemo<ReadonlySet<string>>(() => {
+    const latest = groups[groups.length - 1];
+    return running && latest ? new Set([latest.id]) : new Set<string>();
+  }, [groups, running]);
 
   // 会话当前 model：最新一条 SessionStart.raw.model（无则不显示 tag）。
   const sessionModel = useMemo(() => {
@@ -1118,11 +1136,16 @@ export function LifecycleMindmap({
             {g.prompt ?? t('hooks.mindmap.preSession')}
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {g.open && (
-              <span className="rounded bg-red-900/40 px-1 text-[10px] text-red-300">
-                {t('hooks.mindmap.openTag')}
-              </span>
-            )}
+            {g.open &&
+              (runningGroups.has(g.id) ? (
+                <span className="rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                  {t('hooks.mindmap.runningTag')}
+                </span>
+              ) : (
+                <span className="rounded bg-red-900/40 px-1 text-[10px] text-red-300">
+                  {t('hooks.mindmap.openTag')}
+                </span>
+              ))}
             {g.subagentStops > 0 && (
               <span className="rounded bg-orange-900/40 px-1 text-[10px] text-orange-300">
                 {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
@@ -1273,6 +1296,7 @@ export function LifecycleMindmap({
   };
 
   return (
+    <RunningGroupsCtx.Provider value={runningGroups}>
     <div className={cn('space-y-2', focusGroupId && 'h-full')}>
       {!focusGroupId && (
         <div className="flex items-center gap-2">
@@ -1368,5 +1392,6 @@ export function LifecycleMindmap({
         )}
       </div>
     </div>
+    </RunningGroupsCtx.Provider>
   );
 }

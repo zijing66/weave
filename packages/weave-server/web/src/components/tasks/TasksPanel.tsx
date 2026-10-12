@@ -522,11 +522,16 @@ export function TasksPanel({
                         {t('tasks.groupPreSession')}
                       </Badge>
                     )}
-                    {g.open && (
-                      <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
-                        {t('tasks.groupOpen')}
-                      </Badge>
-                    )}
+                    {g.open &&
+                      (isLatestGroup && activeStatus === 'running' ? (
+                        <Badge className="shrink-0 bg-emerald-900/40 text-emerald-300">
+                          {t('tasks.groupRunning')}
+                        </Badge>
+                      ) : (
+                        <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
+                          {t('tasks.groupOpen')}
+                        </Badge>
+                      ))}
                     {g.subagentStops > 0 && (
                       <Badge className="shrink-0 bg-purple-900/40 text-purple-300">
                         {t('tasks.groupSubagent', { n: g.subagentStops })}
@@ -582,6 +587,7 @@ export function TasksPanel({
                           sessionId={selectedId}
                           focusGroupId={g.id}
                           focusGroup={g}
+                          running={isLatestGroup && activeStatus === 'running'}
                         />
                         <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
                           {t('tasks.legendNote')}
