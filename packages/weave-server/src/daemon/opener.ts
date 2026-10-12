@@ -276,10 +276,238 @@ export async function runInTerminal(
   argv: string[],
   terminal: TerminalSettings,
 ): Promise<void> {
+  if (terminal.preset === 'wezterm' && (await runInWezterm(dir, argv))) return;
   await launchFirst(
     resolveTerminalLaunch(dir, terminal, process.platform, argv),
     `Terminal preset "${terminal.preset}" cannot run a command here — pick another preset in settings`,
   );
+}
+
+// ---- wezterm mux 通道：同项目复用分屏，否则新窗口；失败回退 start 直发 ----
+//
+// `wezterm start -- PROG` 会绕过 default_prog 直派子进程（用户的 shell 配置、
+// job 包裹、OSC 7 全部丢失），所以 run 路径首选 mux：panes 在 mux 里以
+// default_prog 起，命令经 send-text 打进去。mux 不在（wezterm 没开）时
+// cli 调用快速失败，落到候选单里的 `start` 老行为。
+
+/** `cli list` 里与布局决策相关的字段（left_col/top_row 是单元格坐标）。 */
+export interface WeztermPaneInfo {
+  windowId: number;
+  tabId: number;
+  paneId: number;
+  cwd: string | null;
+  left: number;
+  top: number;
+}
+
+export type WeztermDirection = 'right' | 'bottom';
+
+/** 分屏落点：把哪个 pane 往哪个方向切。 */
+export interface WeztermSplitTarget {
+  paneId: number;
+  direction: WeztermDirection;
+}
+
+/** 解析 `cli list --format json`；坏输入安全落空（上层转新窗口/回退）。 */
+export function parseWeztermPanes(jsonText: string | null): WeztermPaneInfo[] {
+  if (!jsonText) return [];
+  let rows: unknown;
+  try {
+    rows = JSON.parse(jsonText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+  const panes: WeztermPaneInfo[] = [];
+  for (const r of rows) {
+    const row = r as Record<string, unknown>;
+    if (typeof row?.pane_id !== 'number' || typeof row?.tab_id !== 'number') continue;
+    panes.push({
+      windowId: typeof row.window_id === 'number' ? row.window_id : 0,
+      tabId: row.tab_id,
+      paneId: row.pane_id,
+      cwd: typeof row.cwd === 'string' ? row.cwd : null,
+      left: typeof row.left_col === 'number' ? row.left_col : 0,
+      top: typeof row.top_row === 'number' ? row.top_row : 0,
+    });
+  }
+  return panes;
+}
+
+/** file:/// URL/本地路径 → 规范比较键：统一斜杠、去尾斜杠，win 下压大小写。 */
+function normalizeDirKey(raw: string | null, platform: NodeJS.Platform): string | null {
+  if (!raw) return null;
+  let s = raw;
+  if (s.startsWith('file://')) {
+    s = s.slice('file://'.length);
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      return null;
+    }
+    // win：file:///D:/x → D:/x；posix：file:///tmp/x → /tmp/x
+    if (platform === 'win32') s = s.replace(/^\//, '');
+  }
+  s = s.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!s) return null;
+  return platform === 'win32' ? s.toLowerCase() : s;
+}
+
+/** 匹配 pane 最多的 tab 复用（平手取最早 tab），tab 内完整 pane 集合参与布局。 */
+function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.Platform) {
+  const matches = new Map<number, number>();
+  for (const p of panes) {
+    if (normalizeDirKey(p.cwd, platform) === key) {
+      matches.set(p.tabId, (matches.get(p.tabId) ?? 0) + 1);
+    }
+  }
+  let bestTab: number | null = null;
+  let bestCount = 0;
+  for (const [tabId, count] of matches) {
+    if (bestTab === null || count > bestCount || (count === bestCount && tabId < bestTab)) {
+      bestTab = tabId;
+      bestCount = count;
+    }
+  }
+  return bestTab;
+}
+
+/**
+ * 同项目复用布局：网格按 1 2 / 3 4 / 5 6 生长 —— 首个分屏向右开列，之后
+ * 矮列的底格向下延伸，等高取左列。坐标用 `cli list` 报的 left_col/top_row，
+ * 用户手工增删 pane 后依旧推导得出，不落持久状态。
+ */
+export function planWeztermReuse(
+  dir: string,
+  panes: WeztermPaneInfo[],
+  platform: NodeJS.Platform = process.platform,
+): WeztermSplitTarget | null {
+  const key = normalizeDirKey(dir, platform);
+  if (!key) return null;
+  const tabId = pickWeztermTab(key, panes, platform);
+  if (tabId === null) return null;
+  const tabPanes = panes.filter((p) => p.tabId === tabId);
+  if (tabPanes.length === 0) return null;
+  if (tabPanes.length === 1) return { paneId: tabPanes[0]!.paneId, direction: 'right' };
+  // 列 = left 值分组（升序）；单列 → 底格向右开第二列；多列 → 矮列底格向下
+  const columns = new Map<number, WeztermPaneInfo[]>();
+  for (const p of tabPanes) {
+    const col = columns.get(p.left) ?? [];
+    col.push(p);
+    columns.set(p.left, col);
+  }
+  const ordered = [...columns.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, ps]) => [...ps].sort((a, b) => b.top - a.top));
+  if (ordered.length === 1) {
+    return { paneId: ordered[0]![0]!.paneId, direction: 'right' };
+  }
+  let target = ordered[0]!;
+  for (const col of ordered) {
+    if (col.length < target.length) target = col;
+  }
+  return { paneId: target[0]!.paneId, direction: 'bottom' };
+}
+
+/** 新项目窗：最近活跃 client 的 workspace（拿不到就省略，进 mux 默认 workspace）。 */
+export function planWeztermNewWindow(dir: string, workspace: string | null): string[] {
+  const args = ['cli', 'spawn', '--new-window', '--cwd', dir];
+  if (workspace) args.push('--workspace', workspace);
+  return args;
+}
+
+/** list-clients JSON → 最近活跃（idle 最小）client 的 workspace；坏输入 null。 */
+export function weztermActiveWorkspaceOf(jsonText: string | null): string | null {
+  if (!jsonText) return null;
+  let clients: unknown;
+  try {
+    clients = JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(clients)) return null;
+  let best: string | null = null;
+  let bestIdle = Number.POSITIVE_INFINITY;
+  for (const c of clients) {
+    const client = c as { workspace?: unknown; idle_time?: { secs?: unknown; nanos?: unknown } };
+    if (typeof client?.workspace !== 'string' || !client.workspace) continue;
+    const idle = client.idle_time;
+    const idleMs =
+      (typeof idle?.secs === 'number' ? idle.secs * 1e3 : 0) +
+      (typeof idle?.nanos === 'number' ? idle.nanos / 1e6 : 0);
+    if (idleMs < bestIdle) {
+      bestIdle = idleMs;
+      best = client.workspace;
+    }
+  }
+  return best;
+}
+
+const WEZTERM_CLI_TIMEOUT_MS = 5000;
+
+/** wezterm cli 子调用：返回 stdout；非零退出/超时/不可执行 → null。 */
+function weztermCli(args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('wezterm', args, { windowsHide: true });
+    } catch {
+      resolve(null);
+      return;
+    }
+    let out = '';
+    child.stdout.on('data', (d: Buffer) => {
+      out += d.toString();
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, WEZTERM_CLI_TIMEOUT_MS);
+    timer.unref();
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? out : null);
+    });
+  });
+}
+
+/** wezterm run 主通道：同项目 → 分屏复用；否则 → 新窗口；命令一律 send-text。 */
+async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
+  const platform = process.platform;
+  const panes = parseWeztermPanes(await weztermCli(['cli', 'list', '--format', 'json']));
+  const split = planWeztermReuse(dir, panes, platform);
+  let paneOut: string | null;
+  if (split) {
+    paneOut = await weztermCli([
+      'cli',
+      'split-pane',
+      '--pane-id',
+      String(split.paneId),
+      `--${split.direction}`,
+      '--cwd',
+      dir,
+    ]);
+  } else {
+    const workspace = weztermActiveWorkspaceOf(
+      await weztermCli(['cli', 'list-clients', '--format', 'json']),
+    );
+    paneOut = await weztermCli(planWeztermNewWindow(dir, workspace));
+  }
+  const paneId = paneOut?.trim() ?? '';
+  if (!/^\d+$/.test(paneId)) return false;
+  const sent = await weztermCli([
+    'cli',
+    'send-text',
+    '--pane-id',
+    paneId,
+    '--no-paste',
+    `${joinCmd(argv, platform)}\r`,
+  ]);
+  return sent !== null;
 }
 
 /** Injection seam for the open routes — tests substitute a spy. */

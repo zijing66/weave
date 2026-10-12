@@ -9,7 +9,16 @@ import {
   setDaemonSettingsDb,
   terminalPresetsFor,
 } from '../settings.js';
-import { quotePath, resolveTerminalLaunch, resolveExplorerLaunch } from '../opener.js';
+import {
+  quotePath,
+  resolveTerminalLaunch,
+  resolveExplorerLaunch,
+  parseWeztermPanes,
+  planWeztermReuse,
+  planWeztermNewWindow,
+  weztermActiveWorkspaceOf,
+  type WeztermPaneInfo,
+} from '../opener.js';
 
 describe('daemon settings persistence (db key-value)', () => {
   let db: ReturnType<typeof openDatabase>;
@@ -442,5 +451,119 @@ describe('resolveExplorerLaunch', () => {
     expect(resolveExplorerLaunch('D:\\p', 'win32')).toEqual({ command: 'explorer.exe', args: ['D:\\p'] });
     expect(resolveExplorerLaunch('/tmp/p', 'darwin')).toEqual({ command: 'open', args: ['/tmp/p'] });
     expect(resolveExplorerLaunch('/tmp/p', 'linux')).toEqual({ command: 'xdg-open', args: ['/tmp/p'] });
+  });
+});
+
+describe('wezterm mux 会话通道（纯函数）', () => {
+  const mkPane = (
+    paneId: number,
+    left: number,
+    top: number,
+    tabId = 0,
+    cwd = 'file:///p/proj',
+  ): WeztermPaneInfo => ({ windowId: 0, tabId, paneId, cwd, left, top });
+
+  it('parseWeztermPanes 提取布局字段，坏输入塌成空表', () => {
+    expect(parseWeztermPanes(null)).toEqual([]);
+    expect(parseWeztermPanes('not json')).toEqual([]);
+    expect(parseWeztermPanes('{"a":1}')).toEqual([]);
+    const real = JSON.stringify([
+      { window_id: 0, tab_id: 0, pane_id: 0, cwd: 'file:///D:/x', left_col: 0, top_row: 0 },
+      { window_id: 0, tab_id: 0, pane_id: 2, cwd: null, left_col: 0, top_row: 27 },
+    ]);
+    expect(parseWeztermPanes(real)).toEqual([
+      { windowId: 0, tabId: 0, paneId: 0, cwd: 'file:///D:/x', left: 0, top: 0 },
+      { windowId: 0, tabId: 0, paneId: 2, cwd: null, left: 0, top: 27 },
+    ]);
+  });
+
+  it('planWeztermReuse：cwd 不匹配 → null（走新窗口）', () => {
+    expect(planWeztermReuse('/p/proj', [], 'linux')).toBeNull();
+    expect(planWeztermReuse('/p/proj', [mkPane(1, 0, 0, 0, 'file:///p/else')], 'linux')).toBeNull();
+    expect(planWeztermReuse('/p/proj', [mkPane(1, 0, 0, 0, null)], 'linux')).toBeNull();
+  });
+
+  it('planWeztermReuse：win32 目录键大小写/斜杠/尾斜杠不敏感', () => {
+    expect(planWeztermReuse('D:\\PROJ\\', [mkPane(7, 0, 0, 3, 'file:///d:/proj/')], 'win32')).toEqual(
+      { paneId: 7, direction: 'right' },
+    );
+  });
+
+  it('planWeztermReuse：posix 目录键大小写敏感', () => {
+    expect(planWeztermReuse('/tmp/x', [mkPane(1, 0, 0, 0, 'file:///tmp/X')], 'linux')).toBeNull();
+    expect(planWeztermReuse('/tmp/X', [mkPane(1, 0, 0, 0, 'file:///tmp/X')], 'linux')).toEqual({
+      paneId: 1,
+      direction: 'right',
+    });
+  });
+
+  it('planWeztermReuse：网格按 1 2 / 3 4 / 5 6 生长', () => {
+    // 第 2 格（1|2）：唯一 pane 向右开列
+    expect(planWeztermReuse('/p/proj', [mkPane(1, 0, 0)], 'linux')).toEqual({
+      paneId: 1,
+      direction: 'right',
+    });
+    // 第 3 格（3 在 1 下）：两列等高 → 左列底格向下
+    expect(planWeztermReuse('/p/proj', [mkPane(1, 0, 0), mkPane(2, 60, 0)], 'linux')).toEqual({
+      paneId: 1,
+      direction: 'bottom',
+    });
+    // 第 4 格（4 在 2 下）：右列矮 → 右列向下
+    expect(
+      planWeztermReuse('/p/proj', [mkPane(1, 0, 0), mkPane(2, 60, 0), mkPane(3, 0, 12)], 'linux'),
+    ).toEqual({ paneId: 2, direction: 'bottom' });
+    // 第 5 格（5 在 3 下）：再次等高 → 左列底格（top 最大的 3）向下
+    expect(
+      planWeztermReuse(
+        '/p/proj',
+        [mkPane(1, 0, 0), mkPane(2, 60, 0), mkPane(3, 0, 12), mkPane(4, 60, 12)],
+        'linux',
+      ),
+    ).toEqual({ paneId: 3, direction: 'bottom' });
+  });
+
+  it('planWeztermReuse：右列被关掉只剩单列 → 底格向右重开列', () => {
+    expect(
+      planWeztermReuse('/p/proj', [mkPane(1, 0, 0), mkPane(3, 0, 12)], 'linux'),
+    ).toEqual({ paneId: 3, direction: 'right' });
+  });
+
+  it('planWeztermReuse：多 tab 命中取匹配最多者，几何只看该 tab', () => {
+    const panes = [mkPane(1, 0, 0, 0), mkPane(5, 0, 0, 1), mkPane(6, 60, 0, 1)];
+    // tab1 里网格已成型（2 pane 匹配）→ 等高两列 → 左列底格向下
+    expect(planWeztermReuse('/p/proj', panes, 'linux')).toEqual({ paneId: 5, direction: 'bottom' });
+  });
+
+  it('planWeztermNewWindow：workspace 随行，缺省省略', () => {
+    expect(planWeztermNewWindow('D:\\proj', 'default')).toEqual([
+      'cli',
+      'spawn',
+      '--new-window',
+      '--cwd',
+      'D:\\proj',
+      '--workspace',
+      'default',
+    ]);
+    expect(planWeztermNewWindow('/p/proj', null)).toEqual([
+      'cli',
+      'spawn',
+      '--new-window',
+      '--cwd',
+      '/p/proj',
+    ]);
+  });
+
+  it('weztermActiveWorkspaceOf 取 idle 最小的 client，坏输入安全落空', () => {
+    expect(weztermActiveWorkspaceOf(null)).toBeNull();
+    expect(weztermActiveWorkspaceOf('wat')).toBeNull();
+    expect(weztermActiveWorkspaceOf('[]')).toBeNull();
+    expect(
+      weztermActiveWorkspaceOf(
+        JSON.stringify([
+          { workspace: 'ws-old', idle_time: { secs: 60, nanos: 0 } },
+          { workspace: 'ws-live', idle_time: { secs: 0, nanos: 500_000_000 } },
+        ]),
+      ),
+    ).toBe('ws-live');
   });
 });
