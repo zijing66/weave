@@ -416,12 +416,25 @@ L1 仓库 namespace 折叠块
 | 门禁 | `build` / `build:web` 全 0；全仓 **105 文件 / 1123 测试全绿**。 |
 | 实机 | `form` 已下发。**发现**：CC 插件所带技能全是 `copy`（CC 解引用后自行复制，weave 不可控）→ 已把「开发者模式提示」的作用域限定写进 D5。 |
 
-### ☐ 批 5 —— UI：Skills 仓库维度三级折叠（D6）
+### ☑ 批 5 —— UI：Skills 仓库维度三级折叠（D6）—— `bc1f914`
+
 - 改：`SkillGrid.tsx`（L1 仓库块 + L2 包块 + L3 现有卡片；开关粒度按表）、
   `CategoryDetail.tsx`（skills tab 装配）、`lib/api.ts`（载荷加 `namespace`）、
   `i18n/dict/assets.ts`（成对新增词条）。
 - 抽共享折叠原语**仅当**出现第三个调用点时（否则改现有文件内联）。
 - 硬闸：`skill-stats` 零改；`dict.test` zh/en 成对；`install-capabilities.test` 零改。
+
+**实施记录（批 5 完成）**：
+
+| 项 | 结果 |
+|---|---|
+| L1 维度 | 由「来源（个人/插件）」改为**仓库 namespace**，由服务端经 harness 面拆键下发（`PluginSurface.parsePluginKey`，与 `pluginKey` 成对；`global-config.ts` 的裸 `split('@')` 同批收口）。codex 无 plugins 槽，其 namespace 就地取缓存路径的市场名。 |
+| 三级结构 | L1 仓库块 → L2 插件包块（抽出 `PackBlock`）→ L3 技能卡片（原样）。个人组（无 namespace）并成一块「本地」，**L2 层省略**（直接铺卡片）。 |
+| 默认态 | 市场块**默认折叠**（用户口径：「claude-plugins-official 插件市场折叠块（默认折叠）」）；「本地」例外默认展开——否则首屏是全折叠空壳。段头展开/折叠按钮同时覆盖两级。**注**：D6 原写「L1 默认展开」，此处按用户更明确的表述改为「市场块默认折叠」，仅「本地」展开。 |
+| 顺带改动 | 全局技能行补 `agent`——「本地」把 claude/codex 两个 personal 组合并成一个扁平网格后，卡片靠它区分 runtime，也是网格内唯一 key 的来源。已核实抽屉只在**项目态**消费 `agent`（`SkillDetailDrawer` 的全局分支不读），行为零变。 |
+| 新增 | `groupByRepo` 纯函数 + `SkillGrid.test.ts`（5 例）；i18n `namespaceTip` / `packCount` 成对。 |
+| 硬闸 | 零改：项目态技能网格 / `skill-stats` / `file-tags` / `dict.test`。 |
+| 门禁 | `build` / `build:web` 全 0；全仓 **106 文件 / 1134 测试全绿**。 |
 
 ### ☐ 批 6 —— UI：Plugins 仓库块 + weave 页合并 + 移除粘贴安装（D6/D7）
 - 改：`ToolkitSection.tsx`（去「工具箱」标题、市场为一级、裸插件归一类、形态徽标）、
