@@ -7,6 +7,7 @@ import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from
 import {
   startInboxWorker,
   handleIngestedRecords,
+  unparkFailedInbox,
   INBOX_CLAIM_SUFFIX,
   INBOX_FAILED_SUFFIX,
   type InboxRecord,
@@ -110,6 +111,10 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
   // 先回收孤儿文件（已删项目的残留），再起消费线程——顺序避免与运行中的写侧追尾
   const purged = purgeOrphanPipelineFiles({ projects: deps.projects, hooksDir });
   if (purged > 0) console.log(`[weave] hook pipeline: purged ${purged} orphan file(s)`);
+
+  // 先回收孤儿，再复活上一次进程停放的失败文件（瞬时争用居多，重启给一轮新机会）
+  const revived = unparkFailedInbox(hooksDir);
+  if (revived > 0) console.log(`[weave] hook pipeline: revived ${revived} parked inbox file(s)`);
 
   const mirror = new MirrorWriter({
     projects: deps.projects,

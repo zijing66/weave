@@ -187,6 +187,35 @@ function parseLine(line: string): InboxLine | null {
   }
 }
 
+/**
+ * 停放文件复活（启动时一次）：`.failed.jsonl` 是「连续失败达上限」的保护区，
+ * 停在盘上等人工处理。但多数失败是瞬时争用（多写者/重建 WAL）——进程重启后
+ * 给它新一轮机会：rename 成 claim，消费线程第一阶段就会先消费它；再失败会重新
+ * 停放，不会热循环。
+ */
+export function unparkFailedInbox(hooksDir: string): number {
+  const inbox = join(hooksDir, 'inbox');
+  let names: string[];
+  try {
+    names = readdirSync(inbox);
+  } catch {
+    return 0;
+  }
+  let revived = 0;
+  for (const name of names) {
+    if (!name.endsWith(INBOX_FAILED_SUFFIX)) continue;
+    const target = join(inbox, `${name.slice(0, -INBOX_FAILED_SUFFIX.length)}${INBOX_CLAIM_SUFFIX}`);
+    if (existsSync(target)) continue; // 已有待消费 claim → 留给下一轮
+    try {
+      renameSync(join(inbox, name), target);
+      revived++;
+    } catch {
+      // 竞争输家/文件已不在
+    }
+  }
+  return revived;
+}
+
 // ---- 主线程侧：worker 入库记录的后段（SSE + 规则分发 + outbox 顺延） ----
 
 export interface IngestedHandlerDeps {

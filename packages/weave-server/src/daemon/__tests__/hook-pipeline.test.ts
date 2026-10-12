@@ -8,6 +8,7 @@ import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { hookShardId } from '../../hooks/mirror.js';
 import { purgeOrphanPipelineFiles, purgeProjectPipeline } from '../hook-pipeline.js';
+import { unparkFailedInbox } from '../../hooks/inbox-worker.js';
 
 const LIVE = 'tok-live';
 const GONE = 'tok-gone';
@@ -73,5 +74,20 @@ describe('管道文件回收', () => {
     purgeProjectPipeline(hooksDir, LIVE);
     for (const f of mine) expect(existsSync(f)).toBe(false);
     for (const f of other) expect(existsSync(f)).toBe(true);
+  });
+
+  it('停放文件复活：.failed.jsonl 变 claim 等消费；已有 claim 时不抢', () => {
+    const sh = shard(LIVE);
+    const parked = path.join(hooksDir, 'inbox', `${sh}.failed.jsonl`);
+    write(parked);
+    expect(unparkFailedInbox(hooksDir)).toBe(1);
+    const claim = path.join(hooksDir, 'inbox', `${sh}.claim.jsonl`);
+    expect(existsSync(parked)).toBe(false);
+    expect(existsSync(claim)).toBe(true);
+
+    // claim 还占着位 → 再停放一个也不动它（留给下一轮）
+    write(parked);
+    expect(unparkFailedInbox(hooksDir)).toBe(0);
+    expect(existsSync(parked)).toBe(true);
   });
 });

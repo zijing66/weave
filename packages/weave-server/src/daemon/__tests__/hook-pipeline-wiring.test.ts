@@ -35,6 +35,7 @@ describe('hook 文件管道装配：单一实现点', () => {
     expect(src).toContain('new MirrorWriter');
     expect(src).toContain('startInboxWorker(');
     expect(src).toContain('handleIngestedRecords(');
+    expect(src).toContain('unparkFailedInbox(');
     // 规则变更与标题变更都要触发镜像重写
     expect(src).toContain('onChange');
     expect(src).toContain('attachToBus');
