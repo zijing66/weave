@@ -14,6 +14,7 @@ import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 /**
@@ -177,14 +178,24 @@ export function TasksPanel({
   };
 
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
-      独立进程不随 daemon 退出；失败走行内错误条。 */
-  const onOpenTerminal = async (sessionId: string): Promise<void> => {
-    try {
-      await api.openSessionTerminal(sessionId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
+      独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
+      spawn），成功无 toast（窗口弹出即反馈），失败 toast。 */
+  const onOpenTerminal = useCallback(
+    (sessionId: string): void => {
+      void fb.run(
+        `openTerm:${sessionId}`,
+        async () => {
+          await api.openSessionTerminal(sessionId);
+        },
+        { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, t],
+  );
+  const openTerminalStateOf = useCallback(
+    (sessionId: string) => fb.stateOf(`openTerm:${sessionId}`),
+    [fb],
+  );
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
   const [assign, setAssign] = useState<Record<number, string>>({});
@@ -199,14 +210,20 @@ export function TasksPanel({
       ),
     [dispatches, rules],
   );
-  const runDispatch = async (dispatchId: number, sessionId: string): Promise<void> => {
-    try {
-      await api.runHookDispatch(dispatchId, sessionId);
-      await refreshStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
+  /** 派发执行：fb 键按 dispatch 隔离——loading 在途吞连点防重复 POST，失败 toast。 */
+  const runDispatch = useCallback(
+    (dispatchId: number, sessionId: string): void => {
+      void fb.run(
+        `dispatch:${dispatchId}`,
+        async () => {
+          await api.runHookDispatch(dispatchId, sessionId);
+          await refreshStatus();
+        },
+        { fail: (e) => t('tasks.dispatchRunFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, refreshStatus, t],
+  );
 
   // 组头列表滚动窗口（折叠条级）：**倒序**（最新组在顶），更早的向列表底部
   // 方向滚——触底自动加载：先扩渲染窗口（10 条/批），组已全渲染且事件游标
@@ -290,16 +307,20 @@ export function TasksPanel({
     });
   };
 
-  const confirmRun = async (): Promise<void> => {
+  /** 拖拽确认执行：与待派发行内按钮同一把 fb 键——同 tick 连点/弹窗内连点都
+      只 POST 一次（弹窗点击即关，按钮先于 await 卸载，天然也只有一次）。 */
+  const confirmRun = (): void => {
     if (!pendingRun) return;
-    try {
-      await api.runHookDispatch(pendingRun.dispatchId, pendingRun.sessionId);
-      await refreshStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPendingRun(null);
-    }
+    const { dispatchId, sessionId } = pendingRun;
+    setPendingRun(null);
+    void fb.run(
+      `dispatch:${dispatchId}`,
+      async () => {
+        await api.runHookDispatch(dispatchId, sessionId);
+        await refreshStatus();
+      },
+      { fail: (e) => t('tasks.dispatchRunFailed', { error: errorText(e) }) },
+    );
   };
 
   /** 删会话（手动）：确认 → 删（连带事件与派发）→ 刷新列表 → toast。
@@ -367,7 +388,8 @@ export function TasksPanel({
             onSelect={setSelectedId}
             onRename={(id, title) => void onRename(id, title)}
             onDropDispatch={onDropDispatch}
-            onOpenTerminal={(id) => void onOpenTerminal(id)}
+            onOpenTerminal={onOpenTerminal}
+            openTerminalStateOf={openTerminalStateOf}
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
           />
@@ -415,10 +437,11 @@ export function TasksPanel({
                     </select>
                     <button
                       type="button"
-                      disabled={!target}
-                      onClick={() => void runDispatch(d.id, target)}
-                      className="shrink-0 rounded bg-emerald-700/80 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
+                      disabled={!target || fb.stateOf(`dispatch:${d.id}`) === 'loading'}
+                      onClick={() => runDispatch(d.id, target)}
+                      className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-700/80 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
                     >
+                      <FeedbackIcon state={fb.stateOf(`dispatch:${d.id}`)} className="h-3 w-3" />
                       {t('tasks.dispatchRun')}
                     </button>
                   </li>
@@ -619,7 +642,7 @@ export function TasksPanel({
               </button>
               <button
                 type="button"
-                onClick={() => void confirmRun()}
+                onClick={confirmRun}
                 className="rounded-md bg-blue-600/80 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
               >
                 {t('hooks.runConfirmYes')}

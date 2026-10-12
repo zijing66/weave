@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '../components/Toast';
 import {
   SUCCESS_HOLD_MS,
+  canStartAction,
   reduceActionState,
   type ActionState,
 } from './feedback-core';
@@ -23,7 +24,8 @@ export interface RunOptions {
 export interface ActionFeedback {
   /** 某个 key 的当前状态（未开始 = idle）。 */
   stateOf: (key: string) => ActionState;
-  /** 跑一个动作并驱动它的反馈状态；失败时按 `fail` 报错到 toast。 */
+  /** 跑一个动作并驱动它的反馈状态；失败时按 `fail` 报错到 toast。
+   *  loading 在途中的重复调用直接吞掉（防连点）；success 停留期放行。 */
   run: (key: string, action: () => Promise<void>, options: RunOptions) => Promise<void>;
 }
 
@@ -31,12 +33,16 @@ export function useActionFeedback(): ActionFeedback {
   const [states, setStates] = useState<Record<string, ActionState>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const { show } = useToast();
+  // 真源在 ref（setStates 只负责触发渲染）：函数式 updater 要等下轮 render 才
+  // 执行，同 tick 内的连点读不到 loading——run 的去重判断必须看同步值。
+  const live = useRef<Record<string, ActionState>>({});
 
   const set = useCallback((key: string, event: 'start' | 'ok' | 'fail') => {
-    setStates((prev) => ({
-      ...prev,
-      [key]: reduceActionState(prev[key] ?? 'idle', event),
-    }));
+    live.current = {
+      ...live.current,
+      [key]: reduceActionState(live.current[key] ?? 'idle', event),
+    };
+    setStates(live.current);
   }, []);
 
   useEffect(
@@ -48,13 +54,15 @@ export function useActionFeedback(): ActionFeedback {
 
   const run = useCallback(
     async (key: string, action: () => Promise<void>, options: RunOptions): Promise<void> => {
+      if (!canStartAction(live.current[key] ?? 'idle')) return;
       set(key, 'start');
       try {
         await action();
         set(key, 'ok');
         clearTimeout(timers.current[key]);
         timers.current[key] = setTimeout(() => {
-          setStates((prev) => ({ ...prev, [key]: 'idle' }));
+          live.current = { ...live.current, [key]: 'idle' };
+          setStates(live.current);
         }, SUCCESS_HOLD_MS);
       } catch (error) {
         set(key, 'fail');

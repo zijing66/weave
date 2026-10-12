@@ -675,17 +675,23 @@ export default function App() {
     [fb, handleSyncAll, show, t],
   );
 
-  /** Context-menu action: open a project's folder in the file manager / terminal. */
-  const handleOpenProject = useCallback(
-    async (p: ProjectRow, target: 'explorer' | 'terminal') => {
-      setError(null);
-      try {
-        await api.openProject(p.id, target);
-      } catch (e) {
-        setError(t('errors.openFailed', { error: e instanceof Error ? e.message : String(e) }));
-      }
-    },
-    [t],
+  /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
+      失败 toast；成功无 toast——窗口弹出本身就是反馈。 */
+  const openProjectWithFeedback = useCallback(
+    (p: ProjectRow, target: 'explorer' | 'terminal') =>
+      void fb.run(
+        `open-${target}:${p.id}`,
+        async () => {
+          await api.openProject(p.id, target);
+        },
+        { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
+      ),
+    [fb, t],
+  );
+  const openExplorerStateOf = useCallback((id: number) => fb.stateOf(`open-explorer:${id}`), [fb]);
+  const openTerminalProjectStateOf = useCallback(
+    (id: number) => fb.stateOf(`open-terminal:${id}`),
+    [fb],
   );
 
   /** Toggle a plugin's enable state in the host config (Claude settings.json or
@@ -867,8 +873,10 @@ export default function App() {
                 globalActive={globalMode}
                 onSelect={loadProject}
                 onSelectGlobal={selectGlobal}
-                onOpenExplorer={(p) => void handleOpenProject(p, 'explorer')}
-                onOpenTerminal={(p) => void handleOpenProject(p, 'terminal')}
+                onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
+                onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
+                openExplorerStateOf={openExplorerStateOf}
+                openTerminalStateOf={openTerminalProjectStateOf}
                 onHoverProject={ensureUpdates}
                 autoSyncOf={(id) => configMap[id]?.autoSync}
                 updatesOf={(id) => updatesMap[id]}

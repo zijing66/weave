@@ -43,6 +43,9 @@ interface ProjectListProps {
   /** 行内按钮反馈态（loading → ✅ → 2s 复原），由 App 的 useActionFeedback 供。 */
   autoSyncStateOf?: (projectId: number) => ActionState;
   syncStateOf?: (projectId: number) => ActionState;
+  /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
+  openExplorerStateOf?: (projectId: number) => ActionState;
+  openTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
 }
@@ -69,6 +72,8 @@ export function ProjectList({
   onSyncNow,
   autoSyncStateOf,
   syncStateOf,
+  openExplorerStateOf,
+  openTerminalStateOf,
   sessionStatsOf,
 }: ProjectListProps) {
   const t = useT();
@@ -181,9 +186,8 @@ export function ProjectList({
                 </span>
               </button>
               {/* 快捷操作簇（批 8）：独立一行换行展示，不与文字同行重叠。
-                  始终占位（opacity 控显隐）——行高恒定，hover 无跳动。簇是行
-                  按钮的兄弟节点，stopPropagation 在 QuickButton 内双保险。 */}
-              <div className="flex items-center gap-0.5 px-2 pb-1 pl-6 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                  簇是行按钮的兄弟节点，stopPropagation 在 QuickButton 内双保险。 */}
+              <div className="flex items-center gap-0.5 px-2 pb-1 pl-6">
                 <QuickButton
                   title={`${autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
                   pressed={autoSync}
@@ -224,10 +228,18 @@ export function ProjectList({
                   )}
                 </span>
                 <QuickButton title={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
-                  <FolderOpen className="h-3.5 w-3.5" />
+                  <FeedbackIcon
+                    state={openExplorerStateOf?.(p.id) ?? 'idle'}
+                    className="h-3.5 w-3.5"
+                    icon={<FolderOpen className="h-3.5 w-3.5" />}
+                  />
                 </QuickButton>
                 <QuickButton title={t('project.openInTerminal')} onClick={() => onOpenTerminal(p)}>
-                  <Terminal className="h-3.5 w-3.5" />
+                  <FeedbackIcon
+                    state={openTerminalStateOf?.(p.id) ?? 'idle'}
+                    className="h-3.5 w-3.5"
+                    icon={<Terminal className="h-3.5 w-3.5" />}
+                  />
                 </QuickButton>
               </div>
             </li>

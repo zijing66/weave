@@ -40,3 +40,8 @@ export function reduceActionState(current: ActionState, event: 'start' | 'ok' | 
   if (current !== 'loading') return current;
   return event === 'ok' ? 'success' : 'idle';
 }
+
+/** 连点去重：loading 在途中的动作不接受新触发（success 停留期允许再次启动）。 */
+export function canStartAction(current: ActionState): boolean {
+  return current !== 'loading';
+}

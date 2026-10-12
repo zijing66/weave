@@ -25,6 +25,7 @@ export function SessionList({
   onRename,
   onDropDispatch,
   onOpenTerminal,
+  openTerminalStateOf,
   onDelete,
   deleteStateOf,
 }: {
@@ -35,6 +36,8 @@ export function SessionList({
   onRename: (sessionId: string, title: string) => void;
   onDropDispatch: (dispatchId: number, sessionId: string) => void;
   onOpenTerminal: (sessionId: string) => void;
+  /** 打开会话终端按钮的反馈态（loading → ✅ → 还原，防连点重复 spawn）。 */
+  openTerminalStateOf?: (sessionId: string) => ActionState;
   /** 删除该会话（含事件与派发；调用方负责确认与报错）。 */
   onDelete: (sessionId: string) => void;
   /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
@@ -147,7 +150,11 @@ export function SessionList({
                         }}
                         className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
                       >
-                        <SquareTerminal className="h-3 w-3" />
+                        <FeedbackIcon
+                          state={openTerminalStateOf?.(s.sessionId) ?? 'idle'}
+                          className="h-3 w-3"
+                          icon={<SquareTerminal className="h-3 w-3" />}
+                        />
                       </button>
                     )}
                     <button

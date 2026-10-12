@@ -3,6 +3,7 @@ import {
   SUCCESS_HOLD_MS,
   TOAST_HOLD_MS,
   addToast,
+  canStartAction,
   reduceActionState,
   removeToast,
   type ToastItem,
@@ -30,6 +31,12 @@ describe('按钮反馈状态机', () => {
     expect(reduceActionState('success', 'fail')).toBe('success');
     expect(reduceActionState('idle', 'ok')).toBe('idle');
     expect(reduceActionState('idle', 'fail')).toBe('idle');
+  });
+
+  it('连点去重：loading 在途中拒绝再触发，success 停留期放行', () => {
+    expect(canStartAction('idle')).toBe(true);
+    expect(canStartAction('loading')).toBe(false);
+    expect(canStartAction('success')).toBe(true);
   });
 });
 
