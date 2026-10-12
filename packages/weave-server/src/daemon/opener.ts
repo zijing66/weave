@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import type { TerminalSettings } from './settings.js';
 
 /**
@@ -276,7 +278,12 @@ export async function runInTerminal(
   argv: string[],
   terminal: TerminalSettings,
 ): Promise<void> {
-  if (terminal.preset === 'wezterm' && (await runInWezterm(dir, argv))) return;
+  // wezterm 只走 mux：legacy `start -- PROG` 绕过 default_prog 不说，mux 在时
+  // `start` 只会挂死出一个无窗僵尸 + trySpawn 假成功。失败一律抛真相。
+  if (terminal.preset === 'wezterm') {
+    await runInWezterm(dir, argv);
+    return;
+  }
   await launchFirst(
     resolveTerminalLaunch(dir, terminal, process.platform, argv),
     `Terminal preset "${terminal.preset}" cannot run a command here — pick another preset in settings`,
@@ -287,9 +294,10 @@ export async function runInTerminal(
 //
 // `wezterm start -- PROG` 会绕过 default_prog 直派子进程（用户的 shell 配置、
 // job 包裹、OSC 7 全部丢失），所以 run 路径首选 mux：panes 在 mux 里以
-// default_prog 起，命令经 send-text 打进去。仅在 mux 不可达（wezterm 没开）时
-// 落到候选单里的 `start` 老行为；mux 可达而任一步失败必须 throw——mux 在时
-// `start` 会挂死且 trySpawn 只见 spawn 事件就报成功，静默落过去就是假 200。
+// default_prog 起，命令经 send-text 打进去。每个 GUI 实例各持有自己的 mux
+// socket（gui-sock-<pid>），daemon 不在 pane 里、没有 wezterm 注入的
+// WEZTERM_UNIX_SOCKET，必须主动发现并按存活/活跃度选 mux。任何失败一律
+// throw——legacy `start` 在 mux 存在时是挂死假成功，静默落过去就是谎报 200。
 
 /** `cli list` 里与布局决策相关的字段（left_col/top_row 是单元格坐标）。 */
 export interface WeztermPaneInfo {
@@ -417,8 +425,14 @@ export function planWeztermNewWindow(dir: string, workspace: string | null): str
   return args;
 }
 
-/** list-clients JSON → 最近活跃（idle 最小）client 的 workspace；坏输入 null。 */
-export function weztermActiveWorkspaceOf(jsonText: string | null): string | null {
+/** 活跃 client：workspace + idle 毫秒（idle 还用来在多个 mux 之间选最活跃的）。 */
+interface WeztermActiveClient {
+  workspace: string;
+  idleMs: number;
+}
+
+/** list-clients JSON → idle 最小的 client；坏输入/无有效 client → null。 */
+function weztermActiveClient(jsonText: string | null): WeztermActiveClient | null {
   if (!jsonText) return null;
   let clients: unknown;
   try {
@@ -427,8 +441,7 @@ export function weztermActiveWorkspaceOf(jsonText: string | null): string | null
     return null;
   }
   if (!Array.isArray(clients)) return null;
-  let best: string | null = null;
-  let bestIdle = Number.POSITIVE_INFINITY;
+  let best: WeztermActiveClient | null = null;
   for (const c of clients) {
     const client = c as { workspace?: unknown; idle_time?: { secs?: unknown; nanos?: unknown } };
     if (typeof client?.workspace !== 'string' || !client.workspace) continue;
@@ -436,12 +449,16 @@ export function weztermActiveWorkspaceOf(jsonText: string | null): string | null
     const idleMs =
       (typeof idle?.secs === 'number' ? idle.secs * 1e3 : 0) +
       (typeof idle?.nanos === 'number' ? idle.nanos / 1e6 : 0);
-    if (idleMs < bestIdle) {
-      bestIdle = idleMs;
-      best = client.workspace;
+    if (best === null || idleMs < best.idleMs) {
+      best = { workspace: client.workspace, idleMs };
     }
   }
   return best;
+}
+
+/** list-clients JSON → 最近活跃（idle 最小）client 的 workspace；坏输入 null。 */
+export function weztermActiveWorkspaceOf(jsonText: string | null): string | null {
+  return weztermActiveClient(jsonText)?.workspace ?? null;
 }
 
 const WEZTERM_CLI_TIMEOUT_MS = 5000;
@@ -454,80 +471,172 @@ interface WeztermCliResult {
   timedOut: boolean;
 }
 
-/** wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。 */
-function weztermCli(args: string[]): Promise<WeztermCliResult | null> {
+/**
+ * wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。
+ * socket 非空时经 WEZTERM_UNIX_SOCKET 指定 mux——daemon 不在 pane 里，没有
+ * wezterm 注入的这个 env，不显式点名就会去连默认 sock/残留 socket 而误判。
+ */
+function weztermCli(args: string[], socket: string): Promise<WeztermCliResult | null> {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn('wezterm', args, { windowsHide: true });
+      child = spawn('wezterm', args, {
+        windowsHide: true,
+        env: { ...process.env, WEZTERM_UNIX_SOCKET: socket },
+      });
     } catch {
       resolve(null);
       return;
     }
     let out = '';
     let err = '';
-    let timedOut = false;
+    let settled = false;
+    const finish = (r: WeztermCliResult | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
     child.stdout.on('data', (d: Buffer) => {
       out += d.toString();
     });
     child.stderr?.on('data', (d: Buffer) => {
       err += d.toString();
     });
+    // 计时到点即 resolve——kill 对卡死进程可能无效，不 resolve 会挂死；
+    // 废料管+unref，免得杀不掉的孤儿子进程拖着 daemon 事件loop
     const timer = setTimeout(() => {
-      timedOut = true;
+      child.stdout.destroy();
+      child.stderr?.destroy();
+      child.unref();
       child.kill();
+      finish({ ok: false, out, err: err.trim(), timedOut: true });
     }, WEZTERM_CLI_TIMEOUT_MS);
     timer.unref();
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
+    child.on('error', () => finish(null));
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0 && !timedOut, out, err: err.trim(), timedOut });
+      finish({ ok: code === 0, out, err: err.trim(), timedOut: false });
     });
   });
 }
 
-/** cli 步骤失败的诊断文案：命令 + stderr/超时，经路由 400 → 前端 toast。 */
-function weztermStepError(args: string[], r: WeztermCliResult | null): string {
-  const cmd = `wezterm ${args.join(' ')}`;
+/** cli 步骤失败的诊断文案：socket + 命令 + stderr/超时，经路由 400 → 前端 toast。 */
+function weztermStepError(args: string[], socket: string, r: WeztermCliResult | null): string {
+  const cmd = `wezterm[${basename(socket)}] ${args.join(' ')}`;
   if (r === null) return `${cmd}: executable not found`;
   if (r.timedOut) return `${cmd}: timed out after ${WEZTERM_CLI_TIMEOUT_MS}ms`;
   return r.err ? `${cmd}: ${r.err}` : `${cmd}: exited with failure`;
 }
 
-/**
- * wezterm run 主通道：同项目 → 分屏复用；否则 → 新窗口；命令一律 send-text。
- * false = mux 不可达（wezterm 未运行），交给 start 候选冷启动；
- * mux 可达而某步失败 → throw（绝不能静默落到会假成功的 start 直发）。
- */
-async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
-  const platform = process.platform;
-  const listed = await weztermCli(['cli', 'list', '--format', 'json']);
-  if (!listed?.ok) return false;
-  const split = planWeztermReuse(dir, parseWeztermPanes(listed.out), platform);
-  let spawnArgs: string[];
-  if (split) {
-    spawnArgs = [
-      'cli',
-      'split-pane',
-      '--pane-id',
-      String(split.paneId),
-      `--${split.direction}`,
-      '--cwd',
-      dir,
-    ];
-  } else {
-    const clients = await weztermCli(['cli', 'list-clients', '--format', 'json']);
-    const workspace = clients?.ok ? weztermActiveWorkspaceOf(clients.out) : null;
-    spawnArgs = planWeztermNewWindow(dir, workspace);
+/** gui-sock-<pid> 文件名自带 GUI 进程 pid，signal 0 探活。 */
+function weztermPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
-  const spawned = await weztermCli(spawnArgs);
-  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, spawned));
+}
+
+/** 目录下 pid 仍活的 gui-sock 完整路径（pid 大→小 ≈ 新→旧）；io 失败当空目录。
+ * 排序不碰 stat：win 下 AF_UNIX socket 文件 statSync 一律 EACCES。 */
+function weztermGuiSocksIn(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const live: { path: string; pid: number }[] = [];
+  for (const name of names) {
+    const m = /^gui-sock-(\d+)$/.exec(name);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (!weztermPidAlive(pid)) continue;
+    live.push({ path: join(dir, name), pid });
+  }
+  return live.sort((a, b) => b.pid - a.pid).map((s) => s.path);
+}
+
+/**
+ * 候选 mux socket：进程 env 显式指定的最优先（daemon 一般没有，pane 内才有），
+ * 其次存活 GUI 的 gui-sock-*（新的在前 ≈ 最近开的 wezterm 实例）。
+ * 跳过裸 `sock`：指向死 mux-server 时 cli 会原地拉起一个无人看的幽灵 server
+ * 还 rc=0 返回空世界，会造成新一轮假成功。
+ */
+function weztermSocketCandidates(platform: NodeJS.Platform): string[] {
+  const out: string[] = [];
+  if (process.env.WEZTERM_UNIX_SOCKET) out.push(process.env.WEZTERM_UNIX_SOCKET);
+  const home = platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
+  if (home) out.push(...weztermGuiSocksIn(join(home, '.local', 'share', 'wezterm')));
+  if (platform !== 'win32' && process.env.XDG_RUNTIME_DIR) {
+    out.push(...weztermGuiSocksIn(join(process.env.XDG_RUNTIME_DIR, 'wezterm')));
+  }
+  return [...new Set(out)];
+}
+
+/** 一个探活通过的 mux：socket + pane 世界 + 活跃 client（workspace 与 idle）。 */
+interface WeztermMux {
+  socket: string;
+  panes: WeztermPaneInfo[];
+  workspace: string | null;
+  idleMs: number;
+}
+
+/** 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。 */
+async function weztermLiveMuxes(): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
+  const candidates = weztermSocketCandidates(process.platform);
+  const muxes: WeztermMux[] = [];
+  for (const socket of candidates) {
+    const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+    if (!listed?.ok) continue;
+    const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
+    const active = weztermActiveClient(clients?.ok ? clients.out : null);
+    muxes.push({
+      socket,
+      panes: parseWeztermPanes(listed.out),
+      workspace: active?.workspace ?? null,
+      idleMs: active?.idleMs ?? Number.POSITIVE_INFINITY,
+    });
+  }
+  return { muxes, candidates };
+}
+
+/**
+ * wezterm run 主通道：同项目 → 分屏复用；否则 → 最活跃 mux 开新窗口；
+ * 命令一律 send-text。任何失败（无活 mux / 某步 rc≠0 / 超时）一律 throw——
+ * 错误经路由 400 → 前端 toast，绝不静默落到假成功的 legacy start。
+ */
+async function runInWezterm(dir: string, argv: string[]): Promise<void> {
+  const platform = process.platform;
+  const { muxes, candidates } = await weztermLiveMuxes();
+  if (muxes.length === 0) {
+    throw new Error(
+      candidates.length === 0
+        ? `wezterm mux undiscoverable: ${process.env.WEZTERM_UNIX_SOCKET ? 'WEZTERM_UNIX_SOCKET set but dead' : 'WEZTERM_UNIX_SOCKET unset'} and no living gui-sock under socket dirs (USERPROFILE=${process.env.USERPROFILE ?? '?'} HOME=${process.env.HOME ?? '?'}) — is wezterm running?`
+        : `wezterm mux sockets all unreachable: ${candidates.map((s) => basename(s)).join(', ')} — wezterm may be wedged, restart it`,
+    );
+  }
+  // 同项目分屏：任一 mux 里 cwd 对上就在那里切；多 mux 命中取更活跃的那个
+  let chosen: WeztermMux | null = null;
+  let split: WeztermSplitTarget | null = null;
+  for (const mux of muxes) {
+    const s = planWeztermReuse(dir, mux.panes, platform);
+    if (s && (chosen === null || mux.idleMs < chosen.idleMs)) {
+      chosen = mux;
+      split = s;
+    }
+  }
+  // 无命中 → 在最近活跃（idle 最小）的 mux 开新窗
+  chosen ??= muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
+  const spawnArgs = split
+    ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
+    : planWeztermNewWindow(dir, chosen.workspace);
+  const spawned = await weztermCli(spawnArgs, chosen.socket);
+  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, chosen.socket, spawned));
   const paneId = spawned.out.trim();
   if (!/^\d+$/.test(paneId)) {
-    throw new Error(`wezterm ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
+    throw new Error(`wezterm[${basename(chosen.socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
   }
   const sendArgs = [
     'cli',
@@ -537,9 +646,8 @@ async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
     '--no-paste',
     `${joinCmd(argv, platform)}\r`,
   ];
-  const sent = await weztermCli(sendArgs);
-  if (!sent?.ok) throw new Error(weztermStepError(sendArgs, sent));
-  return true;
+  const sent = await weztermCli(sendArgs, chosen.socket);
+  if (!sent?.ok) throw new Error(weztermStepError(sendArgs, chosen.socket, sent));
 }
 
 /** Injection seam for the open routes — tests substitute a spy. */
