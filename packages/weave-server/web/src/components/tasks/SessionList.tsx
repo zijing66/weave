@@ -12,6 +12,10 @@ import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 
+/** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
+const ACTION_BTN =
+  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200';
+
 /**
  * 任务视图左栏：会话列表。行内元素 = 名称（title 回退 sessionId 前 8 位，
  * hover 出完整值可复制）+ 状态图标（运行中动效 / 打开静态）+ 事件计数 +
@@ -137,23 +141,33 @@ export function SessionList({
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
                     {sessionLabel(s.title, s.sessionId)}
                   </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [&_svg]:pointer-events-none">
+                  <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
                     {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
-                        codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验 */}
+                        codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
+                        该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
+                        图标转绿：与项目卡同款「有终端在跑」信号。 */}
                     {s.harness === 'claude' && (
                       <button
                         type="button"
-                        title={t('tasks.openSessionTerminal')}
+                        title={
+                          s.pidAlive
+                            ? t('tasks.sessionTerminalRunning')
+                            : t('tasks.openSessionTerminal')
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenTerminal(s.sessionId);
                         }}
-                        className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                        className={ACTION_BTN}
                       >
                         <FeedbackIcon
                           state={openTerminalStateOf?.(s.sessionId) ?? 'idle'}
                           className="h-3 w-3"
-                          icon={<SquareTerminal className="h-3 w-3" />}
+                          icon={
+                            <SquareTerminal
+                              className={cn('h-3 w-3', s.pidAlive && 'text-emerald-400')}
+                            />
+                          }
                         />
                       </button>
                     )}
@@ -164,7 +178,7 @@ export function SessionList({
                         e.stopPropagation();
                         startRename(s);
                       }}
-                      className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                      className={ACTION_BTN}
                     >
                       <Pencil className="h-3 w-3" />
                     </button>
@@ -175,7 +189,7 @@ export function SessionList({
                         e.stopPropagation();
                         copyId(s.sessionId);
                       }}
-                      className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                      className={ACTION_BTN}
                     >
                       {copiedId === s.sessionId ? (
                         <Check className="h-3 w-3 text-emerald-400" />
@@ -191,7 +205,7 @@ export function SessionList({
                         e.stopPropagation();
                         onDelete(s.sessionId);
                       }}
-                      className="rounded p-0.5 text-neutral-500 hover:text-red-400"
+                      className={cn(ACTION_BTN, 'hover:text-red-400')}
                     >
                       <FeedbackIcon
                         state={deleteStateOf?.(s.sessionId) ?? 'idle'}

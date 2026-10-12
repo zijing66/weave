@@ -39,7 +39,7 @@ export const appZh = {
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
-  'project.sessionsOpen': '{n} 个会话闲置（等输入）',
+  'project.sessionsOpen': '{n} 个会话就绪（等输入）',
 
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
@@ -120,7 +120,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.syncPending': '{n} update(s) pending — click to sync now',
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
-  'project.sessionsOpen': '{n} session(s) idle (awaiting input)',
+  'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',

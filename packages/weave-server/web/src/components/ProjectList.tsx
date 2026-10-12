@@ -59,7 +59,7 @@ interface ProjectListProps {
   /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
   openExplorerStateOf?: (projectId: number) => ActionState;
   openTerminalStateOf?: (projectId: number) => ActionState;
-  /** Row badges: 该项目各 harness 的「运行中/打开」会话计数（全局状态总线供给）。 */
+  /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
   /** Row 快速操作：该项目已打开的终端窗口数（0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
@@ -425,7 +425,7 @@ function QuickButton({
         e.stopPropagation();
         onClick();
       }}
-      className="pointer-events-auto [&_svg]:pointer-events-none rounded border border-white/[0.08] bg-white/[0.02] p-0.5 text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
+      className="pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
     >
       {children}
     </button>
