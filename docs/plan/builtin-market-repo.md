@@ -492,7 +492,8 @@ L1 仓库 namespace 折叠块
 | `packages/weave-server/README.md` | 新增 `## Built-in resources` 段（daemon 视角：启动按 `@weavecode/templates` 的 `resources/weave-market/` 落地并当内置市场扫描），指向根 README 那一节。 |
 | 归档口径 | 方案与验证记录的**规范副本在 `docs/plan/`（随仓跟踪、已提交）**；`.claude/plans/` 只留本地草稿副本（`.claude/.gitignore` 内、不入库），不再是事实源。 |
 | 执行状态 | 批 0 ☑（H1 **不成立**：win32 下 `lstat(junction).isSymbolicLink()` 为 true，`removeInstalled` 走 unlink，无删穿风险，故无前置修复批；产物 = `docs/plan/builtin-market-verification.md`）；批 3 并入批 1（☒）；批 1/2/4/5/6/7/8 全 ☑。 |
-| 遗留（不属本方案范围） | ① `daemon/server.ts` 里批 7 的两处 hunk 尚未提交（该文件正被并行会话的 WIP 占用，见批 7 记录）；② 早期 `weave init` 过的项目仍跑旧 HTTP hook 脚本（`.claude/helpers/hook-handler.cjs` 只由 init 刷新）→ 需在那些项目重跑 `weave init`；启动时的陈旧脚本检测尚未做。 |
+| 遗留（不属本方案范围） | ① `daemon/server.ts` 里批 7 的两处 hunk 尚未提交（该文件正被并行会话的 WIP 占用，见批 7 记录）——**已随并行会话的 `4e36f14` 落库**；② 早期 `weave init` 过的项目仍跑旧 HTTP hook 脚本（`.claude/helpers/hook-handler.cjs` 只由 init 刷新）→ 需在那些项目重跑 `weave init`；启动时的陈旧脚本检测尚未做。 |
+| 遗留（批 7 未闭合的接缝） | SSE 的 `asset` 实时帧不带 `namespace`（watcher 不知道文件是谁铺的），而 web 收到帧是**就地打补丁**（`App.tsx` 的 `subscribeSse` 回调自建 `AssetEntry`）→ 在编辑器里改一个属于某仓库的文件时，那一行的仓库标记会消失到下次 `/assets` 全量刷新；走 UI 的安装/卸载不受影响（handler 里已有 `refreshAssets`）。修法二选一：① 帧上补 `namespace`（`handleSse` 的 asset 订阅里按帧查一次 `projectFileNamespaces(projectPath)`，注意写帧顺序）；② 前端保留旧条目的 `namespace` + 新文件触发一次去抖 `refreshAssets`。**已转交 SSE/终端工作线的并行会话**（该文件是它的当前改动面），谁先动谁做。 |
 
 ---
 
