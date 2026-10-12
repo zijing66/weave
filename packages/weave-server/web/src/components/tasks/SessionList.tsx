@@ -164,7 +164,7 @@ export function SessionList({
                           ACTION_BTN,
                           // 已打开：不吃 hover 反馈（否则看着还能点）
                           s.pidAlive &&
-                            'cursor-default hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
+                            'disabled:cursor-not-allowed hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
                         )}
                       >
                         <FeedbackIcon
