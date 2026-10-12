@@ -19,12 +19,12 @@ export const MAIN_CATEGORIES: {
   labelKey: MessageKey;
   icon: LucideIcon;
 }[] = [
+  { key: 'tasks', labelKey: 'catbar.tasks', icon: ListTodo },
   // The count on this card is every file asset (skills, MCP, instructions,
   // settings, helpers …), so the label says 资源管理 rather than implying it
   // counts any one of them alone.
   { key: 'files', labelKey: 'catbar.files', icon: Terminal },
   { key: 'personalization', labelKey: 'catbar.personalization', icon: Sparkles },
-  { key: 'tasks', labelKey: 'catbar.tasks', icon: ListTodo },
   { key: 'weave', labelKey: 'catbar.hooks', icon: Workflow },
 ];
 
