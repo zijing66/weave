@@ -678,15 +678,55 @@ async function runInWezterm(dir: string, argv: string[]): Promise<void> {
   if (!sent?.ok) throw new Error(weztermStepError(sendArgs, chosen.socket, sent));
 }
 
+/**
+ * 项目卡「终端」角标的数据面：每个目录已打开的终端窗口数（窗口级口径）。
+ * 枚举能力只有 wezterm 有（mux `cli list` 报 pane 的 window_id + cwd）；
+ * preset = wezterm/auto 才探测（auto 在装了 wezterm 的机器上开的就是它），
+ * 其余 preset 没有可枚举通道 → 一律 0（角标不显示，不谎报）。
+ */
+export async function countOpenTerminals(
+  dirs: string[],
+  terminal: TerminalSettings,
+): Promise<Map<string, number>> {
+  const zero = new Map(dirs.map((d) => [d, 0]));
+  if (dirs.length === 0) return zero;
+  if (terminal.preset !== 'wezterm' && terminal.preset !== 'auto') return zero;
+  const muxes = await weztermLiveMuxesCached();
+  if (muxes.length === 0) return zero;
+  return countWindowsByDir(
+    dirs,
+    muxes.flatMap((mux) =>
+      mux.panes.map((pane) => ({ muxKey: mux.socket, windowId: pane.windowId, cwd: pane.cwd })),
+    ),
+  );
+}
+
+/**
+ * 探活结果短缓存（2.5s）：角标轮询 + 焦点回归/开窗后刷新会在瞬间打多枪，
+ * 每枪重探全部 socket（死 socket 各 5s 超时）会拖慢路由。**只给计数用**——
+ * runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到刚关掉的 pane）。
+ */
+let muxCache: { at: number; muxes: WeztermMux[] } | null = null;
+
+async function weztermLiveMuxesCached(): Promise<WeztermMux[]> {
+  if (muxCache && Date.now() - muxCache.at < 2500) return muxCache.muxes;
+  const { muxes } = await weztermLiveMuxes();
+  muxCache = { at: Date.now(), muxes };
+  return muxes;
+}
+
 /** Injection seam for the open routes — tests substitute a spy. */
 export interface ProjectOpener {
   openExplorer(dir: string): Promise<void>;
   openTerminal(dir: string, terminal: TerminalSettings): Promise<void>;
   runInTerminal(dir: string, argv: string[], terminal: TerminalSettings): Promise<void>;
+  /** 已打开终端窗口计数（可选：不实现的 spy 由路由回落到默认实现）。 */
+  countTerminals?(dirs: string[], terminal: TerminalSettings): Promise<Map<string, number>>;
 }
 
 export const defaultProjectOpener: ProjectOpener = {
   openExplorer: openInExplorer,
   openTerminal: openInTerminal,
   runInTerminal,
+  countTerminals: countOpenTerminals,
 };

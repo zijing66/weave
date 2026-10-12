@@ -17,7 +17,9 @@ import {
   planWeztermReuse,
   planWeztermNewWindow,
   weztermActiveWorkspaceOf,
+  countWindowsByDir,
   type WeztermPaneInfo,
+  type WeztermMuxPane,
 } from '../opener.js';
 
 describe('daemon settings persistence (db key-value)', () => {
@@ -565,5 +567,41 @@ describe('wezterm mux 会话通道（纯函数）', () => {
         ]),
       ),
     ).toBe('ws-live');
+  });
+});
+
+describe('countWindowsByDir（终端角标：窗口级计数）', () => {
+  it('同窗多 pane 只计 1；跨 mux 同号窗口各计 1；cwd 不匹配/null 不计', () => {
+    const panes: WeztermMuxPane[] = [
+      { muxKey: 'sockA', windowId: 1, cwd: 'file:///p/proj' },
+      { muxKey: 'sockA', windowId: 1, cwd: 'file:///p/proj' }, // 同窗第二个 pane（分屏）
+      { muxKey: 'sockA', windowId: 2, cwd: 'file:///p/proj' },
+      { muxKey: 'sockB', windowId: 1, cwd: 'file:///p/proj' }, // 另一 mux 的同号窗口
+      { muxKey: 'sockA', windowId: 3, cwd: 'file:///p/other' },
+      { muxKey: 'sockA', windowId: 4, cwd: null },
+    ];
+    expect(countWindowsByDir(['/p/proj', '/p/none'], panes, 'linux')).toEqual(
+      new Map([
+        ['/p/proj', 3],
+        ['/p/none', 0],
+      ]),
+    );
+  });
+
+  it('win32 目录键大小写/斜杠/尾斜杠不敏感', () => {
+    expect(
+      countWindowsByDir(
+        ['D:\\PROJ\\'],
+        [{ muxKey: 's', windowId: 0, cwd: 'file:///d:/proj/' }],
+        'win32',
+      ),
+    ).toEqual(new Map([['D:\\PROJ\\', 1]]));
+  });
+
+  it('空输入安全：无 pane / 无目录', () => {
+    expect(countWindowsByDir(['/p/proj'], [], 'linux')).toEqual(new Map([['/p/proj', 0]]));
+    expect(countWindowsByDir([], [{ muxKey: 's', windowId: 0, cwd: 'file:///p/proj' }])).toEqual(
+      new Map(),
+    );
   });
 });

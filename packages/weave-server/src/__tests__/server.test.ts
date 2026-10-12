@@ -6,6 +6,8 @@ import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
+import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js';
+import type { ProjectOpener } from '../daemon/opener.js';
 import type { DatabaseSync } from 'node:sqlite';
 
 const TOKEN = 'daemon-token';
@@ -207,5 +209,56 @@ describe('daemon server PUT /projects/order（拖动排序持久化）', () => {
     expect((await listedIds())[0]).toBe(p2);
     expect((await putOrder(['x'])).status).toBe(400);
     expect((await putOrder('not-array')).status).toBe(400);
+  });
+});
+
+describe('daemon server GET /terminals/counts（项目卡终端角标）', () => {
+  let db: DatabaseSync;
+  let server: Server;
+  let port: number;
+  let ids: number[];
+  /** spy opener：测试机可能真跑着 wezterm，计数必须走注入缝、不进真探测。 */
+  const openedByPath = new Map<string, number>();
+
+  beforeAll(async () => {
+    db = openDatabase(':memory:');
+    setDaemonSettingsDb(db);
+    await writeDaemonSettings({
+      terminal: { preset: 'wezterm', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
+    const projects = new ProjectRepository(db);
+    ids = [
+      projects.register({ path: '/term-a', name: 'a', token: 'ta', source: 'init' }).id,
+      projects.register({ path: '/term-b', name: 'b', token: 'tb', source: 'init' }).id,
+    ];
+    const opener: ProjectOpener = {
+      openExplorer: async () => {},
+      openTerminal: async () => {},
+      runInTerminal: async () => {},
+      countTerminals: async (dirs) => new Map(dirs.map((d) => [d, openedByPath.get(d) ?? 0])),
+    };
+    server = createWeaveServer({ projects, daemonToken: TOKEN, port: 0, opener });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    server.close();
+    setDaemonSettingsDb(null);
+    db.close();
+  });
+
+  it('projectId → 已开终端窗口数；缺 token 401', async () => {
+    openedByPath.set('/term-a', 3);
+    const res = await fetch(`http://127.0.0.1:${port}/terminals/counts`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    const { counts } = (await res.json()) as { counts: Record<string, number> };
+    expect(counts[ids[0]!]).toBe(3);
+    expect(counts[ids[1]!]).toBe(0); // 无终端 → 0（角标不显示）
+    expect((await fetch(`http://127.0.0.1:${port}/terminals/counts`)).status).toBe(401);
   });
 });

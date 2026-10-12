@@ -99,7 +99,7 @@ import {
   terminalPresetsFor,
   type DaemonSettings,
 } from './settings.js';
-import { defaultProjectOpener, type ProjectOpener } from './opener.js';
+import { countOpenTerminals, defaultProjectOpener, type ProjectOpener } from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
 
@@ -1193,6 +1193,24 @@ async function handleRequest(
     }
     deps.projects.setOrder(body.ids as number[]);
     sendJson(res, 200, { projects: deps.projects.list() });
+    return;
+  }
+
+  // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
+  // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
+  if (pathname === '/terminals/counts' && req.method === 'GET') {
+    if (!requireAuth()) return;
+    const projects = deps.projects.list();
+    const opener = deps.opener ?? defaultProjectOpener;
+    const count = opener.countTerminals ?? countOpenTerminals;
+    const settings = await readDaemonSettings();
+    const byPath = await count(
+      projects.map((p) => p.path),
+      settings.terminal,
+    );
+    sendJson(res, 200, {
+      counts: Object.fromEntries(projects.map((p) => [p.id, byPath.get(p.path) ?? 0])),
+    });
     return;
   }
 
