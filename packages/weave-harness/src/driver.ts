@@ -156,6 +156,9 @@ export interface PluginSurface {
   /** 注册键 `<name>@<marketplace>`（键形是 harness 知识，实现期就已定，不外泄给
    *  调用方拼装）；`market` 缺省 = weave 自建市场。 */
   pluginKey(name: string, market?: string): string;
+  /** `pluginKey` 的逆运算。与拼装点成对——键形知识只留同一处，服务端与 web 都
+   *  不得自己 split `@`。`market` = 插件的 namespace（市场身份）。 */
+  parsePluginKey(key: string): { name: string; market: string };
   /** 全局安装（两步 CLI 链；幂等：已装直接返回安装信息）。 */
   globalInstall(srcDir: string, opts?: GlobalInstallOptions): Promise<PluginInstallInfo>;
   /** 读 installed_plugins.json 的插件映射（缺失/损坏 → 空对象）。 */

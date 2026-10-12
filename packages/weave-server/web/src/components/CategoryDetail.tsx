@@ -180,6 +180,8 @@ export function CategoryDetail({
         label: g.label,
         source: g.source,
         pluginKey: g.pluginKey,
+        // 服务端已按 harness 面拆好市场名；前端只透传，不解析键形。
+        namespace: g.namespace,
         enabled,
         skills: g.skills.map((k) => ({
           name: k.name,
@@ -187,6 +189,11 @@ export function CategoryDetail({
           files: [],
           source: g.source as GlobalSkillSource,
           pluginKey: g.pluginKey,
+          form: k.form,
+          // 全局行也带上 runtime：卡片据此显示 claude/codex 徽标，且「本地」把两个
+          // personal 组合并成一个扁平网格时，同名技能仍能有唯一 key。
+          // （抽屉只在项目态消费 agent，全局态分支不读它。）
+          ...(runtime ? { agent: runtime } : {}),
         })),
       };
     });

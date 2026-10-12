@@ -25,6 +25,8 @@ export const assetsZh = {
   'skillGrid.on': '开',
   'skillGrid.off': '关',
   'skillGrid.keyTip': '插件注册键 name@marketplace——@后为所属市场（插件 namespace）',
+  'skillGrid.namespaceTip': '仓库 namespace：该市场下所有插件都归这一块',
+  'skillGrid.packCount': '{n} 个包',
 
   // —— FileAssetTree ——
   'fileTree.all': '全部',
@@ -112,6 +114,8 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.on': 'ON',
   'skillGrid.off': 'OFF',
   'skillGrid.keyTip': 'Plugin key name@marketplace — the part after @ is its marketplace (plugin namespace)',
+  'skillGrid.namespaceTip': 'Repository namespace: every plugin from this marketplace groups here',
+  'skillGrid.packCount': '{n} packs',
 
   // —— FileAssetTree ——
   'fileTree.all': 'All',

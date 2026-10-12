@@ -518,6 +518,9 @@ export type GlobalSkillSource =
 export interface GlobalSkillEntry {
   name: string;
   dir: string;
+  /** 装面形态（服务端 lstat 判定）：链接 = 全局位置无副本、副本 = 回退复制。
+   *  仅陈述事实——CC 自有的 plugins/cache 副本非 weave 可控，别拿它提示用户改设置。 */
+  form: 'link' | 'copy';
 }
 
 /** A labelled group of global skills sharing a source. Plugin groups carry
@@ -527,6 +530,9 @@ export interface GlobalSkillGroup {
   label: string;
   skills: GlobalSkillEntry[];
   pluginKey?: string;
+  /** 所属市场 = 仓库 namespace（服务端经 harness 面拆键得来）。前端据此做一级
+   *  折叠块，**不得自己 split `@`**；个人组无此字段（归「本地」）。 */
+  namespace?: string;
   enabled?: boolean;
 }
 

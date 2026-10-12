@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Power,
   FolderTree,
+  Package,
   ChevronsUpDown,
   ChevronsDownUp,
 } from 'lucide-react';
@@ -39,6 +40,8 @@ export interface SkillRow {
   pluginKey?: string;
   /** Runtime surface the skill is installed on (project rows only). */
   agent?: AssetAgent;
+  /** 装面形态（服务端 lstat 判定，仅陈述事实）。 */
+  form?: 'link' | 'copy';
 }
 
 /** Open a skill's detail drawer. Global rows carry source/pluginKey so the
@@ -59,6 +62,8 @@ export interface SkillGroup {
   source: GlobalSkillSource;
   /** `plugin@marketplace` for plugin groups; undefined for personal groups. */
   pluginKey?: string;
+  /** 所属市场 = 仓库 namespace（服务端拆键得来）；个人组 undefined → 归「本地」。 */
+  namespace?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
   skills: SkillRow[];
@@ -290,6 +295,169 @@ function EffectivePill({ effective, total }: { effective: number; total: number 
   );
 }
 
+/** L1 折叠块：仓库 namespace。个人技能（无 namespace）并成一块「本地」。 */
+interface RepoGroup {
+  key: string;
+  /** undefined = 本地（手动装的独立 skill，非任何市场所出）。 */
+  namespace?: string;
+  groups: SkillGroup[];
+}
+
+const LOCAL_REPO_KEY = '__local__';
+
+/** 按仓库 namespace 聚合；「本地」排最前，其余按市场名排序。 */
+export function groupByRepo(groups: SkillGroup[]): RepoGroup[] {
+  const byRepo = new Map<string, RepoGroup>();
+  for (const g of groups) {
+    const key = g.namespace ?? LOCAL_REPO_KEY;
+    const entry = byRepo.get(key) ?? {
+      key,
+      ...(g.namespace ? { namespace: g.namespace } : {}),
+      groups: [],
+    };
+    entry.groups.push(g);
+    byRepo.set(key, entry);
+  }
+  return [...byRepo.values()].sort((a, b) =>
+    a.namespace === undefined
+      ? -1
+      : b.namespace === undefined
+        ? 1
+        : a.namespace.localeCompare(b.namespace),
+  );
+}
+
+/** 折叠集切换（L1/L2 共用）。 */
+function toggleIn(set: Set<string>, key: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
+/** L2 折叠块：一个插件包（市场里的一个插件文件夹）。 */
+function PackBlock({
+  group,
+  collapsed,
+  onToggle,
+  findUpdate,
+  onUninstallSkill,
+  onOpenDetail,
+  onTogglePlugin,
+  readOnly,
+}: {
+  group: SkillGroup;
+  collapsed: boolean;
+  onToggle: () => void;
+  findUpdate: (name: string) => SkillUpdate | undefined;
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onOpenDetail: OpenDetailFn;
+  onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void | Promise<void>;
+  readOnly?: boolean;
+}) {
+  const t = useT();
+  const fb = useActionFeedback();
+  const isPlugin = group.source.endsWith('-plugin');
+  const runtime = PLUGIN_RUNTIME[group.source];
+  // A pack is atomic — its plugin is either enabled or not — so this is either
+  // all of its skills or none. Shown anyway so every level reads alike.
+  const stats = countEffectiveSkills([group]);
+  const toggleKey = `plugin-toggle:${runtime}:${group.pluginKey ?? '-'}`;
+  const toggleState = fb.stateOf(toggleKey);
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02] cursor-pointer"
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+        )}
+        <FolderTree className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+        <span className="text-xs font-semibold text-neutral-300 truncate">{group.label}</span>
+        {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace（同工具箱行） */}
+        {group.pluginKey && (
+          <span
+            className="shrink-0 font-mono text-[10px] text-neutral-500"
+            title={t('skillGrid.keyTip')}
+          >
+            {group.pluginKey}
+          </span>
+        )}
+        {/* prominent source tag: 插件 / 本地 + runtime */}
+        <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
+          {isPlugin ? t('skillGrid.plugin') : t('skillGrid.local')}
+        </Badge>
+        <AgentBadge agent={group.source.startsWith('claude') ? 'claude' : 'codex'} />
+        <EffectivePill effective={stats.effective} total={stats.total} />
+        {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
+         * Hidden in read-only (project) mode: global config is not edited from a project view. */}
+        {isPlugin && runtime && onTogglePlugin && !readOnly && group.enabled !== undefined && (
+          <button
+            type="button"
+            disabled={toggleState === 'loading'}
+            onClick={(e) => {
+              e.stopPropagation();
+              void fb.run(
+                toggleKey,
+                async () => {
+                  await onTogglePlugin(runtime, group.pluginKey!, !group.enabled);
+                },
+                { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
+              );
+            }}
+            title={group.enabled ? t('skillGrid.pluginOn') : t('skillGrid.pluginOff')}
+            className={cn(
+              'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+              group.enabled
+                ? 'bg-emerald-900/40 text-emerald-300'
+                : 'bg-neutral-800 text-neutral-500',
+            )}
+          >
+            <FeedbackIcon
+              state={toggleState}
+              className="h-3 w-3"
+              icon={<Power className="h-3 w-3" />}
+            />
+            {group.enabled ? t('skillGrid.on') : t('skillGrid.off')}
+          </button>
+        )}
+      </div>
+      {!collapsed && (
+        <div className="px-3 pb-3 pt-1">
+          {group.skills.length === 0 ? (
+            <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 items-start">
+              {group.skills.map((s) => (
+                <SkillCard
+                  key={`${s.scope}-${s.agent ?? 'claude'}-${s.name}`}
+                  row={s}
+                  update={findUpdate(s.name)}
+                  canUninstall={false}
+                  readOnly={readOnly}
+                  onUninstallSkill={onUninstallSkill}
+                  onOpenDetail={onOpenDetail}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupedSkills({
   groups,
   updates,
@@ -311,30 +479,31 @@ function GroupedSkills({
   readOnly?: boolean;
 }) {
   const t = useT();
-  // 插件开关的按钮级反馈：成功由徽标就地翻转呈现（同 HooksPluginsSection.toggle），
-  // 只兜失败 toast + loading 期防重入。
-  const fb = useActionFeedback();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
-  // One collapse flag per group, keyed by source+pluginKey (stable across re-renders).
-  const groupKeys = useMemo(
+
+  // 三级折叠：L1 仓库 namespace → L2 插件包 → L3 技能卡片。
+  // 折叠集记「用户打开过的」而非「关掉的」：数据异步到达、切 runtime tab 时，
+  // 展开集能保住已展开项，折叠集会因新 key 出现而失忆。
+  const repoGroups = useMemo(() => groupByRepo(groups), [groups]);
+  const packKeys = useMemo(
     () => groups.map((g) => `${g.source}:${g.pluginKey ?? '-'}`),
     [groups],
   );
-  // Tracks the groups the user *opened* rather than the ones they closed, so
-  // groups start collapsed — including any that appear later when the runtime
-  // tab changes, which a "start expanded" set could not express.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const anyExpanded = expanded.size > 0;
-  /** One button that flips between expand-all and collapse-all. */
-  const toggleAll = () =>
-    setExpanded(anyExpanded ? new Set() : new Set(groupKeys));
+  // 「本地」例外地默认展开：那是用户手装的独立技能，进页面就该能看见，
+  // 否则首屏是个全折叠的空壳。市场块按用户口径默认折叠。
+  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set([LOCAL_REPO_KEY]));
+  const [expandedPacks, setExpandedPacks] = useState<Set<string>>(new Set());
+  const anyExpanded = expandedRepos.size > 0 || expandedPacks.size > 0;
+  /** One button that flips every level between expand-all and collapse-all. */
+  const toggleAll = () => {
+    if (anyExpanded) {
+      setExpandedRepos(new Set());
+      setExpandedPacks(new Set());
+    } else {
+      setExpandedRepos(new Set(repoGroups.map((r) => r.key)));
+      setExpandedPacks(new Set(packKeys));
+    }
+  };
 
   // How many of the listed skills are actually live. The heading used to carry
   // the total; the pill shows effective/total, so that count would be a repeat.
@@ -372,111 +541,96 @@ function GroupedSkills({
         </div>
       </div>
 
-      <div className="space-y-2">
-        {groups.map((g, i) => {
-          const key = groupKeys[i];
-          const isCollapsed = !expanded.has(key);
-          const runtime = PLUGIN_RUNTIME[g.source];
-          const isPlugin = g.source.endsWith('-plugin');
-          // A group is atomic — its plugin is either enabled or not — so this
-          // is either all of its skills or none. Shown anyway so every group
-          // reads the same as the section heading above.
-          const groupStats = countEffectiveSkills([g]);
-          const toggleKey = `plugin-toggle:${runtime}:${g.pluginKey ?? '-'}`;
-          const toggleState = fb.stateOf(toggleKey);
+      <div className="space-y-3">
+        {repoGroups.map((repo) => {
+          const namespace = repo.namespace;
+          const isLocal = namespace === undefined;
+          const repoCollapsed = !expandedRepos.has(repo.key);
+          const repoStats = countEffectiveSkills(repo.groups);
+          const skillCount = repo.groups.reduce((n, g) => n + g.skills.length, 0);
           return (
             <div
-              key={key}
-              className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden"
+              key={repo.key}
+              className="rounded-2xl border border-white/[0.08] bg-neutral-900/60 overflow-hidden"
             >
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => toggle(key)}
+                onClick={() => setExpandedRepos((prev) => toggleIn(prev, repo.key))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    toggle(key);
+                    setExpandedRepos((prev) => toggleIn(prev, repo.key));
                   }
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02] cursor-pointer"
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] cursor-pointer"
               >
-                {isCollapsed ? (
+                {repoCollapsed ? (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                 ) : (
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                 )}
-                <FolderTree className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                <span className="text-xs font-semibold text-neutral-300 truncate">{g.label}</span>
-                {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace（同工具箱行） */}
-                {g.pluginKey && (
+                <Package className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+                {/* 一级 = 仓库 namespace：市场名原样显示，本地则是一块收敛的个人技能。 */}
+                <span className="text-xs font-semibold text-neutral-200 truncate">
+                  {isLocal ? t('skillGrid.local') : namespace}
+                </span>
+                {!isLocal && (
                   <span
-                    className="shrink-0 font-mono text-[10px] text-neutral-500"
-                    title={t('skillGrid.keyTip')}
+                    className="shrink-0 text-[10px] text-neutral-600"
+                    title={t('skillGrid.namespaceTip')}
                   >
-                    {g.pluginKey}
+                    {t('skillGrid.packCount', { n: repo.groups.length })}
                   </span>
                 )}
-                {/* prominent source tag: 插件 / 本地 + runtime */}
-                <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
-                  {isPlugin ? t('skillGrid.plugin') : t('skillGrid.local')}
+                <Badge variant="skill" className="ml-1">
+                  {skillCount}
                 </Badge>
-                <AgentBadge agent={g.source.startsWith('claude') ? 'claude' : 'codex'} />
-                <EffectivePill effective={groupStats.effective} total={groupStats.total} />
-                {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
-                 * Hidden in read-only (project) mode: global config is not edited from a project view. */}
-                {isPlugin && runtime && onTogglePlugin && !readOnly && g.enabled !== undefined && (
-                  <button
-                    type="button"
-                    disabled={toggleState === 'loading'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void fb.run(
-                        toggleKey,
-                        async () => {
-                          await onTogglePlugin(runtime, g.pluginKey!, !g.enabled);
-                        },
-                        { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
-                      );
-                    }}
-                    title={g.enabled ? t('skillGrid.pluginOn') : t('skillGrid.pluginOff')}
-                    className={cn(
-                      'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-                      g.enabled
-                        ? 'bg-emerald-900/40 text-emerald-300'
-                        : 'bg-neutral-800 text-neutral-500',
-                    )}
-                  >
-                    <FeedbackIcon
-                      state={toggleState}
-                      className="h-3 w-3"
-                      icon={<Power className="h-3 w-3" />}
-                    />
-                    {g.enabled ? t('skillGrid.on') : t('skillGrid.off')}
-                  </button>
-                )}
+                <EffectivePill effective={repoStats.effective} total={repoStats.total} />
               </div>
-              {!isCollapsed && (
-                <div className="px-3 pb-3 pt-1">
-                  {g.skills.length === 0 ? (
-                    <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-3 items-start">
-                      {g.skills.map((s) => (
-                        <SkillCard
-                          key={`${s.scope}-${s.name}`}
-                          row={s}
-                          update={findUpdate(s.name)}
-                          canUninstall={false}
-                          readOnly={readOnly}
+              {!repoCollapsed &&
+                (isLocal ? (
+                  <div className="px-3 pb-3 pt-1">
+                    {skillCount === 0 ? (
+                      <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3 items-start">
+                        {repo.groups
+                          .flatMap((g) => g.skills)
+                          .map((s) => (
+                            <SkillCard
+                              key={`${s.scope}-${s.agent ?? 'claude'}-${s.name}`}
+                              row={s}
+                              update={findUpdate(s.name)}
+                              canUninstall={false}
+                              readOnly={readOnly}
+                              onUninstallSkill={onUninstallSkill}
+                              onOpenDetail={onOpenDetail}
+                            />
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-3 pb-3 pt-1 space-y-2">
+                    {repo.groups.map((g) => {
+                      const packKey = `${g.source}:${g.pluginKey ?? '-'}`;
+                      return (
+                        <PackBlock
+                          key={packKey}
+                          group={g}
+                          collapsed={!expandedPacks.has(packKey)}
+                          onToggle={() => setExpandedPacks((prev) => toggleIn(prev, packKey))}
+                          findUpdate={findUpdate}
                           onUninstallSkill={onUninstallSkill}
                           onOpenDetail={onOpenDetail}
+                          onTogglePlugin={onTogglePlugin}
+                          readOnly={readOnly}
                         />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                ))}
             </div>
           );
         })}

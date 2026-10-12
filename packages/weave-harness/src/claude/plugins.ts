@@ -326,6 +326,16 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
     projectPluginDir: (projectPath) => path.join(projectPath, '.claude', 'plugins'),
     pluginKey,
 
+    parsePluginKey(key: string) {
+      // 键形由本文件的 pluginKey 拼，拆也只在这里拆。取 lastIndexOf：插件名本身
+      // 可能含 `@`（scope 包名），市场名不会。无 `@`（理论外形态）→ 整体当名字、
+      // 市场回落自建。
+      const at = key.lastIndexOf('@');
+      return at > 0
+        ? { name: key.slice(0, at), market: key.slice(at + 1) }
+        : { name: key, market: WEAVE_MARKETPLACE };
+    },
+
     async globalInstall(srcDir: string, opts: GlobalInstallOptions = {}) {
       let name = opts.name;
       if (!name) {

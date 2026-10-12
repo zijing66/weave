@@ -67,6 +67,9 @@ export interface GlobalSkillGroup {
   skills: GlobalSkillEntry[];
   /** `plugin@marketplace` for plugin groups; undefined for personal groups. */
   pluginKey?: string;
+  /** 所属市场 = 插件的 namespace（`pluginKey` 的 `@` 后半段，经 harness 面拆解）。
+   *  前端按它做一级折叠块，**不得自己 split `@`**。个人组无此字段。 */
+  namespace?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
 }
@@ -294,10 +297,12 @@ async function readClaudePluginSkills(): Promise<GlobalSkillGroup[]> {
       .pop();
     if (!rec?.installPath) continue;
     const skills = await listSkillSubdirs(path.join(rec.installPath, 'skills'));
-    const name = key.split('@')[0] ?? key;
+    // 键形拆解经 harness 面（与 pluginKey 拼装点成对），不在 server 里裸 split('@')
+    const { name, market } = pluginSurfaceFor('claude').parsePluginKey(key);
     groups.push({
       source: 'claude-plugin',
       label: name,
+      namespace: market,
       skills,
       pluginKey: key,
     });
@@ -361,6 +366,9 @@ async function readCodexPluginSkills(): Promise<GlobalSkillGroup[]> {
       groups.push({
         source: 'codex-plugin',
         label: pl.name,
+        // Codex 无 plugins 能力槽（driver 明确不注册），键形在 server 拼；
+        // namespace 就地可取（就是缓存路径里的市场名），无需回拆键。
+        namespace: mp.name,
         skills,
         pluginKey,
       });
