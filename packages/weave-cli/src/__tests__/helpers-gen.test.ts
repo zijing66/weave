@@ -247,6 +247,54 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     expect(existsSync(inboxPath())).toBe(true);
   });
 
+  it('stop_hook_active=true 时闭嘴：宿主已让 agent 继续过，再输出就是让它空转', async () => {
+    // 用 pendingTitle 而不是规则：规则有 60s 去重、第二枪本来也会被压掉，
+    // 那样就测不出守卫本身；而 title 每枪都会重新下发。
+    writeMirror({ version: 1, project: 'proj', pendingTitles: { s9: '待生效名字' }, rules: [] });
+
+    // 第一枪（stop_hook_active 缺省 = 未继续过）：正常下发
+    const ask = await runHook({ hook_event_name: 'Stop', session_id: 's9', cwd: projectDir });
+    expect(JSON.parse(ask.stdout).hookSpecificOutput.sessionTitle).toBe('待生效名字');
+
+    // 第二枪：宿主带 stop_hook_active=true 问回来 → 必须静默
+    const again = await runHook({
+      hook_event_name: 'Stop',
+      session_id: 's9',
+      cwd: projectDir,
+      stop_hook_active: true,
+    });
+    expect(again.status).toBe(0);
+    expect(again.stdout).toBe('');
+    // 采集不受守卫影响：两枪都进了 inbox
+    expect(readFileSync(inboxPath(), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  it('stop_hook_active=true 只对 Stop/SubagentStop 生效，别的注入事件不受影响', async () => {
+    writeMirror({
+      version: 1,
+      project: 'proj',
+      pendingTitles: {},
+      rules: [
+        {
+          id: 'r-scope',
+          name: '范围规则',
+          events: ['UserPromptSubmit'],
+          tools: null,
+          globs: null,
+          template: '照常注入',
+        },
+      ],
+    });
+
+    const { stdout } = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's10',
+      cwd: projectDir,
+      stop_hook_active: true, // 该字段本不该出现在这里；守卫也不能因此误伤
+    });
+    expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toContain('照常注入');
+  });
+
   it('项目未注册（无 token）：静默退出、不写 inbox', async () => {
     await rm(path.join(projectDir, '.weave', 'token'), { force: true });
     const { status, stdout } = await runHook({ hook_event_name: 'Stop', session_id: 's1', cwd: projectDir });

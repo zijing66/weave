@@ -267,6 +267,18 @@ async function main() {
     payload: raw
   });
 
+  // Stop/SubagentStop 续跑守卫：宿主在「上一枪已经让 agent 继续了」之后，会带着
+  // stop_hook_active=true 再问一次；此时必须闭嘴返回成功，否则会把"停止"一直判成
+  // 被阻断，agent 空转（宿主连续 9 次后强制结束并告警）。Claude Code 的显式要求：
+  // "For Stop/SubagentStop hooks, check stop_hook_active in the input and return
+  // success while it's true." 放在采集之后——事件照收，只是不再注入。
+  if (
+    (eventType === 'Stop' || eventType === 'SubagentStop') &&
+    parsed.stop_hook_active === true
+  ) {
+    process.exit(0);
+  }
+
   if (INJECTABLE_EVENTS.indexOf(eventType) === -1) { process.exit(0); }
 
   var mirror = readMirror(hooksDir(), token);
