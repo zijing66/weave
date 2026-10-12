@@ -868,13 +868,69 @@ interface WeztermMux {
   idleMs: number;
 }
 
+/** 探活超时后回避多久（可能只是 GUI 忙，不是死了）。 */
+const PROBE_TIMEOUT_COOLDOWN_MS = 60_000;
+
+/**
+ * 探活失败的 socket 记忆——避免对已知坏 socket 反复 spawn `wezterm cli`。
+ *
+ * 为什么需要：陈旧的 `gui-sock-<pid>` 不会自己消失（wezterm 退出不清理，实测
+ * 攒到过 48 个），而对着死 socket 跑 `wezterm cli` 会**原地拉起幽灵 mux-server，
+ * 甚至挂死**——实测一次探活 >250s 不返回，且代码里 5s 超时后的 kill「对卡死
+ * 进程可能无效」，于是每次枚举都再堆一个。
+ *
+ * 判据的分寸：socket 路径与 GUI 的 pid 绑定，**进程死则该路径永久失效**（新 GUI
+ * 必然是新 pid → 新路径），所以「干净的非零退出」可以永久记住；而**超时/起不来
+ * 只算可疑**（本机 GUI 常年在 4~6 核，5s 内答不上来是可能的），只短期回避，
+ * 免得把活着的 GUI 误判死。
+ */
+export class SocketProbeGate {
+  private readonly dead = new Set<string>();
+  private readonly cooling = new Map<string, number>();
+
+  /** 这一轮要不要探它。 */
+  shouldProbe(socket: string, now: number = Date.now()): boolean {
+    if (this.dead.has(socket)) return false;
+    const until = this.cooling.get(socket);
+    return until === undefined || now >= until;
+  }
+
+  /** 探活成功：它活着，清掉回避态。 */
+  succeeded(socket: string): void {
+    this.cooling.delete(socket);
+  }
+
+  /** 干净的非零退出（socket 层失败）→ 该路径永久失效。 */
+  failed(socket: string): void {
+    this.dead.add(socket);
+    this.cooling.delete(socket);
+  }
+
+  /** 超时 / 可执行起不来 → 只回避一段时间。 */
+  cooledDown(socket: string, now: number = Date.now()): void {
+    if (this.dead.has(socket)) return;
+    this.cooling.set(socket, now + PROBE_TIMEOUT_COOLDOWN_MS);
+  }
+}
+
+/** 进程内的探活失败记忆（见 SocketProbeGate）。 */
+const probeGate = new SocketProbeGate();
+
 /** 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。 */
 async function weztermLiveMuxes(): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
   const candidates = weztermSocketCandidates(process.platform);
   const muxes: WeztermMux[] = [];
   for (const socket of candidates) {
+    // 已知坏的 socket 不再重探：死 socket 会把 cli 挂死或踢出幽灵 mux-server。
+    if (!probeGate.shouldProbe(socket)) continue;
     const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
-    if (!listed?.ok) continue;
+    if (!listed?.ok) {
+      // 干净的非零退出 = 该 socket 路径永久失效；超时/起不来只回避。
+      if (listed && !listed.timedOut) probeGate.failed(socket);
+      else probeGate.cooledDown(socket);
+      continue;
+    }
+    probeGate.succeeded(socket);
     const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
     const active = weztermActiveClient(clients?.ok ? clients.out : null);
     muxes.push({

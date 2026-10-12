@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTerminalLaunch, terminalBackendFor } from '../opener.js';
+import { resolveTerminalLaunch, SocketProbeGate, terminalBackendFor } from '../opener.js';
 import type { TerminalSettings } from '../settings.js';
 
 /**
@@ -136,5 +136,37 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     const backend = terminalBackendFor(settings('cmd'));
     expect((await backend.countWindows(['/a', '/b'])).size).toBe(0);
     expect(await backend.listTargets('/a')).toEqual([]);
+  });
+});
+
+describe('SocketProbeGate — 陈旧 socket 不再反复探', () => {
+  it('干净失败 → 永久不再探（路径与 GUI pid 绑定，进程死即永久失效）', () => {
+    const gate = new SocketProbeGate();
+    expect(gate.shouldProbe('/sock-a')).toBe(true);
+
+    gate.failed('/sock-a');
+    expect(gate.shouldProbe('/sock-a')).toBe(false);
+    // 时间也救不回来：新 GUI 必然是新 pid → 新路径，旧路径不会复活
+    expect(gate.shouldProbe('/sock-a', Date.now() + 24 * 3600_000)).toBe(false);
+  });
+
+  it('超时 → 只回避一段（GUI 可能只是忙），到期后继续探', () => {
+    const gate = new SocketProbeGate();
+    const t0 = 1_000_000;
+
+    gate.cooledDown('/sock-b', t0);
+    expect(gate.shouldProbe('/sock-b', t0 + 1)).toBe(false);
+    expect(gate.shouldProbe('/sock-b', t0 + 60_001)).toBe(true);
+  });
+
+  it('探活成功即清掉回避态', () => {
+    const gate = new SocketProbeGate();
+    const t0 = 1_000_000;
+
+    gate.cooledDown('/sock-c', t0);
+    expect(gate.shouldProbe('/sock-c', t0 + 1)).toBe(false);
+
+    gate.succeeded('/sock-c');
+    expect(gate.shouldProbe('/sock-c', t0 + 2)).toBe(true);
   });
 });
