@@ -69,7 +69,9 @@ import { importFromDir, importFromGit, importLibraryIntoMarket } from '../market
 import { marketDir, readManifest } from '../market/manifest.js';
 import { isInsideDir, toRelPosix } from '../market/resolve.js';
 import { checkMarketUpdates } from '../market/updates.js';
-import { refreshMarketItems } from '../market/refresh.js';
+import { refreshMarketItems, type RefreshResult } from '../market/refresh.js';
+import { ensureBuiltinMarket, isBuiltinMarketDir } from '../market/builtin.js';
+import { removeInstalled } from '../market/install-link.js';
 import {
   readProjectFile,
   readGlobalFile,
@@ -473,6 +475,8 @@ async function handleRequest(
     }
     const rows = deps.libraries
       .list()
+      // 内置仓无远程源：不进批量检查（否则只会在 UI 上显示成 unknown 徽标）。
+      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataDir))
       .filter((r) => !body.ids?.length || body.ids.includes(r.id));
     for (const r of rows) await invalidateScan(r.path); // 检查即重扫事件：之后同路径取新结果
     const results = await checkMarketUpdates(rows.map((r) => ({ id: r.id, dir: r.path })));
@@ -496,14 +500,26 @@ async function handleRequest(
         return;
       }
     }
-    const targets = deps.libraries
+    const selected = deps.libraries
       .list()
-      .filter((r) => !body.ids?.length || body.ids.includes(r.id))
+      .filter((r) => !body.ids?.length || body.ids.includes(r.id));
+    // 内置仓的「刷新」= 重新从包内落地：它不是导入来的，没有可回拷的 origin；
+    // 重铺同时会把此前因链接不可用而落成副本的落点改回链接。
+    const builtinResults: RefreshResult[] = [];
+    for (const row of selected.filter((r) => isBuiltinMarketDir(r.path, deps.libraries!.dataDir))) {
+      const r = await ensureBuiltinMarket({ libraries: deps.libraries });
+      builtinResults.push({ id: row.id, status: r.error ? 'failed' : 'refreshed' });
+    }
+    const targets = selected
+      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataDir))
       .map((r) => ({ id: r.id, dir: r.path }));
-    const results = await refreshMarketItems(targets, {
-      libraries: deps.libraries,
-      dataDir: deps.libraries.dataDir,
-    });
+    const results = [
+      ...(await refreshMarketItems(targets, {
+        libraries: deps.libraries,
+        dataDir: deps.libraries.dataDir,
+      })),
+      ...builtinResults,
+    ];
     const dirOf = new Map(targets.map((t) => [t.id, t.dir]));
     for (const r of results) {
       if (r.status === 'refreshed') {
@@ -529,11 +545,20 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Library not found' });
       return;
     }
-    if (!isInsideDir(row.path, marketDir())) {
+    if (isBuiltinMarketDir(row.path, deps.libraries.dataDir)) {
+      sendJson(res, 409, {
+        error: 'Built-in market is owned by weave and cannot be deleted',
+        note: 'It is re-materialized from @weavecode/templates on every daemon start.',
+      });
+      return;
+    }
+    if (!isInsideDir(row.path, marketDir(deps.libraries.dataDir))) {
       sendJson(res, 400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
       return;
     }
-    await fs.promises.rm(row.path, { recursive: true, force: true });
+    // 市场落点可能是链接（全局位置优先链接）：必须 lstat 判定后 unlink，
+    // 裸 rm -rf 会把链接当目录递归删而删穿到包内/外部源。
+    await removeInstalled(row.path);
     deps.libraries.remove(row.id);
     await invalidateScan(row.path); // 目录已带走 scans.json，此处兜底热层
     // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。

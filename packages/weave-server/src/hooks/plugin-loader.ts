@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { watch as fsWatch } from 'chokidar';
-import { builtinRulesRoot } from '@weavecode/templates';
+import { builtinRulesDir } from '../market/builtin.js';
 import {
   CLAUDE_HOOK_EVENTS,
   HookRuleSchema,
@@ -631,9 +631,9 @@ export async function loadAllPlugins(
     );
   }
 
-  // 内置规则包随 `@weavecode/templates` 的仓发货（tsc 不拷 JSON/MD，
-  // copy-templates.mjs 负责整目录复制）。
-  loaded.push(...(await loader.loadRoot(builtinRulesRoot(), 'builtin', null)));
+  // 内置规则包随 `@weavecode/templates` 的仓发货，启动时落地到数据目录
+  // （见 market/builtin.ts 的 ensureBuiltinMarket）。
+  loaded.push(...(await loader.loadRoot(builtinRulesDir(getDataDir()), 'builtin', null)));
   loaded.push(
     ...(await loader.loadRoot(path.join(getDataDir(), 'plugins'), 'global', null)),
   );

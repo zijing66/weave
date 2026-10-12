@@ -21,6 +21,7 @@ import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
+import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -64,6 +65,16 @@ async function main(): Promise<void> {
   const hookDispatches = new HookDispatchRepository(db);
   const hookSessions = new SessionRepository(db);
   const hookBus = new HookEventBus();
+  // 内置仓落地必须先于装载：内置规则包装载根与工具包扫描根都指向它。
+  {
+    const r = await ensureBuiltinMarket({ libraries });
+    if (r.error) console.error(`[dev] builtin market unavailable: ${r.error}`);
+    else if (r.changed) {
+      console.log(
+        `[dev] builtin market ${r.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataDir)}`,
+      );
+    }
+  }
   const { loader: hookPlugins } = await loadAllPlugins(
     {
       rules: new HookRuleRepository(db),

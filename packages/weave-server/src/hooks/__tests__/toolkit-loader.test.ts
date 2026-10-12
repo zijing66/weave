@@ -7,6 +7,8 @@ import { openDatabase } from '../../db/db.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
 import { HookRuleRegistry } from '../registry.js';
+import { LibraryRepository } from '../../repositories/libraries.js';
+import { ensureBuiltinMarket } from '../../market/builtin.js';
 import { WeavePluginLoader, loadAllPlugins } from '../plugin-loader.js';
 
 /**
@@ -148,19 +150,40 @@ describe('WeavePluginLoader 深度扫描根（批 10）', () => {
     expect(rules.list().map((r) => r.pluginId)).toEqual(['weave-plain']);
   });
 
-  it('loadAllPlugins 冒烟：内置 md-lint 注册且默认停用；presets 无 harness-tools 幽灵条目', async () => {
-    const { loader: full, loaded } = await loadAllPlugins(
-      { rules, registry, states },
-      [],
-    );
-    const byId = new Map(loaded.map((p) => [p.id, p]));
-    // 批 10 工具包树的 weave 成分进加载器，首见停用
-    expect(byId.get('md-lint')).toMatchObject({ status: 'disabled', scope: 'builtin' });
-    expect(states.get('md-lint')?.enabled).toBe(false);
-    // 既有内置 presets 不受影响
-    expect(byId.has('weave-doc-update-check')).toBe(true);
-    // 浅层 presets 扫描不把 harness-tools 容器当插件位
-    expect(full.list().some((p) => p.id === 'harness-tools')).toBe(false);
-    expect(full.list().filter((p) => p.status === 'rejected' && p.dir.includes('harness-tools'))).toEqual([]);
+  it('loadAllPlugins 冒烟：内置 md-lint 注册且默认停用；浅层根不把深度根容器当插件位', async () => {
+    // 内置包现在从**数据目录里的落地仓**读取（<dataDir>/market/weave），
+    // 故冒烟测试须把 dataDir 重定向到临时根并先落地。
+    const prevAppdata = process.env.APPDATA;
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+    const base = await mkdtemp(path.join(tmpdir(), 'weave-tk-data-'));
+    process.env.APPDATA = base;
+    process.env.XDG_CONFIG_HOME = base;
+    try {
+      // 库实例的 dataDir 必须与 getDataDir() 同根（生产态即默认值）：
+      // 落地写 <dataDir>/market/weave，而装载根由 getDataDir() 推导，不同根就错位。
+      const libraries = new LibraryRepository(db, path.join(base, 'weave'));
+      const materialized = await ensureBuiltinMarket({ libraries });
+      expect(materialized.error).toBeUndefined();
+
+      const { loader: full, loaded } = await loadAllPlugins(
+        { rules, registry, states, libraries },
+        [],
+      );
+      const byId = new Map(loaded.map((p) => [p.id, p]));
+      // 批 10 工具包树的 weave 成分进加载器，首见停用
+      expect(byId.get('md-lint')).toMatchObject({ status: 'disabled', scope: 'builtin' });
+      expect(states.get('md-lint')?.enabled).toBe(false);
+      // 内置规则包（仓内 rules/）不受影响
+      expect(byId.has('weave-doc-update-check')).toBe(true);
+      // 浅层根扫描不把深度根容器当插件位（两者在仓里是兄弟目录，仍须成立）
+      expect(full.list().some((p) => p.id === 'plugins')).toBe(false);
+      expect(full.list().filter((p) => p.status === 'rejected' && p.dir.includes('plugins'))).toEqual([]);
+    } finally {
+      if (prevAppdata === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = prevAppdata;
+      if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prevXdg;
+      await rm(base, { recursive: true, force: true });
+    }
   });
 });

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { getDataDir } from '../db/paths.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
 import { marketDir } from './manifest.js';
+import { isBuiltinMarketDir } from './builtin.js';
 
 /**
  * 批 9（R11 迁移兼容闸）：`libraries.path` 的读侧单点。
@@ -34,6 +35,10 @@ export function toRelPosix(absPath: string, dataDir: string = getDataDir()): str
 /**
  * managed 市场资源根（位于 `<dataDir>/market/` 内的库行）——toolkit 扫描源与
  * plugin-loader 装载源共用的同一口径（M3 装载桥）；legacy 外部源不入内。
+ *
+ * **内置仓排除在外**：它的根由 `discoverToolkitSources()` 以 `provenance:'builtin'`
+ * 单独提供；若这里也返回，同一棵树会被两遍扫描、同一个包出现两条（一遍 builtin
+ * 一遍 market），开关与列表都会重复。
  */
 export function marketLibraryRoots(
   libraries: Pick<LibraryRepository, 'list'>,
@@ -43,7 +48,8 @@ export function marketLibraryRoots(
   const out = new Set<string>();
   for (const row of libraries.list()) {
     const abs = path.resolve(row.path); // list() 读侧已 resolve，此处归一兜底
-    if (abs !== md && isInsideDir(abs, md)) out.add(abs);
+    if (abs === md || isBuiltinMarketDir(abs, dataDir)) continue;
+    if (isInsideDir(abs, md)) out.add(abs);
   }
   return [...out];
 }

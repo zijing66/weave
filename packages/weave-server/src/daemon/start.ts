@@ -9,6 +9,7 @@ import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
+import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -89,21 +90,33 @@ export function startDaemon(): void {
     plugins: pluginHostHolder,
     pluginStates: new PluginStateRepository(db),
   });
-  void loadAllPlugins(
-    {
-      rules: new HookRuleRepository(db),
-      registry: hookRegistry,
-      states: new PluginStateRepository(db),
-      bus: hookBus,
-      libraries,
-    },
-    projects.list(),
-  ).then(({ loader }) => {
-    pluginLoaderRef = loader;
-    pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
-    pluginHostHolder.getConfig = (id) => loader.getConfig(id);
-    stopPluginWatch = loader.watchRoots();
-  });
+  // 内置仓落地必须先于装载：内置规则包装载根与工具包扫描根都指向 <dataDir>/market/weave。
+  void ensureBuiltinMarket({ libraries })
+    .then((result) => {
+      if (result.error) {
+        console.error(`[weave] builtin market unavailable: ${result.error}`);
+      } else if (result.changed) {
+        console.log(
+          `[weave] builtin market ${result.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataDir)}`,
+        );
+      }
+      return loadAllPlugins(
+        {
+          rules: new HookRuleRepository(db),
+          registry: hookRegistry,
+          states: new PluginStateRepository(db),
+          bus: hookBus,
+          libraries,
+        },
+        projects.list(),
+      );
+    })
+    .then(({ loader }) => {
+      pluginLoaderRef = loader;
+      pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
+      pluginHostHolder.getConfig = (id) => loader.getConfig(id);
+      stopPluginWatch = loader.watchRoots();
+    });
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,

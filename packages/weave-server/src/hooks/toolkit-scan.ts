@@ -1,7 +1,8 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, HARNESS_KEYS, type Harness } from '@weavecode/core';
-import { builtinPacksRoot } from '@weavecode/templates';
+import { builtinPacksDir } from '../market/builtin.js';
+import { getDataDir } from '../db/paths.js';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 
 /**
@@ -65,11 +66,11 @@ const MARKET_MAX_SCAN_LEVEL = 10;
 /** targets 缺省/全无效时的回落。 */
 const DEFAULT_TARGETS: Harness[] = ['claude'];
 
-/** 内置工具包源根 = `@weavecode/templates` 随包发布的仓内 `plugins/`。 */
+/** 内置工具包源根 = 落地在数据目录里的内置仓 `plugins/`（见 `market/builtin.ts`）。 */
 export function builtinToolkitRoot(): string {
   // resolve 掉可能的尾部分隔符——sourceRoot 参与记录与 source 消歧比较，
   // 必须是无尾分隔的规范形。
-  return path.resolve(builtinPacksRoot());
+  return path.resolve(builtinPacksDir(getDataDir()));
 }
 
 async function isDir(p: string): Promise<boolean> {
