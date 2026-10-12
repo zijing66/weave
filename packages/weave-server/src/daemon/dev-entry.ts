@@ -22,6 +22,7 @@ import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
+import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
@@ -105,6 +106,9 @@ async function main(): Promise<void> {
   });
   const watch = new WatchService(projects);
   watch.start();
+  // 空会话自动清理（与生产入口同一装配点）：dev 入口此前漏挂 → 只残留一条
+  // SessionStart 的会话在 dev 下永不消失，一直挂在会话列表里显示「就绪」。
+  startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,

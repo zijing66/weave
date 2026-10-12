@@ -7,7 +7,7 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
-import { SessionSweeper } from '../hooks/session-sweeper.js';
+import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
@@ -122,7 +122,7 @@ export function startDaemon(): void {
   syncScheduler.start();
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
-  new SessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches }).start();
+  startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,

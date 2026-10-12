@@ -54,3 +54,12 @@ export class SessionSweeper {
     return timer;
   }
 }
+
+/**
+ * 两个 daemon 入口（生产 start.ts / dev dev-entry.ts）共用的装配点——
+ * 这层封装的存在理由就是入口漂移：dev 入口曾漏挂清扫器，导致空会话
+ * 在 dev 下永远不被清（存量行一直显示在会话列表，判据见 isEmptySession）。
+ */
+export function startSessionSweeper(deps: SessionPurgeDeps): NodeJS.Timeout {
+  return new SessionSweeper(deps).start();
+}
