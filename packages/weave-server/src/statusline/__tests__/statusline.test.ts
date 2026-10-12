@@ -601,6 +601,66 @@ describe('statusline — data segments', () => {
     expect(outside).not.toContain('test@example.com');
   });
 
+  it('serves the repo identity from the cache instead of re-running git', () => {
+    const repo = tmp('weave-sl-idcache-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.name', 'First');
+    git('config', 'user.email', 'first@example.com');
+
+    const idCfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git_user']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git_user: { ...DEFAULT_STATUSLINE_CONFIG.segments.git_user, enabled: true },
+      },
+    };
+    expect(
+      runScript(generateStatuslineScript(idCfg), { workspace: { current_dir: repo } }),
+    ).toContain('First <first@example.com>');
+
+    // The identity changes, but its TTL has not elapsed — the cached value must
+    // win. That is exactly what proves the second render skipped git.
+    git('config', 'user.name', 'Second');
+    git('config', 'user.email', 'second@example.com');
+    const second = runScript(generateStatuslineScript(idCfg), { workspace: { current_dir: repo } });
+    expect(second).toContain('First <first@example.com>');
+    expect(second).not.toContain('second@example.com');
+  });
+
+  it('a failed git lookup is only remembered briefly, then re-probed', async () => {
+    // A failure is cached on the short retry window, not the segment's TTL —
+    // otherwise a directory that becomes a repo later (or one where git
+    // briefly fails) would stay without its segment for the identity's hour.
+    const dir = tmp('weave-sl-latechanges-');
+    expect(
+      runScript(generateStatuslineScript(changesCfg), { workspace: { current_dir: dir } }),
+    ).not.toContain('(+');
+
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: dir, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(dir, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    writeFileSync(join(dir, 'a.txt'), 'one\ntwo\n'); // +1
+
+    // Waiting the retry window out is what makes this deterministic: asserting
+    // immediately would be testing the cache, not the recovery.
+    await new Promise((r) => setTimeout(r, 6000));
+    expect(
+      runScript(generateStatuslineScript(changesCfg), { workspace: { current_dir: dir } }),
+    ).toContain('(+1, -0)');
+  }, 20_000);
+
   it('a missing git binary drops the git blocks instead of crashing', () => {
     // PATH pointed at an empty dir: the git lookups fail with ENOENT, which
     // every git call site must swallow — the script still renders and exits 0.

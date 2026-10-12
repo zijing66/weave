@@ -34,7 +34,8 @@ import { WEAVE_VERSION } from '../version.js';
  *
  * Runtime budget: Claude Code kills the command after 5s and re-runs it on a
  * ~300ms debounce, so every data path here is bounded — subprocesses carry a
- * 3s timeout and the transcript scan is incremental (see `sessionTokens`).
+ * 3s timeout, the transcript scan is incremental (see `sessionTokens`) and the
+ * git-derived segments are reused across runs (see `cachedGit`).
  */
 
 /** Classic 16-colour foreground codes, keyed by the seven named colours. */
@@ -70,6 +71,15 @@ const TRANSCRIPT_CHUNK = 8 * 1024 * 1024;
 /** Distinct message ids retained in the transcript cache. */
 const TRANSCRIPT_ID_CAP = 5000;
 
+/** How long a repo's git identity is reused before it is looked up again. */
+const GIT_IDENTITY_TTL_SEC = 3600;
+
+/** Diff counts move constantly, so they are only reused briefly. */
+const GIT_CHANGES_TTL_SEC = 5;
+
+/** A failed git lookup is re-probed this soon, never cached for a full TTL. */
+const GIT_RETRY_TTL_SEC = 5;
+
 export function generateStatuslineScript(config: StatuslineConfig): string {
   const embeddedConfig = JSON.stringify(config);
   const embeddedAnsi = JSON.stringify(ANSI);
@@ -93,6 +103,9 @@ const CONTEXT_FORMAT = ${embeddedContextFormats};
 const BAR_FILL = '${BAR_FILL}';
 const BAR_EMPTY = '${BAR_EMPTY}';
 const BAR_CELLS = ${BAR_CELLS};
+const GIT_IDENTITY_TTL = ${GIT_IDENTITY_TTL_SEC};
+const GIT_CHANGES_TTL = ${GIT_CHANGES_TTL_SEC};
+const GIT_RETRY_TTL = ${GIT_RETRY_TTL_SEC};
 // Stamped into the row-0 logo so the running version is always visible.
 const WEAVE_VERSION = ${JSON.stringify(WEAVE_VERSION)};
 // Powerline glyphs (Nerd Font), configurable via CONFIG.powerline: undefined
@@ -262,6 +275,36 @@ function gitConfigValue(dir, key) {
   } catch (e) { return ''; }
 }
 
+// Git-derived segments cost a subprocess each, and every render is a fresh
+// process — so persisting the value across runs is the only way to pay that
+// cost less often than Claude Code invokes us (the trick sessionTokens already
+// uses for the transcript scan). Keyed by segment + directory, so every session
+// in one repo shares a single entry. A failed lookup — not a repo, git missing
+// from PATH — is cached too, so a directory that never has git stops being
+// re-probed on every render; but only for the short retry window, since holding
+// a failure for an identity's full TTL would hide the segment for an hour.
+function cachedGit(key, ttlSec, produce) {
+  var fs = require('fs');
+  var os = require('os');
+  var crypto = require('crypto');
+  var hash = crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
+  var file = path.join(os.tmpdir(), 'weave-slc-' + hash + '.json');
+  var now = Date.now();
+  try {
+    var hit = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (hit && hit.expires > now) return hit.value;
+  } catch (e) {}
+  var value = produce();
+  var ttl = value == null ? Math.min(ttlSec, GIT_RETRY_TTL) : ttlSec;
+  try {
+    // atomic replace: renders overlap while Claude Code re-runs on a debounce
+    var tmp = file + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ expires: now + ttl * 1000, value: value }));
+    fs.renameSync(tmp, file);
+  } catch (e) {}
+  return value;
+}
+
 // Cumulative session tokens, read from the transcript Claude Code points us at.
 //
 // The scan is incremental: a small cache keyed by transcript path records how
@@ -380,17 +423,18 @@ function segmentTokens(key, seg) {
           repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
         };
       } catch (e) { return null; }
-    case 'git_user': {
-      // Both fields must be set — a partial identity would render 'name <>'
-      var gitUser = gitConfigValue(cwd, 'user.name');
-      var gitEmail = gitConfigValue(cwd, 'user.email');
-      return gitUser && gitEmail ? { user: gitUser, email: gitEmail } : null;
-    }
-    case 'changes': {
-      var diff = gitNumstat(cwd);
-      if (!diff) return null;
-      return { added: diff.added, deleted: diff.deleted, files: diff.files };
-    }
+    case 'git_user':
+      return cachedGit('git_user:' + cwd, GIT_IDENTITY_TTL, function () {
+        // Both fields must be set — a partial identity would render 'name <>'
+        var gitUser = gitConfigValue(cwd, 'user.name');
+        var gitEmail = gitConfigValue(cwd, 'user.email');
+        return gitUser && gitEmail ? { user: gitUser, email: gitEmail } : null;
+      });
+    case 'changes':
+      return cachedGit('changes:' + cwd, GIT_CHANGES_TTL, function () {
+        var diff = gitNumstat(cwd);
+        return diff ? { added: diff.added, deleted: diff.deleted, files: diff.files } : null;
+      });
     case 'model': {
       var model = (input.model && input.model.display_name) || '';
       return model ? { model: model } : null;
