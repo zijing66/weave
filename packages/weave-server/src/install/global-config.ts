@@ -9,7 +9,7 @@ import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-t
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
-import { linkOrCopy, removeInstalled } from '../market/install-link.js';
+import { installForm, linkOrCopy, removeInstalled, type InstallLinkMode } from '../market/install-link.js';
 
 /**
  * Global (user-scope) Claude Code configuration.
@@ -54,6 +54,9 @@ export type GlobalSkillSource =
 export interface GlobalSkillEntry {
   name: string;
   dir: string;
+  /** 装面形态：`link` = 链接（全局位置无副本）、`copy` = 链接不可用时的回退复制。
+   * 读侧 lstat 判定，不落状态——用户手动改过、包升级后重铺过，状态都会失真。 */
+  form: InstallLinkMode;
 }
 
 /** A labelled group of skills sharing a source. Plugin groups carry enable
@@ -261,7 +264,10 @@ async function listSkillSubdirs(dir: string): Promise<GlobalSkillEntry[]> {
     if (e.name.startsWith('.')) continue;
     if (!e.isDirectory() && !e.isSymbolicLink()) continue;
     const full = path.join(dir, e.name);
-    if (await isDirectoryFollow(full)) out.push({ name: e.name, dir: full });
+    if (!(await isDirectoryFollow(full))) continue;
+    const form = await installForm(full);
+    if (form === 'absent') continue; // 竞态：刚还在、这会儿没了 → 不列出来
+    out.push({ name: e.name, dir: full, form });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -366,12 +372,15 @@ async function readCodexPluginSkills(): Promise<GlobalSkillGroup[]> {
 /** Personal Claude skills under ~/.claude/skills/ as a group. */
 async function readClaudePersonalSkills(): Promise<GlobalSkillGroup> {
   const dir = globalSkillsPath();
-  const entries = await readGlobalSkills();
-  return {
-    source: 'claude-personal',
-    label: 'Claude Code · 个人',
-    skills: entries.map((name) => ({ name, dir: path.join(dir, name) })),
-  };
+  const names = await readGlobalSkills();
+  const skills: GlobalSkillEntry[] = [];
+  for (const name of names) {
+    const full = path.join(dir, name);
+    const form = await installForm(full);
+    if (form === 'absent') continue; // 竞态：枚举与 lstat 之间被删 → 不列出来
+    skills.push({ name, dir: full, form });
+  }
+  return { source: 'claude-personal', label: 'Claude Code · 个人', skills };
 }
 
 /**

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   GlobalInstallOptions,
@@ -9,6 +9,7 @@ import type {
   PluginInstallInfo,
   PluginSurface,
 } from '../driver.js';
+import { linkOrCopy, removeInstalled } from '../shared/install-link.js';
 import { CLAUDE_ASSETS } from './assets.js';
 
 /**
@@ -215,9 +216,14 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
     };
   };
 
-  /** 同步 weave marketplace 目录源：包拷贝进 `plugins/<name>` + upsert 条目；
-   * 目标副本缺 `.claude-plugin/plugin.json` 时就地合成最小 manifest（CC CLI
-   * install 必需；mods-only 等无 manifest 包走此兜底，绝不回写源目录）。 */
+  /** 同步 weave marketplace 目录源：包铺进 `plugins/<name>` + upsert 条目。
+   *
+   * 铺法**链接优先**（`linkOrCopy`，失败回退复制）——全局位置不再多存一份副本。
+   * 两种情形必须走复制，否则会**穿过链接写进源目录**：
+   *  ① 包缺 `.claude-plugin/plugin.json`：CC CLI install 必需，要就地合成最小
+   *     manifest（mods-only 等无 manifest 包走此兜底）；
+   *  ② 源里带 `node_modules` / `.git`：复制会按 filter 滤掉，链接会原样暴露出去。
+   */
   const syncMarketplace = async (
     srcDir: string,
     name: string,
@@ -225,37 +231,50 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
   ): Promise<string> => {
     const root = marketplaceRoot();
     const target = path.join(root, 'plugins', name);
-    await rm(target, { recursive: true, force: true });
+    // 目标可能是上一轮留下的链接：裸 rm 递归会删穿到链接目标，必须 lstat 判定后清。
+    await removeInstalled(target);
     await mkdir(path.dirname(target), { recursive: true });
-    await cp(srcDir, target, {
-      recursive: true,
-      filter: (src) => {
-        const base = path.basename(src);
-        return base !== 'node_modules' && base !== '.git';
-      },
-    });
-    const manifestFile = path.join(target, '.claude-plugin', 'plugin.json');
-    let hasManifest = true;
-    try {
-      await readFile(manifestFile, 'utf8');
-    } catch {
-      hasManifest = false;
-    }
-    if (!hasManifest) {
-      await mkdir(path.dirname(manifestFile), { recursive: true });
-      await writeFile(
-        manifestFile,
-        JSON.stringify(
-          {
-            name,
-            version: opts.version ?? '0.0.0',
-            ...(opts.description ? { description: opts.description } : {}),
-          },
-          null,
-          2,
-        ) + '\n',
-        'utf8',
-      );
+
+    const hasManifest = await readFile(
+      path.join(srcDir, '.claude-plugin', 'plugin.json'),
+      'utf8',
+    ).then(
+      () => true,
+      () => false,
+    );
+    const sourceEntries = await readdir(srcDir).catch(() => [] as string[]);
+    const linkable =
+      hasManifest &&
+      !sourceEntries.includes('node_modules') &&
+      !sourceEntries.includes('.git');
+
+    if (linkable) {
+      await linkOrCopy(srcDir, target);
+    } else {
+      await cp(srcDir, target, {
+        recursive: true,
+        filter: (src) => {
+          const base = path.basename(src);
+          return base !== 'node_modules' && base !== '.git';
+        },
+      });
+      if (!hasManifest) {
+        const manifestFile = path.join(target, '.claude-plugin', 'plugin.json');
+        await mkdir(path.dirname(manifestFile), { recursive: true });
+        await writeFile(
+          manifestFile,
+          JSON.stringify(
+            {
+              name,
+              version: opts.version ?? '0.0.0',
+              ...(opts.description ? { description: opts.description } : {}),
+            },
+            null,
+            2,
+          ) + '\n',
+          'utf8',
+        );
+      }
     }
     const mktFile = path.join(root, '.claude-plugin', 'marketplace.json');
     const mkt = await readJson(mktFile);
@@ -284,6 +303,9 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
     srcDir: string,
   ): Promise<void> => {
     if (!market.dir) throw new Error(`marketplace dir required for ${name}@${market.name}`);
+    // 市场目录若是链接（内置仓落地即指向包内），就地维护清单会**穿过链接写进包内**
+    // ——链接目标不是我们的数据。这类市场自带清单（随包发布），本就无需在此维护。
+    if ((await lstat(market.dir)).isSymbolicLink()) return;
     const file = path.join(market.dir, '.claude-plugin', 'marketplace.json');
     const mkt = await readJson(file);
     const plugins = Array.isArray(mkt.plugins)

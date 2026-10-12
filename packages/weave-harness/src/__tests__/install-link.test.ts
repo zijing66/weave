@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { linkOrCopy, removeInstalled } from '../install-link.js';
+import { installForm, linkOrCopy, removeInstalled } from '../shared/install-link.js';
 
 // 假 symlink：只在 EPERM 回退分支用例里替换为拒绝，其余走真实实现（R9 双分支）。
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -85,5 +85,30 @@ describe('removeInstalled（lstat 区分，防删穿源）', () => {
 
   it('不存在 → absent（no-op）', async () => {
     expect(await removeInstalled(path.join(root, 'rm-missing', 'zeta'))).toBe('absent');
+  });
+});
+
+describe('installForm（读侧判定，不落状态）', () => {
+  it('链接 → link；复制体 → copy；不存在 → absent', async () => {
+    const linked = path.join(root, 'form-link', 'eta');
+    expect(await linkOrCopy(src, linked)).toBe('link');
+    expect(await installForm(linked)).toBe('link');
+
+    const copied = path.join(root, 'form-copy', 'theta');
+    vi.mocked(symlink).mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+    expect(await linkOrCopy(src, copied)).toBe('copy');
+    expect(await installForm(copied)).toBe('copy');
+
+    expect(await installForm(path.join(root, 'form-missing', 'iota'))).toBe('absent');
+  });
+
+  it('用户手动把链接换成实体目录 → 判定随之变 copy（状态会失真、lstat 不会）', async () => {
+    const target = path.join(root, 'form-swap', 'kappa');
+    expect(await linkOrCopy(src, target)).toBe('link');
+    expect(await installForm(target)).toBe('link');
+
+    await removeInstalled(target);
+    mkdirSync(path.join(target, 'inner'), { recursive: true });
+    expect(await installForm(target)).toBe('copy');
   });
 });

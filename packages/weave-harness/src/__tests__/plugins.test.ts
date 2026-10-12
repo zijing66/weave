@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -353,5 +353,51 @@ describe('globalInstall（两步 CLI 链，幂等）', () => {
     await writeFile(path.join(dir, '.claude-plugin', 'plugin.json'), '{}');
     await expect(surface.globalInstall(dir)).rejects.toThrow(/missing name/);
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * 全局铺包形态（D5）：市场条目**链接优先**，全局位置不再多存一份副本。
+ * 两种情形必须退回复制，否则会穿过链接写进源目录 / 把依赖树暴露给宿主。
+ */
+describe('weave 市场铺包：链接优先', () => {
+  it('自带 CC 清单、无依赖树 → 条目是链接，指向源包', async () => {
+    const src = await makePack('linked-pack');
+    await surface.globalInstall(src, { scope: 'user' });
+
+    const target = path.join(mktRoot(), 'plugins', 'linked-pack');
+    expect((await lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await realpath(target)).toBe(await realpath(src));
+    // 清单仍可经链接读到（CC CLI install 必需的读路径）
+    expect(await readFile(path.join(target, '.claude-plugin', 'plugin.json'), 'utf8')).toContain(
+      'linked-pack',
+    );
+  });
+
+  it('源带 node_modules → 不链接（复制并 filter 掉依赖树）', async () => {
+    const src = await makePack('dep-pack');
+    await mkdir(path.join(src, 'node_modules', 'x'), { recursive: true });
+
+    await surface.globalInstall(src, { scope: 'user' });
+
+    const target = path.join(mktRoot(), 'plugins', 'dep-pack');
+    expect((await lstat(target)).isSymbolicLink()).toBe(false);
+    expect(await readdir(target)).not.toContain('node_modules');
+  });
+
+  it('重装（目标已是链接）→ 只 unlink 不删穿源包', async () => {
+    const src = await makePack('reinstall-pack');
+    await surface.globalInstall(src, { scope: 'user' });
+    await writeInstalled({}); // 抹掉已装记录 → 再走一次完整安装路径
+    await surface.globalInstall(src, { scope: 'user' });
+
+    // 源包毫发无损：目标若是被当普通目录 rm -rf，这里就空了
+    expect(await readFile(path.join(src, '.claude-plugin', 'plugin.json'), 'utf8')).toContain(
+      'reinstall-pack',
+    );
+    expect(await readFile(path.join(src, 'hooks', 'h.js'), 'utf8')).toBe('// hook\n');
+    expect((await lstat(path.join(mktRoot(), 'plugins', 'reinstall-pack'))).isSymbolicLink()).toBe(
+      true,
+    );
   });
 });
