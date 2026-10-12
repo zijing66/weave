@@ -33,12 +33,15 @@ export interface IngestContext {
 }
 
 /**
- * POST /hooks 的同步返回体：命中 inject 规则时携带注入内容，
- * 由 hook-handler.cjs 输出为 hookSpecificOutput.additionalContext。
+ * ingest 的注入产出。响应体通道已随 POST /hooks 移除（hook 文件化后注入走
+ * mirror 本地渲染），本接口保留为消费侧的产出形态：additionalContext 仍是全部
+ * 注入片段（语义不变），deferred 是 hook 无法当场交付的部分（plugin 产出、
+ * crossProjectOnly 等未镜像规则），由消费侧写 outbox 顺延给下一次事件。
  */
 export interface IngestOutcome {
   additionalContext?: string;
   sessionTitle?: string;
+  deferred?: string;
 }
 
 const DEDUPE_WINDOW_MS = 60_000;
@@ -46,23 +49,24 @@ const MAX_CONCURRENT_WEBHOOKS = 4;
 /** 插件执行并发闸（与 webhook 同形）：超出排队，避免慢处理器无界堆积。 */
 const MAX_CONCURRENT_PLUGINS = 4;
 /**
- * 插件注入阶段总预算：可注入事件必须同步等待（注入靠响应体），但多规则串行
- * 不得把响应时间叠加到 CC 的 hook 窗口之上（原先每条规则各自 timeoutMs 默认 10s）。
+ * 插件注入阶段总预算：可注入事件的插件产出要走 outbox 顺延，消费路径仍按事件
+ * 顺序 await（多规则串行不得无界堆积，原先每条规则各自 timeoutMs 默认 10s）。
  */
 const PLUGIN_INJECT_BUDGET_MS = 3_000;
 
 /**
- * 事件分发器：ingest 后在响应路径上同步匹配（纯内存索引）并按 handler 分发。
+ * 事件分发器：ingest 后同步匹配（纯内存索引）并按 handler 分发。
  *
  * - log：只发 bus 事件，不落 dispatch 行（高频防写放大）
  * - manual：入池 status=pending（等 dashboard 复制/拖拽执行）
- * - inject：入池 status=injected + 经响应体返回 additionalContext 注入当前会话
- * - webhook：入池 status=running 后异步出站（不阻塞响应），信号量限并发
- * - plugin：可注入事件在响应路径上同步执行（注入靠响应体）但整段共享预算；
- *   不可注入事件（PreToolUse/Notification 等）additionalContext 反正进不了响应，
- *   与 webhook 同款 fire-and-forget——prompt 照常入池，只是晚一步落库
+ * - inject：入池 status=injected；注入本体由 hook 经 mirror 本地渲染交付
+ *   （镜像外规则进 deferred → outbox 顺延）
+ * - webhook：入池 status=running 后异步出站，信号量限并发
+ * - plugin：可注入事件在消费路径上同步执行、产出进 deferred（outbox 顺延），
+ *   整段共享预算；不可注入事件（PreToolUse/Notification 等）与 webhook 同款
+ *   fire-and-forget——prompt 照常入池，只是晚一步落库
  *
- * 一切异常在内部吞掉并降级为「无动作」——分发失败永不影响 ingest（201 语义不变）。
+ * 一切异常在内部吞掉并降级为「无动作」——分发失败永不影响 ingest。
  */
 export class HookDispatcher {
   private readonly runningWebhooks = new Set<string>();
@@ -139,6 +143,7 @@ export class HookDispatcher {
       if (rules.length === 0) return outcome;
 
       const injected: string[] = [];
+      const deferred: string[] = [];
       const now = Date.now();
       const pluginDeadline = now + PLUGIN_INJECT_BUDGET_MS;
 
@@ -177,7 +182,11 @@ export class HookDispatcher {
             status,
             mode: rule.handler.type === 'inject' ? 'auto' : 'manual',
           });
-          if (rule.handler.type === 'inject') injected.push(prompt);
+          if (rule.handler.type === 'inject') {
+            // hook 只本地渲染镜像内的规则；crossProjectOnly 未镜像 → 注入顺延
+            if (rule.filter.crossProjectOnly) deferred.push(prompt);
+            else injected.push(prompt);
+          }
           continue;
         }
 
@@ -229,11 +238,15 @@ export class HookDispatcher {
               mode: 'auto',
             });
           }
-          if (result.additionalContext) injected.push(result.additionalContext);
+          // 插件注入是消费期才产出的，hook 早退出了 → 一律 outbox 顺延
+          if (result.additionalContext) deferred.push(result.additionalContext);
         }
       }
 
-      if (injected.length > 0) outcome.additionalContext = injected.join('\n\n');
+      if (injected.length > 0 || deferred.length > 0) {
+        outcome.additionalContext = [...injected, ...deferred].join('\n\n');
+      }
+      if (deferred.length > 0) outcome.deferred = deferred.join('\n\n');
       return outcome;
     } catch {
       return {}; // 分发失败永不影响 ingest

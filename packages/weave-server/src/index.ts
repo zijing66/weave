@@ -14,6 +14,8 @@ export type { ProjectRow, RegisterProjectInput } from './repositories/projects.j
 
 export { HookEventRepository } from './repositories/hook-events.js';
 export type { HookEventInput, HookEventRow } from './repositories/hook-events.js';
+export { SessionRepository } from './repositories/sessions.js';
+export type { SessionRow } from './repositories/sessions.js';
 
 export { LibraryRepository } from './repositories/libraries.js';
 export type { LibraryRow } from './repositories/libraries.js';
@@ -61,6 +63,11 @@ export type { AssetCategory, AssetEntry, AssetChangeKind, AssetChangeEvent } fro
 export { ClaudeCodeAdapter } from './hooks/adapter.js';
 export type { HookAdapter } from './hooks/adapter.js';
 export type { HookReport, NormalizedHookPayload } from './hooks/types.js';
+// hook 文件化管道：inbox 消费（worker/测试）与注入计划镜像
+export { drainInboxOnce, handleIngestedRecords } from './hooks/inbox-worker.js';
+export type { InboxRecord, InboxDrainDeps } from './hooks/inbox-worker.js';
+export { MirrorWriter, hooksRoot, hookShardId, appendOutbox } from './hooks/mirror.js';
+export type { HookMirrorDoc, MirrorRule } from './hooks/mirror.js';
 
 // --- install / uninstall (asset lifecycle on the filesystem) ---
 export { scanLibrarySkills, scanLibraryMcp, scanLibraryFileAssets } from './install/scanner.js';

@@ -112,6 +112,9 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
+  // WAL 允许跨连接并发读写，但写写仍互斥：inbox 消费线程持有第二个连接，
+  // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
   migrateHookRulesColumns(db);
   return db;

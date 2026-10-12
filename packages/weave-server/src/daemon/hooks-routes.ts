@@ -309,6 +309,8 @@ export async function handleHooksRoutes(
     try {
       const body = RenameSessionBody.parse(await readJson(req));
       const session = deps.hookSessions.setPendingTitle(sessionId, body.title);
+      // 改名挂起/撤销即时进 mirror——不然要等到下一个 hook 事件才同步
+      if (session?.projectId != null) deps.hookMirror?.syncProject(session.projectId);
       sendJson(res, 200, { session });
     } catch (err) {
       sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
@@ -323,7 +325,8 @@ export async function handleHooksRoutes(
       return true;
     }
     const sessionId = decodeURIComponent(sessionMatch[1]!);
-    if (!deps.hookSessions.getBySessionId(sessionId)) {
+    const session = deps.hookSessions.getBySessionId(sessionId);
+    if (!session) {
       sendJson(res, 404, { error: 'Session not found' });
       return true;
     }
@@ -331,6 +334,7 @@ export async function handleHooksRoutes(
       { sessions: deps.hookSessions, events: deps.hookEvents, dispatches: deps.hookDispatches },
       sessionId,
     );
+    if (session.projectId != null) deps.hookMirror?.syncProject(session.projectId);
     sendJson(res, 200, { ok: true, sessionId, ...purged });
     return true;
   }

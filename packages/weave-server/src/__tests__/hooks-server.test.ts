@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { join } from 'node:path';
+import { hookShardId } from '../hooks/mirror.js';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -16,18 +19,20 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { WeavePluginLoader } from '../hooks/plugin-loader.js';
+import { handleIngestedRecords, type InboxRecord } from '../hooks/inbox-worker.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js';
 
 const DAEMON_TOKEN = 'daemon-token';
 const PROJECT_TOKEN = 'ptoken';
 
-describe('daemon server /hooks endpoint', () => {
+describe('daemon server /hooks/batch（弃用回灌口：旧版 hook 的积压）', () => {
   let db: DatabaseSync;
   let server: Server;
   let port: number;
   let hookEvents: HookEventRepository;
   let projectId: number;
+  let hooksDir: string;
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
@@ -40,123 +45,23 @@ describe('daemon server /hooks endpoint', () => {
     });
     projectId = row.id;
     hookEvents = new HookEventRepository(db);
+    hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-hooks-legacy-'));
     server = createWeaveServer({
       projects,
       daemonToken: DAEMON_TOKEN,
       port: 0,
       hookEvents,
       adapters: [new ClaudeCodeAdapter()],
+      hookInboxDir: hooksDir,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     server.close();
     db.close();
-  });
-
-  it('accepts a valid hook report authenticated by the project token', async () => {
-    const body = JSON.stringify({
-      source: 'claude',
-      eventType: 'PostToolUse',
-      sessionId: 's1',
-      cwd: '/proj',
-      payload: JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Edit' }),
-    });
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body,
-    });
-    expect(res.status).toBe(201);
-    const data = (await res.json()) as {
-      id: number;
-      projectId: number;
-      source: string;
-      eventType: string;
-    };
-    expect(data.projectId).toBe(projectId);
-    expect(data.source).toBe('claude');
-    expect(data.eventType).toBe('PostToolUse');
-    expect(typeof data.id).toBe('number');
-
-    // Persisted as an append-only row.
-    const rows = hookEvents.listByProject(projectId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].eventType).toBe('PostToolUse');
-    expect(rows[0].sessionId).toBe('s1');
-  });
-
-  it('不可注入事件（PreToolUse）先 ack 202，落库转到后台完成', async () => {
-    const before = hookEvents.listByProject(projectId).length;
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({
-        source: 'claude',
-        eventType: 'PreToolUse',
-        sessionId: 's-pre',
-        cwd: '/proj',
-        payload: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
-      }),
-    });
-    // 响应不再等写路径：202 + 无注入内容
-    expect(res.status).toBe(202);
-    expect((await res.json()) as { accepted: boolean }).toMatchObject({ accepted: true });
-
-    let rows = hookEvents.listByProject(projectId);
-    const deadline = Date.now() + 2000;
-    while (rows.length === before && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 20));
-      rows = hookEvents.listByProject(projectId);
-    }
-    expect(rows.some((r) => r.eventType === 'PreToolUse')).toBe(true);
-  });
-
-  it('rejects the daemon token (a project token is required)', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${DAEMON_TOKEN}` },
-      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse', payload: '{}' }),
-    });
-    expect(res.status).toBe(401);
-  });
-
-  it('rejects a missing token', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse', payload: '{}' }),
-    });
-    expect(res.status).toBe(401);
-  });
-
-  it('rejects invalid JSON', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: 'not-json',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects a report missing source or eventType', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'claude' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects a source with no registered adapter', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'codex', eventType: 'X', payload: '{}' }),
-    });
-    expect(res.status).toBe(400);
+    await rm(hooksDir, { recursive: true, force: true });
   });
 
   it('POST /hooks/batch 批量回灌：坏行 skipped，好行同步落库', async () => {
@@ -227,6 +132,40 @@ describe('daemon server /hooks endpoint', () => {
     });
     expect(daemonToken.status).toBe(401);
   });
+
+  it('POST /hooks 弃用兼容口：旧脚本的报告转投 inbox（同一条采集管道）', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse', sessionId: 's-legacy', payload: '{}' }),
+    });
+    expect(res.status).toBe(202);
+    // 不再同步落库（响应不带注入内容）——报告在 inbox 里等消费线程
+    expect((await res.json()) as { accepted: boolean }).toMatchObject({ accepted: true });
+    const file = join(hooksDir, 'inbox', `${hookShardId(PROJECT_TOKEN)}.jsonl`);
+    const line = JSON.parse(readFileSync(file, 'utf8').trim()) as {
+      v: number;
+      token: string;
+      report: { eventType: string };
+    };
+    expect(line).toMatchObject({ v: 1, token: PROJECT_TOKEN });
+    expect(line.report.eventType).toBe('PostToolUse');
+  });
+
+  it('POST /hooks 兼容口 401/400：无 token、缺字段都不入 inbox', async () => {
+    const noToken = await fetch(`http://127.0.0.1:${port}/hooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'claude', eventType: 'PostToolUse' }),
+    });
+    expect(noToken.status).toBe(401);
+    const bad = await fetch(`http://127.0.0.1:${port}/hooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
+      body: JSON.stringify({ source: 'claude' }),
+    });
+    expect(bad.status).toBe(400);
+  });
 });
 
 describe('daemon server hooks rules/dispatch/sessions API', () => {
@@ -236,12 +175,31 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   let registry: HookRuleRegistry;
   let dispatches: HookDispatchRepository;
   let sessions: SessionRepository;
+  let hookEvents: HookEventRepository;
+  let projects: ProjectRepository;
+  let bus: HookEventBus;
+  let dispatcher: HookDispatcher;
+  let hooksDir: string;
   let projectId: number;
 
   const auth = { authorization: `Bearer ${DAEMON_TOKEN}`, 'content-type': 'application/json' };
   const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
   const post = (p: string, body: unknown, method = 'POST') =>
     fetch(`http://127.0.0.1:${port}${p}`, { method, headers: auth, body: JSON.stringify(body) });
+
+  /** 采集链路的落库端（与 inbox worker 入库同形），供 API 用例造数据。 */
+  const seed = (sessionId: string, eventType: string): InboxRecord => {
+    const input = {
+      projectId,
+      source: 'claude' as const,
+      eventType,
+      sessionId,
+      payload: JSON.stringify({ eventType, raw: {} }),
+    };
+    const eventId = hookEvents.insert(input);
+    sessions.touch(sessionId, projectId);
+    return { eventId, projectId, input };
+  };
 
   beforeAll(async () => {
     setDaemonSettingsDb(openDatabase(':memory:'));
@@ -251,14 +209,15 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       hooks: { enabled: true },
     });
     db = openDatabase(':memory:');
-    const projects = new ProjectRepository(db);
+    projects = new ProjectRepository(db);
     projectId = projects.register({ path: '/api-proj', name: 'p', token: PROJECT_TOKEN, source: 'init' }).id;
-    const hookEvents = new HookEventRepository(db);
+    hookEvents = new HookEventRepository(db);
     registry = new HookRuleRegistry(new HookRuleRepository(db));
     dispatches = new HookDispatchRepository(db);
     sessions = new SessionRepository(db);
-    const bus = new HookEventBus();
-    const dispatcher = new HookDispatcher({
+    bus = new HookEventBus();
+    hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-hooks-api-'));
+    dispatcher = new HookDispatcher({
       registry,
       dispatches,
       bus,
@@ -285,6 +244,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     server.close();
     db.close();
     setDaemonSettingsDb(null);
+    void rm(hooksDir, { recursive: true, force: true });
   });
 
   it('未带 daemon token 的规则请求 401', async () => {
@@ -337,7 +297,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect((await post(`/hooks/rules/${rule.id}`, null, 'DELETE')).status).toBe(404);
   });
 
-  it('ingest 响应路径执行规则：inject 命中时 201 body 带 additionalContext', async () => {
+  it('ingest 记录驱动规则：inject 命中时落 injected 派发行（镜像外规则进 outbox）', async () => {
     const created = await post('/hooks/rules', {
       name: 'inject-in-ingest',
       projectId: null,
@@ -346,24 +306,9 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     });
     const { rule } = (await created.json()) as { rule: { id: string } };
 
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({
-        source: 'claude',
-        eventType: 'PostToolUse',
-        sessionId: 'sess-api',
-        payload: JSON.stringify({
-          hook_event_name: 'PostToolUse',
-          tool_name: 'Edit',
-          tool_input: { file_path: '/api-proj/docs/x.md' },
-        }),
-      }),
-    });
-    expect(res.status).toBe(201);
-    const data = (await res.json()) as { id: number; additionalContext?: string };
-    expect(data.additionalContext).toContain('do PostToolUse');
-    expect(data.additionalContext).toContain('<!--weave-dispatch-->');
+    const record = seed('sess-api', 'PostToolUse');
+    handleIngestedRecords({ projects, hooksDir, dispatcher }, [record]);
+    await new Promise((r) => setTimeout(r, 50));
 
     // 派发记录可查
     const list = (await (await get(`/hooks/dispatches?ruleId=${rule.id}`)).json()) as {
@@ -385,7 +330,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     await post(`/hooks/rules/${rule.id}`, null, 'DELETE');
   });
 
-  it('每条采集事件都经 SSE 推出 event.ingested 帧（任务面板实时刷新源）', async () => {
+  it('每条采集记录都经 SSE 推出 event.ingested 帧（任务面板实时刷新源）', async () => {
     const ctrl = new AbortController();
     try {
       const res = await fetch(`http://127.0.0.1:${port}/events?token=${DAEMON_TOKEN}`, {
@@ -393,18 +338,9 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       });
       expect(res.headers.get('content-type')).toContain('text/event-stream');
 
-      // 流建立后再发事件（先连后发，避免帧早于订阅丢失）
-      const post = await fetch(`http://127.0.0.1:${port}/hooks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-        body: JSON.stringify({
-          source: 'claude',
-          eventType: 'PostToolUse',
-          sessionId: 'sse-sess',
-          payload: '{}',
-        }),
-      });
-      expect(post.status).toBe(201);
+      // 流建立后再推记录（先连后发，避免帧早于订阅丢失）
+      const record = seed('sse-sess', 'PostToolUse');
+      handleIngestedRecords({ projects, hooksDir, bus }, [record]);
 
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
@@ -426,12 +362,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   });
 
   it('会话列表随事件出现；PATCH 改名挂 pending_title；未知会话 404', async () => {
-    // 事件触发 touch
-    await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'claude', eventType: 'Stop', sessionId: 'sess-rename', payload: '{}' }),
-    });
+    seed('sess-rename', 'Stop');
 
     const list = (await (await get('/sessions')).json()) as {
       sessions: Array<{
@@ -453,16 +384,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect(row!.lastEventType).toBe('Stop');
 
     // 再来一条 UserPromptSubmit → 基线翻为回合开着（最后 UPS 晚于最后 Stop）
-    await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({
-        source: 'claude',
-        eventType: 'UserPromptSubmit',
-        sessionId: 'sess-rename',
-        payload: '{}',
-      }),
-    });
+    seed('sess-rename', 'UserPromptSubmit');
     const list2 = (await (await get('/sessions')).json()) as {
       sessions: Array<{ sessionId: string; turnOpen?: boolean; lastEventType?: string | null }>;
     };
@@ -481,15 +403,8 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   });
 
   it('DELETE /sessions/:id 清会话行 + 事件 + 派发；重复删 404', async () => {
-    const hookPost = (sessionId: string, eventType: string) =>
-      fetch(`http://127.0.0.1:${port}/hooks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-        body: JSON.stringify({ source: 'claude', eventType, sessionId, payload: '{}' }),
-      });
-    // 两个可注入事件 → 走同步落库路径，计数确定
-    await hookPost('sess-del', 'SessionStart');
-    await hookPost('sess-del', 'UserPromptSubmit');
+    seed('sess-del', 'SessionStart');
+    seed('sess-del', 'UserPromptSubmit');
 
     const before = (await (await get('/sessions')).json()) as {
       sessions: Array<{ sessionId: string; eventCount?: number }>;

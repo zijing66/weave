@@ -128,6 +128,8 @@ describe('HookDispatcher', () => {
     expect(outcome.additionalContext).toContain('检查文档 D:/proj/docs/guide.md');
     expect(outcome.additionalContext).toContain(`规则 文档更新`);
     expect(outcome.additionalContext).toContain(DISPATCH_MARKER);
+    // 镜像内规则由 hook 本地渲染交付 → 不进 outbox（防重复注入）
+    expect(outcome.deferred).toBeUndefined();
 
     const rows = dispatches.list();
     expect(rows).toHaveLength(1);
@@ -203,11 +205,14 @@ describe('HookDispatcher', () => {
       ctx({ payload: payload({ toolInput: { file_path: 'D:\\lib\\README.md' } }) }),
     );
     expect(outside.additionalContext).toContain('cross');
+    // 未镜像规则（hook 本地裁决不了跨项目）：注入走 outbox 顺延
+    expect(outside.deferred).toContain('cross');
 
     const inside = await dispatcher.onIngest(
       ctx({ payload: payload({ toolInput: { file_path: 'D:\\proj\\docs\\a.md' } }) }),
     );
     expect(inside.additionalContext).toBeUndefined();
+    expect(inside.deferred).toBeUndefined();
   });
 
   it('log：只发 bus，不落 dispatch 行', async () => {

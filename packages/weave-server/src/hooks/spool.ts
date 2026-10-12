@@ -8,9 +8,11 @@ import type { HookEventBus } from './bus.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 
 /**
- * Hook 断连积压（spool）：daemon 不可达时 hook-handler.cjs 把事件落盘到项目
- * 本地 `.weave/spool.jsonl`（JSONL，一行一条 HookReport）；daemon 恢复后由
- * 客户端 flusher（detached 子进程 POST /hooks/batch）或本模块的启动 sweep 回灌。
+ * Hook 断连积压（spool）——【弃用回灌口】hook 文件化后新事件直接进全局
+ * `<dataDir>/hooks/inbox/`（hooks/inbox-worker.ts 消费），项目本地 spool 只剩
+ * 旧版 hook-handler.cjs（升级前的存量项目）在用：flusher 经 POST /hooks/batch
+ * 回灌，本模块的启动 sweep 兜底「server 恢复但用户空闲」。保留到存量项目
+ * 重跑 weave init 换新脚本为止。
  *
  * 文件名与格式是跨端契约：生成脚本无依赖不能 import，这些常量在
  * helpers-gen.ts 里以字面量保持同步。
@@ -26,14 +28,15 @@ export interface BacklogDeps {
 
 /**
  * 批量回灌落库：单事务 insertMany + 会话 touch 按 sessionId 去重 + 每事件
- * 一条 SSE（dashboard 边补边看）。不走 dispatcher——inject/webhook 对已经
- * 过去的事件无重放意义，回填只负责采集落库。
+ * 一条 SSE（dashboard 边补边看；worker 消费路径不传 bus，SSE 由主线程按
+ * postMessage 记录补发）。不走 dispatcher——inject/webhook 对已经过去的事件
+ * 无重放意义，回填只负责采集落库。返回与 inputs 对齐的新行 id 列表。
  */
 export function ingestBacklog(
   deps: BacklogDeps,
   project: ProjectRow,
   inputs: HookEventInput[],
-): void {
+): number[] {
   const ids = deps.hookEvents.insertMany(inputs);
   const touched = new Set<string>();
   for (let i = 0; i < inputs.length; i++) {
@@ -58,6 +61,7 @@ export function ingestBacklog(
       at: new Date().toISOString(),
     });
   }
+  return ids;
 }
 
 export interface SpoolSweepDeps extends BacklogDeps {

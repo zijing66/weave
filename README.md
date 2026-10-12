@@ -16,8 +16,10 @@ weave dashboard     # open the local dashboard
   helpers, hooks, settings, `.mcp.json`), merging into user files instead of
   overwriting them. Multi-harness: Claude Code and Codex.
 - **`weave daemon`** — a local daemon (HTTP + SQLite) that ingests hook events,
-  stores sessions, and serves the dashboard. Events spool to
-  `.weave/spool.jsonl` while the daemon is down and flush when it returns.
+  stores sessions, and serves the dashboard. Hooks never call it over HTTP:
+  events append to `<configDir>/weave/hooks/inbox/` (a daemon worker thread
+  claims and ingests them, then deletes the file), so collection and rule-driven
+  injection keep working while the daemon is down.
 - **`weave dashboard`** — a web UI for projects, sessions, hooks, plugins, and
   installs. Served by the daemon itself.
 - **`weave scan` / `weave status` / `weave statusline`** — project discovery,

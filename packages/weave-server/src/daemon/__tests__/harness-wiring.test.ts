@@ -1,20 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { HarnessRegistry, registerRuntimeDrivers, ClaudeEventSource } from '@weavecode/harness';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  HarnessRegistry,
+  registerRuntimeDrivers,
+  createRuntimeRegistry,
+  ClaudeEventSource,
+} from '@weavecode/harness';
 import { HARNESS_EVENTS } from '@weavecode/core';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
+import { SessionRepository } from '../../repositories/sessions.js';
 import { ClaudeCodeAdapter } from '../../hooks/adapter.js';
+import { drainInboxOnce } from '../../hooks/inbox-worker.js';
 import type { HookReport } from '../../hooks/types.js';
-import { createWeaveServer } from '../server.js';
 
 /**
  * 批 4b 装配等价用例（硬闸）：
  * ① `byCapability('events')` 派生 == 旧 `[new ClaudeCodeAdapter()]`；
- * ② server.ts 分派查找结果与旧 `deps.adapters.find` 一致；
- * ③ 仅注入 harnesses（不传 adapters）时 POST /hooks 行为不变。
+ * ② normalize 输出逐字段一致；
+ * ③ inbox 消费线程自持 registry 派生同一份适配器（hook 文件化后无 HTTP 分派）。
  */
 
 const DAEMON_TOKEN = 'daemon-token';
@@ -78,18 +87,20 @@ describe('批 4b：registry 派生 adapters 与旧构造等价', () => {
   });
 });
 
-describe('批 4b：仅注入 harnesses 的 POST /hooks（分派走 registry 派生）', () => {
+describe('批 4b：inbox 消费侧的适配器派生（worker 自持 registry）', () => {
   let db: DatabaseSync;
-  let server: Server;
-  let port: number;
+  let hooksDir: string;
   let hookEvents: HookEventRepository;
+  let hookSessions: SessionRepository;
+  let projects: ProjectRepository;
   let projectId: number;
 
+  const inboxLine = (report: HookReport): string =>
+    JSON.stringify({ v: 1, token: PROJECT_TOKEN, report }) + '\n';
+
   beforeAll(async () => {
-    const harnesses = new HarnessRegistry();
-    registerRuntimeDrivers(harnesses);
     db = openDatabase(':memory:');
-    const projects = new ProjectRepository(db);
+    projects = new ProjectRepository(db);
     projectId = projects.register({
       path: '/proj',
       name: 'test',
@@ -97,53 +108,43 @@ describe('批 4b：仅注入 harnesses 的 POST /hooks（分派走 registry 派�
       source: 'init',
     }).id;
     hookEvents = new HookEventRepository(db);
-    server = createWeaveServer({
-      projects,
-      daemonToken: DAEMON_TOKEN,
-      port: 0,
-      hookEvents,
-      harnesses,
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    port = (server.address() as { port: number }).port;
+    hookSessions = new SessionRepository(db);
+    hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-wiring-'));
+    mkdirSync(path.join(hooksDir, 'inbox'), { recursive: true });
   });
 
-  afterAll(() => {
-    server.close();
+  afterAll(async () => {
     db.close();
+    await rm(hooksDir, { recursive: true, force: true });
   });
 
-  it('claude 事件 201 且入库（与旧 adapters 注入的响应体同构）', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify(SAMPLE_REPORTS[0]),
-    });
-    expect(res.status).toBe(201);
-    const data = (await res.json()) as {
-      id: number;
-      projectId: number;
-      source: string;
-      eventType: string;
-    };
-    expect(data.projectId).toBe(projectId);
-    expect(data.source).toBe('claude');
-    expect(data.eventType).toBe('PostToolUse');
-    expect(typeof data.id).toBe('number');
+  it('worker 侧派生 == runtime registry 的 events 能力槽（与旧 [ClaudeCodeAdapter()] 同源）', () => {
+    const harnesses = new HarnessRegistry();
+    registerRuntimeDrivers(harnesses);
+    const derived = harnesses.byCapability('events').flatMap((d) => d.events ?? []);
+    const legacy = [new ClaudeCodeAdapter()];
+    expect(derived[0]).toBeInstanceOf(ClaudeEventSource);
+    expect(derived[0]!.source).toBe(legacy[0]!.source);
+  });
 
+  it('claude 事件入库；未知 source 行直接丢（与旧 400 同语义）', () => {
+    const derived = createRuntimeRegistry().byCapability('events').flatMap((d) => d.events ?? []);
+    writeFileSync(
+      path.join(hooksDir, 'inbox', 'wiring.jsonl'),
+      inboxLine(SAMPLE_REPORTS[0]!) + inboxLine({ source: 'codex', eventType: 'X', payload: '{}' }),
+    );
+
+    const records = drainInboxOnce({
+      hooksDir,
+      projects,
+      hookEvents,
+      hookSessions,
+      adapters: derived,
+    });
+    expect(records).toHaveLength(1);
     const rows = hookEvents.listByProject(projectId);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.eventType).toBe('PostToolUse');
     expect(rows[0]!.sessionId).toBe('s1');
-  });
-
-  it('未知 source 400（与旧 deps.adapters.find 未命中一致）', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/hooks`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${PROJECT_TOKEN}` },
-      body: JSON.stringify({ source: 'codex', eventType: 'X', payload: '{}' }),
-    });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'Unknown hook source: codex' });
   });
 });

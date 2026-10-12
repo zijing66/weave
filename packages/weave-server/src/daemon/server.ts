@@ -1,19 +1,20 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weavecode/core';
-import { checkHarness, INJECTABLE_EVENTS } from '@weavecode/core';
+import { checkHarness } from '@weavecode/core';
 import type { EventSource, HarnessRegistry } from '@weavecode/harness';
-import { frameFacts } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
+import type { ProjectRepository } from '../repositories/projects.js';
 import type { HookEventRepository, HookEventInput } from '../repositories/hook-events.js';
 import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
-import type { HookReport, NormalizedHookPayload } from '../hooks/types.js';
+import type { HookReport } from '../hooks/types.js';
 import type { HookRuleRegistry } from '../hooks/registry.js';
+import type { MirrorWriter } from '../hooks/mirror.js';
+import { appendInbox, hooksRoot } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
@@ -144,7 +145,7 @@ export interface WeaveServerDeps {
   hookSessions?: SessionRepository;
   /** Hook event bus — SSE subscribes alongside the watch service. */
   hookBus?: HookEventBus;
-  /** Event dispatcher; when present, POST /hooks runs rules on the response path. */
+  /** Event dispatcher; hook 文件化后由 inbox 消费线程（inbox-worker）驱动。 */
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
   hookRunner?: ResumeRunner;
@@ -152,70 +153,12 @@ export interface WeaveServerDeps {
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
   pluginStates?: PluginStateRepository;
+  /** hook 注入计划镜像（规则/标题变更后重写 mirror 文件，缺省不同步 = 无注入）。 */
+  hookMirror?: Pick<MirrorWriter, 'syncProject' | 'syncAll'>;
+  /** 全局 hook 文件管道根（<dataDir>/hooks）；测试可注入临时根。 */
+  hookInboxDir?: string;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
-}
-
-/** 该事件能否把注入内容带回响应体（白名单按 harness 分表，与 dispatcher 同源）。 */
-function injectableEvent(source: Harness, eventType: string): boolean {
-  const allowed = INJECTABLE_EVENTS[source] as readonly string[] | undefined;
-  return allowed !== undefined && allowed.includes(eventType);
-}
-
-/**
- * 采集事件落库 + 会话 touch + SSE 广播 + 规则分发。响应路径（可注入事件，需要
- * 把 additionalContext/sessionTitle 带回去）与后台路径（不可注入事件）共用。
- */
-async function ingestEvent(
-  deps: WeaveServerDeps,
-  project: ProjectRow,
-  input: HookEventInput,
-): Promise<{ id: number; outcome: { additionalContext?: string; sessionTitle?: string } }> {
-  const id = deps.hookEvents!.insert(input);
-  // 会话 upsert：刷新 last_seen_at（rename 双向在 dispatcher/批3 中消费 session_title）。
-  if (deps.hookSessions && input.sessionId) {
-    deps.hookSessions.touch(input.sessionId, project.id);
-  }
-  // payload 解析上提：SSE 帧（子 agent 字段）与分发共用，只 parse 一次；
-  // 帧字段的 Claude 协议知识在 harness 侧（frameFacts），路由只透传。
-  let payload: NormalizedHookPayload | null = null;
-  try {
-    payload = JSON.parse(input.payload) as NormalizedHookPayload;
-  } catch {
-    payload = null;
-  }
-  // 每条采集事件都推 SSE（与规则命中无关）——任务面板靠它实时刷新。
-  deps.hookBus?.emit({
-    kind: 'event.ingested',
-    eventId: id,
-    projectId: project.id,
-    sessionId: input.sessionId ?? null,
-    eventType: input.eventType,
-    ...frameFacts(payload),
-    at: new Date().toISOString(),
-  });
-  // D3 分发：命中 inject 时把 additionalContext 放进返回体，由 hook-handler.cjs
-  // 输出给会话。失败降级为无动作。
-  let outcome: { additionalContext?: string; sessionTitle?: string } = {};
-  if (deps.hookDispatcher) {
-    outcome = await deps.hookDispatcher.onIngest({
-      eventId: id,
-      project,
-      sessionId: input.sessionId ?? null,
-      payload:
-        payload ?? {
-          eventType: input.eventType,
-          toolName: null,
-          toolInput: null,
-          toolResponse: null,
-          cwd: null,
-          transcriptPath: null,
-          raw: null,
-        },
-      source: input.source,
-    });
-  }
-  return { id, outcome };
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
@@ -259,18 +202,15 @@ async function handleRequest(
     return;
   }
 
-  // /hooks — authenticated per-project: the bearer token both authenticates
-  // AND identifies the project (projects.getByToken). Independent of the
-  // daemon token used by the CLI/dashboard for the routes below.
+  // /hooks — 【弃用兼容口】旧版 hook-handler.cjs（未重跑 weave init 的存量项目）
+  // 的直投入口：报告追加进全局 inbox，与新版文件管道同一条采集管道，由
+  // inbox-worker 消费。202 且不带注入内容——旧项目的采集不丢，注入/标题需换
+  // 新脚本（mirror 通道）。新版 hook 不再调这里；下个版本连同 batch 一起移除。
   if (pathname === '/hooks' && req.method === 'POST') {
     const token = extractBearerToken(req);
     const project = token ? deps.projects.getByToken(token) : undefined;
     if (!project) {
       sendJson(res, 401, { error: 'Unauthorized' });
-      return;
-    }
-    if (!deps.hookEvents || (!deps.adapters && !deps.harnesses)) {
-      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
       return;
     }
     let report: HookReport;
@@ -284,40 +224,23 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Missing "source" or "eventType"' });
       return;
     }
-    // 批 4b：查找在装配期派生的 eventSources（harnesses 优先，回退 deps.adapters）。
-    const adapter = eventSources.find((a) => a.source === report.source);
-    if (!adapter) {
-      sendJson(res, 400, { error: `Unknown hook source: ${report.source}` });
+    try {
+      appendInbox(deps.hookInboxDir ?? hooksRoot(), project.token, report);
+    } catch {
+      // 落盘失败只能回 500 并留日志：旧脚本只在网络错误/超时才 spool，非 2xx
+      // 不重试——这条事件对它就是丢了（新脚本自己写盘，不会有这个缺口）。
+      sendJson(res, 500, { error: 'Inbox append failed' });
       return;
     }
-    // EventSource.normalize 返回 unknown（harness 不依赖 server 类型）；
-    // 落库行结构由 ClaudeEventSource 保证，同源断言后 insert。
-    const input = adapter.normalize(report, project.id) as HookEventInput;
-    // 不可注入事件（PreToolUse/Notification 等）：响应体里带不走 additionalContext，
-    // 落库/touch/SSE/分发与这次 hook 的返回无关 → 先 ack，后台做完，别把写路径
-    // 压在 Claude Code 的同步等待上（hook 是同步模型，响应越短越安全）。
-    if (!injectableEvent(input.source, input.eventType)) {
-      void ingestEvent(deps, project, input).catch(() => {});
-      sendJson(res, 202, {
-        accepted: true,
-        projectId: project.id,
-        source: input.source,
-        eventType: input.eventType,
-      });
-      return;
-    }
-    const { id, outcome } = await ingestEvent(deps, project, input);
-    sendJson(res, 201, {
-      id,
-      projectId: project.id,
-      source: input.source,
-      eventType: input.eventType,
-      ...outcome,
-    });
+    sendJson(res, 202, { accepted: true, projectId: project.id, source: report.source, eventType: report.eventType });
     return;
   }
 
-  // /hooks/batch — spool 积压回灌：hook-handler 断连期落盘的事件，server
+  // /hooks/batch — 【弃用回灌口】旧版 hook-handler.cjs（升级前存量项目）的
+  // spool 积压回灌：断连期落盘的事件，server 恢复后分片批量上报到这里。
+  // 新版 hook 直接写全局 inbox（hooks/inbox-worker.ts 消费），不经 HTTP。
+  // 鉴权为 per-project token；坏行跳过计 skipped；先入库再 2xx（失败 500，
+  // 客户端保留 claim 重试）。server
   // 恢复后分片批量上报到这里。鉴权与 /hooks 同一套 per-project token；坏行
   // 跳过计 skipped；先入库再 2xx（失败 500，客户端保留 claim 重试）。
   if (pathname === '/hooks/batch' && req.method === 'POST') {

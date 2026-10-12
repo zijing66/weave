@@ -19,6 +19,9 @@ export class HookRuleRegistry {
   private byEvent = new Map<string, HookRule[]>();
   private all: HookRule[] = [];
 
+  /** 规则集变更后的下游同步钩子（mirror 重写）；构造期首次 load 时通常未挂载。 */
+  onChange?: () => void;
+
   constructor(private readonly repo: HookRuleRepository) {
     this.load();
   }
@@ -33,6 +36,7 @@ export class HookRuleRegistry {
       if (bucket) bucket.push(rule);
       else this.byEvent.set(rule.source.event, [rule]);
     }
+    this.onChange?.();
   }
 
   list(projectId?: number): HookRule[] {
