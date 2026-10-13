@@ -7,8 +7,27 @@ import type { FileAssetCategory } from './shared/file-specs.js';
  * 依赖硬约束：本包仅依赖 @weavecode/core（永不依赖 server/cli，防 statusline/i18n 成环）。
  */
 
-/** 六种可插拔能力槽——driver 声明持有哪些，注册表按能力检索。 */
-export type HarnessCapability = 'init' | 'events' | 'assets' | 'resume' | 'detect' | 'plugins';
+/** 可插拔能力槽——driver 声明持有哪些，注册表按能力检索。 */
+export type HarnessCapability =
+  | 'init'
+  | 'events'
+  | 'assets'
+  | 'resume'
+  | 'detect'
+  | 'plugins'
+  | 'pluginState';
+
+/**
+ * 插件**启用态**槽：只读/写「某 harness 的插件是否启用」，不含安装与市场
+ * （那些在 `plugins` 槽）。Codex 无安装/市场面但有启用态（config.toml），
+ * 故启用态单独成槽——路由可枚举本槽，不再写 `if (runtime === 'claude')`。
+ */
+export interface PluginStateSurface {
+  /** 读全局启用态 map（键 = 注册键或插件名，值 = 是否启用）；缺失/损坏 → 空对象。 */
+  readGlobalEnabled(): Promise<Record<string, boolean>>;
+  /** 写单键（其余键保留；文件可创建）。 */
+  writeGlobalEnabled(key: string, enabled: boolean): Promise<void>;
+}
 
 /** init 槽类型：以 InitContext 构造 InitPipeline 子类（图① InitTemplateClass）。 */
 export type InitTemplateClass = new (ctx: InitContext) => InitPipeline;
@@ -189,7 +208,7 @@ export interface PluginSurface {
   writeGlobalEnabled(key: string, enabled: boolean): Promise<void>;
 }
 
-/** 单个 harness 的驱动：id/displayName 必填，六个能力槽按批次补齐。 */
+/** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
   displayName: string;
@@ -200,6 +219,7 @@ export interface HarnessDriver {
   resume?: ResumeCommandSpec;
   detect?: Detector;
   plugins?: PluginSurface;
+  pluginState?: PluginStateSurface;
 }
 
 /**

@@ -1,14 +1,12 @@
-import { readFile, writeFile, readdir, access, stat, realpath, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, access, stat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { parse } from 'smol-toml';
 import type { Harness } from '@weavecode/core';
 import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
-import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './codex-toml.js';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
-import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
+import { assetSurfaceFor, pluginStateFor, pluginSurfaceFor } from '../surfaces.js';
 import { installForm, linkOrCopy, removeInstalled, type InstallLinkMode } from '../market/install-link.js';
 
 /**
@@ -574,55 +572,27 @@ export async function readGlobalSkillFile(dir: string, relPath: string): Promise
 // --- plugin enable state (Claude: settings.json JSON, Codex: config.toml) ---
 
 /** Read `enabledPlugins` from ~/.claude/settings.json (empty if absent/corrupt).
- * 批 3：实现迁入 harness `claude/plugins.ts`，此处同名导出薄委托（零改闸）。 */
+ * P2：实现经 pluginState 槽取（claude 的实现在 harness plugins 槽内），薄委托。 */
 export async function readClaudePluginEnabled(): Promise<Record<string, boolean>> {
-  return pluginSurfaceFor('claude').readGlobalEnabled();
+  return pluginStateFor('claude').readGlobalEnabled();
 }
 
 /** Set `enabledPlugins[key]` in ~/.claude/settings.json, preserving all other
- * keys. The file is created if missing. 批 3：实现迁入 harness，薄委托。 */
+ * keys. The file is created if missing. P2：薄委托。 */
 export async function writeClaudePluginEnabled(key: string, enabled: boolean): Promise<void> {
-  return pluginSurfaceFor('claude').writeGlobalEnabled(key, enabled);
+  return pluginStateFor('claude').writeGlobalEnabled(key, enabled);
 }
 
-/** Read `[plugins."key"] enabled` from ~/.codex/config.toml (empty if absent). */
+/** Read `[plugins."key"] enabled` from ~/.codex/config.toml (empty if absent).
+ * P2：实现迁入 harness `codex/plugin-state.ts`（含 TOML 表示法），薄委托。 */
 export async function readCodexPluginEnabled(): Promise<Record<string, boolean>> {
-  const file = assetSurfaceFor('codex').userConfigFile(homedir());
-  if (!(await pathExists(file))) return {};
-  try {
-    const parsed = parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
-    const plugins = parsed.plugins;
-    if (!plugins || typeof plugins !== 'object' || Array.isArray(plugins)) return {};
-    const out: Record<string, boolean> = {};
-    for (const [k, v] of Object.entries(plugins as Record<string, unknown>)) {
-      if (v && typeof v === 'object' && typeof (v as { enabled?: unknown }).enabled === 'boolean') {
-        out[k] = (v as { enabled: boolean }).enabled;
-      }
-    }
-    return out;
-  } catch {
-    return {};
-  }
+  return pluginStateFor('codex').readGlobalEnabled();
 }
 
-/** Set `[plugins."key"] enabled` in ~/.codex/config.toml. Uses the incremental
- * section editor so comments, key order and other sections survive; the file
- * is created if missing. */
+/** Set `[plugins."key"] enabled` in ~/.codex/config.toml（增量段编辑，注释与
+ * 键序保留）。P2：薄委托。 */
 export async function writeCodexPluginEnabled(key: string, enabled: boolean): Promise<void> {
-  const file = assetSurfaceFor('codex').userConfigFile(homedir());
-  let text = '';
-  if (await pathExists(file)) {
-    text = await readFile(file, 'utf-8');
-    try {
-      parse(text);
-    } catch (e) {
-      throw new CodexTomlCorruptError(
-        `${file} is not valid TOML — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, upsertCodexPluginEnabledInText(text, key, enabled), 'utf-8');
+  return pluginStateFor('codex').writeGlobalEnabled(key, enabled);
 }
 
 export {

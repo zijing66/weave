@@ -44,10 +44,6 @@ import {
   installGlobalSkill,
   uninstallGlobalSkill,
   readGlobalSkillGroups,
-  readClaudePluginEnabled,
-  writeClaudePluginEnabled,
-  readCodexPluginEnabled,
-  writeCodexPluginEnabled,
   resolveGlobalSkillDir,
   listGlobalSkillFiles,
   readGlobalSkillFile,
@@ -112,7 +108,7 @@ import {
 } from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
-import { pluginSurfaceFor } from '../surfaces.js';
+import { pluginStateSurfaces, pluginSurfaceFor } from '../surfaces.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
 
@@ -882,15 +878,16 @@ async function handleRequest(
     return;
   }
 
-  // --- plugin enable state (Claude settings.json + Codex config.toml) ---
+  // --- plugin enable state (per-harness, enumerated from the pluginState slot:
+  //     claude = ~/.claude/settings.json, codex = ~/.codex/config.toml) ---
   const pluginEnabledMatch = pathname.match(/^\/projects\/(\d+)\/plugins\/enabled$/);
   if (pluginEnabledMatch) {
+    const stateSurfaces = pluginStateSurfaces();
     if (req.method === 'GET') {
-      const [claude, codex] = await Promise.all([
-        readClaudePluginEnabled(),
-        readCodexPluginEnabled(),
-      ]);
-      sendJson(res, 200, { claude, codex });
+      const entries = await Promise.all(
+        stateSurfaces.map(async (s) => [s.harness, await s.state.readGlobalEnabled()] as const),
+      );
+      sendJson(res, 200, Object.fromEntries(entries));
       return;
     }
     if (req.method === 'PUT') {
@@ -901,16 +898,12 @@ async function handleRequest(
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
-      if (
-        !body.key ||
-        typeof body.enabled !== 'boolean' ||
-        (body.runtime !== 'claude' && body.runtime !== 'codex')
-      ) {
+      const target = stateSurfaces.find((s) => s.harness === body.runtime);
+      if (!body.key || typeof body.enabled !== 'boolean' || !target) {
         sendJson(res, 400, { error: 'Missing or invalid "runtime"/"key"/"enabled"' });
         return;
       }
-      if (body.runtime === 'claude') await writeClaudePluginEnabled(body.key, body.enabled);
-      else await writeCodexPluginEnabled(body.key, body.enabled);
+      await target.state.writeGlobalEnabled(body.key, body.enabled);
       sendJson(res, 200, { ok: true });
       return;
     }

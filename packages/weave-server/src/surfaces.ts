@@ -2,6 +2,7 @@ import type { Harness } from '@weavecode/core';
 import {
   createRuntimeRegistry,
   type AssetSurface,
+  type PluginStateSurface,
   type PluginSurface,
 } from '@weavecode/harness';
 
@@ -31,4 +32,22 @@ export function pluginSurfaceFor(harness: Harness): PluginSurface {
   const surface = registry.get(harness)?.plugins;
   if (!surface) throw new Error(`no plugin surface registered for harness: ${harness}`);
   return surface;
+}
+
+/** 按 harness 取插件启用态面（P2）；未注册或未补 pluginState 槽抛错。 */
+export function pluginStateFor(harness: Harness): PluginStateSurface {
+  const state = registry.get(harness)?.pluginState;
+  if (!state) throw new Error(`no plugin state surface registered for harness: ${harness}`);
+  return state;
+}
+
+/**
+ * 声明了 pluginState 槽的 (harness, 面) 列表——路由据本表枚举响应键与
+ * 校验 runtime，不写 `if (runtime === 'claude')` 白名单。
+ */
+export function pluginStateSurfaces(): Array<{ harness: Harness; state: PluginStateSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.pluginState !== undefined)
+    .map((d) => ({ harness: d.id, state: d.pluginState! }));
 }
