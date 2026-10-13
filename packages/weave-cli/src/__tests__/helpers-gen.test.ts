@@ -6,16 +6,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WEAVE_VERSION } from '@weavecode/server';
-import { generateHookHandler, generateAutoMemoryHook } from '../init/helpers-gen';
+import { generateHookHandler } from '@weavecode/harness';
+import { generateAutoMemoryHook } from '../init/helpers-gen';
 
 describe('generateHookHandler（脚本形态）', () => {
   it('emits a CJS shebang script', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out.startsWith('#!/usr/bin/env node')).toBe(true);
   });
 
   it('reads stdin and exits 0 on every path', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out).toContain("process.stdin.on('data'");
     // success / no-token / non-injectable / catch-all —— 每个路径都退出 0
     const exitCount = (out.match(/process\.exit\(0\)/g) ?? []).length;
@@ -23,11 +24,11 @@ describe('generateHookHandler（脚本形态）', () => {
   });
 
   it('includes a weave version stamp', () => {
-    expect(generateHookHandler()).toContain(`weave@${WEAVE_VERSION}`);
+    expect(generateHookHandler(WEAVE_VERSION)).toContain(`weave@${WEAVE_VERSION}`);
   });
 
   it('不再有远程调用：无 http/daemon.json/spool/flusher', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out).not.toContain("require('http')");
     expect(out).not.toContain('daemon.json');
     expect(out).not.toContain('spool');
@@ -36,7 +37,7 @@ describe('generateHookHandler（脚本形态）', () => {
   });
 
   it('落盘全局数据目录：inbox/mirror/outbox + shard 契约', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out).toContain("require('crypto')");
     expect(out).toContain("sha256");
     expect(out).toContain("'hooks'");
@@ -49,7 +50,7 @@ describe('generateHookHandler（脚本形态）', () => {
   });
 
   it('本地渲染注入 + 顺延 outbox + 标题，并带 60s 去重', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out).toContain('hookSpecificOutput');
     expect(out).toContain('hookEventName');
     expect(out).toContain('additionalContext');
@@ -62,7 +63,7 @@ describe('generateHookHandler（脚本形态）', () => {
   });
 
   it('reads the project token from .weave/token', () => {
-    const out = generateHookHandler();
+    const out = generateHookHandler(WEAVE_VERSION);
     expect(out).toContain("'.weave'");
     expect(out).toContain("'token'");
   });
@@ -131,7 +132,7 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     mkdirSync(path.join(projectDir, '.weave'), { recursive: true });
     writeFileSync(path.join(projectDir, '.weave', 'token'), token);
     scriptPath = path.join(root, 'hook-handler.cjs');
-    writeFileSync(scriptPath, generateHookHandler());
+    writeFileSync(scriptPath, generateHookHandler(WEAVE_VERSION));
   });
 
   afterEach(async () => {

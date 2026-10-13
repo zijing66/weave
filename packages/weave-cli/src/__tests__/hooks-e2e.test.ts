@@ -12,8 +12,9 @@ import {
   SessionRepository,
   ClaudeCodeAdapter,
   drainInboxOnce,
+  WEAVE_VERSION,
 } from '@weavecode/server';
-import { generateHookHandler } from '../init/helpers-gen';
+import { generateHookHandler } from '@weavecode/harness';
 
 vi.setConfig({ testTimeout: 20000 });
 
@@ -96,7 +97,7 @@ describe('hook-handler.cjs → inbox → 消费线程 end-to-end', () => {
     const helpersDir = path.join(projectDir, '.claude', 'helpers');
     mkdirSync(helpersDir, { recursive: true });
     handlerPath = path.join(helpersDir, 'hook-handler.cjs');
-    writeFileSync(handlerPath, generateHookHandler());
+    writeFileSync(handlerPath, generateHookHandler(WEAVE_VERSION));
   });
 
   afterAll(() => {

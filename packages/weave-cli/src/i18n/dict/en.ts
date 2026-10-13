@@ -110,6 +110,8 @@ export const en: Record<keyof typeof zh, string> = {
   'init.completedWithErrors': '\n  Init completed with errors\n',
   'init.errorLine': '    - {error}',
   'init.nonInteractive': 'Running in non-interactive mode',
+  'init.userCaptureActive':
+    'User-scope capture is installed — skipping project hooks (weave groups swept)',
   'init.skippedInvalidJson':
     'Skipped {path}: not valid JSON. Fix or remove it, or use --force.',
   'init.backedUp': 'Backed up the previous AGENTS.md to {path}',

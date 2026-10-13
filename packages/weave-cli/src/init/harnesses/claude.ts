@@ -22,17 +22,30 @@ import {
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weavecode/templates';
-import { generateStatuslineScript, readStatuslineConfig } from '@weavecode/server';
-import { InitPipeline, type InitContext } from '@weavecode/harness';
+import { generateStatuslineScript, readStatuslineConfig, WEAVE_VERSION } from '@weavecode/server';
+import { InitPipeline, generateHookHandler, readUserCapture, type InitContext } from '@weavecode/harness';
 import type { SurfaceRecords, SurfacePipeline } from '../types.js';
 import { generateSettingsJson, mergeSettingsJson } from '../settings-gen.js';
 import { generateMcpJson, mergeMcpJson } from '../mcp-gen.js';
-import { generateHookHandler, generateAutoMemoryHook } from '../helpers-gen.js';
+import { generateAutoMemoryHook } from '../helpers-gen.js';
 import { registerPluginTemplates, collectPluginMcpServers } from '../plugin-templates.js';
 import { t } from '../../i18n/index.js';
 
 /** Marks a generated helper script as weave's own (weave-特性文件可覆写). */
 export const WEAVE_HELPER_MARKER = '@version weave@';
+
+/** user 档采集接管时的 hooks 集：全 false 只为触发生成侧的「空即清光」语义。 */
+const CAPTURE_TAKEN_OVER: HooksConfig = {
+  preToolUse: false,
+  postToolUse: false,
+  userPromptSubmit: false,
+  sessionStart: false,
+  stop: false,
+  subagentStop: false,
+  notification: false,
+  timeout: 5000,
+  continueOnError: true,
+};
 
 // 结果累加器与表面管线契约与 harness 无关，已上提到 init/types.ts；
 // 此处 re-export 以保留既有 import 路径。
@@ -160,9 +173,16 @@ async function writeSettings(st: InitStepState): Promise<void> {
   // User file: never overwritten without --force. Existing files are merged —
   // weave appends its entries and refreshes its own keys; user content is kept.
   if (st.components.settings) {
+    // user 档采集接管时不再落项目档 hooks（同一事件 user+project 双注册 =
+    // 双采集）；仍传全 false 生成：merge 靠「hooks 键存在」把项目里的旧
+    // weave 组整体清掉（空即清光）。
+    const userCapture = await readUserCapture({ home: st.platform.homeDir });
+    const hooks = userCapture.installed ? CAPTURE_TAKEN_OVER : st.hooks;
+    if (userCapture.installed) logger.dim(t('init.userCaptureActive'));
+
     const generated = generateSettingsJson({
       components: st.components,
-      hooks: st.hooks,
+      hooks,
       platform: st.platform,
       helpersDir: st.helpersDir,
     });
@@ -314,7 +334,7 @@ async function writeHelpers(st: InitStepState): Promise<void> {
     // falling back to the global template.)
     const statuslineConfig = await readStatuslineConfig(st.targetDir);
     const helperFiles: [string, string][] = [
-      ['hook-handler.cjs', generateHookHandler()],
+      ['hook-handler.cjs', generateHookHandler(WEAVE_VERSION)],
       ['statusline.cjs', generateStatuslineScript(statuslineConfig)],
       ['auto-memory-hook.mjs', generateAutoMemoryHook()],
     ];

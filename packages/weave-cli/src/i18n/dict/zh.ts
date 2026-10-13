@@ -108,6 +108,7 @@ export const zh = {
   'init.completedWithErrors': '\n  初始化完成，但有错误\n',
   'init.errorLine': '    - {error}',
   'init.nonInteractive': '以非交互模式运行',
+  'init.userCaptureActive': 'user 档采集已安装——跳过项目档 hooks（清扫 weave 组）',
   'init.skippedInvalidJson': '已跳过 {path}：不是合法 JSON。请修复或删除它，或使用 --force。',
   'init.pluginMcpRenamed': '插件 MCP server 重名已加前缀：{renamed}',
   'init.backedUp': '已将原 AGENTS.md 备份到 {path}',

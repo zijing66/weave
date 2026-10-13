@@ -3,17 +3,31 @@ import { mkdtemp, rm, readFile, writeFile, stat, mkdir, lstat, readlink, readdir
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { installUserCapture } from '@weavecode/harness';
+import { WEAVE_VERSION } from '@weavecode/server';
 import { executeInit } from '../init/executor';
 import type { PromptPort } from '../init/prompt';
 
 let tmpDir: string;
+let homeDir: string;
+let savedHome: string | undefined;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), 'weave-exec-test-'));
+  homeDir = await mkdtemp(path.join(os.tmpdir(), 'weave-exec-home-'));
+  // user 档采集探测走 os.homedir()（detectPlatform）；指到临时 home，
+  // 测试既不受开发机 ~/.claude/settings.json 影响，也不反写它。
+  const key = process.platform === 'win32' ? 'USERPROFILE' : 'HOME';
+  savedHome = process.env[key];
+  process.env[key] = homeDir;
 });
 
 afterEach(async () => {
+  const key = process.platform === 'win32' ? 'USERPROFILE' : 'HOME';
+  if (savedHome === undefined) delete process.env[key];
+  else process.env[key] = savedHome;
   await rm(tmpDir, { recursive: true, force: true });
+  await rm(homeDir, { recursive: true, force: true });
 });
 
 const BASE_OPTIONS = {
@@ -256,6 +270,35 @@ describe('executeInit', () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     expect(result.skipped).toContain(settingsPath);
     expect(await readFile(settingsPath, 'utf-8')).toBe(corrupt);
+  });
+
+  // ---- user 档采集接管：项目档不落 hooks，旧 weave 组一并清光 ----
+  it('user 档采集已安装时项目档 hooks 落空、旧 weave 组清光', async () => {
+    await installUserCapture({ home: homeDir, version: WEAVE_VERSION });
+
+    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    const helpersDir = path.join(tmpDir, '.claude', 'helpers');
+    await writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              { matcher: '*', hooks: [{ type: 'command', command: `node "${helpersDir}/hook-handler.cjs"` }] },
+            ],
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+
+    const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+    // 空即清光：hooks 键在（merge 判据）、weave 组无（双采集已由 user 档接管）
+    expect(settings.hooks).toEqual({});
   });
 
   // ---- helpers: weave-marked files refresh, user files skip ----
