@@ -109,6 +109,7 @@ describe('daemon /toolkit routes', () => {
       'project-navigation',
       'refactoring',
       'testing',
+      'weave-plugin-creator',
     ]);
     expect(data.packs.every((p) => p.provenance === 'builtin')).toBe(true);
     expect(data.packs.every((p) => p.enabled === false)).toBe(true);
