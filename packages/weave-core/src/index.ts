@@ -29,11 +29,17 @@ export { InitOptionsSchema, PresetSchema, resolveComponents } from './types.js';
 export { normalizeHookRuleSource, hookSourceHarness } from './types.js';
 export {
   type Harness,
+  type InstructionFile,
   HARNESS_EVENTS,
   HARNESS_KEYS,
+  HARNESS_NAMES,
+  HARNESS_EVENT_UNION,
+  HARNESS_INSTRUCTION_FILES,
+  INSTRUCTION_FILES,
   INJECTABLE_EVENTS,
   HARNESS_DIRS,
   HARNESS_LIFECYCLE,
+  isHarness,
 } from './harness.js';
 export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types.js';
 export { DEFAULT_HOOKS, DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS, DEFAULT_MCP } from './types.js';

@@ -11,14 +11,17 @@ export const CLAUDE_ASSETS: AssetSurface = {
   harness: 'claude',
 
   targetDir(category, scope, projectPath, homedir) {
-    const spec = FILE_ASSET_SPECS[category];
+    const dirs = FILE_ASSET_SPECS[category].dirs.claude;
     if (scope === 'global') {
-      if (!spec.userDir) {
+      if (!dirs?.user) {
         throw new Error(`"${category}" is project-scoped only (no user-level directory)`);
       }
-      return path.join(homedir, ...spec.userDir.split('/'));
+      return path.join(homedir, ...dirs.user.split('/'));
     }
-    return path.join(projectPath, ...spec.dir.split('/'));
+    if (!dirs?.project) {
+      throw new Error(`"${category}" has no Claude project surface`);
+    }
+    return path.join(projectPath, ...dirs.project.split('/'));
   },
 
   projectSkillsDir: () => '.claude/skills',
@@ -26,6 +29,8 @@ export const CLAUDE_ASSETS: AssetSurface = {
   globalSkillsRoots: (homedir) => [path.join(homedir, ...'.claude/skills'.split('/'))],
 
   userConfigFile: (homedir) => path.join(homedir, '.claude', 'settings.json'),
+
+  pluginCacheDir: (homedir) => path.join(homedir, '.claude', 'plugins', 'cache'),
 
   classify(relPath) {
     if (relPath === '.claude' || relPath.startsWith('.claude/')) return true;

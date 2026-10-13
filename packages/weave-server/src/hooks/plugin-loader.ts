@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { watch as fsWatch } from 'chokidar';
 import { builtinRulesDir } from '../market/builtin.js';
 import {
-  CLAUDE_HOOK_EVENTS,
+  HARNESS_EVENT_UNION,
   HookRuleSchema,
   PluginRuleEntrySchema,
   WEAVE_PLUGIN_MANIFEST,
@@ -415,7 +415,7 @@ export class WeavePluginLoader implements PluginHost {
 
     // 3. requires.events 必须是采集面全集的子集
     const required = manifest.requires?.events ?? [];
-    const unknownEvents = required.filter((e) => !(CLAUDE_HOOK_EVENTS as readonly string[]).includes(e));
+    const unknownEvents = required.filter((e) => !HARNESS_EVENT_UNION.includes(e));
     if (unknownEvents.length > 0) {
       return reject(manifest.id, `requires.events 含未知事件: ${unknownEvents.join(', ')}`, manifest.name, manifest.version);
     }
@@ -458,7 +458,7 @@ export class WeavePluginLoader implements PluginHost {
     let pendingSubscriber: { events: Set<string>; sub: PluginSubscriber } | undefined;
     if (manifest.subscribe) {
       const subEvents = manifest.subscribe.events.filter(
-        (e) => !(CLAUDE_HOOK_EVENTS as readonly string[]).includes(e),
+        (e) => !HARNESS_EVENT_UNION.includes(e),
       );
       if (subEvents.length > 0) {
         return reject(manifest.id, `subscribe.events 含未知事件: ${subEvents.join(', ')}`, manifest.name, manifest.version);

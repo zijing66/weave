@@ -340,9 +340,15 @@ function asTemplate(name: string, cfg: unknown): { name: string; command: string
   return t;
 }
 
-/** kind-dir basename → category (e.g. "commands" → "command"). */
+/** kind-dir basename → category (e.g. "commands" → "command")——按各 harness
+ *  的项目落点表派生（不再只认 claude 的目录名）。 */
 const KIND_DIR_NAMES: Record<string, FileAssetCategory> = Object.fromEntries(
-  FILE_ASSET_CATEGORIES.map((c) => [basename(FILE_ASSET_SPECS[c].dir), c]),
+  FILE_ASSET_CATEGORIES.flatMap((c) =>
+    Object.values(FILE_ASSET_SPECS[c].dirs)
+      .map((d) => d?.project)
+      .filter((p): p is string => p !== undefined)
+      .map((p) => [basename(p), c] as [string, FileAssetCategory]),
+  ),
 );
 
 /**

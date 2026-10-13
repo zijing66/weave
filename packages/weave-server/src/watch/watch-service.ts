@@ -8,8 +8,9 @@ import { WatchCache } from './cache.js';
 import { classifyAgent, classifyAsset, normalizeRelPath } from './classifier.js';
 import { PluginModsSniffer } from './plugin-mods.js';
 import type { AssetChangeEvent, AssetChangeKind, AssetEntry, ProjectChangeEvent } from './types.js';
-import { globalPersonalSkillRoots } from '../install/global-config.js';
-import { assetSurfaceFor } from '../surfaces.js';
+import { globalPersonalSkillRootsOwned } from '../install/global-config.js';
+import { assetSurfaces } from '../surfaces.js';
+import type { Harness } from '@weavecode/core';
 
 /** Synthetic projectPath for global skill events. Personal skill roots
  * (`~/.claude/skills/`, `~/.agents/skills/`, and the deprecated
@@ -35,7 +36,7 @@ const pluginModsSniffer = new PluginModsSniffer();
 export function shouldIgnore(rel: string): boolean {
   if (rel === '' || rel === '.') return false; // project root itself
   if (rel === '.weave' || rel.startsWith('.weave/')) return false; // weave 自身面
-  return assetSurfaceFor('claude').ignore(rel) && assetSurfaceFor('codex').ignore(rel);
+  return assetSurfaces().every((s) => s.ignore(rel));
 }
 
 export interface WatchServiceOptions {
@@ -70,6 +71,8 @@ export class WatchService {
   // deprecated ~/.codex/skills/) watched
   // for live preview of symlinked skills. Keyed by absolute root path.
   private readonly globalWatchers = new Map<string, FSWatcher>();
+  /** 各全局根的归属 harness（根来自 surface，归属即 surface 自身）。 */
+  private readonly globalOwners = new Map<string, Harness>();
   private readonly globalPending = new Map<string, AssetChangeEvent>();
   private globalTimer: NodeJS.Timeout | undefined;
 
@@ -142,17 +145,19 @@ export class WatchService {
   /** Watch any existing personal skill root that is not yet watched, and drop
    * watchers for roots that have disappeared. */
   private reconcileGlobalRoots(): void {
-    const roots = new Set(globalPersonalSkillRoots());
-    for (const root of roots) {
+    const owned = globalPersonalSkillRootsOwned();
+    const roots = new Set(owned.map((o) => o.root));
+    for (const { harness, root } of owned) {
       if (this.globalWatchers.has(root)) continue;
       if (!existsSync(root)) continue; // created later — picked up next reconcile
-      this.watchGlobalRoot(root);
+      this.watchGlobalRoot(root, harness);
     }
     for (const root of [...this.globalWatchers.keys()]) {
       if (!roots.has(root) || !existsSync(root)) {
         const w = this.globalWatchers.get(root);
         if (w) void w.close();
         this.globalWatchers.delete(root);
+        this.globalOwners.delete(root);
       }
     }
   }
@@ -222,7 +227,7 @@ export class WatchService {
    * (the link target, e.g. a dev repo) surface as events on the link path,
    * matching the abs paths returned by `listGlobalSkillFiles`. `ignoreInitial`
    * avoids flooding with add-events for every existing file at startup. */
-  private watchGlobalRoot(root: string): void {
+  private watchGlobalRoot(root: string, harness: Harness): void {
     const w = watch('.', {
       cwd: root,
       ignored: (testPath: string) => path.basename(testPath).startsWith('.'),
@@ -231,6 +236,7 @@ export class WatchService {
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
     });
     this.globalWatchers.set(root, w);
+    this.globalOwners.set(root, harness);
     w.on('add', (p) => this.onGlobalFile(root, p, 'add'));
     w.on('change', (p) => this.onGlobalFile(root, p, 'change'));
     w.on('unlink', (p) => this.onGlobalFile(root, p, 'unlink'));
@@ -239,8 +245,8 @@ export class WatchService {
 
   /** Handle a change inside a global personal skill root. Events carry the
    * GLOBAL_SENTINEL projectPath so App.tsx's project cache ignores them; the
-   * open skill drawer subscribes to its own EventSource and re-fetches. The
-   * agent is derived from the root (`.codex` path segment → Codex). */
+   * open skill drawer subscribes to its own EventSource and re-fetches.
+   * agent 取该根的归属 harness（watchGlobalRoot 设立时记下，不解析路径段）。 */
   private onGlobalFile(root: string, rawPath: string, kind: AssetChangeKind): void {
     const relPath = normalizeRelPath(rawPath);
     const absPath = path.join(root, relPath);
@@ -248,9 +254,7 @@ export class WatchService {
       projectPath: GLOBAL_SENTINEL,
       projectName: 'global',
       category: 'skill',
-      agent: root.split(/[\\/]/).some((seg) => seg === '.codex' || seg === '.agents')
-        ? 'codex'
-        : 'claude',
+      agent: this.globalOwners.get(root) ?? 'claude',
       relPath,
       absPath,
       kind,

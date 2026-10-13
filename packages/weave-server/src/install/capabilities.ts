@@ -1,4 +1,4 @@
-import type { Harness } from '@weavecode/core';
+import { HARNESS_KEYS, type Harness } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 
 /** 安装范围（与 InstallBody.scope 同形）。 */
@@ -25,18 +25,23 @@ export interface InstallCapabilities {
 /**
  * 安装属性矩阵（批 M5）——点击安装禁用与拖拽 canDrop 共用的服务端事实源。
  *
- * 文件资产由 FILE_ASSET_SPECS 派生：`userDir` 存在 ⇔ claude 支持全局；
- * `codexUserDir` 存在 ⇔ codex 有用户面（Codex 项目面仅 skills，故 codex 恒
- * 只有 global）。skill/mcp 为固定规则（mcp × codex 强制全局）。
+ * 文件资产由 FILE_ASSET_SPECS 的 `dirs` 落点表按 harness 名单遍历派生：
+ * 有 `project` ⇒ 支持项目面、有 `user` ⇒ 支持全局面（Codex 项目面仅 skills，
+ * 故 codex 单文件资产恒只有 global）。skill/mcp 为固定规则（mcp × codex 强制全局）。
  */
 export function installCapabilities(): InstallCapabilities {
   const categories = {} as InstallCapabilities['categories'];
   for (const cat of FILE_ASSET_CATEGORIES) {
-    const spec = FILE_ASSET_SPECS[cat];
-    const surfaces: CategorySurface[] = [
-      { harness: 'claude', scopes: spec.userDir ? ['project', 'global'] : ['project'] },
-    ];
-    if (spec.codexUserDir) surfaces.push({ harness: 'codex', scopes: ['global'] });
+    const dirs = FILE_ASSET_SPECS[cat].dirs;
+    const surfaces: CategorySurface[] = [];
+    for (const harness of HARNESS_KEYS) {
+      const d = dirs[harness];
+      if (!d) continue;
+      const scopes: InstallCapabilities['categories'][FileAssetCategory]['surfaces'][number]['scopes'] = [];
+      if (d.project) scopes.push('project');
+      if (d.user) scopes.push('global');
+      if (scopes.length > 0) surfaces.push({ harness, scopes });
+    }
     categories[cat] = { surfaces };
   }
   categories.skill = {

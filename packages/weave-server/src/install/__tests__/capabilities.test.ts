@@ -13,18 +13,20 @@ function scopesOf(cat: keyof InstallCapabilities['categories'], harness: string)
 }
 
 describe('installCapabilities', () => {
-  it('文件资产矩阵逐格锚定 FILE_ASSET_SPECS（userDir ⇔ claude 全局，codexUserDir ⇔ codex 面）', () => {
+  it('文件资产矩阵逐格锚定 FILE_ASSET_SPECS 落点表（有 project ⇒ 项目面、有 user ⇒ 全局面）', () => {
     for (const cat of FILE_ASSET_CATEGORIES) {
-      const spec = FILE_ASSET_SPECS[cat];
-      const claude = scopesOf(cat, 'claude');
-      expect(claude, cat).toEqual(spec.userDir ? ['project', 'global'] : ['project']);
-      // Codex 项目面仅 skills —— 即便将来补 codexUserDir 也只有 global
-      const codex = scopesOf(cat, 'codex');
-      expect(codex, cat).toEqual(spec.codexUserDir ? ['global'] : undefined);
+      const dirs = FILE_ASSET_SPECS[cat].dirs;
+      for (const harness of ['claude', 'codex'] as const) {
+        const d = dirs[harness];
+        const expectScopes = d
+          ? [...(d.project ? (['project'] as const) : []), ...(d.user ? (['global'] as const) : [])]
+          : undefined;
+        expect(scopesOf(cat, harness), `${cat}/${harness}`).toEqual(expectScopes);
+      }
     }
   });
 
-  it('workflow/rule 仅项目（userDir 缺省 → 全局拒）', () => {
+  it('workflow/rule 仅项目（无 user 落点 → 全局拒）', () => {
     expect(scopesOf('workflow', 'claude')).toEqual(['project']);
     expect(scopesOf('rule', 'claude')).toEqual(['project']);
   });

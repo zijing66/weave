@@ -6,6 +6,7 @@ import {
   HookRuleSourceSchema,
   HandlerConfigSchema,
   HookDispatchStatusSchema,
+  isHarness,
 } from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
@@ -359,7 +360,7 @@ export async function handleHooksRoutes(
     // harness 归属 = 最新事件 source（与 sessions 列表的计算字段同口径）
     const latest = deps.hookEvents.listBySession(sessionId, 1);
     const src = latest[latest.length - 1]?.source;
-    if (src !== 'claude' && src !== 'codex') {
+    if (!isHarness(src)) {
       sendJson(res, 400, { error: 'Session has no hook events to determine its harness' });
       return true;
     }

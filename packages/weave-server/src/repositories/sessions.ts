@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { isHarness, type Harness } from '@weavecode/core';
 
 export interface SessionRow {
   sessionId: string;
@@ -12,7 +13,7 @@ export interface SessionRow {
   /** 该会话的 hook 事件数（listWithCounts 查询填充；其他查询为 undefined）。 */
   eventCount?: number;
   /** 会话归属 harness = 最新一条 hook 事件的 source（listWithCounts 查询填充）。 */
-  harness?: 'claude' | 'codex' | null;
+  harness?: Harness | null;
   /** 回合开合的服务端基线：最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd
    *  （listWithCounts 查询填充）——前端帧态丢失/重挂载时的权威兜底。 */
   turnOpen?: boolean;
@@ -96,7 +97,7 @@ export class SessionRepository {
       return {
         ...toSession(row),
         eventCount: Number((row as { event_count: number }).event_count ?? 0),
-        harness: raw === 'claude' || raw === 'codex' ? raw : null,
+        harness: isHarness(raw) ? raw : null,
         turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
         lastEventType: lastEventType ?? null,
       };

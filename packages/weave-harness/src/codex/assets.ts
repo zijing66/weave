@@ -12,13 +12,13 @@ export const CODEX_ASSETS: AssetSurface = {
 
   targetDir(category, scope, _projectPath, homedir) {
     // Codex 无项目级文件资产表面（skills-only），project 恒抛错——_projectPath 仅占位。
-    const spec = FILE_ASSET_SPECS[category];
-    if (scope !== 'global' || !spec.codexUserDir) {
+    const dirs = FILE_ASSET_SPECS[category].dirs.codex;
+    if (scope !== 'global' || !dirs?.user) {
       throw new Error(
         `"${category}" has no Codex ${scope === 'global' ? 'global' : 'project'} surface`,
       );
     }
-    return path.join(homedir, ...spec.codexUserDir.split('/'));
+    return path.join(homedir, ...dirs.user.split('/'));
   },
 
   projectSkillsDir: () => '.codex/skills',
@@ -31,6 +31,8 @@ export const CODEX_ASSETS: AssetSurface = {
   ],
 
   userConfigFile: (homedir) => path.join(homedir, '.codex', 'config.toml'),
+
+  pluginCacheDir: (homedir) => path.join(homedir, '.codex', 'plugins', 'cache'),
 
   classify(relPath) {
     if (relPath === '.codex' || relPath.startsWith('.codex/')) return true;

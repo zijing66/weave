@@ -6,7 +6,7 @@ import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
-import { assetSurfaceFor, pluginStateFor, pluginSurfaceFor } from '../surfaces.js';
+import { assetSurfaceFor, assetSurfaces, pluginStateFor, pluginSurfaceFor } from '../surfaces.js';
 import { installForm, linkOrCopy, removeInstalled, type InstallLinkMode } from '../market/install-link.js';
 
 /**
@@ -39,14 +39,9 @@ export class ClaudeJsonCorruptError extends Error {
 // AssetSurface（`globalSkillsRoots` / `userConfigFile`），此处只留插件枚举路径。
 const CLAUDE_JSON = '.claude.json';
 const CLAUDE_PLUGINS_JSON = '.claude/plugins/installed_plugins.json';
-const CODEX_PLUGINS_CACHE = '.codex/plugins/cache';
 
 /** Where a global skill came from — used as the grouping key in the UI. */
-export type GlobalSkillSource =
-  | 'claude-personal'
-  | 'claude-plugin'
-  | 'codex-personal'
-  | 'codex-plugin';
+export type GlobalSkillSource = `${Harness}-personal` | `${Harness}-plugin`;
 
 /** A single resolved skill directory. `dir` is absolute (may be a symlink). */
 export interface GlobalSkillEntry {
@@ -95,17 +90,25 @@ function codexSkillsPaths(): string[] {
   return assetSurfaceFor('codex').globalSkillsRoots(homedir());
 }
 function codexPluginsCachePath(): string {
-  return path.join(homedir(), CODEX_PLUGINS_CACHE);
+  const dir = assetSurfaceFor('codex').pluginCacheDir?.(homedir());
+  if (!dir) throw new Error('codex has no plugin cache surface');
+  return dir;
 }
 
 /** Personal skill roots that may contain symlinks to dev repos — the roots the
  * watch service observes so edits to a symlinked skill's original files flow
- * through SSE. Plugin caches are versioned/static and intentionally excluded. */
+ * through SSE. Plugin caches are versioned/static and intentionally excluded.
+ * 带归属版：根来自各 harness 的 AssetSurface，归属即 surface 自身——watch 侧
+ * 据此定 agent，不写路径段白名单。 */
+export function globalPersonalSkillRootsOwned(): Array<{ harness: Harness; root: string }> {
+  return assetSurfaces().flatMap((s) =>
+    s.globalSkillsRoots(homedir()).map((root) => ({ harness: s.harness, root })),
+  );
+}
+
+/** 与 `globalPersonalSkillRootsOwned` 同源的纯根列表（顺序不变）。 */
 export function globalPersonalSkillRoots(): string[] {
-  return [
-    ...assetSurfaceFor('claude').globalSkillsRoots(homedir()),
-    ...assetSurfaceFor('codex').globalSkillsRoots(homedir()),
-  ];
+  return globalPersonalSkillRootsOwned().map((r) => r.root);
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -215,7 +218,7 @@ export async function installGlobalSkill(
   name: string,
   agent: Harness = 'claude',
 ): Promise<string> {
-  const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
+  const root = assetSurfaceFor(agent).globalSkillsRoots(homedir())[0];
   const target = path.join(root, name);
   if (await pathExists(target)) {
     throw new Error(`Global ${agent} skill "${name}" already exists`);
@@ -230,7 +233,7 @@ export async function uninstallGlobalSkill(
   name: string,
   agent: Harness = 'claude',
 ): Promise<void> {
-  const root = agent === 'codex' ? codexSkillsPath() : globalSkillsPath();
+  const root = assetSurfaceFor(agent).globalSkillsRoots(homedir())[0];
   await removeInstalled(path.join(root, name));
 }
 
@@ -493,11 +496,25 @@ export async function resolveGlobalSkillDir(
   return (await isDirectoryFollow(dir)) ? dir : null;
 }
 
+/** 全局技能目录的归属 harness：按各面的全局根 + 插件缓存根前缀匹配
+ *  （不解析路径段，路径知识归各 surface）；无人认领回落 claude。 */
+function globalSkillOwner(dir: string): Harness {
+  const abs = path.resolve(dir);
+  const home = homedir();
+  const owner = assetSurfaces().find((s) => {
+    const roots = [...s.globalSkillsRoots(home)];
+    const cache = s.pluginCacheDir?.(home);
+    if (cache) roots.push(cache);
+    return roots.some((r) => abs === path.resolve(r) || abs.startsWith(path.resolve(r) + path.sep));
+  });
+  return owner?.harness ?? 'claude';
+}
+
 /** Recursively list files inside a global skill directory (symlinks followed),
  * with paths relative to the skill dir (posix separators). Hidden entries are
- * skipped. The agent is derived from the dir path (`.codex` segment → Codex). */
+ * skipped. agent 取该目录的归属 harness。 */
 export async function listGlobalSkillFiles(dir: string): Promise<AssetEntry[]> {
-  const agent = dir.split(/[\\/]/).includes('.codex') ? 'codex' : 'claude';
+  const agent = globalSkillOwner(dir);
   const out: AssetEntry[] = [];
   const walk = async (cur: string, rel: string) => {
     let entries: import('node:fs').Dirent[];

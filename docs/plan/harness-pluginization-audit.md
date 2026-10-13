@@ -187,6 +187,35 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 **每阶段铁律**：`pnpm build`（各包）+ `build:web` + 全量测试退出码 0；中文提交
 `<type>(<scope>): <描述>`；只 add 本阶段文件（并行会话期复核暂存列）。
 
+### 5.1 实施进展（逐条对照；核验以本表为准）
+
+**已完成**
+
+| 项 | 内容 | commit |
+|---|---|---|
+| P0 闸门 | `HARNESS_NAMES` 名单单源（`Harness` 联合 / `HARNESS_KEYS` 派生）；`types.ts` 三处 `z.enum` 派生；`HARNESS_DRIVERS` 驱动总表 + 遍历注册 | `045ec89` |
+| P2′ | codex `config.toml` 行级编辑器下沉 `weave-harness/src/codex/toml.ts`（server 薄壳 re-export）；**新增 `pluginState` 槽**；`plugins/enabled` 路由按槽枚举（删 `if claude … else codex`）；global-config 四个启用态函数改薄委托 | `74f182a`、`7b7a66a` |
+| P1（已收） | `isHarness` + `HARNESS_EVENT_UNION`（core）；`sessions.ts` 联合与归一；`hooks-routes` 白名单；`plugin-loader` 事件校验值域；`classifier.classifyAgent`；`watch-service`（shouldIgnore + 全局根归属带 harness）；`capabilities` 按落点表遍历派生；**`file-specs` 落点表化（杀掉 `codexUserDir` 硬列）**；`scanner`/`updates`/`apply-update` 派生；`GlobalSkillSource` 改模板字面量；`.codex` 路径段判据改为 **`AssetSurface.pluginCacheDir` 归属匹配** | 见 P1 提交 |
+
+**延后项（含理由；均为需要「新能力面 / 接口扩张」或「特性域整体搬家」的项）**
+
+| 项 | 为何延后 | 归属 |
+|---|---|---|
+| server MCP 表示法（`GET /mcp` 三桶、install/uninstall 的 `agent === 'codex'` 分支、CODEX MCP 读写） | 需要 MCP 能力面（read/write/exists × scope）——新槽，§6.3 需所有者确认 | MCP 面首批 |
+| `hooks/toolkit.ts` 的 CC 插件包知识（`targets.includes('claude')`、`pluginSurfaceFor('claude')` 兜底、`claude --version` 探测） | 需要「工具包包面」（pack ↔ harness 映射）抽象 | 单独立项 |
+| `hooks/mirror.ts` 的 claude-only 注入投影 | 镜像投递（`hook-handler.cjs` 挂 Claude Code）是 claude 专属实现，未抽象 | 随 `CROSS-HARNESS-DESIGN` 能力 B |
+| `hooks/resume-runner.ts` 缺省 `CLAUDE_RESUME`/`WEAVE_CLAUDE_BIN` | 按会话 harness 分派 resume 需 dispatcher 侧 harness（命令表） | 随能力 B |
+| `daemon/claude-liveness.ts` | 需「存活探测」槽（第 8 槽，§6.3 待确认） | 待确认后下沉 |
+| `statusline/*`（整模块 + `/statusline/*` 路由） | claude 专属特性域整体搬家，须独立批次 | 独立批 |
+| `install/codex-toml.ts` 的 MCP 表示法（server 侧余量） | 其类型 `McpServerConfig` 仍住 server；随 MCP 面一起下沉 | MCP 面首批 |
+| `watch/classifier.classifyAsset` 的路径前缀表 | 需要 `AssetCategory` 类型下沉 core + surface 增「类别归类」方法 | 待确认后做 |
+| `global-config.resolveGlobalSkillDir` 的四分支 | 需要「插件技能解析」面方法（claude = `installed_plugins.json` / codex = 缓存版本扫描） | 随 MCP/toolkit 面批 |
+| `install/{settings-mcp,reader,global-file-assets,plugin-mods,scanner}.ts` 余量 | 多为 claude 单面特性（项目 `settings.json` MCP 开关等）——须逐项判断「专属特性保留 vs 泛化」 | 复核后逐项 |
+
+> 口径：延后 ≠ 忽略。凡「新 harness 走该路径会出错」的项都必须在表中；仅
+> 「claude 专属特性、第三 harness 本就不适用」的项可保留硬编码（如项目
+> `settings.json` 的 MCP 开关）。逐项复核结论记入本表。
+
 ---
 
 ## 6. 开放问题与不做的事
@@ -195,8 +224,9 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
    本计划不做；P0 只保证「名表 + 驱动表两行」。
 2. **`hookSourceHarness` / `claude-event` 兼容窗**——随 `CROSS-HARNESS-DESIGN` 批 0
    的兼容策略处置，本计划不动语义。
-3. **statusline / codex-toml 的归属**：P2 只搬家不改语义；两模块的能力槽化
-   （是否值得升为第 7、8 槽）需与项目所有者确认后再定。
+3. **槽扩张须所有者确认**：本计划新增了 `pluginState` 槽（P2′，启用态与安装/市场
+   分离——codex 无安装面但有启用态）；后续延后项若需第 8+ 槽（如存活探测、
+   MCP 表示法），**先与项目所有者确认再动**。
 4. **审计条目可能有误**（子agent 扫描所得，未逐条人工复核）——以实施阶段
    逐条**当场复核**为准；发现误报在本文档标注而非默默跳过。
 

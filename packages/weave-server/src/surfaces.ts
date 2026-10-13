@@ -27,6 +27,17 @@ export function assetSurfaceFor(harness: Harness): AssetSurface {
   return surface;
 }
 
+/**
+ * 全部已注册的资产表面（注册顺序）——路径归属 / watch 观测集等多面聚合处
+ * 按本表遍历，不再手写 `[assetSurfaceFor('codex'), assetSurfaceFor('claude')]`。
+ */
+export function assetSurfaces(): AssetSurface[] {
+  return registry
+    .all()
+    .map((d) => d.assets)
+    .filter((s): s is AssetSurface => s !== undefined);
+}
+
 /** 按 harness 取插件安装面（批 3）；未注册或未补 plugins 槽抛错。 */
 export function pluginSurfaceFor(harness: Harness): PluginSurface {
   const surface = registry.get(harness)?.plugins;

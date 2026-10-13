@@ -244,7 +244,11 @@ export async function detectFileAssetUpdates(
     const spec = FILE_ASSET_SPECS[category];
     // Project surface only — user-level dirs (~/.claude/commands, …) are
     // managed by hand and rarely mirrored by a library; revisit if asked.
-    const dir = path.join(projectPath, ...spec.dir.split('/'));
+    // 这里的 skill/文件资产更新检测面向项目面；claude 是唯一有项目文件资产面的
+    // harness，故取 claude 落点（无则跳过该类别）。
+    const projectDir = spec.dirs.claude?.project;
+    if (!projectDir) continue;
+    const dir = path.join(projectPath, ...projectDir.split('/'));
     let files: string[];
     try {
       files = (await readdir(dir, { withFileTypes: true }))

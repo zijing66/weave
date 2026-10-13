@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weavecode/core';
-import { checkHarness } from '@weavecode/core';
+import { checkHarness, isHarness } from '@weavecode/core';
 import type { EventSource, HarnessRegistry, PluginSurface } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -921,12 +921,17 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
-    if (body.runtime !== 'claude' || !body.key) {
+    if (!isHarness(body.runtime) || !body.key) {
       sendJson(res, 400, { error: 'Missing or invalid "runtime"/"key"' });
       return;
     }
     try {
-      const surface = deps.pluginSurface ?? pluginSurfaceFor('claude');
+      // runtime 声明了 plugins 槽才可卸；未补槽的 harness（如 codex）→ 400。
+      // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
+      const surface =
+        body.runtime === 'claude' && deps.pluginSurface
+          ? deps.pluginSurface
+          : pluginSurfaceFor(body.runtime);
       const { name, market } = surface.parsePluginKey(body.key);
       await surface.uninstall(name, market);
       sendJson(res, 200, { ok: true });

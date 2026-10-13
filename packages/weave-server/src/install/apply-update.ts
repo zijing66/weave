@@ -62,7 +62,8 @@ export async function applyUpdate(
         ? // 全局根经 surface 取（codex current 根 = ~/.agents/skills，原硬编码
           // ~/.codex/skills 是批 4a 欠账）
           assetSurfaceFor(agent).globalSkillsRoots(homedir())[0]
-        : path.join(projectPath, agent === 'codex' ? '.codex' : '.claude', 'skills');
+        : // 项目根同经 surface 取（原写死 `.codex`/`.claude` 二分）
+          path.join(projectPath, ...assetSurfaceFor(agent).projectSkillsDir().split('/'));
     const targetDir = path.join(skillsRoot, input.name);
     await rm(targetDir, { recursive: true, force: true });
     await cp(src.dirPath, targetDir, { recursive: true });

@@ -73,6 +73,12 @@ export interface AssetSurface {
   userConfigFile(homedir: string): string;
 
   /**
+   * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
+   * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
+   */
+  pluginCacheDir?(homedir: string): string;
+
+  /**
    * 路径归属：该相对路径（posix 已归一）是否认领为本 harness 表面
    * （`classifyAgent` 消费——按 codex→claude 顺序找首个认领者，无人认领默认 claude）。
    */
