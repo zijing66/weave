@@ -2,7 +2,7 @@ import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weavecode/core';
 import { checkHarness } from '@weavecode/core';
-import type { EventSource, HarnessRegistry } from '@weavecode/harness';
+import type { EventSource, HarnessRegistry, PluginSurface } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -112,6 +112,7 @@ import {
 } from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
+import { pluginSurfaceFor } from '../surfaces.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
 
@@ -166,6 +167,8 @@ export interface WeaveServerDeps {
   hooksDir?: string;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
+  /** 插件安装面（plugins/uninstall 依赖它）；缺省经 registry 取 Claude 面，测试注入 fake exec。 */
+  pluginSurface?: PluginSurface;
 }
 
 /** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
@@ -898,6 +901,33 @@ async function handleRequest(
       sendJson(res, 200, { ok: true });
       return;
     }
+  }
+
+  // --- plugin pack uninstall (harness-level, by registry key; works even
+  //     after the market copy is gone — ToolkitSection rescans market roots,
+  //     this is the only way off installed_plugins.json) ---
+  const pluginUninstallMatch = pathname.match(/^\/projects\/(\d+)\/plugins\/uninstall$/);
+  if (pluginUninstallMatch && req.method === 'POST') {
+    let body: { runtime?: string; key?: string };
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (body.runtime !== 'claude' || !body.key) {
+      sendJson(res, 400, { error: 'Missing or invalid "runtime"/"key"' });
+      return;
+    }
+    try {
+      const surface = deps.pluginSurface ?? pluginSurfaceFor('claude');
+      const { name, market } = surface.parsePluginKey(body.key);
+      await surface.uninstall(name, market);
+      sendJson(res, 200, { ok: true });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Plugin uninstall failed' });
+    }
+    return;
   }
 
   // --- MCP enable/disable overrides (project settings.json) ---

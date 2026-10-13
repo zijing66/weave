@@ -10,6 +10,13 @@ export const assetsZh = {
   'skillGrid.openDetail': '打开 {name} 详情',
   'skillGrid.uninstall': '卸载 {name}',
   'skillGrid.uninstalled': '已卸载：{name}',
+  'skillGrid.uninstallGlobalTitle': '卸载全局技能',
+  'skillGrid.uninstallGlobalConfirm':
+    '从全局技能位删除「{name}」？链接只移除链接本身，副本将递归删除。',
+  'skillGrid.uninstallPackTitle': '卸载插件包',
+  'skillGrid.uninstallPackConfirm':
+    '从 Claude Code 卸载插件包「{key}」？市场副本保留，可随时重装。',
+  'skillGrid.packUninstalled': '已卸载插件包：{label}',
   'skillGrid.effective': '已生效：{done} / {total}',
   'skillGrid.effNone': '没有可统计的 skill',
   'skillGrid.effAll': '{n} 个 skill 全部生效',
@@ -105,6 +112,13 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.openDetail': 'Open {name} detail',
   'skillGrid.uninstall': 'Uninstall {name}',
   'skillGrid.uninstalled': 'Uninstalled: {name}',
+  'skillGrid.uninstallGlobalTitle': 'Uninstall global skill',
+  'skillGrid.uninstallGlobalConfirm':
+    'Remove "{name}" from the global skills location? A link only removes the link itself; a copy is deleted recursively.',
+  'skillGrid.uninstallPackTitle': 'Uninstall plugin pack',
+  'skillGrid.uninstallPackConfirm':
+    'Uninstall plugin pack "{key}" from Claude Code? The market copy is kept and it can be reinstalled anytime.',
+  'skillGrid.packUninstalled': 'Plugin pack uninstalled: {label}',
   'skillGrid.effective': 'In effect: {done} / {total}',
   'skillGrid.effNone': 'No skills to count',
   'skillGrid.effAll': 'All {n} skills in effect',

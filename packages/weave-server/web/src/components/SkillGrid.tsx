@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 export interface SkillRow {
@@ -102,6 +103,18 @@ function SkillCard({
   const fb = useActionFeedback();
   const uninstallKey = `skill-uninstall:${row.scope}:${row.agent ?? 'claude'}:${row.name}`;
   const uninstallState = fb.stateOf(uninstallKey);
+  // 全局卸载删的是用户技能位上的真文件（副本会递归删），破坏性 → 先确认；
+  // 项目卸载维持现状直删。
+  const [confirming, setConfirming] = useState(false);
+  const runUninstall = () =>
+    void fb.run(
+      uninstallKey,
+      async () => {
+        await onUninstallSkill(row.name, row.scope, row.agent);
+        show('success', t('skillGrid.uninstalled', { name: row.name }));
+      },
+      { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+    );
   // 装面形态只在全局位置有意义，且只在 weave 自己铺的那两处（个人技能根）——
   // 项目技能按设计一律是副本，插件缓存是 CC 的，都不该标「副本」让人以为可改。
   const showForm =
@@ -165,16 +178,7 @@ function SkillCard({
           <button
             type="button"
             disabled={uninstallState === 'loading'}
-            onClick={() =>
-              void fb.run(
-                uninstallKey,
-                async () => {
-                  await onUninstallSkill(row.name, row.scope, row.agent);
-                  show('success', t('skillGrid.uninstalled', { name: row.name }));
-                },
-                { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
-              )
-            }
+            onClick={() => (row.scope === 'global' ? setConfirming(true) : runUninstall())}
             className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
             title={t('skillGrid.uninstall', { name: row.name })}
           >
@@ -186,6 +190,16 @@ function SkillCard({
           </button>
         )}
       </CardHeader>
+      {row.scope === 'global' && (
+        <ConfirmDialog
+          open={confirming}
+          title={t('skillGrid.uninstallGlobalTitle')}
+          message={t('skillGrid.uninstallGlobalConfirm', { name: row.name })}
+          confirmLabel={t('common.confirm')}
+          onConfirm={runUninstall}
+          onClose={() => setConfirming(false)}
+        />
+      )}
     </Card>
   );
 }
@@ -199,6 +213,7 @@ export function SkillGrid({
   onUninstallSkill,
   onOpenDetail,
   onTogglePlugin,
+  onUninstallPlugin,
 }: {
   /** Flat skill list (project mode). */
   skills?: SkillRow[];
@@ -217,6 +232,8 @@ export function SkillGrid({
     key: string,
     enabled: boolean,
   ) => void | Promise<void>;
+  /** 卸载 CC 插件包（harness 级，按注册键）；仅 claude-plugin 组消费。 */
+  onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
 }) {
   const t = useT();
   const findUpdate = (name: string) => updates?.find((u) => u.name === name);
@@ -230,6 +247,7 @@ export function SkillGrid({
         onUninstallSkill={onUninstallSkill}
         onOpenDetail={onOpenDetail}
         onTogglePlugin={onTogglePlugin}
+        onUninstallPlugin={onUninstallPlugin}
       />
     );
   }
@@ -325,6 +343,7 @@ function PackBlock({
   onUninstallSkill,
   onOpenDetail,
   onTogglePlugin,
+  onUninstallPlugin,
   readOnly,
 }: {
   group: SkillGroup;
@@ -334,10 +353,14 @@ function PackBlock({
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
   onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void | Promise<void>;
+  /** 卸载 CC 插件包（harness 级，按注册键）；codex-plugin 组不消费（无 plugins 槽）。 */
+  onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
   readOnly?: boolean;
 }) {
   const t = useT();
   const fb = useActionFeedback();
+  const { show } = useToast();
+  const [confirming, setConfirming] = useState(false);
   const isPlugin = group.source.endsWith('-plugin');
   const runtime = PLUGIN_RUNTIME[group.source];
   // A pack is atomic — its plugin is either enabled or not — so this is either
@@ -345,6 +368,23 @@ function PackBlock({
   const stats = countEffectiveSkills([group]);
   const toggleKey = `plugin-toggle:${runtime}:${group.pluginKey ?? '-'}`;
   const toggleState = fb.stateOf(toggleKey);
+  const canUninstallPack =
+    isPlugin && runtime === 'claude' && !!onUninstallPlugin && !readOnly && !!group.pluginKey;
+  const canToggle =
+    isPlugin && !!runtime && !!onTogglePlugin && !readOnly && group.enabled !== undefined;
+  const packUninstallKey = `pack-uninstall:${group.pluginKey ?? '-'}`;
+  const packUninstallState = fb.stateOf(packUninstallKey);
+  const runUninstallPack = () => {
+    if (!group.pluginKey || !onUninstallPlugin) return;
+    void fb.run(
+      packUninstallKey,
+      async () => {
+        await onUninstallPlugin('claude', group.pluginKey!);
+        show('success', t('skillGrid.packUninstalled', { label: group.label }));
+      },
+      { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+    );
+  };
   return (
     <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden">
       <div
@@ -383,7 +423,7 @@ function PackBlock({
         <EffectivePill effective={stats.effective} total={stats.total} />
         {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
          * Hidden in read-only (project) mode: global config is not edited from a project view. */}
-        {isPlugin && runtime && onTogglePlugin && !readOnly && group.enabled !== undefined && (
+        {canToggle && (
           <button
             type="button"
             disabled={toggleState === 'loading'}
@@ -392,7 +432,7 @@ function PackBlock({
               void fb.run(
                 toggleKey,
                 async () => {
-                  await onTogglePlugin(runtime, group.pluginKey!, !group.enabled);
+                  await onTogglePlugin!(runtime!, group.pluginKey!, !group.enabled);
                 },
                 { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
               );
@@ -411,6 +451,29 @@ function PackBlock({
               icon={<Power className="h-3 w-3" />}
             />
             {group.enabled ? t('skillGrid.on') : t('skillGrid.off')}
+          </button>
+        )}
+        {/* pack uninstall — harness 级（`claude plugin uninstall`），市场副本保留、
+         * 可重装。市场源被删后 ToolkitSection 不再列出该包，这里是唯一卸载口。 */}
+        {canUninstallPack && (
+          <button
+            type="button"
+            disabled={packUninstallState === 'loading'}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirming(true);
+            }}
+            className={cn(
+              'shrink-0 text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+              !canToggle && 'ml-auto',
+            )}
+            title={t('skillGrid.uninstallPackTitle')}
+          >
+            <FeedbackIcon
+              state={packUninstallState}
+              className="h-3.5 w-3.5"
+              icon={<Trash2 className="h-3.5 w-3.5" />}
+            />
           </button>
         )}
       </div>
@@ -435,6 +498,14 @@ function PackBlock({
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={confirming}
+        title={t('skillGrid.uninstallPackTitle')}
+        message={t('skillGrid.uninstallPackConfirm', { key: group.pluginKey ?? '' })}
+        confirmLabel={t('common.confirm')}
+        onConfirm={runUninstallPack}
+        onClose={() => setConfirming(false)}
+      />
     </div>
   );
 }
@@ -445,6 +516,7 @@ function GroupedSkills({
   onUninstallSkill,
   onOpenDetail,
   onTogglePlugin,
+  onUninstallPlugin,
   readOnly,
 }: {
   groups: SkillGroup[];
@@ -456,6 +528,7 @@ function GroupedSkills({
     key: string,
     enabled: boolean,
   ) => void | Promise<void>;
+  onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
   /** Read-only context (project view): no enable toggle, cards tagged 全局. */
   readOnly?: boolean;
 }) {
@@ -594,7 +667,7 @@ function GroupedSkills({
                               key={`${s.scope}-${s.agent ?? 'claude'}-${s.name}`}
                               row={s}
                               update={findUpdate(s.name)}
-                              canUninstall={false}
+                              canUninstall={!readOnly}
                               readOnly={readOnly}
                               onUninstallSkill={onUninstallSkill}
                               onOpenDetail={onOpenDetail}
@@ -617,6 +690,7 @@ function GroupedSkills({
                           onUninstallSkill={onUninstallSkill}
                           onOpenDetail={onOpenDetail}
                           onTogglePlugin={onTogglePlugin}
+                          onUninstallPlugin={onUninstallPlugin}
                           readOnly={readOnly}
                         />
                       );

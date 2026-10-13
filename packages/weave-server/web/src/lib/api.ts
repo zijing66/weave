@@ -1115,6 +1115,15 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  /** 卸载 CC 插件包（harness 级，按注册键；市场副本保留）。 */
+  uninstallPluginPack: (
+    projectId: number,
+    body: { runtime: PluginRuntime; key: string },
+  ): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/plugins/uninstall`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   getMcpEnable: (projectId: number): Promise<McpEnableMap> =>
     apiFetch<McpEnableMap>(`/projects/${projectId}/mcp/enable`),
   putMcpEnable: (

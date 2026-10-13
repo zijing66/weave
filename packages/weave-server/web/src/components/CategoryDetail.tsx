@@ -85,6 +85,7 @@ export function CategoryDetail({
   onUninstallMcp,
   onUninstallFileAsset,
   onTogglePlugin,
+  onUninstallPlugin,
   onOpenFile,
   onOpenSkillDetail,
   projects,
@@ -118,6 +119,8 @@ export function CategoryDetail({
     key: string,
     enabled: boolean,
   ) => void | Promise<void>;
+  /** 卸载 CC 插件包（harness 级，按注册键；市场副本保留）。 */
+  onUninstallPlugin: (runtime: PluginRuntime, key: string) => void | Promise<void>;
   onOpenFile: (relPath: string) => void;
   onOpenSkillDetail: OpenDetailFn;
   /** 全局任务总览的项目名映射与跳转入口。 */
@@ -355,6 +358,7 @@ export function CategoryDetail({
           onUninstallSkill={onUninstallSkill}
           onOpenDetail={onOpenSkillDetail}
           onTogglePlugin={onTogglePlugin}
+          onUninstallPlugin={onUninstallPlugin}
         />
       )}
 

@@ -811,6 +811,18 @@ export default function App() {
     [selected, projects, refreshPluginEnabled, refreshGlobalSkills],
   );
 
+  /** 卸载 CC 插件包（harness 注册表级；apiFetch 非 2xx 抛错，调用方 fb.run 报错）。 */
+  const handleUninstallPlugin = useCallback(
+    async (runtime: PluginRuntime, key: string) => {
+      const target = selected ?? projects[0];
+      if (!target) return;
+      await api.uninstallPluginPack(target.id, { runtime, key });
+      refreshGlobalSkills(target);
+      refreshPluginEnabled(target);
+    },
+    [selected, projects, refreshGlobalSkills, refreshPluginEnabled],
+  );
+
   // 直连 fire-and-forget 调用点（拖拽落定 / 库面板安装·更新 / 抽屉卸载）没有
   // 按钮本体可挂三态反馈，就地兜一条错误 toast：失败必有一条提示、也不产生
   // unhandled rejection；成功维持无 toast（由 SSE 刷新与 ✓ 标呈现）。
@@ -1108,6 +1120,7 @@ export default function App() {
                         onUninstallMcp={handleUninstallMcp}
                         onUninstallFileAsset={handleUninstallFileAsset}
                         onTogglePlugin={handleTogglePlugin}
+                        onUninstallPlugin={handleUninstallPlugin}
                         onOpenFile={(relPath) => {
                           setSelectedFile(relPath);
                           setDrawerSkill(null);
