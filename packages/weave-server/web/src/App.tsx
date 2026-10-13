@@ -30,7 +30,7 @@ import {
   type GlobalSkillSource,
   type InstallCapabilities,
 } from '@/lib/api';
-import { canInstall, type DragPayload } from '@/lib/install-capabilities';
+import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capabilities';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { EnableOverride } from '@weavecode/core/tool';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
@@ -387,12 +387,11 @@ export default function App() {
   );
 
   const categoryData = useMemo<CategoryBarData>(() => {
-    // Non-claude harness MCP rows are user-level (machine-scoped), so they
-    // belong to the machine, not the view scope — both views count them (their
-    // tab is visible in both).
-    const machineMcp = mcpRows.filter((r) => r.harness !== 'claude').length;
-    const claudeRows = (s: AssetScope) =>
-      mcpRows.filter((r) => r.harness === 'claude' && r.scope === s).length;
+    // 无 project 档的 harness（codex）MCP 行属机器级，两个视图都计数（其页签
+    // 两视图可见）；判据 = 行随身带的 installScopes（§4 收编：不再点名 harness）。
+    const machineMcp = mcpRows.filter((r) => !r.installScopes.includes('project')).length;
+    const scopedMcp = (s: AssetScope) =>
+      mcpRows.filter((r) => r.installScopes.includes('project') && r.scope === s).length;
     if (globalMode) {
       const outdatedSkills = (updates?.skills ?? []).filter(
         (u) => u.scope === 'user' && u.outdated,
@@ -405,7 +404,7 @@ export default function App() {
         // (~/.claude, ~/.codex) — the merged 资源管理 card count
         files:
           effectiveGlobalSkills +
-          claudeRows('user') +
+          scopedMcp('user') +
           machineMcp +
           globalAssets.length,
         outdated: outdatedSkills + outdatedMcp,
@@ -423,7 +422,7 @@ export default function App() {
       files:
         assetCounts.skill +
         effectiveGlobalSkills +
-        claudeRows('project') +
+        scopedMcp('project') +
         machineMcp +
         otherCount,
       outdated:
@@ -576,9 +575,12 @@ export default function App() {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
-      // claude 有两份 scope 面（.mcp.json / ~/.claude.json）；其余 harness 的 MCP
-      // 只住用户级文件（如 codex config.toml）——一律落 user。
-      const effectiveScope = agent === 'claude' ? scope : 'user';
+      // 卡面规则与视图同源（CategoryDetail rowsFor）：该 harness 的 MCP 面含
+      // 当前 scope → 用之；否则回落首档（codex 无 project 档 → user）。
+      // 判据出自安装属性矩阵，不再点名 harness（§4 收编）。
+      const mcpScopes =
+        capabilitiesOf('mcp', installCaps).surfaces.find((s) => s.harness === agent)?.scopes ?? [];
+      const effectiveScope = mcpScopes.includes(scope) ? scope : mcpScopes[0] ?? 'user';
       const res = await api.install(target.id, {
         category: 'mcp',
         name,
@@ -591,7 +593,7 @@ export default function App() {
       refreshMcp(target);
       refreshUpdates(target);
     },
-    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
+    [selected, projects, globalMode, installCaps, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   const handleUninstallSkill = useCallback(
