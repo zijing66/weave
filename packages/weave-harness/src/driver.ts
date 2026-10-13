@@ -15,7 +15,41 @@ export type HarnessCapability =
   | 'resume'
   | 'detect'
   | 'plugins'
-  | 'pluginState';
+  | 'pluginState'
+  | 'capture';
+
+/**
+ * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
+ */
+export interface CaptureState {
+  /** user 档采集组已写入 user settings（= 所有项目的事件都被采集）。 */
+  installed: boolean;
+  /** user 级 helper 脚本就位（installed 而脚本缺 = 半安装，重装即修复）。 */
+  helperPresent: boolean;
+}
+
+/** user 档采集面读写依赖（测试注入 home）。 */
+export interface CaptureDeps {
+  /** 覆盖用户主目录（测试注入）；缺省 os.homedir()。 */
+  home?: string;
+}
+
+/**
+ * 采集安装面：weave 事件采集集成（整个 dashboard 的地基）按工具对象建模，
+ * user 档安装/启用是硬性要求——跨项目采集，不依赖逐项目 init。安装即启用
+ * （user settings 里有采集组 = 采集在 firing，无独立启停开关）。
+ */
+export interface CaptureSurface {
+  readonly harness: Harness;
+  /** user 档采集状态。 */
+  readUserCapture(deps?: CaptureDeps): Promise<CaptureState>;
+  /** 幂等安装：user 级 helper 脚本 + user settings 采集组（version 语义参数，脚本标记用）。 */
+  installUserCapture(deps: CaptureDeps & { version: string }): Promise<void>;
+  /** 幂等停用：清扫 user settings 采集组 + 删 user 级脚本（带标记才删）。 */
+  uninstallUserCapture(deps?: CaptureDeps): Promise<void>;
+  /** 项目档去重：user 档接管时清扫该项目 settings 的采集组（缺/坏文件 = 已达目的）。 */
+  stripProjectCapture(projectPath: string): Promise<void>;
+}
 
 /**
  * 插件**启用态**槽：只读/写「某 harness 的插件是否启用」，不含安装与市场
@@ -247,6 +281,7 @@ export interface HarnessDriver {
   detect?: Detector;
   plugins?: PluginSurface;
   pluginState?: PluginStateSurface;
+  capture?: CaptureSurface;
 }
 
 /**
