@@ -40,7 +40,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "tsc && node copy-templates.mjs",
+    "build": "tsc && node ../../scripts/minify-dist.mjs dist && node copy-templates.mjs",
     "prepack": "pnpm build",
     "test": "vitest run"
   },
