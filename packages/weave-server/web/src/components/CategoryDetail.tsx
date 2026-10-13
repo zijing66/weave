@@ -4,8 +4,7 @@ import {
   skillSourceRuntime,
   type AssetEntry,
   type AssetAgent,
-  type McpServerConfig,
-  type McpServerMap,
+  type McpRow,
   type UpdateReport,
   type AssetScope,
   type StatuslineSource,
@@ -16,6 +15,7 @@ import {
   type ProjectRow,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
+import type { EnableOverride } from '@weavecode/core/tool';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
@@ -27,7 +27,7 @@ import {
   type SkillGroup,
   type OpenDetailFn,
 } from '@/components/SkillGrid';
-import { McpGrid, type McpRow } from '@/components/McpGrid';
+import { McpGrid } from '@/components/McpGrid';
 import { AgentBadge } from '@/components/AgentBadge';
 import {
   FileAssetTree,
@@ -72,13 +72,14 @@ export function CategoryDetail({
   statuslineNonce,
   assets,
   globalAssets,
-  mcpServers,
+  mcpRows,
   updates,
   globalSkillGroups,
   pluginEnabled,
   statuslineSource,
   onUninstallSkill,
   onUninstallMcp,
+  onCycleMcpEnable,
   onUninstallFileAsset,
   onTogglePlugin,
   onUninstallPlugin,
@@ -101,7 +102,7 @@ export function CategoryDetail({
   assets: AssetEntry[];
   /** Machine-level harness files for the global 资源管理 tree. */
   globalAssets: AssetEntry[];
-  mcpServers: McpServerMap;
+  mcpRows: McpRow[];
   updates: UpdateReport | null;
   globalSkillGroups: GlobalSkillGroup[];
   pluginEnabled: PluginEnabledMap;
@@ -109,6 +110,8 @@ export function CategoryDetail({
   statuslineSource: StatuslineSource | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  /** MCP 启停三态循环：落盘与行刷新由 App 统一负责。 */
+  onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
   onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void | Promise<void>;
   onTogglePlugin: (
     runtime: PluginRuntime,
@@ -194,19 +197,19 @@ export function CategoryDetail({
     });
   }, [globalSkillGroups, pluginEnabled, runtimeTab]);
 
-  // MCP rows for the active runtime tab. claude's servers live in its two scope
-  // maps (.mcp.json / ~/.claude.json) → pick the current scope; every other
-  // harness has a single user-level map (codex ~/.codex/config.toml). 'all'
-  // merges every harness's surface.
+  // MCP rows for the active runtime tab. 行自带 (harness, scope) 面与
+  // installScopes：视图规则 = 卡面取 installScopes 含当前 scope 的那档，否则
+  // 回落首档（codex 无 project 档 → 项目视图展示其 user 档）。'all' 合并全部。
   const mcp = useMemo<McpRow[]>(() => {
-    const toRows = (map: Record<string, McpServerConfig> | undefined, agent?: AssetAgent) =>
-      Object.entries(map ?? {}).map(([name, config]) => ({ name, config, scope, agent }));
-    const scopeMap = isGlobal ? mcpServers.user : mcpServers.project;
-    const rowsFor = (h: Harness): McpRow[] =>
-      toRows(h === 'claude' ? scopeMap : mcpServers[h], h);
+    const rowsFor = (h: Harness): McpRow[] => {
+      const ofH = mcpRows.filter((r) => r.harness === h);
+      if (ofH.length === 0) return [];
+      const card = ofH[0].installScopes.includes(scope) ? scope : ofH[0].installScopes[0];
+      return ofH.filter((r) => r.scope === card);
+    };
     if (runtimeTab === 'all') return HARNESS_ORDER.flatMap(rowsFor);
     return rowsFor(runtimeTab);
-  }, [isGlobal, runtimeTab, mcpServers, scope]);
+  }, [mcpRows, scope, runtimeTab]);
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
   // Non-claude harness MCP servers are user-level (scope-agnostic), so their
@@ -368,8 +371,7 @@ export function CategoryDetail({
 
       {category === 'files' && assetTab === 'mcp' && (
         <McpGrid
-          projectId={projectId}
-          servers={mcp}
+          rows={mcp}
           scope={scope}
           updates={mcpUpdates}
           empty={
@@ -380,6 +382,7 @@ export function CategoryDetail({
                 : t('category.emptyMcpProject')
           }
           onUninstallMcp={onUninstallMcp}
+          onCycleMcpEnable={onCycleMcpEnable}
         />
       )}
 

@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
 import path from 'node:path';
+import type { EnableOverride } from '@weavecode/core';
 
 /**
  * Per-project MCP enable/disable state, stored in `.claude/settings.json`.
@@ -61,6 +62,33 @@ export async function readMcpEnableMap(projectPath: string): Promise<McpEnableMa
   return { overrides, enableAll: s.enableAllProjectMcpServers === true };
 }
 
+// --- 工具对象模型词表桥（模型 on/off/inherit ⇄ settings 文件 enabled/…） ---
+
+const TO_MODEL: Record<McpEnableState, EnableOverride> = {
+  enabled: 'on',
+  disabled: 'off',
+  default: 'inherit',
+};
+
+const TO_FILE: Record<EnableOverride, McpEnableState> = {
+  on: 'enabled',
+  off: 'disabled',
+  inherit: 'default',
+};
+
+/** 某服务器的覆写态，以模型词表返回（无覆写 = inherit）。 */
+export function mcpOverrideOf(map: McpEnableMap, name: string): EnableOverride {
+  return TO_MODEL[map.overrides[name] ?? 'default'];
+}
+
+/** 生效态解析（服务端唯一）：显式覆写优先，未覆写跟随 enableAll。 */
+export function resolveMcpEffective(map: McpEnableMap, name: string): boolean {
+  const state = map.overrides[name];
+  if (state === 'enabled') return true;
+  if (state === 'disabled') return false;
+  return map.enableAll;
+}
+
 /** Set the enable state for one project MCP server, then persist settings.json. */
 export async function setMcpEnableState(
   projectPath: string,
@@ -78,6 +106,15 @@ export async function setMcpEnableState(
   patch(s, 'enabledMcpjsonServers', enabled);
   patch(s, 'disabledMcpjsonServers', disabled);
   await writeSettings(projectPath, s);
+}
+
+/** 以模型词表（on/off/inherit）覆写某服务器的启停，落 settings 三键。 */
+export function setMcpEnableOverride(
+  projectPath: string,
+  name: string,
+  state: EnableOverride,
+): Promise<void> {
+  return setMcpEnableState(projectPath, name, TO_FILE[state]);
 }
 
 function arr(v: unknown): string[] {

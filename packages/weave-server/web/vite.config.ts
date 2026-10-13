@@ -13,6 +13,7 @@ export default defineConfig(() => ({
     alias: {
       // 源码直引（批 1）：web 不依赖 workspace 包运行时，别名指到 core 源文件。
       '@weavecode/core/harness': path.resolve(__dirname, '../../weave-core/src/harness.ts'),
+      '@weavecode/core/tool': path.resolve(__dirname, '../../weave-core/src/tool.ts'),
       '@': path.resolve(__dirname, 'src'),
     },
   },

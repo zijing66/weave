@@ -41,6 +41,12 @@ export {
   HARNESS_LIFECYCLE,
   isHarness,
 } from './harness.js';
+export {
+  type ToolScope,
+  type ToolCategory,
+  type EnableOverride,
+  type ToolStateRow,
+} from './tool.js';
 export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types.js';
 export { DEFAULT_HOOKS, DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS, DEFAULT_MCP } from './types.js';
 export { type PlatformInfo } from './types.js';

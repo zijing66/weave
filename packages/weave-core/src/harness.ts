@@ -2,7 +2,7 @@
  * Harness 类型与注册表——纯类型 + 纯常量（零 node、零 zod）。
  *
  * 经 `@weavecode/core/harness` subpath 暴露给 web：主入口 re-export platform/fs
- * 含 node 依赖，web 不能 import；本文件是唯一被 web 直引的 core 源。
+ * 含 node 依赖，web 不能 import；web 直引的 core 源 = 本文件与 tool.ts。
  * 接口与 Registry 不在这里（会与 @weavecode/harness 成环），见该包 driver.ts。
  */
 

@@ -16,6 +16,11 @@
       "development": "./src/harness.ts",
       "import": "./dist/harness.js"
     },
+    "./tool": {
+      "types": "./dist/tool.d.ts",
+      "development": "./src/tool.ts",
+      "import": "./dist/tool.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

@@ -30,15 +30,14 @@ import {
   uninstallMcp,
   installFileAsset,
   uninstallFileAsset,
-  readMcpServers,
   InstallConflictError,
   AssetNotFoundError,
 } from '../install/installer.js';
 import type { McpServerConfig, InstallAgent } from '../install/installer.js';
 import { isFileAssetCategory, type FileAssetCategory } from '../install/file-assets.js';
 import { installCapabilities } from '../install/capabilities.js';
+import { readMcpRows } from '../install/mcp-rows.js';
 import {
-  readGlobalMcpServers,
   writeGlobalMcpServer,
   removeGlobalMcpServer,
   installGlobalSkill,
@@ -51,14 +50,12 @@ import {
 } from '../install/global-config.js';
 import type { GlobalSkillSource } from '../install/global-config.js';
 import {
-  readCodexMcpServers,
   writeCodexMcpServer,
   removeCodexMcpServer,
   codexMcpExists,
   CodexTomlCorruptError,
 } from '../install/codex-toml.js';
-import { readMcpEnableMap, setMcpEnableState } from '../install/settings-mcp.js';
-import type { McpEnableState } from '../install/settings-mcp.js';
+import { setMcpEnableOverride } from '../install/settings-mcp.js';
 import { readProjectConfig, writeProjectConfig } from '../install/project-config.js';
 import type { ProjectConfig } from '../install/project-config.js';
 import { applyUpdate, syncAll } from '../install/apply-update.js';
@@ -791,7 +788,7 @@ async function handleRequest(
     return;
   }
 
-  // --- mcp servers (project .mcp.json + user ~/.claude.json) ---
+  // --- mcp servers (工具行：claude 项目 .mcp.json / user ~/.claude.json + codex user config.toml) ---
   const mcpMatch = pathname.match(/^\/projects\/(\d+)\/mcp$/);
   if (mcpMatch && req.method === 'GET') {
     const project = deps.projects.getById(Number(mcpMatch[1]));
@@ -799,16 +796,7 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Project not found' });
       return;
     }
-    const [projectServers, globalServers, codexServers] = await Promise.all([
-      readMcpServers(project.path),
-      safeReadGlobalMcp(),
-      readCodexMcpServers().catch(() => ({})),
-    ]);
-    sendJson(res, 200, {
-      project: projectServers,
-      user: globalServers,
-      codex: codexServers,
-    });
+    sendJson(res, 200, { rows: await readMcpRows(project.path) });
     return;
   }
 
@@ -941,16 +929,12 @@ async function handleRequest(
     return;
   }
 
-  // --- MCP enable/disable overrides (project settings.json) ---
+  // --- MCP enable/disable overrides (project settings.json；词表 = 工具对象模型) ---
   const mcpEnableMatch = pathname.match(/^\/projects\/(\d+)\/mcp\/enable$/);
   if (mcpEnableMatch) {
     const project = deps.projects.getById(Number(mcpEnableMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
-      return;
-    }
-    if (req.method === 'GET') {
-      sendJson(res, 200, await readMcpEnableMap(project.path));
       return;
     }
     if (req.method === 'PUT') {
@@ -965,11 +949,15 @@ async function handleRequest(
         sendJson(res, 400, { error: 'Missing "name" or "state"' });
         return;
       }
-      if (!['enabled', 'disabled', 'default'].includes(body.state)) {
-        sendJson(res, 400, { error: 'Invalid "state" (enabled|disabled|default)' });
+      if (!['on', 'off', 'inherit'].includes(body.state)) {
+        sendJson(res, 400, { error: 'Invalid "state" (on|off|inherit)' });
         return;
       }
-      await setMcpEnableState(project.path, body.name, body.state as McpEnableState);
+      await setMcpEnableOverride(
+        project.path,
+        body.name,
+        body.state as 'on' | 'off' | 'inherit',
+      );
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1467,19 +1455,6 @@ function sendInstallError(res: ServerResponse, e: unknown): void {
   }
   res.setHeader('content-type', 'application/json');
   res.end(JSON.stringify({ error: e instanceof Error ? e.message : 'Install failed' }));
-}
-
-/**
- * Read global MCP servers, tolerating a corrupt ~/.claude.json: return empty
- * rather than throwing, so a broken global config never breaks the whole MCP
- * view (the user can still see+manage project-scope servers).
- */
-async function safeReadGlobalMcp(): Promise<Record<string, McpServerConfig>> {
-  try {
-    return await readGlobalMcpServers();
-  } catch {
-    return {};
-  }
 }
 
 /**

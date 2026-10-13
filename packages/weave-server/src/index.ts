@@ -151,6 +151,9 @@ export type {
 } from './install/global-config.js';
 export { readMcpEnableMap, setMcpEnableState } from './install/settings-mcp.js';
 export type { McpEnableState, McpEnableMap } from './install/settings-mcp.js';
+export { mcpOverrideOf, resolveMcpEffective, setMcpEnableOverride } from './install/settings-mcp.js';
+export { readMcpRows } from './install/mcp-rows.js';
+export type { McpToolRow } from './install/mcp-rows.js';
 export {
   readProjectConfig,
   writeProjectConfig,

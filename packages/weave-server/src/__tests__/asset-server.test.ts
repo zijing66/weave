@@ -80,13 +80,17 @@ describe('daemon server — file / mcp / statusline', () => {
     expect(res.status).toBe(404);
   });
 
-  it('GET /projects/:id/mcp returns parsed servers', async () => {
+  it('GET /projects/:id/mcp returns tool rows', async () => {
     const res = await fetch(`${base()}/api/projects/${projectId}/mcp`);
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.project.alpha.command).toBe('npx');
-    expect(data.project.alpha.args).toEqual(['x']);
-    expect(data.global).toBeDefined();
+    const data = (await res.json()) as { rows: Array<{ key: string; harness: string; scope: string; installScopes: string[]; enable: string | null; effective: boolean; detail: { command: string; args?: string[] } }> };
+    const alpha = data.rows.find((r) => r.harness === 'claude' && r.scope === 'project' && r.key === 'alpha');
+    expect(alpha?.detail.command).toBe('npx');
+    expect(alpha?.detail.args).toEqual(['x']);
+    expect(alpha?.installScopes).toEqual(['project', 'user']);
+    // 项目面行带启停语义：无覆盖 = inherit，effective 跟随 enableAll（未放行 = false）。
+    expect(alpha?.enable).toBe('inherit');
+    expect(alpha?.effective).toBe(false);
   });
 
   it('GET /projects/:id/statusline returns default config when absent', async () => {

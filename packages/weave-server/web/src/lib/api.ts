@@ -5,6 +5,7 @@
  */
 
 import type { Harness } from '@weavecode/core/harness';
+import type { EnableOverride, ToolStateRow } from '@weavecode/core/tool';
 import { HARNESS_ORDER } from './harness-meta';
 
 const BASE = '/api';
@@ -393,12 +394,8 @@ export interface McpServerConfig {
   env?: Record<string, string>;
 }
 
-/** MCP servers, mirroring the daemon's GET /mcp response: claude's two scopes
- * (project `.mcp.json` / user `~/.claude.json`) under their scope keys, plus a
- * user-level map for every further harness (codex `~/.codex/config.toml`) keyed by
- * harness id — so a new harness's surface slots in without a named bucket. */
-export type McpServerMap = Record<AssetScope, Record<string, McpServerConfig>> &
-  Partial<Record<Harness, Record<string, McpServerConfig>>>;
+/** MCP 工具行：模型协议 ToolStateRow，服务端 readMcpRows 装配；本路由的行恒带 detail（服务器配置）。 */
+export type McpRow = ToolStateRow<McpServerConfig> & { detail: McpServerConfig };
 
 /** Single-file harness assets (command/agent/workflow/rule/output-style). */
 export type FileAssetCategory = 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
@@ -538,13 +535,6 @@ export interface GlobalSkillGroup {
 export type PluginEnabledMap = Record<Harness, Record<string, boolean>>;
 
 export type PluginRuntime = Harness;
-
-export type McpEnableState = 'enabled' | 'disabled' | 'default';
-
-export interface McpEnableMap {
-  overrides: Record<string, McpEnableState>;
-  enableAll: boolean;
-}
 
 export interface ProjectConfig {
   autoSync: boolean;
@@ -1035,10 +1025,9 @@ export const api = {
   /** Read a machine-level harness file (same allowed roots as readFile). */
   readGlobalFile: (relPath: string): Promise<ProjectFile> =>
     apiFetch<ProjectFile>(`/global-file?path=${encodeURIComponent(relPath)}`),
-  /** Returns project-scope (.mcp.json), global-scope (~/.claude.json) and
-   * Codex user-level (~/.codex/config.toml) MCP servers. */
-  listMcp: (projectId: number): Promise<McpServerMap> =>
-    apiFetch<McpServerMap>(`/projects/${projectId}/mcp`),
+  /** 每行一个 (harness, scope) 面，enable/effective/installScopes 由服务端算好。 */
+  listMcp: (projectId: number): Promise<McpRow[]> =>
+    apiFetch<{ rows: McpRow[] }>(`/projects/${projectId}/mcp`).then((r) => r.rows),
   getStatusline: (
     projectId: number,
   ): Promise<{ config: StatuslineConfig; script: string; globalConfig: StatuslineConfig }> =>
@@ -1126,14 +1115,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  getMcpEnable: (projectId: number): Promise<McpEnableMap> =>
-    apiFetch<McpEnableMap>(`/projects/${projectId}/mcp/enable`),
-  putMcpEnable: (
-    projectId: number,
-    name: string,
-    state: McpEnableState,
-  ): Promise<Response> =>
-    fetch(`${BASE}/projects/${projectId}/mcp/enable`, {
+  putMcpEnable: (projectId: number, name: string, state: EnableOverride): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/mcp/enable`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, state }),

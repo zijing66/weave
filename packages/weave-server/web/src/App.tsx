@@ -18,7 +18,7 @@ import {
   type FileAssetTemplate,
   type HookRule,
   type McpServerConfig,
-  type McpServerMap,
+  type McpRow,
   type ProjectRow,
   type SkillAsset,
   type StatuslineSource,
@@ -32,6 +32,7 @@ import {
 } from '@/lib/api';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
+import type { EnableOverride } from '@weavecode/core/tool';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
@@ -78,10 +79,8 @@ export default function App() {
   // All hook rules (global + per project) — drives the Weave card count; the
   // panel refetches its own copy after every mutation.
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
-  const [mcpServers, setMcpServers] = useState<McpServerMap>({
-    project: {},
-    user: {},
-  });
+  // MCP 工具行（每行一个 (harness, scope) 面；enable/effective 服务端算好）。
+  const [mcpRows, setMcpRows] = useState<McpRow[]>([]);
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>(emptyPluginEnabled);
@@ -204,7 +203,7 @@ export default function App() {
   }, []);
 
   const refreshMcp = useCallback((p: ProjectRow) => {
-    api.listMcp(p.id).then(setMcpServers).catch(() => {});
+    api.listMcp(p.id).then(setMcpRows).catch(() => {});
   }, []);
 
   const refreshUpdates = useCallback((p: ProjectRow) => {
@@ -284,7 +283,7 @@ export default function App() {
       setSelected(p);
       setGlobalMode(false);
       setAssets([]);
-      setMcpServers({ project: {}, user: {} });
+      setMcpRows([]);
       setUpdates(null);
       setGlobalSkillGroups([]);
       setPluginEnabled(emptyPluginEnabled());
@@ -364,9 +363,9 @@ export default function App() {
         if (n) skillNames.add(n);
       }
     }
-    const mcp = Object.keys(mcpServers.project).length + Object.keys(mcpServers.user).length;
+    const mcp = mcpRows.filter((r) => r.harness === 'claude').length;
     return { skill: skillNames.size, mcp };
-  }, [assets, mcpServers]);
+  }, [assets, mcpRows]);
 
   // Machine-wide skills actually in effect: a plugin group that is switched
   // off contributes nothing. The enable state is re-derived from the live map
@@ -386,13 +385,12 @@ export default function App() {
   );
 
   const categoryData = useMemo<CategoryBarData>(() => {
-    // Non-claude harness MCP servers are user-level (machine-scoped), so they
+    // Non-claude harness MCP rows are user-level (machine-scoped), so they
     // belong to the machine, not the view scope — both views count them (their
     // tab is visible in both).
-    const machineMcp = HARNESS_ORDER.reduce(
-      (n, h) => n + (h === 'claude' ? 0 : Object.keys(mcpServers[h] ?? {}).length),
-      0,
-    );
+    const machineMcp = mcpRows.filter((r) => r.harness !== 'claude').length;
+    const claudeRows = (s: AssetScope) =>
+      mcpRows.filter((r) => r.harness === 'claude' && r.scope === s).length;
     if (globalMode) {
       const outdatedSkills = (updates?.skills ?? []).filter(
         (u) => u.scope === 'user' && u.outdated,
@@ -405,7 +403,7 @@ export default function App() {
         // (~/.claude, ~/.codex) — the merged 资源管理 card count
         files:
           effectiveGlobalSkills +
-          Object.keys(mcpServers.user).length +
+          claudeRows('user') +
           machineMcp +
           globalAssets.length,
         outdated: outdatedSkills + outdatedMcp,
@@ -423,7 +421,7 @@ export default function App() {
       files:
         assetCounts.skill +
         effectiveGlobalSkills +
-        Object.keys(mcpServers.project).length +
+        claudeRows('project') +
         machineMcp +
         otherCount,
       outdated:
@@ -436,7 +434,7 @@ export default function App() {
       ).length,
       sessions: (allSessions ?? []).filter((s) => s.projectId === selected?.id).length,
     };
-  }, [globalMode, globalSkillGroups, mcpServers, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
+  }, [globalMode, globalSkillGroups, mcpRows, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -635,6 +633,18 @@ export default function App() {
       refreshUpdates(target);
     },
     [selected, projects, refreshAssets, refreshMcp, refreshUpdates],
+  );
+
+  // MCP 启停三态循环（on/off/inherit）：服务端解析 effective 并随行回传，
+  // 落盘成功即整表刷新（不乐观覆盖——行数据是唯一事实源）。
+  const handleCycleMcpEnable = useCallback(
+    async (name: string, next: EnableOverride) => {
+      const target = selected ?? projects[0];
+      if (!target) return;
+      await api.putMcpEnable(target.id, name, next);
+      refreshMcp(target);
+    },
+    [selected, projects, refreshMcp],
   );
 
   // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。失败抛出，由
@@ -1124,13 +1134,14 @@ export default function App() {
                         statuslineNonce={statuslineNonce}
                         assets={assets}
                         globalAssets={globalAssets}
-                        mcpServers={mcpServers}
+                        mcpRows={mcpRows}
                         updates={updates}
                         globalSkillGroups={globalSkillGroups}
                         pluginEnabled={pluginEnabled}
                         statuslineSource={statuslineSource}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
+                        onCycleMcpEnable={handleCycleMcpEnable}
                         onUninstallFileAsset={handleUninstallFileAsset}
                         onTogglePlugin={handleTogglePlugin}
                         onUninstallPlugin={handleUninstallPlugin}

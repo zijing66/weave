@@ -79,9 +79,15 @@ describe('daemon server — codex MCP (config.toml)', () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      codex: Record<string, { command: string }>;
+      rows: Array<{ key: string; harness: string; scope: string; installScopes: string[]; enable: string | null; effective: boolean; detail: { command: string } }>;
     };
-    expect(data.codex.existing).toEqual({ command: 'existing' });
+    const existing = data.rows.find((r) => r.harness === 'codex' && r.key === 'existing');
+    expect(existing?.detail).toEqual({ command: 'existing' });
+    // codex 面只有 user 档，行 enable 无启停语义。
+    expect(existing?.scope).toBe('user');
+    expect(existing?.installScopes).toEqual(['user']);
+    expect(existing?.enable).toBeNull();
+    expect(existing?.effective).toBe(true);
   });
 
   it('POST install agent=codex writes a config.toml section', async () => {
@@ -107,9 +113,10 @@ describe('daemon server — codex MCP (config.toml)', () => {
   it('GET /mcp reflects the installed codex server', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/projects/${projectId}/mcp`);
     const data = (await res.json()) as {
-      codex: Record<string, { command: string; args?: string[] }>;
+      rows: Array<{ key: string; harness: string; detail: { command: string; args?: string[] } }>;
     };
-    expect(data.codex.weave).toEqual({ command: 'npx', args: ['-y', 'weave'] });
+    const weave = data.rows.find((r) => r.harness === 'codex' && r.key === 'weave');
+    expect(weave?.detail).toEqual({ command: 'npx', args: ['-y', 'weave'] });
   });
 
   it('install agent=codex rejects project scope (config.toml is user-level)', async () => {

@@ -1,11 +1,8 @@
-import { useEffect, useState } from 'react';
+import type { EnableOverride } from '@weavecode/core/tool';
 import {
-  api,
   type AssetAgent,
   type AssetScope,
-  type McpEnableMap,
-  type McpEnableState,
-  type McpServerConfig,
+  type McpRow,
   type McpUpdate,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -18,38 +15,31 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
-export interface McpRow {
-  name: string;
-  config: McpServerConfig;
-  scope: AssetScope;
-  /** 'codex' rows target ~/.codex/config.toml (user-level). */
-  agent?: AssetAgent;
-}
-
-/** Tri-state cycle for the project enable override (absent entry = 跟随默认). */
-const NEXT_STATE: Record<McpEnableState, McpEnableState> = {
-  default: 'enabled',
-  enabled: 'disabled',
-  disabled: 'default',
+/** 三态循环 inherit → on → off → inherit；override 由服务端行随身带。 */
+const NEXT_STATE: Record<EnableOverride, EnableOverride> = {
+  inherit: 'on',
+  on: 'off',
+  off: 'inherit',
 };
 
-const STATE_LABEL: Record<McpEnableState, 'mcp.enableDefault' | 'mcp.enableOn' | 'mcp.enableOff'> = {
-  default: 'mcp.enableDefault',
-  enabled: 'mcp.enableOn',
-  disabled: 'mcp.enableOff',
+const STATE_LABEL: Record<EnableOverride, 'mcp.enableDefault' | 'mcp.enableOn' | 'mcp.enableOff'> = {
+  inherit: 'mcp.enableDefault',
+  on: 'mcp.enableOn',
+  off: 'mcp.enableOff',
 };
+
+/** 能力面 mcpScopes 只有 project/user 两档，行 scope 即卡面。 */
+const cardScope = (r: McpRow): AssetScope => (r.scope === 'user' ? 'user' : 'project');
 
 export function McpGrid({
-  projectId,
-  servers,
+  rows,
   scope,
   updates,
   empty,
   onUninstallMcp,
+  onCycleMcpEnable,
 }: {
-  /** Anchor project for the enable overrides (project scope only). */
-  projectId: number;
-  servers: McpRow[];
+  rows: McpRow[];
   /** Which view this grid is rendered in — prefixes the section heading the
    * same way the skills sections do (项目 X / 全局 X). */
   scope: AssetScope;
@@ -57,56 +47,23 @@ export function McpGrid({
   updates?: McpUpdate[];
   empty: string;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  /** 开关切换只交语义（名字 + 下一态），落盘与刷新由 App 统一负责。 */
+  onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
 }) {
   const t = useT();
-  const [enableMap, setEnableMap] = useState<McpEnableMap | null>(null);
-  // 按钮本体自持三态反馈：卸载 loading 转圈 + 成功/失败 toast；cycleEnable 失败
-  // 回滚乐观覆盖并报错（原先 .catch 静默吞掉）。
+  // 按钮本体自持三态反馈：卸载/开关 loading 转圈 + 失败 toast。
   const { show } = useToast();
   const fb = useActionFeedback();
 
-  // Enable overrides live in the project's .claude/settings.json, so only the
-  // project view reads them (global / Codex rows have no such semantics).
-  useEffect(() => {
-    if (scope !== 'project') {
-      setEnableMap(null);
-      return;
-    }
-    let alive = true;
-    api
-      .getMcpEnable(projectId)
-      .then((m) => {
-        if (alive) setEnableMap(m);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [projectId, scope]);
-
-  const stateOf = (name: string): McpEnableState => enableMap?.overrides[name] ?? 'default';
-
-  const cycleEnable = (name: string): void => {
-    const key = `mcp-enable:${name}`;
+  const cycleEnable = (row: McpRow): void => {
+    const key = `mcp-enable:${row.key}`;
     if (fb.stateOf(key) === 'loading') return;
-    const prev = enableMap;
-    const next = NEXT_STATE[stateOf(name)];
-    setEnableMap(prev ? { ...prev, overrides: { ...prev.overrides, [name]: next } } : prev);
-    void fb.run(
-      key,
-      async () => {
-        try {
-          await api.putMcpEnable(projectId, name, next);
-        } catch (e) {
-          setEnableMap(prev); // 失败回滚乐观覆盖，再抛给 fb.run 报 toast
-          throw e;
-        }
-      },
-      { fail: (e) => t('mcp.enableFailed', { error: errorText(e) }) },
-    );
+    void fb.run(key, async () => onCycleMcpEnable(row.key, NEXT_STATE[row.enable ?? 'inherit']), {
+      fail: (e) => t('mcp.enableFailed', { error: errorText(e) }),
+    });
   };
 
-  if (servers.length === 0) {
+  if (rows.length === 0) {
     return (
       <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
         {empty}
@@ -126,29 +83,30 @@ export function McpGrid({
           {scope === 'user' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
-          {servers.length}
+          {rows.length}
         </span>
       </div>
       <div className="grid grid-cols-2 gap-3 items-start">
-        {servers.map((s) => {
-          const outdated = isOutdated(s.name, s.agent);
-          const toggleable = s.scope === 'project' && (s.agent ?? 'claude') !== 'codex';
-          const state = stateOf(s.name);
-          const enableKey = `mcp-enable:${s.name}`;
+        {rows.map((s) => {
+          const outdated = isOutdated(s.key, s.harness);
+          // enable 为 null 的面没有启停语义（user/codex 面），不渲染开关。
+          const toggleable = s.enable !== null;
+          const state = s.enable ?? 'inherit';
+          const enableKey = `mcp-enable:${s.key}`;
           const enableState = fb.stateOf(enableKey);
-          const uninstallKey = `mcp-uninstall:${s.agent ?? 'claude'}:${s.scope}:${s.name}`;
+          const uninstallKey = `mcp-uninstall:${s.harness}:${s.scope}:${s.key}`;
           const uninstallState = fb.stateOf(uninstallKey);
           return (
-            <Card key={`${s.agent ?? 'claude'}-${s.scope}-${s.name}`}>
+            <Card key={`${s.harness}-${s.scope}-${s.key}`}>
               <CardHeader className="items-center gap-2">
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
-                <CardTitle className="truncate">{s.name}</CardTitle>
-                <AgentBadge agent={s.agent} />
+                <CardTitle className="truncate">{s.key}</CardTitle>
+                <AgentBadge agent={s.harness} />
                 {/* Codex rows always live in the user-level config.toml, so
                     they read 全局 even when rendered inside the project view. */}
                 <Badge variant="settings" className="ml-1">
                   {t(
-                    s.agent === 'codex' || s.scope === 'user'
+                    s.harness === 'codex' || s.scope === 'user'
                       ? 'library.scopeGlobal'
                       : 'library.scopeProject',
                   )}
@@ -163,11 +121,11 @@ export function McpGrid({
                     <button
                       type="button"
                       disabled={enableState === 'loading'}
-                      onClick={() => cycleEnable(s.name)}
+                      onClick={() => cycleEnable(s)}
                       title={t('mcp.enableTip', { state: t(STATE_LABEL[state]) })}
                       className={cn(
                         'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-                        state === 'enabled'
+                        state === 'on'
                           ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
                           : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
                       )}
@@ -187,14 +145,14 @@ export function McpGrid({
                       void fb.run(
                         uninstallKey,
                         async () => {
-                          await onUninstallMcp(s.name, s.scope, s.agent);
-                          show('success', t('mcp.uninstalled', { name: s.name }));
+                          await onUninstallMcp(s.key, cardScope(s), s.harness);
+                          show('success', t('mcp.uninstalled', { name: s.key }));
                         },
                         { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
                       )
                     }
                     className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                    title={t('mcp.remove', { name: s.name })}
+                    title={t('mcp.remove', { name: s.key })}
                   >
                     <FeedbackIcon
                       state={uninstallState}
@@ -205,13 +163,13 @@ export function McpGrid({
                 </div>
               </CardHeader>
               <CardContent className="pt-0 text-xs font-mono text-neutral-400 break-all">
-                <span className="text-neutral-300">{s.config.command}</span>
-                {s.config.args && s.config.args.length > 0 && (
-                  <span className="text-neutral-500"> {s.config.args.join(' ')}</span>
+                <span className="text-neutral-300">{s.detail.command}</span>
+                {s.detail.args && s.detail.args.length > 0 && (
+                  <span className="text-neutral-500"> {s.detail.args.join(' ')}</span>
                 )}
-                {s.config.env && Object.keys(s.config.env).length > 0 && (
+                {s.detail.env && Object.keys(s.detail.env).length > 0 && (
                   <div className="mt-1 text-neutral-600">
-                    env: {Object.keys(s.config.env).join(', ')}
+                    env: {Object.keys(s.detail.env).join(', ')}
                   </div>
                 )}
               </CardContent>
