@@ -105,7 +105,7 @@ describe('WeavePluginLoader 深度扫描根（批 10）', () => {
       path.join(cc, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'skills-pack', version: '0.1.0' }),
     );
-    const loaded = await loader.loadToolkitRoot(path.join(root, 'tools'), 'global', null);
+    const loaded = await loader.loadToolkitRoot(path.join(root, 'tools'), 'user', null);
     expect(loaded).toHaveLength(0);
   });
 

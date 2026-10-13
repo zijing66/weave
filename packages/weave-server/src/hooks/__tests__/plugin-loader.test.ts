@@ -81,7 +81,7 @@ describe('WeavePluginLoader', () => {
       'prompts/check.md': '检查文档一致性 {file}',
     });
 
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded).toHaveLength(1);
     expect(loaded[0]).toMatchObject({ id: 'doc-update-check', status: 'active', ruleCount: 1 });
 
@@ -109,7 +109,7 @@ describe('WeavePluginLoader', () => {
       'rules.json': JSON.stringify(BASE_RULES),
       'prompts/check.md': 'x {file}',
     });
-    await loader.loadRoot(root, 'global', null);
+    await loader.loadRoot(root, 'user', null);
 
     // 用户在 dashboard 关掉该规则
     rules.setEnabled('plugin:doc-update-check:0', false);
@@ -120,7 +120,7 @@ describe('WeavePluginLoader', () => {
       'prompts/check.md': '新文案 {file}',
     });
     const loader2 = new WeavePluginLoader({ rules, registry, states });
-    const loaded = await loader2.loadRoot(root, 'global', null);
+    const loaded = await loader2.loadRoot(root, 'user', null);
 
     expect(loaded[0].status).toBe('active');
     const list = rules.list();
@@ -142,7 +142,7 @@ describe('WeavePluginLoader', () => {
       'prompts/check.md': 'ok {file}',
     });
 
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     const byId = new Map(loaded.map((p) => [p.id, p]));
     expect(byId.get('bad-manifest')?.status).toBe('rejected');
     expect(byId.get('bad-event')?.status).toBe('rejected');
@@ -155,18 +155,18 @@ describe('WeavePluginLoader', () => {
 
   it('路径穿越：manifest entry 越出插件目录 → rejected', async () => {
     await writePlugin(root, 'escape', { ...BASE_MANIFEST, id: 'escape', rules: ['../../../etc/passwd.json'] });
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded[0].status).toBe('rejected');
     expect(loaded[0].error).toContain('越出');
     expect(rules.list()).toHaveLength(0);
   });
 
-  it('内置命名空间 weave- 前缀保留给预设：作用域 global 的同名插件 rejected', async () => {
+  it('内置命名空间 weave- 前缀保留给预设：user 档根的同名插件 rejected', async () => {
     await writePlugin(root, 'weave-presets', { ...BASE_MANIFEST, id: 'weave-presets' }, {
       'rules.json': JSON.stringify(BASE_RULES),
       'prompts/check.md': 'x',
     });
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded[0].status).toBe('rejected');
     expect(loaded[0].error).toContain('命名空间');
   });
@@ -180,7 +180,7 @@ describe('WeavePluginLoader', () => {
       'rules.json': JSON.stringify(BASE_RULES),
       'prompts/check.md': 'x',
     });
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     const statuses = loaded.map((p) => p.status).sort();
     expect(statuses).toEqual(['active', 'rejected']);
     expect(rules.list()).toHaveLength(1); // 只有第一个注册
@@ -193,7 +193,7 @@ describe('WeavePluginLoader', () => {
     });
     states.setEnabled('doc-update-check', false);
 
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded[0].status).toBe('disabled');
     expect(rules.list()[0].enabled).toBe(false);
     expect(registry.candidates('PostToolUse')).toHaveLength(0);
@@ -213,7 +213,7 @@ describe('WeavePluginLoader', () => {
         'handler.mjs': 'export default { type: "doc-lint", execute: () => ({ prompt: "hi" }) };',
       },
     );
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded[0].status).toBe('active');
     const impl = loader.getHandler('with-handler', 'doc-lint');
     expect(impl).toBeDefined();
@@ -233,7 +233,7 @@ describe('WeavePluginLoader', () => {
       },
       { 'handler.mjs': 'export default { type: "x" };' },
     );
-    const loaded = await loader.loadRoot(root, 'global', null);
+    const loaded = await loader.loadRoot(root, 'user', null);
     expect(loaded[0].status).toBe('rejected');
     expect(loaded[0].error).toContain('execute');
   });
@@ -248,14 +248,14 @@ describe('WeavePluginLoader', () => {
         'handler.mjs': 'export default { type: "x", execute: () => ({}) };',
       },
     );
-    const first = await loader.loadRoot(root, 'global', null);
+    const first = await loader.loadRoot(root, 'user', null);
     expect(first.find((p) => p.id === 'doomed')?.status).toBe('active');
     expect(rules.listByPlugin('doomed')).toHaveLength(1);
     expect(loader.getHandler('doomed', 'x')).toBeDefined();
 
     // 删除目录 → 重载（同一 loader，模拟热重载）
     await rm(path.join(root, 'doomed'), { recursive: true, force: true });
-    await loader.loadRoot(root, 'global', null);
+    await loader.loadRoot(root, 'user', null);
 
     expect(loader.list().find((p) => p.id === 'doomed')).toBeUndefined();
     expect(rules.listByPlugin('doomed')).toHaveLength(0);
@@ -268,7 +268,7 @@ describe('WeavePluginLoader', () => {
       'rules.json': JSON.stringify(BASE_RULES),
       'prompts/check.md': 'x {file}',
     });
-    await loader.loadRoot(root, 'global', null);
+    await loader.loadRoot(root, 'user', null);
 
     expect(loader.setPluginEnabled('doc-update-check', false)).toBe(true);
     expect(loader.list().find((p) => p.id === 'doc-update-check')?.status).toBe('disabled');
@@ -440,7 +440,7 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
       registry,
       states: new PluginStateRepository(db),
     });
-    const loaded = await loader.loadRoot(fixturesDir, 'global', null);
+    const loaded = await loader.loadRoot(fixturesDir, 'user', null);
     expect(loaded.find((p) => p.id === 'changelog-reminder')?.status).toBe('active');
 
     dispatcher = new HookDispatcher({

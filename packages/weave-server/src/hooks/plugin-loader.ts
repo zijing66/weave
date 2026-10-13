@@ -93,7 +93,8 @@ export interface LoadedPluginInfo {
   name: string;
   version: string;
   dir: string;
-  scope: 'builtin' | 'global' | 'project';
+  /** 扫描根的安装档（ToolScope 词表：user = 数据目录/市场根，无 local 档）。 */
+  scope: 'builtin' | 'user' | 'project';
   projectId: number | null;
   status: PluginLoadStatus;
   /** rejected/disabled 的原因（校验错误、重复 id、handler 加载失败等）。 */
@@ -118,7 +119,7 @@ export class WeavePluginLoader implements PluginHost {
   /** 已登记的扫描根 → 作用域（热重载时按根重扫用；deep = 批 10 工具包深度根）。 */
   private readonly roots = new Map<
     string,
-    { scope: 'builtin' | 'global' | 'project'; projectId: number | null; deep?: boolean }
+    { scope: 'builtin' | 'user' | 'project'; projectId: number | null; deep?: boolean }
   >();
   private watchStop: (() => void) | undefined;
 
@@ -152,7 +153,7 @@ export class WeavePluginLoader implements PluginHost {
    */
   async loadRoot(
     root: string,
-    scope: 'builtin' | 'global' | 'project',
+    scope: 'builtin' | 'user' | 'project',
     projectId: number | null,
   ): Promise<LoadedPluginInfo[]> {
     const normalizedRoot = path.resolve(root);
@@ -193,7 +194,7 @@ export class WeavePluginLoader implements PluginHost {
    */
   async loadToolkitRoot(
     root: string,
-    scope: 'builtin' | 'global' | 'project',
+    scope: 'builtin' | 'user' | 'project',
     projectId: number | null,
   ): Promise<LoadedPluginInfo[]> {
     const normalizedRoot = path.resolve(root);
@@ -375,7 +376,7 @@ export class WeavePluginLoader implements PluginHost {
 
   private async loadOne(
     dir: string,
-    scope: 'builtin' | 'global' | 'project',
+    scope: 'builtin' | 'user' | 'project',
     projectId: number | null,
     dirName: string,
   ): Promise<LoadedPluginInfo> {
@@ -625,7 +626,7 @@ export async function loadAllPlugins(
     loaded.push(
       ...(await loader.loadToolkitRoot(
         source.root,
-        source.provenance === 'builtin' ? 'builtin' : 'global',
+        source.provenance === 'builtin' ? 'builtin' : 'user',
         null,
       )),
     );
@@ -635,7 +636,7 @@ export async function loadAllPlugins(
   // （见 market/builtin.ts 的 ensureBuiltinMarket）。
   loaded.push(...(await loader.loadRoot(builtinRulesDir(getDataDir()), 'builtin', null)));
   loaded.push(
-    ...(await loader.loadRoot(path.join(getDataDir(), 'plugins'), 'global', null)),
+    ...(await loader.loadRoot(path.join(getDataDir(), 'plugins'), 'user', null)),
   );
   for (const project of projects) {
     loaded.push(

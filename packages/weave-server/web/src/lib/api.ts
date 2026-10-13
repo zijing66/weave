@@ -176,7 +176,7 @@ export interface HookPlugin {
   name: string;
   version: string;
   dir: string;
-  scope: 'builtin' | 'global' | 'project';
+  scope: 'builtin' | 'user' | 'project';
   projectId: number | null;
   status: 'active' | 'rejected' | 'disabled';
   error?: string;

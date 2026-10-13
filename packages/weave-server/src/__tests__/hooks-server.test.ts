@@ -322,7 +322,7 @@ describe('daemon server /hooks/plugins API', () => {
       registry,
       states: new PluginStateRepository(db),
     });
-    await loader.loadRoot(root, 'global', null);
+    await loader.loadRoot(root, 'user', null);
 
     server = createWeaveServer({
       projects,

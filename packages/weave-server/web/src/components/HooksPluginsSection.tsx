@@ -13,7 +13,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 const SCOPE_STYLES: Record<HookPlugin['scope'], string> = {
   builtin: 'bg-amber-900/40 text-amber-300',
-  global: 'bg-blue-900/40 text-blue-300',
+  user: 'bg-blue-900/40 text-blue-300',
   project: 'bg-emerald-900/40 text-emerald-300',
 };
 

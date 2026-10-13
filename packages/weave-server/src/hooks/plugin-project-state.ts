@@ -2,8 +2,9 @@ import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 
 /**
- * D3 插件启用按项目隔离：每项目显式覆盖写 `projects.meta.plugins`，
- * `plugin_states` 表保持全局（=「默认启用」开关），不改表零迁移。
+ * D3 插件启用按项目隔离，即 ToolScope 两档链（user 默认 + project 覆写）：
+ * 每项目显式覆盖写 `projects.meta.plugins`，`plugin_states` 表保持
+ * user 档默认（=「默认启用」开关），不加范围维度、零迁移（§6-3 拍板）。
  */
 export interface PluginsMeta {
   syncedAt: string | null;

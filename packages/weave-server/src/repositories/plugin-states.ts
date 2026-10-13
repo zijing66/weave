@@ -10,6 +10,8 @@ export interface PluginStateRow {
 
 /**
  * 插件级开关与配置覆写（三通道统一状态源：内置/目录扫描/安装）。
+ * 本表 = user 档默认启停；project 档覆写在 projects.meta.plugins
+ * （plugin-project-state），SPI 插件单根安装无 local 档。
  * 规则级 enabled 仍是 hook_rules 单一事实源；插件 disable 由管理面
  * 级联把该插件全部规则 enabled 置 0（同事务），enable 恢复插件默认值。
  */

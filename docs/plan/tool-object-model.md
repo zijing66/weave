@@ -134,7 +134,11 @@ weave init 落项目 `.claude/settings.json` 的 hooks，cli/harness 内无 user
 2. **CC 插件**：PluginStateSurface 补 local；PluginEnabledMap → ToolState；
    **补 user 档安装管理面**（server 路由 + web 入口，现状见 §1 末条；视图摆放 §7-5）；
    **hooks 基石 user 档采集面**（§2.6，现状仅项目档）。
-3. **toolkit / 自有 SPI 插件**：plugin_states 加范围维度（schema 迁移）。
+3. **toolkit / 自有 SPI 插件**：~~plugin_states 加范围维度（schema 迁移）~~
+   实施时拍板不加（见 §7-3）：D3 已用 `plugin_states`（user 档默认）+
+   `projects.meta.plugins`（project 档覆写）+ `effective()`（生效链解析）
+   实现两档链语义，SPI 插件单根安装无 local 档；改为三根词表对齐
+   （loader scope `global` → `user`，对齐 ToolScope）。
 4. 收尾：SkillGrid 卸载门控、LibraryPanel 提示、FileAssetTree 门控。
 
 测试闭式镜像同步派生（P5 教训：不留写死两 harness 的计数断言）。
@@ -146,8 +150,13 @@ weave init 落项目 `.claude/settings.json` 的 hooks，cli/harness 内无 user
 1. **词表**：按建议统一 `user|project|local`——现有 AssetScope/InstallScope 的 `global`
    一次性改名 `user`。
 2. （原问题 2 转待定 1——先重述后定，见 §8。）
-3. **自有 SPI 插件**：视情况收编——第 3 步实施时定；倾向 plugin_states 加范围维度
-   （与 builtin/global/project 三根对齐）。
+3. **自有 SPI 插件**（第 3 步实施时已定）：**不加** plugin_states 范围维度——D3 的
+   `plugin_states`（user 档默认）+ `projects.meta.plugins`（project 档覆写）+ `effective()`
+   已是 ToolScope 两档链的完整实现，SPI 插件单根安装（一个 id 只落一个根，
+   安装态由 loader 扫描即事实、无需持久化）、无 local 档根；加 scope 列要么与
+   meta.plugins 重复、要么把 toolkit weave 成分曾有的「flip 全局串项目」问题请回来。
+   收编改为词表对齐：三根 `builtin|global|project` 的 `global` 改名 `user`
+   （LoadedPluginInfo.scope + web 镜像 + 徽标 + 测试），对齐 §7-1 词表。
 4. **hooks**：事件矩阵不进模型（规则域，audit 延后表该行改标「能力面/规则域，非工具域」）。
    但 **weave hooks 采集集成本身是基石**，按工具对象建模，**硬性要求 user 档安装/启用面**
    （跨项目采集，§2.6）。
