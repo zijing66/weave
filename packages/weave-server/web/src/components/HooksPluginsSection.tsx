@@ -9,6 +9,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { toggleIn } from '@/lib/repo-groups';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 const SCOPE_STYLES: Record<HookPlugin['scope'], string> = {
   builtin: 'bg-amber-900/40 text-amber-300',
@@ -47,6 +48,8 @@ export function HooksPluginsSection({
   const [globalPlugins, setGlobalPlugins] = useState<HookPlugin[] | null>(null);
   // 折叠集记「折叠起来的」：默认展开——规则就在这个块里，藏起来等于没合并。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // 待确认卸载的插件：✕ 按钮设入，应用内 ConfirmDialog 确认后执行
+  const [uninstallTarget, setUninstallTarget] = useState<HookPlugin | null>(null);
   // 统一反馈：动作状态走 useActionFeedback，消息（含失败）走 toast——插件开关/
   // 卸载失败原先在面板里被静默吞掉。
   const { show } = useToast();
@@ -90,7 +93,6 @@ export function HooksPluginsSection({
   };
 
   const uninstall = async (p: HookPlugin): Promise<void> => {
-    if (!window.confirm(t('hooks.plugins.uninstallConfirm', { id: p.id }))) return;
     await fb.run(
       `uninstall:${p.id}`,
       async () => {
@@ -172,7 +174,7 @@ export function HooksPluginsSection({
                 {projectId === undefined && (
                   <button
                     type="button"
-                    onClick={() => void uninstall(p)}
+                    onClick={() => setUninstallTarget(p)}
                     title={t('hooks.plugins.uninstallTip')}
                     className="rounded px-1 text-[11px] text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
                   >
@@ -204,6 +206,18 @@ export function HooksPluginsSection({
         <RotateCw className="h-3 w-3" />
         {t('hooks.plugins.hotReload')}
       </p>
+
+      {/* 卸载确认弹窗：替代原生 window.confirm */}
+      <ConfirmDialog
+        open={uninstallTarget !== null}
+        title={t('hooks.plugins.uninstallTitle')}
+        message={uninstallTarget ? t('hooks.plugins.uninstallConfirm', { id: uninstallTarget.id }) : ''}
+        confirmLabel={t('common.confirm')}
+        onConfirm={() => {
+          if (uninstallTarget) void uninstall(uninstallTarget);
+        }}
+        onClose={() => setUninstallTarget(null)}
+      />
     </div>
   );
 }

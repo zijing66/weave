@@ -22,6 +22,7 @@ import { useSessionStatus, type HookFrame } from './session-status-store';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
 /**
@@ -360,26 +361,32 @@ export function TasksPanel({
     );
   };
 
-  /** 删会话（手动）：确认 → 删（连带事件与派发）→ 刷新列表 → toast。
-   *  删掉的若是当前选中项，一并清选择，避免右栏挂在已消失的会话上。 */
+  /** 删会话（手动）：先弹应用内确认（deleteTarget），确认后删（连带事件与派发）
+   *  → 刷新列表 → toast。删掉的若是当前选中项，一并清选择，避免右栏挂在已消失的会话上。 */
+  const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; label: string } | null>(null);
   const handleDeleteSession = useCallback(
     (sessionId: string) => {
       const row = sessions?.find((s) => s.sessionId === sessionId);
       const label = row ? sessionLabel(row.title, row.sessionId) : sessionId.slice(0, 8);
-      if (!window.confirm(t('tasks.deleteConfirm', { id: label }))) return;
-      void fb.run(
-        `del:${sessionId}`,
-        async () => {
-          const res = await api.deleteSession(sessionId);
-          if (selectedId === sessionId) setSelectedId(null);
-          await refreshStatus();
-          show('success', t('toast.sessionDeleted', { n: res.events }));
-        },
-        { fail: (e) => t('tasks.deleteFailed', { error: errorText(e) }) },
-      );
+      setDeleteTarget({ sessionId, label });
     },
-    [sessions, t, fb, selectedId, refreshStatus, show],
+    [sessions],
   );
+  const confirmDeleteSession = (): void => {
+    if (!deleteTarget) return;
+    const { sessionId } = deleteTarget;
+    setDeleteTarget(null);
+    void fb.run(
+      `del:${sessionId}`,
+      async () => {
+        const res = await api.deleteSession(sessionId);
+        if (selectedId === sessionId) setSelectedId(null);
+        await refreshStatus();
+        show('success', t('toast.sessionDeleted', { n: res.events }));
+      },
+      { fail: (e) => t('tasks.deleteFailed', { error: errorText(e) }) },
+    );
+  };
 
   const deleteStateOf = useCallback((sessionId: string) => fb.stateOf(`del:${sessionId}`), [fb]);
 
@@ -694,6 +701,16 @@ export function TasksPanel({
           </div>
         </div>
       )}
+
+      {/* 删会话确认弹窗：替代原生 window.confirm */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('tasks.deleteSession')}
+        message={deleteTarget ? t('tasks.deleteConfirm', { id: deleteTarget.label }) : ''}
+        confirmLabel={t('common.confirm')}
+        onConfirm={confirmDeleteSession}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       {/* 会话终端附加：项目开着多个终端时才弹窗选（列表按最近活跃排序） */}
       {terminalPicker && (
