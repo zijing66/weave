@@ -27,7 +27,7 @@ import {
 } from './claudemd-gen.js';
 import { ensureInstructionLink } from './instruction-link.js';
 import { buildInitRegistry } from './wiring.js';
-import { type ClaudePipeline } from './harnesses/claude.js';
+import { type SurfacePipeline } from './types.js';
 import { createPromptPort, type PromptPort } from './prompt.js';
 import { commitInitOutputs, findGitRepoRoot } from './git-commit.js';
 import { t } from '../i18n/index.js';
@@ -92,7 +92,7 @@ export async function executeInit(
   const ctx: InitContext = { ...options, platform };
   const registry = buildInitRegistry();
   for (const h of selected) {
-    const pipeline = new (registry.initFor(h)!)(ctx) as ClaudePipeline;
+    const pipeline = new (registry.initFor(h)!)(ctx) as SurfacePipeline;
     await pipeline.runSurface();
     const rec = pipeline.records;
     created.directories.push(...rec.created.directories);

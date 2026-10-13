@@ -24,6 +24,7 @@ import {
 import { templateRegistry } from '@weavecode/templates';
 import { generateStatuslineScript, readStatuslineConfig } from '@weavecode/server';
 import { InitPipeline, type InitContext } from '@weavecode/harness';
+import type { SurfaceRecords, SurfacePipeline } from '../types.js';
 import { generateSettingsJson, mergeSettingsJson } from '../settings-gen.js';
 import { generateMcpJson, mergeMcpJson } from '../mcp-gen.js';
 import { generateHookHandler, generateAutoMemoryHook } from '../helpers-gen.js';
@@ -33,20 +34,9 @@ import { t } from '../../i18n/index.js';
 /** Marks a generated helper script as weave's own (weave-特性文件可覆写). */
 export const WEAVE_HELPER_MARKER = '@version weave@';
 
-/**
- * 步骤 1–7 的结果累加器：InitResult 中由表面步骤贡献的部分。
- * executor 中立步（⑧⑨⑩）在 runSurface 后合并同一组数组。
- */
-export interface SurfaceRecords {
-  created: { directories: string[]; files: string[] };
-  skipped: string[];
-  merged: string[];
-  updated: string[];
-  removed: string[];
-}
-
-/** executor 视角的 Claude 表面管线：runSurface 后读取结果累加器。 */
-export type ClaudePipeline = InitPipeline & { readonly records: SurfaceRecords };
+// 结果累加器与表面管线契约与 harness 无关，已上提到 init/types.ts；
+// 此处 re-export 以保留既有 import 路径。
+export type { SurfaceRecords, SurfacePipeline } from '../types.js';
 
 /** Steps 1–7 的共享状态：解析后的选项、表面目录与结果累加器。 */
 interface InitStepState {
@@ -75,7 +65,7 @@ interface InitStepState {
  * Claude init 模板：InitPipeline 的 8 个钩子覆写，Step1–7 原代码（原 executor
  * 内联体）按序落位；Step8–11 为中立步，留在 executor（InitOrchestrator）。
  */
-export class ClaudeInitTemplate extends InitPipeline implements ClaudePipeline {
+export class ClaudeInitTemplate extends InitPipeline implements SurfacePipeline {
   readonly records: SurfaceRecords = {
     created: { directories: [], files: [] },
     skipped: [],

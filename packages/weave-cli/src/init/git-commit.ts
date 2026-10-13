@@ -2,7 +2,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { lstat, stat } from 'node:fs/promises';
-import { HARNESS_DIRS, type Harness, logger } from '@weavecode/core';
+import { HARNESS_DIRS, INSTRUCTION_FILES, type Harness, logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import type { PromptPort } from './prompt.js';
 
@@ -85,8 +85,7 @@ export async function collectCommitPaths(
   selected: Harness[],
 ): Promise<string[]> {
   const candidates = [
-    'CLAUDE.md',
-    'AGENTS.md',
+    ...INSTRUCTION_FILES,
     '.mcp.json',
     ...selected.map((h) => HARNESS_DIRS[h].projectDir),
     '.weave',

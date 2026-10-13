@@ -1,7 +1,16 @@
 import path from 'node:path';
+import os from 'node:os';
 import { readFile } from 'node:fs/promises';
-import { fileExists, logger, formatTable } from '@weavecode/core';
-import { createRuntimeRegistry } from '@weavecode/harness';
+import {
+  fileExists,
+  logger,
+  formatTable,
+  HARNESS_DIRS,
+  HARNESS_INSTRUCTION_FILES,
+  HARNESS_KEYS,
+  type Harness,
+} from '@weavecode/core';
+import { createRuntimeRegistry, type AssetSurface, type FileAssetCategory } from '@weavecode/harness';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
@@ -34,6 +43,32 @@ async function checkFile(
   return exists ? 'out.status.present' : 'out.status.missing';
 }
 
+/** 一行表面项：(表头标签, 目标根相对路径)。 */
+type SurfaceRow = [string, string];
+
+/** 表面项的呈现行：标签 + 存在性文案。 */
+async function surfaceRow(label: string, relPath: string, targetDir: string): Promise<SurfaceRow> {
+  return [label, t(await checkFile(relPath, targetDir))];
+}
+
+/**
+ * 经 AssetSurface 取某资产类别在项目内的相对路径（posix 归一）；该 harness
+ * 无此项目表面（`targetDir` 抛错）返回 null。
+ */
+function projectSurfaceRel(
+  surface: AssetSurface | undefined,
+  category: FileAssetCategory,
+  targetDir: string,
+): string | null {
+  if (!surface) return null;
+  try {
+    const abs = surface.targetDir(category, 'project', targetDir, os.homedir());
+    return path.relative(targetDir, abs).split(path.sep).join('/');
+  } catch {
+    return null;
+  }
+}
+
 export const statusCommand: Command = {
   name: 'status',
   description: 'cmd.status.desc',
@@ -59,7 +94,7 @@ export const statusCommand: Command = {
     logger.info(t('out.status.header'));
 
     // harness 识别经 Detector（批 5）：认 `.claude`/`CLAUDE.md` 与 `.codex`/`AGENTS.md`，
-    // 不再硬编码 marker；下方存量 claude 表面行与 checkHarness 健康检查保持不动。
+    // 不再硬编码 marker。
     const reg = createRuntimeRegistry();
     const detected = reg
       .byCapability('detect')
@@ -67,21 +102,41 @@ export const statusCommand: Command = {
         d.detect && d.detect.detect(targetDir).present ? [d.id] : [],
       );
 
-    const entries: [string, string][] = [
+    const entries: SurfaceRow[] = [
       [t('out.status.col.version'), config.initVersion ?? t('out.status.unknown')],
       [t('out.status.col.initialized'), config.initTimestamp ?? t('out.status.unknown')],
       [t('out.status.col.preset'), config.preset ?? t('out.status.unknown')],
       [t('out.status.col.harness'), detected.length > 0 ? detected.join(', ') : t('out.status.unknown')],
-      ['CLAUDE.md', t(await checkFile('CLAUDE.md', targetDir))],
-      ['settings.json', t(await checkFile('.claude/settings.json', targetDir))],
-      ['.mcp.json', t(await checkFile('.mcp.json', targetDir))],
-      ['helpers', t(await checkFile('.claude/helpers', targetDir))],
-      ['skills', t(await checkFile('.claude/skills', targetDir))],
-      ['commands', t(await checkFile('.claude/commands', targetDir))],
-      ['agents', t(await checkFile('.claude/agents', targetDir))],
     ];
-    if (detected.includes('codex')) {
-      entries.push(['.codex/skills', t(await checkFile('.codex/skills', targetDir))]);
+
+    // 表面行：默认 harness（名表首项）持有 weave 的完整项目表面，其余 detected
+    // harness 只暴露 skills 面（其 init 其余步骤 skip）。目录/文件名由 HARNESS_DIRS
+    // + AssetSurface 派生——本文件不写 harness 名或 `.claude/*` 路径字面量，接新
+    // harness 无需改动。
+    const base: Harness = HARNESS_KEYS[0];
+    const baseDir = HARNESS_DIRS[base].projectDir;
+    const baseSurface = reg.get(base)?.assets;
+
+    for (const name of HARNESS_INSTRUCTION_FILES[base]) {
+      entries.push(await surfaceRow(name, name, targetDir));
+    }
+    entries.push(await surfaceRow('settings.json', `${baseDir}/settings.json`, targetDir));
+    entries.push(await surfaceRow('.mcp.json', '.mcp.json', targetDir));
+    entries.push(await surfaceRow('helpers', `${baseDir}/helpers`, targetDir));
+    const baseSkills = baseSurface?.projectSkillsDir() ?? `${baseDir}/skills`;
+    entries.push(await surfaceRow(path.posix.basename(baseSkills), baseSkills, targetDir));
+    const baseCategories: readonly (readonly [string, FileAssetCategory])[] = [
+      ['commands', 'command'],
+      ['agents', 'agent'],
+    ];
+    for (const [label, category] of baseCategories) {
+      const rel = projectSurfaceRel(baseSurface, category, targetDir) ?? `${baseDir}/${label}`;
+      entries.push(await surfaceRow(path.posix.basename(rel), rel, targetDir));
+    }
+    for (const h of detected) {
+      if (h === base) continue;
+      const rel = reg.get(h)?.assets?.projectSkillsDir() ?? `${HARNESS_DIRS[h].projectDir}/skills`;
+      entries.push(await surfaceRow(rel, rel, targetDir));
     }
 
     console.log(formatTable(entries));

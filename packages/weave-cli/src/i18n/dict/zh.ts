@@ -1,3 +1,5 @@
+import { HARNESS_DIRS, HARNESS_KEYS } from '@weavecode/core';
+
 /** CLI 中文词典（help / 解析错误 / 命令与选项描述）。 */
 export const zh = {
   // --- help 帮助输出 ---
@@ -33,8 +35,7 @@ export const zh = {
   'flag.init.noInteractive': '禁用交互式提示',
   'flag.init.hooks':
     '启用的 hook 事件，逗号分隔（preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification）；none 表示全不注册；默认全开',
-  'flag.init.harness':
-    '要初始化的 harness 面，逗号分隔（claude、codex）；缺省时 TTY 下交互多选，默认 claude',
+  'flag.init.harness': `要初始化的 harness 面，逗号分隔（${HARNESS_KEYS.join('、')}）；缺省时 TTY 下交互多选，默认 ${HARNESS_KEYS[0]}`,
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
@@ -90,7 +91,7 @@ export const zh = {
   // --- statusline 命令运行时输出 ---
   'out.statusline.pathMissing': '项目路径不存在：{path}',
   // --- init 流程输出与表头 ---
-  'init.banner': '\n  Weave — Claude Code harness v0.1.0\n',
+  'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
   'init.presetTarget': '  预设：{preset}  |  目标：{target}\n',
   'init.failed': '\n  初始化失败：{error}\n',
   'init.complete': '\n  初始化完成\n',
@@ -134,7 +135,7 @@ export const zh = {
   'harness.instructionLinkDangling.message': '{name} 是目标不存在的软链接。',
   'harness.instructionLinkDangling.fix': '运行 `weave init` 重建链接与指令文件。',
   'harness.statuslinePathUnresolved.message': 'statusLine 命令无法解析出脚本路径：{command}',
-  'harness.statuslinePathUnresolved.fix': '运行 `weave init` 重新生成 `.claude/settings.json`。',
+  'harness.statuslinePathUnresolved.fix': `运行 \`weave init\` 重新生成 \`${HARNESS_DIRS[HARNESS_KEYS[0]].projectDir}/settings.json\`。`,
   'harness.statuslinePathForeign.message': 'statusLine 指向本项目之外（{path}）——它是为另一个检出生成的。',
   'harness.statuslinePathForeign.fix': '在本项目中运行 `weave init` 重写绝对路径。',
   'harness.statuslineScriptMissing.message': 'statusLine 脚本缺失：{path}',

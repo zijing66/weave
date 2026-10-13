@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
+import { INSTRUCTION_FILES, type InstructionFile } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 
 /**
@@ -17,7 +18,7 @@ import { t } from '../i18n/index.js';
  */
 
 /** Which of the two names holds the real content. CLAUDE.md wins when both exist. */
-export type InstructionFile = 'CLAUDE.md' | 'AGENTS.md';
+export type { InstructionFile };
 
 export interface InstructionLinkOptions {
   /** Take the default action without asking. */
@@ -39,8 +40,8 @@ export interface InstructionLinkResult {
   backedUpTo?: string;
 }
 
-const CLAUDE = 'CLAUDE.md';
-const AGENTS = 'AGENTS.md';
+// 两个指令文件名来自 harness 名表（首项 = 主名，其余为链到主名的次名）。
+const [CLAUDE, AGENTS] = INSTRUCTION_FILES as [InstructionFile, InstructionFile];
 
 type FileState = 'absent' | 'file' | 'link' | 'broken-link';
 

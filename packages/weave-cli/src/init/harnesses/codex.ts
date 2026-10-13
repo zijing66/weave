@@ -14,7 +14,7 @@ import {
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weavecode/templates';
 import { InitPipeline, type InitContext } from '@weavecode/harness';
-import { type SurfaceRecords } from './claude.js';
+import { type SurfaceRecords } from '../types.js';
 import { t } from '../../i18n/index.js';
 
 /**

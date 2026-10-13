@@ -1,3 +1,4 @@
+import { HARNESS_DIRS, HARNESS_KEYS } from '@weavecode/core';
 import { zh } from './zh.js';
 
 /** CLI English dictionary — mirrors zh.ts key-for-key. */
@@ -35,8 +36,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.init.noInteractive': 'Disable interactive prompts',
   'flag.init.hooks':
     'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification); "none" registers none; default: all',
-  'flag.init.harness':
-    'Comma-separated harness surfaces to initialize (claude, codex); omitted → interactive multiselect on a TTY, default claude',
+  'flag.init.harness': `Comma-separated harness surfaces to initialize (${HARNESS_KEYS.join(', ')}); omitted → interactive multiselect on a TTY, default ${HARNESS_KEYS[0]}`,
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
@@ -93,7 +93,7 @@ export const en: Record<keyof typeof zh, string> = {
   // --- statusline command output ---
   'out.statusline.pathMissing': 'Project path does not exist: {path}',
   // --- init flow output and table headers ---
-  'init.banner': '\n  Weave — Claude Code harness v0.1.0\n',
+  'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
   'init.presetTarget': '  Preset: {preset}  |  Target: {target}\n',
   'init.failed': '\n  Init failed: {error}\n',
   'init.complete': '\n  Init complete\n',
@@ -144,7 +144,7 @@ export const en: Record<keyof typeof zh, string> = {
     'Run `weave init` to rewrite the link and the instruction file.',
   'harness.statuslinePathUnresolved.message':
     'statusLine command does not resolve to a script path: {command}',
-  'harness.statuslinePathUnresolved.fix': 'Run `weave init` to regenerate `.claude/settings.json`.',
+  'harness.statuslinePathUnresolved.fix': `Run \`weave init\` to regenerate \`${HARNESS_DIRS[HARNESS_KEYS[0]].projectDir}/settings.json\`.`,
   'harness.statuslinePathForeign.message':
     'statusLine points outside this project ({path}) — it was generated for another checkout.',
   'harness.statuslinePathForeign.fix':

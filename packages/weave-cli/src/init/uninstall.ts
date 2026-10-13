@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstat, readdir, readFile, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
-import { HARNESS_DIRS, HARNESS_KEYS, type Harness, logger } from '@weavecode/core';
+import { HARNESS_DIRS, HARNESS_KEYS, INSTRUCTION_FILES, type Harness, logger } from '@weavecode/core';
 import { hashFile, projectPackFiles, unregisterProject } from '@weavecode/server';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
@@ -84,8 +84,19 @@ export interface UninstallResult {
 
 const UNINSTALL_COMMIT_MESSAGE = 'chore: weave uninstall 移除 init 生成物';
 
-/** init 提交允许包含的路径前缀——reset 门用（CLAUDE.md/AGENTS.md 按整名）。 */
-const WEAVE_MANAGED_PATHS = ['CLAUDE.md', 'AGENTS.md', '.mcp.json', '.claude', '.codex', '.weave'];
+/** 次名指令文件（合一时链到主名者）——init 顶替/备份的正是它。 */
+const INSTRUCTION_ALIAS = INSTRUCTION_FILES[1];
+
+/**
+ * init 提交允许包含的路径前缀——reset 门用。指令文件名与各 harness 项目目录
+ * 皆表驱动（新增 harness 自动纳入），不写 harness 名或路径字面量。
+ */
+const WEAVE_MANAGED_PATHS = [
+  ...INSTRUCTION_FILES,
+  '.mcp.json',
+  ...HARNESS_KEYS.map((h) => HARNESS_DIRS[h].projectDir),
+  '.weave',
+];
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -337,7 +348,8 @@ class Uninstaller {
    * - init 顶替掉的 AGENTS.md 备份 → AGENTS.md 缺位时还原
    */
   private async sweepInstructionFiles(agentsBackup: string | null): Promise<void> {
-    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    // 次名在前（原文件的摘链接/删除顺序），主名在后。
+    for (const name of [...INSTRUCTION_FILES].reverse()) {
       const p = path.join(this.targetDir, name);
       let st;
       try {
@@ -373,12 +385,12 @@ class Uninstaller {
         }
       }
     }
-    // 既有的 AGENTS.md（用户后来自己写的）永远优先，不拿备份覆盖。
-    if (agentsBackup && !(await pathExists(path.join(this.targetDir, 'AGENTS.md')))) {
+    // 既有的次名指令文件（用户后来自己写的）永远优先，不拿备份覆盖。
+    if (agentsBackup && !(await pathExists(path.join(this.targetDir, INSTRUCTION_ALIAS)))) {
       const content = await readTextIfPresent(agentsBackup);
       if (content !== null) {
-        await writeFile(path.join(this.targetDir, 'AGENTS.md'), content, 'utf-8');
-        this.result.restoredFromBackup = path.join(this.targetDir, 'AGENTS.md');
+        await writeFile(path.join(this.targetDir, INSTRUCTION_ALIAS), content, 'utf-8');
+        this.result.restoredFromBackup = path.join(this.targetDir, INSTRUCTION_ALIAS);
       }
     }
   }
@@ -503,7 +515,7 @@ class Uninstaller {
   }
 }
 
-/** `.weave/backup/AGENTS.md.<stamp>` 里最新的一份；没有返回 null。 */
+/** `.weave/backup/<指令文件>.<stamp>` 里最新的一份；没有返回 null。 */
 async function newestAgentsBackup(weaveDir: string): Promise<string | null> {
   const backupDir = path.join(weaveDir, 'backup');
   let names: string[];
@@ -512,7 +524,9 @@ async function newestAgentsBackup(weaveDir: string): Promise<string | null> {
   } catch {
     return null;
   }
-  const stamps = names.filter((n) => n.startsWith('AGENTS.md.')).sort();
+  const stamps = names
+    .filter((n) => INSTRUCTION_FILES.some((f) => n.startsWith(f + '.')))
+    .sort();
   return stamps.length > 0 ? path.join(backupDir, stamps[stamps.length - 1]) : null;
 }
 
