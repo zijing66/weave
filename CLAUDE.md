@@ -1,6 +1,6 @@
 # weave
 
-> This file is managed by [weave](https://github.com/weave) — a coding-agent harness.
+> This file is managed by [weave](https://github.com/zijing66/weave) — a coding-agent harness.
 > Re-run `weave init` to regenerate.
 
 <!-- weave:start -->

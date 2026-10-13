@@ -1,7 +1,7 @@
 /** CLI 中文词典（help / 解析错误 / 命令与选项描述）。 */
 export const zh = {
   // --- help 帮助输出 ---
-  'help.tagline': 'weave v{version} — Claude Code harness 工具',
+  'help.tagline': 'weave v{version} — Harness 工具',
   'help.usage': '用法：weave <命令> [选项]',
   'help.commands': '命令：',
   'help.globalOptions': '全局选项：',

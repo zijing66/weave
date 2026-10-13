@@ -3,7 +3,7 @@ import { zh } from './zh.js';
 /** CLI English dictionary — mirrors zh.ts key-for-key. */
 export const en: Record<keyof typeof zh, string> = {
   // --- help output ---
-  'help.tagline': 'weave v{version} — Claude Code harness tool',
+  'help.tagline': 'weave v{version} — Harness tool',
   'help.usage': 'Usage: weave <command> [options]',
   'help.commands': 'Commands:',
   'help.globalOptions': 'Global options:',
