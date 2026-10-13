@@ -12,7 +12,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { HARNESS_ORDER } from '@/lib/harness-meta';
+import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import {
   api,
   CLAUDE_HOOK_EVENTS,
@@ -910,7 +910,8 @@ export function HooksPanel({
                       >
                         {HARNESS_OPTIONS.map((h) => (
                           <option key={h} value={h}>
-                            {t(`hooks.harness.${h}`)}
+                            {/* harness 名走 meta 单点表（加 harness 自动跟随）；只有 any 是词条。 */}
+                            {h === 'any' ? t('hooks.harness.any') : harnessUiOf(h).label}
                           </option>
                         ))}
                       </select>
