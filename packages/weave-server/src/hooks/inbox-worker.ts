@@ -20,7 +20,8 @@ import type { HookReport, NormalizedHookPayload } from './types.js';
  * 竞争协议（复用 spool 的 rename-claim）：rename 原子先到先得，输家 ENOENT 空手；
  * 崩在半途留下 `.claim.jsonl` 下轮先清。入库失败的行留盘重试，连续失败 parked
  * 为 `.failed.jsonl` 防毒丸热循环。行内 token 解析项目（项目已删 → 丢行，同
- * 旧 /hooks 401 语义）；不可归因的坏行直接丢（重试无意义）。
+ * 旧 /hooks 401 语义；归档项目同样丢行——server 不消费，行即焚）；不可归因
+ * 的坏行直接丢（重试无意义）。
  */
 
 export const INBOX_TICK_MS = 200;
@@ -112,7 +113,9 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       group.project = deps.projects.getByToken(parsed.token); // 项目已删 → 整组丢
       groups.set(parsed.token, group);
     }
-    if (!group.project) continue;
+    // 归档项目不消费：行即焚（不进 failedLines → 文件全组焚毁后删除），
+    // 与活跃项目同一轮 drain 里完成——「消费其他项目时立即销毁归档日志」。
+    if (!group.project || group.project.archivedAt) continue;
     const adapter = parsed.report && typeof parsed.report === 'object'
       ? deps.adapters.find((a) => a.source === parsed.report.source)
       : undefined;

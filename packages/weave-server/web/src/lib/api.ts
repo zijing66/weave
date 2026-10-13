@@ -42,6 +42,8 @@ export interface ProjectRow {
   registeredAt: string;
   lastSeenAt: string | null;
   meta: string | null;
+  /** 归档时间（null/undefined = 活跃项目）。 */
+  archivedAt?: string | null;
 }
 
 /** 会话终端可附加目标（一个窗口内的一个 tab，按最近活跃排序；id 格式归各终端）。 */
@@ -769,6 +771,19 @@ export const CONTEXT_STYLE_FORMAT: Record<'percent' | 'bar' | 'both', string> = 
 export const api = {
   listProjects: (): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects').then((r) => r.projects),
+  /** 归档项目面（仅基础信息；历史会话已在归档时清空）。 */
+  listArchivedProjects: (): Promise<ProjectRow[]> =>
+    apiFetch<{ projects: ProjectRow[] }>('/projects/archived').then((r) => r.projects),
+  /** 归档：清空历史会话 + 管道文件，server 各消费面即刻跳过；项目行只留基础信息。 */
+  archiveProject: (
+    id: number,
+  ): Promise<{
+    project: ProjectRow;
+    purged: { events: number; dispatches: number; sessions: number };
+  }> => apiFetch(`/projects/${id}/archive`, { method: 'POST' }),
+  /** 恢复：翻转归档位回活跃（会话历史不回来——归档是删除不是暂停）。 */
+  restoreProject: (id: number): Promise<{ project: ProjectRow }> =>
+    apiFetch<{ project: ProjectRow }>(`/projects/${id}/restore`, { method: 'POST' }),
   /** 项目列表拖动排序持久化：payload = 完整目标顺序（id 全量列表），幂等。 */
   reorderProjects: (ids: number[]): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects/order', {

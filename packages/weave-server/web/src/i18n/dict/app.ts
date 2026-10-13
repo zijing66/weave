@@ -40,6 +40,18 @@ export const appZh = {
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
   'project.sessionsOpen': '{n} 个会话就绪（等输入）',
+  // —— 归档（右键归档 + 归档面查看/恢复）——
+  'project.archive': '归档项目',
+  'project.archiveConfirm': '归档「{name}」？历史会话将立即清空，server 不再消费该项目；基础信息保留，可随时从归档面恢复。',
+  'project.archivedSection': '归档项目',
+  'project.archivedCount': '{n} 个归档项目 — 点击查看',
+  'project.archivedOn': '归档于 {date}',
+  'project.restore': '恢复',
+  'project.restoreTooltip': '恢复为活跃项目（历史会话已清空，不会回来）',
+  'toast.projectArchived': '已归档「{name}」（清除 {sessions} 个会话 / {events} 条事件）',
+  'toast.projectRestored': '已恢复「{name}」',
+  'errors.archiveFailed': '归档失败：{error}',
+  'errors.restoreFailed': '恢复失败：{error}',
 
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
@@ -121,6 +133,19 @@ export const appEn: Record<keyof typeof appZh, string> = {
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
   'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
+  // —— Archive (context-menu archive + archived view/restore) ——
+  'project.archive': 'Archive project',
+  'project.archiveConfirm':
+    'Archive "{name}"? Session history is cleared immediately and the server stops consuming it; basic info is kept — restore anytime from the archived view.',
+  'project.archivedSection': 'Archived projects',
+  'project.archivedCount': '{n} archived — click to view',
+  'project.archivedOn': 'Archived {date}',
+  'project.restore': 'Restore',
+  'project.restoreTooltip': 'Restore as an active project (session history is gone — archive deletes, not pauses)',
+  'toast.projectArchived': 'Archived "{name}" (purged {sessions} session(s) / {events} event(s))',
+  'toast.projectRestored': 'Restored "{name}"',
+  'errors.archiveFailed': 'Archive failed: {error}',
+  'errors.restoreFailed': 'Restore failed: {error}',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',

@@ -129,6 +129,7 @@ export default function App() {
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch((e) => setError(String(e)));
+    api.listArchivedProjects().then(setArchivedProjects).catch(() => {});
   }, []);
 
   // 安装属性矩阵（静态）：启动拉一次，下发 LibraryPanel（M6 拖拽 canDrop 也用）。
@@ -140,10 +141,14 @@ export default function App() {
   // 拖拽中的统一 payload（onDragStart 提升）：落点 canInstall 判定与落定分派共用。
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
 
+  // 归档项目面数据：与活跃列表同源刷新（归档/恢复/SSE project 帧都会带动）。
+  const [archivedProjects, setArchivedProjects] = useState<ProjectRow[]>([]);
   // 项目列表刷新：SSE project 帧（另一进程 weave init/scan 落库 → daemon
   // reconcile 检出）触发整表重拉；visibilitychange 兜底 ≤5s reconcile 窗口。
+  // 归档面一并重拉——归档/恢复后 dataBus 的 projects 失效键走同一条路。
   const refreshProjects = useCallback(() => {
     api.listProjects().then(setProjects).catch(() => {});
+    api.listArchivedProjects().then(setArchivedProjects).catch(() => {});
   }, []);
 
   // 项目行拖拽排序落定：乐观重排（落点即时反馈），持久化失败回滚到服务端
@@ -745,6 +750,48 @@ export default function App() {
     [fb],
   );
 
+  /** 归档：确认在 ProjectList（右键菜单）；此处只跑动作 + 汇报清空规模。
+   *  被归档的是当前选中项目时切到下一个活跃项目——不留幽灵详情。 */
+  const handleArchiveProject = useCallback(
+    (p: ProjectRow) =>
+      void fb.run(
+        `archive:${p.id}`,
+        async () => {
+          const { purged } = await api.archiveProject(p.id);
+          show(
+            'success',
+            t('toast.projectArchived', {
+              name: p.name,
+              sessions: purged.sessions,
+              events: purged.events,
+            }),
+          );
+          if (selected?.id === p.id) {
+            const next = projects.find((x) => x.id !== p.id);
+            if (next) loadProject(next);
+            else setSelected(null); // 没有活跃项目了 → 主区回落空态
+          }
+          refreshProjects();
+        },
+        { fail: (e) => t('errors.archiveFailed', { error: errorText(e) }) },
+      ),
+    [fb, selected, projects, loadProject, show, t, refreshProjects],
+  );
+  const handleRestoreProject = useCallback(
+    (p: ProjectRow) =>
+      void fb.run(
+        `restore:${p.id}`,
+        async () => {
+          await api.restoreProject(p.id);
+          show('success', t('toast.projectRestored', { name: p.name }));
+          refreshProjects();
+        },
+        { fail: (e) => t('errors.restoreFailed', { error: errorText(e) }) },
+      ),
+    [fb, show, t, refreshProjects],
+  );
+  const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
+
   /** Toggle a plugin's enable state in the host config (Claude settings.json or
    * Codex config.toml). Optimistically updates the local map, then persists;
    * reloads groups on success so enable badges stay in sync. On failure refetches
@@ -938,6 +985,10 @@ export default function App() {
                 sessionStatsOf={(id) => projectStats.get(id)}
                 terminalsOf={(id) => terminalCounts[id] ?? 0}
                 onReorder={handleProjectReorder}
+                archivedProjects={archivedProjects}
+                onArchive={handleArchiveProject}
+                onRestore={handleRestoreProject}
+                restoreStateOf={restoreActionStateOf}
               />
             </aside>
             <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />

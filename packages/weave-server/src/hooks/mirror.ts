@@ -113,6 +113,7 @@ export class MirrorWriter {
   }
 
   syncAll(): void {
+    // list() 只含活跃项目——归档项目的镜像不重写（归档时已焚毁）。
     for (const project of this.deps.projects.list()) {
       this.syncProject(project.id);
     }
@@ -120,7 +121,7 @@ export class MirrorWriter {
 
   syncProject(projectId: number): void {
     const project = this.deps.projects.getById(projectId);
-    if (!project) return;
+    if (!project || project.archivedAt) return; // 归档项目不喂镜像（文件已随归档焚毁）
     const pendingTitles: Record<string, string> = {};
     for (const session of this.deps.sessions.list(projectId)) {
       if (session.pendingTitle) pendingTitles[session.sessionId] = session.pendingTitle;

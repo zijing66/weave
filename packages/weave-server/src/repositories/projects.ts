@@ -11,6 +11,8 @@ export interface ProjectRow {
   meta: string | null;
   /** dashboard 手动拖出的位置（NULL = 未手动排序，列表里垫在已排序块之后）。 */
   sortOrder: number | null;
+  /** 归档时间（NULL = 活跃）。归档项目不参与 server 任何消费面，仅保留基础信息待恢复。 */
+  archivedAt: string | null;
 }
 
 export interface RegisterProjectInput {
@@ -26,6 +28,7 @@ export class ProjectRepository {
   /**
    * Register a project. Idempotent on `path`: re-registering refreshes
    * `last_seen_at` but preserves the original token, name, and source.
+   * 归档态也一并保留——恢复只能走 dashboard 的归档面，`weave init` 不隐式解档。
    */
   register(input: RegisterProjectInput): ProjectRow {
     const now = new Date().toISOString();
@@ -54,13 +57,25 @@ export class ProjectRepository {
     return row ? toProject(row) : undefined;
   }
 
+  /**
+   * 活跃项目（归档排除）。这是所有消费面（watch/mirror/inbox 存活集/同步/
+   * 终端角标等）的统一口径——归档项目由 `listArchived()` 单独供「查看归档」面。
+   * 排序口径：手动序块在前（sort_order 升序），未手动排序的按注册时间倒序
+   * 垫尾——拖过的顺序权威，新注册项目照旧冒头在尾部可见位置。
+   */
   list(): ProjectRow[] {
-    // 排序口径：手动序块在前（sort_order 升序），未手动排序的按注册时间倒序
-    // 垫尾——拖过的顺序权威，新注册项目照旧冒头在尾部可见位置。
     return this.db
       .prepare(
-        'SELECT * FROM projects ORDER BY sort_order IS NULL, sort_order ASC, registered_at DESC',
+        'SELECT * FROM projects WHERE archived_at IS NULL ORDER BY sort_order IS NULL, sort_order ASC, registered_at DESC',
       )
+      .all()
+      .map((row) => toProject(row));
+  }
+
+  /** 归档项目（仅基础信息，历史会话已在归档时清空），按归档时间倒序。 */
+  listArchived(): ProjectRow[] {
+    return this.db
+      .prepare('SELECT * FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC')
       .all()
       .map((row) => toProject(row));
   }
@@ -94,6 +109,20 @@ export class ProjectRepository {
 
   remove(id: number): void {
     this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  }
+
+  /**
+   * 归档/恢复翻转。归档：置 archived_at、清 sort_order（退出活跃排序局，
+   * 恢复后垫在未排序块尾部）。恢复：置 NULL，归档期间各消费面按活跃口径自然回归。
+   * 行不存在返回 false。
+   */
+  setArchived(id: number, archived: boolean): boolean {
+    const result = archived
+      ? this.db
+          .prepare('UPDATE projects SET archived_at = ?, sort_order = NULL WHERE id = ?')
+          .run(new Date().toISOString(), id)
+      : this.db.prepare('UPDATE projects SET archived_at = NULL WHERE id = ?').run(id);
+    return result.changes > 0;
   }
 
   /** 读 meta JSON（缺失/损坏返回 null，调用方按需回退默认值）。 */
@@ -130,5 +159,6 @@ function toProject(row: Record<string, unknown>): ProjectRow {
     lastSeenAt: row.last_seen_at == null ? null : String(row.last_seen_at),
     meta: row.meta == null ? null : String(row.meta),
     sortOrder: row.sort_order == null ? null : Number(row.sort_order),
+    archivedAt: row.archived_at == null ? null : String(row.archived_at),
   };
 }

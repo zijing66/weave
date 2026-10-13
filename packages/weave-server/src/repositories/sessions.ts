@@ -170,6 +170,13 @@ export class SessionRepository {
   remove(sessionId: string): void {
     this.db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
   }
+
+  /** 归档项目时清空其全部会话行（事件/派发先清，见归档路由）。 */
+  removeByProject(projectId: number): number {
+    return Number(
+      this.db.prepare('DELETE FROM sessions WHERE project_id = ?').run(projectId).changes,
+    );
+  }
 }
 
 function toSession(row: Record<string, unknown>): SessionRow {

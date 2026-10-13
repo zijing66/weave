@@ -12,7 +12,7 @@ import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookRuleRegistry } from '../hooks/registry.js';
-import type { MirrorWriter } from '../hooks/mirror.js';
+import { hooksRoot, type MirrorWriter } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
@@ -95,6 +95,7 @@ import { detectUpdates } from '../install/updates.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
+import { purgeProjectPipeline } from './hook-pipeline.js';
 import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
@@ -161,6 +162,8 @@ export interface WeaveServerDeps {
   pluginStates?: PluginStateRepository;
   /** hook 注入计划镜像（规则/标题变更后重写 mirror 文件，缺省不同步 = 无注入）。 */
   hookMirror?: Pick<MirrorWriter, 'syncProject' | 'syncAll'>;
+  /** hook 文件管道根（归档路由焚毁 inbox/mirror/outbox 用；缺省 hooksRoot()，测试注入临时根）。 */
+  hooksDir?: string;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
 }
@@ -1179,6 +1182,63 @@ async function handleRequest(
 
   if (pathname === '/projects' && req.method === 'GET') {
     sendJson(res, 200, { projects: deps.projects.list() });
+    return;
+  }
+
+  // GET /projects/archived — 归档面数据（仅基础信息；历史会话已在归档时清空）。
+  if (pathname === '/projects/archived' && req.method === 'GET') {
+    sendJson(res, 200, { projects: deps.projects.listArchived() });
+    return;
+  }
+
+  // POST /projects/:id/archive — 归档：清空历史会话（派发→事件→会话行，顺序
+  // 保证派发子查询还能圈到行）+ 焚毁管道文件（inbox/mirror/outbox，hook 侧
+  // 镜像即刻消失）。项目行只留基础信息（archived_at 标记）；各消费面
+  // （watch/mirror/inbox/同步）按「活跃项目」口径自动跳过，无需逐处剔除。
+  // watcher 由 watch.reconcile 立即收掉（不等 5s 周期）。
+  const archiveMatch = pathname.match(/^\/projects\/(\d+)\/archive$/);
+  if (archiveMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(archiveMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    if (project.archivedAt) {
+      sendJson(res, 200, { project, purged: { events: 0, dispatches: 0, sessions: 0 } });
+      return; // 幂等：重复归档不动已清空的数据
+    }
+    const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
+    const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
+    const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
+    deps.projects.setArchived(project.id, true);
+    purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);
+    deps.watch?.reconcile();
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, {
+      project: deps.projects.getById(project.id),
+      purged: { events, dispatches, sessions },
+    });
+    return;
+  }
+
+  // POST /projects/:id/restore — 恢复：翻转归档位，重写注入镜像，watcher 由
+  // reconcile 立即拉起（会话历史不回来——归档是删除不是暂停）。
+  const restoreMatch = pathname.match(/^\/projects\/(\d+)\/restore$/);
+  if (restoreMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(restoreMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    if (!project.archivedAt) {
+      sendJson(res, 200, { project });
+      return; // 幂等：活跃项目的恢复是 no-op
+    }
+    deps.projects.setArchived(project.id, false);
+    deps.hookMirror?.syncProject(project.id);
+    deps.watch?.reconcile();
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, { project: deps.projects.getById(project.id) });
     return;
   }
 

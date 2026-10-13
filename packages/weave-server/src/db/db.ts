@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS projects (
   registered_at TEXT NOT NULL,
   last_seen_at  TEXT,
   meta          TEXT,
-  sort_order    INTEGER
+  sort_order    INTEGER,
+  archived_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS hook_events (
@@ -124,7 +125,8 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
 
 /**
  * 与 migrateHookRulesColumns 同款的列级兜底：给既有库补 projects.sort_order
- * （dashboard 拖动排序的持久化）。幂等：列已存在则跳过。
+ * （dashboard 拖动排序）与 projects.archived_at（归档标记，NULL = 活跃）。
+ * 幂等：列已存在则跳过。
  */
 function migrateProjectsColumns(db: DatabaseSync): void {
   const cols = new Set(
@@ -136,6 +138,9 @@ function migrateProjectsColumns(db: DatabaseSync): void {
   if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
   if (!cols.has('sort_order')) {
     db.exec('ALTER TABLE projects ADD COLUMN sort_order INTEGER');
+  }
+  if (!cols.has('archived_at')) {
+    db.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT');
   }
 }
 

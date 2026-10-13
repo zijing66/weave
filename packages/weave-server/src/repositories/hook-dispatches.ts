@@ -114,6 +114,21 @@ export class HookDispatchRepository {
     );
   }
 
+  /**
+   * 归档项目时清空其派发行：按项目会话与项目事件两条子查询圈定（必须先于
+   * events/sessions 删除执行——子查询依赖那两张表的行还在）。
+   */
+  deleteByProject(projectId: number): number {
+    return Number(
+      this.db
+        .prepare(
+          `DELETE FROM hook_dispatches WHERE session_id IN (SELECT session_id FROM sessions WHERE project_id = ?)
+             OR event_id IN (SELECT id FROM hook_events WHERE project_id = ?)`,
+        )
+        .run(projectId, projectId).changes,
+    );
+  }
+
   findRecentAuto(ruleId: string, sessionId: string, sinceIso: string): HookDispatchRow | undefined {
     const row = this.db
       .prepare(

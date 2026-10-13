@@ -123,6 +123,13 @@ export class HookEventRepository {
     );
   }
 
+  /** 归档项目时清空其全部采集事件（含 session_id 为空的散行）。 */
+  deleteByProject(projectId: number): number {
+    return Number(
+      this.db.prepare('DELETE FROM hook_events WHERE project_id = ?').run(projectId).changes,
+    );
+  }
+
   listBySession(sessionId: string, limit = 300, beforeId?: number): HookEventRow[] {
     const rows =
       beforeId == null
