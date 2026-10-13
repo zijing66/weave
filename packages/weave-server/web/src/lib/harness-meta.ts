@@ -27,6 +27,8 @@ export interface HarnessUi {
   iconIdle: string;
   /** 运行态跑马灯动效类（index.css）。 */
   runAnimation: string;
+  /** 落盘目录名（core HARNESS_DIRS 的 web 镜像）：'.claude' / '.codex'。 */
+  dotDir: string;
 }
 
 export const HARNESS_UI = {
@@ -39,6 +41,7 @@ export const HARNESS_UI = {
     iconRunning: 'text-orange-400',
     iconIdle: 'text-orange-400/45',
     runAnimation: 'harness-run-claude',
+    dotDir: '.claude',
   },
   codex: {
     label: 'Codex',
@@ -49,6 +52,7 @@ export const HARNESS_UI = {
     iconRunning: 'text-cyan-400',
     iconIdle: 'text-cyan-400/45',
     runAnimation: 'harness-run-codex',
+    dotDir: '.codex',
   },
 } satisfies Record<Harness, HarnessUi>;
 
@@ -62,6 +66,7 @@ export const HARNESS_UI_FALLBACK: HarnessUi = {
   iconRunning: 'text-neutral-300',
   iconIdle: 'text-neutral-500',
   runAnimation: '',
+  dotDir: '',
 };
 
 /** 运行时名表（顺序 = 本表键序）：页签数组、初始 state 都由此派生。 */

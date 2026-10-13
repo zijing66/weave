@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, tagsOf, NAMESPACE_TAG, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
+import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -413,6 +414,10 @@ export function FileAssetTree({
   };
 
   const scopeLabel = scope === 'global' ? t('fileTree.scopeGlobal') : t('fileTree.scopeProject');
+  // 路径提示由名表派生（前端不写 harness 路径字面量）；词典只承载可译后缀。
+  const dirList = HARNESS_ORDER.map((h) =>
+    scope === 'global' ? `~/${harnessUiOf(h).dotDir}/` : `${harnessUiOf(h).dotDir}/`,
+  ).join(' · ');
 
   return (
     <section className="space-y-2">
@@ -420,7 +425,7 @@ export function FileAssetTree({
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
           {scopeLabel} {t('fileTree.title')}{' '}
           <span className="text-neutral-600 normal-case font-normal">
-            {scope === 'global' ? t('fileTree.pathsGlobal') : t('fileTree.pathsProject')}
+            {scope === 'global' ? dirList : t('fileTree.pathsProject', { dirs: dirList })}
           </span>
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
