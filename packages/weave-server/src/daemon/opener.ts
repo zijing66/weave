@@ -141,7 +141,7 @@ export abstract class TerminalBackend {
   /** 定点附加（多终端弹窗选定的目标）；无通道的 preset 明确拒绝，不静默忽略。 */
   async runAt(_dir: string, _argv: string[], _targetId: string): Promise<void> {
     throw new Error(
-      `Terminal preset "${this.preset}" cannot attach to a chosen pane — pick wezterm or Terminal.app in settings`,
+      `Terminal preset "${this.preset}" cannot attach to a chosen pane — pick wezterm, wt or Terminal.app in settings`,
     );
   }
 
@@ -184,7 +184,19 @@ const PRESET_CANDIDATES: Record<
 > = {
   wt: (dir, run, platform) =>
     platform === 'win32'
-      ? [{ command: 'wt.exe', args: ['-d', dir, ...(throughCmd(run, platform === 'win32') ?? [])] }]
+      ? [
+          {
+            command: 'wt.exe',
+            args: [
+              // 命名窗口：wt 原生「在则进 tab、不在则开窗」= 复用项目窗口的落点语义
+              '-w',
+              wtWindowSlug(dir),
+              '-d',
+              dir,
+              ...(throughCmd(run, true) ?? []),
+            ],
+          },
+        ]
       : [],
   powershell: (dir, run, platform) =>
     platform === 'win32'
@@ -307,6 +319,79 @@ class GhosttyBackend extends TerminalBackend {
 
   override run(dir: string, argv: string[]): Promise<void> {
     return this.openViaIpcThenStandalone(dir, argv);
+  }
+}
+
+/**
+ * Windows Terminal（win32）：无官方枚举 API，反查走进程树——每个 pane 的
+ * shell 是 `WindowsTerminal.exe` 的直接子进程（`OpenConsole.exe` 是 ConPTY
+ * 宿主、兄弟进程），shell 的 PEB cwd 即 pane 实时工作目录。pane 归属不到
+ * 具体窗口（多窗口共进程、窗口名不外露），角标口径 = 本项目 pane 数（前端
+ * 文案「N 个终端已打开」对窗口/pane 皆成立）。开窗/落点走 wt 命名窗口：
+ * `-w <name>` 在则进 tab、不在则重建——天然就是「复用项目窗口」的落点语义，
+ * 零簿记；定点附加 = 命名窗口里 split-pane（分屏）。
+ */
+class WtBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('wt', platform === 'win32', platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return PRESET_CANDIDATES.wt(dir, run, this.platform);
+  }
+
+  override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
+    if (dirs.length === 0 || this.platform !== 'win32') return new Map(dirs.map((d) => [d, 0]));
+    const panes = await wtPanesCached();
+    if (panes.length === 0) return new Map(dirs.map((d) => [d, 0]));
+    return countWindowsByDir(dirs, wtPanesAsWindows(panes));
+  }
+
+  /**
+   * 目标列表 = 项目命名窗口一条（pane 反查只判「项目有没有 wt 终端」，归属
+   * 不了用户手开的未命名窗口——那些列了也无处落子）。走缓存：wt 的落点
+   * 自愈（命名窗口不在则重建），不像 wezterm 分屏会落进刚关掉的 pane。
+   */
+  override async listTargets(dir: string): Promise<AttachTarget[]> {
+    if (this.platform !== 'win32') return [];
+    const panes = await wtPanesCached();
+    const count = countWindowsByDir([dir], wtPanesAsWindows(panes)).get(dir) ?? 0;
+    if (count === 0) return [];
+    return [
+      {
+        id: `wt:${wtWindowSlug(dir)}`,
+        windowId: 0, // 无窗口号通道；title 非空，前端不回落窗口/Tab 文案
+        tabId: 0,
+        title: basename(dir),
+        matchCount: count,
+        paneCount: count,
+        active: false, // pane 归属不了窗口，无从判定聚焦，不谎报
+      },
+    ];
+  }
+
+  /** 定点附加：命名窗口里分屏跑命令；窗口已关则 wt 重建（原生语义，落点自愈）。 */
+  override async runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+    if (this.platform !== 'win32') {
+      throw new Error(`Terminal preset "${this.preset}" is unavailable on this platform`);
+    }
+    if (!parseWtTargetId(targetId)) throw new Error(`Invalid terminal target "${targetId}"`);
+    await this.spawnFirst(
+      [
+        {
+          command: 'wt.exe',
+          args: [
+            '-w',
+            wtWindowSlug(dir),
+            'split-pane',
+            '-d',
+            dir,
+            ...(throughCmd(argv, true) ?? []),
+          ],
+        },
+      ],
+      `Terminal preset "${this.preset}" is unavailable on this platform`,
+    );
   }
 }
 
@@ -438,12 +523,12 @@ class AutoBackend extends TerminalBackend {
 
   /**
    * auto 的反查/定点通道随平台走它实际会开的终端：darwin 候选序里是 Terminal.app
-   * （没有 wezterm），其余平台沿用 wezterm 口径（有 wezterm 的机器上开的就是它）。
+   * （没有 wezterm），win32 候选序首位是 wt，其余平台沿用 wezterm 口径。
    */
   private attachBackend(): TerminalBackend {
-    return this.platform === 'darwin'
-      ? new TerminalAppBackend(this.platform)
-      : new WeztermBackend(this.platform);
+    if (this.platform === 'darwin') return new TerminalAppBackend(this.platform);
+    if (this.platform === 'win32') return new WtBackend(this.platform);
+    return new WeztermBackend(this.platform);
   }
 
   override countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
@@ -464,7 +549,7 @@ const BACKEND_FACTORIES: Record<
   (terminal: TerminalSettings, platform: NodeJS.Platform) => TerminalBackend
 > = {
   auto: (_terminal, platform) => new AutoBackend(platform),
-  wt: (_terminal, platform) => new CandidatesBackend('wt', platform, PRESET_CANDIDATES.wt),
+  wt: (_terminal, platform) => new WtBackend(platform),
   powershell: (_terminal, platform) =>
     new CandidatesBackend('powershell', platform, PRESET_CANDIDATES.powershell),
   cmd: (_terminal, platform) => new CandidatesBackend('cmd', platform, PRESET_CANDIDATES.cmd),
@@ -881,12 +966,13 @@ interface CaptureResult {
 /**
  * 捕获型子调用（与 fire-and-forget 的 trySpawn 相对）：null = 进程起不来
  * （ENOENT 等）；其余带 rc/stdout/stderr。daemon 侧查世界的通道都走它
- * （wezterm cli / osascript / ps / lsof）。
+ * （wezterm cli / osascript / ps / lsof / wt 进程表）。
  */
 function captureCommand(
   command: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
+  timeoutMs: number = CAPTURE_TIMEOUT_MS,
 ): Promise<CaptureResult | null> {
   return new Promise((resolve) => {
     let child;
@@ -919,7 +1005,7 @@ function captureCommand(
       child.unref();
       child.kill();
       finish({ ok: false, out, err: err.trim(), timedOut: true });
-    }, CAPTURE_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref();
     child.on('error', () => finish(null));
     child.on('close', (code) => {
@@ -1162,10 +1248,11 @@ export async function runInWeztermAt(
 }
 
 /**
- * 项目卡「终端」角标的数据面：每个目录已打开的终端窗口数（窗口级口径）。
+ * 项目卡「终端」角标的数据面：每个目录已打开的终端窗口数（窗口级口径；wt
+ * 归属不到窗口，按 pane 数计——前端文案「N 个终端已打开」两种口径都成立）。
  * 「这个 preset 能不能反查」由后端回答：wezterm 走 mux `cli list`、Terminal.app
- * 走 osascript+ps+lsof；其余 preset 没有可枚举通道 → 一律 0（角标不显示，
- * 不谎报）。
+ * 走 osascript+ps+lsof、wt 走进程表 PEB 走读；其余 preset 没有可枚举通道 →
+ * 一律 0（角标不显示，不谎报）。
  */
 export async function countOpenTerminals(
   dirs: string[],
@@ -1435,6 +1522,184 @@ async function doScriptInTerminalWindow(
     `tell application "Terminal" to do script "${text}" in window id ${windowId}`,
   ]);
   return r?.ok === true;
+}
+
+// ---- Windows Terminal 通道（win32）：进程树反查 + 命名窗口落子 ----
+//
+// wt 无官方枚举 API，但进程树即真相：每个 pane 的 shell 是
+// WindowsTerminal.exe 的直接子进程（OpenConsole.exe 是 ConPTY 宿主、兄弟
+// 进程），shell 的 PEB cwd（ReadProcessMemory 走读）就是 pane 实时工作目录。
+// 一枪 PowerShell 拉全进程表（实测 ~3.4s，含 Add-Type 编译），Node 侧建树。
+
+/** 一次 PowerShell 拉全进程表：pid|ppid|name|created|cwd（`|` 是 Windows
+ * 路径非法字符，可放心当分隔符；cwd 读不到 = 空列）。行内 C# 走 PEB：
+ * ProcessParameters+0x38 的 CurrentDirectory（UNICODE_STRING）。 */
+const WT_PROC_DUMP = [
+  '$ErrorActionPreference = \'SilentlyContinue\'',
+  "$src = @'",
+  'using System; using System.Runtime.InteropServices;',
+  'public class WeaveWtCwd {',
+  '  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int c, ref PBI pbi, int size, out int rl);',
+  '  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int a, bool inh, int pid);',
+  '  [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, int size, out IntPtr read);',
+  '  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);',
+  '  [StructLayout(LayoutKind.Sequential)] struct PBI { public IntPtr r1; public IntPtr Peb; public IntPtr r2; public IntPtr r3; public IntPtr Pid; public IntPtr r4; }',
+  '  static IntPtr ReadPtr(IntPtr h, IntPtr addr) { var b = new byte[8]; IntPtr r; if (!ReadProcessMemory(h, addr, b, 8, out r)) return IntPtr.Zero; long v = BitConverter.ToInt64(b, 0); return v == 0 ? IntPtr.Zero : (IntPtr)v; }',
+  '  static ushort ReadU16(IntPtr h, IntPtr addr) { var b = new byte[2]; IntPtr r; if (!ReadProcessMemory(h, addr, b, 2, out r)) return 0; return BitConverter.ToUInt16(b, 0); }',
+  '  public static string GetCwd(int pid) {',
+  '    var h = OpenProcess(0x0410, false, pid);',
+  '    if (h == IntPtr.Zero) return null;',
+  '    try {',
+  '      var pbi = new PBI(); int rl;',
+  '      if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(typeof(PBI)), out rl) != 0) return null;',
+  '      var pp = ReadPtr(h, (IntPtr)((long)pbi.Peb + 0x20));',
+  '      if (pp == IntPtr.Zero) return null;',
+  '      ushort len = ReadU16(h, (IntPtr)((long)pp + 0x38));',
+  '      var buf = ReadPtr(h, (IntPtr)((long)pp + 0x40));',
+  '      if (buf == IntPtr.Zero || len == 0 || len > 2048) return null;',
+  '      var b = new byte[len]; IntPtr r;',
+  '      if (!ReadProcessMemory(h, buf, b, len, out r)) return null;',
+  "      return System.Text.Encoding.Unicode.GetString(b).TrimEnd('\\0');",
+  '    } finally { CloseHandle(h); }',
+  '  }',
+  '}',
+  "'@",
+  'Add-Type -TypeDefinition $src',
+  'foreach ($p in Get-CimInstance Win32_Process) {',
+  '  $cwd = [WeaveWtCwd]::GetCwd($p.ProcessId)',
+  "  if ($null -ne $cwd -or $p.Name -eq 'WindowsTerminal.exe' -or $p.Name -eq 'OpenConsole.exe') {",
+  "    $created = if ($p.CreationDate) { $p.CreationDate.ToString('yyyyMMddHHmmss') } else { '' }",
+  "    '{0}|{1}|{2}|{3}|{4}' -f $p.ProcessId, $p.ParentProcessId, $p.Name, $created, $cwd",
+  '  }',
+  '}',
+].join('\n');
+
+/** wt 进程表超时：实测 ~3.4s（Add-Type 编译 + 全表 PEB 走读），负载下放宽。 */
+const WT_DUMP_TIMEOUT_MS = 15000;
+
+/** wt 进程表一行（name 已归一小写）。 */
+export interface WtProcRow {
+  pid: number;
+  parentPid: number;
+  name: string;
+  created: string;
+  cwd: string | null;
+}
+
+export function parseWtProcDump(text: string): WtProcRow[] {
+  const rows: WtProcRow[] = [];
+  for (const line of text.split('\n')) {
+    const cols = line.trimEnd().split('|');
+    if (cols.length !== 5) continue;
+    const pid = Number(cols[0]);
+    const parentPid = Number(cols[1]);
+    if (!Number.isInteger(pid) || !Number.isInteger(parentPid) || pid <= 0 || parentPid < 0) continue;
+    if (!cols[2]) continue;
+    rows.push({
+      pid,
+      parentPid,
+      name: cols[2]!.toLowerCase(),
+      created: cols[3]!,
+      cwd: cols[4] === '' ? null : cols[4]!,
+    });
+  }
+  return rows;
+}
+
+/** shell 家族（链尾跟踪到最深的一个 = 用户当下所在的 shell）。 */
+const WT_SHELL_EXES = new Set([
+  'bash.exe',
+  'zsh.exe',
+  'sh.exe',
+  'fish.exe',
+  'pwsh.exe',
+  'powershell.exe',
+  'cmd.exe',
+]);
+
+/**
+ * pane 反查（纯函数）：pane 根 = WindowsTerminal 直接子进程里非 OpenConsole
+ * 的那些（shell 启动器 / cmd 包装 / claude 直跑……）。cwd 取「最深 shell 链
+ * 尾」：Git Bash 的 bin/bash 只是启动器（cwd 停在启动目录），真正交互的
+ * usr/bin/bash 是它的子进程；非 shell 根（如 claude）取根自己的 cwd——
+ * 它的工具子进程不是 pane，不该跟。
+ */
+export function wtPanes(rows: readonly WtProcRow[]): { pid: number; cwd: string | null }[] {
+  const wtPids = new Set(
+    rows.filter((r) => r.name === 'windowsterminal.exe').map((r) => r.pid),
+  );
+  if (wtPids.size === 0) return [];
+  const byParent = new Map<number, WtProcRow[]>();
+  for (const r of rows) {
+    if (r.parentPid === r.pid) continue;
+    const list = byParent.get(r.parentPid) ?? [];
+    list.push(r);
+    byParent.set(r.parentPid, list);
+  }
+  const panes: { pid: number; cwd: string | null }[] = [];
+  for (const r of rows) {
+    if (!wtPids.has(r.parentPid) || r.name === 'openconsole.exe') continue;
+    let node = r;
+    while (WT_SHELL_EXES.has(node.name)) {
+      const shells = (byParent.get(node.pid) ?? []).filter((k) => WT_SHELL_EXES.has(k.name));
+      if (shells.length === 0) break;
+      node = shells.reduce((a, b) =>
+        b.created > a.created || (b.created === a.created && b.pid > a.pid) ? b : a,
+      );
+    }
+    panes.push({ pid: r.pid, cwd: node.cwd });
+  }
+  return panes;
+}
+
+/** 计数口径：每 pane 一个独立窗口键（wt 归属不到窗口；前端文案「N 个终端
+ * 已打开」对 pane 数成立，窗口级的 wezterm 也落在同一文案下）。 */
+function wtPanesAsWindows(
+  panes: readonly { pid: number; cwd: string | null }[],
+): WeztermMuxPane[] {
+  return panes.map((p) => ({ muxKey: `wt:${p.pid}`, windowId: p.pid, cwd: p.cwd }));
+}
+
+async function listWtPanes(): Promise<{ pid: number; cwd: string | null }[]> {
+  if (process.platform !== 'win32') return [];
+  const r = await captureCommand(
+    'powershell.exe',
+    ['-NoProfile', '-Command', WT_PROC_DUMP],
+    undefined,
+    WT_DUMP_TIMEOUT_MS,
+  );
+  if (!r?.ok) return [];
+  return wtPanes(parseWtProcDump(r.out));
+}
+
+/** 探活结果短缓存（10s，同 muxCache）：一枪 ~3.4s 的 PowerShell，角标轮询
+ * 每 30s 打多枪必吃缓存。落点决策也吃它——wt 命名窗口「不在则重建」自愈，
+ * 不像 wezterm 会把分屏落进刚关掉的 pane。 */
+let wtPaneCache: { at: number; panes: { pid: number; cwd: string | null }[] } | null = null;
+
+async function wtPanesCached(): Promise<{ pid: number; cwd: string | null }[]> {
+  if (wtPaneCache && Date.now() - wtPaneCache.at < 10000) return wtPaneCache.panes;
+  const panes = await listWtPanes();
+  wtPaneCache = { at: Date.now(), panes };
+  return panes;
+}
+
+/**
+ * 项目命名窗口名：路径归一键 → 净化 + 短哈希（同路径稳定；净化后撞名的
+ * 两个目录靠哈希区分）。wt 窗口名在窗口切换器里用户可见，保留可读前缀。
+ */
+export function wtWindowSlug(dir: string): string {
+  const key = normalizeDirKey(dir, 'win32') ?? 'root';
+  const sanitized = key.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const hash = createHash('sha1').update(key).digest('hex').slice(0, 8);
+  return `weave-${sanitized.slice(0, 48) || 'root'}-${hash}`;
+}
+
+/** 定点目标 id ↔ 命名窗口名；坏 id → null。落点窗口由 dir 重derive（picker
+ * 条目可能陈旧，dir 才是会话真身）。 */
+export function parseWtTargetId(id: string): string | null {
+  const m = /^wt:(weave-[a-z0-9-]+)$/.exec(id);
+  return m ? m[1]! : null;
 }
 
 /** Injection seam for the open routes — tests substitute a spy. */

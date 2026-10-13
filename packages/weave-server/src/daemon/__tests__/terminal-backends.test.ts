@@ -4,13 +4,17 @@ import {
   parsePsRootPids,
   parseTerminalAppDump,
   parseTerminalAppTargetId,
+  parseWtProcDump,
+  parseWtTargetId,
   pickTerminalAppWindow,
   resolveTerminalLaunch,
   SocketProbeGate,
   terminalAppTargets,
   terminalBackendFor,
+  wtPanes,
+  wtWindowSlug,
 } from '../opener.js';
-import type { TerminalAppSurface, TerminalSettings } from '../opener.js';
+import type { TerminalAppSurface, TerminalSettings, WtProcRow } from '../opener.js';
 
 /**
  * 终端后端的行为钉子。
@@ -124,13 +128,15 @@ describe('终端后端 — auto 由具名条目组合（去重的等价性证明
 });
 
 describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白名单）', () => {
-  it('只有 wezterm / auto / darwin 的 Terminal.app 能反查已开窗口', () => {
+  it('只有 wezterm / auto / darwin 的 Terminal.app / win32 的 wt 能反查已开窗口', () => {
     expect(terminalBackendFor(settings('wezterm')).enumerable).toBe(true);
     expect(terminalBackendFor(settings('auto')).enumerable).toBe(true);
     // Terminal.app 的枚举通道（osascript+ps+lsof）只在 darwin 存在
     expect(terminalBackendFor(settings('terminal'), 'darwin').enumerable).toBe(true);
+    // wt 的枚举通道（进程表 + PEB cwd 走读）只在 win32 存在
+    expect(terminalBackendFor(settings('wt'), 'win32').enumerable).toBe(true);
+    expect(terminalBackendFor(settings('wt'), 'linux').enumerable).toBe(false);
     for (const preset of [
-      'wt',
       'powershell',
       'cmd',
       'terminal',
@@ -151,7 +157,8 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
   });
 
   it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {
-    for (const preset of ['wt', 'ghostty', 'iterm'] as const) {
+    // wt 在 win32 已有定点通道（split-pane），不在此列
+    for (const preset of ['ghostty', 'iterm', 'powershell'] as const) {
       const backend = terminalBackendFor(settings(preset), 'win32');
       await expect(backend.runAt('/tmp/p', ['claude'], 'terminal:1:1'), preset).rejects.toThrow(
         `Terminal preset "${preset}" cannot attach to a chosen pane`,
@@ -266,6 +273,102 @@ describe('终端后端 — Terminal.app 通道（osascript 反查 + do script �
     await expect(backend.listTargets('/tmp/proj')).resolves.toEqual([]);
     const counts = await backend.countWindows(['/tmp/proj']);
     expect(counts.get('/tmp/proj')).toBe(0);
+  });
+});
+
+describe('终端后端 — Windows Terminal 通道（进程表反查 + 命名窗口落子）', () => {
+  // 与 parseWtProcDump 出口一致：name 已归一小写（wtPanes 按小写名匹配）
+  const row = (pid: number, parentPid: number, name: string, created: string, cwd: string | null): WtProcRow => ({
+    pid,
+    parentPid,
+    name: name.toLowerCase(),
+    created,
+    cwd,
+  });
+
+  it('进程表 dump → rows（5 列 TSV；cwd 空列 → null；坏行跳过不整体失败）', () => {
+    const dump = [
+      '200|100|bash.exe|20240101120000|D:\\proj',
+      '201|100|OpenConsole.exe|20240101120000|',
+      'junk',
+      '0|100|zero-pid.exe|20240101120000|x',
+      '200|abc|bad-ppid.exe|20240101120000|x',
+      '202|100||20240101120000|x',
+    ].join('\n');
+    expect(parseWtProcDump(dump)).toEqual([
+      { pid: 200, parentPid: 100, name: 'bash.exe', created: '20240101120000', cwd: 'D:\\proj' },
+      { pid: 201, parentPid: 100, name: 'openconsole.exe', created: '20240101120000', cwd: null },
+    ]);
+    expect(parseWtProcDump('')).toEqual([]);
+  });
+
+  it('pane 根 = WindowsTerminal 直接子进程里非 OpenConsole 的；OpenConsole 是兄弟不是 pane', () => {
+    const panes = wtPanes([
+      row(100, 1, 'WindowsTerminal.exe', '20240101110000', null),
+      row(201, 100, 'OpenConsole.exe', '20240101120000', null), // ConPTY 宿主，排除
+      row(202, 100, 'cmd.exe', '20240101120000', 'D:\\other'),
+    ]);
+    expect(panes).toEqual([{ pid: 202, cwd: 'D:\\other' }]);
+    expect(wtPanes([row(1, 0, 'bash.exe', '20240101110000', '/x')])).toEqual([]);
+  });
+
+  it('shell 根跟到最深 shell（Git Bash 启动器 cwd 冻结，活的 cwd 在 usr/bin/bash 子进程）', () => {
+    const panes = wtPanes([
+      row(100, 1, 'WindowsTerminal.exe', '20240101110000', null),
+      row(200, 100, 'bash.exe', '20240101120000', 'D:\\frozen'), // bin/bash 启动器
+      row(300, 200, 'bash.exe', '20240101120001', 'D:\\proj\\live'), // usr/bin/bash 真 shell
+    ]);
+    expect(panes).toEqual([{ pid: 200, cwd: 'D:\\proj\\live' }]);
+  });
+
+  it('同壳多子（用户手敲了嵌套 shell）跟最年轻的；同时刻并列按 pid 高者', () => {
+    const panes = wtPanes([
+      row(100, 1, 'WindowsTerminal.exe', '20240101110000', null),
+      row(200, 100, 'bash.exe', '20240101120000', 'D:\\frozen'),
+      row(301, 200, 'bash.exe', '20240101120500', 'D:\\old'),
+      row(302, 200, 'bash.exe', '20240101120600', 'D:\\same-instant'),
+      row(303, 200, 'bash.exe', '20240101120600', 'D:\\same-instant-higher-pid'),
+    ]);
+    expect(panes).toEqual([{ pid: 200, cwd: 'D:\\same-instant-higher-pid' }]);
+  });
+
+  it('非 shell 根取自己的 cwd——claude 的工具子进程不是 pane，不该跟', () => {
+    const panes = wtPanes([
+      row(100, 1, 'WindowsTerminal.exe', '20240101110000', null),
+      row(500, 100, 'claude.exe', '20240101120000', 'D:\\proj'),
+      row(600, 500, 'bash.exe', '20240101120200', 'D:\\tool-chdir'), // claude Bash 工具的子进程
+    ]);
+    expect(panes).toEqual([{ pid: 500, cwd: 'D:\\proj' }]);
+  });
+
+  it('命名窗口名：同路径稳定、大小写不敏感路径同名、不同路径必不同', () => {
+    const slug = wtWindowSlug('<repo-root>\\weave');
+    expect(slug).toBe(wtWindowSlug('<repo-root>\\weave'));
+    expect(slug).toBe(wtWindowSlug('<repo-root>\\weave')); // win32 键归一含小写
+    expect(wtWindowSlug('<repo-root>\\other')).not.toBe(slug);
+    expect(slug).toMatch(/^weave-[a-z0-9-]+-[0-9a-f]{8}$/);
+  });
+
+  it('目标 id 解码：wt:<slug>；非 wt 前缀 / 大写 / 空 slug → null', () => {
+    expect(parseWtTargetId('wt:weave-d-proj-1a2b3c4d')).toBe('weave-d-proj-1a2b3c4d');
+    expect(parseWtTargetId('wt:')).toBeNull();
+    expect(parseWtTargetId('wt:Weave-X')).toBeNull();
+    expect(parseWtTargetId('terminal:1:2')).toBeNull();
+  });
+
+  it('落子候选：wt 命名窗口（-w slug），开窗即进 tab、带命令经 cmd.exe 转发', () => {
+    const DIR = 'D:\\proj';
+    const [open] = resolveTerminalLaunch(DIR, settings('wt'), 'win32');
+    expect(open).toEqual({
+      command: 'wt.exe',
+      args: ['-w', wtWindowSlug(DIR), '-d', DIR],
+    });
+    const [run] = resolveTerminalLaunch(DIR, settings('wt'), 'win32', RUN);
+    expect(run).toEqual({
+      command: 'wt.exe',
+      args: ['-w', wtWindowSlug(DIR), '-d', DIR, 'cmd.exe', '/k', 'claude --resume abc'],
+    });
+    expect(commands('wt', 'darwin')).toEqual([]);
   });
 });
 

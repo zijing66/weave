@@ -115,7 +115,7 @@ describe('POST /sessions/:id/open-terminal', () => {
 
   it('带 target 但 preset 无定点通道 → 400（明确拒绝，不静默忽略）', async () => {
     await writeDaemonSettings({
-      terminal: { preset: 'wt', customCommand: '' },
+      terminal: { preset: 'powershell', customCommand: '' },
       locale: 'zh-CN',
       hooks: { enabled: true },
     });

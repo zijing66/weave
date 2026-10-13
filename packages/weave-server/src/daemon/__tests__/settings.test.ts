@@ -21,6 +21,7 @@ import {
   attachTargetsFromMuxes,
   parseAttachTargetId,
   planWeztermGrid,
+  wtWindowSlug,
   type WeztermPaneInfo,
   type WeztermMuxPane,
 } from '../opener.js';
@@ -226,7 +227,10 @@ describe('resolveTerminalLaunch', () => {
   it('auto on Windows probes wt, then powershell, then cmd', () => {
     const launches = resolveTerminalLaunch('D:\\proj', { preset: 'auto', customCommand: '' }, 'win32');
     expect(launches).toHaveLength(3);
-    expect(launches[0]).toEqual({ command: 'wt.exe', args: ['-d', 'D:\\proj'] });
+    expect(launches[0]).toEqual({
+      command: 'wt.exe',
+      args: ['-w', wtWindowSlug('D:\\proj'), '-d', 'D:\\proj'],
+    });
     // cwd-based launches never interpolate the directory into a command string
     expect(launches[1]).toEqual({ command: 'powershell.exe', args: ['-NoExit'], cwd: 'D:\\proj' });
     expect(launches[2]).toEqual({ command: 'cmd.exe', args: ['/K'], cwd: 'D:\\proj' });
@@ -297,7 +301,7 @@ describe('resolveTerminalLaunch', () => {
   });
 
   // ---- run 模式：终端内执行命令（在默认终端打开会话 = claude --resume ----
-  it('run: wt passes the argv after -d', () => {
+  it('run: wt 落进项目命名窗口（-w slug），argv 经 cmd.exe 转发', () => {
     expect(
       resolveTerminalLaunch('D:\\proj', { preset: 'wt', customCommand: '' }, 'win32', [
         'claude',
@@ -307,7 +311,15 @@ describe('resolveTerminalLaunch', () => {
     ).toEqual([
       {
         command: 'wt.exe',
-        args: ['-d', 'D:\\proj', 'cmd.exe', '/k', 'claude --resume abc-123'],
+        args: [
+          '-w',
+          wtWindowSlug('D:\\proj'),
+          '-d',
+          'D:\\proj',
+          'cmd.exe',
+          '/k',
+          'claude --resume abc-123',
+        ],
       },
     ]);
   });
@@ -369,6 +381,8 @@ describe('resolveTerminalLaunch', () => {
     );
     expect(launches.map((l) => l.command)).toEqual(['wt.exe', 'powershell.exe', 'cmd.exe']);
     expect(launches[0]!.args).toEqual([
+      '-w',
+      wtWindowSlug('D:\\proj'),
       '-d',
       'D:\\proj',
       'cmd.exe',

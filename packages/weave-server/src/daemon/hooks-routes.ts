@@ -396,10 +396,10 @@ export async function handleHooksRoutes(
       const argv = [spec.bin, ...spec.openArgs(sessionId)];
       if (target) {
         // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /
-        // Terminal.app osascript），其余明确拒绝而非静默忽略——调用方不列白名单。
+        // Terminal.app osascript / wt 进程表），其余明确拒绝而非静默忽略——调用方不列白名单。
         if (!terminalBackendFor(settings.terminal).enumerable) {
           throw new Error(
-            `Terminal preset "${settings.terminal.preset}" cannot attach to a chosen pane — pick wezterm or Terminal.app in settings`,
+            `Terminal preset "${settings.terminal.preset}" cannot attach to a chosen pane — pick wezterm, wt or Terminal.app in settings`,
           );
         }
         const runAt = opener.runInTerminalAt;
