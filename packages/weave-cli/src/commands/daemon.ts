@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_PORT,
   DAEMON_HOST,
@@ -8,7 +7,7 @@ import {
   readDaemonState,
   writeDaemonState,
   clearDaemonState,
-  daemonEntryUrl,
+  resolveDaemonEntry,
 } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
@@ -56,11 +55,13 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
 
   writeDaemonState({ pid: 0, port, startedAt: new Date().toISOString() });
 
-  const entryPath = fileURLToPath(daemonEntryUrl);
-  const child = spawn(process.execPath, ['--import', 'tsx', entryPath], {
-    detached: true,
-    stdio: 'ignore',
-  });
+  // dist 形（entry.js）直接跑——发布包里没有 tsx；源码态（entry.ts）才需要。
+  const entry = resolveDaemonEntry();
+  const child = spawn(
+    process.execPath,
+    entry.isTs ? ['--import', 'tsx', entry.path] : [entry.path],
+    { detached: true, stdio: 'ignore' },
+  );
   child.unref();
 
   return { port, started: true };

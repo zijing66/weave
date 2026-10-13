@@ -6,6 +6,9 @@
  * surface.
  */
 
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 export { openDatabase } from './db/db.js';
 export { getDataDir, getDbPath, getDaemonStatePath } from './db/paths.js';
 
@@ -192,11 +195,17 @@ export {
 } from './statusline/manager.js';
 
 /**
- * File URL of the standalone daemon entry. Resolves to the TS source under the
- * `development` condition and to the compiled JS in production, so the CLI can
- * spawn the correct entry either way.
+ * Absolute path of the standalone daemon entry, resolved beside this module:
+ * the compiled `entry.js` when running from dist (production), the TS source
+ * under the `development` condition. Only the TS form needs tsx to spawn —
+ * published bundles carry no tsx.
  */
-export const daemonEntryUrl = new URL('./daemon/entry.ts', import.meta.url).href;
+export function resolveDaemonEntry(): { path: string; isTs: boolean } {
+  const js = fileURLToPath(new URL('./daemon/entry.js', import.meta.url));
+  if (existsSync(js)) return { path: js, isTs: false };
+  const ts = fileURLToPath(new URL('./daemon/entry.ts', import.meta.url));
+  return { path: ts, isTs: true };
+}
 
 // 插件分发通道（A3）：供 dashboard / REST 层调用（install/uninstall/export/search）。
 export {
