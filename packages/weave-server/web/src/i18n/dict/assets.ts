@@ -26,10 +26,14 @@ export const assetsZh = {
   'skillGrid.expandAll': '全部展开',
   'skillGrid.collapseAll': '全部折叠',
   'skillGrid.plugin': '插件',
-  'skillGrid.pluginOn': '已启用 — 点击切换',
-  'skillGrid.pluginOff': '已禁用 — 点击切换',
-  'skillGrid.on': '开',
-  'skillGrid.off': '关',
+  // 插件组逐档三态循环（§4 ②推广；循环序随行判据：三档三态 / 仅启用面布尔）
+  'skillGrid.enableDefault': '默认',
+  'skillGrid.enableOn': '启用',
+  'skillGrid.enableOff': '禁用',
+  'skillGrid.scopeUser': '全局',
+  'skillGrid.scopeProject': '项目',
+  'skillGrid.scopeLocal': '仅本人',
+  'skillGrid.enableTip': '{scope}档启用覆写（当前：{state}）——点击切换',
   'skillGrid.keyTip': '插件注册键 name@marketplace——@后为所属市场（插件 namespace）',
 
   // —— 仓库维度折叠（Skills 与 Plugins 两页同源的一级维度） ——
@@ -127,10 +131,14 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.expandAll': 'Expand all',
   'skillGrid.collapseAll': 'Collapse all',
   'skillGrid.plugin': 'Plugin',
-  'skillGrid.pluginOn': 'Enabled — click to toggle',
-  'skillGrid.pluginOff': 'Disabled — click to toggle',
-  'skillGrid.on': 'ON',
-  'skillGrid.off': 'OFF',
+  // Per-scope tri-state cycle on plugin groups (§4; cycle order is row-driven)
+  'skillGrid.enableDefault': 'Default',
+  'skillGrid.enableOn': 'Enabled',
+  'skillGrid.enableOff': 'Disabled',
+  'skillGrid.scopeUser': 'Global',
+  'skillGrid.scopeProject': 'Project',
+  'skillGrid.scopeLocal': 'Local only',
+  'skillGrid.enableTip': '{scope} enable override (now: {state}) — click to cycle',
   'skillGrid.keyTip': 'Plugin key name@marketplace — the part after @ is its marketplace (plugin namespace)',
 
   // —— Repository-dimension grouping (one L1 dimension shared by Skills & Plugins) ——

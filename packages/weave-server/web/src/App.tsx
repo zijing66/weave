@@ -32,7 +32,7 @@ import {
 } from '@/lib/api';
 import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capabilities';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
-import type { EnableOverride } from '@weavecode/core/tool';
+import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
@@ -831,11 +831,13 @@ export default function App() {
    * truth — no optimistic flip, just refetch (effective is server-resolved).
    * Reloads groups on success so enable badges stay in sync. Throws on failure
    * (caller's fb.run reports). */
-  const handleTogglePlugin = useCallback(
-    async (runtime: PluginRuntime, key: string, enabled: boolean) => {
+  /** 插件逐档启用覆写循环（§4 ②推广·拍板 7-5/7-7 摆放）：档位由控件随行
+   *  交来（全局视图 user、项目视图 project/local），此处只落盘与刷新。 */
+  const handleCyclePluginState = useCallback(
+    async (runtime: PluginRuntime, key: string, scope: ToolScope, state: EnableOverride) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      await api.putPluginState(target.id, runtime, key, 'user', enabled ? 'on' : 'off');
+      await api.putPluginState(target.id, runtime, key, scope, state);
       refreshPluginRows(target);
       refreshGlobalSkills(target);
     },
@@ -1155,7 +1157,7 @@ export default function App() {
                         onUninstallMcp={handleUninstallMcp}
                         onCycleMcpEnable={handleCycleMcpEnable}
                         onUninstallFileAsset={handleUninstallFileAsset}
-                        onTogglePlugin={handleTogglePlugin}
+                        onCyclePluginState={handleCyclePluginState}
                         onUninstallPlugin={handleUninstallPlugin}
                         onOpenFile={(relPath) => {
                           setSelectedFile(relPath);

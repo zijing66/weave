@@ -30,6 +30,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 
 export interface SkillRow {
   name: string;
@@ -73,13 +74,51 @@ export interface SkillGroup {
   /** 该组 harness 的插件行有安装面（installScopes 非空）→ 可整包卸载；
    *  undefined → 非插件组（§6-4 卸载门控数据行驱动）。 */
   installSurface?: boolean;
+  /** 三档启用面（§4 ②推广·拍板 7-5/7-7 摆放）：视图相关档的行随组携带
+   *  （user 归全局配置区、project/local 归项目下方，由 CategoryDetail 按摆放
+   *  元数据过滤），PackBlock 逐行渲染循环钮；空/缺省 = 非插件组或无面。 */
+  scopeStates?: GroupScopeState[];
   skills: SkillRow[];
+}
+
+/** 插件组单档启用面：CategoryDetail 从 PluginRow 行投影，PackBlock 只消费。 */
+export interface GroupScopeState {
+  scope: ToolScope;
+  /** 该档覆写（行 enable 非 null 的投影；词表 on/off/inherit）。 */
+  enable: EnableOverride;
+  /** 行随身判据（与 server PUT 同分支）：非空 = 有安装面的 harness →
+   *  三档三态循环；空 = 仅启用面 harness → on/off 布尔循环。 */
+  installScopes: readonly ToolScope[];
 }
 
 /** 插件组的写回 harness（个人组无；由来源前缀派生，不写死两 harness）。 */
 function groupRuntime(source: GlobalSkillSource): PluginRuntime | null {
   return source.endsWith('-plugin') ? skillSourceRuntime(source) : null;
 }
+
+/** 三态循环 inherit → on → off（仅启用面 harness 走 on ↔ off 二态，见下）。 */
+const NEXT_STATE: Record<EnableOverride, EnableOverride> = {
+  inherit: 'on',
+  on: 'off',
+  off: 'inherit',
+};
+
+const STATE_LABEL: Record<EnableOverride, 'skillGrid.enableDefault' | 'skillGrid.enableOn' | 'skillGrid.enableOff'> = {
+  inherit: 'skillGrid.enableDefault',
+  on: 'skillGrid.enableOn',
+  off: 'skillGrid.enableOff',
+};
+
+const SCOPE_LABEL: Record<ToolScope, 'skillGrid.scopeUser' | 'skillGrid.scopeProject' | 'skillGrid.scopeLocal'> = {
+  user: 'skillGrid.scopeUser',
+  project: 'skillGrid.scopeProject',
+  local: 'skillGrid.scopeLocal',
+};
+
+/** 行随身判据（与 server PUT 同分支）：有安装面的 harness 三档三态；
+ *  仅启用面的 harness（如 codex）on/off 布尔循环（inherit → 400）。 */
+const nextStateOf = (s: GroupScopeState): EnableOverride =>
+  s.installScopes.length > 0 ? NEXT_STATE[s.enable] : s.enable === 'on' ? 'off' : 'on';
 
 function SkillCard({
   row,
@@ -212,7 +251,7 @@ export function SkillGrid({
   empty,
   onUninstallSkill,
   onOpenDetail,
-  onTogglePlugin,
+  onCyclePluginState,
   onUninstallPlugin,
 }: {
   /** Flat skill list (project mode). */
@@ -220,17 +259,20 @@ export function SkillGrid({
   /** Grouped skills (global mode). When present, renders collapsible groups. */
   groups?: SkillGroup[];
   /** Global skill groups shown read-only beneath the project list (project
-   * mode): tagged 全局, no uninstall / no enable toggle. */
+   * mode): tagged 全局, no pack uninstall；project/local 档启用覆写仍可写
+   *  （拍板 7-7：项目下方两档控制）。 */
   globalGroupsReadOnly?: SkillGroup[];
   /** Update info already filtered to this mode's scope. */
   updates?: SkillUpdate[];
   empty: string;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
-  onTogglePlugin?: (
+  /** 三档启用覆写循环（§4 ②推广）：交语义（档位 + 下一态），落盘与刷新由 App 统一。 */
+  onCyclePluginState?: (
     runtime: PluginRuntime,
     key: string,
-    enabled: boolean,
+    scope: ToolScope,
+    state: EnableOverride,
   ) => void | Promise<void>;
   /** 卸载 CC 插件包（harness 级，按注册键）；仅 claude-plugin 组消费。 */
   onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
@@ -246,7 +288,7 @@ export function SkillGrid({
         updates={updates}
         onUninstallSkill={onUninstallSkill}
         onOpenDetail={onOpenDetail}
-        onTogglePlugin={onTogglePlugin}
+        onCyclePluginState={onCyclePluginState}
         onUninstallPlugin={onUninstallPlugin}
       />
     );
@@ -295,6 +337,7 @@ export function SkillGrid({
           updates={updates}
           onUninstallSkill={onUninstallSkill}
           onOpenDetail={onOpenDetail}
+          onCyclePluginState={onCyclePluginState}
           readOnly
         />
       )}
@@ -342,7 +385,7 @@ function PackBlock({
   findUpdate,
   onUninstallSkill,
   onOpenDetail,
-  onTogglePlugin,
+  onCyclePluginState,
   onUninstallPlugin,
   readOnly,
 }: {
@@ -352,7 +395,13 @@ function PackBlock({
   findUpdate: (name: string) => SkillUpdate | undefined;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
-  onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void | Promise<void>;
+  /** 三档启用覆写循环（§4 ②推广）：交语义（档位 + 下一态），落盘与刷新由 App 统一。 */
+  onCyclePluginState?: (
+    runtime: PluginRuntime,
+    key: string,
+    scope: ToolScope,
+    state: EnableOverride,
+  ) => void | Promise<void>;
   /** 卸载插件包（harness 级，按注册键）；无安装面的 harness（如 codex）门控在
    *  installSurface（installScopes 非空才出按钮）。 */
   onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
@@ -367,12 +416,12 @@ function PackBlock({
   // A pack is atomic — its plugin is either enabled or not — so this is either
   // all of its skills or none. Shown anyway so every level reads alike.
   const stats = countEffectiveSkills([group]);
-  const toggleKey = `plugin-toggle:${runtime}:${group.pluginKey ?? '-'}`;
-  const toggleState = fb.stateOf(toggleKey);
   const canUninstallPack =
     isPlugin && !!group.installSurface && !!onUninstallPlugin && !readOnly && !!group.pluginKey;
-  const canToggle =
-    isPlugin && !!runtime && !!onTogglePlugin && !readOnly && group.enabled !== undefined;
+  // 逐档循环钮：视图相关档由 CategoryDetail 按摆放元数据随组携带（全局 =
+  // user，项目 = project/local），此处不写死档位。
+  const canCycle =
+    isPlugin && !!runtime && !!onCyclePluginState && (group.scopeStates?.length ?? 0) > 0;
   const packUninstallKey = `pack-uninstall:${group.pluginKey ?? '-'}`;
   const packUninstallState = fb.stateOf(packUninstallKey);
   const runUninstallPack = () => {
@@ -422,37 +471,49 @@ function PackBlock({
         </Badge>
         <AgentBadge agent={skillSourceRuntime(group.source) ?? undefined} />
         <EffectivePill effective={stats.effective} total={stats.total} />
-        {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
-         * Hidden in read-only (project) mode: global config is not edited from a project view. */}
-        {canToggle && (
-          <button
-            type="button"
-            disabled={toggleState === 'loading'}
-            onClick={(e) => {
-              e.stopPropagation();
-              void fb.run(
-                toggleKey,
-                async () => {
-                  await onTogglePlugin!(runtime!, group.pluginKey!, !group.enabled);
-                },
-                { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
+        {/* 逐档启用覆写循环钮（§4 ②推广）——真 <button>；外层行是 div 避免按钮嵌套。
+         * 档位集随组由摆放元数据决定（全局 = user，项目 = project/local），
+         * 循环序按行判据：三档三态 / 仅启用面布尔。 */}
+        {canCycle && (
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {group.scopeStates!.map((s) => {
+              const stateKey = `plugin-state:${runtime}:${group.pluginKey}:${s.scope}`;
+              return (
+                <button
+                  key={s.scope}
+                  type="button"
+                  disabled={fb.stateOf(stateKey) === 'loading'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void fb.run(
+                      stateKey,
+                      async () => {
+                        await onCyclePluginState!(runtime!, group.pluginKey!, s.scope, nextStateOf(s));
+                      },
+                      { fail: (err) => t('errors.pluginToggleFailed', { error: errorText(err) }) },
+                    );
+                  }}
+                  title={t('skillGrid.enableTip', {
+                    scope: t(SCOPE_LABEL[s.scope]),
+                    state: t(STATE_LABEL[s.enable]),
+                  })}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                    s.enable === 'on'
+                      ? 'bg-emerald-900/40 text-emerald-300'
+                      : 'bg-neutral-800 text-neutral-500',
+                  )}
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(stateKey)}
+                    className="h-3 w-3"
+                    icon={<Power className="h-3 w-3" />}
+                  />
+                  {t(SCOPE_LABEL[s.scope])}·{t(STATE_LABEL[s.enable])}
+                </button>
               );
-            }}
-            title={group.enabled ? t('skillGrid.pluginOn') : t('skillGrid.pluginOff')}
-            className={cn(
-              'ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-              group.enabled
-                ? 'bg-emerald-900/40 text-emerald-300'
-                : 'bg-neutral-800 text-neutral-500',
-            )}
-          >
-            <FeedbackIcon
-              state={toggleState}
-              className="h-3 w-3"
-              icon={<Power className="h-3 w-3" />}
-            />
-            {group.enabled ? t('skillGrid.on') : t('skillGrid.off')}
-          </button>
+            })}
+          </span>
         )}
         {/* pack uninstall — harness 注册表级，市场副本保留、可重装。市场源被删后
          * ToolkitSection 不再列出该包，这里是唯一卸载口。 */}
@@ -466,7 +527,7 @@ function PackBlock({
             }}
             className={cn(
               'shrink-0 text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-              !canToggle && 'ml-auto',
+              !canCycle && 'ml-auto',
             )}
             title={t('skillGrid.uninstallPackTitle')}
           >
@@ -516,7 +577,7 @@ function GroupedSkills({
   updates,
   onUninstallSkill,
   onOpenDetail,
-  onTogglePlugin,
+  onCyclePluginState,
   onUninstallPlugin,
   readOnly,
 }: {
@@ -524,13 +585,15 @@ function GroupedSkills({
   updates?: SkillUpdate[];
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
-  onTogglePlugin?: (
+  onCyclePluginState?: (
     runtime: PluginRuntime,
     key: string,
-    enabled: boolean,
+    scope: ToolScope,
+    state: EnableOverride,
   ) => void | Promise<void>;
   onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
-  /** Read-only context (project view): no enable toggle, cards tagged 全局. */
+  /** Read-only context (project view): no pack uninstall, cards tagged 全局；
+   *  逐档启用覆写（project/local）仍可写（拍板 7-7：项目下方两档控制）。 */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -690,7 +753,7 @@ function GroupedSkills({
                           findUpdate={findUpdate}
                           onUninstallSkill={onUninstallSkill}
                           onOpenDetail={onOpenDetail}
-                          onTogglePlugin={onTogglePlugin}
+                          onCyclePluginState={onCyclePluginState}
                           onUninstallPlugin={onUninstallPlugin}
                           readOnly={readOnly}
                         />

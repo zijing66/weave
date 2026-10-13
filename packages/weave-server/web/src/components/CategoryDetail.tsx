@@ -16,7 +16,7 @@ import {
   type InstallCapabilities,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
-import type { EnableOverride } from '@weavecode/core/tool';
+import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
@@ -64,6 +64,13 @@ export type RuntimeTab = Harness | 'all';
 /** 页签数组：每个 harness 一个 + 末尾「全部」。名表单点 = harness-meta。 */
 const RUNTIME_TABS: readonly RuntimeTab[] = [...HARNESS_ORDER, 'all'];
 
+/** 摆放元数据（拍板 7-5/7-7）：视图 → 该视图可写的插件启用档。user 归全局
+ *  配置区，project/local 归项目下方；新档位 = 加一行，视图与控件不写死。 */
+const GROUP_VIEW_SCOPES: Record<Mode, readonly ToolScope[]> = {
+  global: ['user'],
+  project: ['project', 'local'],
+};
+
 export function CategoryDetail({
   projectId,
   mode,
@@ -82,7 +89,7 @@ export function CategoryDetail({
   onUninstallMcp,
   onCycleMcpEnable,
   onUninstallFileAsset,
-  onTogglePlugin,
+  onCyclePluginState,
   onUninstallPlugin,
   onOpenFile,
   onOpenSkillDetail,
@@ -115,10 +122,12 @@ export function CategoryDetail({
   /** MCP 启停三态循环：落盘与行刷新由 App 统一负责。 */
   onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
   onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void | Promise<void>;
-  onTogglePlugin: (
+  /** 插件逐档启用覆写循环（§4 ②推广）：交语义（harness + 键 + 档位 + 下一态）。 */
+  onCyclePluginState: (
     runtime: PluginRuntime,
     key: string,
-    enabled: boolean,
+    scope: ToolScope,
+    state: EnableOverride,
   ) => void | Promise<void>;
   /** 卸载 CC 插件包（harness 级，按注册键；市场副本保留）。 */
   onUninstallPlugin: (runtime: PluginRuntime, key: string) => void | Promise<void>;
@@ -177,10 +186,15 @@ export function CategoryDetail({
     return filtered.map((g) => {
       const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
       const isRow = (r: PluginRow) => r.harness === runtime && r.key === g.pluginKey;
+      const rows = g.pluginKey && runtime ? pluginRows.filter(isRow) : [];
       const enabled =
-        g.pluginKey && runtime
-          ? pluginRows.some((r) => isRow(r) && r.effective)
-          : undefined;
+        g.pluginKey && runtime ? rows.some((r) => r.effective) : undefined;
+      // 逐档启用面（§4 ②推广·摆放）：只投影本视图可写的档（user 归全局、
+      // project/local 归项目），enable 为 null 的面无启停语义不进。
+      const viewScopes = GROUP_VIEW_SCOPES[mode];
+      const scopeStates = rows
+        .filter((r) => viewScopes.includes(r.scope) && r.enable !== null)
+        .map((r) => ({ scope: r.scope, enable: r.enable!, installScopes: r.installScopes }));
       return {
         label: g.label,
         source: g.source,
@@ -191,9 +205,8 @@ export function CategoryDetail({
         // §6-4 卸载门控去硬编码：该 harness 的插件行有安装面（installScopes
         // 非空）→ 可整包卸载，不再写死 runtime === 'claude'。
         installSurface:
-          g.pluginKey && runtime
-            ? pluginRows.some((r) => isRow(r) && r.installScopes.length > 0)
-            : undefined,
+          g.pluginKey && runtime ? rows.some((r) => r.installScopes.length > 0) : undefined,
+        ...(scopeStates.length > 0 ? { scopeStates } : {}),
         skills: g.skills.map((k) => ({
           name: k.name,
           scope: 'user' as const,
@@ -208,7 +221,7 @@ export function CategoryDetail({
         })),
       };
     });
-  }, [globalSkillGroups, pluginRows, runtimeTab]);
+  }, [mode, globalSkillGroups, pluginRows, runtimeTab]);
 
   // MCP rows for the active runtime tab. 行自带 (harness, scope) 面与
   // installScopes：视图规则 = 卡面取 installScopes 含当前 scope 的那档，否则
@@ -379,7 +392,7 @@ export function CategoryDetail({
           }
           onUninstallSkill={onUninstallSkill}
           onOpenDetail={onOpenSkillDetail}
-          onTogglePlugin={onTogglePlugin}
+          onCyclePluginState={onCyclePluginState}
           onUninstallPlugin={onUninstallPlugin}
         />
       )}
