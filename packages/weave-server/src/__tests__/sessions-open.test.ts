@@ -113,7 +113,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(opener.runCalls).toHaveLength(before);
   });
 
-  it('带 target 但 preset 非 wezterm → 400（明确拒绝，不静默忽略）', async () => {
+  it('带 target 但 preset 无定点通道 → 400（明确拒绝，不静默忽略）', async () => {
     await writeDaemonSettings({
       terminal: { preset: 'wt', customCommand: '' },
       locale: 'zh-CN',

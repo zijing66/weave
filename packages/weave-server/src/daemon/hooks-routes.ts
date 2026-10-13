@@ -13,7 +13,7 @@ import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
-import { defaultProjectOpener } from './opener.js';
+import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 
 /**
@@ -395,15 +395,16 @@ export async function handleHooksRoutes(
       const settings = await readDaemonSettings();
       const argv = [spec.bin, ...spec.openArgs(sessionId)];
       if (target) {
-        // 定点附加只有 wezterm mux 有 pane 通道；其它 preset 明确拒绝而非静默忽略。
-        if (settings.terminal.preset !== 'wezterm' && settings.terminal.preset !== 'auto') {
+        // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /
+        // Terminal.app osascript），其余明确拒绝而非静默忽略——调用方不列白名单。
+        if (!terminalBackendFor(settings.terminal).enumerable) {
           throw new Error(
-            `Terminal preset "${settings.terminal.preset}" cannot attach to a chosen pane — pick wezterm in settings`,
+            `Terminal preset "${settings.terminal.preset}" cannot attach to a chosen pane — pick wezterm or Terminal.app in settings`,
           );
         }
         const runAt = opener.runInTerminalAt;
         if (!runAt) throw new Error('Targeted attach is unavailable');
-        await runAt(project.path, argv, target);
+        await runAt(project.path, argv, target, settings.terminal);
       } else {
         await opener.runInTerminal(project.path, argv, settings.terminal);
       }

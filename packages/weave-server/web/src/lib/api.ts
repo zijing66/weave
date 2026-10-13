@@ -44,13 +44,13 @@ export interface ProjectRow {
   meta: string | null;
 }
 
-/** 会话终端可附加目标（wezterm 一个窗口内的一个 tab，按最近活跃排序）。 */
+/** 会话终端可附加目标（一个窗口内的一个 tab，按最近活跃排序；id 格式归各终端）。 */
 export interface TerminalTarget {
   /** 不透明 id（回传给 openSessionTerminal）。 */
   id: string;
   windowId: number;
   tabId: number;
-  /** 聚焦 pane 的标题（claude 的 OSC 标题）；null → 前端回落窗口/Tab 号文案。 */
+  /** 聚焦 pane 的标题；null → 前端回落窗口/Tab 号文案。 */
   title: string | null;
   /** cwd 命中该项目的 pane 数 / 该 tab 总 pane 数。 */
   matchCount: number;

@@ -134,8 +134,15 @@ export abstract class TerminalBackend {
   }
 
   /** 可附加目标（窗口内的 tab）；不支持的 preset 走这里。 */
-  async listTargets(_dir: string): Promise<WeztermAttachTarget[]> {
+  async listTargets(_dir: string): Promise<AttachTarget[]> {
     return [];
+  }
+
+  /** 定点附加（多终端弹窗选定的目标）；无通道的 preset 明确拒绝，不静默忽略。 */
+  async runAt(_dir: string, _argv: string[], _targetId: string): Promise<void> {
+    throw new Error(
+      `Terminal preset "${this.preset}" cannot attach to a chosen pane — pick wezterm or Terminal.app in settings`,
+    );
   }
 
   /** 按候选顺序起一个；全失败抛真相（含试过哪些命令）。 */
@@ -261,7 +268,104 @@ class CustomBackend extends TerminalBackend {
   }
 }
 
-/** wezterm：run 走 mux 通道；窗口/pane 反查也只有它问得到。 */
+/**
+ * ghostty：Linux 上先走 `+new-window` IPC（窗口开进已运行实例，1.2.0+；GTK
+ * 实现，见源码 src/apprt/gtk/ipc）——IPC 是短命 CLI、按退出码判成败，不能进
+ * 候选表（trySpawn 只看进程起了没，会假成功），故覆写 open/run。无实例/未配
+ * D-Bus 激活时非零退出 → 兜底独立进程候选。`-e` 后的 argv 原样直达（中间无
+ * shell），与 send-text 路径不同、无需引号。反查无通道（无 list 类命令），
+ * 不谎报。
+ */
+class GhosttyBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('ghostty', false, platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return PRESET_CANDIDATES.ghostty(dir, run, this.platform);
+  }
+
+  private async openViaIpcThenStandalone(dir: string, argv: string[]): Promise<void> {
+    if (this.platform === 'linux') {
+      const args = [
+        '+new-window',
+        `--working-directory=${dir}`,
+        ...(argv.length > 0 ? ['-e', ...argv] : []),
+      ];
+      const r = await captureCommand('ghostty', args);
+      if (r?.ok) return;
+    }
+    await this.spawnFirst(
+      this.candidates(dir, argv.length > 0 ? argv : undefined),
+      `Terminal preset "${this.preset}" is unavailable on this platform`,
+    );
+  }
+
+  override open(dir: string): Promise<void> {
+    return this.openViaIpcThenStandalone(dir, []);
+  }
+
+  override run(dir: string, argv: string[]): Promise<void> {
+    return this.openViaIpcThenStandalone(dir, argv);
+  }
+}
+
+/**
+ * Terminal.app（macOS）：枚举/定点全走 osascript + ps + lsof——tab 的 tty →
+ * 该 tty 的进程树根（shell；被 exec 替换成 claude 时就是 claude 本身）→ lsof
+ * 取 cwd。无分屏，tab 即整面；「pane 分屏」的等价物是新 tab：run 复用同项目
+ * 窗口开新 tab，定点附加落在所选 tab 的窗口。枚举通道只在 darwin 存在，其它
+ * 平台 enumerable=false。
+ */
+class TerminalAppBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('terminal', platform === 'darwin', platform);
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return PRESET_CANDIDATES.terminal(dir, run, this.platform);
+  }
+
+  /** 同项目已有 Terminal.app 窗口 → 在那个窗口开新 tab；窗口中途没了 → 落回新窗。 */
+  override async run(dir: string, argv: string[]): Promise<void> {
+    if (this.platform === 'darwin') {
+      const surfaces = await listTerminalAppSurfaces(this.platform);
+      const win = pickTerminalAppWindow(surfaces, dir, this.platform);
+      if (win && (await doScriptInTerminalWindow(dir, argv, win.windowId))) return;
+    }
+    await this.spawnFirst(
+      this.candidates(dir, argv),
+      `Terminal preset "${this.preset}" is unavailable on this platform`,
+    );
+  }
+
+  override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
+    if (dirs.length === 0 || this.platform !== 'darwin') return new Map(dirs.map((d) => [d, 0]));
+    const surfaces = await terminalAppSurfacesCached(this.platform);
+    if (surfaces.length === 0) return new Map(dirs.map((d) => [d, 0]));
+    return countWindowsByDir(
+      dirs,
+      surfaces.flatMap((s) =>
+        s.cwd ? [{ muxKey: 'terminal.app', windowId: s.windowId, cwd: s.cwd }] : [],
+      ),
+    );
+  }
+
+  override listTargets(dir: string): Promise<AttachTarget[]> {
+    return listTerminalAppTargets(dir, this.platform);
+  }
+
+  /** 定点附加：落点是所选 tab 的窗口（do script 在该窗口开新 tab）。 */
+  override async runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+    const parsed = parseTerminalAppTargetId(targetId);
+    if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
+    if (!(await doScriptInTerminalWindow(dir, argv, parsed.windowId))) {
+      throw new Error('Terminal window is gone — pick a terminal again');
+    }
+  }
+}
+
+/** wezterm：run 走 mux 通道；窗口/pane 反查走 `cli list`。 */
 class WeztermBackend extends TerminalBackend {
   constructor(platform: NodeJS.Platform) {
     super('wezterm', true, platform);
@@ -294,8 +398,12 @@ class WeztermBackend extends TerminalBackend {
     );
   }
 
-  override listTargets(dir: string): Promise<WeztermAttachTarget[]> {
+  override listTargets(dir: string): Promise<AttachTarget[]> {
     return listAttachTargets(dir, this.platform);
+  }
+
+  override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+    return runInWeztermAt(dir, argv, targetId, this.platform);
   }
 }
 
@@ -328,13 +436,26 @@ class AutoBackend extends TerminalBackend {
     });
   }
 
-  /** auto 在有 wezterm 的机器上开的就是 wezterm，反查口径随之。 */
-  override countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
-    return new WeztermBackend(this.platform).countWindows(dirs);
+  /**
+   * auto 的反查/定点通道随平台走它实际会开的终端：darwin 候选序里是 Terminal.app
+   * （没有 wezterm），其余平台沿用 wezterm 口径（有 wezterm 的机器上开的就是它）。
+   */
+  private attachBackend(): TerminalBackend {
+    return this.platform === 'darwin'
+      ? new TerminalAppBackend(this.platform)
+      : new WeztermBackend(this.platform);
   }
 
-  override listTargets(dir: string): Promise<WeztermAttachTarget[]> {
-    return new WeztermBackend(this.platform).listTargets(dir);
+  override countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
+    return this.attachBackend().countWindows(dirs);
+  }
+
+  override listTargets(dir: string): Promise<AttachTarget[]> {
+    return this.attachBackend().listTargets(dir);
+  }
+
+  override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+    return this.attachBackend().runAt(dir, argv, targetId);
   }
 }
 
@@ -347,14 +468,12 @@ const BACKEND_FACTORIES: Record<
   powershell: (_terminal, platform) =>
     new CandidatesBackend('powershell', platform, PRESET_CANDIDATES.powershell),
   cmd: (_terminal, platform) => new CandidatesBackend('cmd', platform, PRESET_CANDIDATES.cmd),
-  terminal: (_terminal, platform) =>
-    new CandidatesBackend('terminal', platform, PRESET_CANDIDATES.terminal),
+  terminal: (_terminal, platform) => new TerminalAppBackend(platform),
   iterm: (_terminal, platform) => new CandidatesBackend('iterm', platform, PRESET_CANDIDATES.iterm),
   gnome: (_terminal, platform) => new CandidatesBackend('gnome', platform, PRESET_CANDIDATES.gnome),
   konsole: (_terminal, platform) =>
     new CandidatesBackend('konsole', platform, PRESET_CANDIDATES.konsole),
-  ghostty: (_terminal, platform) =>
-    new CandidatesBackend('ghostty', platform, PRESET_CANDIDATES.ghostty),
+  ghostty: (_terminal, platform) => new GhosttyBackend(platform),
   wezterm: (_terminal, platform) => new WeztermBackend(platform),
   custom: (terminal, platform) => new CustomBackend(terminal, platform),
 };
@@ -624,9 +743,12 @@ export function planWeztermNewWindow(dir: string, workspace: string | null): str
   return args;
 }
 
-/** 会话终端可附加目标（多终端弹窗的选项）：wezterm 一个窗口内的一个 tab。 */
-export interface WeztermAttachTarget {
-  /** 不透明 id（`<mux 短哈希>:<windowId>:<tabId>`）——web 只见 id，不见本机 socket 路径。 */
+/**
+ * 会话终端可附加目标（多终端弹窗的选项）：一个终端窗口内的一个 tab（wezterm
+ * 的 tab 含分屏 pane；Terminal.app 的 tab 即整面）。id 不透明、格式归各后端
+ * （wezterm `<mux 短哈希>:<windowId>:<tabId>`，Terminal.app `terminal:<win>:<tab>`）。
+ */
+export interface AttachTarget {
   id: string;
   windowId: number;
   tabId: number;
@@ -666,10 +788,10 @@ export function attachTargetsFromMuxes(
   dir: string,
   muxes: readonly { socket: string; idleMs: number; panes: WeztermPaneInfo[] }[],
   platform: NodeJS.Platform = process.platform,
-): WeztermAttachTarget[] {
+): AttachTarget[] {
   const key = normalizeDirKey(dir, platform);
   if (!key) return [];
-  const out: WeztermAttachTarget[] = [];
+  const out: AttachTarget[] = [];
   for (const mux of [...muxes].sort((a, b) => a.idleMs - b.idleMs)) {
     const byTarget = new Map<string, WeztermPaneInfo[]>();
     for (const p of mux.panes) {
@@ -678,7 +800,7 @@ export function attachTargetsFromMuxes(
       list.push(p);
       byTarget.set(k, list);
     }
-    const rows: WeztermAttachTarget[] = [];
+    const rows: AttachTarget[] = [];
     for (const [k, panes] of byTarget) {
       const matchCount = panes.filter((p) => normalizeDirKey(p.cwd, platform) === key).length;
       if (matchCount === 0) continue; // 非本项目终端 → 不进候选
@@ -705,7 +827,7 @@ export function attachTargetsFromMuxes(
 export async function listAttachTargets(
   dir: string,
   platform: NodeJS.Platform = process.platform,
-): Promise<WeztermAttachTarget[]> {
+): Promise<AttachTarget[]> {
   const { muxes } = await weztermLiveMuxes();
   return attachTargetsFromMuxes(dir, muxes, platform);
 }
@@ -746,10 +868,10 @@ export function weztermActiveWorkspaceOf(jsonText: string | null): string | null
   return weztermActiveClient(jsonText)?.workspace ?? null;
 }
 
-const WEZTERM_CLI_TIMEOUT_MS = 5000;
+const CAPTURE_TIMEOUT_MS = 5000;
 
-/** wezterm cli 调用结果：ok=rc0 且未超时；out/err 供上层拼错误文案。 */
-interface WeztermCliResult {
+/** 捕获型子调用结果：ok=rc0 且未超时；out/err 供上层拼错误文案。 */
+interface CaptureResult {
   ok: boolean;
   out: string;
   err: string;
@@ -757,18 +879,19 @@ interface WeztermCliResult {
 }
 
 /**
- * wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。
- * socket 非空时经 WEZTERM_UNIX_SOCKET 指定 mux——daemon 不在 pane 里，没有
- * wezterm 注入的这个 env，不显式点名就会去连默认 sock/残留 socket 而误判。
+ * 捕获型子调用（与 fire-and-forget 的 trySpawn 相对）：null = 进程起不来
+ * （ENOENT 等）；其余带 rc/stdout/stderr。daemon 侧查世界的通道都走它
+ * （wezterm cli / osascript / ps / lsof）。
  */
-function weztermCli(args: string[], socket: string): Promise<WeztermCliResult | null> {
+function captureCommand(
+  command: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<CaptureResult | null> {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn('wezterm', args, {
-        windowsHide: true,
-        env: { ...process.env, WEZTERM_UNIX_SOCKET: socket },
-      });
+      child = spawn(command, args, { windowsHide: true, env: env ?? process.env });
     } catch {
       resolve(null);
       return;
@@ -776,7 +899,7 @@ function weztermCli(args: string[], socket: string): Promise<WeztermCliResult | 
     let out = '';
     let err = '';
     let settled = false;
-    const finish = (r: WeztermCliResult | null) => {
+    const finish = (r: CaptureResult | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -796,7 +919,7 @@ function weztermCli(args: string[], socket: string): Promise<WeztermCliResult | 
       child.unref();
       child.kill();
       finish({ ok: false, out, err: err.trim(), timedOut: true });
-    }, WEZTERM_CLI_TIMEOUT_MS);
+    }, CAPTURE_TIMEOUT_MS);
     timer.unref();
     child.on('error', () => finish(null));
     child.on('close', (code) => {
@@ -805,11 +928,20 @@ function weztermCli(args: string[], socket: string): Promise<WeztermCliResult | 
   });
 }
 
+/**
+ * wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。
+ * socket 非空时经 WEZTERM_UNIX_SOCKET 指定 mux——daemon 不在 pane 里，没有
+ * wezterm 注入的这个 env，不显式点名就会去连默认 sock/残留 socket 而误判。
+ */
+function weztermCli(args: string[], socket: string): Promise<CaptureResult | null> {
+  return captureCommand('wezterm', args, { ...process.env, WEZTERM_UNIX_SOCKET: socket });
+}
+
 /** cli 步骤失败的诊断文案：socket + 命令 + stderr/超时，经路由 400 → 前端 toast。 */
-function weztermStepError(args: string[], socket: string, r: WeztermCliResult | null): string {
+function weztermStepError(args: string[], socket: string, r: CaptureResult | null): string {
   const cmd = `wezterm[${basename(socket)}] ${args.join(' ')}`;
   if (r === null) return `${cmd}: executable not found`;
-  if (r.timedOut) return `${cmd}: timed out after ${WEZTERM_CLI_TIMEOUT_MS}ms`;
+  if (r.timedOut) return `${cmd}: timed out after ${CAPTURE_TIMEOUT_MS}ms`;
   return r.err ? `${cmd}: ${r.err}` : `${cmd}: exited with failure`;
 }
 
@@ -983,8 +1115,8 @@ async function weztermSpawnAndSend(
   argv: string[],
   split: WeztermSplitTarget | null,
   workspace: string | null,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
-  const platform = process.platform;
   const spawnArgs = split
     ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
     : planWeztermNewWindow(dir, workspace);
@@ -1011,7 +1143,12 @@ async function weztermSpawnAndSend(
  * 就 throw——让前端报「该终端已关闭，请重选」，绝不静默换到别处（换了就是
  * 「我点了 A，命令进了 B」）。
  */
-export async function runInWeztermAt(dir: string, argv: string[], targetId: string): Promise<void> {
+export async function runInWeztermAt(
+  dir: string,
+  argv: string[],
+  targetId: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
   const parsed = parseAttachTargetId(targetId);
   if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
   const { muxes } = await weztermLiveMuxes();
@@ -1021,14 +1158,14 @@ export async function runInWeztermAt(dir: string, argv: string[], targetId: stri
     (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
   );
   if (tabPanes.length === 0) throw new Error('terminal tab is gone — pick a terminal again');
-  await weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace);
+  await weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace, platform);
 }
 
 /**
  * 项目卡「终端」角标的数据面：每个目录已打开的终端窗口数（窗口级口径）。
- * 枚举能力只有 wezterm 有（mux `cli list` 报 pane 的 window_id + cwd）；
- * preset = wezterm/auto 才探测（auto 在装了 wezterm 的机器上开的就是它），
- * 其余 preset 没有可枚举通道 → 一律 0（角标不显示，不谎报）。
+ * 「这个 preset 能不能反查」由后端回答：wezterm 走 mux `cli list`、Terminal.app
+ * 走 osascript+ps+lsof；其余 preset 没有可枚举通道 → 一律 0（角标不显示，
+ * 不谎报）。
  */
 export async function countOpenTerminals(
   dirs: string[],
@@ -1073,6 +1210,233 @@ async function weztermLiveMuxesCached(): Promise<WeztermMux[]> {
   return muxes;
 }
 
+// ---- Terminal.app 通道（macOS）：osascript 反查 + do script 落子 ----
+//
+// Terminal.app 无分屏，tab 即整面；AppleScript 的 `do script "…" in <窗口>`
+// 在指定窗口开新 tab（`in` 缺省 = 新窗口）。反查走 tty 桥：tab 的 tty →
+// `ps` 找该 tty 的进程树根（shell；被 exec 替换成 claude 时就是 claude 本身，
+// cwd 口径不变）→ `lsof` 取根进程 cwd。daemon 控制 Terminal.app 需 macOS
+// 自动化授权（TCC），未授权时 AppleEvent 失败 → 枚举空表/落子 false，不谎报。
+
+/** Terminal.app 一个 tab（整面）：窗口/序号/tty + 窗口是否最前/tab 是否聚焦。 */
+export interface TerminalAppSurface {
+  /** AppleScript window id——会话期稳定，不受窗口顺序/焦点变化影响。 */
+  windowId: number;
+  /** 窗口内 tab 序号（1 起）。 */
+  tabIndex: number;
+  /** tty 设备路径（/dev/ttysNNN）——cwd 桥接键。 */
+  tty: string;
+  selected: boolean;
+  frontmost: boolean;
+  /** 根进程 cwd；取不到 = null（tab 在但不进任何目录匹配）。 */
+  cwd: string | null;
+}
+
+/** 一次 osascript 拉全所有窗口的 tab 清单（Terminal 未运行 → 空串）。 */
+const TERMINAL_APP_DUMP = [
+  'if application "Terminal" is not running then return ""',
+  'tell application "Terminal"',
+  '  set out to ""',
+  '  repeat with w in windows',
+  '    set wid to id of w',
+  '    set fm to frontmost of w as text',
+  '    repeat with t in tabs of w',
+  '      set out to out & wid & "\\t" & (index of t) & "\\t" & tty of t & "\\t" & (selected of t as text) & "\\t" & fm & linefeed',
+  '    end repeat',
+  '  end repeat',
+  '  return out',
+  'end tell',
+].join('\n');
+
+/** dump 文本 → surface 列表（cwd 另行桥接）；坏行跳过，不整体失败。 */
+export function parseTerminalAppDump(text: string): Omit<TerminalAppSurface, 'cwd'>[] {
+  const out: Omit<TerminalAppSurface, 'cwd'>[] = [];
+  for (const line of text.split('\n')) {
+    const cols = line.trim().split('\t');
+    if (cols.length !== 5) continue;
+    const windowId = Number(cols[0]);
+    const tabIndex = Number(cols[1]);
+    if (!Number.isInteger(windowId) || !Number.isInteger(tabIndex)) continue;
+    out.push({
+      windowId,
+      tabIndex,
+      tty: cols[2]!,
+      selected: cols[3] === 'true',
+      frontmost: cols[4] === 'true',
+    });
+  }
+  return out;
+}
+
+/**
+ * `ps -axo pid=,ppid=,tty=` → tty（ps 形如 ttys004，无 /dev/ 前缀）→ 进程树
+ * 根 pid。根 = 父进程不在同一 tty 上的那个（shell 的父是 launchd，claude 的
+ * 父是 shell）；被 exec 替换成 claude 时根就是 claude，cwd 口径不变。
+ */
+export function parsePsRootPids(psText: string): Map<string, number> {
+  const pidsByTty = new Map<string, Set<number>>();
+  const parentOf = new Map<number, number>();
+  for (const line of psText.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const tty = m[3]!;
+    if (tty === '??') continue; // 无 tty 的进程不可能是终端 tab
+    const set = pidsByTty.get(tty) ?? new Set<number>();
+    set.add(pid);
+    pidsByTty.set(tty, set);
+    parentOf.set(pid, Number(m[2]));
+  }
+  const out = new Map<string, number>();
+  for (const [tty, pids] of pidsByTty) {
+    for (const pid of pids) {
+      if (!pids.has(parentOf.get(pid) ?? -1)) {
+        out.set(tty, pid);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** `lsof -Fn` 输出 → pid → cwd（`p<pid>` 行后随 `n<路径>` 行）。 */
+export function parseLsofCwds(lsofText: string): Map<number, string> {
+  const out = new Map<number, string>();
+  let currentPid = -1;
+  for (const line of lsofText.split('\n')) {
+    if (line.startsWith('p') && /^\d+$/.test(line.slice(1))) {
+      currentPid = Number(line.slice(1));
+    } else if (line.startsWith('n') && currentPid !== -1) {
+      out.set(currentPid, line.slice(1));
+      currentPid = -1;
+    }
+  }
+  return out;
+}
+
+/** 实时枚举（不吃缓存——落点决策必须看实时世界，同 wezterm 口径）。 */
+export async function listTerminalAppSurfaces(
+  platform: NodeJS.Platform,
+): Promise<TerminalAppSurface[]> {
+  if (platform !== 'darwin') return []; // 通道只在 darwin 存在，别平台不试 osascript
+  const dump = await captureCommand('osascript', ['-e', TERMINAL_APP_DUMP]);
+  if (!dump?.ok) return [];
+  const partial = parseTerminalAppDump(dump.out);
+  if (partial.length === 0) return [];
+  const ps = await captureCommand('ps', ['-axo', 'pid=,ppid=,tty=']);
+  if (!ps?.ok) return partial.map((s) => ({ ...s, cwd: null }));
+  const roots = parsePsRootPids(ps.out);
+  const rootPids = [
+    ...new Set(partial.map((s) => roots.get(s.tty.replace(/^\/dev\//, '')) ?? -1)),
+  ].filter((pid) => pid !== -1);
+  const lsof =
+    rootPids.length > 0
+      ? await captureCommand('lsof', ['-a', '-p', rootPids.join(','), '-d', 'cwd', '-Fn'])
+      : null;
+  const cwds = parseLsofCwds(lsof?.out ?? '');
+  return partial.map((s) => ({
+    ...s,
+    cwd: cwds.get(roots.get(s.tty.replace(/^\/dev\//, '')) ?? -1) ?? null,
+  }));
+}
+
+/** 探活结果短缓存（10s）：与 muxCache 同由——角标轮询每 30s 打多枪，一枪 =
+ * osascript+ps+lsof 三个子进程。只给计数用。 */
+let terminalAppCache: { at: number; surfaces: TerminalAppSurface[] } | null = null;
+
+async function terminalAppSurfacesCached(platform: NodeJS.Platform): Promise<TerminalAppSurface[]> {
+  if (terminalAppCache && Date.now() - terminalAppCache.at < 10000) return terminalAppCache.surfaces;
+  const surfaces = await listTerminalAppSurfaces(platform);
+  terminalAppCache = { at: Date.now(), surfaces };
+  return surfaces;
+}
+
+function terminalAppTargetId(windowId: number, tabIndex: number): string {
+  return `terminal:${windowId}:${tabIndex}`;
+}
+
+/** 目标 id ↔ (window, tab) 解码；坏 id → null。 */
+export function parseTerminalAppTargetId(id: string): { windowId: number; tabIndex: number } | null {
+  const m = /^terminal:(\d+):(\d+)$/.exec(id);
+  if (!m) return null;
+  return { windowId: Number(m[1]), tabIndex: Number(m[2]) };
+}
+
+function terminalAppMatches(
+  surfaces: readonly TerminalAppSurface[],
+  dir: string,
+  platform: NodeJS.Platform,
+): TerminalAppSurface[] {
+  const key = normalizeDirKey(dir, platform);
+  if (!key) return [];
+  return surfaces.filter((s) => s.cwd !== null && normalizeDirKey(s.cwd, platform) === key);
+}
+
+/**
+ * 目标列表（纯函数）：只列本项目名下的 tab。排序（最近活跃从上往下）：
+ * ① 最前窗口的 tab 在前（Terminal.app 无 mux idle 信号，frontmost 是最近
+ * 活跃的最佳代理）；② 窗口内聚焦 tab 在前；③ 其余按 tabIndex 降序（越晚开
+ * 越可能更近用过）。matchCount/paneCount 恒 1/1——一个 tab 就一个面。
+ */
+export function terminalAppTargets(
+  dir: string,
+  surfaces: readonly TerminalAppSurface[],
+  platform: NodeJS.Platform = process.platform,
+): AttachTarget[] {
+  const matched = terminalAppMatches(surfaces, dir, platform);
+  matched.sort(
+    (a, b) =>
+      Number(b.frontmost) - Number(a.frontmost) ||
+      Number(b.selected) - Number(a.selected) ||
+      b.tabIndex - a.tabIndex,
+  );
+  return matched.map((s) => ({
+    id: terminalAppTargetId(s.windowId, s.tabIndex),
+    windowId: s.windowId,
+    tabId: s.tabIndex,
+    title: null, // 取 tab 标题要另一次 AppleScript，不值：前端回落「窗口 W · Tab T」
+    matchCount: 1,
+    paneCount: 1,
+    active: s.frontmost && s.selected,
+  }));
+}
+
+/** run 的落点：同项目已开的窗口（frontmost 优先，否则最大 windowId——越晚
+ * 创建越可能更近用过）；tab 只用于定位窗口（do script 落点本来就是窗口级
+ * 新 tab，tab 顺序变动无害）。没有 → null（走新窗）。 */
+export function pickTerminalAppWindow(
+  surfaces: readonly TerminalAppSurface[],
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): { windowId: number; tabIndex: number } | null {
+  const matched = terminalAppMatches(surfaces, dir, platform);
+  if (matched.length === 0) return null;
+  matched.sort(
+    (a, b) => Number(b.frontmost) - Number(a.frontmost) || b.windowId - a.windowId,
+  );
+  return { windowId: matched[0]!.windowId, tabIndex: matched[0]!.tabIndex };
+}
+
+/** 目标列表（实时枚举入口）。 */
+async function listTerminalAppTargets(dir: string, platform: NodeJS.Platform): Promise<AttachTarget[]> {
+  return terminalAppTargets(dir, await listTerminalAppSurfaces(platform), platform);
+}
+
+/** 在指定窗口开新 tab 跑命令；false = AppleScript 失败（窗口没了/无授权）。 */
+async function doScriptInTerminalWindow(
+  dir: string,
+  argv: string[],
+  windowId: number,
+): Promise<boolean> {
+  const shell = `cd ${quotePath(dir, 'darwin')} && ${joinCmd(argv, 'darwin')}`;
+  const text = shell.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const r = await captureCommand('osascript', [
+    '-e',
+    `tell application "Terminal" to do script "${text}" in window id ${windowId}`,
+  ]);
+  return r?.ok === true;
+}
+
 /** Injection seam for the open routes — tests substitute a spy. */
 export interface ProjectOpener {
   openExplorer(dir: string): Promise<void>;
@@ -1081,9 +1445,14 @@ export interface ProjectOpener {
   /** 已打开终端窗口计数（可选：不实现的 spy 由路由回落到默认实现）。 */
   countTerminals?(dirs: string[], terminal: TerminalSettings): Promise<Map<string, number>>;
   /** 可附加终端目标列表（可选）：多终端选择弹窗的数据面。 */
-  listTerminals?(dir: string): Promise<WeztermAttachTarget[]>;
+  listTerminals?(dir: string, terminal: TerminalSettings): Promise<AttachTarget[]>;
   /** 定点附加到指定目标 tab（可选）：会话终端选择后的落点。 */
-  runInTerminalAt?(dir: string, argv: string[], targetId: string): Promise<void>;
+  runInTerminalAt?(
+    dir: string,
+    argv: string[],
+    targetId: string,
+    terminal: TerminalSettings,
+  ): Promise<void>;
 }
 
 export const defaultProjectOpener: ProjectOpener = {
@@ -1091,6 +1460,9 @@ export const defaultProjectOpener: ProjectOpener = {
   openTerminal: openInTerminal,
   runInTerminal,
   countTerminals: countOpenTerminals,
-  listTerminals: listAttachTargets,
-  runInTerminalAt: runInWeztermAt,
+  // 目标列表/定点附加经 settings → 后端分发（wezterm mux / Terminal.app osascript），
+  // 不再硬连 wezterm——调用方只传语义参数。
+  listTerminals: (dir, terminal) => terminalBackendFor(terminal).listTargets(dir),
+  runInTerminalAt: (dir, argv, targetId, terminal) =>
+    terminalBackendFor(terminal).runAt(dir, argv, targetId),
 };

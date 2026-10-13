@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTerminalLaunch, SocketProbeGate, terminalBackendFor } from '../opener.js';
-import type { TerminalSettings } from '../settings.js';
+import {
+  parseLsofCwds,
+  parsePsRootPids,
+  parseTerminalAppDump,
+  parseTerminalAppTargetId,
+  pickTerminalAppWindow,
+  resolveTerminalLaunch,
+  SocketProbeGate,
+  terminalAppTargets,
+  terminalBackendFor,
+} from '../opener.js';
+import type { TerminalAppSurface, TerminalSettings } from '../opener.js';
 
 /**
  * 终端后端的行为钉子。
@@ -114,9 +124,11 @@ describe('终端后端 — auto 由具名条目组合（去重的等价性证明
 });
 
 describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白名单）', () => {
-  it('只有 wezterm / auto 能反查已开窗口', () => {
+  it('只有 wezterm / auto / darwin 的 Terminal.app 能反查已开窗口', () => {
     expect(terminalBackendFor(settings('wezterm')).enumerable).toBe(true);
     expect(terminalBackendFor(settings('auto')).enumerable).toBe(true);
+    // Terminal.app 的枚举通道（osascript+ps+lsof）只在 darwin 存在
+    expect(terminalBackendFor(settings('terminal'), 'darwin').enumerable).toBe(true);
     for (const preset of [
       'wt',
       'powershell',
@@ -136,6 +148,124 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     const backend = terminalBackendFor(settings('cmd'));
     expect((await backend.countWindows(['/a', '/b'])).size).toBe(0);
     expect(await backend.listTargets('/a')).toEqual([]);
+  });
+
+  it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {
+    for (const preset of ['wt', 'ghostty', 'iterm'] as const) {
+      const backend = terminalBackendFor(settings(preset), 'win32');
+      await expect(backend.runAt('/tmp/p', ['claude'], 'terminal:1:1'), preset).rejects.toThrow(
+        `Terminal preset "${preset}" cannot attach to a chosen pane`,
+      );
+    }
+  });
+});
+
+describe('终端后端 — Terminal.app 通道（osascript 反查 + do script 落子）', () => {
+  it('osascript dump → surfaces（坏行跳过，不整体失败）', () => {
+    const dump = [
+      '4029\t1\t/dev/ttys001\ttrue\ttrue',
+      '4029\t2\t/dev/ttys002\tfalse\ttrue',
+      'junk',
+      '4030\t1\t/dev/ttys003\ttrue\tfalse',
+    ].join('\n');
+    expect(parseTerminalAppDump(dump)).toEqual([
+      { windowId: 4029, tabIndex: 1, tty: '/dev/ttys001', selected: true, frontmost: true },
+      { windowId: 4029, tabIndex: 2, tty: '/dev/ttys002', selected: false, frontmost: true },
+      { windowId: 4030, tabIndex: 1, tty: '/dev/ttys003', selected: true, frontmost: false },
+    ]);
+    expect(parseTerminalAppDump('')).toEqual([]);
+  });
+
+  it('ps → 每 tty 的进程树根（父进程不在同一 tty = shell；exec 替换后就是它）', () => {
+    const ps = [
+      '  500   123 ttys001', // 根：父 123 不在 ttys001
+      '  777   500 ttys001', // claude，父是 500（同 tty）→ 非根
+      '  888   999 ttys002', // 根（exec 替换成 claude 后 cwd 口径不变）
+      '  999     1 ??', // 无 tty 的进程不进
+    ].join('\n');
+    expect(parsePsRootPids(ps)).toEqual(
+      new Map([
+        ['ttys001', 500],
+        ['ttys002', 888],
+      ]),
+    );
+  });
+
+  it('lsof -Fn → pid → cwd', () => {
+    const lsof = ['p500', 'fcwd', 'n/Users/x/proj', 'p888', 'fcwd', 'n/tmp/other'].join('\n');
+    expect(parseLsofCwds(lsof)).toEqual(
+      new Map([
+        [500, '/Users/x/proj'],
+        [888, '/tmp/other'],
+      ]),
+    );
+    expect(parseLsofCwds('')).toEqual(new Map());
+  });
+
+  const surface = (
+    windowId: number,
+    tabIndex: number,
+    cwd: string | null,
+    selected: boolean,
+    frontmost: boolean,
+  ): TerminalAppSurface => ({
+    windowId,
+    tabIndex,
+    tty: `/dev/ttys0${windowId}${tabIndex}`,
+    selected,
+    frontmost,
+    cwd,
+  });
+
+  it('目标列表：只列本项目 tab；frontmost → 聚焦 → 新 tab 排前', () => {
+    const surfaces = [
+      surface(1, 1, '/other', true, true), // 非本项目
+      surface(2, 3, '/tmp/proj', false, true), // 本项目，最前窗口的背景 tab
+      surface(2, 1, '/tmp/proj', true, true), // 本项目，最前窗口的聚焦 tab
+      surface(2, 2, null, false, true), // cwd 取不到 → 不进
+      surface(3, 1, '/tmp/proj', true, false), // 本项目，背景窗口的聚焦 tab
+    ];
+    const targets = terminalAppTargets('/tmp/proj', surfaces, 'darwin');
+    expect(targets.map((t) => t.id)).toEqual(['terminal:2:1', 'terminal:2:3', 'terminal:3:1']);
+    expect(targets[0]).toMatchObject({
+      windowId: 2,
+      tabId: 1,
+      title: null, // 不取 tab 标题：前端回落「窗口 W · Tab T」
+      matchCount: 1,
+      paneCount: 1,
+      active: true,
+    });
+    expect(targets[2]!.active).toBe(false);
+  });
+
+  it('run 落点：frontmost 优先，其次最大 windowId（越晚创建越近用过）；没有 → null', () => {
+    const surfaces = [
+      surface(3, 1, '/tmp/proj', true, false),
+      surface(2, 1, '/tmp/proj', false, false),
+    ];
+    expect(pickTerminalAppWindow(surfaces, '/tmp/proj', 'darwin')).toEqual({
+      windowId: 3,
+      tabIndex: 1,
+    });
+    const front = [surface(9, 2, '/tmp/proj', false, false), surface(2, 7, '/tmp/proj', true, true)];
+    expect(pickTerminalAppWindow(front, '/tmp/proj', 'darwin')).toEqual({
+      windowId: 2,
+      tabIndex: 7,
+    });
+    expect(pickTerminalAppWindow([surface(1, 1, '/other', true, true)], '/tmp/proj', 'darwin')).toBeNull();
+  });
+
+  it('目标 id 解码：terminal:<win>:<tab>；wezterm 格式互不通用，坏 id → null', () => {
+    expect(parseTerminalAppTargetId('terminal:4029:2')).toEqual({ windowId: 4029, tabIndex: 2 });
+    expect(parseTerminalAppTargetId('deadbeef:1:2')).toBeNull();
+    expect(parseTerminalAppTargetId('terminal:x:1')).toBeNull();
+  });
+
+  it('枚举在无 osascript 的环境优雅归零（不 throw，角标不谎报）', async () => {
+    const backend = terminalBackendFor(settings('terminal'), 'darwin');
+    await expect(backend.listTargets('/tmp/proj')).resolves.toEqual([]);
+    const counts = await backend.countWindows(['/tmp/proj']);
+    expect(counts.get('/tmp/proj')).toBe(0);
   });
 });
 

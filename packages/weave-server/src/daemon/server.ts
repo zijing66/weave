@@ -1203,7 +1203,8 @@ async function handleRequest(
   }
 
   // GET /projects/:id/terminals — 会话终端「选哪个终端」弹窗的数据面：
-  // 按最近活跃排序的可附加目标（窗口内的 tab）；非 wezterm preset 无枚举通道 → 空表。
+  // 按最近活跃排序的可附加目标（窗口内的 tab）。枚举能力归后端——非 enumerable
+  // 的 preset 无枚举通道 → 空表。
   const terminalsMatch = pathname.match(/^\/projects\/(\d+)\/terminals$/);
   if (terminalsMatch && req.method === 'GET') {
     const project = deps.projects.getById(Number(terminalsMatch[1]));
@@ -1214,7 +1215,7 @@ async function handleRequest(
     const settings = await readDaemonSettings();
     const list = deps.opener?.listTerminals ?? defaultProjectOpener.listTerminals!;
     const terminals = terminalBackendFor(settings.terminal).enumerable
-      ? await list(project.path)
+      ? await list(project.path, settings.terminal)
       : [];
     sendJson(res, 200, { projectId: project.id, terminals });
     return;
