@@ -88,6 +88,7 @@ import { detectUpdates } from '../install/updates.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
+import { handleCaptureRoutes } from './capture-routes.js';
 import { purgeProjectPipeline } from './hook-pipeline.js';
 import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
@@ -209,6 +210,9 @@ async function handleRequest(
 
   // 批 10 工具包子路由（包清单/开关）——未命中返回 false，主链继续。
   if (await handleToolkitRoutes(req, res, deps, pathname, url)) return;
+
+  // §6-2d user 档采集面（能力槽 capture）——未命中返回 false，主链继续。
+  if (await handleCaptureRoutes(req, res, deps, pathname)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).
   const hooksMatch = pathname.match(/^\/projects\/(\d+)\/hooks$/);

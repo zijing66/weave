@@ -23,7 +23,8 @@ export type DataKey =
   | 'toolkit'
   | 'market'
   | 'libraries'
-  | 'updates';
+  | 'updates'
+  | 'capture';
 
 /** 一帧数据变更通知。 */
 export interface DataFrame {

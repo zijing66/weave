@@ -2,6 +2,7 @@ import type { Harness } from '@weavecode/core';
 import {
   createRuntimeRegistry,
   type AssetSurface,
+  type CaptureSurface,
   type PluginStateSurface,
   type PluginSurface,
 } from '@weavecode/harness';
@@ -69,4 +70,15 @@ export function pluginStateSurfaces(): Array<{ harness: Harness; state: PluginSt
     .all()
     .filter((d) => d.pluginState !== undefined)
     .map((d) => ({ harness: d.id, state: d.pluginState! }));
+}
+
+/**
+ * 声明了 capture 槽的 (harness, 面) 列表（§6-2d user 档采集）——/capture 路由
+ * 据本表枚举状态行与安装目标，不写 harness 白名单。
+ */
+export function captureSurfaces(): Array<{ harness: Harness; surface: CaptureSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.capture !== undefined)
+    .map((d) => ({ harness: d.id, surface: d.capture! }));
 }
