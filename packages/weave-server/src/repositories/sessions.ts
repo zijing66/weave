@@ -105,6 +105,25 @@ export class SessionRepository {
   }
 
   /**
+   * 单会话 turnOpen（消息域 auto 裁决的忙/闲基准）：语义与 listWithCounts 的
+   * 计算字段完全一致（最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd）。
+   * 会话不存在 → null；存在但零事件 → false（同列表口径：无 ups 即不判开）。
+   */
+  turnOpenOf(sessionId: string): boolean | null {
+    const row = this.db
+      .prepare(
+        'SELECT ' +
+        '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
+        '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = ? AND e4.event_type IN (\'Stop\', \'SessionEnd\')) AS last_stop',
+      )
+      .get(sessionId, sessionId) as { last_ups?: number | null; last_stop?: number | null } | undefined;
+    if (!this.getBySessionId(sessionId)) return null;
+    const lastUps = row?.last_ups ?? null;
+    const lastStop = row?.last_stop ?? null;
+    return lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop));
+  }
+
+  /**
    * dashboard 改名：display 名（title）立即落，pending_title 负责把新名同步给
    * Claude 侧（下次 SessionStart(resume)/UserPromptSubmit 经 hook 下发）——dashboard
    * 不再替闲置会话代持旧名，徽标只表示「Claude 侧还没同步」。

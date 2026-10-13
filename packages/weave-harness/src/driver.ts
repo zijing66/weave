@@ -3,7 +3,8 @@ import type { InitContext, InitPipeline } from './init/pipeline.js';
 import type { FileAssetCategory } from './shared/file-specs.js';
 
 /**
- * 抽象定义的家：六种能力接口 + HarnessDriver + HarnessRegistry + supports。
+ * 抽象定义的家：能力接口 + HarnessDriver + HarnessRegistry + supports
+ * （槽清单以本处 HarnessCapability 为唯一权威）。
  * 依赖硬约束：本包仅依赖 @weavecode/core（永不依赖 server/cli，防 statusline/i18n 成环）。
  */
 
@@ -16,6 +17,7 @@ export type HarnessCapability =
   | 'detect'
   | 'plugins'
   | 'pluginState'
+  | 'messaging'
   | 'capture';
 
 /**
@@ -154,6 +156,44 @@ export interface ResumeCommandSpec {
   openArgs?(sessionId: string): string[];
 }
 
+/** 消息通道名——支持矩阵与原因文案的键。 */
+export type MessagingChannel = 'discovery' | 'inject' | 'headless' | 'watch';
+
+/** 非抢占注入通道规格：注入可骑乘的事件（hook-handler 在这些事件上消化 outbox 行）。 */
+export interface InjectChannelSpec {
+  rideEvents: readonly string[];
+}
+
+/** 信封渲染入参。 */
+export interface MessageMeta {
+  /** 发起方展示名（dashboard / 会话标题 / cli）。 */
+  fromLabel: string;
+  at: string;
+  mode: string;
+}
+
+/**
+ * 会话消息能力面（session-orchestration 批 1）：每 harness 一份声明式规格，
+ * server 的 MessageDeliverer 按面裁决支持状态与编排控制；claude = 完整参考实现，
+ * codex = 显式不支持面（缺席无法渲染「为什么置灰」）。设计见
+ * docs/plan/session-orchestration.md 第三章。
+ */
+export interface MessagingSurface {
+  readonly harness: Harness;
+  /** 会话发现：该 harness 会话能否成为编排目标。 */
+  readonly discovery: boolean;
+  /** 非抢占注入通道（忙排）；null = 不支持。 */
+  readonly inject: InjectChannelSpec | null;
+  /** 无头强制回合通道（闲投）；null = 不支持。引用 resume 槽规格对象，不复制。 */
+  readonly headless: ResumeCommandSpec | null;
+  /** 空闲信号事件名（watch 触发源）；空数组 = 不支持空闲订阅。 */
+  readonly idleSignals: readonly string[];
+  /** 注入信封渲染（缺省 = server 的 weave 统一信封）。 */
+  renderEnvelope?(text: string, meta: MessageMeta): string;
+  /** 不支持通道的语义原因（409 文案与 UI tooltip 直用）。 */
+  readonly unsupportedReasons?: Partial<Record<MessagingChannel, string>>;
+}
+
 /** detect 返回结构（批 5 定）：harness 标识 + `dir` 下是否命中其标记。 */
 export interface DetectResult {
   harness: Harness;
@@ -288,6 +328,7 @@ export interface HarnessDriver {
   detect?: Detector;
   plugins?: PluginSurface;
   pluginState?: PluginStateSurface;
+  messaging?: MessagingSurface;
   capture?: CaptureSurface;
 }
 

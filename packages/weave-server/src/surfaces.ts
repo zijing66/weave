@@ -3,6 +3,7 @@ import {
   createRuntimeRegistry,
   type AssetSurface,
   type CaptureSurface,
+  type MessagingSurface,
   type PluginStateSurface,
   type PluginSurface,
 } from '@weavecode/harness';
@@ -70,6 +71,28 @@ export function pluginStateSurfaces(): Array<{ harness: Harness; state: PluginSt
     .all()
     .filter((d) => d.pluginState !== undefined)
     .map((d) => ({ harness: d.id, state: d.pluginState! }));
+}
+
+/**
+ * 按 harness 取消息能力面（session-orchestration 批 1）。与 pluginState 不同，
+ * **不支持也是面**（全 null + unsupportedReasons）——「为什么置灰」必须可渲染，
+ * 所以 codex 同样注册 messaging 槽；槽位缺席才抛错（装配期问题）。
+ */
+export function messagingSurfaceFor(harness: Harness): MessagingSurface {
+  const surface = registry.get(harness)?.messaging;
+  if (!surface) throw new Error(`no messaging surface registered for harness: ${harness}`);
+  return surface;
+}
+
+/**
+ * 全部已注册的消息能力面——能力矩阵路由（GET /messaging/capabilities）据本表
+ * 派生响应，不写第二份支持状态事实源。
+ */
+export function messagingSurfaces(): Array<{ harness: Harness; surface: MessagingSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.messaging !== undefined)
+    .map((d) => ({ harness: d.id, surface: d.messaging! }));
 }
 
 /**

@@ -1,23 +1,27 @@
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { HookEventRepository } from '../repositories/hook-events.js';
+import type { SessionMessageRepository } from '../repositories/session-messages.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 
 export interface SessionPurgeDeps {
   sessions: SessionRepository;
   events: HookEventRepository;
   dispatches?: Pick<HookDispatchRepository, 'deleteBySession'>;
+  /** 消息域（session-orchestration 批 1）：双向（收/发）线程一并清。 */
+  messages?: Pick<SessionMessageRepository, 'deleteBySession'>;
 }
 
 /**
- * 删会话的数据清理：会话行 + 该会话的采集事件 + 指令池派发一起清。手动删除
- * （`DELETE /sessions/:id`）与空会话自动清理走同一条路径——两处清理口径不分家。
+ * 删会话的数据清理：会话行 + 该会话的采集事件 + 指令池派发 + 消息线程一起清。
+ * 手动删除（`DELETE /sessions/:id`）与空会话自动清理走同一条路径——两处清理口径不分家。
  */
 export function purgeSession(
   deps: SessionPurgeDeps,
   sessionId: string,
-): { events: number; dispatches: number } {
+): { events: number; dispatches: number; messages: number } {
   const events = deps.events.deleteBySession(sessionId);
   const dispatches = deps.dispatches?.deleteBySession(sessionId) ?? 0;
+  const messages = deps.messages?.deleteBySession(sessionId) ?? 0;
   deps.sessions.remove(sessionId);
-  return { events, dispatches };
+  return { events, dispatches, messages };
 }

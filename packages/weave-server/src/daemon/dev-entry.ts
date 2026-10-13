@@ -19,6 +19,9 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
+import { HeadlessRunner } from '../hooks/headless-runner.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -106,6 +109,8 @@ async function main(): Promise<void> {
     plugins: hookPlugins,
     pluginStates: new PluginStateRepository(db),
   });
+  // session-orchestration 批 1（与 start.ts 同装配）：两域共享无头执行核。
+  const headlessRunner = new HeadlessRunner();
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,
@@ -113,6 +118,16 @@ async function main(): Promise<void> {
     bus: hookBus,
     // 批 4b：resume 规格来自 registry（缺省回落 CLAUDE_RESUME，行为不变）。
     resumeSpec: harnesses.get('claude')?.resume,
+    headless: headlessRunner,
+  });
+  const sessionMessages = new SessionMessageRepository(db);
+  const messageDeliverer = new MessageDeliverer({
+    messages: sessionMessages,
+    sessions: hookSessions,
+    projects,
+    hookEvents,
+    bus: hookBus,
+    headless: headlessRunner,
   });
   const watch = new WatchService(projects);
   watch.start();
@@ -127,7 +142,12 @@ async function main(): Promise<void> {
   terminalRefresher.start();
   // 空会话自动清理（与生产入口同一装配点）：dev 入口此前漏挂 → 只残留一条
   // SessionStart 的会话在 dev 下永不消失，一直挂在会话列表里显示「就绪」。
-  startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
+  startSessionSweeper({
+    sessions: hookSessions,
+    events: hookEvents,
+    dispatches: hookDispatches,
+    messages: sessionMessages,
+  });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,
@@ -155,6 +175,8 @@ async function main(): Promise<void> {
     terminalRefresher,
     hookDispatcher,
     hookRunner,
+    sessionMessages,
+    messageDeliverer,
     hookPlugins,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

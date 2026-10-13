@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type HookDispatch,
   type HookEventRow,
   type HookRule,
+  type MessagingCapability,
   type TerminalTarget,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -11,6 +13,7 @@ import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
+import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
 import {
   buildLifecycleGroups,
@@ -98,6 +101,24 @@ export function TasksPanel({
     setSelectedId(initialSessionId ?? null);
     api.listHooksRules(projectId).then(setRules).catch(() => {});
   }, [projectId, initialSessionId]);
+
+  // 消息能力矩阵（服务端 MessagingSurface 纯派生）：按钮门控与弹窗模式选项的
+  // 唯一真源——web 只渲染不判定，不写死 harness 白名单。
+  const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
+  useEffect(() => {
+    api.messagingCapabilities().then(setMessagingCaps).catch(() => {});
+  }, []);
+  const { capabilityByHarness, messagers } = useMemo(() => {
+    const m = new Map<Harness, MessagingCapability>();
+    const s = new Set<Harness>();
+    for (const c of messagingCaps ?? []) {
+      if (c.inject || c.headless) {
+        m.set(c.harness, c);
+        s.add(c.harness);
+      }
+    }
+    return { capabilityByHarness: m, messagers: s };
+  }, [messagingCaps]);
 
   // 会话列表就绪后补默认选中（初始选中会话优先；用户点击后 prev 非空，不再覆盖）。
   useEffect(() => {
@@ -240,6 +261,26 @@ export function TasksPanel({
   const openTerminalStateOf = useCallback(
     (sessionId: string) => fb.stateOf(`openTerm:${sessionId}`),
     [fb],
+  );
+
+  /** 消息线程弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
+  const [messagesTarget, setMessagesTarget] = useState<{
+    sessionId: string;
+    label: string;
+    capability: MessagingCapability;
+  } | null>(null);
+  const onOpenMessages = useCallback(
+    (sessionId: string): void => {
+      const row = sessions?.find((s) => s.sessionId === sessionId);
+      const capability = row?.harness ? capabilityByHarness.get(row.harness) : undefined;
+      if (!capability) return;
+      setMessagesTarget({
+        sessionId,
+        label: sessionLabel(row?.title ?? null, sessionId),
+        capability,
+      });
+    },
+    [sessions, capabilityByHarness],
   );
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
@@ -438,6 +479,8 @@ export function TasksPanel({
             onDropDispatch={onDropDispatch}
             onOpenTerminal={onOpenTerminal}
             openTerminalStateOf={openTerminalStateOf}
+            messagers={messagingCaps === null ? null : messagers}
+            onOpenMessages={onOpenMessages}
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
           />
@@ -728,6 +771,16 @@ export function TasksPanel({
             runOpenTerminal(sessionId, targetId);
           }}
           onClose={() => setTerminalPicker(null)}
+        />
+      )}
+
+      {/* 会话消息线程：双向时间线 + 投递（模式选项按能力矩阵门控） */}
+      {messagesTarget && (
+        <SessionMessages
+          sessionId={messagesTarget.sessionId}
+          label={messagesTarget.label}
+          capability={messagesTarget.capability}
+          onClose={() => setMessagesTarget(null)}
         />
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { Harness } from '@weavecode/core/harness';
 import { type SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
@@ -6,7 +7,7 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Check, Copy, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
+import { Check, Copy, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
@@ -30,6 +31,8 @@ export function SessionList({
   onDropDispatch,
   onOpenTerminal,
   openTerminalStateOf,
+  messagers,
+  onOpenMessages,
   onDelete,
   deleteStateOf,
 }: {
@@ -42,6 +45,10 @@ export function SessionList({
   onOpenTerminal: (sessionId: string) => void;
   /** 打开会话终端按钮的反馈态（loading → ✅ → 还原，防连点重复 spawn）。 */
   openTerminalStateOf?: (sessionId: string) => ActionState;
+  /** 可收消息的 harness 集（服务端 MessagingSurface 派生矩阵；null = 矩阵未载）。 */
+  messagers?: ReadonlySet<Harness> | null;
+  /** 打开该会话的消息线程（弹窗内投递/查看）。 */
+  onOpenMessages: (sessionId: string) => void;
   /** 删除该会话（含事件与派发；调用方负责确认与报错）。 */
   onDelete: (sessionId: string) => void;
   /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
@@ -176,6 +183,22 @@ export function SessionList({
                             />
                           }
                         />
+                      </button>
+                    )}
+                    {/* 消息线程入口：能力真源 = 服务端 MessagingSurface 派生矩阵
+                        （表驱动门控，不写死 harness 白名单）；harness 未知（无事件）
+                        的会话不现按钮。 */}
+                    {s.harness != null && messagers?.has(s.harness) && (
+                      <button
+                        type="button"
+                        title={t('tasks.messageTooltip')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenMessages(s.sessionId);
+                        }}
+                        className={ACTION_BTN}
+                      >
+                        <MessageSquareText className="h-3 w-3" />
                       </button>
                     )}
                     <button

@@ -18,6 +18,8 @@ import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
 import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
+import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import type { SessionMessageRepository } from '../repositories/session-messages.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
@@ -153,6 +155,10 @@ export interface WeaveServerDeps {
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
   hookRunner?: ResumeRunner;
+  /** session-orchestration 批 1：点对点消息存储；GET /sessions/:id/messages 依赖它。 */
+  sessionMessages?: SessionMessageRepository;
+  /** 消息投递器（裁决表 + 双通道）；POST /sessions/:id/messages 依赖它。 */
+  messageDeliverer?: MessageDeliverer;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
@@ -1310,11 +1316,16 @@ async function handleRequest(
       return;
     }
     if (project.archivedAt) {
-      sendJson(res, 200, { project, purged: { events: 0, dispatches: 0, sessions: 0 } });
+      sendJson(res, 200, {
+        project,
+        purged: { events: 0, dispatches: 0, sessions: 0, messages: 0 },
+      });
       return; // 幂等：重复归档不动已清空的数据
     }
     const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
+    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）
+    const messages = deps.sessionMessages?.deleteByProject(project.id) ?? 0;
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);
     purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);
@@ -1322,7 +1333,7 @@ async function handleRequest(
     deps.dataBus?.emit({ key: 'projects' });
     sendJson(res, 200, {
       project: deps.projects.getById(project.id),
-      purged: { events, dispatches, sessions },
+      purged: { events, dispatches, sessions, messages },
     });
     return;
   }

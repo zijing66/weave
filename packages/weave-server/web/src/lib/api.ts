@@ -309,6 +309,33 @@ export const INJECTABLE_HOOK_EVENTS = [
   'SubagentStop',
 ] as const;
 
+/** mirror of `SessionMessageRow` in packages/weave-server/src/repositories/session-messages.ts。 */
+export interface SessionMessageRow {
+  id: number;
+  fromKind: 'dashboard' | 'session' | 'cli';
+  fromSessionId: string | null;
+  toSessionId: string;
+  text: string;
+  /** inject = 非抢占注入（忙排）；headless = 强制回合；auto = 服务端按忙闲裁决后落实际通道。 */
+  mode: 'inject' | 'headless' | 'auto';
+  status: 'queued' | 'injected' | 'running' | 'succeeded' | 'failed' | 'timeout';
+  output: string | null;
+  error: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+  finishedAt: string | null;
+}
+
+/** mirror of MessagingSurface 派生能力矩阵（GET /messaging/capabilities 行）——
+ *  web 只渲染不判定：按钮门控、模式选择器选项都从这张表来。 */
+export interface MessagingCapability {
+  harness: Harness;
+  discovery: boolean;
+  inject: boolean;
+  headless: boolean;
+  watch: boolean;
+  unsupportedReasons: string[] | null;
+}
 
 export interface LibraryRow {
   id: number;
@@ -957,6 +984,26 @@ export const api = {
     apiFetch<{ ok: boolean; events: number; dispatches: number }>(
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
+    ),
+  /** 会话消息线程（双向：发到该会话的 + 该会话发出的，升序最新 300 条）。 */
+  listSessionMessages: (sessionId: string): Promise<SessionMessageRow[]> =>
+    apiFetch<{ messages: SessionMessageRow[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/messages`,
+    ).then((r) => r.messages),
+  /** 投递消息到会话：auto 按忙闲裁决（忙→注入排队，闲→无头强开回合）；
+   *  非 2xx（会话忙/无项目/无头被占等）由 apiFetch 抛 Error（error 字段原文）。 */
+  sendSessionMessage: (
+    sessionId: string,
+    body: { text: string; mode?: 'inject' | 'headless' | 'auto' },
+  ): Promise<{ ok: boolean; messageId: number; status: string; message?: SessionMessageRow }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 消息能力矩阵（服务端 MessagingSurface 纯派生，无第二事实源）。 */
+  messagingCapabilities: (): Promise<MessagingCapability[]> =>
+    apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(
+      (r) => r.capabilities,
     ),
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */

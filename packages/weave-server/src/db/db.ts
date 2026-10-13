@@ -96,6 +96,35 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_seen_at);
 
+-- 跨会话编排（session-orchestration）：点对点消息域（手动编排，与规则驱动的
+-- hook_dispatches 分域）。session_watches 批 2 接触发器，表先建。
+CREATE TABLE IF NOT EXISTS session_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_kind       TEXT NOT NULL,
+  from_session_id TEXT,
+  to_session_id   TEXT NOT NULL,
+  text            TEXT NOT NULL,
+  mode            TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  output          TEXT,
+  error           TEXT,
+  created_at      TEXT NOT NULL,
+  delivered_at    TEXT,
+  finished_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_session_messages_to ON session_messages(to_session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_session_messages_from ON session_messages(from_session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS session_watches (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  watcher_session_id TEXT,
+  target_session_id  TEXT NOT NULL,
+  notify             TEXT,
+  fired_at           TEXT,
+  created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_watches_target ON session_watches(target_session_id, fired_at);
+
 -- 全局静态配置（key-value 单表，原 <dataDir>/settings.json 文件——配置
 -- 统一落库）。配置项以约定 key 落行（如 terminal.preset / locale /
 -- hooks.enabled / events.retentionDays），新增配置零表结构迁移；

@@ -11,6 +11,7 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { SessionRepository } from '../repositories/sessions.js';
+import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb } from '../daemon/settings.js';
 import { drainInboxOnce, type InboxDrainDeps } from '../hooks/inbox-worker.js';
@@ -44,6 +45,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
   let hookEvents: HookEventRepository;
   let sessions: SessionRepository;
   let dispatches: HookDispatchRepository;
+  let sessionMessages: SessionMessageRepository;
   let idA: number;
   let idB: number;
 
@@ -57,6 +59,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     hookEvents = new HookEventRepository(db);
     sessions = new SessionRepository(db);
     dispatches = new HookDispatchRepository(db);
+    sessionMessages = new SessionMessageRepository(db);
     setDaemonSettingsDb(db);
     // 派发行有 rule_id 外键（ON DELETE CASCADE），先落一条规则行
     db.prepare(
@@ -79,6 +82,14 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     hookEvents.insert({ projectId: idB, source: 'claude', eventType: 'Stop', sessionId: 'sess-b2', payload: '{}' });
     hookEvents.insert({ projectId: idA, source: 'claude', eventType: 'Stop', sessionId: 'sess-a1', payload: '{}' });
     dispatches.insert({ ruleId: 'rule-arch', eventId: ev1, sessionId: 'sess-b1', prompt: 'do', status: 'pending', mode: 'manual' });
+    // B 的会话消息（消息域第四条删除路径）
+    sessionMessages.insert({
+      fromKind: 'dashboard',
+      toSessionId: 'sess-b1',
+      text: 'msg',
+      mode: 'inject',
+      status: 'injected',
+    });
     // B 的管道文件（inbox 活文件 + mirror + outbox）——归档即焚的对象
     writeFileSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_B)}.jsonl`), inboxLine(TOK_B, 'Stop', 'sess-b1'));
     writeFileSync(mirrorPathOf(hooksDir, hookShardId(TOK_B)), '{}');
@@ -92,6 +103,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
       hookEvents,
       hookSessions: sessions,
       hookDispatches: dispatches,
+      sessionMessages,
       hooksDir,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -110,11 +122,11 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       project: { archivedAt: string | null };
-      purged: { events: number; dispatches: number; sessions: number };
+      purged: { events: number; dispatches: number; sessions: number; messages: number };
     };
     expect(data.project.archivedAt).toBeTruthy();
-    // 事件 2（B 的）+ 派发 1 + 会话 2（B 的）——A 的一概不动
-    expect(data.purged).toEqual({ events: 2, dispatches: 1, sessions: 2 });
+    // 事件 2（B 的）+ 派发 1 + 会话 2（B 的）+ 消息 1（B 的）——A 的一概不动
+    expect(data.purged).toEqual({ events: 2, dispatches: 1, sessions: 2, messages: 1 });
     expect(hookEvents.listByProject(idB)).toHaveLength(0);
     expect(sessions.list(idB)).toHaveLength(0);
     expect(dispatches.list({ sessionId: 'sess-b1' })).toHaveLength(0);
@@ -141,8 +153,8 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
   it('重复归档幂等：不再动数据（purged 全零）', async () => {
     const res = await post(`/projects/${idB}/archive`);
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { purged: { events: number; dispatches: number; sessions: number } };
-    expect(data.purged).toEqual({ events: 0, dispatches: 0, sessions: 0 });
+    const data = (await res.json()) as { purged: { events: number; dispatches: number; sessions: number; messages: number } };
+    expect(data.purged).toEqual({ events: 0, dispatches: 0, sessions: 0, messages: 0 });
   });
 
   it('归档项目的 inbox 行即焚：消费其他项目的同一轮 drain 里销毁，不入库', () => {

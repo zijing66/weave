@@ -16,6 +16,7 @@ import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
+import { messagingSurfaces } from '../surfaces.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -45,6 +46,14 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 
+/** 点对点消息投递：mode/fromKind 缺省 auto/dashboard；fromSessionId 会话间编排用。 */
+const SendMessageBody = z.object({
+  text: z.string().min(1).max(20_000),
+  mode: z.enum(['inject', 'headless', 'auto']).optional(),
+  fromKind: z.enum(['dashboard', 'session', 'cli']).optional(),
+  fromSessionId: z.string().min(1).nullable().optional(),
+});
+
 const InstallBody = z.object({ src: z.string().min(1) });
 
 export async function handleHooksRoutes(
@@ -57,7 +66,8 @@ export async function handleHooksRoutes(
   const isHooksPath =
     pathname.startsWith('/hooks/') ||
     pathname === '/sessions' ||
-    pathname.startsWith('/sessions/');
+    pathname.startsWith('/sessions/') ||
+    pathname.startsWith('/messaging');
   if (!isHooksPath) return false;
 
   // ---- 规则 CRUD ----
@@ -331,7 +341,12 @@ export async function handleHooksRoutes(
       return true;
     }
     const purged = purgeSession(
-      { sessions: deps.hookSessions, events: deps.hookEvents, dispatches: deps.hookDispatches },
+      {
+        sessions: deps.hookSessions,
+        events: deps.hookEvents,
+        dispatches: deps.hookDispatches,
+        messages: deps.sessionMessages,
+      },
       sessionId,
     );
     if (session.projectId != null) deps.hookMirror?.syncProject(session.projectId);
@@ -421,6 +436,66 @@ export async function handleHooksRoutes(
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }
+    return true;
+  }
+
+  // ---- 消息域（session-orchestration 批 1）：线程读 + 投递 ----
+  const messagesMatch = pathname.match(/^\/sessions\/([^/]+)\/messages$/);
+  if (messagesMatch) {
+    const sessionId = decodeURIComponent(messagesMatch[1]!);
+    if (req.method === 'GET') {
+      if (!deps.sessionMessages) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      if (!deps.hookSessions?.getBySessionId(sessionId)) {
+        sendJson(res, 404, { error: 'Session not found' });
+        return true;
+      }
+      sendJson(res, 200, { messages: deps.sessionMessages.listBySession(sessionId, 300) });
+      return true;
+    }
+    if (req.method === 'POST') {
+      if (!deps.messageDeliverer || !deps.hookSessions) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      let body: z.infer<typeof SendMessageBody>;
+      try {
+        body = SendMessageBody.parse(await readJson(req));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+        return true;
+      }
+      const result = await deps.messageDeliverer.send({
+        toSessionId: sessionId,
+        text: body.text,
+        mode: body.mode ?? 'auto',
+        fromKind: body.fromKind ?? 'dashboard',
+        fromSessionId: body.fromSessionId ?? null,
+      });
+      if (result.ok) {
+        const message = deps.sessionMessages?.getById(result.messageId);
+        sendJson(res, 201, { ok: true, messageId: result.messageId, status: result.status, message });
+      } else {
+        sendJson(res, result.status, { error: result.error });
+      }
+      return true;
+    }
+  }
+
+  // ---- 能力矩阵：纯派生自 MessagingSurface（无第二事实源），web 按表渲染徽标 ----
+  if (pathname === '/messaging/capabilities' && req.method === 'GET') {
+    sendJson(res, 200, {
+      capabilities: messagingSurfaces().map(({ harness, surface }) => ({
+        harness,
+        discovery: surface.discovery,
+        inject: surface.inject !== null,
+        headless: surface.headless !== null,
+        watch: surface.idleSignals.length > 0,
+        unsupportedReasons: surface.unsupportedReasons ?? null,
+      })),
+    });
     return true;
   }
 

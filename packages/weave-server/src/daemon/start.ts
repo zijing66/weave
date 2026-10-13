@@ -14,6 +14,9 @@ import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
+import { HeadlessRunner } from '../hooks/headless-runner.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -115,6 +118,9 @@ export function startDaemon(): void {
       pluginHostHolder.getConfig = (id) => loader.getConfig(id);
       stopPluginWatch = loader.watchRoots();
     });
+  // session-orchestration 批 1：dispatch 域（ResumeRunner）与 message 域
+  // （MessageDeliverer）共享同一无头执行核 = 同会话并发闸跨域生效。
+  const headlessRunner = new HeadlessRunner();
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,
@@ -122,6 +128,16 @@ export function startDaemon(): void {
     bus: hookBus,
     // 批 4b：resume 规格来自 registry（缺省回落 CLAUDE_RESUME，行为不变）。
     resumeSpec: harnesses.get('claude')?.resume,
+    headless: headlessRunner,
+  });
+  const sessionMessages = new SessionMessageRepository(db);
+  const messageDeliverer = new MessageDeliverer({
+    messages: sessionMessages,
+    sessions: hookSessions,
+    projects,
+    hookEvents,
+    bus: hookBus,
+    headless: headlessRunner,
   });
   const watch = new WatchService(projects);
   watch.start();
@@ -143,7 +159,12 @@ export function startDaemon(): void {
   terminalRefresher.start();
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
-  startSessionSweeper({ sessions: hookSessions, events: hookEvents, dispatches: hookDispatches });
+  startSessionSweeper({
+    sessions: hookSessions,
+    events: hookEvents,
+    dispatches: hookDispatches,
+    messages: sessionMessages,
+  });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,
@@ -172,6 +193,8 @@ export function startDaemon(): void {
     terminalRefresher,
     hookDispatcher,
     hookRunner,
+    sessionMessages,
+    messageDeliverer,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
