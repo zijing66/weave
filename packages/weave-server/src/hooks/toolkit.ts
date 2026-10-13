@@ -10,8 +10,8 @@ import type { ProjectRepository, ProjectRow } from '../repositories/projects.js'
 import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { marketLibraryRoots } from '../market/resolve.js';
-import { marketDir } from '../market/manifest.js';
 import { marketIdOf } from '../market/identity.js';
+import { installPluginPack } from '../install/plugin-install.js';
 import type { LoadedPluginInfo, PluginManager } from './plugin-loader.js';
 import { effective, setProjectEnabled } from './plugin-project-state.js';
 import {
@@ -436,15 +436,9 @@ export class ToolkitService {
     const ccLanded = isCcPluginPack(pack) && pack.targets.includes('claude');
     if (ccLanded) {
       const surface = this.pluginSurface();
-      const market = marketIdOf(pack.dir);
-      await surface.globalInstall(pack.dir, {
-        name: pack.name,
-        version: pack.version,
-        description: pack.description,
-        // 外部市场来源：按该市场身份安装（文件留在数据目录，不占 weave 自建市场）
-        ...(market ? { marketplace: { name: market, dir: path.join(marketDir(), market) } } : {}),
-      });
-      await surface.setProjectEnabled(projectPath, pack.name, true, market);
+      // 外部市场来源：按该市场身份安装（编排唯一处 = installPluginPack）
+      await installPluginPack(surface, pack);
+      await surface.setProjectEnabled(projectPath, pack.name, true, marketIdOf(pack.dir));
     }
 
     const recPath = recordPathFor(projectPath, pack.id);

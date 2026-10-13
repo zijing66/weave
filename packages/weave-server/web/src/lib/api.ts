@@ -439,7 +439,7 @@ export interface MarketPluginAsset {
 }
 
 export interface InstallBody {
-  category: 'skill' | 'mcp' | FileAssetCategory;
+  category: 'skill' | 'mcp' | 'plugin' | FileAssetCategory;
   name: string;
   sourceDir?: string;
   /** Template file (library-relative or absolute) for file assets. */
@@ -447,6 +447,9 @@ export interface InstallBody {
   mcpConfig?: McpServerConfig;
   scope?: 'project' | 'user';
   agent?: AssetAgent;
+  /** plugin 类别：无 manifest 包合成最小 plugin.json 用（版本/描述）。 */
+  version?: string;
+  description?: string;
 }
 
 export type AssetScope = 'project' | 'user';

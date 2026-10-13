@@ -156,6 +156,7 @@ export { readMcpRows } from './install/mcp-rows.js';
 export type { McpToolRow } from './install/mcp-rows.js';
 export { readPluginRows } from './install/plugin-rows.js';
 export type { PluginToolRow } from './install/plugin-rows.js';
+export { installPluginPack } from './install/plugin-install.js';
 export {
   readProjectConfig,
   writeProjectConfig,

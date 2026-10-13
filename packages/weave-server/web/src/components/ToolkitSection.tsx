@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Harness } from '@weavecode/core/harness';
-import { api, type ToolkitPack } from '@/lib/api';
+import type { EnableOverride } from '@weavecode/core/tool';
+import { api, type ToolkitPack, type PluginRow, type AssetScope } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,7 @@ import {
   ChevronsUpDown,
   FolderTree,
   Package,
+  Power,
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
@@ -43,6 +45,22 @@ export const KIND_STYLES: Record<ToolkitPack['kind'], string> = {
 const PROV_KEY: Record<ToolkitPack['provenance'], MessageKey> = {
   builtin: 'toolkit.prov.builtin',
   market: 'toolkit.prov.market',
+};
+
+/** user 档启停三态循环 inherit → on → off → inherit（与 McpGrid 同序）。 */
+const NEXT_STATE: Record<EnableOverride, EnableOverride> = {
+  inherit: 'on',
+  on: 'off',
+  off: 'inherit',
+};
+
+const STATE_LABEL: Record<
+  EnableOverride,
+  'toolkit.enableDefault' | 'toolkit.enableOn' | 'toolkit.enableOff'
+> = {
+  inherit: 'toolkit.enableDefault',
+  on: 'toolkit.enableOn',
+  off: 'toolkit.enableOff',
 };
 
 /** 包直接放在扫描根下（`scope` 为空）= 没有父级文件夹可作汇总单位 → 单列一块。 */
@@ -82,12 +100,17 @@ function groupByScope(packs: ToolkitPack[]): ScopeGroup[] {
 export function ToolkitSection({
   projectId,
   runtimeTab = 'all',
+  scope = 'project',
 }: {
   projectId: number;
   runtimeTab?: Harness | 'all';
+  /** 视图落点（拍板 7-5）：project = 既有 toolkit 管线；user（全局配置区）=
+   *  CC 落地包行改走 user 档安装 + user 档启停覆写，不借道锚点项目。 */
+  scope?: AssetScope;
 }) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);
+  const [pluginRows, setPluginRows] = useState<PluginRow[]>([]);
   const [legacyCopies, setLegacyCopies] = useState<string[]>([]);
   // 折叠集记「折叠起来的」：默认全展开（包行本身就是可操作面，藏起来反而要点两下）。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -110,7 +133,11 @@ export function ToolkitSection({
         setPacks((prev) => prev ?? []);
         show('error', t('toolkit.loadFailed', { error: errorText(e) }));
       });
-  }, [projectId, t, show]);
+    // user 档行 = 全局视图 CC 包行的启停状态源（项目视图不拉）。
+    if (scope === 'user') {
+      api.listPluginState(projectId).then(setPluginRows).catch(() => {});
+    }
+  }, [projectId, scope, t, show]);
 
   useEffect(() => {
     refresh();
@@ -128,6 +155,44 @@ export function ToolkitSection({
       async () => {
         const result = await api.toggleToolkit(projectId, pack.id, enabled, pack.sourceRoot);
         if (result.warnings.length > 0) show('info', result.warnings.join('；'));
+        refresh();
+      },
+      { fail: (e) => t('toolkit.toggleFailed', { error: errorText(e) }) },
+    );
+  };
+
+  /** user 档安装（安装管理面，拍板 7-6 方案 A）：两步 CLI 较慢，行级三态反馈。 */
+  const installUser = async (pack: ToolkitPack): Promise<void> => {
+    const key = rowKey(pack);
+    if (rowBusy(key)) return;
+    await fb.run(
+      key,
+      async () => {
+        const res = await api.install(projectId, {
+          category: 'plugin',
+          name: pack.name,
+          sourceDir: pack.dir,
+          version: pack.version,
+          description: pack.description,
+          scope: 'user',
+          agent: 'claude',
+        });
+        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+        refresh();
+        show('success', t('toolkit.userInstalled', { key: pack.key ?? pack.name }));
+      },
+      { fail: (e) => t('toolkit.installFailed', { error: errorText(e) }) },
+    );
+  };
+
+  /** user 档启停覆写循环（inherit → on → off）：状态源 = 服务端行的 enable。 */
+  const cycleUserEnable = async (pack: ToolkitPack, next: EnableOverride): Promise<void> => {
+    const key = rowKey(pack);
+    if (rowBusy(key)) return;
+    await fb.run(
+      key,
+      async () => {
+        await api.putPluginState(projectId, 'claude', pack.key!, 'user', next);
         refresh();
       },
       { fail: (e) => t('toolkit.toggleFailed', { error: errorText(e) }) },
@@ -189,13 +254,21 @@ export function ToolkitSection({
 
   const renderPack = (p: ToolkitPack) => {
     const isBusy = rowBusy(rowKey(p));
+    // user 视图（全局配置区）的 CC 落地包（行带注册键）：改走 user 档安装 +
+    // user 档启停覆写（拍板 7-5/7-6）；表面/weave 包无插件安装档语义，维持原管线。
+    const userManaged = scope === 'user' && !!p.key;
+    const userRow = userManaged
+      ? pluginRows.find((r) => r.harness === 'claude' && r.key === p.key && r.scope === 'user')
+      : undefined;
+    const userState: EnableOverride = userRow?.enable ?? 'inherit';
+    const active = userManaged ? (userRow?.effective ?? false) : p.enabled;
     return (
       <div
         key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
         className="flex flex-wrap items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
       >
         <Package
-          className={cn('h-3.5 w-3.5 shrink-0', p.enabled ? 'text-emerald-400' : 'text-neutral-600')}
+          className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-emerald-400' : 'text-neutral-600')}
         />
         {/* 名称即注册键（name@marketplace，@后 = 所属市场 = 插件 namespace）——
             身份只此一处，不再另排 id / 键徽标造成三重重复。 */}
@@ -251,12 +324,46 @@ export function ToolkitSection({
               icon={<Trash2 className="h-3.5 w-3.5" />}
             />
           </button>
-          <Switch
-            checked={p.enabled}
-            disabled={isBusy}
-            onChange={(v) => void toggle(p, v)}
-            title={t('toolkit.toggleTip')}
-          />
+          {userManaged ? (
+            p.installed ? (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
+                title={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                  userState === 'on'
+                    ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                    : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                )}
+              >
+                <FeedbackIcon
+                  state={fb.stateOf(rowKey(p))}
+                  className="h-3 w-3"
+                  icon={<Power className="h-3 w-3" />}
+                />
+                {t(STATE_LABEL[userState])}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void installUser(p)}
+                title={t('toolkit.installTip')}
+                className="rounded bg-blue-900/50 px-2 py-0.5 text-[10px] text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
+              >
+                {isBusy ? t('toolkit.installing') : t('toolkit.install')}
+              </button>
+            )
+          ) : (
+            <Switch
+              checked={p.enabled}
+              disabled={isBusy}
+              onChange={(v) => void toggle(p, v)}
+              title={t('toolkit.toggleTip')}
+            />
+          )}
         </span>
       </div>
     );

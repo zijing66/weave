@@ -107,6 +107,7 @@ import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
 import { pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../surfaces.js';
 import { readPluginRows } from '../install/plugin-rows.js';
+import { installPluginPack } from '../install/plugin-install.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
 
@@ -677,8 +678,44 @@ async function handleRequest(
           scope: body.agent === 'codex' ? 'user' : (body.scope ?? 'project'),
           agent: body.agent ?? 'claude',
         });
+      } else if (body.category === 'plugin') {
+        // user 档安装管理面（拍板 7-6 方案 A：先开 user 档安装，project/local 待
+        // 可逆实验后开）。市场身份与 CLI 编排收在 installPluginPack 唯一处。
+        if (!body.name || !body.sourceDir) {
+          sendJson(res, 400, { error: 'Missing "name" or "sourceDir"' });
+          return;
+        }
+        if (body.scope && body.scope !== 'user') {
+          sendJson(res, 400, { error: 'Plugin install currently only supports scope "user"' });
+          return;
+        }
+        const agent = body.agent ?? 'claude';
+        const installFace = pluginSurfaces().find((p) => p.harness === agent);
+        if (!installFace) {
+          sendJson(res, 400, { error: `No plugin install surface for runtime: ${agent}` });
+          return;
+        }
+        // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
+        const surface =
+          agent === 'claude' && deps.pluginSurface
+            ? deps.pluginSurface
+            : installFace.surface;
+        const info = await installPluginPack(surface, {
+          dir: body.sourceDir,
+          name: body.name,
+          version: body.version,
+          description: body.description,
+        });
+        deps.dataBus?.emit({ key: 'toolkit' });
+        sendJson(res, 201, {
+          category: 'plugin',
+          key: info.key,
+          scope: 'user',
+          agent,
+          alreadyInstalled: info.alreadyInstalled,
+        });
       } else {
-        sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
+        sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|plugin|command|agent|workflow|rule|output-style)' });
       }
     } catch (e) {
       sendInstallError(res, e);
@@ -923,6 +960,8 @@ async function handleRequest(
           }
           await stateFace.state.writeGlobalEnabled(body.key, state === 'on');
         }
+        // 插件启停域变化 → 包视图（ToolkitSection）与行消费方（SkillGrid 徽标）重拉。
+        deps.dataBus?.emit({ key: 'toolkit' });
         sendJson(res, 200, { ok: true });
       } catch (e) {
         sendJson(res, 400, { error: e instanceof Error ? e.message : 'Plugin state write failed' });
@@ -1472,6 +1511,9 @@ interface InstallBody {
   scope?: 'project' | 'user';
   /** Which coding agent's surface to target (default: claude). */
   agent?: InstallAgent;
+  /** plugin 类别：无 manifest 包合成最小 plugin.json 用（版本/描述）。 */
+  version?: string;
+  description?: string;
 }
 
 /** Map installer errors to HTTP statuses (409 conflict / 404 missing / 400 bad). */

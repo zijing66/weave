@@ -21,7 +21,11 @@ export function PluginAssetsPanel({
     <div key={mode} className="space-y-4">
       <Card>
         <CardContent className="space-y-1 pt-4">
-          <ToolkitSection projectId={projectId} runtimeTab={runtimeTab} />
+          <ToolkitSection
+            projectId={projectId}
+            runtimeTab={runtimeTab}
+            scope={mode === 'global' ? 'user' : 'project'}
+          />
         </CardContent>
       </Card>
     </div>

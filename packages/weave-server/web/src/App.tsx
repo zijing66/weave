@@ -458,6 +458,17 @@ export default function App() {
   // 接到既有的重拉函数上——不再写「成功后手动 refresh」的胶水。
   useEffect(() => registerInvalidator('projects', refreshProjects), [refreshProjects]);
 
+  // 插件启停/安装域变化（invalidate('toolkit')：toolkit 路由 + /plugins/state 与
+  // plugin 安装路由）→ 重拉工具行——SkillGrid 徽标与计数同源刷新。
+  useEffect(
+    () =>
+      registerInvalidator('toolkit', () => {
+        const target = selected ?? projects[0];
+        if (target) refreshPluginRows(target);
+      }),
+    [selected, projects, refreshPluginRows],
+  );
+
   useEffect(
     () =>
       subscribeSse((frame) => {
