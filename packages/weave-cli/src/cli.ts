@@ -8,6 +8,7 @@ import { daemonCommand } from './commands/daemon.js';
 import { dashboardCommand } from './commands/dashboard.js';
 import { scanCommand } from './commands/scan.js';
 import { statuslineCommand } from './commands/statusline.js';
+import { uninstallCommand } from './commands/uninstall.js';
 import type { Command, CommandContext } from './parser.js';
 import { initCliLocale, t } from './i18n/index.js';
 import type { MessageKey } from './i18n/dict/index.js';
@@ -51,6 +52,7 @@ export class CLI {
 
   private registerCommands(): void {
     this.parser.registerCommand(initCommand);
+    this.parser.registerCommand(uninstallCommand);
     this.parser.registerCommand(statusCommand);
     this.parser.registerCommand(daemonCommand);
     this.parser.registerCommand(dashboardCommand);

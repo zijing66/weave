@@ -55,3 +55,18 @@ export function mergeMcpJson(
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+/**
+ * uninstall 用的剥除：删 `weave` 服务键（weave 自己的配置键）；mcpServers 清空
+ * 删键；顶层清空返回空对象，调用方据此删文件。用户自己的服务键不动。
+ */
+export function stripWeaveMcp(existing: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...existing };
+  if (isPlainObject(out['mcpServers'])) {
+    const servers: Record<string, unknown> = { ...(out['mcpServers'] as Record<string, unknown>) };
+    delete servers['weave'];
+    if (Object.keys(servers).length > 0) out['mcpServers'] = servers;
+    else delete out['mcpServers'];
+  }
+  return out;
+}

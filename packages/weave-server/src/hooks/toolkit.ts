@@ -272,6 +272,31 @@ export async function projectFileNamespaces(projectPath: string): Promise<Map<st
   return out;
 }
 
+/**
+ * uninstall 面：所有包落盘记录的 rel → 启用时内容 sha256。与
+ * `projectFileNamespaces` 同源（`.weave/toolkit/*.json` 是唯一事实），多了
+ * 内容指纹——uninstall 只删当前内容仍与安装时一致的文件，用户改过的留下。
+ */
+export async function projectPackFiles(projectPath: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const dir = path.join(projectPath, '.weave', 'toolkit');
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return out; // 从未启用过任何包
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const record = await readRecord(path.join(dir, name));
+    if (!record) continue;
+    for (const [rel, sha] of Object.entries(record.files)) {
+      if (typeof sha === 'string') out.set(rel, sha);
+    }
+  }
+  return out;
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await readFile(p);

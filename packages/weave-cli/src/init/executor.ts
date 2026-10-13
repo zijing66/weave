@@ -221,7 +221,7 @@ export async function executeInit(
  * `*` ignores everything beside the file itself; the `!` line keeps this file
  * tracked so the rule travels with the repository.
  */
-const NESTED_GITIGNORE = `# weave — generated; do not commit
+export const NESTED_GITIGNORE = `# weave — generated; do not commit
 *
 !.gitignore
 `;

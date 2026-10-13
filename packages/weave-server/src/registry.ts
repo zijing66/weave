@@ -1,8 +1,13 @@
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { openDatabase } from './db/db.js';
 import { ProjectRepository } from './repositories/projects.js';
+import { HookDispatchRepository } from './repositories/hook-dispatches.js';
+import { HookEventRepository } from './repositories/hook-events.js';
+import { SessionRepository } from './repositories/sessions.js';
 import { generateToken } from './daemon/auth.js';
+import { purgeProjectPipeline } from './daemon/hook-pipeline.js';
+import { hooksRoot } from './hooks/mirror.js';
 
 export interface RegisterResult {
   id: number;
@@ -28,6 +33,42 @@ export function registerProject(targetDir: string, source: 'init' | 'scan', dbPa
     writeFileSync(join(targetDir, '.weave', 'token'), token + '\n', 'utf-8');
 
     return { id: row.id, token, path: row.path };
+  } finally {
+    db.close();
+  }
+}
+
+export interface UnregisterResult {
+  id: number;
+  name: string;
+  path: string;
+  purged: { events: number; dispatches: number; sessions: number };
+}
+
+/**
+ * `registerProject` 的逆：把项目从全局注册表整行删除（含归档行）。先按
+ * 归档路由同一套顺序清运行数据（派发 → 事件 → 会话），焚毁 daemon 侧
+ * 管道文件（inbox/mirror/outbox），再删行——运行中的 daemon 由 watch
+ * reconcile ≤5s 内自然收掉 watcher 并广播 project:removed。
+ *
+ * 未注册返回 null；不触碰项目目录本身（本地生成物归 uninstall 流程管）。
+ */
+export function unregisterProject(
+  targetDir: string,
+  dbPath?: string,
+  hooksDir?: string,
+): UnregisterResult | null {
+  const db = openDatabase(dbPath);
+  try {
+    const projects = new ProjectRepository(db);
+    const row = projects.getByPath(targetDir) ?? projects.getByPath(resolve(targetDir));
+    if (!row) return null;
+    const dispatches = new HookDispatchRepository(db).deleteByProject(row.id);
+    const events = new HookEventRepository(db).deleteByProject(row.id);
+    const sessions = new SessionRepository(db).removeByProject(row.id);
+    purgeProjectPipeline(hooksDir ?? hooksRoot(), row.token);
+    projects.remove(row.id);
+    return { id: row.id, name: row.name, path: row.path, purged: { events, dispatches, sessions } };
   } finally {
     db.close();
   }

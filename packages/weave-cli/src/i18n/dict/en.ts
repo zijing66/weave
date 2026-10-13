@@ -19,6 +19,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.quiet': 'Suppress non-essential output',
   // --- command descriptions ---
   'cmd.init.desc': 'Initialize weave harness in the current project',
+  'cmd.uninstall.desc': 'Remove weave init outputs (reset the init commit when it is HEAD, otherwise commit the removal)',
   'cmd.status.desc': 'Show current harness status',
   'cmd.daemon.desc': 'Manage the background daemon (start, stop, status)',
   'cmd.daemon.start.desc': 'Start the daemon in the background (no browser — see `weave dashboard`)',
@@ -58,6 +59,24 @@ export const en: Record<keyof typeof zh, string> = {
   'out.dash.noOpen': '  (--no-open: not launching a browser)',
   // --- scan command output ---
   'out.scan.registered': 'Registered {count} project(s) from {root}',
+  // --- uninstall command runtime output ---
+  'out.uninstall.banner': 'Uninstalling weave: {target}',
+  'out.uninstall.notInitialized': 'No .weave/ found — this project is not initialized, nothing to uninstall.',
+  'out.uninstall.done': 'Uninstalled: removed {files} file(s), {dirs} directorie(s)',
+  'out.uninstall.modified': 'Rewrote {count} file(s) (weave-added keys/sections stripped)',
+  'out.uninstall.keptUser': 'Kept {count} generated-location file(s) that differ from weave sources (likely user-edited):',
+  'out.uninstall.restored': 'Restored the AGENTS.md displaced by init (from .weave/backup/)',
+  'out.uninstall.gitReset': 'The init commit was HEAD — pointer rolled back to {sha}, history clean',
+  'out.uninstall.gitCommit': 'Created removal commit {sha} ({count} file(s))',
+  'out.uninstall.gitNoChanges': 'No tracked weave files changed — nothing committed',
+  'out.uninstall.gitDirty': 'Index not empty — files cleaned, git skipped to avoid touching staged content',
+  'out.uninstall.gitNotRepo': 'Not inside a git repository — files cleaned only',
+  'out.uninstall.gitFailed': 'git failed: {error} (files are already cleaned)',
+  'out.uninstall.serverRemoved':
+    'Unregistered project {name} from the weave server (purged {events} events / {dispatches} dispatches / {sessions} sessions)',
+  'out.uninstall.serverFailed': 'Failed to unregister from the weave server: {error}',
+  // --- uninstall internal warns ---
+  'uninstall.pluginScanFailed': 'Plugin template scan failed (that part skipped): {error}',
   // --- status command output ---
   'out.status.notInitialized': 'Weave not initialized. Run `weave init` first.',
   'out.status.header': '\n  Weave Harness Status\n',

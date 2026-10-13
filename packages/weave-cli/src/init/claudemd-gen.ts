@@ -16,13 +16,16 @@ export interface ClaudeMdGeneratorInput {
  */
 
 /** Delimit weave's managed block so re-init can replace it in place. */
-const WEAVE_BLOCK_START = '<!-- weave:start -->';
-const WEAVE_BLOCK_END = '<!-- weave:end -->';
+export const WEAVE_BLOCK_START = '<!-- weave:start -->';
+export const WEAVE_BLOCK_END = '<!-- weave:end -->';
+
+/** weave 生成的整个文件都带这条 header——uninstall 据此判「整文件是 weave 的」。 */
+export const WEAVE_MANAGED_HEADER = '> This file is managed by [weave](https://github.com/zijing66/weave) — a coding-agent harness.';
 
 function header(name: string): string {
   return `# ${name}
 
-> This file is managed by [weave](https://github.com/weave) — a coding-agent harness.
+> This file is managed by [weave](https://github.com/zijing66/weave) — a coding-agent harness.
 > Re-run \`weave init\` to regenerate.
 
 `;

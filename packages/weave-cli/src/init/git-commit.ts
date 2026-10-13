@@ -127,7 +127,7 @@ export interface CommitInitOptions {
   execGit?: GitExec;
 }
 
-const COMMIT_MESSAGE = 'chore: weave init 生成初始化产物';
+export const COMMIT_MESSAGE = 'chore: weave init 生成初始化产物';
 
 export async function commitInitOutputs(opts: CommitInitOptions): Promise<CommitOutcome> {
   try {

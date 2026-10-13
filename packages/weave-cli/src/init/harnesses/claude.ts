@@ -31,7 +31,7 @@ import { registerPluginTemplates, collectPluginMcpServers } from '../plugin-temp
 import { t } from '../../i18n/index.js';
 
 /** Marks a generated helper script as weave's own (weave-特性文件可覆写). */
-const WEAVE_HELPER_MARKER = '@version weave@';
+export const WEAVE_HELPER_MARKER = '@version weave@';
 
 /**
  * 步骤 1–7 的结果累加器：InitResult 中由表面步骤贡献的部分。

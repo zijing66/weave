@@ -50,8 +50,8 @@ export {
 export type { ProjectOpener, TerminalLaunch } from './daemon/opener.js';
 export { resolveStaticDir } from './daemon/static.js';
 export { startDaemon } from './daemon/start.js';
-export { registerProject } from './registry.js';
-export type { RegisterResult } from './registry.js';
+export { registerProject, unregisterProject } from './registry.js';
+export type { RegisterResult, UnregisterResult } from './registry.js';
 
 // --- watch service (filesystem observation, in-memory cache only) ---
 export { classifyAsset, normalizeRelPath } from './watch/classifier.js';
@@ -120,6 +120,7 @@ export { buildLibraryIndex, findSkillSource, findFileAssetSource } from './insta
 export type { SkillSource, LibraryIndex, FileAssetSource } from './install/library-index.js';
 export { hashSkillDir, maxMtimeDir, hashMcpConfig, hashFile, FingerprintCache } from './install/fingerprint.js';
 export type { FingerprintCacheEntry } from './install/fingerprint.js';
+export { projectFileNamespaces, projectPackFiles } from './hooks/toolkit.js';
 export { detectUpdates, detectSkillUpdates, detectFileAssetUpdates } from './install/updates.js';
 export type { SkillUpdate, McpUpdate, FileAssetUpdate, UpdateReport } from './install/updates.js';
 export {

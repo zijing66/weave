@@ -17,6 +17,7 @@ export const zh = {
   'flag.quiet': '抑制非必要输出',
   // --- 命令描述 ---
   'cmd.init.desc': '在当前项目初始化 weave harness',
+  'cmd.uninstall.desc': '卸载 weave：移除 init 生成物（init 提交刚落盘时回滚指针，否则生成卸载提交）',
   'cmd.status.desc': '查看当前 harness 状态',
   'cmd.daemon.desc': '管理后台守护进程（start、stop、status）',
   'cmd.daemon.start.desc': '在后台启动守护进程（不开浏览器——见 `weave dashboard`）',
@@ -55,6 +56,24 @@ export const zh = {
   'out.dash.noOpen': '  （--no-open：不启动浏览器）',
   // --- scan 命令运行时输出 ---
   'out.scan.registered': '已从 {root} 注册 {count} 个项目',
+  // --- uninstall 命令运行时输出 ---
+  'out.uninstall.banner': '卸载 weave：{target}',
+  'out.uninstall.notInitialized': '未找到 .weave/ —— 本项目未初始化 weave，无需卸载。',
+  'out.uninstall.done': '卸载完成：删除 {files} 个文件、{dirs} 个目录',
+  'out.uninstall.modified': '改写 {count} 个文件（剥除 weave 写入的键/段落）',
+  'out.uninstall.keptUser': '保留疑似用户修改的生成位文件 {count} 个（内容与 weave 来源不一致）：',
+  'out.uninstall.restored': '已还原被 init 顶替的 AGENTS.md（来自 .weave/backup/）',
+  'out.uninstall.gitReset': 'init 提交是最近一次提交——指针已回滚到 {sha}，历史无痕',
+  'out.uninstall.gitCommit': '已生成卸载提交 {sha}（{count} 个文件）',
+  'out.uninstall.gitNoChanges': '没有已跟踪的 weave 文件变化——未产生提交',
+  'out.uninstall.gitDirty': '暂存区非空——文件已清理，但跳过 git 操作以免波及已暂存内容',
+  'out.uninstall.gitNotRepo': '不在 git 仓库内——仅清理文件',
+  'out.uninstall.gitFailed': 'git 操作失败：{error}（文件已清理）',
+  'out.uninstall.serverRemoved':
+    '已从 server 注销项目 {name}（清理 {events} 事件 / {dispatches} 派发 / {sessions} 会话）',
+  'out.uninstall.serverFailed': 'server 注销失败：{error}',
+  // --- uninstall 内部 warn ---
+  'uninstall.pluginScanFailed': '插件模板扫描失败（跳过该部分）：{error}',
   // --- status 命令运行时输出 ---
   'out.status.notInitialized': 'Weave 尚未初始化。请先运行 `weave init`。',
   'out.status.header': '\n  Weave Harness 状态\n',
