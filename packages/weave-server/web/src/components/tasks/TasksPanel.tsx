@@ -22,6 +22,7 @@ import { useSessionStatus, type HookFrame } from './session-status-store';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 
@@ -404,13 +405,11 @@ export function TasksPanel({
           <span className="text-[11px] text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
-          <button
-            type="button"
-            onClick={() => void refreshStatus()}
-            className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-200"
-          >
-            {t('tasks.refresh')}
-          </button>
+          <RefreshIconButton
+            className="ml-auto"
+            title={t('tasks.refresh')}
+            onClick={refreshStatus}
+          />
         </div>
         {error && (
           <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">

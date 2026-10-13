@@ -7,6 +7,7 @@ import { STATUS_BADGE, STATUS_KEY } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { AgentBadge } from '@/components/AgentBadge';
+import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { Globe, Loader2 } from 'lucide-react';
 
 /** 时间段快捷档（按 lastSeenAt 过滤）；custom = 起止日期双输入。 */
@@ -120,13 +121,7 @@ export function GlobalTasksOverview({
               ? String(filtered.length)
               : `${filtered.length} / ${sessions?.length ?? 0}`}
         </span>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-200"
-        >
-          {t('tasks.refresh')}
-        </button>
+        <RefreshIconButton className="ml-auto" title={t('tasks.refresh')} onClick={refresh} />
       </div>
 
       {/* 查询条件：项目 + 时间段（客户端过滤，不新造 API） */}
