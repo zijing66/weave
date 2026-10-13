@@ -154,6 +154,8 @@ export type { McpEnableState, McpEnableMap } from './install/settings-mcp.js';
 export { mcpOverrideOf, resolveMcpEffective, setMcpEnableOverride } from './install/settings-mcp.js';
 export { readMcpRows } from './install/mcp-rows.js';
 export type { McpToolRow } from './install/mcp-rows.js';
+export { readPluginRows } from './install/plugin-rows.js';
+export type { PluginToolRow } from './install/plugin-rows.js';
 export {
   readProjectConfig,
   writeProjectConfig,

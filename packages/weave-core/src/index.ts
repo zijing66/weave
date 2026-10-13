@@ -45,6 +45,7 @@ export {
   type ToolScope,
   type ToolCategory,
   type EnableOverride,
+  type InstallState,
   type ToolStateRow,
 } from './tool.js';
 export { DEFAULT_COMPONENTS, FULL_COMPONENTS, MINIMAL_COMPONENTS } from './types.js';

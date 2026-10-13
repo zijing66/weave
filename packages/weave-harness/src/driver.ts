@@ -1,4 +1,4 @@
-import type { Harness } from '@weavecode/core';
+import type { EnableOverride, Harness } from '@weavecode/core';
 import type { InitContext, InitPipeline } from './init/pipeline.js';
 import type { FileAssetCategory } from './shared/file-specs.js';
 
@@ -218,6 +218,21 @@ export interface PluginSurface {
   readGlobalEnabled(): Promise<Record<string, boolean>>;
   /** 全局 settings 单键写（其余键保留，文件可创建）。 */
   writeGlobalEnabled(key: string, enabled: boolean): Promise<void>;
+  /** 插件可装/可启用档位（installScopes 数据行；行行携带于 ToolStateRow）。 */
+  pluginScopes(): readonly PluginScope[];
+  /** 三档 enabledPlugins 覆写读（local > project > user 链原料；键 = 注册键；
+   *  未列 = 无覆写 = inherit——区别于显式 false）。 */
+  readEnabledOverrides(
+    projectPath: string,
+  ): Promise<Record<PluginScope, Record<string, boolean>>>;
+  /** 写某档覆写（'on'/'off' 写单键；'inherit' 删该档键 = 回落下一档；
+   *  其余键保留，文件可创建）。 */
+  setEnabledOverride(
+    projectPath: string,
+    scope: PluginScope,
+    key: string,
+    state: EnableOverride,
+  ): Promise<void>;
 }
 
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */

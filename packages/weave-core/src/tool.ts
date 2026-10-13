@@ -32,6 +32,9 @@ export type ToolCategory =
  */
 export type EnableOverride = 'on' | 'off' | 'inherit';
 
+/** 单档安装态（跨档独立求值：user 已装、project 未装 ≠ 冲突）。 */
+export type InstallState = 'absent' | 'installed' | 'updateAvailable';
+
 /**
  * 单 harness × scope 的工具状态行：扁平一行一个落点，安装与启停的抽象面。
  * 同名多档 = 多行（启停继承链由服务端解析成 `effective`，行上不留链式状态）。
@@ -44,6 +47,8 @@ export interface ToolStateRow<D = unknown> {
   scope: ToolScope;
   /** 该 harness 此类别的全部可装范围（安装控制与视图选择用，行行携带）。 */
   installScopes: readonly ToolScope[];
+  /** 本面安装态（行存在 = 本面在 installScopes 内；缺省 = 该面无安装语义）。 */
+  install?: InstallState;
   /** 该档的启停覆写；null = 此面无启停语义（装了即生效）。 */
   enable: EnableOverride | null;
   /** 服务端唯一解析的生效态（前端不得自算）。 */

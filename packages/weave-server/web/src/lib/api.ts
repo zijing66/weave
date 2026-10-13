@@ -5,7 +5,7 @@
  */
 
 import type { Harness } from '@weavecode/core/harness';
-import type { EnableOverride, ToolStateRow } from '@weavecode/core/tool';
+import type { EnableOverride, ToolScope, ToolStateRow } from '@weavecode/core/tool';
 import { HARNESS_ORDER } from './harness-meta';
 
 const BASE = '/api';
@@ -531,8 +531,8 @@ export interface GlobalSkillGroup {
   enabled?: boolean;
 }
 
-/** Plugin enable map per runtime (Claude reads settings.json, Codex config.toml). */
-export type PluginEnabledMap = Record<Harness, Record<string, boolean>>;
+/** 插件工具行：模型协议 ToolStateRow（install/enable 逐档，effective 服务端解析）。 */
+export type PluginRow = ToolStateRow;
 
 export type PluginRuntime = Harness;
 
@@ -1095,16 +1095,22 @@ export const api = {
     if (q.pluginKey) params.set('pluginKey', q.pluginKey);
     return apiFetch<ProjectFile>(`/projects/${projectId}/skills/global/file?${params}`);
   },
-  getPluginEnabled: (projectId: number): Promise<PluginEnabledMap> =>
-    apiFetch<PluginEnabledMap>(`/projects/${projectId}/plugins/enabled`),
-  putPluginEnabled: (
+  /** 插件工具行（每键 × 每可装档一行；effective/安装态服务端算好）。 */
+  listPluginState: (projectId: number): Promise<PluginRow[]> =>
+    apiFetch<{ rows: PluginRow[] }>(`/projects/${projectId}/plugins/state`).then(
+      (r) => r.rows,
+    ),
+  putPluginState: (
     projectId: number,
-    body: { runtime: PluginRuntime; key: string; enabled: boolean },
-  ): Promise<Response> =>
-    fetch(`${BASE}/projects/${projectId}/plugins/enabled`, {
+    runtime: PluginRuntime,
+    key: string,
+    scope: ToolScope,
+    state: EnableOverride,
+  ): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/plugins/state`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ runtime, key, scope, state }),
     }),
   /** 卸载 CC 插件包（harness 级，按注册键；市场副本保留）。 */
   uninstallPluginPack: (

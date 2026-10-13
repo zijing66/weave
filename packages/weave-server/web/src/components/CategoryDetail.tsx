@@ -10,7 +10,7 @@ import {
   type StatuslineSource,
   type GlobalSkillGroup,
   type GlobalSkillSource,
-  type PluginEnabledMap,
+  type PluginRow,
   type PluginRuntime,
   type ProjectRow,
 } from '@/lib/api';
@@ -75,7 +75,7 @@ export function CategoryDetail({
   mcpRows,
   updates,
   globalSkillGroups,
-  pluginEnabled,
+  pluginRows,
   statuslineSource,
   onUninstallSkill,
   onUninstallMcp,
@@ -105,7 +105,7 @@ export function CategoryDetail({
   mcpRows: McpRow[];
   updates: UpdateReport | null;
   globalSkillGroups: GlobalSkillGroup[];
-  pluginEnabled: PluginEnabledMap;
+  pluginRows: PluginRow[];
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
@@ -173,7 +173,9 @@ export function CategoryDetail({
     return filtered.map((g) => {
       const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
       const enabled =
-        g.pluginKey && runtime ? pluginEnabled[runtime]?.[g.pluginKey] ?? false : undefined;
+        g.pluginKey && runtime
+          ? pluginRows.some((r) => r.harness === runtime && r.key === g.pluginKey && r.effective)
+          : undefined;
       return {
         label: g.label,
         source: g.source,
@@ -195,7 +197,7 @@ export function CategoryDetail({
         })),
       };
     });
-  }, [globalSkillGroups, pluginEnabled, runtimeTab]);
+  }, [globalSkillGroups, pluginRows, runtimeTab]);
 
   // MCP rows for the active runtime tab. 行自带 (harness, scope) 面与
   // installScopes：视图规则 = 卡面取 installScopes 含当前 scope 的那档，否则

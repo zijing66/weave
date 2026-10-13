@@ -21,7 +21,8 @@ import { CLAUDE_ASSETS } from './assets.js';
  * - weave marketplace = 自有目录源（`~/.claude/weave-marketplace`，包目录拷贝成
  *   `plugins/<name>` + 相对 source），键形自然为 `name@weave`（H5）。
  * - 项目启用 = 项目 `.claude/settings.json` 的 `enabledPlugins[name@weave]`
- *   （local > project > user 合并，项目 false 可关全局，H3）。
+ *   （local > project > user 合并，项目 false 可关全局，H3）；local 档 =
+ *   `.claude/settings.local.json`（个人本项目，gitignored）。
  * - 项目 `.claude/plugins/` 宿主从不扫描（H4）——只有存量副本清理语义消费。
  */
 export const WEAVE_MARKETPLACE = 'weave';
@@ -150,6 +151,9 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
   const marketplaceRoot = (): string => path.join(homedir(), '.claude', MARKETPLACE_DIRNAME);
   const projectSettingsFile = (projectPath: string): string =>
     path.join(projectPath, '.claude', 'settings.json');
+  /** local 档（个人本项目、gitignored）：`.claude/settings.local.json`。 */
+  const localSettingsFile = (projectPath: string): string =>
+    path.join(projectPath, '.claude', 'settings.local.json');
   /** 注册键：缺省 weave 自建市场；给出市场身份则用该市场（外部市场导入的包）。 */
   const pluginKey = (name: string, market?: string): string =>
     `${name}@${market ?? WEAVE_MARKETPLACE}`;
@@ -433,6 +437,32 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       const file = globalSettingsFile();
       const settings = await readJson(file);
       settings.enabledPlugins = { ...rawEnabledOf(settings), [key]: enabled };
+      await writeJson(file, settings);
+    },
+
+    pluginScopes: () => ['user', 'project', 'local'],
+
+    async readEnabledOverrides(projectPath) {
+      const [user, project, local] = await Promise.all([
+        readJson(globalSettingsFile()).then(enabledOf),
+        readJson(projectSettingsFile(projectPath)).then(enabledOf),
+        readJson(localSettingsFile(projectPath)).then(enabledOf),
+      ]);
+      return { user, project, local };
+    },
+
+    async setEnabledOverride(projectPath, scope, key, state) {
+      const file =
+        scope === 'user'
+          ? globalSettingsFile()
+          : scope === 'project'
+            ? projectSettingsFile(projectPath)
+            : localSettingsFile(projectPath);
+      const settings = await readJson(file);
+      const raw = rawEnabledOf(settings);
+      if (state === 'inherit') delete raw[key];
+      else raw[key] = state === 'on';
+      settings.enabledPlugins = raw;
       await writeJson(file, settings);
     },
   };

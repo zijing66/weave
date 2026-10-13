@@ -45,6 +45,14 @@ export function pluginSurfaceFor(harness: Harness): PluginSurface {
   return surface;
 }
 
+/** 声明了 plugins 槽的 (harness, 面) 列表——工具行装配按本表枚举，不写白名单。 */
+export function pluginSurfaces(): Array<{ harness: Harness; surface: PluginSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.plugins !== undefined)
+    .map((d) => ({ harness: d.id, surface: d.plugins! }));
+}
+
 /** 按 harness 取插件启用态面（P2）；未注册或未补 pluginState 槽抛错。 */
 export function pluginStateFor(harness: Harness): PluginStateSurface {
   const state = registry.get(harness)?.pluginState;

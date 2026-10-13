@@ -105,7 +105,8 @@ import {
 } from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
-import { pluginStateSurfaces, pluginSurfaceFor } from '../surfaces.js';
+import { pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../surfaces.js';
+import { readPluginRows } from '../install/plugin-rows.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
 
@@ -866,33 +867,66 @@ async function handleRequest(
     return;
   }
 
-  // --- plugin enable state (per-harness, enumerated from the pluginState slot:
-  //     claude = ~/.claude/settings.json, codex = ~/.codex/config.toml) ---
-  const pluginEnabledMatch = pathname.match(/^\/projects\/(\d+)\/plugins\/enabled$/);
-  if (pluginEnabledMatch) {
-    const stateSurfaces = pluginStateSurfaces();
+  // --- plugin tool rows (工具对象模型：每键 × 每可装档一行；effective 服务端
+  //     唯一解析，PluginEnabledMap 的替换面) ---
+  const pluginStateMatch = pathname.match(/^\/projects\/(\d+)\/plugins\/state$/);
+  if (pluginStateMatch) {
+    const project = deps.projects.getById(Number(pluginStateMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
     if (req.method === 'GET') {
-      const entries = await Promise.all(
-        stateSurfaces.map(async (s) => [s.harness, await s.state.readGlobalEnabled()] as const),
-      );
-      sendJson(res, 200, Object.fromEntries(entries));
+      sendJson(res, 200, { rows: await readPluginRows(project.path) });
       return;
     }
     if (req.method === 'PUT') {
-      let body: { runtime?: string; key?: string; enabled?: boolean };
+      let body: { runtime?: string; key?: string; scope?: string; state?: string };
       try {
         body = JSON.parse(await readBody(req)) as typeof body;
       } catch {
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
-      const target = stateSurfaces.find((s) => s.harness === body.runtime);
-      if (!body.key || typeof body.enabled !== 'boolean' || !target) {
-        sendJson(res, 400, { error: 'Missing or invalid "runtime"/"key"/"enabled"' });
+      if (
+        !isHarness(body.runtime) ||
+        !body.key ||
+        !body.scope ||
+        !['user', 'project', 'local'].includes(body.scope) ||
+        !body.state ||
+        !['on', 'off', 'inherit'].includes(body.state)
+      ) {
+        sendJson(res, 400, {
+          error: 'Missing or invalid "runtime"/"key"/"scope" (user|project|local)/"state" (on|off|inherit)',
+        });
         return;
       }
-      await target.state.writeGlobalEnabled(body.key, body.enabled);
-      sendJson(res, 200, { ok: true });
+      const scope = body.scope as 'user' | 'project' | 'local';
+      const state = body.state as 'on' | 'off' | 'inherit';
+      try {
+        const installFace = pluginSurfaces().find((p) => p.harness === body.runtime);
+        if (installFace) {
+          // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
+          const surface =
+            body.runtime === 'claude' && deps.pluginSurface
+              ? deps.pluginSurface
+              : installFace.surface;
+          await surface.setEnabledOverride(project.path, scope, body.key, state);
+        } else {
+          // 仅启用面 harness（codex）：只有 user 档布尔写，无 inherit 删除语义。
+          const stateFace = pluginStateSurfaces().find((s) => s.harness === body.runtime);
+          if (!stateFace || scope !== 'user' || state === 'inherit') {
+            sendJson(res, 400, {
+              error: 'This runtime only supports user-scope on/off overrides',
+            });
+            return;
+          }
+          await stateFace.state.writeGlobalEnabled(body.key, state === 'on');
+        }
+        sendJson(res, 200, { ok: true });
+      } catch (e) {
+        sendJson(res, 400, { error: e instanceof Error ? e.message : 'Plugin state write failed' });
+      }
       return;
     }
   }

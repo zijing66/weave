@@ -25,7 +25,7 @@ import {
   type UpdateReport,
   type ProjectConfig,
   type GlobalSkillGroup,
-  type PluginEnabledMap,
+  type PluginRow,
   type PluginRuntime,
   type GlobalSkillSource,
   type InstallCapabilities,
@@ -58,9 +58,9 @@ const RIGHT_MIN = 260;
 const RIGHT_MAX = 440;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
-/** 每个 harness 一张空 enable 表（由名表生成，加 harness 自动跟随）。 */
-const emptyPluginEnabled = (): PluginEnabledMap =>
-  Object.fromEntries(HARNESS_ORDER.map((h) => [h, {}])) as PluginEnabledMap;
+/** 生效查表（链解析在服务端，前端只读行上的 effective）。 */
+const pluginEffective = (rows: readonly PluginRow[], runtime: PluginRuntime, key: string): boolean =>
+  rows.some((r) => r.harness === runtime && r.key === key && r.effective);
 
 export default function App() {
   const t = useT();
@@ -83,7 +83,7 @@ export default function App() {
   const [mcpRows, setMcpRows] = useState<McpRow[]>([]);
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
-  const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>(emptyPluginEnabled);
+  const [pluginRows, setPluginRows] = useState<PluginRow[]>([]);
   // Per-project config cache (autoSync etc.) — single source for the top bar
   // chip (selected project) and the row quick-action toggles alike.
   const [configMap, setConfigMap] = useState<Record<number, ProjectConfig>>({});
@@ -221,8 +221,8 @@ export default function App() {
   const refreshGlobalSkills = useCallback((p: ProjectRow) => {
     api.listGlobalSkills(p.id).then(setGlobalSkillGroups).catch(() => {});
   }, []);
-  const refreshPluginEnabled = useCallback((p: ProjectRow) => {
-    api.getPluginEnabled(p.id).then(setPluginEnabled).catch(() => {});
+  const refreshPluginRows = useCallback((p: ProjectRow) => {
+    api.listPluginState(p.id).then(setPluginRows).catch(() => {});
   }, []);
 
   const refreshConfig = useCallback((p: ProjectRow) => {
@@ -286,7 +286,7 @@ export default function App() {
       setMcpRows([]);
       setUpdates(null);
       setGlobalSkillGroups([]);
-      setPluginEnabled(emptyPluginEnabled());
+      setPluginRows([]);
       setSelectedFile(null);
       setDrawerSkill(null);
       setMainCategory('tasks');
@@ -297,14 +297,14 @@ export default function App() {
       refreshMcp(p);
       refreshUpdates(p);
       refreshGlobalSkills(p);
-      refreshPluginEnabled(p);
+      refreshPluginRows(p);
       refreshConfig(p);
       api
         .getStatusline(p.id)
         .then((r) => setStatuslineSource(r.config.source))
         .catch(() => {});
     },
-    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshPluginEnabled, refreshConfig],
+    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshPluginRows, refreshConfig],
   );
 
   /** Enter the global pseudo-project. Global data is machine-wide, so any
@@ -326,10 +326,10 @@ export default function App() {
       .then(setGlobalAssets)
       .catch((e) => setError(String(e)));
     refreshGlobalSkills(anchor);
-    refreshPluginEnabled(anchor);
+    refreshPluginRows(anchor);
     refreshMcp(anchor);
     refreshUpdates(anchor);
-  }, [selected, projects, refreshGlobalSkills, refreshPluginEnabled, refreshMcp, refreshUpdates]);
+  }, [selected, projects, refreshGlobalSkills, refreshPluginRows, refreshMcp, refreshUpdates]);
 
   // Land in the global pseudo-project once the project list arrives. The
   // "nothing selected yet" state (no project + not in global mode) is only
@@ -377,11 +377,13 @@ export default function App() {
         globalSkillGroups.map((g) => {
           const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
           const enabled =
-            g.pluginKey && runtime ? pluginEnabled[runtime]?.[g.pluginKey] ?? false : undefined;
+            g.pluginKey && runtime
+              ? pluginEffective(pluginRows, runtime, g.pluginKey)
+              : undefined;
           return { enabled, skills: g.skills };
         }),
       ).effective,
-    [globalSkillGroups, pluginEnabled],
+    [globalSkillGroups, pluginRows],
   );
 
   const categoryData = useMemo<CategoryBarData>(() => {
@@ -434,7 +436,7 @@ export default function App() {
       ).length,
       sessions: (allSessions ?? []).filter((s) => s.projectId === selected?.id).length,
     };
-  }, [globalMode, globalSkillGroups, mcpRows, updates, assets, globalAssets, assetCounts, pluginEnabled, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
+  }, [globalMode, globalSkillGroups, mcpRows, updates, assets, globalAssets, assetCounts, pluginRows, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.
@@ -811,23 +813,20 @@ export default function App() {
   );
   const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
 
-  /** Toggle a plugin's enable state in the host config (Claude settings.json or
-   * Codex config.toml). Optimistically updates the local map, then persists;
-   * reloads groups on success so enable badges stay in sync. On failure refetches
-   * to revert the optimistic flip and throws (caller reports). */
+  /** Toggle a plugin's user-scope enable override (on/off) in the host config
+   * (Claude settings.json / Codex config.toml). Rows are the single source of
+   * truth — no optimistic flip, just refetch (effective is server-resolved).
+   * Reloads groups on success so enable badges stay in sync. Throws on failure
+   * (caller's fb.run reports). */
   const handleTogglePlugin = useCallback(
     async (runtime: PluginRuntime, key: string, enabled: boolean) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      setPluginEnabled((prev) => ({ ...prev, [runtime]: { ...prev[runtime], [key]: enabled } }));
-      const res = await api.putPluginEnabled(target.id, { runtime, key, enabled });
-      if (!res.ok) {
-        refreshPluginEnabled(target);
-        throw new Error(`${res.status} ${await res.text()}`);
-      }
+      await api.putPluginState(target.id, runtime, key, 'user', enabled ? 'on' : 'off');
+      refreshPluginRows(target);
       refreshGlobalSkills(target);
     },
-    [selected, projects, refreshPluginEnabled, refreshGlobalSkills],
+    [selected, projects, refreshPluginRows, refreshGlobalSkills],
   );
 
   /** 卸载 CC 插件包（harness 注册表级；apiFetch 非 2xx 抛错，调用方 fb.run 报错）。 */
@@ -837,9 +836,9 @@ export default function App() {
       if (!target) return;
       await api.uninstallPluginPack(target.id, { runtime, key });
       refreshGlobalSkills(target);
-      refreshPluginEnabled(target);
+      refreshPluginRows(target);
     },
-    [selected, projects, refreshGlobalSkills, refreshPluginEnabled],
+    [selected, projects, refreshGlobalSkills, refreshPluginRows],
   );
 
   // 直连 fire-and-forget 调用点（拖拽落定 / 库面板安装·更新 / 抽屉卸载）没有
@@ -1137,7 +1136,7 @@ export default function App() {
                         mcpRows={mcpRows}
                         updates={updates}
                         globalSkillGroups={globalSkillGroups}
-                        pluginEnabled={pluginEnabled}
+                        pluginRows={pluginRows}
                         statuslineSource={statuslineSource}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}

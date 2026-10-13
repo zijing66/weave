@@ -429,3 +429,65 @@ describe('weave 市场铺包：链接优先', () => {
     );
   });
 });
+
+/** 工具对象模型三档启用覆写（H3：local > project > user，未列 = 无覆写）。 */
+describe('三档启用覆写：readEnabledOverrides / setEnabledOverride', () => {
+  it('pluginScopes 数据行 = user/project/local', () => {
+    expect(surface.pluginScopes()).toEqual(['user', 'project', 'local']);
+  });
+
+  it('三档覆写读：未列 = 无覆写（读侧区分显式 false 与缺键）', async () => {
+    await mkdir(path.dirname(settingsFile()), { recursive: true });
+    await writeFile(settingsFile(), JSON.stringify({ enabledPlugins: { 'a@weave': true } }));
+    await mkdir(path.dirname(projectSettings()), { recursive: true });
+    await writeFile(
+      projectSettings(),
+      JSON.stringify({ enabledPlugins: { 'b@weave': false } }),
+    );
+    const overrides = await surface.readEnabledOverrides(project);
+    expect(overrides).toEqual({
+      user: { 'a@weave': true },
+      project: { 'b@weave': false },
+      local: {},
+    });
+  });
+
+  it('on/off 各落各的档位文件（user 可创建）；inherit 删档位键 = 回落', async () => {
+    await surface.setEnabledOverride(project, 'local', 'a@weave', 'on');
+    await surface.setEnabledOverride(project, 'project', 'a@weave', 'off');
+    await surface.setEnabledOverride(project, 'user', 'b@weave', 'off');
+
+    const local = JSON.parse(
+      await readFile(path.join(project, '.claude', 'settings.local.json'), 'utf8'),
+    ) as { enabledPlugins: Record<string, boolean> };
+    expect(local.enabledPlugins).toEqual({ 'a@weave': true });
+    const proj = JSON.parse(await readFile(projectSettings(), 'utf8')) as {
+      enabledPlugins: Record<string, boolean>;
+    };
+    expect(proj.enabledPlugins).toEqual({ 'a@weave': false });
+    const user = JSON.parse(await readFile(settingsFile(), 'utf8')) as {
+      enabledPlugins: Record<string, boolean>;
+    };
+    expect(user.enabledPlugins).toEqual({ 'b@weave': false });
+
+    await surface.setEnabledOverride(project, 'local', 'a@weave', 'inherit');
+    const overrides = await surface.readEnabledOverrides(project);
+    expect(overrides.local).toEqual({});
+    expect(overrides.project['a@weave']).toBe(false);
+  });
+
+  it('覆写不碰同档其余键（enabledPlugins 外的 settings 键也保留）', async () => {
+    await mkdir(path.dirname(projectSettings()), { recursive: true });
+    await writeFile(
+      projectSettings(),
+      JSON.stringify({ enabledPlugins: { 'keep@weave': true }, other: 1 }),
+    );
+    await surface.setEnabledOverride(project, 'project', 'a@weave', 'on');
+    const json = JSON.parse(await readFile(projectSettings(), 'utf8')) as {
+      enabledPlugins: Record<string, boolean>;
+      other: number;
+    };
+    expect(json.enabledPlugins).toEqual({ 'keep@weave': true, 'a@weave': true });
+    expect(json.other).toBe(1);
+  });
+});
