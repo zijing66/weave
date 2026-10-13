@@ -73,6 +73,12 @@ export interface AssetSurface {
   userConfigFile(homedir: string): string;
 
   /**
+   * MCP 服务器的可配置范围（project = 项目 `.mcp.json` / user = 用户级配置），
+   * 空数组 = 该 harness 无 MCP 面。安装属性矩阵与 web 能力判定共源。
+   */
+  mcpScopes(): Array<'project' | 'user'>;
+
+  /**
    * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
    * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
    */

@@ -30,6 +30,8 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   userConfigFile: (homedir) => path.join(homedir, '.claude', 'settings.json'),
 
+  mcpScopes: () => ['project', 'user'],
+
   pluginCacheDir: (homedir) => path.join(homedir, '.claude', 'plugins', 'cache'),
 
   classify(relPath) {

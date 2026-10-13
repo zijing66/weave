@@ -64,6 +64,11 @@ describe('skills / 配置路径', () => {
     expect(CLAUDE_ASSETS.userConfigFile(HOME)).toBe(join(HOME, '.claude', 'settings.json'));
     expect(CODEX_ASSETS.userConfigFile(HOME)).toBe(join(HOME, '.codex', 'config.toml'));
   });
+
+  it('mcp 范围：Claude 双面（.mcp.json / 用户级）；Codex 仅用户级', () => {
+    expect(CLAUDE_ASSETS.mcpScopes()).toEqual(['project', 'user']);
+    expect(CODEX_ASSETS.mcpScopes()).toEqual(['user']);
+  });
 });
 
 describe('classify — 路径归属（同 classifyAgent 逐例）', () => {

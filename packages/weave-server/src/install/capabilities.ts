@@ -29,9 +29,9 @@ export interface InstallCapabilities {
  *
  * 文件资产由 FILE_ASSET_SPECS 的 `dirs` 落点表按 harness 名单遍历派生：
  * 有 `project` ⇒ 支持项目面、有 `user` ⇒ 支持 user 面（Codex 项目面仅 skills，
- * 故 codex 单文件资产恒只有 user）。skill 面由资产面派生（P5：stub 实验
- * 证明手写字面量会漏第三 harness 的面）；mcp 为固定规则（mcp × codex 强制
- * user，表示法随 MCP 面批收口）。
+ * 故 codex 单文件资产恒只有 user）。skill 与 mcp 面皆由资产面派生
+ * （P5：stub 实验证明手写字面量会漏第三 harness 的面；mcp 范围 =
+ * AssetSurface.mcpScopes，表示法随 MCP 面批收口）。
  */
 export function installCapabilities(): InstallCapabilities {
   const categories = {} as InstallCapabilities['categories'];
@@ -57,10 +57,9 @@ export function installCapabilities(): InstallCapabilities {
     }),
   };
   categories.mcp = {
-    surfaces: [
-      { harness: 'claude', scopes: ['project', 'user'] },
-      { harness: 'codex', scopes: ['user'] },
-    ],
+    surfaces: assetSurfaces()
+      .map((s) => ({ harness: s.harness, scopes: s.mcpScopes() }))
+      .filter((surface) => surface.scopes.length > 0),
   };
   return { categories };
 }

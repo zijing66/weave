@@ -32,6 +32,9 @@ export const CODEX_ASSETS: AssetSurface = {
 
   userConfigFile: (homedir) => path.join(homedir, '.codex', 'config.toml'),
 
+  // MCP 恒用户级（~/.codex/config.toml），无项目 .mcp.json 面。
+  mcpScopes: () => ['user'],
+
   pluginCacheDir: (homedir) => path.join(homedir, '.codex', 'plugins', 'cache'),
 
   classify(relPath) {
