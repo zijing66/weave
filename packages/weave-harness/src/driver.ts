@@ -113,6 +113,13 @@ export interface AssetSurface {
   mcpScopes(): Array<'project' | 'user'>;
 
   /**
+   * MCP 配置落点（安装属性矩阵的范围落点提示数据源）：project = 项目内文件
+   * 相对路径（posix）、user = 用户级配置文件绝对路径；该 harness 无此 scope
+   * 的 MCP 面 → undefined。web 按行渲染提示，不自拼 harness 路径。
+   */
+  mcpDest(scope: 'project' | 'user', homedir: string): string | undefined;
+
+  /**
    * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
    * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
    */

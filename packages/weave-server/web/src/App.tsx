@@ -1167,6 +1167,7 @@ export default function App() {
                         onOpenSession={openSessionInProject}
                         initialSessionId={initialSessionId ?? undefined}
                         dragPayload={dragPayload}
+                        capabilities={installCaps}
                       />
                     )}
                   </div>

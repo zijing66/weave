@@ -32,6 +32,10 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   mcpScopes: () => ['project', 'user'],
 
+  // 项目 = 根级 .mcp.json；用户级 MCP 住在运行时文件 ~/.claude.json（非 settings.json）。
+  mcpDest: (scope, homedir) =>
+    scope === 'project' ? '.mcp.json' : path.join(homedir, '.claude.json'),
+
   pluginCacheDir: (homedir) => path.join(homedir, '.claude', 'plugins', 'cache'),
 
   classify(relPath) {

@@ -676,7 +676,8 @@ export function LibraryPanel({
               agent={installAgent}
               onChange={setInstallAgent}
               kind="skills"
-              globalHint={scope === 'user'}
+              scope={scope}
+              capabilities={capabilities}
             />
             {groupSkills(skills).map(([group, items]) => {
               const key = group || '__root__';
@@ -816,7 +817,13 @@ export function LibraryPanel({
               <p className="text-xs text-neutral-600">{t('library.noMcpTemplates')}</p>
             )}
             {/* Install-to runtime: Claude (.mcp.json / ~/.claude.json) or Codex (~/.codex/config.toml) */}
-            <AgentToggle agent={installAgent} onChange={setInstallAgent} kind="mcp" />
+            <AgentToggle
+              agent={installAgent}
+              onChange={setInstallAgent}
+              kind="mcp"
+              scope={scope}
+              capabilities={capabilities}
+            />
             {mcp.map((srv) => (
               <DraggableMcpRow
                 key={srv.name}
@@ -1176,18 +1183,22 @@ function groupSkills(skills: SkillAsset[]): [string, SkillAsset[]][] {
 
 /** harness install-target toggle shared by the skill and MCP template
  * sections. Harnesses come from the name table; tooltips are per-kind (a new
- * harness without a tip shows none). The destination hint is codex-specific. */
+ * harness without a tip shows none). The destination hint renders from the
+ * install-capabilities matrix（§6-4 收编：不自拼 harness 路径）。 */
 function AgentToggle({
   agent,
   onChange,
   kind,
-  globalHint,
+  scope,
+  capabilities,
 }: {
   agent: AssetAgent;
   onChange: (a: AssetAgent) => void;
   kind: 'skills' | 'mcp';
-  /** skills only: show the ~/.codex path hint in global scope. */
-  globalHint?: boolean;
+  /** 当前安装 scope：dest 按 (harness, scope) 从矩阵取。 */
+  scope: AssetScope;
+  /** 安装属性矩阵；未加载 → 无 dest → 不显提示（谓词层同样回落全放行）。 */
+  capabilities: InstallCapabilities | null;
 }) {
   const t = useT();
   const tips: Partial<Record<AssetAgent, string>> =
@@ -1200,6 +1211,9 @@ function AgentToggle({
           claude: t('library.tipMcpClaude'),
           codex: t('library.tipMcpCodex'),
         };
+  const dest = capabilitiesOf(kind === 'skills' ? 'skill' : 'mcp', capabilities).surfaces.find(
+    (s) => s.harness === agent,
+  )?.dest?.[scope];
   return (
     <div className="flex items-center gap-1 mb-1">
       <span className="text-[11px] text-neutral-500 shrink-0">{t('library.installTarget')}</span>
@@ -1218,15 +1232,7 @@ function AgentToggle({
           {harnessUiOf(a).label}
         </button>
       ))}
-      {agent === 'codex' && (
-        <span className="text-[10px] text-neutral-600">
-          {kind === 'skills'
-            ? globalHint
-              ? '→ ~/.agents/skills/'
-              : '→ .codex/skills/'
-            : t('library.codexMcpPathHint')}
-        </span>
-      )}
+      {dest && <span className="text-[10px] text-neutral-600">→ {dest}</span>}
     </div>
   );
 }

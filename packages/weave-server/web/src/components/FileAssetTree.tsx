@@ -5,7 +5,9 @@ import {
   type AssetScope,
   type FileAssetCategory,
   type FileAssetUpdate,
+  type InstallCapabilities,
 } from '@/lib/api';
+import { canUninstall } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
@@ -47,20 +49,6 @@ const CHIP_BASE =
 
 /** Highlight for a chip in the filtered (selected) state. */
 const CHIP_ACTIVE_HL = 'bg-neutral-700 ring-1 ring-blue-500/50 hover:bg-neutral-700';
-
-/** Kinds the daemon's uninstall route accepts in a project
- * (mirrors isFileAssetCategory). */
-const UNINSTALLABLE = new Set([
-  'command',
-  'agent',
-  'workflow',
-  'rule',
-  'output-style',
-]);
-
-/** Global (user-level) uninstall needs a `userDir` in FILE_ASSET_SPECS —
- * workflow and rule are project-scoped only, and Codex has no such surface. */
-const GLOBAL_UNINSTALLABLE = new Set(['command', 'agent', 'output-style']);
 
 type FileNode = { type: 'file'; asset: AssetEntry };
 type DirNode = {
@@ -157,6 +145,7 @@ function AssetTreeNode({
   node,
   depth,
   scope,
+  capabilities,
   updateMap,
   collapsed,
   onToggle,
@@ -166,6 +155,8 @@ function AssetTreeNode({
   node: TreeNode;
   depth: number;
   scope: AssetScope;
+  /** 安装属性矩阵（卸载门控数据源）；未到 = 回落全放行，服务端硬校验兜底。 */
+  capabilities?: InstallCapabilities | null;
   /** key = fileStem + category（构建时一次成 Map，避免每行线性 find）。 */
   updateMap?: Map<string, FileAssetUpdate>;
   collapsed: Set<string>;
@@ -183,10 +174,9 @@ function AssetTreeNode({
     const name = lastSegment(a.relPath);
     const isMd = a.relPath.toLowerCase().endsWith('.md');
     const update = updateMap?.get(`${fileStem(a.relPath)}::${a.category}`);
-    const uninstallable =
-      scope === 'user'
-        ? GLOBAL_UNINSTALLABLE.has(a.category) && a.agent !== 'codex'
-        : UNINSTALLABLE.has(a.category);
+    // 卸载面按 installScopes 数据行驱动（§6-4）：该 harness 在本 scope 有面
+    // 才给卸载按钮（可装处即可卸）；无 agent 的行 = claude 面（路径不带归属）。
+    const uninstallable = canUninstall(a.category, a.agent ?? 'claude', scope, capabilities);
     const tags = tagsOf(a.category, a.relPath);
     const row: FileAssetRow = {
       name: fileStem(a.relPath),
@@ -298,6 +288,7 @@ function AssetTreeNode({
             node={c}
             depth={depth + 1}
             scope={scope}
+            capabilities={capabilities}
             updateMap={updateMap}
             collapsed={collapsed}
             onToggle={onToggle}
@@ -320,6 +311,7 @@ function AssetTreeNode({
 export function FileAssetTree({
   scope,
   assets,
+  capabilities,
   updates,
   onUninstall,
   onOpenFile,
@@ -327,6 +319,8 @@ export function FileAssetTree({
   /** Which view this tree is in — prefixes the heading (项目 X / 全局 X). */
   scope: AssetScope;
   assets: AssetEntry[];
+  /** 安装属性矩阵——卸载门控数据源（§6-4）。 */
+  capabilities?: InstallCapabilities | null;
   /** Update info already filtered to this mode's scope. */
   updates?: FileAssetUpdate[];
   onUninstall: (row: FileAssetRow) => void | Promise<void>;
@@ -476,6 +470,7 @@ export function FileAssetTree({
               node={node}
               depth={0}
               scope={scope}
+              capabilities={capabilities}
               updateMap={updateMap}
               collapsed={collapsed}
               onToggle={toggle}

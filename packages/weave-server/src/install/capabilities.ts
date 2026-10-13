@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { homedir } from 'node:os';
 import { HARNESS_KEYS, type Harness } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
@@ -13,6 +14,9 @@ export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;
 export interface CategorySurface {
   harness: Harness;
   scopes: InstallScope[];
+  /** 各 scope 的安装落点（显示形：项目内相对路径 posix 原样、用户级以 `~`
+   *  缩写）——web 的范围落点提示按此渲染，不自拼 harness 路径（§6-4）。 */
+  dest?: Partial<Record<InstallScope, string>>;
 }
 
 export interface CategoryCapability {
@@ -30,10 +34,17 @@ export interface InstallCapabilities {
  * 文件资产由 FILE_ASSET_SPECS 的 `dirs` 落点表按 harness 名单遍历派生：
  * 有 `project` ⇒ 支持项目面、有 `user` ⇒ 支持 user 面（Codex 项目面仅 skills，
  * 故 codex 单文件资产恒只有 user）。skill 与 mcp 面皆由资产面派生
- * （P5：stub 实验证明手写字面量会漏第三 harness 的面；mcp 范围 =
- * AssetSurface.mcpScopes，表示法随 MCP 面批收口）。
+ * （P5：stub 实验证明手写字面量会漏第三 harness 的面）；mcp 范围 =
+ * AssetSurface.mcpScopes、落点 = mcpDest——范围落点提示随行下发（§6-4），
+ * web 不自拼 harness 路径。
  */
+/** 用户级落点的显示形：`~` + 相对 home 的 posix 路径。 */
+function userDest(abs: string, home: string): string {
+  return path.join('~', path.relative(home, abs)).split(path.sep).join('/');
+}
+
 export function installCapabilities(): InstallCapabilities {
+  const home = homedir();
   const categories = {} as InstallCapabilities['categories'];
   for (const cat of FILE_ASSET_CATEGORIES) {
     const dirs = FILE_ASSET_SPECS[cat].dirs;
@@ -49,16 +60,32 @@ export function installCapabilities(): InstallCapabilities {
     categories[cat] = { surfaces };
   }
   categories.skill = {
-    surfaces: assetSurfaces().map((s) => {
-      const scopes: InstallScope[] = [];
-      if (s.projectSkillsDir()) scopes.push('project');
-      if (s.globalSkillsRoots(homedir()).length > 0) scopes.push('user');
-      return { harness: s.harness, scopes };
-    }),
+    surfaces: assetSurfaces()
+      .map((s) => {
+        const scopes: InstallScope[] = [];
+        const dest: Partial<Record<InstallScope, string>> = {};
+        if (s.projectSkillsDir()) {
+          scopes.push('project');
+          dest.project = s.projectSkillsDir();
+        }
+        const userRoot = s.globalSkillsRoots(home)[0];
+        if (userRoot) {
+          scopes.push('user');
+          dest.user = userDest(userRoot, home);
+        }
+        return { harness: s.harness, scopes, dest };
+      }),
   };
   categories.mcp = {
     surfaces: assetSurfaces()
-      .map((s) => ({ harness: s.harness, scopes: s.mcpScopes() }))
+      .map((s) => {
+        const dest: Partial<Record<InstallScope, string>> = {};
+        const project = s.mcpDest('project', home);
+        const user = s.mcpDest('user', home);
+        if (project) dest.project = project;
+        if (user) dest.user = userDest(user, home);
+        return { harness: s.harness, scopes: s.mcpScopes(), dest };
+      })
       .filter((surface) => surface.scopes.length > 0),
   };
   return { categories };

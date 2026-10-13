@@ -5,12 +5,14 @@
  */
 import type { MessageKey } from '@/i18n/dict';
 import { HARNESS_ORDER } from './harness-meta';
-import type {
-  AssetScope,
-  AssetAgent,
-  InstallCapabilities,
-  InstallCategory,
-  McpServerConfig,
+import {
+  FILE_ASSET_CATEGORIES,
+  type AssetScope,
+  type AssetAgent,
+  type FileAssetCategory,
+  type InstallCapabilities,
+  type InstallCategory,
+  type McpServerConfig,
 } from './api';
 
 export type { InstallCategory };
@@ -20,7 +22,11 @@ declare const attrsBrand: unique symbol;
 /** 某类别在各 harness 面的安装范围（唯一构造点 = capabilitiesOf）。 */
 export interface InstallAttrs {
   readonly [attrsBrand]: true;
-  surfaces: Array<{ harness: AssetAgent; scopes: AssetScope[] }>;
+  surfaces: Array<{
+    harness: AssetAgent;
+    scopes: AssetScope[];
+    dest?: Partial<Record<AssetScope, string>>;
+  }>;
 }
 
 export interface InstallVerdict {
@@ -73,6 +79,19 @@ export function canInstall(
     };
   }
   return { ok: true, reasonKey: null };
+}
+
+/** 卸载门控（§6-4 收编）：与安装共用同一矩阵——harness 在该 scope 有面才可卸
+ *  （服务端 uninstall 本就按面抛错，这里只是让 UI 提前说真话）。非单文件资产
+ *  类别（树里的 settings/hooks 等只读行）→ 恒 false。 */
+export function canUninstall(
+  category: string,
+  agent: AssetAgent,
+  scope: AssetScope,
+  table?: InstallCapabilities | null,
+): boolean {
+  if (!FILE_ASSET_CATEGORIES.includes(category as FileAssetCategory)) return false;
+  return canInstall(capabilitiesOf(category as FileAssetCategory, table), { scope, agent }).ok;
 }
 
 /** 统一拖拽 payload：拖源封装、落点 canInstall 判定、onDragEnd 分派共用一形。 */

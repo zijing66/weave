@@ -13,6 +13,7 @@ import {
   type PluginRow,
   type PluginRuntime,
   type ProjectRow,
+  type InstallCapabilities,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride } from '@weavecode/core/tool';
@@ -89,6 +90,7 @@ export function CategoryDetail({
   onOpenSession,
   initialSessionId,
   dragPayload,
+  capabilities,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
   projectId: number;
@@ -129,6 +131,8 @@ export function CategoryDetail({
   initialSessionId?: string;
   /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
   dragPayload: DragPayload | null;
+  /** 安装属性矩阵（App 传入）：文件树卸载门控数据源（§6-4）。 */
+  capabilities: InstallCapabilities | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
@@ -172,9 +176,10 @@ export function CategoryDetail({
         : globalSkillGroups.filter((g) => g.source.startsWith(runtimeTab));
     return filtered.map((g) => {
       const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
+      const isRow = (r: PluginRow) => r.harness === runtime && r.key === g.pluginKey;
       const enabled =
         g.pluginKey && runtime
-          ? pluginRows.some((r) => r.harness === runtime && r.key === g.pluginKey && r.effective)
+          ? pluginRows.some((r) => isRow(r) && r.effective)
           : undefined;
       return {
         label: g.label,
@@ -183,6 +188,12 @@ export function CategoryDetail({
         // 服务端已按 harness 面拆好市场名；前端只透传，不解析键形。
         namespace: g.namespace,
         enabled,
+        // §6-4 卸载门控去硬编码：该 harness 的插件行有安装面（installScopes
+        // 非空）→ 可整包卸载，不再写死 runtime === 'claude'。
+        installSurface:
+          g.pluginKey && runtime
+            ? pluginRows.some((r) => isRow(r) && r.installScopes.length > 0)
+            : undefined,
         skills: g.skills.map((k) => ({
           name: k.name,
           scope: 'user' as const,
@@ -321,6 +332,7 @@ export function CategoryDetail({
             scope={scope}
             assets={treeAssets}
             updates={fileUpdates}
+            capabilities={capabilities}
             onUninstall={(row) => onUninstallFileAsset(row, 'project')}
             onOpenFile={onOpenFile}
           />
@@ -344,6 +356,7 @@ export function CategoryDetail({
             scope={scope}
             assets={globalTreeAssets}
             updates={fileUpdates}
+            capabilities={capabilities}
             onUninstall={(row) => onUninstallFileAsset(row, 'user')}
             onOpenFile={onOpenFile}
           />

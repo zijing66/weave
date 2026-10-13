@@ -4,6 +4,7 @@ import type { EnableOverride } from '@weavecode/core/tool';
 import { api, type ToolkitPack, type PluginRow, type AssetScope } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
@@ -66,11 +67,6 @@ const STATE_LABEL: Record<
 /** 包直接放在扫描根下（`scope` 为空）= 没有父级文件夹可作汇总单位 → 单列一块。 */
 const SCOPE_ROOT_KEY = '__root__';
 
-/** 只显示非 weave 成分的 pack：weave 规则包（Markdown Lint 注入一类）由
- * Weave 分类唯一承载（SPI 扫描同一目录——两处展示=重复开关）。
- * mods 按 CC 插件管线安装（与 server isCcPluginPack 同口径）→ 视为 CC 包。 */
-const isCcPack = (p: ToolkitPack) => p.ccPack || p.kind === 'mod';
-
 /** L2 折叠块：一个 scope 文件夹（扫描根的直接子目录 = 父级文件夹汇总单位）。 */
 interface ScopeGroup {
   key: string;
@@ -94,8 +90,8 @@ function groupByScope(packs: ToolkitPack[]): ScopeGroup[] {
  * 折叠块（与外层 Skills 同源），市场里的包文件夹为二级，包行为三级——不再按
  * 「Claude Plugins / 表面工具包」这种成分切法分堆（那种切法看不出包属于哪个市场）。
  * 形态与开关粒度不变：CC 原生包 + mods 走「全局安装 + 项目启用」的整包 Switch，
- * 其余按本项目落盘；行尾卸载按钮 + 热重载由 daemon 负责。codex 运行态下 CC 包隐藏
- * （它们只在 claude harness 生效）。
+ * 其余按本项目落盘；行尾卸载按钮 + 热重载由 daemon 负责。运行态页签按包的
+ * manifest targets 过滤（CC 包 targets=['claude']，codex 页签自然不见）。
  */
 export function ToolkitSection({
   projectId,
@@ -228,10 +224,13 @@ export function ToolkitSection({
   };
 
   // 只分渲染组，不动数据：pack 列表仍单次拉取，toggle/清理逻辑共享同一份。
+  // 可见性按 manifest targets 数据行驱动（§6-4 收编）：CC 原生包与 mods 的
+  // targets = ['claude']，codex 运行态自然隐藏。
   const visible = useMemo(() => {
     if (!packs) return [];
-    // codex 运行态隐藏 CC 原生包与 mods（它们只在 claude harness 生效）
-    return packs.filter((p) => !p.weavePack && !(runtimeTab === 'codex' && isCcPack(p)));
+    return packs.filter(
+      (p) => !p.weavePack && (runtimeTab === 'all' || p.targets.includes(runtimeTab)),
+    );
   }, [packs, runtimeTab]);
 
   const repos = useMemo(() => groupByRepo(visible), [visible]);
@@ -488,7 +487,12 @@ export function ToolkitSection({
                             {scope.key === SCOPE_ROOT_KEY ? t('toolkit.scopeRoot') : scope.scope}
                           </span>
                           <Badge variant="skill">{scope.packs.length}</Badge>
-                          {scope.packs.some(isCcPack) && <AgentBadge agent="claude" />}
+                          {/* 汇总单位的 harness 面 = 各包 targets 并集（§6-4 收编） */}
+                          {[...new Set(scope.packs.flatMap((p) => p.targets))]
+                            .sort((a, b) => HARNESS_ORDER.indexOf(a) - HARNESS_ORDER.indexOf(b))
+                            .map((h) => (
+                              <AgentBadge key={h} agent={h} />
+                            ))}
                         </div>
                         {!scopeCollapsed && (
                           <div className="px-3 pb-3 pt-1 space-y-1.5">

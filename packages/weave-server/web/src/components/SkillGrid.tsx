@@ -70,6 +70,9 @@ export interface SkillGroup {
   namespace?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
+  /** 该组 harness 的插件行有安装面（installScopes 非空）→ 可整包卸载；
+   *  undefined → 非插件组（§6-4 卸载门控数据行驱动）。 */
+  installSurface?: boolean;
   skills: SkillRow[];
 }
 
@@ -350,7 +353,8 @@ function PackBlock({
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onOpenDetail: OpenDetailFn;
   onTogglePlugin?: (runtime: PluginRuntime, key: string, enabled: boolean) => void | Promise<void>;
-  /** 卸载 CC 插件包（harness 级，按注册键）；codex-plugin 组不消费（无 plugins 槽）。 */
+  /** 卸载插件包（harness 级，按注册键）；无安装面的 harness（如 codex）门控在
+   *  installSurface（installScopes 非空才出按钮）。 */
   onUninstallPlugin?: (runtime: PluginRuntime, key: string) => void | Promise<void>;
   readOnly?: boolean;
 }) {
@@ -366,7 +370,7 @@ function PackBlock({
   const toggleKey = `plugin-toggle:${runtime}:${group.pluginKey ?? '-'}`;
   const toggleState = fb.stateOf(toggleKey);
   const canUninstallPack =
-    isPlugin && runtime === 'claude' && !!onUninstallPlugin && !readOnly && !!group.pluginKey;
+    isPlugin && !!group.installSurface && !!onUninstallPlugin && !readOnly && !!group.pluginKey;
   const canToggle =
     isPlugin && !!runtime && !!onTogglePlugin && !readOnly && group.enabled !== undefined;
   const packUninstallKey = `pack-uninstall:${group.pluginKey ?? '-'}`;
@@ -376,7 +380,7 @@ function PackBlock({
     void fb.run(
       packUninstallKey,
       async () => {
-        await onUninstallPlugin('claude', group.pluginKey!);
+        await onUninstallPlugin(runtime!, group.pluginKey!);
         show('success', t('skillGrid.packUninstalled', { label: group.label }));
       },
       { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
@@ -450,8 +454,8 @@ function PackBlock({
             {group.enabled ? t('skillGrid.on') : t('skillGrid.off')}
           </button>
         )}
-        {/* pack uninstall — harness 级（`claude plugin uninstall`），市场副本保留、
-         * 可重装。市场源被删后 ToolkitSection 不再列出该包，这里是唯一卸载口。 */}
+        {/* pack uninstall — harness 注册表级，市场副本保留、可重装。市场源被删后
+         * ToolkitSection 不再列出该包，这里是唯一卸载口。 */}
         {canUninstallPack && (
           <button
             type="button"

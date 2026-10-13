@@ -197,7 +197,8 @@ export interface ToolkitPack {
    *  市场 = 该市场 id；不在任何市场下（裸插件/手加目录）缺省 → 前端归「本地」。
    *  一级折叠块据此分组，**不得自己从路径里推**。 */
   namespace?: string;
-  targets: string[];
+  /** weave.json manifest 的安装目标 harness（服务端 normalizeTargets 归一）。 */
+  targets: Harness[];
   kind: 'skill' | 'hook' | 'mod' | 'rule' | 'surface';
   components: string[];
   ccPack: boolean;
@@ -458,7 +459,12 @@ export type AssetScope = 'project' | 'user';
 export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;
 
 export interface CategoryCapability {
-  surfaces: Array<{ harness: AssetAgent; scopes: AssetScope[] }>;
+  surfaces: Array<{
+    harness: AssetAgent;
+    scopes: AssetScope[];
+    /** 各 scope 的安装落点显示形（服务端经资产面派生；范围落点提示按此渲染）。 */
+    dest?: Partial<Record<AssetScope, string>>;
+  }>;
 }
 
 export interface InstallCapabilities {
