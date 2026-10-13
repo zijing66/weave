@@ -556,6 +556,18 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
       return;
     }
+    // 层 1 反向收口：weave 经 globalInstall 注册进宿主的市场（`marketplace add`
+    // 的就是该目录）一并注销——否则 known_marketplaces 指向已删目录成悬空注册。
+    // 宿主的 marketplace remove 会**级联卸载**该市场的插件（连同其数据）——
+    // 破坏性，前端已加确认弹窗。skills 等装面副本不在此列，保留。
+    // best-effort：CLI 缺失/旧版不该堵死市场移除，warning 带回前端提示。
+    let warning: string | undefined;
+    try {
+      const surface = deps.pluginSurface ?? pluginSurfaceFor('claude');
+      await surface.removeMarketplace(row.path);
+    } catch (e) {
+      warning = `Host marketplace deregistration failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
     // 市场落点可能是链接（全局位置优先链接）：必须 lstat 判定后 unlink，
     // 裸 rm -rf 会把链接当目录递归删而删穿到包内/外部源。
     await removeInstalled(row.path);
@@ -563,12 +575,13 @@ async function handleRequest(
     await invalidateScan(row.path); // 目录已带走 scans.json，此处兜底热层
     deps.dataBus?.emit({ key: 'market' });
     deps.dataBus?.emit({ key: 'libraries' });
-    // 简化裁决：只删市场目录与 libraries 行；装面副本（链接/复制）不级联卸载。
+    // 简化裁决：只删市场目录与 libraries 行；非插件装面副本（链接/复制）不级联。
     sendJson(res, 200, {
       ok: true,
       removed: row.path,
       installedCopiesKept: true,
-      note: 'Installed copies are kept; uninstall them from the assets panel if needed.',
+      ...(warning ? { warning } : {}),
+      note: 'The host cascade-uninstalls plugins installed from this market; other installed copies are kept.',
     });
     return;
   }

@@ -162,6 +162,34 @@ describe('uninstall：逐 scope 卸——每条记录按它自己的 scope 删',
   });
 });
 
+describe('removeMarketplace：按落点反查注册名注销（幂等）', () => {
+  const knownFile = (): string => path.join(home, '.claude', 'plugins', 'known_marketplaces.json');
+  const writeKnown = async (entries: Record<string, unknown>): Promise<void> => {
+    await mkdir(path.dirname(knownFile()), { recursive: true });
+    await writeFile(knownFile(), JSON.stringify(entries, null, 2));
+  };
+
+  it('注册名 ≠ 目录名也按落点命中 → marketplace remove <注册名>', async () => {
+    const dir = path.join(home, 'weave', 'market', 'claude-code-playground');
+    await mkdir(dir, { recursive: true });
+    await writeKnown({
+      'ccp-market': { source: { source: 'directory', path: dir }, installLocation: dir },
+    });
+    await surface.removeMarketplace(dir);
+    expect(calls).toEqual([['plugin', 'marketplace', 'remove', 'ccp-market']]);
+  });
+
+  it('未注册（文件缺失 / 落点不符）→ 幂等不发 CLI', async () => {
+    const dir = path.join(home, 'weave', 'market', 'ghost');
+    await surface.removeMarketplace(dir); // known_marketplaces.json 不存在
+    await writeKnown({
+      other: { source: { source: 'directory' }, installLocation: path.join(home, 'elsewhere') },
+    });
+    await surface.removeMarketplace(dir);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('claudeCommandLine（win32 命令行拼装）', () => {
   it('参数逐个加引号，反斜杠绝对路径原样保留', () => {
     expect(

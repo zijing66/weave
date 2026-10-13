@@ -74,10 +74,14 @@ export const libraryZh = {
   'library.migratedOk': '已迁入市场：{name}',
   'library.migrateFailed': '迁入失败：{error}',
   'library.importedAt': '{date} 导入',
-  'library.removeMarketTip': '删除市场副本（已安装的副本保留）',
+  'library.removeMarketTip': '移除市场：删副本 + 注销宿主市场（该市场的插件将被级联卸载）',
+  'library.removeMarketTitle': '移除市场',
+  'library.removeMarketConfirm':
+    '移除市场「{name}」？市场副本将被删除，宿主会级联卸载从该市场安装的插件（连同其数据）；已安装的 skills 等装面副本保留。',
   'library.removeLegacyTip': '从清单移除（外部目录保留）',
   'library.removedOk': '已移除：{name}',
   'library.removeFailed': '移除失败：{error}',
+  'library.removeDeregWarn': '市场副本已删，但从宿主注销市场未成功：{error}',
   'library.noTemplates': '「{name}」分类暂无外部可安装模板。',
   'library.noTemplatesHint': '切换到 Skills / MCP tab 查看可安装内容。',
   'library.catPersonalization': '个性化配置',
@@ -230,10 +234,16 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.migratedOk': 'Moved into market: {name}',
   'library.migrateFailed': 'Move failed: {error}',
   'library.importedAt': 'imported {date}',
-  'library.removeMarketTip': 'Remove the market copy (installed copies are kept)',
+  'library.removeMarketTip':
+    'Remove the market: delete the copy + deregister from the host (plugins from this market are cascade-uninstalled)',
+  'library.removeMarketTitle': 'Remove market',
+  'library.removeMarketConfirm':
+    'Remove market "{name}"? The market copy is deleted and the host cascade-uninstalls plugins installed from it (including their data); installed copies such as skills are kept.',
   'library.removeLegacyTip': 'Remove from the registry (external folder kept)',
   'library.removedOk': 'Removed: {name}',
   'library.removeFailed': 'Remove failed: {error}',
+  'library.removeDeregWarn':
+    'Market copy removed, but deregistering it from the host failed: {error}',
   'library.noTemplates': 'The "{name}" category has no externally installable templates.',
   'library.noTemplatesHint': 'Switch to the Skills / MCP tab to view installable content.',
   'library.catPersonalization': 'Personalization',

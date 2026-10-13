@@ -391,6 +391,25 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       }
     },
 
+    async removeMarketplace(marketDir) {
+      // 注册名只存在于 known_marketplaces.json（目录名只是通常同名，不作依据）；
+      // 按落点路径精确反查，查不到 = 未注册（或已注销）→ 幂等返回。
+      const json = await readJson(
+        path.join(homedir(), '.claude', 'plugins', 'known_marketplaces.json'),
+      );
+      const want = path.resolve(marketDir);
+      const name = Object.entries(json).find(
+        ([, v]) =>
+          v &&
+          typeof v === 'object' &&
+          typeof (v as { installLocation?: unknown }).installLocation === 'string' &&
+          path.resolve((v as { installLocation: string }).installLocation) === want,
+      )?.[0];
+      if (!name) return;
+      // 宿主语义：连带级联卸载该市场的全部插件（含其数据），破坏性在调用方确认。
+      await run(['plugin', 'marketplace', 'remove', name]);
+    },
+
     async readProjectEnabled(projectPath, name, market) {
       const enabled = enabledOf(await readJson(projectSettingsFile(projectPath)));
       return enabled[pluginKey(name, market)] ?? false;

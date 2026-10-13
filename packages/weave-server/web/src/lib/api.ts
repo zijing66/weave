@@ -982,9 +982,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ kind: 'git', url }),
     }).then((r) => r.item),
-  /** 删除市场资源（只删市场目录与行，装面副本不级联）。 */
-  removeMarket: (id: number): Promise<void> =>
-    apiFetch<{ ok: boolean }>(`/market/${id}`, { method: 'DELETE' }).then(() => undefined),
+  /** 删除市场资源（只删市场目录与行，装面副本不级联；warning = 宿主市场注销
+   *  失败的次要结果，副本仍已删除）。 */
+  removeMarket: (id: number): Promise<{ warning?: string }> =>
+    apiFetch<{ ok: boolean; warning?: string }>(`/market/${id}`, { method: 'DELETE' }),
   /** 批量检查市场缓存更新（M4）：比对 origin，只读不落库；缺省全量。 */
   checkMarketUpdates: (ids?: number[]): Promise<MarketUpdateCheck[]> =>
     apiFetch<{ results: MarketUpdateCheck[] }>('/market/check-updates', {

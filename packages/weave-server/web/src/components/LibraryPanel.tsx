@@ -29,6 +29,7 @@ import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -321,17 +322,22 @@ export function LibraryPanel({
     );
   }
 
-  /** managed → 删市场副本；legacy → 只摘行（外部目录保留）。 */
+  /** managed → 删市场副本（并从宿主注销市场，宿主级联卸载该市场的插件——破坏性，
+   *  按钮先过 ConfirmDialog）；legacy → 只摘行（外部目录保留）。 */
+  const [removeTarget, setRemoveTarget] = useState<MarketItem | null>(null);
   async function removeItem(item: MarketItem) {
     const key = `lib-remove:${item.id}`;
     if (fb.stateOf(key) === 'loading') return;
     await fb.run(
       key,
       async () => {
-        await (item.managed ? api.removeMarket(item.id) : api.removeLibrary(item.id));
+        let warning: string | undefined;
+        if (item.managed) warning = (await api.removeMarket(item.id)).warning;
+        else await api.removeLibrary(item.id);
         if (selectedId === item.id) setSelectedId(null);
         await refreshMarket();
         show('success', t('library.removedOk', { name: item.resourceId ?? item.path }));
+        if (warning) show('info', t('library.removeDeregWarn', { error: warning }));
       },
       { fail: (e) => t('library.removeFailed', { error: errorText(e) }) },
     );
@@ -503,6 +509,18 @@ export function LibraryPanel({
           }}
           existingPaths={market.map((l) => l.path)}
         />
+        <ConfirmDialog
+          open={removeTarget !== null}
+          title={t('library.removeMarketTitle')}
+          message={t('library.removeMarketConfirm', {
+            name: removeTarget?.resourceId ?? removeTarget?.path ?? '',
+          })}
+          confirmLabel={t('common.confirm')}
+          onConfirm={() => {
+            if (removeTarget) void removeItem(removeTarget);
+          }}
+          onClose={() => setRemoveTarget(null)}
+        />
         {market.length > 0 && (
           <div className="flex items-center gap-1">
             <button
@@ -598,7 +616,9 @@ export function LibraryPanel({
                   )}
                   {!item.builtin && (
                     <button
-                      onClick={() => void removeItem(item)}
+                      onClick={() =>
+                        item.managed ? setRemoveTarget(item) : void removeItem(item)
+                      }
                       disabled={removeState === 'loading'}
                       title={
                         item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')

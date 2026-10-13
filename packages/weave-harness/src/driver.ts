@@ -169,6 +169,11 @@ export interface PluginSurface {
    *  逐 scope 卸：每条安装记录按**它自己的** scope 删（全局记录 `--scope user`、
    *  项目记录 `--scope project`）——漏删的残留记录会让宿主继续列出"已安装"。 */
   uninstall(name: string, market?: string): Promise<void>;
+  /** 注销市场（按注册时的落点路径反查注册名；幂等——未注册直接返回）。
+   *  **宿主语义：连带级联卸载该市场的全部插件（含其数据）**——调用方须先过
+   *  破坏性确认。server 只传市场目录这一语义参数，known_marketplaces 的文件
+   *  位置、名键、CLI 子命令都是 harness 自己的表示法。 */
+  removeMarketplace(marketDir: string): Promise<void>;
   /** 项目 settings 的 enabledPlugins（键 `name@<market>`；缺省 false）。 */
   readProjectEnabled(projectPath: string, name: string, market?: string): Promise<boolean>;
   /** 写项目 enabledPlugins 单键（其余键保留，文件可创建）。 */
