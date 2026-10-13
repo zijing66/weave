@@ -6,8 +6,16 @@
  * 接口与 Registry 不在这里（会与 @weavecode/harness 成环），见该包 driver.ts。
  */
 
-/** 一期闭合联合；加 harness = 加一项。 */
-export type Harness = 'claude' | 'codex';
+/**
+ * harness 名单表——**全仓唯一名单来源**：`Harness` 联合、zod 值域
+ * （`types.ts` 的三处 schema）、`HARNESS_KEYS` 皆由此派生。
+ * 加 harness = 这里加一项（下面四表由 `satisfies Record<Harness, …>` 催补，
+ * 漏加即编译失败）。
+ */
+export const HARNESS_NAMES = ['claude', 'codex'] as const;
+
+/** 一期闭合联合；从名单表派生（不手写 union，防与名单脱节）。 */
+export type Harness = (typeof HARNESS_NAMES)[number];
 
 /**
  * 事件采集面注册表——按 harness 声明，不设全局事件数组（CROSS §2.2：
@@ -71,7 +79,8 @@ export const HARNESS_LIFECYCLE = {
 } satisfies Record<Harness, HarnessLifecycle>;
 
 /**
- * 可选 harness 键序（= `HARNESS_EVENTS` 的键）：
- * `--harness` flag 值域与 init 交互多选的选项表共用（批 5）。
+ * 可选 harness 键序（= 名单表）：`--harness` flag 值域与 init 交互多选的
+ * 选项表共用（批 5）。经名单表派生而非 `Object.keys(HARNESS_EVENTS)`——
+ * 单一来源，顺序即名单顺序。
  */
-export const HARNESS_KEYS = Object.keys(HARNESS_EVENTS) as Harness[];
+export const HARNESS_KEYS: readonly Harness[] = HARNESS_NAMES;

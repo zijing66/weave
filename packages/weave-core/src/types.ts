@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { HARNESS_EVENTS, INJECTABLE_EVENTS, type Harness } from './harness.js';
+import { HARNESS_EVENTS, HARNESS_NAMES, INJECTABLE_EVENTS, type Harness } from './harness.js';
 
 // ---- Presets ----
 
@@ -46,10 +46,18 @@ export const CLAUDE_HOOK_EVENTS = HARNESS_EVENTS.claude;
 /** 兼容 re-export：`INJECTABLE_EVENTS.claude`。 */
 export const INJECTABLE_HOOK_EVENTS = INJECTABLE_EVENTS.claude;
 
+/**
+ * harness 值域 schema：**唯一来源 = `harness.ts` 名单表**（加 harness 不动
+ * 本文件）。`HarnessName` 用于纯 harness 字段，`HarnessOrAny` 用于可跨
+ * harness 的规则字段（'any' 语义见 HookRuleSourceSchema）。
+ */
+const HarnessName = z.enum(HARNESS_NAMES);
+const HarnessOrAny = z.enum([...HARNESS_NAMES, 'any'] as const);
+
 export const HookRuleSourceSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('hook-event'),
-    harness: z.enum(['claude', 'codex', 'any']),
+    harness: HarnessOrAny,
     event: z.string().min(1),
   }),
   /** 二期占位：外部系统 ingress，一期 schema 预留但不实现入口。 */
@@ -249,7 +257,7 @@ export const RuntimeConfigSchema = z.object({
   initTimestamp: z.string(),
   preset: PresetSchema,
   /** 本次 init 选择的 harness 面（批 5 记录；旧文件无此字段 → undefined，向后兼容）。 */
-  harnesses: z.array(z.enum(['claude', 'codex'])).optional(),
+  harnesses: z.array(HarnessName).optional(),
   components: InitComponentsSchema,
 });
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
@@ -274,7 +282,7 @@ export const InitOptionsSchema = z.object({
   interactive: z.boolean().default(true),
   preset: PresetSchema.default('default'),
   /** `--harness` flag 解析结果：undefined = 未提供（走交互/默认三级优先级）。 */
-  harnesses: z.array(z.enum(['claude', 'codex'])).optional(),
+  harnesses: z.array(HarnessName).optional(),
   components: InitComponentsSchema.partial().default({}),
   hooks: HooksConfigSchema.partial().default({}),
   skills: SkillsConfigSchema.partial().default({}),

@@ -72,12 +72,12 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 
 | 级别 | file:line | 问题 | 收口 |
 |---|---|---|---|
-| A | `weave-core/src/harness.ts:10,16,34,41,62` | `Harness` 联合 + `HARNESS_EVENTS`/`INJECTABLE_EVENTS`/`HARNESS_DIRS`/`HARNESS_LIFECYCLE` 四表 | 保留（`satisfies` 已保证漏加报错）；名表收敛为单一数组并派生联合 |
-| A | `weave-harness/src/registry-wiring.ts:11-12` | 逐 id 硬编码 `register(CLAUDE_DRIVER)`/`register(CODEX_DRIVER)` | 改遍历 driver 表 |
-| A | `weave-harness/src/index.ts:6-7` | 手写 `export * from './claude/index.js'` 等 | driver 表统一 re-export |
-| **C** | `weave-core/src/types.ts:52` | `harness: z.enum(['claude','codex','any'])` 手写 | 由 `HARNESS_KEYS` 派生单一 enumeration |
-| **C** | `weave-core/src/types.ts:252` | `harnesses: z.array(z.enum(['claude','codex']))`（RuntimeConfig） | 同上 |
-| **C** | `weave-core/src/types.ts:277` | 同上（InitOptions） | 同上 |
+| A | `weave-core/src/harness.ts:10,16,34,41,62` | `Harness` 联合 + `HARNESS_EVENTS`/`INJECTABLE_EVENTS`/`HARNESS_DIRS`/`HARNESS_LIFECYCLE` 四表 | ✅ P0：名表收敛为单一 `HARNESS_NAMES`，联合与 `HARNESS_KEYS` 由其派生 |
+| A | `weave-harness/src/registry-wiring.ts:11-12` | 逐 id 硬编码 `register(CLAUDE_DRIVER)`/`register(CODEX_DRIVER)` | ✅ P0：`HARNESS_DRIVERS` 单表 + 遍历注册 |
+| A | `weave-harness/src/index.ts:6-7` | 手写 `export * from './claude/index.js'` 等 | **保留为声明行**：驱动注册已由 `HARNESS_DRIVERS` 表派生；per-harness 符号（`CLAUDE_PLUGINS` / `WEAVE_MARKETPLACE` 等）无法由表派生导出，加 harness 在根 barrel +1 行，属 §3 允许的纯声明行 |
+| **C** | `weave-core/src/types.ts:52` | `harness: z.enum(['claude','codex','any'])` 手写 | ✅ P0：`HarnessOrAny` 由名表派生 |
+| **C** | `weave-core/src/types.ts:252` | `harnesses: z.array(z.enum(['claude','codex']))`（RuntimeConfig） | ✅ P0：`HarnessName` 派生 |
+| **C** | `weave-core/src/types.ts:277` | 同上（InitOptions） | ✅ P0：同上 |
 | **C** | `weave-harness/src/shared/file-specs.ts:29-31` | `userDir?` / `codexUserDir?` **按 harness 名硬编码成列**，第三 harness 无列可放 | 改 `perHarness?: Partial<Record<Harness, …>>` 或路径知识完全下放各 `AssetSurface` |
 | 次 | `weave-core/src/harness-checks.ts:24-27` | Claude 专属 check 住 core（`weave status` 用） | 下沉 harness 实现（非阻塞） |
 | 次 | `weave-cli/src/init/wiring.ts:8-9,32-35` | per-id `unregister`+`register` 挂 init 槽 | 与 driver 表合并，遍历挂载 |
@@ -177,8 +177,8 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 
 | 阶段 | 内容 | 触达面 | 硬闸 |
 |---|---|---|---|
-| **P0 core 闸门** | ① `harness.ts` 名表收敛为单一 `HARNESS_NAMES` 数组，`Harness` 由其派生；② `types.ts` 三处 `z.enum` 改派生；③ 新建 `HARNESS_DRIVERS: Record<Harness, HarnessDriver>` 单表（`satisfies` 穷尽），`registry-wiring` 遍历注册、`index.ts` 由表导出；④ `file-specs.ts` 硬列改 `perHarness` 映射 | core、harness 根、shared | 存量测试零改动通过；名表漏加一行 → 编译失败（负例验证） |
-| **P1 server 枚举收口** | 响应桶/白名单改 registry 驱动（`plugins/enabled`、`plugins/uninstall`、`mcp`、`hooks-routes`）；目录/来源枚举改遍历 `byCapability('assets')`（`capabilities.ts`、`global-config.ts`、`updates.ts`、`apply-update.ts`、`global-file-assets.ts`、`reader.ts`、`watch/*`、`scanner.ts`、`sessions.ts`）；事件集改 `HARNESS_EVENTS[harness]`（`plugin-loader`、`mirror`）；resume 缺省改按会话 harness 取 | server ~20 文件 | 全量 server 测试绿；新 harness（stub）不被白名单拒 |
+| **P0 core 闸门** | ① `harness.ts` 名表收敛为单一 `HARNESS_NAMES` 数组（`Harness` 由其派生，`HARNESS_KEYS` 同源）；② `types.ts` 三处 `z.enum` 改派生（`HarnessName` / `HarnessOrAny`）；③ `HARNESS_DRIVERS: Record<Harness, HarnessDriver>` 单表（`satisfies` 穷尽），`registerRuntimeDrivers` 遍历注册 | core、harness 根 | 存量测试零改动通过；名表漏加一行 → 编译失败（`satisfies` 构造保证） |
+| **P1 server 枚举收口** | 响应桶/白名单改 registry 驱动（`plugins/enabled`、`plugins/uninstall`、`mcp`、`hooks-routes`）；目录/来源枚举改遍历 `byCapability('assets')`（`capabilities.ts`、`global-config.ts`、`updates.ts`、`apply-update.ts`、`global-file-assets.ts`、`reader.ts`、`watch/*`、`scanner.ts`、`sessions.ts`）；**`file-specs.ts` 的 `codexUserDir` 硬列改 `perHarness` 映射（本项 P0→P1：消费方在 server，随枚举收口一起改）**；事件集改 `HARNESS_EVENTS[harness]`（`plugin-loader`、`mirror`）；resume 缺省改按会话 harness 取 | server ~20 文件 | 全量 server 测试绿；新 harness（stub）不被白名单拒 |
 | **P2 专属格式下沉** | `codex-toml.ts`、`statusline/*`、`claude-liveness.ts` 迁入 `weave-harness/src/<name>/`，server 经能力面取 | harness 包 + server 装配 | 迁移后行为零变（测试零改动）；server 不再 import 专属格式模块 |
 | **P3 web 解耦** | ① 建 harness 元数据单点表（显示名/色/图标/页签标签/安装目标），理想由服务端 `/capabilities` 下发；② 手写镜像联合改引 `Harness`/`Record<Harness,…>`；③ **删除前端路径知识**（`agentOf`、`groupSkillRows` 正则、`SKILL_PREFIX_RE`、`file-tags` 判据、App 正则），只信 `AssetEntry.agent`；④ 二元分支改查表；⑤ i18n 专名参数化 | web ~20 文件 | web tsc + build:web 绿；dict 测试绿；无 `startsWith('claude')` 一类推断残留 |
 | **P4 cli 收口** | `status.ts` 表面行由 `AssetSurface` 派生；`instruction-link.ts` 指令文件名下沉 harness；`uninstall.ts` 白名单派生（对齐 `sweepHarness`）；`SurfaceRecords` 从 claude 模块上提；i18n 帮助文本动态、banner 去专名 | cli 6 文件 | cli 测试绿；`weave status` 输出对 stub harness 正确 |
