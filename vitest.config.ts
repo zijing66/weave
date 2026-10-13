@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
@@ -16,6 +16,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // scripts/ 下的 *.test.mjs 是 node --test 自跑的（node --test scripts/…），
+    // 不归 vitest——collection 阶段就会执行其模块级沙箱 git。
+    exclude: [...configDefaults.exclude, 'scripts/**'],
     server: {
       deps: {
         // node:sqlite was added to Node after vite 5's builtin-module list was

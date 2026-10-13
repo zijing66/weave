@@ -1,0 +1,44 @@
+{
+  "name": "@weavecode/weave",
+  "version": "0.1.0",
+  "description": "All-in-one install for weave — CLI, daemon + dashboard, harness drivers, and the built-in resource repo in a single npm package",
+  "type": "module",
+  "bin": {
+    "weave": "./bin/weave.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "sideEffects": false,
+  "author": "zijing66",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "harness",
+    "mcp",
+    "skills"
+  ],
+  "homepage": "https://github.com/zijing66/weave#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zijing66/weave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zijing66/weave/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@weavecode/cli": "workspace:^",
+    "@weavecode/core": "workspace:^",
+    "@weavecode/harness": "workspace:^",
+    "@weavecode/server": "workspace:^",
+    "@weavecode/templates": "workspace:^"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
