@@ -198,6 +198,28 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 | P1（已收） | `isHarness` + `HARNESS_EVENT_UNION`（core）；`sessions.ts` 联合与归一；`hooks-routes` 白名单；`plugin-loader` 事件校验值域；`classifier.classifyAgent`；`watch-service`（shouldIgnore + 全局根归属带 harness）；`capabilities` 按落点表遍历派生；**`file-specs` 落点表化（杀掉 `codexUserDir` 硬列）**；`scanner`/`updates`/`apply-update` 派生；`GlobalSkillSource` 改模板字面量；`.codex` 路径段判据改为 **`AssetSurface.pluginCacheDir` 归属匹配** | `22576c5`、`e569e0f` |
 | P3（已收） | **`web/src/lib/harness-meta.ts` 展示元数据单点表**（`satisfies Record<Harness,…>` + 未知降级 + `HARNESS_ORDER` 派生页签/初始 state）；`PluginEnabledMap`/`McpServerMap`/`GlobalSkillSource`/`SessionRow.harness`/`HarnessKey` 改引 `Harness` 派生；**删前端路径知识**（`agentOf`、`groupSkillRows`/`SKILL_PREFIX_RE`/App 正则改首段通用形、`file-tags` 目录段判定、只信 `AssetEntry.agent`）；页签标签/占位/徽标/图标/SOURCE_STYLES/session-status 桶序全查表；AgentBadge 未知识别 harness 中性降级、不猜；hooks 面板 harness 选项走 meta 表（删 `hooks.harness.*` per-harness 词条）；D7 生命周期表按会话 harness 取（TasksPanel/LifecycleMindmap/layoutMindmap 表参数化） | `4ed2de1`、`eb1ecb9` |
 | P4（已收） | `status.ts` 表面行由 `HARNESS_DIRS`/`HARNESS_INSTRUCTION_FILES`/`AssetSurface` 派生（codex 特判改遍历 detected）；`instruction-link`/`uninstall`/`git-commit` 指令文件与白名单 `INSTRUCTION_FILES`/`HARNESS_DIRS` 表驱动；`wiring.ts` init 槽 `satisfies Record<Harness, InitTemplateClass>` 表 + 遍历注册；`SurfaceRecords`/`SurfacePipeline` 上提 `init/types.ts`（claude 模块薄 re-export）；i18n 帮助文本/banner/statusline 修复提示表驱动 | `0a4d572` |
+| P5（已收，一次性实验） | stub harness 实验：临时扩名表跑通全系统，度量真实接入成本（见 §5.2）；**产出两项永久修复**——`installCapabilities()` 的 skill 面由资产面派生（原手写字面量漏第三 harness）；3 处测试侧闭式镜像改派生/下限断言（detect.test 驱动白名单、global-config.test 根数、server.test skill 面计数） | 见 P5 提交 |
+
+#### 5.2 P5 实验记录（stub harness 一次性验收）
+
+**方法**：临时把 `stub` 加入 `HARNESS_NAMES`，仅补声明表行 + 新目录（stub 驱动 = detect + assets 两槽，marker `.stub`，项目/全局 skills 根 `.stub/skills`），全包编译 + 全量测试 + 运行时脚本验证（注册表/detect/`assetSurfaces()`/全局根/`installCapabilities()` 9 项全过），随后整体回退。持久测试夹具不可行：`HarnessDriver.id: Harness` 闭式联合是编译期事实，夹具进名表即入发布——故 P5 形态为「一次性实验 + 发现永久修复」。
+
+**度量结果——接入新 harness 的真实改动面**：
+
+| 改动 | 性质 |
+|---|---|
+| `HARNESS_NAMES` + 1 名 | 声明行（唯一名源） |
+| core 五表各 + 1 行（`HARNESS_EVENTS`/`INJECTABLE_EVENTS`/`HARNESS_DIRS`/`HARNESS_INSTRUCTION_FILES`/`HARNESS_LIFECYCLE`） | 声明表行（`satisfies` 逐表催出，漏加即编译失败） |
+| `HARNESS_DRIVERS` + 1 行 + `weave-harness/src/<name>/` 新目录（驱动实现半球） | 声明行 + 新目录 |
+| cli `HARNESS_INIT_TEMPLATES` + 1 行 + `init/harnesses/<name>.ts`（init 实现半球） | 声明行 + 新文件（init 槽对名表内 harness **强制**——无 init 意图的 harness 也须给 no-op 模板；如需「init 可选」须把该表改 `Partial` + 交互多选容错，暂不动） |
+| web `HarnessUi` 表 + 1 行（`harness-meta.ts`） | 镜像表行（web 不能 import core 值的既定代价） |
+| web `HARNESS_LIFECYCLE` 镜像 + 1 行（`tasks/lifecycle.ts`） | 同上 |
+
+**P5 暴露并已修复的 shared 代码缺陷**：
+1. `installCapabilities()` 的 `skill.surfaces` 手写字面量 `[{claude},{codex}]`——第三 harness 的 skills 面**不进 capabilities 矩阵**（web `canInstall` 会误拒）。已改为 `assetSurfaces()` 派生（对 claude/codex 输出等价）。`mcp.surfaces` 字面量保留（MCP 表示法域，已在延后表）。
+2. 测试侧闭式镜像 3 处（写死两 harness 名单/计数）——已改派生或下限断言，加 harness 不再需要改测试。
+
+**结论**：P0–P4 收口后，接入新 harness 的 shared 代码改动 = **零**（仅声明表行 + 各实现半球新文件）；此前会漏的两处（capabilities、测试镜像）已由本实验修复并验证。
 
 **延后项（含理由；均为需要「新能力面 / 接口扩张」或「特性域整体搬家」的项）**
 

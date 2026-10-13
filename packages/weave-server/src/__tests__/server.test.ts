@@ -65,7 +65,11 @@ describe('daemon server', () => {
     expect(
       data.categories.mcp.surfaces.find((s) => s.harness === 'codex')?.scopes,
     ).toEqual(['global']);
-    expect(data.categories.skill.surfaces).toHaveLength(2);
+    // skill 面由资产面派生（加 harness 自动跟随），不写死闭式计数
+    expect(
+      data.categories.skill.surfaces.find((s) => s.harness === 'claude')?.scopes,
+    ).toEqual(['project', 'global']);
+    expect(data.categories.skill.surfaces.length).toBeGreaterThanOrEqual(2);
   });
 
   it('unknown routes return 404', async () => {

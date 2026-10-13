@@ -245,7 +245,8 @@ describe('global skill file listing / reading (follows symlinks)', () => {
     // current Codex location, then the deprecated one it still reads
     expect(roots.some((r) => r.endsWith(join('.agents', 'skills')))).toBe(true);
     expect(roots.some((r) => r.endsWith(join('.codex', 'skills')))).toBe(true);
-    expect(roots.length).toBe(3);
+    // 根数随 harness 数增长（各面的全局根皆入列），不写死闭式计数
+    expect(roots.length).toBeGreaterThanOrEqual(3);
   });
 
   it('resolveGlobalSkillDir finds a claude-personal skill', async () => {

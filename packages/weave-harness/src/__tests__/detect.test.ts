@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { HarnessRegistry, supports } from '../driver';
-import { registerRuntimeDrivers } from '../registry-wiring';
+import { HARNESS_DRIVERS, registerRuntimeDrivers } from '../registry-wiring';
 import { CLAUDE_DETECTOR } from '../claude/detect';
 import { CODEX_DETECTOR } from '../codex/detect';
 
@@ -53,12 +53,15 @@ describe('CODEX_DETECTOR', () => {
 });
 
 describe('registerRuntimeDrivers（批 5 detect 槽）', () => {
-  it('两 driver 都声明 detect 能力且带 detect 槽', () => {
+  it('声明 detect 能力的 driver 皆带 detect 槽（期望由驱动表派生，不写死名单）', () => {
     const reg = new HarnessRegistry();
     registerRuntimeDrivers(reg);
 
+    const expected = Object.values(HARNESS_DRIVERS)
+      .filter((d) => d.capabilities.includes('detect'))
+      .map((d) => d.id);
     const detected = reg.byCapability('detect');
-    expect(detected.map((d) => d.id)).toEqual(['claude', 'codex']);
+    expect(detected.map((d) => d.id)).toEqual(expected);
     for (const d of detected) expect(d.detect).toBeDefined();
   });
 
