@@ -589,6 +589,15 @@ export interface DaemonSettingsBundle {
   platform: string;
 }
 
+/** user 档采集状态行（GET/PUT /capture；§6-2d 安装即启用，无独立开关位）。 */
+export interface CaptureRow {
+  harness: Harness;
+  /** user settings 采集组已写入（= 全项目事件都被采集）。 */
+  installed: boolean;
+  /** user 级 helper 脚本就位（installed 而脚本缺 = 半安装，重开开关即修复）。 */
+  helperPresent: boolean;
+}
+
 export interface ProjectFile {
   path: string;
   content: string;
@@ -1154,6 +1163,15 @@ export const api = {
     apiFetch<DaemonSettings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    }),
+  /** user 档采集状态行（§6-2d：跨项目事件采集的地基）。 */
+  getCapture: (): Promise<CaptureRow[]> =>
+    apiFetch<{ rows: CaptureRow[] }>('/capture').then((r) => r.rows),
+  putCapture: (harness: Harness, enabled: boolean): Promise<CaptureRow> =>
+    apiFetch<CaptureRow>('/capture', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ harness, enabled }),
     }),
   putProjectConfig: (projectId: number, config: ProjectConfig): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/config`, {

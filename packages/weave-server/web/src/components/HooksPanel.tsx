@@ -19,6 +19,7 @@ import {
   INJECTABLE_HOOK_EVENTS,
   hookSourceHarness,
   normalizeHookRuleSource,
+  type CaptureRow,
   type HandlerConfig,
   type HookPlugin,
   type HookRule,
@@ -30,8 +31,13 @@ import {
 import type { Harness } from '@weavecode/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useToast } from '@/components/Toast';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
+import { registerInvalidator } from '@/lib/sse';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
@@ -342,6 +348,74 @@ function formFromRule(rule: HookRule): RuleFormState {
 interface OpenForm {
   editingId: string | null;
   state: RuleFormState;
+}
+
+// ---------------------------------------------------------------------------
+// user 档采集（§6-2d）：跨项目事件采集的地基开关，全局配置区独占
+// ---------------------------------------------------------------------------
+
+function CaptureSection() {
+  const t = useT();
+  const { show } = useToast();
+  const fb = useActionFeedback();
+  const [rows, setRows] = useState<CaptureRow[] | null>(null);
+
+  const refresh = useCallback(() => {
+    api.getCapture().then(setRows).catch(() => {});
+  }, []);
+
+  useEffect(() => registerInvalidator('capture', refresh), [refresh]);
+
+  // 无 capture 槽的 harness 不出行（服务端按能力面枚举，前端不写白名单）。
+  if (rows === null || rows.length === 0) return null;
+
+  const toggle = (row: CaptureRow, enabled: boolean): void => {
+    void fb.run(
+      `capture:${row.harness}`,
+      async () => {
+        const next = await api.putCapture(row.harness, enabled);
+        setRows((prev) => prev?.map((r) => (r.harness === next.harness ? next : r)) ?? prev);
+        show('success', enabled ? t('hooks.capture.onOk') : t('hooks.capture.offOk'));
+      },
+      { fail: (e) => t('hooks.capture.fail', { error: errorText(e) }) },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center gap-2 space-y-0">
+        <CardTitle className="text-sm">{t('hooks.capture.title')}</CardTitle>
+        <span className="text-[11px] text-neutral-500">{t('hooks.capture.hint')}</span>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((row) => (
+          <div
+            key={row.harness}
+            className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
+          >
+            <Zap className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+            <span className="shrink-0 text-xs font-medium text-neutral-200">
+              {harnessUiOf(row.harness).label}
+            </span>
+            {row.installed && !row.helperPresent && (
+              <Badge variant="warning" title={t('hooks.capture.halfTip')}>
+                {t('hooks.capture.half')}
+              </Badge>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <FeedbackIcon state={fb.stateOf(`capture:${row.harness}`)} className="h-3 w-3" />
+              <Switch
+                checked={row.installed}
+                onChange={(v) => toggle(row, v)}
+                title={t('hooks.capture.toggleTip')}
+              />
+            </span>
+          </div>
+        ))}
+        <p className="text-[10px] text-neutral-600">{t('hooks.capture.note')}</p>
+      </CardContent>
+    </Card>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +770,9 @@ export function HooksPanel({
           {error}
         </p>
       )}
+
+      {/* user 档采集：全局配置区独占（项目模式不渲染——采集是跨项目地基） */}
+      {mode === 'global' && <CaptureSection />}
 
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-semibold tracking-tight">{t('hooks.title')}</h3>

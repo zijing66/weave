@@ -138,6 +138,18 @@ export const hooksZh = {
   'hooks.plugins.toggleFail': '插件开关失败：{error}',
   'hooks.plugins.uninstallOk': '已卸载：{id}',
   'hooks.plugins.uninstallFail': '卸载失败：{error}',
+
+  // —— user 档采集（§6-2d） ——
+  'hooks.capture.title': '事件采集（user 档）',
+  'hooks.capture.hint': '跨项目采集全部会话事件——dashboard 的地基',
+  'hooks.capture.note':
+    '安装即启用：写入宿主 user 档 hooks（claude = ~/.claude/settings.json）；项目档 init 的采集组会被自动清扫，不会双采集',
+  'hooks.capture.toggleTip': '安装 / 停用 user 档事件采集',
+  'hooks.capture.onOk': 'user 档采集已安装',
+  'hooks.capture.offOk': 'user 档采集已停用',
+  'hooks.capture.fail': '采集开关失败：{error}',
+  'hooks.capture.half': '半安装',
+  'hooks.capture.halfTip': '采集组已写但 helper 脚本缺失——关掉再打开即可修复',
 };
 
 export const hooksEn: Record<keyof typeof hooksZh, string> = {
@@ -280,4 +292,16 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.plugins.toggleFail': 'Failed to toggle plugin: {error}',
   'hooks.plugins.uninstallOk': 'Uninstalled: {id}',
   'hooks.plugins.uninstallFail': 'Uninstall failed: {error}',
+
+  // —— User-scope capture (§6-2d) ——
+  'hooks.capture.title': 'Event capture (user scope)',
+  'hooks.capture.hint': 'Captures session events across every project — the dashboard foundation',
+  'hooks.capture.note':
+    'Install = enabled: writes harness user-scope hooks (claude = ~/.claude/settings.json); project-scope init groups are swept automatically, so no double capture',
+  'hooks.capture.toggleTip': 'Install / disable user-scope event capture',
+  'hooks.capture.onOk': 'User-scope capture installed',
+  'hooks.capture.offOk': 'User-scope capture disabled',
+  'hooks.capture.fail': 'Capture toggle failed: {error}',
+  'hooks.capture.half': 'Half-installed',
+  'hooks.capture.halfTip': 'Hook groups written but helper script missing — toggle off and on to repair',
 };
