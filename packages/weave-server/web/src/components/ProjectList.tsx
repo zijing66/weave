@@ -19,6 +19,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import type { ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
@@ -32,6 +33,7 @@ import {
   ToggleLeft,
   ToggleRight,
   TriangleAlert,
+  X,
 } from 'lucide-react';
 
 interface ProjectListProps {
@@ -111,8 +113,14 @@ export function ProjectList({
 }: ProjectListProps) {
   const t = useT();
   const sortSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  // 归档面开合：本地 UI 态；列表非空即可见入口，默认收起
+  // 归档弹窗开合：本地 UI 态；入口按钮只在有归档项目时出现
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
+  const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
+  // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
+  useEffect(() => {
+    if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
+  }, [archivedOpen, archivedProjects.length]);
 
   // 项目行拖拽排序：内嵌 DndContext 与 App 级资产拖拽完全隔离（draggable
   // 只绑最近 context）；落定只算目标顺序，持久化/失败回滚都归 App。
@@ -184,20 +192,14 @@ export function ProjectList({
         <p className="flex-1 text-[11px] text-neutral-500 uppercase tracking-wide">
           {t('project.sectionHeader')}
         </p>
-        {/* 查看归档入口：有归档项目才出现（点击展开/收起归档面） */}
+        {/* 查看归档入口：有归档项目才出现，点击弹 3 列卡片弹窗 */}
         {archivedProjects.length > 0 && (
           <button
             type="button"
-            aria-pressed={archivedOpen}
             aria-label={t('project.archivedCount', { n: archivedProjects.length })}
             title={t('project.archivedCount', { n: archivedProjects.length })}
-            onClick={() => setArchivedOpen((v) => !v)}
-            className={cn(
-              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition-colors',
-              archivedOpen
-                ? 'bg-neutral-800/80 text-neutral-200'
-                : 'text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/50',
-            )}
+            onClick={() => setArchivedOpen(true)}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
           >
             <Archive className="h-3 w-3" />
             {archivedProjects.length}
@@ -353,48 +355,81 @@ export function ProjectList({
         </DndContext>
       </ul>
 
-      {/* 归档面：仅基础信息（历史会话已在归档时清空），一行一个恢复按钮 */}
-      {archivedOpen && archivedProjects.length > 0 && (
-        <div className="px-2 pb-2">
-          <p className="px-2 pt-1 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">
-            {t('project.archivedSection')}
-          </p>
-          <ul className="space-y-1">
-            {archivedProjects.map((p) => (
-              <li
-                key={p.id}
-                className="rounded-xl border border-white/[0.04] bg-neutral-900/30 px-2 py-1.5"
-              >
-                <div className="flex items-center gap-2">
-                  <Archive className="h-3.5 w-3.5 shrink-0 text-neutral-600" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-neutral-400" title={p.name}>
-                      {p.name}
-                    </span>
-                    <span className="block truncate text-[11px] text-neutral-600" title={p.path}>
-                      {p.archivedAt
-                        ? `${p.path} · ${t('project.archivedOn', {
-                            date: new Date(p.archivedAt).toLocaleString(),
-                          })}`
-                        : p.path}
-                    </span>
-                  </span>
-                  <QuickButton
-                    title={t('project.restoreTooltip')}
-                    onClick={() => onRestore?.(p)}
-                  >
-                    <FeedbackIcon
-                      state={restoreStateOf?.(p.id) ?? 'idle'}
-                      className="h-3.5 w-3.5"
-                      icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-                    />
-                  </QuickButton>
+      {/* 归档弹窗 — portal 到 body（同右键菜单：侧栏 .frosted 会裁剪 fixed 后代）。
+          3 列卡片网格；恢复最后一个后列表空 → 效果里自动收弹窗。 */}
+      {archivedOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setArchivedOpen(false)} />
+            <div className="relative w-[680px] max-w-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+              <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+                <Archive className="h-4 w-4 text-neutral-400" />
+                <span className="text-sm font-semibold text-neutral-200">
+                  {t('project.archivedSection')}
+                </span>
+                <span className="text-xs text-neutral-500">{archivedProjects.length}</span>
+                <button
+                  onClick={() => setArchivedOpen(false)}
+                  className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+                  title={t('common.close')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </header>
+              <div className="p-4 max-h-[60vh] overflow-y-auto">
+                <div className="grid grid-cols-3 gap-3">
+                  {archivedProjects.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-neutral-900/50 p-3"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Archive className="h-4 w-4 shrink-0 text-neutral-600" />
+                        <span className="truncate text-sm text-neutral-200" title={p.name}>
+                          {p.name}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 truncate" title={p.path}>
+                        {p.path}
+                      </p>
+                      {p.archivedAt && (
+                        <p className="text-[11px] text-neutral-600">
+                          {t('project.archivedOn', { date: new Date(p.archivedAt).toLocaleString() })}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onRestore?.(p)}
+                        title={t('project.restoreTooltip')}
+                        className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
+                      >
+                        <FeedbackIcon
+                          state={restoreStateOf?.(p.id) ?? 'idle'}
+                          className="h-3.5 w-3.5"
+                          icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+                        />
+                        {t('project.restore')}
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 归档确认弹窗：替代原生 window.confirm */}
+      <ConfirmDialog
+        open={confirmTarget !== null}
+        title={t('project.archive')}
+        message={confirmTarget ? t('project.archiveConfirm', { name: confirmTarget.name }) : ''}
+        confirmLabel={t('common.confirm')}
+        onConfirm={() => {
+          if (confirmTarget) onArchive?.(confirmTarget);
+        }}
+        onClose={() => setConfirmTarget(null)}
+      />
 
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
           fixed 后代的 containing block，留在组件树里会被裁剪在侧栏内。 */}
@@ -404,7 +439,7 @@ export function ProjectList({
             ref={menuRef}
             style={{
               left: Math.min(menu.x, window.innerWidth - 200),
-              top: Math.min(menu.y, window.innerHeight - 124),
+              top: Math.min(menu.y, window.innerHeight - 88),
             }}
             className="fixed z-50 w-48 rounded-lg border border-white/[0.08] bg-neutral-900 shadow-mac py-1"
             onContextMenu={(e) => e.preventDefault()}
@@ -412,30 +447,13 @@ export function ProjectList({
             <p className="px-3 pb-1 pt-0.5 text-[10px] text-neutral-500 truncate" title={menu.project.path}>
               {menu.project.name}
             </p>
-            <MenuButton
-              icon={<FolderOpen className="h-3.5 w-3.5" />}
-              label={t('project.openInExplorer')}
-              onClick={() => {
-                onOpenExplorer(menu.project);
-                setMenu(null);
-              }}
-            />
-            <MenuButton
-              icon={<Terminal className="h-3.5 w-3.5" />}
-              label={t('project.openInTerminal')}
-              onClick={() => {
-                onOpenTerminal(menu.project);
-                setMenu(null);
-              }}
-            />
+            {/* 右键只留归档：开目录/开终端与行内按钮簇重复，行内是快捷路径。
+                破坏性动作（历史会话即清空）：应用内 ConfirmDialog 确认再交 App 执行。 */}
             <MenuButton
               icon={<Archive className="h-3.5 w-3.5" />}
               label={t('project.archive')}
               onClick={() => {
-                // 破坏性动作（历史会话即清空）：先确认再交 App 执行
-                if (window.confirm(t('project.archiveConfirm', { name: menu.project.name }))) {
-                  onArchive?.(menu.project);
-                }
+                setConfirmTarget(menu.project);
                 setMenu(null);
               }}
             />

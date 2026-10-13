@@ -2,6 +2,7 @@
 export const commonZh = {
   'common.close': '关闭',
   'common.cancel': '取消',
+  'common.confirm': '确认',
   'common.save': '保存',
   'common.saving': '保存中…',
   'common.loading': '加载中…',
@@ -13,6 +14,7 @@ export const commonZh = {
 export const commonEn: Record<keyof typeof commonZh, string> = {
   'common.close': 'Close',
   'common.cancel': 'Cancel',
+  'common.confirm': 'Confirm',
   'common.save': 'Save',
   'common.saving': 'Saving…',
   'common.loading': 'Loading…',
