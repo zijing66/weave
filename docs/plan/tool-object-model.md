@@ -106,11 +106,11 @@ weave init 落项目 `.claude/settings.json` 的 hooks，cli/harness 内无 user
 
 | 延后项（audit 延后表 web 行） | 收编为 |
 |---|---|
-| CategoryDetail rowsFor MCP 分叉（claude 双 scope / 其余用户级） | installScopes 数据行 + 通用安装菜单 |
-| App machineMcp 计数与 effectiveScope | `effective` 由 server 下发 |
-| LibraryPanel codexMcpPathHint | 范围落点提示按数据行渲染 |
-| ToolkitSection isCcPack / SkillGrid 插件卸载 claude 门控 | category×harness 数据行驱动 |
-| FileAssetTree 全局卸载门控 | 卸载面按 installScopes 行驱动 |
+| ~~CategoryDetail rowsFor MCP 分叉（claude 双 scope / 其余用户级）~~ | ✅ installScopes 数据行驱动卡面（§6-1 `ea96180`；通用安装菜单归后续） |
+| App machineMcp 计数与 effectiveScope | `effective` 已随行下发（§6-1）；计数与 `agent==='claude'?scope:'user'` 档位回落仍延后 |
+| ~~LibraryPanel codexMcpPathHint~~ | ✅ 范围落点提示按矩阵 dest 行渲染（§6-4 `62bcf04`：mcpDest + `~` 缩写显示形） |
+| ~~ToolkitSection isCcPack / SkillGrid 插件卸载 claude 门控~~ | ✅ manifest targets 过滤/徽标并集 + installScopes 门控（§6-4 `62bcf04`） |
+| ~~FileAssetTree 全局卸载门控~~ | ✅ 卸载面按 installScopes 行驱动（§6-4 `62bcf04`：canUninstall 共用安装矩阵） |
 
 通用控件三件：①按 installScopes 渲染的安装菜单（claude plugin 三项、codex 一项，
 同一控件）；②三态开关 on/off/inherit + 解析结果显示（现 MCP 三态 UI 的推广）；
@@ -130,16 +130,21 @@ weave init 落项目 `.claude/settings.json` 的 hooks，cli/harness 内无 user
 
 ## 6. 迁移路径（建议，每步独立可交付）
 
-1. **MCP 先行**：范围表 + ToolState 协议 + web MCP 三处收编（分叉最大、延后项最集中）。
-2. **CC 插件**：PluginStateSurface 补 local；PluginEnabledMap → ToolState；
-   **补 user 档安装管理面**（server 路由 + web 入口，现状见 §1 末条；视图摆放 §7-5）；
-   **hooks 基石 user 档采集面**（§2.6，现状仅项目档）。
+1. **MCP 先行**（已收 `ea96180`）：范围表 + ToolState 协议 + web MCP 三处收编
+   （分叉最大、延后项最集中）。
+2. **CC 插件**（已收 `7ce4865` + `f12a444`→`dcf619e` 采集四部曲）：PluginStateSurface
+   补 local；PluginEnabledMap → ToolState；user 档安装管理面（server 路由 + web
+   入口）；hooks 基石 user 档采集面（§2.6）。
 3. **toolkit / 自有 SPI 插件**：~~plugin_states 加范围维度（schema 迁移）~~
    实施时拍板不加（见 §7-3）：D3 已用 `plugin_states`（user 档默认）+
    `projects.meta.plugins`（project 档覆写）+ `effective()`（生效链解析）
    实现两档链语义，SPI 插件单根安装无 local 档；改为三根词表对齐
    （loader scope `global` → `user`，对齐 ToolScope）。
-4. 收尾：SkillGrid 卸载门控、LibraryPanel 提示、FileAssetTree 门控。
+4. ~~收尾：SkillGrid 卸载门控、LibraryPanel 提示、FileAssetTree 门控。~~
+   已收（`62bcf04`）：`AssetSurface.mcpDest` 落点随安装属性矩阵行下发，三处
+   门控/提示全量数据行驱动（FileAssetTree 删两套写死清单改 `canUninstall`、
+   SkillGrid 改 installScopes 门控、LibraryPanel 删 codexMcpPathHint 自拼路径），
+   §4 收编表对应行全数落地。
 
 测试闭式镜像同步派生（P5 教训：不留写死两 harness 的计数断言）。
 

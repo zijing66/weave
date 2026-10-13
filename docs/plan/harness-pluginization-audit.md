@@ -115,7 +115,7 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 | **C** | `install/scanner.ts:12,102` | `targets.includes('claude')` + `.claude-plugin/plugin.json` |
 | **C** | `install/codex-toml.ts`（整模块） | Codex TOML 表示法物理落在 server（违反「专属格式不得 server 自拼」） |
 | **C** | `hooks/toolkit.ts`（:124,196,200,214,424,436,521,537,612,641,676,710） | `targets.includes('claude')`、`detectClaudeVersion` spawn、`pluginSurfaceFor('claude')` 兜底 |
-| **C** | `hooks/toolkit-scan.ts:55,67` | `CC_MANIFEST_DIR='.claude-plugin'`、`DEFAULT_TARGETS=['claude']` |
+| **C** | `hooks/toolkit-scan.ts:55,67` | `CC_MANIFEST_DIR='.claude-plugin'`、`DEFAULT_TARGETS=['claude']`——复核记档（§6-4）：CC manifest 目录名属 toolkit 扫描域的包格式知识；targets 缺省回落 `['claude']` 是「无 weave.json 的包默认装 claude」的规格定义（normalizeTargets 归一，与 mods/CC 管线同口径），**记为可接受** |
 | **C** | `hooks/mirror.ts:75` | `hookSourceHarness(...) !== 'claude'` 早退 |
 | **C** | `hooks/plugin-loader.ts:418,461` | 仅对 `CLAUDE_HOOK_EVENTS` 校验（非按 `HARNESS_EVENTS[harness]`） |
 | **C** | `hooks/resume-runner.ts:2,82-85` | 缺省 `CLAUDE_RESUME`/`WEAVE_CLAUDE_BIN` |
@@ -199,6 +199,7 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 | P3（已收） | **`web/src/lib/harness-meta.ts` 展示元数据单点表**（`satisfies Record<Harness,…>` + 未知降级 + `HARNESS_ORDER` 派生页签/初始 state）；`PluginEnabledMap`/`McpServerMap`/`GlobalSkillSource`/`SessionRow.harness`/`HarnessKey` 改引 `Harness` 派生；**删前端路径知识**（`agentOf`、`groupSkillRows`/`SKILL_PREFIX_RE`/App 正则改首段通用形、`file-tags` 目录段判定、只信 `AssetEntry.agent`）；页签标签/占位/徽标/图标/SOURCE_STYLES/session-status 桶序全查表；AgentBadge 未知识别 harness 中性降级、不猜；hooks 面板 harness 选项走 meta 表（删 `hooks.harness.*` per-harness 词条）；D7 生命周期表按会话 harness 取（TasksPanel/LifecycleMindmap/layoutMindmap 表参数化） | `4ed2de1`、`eb1ecb9` |
 | P4（已收） | `status.ts` 表面行由 `HARNESS_DIRS`/`HARNESS_INSTRUCTION_FILES`/`AssetSurface` 派生（codex 特判改遍历 detected）；`instruction-link`/`uninstall`/`git-commit` 指令文件与白名单 `INSTRUCTION_FILES`/`HARNESS_DIRS` 表驱动；`wiring.ts` init 槽 `satisfies Record<Harness, InitTemplateClass>` 表 + 遍历注册；`SurfaceRecords`/`SurfacePipeline` 上提 `init/types.ts`（claude 模块薄 re-export）；i18n 帮助文本/banner/statusline 修复提示表驱动 | `0a4d572` |
 | P5（已收，一次性实验） | stub harness 实验：临时扩名表跑通全系统，度量真实接入成本（见 §5.2）；**产出两项永久修复**——`installCapabilities()` 的 skill 面由资产面派生（原手写字面量漏第三 harness）；3 处测试侧闭式镜像改派生/下限断言（detect.test 驱动白名单、global-config.test 根数、server.test skill 面计数） | 见 P5 提交 |
+| 工具对象模型 §6（`docs/plan/tool-object-model.md` 全程已收） | ① MCP：ToolStateRow 协议 + 服务端 effective 唯一解析 + web 三处收编（rowsFor/McpGrid/api 镜像）② CC 插件：PluginStateSurface 三档覆写面 + `/plugins/state` + user 档安装管理面 + hooks 采集基石 user 档（CaptureSurface 四部曲）③ SPI：三根词表 `global`→`user` 对齐（plugin_states 拍板不加范围维度，见该 plan §7-3）④ §6-4 收尾：`AssetSurface.mcpDest` 落点随安装属性矩阵下发，卸载门控/落点提示全量数据行驱动（延后表 web MCP 呈现余量的 LibraryPanel 部分、web toolkit 余量、FileAssetTree 门控三行收编）。核验 = 包根 + web 两 tsc 绿、harness 113 / server 867 测试全绿（2026-10-14） | `ea96180`、`7ce4865`、`f12a444`…`dcf619e`、`a92ba6e`、`62bcf04` |
 
 #### 5.2 P5 实验记录（stub harness 一次性验收）
 
@@ -226,10 +227,10 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 | 项 | 为何延后 | 归属 |
 |---|---|---|
 | server MCP 表示法（`GET /mcp` 三桶、install/uninstall 的 `agent === 'codex'` 分支、CODEX MCP 读写） | 需要 MCP 能力面（read/write/exists × scope）——新槽，§6.3 需所有者确认 | MCP 面首批 |
-| **web MCP 呈现余量**（`McpGrid` 卸载/开关二分、`CategoryDetail.rowsFor` 的「claude=双 scope、其余=用户级」语义分叉、App `machineMcp` 计数与 `effectiveScope`、`LibraryPanel` `codexMcpPathHint` 与 AgentToggle 目标路径提示） | 同上——「哪个 harness 的 MCP 住哪」是 MCP 表示法知识，须随面下发 | MCP 面首批 |
+| **web MCP 呈现余量**（`McpGrid` 卸载/开关二分、~~`CategoryDetail.rowsFor` 的「claude=双 scope、其余=用户级」语义分叉~~、App `machineMcp` 计数与 `effectiveScope`、~~`LibraryPanel` `codexMcpPathHint` 与 AgentToggle 目标路径提示~~）——划线部分已收编（§6-1 `ea96180` / §6-4 `62bcf04`：mcpDest 落点随矩阵行下发） | 同上——「哪个 harness 的 MCP 住哪」是 MCP 表示法知识，须随面下发 | MCP 面首批 |
 | `hooks/toolkit.ts` 的 CC 插件包知识（`targets.includes('claude')`、`pluginSurfaceFor('claude')` 兜底、`claude --version` 探测） | 需要「工具包包面」（pack ↔ harness 映射）抽象 | 单独立项 |
-| **web toolkit 余量**（`ToolkitSection` `isCcPack` 过滤 + CC 包 `AgentBadge agent="claude"`、`SkillGrid` 插件卸载按钮 claude 门控） | 同上——pack ↔ harness 映射未抽象 | 随工具包包面 |
-| **hooks 规则编辑器事件矩阵**（web `CLAUDE_HOOK_EVENTS`/`INJECTABLE_HOOK_EVENTS` 镜像仅 claude 事件；`claude-event` legacy 见 §6.2） | 规则事件选项按 `HARNESS_EVENTS[harness]` 展开属 hooks 域改造 | hooks 域批 |
+| ~~**web toolkit 余量**（`ToolkitSection` `isCcPack` 过滤 + CC 包 `AgentBadge agent="claude"`、`SkillGrid` 插件卸载按钮 claude 门控）~~ 已收编（§6-4 `62bcf04`：manifest targets 过滤/徽标并集 + installScopes 门控，`ToolkitPack.targets` 镜像收紧 `Harness[]`） | 同上——pack ↔ harness 映射未抽象 | 随工具包包面 |
+| **hooks 规则编辑器事件矩阵**（web `CLAUDE_HOOK_EVENTS`/`INJECTABLE_HOOK_EVENTS` 镜像仅 claude 事件；`claude-event` legacy 见 §6.2）——**改标：能力面/规则域，非工具域**（tool-object-model 拍板 7-4：事件矩阵不进工具对象模型） | 规则事件选项按 `HARNESS_EVENTS[harness]` 展开属 hooks 域改造 | hooks 域批 |
 | `hooks/mirror.ts` 的 claude-only 注入投影 | 镜像投递（`hook-handler.cjs` 挂 Claude Code）是 claude 专属实现，未抽象 | 随 `CROSS-HARNESS-DESIGN` 能力 B |
 | `hooks/resume-runner.ts` 缺省 `CLAUDE_RESUME`/`WEAVE_CLAUDE_BIN` | 按会话 harness 分派 resume 需 dispatcher 侧 harness（命令表） | 随能力 B |
 | **web 会话「打开终端」门控**（`SessionList` `s.harness === 'claude'`，注释已声明镜像 resume 槽注册事实） | 真源 = `ResumeCommandSpec.openArgs`，须由服务端下发 canResume | 随能力 B |
@@ -238,7 +239,7 @@ codex 证明了**能力槽可缺席**（不声明 plugins 槽，被 400/501 显�
 | `install/codex-toml.ts` 的 MCP 表示法（server 侧余量） | 其类型 `McpServerConfig` 仍住 server；随 MCP 面一起下沉 | MCP 面首批 |
 | **cli `instruction-link` 主名+单次名二元结构**（`INSTRUCTION_FILES[1]` 为唯一别名） | 第三 harness 的次名链入需「主名 + N 别名」合一改造（合一状态机为两名设计） | 随第三 harness 落地时改造 |
 | `watch/classifier.classifyAsset` 的路径前缀表 | 需要 `AssetCategory` 类型下沉 core + surface 增「类别归类」方法 | 待确认后做 |
-| **web `FileAssetTree` 全局卸载门控**（`a.agent !== 'codex'`） | 「该 harness 有无用户级面」应经 capabilities 矩阵判定，需把表接进树组件 | 随 capabilities 泛化 |
+| ~~**web `FileAssetTree` 全局卸载门控**（`a.agent !== 'codex'`）~~ 已收编（§6-4 `62bcf04`：删 UNINSTALLABLE/GLOBAL_UNINSTALLABLE 两套清单，`canUninstall` 与安装共用同一矩阵） | 「该 harness 有无用户级面」应经 capabilities 矩阵判定，需把表接进树组件 | 随 capabilities 泛化 |
 | `global-config.resolveGlobalSkillDir` 的四分支 | 需要「插件技能解析」面方法（claude = `installed_plugins.json` / codex = 缓存版本扫描） | 随 MCP/toolkit 面批 |
 | `install/{settings-mcp,reader,global-file-assets,plugin-mods,scanner}.ts` 余量 | 多为 claude 单面特性（项目 `settings.json` MCP 开关等）——须逐项判断「专属特性保留 vs 泛化」 | 复核后逐项 |
 
