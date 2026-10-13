@@ -80,7 +80,7 @@ export default function App() {
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerMap>({
     project: {},
-    global: {},
+    user: {},
   });
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
@@ -284,7 +284,7 @@ export default function App() {
       setSelected(p);
       setGlobalMode(false);
       setAssets([]);
-      setMcpServers({ project: {}, global: {} });
+      setMcpServers({ project: {}, user: {} });
       setUpdates(null);
       setGlobalSkillGroups([]);
       setPluginEnabled(emptyPluginEnabled());
@@ -364,7 +364,7 @@ export default function App() {
         if (n) skillNames.add(n);
       }
     }
-    const mcp = Object.keys(mcpServers.project).length + Object.keys(mcpServers.global).length;
+    const mcp = Object.keys(mcpServers.project).length + Object.keys(mcpServers.user).length;
     return { skill: skillNames.size, mcp };
   }, [assets, mcpServers]);
 
@@ -395,17 +395,17 @@ export default function App() {
     );
     if (globalMode) {
       const outdatedSkills = (updates?.skills ?? []).filter(
-        (u) => u.scope === 'global' && u.outdated,
+        (u) => u.scope === 'user' && u.outdated,
       ).length;
       const outdatedMcp = (updates?.mcp ?? []).filter(
-        (u) => u.scope === 'global' && u.outdated,
+        (u) => u.scope === 'user' && u.outdated,
       ).length;
       return {
         // machine-wide skills in effect + MCP servers + the global file tree
         // (~/.claude, ~/.codex) — the merged 资源管理 card count
         files:
           effectiveGlobalSkills +
-          Object.keys(mcpServers.global).length +
+          Object.keys(mcpServers.user).length +
           machineMcp +
           globalAssets.length,
         outdated: outdatedSkills + outdatedMcp,
@@ -566,8 +566,8 @@ export default function App() {
       const target = selected ?? projects[0];
       if (!target) return;
       // claude 有两份 scope 面（.mcp.json / ~/.claude.json）；其余 harness 的 MCP
-      // 只住用户级文件（如 codex config.toml）——一律落 global。
-      const effectiveScope = agent === 'claude' ? scope : 'global';
+      // 只住用户级文件（如 codex config.toml）——一律落 user。
+      const effectiveScope = agent === 'claude' ? scope : 'user';
       const res = await api.install(target.id, {
         category: 'mcp',
         name,
@@ -626,7 +626,7 @@ export default function App() {
       const res = await api.uninstall(target.id, {
         category: 'mcp',
         name,
-        scope: (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'global',
+        scope: (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user',
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -911,7 +911,7 @@ export default function App() {
     const data = active.data.current as DragPayload | undefined;
     setDragPayload(null);
     if (!over || over.id !== 'project-assets' || !data) return;
-    const scope: AssetScope = globalMode ? 'global' : 'project';
+    const scope: AssetScope = globalMode ? 'user' : 'project';
     // 属性判定单点：不合法 → 顶栏报因、不安装（与按钮 disabled 同谓词）。
     const verdict = canInstall(data.attrs, { scope, agent: data.targetAgent });
     if (!verdict.ok) {
@@ -938,7 +938,7 @@ export default function App() {
   // Files match by skill-dir name + the skill's server-set agent — no harness
   // path is written into the client.
   const drawerFiles = useMemo(() => {
-    if (!drawerSkill || drawerSkill.scope === 'global') return [];
+    if (!drawerSkill || drawerSkill.scope === 'user') return [];
     const { name, agent } = drawerSkill;
     return assets.filter((a) => {
       const skillName = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//)?.[1];
@@ -1178,7 +1178,7 @@ export default function App() {
                   pluginKey={drawerSkill.pluginKey}
                   agent={drawerSkill.agent}
                   files={drawerFiles}
-                  readOnly={!globalMode && drawerSkill.scope === 'global'}
+                  readOnly={!globalMode && drawerSkill.scope === 'user'}
                   outdated={drawerUpdate?.outdated ?? false}
                   custom={drawerUpdate?.custom ?? false}
                   onUninstall={() => {
@@ -1209,7 +1209,7 @@ export default function App() {
                   onUpdateAsset={updateAssetSafely}
                   category={mainCategory}
                   assetTab={assetTab}
-                  scope={mode}
+                  scope={globalMode ? 'user' : 'project'}
                   capabilities={installCaps}
                   projectId={activeProject.id}
                   onSyncAll={() => void syncNowWithFeedback(activeProject)}

@@ -55,7 +55,7 @@ export interface AssetSurface {
   /** 某资产类别在指定 scope 的目标目录；无该表面则抛错（同 `fileAssetTargetDir` 语义）。 */
   targetDir(
     category: FileAssetCategory,
-    scope: 'project' | 'global',
+    scope: 'project' | 'user',
     projectPath: string,
     homedir: string,
   ): string;

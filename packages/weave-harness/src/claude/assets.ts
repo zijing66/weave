@@ -12,7 +12,7 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   targetDir(category, scope, projectPath, homedir) {
     const dirs = FILE_ASSET_SPECS[category].dirs.claude;
-    if (scope === 'global') {
+    if (scope === 'user') {
       if (!dirs?.user) {
         throw new Error(`"${category}" is project-scoped only (no user-level directory)`);
       }

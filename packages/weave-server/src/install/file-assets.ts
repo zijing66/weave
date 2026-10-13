@@ -29,7 +29,7 @@ export {
 export function fileAssetTargetDir(
   category: FileAssetCategory,
   agent: Harness,
-  scope: 'project' | 'global',
+  scope: 'project' | 'user',
   projectPath: string,
   homedir: string,
 ): string {

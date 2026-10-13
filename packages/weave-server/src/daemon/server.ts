@@ -632,7 +632,7 @@ async function handleRequest(
         }
         const agent = body.agent ?? 'claude';
         const target =
-          body.scope === 'global'
+          body.scope === 'user'
             ? await installGlobalSkill(body.sourceDir, body.name, agent)
             : await installSkill(project.path, body.sourceDir, body.name, agent);
         sendJson(res, 201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
@@ -660,7 +660,7 @@ async function handleRequest(
         if (body.agent === 'codex') {
           // Codex MCP servers live in ~/.codex/config.toml (user-level only)
           if (body.scope === 'project') {
-            sendJson(res, 400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "global"' });
+            sendJson(res, 400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "user"' });
             return;
           }
           if (await codexMcpExists(body.name)) {
@@ -668,7 +668,7 @@ async function handleRequest(
             return;
           }
           await writeCodexMcpServer(body.name, body.mcpConfig as McpServerConfig);
-        } else if (body.scope === 'global') {
+        } else if (body.scope === 'user') {
           await writeGlobalMcpServer(body.name, body.mcpConfig as McpServerConfig);
         } else {
           await installMcp(project.path, body.name, body.mcpConfig as McpServerConfig);
@@ -676,7 +676,7 @@ async function handleRequest(
         sendJson(res, 201, {
           category: 'mcp',
           name: body.name,
-          scope: body.agent === 'codex' ? 'global' : (body.scope ?? 'project'),
+          scope: body.agent === 'codex' ? 'user' : (body.scope ?? 'project'),
           agent: body.agent ?? 'claude',
         });
       } else {
@@ -697,7 +697,7 @@ async function handleRequest(
     let body: {
       category?: string;
       name?: string;
-      scope?: 'project' | 'global';
+      scope?: 'project' | 'user';
       agent?: Harness;
     };
     try {
@@ -713,7 +713,7 @@ async function handleRequest(
           return;
         }
         const agent = body.agent ?? 'claude';
-        if (body.scope === 'global') await uninstallGlobalSkill(body.name, agent);
+        if (body.scope === 'user') await uninstallGlobalSkill(body.name, agent);
         else await uninstallSkill(project.path, body.name, agent);
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name) {
@@ -740,7 +740,7 @@ async function handleRequest(
             );
             return;
           }
-        } else if (body.scope === 'global') await removeGlobalMcpServer(body.name);
+        } else if (body.scope === 'user') await removeGlobalMcpServer(body.name);
         else await uninstallMcp(project.path, body.name);
       } else {
         sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
@@ -791,7 +791,7 @@ async function handleRequest(
     return;
   }
 
-  // --- mcp servers (project .mcp.json + global ~/.claude.json) ---
+  // --- mcp servers (project .mcp.json + user ~/.claude.json) ---
   const mcpMatch = pathname.match(/^\/projects\/(\d+)\/mcp$/);
   if (mcpMatch && req.method === 'GET') {
     const project = deps.projects.getById(Number(mcpMatch[1]));
@@ -806,7 +806,7 @@ async function handleRequest(
     ]);
     sendJson(res, 200, {
       project: projectServers,
-      global: globalServers,
+      user: globalServers,
       codex: codexServers,
     });
     return;
@@ -1011,7 +1011,7 @@ async function handleRequest(
     let body: {
       category?: string;
       name?: string;
-      scope?: 'project' | 'global';
+      scope?: 'project' | 'user';
       agent?: Harness;
     };
     try {
@@ -1446,8 +1446,8 @@ interface InstallBody {
   sourceDir?: string;
   sourceFile?: string;
   mcpConfig?: McpServerConfig;
-  /** 'project' (default) writes into the project; 'global' writes ~/.claude / ~/.codex. */
-  scope?: 'project' | 'global';
+  /** 'project' (default) writes into the project; 'user' writes ~/.claude / ~/.codex. */
+  scope?: 'project' | 'user';
   /** Which coding agent's surface to target (default: claude). */
   agent?: InstallAgent;
 }

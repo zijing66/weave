@@ -58,17 +58,17 @@ describe('daemon server', () => {
     const data = (await res.json()) as {
       categories: Record<string, { surfaces: Array<{ harness: string; scopes: string[] }> }>;
     };
-    // workflow 仅项目（无 userDir）；mcp × codex 强制 global
+    // workflow 仅项目（无 userDir）；mcp × codex 强制 user
     expect(data.categories.workflow.surfaces).toEqual([
       { harness: 'claude', scopes: ['project'] },
     ]);
     expect(
       data.categories.mcp.surfaces.find((s) => s.harness === 'codex')?.scopes,
-    ).toEqual(['global']);
+    ).toEqual(['user']);
     // skill 面由资产面派生（加 harness 自动跟随），不写死闭式计数
     expect(
       data.categories.skill.surfaces.find((s) => s.harness === 'claude')?.scopes,
-    ).toEqual(['project', 'global']);
+    ).toEqual(['project', 'user']);
     expect(data.categories.skill.surfaces.length).toBeGreaterThanOrEqual(2);
   });
 

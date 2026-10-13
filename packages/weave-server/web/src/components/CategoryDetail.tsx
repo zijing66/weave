@@ -129,7 +129,7 @@ export function CategoryDetail({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
-  const scope: AssetScope = isGlobal ? 'global' : 'project';
+  const scope: AssetScope = isGlobal ? 'user' : 'project';
   const t = useT();
 
   // 资产面板动作的按钮级反馈（FeedbackIcon 三态 + toast）已随按钮本体落位：
@@ -180,7 +180,7 @@ export function CategoryDetail({
         enabled,
         skills: g.skills.map((k) => ({
           name: k.name,
-          scope: 'global' as const,
+          scope: 'user' as const,
           files: [],
           source: g.source as GlobalSkillSource,
           pluginKey: g.pluginKey,
@@ -201,7 +201,7 @@ export function CategoryDetail({
   const mcp = useMemo<McpRow[]>(() => {
     const toRows = (map: Record<string, McpServerConfig> | undefined, agent?: AssetAgent) =>
       Object.entries(map ?? {}).map(([name, config]) => ({ name, config, scope, agent }));
-    const scopeMap = isGlobal ? mcpServers.global : mcpServers.project;
+    const scopeMap = isGlobal ? mcpServers.user : mcpServers.project;
     const rowsFor = (h: Harness): McpRow[] =>
       toRows(h === 'claude' ? scopeMap : mcpServers[h], h);
     if (runtimeTab === 'all') return HARNESS_ORDER.flatMap(rowsFor);
@@ -339,7 +339,7 @@ export function CategoryDetail({
             scope={scope}
             assets={globalTreeAssets}
             updates={fileUpdates}
-            onUninstall={(row) => onUninstallFileAsset(row, 'global')}
+            onUninstall={(row) => onUninstallFileAsset(row, 'user')}
             onOpenFile={onOpenFile}
           />
         ))}

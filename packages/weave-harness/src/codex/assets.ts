@@ -3,7 +3,7 @@ import type { AssetSurface } from '../driver.js';
 import { FILE_ASSET_SPECS } from '../shared/file-specs.js';
 
 /**
- * Codex 资产表面（批 4a 迁入，能力矩阵 ⚠：仅 skills + 文件资产全局面）：
+ * Codex 资产表面（批 4a 迁入，能力矩阵 ⚠：仅 skills + 文件资产 user 面）：
  * 落点表（FILE_ASSET_SPECS.dirs.codex）目标目录、skills 项目/全局根（current + legacy 两根）、
  * config.toml 路径、路径归属与 watch 观测集。
  */
@@ -13,9 +13,9 @@ export const CODEX_ASSETS: AssetSurface = {
   targetDir(category, scope, _projectPath, homedir) {
     // Codex 无项目级文件资产表面（skills-only），project 恒抛错——_projectPath 仅占位。
     const dirs = FILE_ASSET_SPECS[category].dirs.codex;
-    if (scope !== 'global' || !dirs?.user) {
+    if (scope !== 'user' || !dirs?.user) {
       throw new Error(
-        `"${category}" has no Codex ${scope === 'global' ? 'global' : 'project'} surface`,
+        `"${category}" has no Codex ${scope === 'user' ? 'user' : 'project'} surface`,
       );
     }
     return path.join(homedir, ...dirs.user.split('/'));

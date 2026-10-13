@@ -121,7 +121,7 @@ export async function installFileAsset(
   name: string,
   sourceFile: string,
   agent: InstallAgent = 'claude',
-  scope: 'project' | 'global' = 'project',
+  scope: 'project' | 'user' = 'project',
 ): Promise<string> {
   assertSafeName(name);
   const targetDir = fileAssetTargetDir(category, agent, scope, projectPath, homedir());
@@ -143,7 +143,7 @@ export async function uninstallFileAsset(
   category: FileAssetCategory,
   name: string,
   agent: InstallAgent = 'claude',
-  scope: 'project' | 'global' = 'project',
+  scope: 'project' | 'user' = 'project',
 ): Promise<void> {
   assertSafeName(name);
   const targetDir = fileAssetTargetDir(category, agent, scope, projectPath, homedir());

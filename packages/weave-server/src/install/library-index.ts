@@ -17,7 +17,7 @@ import type { McpServerConfig } from './installer.js';
  *
  * Scope is likewise inferred from path, not stored:
  *   project → `<project>/.claude/skills/`
- *   global  → `~/.claude/skills/`
+ *   user    → `~/.claude/skills/`
  *
  * Multi-source edge case: if two libraries both define `<name>`, the first one
  * (by `libraries.list()` order) wins for update-checking. Any matching source

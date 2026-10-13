@@ -29,8 +29,8 @@ import type { LibraryRow } from '../repositories/libraries.js';
  *
  * Scope + agent are honoured:
  *   project skill → `.claude/skills/` (claude) · `.codex/skills/` (codex)
- *   global  skill → `~/.claude/skills/` (claude) · `~/.agents/skills/` (codex)
- *   project mcp   → `.mcp.json`, global mcp → `~/.claude.json`
+ *   user    skill → `~/.claude/skills/` (claude) · `~/.agents/skills/` (codex)
+ *   project mcp   → `.mcp.json`, user mcp → `~/.claude.json`
  *   codex  mcp    → `~/.codex/config.toml` (agent: 'codex')
  *   file assets   → the kind's project dir (see file-assets.ts)
  */
@@ -38,7 +38,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
 export interface ApplyUpdateInput {
   category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
   name: string;
-  scope: 'project' | 'global';
+  scope: 'project' | 'user';
   /** Which agent's surface to refresh (skills + codex MCP matter). */
   agent?: Harness;
 }
@@ -58,7 +58,7 @@ export async function applyUpdate(
     const src = findSkillSource(idx, input.name);
     if (!src) throw new Error(`No library source for skill "${input.name}"`);
     const skillsRoot =
-      input.scope === 'global'
+      input.scope === 'user'
         ? // 全局根经 surface 取（codex current 根 = ~/.agents/skills，原硬编码
           // ~/.codex/skills 是批 4a 欠账）
           assetSurfaceFor(agent).globalSkillsRoots(homedir())[0]
@@ -89,7 +89,7 @@ export async function applyUpdate(
     await writeCodexMcpServer(input.name, src.config);
     return;
   }
-  if (input.scope === 'global') {
+  if (input.scope === 'user') {
     await writeGlobalMcpServer(input.name, src.config);
   } else {
     // remove then re-add to refresh the entry cleanly

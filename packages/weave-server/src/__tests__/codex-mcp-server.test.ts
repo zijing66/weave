@@ -89,12 +89,12 @@ describe('daemon server — codex MCP (config.toml)', () => {
       category: 'mcp',
       name: 'weave',
       mcpConfig: { command: 'npx', args: ['-y', 'weave'] },
-      scope: 'global',
+      scope: 'user',
       agent: 'codex',
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { scope: string; agent: string };
-    expect(body.scope).toBe('global');
+    expect(body.scope).toBe('user');
     expect(body.agent).toBe('codex');
 
     const raw = readFileSync(configFile, 'utf-8');
@@ -128,7 +128,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
       category: 'mcp',
       name: 'weave',
       mcpConfig: { command: 'npx' },
-      scope: 'global',
+      scope: 'user',
       agent: 'codex',
     });
     expect(res.status).toBe(409);

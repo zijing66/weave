@@ -123,7 +123,7 @@ export function McpGrid({
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {scope === 'global' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
+          {scope === 'user' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
           {servers.length}
@@ -148,7 +148,7 @@ export function McpGrid({
                     they read 全局 even when rendered inside the project view. */}
                 <Badge variant="settings" className="ml-1">
                   {t(
-                    s.agent === 'codex' || s.scope === 'global'
+                    s.agent === 'codex' || s.scope === 'user'
                       ? 'library.scopeGlobal'
                       : 'library.scopeProject',
                   )}

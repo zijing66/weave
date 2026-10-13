@@ -41,7 +41,7 @@ export function capabilitiesOf(
   const surfaces: InstallAttrs['surfaces'] =
     entry?.surfaces ??
     (HARNESS_ORDER.map(
-      (harness) => ({ harness, scopes: ['project', 'global'] as AssetScope[] }),
+      (harness) => ({ harness, scopes: ['project', 'user'] as AssetScope[] }),
     ) as InstallAttrs['surfaces']);
   return { surfaces } as InstallAttrs;
 }
@@ -69,7 +69,7 @@ export function canInstall(
     return {
       ok: false,
       reasonKey:
-        ctx.scope === 'global' ? 'capability.reason.projectOnly' : 'capability.reason.globalOnly',
+        ctx.scope === 'user' ? 'capability.reason.projectOnly' : 'capability.reason.globalOnly',
     };
   }
   return { ok: true, reasonKey: null };

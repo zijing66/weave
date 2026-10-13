@@ -22,26 +22,26 @@ describe('targetDir — Claude 表面', () => {
     );
   });
 
-  it('global scope 落 ~/.claude/<kind>，无 userDir 的类别抛 project-scoped only', () => {
-    expect(CLAUDE_ASSETS.targetDir('command', 'global', PROJECT, HOME)).toBe(
+  it('user scope 落 ~/.claude/<kind>，无 userDir 的类别抛 project-scoped only', () => {
+    expect(CLAUDE_ASSETS.targetDir('command', 'user', PROJECT, HOME)).toBe(
       join(HOME, '.claude', 'commands'),
     );
-    expect(CLAUDE_ASSETS.targetDir('output-style', 'global', PROJECT, HOME)).toBe(
+    expect(CLAUDE_ASSETS.targetDir('output-style', 'user', PROJECT, HOME)).toBe(
       join(HOME, '.claude', 'output-styles'),
     );
-    expect(() => CLAUDE_ASSETS.targetDir('rule', 'global', PROJECT, HOME)).toThrow(
+    expect(() => CLAUDE_ASSETS.targetDir('rule', 'user', PROJECT, HOME)).toThrow(
       /project-scoped only/,
     );
   });
 });
 
 describe('targetDir — Codex 表面', () => {
-  it('无 codexUserDir / 非 global 一律抛 no Codex', () => {
+  it('无 codexUserDir / 非 user 一律抛 no Codex', () => {
     expect(FILE_ASSET_SPECS.command.codexUserDir).toBeUndefined();
-    expect(() => CODEX_ASSETS.targetDir('command', 'global', PROJECT, HOME)).toThrow(/no Codex/);
+    expect(() => CODEX_ASSETS.targetDir('command', 'user', PROJECT, HOME)).toThrow(/no Codex/);
     expect(() => CODEX_ASSETS.targetDir('command', 'project', PROJECT, HOME)).toThrow(/no Codex/);
     for (const category of ['agent', 'workflow', 'rule', 'output-style'] as const) {
-      expect(() => CODEX_ASSETS.targetDir(category, 'global', PROJECT, HOME)).toThrow(/no Codex/);
+      expect(() => CODEX_ASSETS.targetDir(category, 'user', PROJECT, HOME)).toThrow(/no Codex/);
     }
   });
 });

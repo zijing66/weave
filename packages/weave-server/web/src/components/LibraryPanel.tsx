@@ -448,15 +448,15 @@ export function LibraryPanel({
 
         {/* Install-to context (follows the active project/global selection) */}
         <div className="rounded-md border border-white/[0.06] bg-neutral-900/60 p-2 flex items-center gap-2">
-          {scope === 'global' ? (
+          {scope === 'user' ? (
             <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           ) : (
             <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           )}
           <span className="text-[11px] text-neutral-400">
             {t('library.installTo')}{' '}
-            <span className={cn('font-semibold', scope === 'global' ? 'text-emerald-300' : 'text-blue-300')}>
-              {scope === 'global' ? t('library.scopeGlobal') : t('library.scopeProject')}
+            <span className={cn('font-semibold', scope === 'user' ? 'text-emerald-300' : 'text-blue-300')}>
+              {scope === 'user' ? t('library.scopeGlobal') : t('library.scopeProject')}
             </span>
           </span>
           <span className="ml-auto text-[11px] text-neutral-600">{t('library.followsSelection')}</span>
@@ -676,7 +676,7 @@ export function LibraryPanel({
               agent={installAgent}
               onChange={setInstallAgent}
               kind="skills"
-              globalHint={scope === 'global'}
+              globalHint={scope === 'user'}
             />
             {groupSkills(skills).map(([group, items]) => {
               const key = group || '__root__';

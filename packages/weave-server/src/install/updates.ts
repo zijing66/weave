@@ -32,15 +32,15 @@ import type { LibraryRow } from '../repositories/libraries.js';
  * Scope + agent are inferred from the install path:
  *   project skill → `<project>/.claude/skills/<name>/` (claude)
  *                   `<project>/.codex/skills/<name>/`  (codex)
- *   global  skill → `~/.claude/skills/<name>/` (claude) · `~/.agents/skills/<name>/` (codex)
+ *   user    skill → `~/.claude/skills/<name>/` (claude) · `~/.agents/skills/<name>/` (codex)
  *   project mcp   → `.mcp.json`
- *   global  mcp   → `~/.claude.json`
+ *   user    mcp   → `~/.claude.json`
  *   codex   mcp   → `~/.codex/config.toml`
  */
 
 export interface SkillUpdate {
   name: string;
-  scope: 'project' | 'global';
+  scope: 'project' | 'user';
   /** Which agent's surface the skill is installed on. */
   agent: Harness;
   /** true = installed content differs from source (update available). */
@@ -56,7 +56,7 @@ export interface SkillUpdate {
 
 export interface McpUpdate {
   name: string;
-  scope: 'project' | 'global';
+  scope: 'project' | 'user';
   /** Which agent's surface the server is configured on (Codex = config.toml). */
   agent?: Harness;
   outdated: boolean;
@@ -69,7 +69,7 @@ export interface McpUpdate {
 export interface FileAssetUpdate {
   category: FileAssetCategory;
   name: string;
-  scope: 'project' | 'global';
+  scope: 'project' | 'user';
   outdated: boolean;
   custom: boolean;
   /** true = 账本登记过但盘上已不在（补齐路径会重装）。 */
@@ -165,7 +165,7 @@ async function mergeMissingFromLedger(
 }
 
 /** List installed skill names under a skills root (dirs + symlinks to dirs —
- * global installs are symlinks, which `Dirent.isDirectory()` alone misses
+ * user-level installs are symlinks, which `Dirent.isDirectory()` alone misses
  * because it reports the link type, not the target). */
 async function listSkillNames(dir: string): Promise<string[]> {
   let entries;
@@ -186,17 +186,17 @@ async function listSkillNames(dir: string): Promise<string[]> {
   return out;
 }
 
-/** Detect skill updates (project + global, Claude + Codex) against the index. */
+/** Detect skill updates (project + user, Claude + Codex) against the index. */
 export async function detectSkillUpdates(
   projectPath: string,
   cache: FingerprintCache,
   idx: LibraryIndex,
 ): Promise<SkillUpdate[]> {
   const home = homedir();
-  // 项目面与全局面皆由各 harness 的资产面派生（项目根 = projectSkillsDir，
+  // 项目面与 user 面皆由各 harness 的资产面派生（项目根 = projectSkillsDir，
   // 全局根 = globalSkillsRoots[0]——只扫安装目标根，遗留只读根不入更新面）。
-  // 顺序与原硬编码一致：先全部项目面、再全部全局面（按 harness 注册序）。
-  const surfaces: { dir: string; scope: 'project' | 'global'; agent: Harness }[] = [
+  // 顺序与原硬编码一致：先全部项目面、再全部 user 面（按 harness 注册序）。
+  const surfaces: { dir: string; scope: 'project' | 'user'; agent: Harness }[] = [
     ...assetSurfaces().map((s) => ({
       dir: path.join(projectPath, ...s.projectSkillsDir().split('/')),
       scope: 'project' as const,
@@ -204,7 +204,7 @@ export async function detectSkillUpdates(
     })),
     ...assetSurfaces().map((s) => ({
       dir: s.globalSkillsRoots(home)[0],
-      scope: 'global' as const,
+      scope: 'user' as const,
       agent: s.harness,
     })),
   ];
@@ -289,7 +289,7 @@ export async function detectFileAssetUpdates(
   return out;
 }
 
-/** Detect MCP updates (project + global + Codex config.toml) against the index. */
+/** Detect MCP updates (project + user + Codex config.toml) against the index. */
 async function detectMcpUpdates(projectPath: string, idx: LibraryIndex): Promise<McpUpdate[]> {
   const [projectServers, globalServers, codexServers] = await Promise.all([
     readMcpServers(projectPath).catch(() => ({})),
@@ -314,11 +314,11 @@ async function detectMcpUpdates(projectPath: string, idx: LibraryIndex): Promise
   for (const [name, cfg] of Object.entries(globalServers)) {
     const src = findMcpSource(idx, name);
     if (!src) {
-      out.push({ name, scope: 'global', outdated: false, custom: true });
+      out.push({ name, scope: 'user', outdated: false, custom: true });
     } else {
       out.push({
         name,
-        scope: 'global',
+        scope: 'user',
         outdated: hashMcpConfig(cfg) !== hashMcpConfig(src.config),
         custom: false,
         libraryId: src.libraryId,
@@ -328,11 +328,11 @@ async function detectMcpUpdates(projectPath: string, idx: LibraryIndex): Promise
   for (const [name, cfg] of Object.entries(codexServers)) {
     const src = findMcpSource(idx, name);
     if (!src) {
-      out.push({ name, scope: 'global', agent: 'codex', outdated: false, custom: true });
+      out.push({ name, scope: 'user', agent: 'codex', outdated: false, custom: true });
     } else {
       out.push({
         name,
-        scope: 'global',
+        scope: 'user',
         agent: 'codex',
         outdated: hashMcpConfig(cfg) !== hashMcpConfig(src.config),
         custom: false,

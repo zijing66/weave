@@ -184,7 +184,7 @@ function AssetTreeNode({
     const isMd = a.relPath.toLowerCase().endsWith('.md');
     const update = updateMap?.get(`${fileStem(a.relPath)}::${a.category}`);
     const uninstallable =
-      scope === 'global'
+      scope === 'user'
         ? GLOBAL_UNINSTALLABLE.has(a.category) && a.agent !== 'codex'
         : UNINSTALLABLE.has(a.category);
     const tags = tagsOf(a.category, a.relPath);
@@ -413,10 +413,10 @@ export function FileAssetTree({
     setSelected(next);
   };
 
-  const scopeLabel = scope === 'global' ? t('fileTree.scopeGlobal') : t('fileTree.scopeProject');
+  const scopeLabel = scope === 'user' ? t('fileTree.scopeGlobal') : t('fileTree.scopeProject');
   // 路径提示由名表派生（前端不写 harness 路径字面量）；词典只承载可译后缀。
   const dirList = HARNESS_ORDER.map((h) =>
-    scope === 'global' ? `~/${harnessUiOf(h).dotDir}/` : `${harnessUiOf(h).dotDir}/`,
+    scope === 'user' ? `~/${harnessUiOf(h).dotDir}/` : `${harnessUiOf(h).dotDir}/`,
   ).join(' · ');
 
   return (
@@ -425,7 +425,7 @@ export function FileAssetTree({
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
           {scopeLabel} {t('fileTree.title')}{' '}
           <span className="text-neutral-600 normal-case font-normal">
-            {scope === 'global' ? dirList : t('fileTree.pathsProject', { dirs: dirList })}
+            {scope === 'user' ? dirList : t('fileTree.pathsProject', { dirs: dirList })}
           </span>
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">

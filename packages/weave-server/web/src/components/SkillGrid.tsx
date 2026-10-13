@@ -117,7 +117,7 @@ function SkillCard({
   // 装面形态只在全局位置有意义，且只在 weave 自己铺的个人技能根（`<h>-personal`）——
   // 项目技能按设计一律是副本，插件缓存是 CC 的，都不该标「副本」让人以为可改。
   const personal = row.source?.endsWith('-personal') ?? false;
-  const showForm = row.scope === 'global' && personal && row.form !== undefined;
+  const showForm = row.scope === 'user' && personal && row.form !== undefined;
   return (
     <Card>
       <CardHeader className="items-center gap-2">
@@ -175,7 +175,7 @@ function SkillCard({
           <button
             type="button"
             disabled={uninstallState === 'loading'}
-            onClick={() => (row.scope === 'global' ? setConfirming(true) : runUninstall())}
+            onClick={() => (row.scope === 'user' ? setConfirming(true) : runUninstall())}
             className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
             title={t('skillGrid.uninstall', { name: row.name })}
           >
@@ -187,7 +187,7 @@ function SkillCard({
           </button>
         )}
       </CardHeader>
-      {row.scope === 'global' && (
+      {row.scope === 'user' && (
         <ConfirmDialog
           open={confirming}
           title={t('skillGrid.uninstallGlobalTitle')}

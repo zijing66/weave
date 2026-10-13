@@ -92,7 +92,7 @@ describe('syncAll — batches all outdated', () => {
   });
 });
 
-describe('applyUpdate — skill (global scope)', () => {
+describe('applyUpdate — skill (user scope)', () => {
   let libDir: string;
   beforeEach(() => {
     libDir = mkdtempSync(join(tmpdir(), 'weave-au-globlib-'));
@@ -110,7 +110,7 @@ describe('applyUpdate — skill (global scope)', () => {
   it('overwrites the global skill from source', async () => {
     const lib = libraries.add({ path: libDir, kind: 'skill' });
     const index = await buildLibraryIndex([lib]);
-    await applyUpdate({} as string, { category: 'skill', name: 'gskill', scope: 'global' }, index);
+    await applyUpdate({} as string, { category: 'skill', name: 'gskill', scope: 'user' }, index);
     expect(readFileSync(join(fakeHome, '.claude/skills/gskill/SKILL.md'), 'utf-8')).toBe('# G v2');
   });
 });

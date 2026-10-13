@@ -72,7 +72,7 @@ it('symlink 形式的 claude 全局 skill 出现在检测里，内容一致不 o
 
   const idx = await buildLibraryIndex(libs.list());
   const out = await detectSkillUpdates(projectDir, new FingerprintCache(), idx);
-  const entry = out.find((s) => s.name === 'gskill' && s.scope === 'global' && s.agent === 'claude');
+  const entry = out.find((s) => s.name === 'gskill' && s.scope === 'user' && s.agent === 'claude');
   expect(entry).toBeDefined();
   expect(entry!.custom).toBe(false);
   expect(entry!.outdated).toBe(false);
@@ -88,7 +88,7 @@ it('codex 全局 current 根（~/.agents/skills）内的 skill 被扫描到', as
 
   const idx = await buildLibraryIndex(libs.list());
   const out = await detectSkillUpdates(projectDir, new FingerprintCache(), idx);
-  const entry = out.find((s) => s.name === 'cskill' && s.scope === 'global' && s.agent === 'codex');
+  const entry = out.find((s) => s.name === 'cskill' && s.scope === 'user' && s.agent === 'codex');
   expect(entry).toBeDefined();
   expect(entry!.outdated).toBe(false);
   db.close();

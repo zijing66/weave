@@ -206,7 +206,7 @@ export function SkillDetailDrawer({
   onClose: () => void;
 }) {
   const t = useT();
-  const isGlobal = scope === 'global' && !!source;
+  const isGlobal = scope === 'user' && !!source;
   // Global rows start with no files and fetch them (follows symlinks).
   const [fileList, setFileList] = useState<AssetEntry[]>(files);
   const [selected, setSelected] = useState<AssetEntry | null>(() => {

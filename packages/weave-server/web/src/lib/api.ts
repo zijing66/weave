@@ -394,7 +394,7 @@ export interface McpServerConfig {
 }
 
 /** MCP servers, mirroring the daemon's GET /mcp response: claude's two scopes
- * (project `.mcp.json` / global `~/.claude.json`) under their scope keys, plus a
+ * (project `.mcp.json` / user `~/.claude.json`) under their scope keys, plus a
  * user-level map for every further harness (codex `~/.codex/config.toml`) keyed by
  * harness id — so a new harness's surface slots in without a named bucket. */
 export type McpServerMap = Record<AssetScope, Record<string, McpServerConfig>> &
@@ -448,11 +448,11 @@ export interface InstallBody {
   /** Template file (library-relative or absolute) for file assets. */
   sourceFile?: string;
   mcpConfig?: McpServerConfig;
-  scope?: 'project' | 'global';
+  scope?: 'project' | 'user';
   agent?: AssetAgent;
 }
 
-export type AssetScope = 'project' | 'global';
+export type AssetScope = 'project' | 'user';
 
 /** Mirror of server `install/capabilities.ts`（安装属性矩阵唯一事实源在服务端）。 */
 export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;
@@ -491,7 +491,7 @@ export interface McpUpdate {
   outdated: boolean;
   custom: boolean;
   libraryId?: number;
-  /** 'codex' updates target ~/.codex/config.toml (always global scope). */
+  /** 'codex' updates target ~/.codex/config.toml (always user scope). */
   agent?: AssetAgent;
 }
 

@@ -13,13 +13,13 @@ function scopesOf(cat: keyof InstallCapabilities['categories'], harness: string)
 }
 
 describe('installCapabilities', () => {
-  it('文件资产矩阵逐格锚定 FILE_ASSET_SPECS 落点表（有 project ⇒ 项目面、有 user ⇒ 全局面）', () => {
+  it('文件资产矩阵逐格锚定 FILE_ASSET_SPECS 落点表（有 project ⇒ 项目面、有 user ⇒ user 面）', () => {
     for (const cat of FILE_ASSET_CATEGORIES) {
       const dirs = FILE_ASSET_SPECS[cat].dirs;
       for (const harness of ['claude', 'codex'] as const) {
         const d = dirs[harness];
         const expectScopes = d
-          ? [...(d.project ? (['project'] as const) : []), ...(d.user ? (['global'] as const) : [])]
+          ? [...(d.project ? (['project'] as const) : []), ...(d.user ? (['user'] as const) : [])]
           : undefined;
         expect(scopesOf(cat, harness), `${cat}/${harness}`).toEqual(expectScopes);
       }
@@ -33,19 +33,19 @@ describe('installCapabilities', () => {
 
   it('command/agent/output-style claude 双范围、无 codex 面', () => {
     for (const cat of ['command', 'agent', 'output-style'] as const) {
-      expect(scopesOf(cat, 'claude')).toEqual(['project', 'global']);
+      expect(scopesOf(cat, 'claude')).toEqual(['project', 'user']);
       expect(scopesOf(cat, 'codex')).toBeUndefined();
     }
   });
 
   it('skill 双 harness 双范围', () => {
-    expect(scopesOf('skill', 'claude')).toEqual(['project', 'global']);
-    expect(scopesOf('skill', 'codex')).toEqual(['project', 'global']);
+    expect(scopesOf('skill', 'claude')).toEqual(['project', 'user']);
+    expect(scopesOf('skill', 'codex')).toEqual(['project', 'user']);
   });
 
-  it('mcp：claude 双范围、codex 强制 global', () => {
-    expect(scopesOf('mcp', 'claude')).toEqual(['project', 'global']);
-    expect(scopesOf('mcp', 'codex')).toEqual(['global']);
+  it('mcp：claude 双范围、codex 强制 user', () => {
+    expect(scopesOf('mcp', 'claude')).toEqual(['project', 'user']);
+    expect(scopesOf('mcp', 'codex')).toEqual(['user']);
   });
 
   it('类别表齐全（skill/mcp + 5 类文件资产）', () => {
