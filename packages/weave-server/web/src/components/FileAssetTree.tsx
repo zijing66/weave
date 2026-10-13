@@ -218,7 +218,7 @@ function AssetTreeNode({
               chip colours as the filter bar, so rows and filters agree. A file
               renders ALL of its tags (mods rows show plugin + mods). */}
           <AgentBadge
-            agent={a.agent ?? 'claude'}
+            agent={a.agent}
             className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
           />
           {tags.map((tag) => (

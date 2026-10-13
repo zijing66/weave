@@ -12,6 +12,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
 import {
   api,
   CLAUDE_HOOK_EVENTS,
@@ -90,7 +91,8 @@ const HANDLER_ICONS: Record<HandlerConfig['type'], LucideIcon> = {
 /** 规则来源的两种可编辑形（webhook 形一期不开放编辑）。 */
 const SOURCE_KINDS: Array<HookRuleSource['kind']> = ['hook-event', 'claude-event'];
 
-const HARNESS_OPTIONS: Array<Harness | 'any'> = ['claude', 'codex', 'any'];
+/** 规则 harness 过滤选项 = 名表 + any（加 harness 自动跟随）。 */
+const HARNESS_OPTIONS: Array<Harness | 'any'> = [...HARNESS_ORDER, 'any'];
 
 /** 面板内所有用户操作的成功/失败提示统一走这里（apiFetch 已抛人话错误）。 */
 function errMsg(e: unknown): string {

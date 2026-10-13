@@ -4,6 +4,7 @@
  * 点击安装 disabled 与拖拽 canDrop 共用 `canInstall`——零第二份属性硬编码。
  */
 import type { MessageKey } from '@/i18n/dict';
+import { HARNESS_ORDER } from './harness-meta';
 import type {
   AssetScope,
   AssetAgent,
@@ -39,12 +40,17 @@ export function capabilitiesOf(
   const entry = table?.categories[category];
   const surfaces: InstallAttrs['surfaces'] =
     entry?.surfaces ??
-    ([
-      { harness: 'claude', scopes: ['project', 'global'] },
-      { harness: 'codex', scopes: ['project', 'global'] },
-    ] as InstallAttrs['surfaces']);
+    (HARNESS_ORDER.map(
+      (harness) => ({ harness, scopes: ['project', 'global'] as AssetScope[] }),
+    ) as InstallAttrs['surfaces']);
   return { surfaces } as InstallAttrs;
 }
+
+/** harness → 资源不支持它时的拒绝词条（claude/codex 保留专属文案；其余走通用键）。 */
+const UNSUPPORTED_REASON: Record<string, MessageKey> = {
+  claude: 'capability.reason.codexOnly',
+  codex: 'capability.reason.claudeOnly',
+};
 
 /** 唯一判定：harness 面缺失 → 资源不支持目标 harness；面在但 scope 缺 → 范围拒。 */
 export function canInstall(
@@ -56,7 +62,7 @@ export function canInstall(
     return {
       ok: false,
       reasonKey:
-        ctx.agent === 'codex' ? 'capability.reason.claudeOnly' : 'capability.reason.codexOnly',
+        UNSUPPORTED_REASON[ctx.agent] ?? 'capability.reason.harnessUnsupported',
     };
   }
   if (!surface.scopes.includes(ctx.scope)) {

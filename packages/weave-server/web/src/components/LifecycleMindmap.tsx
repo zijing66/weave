@@ -34,6 +34,8 @@ import {
   type LifecycleGroup,
 } from '@/components/tasks/build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from '@/components/tasks/lifecycle';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
+import type { Harness, HarnessLifecycle } from '@weavecode/core/harness';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 
 /**
@@ -134,6 +136,7 @@ export function layoutMindmap(
   expanded: ReadonlySet<string>,
   ruleInfo: ReadonlyMap<string, RuleInfo> = new Map(),
   sessionModel?: string,
+  lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[HARNESS_ORDER[0] ?? 'claude'],
 ): { nodes: LaidNode[]; edges: LaidEdge[] } {
   interface TNode {
     key: string;
@@ -236,7 +239,7 @@ export function layoutMindmap(
           const eKey = `e:${e.id}`;
           const hits = g.dispatches.filter((d) => d.eventId === e.id);
           const kids = expanded.has(eKey) ? hitChain(e.id, hits) : [];
-          const isSub = e.eventType === HARNESS_LIFECYCLE.claude.subagentStop;
+          const isSub = e.eventType === lifecycle.subagentStop;
           const ad = agentDispatchOf(e);
           const notif = taskNotificationOf(e);
 
@@ -923,6 +926,7 @@ export function LifecycleMindmap({
   projectId,
   sessionId,
   sessions,
+  harness,
   onSelect,
   focusGroupId,
   focusGroup,
@@ -931,6 +935,8 @@ export function LifecycleMindmap({
   projectId: number;
   sessionId: string;
   sessions?: SessionRow[];
+  /** 会话归属 harness——分组/画布生命周期表按它取（D7 表驱动）；缺省回落名表首项。 */
+  harness?: Harness | null;
   onSelect?: (sessionId: string) => void;
   /**
    * 单组模式（任务视图组展开）：只渲染该 prompt 组、根默认展开，隐藏会话下拉
@@ -946,6 +952,8 @@ export function LifecycleMindmap({
   running?: boolean;
 }) {
   const t = useT();
+  /** 生命周期表按会话 harness 取（D7——分组差异是 harness 知识，不写死 claude）。 */
+  const lifecycle = HARNESS_LIFECYCLE[harness ?? HARNESS_ORDER[0] ?? 'claude'];
   const [events, setEvents] = useState<HookEventRow[] | null>(null);
   const [dispatches, setDispatches] = useState<HookDispatch[] | null>(null);
   const [ruleInfo, setRuleInfo] = useState<Map<string, RuleInfo>>(new Map());
@@ -1018,11 +1026,11 @@ export function LifecycleMindmap({
     // 头部满一整批（≥300）说明窗口从半截 turn 切开——此时的 preSession 组是
     // 上一 turn 尾巴的伪影，隐藏（翻到底才是真会话引导）。
     const headTruncated = events.length >= 300;
-    const all = buildLifecycleGroups(events, mine, HARNESS_LIFECYCLE.claude).filter(
+    const all = buildLifecycleGroups(events, mine, lifecycle).filter(
       (g) => g.id !== ORPHAN_GROUP_ID && !(g.preSession && headTruncated),
     );
     return focusGroupId ? all.filter((g) => g.id === focusGroupId) : all;
-  }, [events, dispatches, sessionId, focusGroupId, focusGroup]);
+  }, [events, dispatches, sessionId, focusGroupId, focusGroup, lifecycle]);
 
   /** 执行中的组（仅最新组——历史 open 组是中断落库，不是进行中）。 */
   const runningGroups = useMemo<ReadonlySet<string>>(() => {
@@ -1041,8 +1049,8 @@ export function LifecycleMindmap({
   }, [events]);
 
   const laid = useMemo(
-    () => layoutMindmap(groups, expanded, ruleInfo, sessionModel),
-    [groups, expanded, ruleInfo, sessionModel],
+    () => layoutMindmap(groups, expanded, ruleInfo, sessionModel, lifecycle),
+    [groups, expanded, ruleInfo, sessionModel, lifecycle],
   );
 
   const instRef = useRef<ReactFlowInstance<MindmapFlowNode, Edge> | null>(null);

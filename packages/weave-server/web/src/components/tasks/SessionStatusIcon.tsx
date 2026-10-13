@@ -1,3 +1,4 @@
+import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { STATUS_DOT, type SessionStatus } from './session-status';
 import { HarnessIcon } from './HarnessIcon';
@@ -11,7 +12,7 @@ export function SessionStatusIcon({
   harness,
 }: {
   status: SessionStatus;
-  harness?: 'claude' | 'codex' | null;
+  harness?: Harness | null;
 }) {
   if (status === 'running' || status === 'open') {
     return <HarnessIcon harness={harness} running={status === 'running'} />;

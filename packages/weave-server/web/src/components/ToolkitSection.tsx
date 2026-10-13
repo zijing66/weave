@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Harness } from '@weavecode/core/harness';
 import { api, type ToolkitPack } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
@@ -83,7 +84,7 @@ export function ToolkitSection({
   runtimeTab = 'all',
 }: {
   projectId: number;
-  runtimeTab?: 'claude' | 'codex' | 'all';
+  runtimeTab?: Harness | 'all';
 }) {
   const t = useT();
   const [packs, setPacks] = useState<ToolkitPack[] | null>(null);

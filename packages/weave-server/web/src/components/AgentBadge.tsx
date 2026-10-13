@@ -1,31 +1,20 @@
 import { Badge } from '@/components/ui/badge';
 import type { AssetAgent } from '@/lib/api';
+import { harnessUiOf } from '@/lib/harness-meta';
 import { cn } from '@/lib/utils';
 
 /**
  * Which runtime an asset belongs to, shown on every card that can hold either
  * agent's copy.
  *
- * Both are rendered explicitly, in the Tasks panel's source-tag colours
- * (claude = orange, codex = cyan) so one hue means one agent everywhere.
- *
- * The cards used to badge only Codex, which left
- * "this is Claude's" implicit — invisible until you noticed a Codex entry was
- * the one that looked different.
+ * Colour comes from the single harness-meta table (claude = orange, codex = cyan,
+ * unknown = neutral) so one hue means one agent everywhere; the label is the raw
+ * harness id. A row with no agent renders nothing — the surface is a server fact,
+ * the client does not guess one.
  */
 export function AgentBadge({ agent, className }: { agent?: AssetAgent; className?: string }) {
-  const codex = agent === 'codex';
+  if (!agent) return null;
   return (
-    <Badge
-      className={cn(
-        'shrink-0',
-        codex
-          ? 'border-cyan-800/50 bg-cyan-900/40 text-cyan-300'
-          : 'border-orange-800/50 bg-orange-900/40 text-orange-300',
-        className,
-      )}
-    >
-      {codex ? 'codex' : 'claude'}
-    </Badge>
+    <Badge className={cn('shrink-0', harnessUiOf(agent).badge, className)}>{agent}</Badge>
   );
 }

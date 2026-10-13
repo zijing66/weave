@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/core';
 import {
   api,
+  skillSourceRuntime,
   type AssetEntry,
   type AssetAgent,
   type AssetChangeEvent,
@@ -30,6 +31,7 @@ import {
   type InstallCapabilities,
 } from '@/lib/api';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
@@ -55,6 +57,10 @@ const RIGHT_MIN = 260;
 const RIGHT_MAX = 440;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
+/** 每个 harness 一张空 enable 表（由名表生成，加 harness 自动跟随）。 */
+const emptyPluginEnabled = (): PluginEnabledMap =>
+  Object.fromEntries(HARNESS_ORDER.map((h) => [h, {}])) as PluginEnabledMap;
+
 export default function App() {
   const t = useT();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -75,11 +81,10 @@ export default function App() {
   const [mcpServers, setMcpServers] = useState<McpServerMap>({
     project: {},
     global: {},
-    codex: {},
   });
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
-  const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>({ claude: {}, codex: {} });
+  const [pluginEnabled, setPluginEnabled] = useState<PluginEnabledMap>(emptyPluginEnabled);
   // Per-project config cache (autoSync etc.) — single source for the top bar
   // chip (selected project) and the row quick-action toggles alike.
   const [configMap, setConfigMap] = useState<Record<number, ProjectConfig>>({});
@@ -279,10 +284,10 @@ export default function App() {
       setSelected(p);
       setGlobalMode(false);
       setAssets([]);
-      setMcpServers({ project: {}, global: {}, codex: {} });
+      setMcpServers({ project: {}, global: {} });
       setUpdates(null);
       setGlobalSkillGroups([]);
-      setPluginEnabled({ claude: {}, codex: {} });
+      setPluginEnabled(emptyPluginEnabled());
       setSelectedFile(null);
       setDrawerSkill(null);
       setMainCategory('tasks');
@@ -344,7 +349,7 @@ export default function App() {
     for (const g of globalSkillGroups) for (const k of g.skills) s.add(k.name);
     for (const a of assets) {
       if (a.category === 'skill') {
-        const n = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//)?.[1];
+        const n = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//)?.[1];
         if (n) s.add(n);
       }
     }
@@ -355,7 +360,7 @@ export default function App() {
     const skillNames = new Set<string>();
     for (const a of assets) {
       if (a.category === 'skill') {
-        const n = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//)?.[1];
+        const n = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//)?.[1];
         if (n) skillNames.add(n);
       }
     }
@@ -371,13 +376,9 @@ export default function App() {
     () =>
       countEffectiveSkills(
         globalSkillGroups.map((g) => {
-          const runtime: PluginRuntime | null = g.source.startsWith('claude')
-            ? 'claude'
-            : g.source.startsWith('codex')
-              ? 'codex'
-              : null;
+          const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
           const enabled =
-            g.pluginKey && runtime ? pluginEnabled[runtime][g.pluginKey] ?? false : undefined;
+            g.pluginKey && runtime ? pluginEnabled[runtime]?.[g.pluginKey] ?? false : undefined;
           return { enabled, skills: g.skills };
         }),
       ).effective,
@@ -385,10 +386,13 @@ export default function App() {
   );
 
   const categoryData = useMemo<CategoryBarData>(() => {
-    // Codex MCP servers live in ~/.codex/config.toml, so they belong to the
-    // machine, not the scope — both views count them (their tab is visible in
-    // both).
-    const codexMcp = Object.keys(mcpServers.codex).length;
+    // Non-claude harness MCP servers are user-level (machine-scoped), so they
+    // belong to the machine, not the view scope — both views count them (their
+    // tab is visible in both).
+    const machineMcp = HARNESS_ORDER.reduce(
+      (n, h) => n + (h === 'claude' ? 0 : Object.keys(mcpServers[h] ?? {}).length),
+      0,
+    );
     if (globalMode) {
       const outdatedSkills = (updates?.skills ?? []).filter(
         (u) => u.scope === 'global' && u.outdated,
@@ -402,7 +406,7 @@ export default function App() {
         files:
           effectiveGlobalSkills +
           Object.keys(mcpServers.global).length +
-          codexMcp +
+          machineMcp +
           globalAssets.length,
         outdated: outdatedSkills + outdatedMcp,
         // The global view IS the template — a 跟随全局 badge would be noise.
@@ -420,7 +424,7 @@ export default function App() {
         assetCounts.skill +
         effectiveGlobalSkills +
         Object.keys(mcpServers.project).length +
-        codexMcp +
+        machineMcp +
         otherCount,
       outdated:
         (updates?.skills ?? []).filter((u) => u.outdated).length +
@@ -509,7 +513,11 @@ export default function App() {
   // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /
   // 兜底 catch——handler 内先报错又正常 resolve 的话，调用方会在失败时也弹成功。
   const handleInstallSkill = useCallback(
-    async (skill: SkillAsset, scope: AssetScope = 'project', agent: AssetAgent = 'claude') => {
+    async (
+      skill: SkillAsset,
+      scope: AssetScope = 'project',
+      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
+    ) => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
@@ -552,13 +560,14 @@ export default function App() {
       name: string,
       config: McpServerConfig,
       scope: AssetScope = 'project',
-      agent: AssetAgent = 'claude',
+      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
     ) => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
       if (!target) return;
-      // Codex MCP servers only live in ~/.codex/config.toml (user-level).
-      const effectiveScope = agent === 'codex' ? 'global' : scope;
+      // claude 有两份 scope 面（.mcp.json / ~/.claude.json）；其余 harness 的 MCP
+      // 只住用户级文件（如 codex config.toml）——一律落 global。
+      const effectiveScope = agent === 'claude' ? scope : 'global';
       const res = await api.install(target.id, {
         category: 'mcp',
         name,
@@ -582,7 +591,7 @@ export default function App() {
         category: 'skill',
         name,
         scope,
-        agent: agent ?? 'claude',
+        ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
@@ -613,11 +622,11 @@ export default function App() {
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
       if (!target) return;
-      // Codex servers are user-level — uninstall always targets the TOML file.
+      // claude 以外 harness 的 MCP 住用户级文件——卸载恒指用户级（同安装侧判定）。
       const res = await api.uninstall(target.id, {
         category: 'mcp',
         name,
-        scope: agent === 'codex' ? 'global' : scope,
+        scope: (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'global',
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -664,7 +673,7 @@ export default function App() {
         category,
         name,
         scope,
-        ...(category === 'skill' || category === 'mcp' ? { agent: agent ?? 'claude' } : {}),
+        ...((category === 'skill' || category === 'mcp') && agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshUpdates(target);
@@ -926,11 +935,15 @@ export default function App() {
   }
 
   // Drawer data for the open skill (project-scope files; global rows have none).
+  // Files match by skill-dir name + the skill's server-set agent — no harness
+  // path is written into the client.
   const drawerFiles = useMemo(() => {
     if (!drawerSkill || drawerSkill.scope === 'global') return [];
-    const root = drawerSkill.agent === 'codex' ? '.codex' : '.claude';
-    const prefix = `${root}/skills/${drawerSkill.name}/`;
-    return assets.filter((a) => a.relPath.startsWith(prefix));
+    const { name, agent } = drawerSkill;
+    return assets.filter((a) => {
+      const skillName = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//)?.[1];
+      return skillName === name && (!agent || a.agent === agent);
+    });
   }, [drawerSkill, assets]);
 
   const drawerUpdate = useMemo(
@@ -1149,7 +1162,7 @@ export default function App() {
                   projectId={activeProject.id}
                   relPath={selectedFile}
                   global={globalMode}
-                  agent={selectedAsset ? (selectedAsset.agent ?? 'claude') : undefined}
+                  agent={selectedAsset?.agent}
                   onClose={() => setSelectedFile(null)}
                 />
               )}

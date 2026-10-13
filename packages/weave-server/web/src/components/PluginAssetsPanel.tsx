@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { ToolkitSection } from '@/components/ToolkitSection';
-import type { Mode } from '@/components/CategoryDetail';
+import type { Mode, RuntimeTab } from '@/components/CategoryDetail';
 
 /**
  * 资源管理页 Plugins tab：只含插件工具包区（内部按仓库 namespace 分一级折叠块）；
@@ -15,7 +15,7 @@ export function PluginAssetsPanel({
 }: {
   projectId: number;
   mode: Mode;
-  runtimeTab: 'claude' | 'codex' | 'all';
+  runtimeTab: RuntimeTab;
 }) {
   return (
     <div key={mode} className="space-y-4">

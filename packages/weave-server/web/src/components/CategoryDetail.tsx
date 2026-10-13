@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
+  skillSourceRuntime,
   type AssetEntry,
   type AssetAgent,
   type McpServerConfig,
@@ -15,6 +16,7 @@ import {
   type ProjectRow,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
+import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -55,17 +57,11 @@ const ASSET_TAB_LABELS: Record<AssetTab, MessageKey> = {
   plugins: 'assetTab.plugins',
 };
 
-/** Runtime surface of an asset row. Rows scanned before the agent field
- * existed fall back to the server's path rule (Codex owns .codex/ and
- * AGENTS.md anywhere in the tree). */
-function agentOf(a: AssetEntry): AssetAgent {
-  if (a.agent) return a.agent;
-  const base = a.relPath.slice(a.relPath.lastIndexOf('/') + 1);
-  return base === 'AGENTS.md' || a.relPath.startsWith('.codex/') ? 'codex' : 'claude';
-}
-
 /** Harness-tool filter for the sections on the 资源管理 page. */
 export type RuntimeTab = Harness | 'all';
+
+/** 页签数组：每个 harness 一个 + 末尾「全部」。名表单点 = harness-meta。 */
+const RUNTIME_TABS: readonly RuntimeTab[] = [...HARNESS_ORDER, 'all'];
 
 export function CategoryDetail({
   projectId,
@@ -145,9 +141,9 @@ export function CategoryDetail({
     : null;
   const dropBlocked = dragPayload !== null && dropVerdict !== null && !dropVerdict.ok;
 
-  // Harness-tool tab: globally effective skills differ per tool (Claude vs
-  // Codex), so the asset categories filter by runtime instead of mixing them.
-  const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>('claude');
+  // Harness-tool tab: globally effective skills differ per tool, so the asset
+  // categories filter by runtime instead of mixing them.
+  const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>(HARNESS_ORDER[0] ?? 'claude');
   const showRuntimeTabs = category === 'files' || category === 'personalization';
 
   // Project mode: a flat skill list from the project's own .claude/skills/ and
@@ -172,13 +168,9 @@ export function CategoryDetail({
         ? globalSkillGroups
         : globalSkillGroups.filter((g) => g.source.startsWith(runtimeTab));
     return filtered.map((g) => {
-      const runtime: PluginRuntime | null = g.source.startsWith('claude')
-        ? 'claude'
-        : g.source.startsWith('codex')
-          ? 'codex'
-          : null;
+      const runtime: PluginRuntime | null = skillSourceRuntime(g.source);
       const enabled =
-        g.pluginKey && runtime ? pluginEnabled[runtime][g.pluginKey] ?? false : undefined;
+        g.pluginKey && runtime ? pluginEnabled[runtime]?.[g.pluginKey] ?? false : undefined;
       return {
         label: g.label,
         source: g.source,
@@ -202,36 +194,41 @@ export function CategoryDetail({
     });
   }, [globalSkillGroups, pluginEnabled, runtimeTab]);
 
-  // MCP rows for the active runtime tab. Codex servers always come from the
-  // user-level ~/.codex/config.toml map; the claude/all tabs show the current
-  // scope's map (.mcp.json or ~/.claude.json), 'all' merges both surfaces.
+  // MCP rows for the active runtime tab. claude's servers live in its two scope
+  // maps (.mcp.json / ~/.claude.json) → pick the current scope; every other
+  // harness has a single user-level map (codex ~/.codex/config.toml). 'all'
+  // merges every harness's surface.
   const mcp = useMemo<McpRow[]>(() => {
-    const toRows = (map: Record<string, McpServerConfig>, agent?: AssetAgent) =>
-      Object.entries(map).map(([name, config]) => ({ name, config, scope, agent }));
-    if (runtimeTab === 'codex') return toRows(mcpServers.codex, 'codex');
-    const claude = toRows(isGlobal ? mcpServers.global : mcpServers.project);
-    if (runtimeTab === 'all') return [...claude, ...toRows(mcpServers.codex, 'codex')];
-    return claude;
+    const toRows = (map: Record<string, McpServerConfig> | undefined, agent?: AssetAgent) =>
+      Object.entries(map ?? {}).map(([name, config]) => ({ name, config, scope, agent }));
+    const scopeMap = isGlobal ? mcpServers.global : mcpServers.project;
+    const rowsFor = (h: Harness): McpRow[] =>
+      toRows(h === 'claude' ? scopeMap : mcpServers[h], h);
+    if (runtimeTab === 'all') return HARNESS_ORDER.flatMap(rowsFor);
+    return rowsFor(runtimeTab);
   }, [isGlobal, runtimeTab, mcpServers, scope]);
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
-  // Codex MCP updates are user-level (global scope) and shown whenever the
-  // codex servers themselves are visible (codex / all tabs).
+  // Non-claude harness MCP servers are user-level (scope-agnostic), so their
+  // updates show whenever that harness's servers are visible; claude's updates
+  // track the current scope and hide under another harness's tab.
   const mcpUpdates = updates?.mcp.filter((u) => {
-    if (u.agent === 'codex') return runtimeTab !== 'claude';
-    return u.scope === scope && runtimeTab !== 'codex';
+    const h = u.agent && u.agent !== 'claude' ? u.agent : null;
+    if (h) return runtimeTab === 'all' || runtimeTab === h;
+    return u.scope === scope && (runtimeTab === 'all' || runtimeTab === 'claude');
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
-  // 资源管理文件树：只按 runtime tab 过滤，类型显隐交给树内 chips（tagsOf）。
+  // 资源管理文件树：只按 runtime tab 过滤（只信服务端给的 agent），
+  // 类型显隐交给树内 chips（tagsOf）。
   const treeAssets = useMemo(
-    () => assets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
+    () => assets.filter((a) => runtimeTab === 'all' || a.agent === runtimeTab),
     [assets, runtimeTab],
   );
 
-  // 全局资源文件：同一过滤跑在 ~/.claude + ~/.codex 行上。
+  // 全局资源文件：同一过滤跑在机器级（~/.claude + ~/.codex）行上。
   const globalTreeAssets = useMemo(
-    () => globalAssets.filter((a) => runtimeTab === 'all' || agentOf(a) === runtimeTab),
+    () => globalAssets.filter((a) => runtimeTab === 'all' || a.agent === runtimeTab),
     [globalAssets, runtimeTab],
   );
 
@@ -249,7 +246,7 @@ export function CategoryDetail({
     >
       {showRuntimeTabs && (
         <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
-          {(['claude', 'codex', 'all'] as const).map((tab) => (
+          {RUNTIME_TABS.map((tab) => (
             <button
               key={tab}
               onClick={() => setRuntimeTab(tab)}
@@ -262,12 +259,10 @@ export function CategoryDetail({
               title={
                 tab === 'all'
                   ? t('category.tabAllTip')
-                  : t('category.tabToolTip', {
-                      tool: tab === 'claude' ? 'Claude Code' : 'Codex',
-                    })
+                  : t('category.tabToolTip', { tool: harnessUiOf(tab).tooltip })
               }
             >
-              {tab === 'claude' ? 'Claude' : tab === 'codex' ? 'Codex' : t('category.tabAll')}
+              {tab === 'all' ? t('category.tabAll') : harnessUiOf(tab).label}
             </button>
           ))}
         </div>
@@ -299,8 +294,17 @@ export function CategoryDetail({
         assetTab === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
-          runtimeTab === 'codex' ? (
-            <CodexPlaceholder text={t('category.codexFilesPlaceholder')} />
+          runtimeTab !== 'claude' && runtimeTab !== 'all' ? (
+            <RuntimePlaceholder
+              harness={runtimeTab}
+              text={
+                runtimeTab === 'codex'
+                  ? t('category.codexFilesPlaceholder')
+                  : t('category.emptyFilesOtherHarness', {
+                      harness: harnessUiOf(runtimeTab).label,
+                    })
+              }
+            />
           ) : (
             <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
               <PackageX className="h-8 w-8 text-neutral-600" />
@@ -393,7 +397,8 @@ export function CategoryDetail({
           <TasksPanel projectId={projectId} initialSessionId={initialSessionId} />
         ))}
 
-      {category === 'personalization' && runtimeTab !== 'codex' && (
+      {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}
+      {category === 'personalization' && (runtimeTab === 'claude' || runtimeTab === 'all') && (
         <div className="space-y-3">
           <p className="text-[11px] text-neutral-500">
             {isGlobal
@@ -418,8 +423,18 @@ export function CategoryDetail({
         </div>
       )}
 
+      {/* 非 claude 页签（codex / 全部 / 未来 harness）显示「无对等个性化」占位。 */}
       {category === 'personalization' && runtimeTab !== 'claude' && (
-        <CodexPlaceholder text={t('category.codexPersonalizationPlaceholder')} />
+        <RuntimePlaceholder
+          harness={runtimeTab === 'all' ? 'codex' : runtimeTab}
+          text={
+            runtimeTab === 'all' || runtimeTab === 'codex'
+              ? t('category.codexPersonalizationPlaceholder')
+              : t('category.personalizationUnsupported', {
+                  harness: harnessUiOf(runtimeTab).label,
+                })
+          }
+        />
       )}
 
       {dropBlocked && dropVerdict?.reasonKey && (
@@ -432,12 +447,12 @@ export function CategoryDetail({
   );
 }
 
-/** Shown for the Codex tab in categories whose data source is Claude-only. */
-function CodexPlaceholder({ text }: { text: string }) {
+/** Shown for a non-claude harness tab in categories whose data source is Claude-only. */
+function RuntimePlaceholder({ harness, text }: { harness: Harness; text: string }) {
   return (
     <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
       <Code2 className="h-8 w-8 text-neutral-600" />
-      <AgentBadge agent="codex" />
+      <AgentBadge agent={harness} />
       <p className="text-xs text-neutral-500 max-w-xs">{text}</p>
     </div>
   );

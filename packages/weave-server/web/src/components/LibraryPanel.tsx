@@ -24,6 +24,7 @@ import {
   type InstallVerdict,
   type DragPayload,
 } from '@/lib/install-capabilities';
+import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
@@ -115,8 +116,8 @@ export function LibraryPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   /** git 导入输入。 */
   const [gitUrl, setGitUrl] = useState('');
-  /** Install-to runtime for skills and MCP (Claude vs Codex surfaces). */
-  const [installAgent, setInstallAgent] = useState<AssetAgent>('claude');
+  /** Install-to runtime for skills and MCP (each harness's surface). */
+  const [installAgent, setInstallAgent] = useState<AssetAgent>(HARNESS_ORDER[0] ?? 'claude');
   /** 覆盖导入 / 缓存刷新后 +1 → 同 id 资产重扫（M8 scanNonce）。 */
   const [scanNonce, setScanNonce] = useState(0);
   /** 批量检查结果（POST /market/check-updates，不落库）。 */
@@ -757,6 +758,10 @@ export function LibraryPanel({
             {FILE_ASSET_CATEGORIES.map((cat) => {
               const items = fileTemplates.filter((f) => f.category === cat);
               if (!items.length) return null;
+              // 模板行的安装判定与拖拽目标 = 该类别首个可用面（由 capabilities
+              // 矩阵下发，不写死 harness；今天单文件资产只有 claude 面）。
+              const primaryAgent =
+                capabilitiesOf(cat, capabilities).surfaces[0]?.harness ?? 'claude';
               return (
                 <div key={cat} className="mb-1">
                   <div className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5">
@@ -768,7 +773,7 @@ export function LibraryPanel({
                     {items.map((f) => {
                       const verdict = canInstall(capabilitiesOf(f.category, capabilities), {
                         scope,
-                        agent: 'claude',
+                        agent: primaryAgent,
                       });
                       return (
                         <DraggableFileRow
@@ -780,7 +785,7 @@ export function LibraryPanel({
                               category: f.category,
                               name: f.name,
                               sourceFile: f.filePath,
-                              targetAgent: 'claude',
+                              targetAgent: primaryAgent,
                             },
                             capabilities,
                           )}
@@ -1169,8 +1174,9 @@ function groupSkills(skills: SkillAsset[]): [string, SkillAsset[]][] {
   });
 }
 
-/** Claude / Codex install-target toggle shared by the skill and MCP template
- * sections. Tooltips and the destination hint differ per kind. */
+/** harness install-target toggle shared by the skill and MCP template
+ * sections. Harnesses come from the name table; tooltips are per-kind (a new
+ * harness without a tip shows none). The destination hint is codex-specific. */
 function AgentToggle({
   agent,
   onChange,
@@ -1184,7 +1190,7 @@ function AgentToggle({
   globalHint?: boolean;
 }) {
   const t = useT();
-  const tips =
+  const tips: Partial<Record<AssetAgent, string>> =
     kind === 'skills'
       ? {
           claude: t('library.tipSkillsClaude'),
@@ -1197,7 +1203,7 @@ function AgentToggle({
   return (
     <div className="flex items-center gap-1 mb-1">
       <span className="text-[11px] text-neutral-500 shrink-0">{t('library.installTarget')}</span>
-      {(['claude', 'codex'] as const).map((a) => (
+      {HARNESS_ORDER.map((a) => (
         <button
           key={a}
           onClick={() => onChange(a)}
@@ -1209,7 +1215,7 @@ function AgentToggle({
           )}
           title={tips[a]}
         >
-          {a === 'claude' ? 'Claude' : 'Codex'}
+          {harnessUiOf(a).label}
         </button>
       ))}
       {agent === 'codex' && (
@@ -1296,9 +1302,9 @@ function UpdateHintRow({
     <div className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-neutral-900">
       <RefreshCw className="h-3 w-3 shrink-0 text-orange-400" />
       <span className="truncate">{label}</span>
-      {agent === 'codex' && (
+      {agent && agent !== HARNESS_ORDER[0] && (
         <Badge variant="other" className="shrink-0">
-          Codex
+          {harnessUiOf(agent).label}
         </Badge>
       )}
       <Badge variant="skill" className="shrink-0">

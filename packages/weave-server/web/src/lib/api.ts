@@ -5,6 +5,7 @@
  */
 
 import type { Harness } from '@weavecode/core/harness';
+import { HARNESS_ORDER } from './harness-meta';
 
 const BASE = '/api';
 
@@ -276,7 +277,7 @@ export interface SessionRow {
   /** 该会话 hook 事件数（GET /sessions 的 listWithCounts 填充）。 */
   eventCount?: number;
   /** 会话归属 harness（最新事件 source；listWithCounts 填充，其余查询 undefined）。 */
-  harness?: 'claude' | 'codex' | null;
+  harness?: Harness | null;
   /** 回合开合服务端基线：最后 UPS 晚于最后 Stop/SessionEnd（listWithCounts 填充）。 */
   turnOpen?: boolean;
   /** 最新一条 hook 事件类型（listWithCounts 填充）——状态总线判「关闭」用。 */
@@ -285,7 +286,8 @@ export interface SessionRow {
   pidAlive?: boolean | null;
 }
 
-/** mirror of `CLAUDE_HOOK_EVENTS` in packages/weave-core/src/types.ts — 同序。 */
+/** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
+ *  hooks 规则编辑器的事件选项——按 harness 事件表展开随 hooks 域批做。 */
 export const CLAUDE_HOOK_EVENTS = [
   'PreToolUse',
   'PostToolUse',
@@ -391,13 +393,12 @@ export interface McpServerConfig {
   env?: Record<string, string>;
 }
 
-/** MCP servers per surface: project (.mcp.json), global (~/.claude.json),
- * codex user-level (~/.codex/config.toml). */
-export interface McpServerMap {
-  project: Record<string, McpServerConfig>;
-  global: Record<string, McpServerConfig>;
-  codex: Record<string, McpServerConfig>;
-}
+/** MCP servers, mirroring the daemon's GET /mcp response: claude's two scopes
+ * (project `.mcp.json` / global `~/.claude.json`) under their scope keys, plus a
+ * user-level map for every further harness (codex `~/.codex/config.toml`) keyed by
+ * harness id — so a new harness's surface slots in without a named bucket. */
+export type McpServerMap = Record<AssetScope, Record<string, McpServerConfig>> &
+  Partial<Record<Harness, Record<string, McpServerConfig>>>;
 
 /** Single-file harness assets (command/agent/workflow/rule/output-style). */
 export type FileAssetCategory = 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
@@ -501,12 +502,15 @@ export interface UpdateReport {
   available: number;
 }
 
-/** Where a global skill was resolved from (grouping key in the global view). */
-export type GlobalSkillSource =
-  | 'claude-personal'
-  | 'claude-plugin'
-  | 'codex-personal'
-  | 'codex-plugin';
+/** Where a global skill was resolved from (grouping key in the global view).
+ *  Derived from `Harness` so a new harness's personal/plugin groups slot in. */
+export type GlobalSkillSource = `${Harness}-personal` | `${Harness}-plugin`;
+
+/** GlobalSkillSource 的 harness 前缀（claude-personal → claude）——按名表前缀匹配，
+ *  不写死两 harness；无匹配返回 null（未知来源，调用方不猜）。 */
+export function skillSourceRuntime(source: GlobalSkillSource): Harness | null {
+  return HARNESS_ORDER.find((h) => source.startsWith(h)) ?? null;
+}
 
 /** A resolved skill directory (absolute path, may be a symlink target). */
 export interface GlobalSkillEntry {
@@ -531,10 +535,7 @@ export interface GlobalSkillGroup {
 }
 
 /** Plugin enable map per runtime (Claude reads settings.json, Codex config.toml). */
-export interface PluginEnabledMap {
-  claude: Record<string, boolean>;
-  codex: Record<string, boolean>;
-}
+export type PluginEnabledMap = Record<Harness, Record<string, boolean>>;
 
 export type PluginRuntime = Harness;
 

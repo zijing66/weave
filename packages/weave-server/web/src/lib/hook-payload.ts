@@ -1,4 +1,5 @@
 import type { HookEventRow } from './api';
+import { HARNESS_UI } from './harness-meta';
 
 /** Hook 事件 payload 的可选字段（服务端 NormalizedHookPayload 容忍缺失）。 */
 export interface EventDetail {
@@ -38,11 +39,10 @@ export const EVENT_TYPE_STYLES: Record<string, string> = {
   SubagentStop: 'bg-orange-900/40 text-orange-300',
 };
 
-/** 采集来源 → Badge 配色。 */
-export const SOURCE_STYLES: Record<string, string> = {
-  claude: 'bg-orange-900/40 text-orange-300',
-  codex: 'bg-cyan-900/40 text-cyan-300',
-};
+/** 采集来源 → Badge 配色。由 harness-meta 单点表派生（加 harness 自动跟随）。 */
+export const SOURCE_STYLES: Record<string, string> = Object.fromEntries(
+  Object.entries(HARNESS_UI).map(([harness, ui]) => [harness, ui.source]),
+);
 
 /** ISO → 本地时分（日志/节点用）。 */
 export function formatTime(iso: string): string {

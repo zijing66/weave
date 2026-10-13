@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  skillSourceRuntime,
   type AssetAgent,
   type AssetEntry,
   type AssetScope,
@@ -72,12 +73,10 @@ export interface SkillGroup {
   skills: SkillRow[];
 }
 
-const PLUGIN_RUNTIME: Record<GlobalSkillSource, PluginRuntime | null> = {
-  'claude-personal': null,
-  'claude-plugin': 'claude',
-  'codex-personal': null,
-  'codex-plugin': 'codex',
-};
+/** 插件组的写回 harness（个人组无；由来源前缀派生，不写死两 harness）。 */
+function groupRuntime(source: GlobalSkillSource): PluginRuntime | null {
+  return source.endsWith('-plugin') ? skillSourceRuntime(source) : null;
+}
 
 function SkillCard({
   row,
@@ -115,12 +114,10 @@ function SkillCard({
       },
       { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
     );
-  // 装面形态只在全局位置有意义，且只在 weave 自己铺的那两处（个人技能根）——
+  // 装面形态只在全局位置有意义，且只在 weave 自己铺的个人技能根（`<h>-personal`）——
   // 项目技能按设计一律是副本，插件缓存是 CC 的，都不该标「副本」让人以为可改。
-  const showForm =
-    row.scope === 'global' &&
-    (row.source === 'claude-personal' || row.source === 'codex-personal') &&
-    row.form !== undefined;
+  const personal = row.source?.endsWith('-personal') ?? false;
+  const showForm = row.scope === 'global' && personal && row.form !== undefined;
   return (
     <Card>
       <CardHeader className="items-center gap-2">
@@ -362,7 +359,7 @@ function PackBlock({
   const { show } = useToast();
   const [confirming, setConfirming] = useState(false);
   const isPlugin = group.source.endsWith('-plugin');
-  const runtime = PLUGIN_RUNTIME[group.source];
+  const runtime = groupRuntime(group.source);
   // A pack is atomic — its plugin is either enabled or not — so this is either
   // all of its skills or none. Shown anyway so every level reads alike.
   const stats = countEffectiveSkills([group]);
@@ -419,7 +416,7 @@ function PackBlock({
         <Badge variant={isPlugin ? 'mcp' : 'skill'} className="ml-1">
           {isPlugin ? t('skillGrid.plugin') : t('repo.local')}
         </Badge>
-        <AgentBadge agent={group.source.startsWith('claude') ? 'claude' : 'codex'} />
+        <AgentBadge agent={skillSourceRuntime(group.source) ?? undefined} />
         <EffectivePill effective={stats.effective} total={stats.total} />
         {/* plugin enable toggle — a real <button>; the outer row is a div to avoid nested buttons.
          * Hidden in read-only (project) mode: global config is not edited from a project view. */}
@@ -706,21 +703,23 @@ function GroupedSkills({
 }
 
 /** Group project-scope skill files by their containing skill directory.
- * Matches both `.claude/skills/` and `.codex/skills/` roots; the agent is
- * carried on each row so uninstall targets the right surface. */
+ * The `<harness-root>/skills/<name>/` shape is harness-agnostic (first path
+ * segment = the harness root); the agent is taken from the server-set
+ * `AssetEntry.agent` (never guessed from the path). Rows are keyed by
+ * agent + name so two harnesses' same-named skills stay distinct. */
 export function groupSkillRows(assets: AssetEntry[]): SkillRow[] {
-  const m = new Map<string, { agent: AssetAgent; files: AssetEntry[] }>();
+  const m = new Map<string, { name: string; agent?: AssetAgent; files: AssetEntry[] }>();
   for (const a of assets) {
-    const match = a.relPath.match(/^(?:\.claude|\.codex)\/skills\/([^/]+)\//);
+    const match = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//);
     if (!match) continue;
     const name = match[1];
-    const agent: AssetAgent = a.relPath.startsWith('.codex') ? 'codex' : 'claude';
-    const entry = m.get(name) ?? { agent, files: [] as AssetEntry[] };
+    const key = `${a.agent ?? ''}\u0000${name}`;
+    const entry = m.get(key) ?? { name, agent: a.agent, files: [] as AssetEntry[] };
     entry.files.push(a);
-    m.set(name, entry);
+    m.set(key, entry);
   }
-  return [...m.entries()]
-    .map(([name, { agent, files }]) => ({
+  return [...m.values()]
+    .map(({ name, agent, files }) => ({
       name,
       scope: 'project' as AssetScope,
       agent,

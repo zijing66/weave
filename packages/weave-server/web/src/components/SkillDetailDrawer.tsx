@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  skillSourceRuntime,
   type AssetAgent,
   type AssetEntry,
   type AssetChangeEvent,
@@ -28,12 +29,15 @@ import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
 import { subscribeSse } from '@/lib/sse';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
+import { harnessUiOf } from '@/lib/harness-meta';
 
 type FileNode = { type: 'file'; file: AssetEntry };
 type DirNode = { type: 'dir'; name: string; path: string; children: TreeNode[] };
 type TreeNode = FileNode | DirNode;
 
-const SKILL_PREFIX_RE = /^\.claude\/skills\/[^/]+\//;
+/** 项目级 skill 文件的 `<harness-root>/skills/<name>/` 前缀（首段 = harness 落面根，
+ *  不写死具体 harness 目录）。 */
+const SKILL_PREFIX_RE = /^[^/]+\/skills\/[^/]+\//;
 
 function lastSegment(relPath: string): string {
   const i = relPath.lastIndexOf('/');
@@ -313,7 +317,9 @@ export function SkillDetailDrawer({
   const isMarkdown = selected?.relPath.toLowerCase().endsWith('.md') ?? false;
   const parsed = content != null && isMarkdown ? splitFrontmatter(content) : null;
   const isPlugin = source?.endsWith('-plugin') ?? false;
-  const runtimeLabel = source?.startsWith('codex') ? 'Codex' : 'Claude';
+  const runtimeLabel = source ? harnessUiOf(skillSourceRuntime(source)).label : '';
+  // 项目级 skill 的落面根目录（footer 提示用）：取服务端给的 relPath 首段，不写死。
+  const skillRoot = files[0]?.relPath.split('/')[0] ?? '';
 
   return (
     <div className="absolute right-0 top-0 h-full w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-white/[0.08] shadow-mac">
@@ -441,7 +447,7 @@ export function SkillDetailDrawer({
           <>
             <Folder className="h-3 w-3" />
             {t('skillDetail.projectScopeHint', {
-              root: agent === 'codex' ? '.codex' : '.claude',
+              root: skillRoot || (agent ? harnessUiOf(agent).label : ''),
             })}
           </>
         ) : readOnly ? (

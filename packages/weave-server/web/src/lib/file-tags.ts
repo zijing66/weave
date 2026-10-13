@@ -31,7 +31,7 @@ export function tagsOf(category: string, relPath: string): string[] {
     case 'plugin':
       return [category];
     case 'helper':
-      return ['hooks']; // .claude/helpers/ = hook 处理脚本
+      return ['hooks']; // helper = hook 处理脚本
     case 'rule':
       return ['rules'];
     case 'mods':
@@ -39,7 +39,9 @@ export function tagsOf(category: string, relPath: string): string[] {
     default:
       break;
   }
-  if (category === 'other' && relPath.startsWith('.claude/hooks/')) return ['hooks'];
+  // hook 脚本（未归入 helper 类别）住在任意 harness 的 hooks/ 目录下——按目录段
+  // 判定，不写死具体 harness 根。
+  if (category === 'other' && /(^|\/)hooks\//.test(relPath)) return ['hooks'];
   return ['other'];
 }
 

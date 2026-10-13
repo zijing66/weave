@@ -7,6 +7,7 @@ import {
   type TerminalTarget,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
@@ -145,6 +146,11 @@ export function TasksPanel({
     return m;
   }, [dispatches]);
 
+  // 会话归属 harness：分组生命周期表按它取（D7——分组差异是 harness 知识，
+  // 不写死 claude 表；无事件流/未知 harness 回落名表首项的表）。
+  const selectedHarness = sessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
+  const selectedLifecycle = HARNESS_LIFECYCLE[selectedHarness ?? HARNESS_ORDER[0] ?? 'claude'];
+
   // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
   // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、
   // 窗口尾无 open 归最后组——组 id 稳定（turn:<事件id>），展开态不跳。
@@ -155,13 +161,13 @@ export function TasksPanel({
         ? buildLifecycleGroups(
             events,
             dispatchBySession.get(selectedId) ?? [],
-            HARNESS_LIFECYCLE.claude,
+            selectedLifecycle,
           ).filter((g) => g.id !== ORPHAN_GROUP_ID)
             // 头部截断未翻完时，preSession 组是上一 turn 尾巴的窗口伪影
             //（「会话引导」名不副实）——翻到底（exhausted）后才是真会话引导。
             .filter((g) => !(g.preSession && !olderExhausted))
         : [],
-    [selectedId, events, dispatchBySession, olderExhausted],
+    [selectedId, events, dispatchBySession, olderExhausted, selectedLifecycle],
   );
 
   const activeGroupId = useMemo(() => {
@@ -394,7 +400,6 @@ export function TasksPanel({
   // 组头状态展示：运行中显示 harness 跑马灯动效图标，打开/关闭/失败不显示
   // ——去掉原文字状态 tag（会话状态与组头信息重复）。
   const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
-  const selectedHarness = sessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
 
   return (
     <div className="flex h-full min-h-0 gap-3">
@@ -628,6 +633,7 @@ export function TasksPanel({
                           key={`${selectedId}:${g.id}`}
                           projectId={projectId}
                           sessionId={selectedId}
+                          harness={selectedHarness}
                           focusGroupId={g.id}
                           focusGroup={g}
                           running={isLatestGroup && activeStatus === 'running'}

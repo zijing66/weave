@@ -12,6 +12,9 @@
  * 判死（pidAlive === false）时成立——查不到登记（codex/旧会话）不猜。
  */
 
+import type { Harness } from '@weavecode/core/harness';
+import { HARNESS_ORDER } from '@/lib/harness-meta';
+
 export type SessionStatus = 'running' | 'failed' | 'open' | 'closed' | 'terminated';
 
 export interface StatusInput {
@@ -106,7 +109,8 @@ export const STATUS_BADGE: Record<SessionStatus, string> = {
   terminated: 'bg-rose-950/60 text-rose-400',
 };
 
-export type HarnessKey = 'claude' | 'codex';
+/** 会话归属 harness——直接引 core 名表（类型层，无运行时依赖）。 */
+export type HarnessKey = Harness;
 
 /** 只取状态计数所需的最小结构——SessionRow 结构化满足（避免 lib/api 进纯测试）。 */
 export interface SessionLike {
@@ -123,7 +127,7 @@ export interface HarnessSessionCounts {
 /**
  * 项目维度会话计数（项目行徽标用）：按 harness 分桶，只计「运行中」与「打开」
  * 两类（失败/关闭 不在项目行提示——失败由任务视图承载，关闭无需提醒）。
- * 桶序 claude → codex → 未知，同项目徽标顺序稳定。
+ * 桶序 = 名表序（claude → codex）→ 未知，同项目徽标顺序稳定。
  */
 export function countSessionsByHarness(
   sessions: readonly SessionLike[],
@@ -134,7 +138,7 @@ export function countSessionsByHarness(
     const status = statuses.get(s.sessionId) ?? 'open';
     if (status !== 'running' && status !== 'open') continue;
     const key: HarnessKey | null =
-      s.harness === 'claude' || s.harness === 'codex' ? s.harness : null;
+      s.harness != null && HARNESS_ORDER.includes(s.harness) ? s.harness : null;
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = { harness: key, running: 0, open: 0 };
@@ -144,6 +148,6 @@ export function countSessionsByHarness(
     else bucket.open += 1;
   }
   const rank = (h: HarnessKey | null): number =>
-    h === 'claude' ? 0 : h === 'codex' ? 1 : 2;
+    h === null ? HARNESS_ORDER.length : HARNESS_ORDER.indexOf(h);
   return [...buckets.values()].sort((a, b) => rank(a.harness) - rank(b.harness));
 }

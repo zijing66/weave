@@ -33,6 +33,7 @@ export const libraryZh = {
   'category.emptyMcpProject': '该项目未配置 MCP',
   'category.codexFilesPlaceholder':
     '该项目暂无 Codex 资源（AGENTS.md、.codex/config.toml 等会展示在文件树中）。Codex 自定义 prompts（~/.codex/prompts/）已被官方移除。',
+  'category.emptyFilesOtherHarness': '该项目暂无 {harness} 资源',
   'category.emptyFilesProject': '该项目暂无资源',
   'category.globalFilesTitle': '全局资源',
   'category.emptyFilesGlobalDesc':
@@ -44,6 +45,7 @@ export const libraryZh = {
   'category.statuslineFollowGlobal': '跟随全局模板',
   'category.codexPersonalizationPlaceholder':
     'Codex 没有 statusline 等个性化对等物（BACKLOG §10-4：Claude 专属是正确的）。此面板仅提供 Claude Code 个性化配置，Codex 侧不会出现对应界面。',
+  'category.personalizationUnsupported': '{harness} 没有等价的个性化配置',
   'category.dropToInstall': '拖放以安装 skill',
 
   // —— LibraryPanel（library.*）——
@@ -157,6 +159,7 @@ export const libraryZh = {
   'capability.reason.globalOnly': '该资源仅支持全局安装',
   'capability.reason.claudeOnly': '该资源不支持 Codex',
   'capability.reason.codexOnly': '该资源不支持 Claude',
+  'capability.reason.harnessUnsupported': '该资源不支持此 harness',
 };
 
 export const libraryEn: Record<keyof typeof libraryZh, string> = {
@@ -193,6 +196,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'category.emptyMcpProject': 'No MCP configured in this project',
   'category.codexFilesPlaceholder':
     'This project has no Codex resources yet (AGENTS.md, .codex/config.toml, etc. show up in the file tree). Codex custom prompts (~/.codex/prompts/) were removed upstream.',
+  'category.emptyFilesOtherHarness': 'This project has no {harness} resources yet',
   'category.emptyFilesProject': 'This project has no resources yet',
   'category.globalFilesTitle': 'Global resources',
   'category.emptyFilesGlobalDesc':
@@ -204,6 +208,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'category.statuslineFollowGlobal': 'Follows global template',
   'category.codexPersonalizationPlaceholder':
     'Codex has no statusline counterpart for personalization (BACKLOG §10-4: Claude-only by design). This panel only provides Claude Code personalization — no equivalent surface exists for Codex.',
+  'category.personalizationUnsupported': '{harness} has no equivalent personalization',
   'category.dropToInstall': 'Drop to install skill',
 
   // —— LibraryPanel（library.*）——
@@ -322,4 +327,5 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'capability.reason.globalOnly': 'This resource only installs globally',
   'capability.reason.claudeOnly': 'This resource does not support Codex',
   'capability.reason.codexOnly': 'This resource does not support Claude',
+  'capability.reason.harnessUnsupported': 'This resource does not support this harness',
 };
