@@ -30,6 +30,12 @@
       "source": "./plugins/core-skills/testing"
     },
     {
+      "name": "weave-plugin-creator",
+      "description": "Weave plugin development guide: rule packs, CC plugins, mods and skill bundles — formats, manifests, and the load/verify loop",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/weave-plugin-creator"
+    },
+    {
       "name": "docs-reminder",
       "description": "Remind to check documentation consistency after Markdown edits (classic hooks, derived from the changelog-reminder fixture)",
       "version": "0.1.0",

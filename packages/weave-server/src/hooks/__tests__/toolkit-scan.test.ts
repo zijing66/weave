@@ -219,7 +219,7 @@ describe('toolkit-scan 识别与发现', () => {
     }
   });
 
-  it('内置真实树冒烟：8 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
+  it('内置真实树冒烟：9 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();
     expect(ids).toEqual([
@@ -231,6 +231,7 @@ describe('toolkit-scan 识别与发现', () => {
       'project-navigation',
       'refactoring',
       'testing',
+      'weave-plugin-creator',
     ]);
     const byId = new Map(packs.map((p) => [p.id, p]));
     expect(byId.get('code-review')).toMatchObject({
@@ -238,6 +239,12 @@ describe('toolkit-scan 识别与发现', () => {
       kind: 'skill',
       targets: ['claude', 'codex'],
       provenance: 'builtin',
+    });
+    expect(byId.get('weave-plugin-creator')).toMatchObject({
+      scope: 'core-skills',
+      kind: 'skill',
+      ccPack: true,
+      skills: ['weave-plugin-creator'],
     });
     expect(byId.get('md-lint')).toMatchObject({ weavePack: true, kind: 'rule' });
     expect(byId.get('docs-reminder')).toMatchObject({ ccPack: true, kind: 'hook' });

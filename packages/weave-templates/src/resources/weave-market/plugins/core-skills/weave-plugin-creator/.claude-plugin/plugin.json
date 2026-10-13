@@ -1,0 +1,8 @@
+{
+  "name": "weave-plugin-creator",
+  "version": "0.1.0",
+  "description": "Weave plugin development guide: rule packs, CC plugins, mods and skill bundles — formats, manifests, and the load/verify loop",
+  "author": {
+    "name": "weave"
+  }
+}
