@@ -107,18 +107,23 @@ weave init 落项目 `.claude/settings.json` 的 hooks，cli/harness 内无 user
 | 延后项（audit 延后表 web 行） | 收编为 |
 |---|---|
 | ~~CategoryDetail rowsFor MCP 分叉（claude 双 scope / 其余用户级）~~ | ✅ installScopes 数据行驱动卡面（§6-1 `ea96180`；通用安装菜单归后续） |
-| App machineMcp 计数与 effectiveScope | `effective` 已随行下发（§6-1）；计数与 `agent==='claude'?scope:'user'` 档位回落仍延后 |
+| ~~App machineMcp 计数与 effectiveScope~~ | ✅ `effective` 随行下发（§6-1）+ 计数/档位回落改行 installScopes 与能力矩阵判据（`29efca4`） |
 | ~~LibraryPanel codexMcpPathHint~~ | ✅ 范围落点提示按矩阵 dest 行渲染（§6-4 `62bcf04`：mcpDest + `~` 缩写显示形） |
 | ~~ToolkitSection isCcPack / SkillGrid 插件卸载 claude 门控~~ | ✅ manifest targets 过滤/徽标并集 + installScopes 门控（§6-4 `62bcf04`） |
 | ~~FileAssetTree 全局卸载门控~~ | ✅ 卸载面按 installScopes 行驱动（§6-4 `62bcf04`：canUninstall 共用安装矩阵） |
 
 通用控件三件：①按 installScopes 渲染的安装菜单（claude plugin 三项、codex 一项，
-同一控件）；②三态开关 on/off/inherit + 解析结果显示（现 MCP 三态 UI 的推广）；
-③per-scope 状态徽章。hooks 事件矩阵、会话终端门控、statusline 属能力/规则域，
-不在此表（§2.4）。
+同一控件）——**拍板 6 缓**（「装到 project/local 档」动作待可逆实验后开；ToolkitSection
+项目 Switch 是「安装+清扫+项目启用」复合管线，归本件不动）；②三态开关
+on/off/inherit + 解析结果显示——**已推广**（MCP `ea96180`；插件组 SkillGrid PackBlock
+逐档循环钮 `abf50fa`：全局 user / 项目 project+local，循环序按行判据——有安装面
+harness 三态、仅启用面 on/off 布尔，与 server PUT 同分支）；③per-scope 状态徽章——
+随 ② 落地（循环钮即「档位·状态」徽章）。hooks 事件矩阵、会话终端门控、statusline
+属能力/规则域，不在此表（§2.4）。
 
-摆放（§7-5/7-7 已定）：user 档入当前全局配置区，project/local 档入项目下方；scope→视图
-区域的映射由 scope 元数据驱动——抽象实现，不写死 per-scope 分支。
+摆放（§7-5/7-7 已定，**已落地**）：user 档入当前全局配置区，project/local 档入
+项目下方；scope→视图区域的映射由摆放元数据 `GROUP_VIEW_SCOPES`（CategoryDetail）
+驱动——新档位 = 加一行，视图与控件不写死 per-scope 分支。
 
 ## 5. 落点与依赖方向
 
