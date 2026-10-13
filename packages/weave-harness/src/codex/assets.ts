@@ -4,7 +4,7 @@ import { FILE_ASSET_SPECS } from '../shared/file-specs.js';
 
 /**
  * Codex 资产表面（批 4a 迁入，能力矩阵 ⚠：仅 skills + 文件资产全局面）：
- * codexUserDir 目标目录、skills 项目/全局根（current + legacy 两根）、
+ * 落点表（FILE_ASSET_SPECS.dirs.codex）目标目录、skills 项目/全局根（current + legacy 两根）、
  * config.toml 路径、路径归属与 watch 观测集。
  */
 export const CODEX_ASSETS: AssetSurface = {

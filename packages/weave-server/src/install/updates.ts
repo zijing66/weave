@@ -15,7 +15,7 @@ import { readGlobalMcpServers, readGlobalSkills } from './global-config.js';
 import { readCodexMcpServers } from './codex-toml.js';
 import { FILE_ASSET_CATEGORIES, FILE_ASSET_SPECS } from './file-assets.js';
 import type { FileAssetCategory } from './file-assets.js';
-import { assetSurfaceFor } from '../surfaces.js';
+import { assetSurfaces } from '../surfaces.js';
 import { readInstalledLedger } from './install-ledger.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
@@ -193,12 +193,20 @@ export async function detectSkillUpdates(
   idx: LibraryIndex,
 ): Promise<SkillUpdate[]> {
   const home = homedir();
+  // 项目面与全局面皆由各 harness 的资产面派生（项目根 = projectSkillsDir，
+  // 全局根 = globalSkillsRoots[0]——只扫安装目标根，遗留只读根不入更新面）。
+  // 顺序与原硬编码一致：先全部项目面、再全部全局面（按 harness 注册序）。
   const surfaces: { dir: string; scope: 'project' | 'global'; agent: Harness }[] = [
-    { dir: path.join(projectPath, '.claude', 'skills'), scope: 'project', agent: 'claude' },
-    { dir: path.join(projectPath, '.codex', 'skills'), scope: 'project', agent: 'codex' },
-    { dir: path.join(home, '.claude', 'skills'), scope: 'global', agent: 'claude' },
-    // codex 全局装在 current 根（~/.agents/skills）；原硬编码 ~/.codex/skills 是批 4a 欠账
-    { dir: assetSurfaceFor('codex').globalSkillsRoots(home)[0], scope: 'global', agent: 'codex' },
+    ...assetSurfaces().map((s) => ({
+      dir: path.join(projectPath, ...s.projectSkillsDir().split('/')),
+      scope: 'project' as const,
+      agent: s.harness,
+    })),
+    ...assetSurfaces().map((s) => ({
+      dir: s.globalSkillsRoots(home)[0],
+      scope: 'global' as const,
+      agent: s.harness,
+    })),
   ];
   const out: SkillUpdate[] = [];
   for (const surface of surfaces) {
