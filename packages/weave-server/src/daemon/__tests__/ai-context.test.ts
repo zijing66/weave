@@ -41,6 +41,9 @@ describe('ai-context', () => {
     expect(ctx.prompt).toContain('能力槽装配');
     expect(ctx.prompt).toContain('运行时拓扑四图');
     expect(ctx.prompt).toContain('测试技能正文');
+    // 回复范围限制（越界礼貌拒答）是固定前言的一部分
+    expect(ctx.prompt).toContain('只负责 weave 本身');
+    expect(ctx.prompt).toContain('越界');
   });
 
   it('docs 缺失（安装态 cwd 不落仓库）→ 降级只注入技能，不报错', () => {

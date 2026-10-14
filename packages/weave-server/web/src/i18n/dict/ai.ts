@@ -7,9 +7,9 @@ export const aiZh = {
   'ai.send': '发送',
   'ai.stop': '停止生成',
   'ai.clear': '清空对话',
-  'ai.empty': '还没有对话。助手已加载 weave 的功能文档与内置技能，可直接提问。',
+  'ai.empty': '还没有对话。助手已加载 weave 的功能文档与内置技能，只回答 weave 相关问题——可直接提问。',
   'ai.docsMissing': '（未找到仓库 docs/，本次只注入了内置技能）',
-  'ai.intro': '已注入 weave 功能文档与内置技能；回答仅依据这些资料与通用知识。',
+  'ai.intro': '回答范围仅限 weave（功能/用法/配置/架构/技能，越界会礼貌拒答）；依据下方注入的资料。',
   'ai.thinking': '正在生成…',
   'ai.emptyAnswer': '（上游没有返回内容——检查模型名、端点是否支持该对话接口）',
   'ai.failed': 'AI 请求失败：{error}',
@@ -38,10 +38,10 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
   'ai.stop': 'Stop generating',
   'ai.clear': 'Clear chat',
   'ai.empty':
-    'No messages yet. The assistant has weave’s feature docs and built-in skills loaded — just ask.',
+    'No messages yet. The assistant has weave’s feature docs and built-in skills loaded and answers weave questions only — just ask.',
   'ai.docsMissing': ' (repo docs/ not found — only built-in skills were injected)',
   'ai.intro':
-    'weave feature docs and built-in skills are injected; answers rely on those plus general knowledge.',
+    'Scope is limited to weave (features / usage / config / architecture / skills; off-topic asks are politely declined). Answers rely on the injected material below.',
   'ai.thinking': 'Generating…',
   'ai.emptyAnswer':
     '(The upstream returned no content — check the model name and that the endpoint supports chat completions.)',
