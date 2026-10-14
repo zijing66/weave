@@ -36,6 +36,7 @@ import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
+import { notifyBrowser } from '@/lib/browser-notify';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -526,7 +527,10 @@ function Dashboard() {
             typeof frame.targetSessionId === 'string'
           ) {
             const row = allSessions?.find((s) => s.sessionId === frame.targetSessionId);
-            show('info', t('tasks.watchOn', { label: sessionLabel(row?.title ?? null, frame.targetSessionId) }));
+            const label = sessionLabel(row?.title ?? null, frame.targetSessionId);
+            show('info', t('tasks.watchOn', { label }));
+            // toast 之外补系统通知：标签页切走/最小化时 toast 看不见，通知才叫「提醒」
+            notifyBrowser(t('tasks.watchNotifyTitle'), t('tasks.watchOn', { label }));
           }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;

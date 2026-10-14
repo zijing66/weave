@@ -30,6 +30,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { ensureNotifyPermission } from '@/lib/browser-notify';
 import { useMediaQuery } from '@/lib/use-media-query';
 
 /**
@@ -160,8 +161,15 @@ export function TasksPanel({
       void fb.run(
         `watch:${sessionId}`,
         async () => {
-          if (existing) await api.deleteSessionWatch(sessionId, existing.id);
-          else await api.createSessionWatch(sessionId);
+          if (existing) {
+            await api.deleteSessionWatch(sessionId, existing.id);
+          } else {
+            // 订阅 = 用户手势：此刻申请通知权限（须在手势里，浏览器才弹窗）。
+            // 拒绝/不支持则退化为页面内 toast——明确告知，不静默降级。
+            const granted = await ensureNotifyPermission();
+            if (!granted) show('info', t('tasks.notifyDenied'));
+            await api.createSessionWatch(sessionId);
+          }
           refreshWatches();
         },
         {
@@ -170,7 +178,7 @@ export function TasksPanel({
         },
       );
     },
-    [fb, t, dashboardWatches, refreshWatches],
+    [fb, t, show, dashboardWatches, refreshWatches],
   );
 
   // watch.fired 帧：订阅落定（fire 即失效）→ 重拉订阅面，铃铛归位。

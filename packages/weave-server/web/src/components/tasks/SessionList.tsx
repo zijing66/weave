@@ -101,6 +101,7 @@ export function SessionList({
         const selected = s.sessionId === selectedId;
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
         const watch = watchOf?.(s.sessionId);
+        const inflight = s.inflight ?? 0;
         return (
           <li key={s.sessionId}>
             <div
@@ -202,18 +203,39 @@ export function SessionList({
                     )}
                     {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
                         （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
-                        harness 未知（无事件）的会话不现按钮。 */}
+                        harness 未知（无事件）的会话不现按钮。
+                        有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标，
+                        常态（0 条）保持原样。 */}
                     {cap?.prompt && (
                       <button
                         type="button"
-                        title={t('tasks.messageTooltip')}
+                        title={
+                          inflight > 0
+                            ? t('tasks.messageInflight', { n: inflight })
+                            : t('tasks.messageTooltip')
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenMessages(s.sessionId);
                         }}
-                        className={ACTION_BTN}
+                        className={cn(
+                          ACTION_BTN,
+                          'relative',
+                          inflight > 0 &&
+                            'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                        )}
                       >
-                        <MessageSquareText className="h-3 w-3" />
+                        <MessageSquareText
+                          className={cn('h-3 w-3', inflight > 0 && 'text-amber-300')}
+                        />
+                        {inflight > 0 && (
+                          <span
+                            aria-hidden
+                            className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                          >
+                            {inflight > 9 ? '9+' : inflight}
+                          </span>
+                        )}
                       </button>
                     )}
                     {/* 空闲订阅（one-shot）：门控同上表 watch 位。已有订阅 = 铃铛

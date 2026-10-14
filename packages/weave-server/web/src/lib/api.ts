@@ -292,6 +292,8 @@ export interface SessionRow {
   lastEventType?: string | null;
   /** claude 注册表判活：false=进程确死（判 terminated）；null=查不到登记（codex 等）不猜。 */
   pidAlive?: boolean | null;
+  /** 在途消息条数（服务端管道口径：队列 pending ∪ 内存 delivering/running）——行角标用。 */
+  inflight?: number;
 }
 
 /** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
