@@ -26,6 +26,7 @@ export function SessionList({
   sessions,
   statuses,
   selectedId,
+  highlightId,
   onSelect,
   onRename,
   onDropDispatch,
@@ -42,6 +43,8 @@ export function SessionList({
   sessions: SessionRow[];
   statuses: Map<string, SessionStatus>;
   selectedId: string | null;
+  /** 全局总览跳转定位：该行高亮边框 3s 后移除（selected 之外的临时指位）。 */
+  highlightId?: string | null;
   onSelect: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => void;
   onDropDispatch: (dispatchId: number, sessionId: string) => void;
@@ -132,6 +135,7 @@ export function SessionList({
                 selected
                   ? 'border-blue-500/50 bg-blue-500/10'
                   : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10] hover:bg-white/[0.04]',
+                highlightId === s.sessionId && 'border-rose-400/70',
                 droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
               )}
             >

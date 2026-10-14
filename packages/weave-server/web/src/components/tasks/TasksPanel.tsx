@@ -69,6 +69,8 @@ export function TasksPanel({
   const [groupWindow, setGroupWindow] = useState(10);
   /** 折叠条搜索：按组头可见文字过滤（开组 prompt 为主）；空串 = 不过滤。 */
   const [search, setSearch] = useState('');
+  /** 全局总览跳转定位：该会话行高亮边框（3s 后移除）。 */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   /** 事件游标已翻到最早（最新窗口不满一条完整批，或更早批次拉空）。 */
   const [olderExhausted, setOlderExhausted] = useState(false);
   /** 事件拉取中——空窗期不得冒充「该会话还没有采集到事件」。 */
@@ -106,8 +108,15 @@ export function TasksPanel({
 
   useEffect(() => {
     setSelectedId(initialSessionId ?? null);
-    // 全局总览跳转带入初始会话：<lg 直接开链路全屏（跳转意图即「看这条会话」）。
-    if (initialSessionId) setChainOpen(true);
+    // 全局总览跳转带入初始会话：不自动开事件链 drawer（drawer 只由点会话进入），
+    // 会话行高亮边框 3s 指位后移除。
+    if (initialSessionId) {
+      setHighlightId(initialSessionId);
+      window.setTimeout(
+        () => setHighlightId((cur) => (cur === initialSessionId ? null : cur)),
+        3000,
+      );
+    }
     api.listHooksRules(projectId).then(setRules).catch(() => {});
   }, [projectId, initialSessionId]);
 
@@ -833,6 +842,7 @@ export function TasksPanel({
             sessions={sessions}
             statuses={statuses}
             selectedId={selectedId}
+            highlightId={highlightId}
             onSelect={(id) => {
               setSelectedId(id);
               // <lg 点会话 = 进事件链全屏（桌面仅切换选中，链路恒可见）
