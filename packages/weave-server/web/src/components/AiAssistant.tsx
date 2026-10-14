@@ -65,7 +65,11 @@ export function AiAssistant() {
           setStreaming(answer);
         },
       });
-      setMessages([...history, { role: 'assistant', content: answer }]);
+      // 空回答也给个明确交代：否则气泡是空的、看着像还在加载
+      setMessages([
+        ...history,
+        { role: 'assistant', content: answer !== '' ? answer : t('ai.emptyAnswer') },
+      ]);
       setStreaming('');
     } catch (e) {
       setStreaming('');
@@ -143,6 +147,13 @@ export function AiAssistant() {
                   </div>
                 </div>
               ))}
+              {busy && streaming === '' && (
+                <div className="flex justify-start">
+                  <div className="animate-pulse rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-400">
+                    {t('ai.thinking')}
+                  </div>
+                </div>
+              )}
               {streaming !== '' && (
                 <div className="flex justify-start">
                   <div className="max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-200">

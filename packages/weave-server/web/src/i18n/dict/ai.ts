@@ -10,6 +10,8 @@ export const aiZh = {
   'ai.empty': '还没有对话。助手已加载 weave 的功能文档与内置技能，可直接提问。',
   'ai.docsMissing': '（未找到仓库 docs/，本次只注入了内置技能）',
   'ai.intro': '已注入 weave 功能文档与内置技能；回答仅依据这些资料与通用知识。',
+  'ai.thinking': '正在生成…',
+  'ai.emptyAnswer': '（上游没有返回内容——检查模型名、端点是否支持该对话接口）',
   'ai.failed': 'AI 请求失败：{error}',
 
   'settings.ai': 'AI 助手',
@@ -40,6 +42,9 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
   'ai.docsMissing': ' (repo docs/ not found — only built-in skills were injected)',
   'ai.intro':
     'weave feature docs and built-in skills are injected; answers rely on those plus general knowledge.',
+  'ai.thinking': 'Generating…',
+  'ai.emptyAnswer':
+    '(The upstream returned no content — check the model name and that the endpoint supports chat completions.)',
   'ai.failed': 'AI request failed: {error}',
 
   'settings.ai': 'AI assistant',

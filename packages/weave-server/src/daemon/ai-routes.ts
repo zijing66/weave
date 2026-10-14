@@ -98,6 +98,48 @@ export async function handleAiRoutes(
   return true;
 }
 
+/** 供应商响应里取正文（流式在 delta、非流式在 message）。 */
+interface ChatCompletionPayload {
+  choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }>;
+}
+
+function completionText(payload: unknown): string | null {
+  const choices = (payload as ChatCompletionPayload | null)?.choices;
+  const first = choices?.[0];
+  const content = first?.delta?.content ?? first?.message?.content;
+  return typeof content === 'string' && content !== '' ? content : null;
+}
+
+/**
+ * 非流式补一次（`stream:false`）：有的网关对 `stream:true` 直接报错
+ * （实测 LiteLLM 会甩 `'async for' requires … got ModelResponse` 的 500），
+ * 退一次整段返回，体验退化为「一次性」，但可用。
+ */
+async function completeOnce(args: {
+  url: string;
+  apiKey: string;
+  model: string;
+  messages: Array<{ role: string; content: string }>;
+  signal: AbortSignal;
+}): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(args.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${args.apiKey}` },
+      body: JSON.stringify({ model: args.model, stream: false, messages: args.messages }),
+      signal: args.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      return { ok: false, error: `upstream ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}` };
+    }
+    const content = completionText(await res.json().catch(() => null));
+    return content === null ? { ok: false, error: 'upstream returned no content' } : { ok: true, content };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 调供应商并把增量转发成自家帧：`{delta}` … `{done:true}` / `{error}`。 */
 async function streamChat(args: {
   req: IncomingMessage;
@@ -109,6 +151,8 @@ async function streamChat(args: {
   system: string;
 }): Promise<void> {
   const { req, res, baseUrl, model, apiKey, messages, system } = args;
+  const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const payloadMessages = [{ role: 'system', content: system }, ...messages];
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
   // 客户端断开 → 一并中止上游（花的是机主的钱，不能白烧）。
@@ -120,24 +164,47 @@ async function streamChat(args: {
     connection: 'keep-alive',
     'x-accel-buffering': 'no',
   });
+  let finished = false;
   const frame = (payload: unknown): void => {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    if (finished) return;
+    try {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    } catch {
+      // 客户端已断开：写失败无所谓，别把整轮炸掉
+    }
+  };
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    try {
+      res.write('data: {"done":true}\n\n');
+      res.end();
+    } catch {
+      // 同上
+    }
   };
 
   try {
-    const upstream = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const upstream = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [{ role: 'system', content: system }, ...messages],
-      }),
+      body: JSON.stringify({ model, stream: true, messages: payloadMessages }),
       signal: controller.signal,
     });
+
     if (!upstream.ok || !upstream.body) {
       const detail = await upstream.text().catch(() => '');
-      frame({ error: `upstream ${upstream.status}${detail ? `: ${detail.slice(0, 300)}` : ''}` });
+      const retry = await completeOnce({ url, apiKey, model, messages: payloadMessages, signal: controller.signal });
+      if (retry.ok) frame({ delta: retry.content });
+      else frame({ error: `upstream ${upstream.status}${detail ? `: ${detail.slice(0, 300)}` : ''}` });
+      return;
+    }
+
+    // 网关忽略 stream:true、直接回整段 JSON（content-type 不是 SSE）→ 当单帧发出。
+    if (!(upstream.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      const content = completionText(await upstream.json().catch(() => null));
+      if (content === null) frame({ error: 'upstream returned no content' });
+      else frame({ delta: content });
       return;
     }
 
@@ -154,26 +221,19 @@ async function streamChat(args: {
         buffer = buffer.slice(newline + 1);
         if (!line.startsWith('data:')) continue;
         const payload = line.slice(5).trim();
-        if (payload === '[DONE]') {
-          frame({ done: true });
-          return;
-        }
+        if (payload === '[DONE]') return; // done 帧由 finish() 统一发
         try {
-          const parsed = JSON.parse(payload) as {
-            choices?: Array<{ delta?: { content?: unknown } }>;
-          };
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (typeof delta === 'string' && delta) frame({ delta });
+          const delta = completionText(JSON.parse(payload));
+          if (delta !== null) frame({ delta });
         } catch {
           // 坏行忽略（供应商偶发非 JSON 行不该中断整条回答）
         }
       }
     }
-    frame({ done: true });
   } catch (e) {
     frame({ error: e instanceof Error ? e.message : String(e) });
   } finally {
     clearTimeout(timer);
-    res.end();
+    finish();
   }
 }

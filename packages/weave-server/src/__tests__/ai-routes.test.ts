@@ -144,6 +144,56 @@ describe('daemon ai routes', () => {
     expect(text).not.toContain('sk-secret');
   });
 
+  it('流式被上游拒绝（如 LiteLLM 对 stream:true 报 500）→ 自动退一次非流式，整段当单帧发出', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
+
+    const calls: Array<{ stream: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { stream?: unknown };
+        calls.push({ stream: body.stream });
+        if (body.stream === true) {
+          return new Response(
+            JSON.stringify({
+              error: { message: "'async for' requires an object with __aiter__ method, got ModelResponse" },
+            }),
+            { status: 500, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: '整段回答' } }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+
+    const text = await (await chat({ messages: [{ role: 'user', content: 'hi' }] })).text();
+    expect(calls.map((c) => c.stream)).toEqual([true, false]); // 先流式、失败后退非流式
+    expect(text).toContain('"delta":"整段回答"');
+    expect(text).toContain('"done":true');
+  });
+
+  it('上游无视 stream:true 直接回整段 JSON → 也当单帧发出', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ choices: [{ message: { content: '非流式正文' } }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
+
+    const text = await (await chat({ messages: [{ role: 'user', content: 'hi' }] })).text();
+    expect(text).toContain('"delta":"非流式正文"');
+    expect(text).toContain('"done":true');
+  });
+
   it('messages 形状非法 → 400', async () => {
     const bad = await chat({ messages: [{ role: 'system', content: 'x' }] });
     expect(bad.status).toBe(400);
