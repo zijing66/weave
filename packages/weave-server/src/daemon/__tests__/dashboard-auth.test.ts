@@ -60,6 +60,9 @@ describe('AuthService', () => {
     expect(auth.isAuthenticated({ cookie: `${SESSION_COOKIE}=${auth.issueSession()}` })).toBe(true);
     expect(auth.isAuthenticated({ cookie: `${SESSION_COOKIE}=bogus` })).toBe(false);
     expect(auth.isAuthenticated({})).toBe(false);
+    // 本机令牌判定独立于会话（改密只认它）
+    expect(auth.isLocallyTrusted({ [LOCAL_TOKEN_HEADER]: token })).toBe(true);
+    expect(auth.isLocallyTrusted({ cookie: `${SESSION_COOKIE}=${auth.issueSession()}` })).toBe(false);
   });
 
   it('改密：新口令生效、旧会话失效（轮换密钥）、标记文件清掉', () => {

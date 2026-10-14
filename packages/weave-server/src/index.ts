@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export { openDatabase } from './db/db.js';
-export { getDataDir, getDbPath, getDaemonStatePath } from './db/paths.js';
+export { getDataDir, getDbPath, getDaemonStatePath, getAuthPath, getInitialPasswordPath } from './db/paths.js';
 
 export { ProjectRepository } from './repositories/projects.js';
 export type { ProjectRow, RegisterProjectInput } from './repositories/projects.js';

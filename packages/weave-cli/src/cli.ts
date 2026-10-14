@@ -7,6 +7,7 @@ import { statusCommand } from './commands/status.js';
 import { daemonCommand } from './commands/daemon.js';
 import { dashboardCommand } from './commands/dashboard.js';
 import { scanCommand } from './commands/scan.js';
+import { chpassCommand } from './commands/chpass.js';
 import { statuslineCommand } from './commands/statusline.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import type { Command, CommandContext } from './parser.js';
@@ -57,6 +58,7 @@ export class CLI {
     this.parser.registerCommand(daemonCommand);
     this.parser.registerCommand(dashboardCommand);
     this.parser.registerCommand(scanCommand);
+    this.parser.registerCommand(chpassCommand);
     this.parser.registerCommand(statuslineCommand);
   }
 

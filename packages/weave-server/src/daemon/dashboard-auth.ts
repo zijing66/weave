@@ -231,9 +231,17 @@ export class AuthService {
 
   /** 请求级判定：本机令牌头 或 有效会话 cookie。 */
   isAuthenticated(headers: IncomingHttpHeaders): boolean {
-    const local = headers[LOCAL_TOKEN_HEADER];
-    if (this.verifyLocalToken(typeof local === 'string' ? local : undefined)) return true;
+    if (this.isLocallyTrusted(headers)) return true;
     return this.verifySession(readCookie(headers.cookie, SESSION_COOKIE));
+  }
+
+  /**
+   * 本机令牌判定——**改密等「本机管理员」动作专用**：只认 `x-weave-local`，
+   * 会话 cookie 不算（改密只走 CLI，dashboard 不提供该操作）。
+   */
+  isLocallyTrusted(headers: IncomingHttpHeaders): boolean {
+    const local = headers[LOCAL_TOKEN_HEADER];
+    return this.verifyLocalToken(typeof local === 'string' ? local : undefined);
   }
 
   private sign(exp: number): string {

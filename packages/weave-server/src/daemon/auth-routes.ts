@@ -61,11 +61,11 @@ export async function handleAuthRoutes(
     return true;
   }
 
-  // 改密：需已认证（面板 cookie 或本机令牌 = `weave chpass` 走的通道）。改密会
-  // 轮换会话密钥，给调用方回发一枚新 cookie——免得操作者把自己踢下线。
+  // 改密：**只认本机令牌**（`weave chpass`）——dashboard 不提供改密操作，会话
+  // cookie 也不够（会话被盗也改不了密码）。改密会轮换会话密钥 → 已登录浏览器全部失效。
   if (pathname === '/auth/password' && req.method === 'PUT') {
-    if (!auth.isAuthenticated(req.headers)) {
-      sendJson(res, 401, { error: 'Unauthorized' });
+    if (!auth.isLocallyTrusted(req.headers)) {
+      sendJson(res, 401, { error: 'Unauthorized (local token required)' });
       return true;
     }
     let body: { next?: unknown };
@@ -81,7 +81,6 @@ export async function handleAuthRoutes(
       return true;
     }
     auth.setPassword(next);
-    res.setHeader('set-cookie', sessionCookie(auth.issueSession()));
     sendJson(res, 200, { ok: true });
     return true;
   }

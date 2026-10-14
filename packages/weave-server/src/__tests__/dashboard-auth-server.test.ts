@@ -105,13 +105,23 @@ describe('daemon auth gate', () => {
     expect(relogin.status).toBe(200);
   });
 
-  it('未认证改密 401；短口令 400', async () => {
+  it('改密只认本机令牌：无凭据 / 仅会话 cookie 都 401；短口令 400', async () => {
     const unauthed = await fetch(url('/auth/password'), {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ next: 'long-enough-pw' }),
     });
     expect(unauthed.status).toBe(401);
+
+    // dashboard 不提供改密：登录会话本身不够，必须本机令牌（CLI）
+    const login = await fetch(url('/auth/login'), json({ password: 'brand-new-pw' }));
+    const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const cookieOnly = await fetch(url('/auth/password'), {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ next: 'another-password' }),
+    });
+    expect(cookieOnly.status).toBe(401);
 
     const short = await fetch(url('/auth/password'), {
       method: 'PUT',

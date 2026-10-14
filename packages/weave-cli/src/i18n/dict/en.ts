@@ -27,6 +27,7 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.daemon.stop.desc': 'Stop the running daemon',
   'cmd.daemon.status.desc': 'Show daemon status',
   'cmd.dashboard.desc': 'Open the web console in a browser (starts the daemon if needed)',
+  'cmd.chpass.desc': 'Change the dashboard login password (new password given; no old password needed locally)',
   'cmd.scan.desc': 'Scan for weave-initialized projects and register them',
   'cmd.statusline.desc': 'Statusline tools (preview TUI)',
   'cmd.statusline.preview.desc': 'Interactive Ink preview of the statusline',
@@ -39,6 +40,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.init.harness': `Comma-separated harness surfaces to initialize (${HARNESS_KEYS.join(', ')}); omitted → interactive multiselect on a TTY, default ${HARNESS_KEYS[0]}`,
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
+  'flag.chpass.newPassword': 'New password (at least 6 characters)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
   'flag.statusline.preview.project': 'Target project path (default: cwd)',
   // --- daemon command output ---
@@ -57,6 +59,13 @@ export const en: Record<keyof typeof zh, string> = {
     '  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (http://localhost:9527).',
   'out.dash.url': '\n  Dashboard: {url}\n',
   'out.dash.noOpen': '  (--no-open: not launching a browser)',
+  'out.dash.lanUrl': '  LAN: {url}',
+  'out.dash.initialPassword':
+    '\n  Initial login password: {password}\n  (shown only once; change it with `weave chpass --new-password <new password>`)\n',
+  // --- chpass command runtime output ---
+  'out.chpass.ok': 'Dashboard login password updated — signed-in browsers must log in again.',
+  'out.chpass.fail': 'Failed to change password: {error}',
+  'out.chpass.usage': 'Usage: weave chpass --new-password <new password> (at least 6 characters)',
   // --- scan command output ---
   'out.scan.registered': 'Registered {count} project(s) from {root}',
   // --- uninstall command runtime output ---

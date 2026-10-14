@@ -1,16 +1,18 @@
 import { spawn } from 'node:child_process';
-import { DAEMON_HOST, resolveStaticDir } from '@weavecode/server';
+import { networkInterfaces } from 'node:os';
+import { DAEMON_HOST, readDaemonState, resolveStaticDir } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
+import { announceInitialPassword } from './daemon-auth.js';
 import type { Command } from '../parser.js';
 
 /**
  * `weave dashboard` — start the daemon if needed and open the web console.
  *
  * The daemon serves the built SPA (packages/weave-server/web/dist) on a single
- * origin, bound to 127.0.0.1 only — no auth token, the machine boundary is the
- * trust boundary.
+ * origin; 绑定地址来自 settings（默认 0.0.0.0），访问需 dashboard 密码登录
+ * （首启的初始密码在本命令输出里领取一次）。
  */
 
 /** Open `url` in the platform's default browser. */
@@ -38,6 +40,19 @@ export function dashboardUrl(port: number): string {
   return `http://${DAEMON_HOST}:${port}/`;
 }
 
+/** 绑非回环时的局域网访问地址（IPv4 非内部）；绑回环 / 无状态文件 → 空表。 */
+export function lanUrls(port: number): string[] {
+  const host = readDaemonState()?.host;
+  if (!host || host === '127.0.0.1' || host === 'localhost') return [];
+  const urls: string[] = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const info of list ?? []) {
+      if (info.family === 'IPv4' && !info.internal) urls.push(`http://${info.address}:${port}/`);
+    }
+  }
+  return urls;
+}
+
 async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise<void> {
   const noOpen = Boolean(ctx.flags['noOpen']);
 
@@ -57,6 +72,12 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
 
   const url = dashboardUrl(handle.port);
   logger.info(t('out.dash.url', { url }));
+  // 绑非回环时同时给出局域网地址（另机用同一密码登录）。
+  for (const lan of lanUrls(handle.port)) {
+    logger.info(t('out.dash.lanUrl', { url: lan }));
+  }
+  // 首启初始密码的一次性领取点（daemon 是 detached 启动，打印必丢）。
+  announceInitialPassword();
 
   if (noOpen) {
     logger.dim(t('out.dash.noOpen'));

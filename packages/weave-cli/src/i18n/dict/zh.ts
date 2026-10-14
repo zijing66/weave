@@ -26,6 +26,7 @@ export const zh = {
   'cmd.daemon.stop.desc': '停止运行中的守护进程',
   'cmd.daemon.status.desc': '查看守护进程状态',
   'cmd.dashboard.desc': '在浏览器中打开 web 控制台（必要时先启动守护进程）',
+  'cmd.chpass.desc': '修改 dashboard 登录密码（指定新密码；本机执行不需要旧密码）',
   'cmd.scan.desc': '扫描已初始化 weave 的项目并注册',
   'cmd.statusline.desc': 'statusline 工具（预览 TUI）',
   'cmd.statusline.preview.desc': 'statusline 的交互式 Ink 预览',
@@ -38,6 +39,7 @@ export const zh = {
   'flag.init.harness': `要初始化的 harness 面，逗号分隔（${HARNESS_KEYS.join('、')}）；缺省时 TTY 下交互多选，默认 ${HARNESS_KEYS[0]}`,
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
+  'flag.chpass.newPassword': '新密码（至少 6 位）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
   'flag.statusline.preview.project': '目标项目路径（默认：当前目录）',
   // --- daemon 命令运行时输出 ---
@@ -55,6 +57,13 @@ export const zh = {
   'out.dash.buildHint': '  可用 `pnpm build:web` 构建，或运行 Vite 开发服务器：`pnpm dev:web`（http://localhost:9527）。',
   'out.dash.url': '\n  控制台：{url}\n',
   'out.dash.noOpen': '  （--no-open：不启动浏览器）',
+  'out.dash.lanUrl': '  局域网：{url}',
+  'out.dash.initialPassword':
+    '\n  初始登录密码：{password}\n  （只显示这一次；可用 `weave chpass --new-password <新密码>` 修改）\n',
+  // --- chpass 命令运行时输出 ---
+  'out.chpass.ok': '已更新 dashboard 登录密码——所有已登录的浏览器需重新登录。',
+  'out.chpass.fail': '修改密码失败：{error}',
+  'out.chpass.usage': '用法：weave chpass --new-password <新密码>（至少 6 位）',
   // --- scan 命令运行时输出 ---
   'out.scan.registered': '已从 {root} 注册 {count} 个项目',
   // --- uninstall 命令运行时输出 ---
