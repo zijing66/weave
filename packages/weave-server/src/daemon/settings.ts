@@ -65,6 +65,8 @@ export interface DaemonSettings {
   startup?: StartupSettings;
   /** 监听面（绑定地址；缺省放开 0.0.0.0——读时归一化）。 */
   server?: ServerSettings;
+  /** AI 助手（地址/模型；缺省空 = 未配置——读时归一化）。 */
+  ai?: AiSettings;
 }
 
 export interface HooksSettings {
@@ -86,6 +88,15 @@ export interface ServerSettings {
   bindHost: string;
 }
 
+/**
+ * AI 助手（OpenAI 兼容端点）的非密配置。**api key 不在这里**——它落
+ * `<dataDir>/ai.json`（0600，见 daemon/ai-config.ts），本表是 UI 可读面。
+ */
+export interface AiSettings {
+  baseUrl: string;
+  model: string;
+}
+
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   preset: 'auto',
   customCommand: '',
@@ -105,6 +116,9 @@ export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false 
 /** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。 */
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST };
 
+/** 缺省未配置（地址/模型皆空）——助手按钮此时不显示。 */
+export const DEFAULT_AI_SETTINGS: AiSettings = { baseUrl: '', model: '' };
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
@@ -112,6 +126,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   events: DEFAULT_EVENTS_SETTINGS,
   startup: DEFAULT_STARTUP_SETTINGS,
   server: DEFAULT_SERVER_SETTINGS,
+  ai: DEFAULT_AI_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -179,6 +194,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const events = (obj.events ?? {}) as Partial<EventsSettings>;
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const server = (obj.server ?? {}) as Partial<ServerSettings>;
+  const ai = (obj.ai ?? {}) as Partial<AiSettings>;
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -207,6 +223,10 @@ function mergeDefaults(raw: unknown): DaemonSettings {
           ? server.bindHost.trim()
           : DEFAULT_SERVER_SETTINGS.bindHost,
     },
+    ai: {
+      baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl.trim() : '',
+      model: typeof ai.model === 'string' ? ai.model.trim() : '',
+    },
   };
 }
 
@@ -223,6 +243,8 @@ const KEYS = {
   eventRetentionDays: 'events.retentionDays',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
+  aiBaseUrl: 'ai.baseUrl',
+  aiModel: 'ai.model',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -277,6 +299,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
     ...(map.has(KEYS.serverBindHost) ? { server: { bindHost: map.get(KEYS.serverBindHost)! } } : {}),
+    ...(map.has(KEYS.aiBaseUrl) || map.has(KEYS.aiModel)
+      ? { ai: { baseUrl: map.get(KEYS.aiBaseUrl) ?? '', model: map.get(KEYS.aiModel) ?? '' } }
+      : {}),
   });
 }
 
@@ -293,6 +318,8 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
     [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],
+    [KEYS.aiBaseUrl, settings.ai?.baseUrl ?? ''],
+    [KEYS.aiModel, settings.ai?.model ?? ''],
   ];
 }
 

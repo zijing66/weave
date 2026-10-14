@@ -99,9 +99,11 @@ import { purgeProjectPipeline } from './hook-pipeline.js';
 import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
+  DEFAULT_AI_SETTINGS,
   readDaemonSettings,
   writeDaemonSettings,
   terminalPresetsFor,
+  type AiSettings,
   type DaemonSettings,
 } from './settings.js';
 import {
@@ -116,6 +118,8 @@ import { pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../surfac
 import { readPluginRows } from '../install/plugin-rows.js';
 import { installPluginPack } from '../install/plugin-install.js';
 import { handleAuthRoutes } from './auth-routes.js';
+import { handleAiRoutes } from './ai-routes.js';
+import { hasAiKey, writeAiKey } from './ai-config.js';
 import type { AuthService } from './dashboard-auth.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
@@ -187,6 +191,8 @@ export interface WeaveServerDeps {
   pluginSurface?: PluginSurface;
   /** dashboard 平面认证（见 auth.ts）。缺省不装 = 开放（存量测试口径），生产由 start/dev-entry 装配。 */
   auth?: AuthService;
+  /** AI key 文件路径（测试注入）；缺省 `<dataDir>/ai.json`（见 daemon/ai-config.ts）。 */
+  aiKeyPath?: string;
 }
 
 /** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
@@ -226,6 +232,10 @@ async function handleRequest(
 
   // /auth/* —— 认证子系统自身（登录/登出/改密/状态），门豁免：登录页要用它。
   if (await handleAuthRoutes(req, res, deps, pathname)) return;
+
+  // /ai/* —— AI 助手（OpenAI 兼容的服务端代理，见 daemon/ai-routes.ts）。
+  // 不豁免：门内的路由，只有已登录用户能花机主的 key。
+  if (await handleAiRoutes(req, res, deps, pathname)) return;
 
   // 认证门（装 auth 才生效）：除「HTML 导航 + 真实静态文件」外一律要凭据——
   // 浏览器 fetch/SSE、CLI 全部走同一条判定（会话 cookie 或本机令牌）。放行 HTML
@@ -272,28 +282,36 @@ async function handleRequest(
   if (pathname === '/settings') {
     if (req.method === 'GET') {
       sendJson(res, 200, {
-        settings: await readDaemonSettings(),
+        settings: withAiStatus(await readDaemonSettings(), deps.aiKeyPath),
         presets: terminalPresetsFor(process.platform),
         platform: process.platform,
       });
       return;
     }
     if (req.method === 'PUT') {
-      let body: Partial<DaemonSettings>;
+      let body: Partial<DaemonSettings> & { ai?: { apiKey?: string | null } };
       try {
-        body = JSON.parse(await readBody(req)) as Partial<DaemonSettings>;
+        body = JSON.parse(await readBody(req)) as Partial<DaemonSettings> & {
+          ai?: { apiKey?: string | null };
+        };
       } catch {
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
-      const saved = await writeDaemonSettings(body as DaemonSettings);
+      // `ai.apiKey` 是**只写**字段：拆出来落 <dataDir>/ai.json（0600），不进 settings 表；
+      // 响应与 GET 都只回派生布尔 apiKeySet——密钥永不回显。
+      const apiKey = body.ai?.apiKey;
+      if (apiKey !== undefined) {
+        writeAiKey(typeof apiKey === 'string' ? apiKey : null, deps.aiKeyPath);
+      }
+      const saved = await writeDaemonSettings({ ...body, ai: stripAiKey(body.ai) } as DaemonSettings);
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。
       deps.hookEvents?.resetPrune();
       // 开机自启即刻注册/注销（内部吞错，不阻塞保存响应）。
       (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
       deps.dataBus?.emit({ key: 'settings' });
-      sendJson(res, 200, saved);
+      sendJson(res, 200, withAiStatus(saved, deps.aiKeyPath));
       return;
     }
   }
@@ -1551,6 +1569,25 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string): 
       res.end(data);
     });
   });
+}
+
+/**
+ * /settings 的对外形状：`ai` 段补派生布尔 `apiKeySet`（地址/模型来自 settings 表，
+ * key 来自 `<dataDir>/ai.json`——密钥只写，GET/PUT 一律不回显）。
+ */
+function withAiStatus(settings: DaemonSettings, aiKeyPath?: string): Record<string, unknown> {
+  const ai = settings.ai ?? DEFAULT_AI_SETTINGS;
+  return {
+    ...settings,
+    ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: hasAiKey(aiKeyPath) },
+  };
+}
+
+/** 落 settings 表前剥掉只写的 `apiKey`（它归 ai.json，不归本表）。 */
+function stripAiKey(ai: { apiKey?: string | null } | undefined): Partial<AiSettings> | undefined {
+  if (!ai) return undefined;
+  const { apiKey: _writeOnly, ...rest } = ai;
+  return rest;
 }
 
 function mime(filePath: string): string {

@@ -48,7 +48,14 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       },
     };
     setDaemonSettingsDb(db);
-    server = createWeaveServer({ projects, port: 0, opener, autoStart });
+    // aiKeyPath 同样隔离：否则 apiKeySet 读机器真实 <dataDir>/ai.json，断言看环境。
+    server = createWeaveServer({
+      projects,
+      port: 0,
+      opener,
+      autoStart,
+      aiKeyPath: path.join(projectPath, 'ai.json'),
+    });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -92,6 +99,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
       server: { bindHost: '0.0.0.0' }, // 监听绑定（归一化补默认，默认放开）
+      ai: { baseUrl: '', model: '', apiKeySet: false }, // AI 助手（归一化补默认，默认未配置）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
     expect(autoStartCalls).toEqual([false]);

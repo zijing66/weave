@@ -25,3 +25,8 @@ export function getAuthPath(): string {
 export function getInitialPasswordPath(): string {
   return path.join(getDataDir(), 'initial-password');
 }
+
+/** Absolute path to the AI assistant key file (`{ apiKey }`, 0600; 密钥不进 settings 表). */
+export function getAiKeyPath(): string {
+  return path.join(getDataDir(), 'ai.json');
+}
