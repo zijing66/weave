@@ -373,7 +373,7 @@ export interface SessionWatchRow {
 export interface SequenceStep {
   to: string;
   text: string;
-  mode: 'inject' | 'headless' | 'auto';
+  mode: 'prompt' | 'inject' | 'headless' | 'auto';
   /** 步触发后回填的管道发号（缺省 = 尚未触发）。 */
   messageId?: string;
 }
@@ -1099,7 +1099,7 @@ export const api = {
    *  （404 会话不在 / 409 无通道）由服务端把关，非 2xx 抛 Error（error 字段原文）。 */
   createSequence: (body: {
     name?: string;
-    steps: Array<{ to: string; text: string; mode?: 'inject' | 'headless' | 'auto' }>;
+    steps: Array<{ to: string; text: string; mode?: 'prompt' | 'inject' | 'headless' | 'auto' }>;
   }): Promise<{ ok: boolean; sequence: SessionSequenceRow }> =>
     apiFetch('/messaging/sequences', {
       method: 'POST',

@@ -45,7 +45,7 @@ import { layoutSequenceCanvas, type LaidLane } from './sequence-canvas-layout';
 interface BuilderStep {
   to: string;
   text: string;
-  mode: 'auto' | 'inject' | 'headless';
+  mode: 'prompt' | 'auto' | 'inject' | 'headless';
 }
 
 const SEQ_STATUS_KEY: Record<
@@ -66,8 +66,9 @@ const SEQ_STATUS_BADGE: Record<SessionSequenceRow['status'], string> = {
 
 const MODE_KEY: Record<
   BuilderStep['mode'],
-  'tasks.msgModeAuto' | 'tasks.msgModeInject' | 'tasks.msgModeHeadless'
+  'tasks.msgModePrompt' | 'tasks.msgModeAuto' | 'tasks.msgModeInject' | 'tasks.msgModeHeadless'
 > = {
+  prompt: 'tasks.msgModePrompt',
   auto: 'tasks.msgModeAuto',
   inject: 'tasks.msgModeInject',
   headless: 'tasks.msgModeHeadless',
@@ -330,13 +331,13 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
   const [builderSteps, setBuilderSteps] = useState<BuilderStep[]>([
     { to: '', text: '', mode: 'auto' },
   ]);
-  /** 可收消息的会话（能力矩阵门控——inject/headless 任一通道在场）。 */
+  /** 可收消息的会话（能力矩阵门控——prompt/inject/headless 任一通道在场）。 */
   const capableSessions = useMemo(
     () =>
       (sessions ?? []).filter((s) => {
         if (s.harness == null) return false;
         const cap = capabilityMap.get(s.harness);
-        return !!cap && (cap.inject || cap.headless);
+        return !!cap && (cap.prompt || cap.inject || cap.headless);
       }),
     [sessions, capabilityMap],
   );
@@ -364,6 +365,7 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
         if (j !== i) return s;
         const modeOk =
           s.mode === 'auto' ||
+          (s.mode === 'prompt' && !!cap?.prompt) ||
           (s.mode === 'inject' && !!cap?.inject) ||
           (s.mode === 'headless' && !!cap?.headless);
         return modeOk ? { ...s, to } : { ...s, to, mode: 'auto' as const };
@@ -508,6 +510,9 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
                     className="shrink-0 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
                   >
                     <option value="auto">{t('tasks.msgModeAutoHint')}</option>
+                    {cap?.prompt && (
+                      <option value="prompt">{t('tasks.msgModePromptHint')}</option>
+                    )}
                     {cap?.inject && <option value="inject">{t('tasks.msgModeInjectHint')}</option>}
                     {cap?.headless && (
                       <option value="headless">{t('tasks.msgModeHeadlessHint')}</option>
