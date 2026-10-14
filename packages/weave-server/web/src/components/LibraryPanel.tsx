@@ -33,6 +33,7 @@ import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { SkeletonCards } from '@/components/ui/skeleton';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
@@ -590,6 +591,8 @@ export function LibraryPanel({
 
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {/* 首拉未回：市场源卡片骨架（形状同真实市场源卡）——首次打开不再空白。 */}
+        {loading && market.length === 0 && <SkeletonCards count={3} />}
         {/* 市场源三节折叠块：内置 → 本地（目录导入 + legacy 外部源）→ Git；
             每源一张独立卡片，点卡片选中该库。 */}
         {builtinMarkets.length > 0 && (

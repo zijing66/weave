@@ -25,6 +25,7 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -859,10 +860,8 @@ export function TasksPanel({
           </p>
         )}
         {sessions === null ? (
-          <p className="flex items-center gap-1.5 text-xs text-neutral-600">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {t('hooks.loading')}
-          </p>
+          // 首拉未回：会话行骨架（形状同真实行），比转圈更能顶住首屏
+          <SkeletonRows rows={8} className="p-0" />
         ) : sessions.length === 0 ? (
           <p className="text-xs text-neutral-600">{t('tasks.emptySessions')}</p>
         ) : (

@@ -58,6 +58,7 @@ import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
 import { LoginPage } from '@/components/LoginPage';
 import { AiAssistant } from '@/components/AiAssistant';
+import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
@@ -93,6 +94,8 @@ export default function App() {
 function Dashboard() {
   const t = useT();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
+  const [shellReady, setShellReady] = useState(false);
   const [selected, setSelected] = useState<ProjectRow | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
@@ -171,7 +174,11 @@ function Dashboard() {
   const sensors = useSensors(finePointer ? mouseSensor : touchSensor);
 
   useEffect(() => {
-    api.listProjects().then(setProjects).catch((e) => setError(String(e)));
+    api
+      .listProjects()
+      .then(setProjects)
+      .catch((e) => setError(String(e)))
+      .finally(() => setShellReady(true));
     api.listArchivedProjects().then(setArchivedProjects).catch(() => {});
   }, []);
 
@@ -1048,7 +1055,7 @@ function Dashboard() {
   // 左右两栏各只挂载一份：桌面 inline 栏与移动滑出抽屉复用同一 JSX（isDesktop
   // 互斥渲染，不会双挂载）。移动端选中项目顺手收抽屉（setMobilePanel(null)
   // 在桌面是空操作）。
-  const projectListEl = (
+  const projectListEl = shellReady ? (
     <ProjectList
       projects={projects}
       selectedId={selected?.id}
@@ -1080,6 +1087,8 @@ function Dashboard() {
       onRestore={handleRestoreProject}
       restoreStateOf={restoreActionStateOf}
     />
+  ) : (
+    <SkeletonRows rows={7} />
   );
   const libraryPanelEl = activeProject ? (
     <LibraryPanel
@@ -1265,6 +1274,9 @@ function Dashboard() {
                       <p className="text-xs text-neutral-500">
                         {t('app.needProjectAnchor')}
                       </p>
+                    ) : !shellReady ? (
+                      // 首次访问：主区（分类栏 + 技能/资产列表）用骨架顶住
+                      <SkeletonMain />
                     ) : (
                       <CategoryDetail
                         projectId={activeProject!.id}
