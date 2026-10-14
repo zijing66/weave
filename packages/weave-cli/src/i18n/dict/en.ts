@@ -40,7 +40,6 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.init.harness': `Comma-separated harness surfaces to initialize (${HARNESS_KEYS.join(', ')}); omitted → interactive multiselect on a TTY, default ${HARNESS_KEYS[0]}`,
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
-  'flag.chpass.newPassword': 'New password (at least 6 characters)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
   'flag.statusline.preview.project': 'Target project path (default: cwd)',
   // --- daemon command output ---
@@ -61,11 +60,11 @@ export const en: Record<keyof typeof zh, string> = {
   'out.dash.noOpen': '  (--no-open: not launching a browser)',
   'out.dash.lanUrl': '  LAN: {url}',
   'out.dash.initialPassword':
-    '\n  Initial login password: {password}\n  (shown only once; change it with `weave chpass --new-password <new password>`)\n',
+    '\n  Initial login password: {password}\n  (shown only once; change it with `weave chpass <new password>`)\n',
   // --- chpass command runtime output ---
   'out.chpass.ok': 'Dashboard login password updated — signed-in browsers must log in again.',
   'out.chpass.fail': 'Failed to change password: {error}',
-  'out.chpass.usage': 'Usage: weave chpass --new-password <new password> (at least 6 characters)',
+  'out.chpass.usage': 'Usage: weave chpass <new password> (at least 6 characters)',
   // --- scan command output ---
   'out.scan.registered': 'Registered {count} project(s) from {root}',
   // --- uninstall command runtime output ---

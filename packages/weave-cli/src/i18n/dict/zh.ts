@@ -39,7 +39,6 @@ export const zh = {
   'flag.init.harness': `要初始化的 harness 面，逗号分隔（${HARNESS_KEYS.join('、')}）；缺省时 TTY 下交互多选，默认 ${HARNESS_KEYS[0]}`,
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
-  'flag.chpass.newPassword': '新密码（至少 6 位）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
   'flag.statusline.preview.project': '目标项目路径（默认：当前目录）',
   // --- daemon 命令运行时输出 ---
@@ -59,11 +58,11 @@ export const zh = {
   'out.dash.noOpen': '  （--no-open：不启动浏览器）',
   'out.dash.lanUrl': '  局域网：{url}',
   'out.dash.initialPassword':
-    '\n  初始登录密码：{password}\n  （只显示这一次；可用 `weave chpass --new-password <新密码>` 修改）\n',
+    '\n  初始登录密码：{password}\n  （只显示这一次；可用 `weave chpass <新密码>` 修改）\n',
   // --- chpass 命令运行时输出 ---
   'out.chpass.ok': '已更新 dashboard 登录密码——所有已登录的浏览器需重新登录。',
   'out.chpass.fail': '修改密码失败：{error}',
-  'out.chpass.usage': '用法：weave chpass --new-password <新密码>（至少 6 位）',
+  'out.chpass.usage': '用法：weave chpass <新密码>（至少 6 位）',
   // --- scan 命令运行时输出 ---
   'out.scan.registered': '已从 {root} 注册 {count} 个项目',
   // --- uninstall 命令运行时输出 ---
