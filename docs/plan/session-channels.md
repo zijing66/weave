@@ -31,6 +31,44 @@
    只换实现（`MessagingSurface.prompt` 里加一个 channel 规格，和中继规格并列，
    由装配侧按「装了没 / 活没活」选择）——web、路由、投递裁决**零改动**。
 
+## 文档已核实的关键事实（决定可行性，2026-10-15 抓 `channels-reference`）
+
+1. **载荷**：`notifications/claude/channel`，`content` 为纯字符串（+ 可选 `meta`
+   路由属性）→ daemon 推任意文本可行；到达时在会话上下文里包一层 `<channel>` 标签。
+2. **忙闲语义是原生的**（正合我们层③ 的语义）：*"Events queue into the session and are
+   processed in order. If several notifications arrive while Claude is busy, they're
+   delivered together on the next turn and Claude handles them as a group."* → 运行中
+   会话的「忙则下一拍」不用我们排队（promptbox 只剩「会话没开」这一支）。
+3. **无回执**：*"Claude Code doesn't acknowledge notifications"*；`await` 只保证写进
+   传输；**若该会话没把我们的 server 当 channel 加载（或被组织策略挡），事件被静默
+   丢弃、不返回任何错误**。→ 单向 channel 的 `delivered` 比中继**更不可信**；要回执
+   只能靠 **reply tool**（见下）或会话自己的 idle 事件（序列编排已用后者）。
+4. **加载方式**（决定「默认启用」怎么落）：① MCP 配置里加一条 server 条目
+   （`.mcp.json` 项目级 / `~/.claude.json` 用户级——**weave 已在管 MCP 配置**）；
+   ② 会话启动**必须带旗标**：研究预览期自定义 channel 不在 allowlist，要用
+   `claude --dangerously-load-development-channels server:<名>`，启动时**弹全屏警告
+   要求人工确认**，且本项目首次还要再确认一次「Use this MCP server」。注册成功后
+   启动横幅下有暗色提示 `Channels (experimental) messages from server:<名> inject
+   directly in this session`。→ **无法静默自动化**（这是官方安全设计，不该绕）：
+   只有 **weave 自己拉起的会话**（`openSessionTerminal` = 我们 spawn `claude --resume`）
+   能替用户带上旗标；用户自己开的会话要回落中继。
+5. **双向可行**：channel 可暴露标准 MCP tool（官方示例就叫 `reply`）让会话回写 →
+   这正是「编排保留双向对话」缺的那块（今天中继是瞬时进程，回复无处可去）。
+   代价：该 tool 的 schema + instructions 会进入**每个**挂载会话的上下文（每回合
+   token 开销）→ 默认单向、双向按需开。
+
+## 结论（对「冷启动效率 + 编排功能是否满足」的回答）
+
+- **冷启动：满足，且是数量级改善**——每条消息从「一次 claude CLI 启动（本机实测
+  7.4–38.3s + token）」变成「本机 stdio 写一行（毫秒、无 LLM）」。成本模型从
+  **每条消息**挪到**每个会话**（多一个瘦 server 进程，需实测内存）。
+- **编排：核心满足，且两处更强**——投递语义不变；忙时排队原生；双向由 reply tool
+  补齐；完成判据仍走目标会话的 idle 信号，无需新事件源。
+- **但有三条代价**：研究预览契约可能变 → 双通道回落必须有；单向无回执（静默丢弃）
+  → `delivered` 要重新措辞或补 reply 回执；双向会往每个会话上下文塞一个 tool schema。
+- 因此「默认启用」的准确落法 = **MCP 条目默认写入 + weave 拉起的会话默认带旗标**，
+  用户自拉会话回落中继；人工确认对话框保持人工（不绕）。
+
 ## 必须解决的开放问题
 
 | # | 问题 | 现状/倾向 |
