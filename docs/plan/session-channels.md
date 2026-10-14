@@ -57,6 +57,26 @@
    代价：该 tool 的 schema + instructions 会进入**每个**挂载会话的上下文（每回合
    token 开销）→ 默认单向、双向按需开。
 
+## 原型实测（2026-10-15，本机 2.1.296；探针在临时目录，未动仓库）
+
+手写最小 channel MCP（Node + `@modelcontextprotocol/sdk`，**不需要 Bun**：声明
+`capabilities.experimental['claude/channel']` + 本地 HTTP :8789 收 POST → 调
+`notifications/claude/channel` 推进会话）：
+
+| 项 | 结果 |
+|---|---|
+| 探针能否被会话拉起 | ✅ 用 `--mcp-config <file>`（**绕开项目 `.mcp.json` 的人工批准**——纯 `.mcp.json` 在 `-p` 下等于被跳过）→ 841ms 连上，stdio 正常 |
+| 能力声明是否正确 | ✅ 对照日志：别的 MCP server 是 `Channel notifications skipped: server did not declare claude/channel capability`，探针**不在**该名单里 → 声明被识别 |
+| 事件能否送达 | ❌ **`Channel notifications skipped: channels feature is not currently available`** ——本机**功能门未开**（研究预览 + 账号/组织/feature-flag 层面），推送被**静默丢弃**（探针 POST 仍 200，与文档「不报错」一致）；空转一轮再问会话，会话答「no external channel events」 |
+| 非交互目标会话 | ❌ `--dangerously-load-development-channels` 在 `-p` 下被禁用（debug：`flag=false(disabled) … nonInteractive=true`）→ 即便门开，非交互会话这一支也受限制 |
+| 进程回收 | ✅ 会话退出即杀掉 MCP server（`lingering probe procs: 0`）——与我们的资源口径一致 |
+
+**结论：层④ 当前不可实施**（拦路的是功能门，不是我们的代码或声明）。中继仍是
+唯一可行路径 → 本计划保持「计划」状态。门开后复验清单（探针复用即可）：
+① debug 里不再出现 `channels feature is not currently available`；
+② POST 后目标会话在下一回合能看到事件文本；
+③ 记录每次推送延迟与常驻 server 内存，与本机中继（7.4–38.3s / 一条一次）对比。
+
 ## 结论（对「冷启动效率 + 编排功能是否满足」的回答）
 
 - **冷启动：满足，且是数量级改善**——每条消息从「一次 claude CLI 启动（本机实测
