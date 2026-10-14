@@ -154,7 +154,7 @@ export function SessionMessages({
       onClick={onClose}
     >
       <div
-        className="flex h-[70vh] w-full max-w-lg flex-col rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className="flex h-[70dvh] max-lg:h-[88dvh] w-full max-w-lg flex-col rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">
@@ -241,8 +241,10 @@ export function SessionMessages({
           </p>
         )}
 
-        {/* Composer：模式选项按能力矩阵门控（表驱动，不写死 harness） */}
-        <div className="mt-2 flex shrink-0 items-end gap-2">
+        {/* Composer：模式选项按能力矩阵门控（表驱动，不写死 harness）。
+            <lg 纵排——输入框满宽在上、模式+发送一行在下（横排会被选择器挤窄），
+            桌面横排原样。 */}
+        <div className="mt-2 flex shrink-0 flex-col gap-2 lg:flex-row lg:items-end">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -254,13 +256,13 @@ export function SessionMessages({
             }}
             placeholder={t('tasks.messagesPlaceholder')}
             rows={2}
-            className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
+            className="min-w-0 w-full resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40 lg:w-auto lg:flex-1"
           />
-          <div className="flex shrink-0 flex-col gap-1">
+          <div className="flex gap-1.5 lg:shrink-0 lg:flex-col lg:gap-1">
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as typeof mode)}
-              className="rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+              className="min-w-0 flex-1 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200 lg:flex-none"
             >
               <option value="auto">{t('tasks.msgModeAutoHint')}</option>
               {capability.inject && (
@@ -274,7 +276,7 @@ export function SessionMessages({
               type="button"
               disabled={!draft.trim() || fb.stateOf(`sendMsg:${sessionId}`) === 'loading'}
               onClick={send}
-              className="inline-flex items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+              className="inline-flex flex-1 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 lg:flex-none"
             >
               <FeedbackIcon
                 state={fb.stateOf(`sendMsg:${sessionId}`)}
