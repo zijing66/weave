@@ -39,6 +39,7 @@ import { HooksPanel } from '@/components/HooksPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
+import { SequenceCanvas } from '@/components/tasks/SequenceCanvas';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
 import { Code2, PackageX } from 'lucide-react';
@@ -426,6 +427,14 @@ export function CategoryDetail({
           <GlobalTasksOverview projects={projects} onOpenSession={onOpenSession} />
         ) : (
           <TasksPanel projectId={projectId} initialSessionId={initialSessionId} />
+        ))}
+
+      {/* 编排：项目级 = 跨会话序列画布；全局级 = 占位（序列目标随项目会话走）。 */}
+      {category === 'orchestrate' &&
+        (isGlobal ? (
+          <p className="pt-6 text-center text-xs text-neutral-600">{t('orch.globalHint')}</p>
+        ) : (
+          <SequenceCanvas projectId={projectId} />
         ))}
 
       {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}

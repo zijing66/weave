@@ -8,10 +8,11 @@ import {
   Sparkles,
   Workflow,
   ListTodo,
+  Waypoints,
   type LucideIcon,
 } from 'lucide-react';
 
-export type MainCategory = 'files' | 'personalization' | 'tasks' | 'weave';
+export type MainCategory = 'files' | 'personalization' | 'tasks' | 'orchestrate' | 'weave';
 
 export const MAIN_CATEGORIES: {
   key: MainCategory;
@@ -20,6 +21,7 @@ export const MAIN_CATEGORIES: {
   icon: LucideIcon;
 }[] = [
   { key: 'tasks', labelKey: 'catbar.tasks', icon: ListTodo },
+  { key: 'orchestrate', labelKey: 'catbar.orchestrate', icon: Waypoints },
   // The count on this card is every file asset (skills, MCP, instructions,
   // settings, helpers …), so the label says 资源管理 rather than implying it
   // counts any one of them alone.
@@ -60,6 +62,9 @@ export function CategoryBar({
       case 'weave':
         return data.hooksRules;
       case 'tasks':
+        return data.sessions;
+      // 编排画布以会话为节点——计数同任务卡（项目会话数）。
+      case 'orchestrate':
         return data.sessions;
     }
   };
@@ -111,6 +116,7 @@ export function CategoryBar({
                 key === 'files' && 'text-purple-400',
                 key === 'personalization' && 'text-cyan-400',
                 key === 'tasks' && 'text-rose-400',
+                key === 'orchestrate' && 'text-teal-400',
                 key === 'weave' && 'text-amber-400',
               )}
             />

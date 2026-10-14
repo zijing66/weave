@@ -349,6 +349,28 @@ export interface SessionWatchRow {
   createdAt: string;
 }
 
+/** mirror of `SequenceStep` in packages/weave-server/src/repositories/session-sequences.ts。 */
+export interface SequenceStep {
+  to: string;
+  text: string;
+  mode: 'inject' | 'headless' | 'auto';
+  /** 步触发后回填的消息行 id（缺省 = 尚未触发）。 */
+  messageId?: number;
+}
+
+/** mirror of `SessionSequenceRow`（session_sequences 表行；steps 已解析为数组）。 */
+export interface SessionSequenceRow {
+  id: number;
+  name: string;
+  steps: SequenceStep[];
+  status: 'running' | 'done' | 'failed' | 'cancelled';
+  /** 正在等待完成的步下标；全落 = steps.length。 */
+  cursor: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LibraryRow {
   id: number;
   path: string;
@@ -1035,6 +1057,24 @@ export const api = {
       method: 'DELETE',
       body: JSON.stringify({ watchId }),
     }),
+  /** 跨会话序列列表（新在前；编排画布用，全项目共用一张表）。 */
+  listSessionSequences: (): Promise<SessionSequenceRow[]> =>
+    apiFetch<{ sequences: SessionSequenceRow[] }>('/messaging/sequences').then(
+      (r) => r.sequences,
+    ),
+  /** 触发序列（创建即执行步 0）。步数上限 3 = hop 上限、步级前置校验
+   *  （404 会话不在 / 409 无通道）由服务端把关，非 2xx 抛 Error（error 字段原文）。 */
+  createSequence: (body: {
+    name?: string;
+    steps: Array<{ to: string; text: string; mode?: 'inject' | 'headless' | 'auto' }>;
+  }): Promise<{ ok: boolean; sequence: SessionSequenceRow }> =>
+    apiFetch('/messaging/sequences', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 取消运行中的序列（非 running → 409 抛 Error）。 */
+  cancelSequence: (id: number): Promise<{ ok: boolean }> =>
+    apiFetch(`/messaging/sequences/${id}`, { method: 'DELETE' }),
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>

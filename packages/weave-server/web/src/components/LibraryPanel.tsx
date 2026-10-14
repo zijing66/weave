@@ -1097,6 +1097,8 @@ function categoryLabel(category: MainCategory, t: TFunc): string {
       return t('catbar.hooks');
     case 'tasks':
       return t('catbar.tasks');
+    case 'orchestrate':
+      return t('catbar.orchestrate');
   }
 }
 
