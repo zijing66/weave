@@ -548,6 +548,35 @@ describe('MessageDeliverer 裁决表', () => {
     expect(fake.children[0]!.stdin.writes[0]).toContain('[one-way]');
   });
 
+  it('中继不设超时：等多久都留在途中（等待发生在目标会话内，不得误判 timeout）', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeSpawn();
+      const killImpl = vi.fn();
+      const { surface } = relaySurface();
+      const deliverer = new MessageDeliverer(
+        makeDeps({ spawnImpl: fake.spawnImpl, killImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const result = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'long delivery',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      // 远超旧 120s 上限：不杀进程、状态仍是 delivering
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(killImpl).not.toHaveBeenCalled();
+      expect(deliverer.getMessage((result as { messageId: string }).messageId)!.status).toBe(
+        'delivering',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('prompt 层① 中继键 = 合成键：目标会话 headless 被占不挡中继', async () => {
     const fake = createFakeSpawn();
     const headless = new HeadlessRunner({ spawnImpl: fake.spawnImpl });

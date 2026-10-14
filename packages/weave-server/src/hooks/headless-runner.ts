@@ -41,7 +41,8 @@ export interface HeadlessRunInput {
   prompt: string;
   spec: ResumeCommandSpec;
   bin: string;
-  /** 单次超时（毫秒），超时强杀 → timeout。 */
+  /** 单次超时（毫秒），超时强杀 → timeout；**0 = 不设看门狗**（投递等待发生在
+   *  目标会话内的场景，如 prompt 中继——设上限只会把正常投递误判成 timeout）。 */
   timeoutMs?: number;
   onSettle: (result: HeadlessSettleResult) => void;
 }
@@ -164,23 +165,26 @@ export class HeadlessRunner {
       stderrBytes = push(stderrChunks, stderrBytes, chunk);
     });
 
-    const timer = setTimeout(() => {
-      if (child.pid !== undefined) {
-        try {
-          this.killImpl(child.pid);
-        } catch {
-          // 强杀失败也照落 timeout（进程可能已自行退出）
-        }
-      }
-      this.settle(input, state, {
-        status: 'timeout',
-        output: collectOutput(),
-        error: `Timeout after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            if (child.pid !== undefined) {
+              try {
+                this.killImpl(child.pid);
+              } catch {
+                // 强杀失败也照落 timeout（进程可能已自行退出）
+              }
+            }
+            this.settle(input, state, {
+              status: 'timeout',
+              output: collectOutput(),
+              error: `Timeout after ${timeoutMs}ms`,
+            });
+          }, timeoutMs)
+        : null;
 
     child.on('error', (err: Error) => {
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       this.settle(input, state, {
         status: 'failed',
         output: collectOutput(),
@@ -188,7 +192,7 @@ export class HeadlessRunner {
       });
     });
     child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       const output = collectOutput();
       if (code === 0) {
         this.settle(input, state, { status: 'succeeded', output, error: null });

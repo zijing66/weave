@@ -98,7 +98,8 @@ export interface MessageDelivererDeps {
   bin?: string;
   /** 无头回合超时（毫秒）；缺省 HeadlessRunner 默认 300s。 */
   timeoutMs?: number;
-  /** prompt 中继超时（毫秒）；缺省 120s。 */
+  /** prompt 中继超时（毫秒）；**缺省 0 = 不设超时**——投递的等待发生在目标
+   *  会话内（忙则等它下一拍 tool round 取走），设上限会把正常投递误判 timeout。 */
   relayTimeoutMs?: number;
   /** hooks 根目录（测试注入）；缺省 hooksRoot()。 */
   hooksDir?: string;
@@ -493,7 +494,7 @@ export class MessageDeliverer {
         prompt: relay.instruction(peerName, entry.text, { oneWay: entry.oneWay === true }),
         spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
-        timeoutMs: this.deps.relayTimeoutMs ?? 120_000,
+        timeoutMs: this.deps.relayTimeoutMs ?? 0,
         onSettle: (result) => this.settleRelay(entry.id, result),
       });
     } catch (err) {
