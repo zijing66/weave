@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api, type BrowseChild, type BrowseRoot } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import type { MessageKey } from '@/i18n/dict';
 import {
   Check,
@@ -281,7 +282,7 @@ export function DirectoryPickerModal({
               );
             })}
             {roots.length === 0 && (
-              <p className="px-2 py-2 text-[11px] text-neutral-500">{t('common.loading')}</p>
+              <SkeletonRows rows={8} className="p-0" />
             )}
           </aside>
 

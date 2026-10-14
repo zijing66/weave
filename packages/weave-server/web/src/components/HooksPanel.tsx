@@ -30,6 +30,7 @@ import {
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
@@ -822,7 +823,7 @@ export function HooksPanel({
             </div>
             <div className="space-y-2 px-3 pb-3">
               {rules === null ? (
-                <p className="py-2 text-center text-xs text-neutral-500">{t('hooks.loading')}</p>
+                <SkeletonRows rows={6} className="p-0" />
               ) : localRules.length === 0 ? (
                 <p className="py-2 text-center text-xs text-neutral-500">{t('hooks.rulesEmpty')}</p>
               ) : (

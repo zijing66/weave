@@ -69,6 +69,29 @@ export function SkeletonCards({
   );
 }
 
+/** 文本块骨架：文档/预览这类「一段一段文字」的形状（行宽随机收尾，像真段落）。 */
+export function SkeletonLines({
+  lines = 8,
+  className,
+}: {
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div className={cn('space-y-2 p-3', className)} aria-busy="true">
+      {Array.from({ length: lines }, (_, index) => (
+        <Skeleton
+          key={index}
+          className={cn(
+            'h-3',
+            index % 4 === 3 ? 'w-1/2' : index % 5 === 0 ? 'w-3/4' : 'w-full',
+          )}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** 主区骨架：分类栏 + 内容区一屏（首屏门用）。 */
 export function SkeletonMain() {
   return (
