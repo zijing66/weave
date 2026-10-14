@@ -75,7 +75,11 @@ export function SessionMessages({
   const fb = useActionFeedback();
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
-  const [mode, setMode] = useState<'auto' | 'inject' | 'headless'>('auto');
+  // 缺省 inject：开着的会话下一拍注入，未开的入队、随其下次 SessionStart 加载
+  // （inject 不支持的面回 auto——选项本身按能力门控，auto 恒在）。
+  const [mode, setMode] = useState<'auto' | 'inject' | 'headless'>(
+    capability.inject ? 'inject' : 'auto',
+  );
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
 

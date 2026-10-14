@@ -45,7 +45,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
-  'flag.msg.mode': 'Delivery mode: auto (default; busy → inject, idle → headless), inject (non-preemptive queue), headless (idle only, forces a turn)',
+  'flag.msg.mode': 'Delivery mode: inject (default; queued, loaded on the session next open), auto (busy → inject, idle → headless), headless (idle only, forces a turn)',
   'flag.msg.notify': 'Notice text injected into this session when the watch fires (server-rendered when omitted)',
   'flag.statusline.preview.project': 'Target project path (default: cwd)',
   // --- daemon command output ---

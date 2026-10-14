@@ -44,7 +44,7 @@ export const zh = {
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
-  'flag.msg.mode': '投递模式：auto（默认，忙→注入/闲→无头）、inject（忙排注入）、headless（闲投强开回合）',
+  'flag.msg.mode': '投递模式：inject（默认，注入/入队，未开的会话下次打开时加载）、auto（忙→注入/闲→无头）、headless（闲投强开回合）',
   'flag.msg.notify': 'watch 触发时注入本会话的通知文本（缺省服务端渲染）',
   'flag.statusline.preview.project': '目标项目路径（默认：当前目录）',
   // --- daemon 命令运行时输出 ---

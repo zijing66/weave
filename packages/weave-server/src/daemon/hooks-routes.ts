@@ -47,7 +47,8 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 
-/** 点对点消息投递：mode/fromKind 缺省 auto/dashboard；fromSessionId 会话间编排用。 */
+/** 点对点消息投递：mode/fromKind 缺省 inject/dashboard——手动发送不无头抢占，
+ * 未开的会话入 outbox 队列、随其下次 SessionStart 加载；fromSessionId 会话间编排用。 */
 const SendMessageBody = z.object({
   text: z.string().min(1).max(20_000),
   mode: z.enum(['inject', 'headless', 'auto']).optional(),
@@ -494,7 +495,7 @@ export async function handleHooksRoutes(
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,
         text: body.text,
-        mode: body.mode ?? 'auto',
+        mode: body.mode ?? 'inject',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,
       });

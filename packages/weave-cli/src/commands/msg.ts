@@ -251,7 +251,7 @@ async function replyAction(port: number, text: string): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  await sendAction(port, target, text, 'auto', fromSessionId);
+  await sendAction(port, target, text, 'inject', fromSessionId);
 }
 
 export const msgCommand: Command = {
@@ -281,7 +281,7 @@ export const msgCommand: Command = {
           description: 'flag.msg.mode',
           type: 'string',
           choices: ['auto', 'inject', 'headless'],
-          default: 'auto',
+          default: 'inject',
         },
       ],
       async action(ctx) {
@@ -294,7 +294,7 @@ export const msgCommand: Command = {
         }
         const handle = await ensureDaemonRunning();
         try {
-          await sendAction(handle.port, ref, text, String(ctx.flags.mode ?? 'auto'), mySessionId());
+          await sendAction(handle.port, ref, text, String(ctx.flags.mode ?? 'inject'), mySessionId());
         } catch (e) {
           logger.warn(t('out.msg.sendFail', { error: e instanceof Error ? e.message : String(e) }));
           process.exitCode = 1;
