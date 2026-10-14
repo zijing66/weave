@@ -1135,13 +1135,14 @@ function Dashboard() {
             >
               <Library className="h-4 w-4" />
             </button>
-            {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边 */}
+            {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边。
+                不挂 title：图标语义自明，悬停提示属噪音（保留 aria-label 供读屏）。 */}
             <a
               href={WEAVE_REPO_URL}
               target="_blank"
               rel="noreferrer"
+              aria-label="GitHub"
               className="ml-auto inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={t('app.githubTip')}
             >
               <Github className="h-4 w-4" />
               {stars !== null && (
