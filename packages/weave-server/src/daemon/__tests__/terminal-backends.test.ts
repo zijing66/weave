@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseLsofCwds,
+  parsePromptPaneId,
   parsePsRootPids,
   parseTerminalAppDump,
   parseTerminalAppTargetId,
   parseWtProcDump,
   parseWtTargetId,
   pickTerminalAppWindow,
+  promptTerminalChannel,
   resolveTerminalLaunch,
   SocketProbeGate,
   terminalAppTargets,
@@ -154,6 +156,55 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     const backend = terminalBackendFor(settings('cmd'));
     expect((await backend.countWindows(['/a', '/b'])).size).toBe(0);
     expect(await backend.listTargets('/a')).toEqual([]);
+  });
+
+  it('prompt 文本通道能力归后端：只有 wezterm（auto 在无 wezterm attach 的平台不亮）', () => {
+    expect(terminalBackendFor(settings('wezterm')).textAddressable).toBe(true);
+    expect(terminalBackendFor(settings('auto'), 'linux').textAddressable).toBe(true);
+    expect(terminalBackendFor(settings('auto'), 'win32').textAddressable).toBe(false);
+    expect(terminalBackendFor(settings('auto'), 'darwin').textAddressable).toBe(false);
+    for (const preset of [
+      'wt',
+      'powershell',
+      'cmd',
+      'terminal',
+      'iterm',
+      'gnome',
+      'konsole',
+      'ghostty',
+      'custom',
+    ] as const) {
+      expect(terminalBackendFor(settings(preset)).textAddressable, preset).toBe(false);
+    }
+  });
+
+  it('无文本通道的后端：枚举空表 + 注入明确拒绝（不静默谎报）', async () => {
+    const backend = terminalBackendFor(settings('wt'), 'win32');
+    await expect(backend.listPromptPanes()).resolves.toEqual([]);
+    await expect(backend.sendPromptText('deadbeef:7', 'hi')).rejects.toThrow(
+      'Terminal preset "wt" cannot send text into an open pane',
+    );
+  });
+
+  it('prompt pane id 解码：`<mux 短哈希>:<paneId>`；坏 id → null', () => {
+    expect(parsePromptPaneId('deadbeef:42')).toEqual({ muxKey: 'deadbeef', paneId: 42 });
+    expect(parsePromptPaneId('terminal:1:2')).toBeNull();
+    expect(parsePromptPaneId('deadbeef:x')).toBeNull();
+    expect(parsePromptPaneId(':7')).toBeNull();
+  });
+
+  it('promptTerminalChannel 适配器：随 settings 后端变化，available 不谎报、注入有明确拒绝', async () => {
+    let current = settings('wezterm');
+    const channel = promptTerminalChannel(() => current);
+    expect(channel.available()).toBe(true);
+
+    // 运行期换 preset：通道声明跟着变（能力矩阵同一拍感知）
+    current = settings('wt');
+    expect(channel.available()).toBe(false);
+    await expect(channel.listPanes()).resolves.toEqual([]);
+    await expect(channel.sendText('deadbeef:7', 'hi')).rejects.toThrow(
+      'Terminal preset "wt" cannot send text into an open pane',
+    );
   });
 
   it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {

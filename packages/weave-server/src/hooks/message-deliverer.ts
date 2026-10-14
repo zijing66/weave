@@ -6,6 +6,7 @@ import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
+import { normalizeDirKey } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
 import { appendOutbox, hooksRoot } from './mirror.js';
@@ -70,8 +71,10 @@ export interface PipeMessage {
 
 /** 终端 send-text 兜底通道（层②）：TerminalBackend 能力面的消费侧形状。 */
 export interface PromptTerminal {
-  /** 可注入 pane（id / 标题 / 工作目录）。 */
-  listPanes(): Promise<Array<{ id: string; title: string; cwd: string }>>;
+  /** 通道可用性（同步声明；装配侧随 settings 终端后端能力变化，能力矩阵取用）。 */
+  available(): boolean;
+  /** 可注入 pane（id / 标题 / 工作目录；取不到的字段为 null）。 */
+  listPanes(): Promise<Array<{ id: string; title: string | null; cwd: string | null }>>;
   /** 往 pane 注入一段 prompt（原文 + 提交键）。 */
   sendText(paneId: string, text: string): Promise<void>;
 }
@@ -238,7 +241,7 @@ export class MessageDeliverer {
 
   /** 层② 终端 send-text 通道是否装配（能力矩阵 prompt 列合成用）。 */
   hasTerminalChannel(): boolean {
-    return this.deps.terminal != null;
+    return this.terminalChannel() != null;
   }
 
   /** 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。 */
@@ -277,7 +280,7 @@ export class MessageDeliverer {
         this.memory.delete(msg.id);
         return;
       }
-      if (this.deps.terminal) {
+      if (this.terminalChannel()) {
         const pane = await this.terminalPaneFor(session, project);
         if (pane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
@@ -359,7 +362,7 @@ export class MessageDeliverer {
   ): ResolvedChannel | { reason: string } {
     if (mode === 'prompt') {
       if (surface.prompt) return 'prompt';
-      if (this.deps.terminal) return 'prompt';
+      if (this.terminalChannel()) return 'prompt';
       return {
         reason:
           surface.unsupportedReasons?.prompt ??
@@ -389,23 +392,36 @@ export class MessageDeliverer {
     );
   }
 
-  /** 层② pane 匹配：标题（剥 ✳ spinner 前缀）== 会话标题 且 cwd == 项目路径；歧义拒绝不打。 */
+  /** 层② pane 匹配：标题（剥 ✳ spinner 前缀）== 会话标题 且 cwd == 项目路径（归一比较）；歧义拒绝不打。 */
   private async terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
   ): Promise<{ id: string } | null> {
-    if (!this.deps.terminal || !session.title) return null;
+    const terminal = this.terminalChannel();
+    if (!terminal || !session.title) return null;
     const want = session.title.replace(/^[✳*]+\s*/, '');
-    let panes: Array<{ id: string; title: string; cwd: string }>;
+    const pathKey = normalizeDirKey(project.path, process.platform);
+    let panes: Array<{ id: string; title: string | null; cwd: string | null }>;
     try {
-      panes = await this.deps.terminal.listPanes();
+      panes = await terminal.listPanes();
     } catch {
       return null;
     }
     const hits = panes.filter(
-      (p) => p.title.replace(/^[✳*]+\s*/, '') === want && p.cwd === project.path,
+      (p) =>
+        p.title != null &&
+        p.cwd != null &&
+        pathKey != null &&
+        p.title.replace(/^[✳*]+\s*/, '') === want &&
+        normalizeDirKey(p.cwd, process.platform) === pathKey,
     );
-    return hits.length === 1 ? hits[0] : null;
+    return hits.length === 1 ? hits[0]! : null;
+  }
+
+  /** 层② 通道现取（available 是随 settings 变的诚实声明，不可缓存到构造期）。 */
+  private terminalChannel(): PromptTerminal | null {
+    const terminal = this.deps.terminal;
+    return terminal && terminal.available() ? terminal : null;
   }
 
   /** prompt 通道入口（send 的即时路径）：层① 命中即时中继，层② 异步找 pane，都不行入队。 */
@@ -424,7 +440,7 @@ export class MessageDeliverer {
       }
       // 同会话中继在途：落队列，下轮冲洗
       this.memory.delete(entry.id);
-    } else if (this.deps.terminal) {
+    } else if (this.terminalChannel()) {
       const pane = await this.terminalPaneFor(session, project);
       if (pane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering' });
@@ -505,8 +521,10 @@ export class MessageDeliverer {
   private async runTerminalPrompt(messageId: string, paneId: string, text: string): Promise<void> {
     const msg = this.memory.get(messageId);
     if (!msg) return;
+    const terminal = this.terminalChannel();
+    if (!terminal) return;
     try {
-      await this.deps.terminal!.sendText(paneId, text);
+      await terminal.sendText(paneId, text);
       this.memory.set(messageId, { ...msg, status: 'delivered' });
       this.bus({
         kind: 'message.delivered',

@@ -94,7 +94,27 @@ function osascriptRun(
 // 子类只填两处差异：候选表、以及流程真的不同的那个 preset（wezterm 的 run 必须走
 // mux 通道）。**枚举能力也归后端**：「这个 preset 能不能反查已开窗口」不再是调用方
 // 散写的 `preset === 'wezterm'` 白名单，而是后端覆没覆写那两个方法——不支持就走
-// 基类空实现（角标不显示，不谎报）。
+// 基类空实现（角标不显示，不谎报）。文本注入（prompt 层② send-text 兜底）同此：
+// `textAddressable` 即后端的诚实声明。
+
+/**
+ * prompt 层② 兜底的注入落点：后端枚举出的可打文本 pane。
+ * id 不透明、格式归各后端（wezterm = `<mux 短哈希>:<paneId>`）。
+ */
+export interface PromptPaneTarget {
+  id: string;
+  /** pane 标题（claude 的 OSC 标题）——与会话标题匹配的素材；取不到 = null。 */
+  title: string | null;
+  /** pane 实时工作目录；取不到 = null（匹配不上任何项目）。 */
+  cwd: string | null;
+}
+
+/** prompt pane id ↔ (mux, paneId) 解码；坏 id → null。 */
+export function parsePromptPaneId(id: string): { muxKey: string; paneId: number } | null {
+  const m = /^([0-9a-f]{8}):(\d+)$/.exec(id);
+  if (!m) return null;
+  return { muxKey: m[1]!, paneId: Number(m[2]) };
+}
 
 /** 终端后端基类。模板方法定义骨架，子类只填候选与真正不同的流程。 */
 export abstract class TerminalBackend {
@@ -103,6 +123,8 @@ export abstract class TerminalBackend {
     /** 能否反查已开窗口 / 可附加目标（默认否：不是每种终端都问得到）。 */
     readonly enumerable: boolean,
     protected readonly platform: NodeJS.Platform = process.platform,
+    /** 能否给已开 pane 注入文本（prompt 层② send-text 兜底；默认否，不谎报）。 */
+    readonly textAddressable: boolean = false,
   ) {}
 
   /** 启动候选（按序尝试，第一个起的算成功）；空 = 本平台不支持该 preset。 */
@@ -142,6 +164,18 @@ export abstract class TerminalBackend {
   async runAt(_dir: string, _argv: string[], _targetId: string): Promise<void> {
     throw new Error(
       `Terminal preset "${this.preset}" cannot attach to a chosen pane — pick wezterm, wt or Terminal.app in settings`,
+    );
+  }
+
+  /** prompt 层② 兜底：枚举可注入文本的 pane；无通道的后端空表（不谎报）。 */
+  async listPromptPanes(): Promise<PromptPaneTarget[]> {
+    return [];
+  }
+
+  /** prompt 层② 兜底：向枚举所得 pane 注入 prompt 原文并提交；无通道的后端明确拒绝。 */
+  async sendPromptText(_paneId: string, _text: string): Promise<void> {
+    throw new Error(
+      `Terminal preset "${this.preset}" cannot send text into an open pane — pick wezterm in settings`,
     );
   }
 
@@ -450,10 +484,10 @@ class TerminalAppBackend extends TerminalBackend {
   }
 }
 
-/** wezterm：run 走 mux 通道；窗口/pane 反查走 `cli list`。 */
+/** wezterm：run 走 mux 通道；窗口/pane 反查走 `cli list`；prompt 文本走 send-text。 */
 class WeztermBackend extends TerminalBackend {
   constructor(platform: NodeJS.Platform) {
-    super('wezterm', true, platform);
+    super('wezterm', true, platform, true);
   }
 
   candidates(dir: string, run?: string[]): TerminalLaunch[] {
@@ -490,6 +524,46 @@ class WeztermBackend extends TerminalBackend {
   override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
     return runInWeztermAt(dir, argv, targetId, this.platform);
   }
+
+  /** prompt 层②：跨 mux 摊平全部 pane（实时枚举——落点决策必须看实时世界）。 */
+  override async listPromptPanes(): Promise<PromptPaneTarget[]> {
+    const { muxes } = await weztermLiveMuxes();
+    return muxes.flatMap((mux) =>
+      mux.panes.map((p) => ({
+        id: `${weztermMuxKey(mux.socket)}:${p.paneId}`,
+        title: p.title,
+        cwd: p.cwd,
+      })),
+    );
+  }
+
+  /**
+   * prompt 层② 注入（spike 字节级实测配方）：bracketed paste 打原文（内含
+   * CR 是字面内容、不会被终端解释提交）→ `--no-paste` 补一记 CR 提交。mux
+   * 实时重枚举定位，目标没了 throw（消息转可见失败，不静默丢）。
+   */
+  override async sendPromptText(paneId: string, text: string): Promise<void> {
+    const parsed = parsePromptPaneId(paneId);
+    if (!parsed) throw new Error(`Invalid prompt pane "${paneId}"`);
+    const { muxes } = await weztermLiveMuxes();
+    const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
+    if (!mux) throw new Error('wezterm instance is gone — cannot deliver prompt');
+    const pane = String(parsed.paneId);
+    if (text) {
+      const pasted = await weztermCli(['cli', 'send-text', '--pane-id', pane, text], mux.socket);
+      if (!pasted?.ok) {
+        throw new Error(
+          weztermStepError(['cli', 'send-text', '--pane-id', pane, '<prompt text>'], mux.socket, pasted),
+        );
+      }
+    }
+    const submit = await weztermCli(['cli', 'send-text', '--pane-id', pane, '--no-paste', '\r'], mux.socket);
+    if (!submit?.ok) {
+      throw new Error(
+        weztermStepError(['cli', 'send-text', '--pane-id', pane, '--no-paste', '<CR>'], mux.socket, submit),
+      );
+    }
+  }
 }
 
 /** auto：把本平台的具名 preset 候选按序串起来（与具名条目同源）。 */
@@ -497,7 +571,9 @@ class AutoBackend extends TerminalBackend {
   private readonly parts: TerminalBackend[];
 
   constructor(platform: NodeJS.Platform) {
-    super('auto', true, platform);
+    // 文本通道随 attachBackend 走（win32=wt / darwin=Terminal.app 都没有，
+    // 其余平台是 wezterm）；候选序里本就没有 wezterm，darwin 除外逻辑同反查。
+    super('auto', true, platform, platform !== 'win32' && platform !== 'darwin');
     const order: Partial<Record<NodeJS.Platform, TerminalPreset[]>> = {
       win32: ['wt', 'powershell', 'cmd'],
       darwin: ['terminal', 'iterm'],
@@ -542,6 +618,14 @@ class AutoBackend extends TerminalBackend {
   override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
     return this.attachBackend().runAt(dir, argv, targetId);
   }
+
+  override listPromptPanes(): Promise<PromptPaneTarget[]> {
+    return this.attachBackend().listPromptPanes();
+  }
+
+  override sendPromptText(paneId: string, text: string): Promise<void> {
+    return this.attachBackend().sendPromptText(paneId, text);
+  }
 }
 
 const BACKEND_FACTORIES: Record<
@@ -569,6 +653,37 @@ export function terminalBackendFor(
   platform: NodeJS.Platform = process.platform,
 ): TerminalBackend {
   return (BACKEND_FACTORIES[terminal.preset] ?? BACKEND_FACTORIES.auto)(terminal, platform);
+}
+
+/**
+ * prompt 层② 兜底通道适配（MessageDeliverer 的 PromptTerminal 形状）：settings
+ * 每次调用重新取后端（preset 运行期可改），`textAddressable` 即「层② 可用」的
+ * 诚实声明——能力矩阵与投递裁决都经 available() 取用，不支持的 preset 不谎报。
+ */
+export function promptTerminalChannel(
+  settings: () => TerminalSettings,
+): {
+  available(): boolean;
+  listPanes(): Promise<PromptPaneTarget[]>;
+  sendText(paneId: string, text: string): Promise<void>;
+} {
+  const backendOf = () => terminalBackendFor(settings());
+  return {
+    available: () => backendOf().textAddressable,
+    listPanes: async () => {
+      const backend = backendOf();
+      return backend.textAddressable ? await backend.listPromptPanes() : [];
+    },
+    sendText: async (paneId, text) => {
+      const backend = backendOf();
+      if (!backend.textAddressable) {
+        throw new Error(
+          `Terminal preset "${backend.preset}" cannot send text into an open pane — pick wezterm in settings`,
+        );
+      }
+      await backend.sendPromptText(paneId, text);
+    },
+  };
 }
 
 /**
@@ -712,7 +827,7 @@ export function parseWeztermPanes(jsonText: string | null): WeztermPaneInfo[] {
 }
 
 /** file:/// URL/本地路径 → 规范比较键：统一斜杠、去尾斜杠，win 下压大小写。 */
-function normalizeDirKey(raw: string | null, platform: NodeJS.Platform): string | null {
+export function normalizeDirKey(raw: string | null, platform: NodeJS.Platform): string | null {
   if (!raw) return null;
   let s = raw;
   if (s.startsWith('file://')) {

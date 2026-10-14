@@ -586,6 +586,35 @@ describe('MessageDeliverer 裁决表', () => {
     void queued;
   });
 
+  it('终端通道注入但 available()=false（settings 换了不支持的后端）→ prompt 409、矩阵不亮', async () => {
+    const terminal: PromptTerminal = {
+      available: () => false,
+      listPanes: vi.fn(),
+      sendText: vi.fn(),
+    };
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => noNative, terminal }));
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+
+    expect(deliverer.hasTerminalChannel()).toBe(false);
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hi',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(terminal.listPanes).not.toHaveBeenCalled();
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
   it('prompt 层②：无原生面 + 终端通道——pane 标题（剥 spinner）+ cwd 匹配即注入；歧义拒绝', async () => {
     const sessions2 = sessions; // 标题挂在会话行上
     sessions.touch(SESSION_ID, projectId);
@@ -599,6 +628,7 @@ describe('MessageDeliverer 裁决表', () => {
     ];
     const sendText = vi.fn().mockResolvedValue(undefined);
     const terminal: PromptTerminal = {
+      available: () => true,
       listPanes: vi.fn().mockResolvedValue(panes),
       sendText,
     };
@@ -631,6 +661,7 @@ describe('MessageDeliverer 裁决表', () => {
 
     // 歧义（两个 pane 同标题同 cwd）→ 拒绝 → 入队
     const ambiguous: PromptTerminal = {
+      available: () => true,
       listPanes: vi.fn().mockResolvedValue([
         { id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH },
         { id: 'pane-3', title: 'msg-target', cwd: PROJECT_PATH },
@@ -655,6 +686,7 @@ describe('MessageDeliverer 裁决表', () => {
     let panes: Array<{ id: string; title: string; cwd: string }> = [];
     const sendText = vi.fn().mockResolvedValue(undefined);
     const terminal: PromptTerminal = {
+      available: () => true,
       listPanes: vi.fn().mockImplementation(async () => panes),
       sendText,
     };

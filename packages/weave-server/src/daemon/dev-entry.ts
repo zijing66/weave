@@ -35,7 +35,7 @@ import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
-import { readTerminalCounts } from './opener.js';
+import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
@@ -131,13 +131,15 @@ async function main(): Promise<void> {
     resumeSpec: harnesses.get('claude')?.resume,
     headless: headlessRunner,
   });
-  // 消息域（消息域重塑，与 start.ts 同装配）：纯递送管道 + 隐藏冲洗器。
+  // 消息域（消息域重塑，与 start.ts 同装配）：纯递送管道 + 隐藏冲洗器 +
+  // prompt 层② 终端兜底（随 settings 取后端）。
   const messageDeliverer = new MessageDeliverer({
     sessions: hookSessions,
     projects,
     hookEvents,
     bus: hookBus,
     headless: headlessRunner,
+    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。

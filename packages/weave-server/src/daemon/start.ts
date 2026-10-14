@@ -29,7 +29,7 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
-import { readTerminalCounts } from './opener.js';
+import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
@@ -145,12 +145,14 @@ export function startDaemon(): void {
   });
   // 消息域（消息域重塑）：纯递送管道——无 DB 依赖，pending 落 promptbox 文件、
   // 在途/终态在内存注册表；隐藏冲洗器周期试递（与 ingest 即时冲洗双触发）。
+  // prompt 层② 终端兜底随 settings 取后端（preset 运行期可改，可用性由后端诚实声明）。
   const messageDeliverer = new MessageDeliverer({
     sessions: hookSessions,
     projects,
     hookEvents,
     bus: hookBus,
     headless: headlessRunner,
+    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2：空闲订阅引擎（ingest 即时 fire + sweeper 补射）

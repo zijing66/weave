@@ -47,11 +47,11 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 
-/** 点对点消息投递（消息域重塑）：mode 缺省 prompt——原生中继/终端兜底/队列
- * 三层递送（绝不无头抢占）；inject/headless/auto 保留为编排域显式选项。 */
+/** 点对点消息投递（消息域重塑）：无模式入参——恒走 prompt 通道三层递送
+ * （默认 = 原生 SendMessage 中继 + 未开会话积压队列；降级 = 终端 send-text，
+ * 全自动）。inject/headless/auto 只活在编排域（序列步显式选项）。 */
 const SendMessageBody = z.object({
   text: z.string().min(1).max(20_000),
-  mode: z.enum(['prompt', 'inject', 'headless', 'auto']).optional(),
   fromKind: z.enum(['dashboard', 'session']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
 });
@@ -495,7 +495,7 @@ export async function handleHooksRoutes(
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,
         text: body.text,
-        mode: body.mode ?? 'auto',
+        mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,
       });

@@ -491,8 +491,9 @@ fromKind/fromSessionId 入参面保留（批 5 联邦转发正需）。
 
 > 「不对，我的会话消息是给会话发prompt，不是headless」
 > 模式收敛拍板：**prompt 缺省 + 三模式保留**（后经下两条收敛为：手动面
-> 仅 prompt，三模式留给编排域；再后用户改口「会话消息默认选自动」——
-> 手动面恢复模式选择、缺省 auto，见「手动弹窗模式选择」条）
+> 仅 prompt，三模式留给编排域；中途一度改口「默认选自动」，终局再收敛
+> 「前端不要选模式、按优先级自动完成、只有降级操作」——降级发生在
+> prompt 通道**内部**（层① → 层②），见「手动弹窗无模式选项」条）
 > 「会话消息不要入库，仅落本地文件，消息消费后就移除了」
 > 「会话消息选项记得清理」「claude 自身不是有 sendmessage 机制吗，不要
 > 通过 terminal 完成」
@@ -561,9 +562,13 @@ wezterm，还有 terminal、ghostty」）：
   ＋终端无通道原因）；未来 harness 自带等价机制 = 实现自己的 prompt 规格，
   server/web 零改动点亮。peer 注册表读取（sessionId→name/存活）是 harness
   知识，落 claude adapter。
-- **手动弹窗模式选择、缺省 auto**（用户 2026-10-15 后续改口「会话消息默认选
-  自动」，取代早先「无模式选项恒走 prompt」）：文本框 + 模式四选一
-  （auto/inject/headless/prompt），缺省 auto；路由 `body.mode` 缺省同为 auto。
+- **手动弹窗无模式选项**（用户定案「选项清理」+ 终局改口「前端不要选 auto
+  还是什么模式了，按照优先级自动完成，只有降级操作」「默认就是 sendmessage+
+  积压消息，降级时，通过 terminal send-text」）：纯文本框 + 发送，恒走
+  prompt 通道——默认 = 层① 原生 SendMessage 中继，会话没开 = 积压入
+  promptbox 队列；降级（无原生机制的 harness）= 层② 终端 send-text，
+  **全自动、无入参**（路由无 mode 字段）。inject/headless/auto 只活在
+  编排域（序列步显式选项），手动面 409 语义保留（层①② 皆无才置灰）。
 - **三模式保留（inject/headless/auto）为编排域显式选项**（序列步 / 画布
   连线 / watch notify），编排语义不变；序列步新增 prompt 模式（完成判据 =
   idle 推进，同 inject 口径）：
@@ -587,7 +592,7 @@ wezterm，还有 terminal、ghostty」）：
 **实施批次**：① prompt spike（已毕，结论如上）→ ② 存储切换（表退役 +
 promptbox + deliverer 管道化 + 中继 runner + peer 注册表 adapter + 层②
 send-text 兜底：TerminalBackend 文本通道能力 + wezterm 实现 + pane 映射 +
-队列双触发冲洗 + capabilities prompt 列）→ ③ web（弹窗模式选择缺省 auto +
+队列双触发冲洗 + capabilities prompt 列）→ ③ web（弹窗纯 prompt 发送 +
 在途视图 + 画布/序列模式选项加 prompt）→ ④ 序列引擎适配（内存步态 +
 interrupted 语义）。
 
