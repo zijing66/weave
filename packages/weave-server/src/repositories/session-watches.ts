@@ -77,26 +77,30 @@ export class SessionWatchRepository {
   }
 
   /**
-   * 命中一次（CAS）：持久化订阅只校验仍未落定；计数订阅原子减一，减到 0 同时落
-   * fired_at（失效）。返回 false = 已失效（并发方已吃掉最后一次 / 次数耗尽）——
-   * 调用方必须放弃副作用（防同批 Stop/SessionEnd 双事件双投递）。
+   * 命中一次（**单条原子 UPDATE**，跨连接也安全——inbox 消费线程持有第二个连接）：
+   * 计数订阅 `remaining = remaining - 1`，减到 0 当即落定；持久化订阅（remaining
+   * IS NULL）不消耗，只校验仍然有效。返回 null = 已失效（并发方吃掉最后一次 /
+   * 次数耗尽）——调用方必须放弃副作用（防同批 Stop/SessionEnd 双事件双投递）。
    */
   consumeHit(id: number): SessionWatchRow | null {
-    const row = this.getById(id);
-    if (!row || row.firedAt !== null) return null;
-    if (row.remaining === null) return row; // 持久化：不消耗
-    if (row.remaining <= 0) return null;
-    const next = row.remaining - 1;
-    const firedAt = next === 0 ? new Date().toISOString() : null;
-    const changes = Number(
+    const decremented = Number(
       this.db
         .prepare(
-          `UPDATE session_watches SET remaining = ?, fired_at = ?
-           WHERE id = ? AND fired_at IS NULL AND remaining = ?`,
+          `UPDATE session_watches SET remaining = remaining - 1
+           WHERE id = ? AND fired_at IS NULL AND remaining > 0`,
         )
-        .run(next, firedAt, id, row.remaining).changes,
+        .run(id).changes,
     );
-    return changes === 1 ? { ...row, remaining: next, firedAt } : null;
+    if (decremented === 1) {
+      // 减到 0 = 次数用尽：同刻落定（条件更新天然幂等，并发只赢一次）
+      this.db
+        .prepare('UPDATE session_watches SET fired_at = ? WHERE id = ? AND remaining = 0 AND fired_at IS NULL')
+        .run(new Date().toISOString(), id);
+      return this.getById(id) ?? null;
+    }
+    // 未走计数路径：持久化订阅（remaining IS NULL，`NULL > 0` 不成立）仍算命中
+    const row = this.getById(id);
+    return row && row.remaining === null && row.firedAt === null ? row : null;
   }
 
   deleteById(id: number): boolean {

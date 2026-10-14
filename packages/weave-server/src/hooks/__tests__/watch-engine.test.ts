@@ -378,7 +378,7 @@ describe('SessionWatchRepository（in-memory 直覆盖）', () => {
     expect(watches.listPending()).toHaveLength(1);
   });
 
-  it('consumeHit：计数订阅逐次减一、归零落 fired_at；持久化（null）永不落定', () => {
+  it('consumeHit：单条 UPDATE 原子减一、归零落 fired_at；持久化（null）永不落定', () => {
     const counted = watches.insert({
       watcherSessionId: null,
       targetSessionId: 'a',
@@ -391,6 +391,8 @@ describe('SessionWatchRepository（in-memory 直覆盖）', () => {
     expect(last!.firedAt).not.toBeNull(); // 最后一次同时落定
     expect(watches.consumeHit(counted.id)).toBeNull();
     expect(watches.getById(counted.id)?.firedAt).not.toBeNull();
+    // 原子性：并发已落定的行，重复命中不会把 remaining 扣成负数
+    expect(watches.getById(counted.id)?.remaining).toBe(0);
 
     const forever = watches.insert({
       watcherSessionId: null,

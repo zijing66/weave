@@ -134,7 +134,9 @@ export function WatchPicker({
         {/* 提醒次数：数字 = 命中该次数后失效（所有已选类型共用一个计数）；
             勾了「持久化」= 不自动失效。 */}
         <div className="mt-3 flex items-center gap-2 border-t border-white/[0.06] pt-2.5">
-          <span className="text-[11px] text-neutral-400">{t('tasks.watchTimes')}</span>
+          <span className="text-[11px] text-neutral-400">
+            {t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
+          </span>
           <input
             type="number"
             min={1}

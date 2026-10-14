@@ -247,18 +247,25 @@ export function SessionList({
                         )}
                       </button>
                     )}
-                    {/* 会话提醒订阅（one-shot）：点开选触发类型 → 订阅下一条命中的
-                        消息（命中即提醒并失效）。已有订阅 = 铃铛亮起（amber），
-                        点开可取消；fire 后行消失、铃铛自然回空。 */}
+                    {/* 会话提醒订阅：点开选触发类型 + 次数 → 订阅下一条命中的消息。
+                        已有订阅 = 铃铛亮起（amber）+ 角标显示**剩余次数**（持久化显
+                        ∞）——每 fire 一次刷新即减一，不是初始配置的次数；
+                        次数用尽订阅消失、铃铛自然回空。 */}
                     {cap?.watch && (
                       <button
                         type="button"
-                        title={watch ? t('tasks.watchActiveTooltip') : t('tasks.watchTooltip')}
+                        title={
+                          watch
+                            ? t('tasks.watchActiveTooltip', {
+                                n: watch.remaining === null ? '∞' : String(watch.remaining),
+                              })
+                            : t('tasks.watchTooltip')
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
                           setWatchPickerFor(s.sessionId);
                         }}
-                        className={ACTION_BTN}
+                        className={cn(ACTION_BTN, 'relative')}
                       >
                         <FeedbackIcon
                           state={watchStateOf?.(s.sessionId) ?? 'idle'}
@@ -271,6 +278,14 @@ export function SessionList({
                             )
                           }
                         />
+                        {watch && (
+                          <span
+                            aria-hidden
+                            className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                          >
+                            {watch.remaining === null ? '∞' : watch.remaining}
+                          </span>
+                        )}
                       </button>
                     )}
                     <button
