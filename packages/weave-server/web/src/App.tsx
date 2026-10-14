@@ -528,9 +528,18 @@ function Dashboard() {
           ) {
             const row = allSessions?.find((s) => s.sessionId === frame.targetSessionId);
             const label = sessionLabel(row?.title ?? null, frame.targetSessionId);
-            show('info', t('tasks.watchOn', { label }));
+            // 正文按命中的触发类型措辞（session_watches.onEvents 的那一项）
+            const body = t(
+              frame.reason === 'turnEnd'
+                ? 'tasks.watchTurnEnd'
+                : frame.reason === 'messageFailed'
+                  ? 'tasks.watchMsgFailed'
+                  : 'tasks.watchOn',
+              { label },
+            );
+            show('info', body);
             // toast 之外补系统通知：标签页切走/最小化时 toast 看不见，通知才叫「提醒」
-            notifyBrowser(t('tasks.watchNotifyTitle'), t('tasks.watchOn', { label }));
+            notifyBrowser(t('tasks.watchNotifyTitle'), body);
           }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;

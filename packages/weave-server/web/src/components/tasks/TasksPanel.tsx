@@ -8,6 +8,7 @@ import {
   type MessagingCapability,
   type SessionWatchRow,
   type TerminalTarget,
+  type WatchOn,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
@@ -51,7 +52,13 @@ export function TasksPanel({
   const t = useT();
   const { show } = useToast();
   const fb = useActionFeedback();
-  const { sessions: allSessions, dispatches, statuses, refresh: refreshStatus } = useSessionStatus();
+  const {
+    sessions: allSessions,
+    dispatches,
+    statuses,
+    inflight: inflightCounts,
+    refresh: refreshStatus,
+  } = useSessionStatus();
   // <lg 两屏走查：列表态 ⇄ 事件链全屏态（点会话进、收起回），桌面恒双栏 inline。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [chainOpen, setChainOpen] = useState(false);
@@ -155,30 +162,43 @@ export function TasksPanel({
     [dashboardWatches],
   );
   const watchStateOf = useCallback((sessionId: string) => fb.stateOf(`watch:${sessionId}`), [fb]);
-  const onToggleWatch = useCallback(
-    (sessionId: string): void => {
-      const existing = dashboardWatches.get(sessionId);
+  /** 在途消息条数（总线 push 快照）：会话行消息图标的 amber + 角标。 */
+  const inflightOf = useCallback(
+    (sessionId: string) => inflightCounts.get(sessionId) ?? 0,
+    [inflightCounts],
+  );
+  const onSubscribeWatch = useCallback(
+    (sessionId: string, on: WatchOn[], times: number | null): void => {
       void fb.run(
         `watch:${sessionId}`,
         async () => {
-          if (existing) {
-            await api.deleteSessionWatch(sessionId, existing.id);
-          } else {
-            // 订阅 = 用户手势：此刻申请通知权限（须在手势里，浏览器才弹窗）。
-            // 拒绝/不支持则退化为页面内 toast——明确告知，不静默降级。
-            const granted = await ensureNotifyPermission();
-            if (!granted) show('info', t('tasks.notifyDenied'));
-            await api.createSessionWatch(sessionId);
-          }
+          // 订阅 = 用户手势：此刻申请通知权限（须在手势里，浏览器才弹窗）。
+          // 拒绝/不支持则退化为页面内 toast——明确告知，不静默降级。
+          const granted = await ensureNotifyPermission();
+          if (!granted) show('info', t('tasks.notifyDenied'));
+          await api.createSessionWatch(sessionId, { on, times });
           refreshWatches();
         },
-        {
-          fail: (e) =>
-            t(existing ? 'tasks.unwatchFailed' : 'tasks.watchFailed', { error: errorText(e) }),
-        },
+        { fail: (e) => t('tasks.watchFailed', { error: errorText(e) }) },
       );
     },
-    [fb, t, show, dashboardWatches, refreshWatches],
+    [fb, t, show, refreshWatches],
+  );
+
+  const onUnwatch = useCallback(
+    (sessionId: string): void => {
+      const existing = dashboardWatches.get(sessionId);
+      if (!existing) return;
+      void fb.run(
+        `watch:${sessionId}`,
+        async () => {
+          await api.deleteSessionWatch(sessionId, existing.id);
+          refreshWatches();
+        },
+        { fail: (e) => t('tasks.unwatchFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, dashboardWatches, refreshWatches],
   );
 
   // watch.fired 帧：订阅落定（fire 即失效）→ 重拉订阅面，铃铛归位。
@@ -862,9 +882,11 @@ export function TasksPanel({
             openTerminalStateOf={openTerminalStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
+            inflightOf={inflightOf}
             watchOf={watchOf}
             watchStateOf={watchStateOf}
-            onToggleWatch={onToggleWatch}
+            onSubscribeWatch={onSubscribeWatch}
+            onUnwatch={onUnwatch}
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
           />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { type SessionRow, type SessionWatchRow, type MessagingCapability } from '@/lib/api';
+import { type SessionRow, type SessionWatchRow, type MessagingCapability, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
@@ -11,6 +11,7 @@ import { Bell, BellRing, Check, Copy, MessageSquareText, Pencil, SquareTerminal,
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
+import { WatchPicker } from './WatchPicker';
 import { SessionStatusIcon } from './SessionStatusIcon';
 
 /** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
@@ -34,9 +35,11 @@ export function SessionList({
   openTerminalStateOf,
   capabilities,
   onOpenMessages,
+  inflightOf,
   watchOf,
   watchStateOf,
-  onToggleWatch,
+  onSubscribeWatch,
+  onUnwatch,
   onDelete,
   deleteStateOf,
 }: {
@@ -55,18 +58,24 @@ export function SessionList({
   capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
   /** 打开该会话的消息线程（弹窗内投递/查看）。 */
   onOpenMessages: (sessionId: string) => void;
+  /** 该会话在途消息条数（服务端 SSE push 快照）——有则消息图标转 amber + 角标。 */
+  inflightOf: (sessionId: string) => number;
   /** 该会话当前的 pending 订阅行（无 = 未订阅）。 */
   watchOf?: (sessionId: string) => SessionWatchRow | undefined;
   /** 订阅按钮的反馈态（loading → ✅ → 还原）。 */
   watchStateOf?: (sessionId: string) => ActionState;
-  /** 订阅/取消订阅（one-shot：fire 即失效）。 */
-  onToggleWatch: (sessionId: string) => void;
+  /** 订阅（类型集 + 次数在弹窗里选；times null = 持久化）。 */
+  onSubscribeWatch: (sessionId: string, on: WatchOn[], times: number | null) => void;
+  /** 取消订阅。 */
+  onUnwatch: (sessionId: string) => void;
   /** 删除该会话（含事件与派发；调用方负责确认与报错）。 */
   onDelete: (sessionId: string) => void;
   /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
   deleteStateOf?: (sessionId: string) => ActionState;
 }) {
   const t = useT();
+  /** 提醒订阅弹窗目标（null = 关）。 */
+  const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -101,7 +110,7 @@ export function SessionList({
         const selected = s.sessionId === selectedId;
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
         const watch = watchOf?.(s.sessionId);
-        const inflight = s.inflight ?? 0;
+        const inflight = inflightOf(s.sessionId);
         return (
           <li key={s.sessionId}>
             <div
@@ -238,15 +247,16 @@ export function SessionList({
                         )}
                       </button>
                     )}
-                    {/* 空闲订阅（one-shot）：门控同上表 watch 位。已有订阅 = 铃铛
-                        亮起（amber），再点取消；fire 后行消失、铃铛自然回空。 */}
+                    {/* 会话提醒订阅（one-shot）：点开选触发类型 → 订阅下一条命中的
+                        消息（命中即提醒并失效）。已有订阅 = 铃铛亮起（amber），
+                        点开可取消；fire 后行消失、铃铛自然回空。 */}
                     {cap?.watch && (
                       <button
                         type="button"
                         title={watch ? t('tasks.watchActiveTooltip') : t('tasks.watchTooltip')}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onToggleWatch(s.sessionId);
+                          setWatchPickerFor(s.sessionId);
                         }}
                         className={ACTION_BTN}
                       >
@@ -332,6 +342,27 @@ export function SessionList({
           </li>
         );
       })}
+      {watchPickerFor && (
+        <WatchPicker
+          label={
+            sessionLabel(
+              sessions.find((s) => s.sessionId === watchPickerFor)?.title ?? null,
+              watchPickerFor,
+            )
+          }
+          current={watchOf?.(watchPickerFor) ?? null}
+          busy={watchStateOf?.(watchPickerFor) === 'loading'}
+          onSubscribe={(on, times) => {
+            setWatchPickerFor(null);
+            onSubscribeWatch(watchPickerFor, on, times);
+          }}
+          onUnwatch={() => {
+            setWatchPickerFor(null);
+            onUnwatch(watchPickerFor);
+          }}
+          onClose={() => setWatchPickerFor(null)}
+        />
+      )}
     </ul>
   );
 }

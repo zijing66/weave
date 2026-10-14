@@ -292,8 +292,6 @@ export interface SessionRow {
   lastEventType?: string | null;
   /** claude 注册表判活：false=进程确死（判 terminated）；null=查不到登记（codex 等）不猜。 */
   pidAlive?: boolean | null;
-  /** 在途消息条数（服务端管道口径：队列 pending ∪ 内存 delivering/running）——行角标用。 */
-  inflight?: number;
 }
 
 /** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
@@ -350,12 +348,19 @@ export interface MessagingCapability {
   > | null;
 }
 
+/** mirror of `WatchOn` in packages/weave-server/src/repositories/session-watches.ts。 */
+export type WatchOn = 'idle' | 'turnEnd' | 'messageFailed';
+
 /** mirror of `SessionWatchRow` in packages/weave-server/src/repositories/session-watches.ts。 */
 export interface SessionWatchRow {
   id: number;
   /** null = dashboard 订阅（本面板创建的都是 null）。 */
   watcherSessionId: string | null;
   targetSessionId: string;
+  /** 触发类型集（订阅时选；缺省 ['idle']）。 */
+  onEvents: WatchOn[];
+  /** 剩余提醒次数（所有已选类型共用）；null = 持久化。 */
+  remaining: number | null;
   notify: string | null;
   /** null = pending；fire 后行不再出现在列表（one-shot）。 */
   firedAt: string | null;
@@ -1056,10 +1061,15 @@ export const api = {
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>
     apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),
-  /** 订阅空闲提醒（one-shot：fire 即失效）。非 2xx（目标不支持/会话不在）抛 Error。 */
+  /** 订阅会话提醒；`on` = 触发类型集，`times` = 提醒次数（null = 持久化）。非 2xx 抛 Error。 */
   createSessionWatch: (
     sessionId: string,
-    body: { watcherSessionId?: string | null; notify?: string | null } = {},
+    body: {
+      watcherSessionId?: string | null;
+      notify?: string | null;
+      on?: WatchOn[];
+      times?: number | null;
+    } = {},
   ): Promise<{ ok: boolean; watchId: number; watch: SessionWatchRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/watch`, {
       method: 'POST',

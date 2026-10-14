@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, type HookDispatch, type SessionRow } from '@/lib/api';
+import { subscribeSse } from '@/lib/sse';
 import {
   countSessionsByHarness,
   deriveSessionStatus,
@@ -49,6 +50,8 @@ interface SessionStatusValue {
   projectStats: Map<number, HarnessSessionCounts[]>;
   /** 最近一次拉取失败的原因（成功即清空）；派发拉取失败不算错（状态降级即可）。 */
   error: string | null;
+  /** sessionId → 在途消息条数（服务端 push 'inflightCounts' 的绝对值快照）。 */
+  inflight: Map<string, number>;
   /** 手动重拉（刷新按钮；SSE 之外兜底）。 */
   refresh: () => Promise<void>;
 }
@@ -71,6 +74,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
    *  自身事件续期，Stop/SubagentStop 的 background_tasks 快照整集对账；
    *  读取侧 STALE_SUBAGENT_MS 兜底。回合开合不用帧态——以服务端 turnOpen 为权威。 */
   const [subagents, setSubagents] = useState<Map<string, Map<string, number>>>(new Map());
+  /** 在途消息角标（后端 push 的绝对值快照；漏帧由下一次推自我校正）。 */
+  const [inflight, setInflight] = useState<Map<string, number>>(new Map());
 
   const refresh = useCallback(async () => {
     const [s, d] = await Promise.allSettled([
@@ -90,6 +95,17 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
+  useEffect(
+    () =>
+      subscribeSse((frame) => {
+        if (frame.type !== 'push' || frame.key !== 'inflightCounts') return;
+        const counts = (frame.payload as { counts: Record<string, number> }).counts ?? {};
+        setInflight(new Map(Object.entries(counts)));
+      }),
+    [],
+  );
 
   useEffect(() => {
     let timer: number | null = null;
@@ -244,8 +260,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   }, [sessions, statuses]);
 
   const value = useMemo<SessionStatusValue>(
-    () => ({ sessions, dispatches, statuses, projectStats, error, refresh }),
-    [sessions, dispatches, statuses, projectStats, error, refresh],
+    () => ({ sessions, dispatches, statuses, projectStats, error, inflight, refresh }),
+    [sessions, dispatches, statuses, projectStats, error, inflight, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
