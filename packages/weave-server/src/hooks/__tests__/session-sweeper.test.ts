@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
@@ -103,5 +103,17 @@ describe('SessionSweeper.sweep', () => {
     );
     clearInterval(sweeper.start());
     expect(sessions.getBySessionId('a-boot')).toBeUndefined();
+  });
+
+  it('清空循环之后挂空闲订阅补射（批 2：同 tick 释放刚清掉会话的 pending watch）', () => {
+    const sweepTerminated = vi.fn(() => 0);
+    const sweeper = new SessionSweeper({
+      sessions,
+      events,
+      dispatches,
+      watchEngine: { sweepTerminated },
+    });
+    expect(sweeper.sweep()).toBe(0);
+    expect(sweepTerminated).toHaveBeenCalledTimes(1);
   });
 });

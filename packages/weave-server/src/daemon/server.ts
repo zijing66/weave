@@ -19,7 +19,9 @@ import type { DataBus } from './data-bus.js';
 import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionMessageRepository } from '../repositories/session-messages.js';
+import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
@@ -159,6 +161,10 @@ export interface WeaveServerDeps {
   sessionMessages?: SessionMessageRepository;
   /** 消息投递器（裁决表 + 双通道）；POST /sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
+  /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
+  sessionWatches?: SessionWatchRepository;
+  /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */
+  watchEngine?: Pick<WatchEngine, 'created'>;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
@@ -1324,8 +1330,9 @@ async function handleRequest(
     }
     const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
-    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）
+    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）；订阅同形
     const messages = deps.sessionMessages?.deleteByProject(project.id) ?? 0;
+    deps.sessionWatches?.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);
     purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);

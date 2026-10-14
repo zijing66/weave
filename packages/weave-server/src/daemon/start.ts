@@ -17,6 +17,8 @@ import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SessionMessageRepository } from '../repositories/session-messages.js';
+import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { WatchEngine } from '../hooks/watch-engine.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -139,6 +141,14 @@ export function startDaemon(): void {
     bus: hookBus,
     headless: headlessRunner,
   });
+  // session-orchestration 批 2：空闲订阅引擎（ingest 即时 fire + sweeper 补射）
+  const sessionWatches = new SessionWatchRepository(db);
+  const watchEngine = new WatchEngine({
+    watches: sessionWatches,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -164,6 +174,7 @@ export function startDaemon(): void {
     events: hookEvents,
     dispatches: hookDispatches,
     messages: sessionMessages,
+    watchEngine,
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
@@ -172,6 +183,7 @@ export function startDaemon(): void {
     sessions: hookSessions,
     bus: hookBus,
     dispatcher: hookDispatcher,
+    watchEngine,
   });
   const staticDir = resolveStaticDir();
 
@@ -195,6 +207,8 @@ export function startDaemon(): void {
     hookRunner,
     sessionMessages,
     messageDeliverer,
+    sessionWatches,
+    watchEngine,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

@@ -16,7 +16,7 @@ import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
-import { messagingSurfaces } from '../surfaces.js';
+import { messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -53,6 +53,14 @@ const SendMessageBody = z.object({
   fromKind: z.enum(['dashboard', 'session', 'cli']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
 });
+
+/** 空闲订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast）。 */
+const CreateWatchBody = z.object({
+  watcherSessionId: z.string().min(1).nullable().optional(),
+  notify: z.string().min(1).max(20_000).nullable().optional(),
+});
+
+const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
 
 const InstallBody = z.object({ src: z.string().min(1) });
 
@@ -346,6 +354,7 @@ export async function handleHooksRoutes(
         events: deps.hookEvents,
         dispatches: deps.hookDispatches,
         messages: deps.sessionMessages,
+        watches: deps.sessionWatches,
       },
       sessionId,
     );
@@ -482,6 +491,109 @@ export async function handleHooksRoutes(
       }
       return true;
     }
+  }
+
+  // ---- 空闲订阅域（session-orchestration 批 2）：one-shot「空闲时提醒我」 ----
+  const watchMatch = pathname.match(/^\/sessions\/([^/]+)\/watch$/);
+  if (watchMatch) {
+    const sessionId = decodeURIComponent(watchMatch[1]!);
+    if (req.method === 'POST') {
+      if (!deps.sessionWatches || !deps.hookSessions || !deps.hookEvents) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      let body: z.infer<typeof CreateWatchBody>;
+      try {
+        body = CreateWatchBody.parse(await readJson(req));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+        return true;
+      }
+      const target = deps.hookSessions.getBySessionId(sessionId);
+      if (!target) {
+        sendJson(res, 404, { error: 'Session not found' });
+        return true;
+      }
+      // 目标 harness = 最新事件 source（与 open-terminal / 消息投递同口径）
+      const latest = deps.hookEvents.listBySession(sessionId, 1);
+      const targetSrc = latest[latest.length - 1]?.source;
+      if (!isHarness(targetSrc)) {
+        sendJson(res, 400, { error: 'Session has no hook events to determine its harness' });
+        return true;
+      }
+      const targetSurface = messagingSurfaceFor(targetSrc);
+      if (targetSurface.idleSignals.length === 0) {
+        sendJson(
+          res,
+          409,
+          { error: targetSurface.unsupportedReasons?.watch ?? `Harness "${targetSrc}" does not support idle watching` },
+        );
+        return true;
+      }
+      // 会话订阅方：通知注入它的 inject 通道必须在场（否则 fire 时必然无声丢弃）
+      if (body.watcherSessionId) {
+        const watcher = deps.hookSessions.getBySessionId(body.watcherSessionId);
+        if (!watcher) {
+          sendJson(res, 404, { error: 'Watcher session not found' });
+          return true;
+        }
+        const watcherLatest = deps.hookEvents.listBySession(body.watcherSessionId, 1);
+        const watcherSrc = watcherLatest[watcherLatest.length - 1]?.source;
+        if (!isHarness(watcherSrc)) {
+          sendJson(res, 400, { error: 'Watcher session has no hook events to determine its harness' });
+          return true;
+        }
+        const watcherSurface = messagingSurfaceFor(watcherSrc);
+        if (!watcherSurface.inject) {
+          sendJson(
+            res,
+            409,
+            { error: watcherSurface.unsupportedReasons?.inject ?? `Harness "${watcherSrc}" cannot receive watch notifications` },
+          );
+          return true;
+        }
+      }
+      const watch = deps.sessionWatches.insert({
+        watcherSessionId: body.watcherSessionId ?? null,
+        targetSessionId: sessionId,
+        notify: body.notify ?? null,
+      });
+      // 目标此刻已空闲 → 立即 fire（不等下一拍；one-shot 语义即「答案就是现在」）
+      deps.watchEngine?.created(watch);
+      sendJson(res, 201, { ok: true, watchId: watch.id, watch });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      if (!deps.sessionWatches) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      let body: z.infer<typeof DeleteWatchBody>;
+      try {
+        body = DeleteWatchBody.parse(await readJson(req));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+        return true;
+      }
+      const row = deps.sessionWatches.getById(body.watchId);
+      if (!row || row.targetSessionId !== sessionId || row.firedAt !== null) {
+        sendJson(res, 404, { error: 'Watch not found' });
+        return true;
+      }
+      deps.sessionWatches.deleteById(body.watchId);
+      sendJson(res, 200, { ok: true, watchId: body.watchId });
+      return true;
+    }
+  }
+
+  // ---- 订阅面查询：pending 全量（web 按 watcherSessionId 过滤 dashboard 行） ----
+  if (pathname === '/messaging/watches' && req.method === 'GET') {
+    if (!deps.sessionWatches) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    sendJson(res, 200, { watches: deps.sessionWatches.listPending() });
+    return true;
   }
 
   // ---- 能力矩阵：纯派生自 MessagingSurface（无第二事实源），web 按表渲染徽标 ----

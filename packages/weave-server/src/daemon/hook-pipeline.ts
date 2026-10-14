@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { getDbPath } from '../db/paths.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
+import type { WatchEngine } from '../hooks/watch-engine.js';
 import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
 import {
   startInboxWorker,
@@ -22,6 +23,8 @@ export interface HookPipelineDeps {
   sessions: SessionRepository;
   bus: HookEventBus;
   dispatcher: HookDispatcher;
+  /** 空闲订阅引擎（批 2）：透传给 handleIngestedRecords（与 dispatcher 平行触发）。 */
+  watchEngine?: Pick<WatchEngine, 'onEvent'>;
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox）。 */
@@ -130,7 +133,13 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
   const worker = startInboxWorker({ dbPath: getDbPath(), hooksDir });
   worker.on('message', (records: InboxRecord[]) => {
     handleIngestedRecords(
-      { projects: deps.projects, hooksDir, bus: deps.bus, dispatcher: deps.dispatcher },
+      {
+        projects: deps.projects,
+        hooksDir,
+        bus: deps.bus,
+        dispatcher: deps.dispatcher,
+        watchEngine: deps.watchEngine,
+      },
       records,
     );
   });

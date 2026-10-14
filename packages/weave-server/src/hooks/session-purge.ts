@@ -1,6 +1,7 @@
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { SessionMessageRepository } from '../repositories/session-messages.js';
+import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 
 export interface SessionPurgeDeps {
@@ -9,6 +10,8 @@ export interface SessionPurgeDeps {
   dispatches?: Pick<HookDispatchRepository, 'deleteBySession'>;
   /** 消息域（session-orchestration 批 1）：双向（收/发）线程一并清。 */
   messages?: Pick<SessionMessageRepository, 'deleteBySession'>;
+  /** 空闲订阅（批 2）：目标或订阅方任一指向该会话的行一并清（不计数）。 */
+  watches?: Pick<SessionWatchRepository, 'deleteBySession'>;
 }
 
 /**
@@ -22,6 +25,7 @@ export function purgeSession(
   const events = deps.events.deleteBySession(sessionId);
   const dispatches = deps.dispatches?.deleteBySession(sessionId) ?? 0;
   const messages = deps.messages?.deleteBySession(sessionId) ?? 0;
+  deps.watches?.deleteBySession(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };
 }

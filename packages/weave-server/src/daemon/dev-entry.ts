@@ -22,6 +22,8 @@ import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SessionMessageRepository } from '../repositories/session-messages.js';
+import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { WatchEngine } from '../hooks/watch-engine.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -129,6 +131,14 @@ async function main(): Promise<void> {
     bus: hookBus,
     headless: headlessRunner,
   });
+  // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
+  const sessionWatches = new SessionWatchRepository(db);
+  const watchEngine = new WatchEngine({
+    watches: sessionWatches,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
   const watch = new WatchService(projects);
   watch.start();
   // 数据变更帧总线 + 终端角标隐藏刷新：前端不再轮询角标，改由后端「有人看时每
@@ -147,6 +157,7 @@ async function main(): Promise<void> {
     events: hookEvents,
     dispatches: hookDispatches,
     messages: sessionMessages,
+    watchEngine,
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
@@ -155,6 +166,7 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     bus: hookBus,
     dispatcher: hookDispatcher,
+    watchEngine,
   });
   const staticDir = resolveStaticDir();
 
@@ -177,6 +189,8 @@ async function main(): Promise<void> {
     hookRunner,
     sessionMessages,
     messageDeliverer,
+    sessionWatches,
+    watchEngine,
     hookPlugins,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

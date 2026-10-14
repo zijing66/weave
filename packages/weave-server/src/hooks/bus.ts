@@ -61,6 +61,16 @@ export type HookBusMessage =
       sessionId: string;
       status: 'succeeded' | 'failed' | 'timeout';
       at: string;
+    }
+  // ---- 空闲订阅域（session-orchestration 批 2）：one-shot fire 广播 ----
+  // watcher null = dashboard 订阅（web toast）；有值 = 会话订阅（通知已走消息域注入，
+  // 该会话的线程会另收 message.* 帧）。
+  | {
+      kind: 'watch.fired';
+      watchId: number;
+      targetSessionId: string;
+      watcherSessionId: string | null;
+      at: string;
     };
 
 export class HookEventBus {

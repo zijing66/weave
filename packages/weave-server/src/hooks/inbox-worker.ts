@@ -10,6 +10,7 @@ import type { HookEventBus } from './bus.js';
 import type { HookDispatcher } from './dispatcher.js';
 import { appendOutbox } from './mirror.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
+import type { WatchEngine } from './watch-engine.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -256,12 +257,14 @@ export interface IngestedHandlerDeps {
   hooksDir: string;
   bus?: HookEventBus;
   dispatcher?: HookDispatcher;
+  /** 空闲订阅引擎（session-orchestration 批 2）：见目标会话的 idleSignals 即 fire。 */
+  watchEngine?: Pick<WatchEngine, 'onEvent'>;
 }
 
 /**
  * worker 入库记录的主线程消费：每条补发 `event.ingested` SSE（任务面板实时），
- * 再进 dispatcher（manual/webhook/log/plugin、会话标题双向），插件注入产出
- * 写 outbox 顺延给下一次 hook 事件。
+ * 再进 dispatcher（manual/webhook/log/plugin、会话标题双向）与 watch 引擎
+ * （空闲订阅触发，消息域与规则域平行），插件注入产出写 outbox 顺延给下一次 hook 事件。
  */
 export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxRecord[]): void {
   for (const record of records) {
@@ -282,6 +285,13 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       ...frameFacts(payload),
       at: new Date().toISOString(),
     });
+    if (record.input.sessionId) {
+      deps.watchEngine?.onEvent({
+        sessionId: record.input.sessionId,
+        eventType: record.input.eventType,
+        source: record.input.source,
+      });
+    }
     if (!deps.dispatcher) continue;
     void deps.dispatcher
       .onIngest({

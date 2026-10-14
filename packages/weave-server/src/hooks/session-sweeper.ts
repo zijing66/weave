@@ -1,5 +1,6 @@
 import type { SessionRow } from '../repositories/sessions.js';
 import { purgeSession, type SessionPurgeDeps } from './session-purge.js';
+import type { WatchEngine } from './watch-engine.js';
 
 /** 空会话保活窗口：先留 10 分钟再清（新会话在第一条 prompt 落下前正是"空"的形状）。 */
 export const EMPTY_SESSION_GRACE_MS = 10 * 60_000;
@@ -31,7 +32,10 @@ export function isEmptySession(
  */
 export class SessionSweeper {
   constructor(
-    private readonly deps: SessionPurgeDeps,
+    private readonly deps: SessionPurgeDeps & {
+      /** 空闲订阅补射（批 2）：挂同一 tick——daemon 重启/目标异常终止后扫 pending。 */
+      watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
+    },
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -44,6 +48,7 @@ export class SessionSweeper {
       purgeSession(this.deps, row.sessionId);
       purged++;
     }
+    this.deps.watchEngine?.sweepTerminated();
     return purged;
   }
 
@@ -64,6 +69,8 @@ export class SessionSweeper {
  * 这层封装的存在理由就是入口漂移：dev 入口曾漏挂清扫器，导致空会话
  * 在 dev 下永远不被清（存量行一直显示在会话列表，判据见 isEmptySession）。
  */
-export function startSessionSweeper(deps: SessionPurgeDeps): NodeJS.Timeout {
+export function startSessionSweeper(
+  deps: SessionPurgeDeps & { watchEngine?: Pick<WatchEngine, 'sweepTerminated'> },
+): NodeJS.Timeout {
   return new SessionSweeper(deps).start();
 }
