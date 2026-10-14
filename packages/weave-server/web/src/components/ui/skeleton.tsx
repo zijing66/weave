@@ -8,6 +8,11 @@ import { cn } from '@/lib/utils';
  * 帧一到就重拉），全局 loading 会不停闪。用这里的原语在各面板**首拉未回**时替换内容即可。
  *
  * 用法：`if (loading) return <SkeletonRows rows={6} />;`
+ *
+ * **只用于「块」**：列表 / 卡片网格 / 正文 / 表格这类内容区块的首拉占位。
+ * **按钮与图标的加载态保持原状**——动作用 `useActionFeedback` 三态 + `FeedbackIcon`
+ * （转圈 → 打勾 → 复原）、刷新用 `RefreshIconButton`，一律不要换成骨架块：
+ * 骨架表达「这块内容还没到」，三态表达「这个动作正在跑」，两者语义不同。
  */
 
 /** 基础块：一块 shimmer。宽高由调用方给（className）。 */
