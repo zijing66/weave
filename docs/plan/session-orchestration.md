@@ -201,6 +201,10 @@ auto 的裁决基准 `turnOpen` 已由 `listWithCounts` 算好（harness 无关�
 
 ### D1 新消息域，不复用指令池
 
+> **2026-10-15 重塑后注**：`session_messages` 新表已被「纯文件管道」定案取代
+> （见「消息域重塑」节）——消息域不再入库；`hook_dispatches` 不复用的三条理由
+> 与投递执行复用（`appendOutbox` / `runPrompt`）不变。
+
 - 新表 `session_messages` + 新路由 + 新 SSE kinds；指令池（`hook_dispatches`，ruleId
   非空、规则驱动）保持自动域语义不动。
 - 不复用原因：① ruleId 硬耦合——点对点消息没有规则；② 状态机不同——消息需要
@@ -263,6 +267,10 @@ auto 的裁决基准 `turnOpen` 已由 `listWithCounts` 算好（harness 无关�
 
 ## 第五章 数据与协议
 
+> **2026-10-15 重塑后注**：`session_messages` 表已退役（消息域不再入库，仅
+> 本地文件、消费即删）；`session_watches` 仍真。消息路由与帧语义见「消息域
+> 重塑」节，下方消息表仅存历史参考。
+
 ```sql
 CREATE TABLE session_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,6 +318,7 @@ CREATE TABLE session_watches (
 | **批 4** codex 对齐 | B0 落地后**只改 `codex/messaging.ts` 声明**（发现/注入/无头逐项点亮），server/web/CLI 零改动 | B0 调研 |
 | **批 5** 局域网联邦 | origin 字段批 1 已带；peer 注册 + MessageRouter + capabilities 互报 + pairing 安全面；**触发源形态 = remote，入参面不变**（第七章） | 批 1–3 稳定后 |
 | **批 6** 定时投递（候选） | daemon 侧 scheduler 表（cron/一次性，durable 天然成立）+ `from_kind='scheduler'`，**复用 MessageDeliverer 全套零改动**；抖动纪律与载荷自包含见第七章 | 批 1 稳定后评估 |
+| **批 7** 消息域重塑 | prompt 通道（send-text 打原文 + promptbox 队列）+ `session_messages` 退役（不入库、纯文件管道）+ web 在途视图 + 序列 interrupted 语义（设计见「消息域重塑」节） | 批 1–3 |
 
 ### 批 1 实施记录（2026-10-14 落库）
 
@@ -475,6 +484,72 @@ web 单入口（会话消息弹窗 + 编排画布），watch 订阅走 web 会�
 已移除）；`fromKind='cli'` 亦清理（`7c51d45`）——union 收敛 `'dashboard' | 'session'`
 （`'session'` 由 watch 引擎产出；用户 DB 实测零 cli 行，无历史渲染包袱），路由
 fromKind/fromSessionId 入参面保留（批 5 联邦转发正需）。
+
+### 消息域重塑（2026-10-15 产品定案）：prompt 通道 + 纯文件管道
+
+用户三轮定案（原话）：
+
+> 「不对，我的会话消息是给会话发prompt，不是headless」
+> 模式收敛拍板：**prompt 缺省 + 三模式保留**
+> 「会话消息不要入库，仅落本地文件，消息消费后就移除了」
+
+**总纲：消息域 = 纯递送管道，不是记录系统。** 消息的唯一归宿是目标会话
+自己的转录（claude 的 jsonl），weave 只在投递前短暂持有；送达即删，无任何
+DB 行。D1 的 `session_messages` 表、第五章的消息 SQL、批 1/3 的线程视图与
+messageId 反查，均被本定案重塑。
+
+**存储模型**：
+
+```
+发送 → <dataDir>/hooks/promptbox/<shard>.jsonl（本地文件队列，daemon 只写）
+     → 送达（按模式分叉，见下）
+     → 移除（文件行删除；无 DB 行、无归档）
+```
+
+- **`session_messages` 表退役**：停写 + `DROP TABLE IF EXISTS`（现存行均为
+  测试数据随表删）；`SessionMessageRepository` 与消息域 DB 级联全数移除。
+  `fromKind` 概念随之退役——管道无来源记录，`fromLabel` 只活在 inject 信封
+  渲染里（路由 fromKind/fromSessionId 入参面保留，批 5 联邦正需）。
+- **prompt 队列独立成 `promptbox/`，与 outbox 严格分离**：outbox 行由目标
+  会话内 handler 消费成 additionalContext（跨端契约不动）；prompt 行由
+  **daemon** 冲洗（send-text 打进终端），handler 永不碰。
+- **prompt 通道（新）**：
+  - 语义 = 往目标会话的终端 pane 打**原文**（真·用户 prompt、窗口可见、
+    不加 `[weave message]` 信封——是人在给会话说话）+ 提交键；多行文本用
+    paste 语义。
+  - pane↔session 映射双保险：① weave `wezterm cli spawn` 返回 pane_id →
+    daemon 记 sessionId↔pane（主路径）；② 手动开窗走终端标题匹配（claude
+    自写会话标题进终端标题；忙时 `✳` spinner 前缀剥掉再比；本机
+    `wezterm cli list` 无 foreground_process/tty 字段，Windows 限制）；
+    歧义（同名多窗）拒绝不打。
+  - 没开的会话入 promptbox 队列；SessionStart hook 到达（claude TUI 就绪）
+    且 pane 可寻时 send-text 冲洗。
+  - 门控 = 终端后端 `enumerable`（wezterm 有），`prompt` 列进
+    `/messaging/capabilities` 矩阵。
+  - 实施第一步 = spike 实测 Claude Code TUI 行为（scratch pane，勿打用户
+    活窗口）：send-text 的 paste 语义、多行、提交键。
+- **三模式保留（inject/headless/auto）为显式高级选项**，编排域（序列步 /
+  watch notify / 画布连线）继续用，编排语义不变：
+  - inject：outbox 行（既有通道不动）；
+  - headless：进程终态仅**内存 + SSE**，不落库；daemon 重启即丢（显式高级
+    选项的合理代价）；`promptStdin` 契约不动；
+  - auto：忙→inject 闲→headless 裁决不动。
+- **web 弹窗**：模式选择器 prompt 缺省 + 三模式保留（全表驱动门控）；线程
+  视图 → **在途视图**——daemon 聚合 promptbox 文件 ∪ headless 内存态，
+  `GET /sessions/:id/messages` 改读聚合源，`message.*` 帧的 id 改为管道
+  发号（非 DB 主键）；送达即从列表消失，「历史」在会话自己的转录里。
+- **序列引擎适配**：`session_sequences` 表保留（编排状态非消息）；
+  `steps[].messageId` 语义改为管道发号的内存关联（不再反查消息行）；
+  画布步状态着色改 `sequence.*` 帧驱动；**重启时在途步标记 interrupted、
+  不自动重发**（宁可人续，不往会话重复打 prompt）——取代批 3 的 rearm
+  补 fire 语义。hop 上限（步数 ≤3）不动。
+- **watch 通知**：同样纯管道（outbox 行、消费即删），本就非历史——零改动。
+- **`MessageDeliverer` 裁决单点保留**：能力矩阵、404/409 语义拒绝、auto
+  忙闲裁决全不变；只有落点从「DB 行 + outbox」变「文件队列 + 内存态」。
+
+**实施批次**：① prompt spike（wezterm send-text + TUI 实测）→ ② 存储切换
+（表退役 + promptbox + deliverer 管道化）→ ③ web 弹窗（prompt 缺省 + 在途
+视图）→ ④ 序列引擎适配（内存步态 + interrupted 语义）。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
