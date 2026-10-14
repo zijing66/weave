@@ -740,7 +740,8 @@ describe('MessageDeliverer 裁决表', () => {
     expect(result).toMatchObject({ ok: true, status: 'delivered' });
     expect(fake.calls).toHaveLength(0); // 没有起中继进程
     await new Promise((r) => setTimeout(r, 50));
-    expect(got).toContain('socket 直投正文');
+    // 载荷带来源标注（socket 路径是裸 user 文本，标一句供日后审计）
+    expect(got).toContain('[weave] socket 直投正文');
     expect(got).toContain('"type":"auth"');
     expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
       status: 'delivered',

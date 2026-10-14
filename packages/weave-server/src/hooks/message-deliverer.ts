@@ -147,6 +147,15 @@ const FLUSH_GAP_MS = 1_000;
 const ACK_MIN_TEXT = 8;
 
 /**
+ * socket 直投的来源标注（只作用于这条路径）：socket 消息是**裸 user 文本**
+ * （会话看起来像用户自己敲的），标一句让转录以后能分辨「这不是我敲的」。
+ * 实测（本机 2.1.296）不改变回复形态、不改变模型的发送者归属；它**给不了**
+ * 系统级来源语义（那只有中继路径有：目标被明确告知「来自另一个会话」并受
+ * 跨会话限制）。不想要就删这一个常量。
+ */
+const INBOX_SOURCE_PREFIX = '[weave] ';
+
+/**
  * 回执比对归一：剥掉 Claude Code 给会话间消息裹的外壳（`<cross-session-message
  * from="uds:…" …>…</cross-session-message>`）再折叠空白——socket 直投的原文
  * 是裸文本、中继投递的会带壳，两边都归一成同一形态再比。
@@ -579,7 +588,8 @@ export class MessageDeliverer {
     if (inboxSpec && entry.oneWay === true && inboxTarget) {
       this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
       try {
-        await deliverViaInboxSocket(inboxSpec, inboxTarget, entry.text);
+        // 来源标注只加在这里（中继路径有系统级来源，见 INBOX_SOURCE_PREFIX 注释）
+        await deliverViaInboxSocket(inboxSpec, inboxTarget, `${INBOX_SOURCE_PREFIX}${entry.text}`);
         const delivered: PipeMessage = {
           ...this.memory.get(entry.id)!,
           status: 'delivered',
