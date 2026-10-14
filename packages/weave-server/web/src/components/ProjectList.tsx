@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   DndContext,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -14,6 +15,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -112,7 +114,12 @@ export function ProjectList({
   restoreStateOf,
 }: ProjectListProps) {
   const t = useT();
-  const sortSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // 传感器按指针能力分流（同 App）：鼠标 5px 位移激活；触屏 200ms 长按激活
+  // （容差 8px——长按期间手指微动不误触、不吞列表滚动）。
+  const finePointer = useMediaQuery('(pointer: fine)');
+  const mouseSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } });
+  const sortSensors = useSensors(finePointer ? mouseSensor : touchSensor);
   // 归档弹窗开合：本地 UI 态；入口按钮只在有归档项目时出现
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
@@ -359,7 +366,7 @@ export function ProjectList({
           3 列卡片网格；恢复最后一个后列表空 → 效果里自动收弹窗。 */}
       {archivedOpen &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setArchivedOpen(false)} />
             <div className="relative w-[680px] max-w-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
               <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">

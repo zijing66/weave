@@ -249,7 +249,7 @@ function AssetTreeNode({
                 { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
               )
             }
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 hover:text-red-400 hover:bg-neutral-800 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 max-lg:opacity-100 hover:text-red-400 hover:bg-neutral-800 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
             title={t('fileTree.uninstall', { name })}
           >
             <FeedbackIcon

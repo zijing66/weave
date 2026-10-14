@@ -23,6 +23,9 @@ export const appZh = {
   'app.needProjectAnchor': '需要至少注册一个项目作为全局数据源。',
   'app.selectProject': '请选择一个项目',
   'app.selectProjectForAssets': '请选择一个项目，资产将安装到该项目。',
+  'app.mobileProjects': '项目列表',
+  'app.mobileLibrary': '资源市场',
+  'app.mobileDrawerClose': '收起',
 
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局配置',
@@ -118,6 +121,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.needProjectAnchor': 'Register at least one project to serve as the global data source.',
   'app.selectProject': 'Select a project',
   'app.selectProjectForAssets': 'Select a project to install assets into.',
+  'app.mobileProjects': 'Projects',
+  'app.mobileLibrary': 'Resource market',
+  'app.mobileDrawerClose': 'Dismiss',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',

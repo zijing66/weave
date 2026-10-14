@@ -322,7 +322,7 @@ export function SkillDetailDrawer({
   const skillRoot = files[0]?.relPath.split('/')[0] ?? '';
 
   return (
-    <div className="absolute right-0 top-0 h-full w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-white/[0.08] shadow-mac">
+    <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-white/[0.08] shadow-mac">
       {/* Header */}
       <div className="flex items-center gap-2 p-3 border-b border-white/[0.06]">
         <FileCode className="h-4 w-4 shrink-0 text-blue-400" />

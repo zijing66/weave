@@ -896,7 +896,7 @@ export function HooksPanel({
       {/* 规则表单（新建 / 行内编辑共用）— modal；蒙版不绑 onClick：点击不关闭，防编辑丢失 */}
       {form &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
             <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-white/[0.08] bg-neutral-900 shadow-mac">
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">

@@ -489,9 +489,9 @@ export function TasksPanel({
   const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
 
   return (
-    <div className="flex h-full min-h-0 gap-3">
-      {/* 左栏：会话列表 */}
-      <aside className="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto border-r border-white/[0.06] pr-3">
+    <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
+      {/* 左栏：会话列表。<lg 折到上方限高内滚，链路图让出主空间。 */}
+      <aside className="flex w-full lg:w-72 shrink-0 max-h-[38%] lg:max-h-none flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
           <span className="text-[11px] text-neutral-500">
@@ -536,8 +536,9 @@ export function TasksPanel({
         )}
       </aside>
 
-      {/* 右栏：组头列表 + 单组画布（D8 accordion，每组一图） */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      {/* 右栏：组头列表 + 单组画布（D8 accordion，每组一图）。
+          min-h-0：<lg 纵向堆叠时链路区才能在会话列表下方收缩（否则溢出被裁）。 */}
+      <section className="flex min-w-0 min-h-0 flex-1 flex-col">
         <div className="flex items-center gap-2 pb-2">
           <Activity className="h-3.5 w-3.5 text-rose-400" />
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
@@ -717,9 +718,11 @@ export function TasksPanel({
                     )}
                   </div>
                   {expanded && (
-                    <div className="h-[calc(100vh-330px)] min-h-[420px] max-h-[760px] shrink-0 border-t border-white/[0.06] p-1.5">
+                    <div className="h-[52dvh] min-h-[280px] lg:h-[calc(100dvh-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-white/[0.06] p-1.5">
                       {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；
-                          合体形态 = 该 prompt 的思维导图即事件链，逐级点开。 */}
+                          合体形态 = 该 prompt 的思维导图即事件链，逐级点开。
+                          <lg 会话列表折到画布上方，330px 桌面预算失真 → 改按视口
+                          比例取高，展开后组头仍在首屏内；dvh 随移动端地址栏伸缩。 */}
                       <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
                         <LifecycleMindmap
                           key={`${selectedId}:${g.id}`}

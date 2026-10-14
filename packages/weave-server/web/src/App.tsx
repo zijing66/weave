@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -48,7 +49,8 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { useT } from '@/i18n/I18nProvider';
-import { Settings } from 'lucide-react';
+import { useMediaQuery } from '@/lib/use-media-query';
+import { Library, PanelLeft, Settings, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -103,6 +105,10 @@ export default function App() {
   /** 按钮反馈（loading → ✅ → 2s 复原），按 key 记状态。 */
   const fb = useActionFeedback();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 移动端外壳（<1024px 单栏）：左右栏改滑出抽屉；拖拽 sensor 按指针类型分流。
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const finePointer = useMediaQuery('(pointer: fine)');
+  const [mobilePanel, setMobilePanel] = useState<'projects' | 'library' | null>(null);
 
   // Main area
   const [mainCategory, setMainCategory] = useState<MainCategory>('tasks');
@@ -130,7 +136,14 @@ export default function App() {
   useEffect(() => localStorage.setItem('weave:col-left', String(leftW)), [leftW]);
   useEffect(() => localStorage.setItem('weave:col-right', String(rightW)), [rightW]);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // 拖拽激活按指针分流：鼠标 = 5px 位移即拖（现状）；触屏 = 长按 200ms 才拖——
+  // PointerSensor 挂触摸会把列表滚动劫持成拖拽（dnd-kit 只在拖拽浮层设
+  // touch-action:none，改用 TouchSensor 后行本身的滚动不受影响）。
+  const mouseSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 200, tolerance: 8 },
+  });
+  const sensors = useSensors(finePointer ? mouseSensor : touchSensor);
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch((e) => setError(String(e)));
@@ -995,6 +1008,63 @@ export default function App() {
   // 顶栏自动同步开关：与行内按钮同读 configMap（选中项目一条数据源）。
   const autoSyncOn = selected ? (configMap[selected.id]?.autoSync ?? false) : false;
 
+  // 左右两栏各只挂载一份：桌面 inline 栏与移动滑出抽屉复用同一 JSX（isDesktop
+  // 互斥渲染，不会双挂载）。移动端选中项目顺手收抽屉（setMobilePanel(null)
+  // 在桌面是空操作）。
+  const projectListEl = (
+    <ProjectList
+      projects={projects}
+      selectedId={selected?.id}
+      globalActive={globalMode}
+      onSelect={(p) => {
+        loadProject(p);
+        setMobilePanel(null);
+      }}
+      onSelectGlobal={() => {
+        selectGlobal();
+        setMobilePanel(null);
+      }}
+      onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
+      onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
+      openExplorerStateOf={openExplorerStateOf}
+      openTerminalStateOf={openTerminalProjectStateOf}
+      onHoverProject={ensureUpdates}
+      autoSyncOf={(id) => configMap[id]?.autoSync}
+      updatesOf={(id) => updatesMap[id]}
+      autoSyncStateOf={autoSyncActionStateOf}
+      syncStateOf={syncActionStateOf}
+      onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
+      onSyncNow={(p) => void syncNowWithFeedback(p)}
+      sessionStatsOf={(id) => projectStats.get(id)}
+      terminalsOf={(id) => terminalCounts[id] ?? 0}
+      onReorder={handleProjectReorder}
+      archivedProjects={archivedProjects}
+      onArchive={handleArchiveProject}
+      onRestore={handleRestoreProject}
+      restoreStateOf={restoreActionStateOf}
+    />
+  );
+  const libraryPanelEl = activeProject ? (
+    <LibraryPanel
+      installedSkillNames={installedSkillNames}
+      onInstallSkill={installSkillSafely}
+      onInstallFileAsset={installFileAssetSafely}
+      onInstallMcp={installMcpSafely}
+      updates={updates}
+      onUpdateAsset={updateAssetSafely}
+      category={mainCategory}
+      assetTab={assetTab}
+      scope={globalMode ? 'user' : 'project'}
+      capabilities={installCaps}
+      projectId={activeProject.id}
+      onSyncAll={() => void syncNowWithFeedback(activeProject)}
+    />
+  ) : (
+    <div className="p-3 text-xs text-neutral-500">
+      {t('app.selectProjectForAssets')}
+    </div>
+  );
+
   return (
     <DndContext
       sensors={sensors}
@@ -1002,14 +1072,35 @@ export default function App() {
       onDragEnd={onDragEnd}
       onDragCancel={() => setDragPayload(null)}
     >
-      <div className="h-screen p-4 bg-neutral-950">
-        <div className="h-full flex flex-col rounded-2xl border border-white/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
-          <div className="h-11 shrink-0 flex items-center gap-3 px-4 border-b border-white/[0.06] frosted">
+      <div className="h-dvh p-0 lg:p-4 bg-neutral-950">
+        <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-white/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
+          <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-white/[0.06] frosted">
+            {/* <lg：左右栏收进滑出抽屉，顶栏放两个入口 */}
+            <button
+              onClick={() => setMobilePanel('projects')}
+              className={cn(
+                'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
+                isDesktop && 'hidden',
+              )}
+              title={t('app.mobileProjects')}
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
             <TrafficLight />
             <span className="text-sm font-semibold tracking-tight text-neutral-200">Weave</span>
             <span className="text-xs text-neutral-500">
               {t('app.projectCount', { n: projects.length })}
             </span>
+            <button
+              onClick={() => setMobilePanel('library')}
+              className={cn(
+                'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
+                (isDesktop || !activeProject) && 'hidden',
+              )}
+              title={t('app.mobileLibrary')}
+            >
+              <Library className="h-4 w-4" />
+            </button>
             <button
               onClick={() => setSettingsOpen(true)}
               className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
@@ -1020,44 +1111,25 @@ export default function App() {
           </div>
 
           <div className="flex flex-1 overflow-hidden">
-            {/* Level 1 — global config (pseudo-project) + projects */}
-            <aside
-              style={{ width: leftW }}
-              className="shrink-0 border-r border-white/[0.06] frosted overflow-y-auto"
-            >
-              <ProjectList
-                projects={projects}
-                selectedId={selected?.id}
-                globalActive={globalMode}
-                onSelect={loadProject}
-                onSelectGlobal={selectGlobal}
-                onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
-                onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
-                openExplorerStateOf={openExplorerStateOf}
-                openTerminalStateOf={openTerminalProjectStateOf}
-                onHoverProject={ensureUpdates}
-                autoSyncOf={(id) => configMap[id]?.autoSync}
-                updatesOf={(id) => updatesMap[id]}
-                autoSyncStateOf={autoSyncActionStateOf}
-                syncStateOf={syncActionStateOf}
-                onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
-                onSyncNow={(p) => void syncNowWithFeedback(p)}
-                sessionStatsOf={(id) => projectStats.get(id)}
-                terminalsOf={(id) => terminalCounts[id] ?? 0}
-                onReorder={handleProjectReorder}
-                archivedProjects={archivedProjects}
-                onArchive={handleArchiveProject}
-                onRestore={handleRestoreProject}
-                restoreStateOf={restoreActionStateOf}
-              />
-            </aside>
-            <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />
+            {/* Level 1 — global config (pseudo-project) + projects。
+                <lg 收进滑出抽屉（见底部 mobilePanel overlay）。 */}
+            {isDesktop && (
+              <>
+                <aside
+                  style={{ width: leftW }}
+                  className="shrink-0 border-r border-white/[0.06] frosted overflow-y-auto"
+                >
+                  {projectListEl}
+                </aside>
+                <Resizer onResize={(d) => setLeftW((w) => clamp(w + d, LEFT_MIN, LEFT_MAX))} title={t('app.resizeLeft')} />
+              </>
+            )}
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {activeProject ? (
                 <>
-                  <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-3">
+                  <div className="px-4 py-2 border-b border-white/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-semibold truncate">
                         {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
@@ -1098,7 +1170,7 @@ export default function App() {
                         {/* Both controls below run the same server-side syncAll,
                             so one chip states the scope for the pair. */}
                         <span
-                          className="shrink-0 rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
+                          className="shrink-0 hidden lg:inline-flex rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
                           title={t('app.scopeCoverageTooltip')}
                         >
                           {t('app.scopeCoverageChip')}
@@ -1227,39 +1299,61 @@ export default function App() {
               )}
             </main>
 
-            {/* Sign matters: this handle sits to the LEFT of the panel, so
-                dragging left (negative delta) has to make it wider. */}
-            <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title={t('app.resizeRight')} />
-
-            {/* Right — installable asset library, scope follows the active context */}
-            <aside
-              style={{ width: rightW }}
-              className="shrink-0 border-l border-white/[0.06] frosted overflow-hidden"
-            >
-              {activeProject ? (
-                <LibraryPanel
-                  installedSkillNames={installedSkillNames}
-                  onInstallSkill={installSkillSafely}
-                  onInstallFileAsset={installFileAssetSafely}
-                  onInstallMcp={installMcpSafely}
-                  updates={updates}
-                  onUpdateAsset={updateAssetSafely}
-                  category={mainCategory}
-                  assetTab={assetTab}
-                  scope={globalMode ? 'user' : 'project'}
-                  capabilities={installCaps}
-                  projectId={activeProject.id}
-                  onSyncAll={() => void syncNowWithFeedback(activeProject)}
-                />
-              ) : (
-                <div className="p-3 text-xs text-neutral-500">
-                  {t('app.selectProjectForAssets')}
-                </div>
-              )}
-            </aside>
+            {/* Right — installable asset library, scope follows the active context。
+                <lg 同样收进滑出抽屉。 */}
+            {isDesktop && (
+              <>
+                {/* Sign matters: this handle sits to the LEFT of the panel, so
+                    dragging left (negative delta) has to make it wider. */}
+                <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title={t('app.resizeRight')} />
+                <aside
+                  style={{ width: rightW }}
+                  className="shrink-0 border-l border-white/[0.06] frosted overflow-hidden"
+                >
+                  {libraryPanelEl}
+                </aside>
+              </>
+            )}
           </div>
         </div>
       </div>
+
+      {/* <lg：左右栏滑出抽屉——与桌面栏复用同一 JSX 常量（isDesktop 互斥，不双挂载） */}
+      {!isDesktop && mobilePanel !== null && (
+        <div className="fixed inset-0 z-40">
+          <button
+            aria-label={t('app.mobileDrawerClose')}
+            onClick={() => setMobilePanel(null)}
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm drawer-fade"
+          />
+          <aside
+            className={cn(
+              'absolute top-0 bottom-0 w-[min(88vw,360px)] bg-neutral-900 border-white/[0.08] shadow-mac flex flex-col',
+              mobilePanel === 'projects'
+                ? 'left-0 border-r drawer-left'
+                : 'right-0 border-l drawer-right',
+            )}
+          >
+            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+              <span className="text-sm font-semibold tracking-tight text-neutral-200">
+                {mobilePanel === 'projects' ? t('app.mobileProjects') : t('app.mobileLibrary')}
+              </span>
+              <button
+                onClick={() => setMobilePanel(null)}
+                className="ml-auto rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                title={t('app.mobileDrawerClose')}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {mobilePanel === 'projects' ? (
+              <div className="flex-1 overflow-y-auto">{projectListEl}</div>
+            ) : (
+              <div className="flex-1 overflow-hidden">{libraryPanelEl}</div>
+            )}
+          </aside>
+        </div>
+      )}
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </DndContext>
@@ -1268,7 +1362,7 @@ export default function App() {
 
 function TrafficLight() {
   return (
-    <div className="flex gap-1.5 shrink-0">
+    <div className="hidden sm:flex gap-1.5 shrink-0">
       <span className="h-3 w-3 rounded-full bg-mac-red" />
       <span className="h-3 w-3 rounded-full bg-mac-yellow" />
       <span className="h-3 w-3 rounded-full bg-mac-green" />

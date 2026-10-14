@@ -190,12 +190,14 @@ export function GlobalTasksOverview({
         <p className="text-xs text-neutral-600">{t('tasks.overviewEmpty')}</p>
       ) : (
         <>
+          {/* 列头与行同构收缩（<lg 项目列收窄、状态列自然宽、事件/时间列隐藏
+              ——两条数据折进行内第二行），否则窄屏 shrink-0 定列互相挤压错位。 */}
           <div className="flex items-center gap-3 px-2 text-[10px] text-neutral-600">
-            <span className="w-32 shrink-0">{t('tasks.overviewProject')}</span>
+            <span className="w-32 max-lg:w-24 shrink-0">{t('tasks.overviewProject')}</span>
             <span className="min-w-0 flex-1">{t('tasks.overviewSession')}</span>
-            <span className="w-20 shrink-0">{t('tasks.overviewStatus')}</span>
-            <span className="w-16 shrink-0 text-right">{t('tasks.overviewEvents')}</span>
-            <span className="w-16 shrink-0 text-right">{t('tasks.overviewTime')}</span>
+            <span className="w-20 max-lg:w-auto shrink-0">{t('tasks.overviewStatus')}</span>
+            <span className="w-16 shrink-0 text-right hidden lg:block">{t('tasks.overviewEvents')}</span>
+            <span className="w-16 shrink-0 text-right hidden lg:block">{t('tasks.overviewTime')}</span>
           </div>
           <ul className="space-y-1">
             {rows.map(({ session: s, projectName }) => {
@@ -223,14 +225,14 @@ export function GlobalTasksOverview({
                     }
                     title={clickable ? s.sessionId : undefined}
                     className={cn(
-                      'flex items-center gap-3 rounded-md border px-2 py-1.5',
+                      'flex flex-wrap lg:flex-nowrap items-center gap-3 rounded-md border px-2 py-1.5',
                       clickable
                         ? 'cursor-pointer border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]'
                         : 'border-white/[0.04] opacity-60',
                     )}
                   >
                     <span
-                      className="w-32 shrink-0 truncate rounded bg-neutral-800/80 px-1.5 py-0.5 text-[10px] text-neutral-300"
+                      className="w-32 max-lg:w-24 shrink-0 truncate rounded bg-neutral-800/80 px-1.5 py-0.5 text-[10px] text-neutral-300"
                       title={projectName}
                     >
                       {projectName}
@@ -241,18 +243,23 @@ export function GlobalTasksOverview({
                     {s.harness && (
                       <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
                     )}
-                    <span className="flex w-20 shrink-0 items-center gap-1.5">
+                    <span className="flex w-20 max-lg:w-auto shrink-0 items-center gap-1.5">
                       <SessionStatusIcon status={status} harness={s.harness} />
                       {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
                       <span className={cn('text-[10px]', STATUS_BADGE[status].split(' ')[1])}>
                         {t(STATUS_KEY[status])}
                       </span>
                     </span>
-                    <span className="w-16 shrink-0 text-right text-[10px] text-neutral-500">
+                    <span className="hidden lg:block w-16 shrink-0 text-right text-[10px] text-neutral-500">
                       {t('tasks.events', { n: s.eventCount ?? 0 })}
                     </span>
-                    <span className="w-16 shrink-0 text-right text-[10px] text-neutral-500">
+                    <span className="hidden lg:block w-16 shrink-0 text-right text-[10px] text-neutral-500">
                       {formatTime(s.lastSeenAt)}
+                    </span>
+                    {/* <lg：事件/时间折到第二行（basis-full 强制换行），数据不丢 */}
+                    <span className="lg:hidden flex basis-full gap-3 text-[10px] text-neutral-500">
+                      <span>{t('tasks.events', { n: s.eventCount ?? 0 })}</span>
+                      <span>{formatTime(s.lastSeenAt)}</span>
                     </span>
                   </div>
                 </li>

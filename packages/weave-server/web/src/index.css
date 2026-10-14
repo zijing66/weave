@@ -165,6 +165,43 @@
   animation: harness-run-codex 1.2s ease-in-out infinite;
 }
 
+/* ---- 移动端滑出抽屉动效（<lg 布局，一次滑入） ---- */
+@keyframes drawer-slide-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.drawer-left {
+  animation: drawer-slide-left 200ms ease-out;
+}
+
+@keyframes drawer-slide-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.drawer-right {
+  animation: drawer-slide-right 200ms ease-out;
+}
+
+@keyframes drawer-backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.drawer-fade {
+  animation: drawer-backdrop-fade 200ms ease-out;
+}
+
 /* ReactFlow 左下角 Controls（zoom±/fitView）暗色主题覆盖：
    xyflow 默认白底浅色按钮，在暗色仪表盘上看不清。
    选择器加 .react-flow__controls 前缀提升特异性，保证覆盖 import 进
