@@ -44,6 +44,13 @@ export interface HeadlessRunInput {
   /** 单次超时（毫秒），超时强杀 → timeout；**0 = 不设看门狗**（投递等待发生在
    *  目标会话内的场景，如 prompt 中继——设上限只会把正常投递误判成 timeout）。 */
   timeoutMs?: number;
+  /**
+   * 是否自成进程组（POSIX `detached`）。缺省 true——headless 回合跑得长、可整组
+   * 强杀。**中继传 false**：它是本轮次的一次性子进程，应当跟 daemon 同进程组、
+   * 随 daemon 退出被回收，不留独立进程占资源。win32 shell 模式恒 false（实测
+   * shell+detached 管道输出全丢）。
+   */
+  detached?: boolean;
   onSettle: (result: HeadlessSettleResult) => void;
 }
 
@@ -65,6 +72,8 @@ export class HeadlessRunner {
   private readonly killImpl: (pid: number) => void;
   /** sessionId → 进行中的回合（并发闸）；终态落定后清除。 */
   private readonly active = new Set<string>();
+  /** sessionId → 在飞子进程 pid（daemon 退出时统一回收；终态/退出后清除）。 */
+  private readonly livePids = new Map<string, number>();
 
   constructor(deps: HeadlessRunnerDeps = {}) {
     this.spawnImpl = deps.spawnImpl ?? nodeSpawn;
@@ -74,6 +83,26 @@ export class HeadlessRunner {
   /** 该会话是否已有无头回合在跑（跨 dispatch/message 域共享）。 */
   isBusy(sessionId: string): boolean {
     return this.active.has(sessionId);
+  }
+
+  /**
+   * 回收全部在飞子进程（daemon 退出时调用）：这些进程是 daemon 的子进程，
+   * 不该比 daemon 活得久。win32 → taskkill /T /F（整棵进程树）；POSIX →
+   * 先杀进程组（detached 子进程自成组）再回退单进程（非 detached 的子进程，
+   * 如中继）——三平台同一入口，无平台分支。返回强杀尝试数。
+   */
+  killAll(): number {
+    let killed = 0;
+    for (const pid of this.livePids.values()) {
+      try {
+        this.killImpl(pid);
+        killed++;
+      } catch {
+        // 进程可能已退出：忽略
+      }
+    }
+    this.livePids.clear();
+    return killed;
   }
 
   /**
@@ -106,9 +135,13 @@ export class HeadlessRunner {
     const args = input.spec.args(input.sessionId, viaStdin ? '' : input.prompt);
     const useShell =
       viaStdin && process.platform === 'win32' && !/[\s"\\/]/.test(input.bin);
+    // detached：POSIX 自成进程组（超时可整组强杀）；中继显式 false = 本轮次的
+    // 子进程，跟 daemon 同组、随 daemon 退出被回收。win32 恒 false（shell 模式
+    // 实测丢管道输出；非 shell 模式 taskkill /T 已能杀整棵树，无须进程组）。
+    const detached = (input.detached ?? true) && !useShell;
     const options: SpawnOptions = {
       cwd: input.cwd,
-      detached: !useShell, // POSIX 下自成进程组，超时可整组强杀
+      detached,
       windowsHide: true,
       shell: useShell,
       stdio: [viaStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -128,6 +161,8 @@ export class HeadlessRunner {
     const child = useShell
       ? this.spawnImpl([input.bin, ...args].join(' '), [], options)
       : this.spawnImpl(input.bin, args, options);
+    // 记在飞子进程：daemon 退出时统一回收（killAll），不留孤儿占资源。
+    if (child.pid !== undefined) this.livePids.set(input.sessionId, child.pid);
 
     if (viaStdin) {
       // EPIPE（子进程未读完先退）吞掉；终态由 exit/error 事件落定。
@@ -215,6 +250,7 @@ export class HeadlessRunner {
     if (state.settled) return;
     state.settled = true;
     this.active.delete(input.sessionId);
+    this.livePids.delete(input.sessionId);
     try {
       input.onSettle(result);
     } catch {

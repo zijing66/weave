@@ -500,6 +500,9 @@ export class MessageDeliverer {
         spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
         timeoutMs: this.deps.relayTimeoutMs ?? 0,
+        // 中继 = 本轮次的一次性子进程：与 daemon 同进程组，随 daemon 退出回收，
+        // 不留独立进程占资源（win32 恒非 detached，见 HeadlessRunner）。
+        detached: false,
         onSettle: (result) => this.settleRelay(entry.id, result),
       });
     } catch (err) {

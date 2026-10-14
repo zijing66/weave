@@ -523,6 +523,34 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listInflightCounts().size).toBe(0);
   });
 
+  it('中继作为子进程启动（非 detached）——三平台同一语义，并随 daemon 退出被回收', async () => {
+    const fake = createFakeSpawn();
+    const killImpl = vi.fn();
+    const runner = new HeadlessRunner({ spawnImpl: fake.spawnImpl, killImpl });
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ headless: runner, spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'child please',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    // win32（shell 模式恒 false）与 POSIX（中继显式 false）都不自成进程组
+    expect(fake.calls[0]!.options.detached).toBe(false);
+    expect(fake.children[0]!.pid).toBe(7777);
+
+    // daemon 退出：在飞中继随它一起收
+    expect(runner.killAll()).toBe(1);
+    expect(killImpl).toHaveBeenCalledWith(7777);
+    // 已回收：再调不重复杀
+    expect(runner.killAll()).toBe(0);
+  });
+
   it('message.created 在在途状态建立之后才广播——角标推送重算不落后一拍', async () => {
     const fake = createFakeSpawn();
     const { surface } = relaySurface(() => null); // 会话没开 → 入队（pending）

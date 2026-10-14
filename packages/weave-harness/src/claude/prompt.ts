@@ -21,7 +21,7 @@ export const CLAUDE_PROMPT_RELAY: PromptRelaySpec = {
   args: ['-p', '--no-session-persistence', '--tools', 'SendMessage,ListAgents', '-n', 'weave'],
   senderName: 'weave',
   instruction: (peerName, text, opts) =>
-    `Send the following message verbatim to the Claude session named "${peerName}" using the SendMessage tool, then stop. Do not use any other tool.\n\n${
+    `Send the following message verbatim to the Claude session named "${peerName}" using the SendMessage tool, then stop immediately. Do not use any other tool and do not wait for a reply — the handover is done once the tool call returns, so this process must exit promptly.\n\n${
       opts.oneWay ? `${ONE_WAY_NOTE}\n\n` : ''
     }${text}`,
   resolve: resolveClaudePeer,

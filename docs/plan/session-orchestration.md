@@ -539,6 +539,15 @@ send-text、注意多终端」——早期「send-text 作主通道」作废，�
   idle 立即唤醒、忙则下一 tool round 到达）。
 - 中继显示名 `-n weave`——**原文即消息体**，不加信封（claude 的消息头
   `Message from @weave:` 自带出处）。
+- **中继进程的启动/退出契约**（用户 2026-10-15：应当正确启动与退出、不持续占用
+  系统资源、作为子进程而非独立进程，且三平台兼容）：中继 `detached: false` ——
+  win32 shell 模式本就非 detached（实测 shell+detached 丢管道输出），POSIX 不再
+  自成进程组，跟 daemon 同组；**不设看门狗**（等待发生在目标会话内，120s 上限只会
+  把正常投递误判 timeout），但中继指令明确「tool 调用返回即已交接、立刻退出、不要
+  等回复」；daemon 退出（SIGTERM/SIGINT）经 `HeadlessRunner.killAll()` 回收在飞
+  子进程（含 headless 回合），不留孤儿。回收入口跨平台统一：win32 → `taskkill /T /F`
+  杀整棵树，POSIX → 先杀进程组（detached 子进程自成组）再回退单进程（非 detached
+  子进程如中继），无平台分支散写。
 - **单向注入（只对手动面）**（用户 2026-10-15 追问「sendmessage 对其他会话
   来说是在聊天、会回消息，可不可以要求不回复，我只是想给模板会话注入
   prompt」，随即补「注意，sendmessage 在会话编排功能中，还是需要保留双向

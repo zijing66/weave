@@ -234,6 +234,8 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     terminalRefresher.stop();
+    // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
+    headlessRunner.killAll();
     void hookPipeline.stop();
     server.close();
     process.exit(0);
