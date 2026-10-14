@@ -13,7 +13,7 @@ export type MessageStatus =
   | 'timeout';
 
 /** 发起方：dashboard（web）/ session（会话间）/ cli（终端命令）。 */
-export type MessageFromKind = 'dashboard' | 'session' | 'cli';
+export type MessageFromKind = 'dashboard' | 'session';
 
 export interface SessionMessageInput {
   fromKind: MessageFromKind;

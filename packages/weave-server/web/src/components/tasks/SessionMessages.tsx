@@ -37,11 +37,10 @@ const STATUS_KEY: Record<
 };
 const FROM_KEY: Record<
   SessionMessageRow['fromKind'],
-  'tasks.msgFromDashboard' | 'tasks.msgFromSession' | 'tasks.msgFromCli'
+  'tasks.msgFromDashboard' | 'tasks.msgFromSession'
 > = {
   dashboard: 'tasks.msgFromDashboard',
   session: 'tasks.msgFromSession',
-  cli: 'tasks.msgFromCli',
 };
 const MODE_KEY: Record<
   SessionMessageRow['mode'],

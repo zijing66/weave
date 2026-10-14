@@ -312,7 +312,7 @@ export const INJECTABLE_HOOK_EVENTS = [
 /** mirror of `SessionMessageRow` in packages/weave-server/src/repositories/session-messages.ts。 */
 export interface SessionMessageRow {
   id: number;
-  fromKind: 'dashboard' | 'session' | 'cli';
+  fromKind: 'dashboard' | 'session';
   fromSessionId: string | null;
   toSessionId: string;
   text: string;

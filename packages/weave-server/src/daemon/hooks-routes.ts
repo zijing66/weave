@@ -52,7 +52,7 @@ const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 const SendMessageBody = z.object({
   text: z.string().min(1).max(20_000),
   mode: z.enum(['inject', 'headless', 'auto']).optional(),
-  fromKind: z.enum(['dashboard', 'session', 'cli']).optional(),
+  fromKind: z.enum(['dashboard', 'session']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
 });
 
