@@ -7,6 +7,13 @@ import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { writeAiKey } from '../daemon/ai-config.js';
+import {
+  STREAM_MEMO_TTL_MS,
+  rememberStreamSupport,
+  resetStreamMemory,
+  streamMemoKey,
+  streamSupported,
+} from '../daemon/ai-routes.js';
 import { setDaemonSettingsDb, writeDaemonSettings, type DaemonSettings } from '../daemon/settings.js';
 import { createWeaveServer } from '../daemon/server.js';
 
@@ -71,6 +78,7 @@ describe('daemon ai routes', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetStreamMemory(); // 流式能力记忆是模块级状态：用例间必须隔离
   });
 
   afterAll(() => {
@@ -194,7 +202,157 @@ describe('daemon ai routes', () => {
     expect(text).toContain('"done":true');
   });
 
+  it('流式失败后短记忆生效：TTL 内第二轮只发非流式（省掉失败往返）', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
+
+    const streams: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { stream?: unknown };
+        streams.push(body.stream);
+        if (body.stream === true) return new Response('{"error":{"message":"boom"}}', { status: 500 });
+        return new Response(JSON.stringify({ choices: [{ message: { content: '整段' } }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    const first = await (await chat({ messages: [{ role: 'user', content: 'one' }] })).text();
+    expect(first).toContain('"delta":"整段"');
+    const second = await (await chat({ messages: [{ role: 'user', content: 'two' }] })).text();
+    expect(second).toContain('"delta":"整段"');
+
+    // 第一轮：stream:true 失败 → stream:false 兜底；第二轮：记忆生效，直接 stream:false
+    expect(streams).toEqual([true, false, false]);
+  });
+
+  it('流式可用时记忆为真：后续请求继续走流式', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
+
+    const streams: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init: RequestInit) => {
+        streams.push((JSON.parse(String(init.body)) as { stream?: unknown }).stream);
+        return sseResponse([
+          'data: {"choices":[{"delta":{"content":"好"}}]}\n\n',
+          'data: [DONE]\n\n',
+        ]);
+      }),
+    );
+
+    await chat({ messages: [{ role: 'user', content: 'one' }] });
+    await chat({ messages: [{ role: 'user', content: 'two' }] });
+    expect(streams).toEqual([true, true]);
+  });
+
+  it('记忆语义：无记忆/过期都先试流式，TTL 内按记忆走', () => {
+    resetStreamMemory();
+    const key = streamMemoKey('https://llm.example/v1', 'test-model');
+
+    expect(streamSupported(key, 1_000)).toBe(true); // 无记忆 → 先试流式
+    rememberStreamSupport(key, false, 1_000);
+    expect(streamSupported(key, 2_000)).toBe(false); // TTL 内 → 不试
+    expect(streamSupported(key, 1_000 + STREAM_MEMO_TTL_MS + 1)).toBe(true); // 过期 → 再试一次
+    rememberStreamSupport(key, true, 5_000);
+    expect(streamSupported(key, 6_000)).toBe(true); // 能用就继续用
+  });
+
+  it('/ai/models：服务端拉取模型列表（去重排序，用已存 key）', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
+
+    const seen: Array<{ url: string; auth: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init: RequestInit) => {
+        seen.push({
+          url: String(input),
+          auth: String((init.headers as Record<string, string>)['authorization']),
+        });
+        return new Response(
+          JSON.stringify({ data: [{ id: 'b-model' }, { id: 'a-model' }, { id: 'a-model' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+
+    const res = await realFetch(url('/ai/models'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ models: ['a-model', 'b-model'] }); // 去重 + 排序
+    expect(seen[0]!.url).toBe('https://llm.example/v1/models');
+    expect(seen[0]!.auth).toBe('Bearer sk-test-key');
+  });
+
+  it('/ai/models：上游 401 不能透传成我方 401（否则前端会当登录失效跳登录页）', async () => {
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-secret', keyPath);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"invalid api key"}', { status: 401 })),
+    );
+
+    const res = await realFetch(url('/ai/models'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('upstream 401');
+    expect(JSON.stringify(body)).not.toContain('sk-secret');
+  });
+
+  it('/ai/models：未配置（地址或 key 缺）→ 409', async () => {
+    await writeDaemonSettings(settingsBase());
+    writeAiKey(null, keyPath);
+    const res = await realFetch(url('/ai/models'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('/ai/models：表单里刚填还没保存时，baseUrl/apiKey 可覆盖一次', async () => {
+    await writeDaemonSettings(settingsBase());
+    writeAiKey(null, keyPath); // 已存配置为空，全靠请求体
+
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init: RequestInit) => {
+        seen.push(String(input));
+        expect((init.headers as Record<string, string>)['authorization']).toBe('Bearer sk-inline');
+        return new Response(JSON.stringify({ data: [{ id: 'm-inline' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    const res = await realFetch(url('/ai/models'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://inline.example/v1', apiKey: 'sk-inline' }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ models: ['m-inline'] });
+    expect(seen[0]).toBe('https://inline.example/v1/models');
+  });
+
   it('messages 形状非法 → 400', async () => {
+    // 自带配置：不然会被「未配置」的 409 先拦下（与用例顺序解耦）
+    await writeDaemonSettings(withAi('https://llm.example/v1', 'test-model'));
+    writeAiKey('sk-test-key', keyPath);
     const bad = await chat({ messages: [{ role: 'system', content: 'x' }] });
     expect(bad.status).toBe(400);
     const empty = await chat({ messages: [] });

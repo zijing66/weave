@@ -21,6 +21,8 @@ export const aiZh = {
   'settings.aiBaseUrlPlaceholder': 'https://api.example.com/v1',
   'settings.aiModel': '模型',
   'settings.aiModelPlaceholder': 'gpt-4o-mini',
+  'settings.aiModelFetch': '拉取模型',
+  'settings.aiModelFetchTip': '按当前地址与 key 从服务端拉取可用模型（地址+key 齐了会自动拉一次）',
   'settings.aiApiKey': 'API Key',
   'settings.aiApiKeySet': '已设置（留空 = 保持不变）',
   'settings.aiApiKeyUnset': '未设置',
@@ -54,6 +56,10 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
   'settings.aiBaseUrlPlaceholder': 'https://api.example.com/v1',
   'settings.aiModel': 'Model',
   'settings.aiModelPlaceholder': 'gpt-4o-mini',
+  'settings.aiModelFetch': 'Fetch models',
+  'settings.aiModelFetchTip':
+    'Fetch available models server-side with the current base URL and key (auto-fetched once both are set)',
+
   'settings.aiApiKey': 'API key',
   'settings.aiApiKeySet': 'Set (leave blank to keep)',
   'settings.aiApiKeyUnset': 'Not set',

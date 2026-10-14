@@ -10,12 +10,16 @@ import {
   EyeOff,
   Languages,
   Power,
+  RefreshCw,
   Settings,
   Sparkles,
   Terminal,
   X,
   Zap,
 } from 'lucide-react';
+import { fetchAiModels } from '@/lib/ai';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
 import { registerInvalidator } from '@/lib/sse';
 
@@ -48,6 +52,30 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  /** 服务端拉回的模型候选（datalist 用；空 = 还没拉/网关没有 /models）。 */
+  const [models, setModels] = useState<string[]>([]);
+  const fb = useActionFeedback();
+
+  /**
+   * 拉模型列表（走服务端代理 `POST /ai/models`）。`silent` = 自动拉取：
+   * 失败不打扰（不是所有网关都提供 /models），手动按钮才报错（走 toast）。
+   */
+  const loadModels = useCallback(
+    async (opts?: { baseUrl?: string; apiKey?: string; silent?: boolean }): Promise<void> => {
+      try {
+        const result = await fetchAiModels(
+          opts && (opts.baseUrl !== undefined || opts.apiKey !== undefined)
+            ? { ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}), ...(opts.apiKey ? { apiKey: opts.apiKey } : {}) }
+            : undefined,
+        );
+        setModels(result.models);
+      } catch (error) {
+        if (opts?.silent) return;
+        throw error;
+      }
+    },
+    [],
+  );
   // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充/弹生成器，这是最硬的一道闸
   // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会）。聚焦即可正常输入。
   const [keyFocused, setKeyFocused] = useState(false);
@@ -63,6 +91,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       .then((r) => {
         setSettings(r.settings as DaemonSettingsExt); // 运行时含 events（server 归一化回传）
         setPresets(r.presets);
+        // 已配置（存的地址 + key 齐全）**不自动拉**——模型一般已选好，按需点「拉取模型」；
+        // 只有首次配置（未配置态）在表单两栏填齐后才自动拉一次（见下面的 debounce effect）。
       })
       .catch((e) => setError(String(e)));
   }, []);
@@ -78,6 +108,22 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     if (!open) return;
     return registerInvalidator('settings', loadSettings);
   }, [open, loadSettings]);
+
+  /**
+   * 首次配置才自动拉模型：**未配置态**（没存下地址或 key）里，表单两栏都填了就静默拉一次
+   * （debounce 700ms，避免逐键打枪）。**已配置态**一律不自动——按需点「拉取模型」。
+   */
+  const savedConfigured = Boolean(settings?.ai?.baseUrl && settings?.ai?.apiKeySet);
+  const typedBaseUrl = settings?.ai?.baseUrl?.trim() ?? '';
+  const typedKey = apiKeyInput.trim();
+  useEffect(() => {
+    if (!open || savedConfigured) return;
+    if (typedBaseUrl === '' || typedKey === '') return;
+    const timer = setTimeout(() => {
+      void loadModels({ baseUrl: typedBaseUrl, apiKey: typedKey, silent: true });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [open, savedConfigured, typedBaseUrl, typedKey, loadModels]);
 
   if (!open) return null;
 
@@ -298,18 +344,51 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 placeholder={t('settings.aiBaseUrlPlaceholder')}
                 className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
-              <input
-                value={settings?.ai?.model ?? ''}
-                onChange={(e) =>
-                  setSettings((s) =>
-                    s === null
-                      ? s
-                      : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
-                  )
-                }
-                placeholder={t('settings.aiModelPlaceholder')}
-                className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+              <div className="flex items-center gap-1">
+                <input
+                  list="weave-ai-models"
+                  value={settings?.ai?.model ?? ''}
+                  onChange={(e) =>
+                    setSettings((s) =>
+                      s === null
+                        ? s
+                        : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
+                    )
+                  }
+                  placeholder={t('settings.aiModelPlaceholder')}
+                  className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    void fb.run(
+                      'ai-models',
+                      () =>
+                        loadModels({
+                          baseUrl: settings?.ai?.baseUrl ?? '',
+                          ...(apiKeyInput !== '' ? { apiKey: apiKeyInput } : {}),
+                        }),
+                      { fail: (error) => errorText(error) },
+                    )
+                  }
+                  disabled={fb.stateOf('ai-models') === 'loading'}
+                  title={t('settings.aiModelFetchTip')}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf('ai-models')}
+                    className="h-3 w-3"
+                    icon={<RefreshCw className="h-3 w-3" />}
+                  />
+                  {t('settings.aiModelFetch')}
+                </button>
+              </div>
+              {/* 拉取到的候选（datalist：可挑可手填——有的网关没有 /models） */}
+              <datalist id="weave-ai-models">
+                {models.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
             </div>
             <div className="flex items-center gap-2">
               <input

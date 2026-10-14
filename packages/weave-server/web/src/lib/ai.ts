@@ -29,6 +29,34 @@ export async function aiStatus(): Promise<AiStatus> {
 }
 
 /**
+ * 拉取供应商模型列表（服务端代理 `POST /ai/models`）——设置页在「地址 + key」里
+ * 配好后由服务端向 `GET {baseUrl}/models` 取；`baseUrl`/`apiKey` 缺省用已存配置
+ * （表单里刚填还没保存时可显式传入，覆盖一次）。
+ */
+export async function fetchAiModels(args?: {
+  baseUrl?: string;
+  apiKey?: string;
+}): Promise<{ models: string[] }> {
+  const res = await fetch(`${API_BASE}/ai/models`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args ?? {}),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error) message = parsed.error;
+    } catch {
+      // 非 JSON 错误体：用原文
+    }
+    throw new Error(message || `HTTP ${res.status}`);
+  }
+  return (await res.json()) as { models: string[] };
+}
+
+/**
  * 发一轮对话并把增量交给 `onDelta`；返回即本轮结束（`{done}` 帧或流自然结束）。
  * `signal` 用于「停止生成」（前端 AbortController）；错误帧与 HTTP 错误都 throw。
  */
