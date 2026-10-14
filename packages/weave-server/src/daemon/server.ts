@@ -22,6 +22,8 @@ import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionMessageRepository } from '../repositories/session-messages.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
+import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
+import type { SequenceEngine } from '../hooks/sequence-engine.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
@@ -165,6 +167,10 @@ export interface WeaveServerDeps {
   sessionWatches?: SessionWatchRepository;
   /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */
   watchEngine?: Pick<WatchEngine, 'created'>;
+  /** 跨会话序列存储（批 3）；/messaging/sequences 依赖它。 */
+  sessionSequences?: SessionSequenceRepository;
+  /** 序列引擎（批 3）；POST 触发步 0 与 DELETE 取消依赖它。 */
+  sequenceEngine?: Pick<SequenceEngine, 'trigger' | 'cancel'>;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
@@ -1330,9 +1336,11 @@ async function handleRequest(
     }
     const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
-    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）；订阅同形
+    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）；订阅/序列同形
+    // （序列按项目会话集圈「任一步目标」行，同样必须在会话行删除前执行）
     const messages = deps.sessionMessages?.deleteByProject(project.id) ?? 0;
     deps.sessionWatches?.deleteByProject(project.id);
+    deps.sessionSequences?.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);
     purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);

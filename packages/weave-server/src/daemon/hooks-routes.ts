@@ -17,6 +17,7 @@ import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
+import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -61,6 +62,20 @@ const CreateWatchBody = z.object({
 });
 
 const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
+
+/** 跨会话序列（批 3）：步数上限单独校验（错误文案要带 hop limit 语义）。 */
+const CreateSequenceBody = z.object({
+  name: z.string().max(200).optional(),
+  steps: z
+    .array(
+      z.object({
+        to: z.string().min(1),
+        text: z.string().min(1).max(20_000),
+        mode: z.enum(['inject', 'headless', 'auto']).optional(),
+      }),
+    )
+    .min(1),
+});
 
 const InstallBody = z.object({ src: z.string().min(1) });
 
@@ -593,6 +608,89 @@ export async function handleHooksRoutes(
       return true;
     }
     sendJson(res, 200, { watches: deps.sessionWatches.listPending() });
+    return true;
+  }
+
+  // ---- 序列域（session-orchestration 批 3）：手工编排多步链 A→B→C ----
+  if (pathname === '/messaging/sequences') {
+    if (req.method === 'GET') {
+      if (!deps.sessionSequences) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      sendJson(res, 200, { sequences: deps.sessionSequences.list() });
+      return true;
+    }
+    if (req.method === 'POST') {
+      if (!deps.sessionSequences || !deps.sequenceEngine || !deps.hookSessions || !deps.hookEvents) {
+        sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+        return true;
+      }
+      let body: z.infer<typeof CreateSequenceBody>;
+      try {
+        body = CreateSequenceBody.parse(await readJson(req));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+        return true;
+      }
+      if (body.steps.length > SEQUENCE_HOP_LIMIT) {
+        sendJson(res, 400, {
+          error: `Sequences are capped at ${SEQUENCE_HOP_LIMIT} steps (hop limit)`,
+        });
+        return true;
+      }
+      // 全部目标前置校验（每步 404/400/409 指明步号）：中途失败 = 步 1 已发出去、
+      // 链断在半路，比创建前拒绝差得多——宁可先验完再触发步 0。
+      for (let i = 0; i < body.steps.length; i++) {
+        const step = body.steps[i]!;
+        const target = deps.hookSessions.getBySessionId(step.to);
+        if (!target) {
+          sendJson(res, 404, { error: `Step ${i + 1}: session not found` });
+          return true;
+        }
+        const latest = deps.hookEvents.listBySession(step.to, 1);
+        const src = latest[latest.length - 1]?.source;
+        if (!isHarness(src)) {
+          sendJson(res, 400, { error: `Step ${i + 1}: session has no hook events to determine its harness` });
+          return true;
+        }
+        const surface = messagingSurfaceFor(src);
+        if (!surface.inject && !surface.headless) {
+          sendJson(res, 409, {
+            error: `Step ${i + 1}: ${surface.unsupportedReasons?.inject ?? `Harness "${src}" supports no messaging channel`}`,
+          });
+          return true;
+        }
+      }
+      const sequence = deps.sessionSequences.insert({
+        name: body.name ?? '',
+        steps: body.steps.map((step) => ({ ...step, mode: step.mode ?? 'auto' })),
+      });
+      await deps.sequenceEngine.trigger(sequence);
+      // trigger 后重读：响应即带步 0 的 messageId（web 画布直接渲染首步边）
+      sendJson(res, 201, { ok: true, sequence: deps.sessionSequences.getById(sequence.id) ?? sequence });
+      return true;
+    }
+  }
+
+  const sequenceMatch = pathname.match(/^\/messaging\/sequences\/(\d+)$/);
+  if (sequenceMatch && req.method === 'DELETE') {
+    if (!deps.sessionSequences) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const row = deps.sessionSequences.getById(Number(sequenceMatch[1]));
+    if (!row) {
+      sendJson(res, 404, { error: 'Sequence not found' });
+      return true;
+    }
+    if (row.status !== 'running') {
+      sendJson(res, 409, { error: `Sequence already ${row.status}` });
+      return true;
+    }
+    if (deps.sequenceEngine) deps.sequenceEngine.cancel(row.id);
+    else deps.sessionSequences.finish(row.id, 'cancelled');
+    sendJson(res, 200, { ok: true, sequenceId: row.id });
     return true;
   }
 

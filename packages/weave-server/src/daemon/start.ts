@@ -18,7 +18,9 @@ import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
+import { SequenceEngine } from '../hooks/sequence-engine.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -149,6 +151,17 @@ export function startDaemon(): void {
     sessions: hookSessions,
     bus: hookBus,
   });
+  // session-orchestration 批 3：序列引擎（无状态 bus 监听 + DB 推进），启动
+  // rearm 恢复重启前的 running 序列。
+  const sessionSequences = new SessionSequenceRepository(db);
+  const sequenceEngine = new SequenceEngine({
+    sequences: sessionSequences,
+    messages: sessionMessages,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
+  sequenceEngine.rearm();
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -174,7 +187,10 @@ export function startDaemon(): void {
     events: hookEvents,
     dispatches: hookDispatches,
     messages: sessionMessages,
+    watches: sessionWatches,
+    sequences: sessionSequences,
     watchEngine,
+    sequenceEngine,
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
@@ -184,6 +200,7 @@ export function startDaemon(): void {
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,
+    sequenceEngine,
   });
   const staticDir = resolveStaticDir();
 
@@ -209,6 +226,8 @@ export function startDaemon(): void {
     messageDeliverer,
     sessionWatches,
     watchEngine,
+    sessionSequences,
+    sequenceEngine,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

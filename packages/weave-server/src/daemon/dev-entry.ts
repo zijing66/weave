@@ -23,7 +23,9 @@ import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
+import { SequenceEngine } from '../hooks/sequence-engine.js';
 import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -139,6 +141,16 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     bus: hookBus,
   });
+  // session-orchestration 批 3（与 start.ts 同装配）：序列引擎 + 重启恢复。
+  const sessionSequences = new SessionSequenceRepository(db);
+  const sequenceEngine = new SequenceEngine({
+    sequences: sessionSequences,
+    messages: sessionMessages,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
+  sequenceEngine.rearm();
   const watch = new WatchService(projects);
   watch.start();
   // 数据变更帧总线 + 终端角标隐藏刷新：前端不再轮询角标，改由后端「有人看时每
@@ -157,7 +169,10 @@ async function main(): Promise<void> {
     events: hookEvents,
     dispatches: hookDispatches,
     messages: sessionMessages,
+    watches: sessionWatches,
+    sequences: sessionSequences,
     watchEngine,
+    sequenceEngine,
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
@@ -167,6 +182,7 @@ async function main(): Promise<void> {
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,
+    sequenceEngine,
   });
   const staticDir = resolveStaticDir();
 
@@ -191,6 +207,8 @@ async function main(): Promise<void> {
     messageDeliverer,
     sessionWatches,
     watchEngine,
+    sessionSequences,
+    sequenceEngine,
     hookPlugins,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

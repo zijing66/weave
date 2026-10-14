@@ -11,6 +11,7 @@ import type { HookDispatcher } from './dispatcher.js';
 import { appendOutbox } from './mirror.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 import type { WatchEngine } from './watch-engine.js';
+import type { SequenceEngine } from './sequence-engine.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -259,6 +260,8 @@ export interface IngestedHandlerDeps {
   dispatcher?: HookDispatcher;
   /** 空闲订阅引擎（session-orchestration 批 2）：见目标会话的 idleSignals 即 fire。 */
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
+  /** 序列引擎（批 3）：inject 步的完成判据 = 目标 idleSignals 事件。 */
+  sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
 }
 
 /**
@@ -287,6 +290,11 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
     });
     if (record.input.sessionId) {
       deps.watchEngine?.onEvent({
+        sessionId: record.input.sessionId,
+        eventType: record.input.eventType,
+        source: record.input.source,
+      });
+      deps.sequenceEngine?.onEvent({
         sessionId: record.input.sessionId,
         eventType: record.input.eventType,
         source: record.input.source,

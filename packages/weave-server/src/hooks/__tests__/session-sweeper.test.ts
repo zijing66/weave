@@ -116,4 +116,19 @@ describe('SessionSweeper.sweep', () => {
     expect(sweeper.sweep()).toBe(0);
     expect(sweepTerminated).toHaveBeenCalledTimes(1);
   });
+
+  it('订阅补射之后再挂序列补射（批 3：同 tick 判死进行中序列的等待目标）', () => {
+    const watchSweep = vi.fn(() => 0);
+    const sequenceSweep = vi.fn(() => 0);
+    const sweeper = new SessionSweeper({
+      sessions,
+      events,
+      dispatches,
+      watchEngine: { sweepTerminated: watchSweep },
+      sequenceEngine: { sweepTerminated: sequenceSweep },
+    });
+    expect(sweeper.sweep()).toBe(0);
+    expect(watchSweep).toHaveBeenCalledTimes(1);
+    expect(sequenceSweep).toHaveBeenCalledTimes(1);
+  });
 });

@@ -71,6 +71,15 @@ export type HookBusMessage =
       targetSessionId: string;
       watcherSessionId: string | null;
       at: string;
+    }
+  // ---- 序列域（session-orchestration 批 3）：步触发/终态广播（编排画布实时） ----
+  | { kind: 'sequence.step'; sequenceId: number; cursor: number; at: string }
+  | {
+      kind: 'sequence.finished';
+      sequenceId: number;
+      status: 'done' | 'failed' | 'cancelled';
+      error: string | null;
+      at: string;
     };
 
 export class HookEventBus {

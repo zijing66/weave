@@ -125,6 +125,20 @@ CREATE TABLE IF NOT EXISTS session_watches (
 );
 CREATE INDEX IF NOT EXISTS idx_session_watches_target ON session_watches(target_session_id, fired_at);
 
+-- 跨会话序列（批 3）：手工编排的多步链。steps JSON = [{to,text,mode,
+-- messageId?}]，messageId 为步触发后回填的消息行 id（重启恢复判据）；
+-- cursor = 正在等待完成的步下标。引擎无内存权威态，全部状态在行。
+CREATE TABLE IF NOT EXISTS session_sequences (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL DEFAULT '',
+  steps      TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  cursor     INTEGER NOT NULL DEFAULT 0,
+  error      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 全局静态配置（key-value 单表，原 <dataDir>/settings.json 文件——配置
 -- 统一落库）。配置项以约定 key 落行（如 terminal.preset / locale /
 -- hooks.enabled / events.retentionDays），新增配置零表结构迁移；
