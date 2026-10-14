@@ -120,6 +120,7 @@ flowchart TD
     REF["隐藏刷新器（terminal-counts 形状）<br/>有 SSE 客户端才探 · 变化才推"]
     MSG["message-deliverer 裁决表<br/>inject（忙排 outbox）｜headless（闲投 resume）"]
     AUTH["认证门 · deps.auth<br/>密码 / 会话 cookie / x-weave-local 本机令牌<br/>（豁免 /health、/auth/*、HTML 与静态文件）"]
+    AI["AI 助手代理 · /ai/*<br/>OpenAI 兼容 · 上下文三源（docs + 内置技能）<br/>key 落 &lt;dataDir&gt;/ai.json（0600，只写）"]
     OP["TerminalBackend 候选链<br/>（settings → terminalBackendFor）"]
     DB[("node:sqlite<br/>projects · sessions · hook_events<br/>session_messages · watches …")]
   end
@@ -149,6 +150,9 @@ flowchart TD
   OP -->|"开终端窗口"| CC
   OP -->|"开终端窗口"| CX2
   MKT --- HP
+  UI -->|"AI 对话（流式帧）"| AI
+  AI -->|"Bearer key → /chat/completions"| EXT["LLM 供应商（OpenAI 兼容）"]
+  AI -->|"读 docs + market 技能"| MKT
 ```
 
 要点：
