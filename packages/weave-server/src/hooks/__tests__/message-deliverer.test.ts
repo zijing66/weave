@@ -492,6 +492,37 @@ describe('MessageDeliverer 裁决表', () => {
     expect(fake.children[0]!.stdin.writes[0]).toBe(`Send to "${PEER_NAME}": step 1 text`);
   });
 
+  it('在途计数（会话行角标）：队列 pending ∪ 内存 delivering 计入，delivered 归零', async () => {
+    const fake = createFakeSpawn();
+    let registered = false;
+    const { surface } = relaySurface((sessionId) =>
+      registered ? { name: PEER_NAME } : null,
+    );
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    // 会话没开 → 队列 pending
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect([...deliverer.listInflightCounts()]).toEqual([[SESSION_ID, 1]]);
+
+    // 登记出现 → 冲洗转中继（delivering 在内存，仍在途计数为 1）
+    registered = true;
+    await deliverer.flushSession(SESSION_ID);
+    expect([...deliverer.listInflightCounts()]).toEqual([[SESSION_ID, 1]]);
+
+    // 中继退出 0 → delivered（终态）→ 计数归零
+    fake.children[0]!.emit('exit', 0, null);
+    expect(deliverer.listInflightCounts().size).toBe(0);
+  });
+
   it('prompt 层③：oneWay 随队列行落盘——换投递器（daemon 重启）后冲洗仍带单向标记', async () => {
     const fake = createFakeSpawn();
     const { surface } = relaySurface(() => null); // 会话没开 → 入队

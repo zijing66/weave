@@ -109,25 +109,30 @@ export function removePromptboxEntries(hooksDir: string, token: string, ids: Set
   }
 }
 
-/** 全库扫描：待递送行涉及哪些会话（启动重建队列索引 / 刷新器探活）。 */
-export function scanQueuedSessionIds(hooksDir: string): Set<string> {
+/** 全库读行（扫所有项目分片）：队列索引与在途计数共用一份目录遍历。 */
+export function readAllPromptbox(hooksDir: string): PromptboxEntry[] {
   const dir = join(hooksDir, 'promptbox');
-  const ids = new Set<string>();
   let files: string[];
   try {
     files = readdirSync(dir);
   } catch {
-    return ids;
+    return [];
   }
+  const out: PromptboxEntry[] = [];
   for (const file of files) {
     if (!file.endsWith('.jsonl')) continue;
     try {
-      for (const entry of parseLines(readFileSync(join(dir, file), 'utf8'))) ids.add(entry.sessionId);
+      out.push(...parseLines(readFileSync(join(dir, file), 'utf8')));
     } catch {
       continue;
     }
   }
-  return ids;
+  return out;
+}
+
+/** 全库扫描：待递送行涉及哪些会话（启动重建队列索引 / 刷新器探活）。 */
+export function scanQueuedSessionIds(hooksDir: string): Set<string> {
+  return new Set(readAllPromptbox(hooksDir).map((e) => e.sessionId));
 }
 
 /** 按会话删行（会话被删/归档时的级联清理）。返回删除行数。 */

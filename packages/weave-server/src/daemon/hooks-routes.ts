@@ -329,8 +329,14 @@ export async function handleHooksRoutes(
     const sessions = deps.hookSessions.listWithCounts(projectId);
     // claude 注册表判活随返回：true/false=判得动，null=判不动（codex/新鲜会话）不猜
     const liveness = claudeLivenessById();
+    // 在途消息计数（会话行角标）：管道口径 = 队列 pending ∪ 内存 delivering/running
+    const inflight = deps.messageDeliverer?.listInflightCounts() ?? new Map<string, number>();
     sendJson(res, 200, {
-      sessions: sessions.map((s) => ({ ...s, pidAlive: pidAliveOf(s, liveness) })),
+      sessions: sessions.map((s) => ({
+        ...s,
+        pidAlive: pidAliveOf(s, liveness),
+        inflight: inflight.get(s.sessionId) ?? 0,
+      })),
     });
     return true;
   }

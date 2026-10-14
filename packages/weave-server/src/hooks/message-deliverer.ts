@@ -12,6 +12,7 @@ import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './hea
 import { appendOutbox, hooksRoot } from './mirror.js';
 import {
   appendPromptbox,
+  readAllPromptbox,
   readPromptbox,
   removePromptboxBySession,
   removePromptboxEntries,
@@ -238,6 +239,22 @@ export class MessageDeliverer {
   /** 该会话是否有队列行（ingest 冲洗守卫，O(1)）。 */
   hasQueued(sessionId: string): boolean {
     return this.queuedSessions.has(sessionId);
+  }
+
+  /**
+   * 在途计数（sessionId → 条数）：队列 pending（未送达）∪ 内存 delivering/running
+   * （在飞）。会话行角标用——终态（injected/delivered/succeeded/…）不计。
+   */
+  listInflightCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    const bump = (sessionId: string): void => {
+      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
+    };
+    for (const entry of readAllPromptbox(this.hooksDir)) bump(entry.sessionId);
+    for (const msg of this.memory.values()) {
+      if (msg.status === 'delivering' || msg.status === 'running') bump(msg.sessionId);
+    }
+    return counts;
   }
 
   /** 层② 终端 send-text 通道是否装配（能力矩阵 prompt 列合成用）。 */
