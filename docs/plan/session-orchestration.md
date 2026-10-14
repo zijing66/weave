@@ -517,9 +517,14 @@ messageId 反查，均被本定案重塑。
   会话内 handler 消费成 additionalContext（跨端契约不动）；prompt 行由
   **daemon** 冲洗，handler 永不碰。
 
-**prompt 通道 = claude 原生 peer messaging，经受限中继**（spike 实测定案，
-2026-10-15；早期「wezterm send-text 打终端」方案作废——用户定案不走
-terminal）：
+**prompt 通道三层投递**（用户定案 2026-10-15 两轮合成：先「claude 原生
+SendMessage、不走 terminal」，后补「不支持 sendMessage 的 harness 回退
+send-text、注意多终端」——早期「send-text 作主通道」作废，但 send-text 本身
+**不作废**，降为兜底层）：**层① 原生中继**（harness 有 peer 消息机制）→
+**层② 终端 send-text 兜底**（无原生机制的 harness）→ **层③ promptbox 队列**
+（都不行，等待）。
+
+**层① 原生中继**（claude；spike E2E 实测定案）：
 
 - claude 每个持久会话在 peer 注册表 `~/.claude/sessions/<pid>.json` 登记
   `sessionId/name/status/messagingSocketPath`（命名管 `\\.\pipe\LOCAL\
@@ -532,15 +537,29 @@ terminal）：
   idle 立即唤醒、忙则下一 tool round 到达、回复可回中继进程）。
 - 中继显示名 `-n weave`——**原文即消息体**，不加信封（claude 的消息头
   `Message from @weave:` 自带出处）。
-- **没开的会话**：SendMessage 只达活会话 → 入 promptbox 队列，peer 注册表
-  出现该 sessionId 时中继冲洗（隐藏刷新器形状：只在队列非空时探、值变化
-  才推）；weave 项目的会话另由 ingest 事件即时触发冲洗（双触发幂等）。
-- 门控 = `MessagingSurface.prompt`（claude 声明中继规格；codex 等**不支持
-  sendMessage 机制的面声明 null + 原因**——按钮置灰带原因、路由 409 +
-  `unsupportedReasons.prompt`，与 inject/headless 同一裁决表口径；未来 harness
-  自带等价机制 = 实现自己的 prompt 规格，server/web 零改动点亮），
-  `prompt` 列进 `/messaging/capabilities` 矩阵；peer 注册表读取
-  （sessionId→name/存活）是 harness 知识，落 claude adapter。
+
+**层② 终端 send-text 兜底**（无原生 peer 消息的 harness，如 codex）——**经
+`TerminalBackend` 抽象泛化，不散写 wezterm**（用户定案「多终端支持，不仅是
+wezterm，还有 terminal、ghostty」）：
+
+- 后端新增文本通道能力（枚举 prompt pane + 注入文本），**按后端诚实声明**：
+  wezterm 实现（`cli list` 枚举 pane、`cli send-text` 注入，多 mux 走既有
+  mux 枚举基建）；Terminal.app / ghostty 按各自通道现实实现，没有通道的后端
+  默认不支持、不谎报——未来哪个后端有了通道 = 实现该方法即点亮，调用方零改动。
+- pane↔会话映射（spike 实测）：pane 标题 == 会话标题（忙时 ✳ spinner 前缀
+  剥掉再比）且 pane cwd == 项目路径；**歧义（多 pane 命中）拒绝不打**。
+- 投递配方（字节级实测）：send-text 缺省 bracketed paste 打原文（内含 CR 是
+  字面内容、不会提交）+ `--no-paste` 补一记 CR 提交。
+- **没开的会话**：入 promptbox 队列，双触发冲洗——① weave 项目会话由 ingest
+  事件即时触发；② 隐藏刷新器（形状同 `terminal-counts-refresher`：只在队列
+  非空时探）扫 peer 注册表（层① 目标）与 pane 枚举（层② 目标），幂等。
+- 门控分两层合成：`MessagingSurface.prompt`（层① 原生，claude 声明中继规格；
+  codex 等**不支持 sendMessage 的面声明 null + 原因**）+ 终端文本通道可用性
+  （层②，`TerminalBackend` 能力、随 settings/机器变）。**能力矩阵 `prompt`
+  列 = 原生 || 终端兜底可用**，两者皆无才置灰（409 + `unsupportedReasons.prompt`
+  ＋终端无通道原因）；未来 harness 自带等价机制 = 实现自己的 prompt 规格，
+  server/web 零改动点亮。peer 注册表读取（sessionId→name/存活）是 harness
+  知识，落 claude adapter。
 - **手动弹窗无模式选项**（用户定案「选项清理」）：纯文本框 + 发送，恒走
   prompt 通道。
 - **三模式保留（inject/headless/auto）为编排域显式选项**（序列步 / 画布
@@ -564,9 +583,11 @@ terminal）：
   忙闲裁决全不变；只有落点从「DB 行 + outbox」变「文件队列 + 内存态」。
 
 **实施批次**：① prompt spike（已毕，结论如上）→ ② 存储切换（表退役 +
-promptbox + deliverer 管道化 + 中继 runner + peer 注册表 adapter +
-capabilities prompt 列）→ ③ web（弹窗纯 prompt 发送 + 在途视图 + 画布/序列
-模式选项加 prompt）→ ④ 序列引擎适配（内存步态 + interrupted 语义）。
+promptbox + deliverer 管道化 + 中继 runner + peer 注册表 adapter + 层②
+send-text 兜底：TerminalBackend 文本通道能力 + wezterm 实现 + pane 映射 +
+队列双触发冲洗 + capabilities prompt 列）→ ③ web（弹窗纯 prompt 发送 +
+在途视图 + 画布/序列模式选项加 prompt）→ ④ 序列引擎适配（内存步态 +
+interrupted 语义）。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
