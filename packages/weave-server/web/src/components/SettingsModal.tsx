@@ -4,7 +4,7 @@ import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/li
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
-import { Languages, Settings, Terminal, X, Zap, Database, Power } from 'lucide-react';
+import { Languages, Settings, Sparkles, Terminal, X, Zap, Database, Power } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { registerInvalidator } from '@/lib/sse';
 
@@ -33,6 +33,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [presets, setPresets] = useState<Array<{ id: TerminalPreset; label: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // AI key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [clearKey, setClearKey] = useState(false);
 
   const loadSettings = useCallback(() => {
     setError(null);
@@ -67,8 +70,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setSaving(true);
     setError(null);
     try {
-      const saved = await api.putDaemonSettings(settings);
+      // `ai.apiKey` 只写：只在用户真输入过 / 点过清除时才带进请求（留空 = 服务端保持原值）。
+      const payload: DaemonSettingsExt = {
+        ...settings,
+        ...(settings.ai
+          ? {
+              ai: {
+                baseUrl: settings.ai.baseUrl,
+                model: settings.ai.model,
+                ...(apiKeyInput !== ''
+                  ? { apiKey: apiKeyInput }
+                  : clearKey
+                    ? { apiKey: null }
+                    : {}),
+              },
+            }
+          : {}),
+      };
+      const saved = await api.putDaemonSettings(payload);
       setSettings(saved as DaemonSettingsExt);
+      setApiKeyInput('');
+      setClearKey(false);
       setLocale(saved.locale);
       onClose();
     } catch (e) {
@@ -234,6 +256,68 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Sparkles className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.ai')}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={settings?.ai?.baseUrl ?? ''}
+                onChange={(e) =>
+                  setSettings((s) =>
+                    s === null
+                      ? s
+                      : { ...s, ai: { ...(s.ai ?? { model: '' }), baseUrl: e.target.value } },
+                  )
+                }
+                placeholder={t('settings.aiBaseUrlPlaceholder')}
+                className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <input
+                value={settings?.ai?.model ?? ''}
+                onChange={(e) =>
+                  setSettings((s) =>
+                    s === null
+                      ? s
+                      : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
+                  )
+                }
+                placeholder={t('settings.aiModelPlaceholder')}
+                className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => {
+                  setApiKeyInput(e.target.value);
+                  if (e.target.value !== '') setClearKey(false);
+                }}
+                placeholder={
+                  settings?.ai?.apiKeySet
+                    ? t('settings.aiApiKeySet')
+                    : t('settings.aiApiKeyUnset')
+                }
+                className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              {settings?.ai?.apiKeySet === true && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiKeyInput('');
+                    setClearKey(true);
+                  }}
+                  className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700"
+                >
+                  {t('settings.aiApiKeyClear')}
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-neutral-500">{t('settings.aiHint')}</p>
           </div>
 
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}

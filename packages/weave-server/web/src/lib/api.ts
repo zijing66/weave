@@ -9,10 +9,12 @@ import type { EnableOverride, ToolScope, ToolStateRow } from '@weavecode/core/to
 import { HARNESS_ORDER } from './harness-meta';
 import { markUnauthorized } from './auth';
 
-const BASE = '/api';
+/** daemon API 前缀：dev 由 vite 代理剥离，prod 由 daemon 自剥（web 侧只此一处）。 */
+export const API_BASE = '/api';
+const BASE = API_BASE; // 本文件既有调用点沿用短名
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -661,6 +663,13 @@ export interface DaemonSettings {
   hooks: { enabled: boolean };
   /** 开机自启 daemon（默认关）。 */
   startup?: { launchOnLogin: boolean };
+  /** 监听绑定地址（默认 0.0.0.0）。 */
+  server?: { bindHost: string };
+  /**
+   * AI 助手（OpenAI 兼容端点）。地址/模型是非密配置；`apiKey` 是**只写**字段
+   * （服务端拆存 `<dataDir>/ai.json`，GET/PUT 都不回显），`apiKeySet` 是服务端派生布尔。
+   */
+  ai?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
 }
 
 export interface TerminalPresetMeta {
@@ -1343,5 +1352,5 @@ export const api = {
       plugins: MarketPluginAsset[];
     }>(`/libraries/${id}/assets`),
 
-  eventsUrl: (): string => `${BASE}/events`,
+  eventsUrl: (): string => `${API_BASE}/events`,
 };

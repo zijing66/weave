@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { getDataDir } from '../db/paths.js';
 import { DEFAULT_AI_SETTINGS, readDaemonSettings } from './settings.js';
 import { hasAiKey, readAiKey } from './ai-config.js';
-import { buildSystemPrompt } from './ai-context.js';
+import { buildSystemPrompt, findDocsDir } from './ai-context.js';
 import { readJson, sendJson } from './http.js';
 import type { WeaveServerDeps } from './server.js';
 
@@ -62,6 +62,8 @@ export async function handleAiRoutes(
       baseUrl: ai.baseUrl,
       model: ai.model,
       apiKeySet: keySet,
+      // docs 命中与否：给 UI 一句「本次只注入了技能」的提示（只探目录，不读文件）。
+      docsFound: findDocsDir(process.cwd()) !== null,
     });
     return true;
   }

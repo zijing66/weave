@@ -57,6 +57,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
 import { LoginPage } from '@/components/LoginPage';
+import { AiAssistant } from '@/components/AiAssistant';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
@@ -1399,6 +1400,8 @@ function Dashboard() {
       )}
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
+      <AiAssistant />
     </DndContext>
   );
 }

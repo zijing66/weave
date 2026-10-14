@@ -59,7 +59,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2">
+      {/* bottom-20：让开右下角的 AI 助手悬浮按钮（bottom-4），两者同在右下角 */}
+      <div className="pointer-events-none fixed bottom-20 right-4 z-[60] flex w-80 flex-col gap-2">
         {items.map((item) => (
           <div
             key={item.id}
