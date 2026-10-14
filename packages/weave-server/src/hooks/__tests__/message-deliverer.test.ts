@@ -70,7 +70,8 @@ function relaySurface(resolve: (sessionId: string) => { name: string } | null = 
     bin: 'fake-relay',
     args: ['-p', '--no-session-persistence'],
     senderName: 'weave',
-    instruction: (peerName, text) => `Send to "${peerName}": ${text}`,
+    instruction: (peerName, text, opts) =>
+      `Send to "${peerName}"${opts.oneWay ? ' [one-way]' : ''}: ${text}`,
     resolve,
   };
   const surface: MessagingSurface = {
@@ -447,6 +448,7 @@ describe('MessageDeliverer 裁决表', () => {
       text: 'go check the build',
       mode: 'prompt',
       fromKind: 'dashboard',
+      oneWay: true, // 手动面：单向注入
     });
     expect(result).toMatchObject({ ok: true, status: 'delivering' });
     expect(fake.calls).toHaveLength(1);
@@ -458,8 +460,8 @@ describe('MessageDeliverer 裁决表', () => {
     // 中性 cwd（防项目 hooks 幽灵事件），不是项目路径
     expect(fake.calls[0]!.options.cwd).not.toBe(PROJECT_PATH);
     const stdinText = fake.children[0]!.stdin.writes[0]!;
-    // 指令全文由 harness 规格给出（server 只传 peer 名 + 原文，逐字透传）
-    expect(stdinText).toBe(`Send to "${PEER_NAME}": go check the build`);
+    // 指令全文由 harness 规格给出（server 只传 peer 名 + 原文 + oneWay，逐字透传）
+    expect(stdinText).toBe(`Send to "${PEER_NAME}" [one-way]: go check the build`);
     // 队列不落行（层① 命中即时投递）
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
 
@@ -471,6 +473,48 @@ describe('MessageDeliverer 裁决表', () => {
     );
     // delivered 不在在途视图（送达即从列表消失）
     expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(msg.id);
+  });
+
+  it('prompt 层①：编排域发送（非 oneWay）不带单向标记——双向对话保留', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'step 1 text',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(fake.children[0]!.stdin.writes[0]).toBe(`Send to "${PEER_NAME}": step 1 text`);
+  });
+
+  it('prompt 层③：oneWay 随队列行落盘——换投递器（daemon 重启）后冲洗仍带单向标记', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(() => null); // 会话没开 → 入队
+    const first = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    await first.send({
+      toSessionId: SESSION_ID,
+      text: 'queued manual',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(readPromptbox(hooksDir, TOKEN)[0]).toMatchObject({ oneWay: true });
+
+    // 全重启：新投递器（内存注册表空）+ peer 已登记 → 冲洗走中继
+    const open = relaySurface();
+    const second = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => open.surface, bin: 'fake-relay' }),
+    );
+    await second.flushSession(SESSION_ID);
+    expect(fake.children[0]!.stdin.writes[0]).toContain('[one-way]');
   });
 
   it('prompt 层① 中继键 = 合成键：目标会话 headless 被占不挡中继', async () => {

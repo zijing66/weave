@@ -498,6 +498,9 @@ export async function handleHooksRoutes(
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,
+        // 手动面 = 单向注入：没有接收方会话，中继载荷带「无需回复」注记
+        // （编排域不置 = 双向对话保留）。
+        oneWay: true,
       });
       if (result.ok) {
         sendJson(res, 201, {

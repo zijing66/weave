@@ -61,6 +61,8 @@ export interface PipeMessage {
   sessionId: string;
   text: string;
   mode: MessageMode;
+  /** 单向注入（手动面：无接收方会话，中继载荷带「无需回复」注记）；编排域不置。 */
+  oneWay?: boolean;
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -112,6 +114,8 @@ export interface SendInput {
   mode: MessageMode;
   fromKind: MessageFromKind;
   fromSessionId?: string | null;
+  /** 单向注入（手动面置 true：无接收方会话）；编排域省略 = 双向对话保留。 */
+  oneWay?: boolean;
 }
 
 /** send() 返回：ok 由路由映射 200，否则 status 即 HTTP 码。 */
@@ -179,6 +183,7 @@ export class MessageDeliverer {
       sessionId: input.toSessionId,
       text: input.text,
       mode: input.mode,
+      oneWay: input.oneWay === true,
       channel,
       status: 'pending',
       at: meta.at,
@@ -216,6 +221,7 @@ export class MessageDeliverer {
             sessionId,
             text: entry.text,
             mode: 'prompt',
+            oneWay: entry.oneWay === true,
             channel: 'prompt',
             status: 'pending',
             at: entry.at,
@@ -261,6 +267,7 @@ export class MessageDeliverer {
           sessionId,
           text: entry.text,
           mode: 'prompt',
+          oneWay: entry.oneWay === true,
           channel: 'prompt',
           status: 'pending',
           at: entry.at,
@@ -284,6 +291,7 @@ export class MessageDeliverer {
             sessionId,
             text: entry.text,
             mode: 'prompt',
+            oneWay: entry.oneWay === true,
             channel: 'prompt',
             status: 'delivering',
             at: entry.at,
@@ -451,7 +459,7 @@ export class MessageDeliverer {
   /** 入队（promptbox 追加 + 会话索引登记）。 */
   private queueEntry(entry: PipeMessage, token: string): void {
     appendPromptbox(this.hooksDir, token, [
-      { id: entry.id, sessionId: entry.sessionId, text: entry.text },
+      { id: entry.id, sessionId: entry.sessionId, text: entry.text, oneWay: entry.oneWay === true },
     ]);
     this.queuedSessions.add(entry.sessionId);
   }
@@ -465,7 +473,7 @@ export class MessageDeliverer {
       return this.headless.run({
         sessionId: `prompt-relay:${entry.sessionId}`,
         cwd: relayCwd(),
-        prompt: relay.instruction(peerName, entry.text),
+        prompt: relay.instruction(peerName, entry.text, { oneWay: entry.oneWay === true }),
         spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
         timeoutMs: this.deps.relayTimeoutMs ?? 120_000,

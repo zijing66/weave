@@ -182,11 +182,12 @@ export interface PromptRelaySpec {
   /** 目标会话里消息显示的发送方名（claude：`-n <senderName>`）。 */
   readonly senderName: string;
   /**
-   * 中继 stdin 指令全文（server 只传语义参数：peer 寻址名 + 原文）。本通道是
-   * **单向注入**——中继会话发完即退、没有接收面，故指令内的投递载荷须带
-   * 「无需回复」注记，否则目标会把消息当聊天、回给一个已消失的 @senderName。
+   * 中继 stdin 指令全文（server 只传语义参数：peer 寻址名 + 原文 + 单向标记）。
+   * `oneWay`（手动面）：中继会话发完即退、没有接收面，载荷须带「无需回复」注记，
+   * 否则目标会把消息当聊天、回给一个已消失的 @senderName。编排域（序列步）传
+   * false——**双向对话保留**，注记不加，原样投递。
    */
-  instruction(peerName: string, text: string): string;
+  instruction(peerName: string, text: string, opts: { oneWay: boolean }): string;
   /** sessionId → peer 寻址名（在 peer 注册表中登记 = 会话开着才有）；null = 未登记，走终端兜底或排队。 */
   resolve(sessionId: string): { name: string } | null;
 }

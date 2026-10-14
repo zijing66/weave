@@ -39,15 +39,25 @@ describe('MessagingSurface 契约', () => {
     expect(typeof CLAUDE_PROMPT_RELAY.resolve).toBe('function');
   });
 
-  it('claude：中继指令含单向注记——目标读到的载荷先声明无需回复，再是原文', () => {
-    const instruction = CLAUDE_PROMPT_RELAY.instruction('peer-a', 'go check the build');
+  it('claude：中继指令——手动面（oneWay）载荷头部带单向注记、原文其后', () => {
+    const instruction = CLAUDE_PROMPT_RELAY.instruction('peer-a', 'go check the build', {
+      oneWay: true,
+    });
     expect(instruction).toContain('"peer-a"');
     expect(instruction).toContain('SendMessage');
     expect(instruction).toContain('go check the build');
-    // 注记在载荷头部（先于原文）
     expect(instruction.indexOf('one-way')).toBeLessThan(
       instruction.indexOf('go check the build'),
     );
+  });
+
+  it('claude：中继指令——编排域（非 oneWay）原样投递，双向对话不加注记', () => {
+    const instruction = CLAUDE_PROMPT_RELAY.instruction('peer-a', 'go check the build', {
+      oneWay: false,
+    });
+    expect(instruction).toContain('go check the build');
+    expect(instruction).not.toContain('one-way');
+    expect(instruction).not.toContain('no reply');
   });
 
   it('claude：idleSignals 取值生命周期表（close + 会话级终点），不手抄', () => {

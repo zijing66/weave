@@ -16,6 +16,8 @@ export interface PromptboxEntry {
   id: string;
   sessionId: string;
   text: string;
+  /** 单向注入（手动面）——随行落盘，重启后冲洗仍带「无需回复」注记。 */
+  oneWay?: boolean;
   at: string;
 }
 
@@ -30,7 +32,13 @@ function parseLines(text: string): PromptboxEntry[] {
     try {
       const raw = JSON.parse(line) as Partial<PromptboxEntry>;
       if (typeof raw.id === 'string' && typeof raw.sessionId === 'string' && typeof raw.text === 'string') {
-        out.push({ id: raw.id, sessionId: raw.sessionId, text: raw.text, at: typeof raw.at === 'string' ? raw.at : '' });
+        out.push({
+          id: raw.id,
+          sessionId: raw.sessionId,
+          text: raw.text,
+          oneWay: raw.oneWay === true,
+          at: typeof raw.at === 'string' ? raw.at : '',
+        });
       }
     } catch {
       // 坏行跳过：队列是尽力递送面，不是记录系统
@@ -40,7 +48,11 @@ function parseLines(text: string): PromptboxEntry[] {
 }
 
 /** 追加入队（有界：超上限丢最旧，与 outbox 同型）。 */
-export function appendPromptbox(hooksDir: string, token: string, entries: Array<{ id: string; sessionId: string; text: string }>): void {
+export function appendPromptbox(
+  hooksDir: string,
+  token: string,
+  entries: Array<{ id: string; sessionId: string; text: string; oneWay?: boolean }>,
+): void {
   if (entries.length === 0) return;
   try {
     const file = promptboxPathOf(hooksDir, hookShardId(token));

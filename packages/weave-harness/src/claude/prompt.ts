@@ -2,9 +2,10 @@ import type { PromptRelaySpec } from '../driver.js';
 import { resolveClaudePeer } from './peers.js';
 
 /**
- * 单向注入注记（置于投递载荷头部）：本通道没有接收方会话——中继进程发完
- * 即退（`--no-session-persistence`），目标回的 SendMessage 必然落空。不加
- * 这句目标会把消息当聊天回一条，白烧一轮还可能报「找不到 @weave」。
+ * 单向注入注记（只给手动面，置于投递载荷头部）：手动发送没有接收方会话——
+ * 中继进程发完即退（`--no-session-persistence`），目标回的 SendMessage 必然
+ * 落空。不加这句目标会把消息当聊天回一条，白烧一轮还可能报「找不到 @weave」。
+ * 编排域（序列步）不加：那是要保留的双向对话。
  */
 const ONE_WAY_NOTE =
   '[weave one-way injection — no reply is expected: do not call SendMessage or ListAgents, just act on this prompt in this session.]';
@@ -19,7 +20,9 @@ export const CLAUDE_PROMPT_RELAY: PromptRelaySpec = {
   bin: 'claude',
   args: ['-p', '--no-session-persistence', '--tools', 'SendMessage,ListAgents', '-n', 'weave'],
   senderName: 'weave',
-  instruction: (peerName, text) =>
-    `Send the following message verbatim to the Claude session named "${peerName}" using the SendMessage tool, then stop. Do not use any other tool.\n\n${ONE_WAY_NOTE}\n\n${text}`,
+  instruction: (peerName, text, opts) =>
+    `Send the following message verbatim to the Claude session named "${peerName}" using the SendMessage tool, then stop. Do not use any other tool.\n\n${
+      opts.oneWay ? `${ONE_WAY_NOTE}\n\n` : ''
+    }${text}`,
   resolve: resolveClaudePeer,
 };
