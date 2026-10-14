@@ -4,7 +4,18 @@ import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/li
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
-import { Languages, Settings, Sparkles, Terminal, X, Zap, Database, Power } from 'lucide-react';
+import {
+  Database,
+  Eye,
+  EyeOff,
+  Languages,
+  Power,
+  Settings,
+  Sparkles,
+  Terminal,
+  X,
+  Zap,
+} from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { registerInvalidator } from '@/lib/sse';
 
@@ -36,9 +47,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   // AI key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [clearKey, setClearKey] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const loadSettings = useCallback(() => {
     setError(null);
+    // 每次打开都清空 key 相关输入态：不回显既有 key，也不留上一次的明文在内存里。
+    setApiKeyInput('');
+    setClearKey(false);
+    setShowApiKey(false);
     api
       .getDaemonSettings()
       .then((r) => {
@@ -291,12 +307,23 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
             <div className="flex items-center gap-2">
               <input
-                type="password"
+                type={showApiKey ? 'text' : 'password'}
                 value={apiKeyInput}
                 onChange={(e) => {
                   setApiKeyInput(e.target.value);
                   if (e.target.value !== '') setClearKey(false);
                 }}
+                // 这不是登录凭据：显式告诉浏览器与密码管理器别把它当密码字段——
+                // 同源上「保存的凭据」只该归登录页那个框（见 LoginPage：current-password）。
+                // one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器。
+                name="weaveAiApiKey"
+                autoComplete="one-time-code"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
                 placeholder={
                   settings?.ai?.apiKeySet
                     ? t('settings.aiApiKeySet')
@@ -304,6 +331,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 }
                 className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
+              <button
+                type="button"
+                onClick={() => setShowApiKey((value) => !value)}
+                title={showApiKey ? t('settings.aiApiKeyHide') : t('settings.aiApiKeyShow')}
+                className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
+              >
+                {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
               {settings?.ai?.apiKeySet === true && (
                 <button
                   type="button"

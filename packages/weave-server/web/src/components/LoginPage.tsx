@@ -42,11 +42,17 @@ export function LoginPage() {
           <Lock className="h-4 w-4 text-neutral-500" />
           <span className="text-sm font-medium">{t('auth.title')}</span>
         </div>
+        {/* 登录凭据的**唯一**归属框：current-password 让浏览器把保存的密码稳定填这里；
+            设置里的 API key 输入已标为非凭据（见 SettingsModal），两者不再互抢。 */}
         <input
           type="password"
           value={password}
           autoFocus
           autoComplete="current-password"
+          name="weaveDashboardPassword"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
           onChange={(e) => setPassword(e.target.value)}
           placeholder={t('auth.passwordPlaceholder')}
           className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"

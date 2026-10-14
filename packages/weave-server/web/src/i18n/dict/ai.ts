@@ -23,6 +23,8 @@ export const aiZh = {
   'settings.aiApiKeySet': '已设置（留空 = 保持不变）',
   'settings.aiApiKeyUnset': '未设置',
   'settings.aiApiKeyClear': '清除',
+  'settings.aiApiKeyShow': '显示',
+  'settings.aiApiKeyHide': '隐藏',
 };
 
 export const aiEn: Record<keyof typeof aiZh, string> = {
@@ -51,4 +53,6 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
   'settings.aiApiKeySet': 'Set (leave blank to keep)',
   'settings.aiApiKeyUnset': 'Not set',
   'settings.aiApiKeyClear': 'Clear',
+  'settings.aiApiKeyShow': 'Show',
+  'settings.aiApiKeyHide': 'Hide',
 };
