@@ -14,5 +14,4 @@ export const CLAUDE_MESSAGING: MessagingSurface = {
   inject: { rideEvents: INJECTABLE_EVENTS.claude },
   headless: CLAUDE_RESUME,
   idleSignals: [...HARNESS_LIFECYCLE.claude.close, 'SessionEnd'],
-  sessionEnv: 'CLAUDE_CODE_SESSION_ID',
 };

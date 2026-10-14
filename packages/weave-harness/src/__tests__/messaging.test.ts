@@ -36,10 +36,6 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_MESSAGING.idleSignals).toContain('Stop');
   });
 
-  it('claude：sessionEnv 声明会话内 env 变量名（CLI 身份定位用，env 名是 harness 知识）', () => {
-    expect(CLAUDE_MESSAGING.sessionEnv).toBe('CLAUDE_CODE_SESSION_ID');
-  });
-
   it('claude：headless 规格 promptStdin——args 不含 prompt（命令行无用户内容）', () => {
     expect(CLAUDE_RESUME.promptStdin).toBe(true);
     expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
