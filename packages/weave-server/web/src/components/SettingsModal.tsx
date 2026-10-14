@@ -48,6 +48,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充/弹生成器，这是最硬的一道闸
+  // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会）。聚焦即可正常输入。
+  const [keyFocused, setKeyFocused] = useState(false);
 
   const loadSettings = useCallback(() => {
     setError(null);
@@ -119,7 +122,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-[440px] max-w-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+      {/* max-h + 内容区 min-h-0/滚动：设置项变多后（AI 段）内容会超过视口，
+          面板是 overflow-hidden——不这样收口会把底部输入裁掉、点不到（见 CLAUDE.md
+          「纵向 flex 堆叠的下区要 min-h-0」）。 */}
+      <div className="relative w-[440px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
           <Settings className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('settings.title')}</span>
@@ -132,7 +138,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </button>
         </header>
 
-        <div className="p-4 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
@@ -309,6 +315,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <input
                 type={showApiKey ? 'text' : 'password'}
                 value={apiKeyInput}
+                readOnly={!keyFocused}
+                onFocus={() => setKeyFocused(true)}
+                onBlur={() => setKeyFocused(false)}
                 onChange={(e) => {
                   setApiKeyInput(e.target.value);
                   if (e.target.value !== '') setClearKey(false);
@@ -329,7 +338,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     ? t('settings.aiApiKeySet')
                     : t('settings.aiApiKeyUnset')
                 }
-                className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="button"
