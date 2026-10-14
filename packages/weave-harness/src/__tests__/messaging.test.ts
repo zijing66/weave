@@ -35,6 +35,10 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_PROMPT_RELAY.args.every((a) => !a.includes('\n'))).toBe(true);
     expect(CLAUDE_PROMPT_RELAY.args).toContain('--no-session-persistence');
     expect(CLAUDE_PROMPT_RELAY.args).toContain('--tools');
+    // 中继启动减肥：不拉 MCP、不解析 skills；--bare 不可用（破坏 --tools 白名单）
+    expect(CLAUDE_PROMPT_RELAY.args).toContain('--strict-mcp-config');
+    expect(CLAUDE_PROMPT_RELAY.args).toContain('--disable-slash-commands');
+    expect(CLAUDE_PROMPT_RELAY.args).not.toContain('--bare');
     expect(CLAUDE_PROMPT_RELAY.senderName).toBe('weave');
     expect(typeof CLAUDE_PROMPT_RELAY.resolve).toBe('function');
   });
