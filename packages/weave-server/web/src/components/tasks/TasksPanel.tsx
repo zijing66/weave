@@ -24,12 +24,13 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2 } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { useMediaQuery } from '@/lib/use-media-query';
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
@@ -50,6 +51,9 @@ export function TasksPanel({
   const { show } = useToast();
   const fb = useActionFeedback();
   const { sessions: allSessions, dispatches, statuses, refresh: refreshStatus } = useSessionStatus();
+  // <lg 两屏走查：列表态 ⇄ 事件链全屏态（点会话进、收起回），桌面恒双栏 inline。
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const [chainOpen, setChainOpen] = useState(false);
   const [rules, setRules] = useState<HookRule[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -100,6 +104,8 @@ export function TasksPanel({
 
   useEffect(() => {
     setSelectedId(initialSessionId ?? null);
+    // 全局总览跳转带入初始会话：<lg 直接开链路全屏（跳转意图即「看这条会话」）。
+    if (initialSessionId) setChainOpen(true);
     api.listHooksRules(projectId).then(setRules).catch(() => {});
   }, [projectId, initialSessionId]);
 
@@ -488,62 +494,17 @@ export function TasksPanel({
   // ——去掉原文字状态 tag（会话状态与组头信息重复）。
   const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
 
-  return (
-    <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
-      {/* 左栏：会话列表。<lg 折到上方限高内滚，链路图让出主空间。 */}
-      <aside className="flex w-full lg:w-72 shrink-0 max-h-[38%] lg:max-h-none flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
-          <span className="text-[11px] text-neutral-500">
-            {sessions === null ? t('hooks.loading') : String(sessions.length)}
-          </span>
-          <RefreshIconButton
-            className="ml-auto"
-            title={t('tasks.refresh')}
-            onClick={refreshStatus}
-          />
-        </div>
-        {error && (
-          <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
-            {error}
-          </p>
-        )}
-        {sessions === null ? (
-          <p className="flex items-center gap-1.5 text-xs text-neutral-600">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {t('hooks.loading')}
-          </p>
-        ) : sessions.length === 0 ? (
-          <p className="text-xs text-neutral-600">{t('tasks.emptySessions')}</p>
-        ) : (
-          <SessionList
-            sessions={sessions}
-            statuses={statuses}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onRename={(id, title) => void onRename(id, title)}
-            onDropDispatch={onDropDispatch}
-            onOpenTerminal={onOpenTerminal}
-            openTerminalStateOf={openTerminalStateOf}
-            capabilities={messagingCaps === null ? null : capabilityMap}
-            onOpenMessages={onOpenMessages}
-            watchOf={watchOf}
-            watchStateOf={watchStateOf}
-            onToggleWatch={onToggleWatch}
-            onDelete={handleDeleteSession}
-            deleteStateOf={deleteStateOf}
-          />
-        )}
-      </aside>
+  const selectedRow = sessions?.find((s) => s.sessionId === selectedId);
 
-      {/* 右栏：组头列表 + 单组画布（D8 accordion，每组一图）。
-          min-h-0：<lg 纵向堆叠时链路区才能在会话列表下方收缩（否则溢出被裁）。 */}
-      <section className="flex min-w-0 min-h-0 flex-1 flex-col">
-        <div className="flex items-center gap-2 pb-2">
-          <Activity className="h-3.5 w-3.5 text-rose-400" />
-          <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
-          <span className="ml-auto text-[10px] text-neutral-600">{t('tasks.legendNote')}</span>
-        </div>
+  // 链路区（右栏）：桌面 inline 与 <lg 全屏滑出复用同一 JSX 常量（isDesktop
+  // 互斥渲染，不双挂载）——展开态/滚动窗口等状态都在面板级，两态共用。
+  const chainEl = (
+    <section className="flex min-w-0 min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 pb-2">
+        <Activity className="h-3.5 w-3.5 text-rose-400" />
+        <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
+        <span className="ml-auto text-[10px] text-neutral-600">{t('tasks.legendNote')}</span>
+      </div>
 
         {/* 待派发区：未投送的 pending 指令——选活跃会话后派发（结果在事件链高亮） */}
         {pendingToDispatch.length > 0 && (
@@ -770,7 +731,89 @@ export function TasksPanel({
             )}
           </div>
         )}
-      </section>
+    </section>
+  );
+
+  return (
+    <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
+      {/* 左栏：会话列表。<lg 独占全高（链路收进全屏滑出层），桌面恒双栏。 */}
+      <aside className="flex w-full lg:w-72 max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
+          <span className="text-[11px] text-neutral-500">
+            {sessions === null ? t('hooks.loading') : String(sessions.length)}
+          </span>
+          <RefreshIconButton
+            className="ml-auto"
+            title={t('tasks.refresh')}
+            onClick={refreshStatus}
+          />
+        </div>
+        {error && (
+          <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+            {error}
+          </p>
+        )}
+        {sessions === null ? (
+          <p className="flex items-center gap-1.5 text-xs text-neutral-600">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t('hooks.loading')}
+          </p>
+        ) : sessions.length === 0 ? (
+          <p className="text-xs text-neutral-600">{t('tasks.emptySessions')}</p>
+        ) : (
+          <SessionList
+            sessions={sessions}
+            statuses={statuses}
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              // <lg 点会话 = 进事件链全屏（桌面仅切换选中，链路恒可见）
+              if (!isDesktop) setChainOpen(true);
+            }}
+            onRename={(id, title) => void onRename(id, title)}
+            onDropDispatch={onDropDispatch}
+            onOpenTerminal={onOpenTerminal}
+            openTerminalStateOf={openTerminalStateOf}
+            capabilities={messagingCaps === null ? null : capabilityMap}
+            onOpenMessages={onOpenMessages}
+            watchOf={watchOf}
+            watchStateOf={watchStateOf}
+            onToggleWatch={onToggleWatch}
+            onDelete={handleDeleteSession}
+            deleteStateOf={deleteStateOf}
+          />
+        )}
+      </aside>
+
+      {/* 桌面：链路 inline 常驻右栏 */}
+      {isDesktop && chainEl}
+
+      {/* <lg：点会话 → 事件链全屏右侧滑出（同 chainEl），收起回列表。 */}
+      {!isDesktop && chainOpen && selectedId && (
+        <div className="fixed inset-0 z-40">
+          <div className="absolute inset-0 flex flex-col bg-neutral-950 drawer-right">
+            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+              <span className="truncate text-sm font-semibold text-neutral-200">
+                {sessionLabel(selectedRow?.title ?? null, selectedId)}
+              </span>
+              {selectedRow?.harness && (
+                <span className="shrink-0">
+                  <HarnessIcon harness={selectedRow.harness} />
+                </span>
+              )}
+              <button
+                onClick={() => setChainOpen(false)}
+                className="ml-auto rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                title={t('app.mobileDrawerClose')}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col p-3">{chainEl}</div>
+          </div>
+        </div>
+      )}
 
       {/* 拖拽执行确认 */}
       {pendingRun && (
