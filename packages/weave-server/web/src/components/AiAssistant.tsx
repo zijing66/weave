@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ReactMarkdown from 'react-markdown';
 import { Bot, Send, Square, Trash2, X } from 'lucide-react';
 import { aiStatus, streamChat, type AiChatMessage, type AiStatus } from '@/lib/ai';
 import { errorText } from '@/lib/action-feedback';
@@ -15,6 +16,46 @@ import { useT } from '@/i18n/I18nProvider';
  * 反馈口径：失败走 toast（不静默）；发送中按钮变「停止」（AbortController）——
  * 这是长动作而非一次性动作，故不用 useActionFeedback 的三态。
  */
+/**
+ * 助手回答的 Markdown 预览（**只认简单文本格式**）：标题 / 粗斜体 / 行内与围栏代码 /
+ * 列表 / 引用 / 链接。刻意不挂 GFM 与代码高亮插件——窄气泡里表格、HTML、任务列表都
+ * 读不动，简单格式反而清爽。
+ *
+ * **字号整体适配气泡**：不用仓内的 `prose`（typography 插件最小档是 prose-sm = 14px，
+ * 比对话框正文 12px 大一圈，视觉上明显不配），改为手写紧凑样式——正文锁 `text-xs`、
+ * 代码 11px、标题只比正文大半档，行内元素逐项收边距。链接强制新开页签：点一下不能
+ * 把 dashboard 导航走。
+ */
+function AssistantMarkdown({ text }: { text: string }) {
+  return (
+    <div
+      className={
+        'text-xs leading-relaxed text-neutral-200 ' +
+        '[&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 ' +
+        '[&_strong]:font-semibold [&_strong]:text-neutral-100 [&_em]:italic ' +
+        '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 ' +
+        '[&_code]:rounded [&_code]:bg-neutral-950/60 [&_code]:px-1 [&_code]:py-px [&_code]:text-[11px] [&_code]:text-neutral-300 ' +
+        '[&_pre]:my-1.5 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-white/[0.06] [&_pre]:bg-neutral-950/60 [&_pre]:p-2 ' +
+        '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[11px] ' +
+        '[&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-[13px] [&_h1]:font-semibold ' +
+        '[&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold ' +
+        '[&_h3]:mt-1.5 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-medium ' +
+        '[&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-700 [&_blockquote]:pl-2 [&_blockquote]:text-neutral-400 ' +
+        '[&_a]:text-blue-400 [&_a]:underline ' +
+        '[&_hr]:my-2 [&_hr]:border-white/[0.08]'
+      }
+    >
+      <ReactMarkdown
+        components={{
+          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 export function AiAssistant() {
   const t = useT();
   const { show } = useToast();
@@ -136,15 +177,15 @@ export function AiAssistant() {
                   key={index}
                   className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
                 >
-                  <div
-                    className={
-                      message.role === 'user'
-                        ? 'max-w-[85%] whitespace-pre-wrap break-words rounded-lg bg-blue-600/25 px-2.5 py-1.5 text-xs text-blue-50'
-                        : 'max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-200'
-                    }
-                  >
-                    {message.content}
-                  </div>
+                  {message.role === 'user' ? (
+                    <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-lg bg-blue-600/25 px-2.5 py-1.5 text-xs text-blue-50">
+                      {message.content}
+                    </div>
+                  ) : (
+                    <div className="max-w-[92%] break-words rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-200">
+                      <AssistantMarkdown text={message.content} />
+                    </div>
+                  )}
                 </div>
               ))}
               {busy && streaming === '' && (
@@ -156,8 +197,8 @@ export function AiAssistant() {
               )}
               {streaming !== '' && (
                 <div className="flex justify-start">
-                  <div className="max-w-[92%] whitespace-pre-wrap break-words rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-200">
-                    {streaming}
+                  <div className="max-w-[92%] break-words rounded-lg bg-neutral-800/70 px-2.5 py-1.5 text-xs text-neutral-200">
+                    <AssistantMarkdown text={streaming} />
                   </div>
                 </div>
               )}
