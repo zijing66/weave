@@ -30,6 +30,16 @@ class FakeEventSource {
 
 vi.stubGlobal('EventSource', FakeEventSource);
 
+/** 认证态是 SSE 的门：stub `/auth/status` 置已登录后再订阅（真实路径 refreshAuth）。 */
+async function markAuthenticated(): Promise<void> {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ authenticated: true }), { status: 200 })),
+  );
+  const { refreshAuth } = await import('../auth');
+  await refreshAuth();
+}
+
 describe('lib/sse', () => {
   beforeEach(() => {
     FakeEventSource.latest = null;
@@ -37,6 +47,7 @@ describe('lib/sse', () => {
   });
 
   it('懒创建：首次订阅才建连接，多个订阅者共用同一条；退订不关流', async () => {
+    await markAuthenticated();
     const { subscribeSse } = await import('../sse');
 
     const offA = subscribeSse(() => {});
@@ -51,7 +62,18 @@ describe('lib/sse', () => {
     expect(source!.closed).toBe(false); // SPA 生命周期内复用，不因没人听就断
   });
 
+  it('未登录不建连；认证态翻到已登录即补连', async () => {
+    const { subscribeSse } = await import('../sse');
+    const off = subscribeSse(() => {});
+    expect(FakeEventSource.latest).toBeNull(); // 未登录：连上也是 401，不建连
+
+    await markAuthenticated();
+    expect(FakeEventSource.latest).not.toBeNull(); // 认证态订阅者把既有订阅补连
+    off();
+  });
+
   it('invalidate 帧按 key 调注册的重拉函数；push / 未注册 / 已退订都不调', async () => {
+    await markAuthenticated();
     const { subscribeSse, registerInvalidator } = await import('../sse');
     const offSubscribe = subscribeSse(() => {});
     const calls: string[] = [];

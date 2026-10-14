@@ -10,6 +10,7 @@ import { hooksZh, hooksEn } from './hooks';
 import { tasksZh, tasksEn } from './tasks';
 import { healthZh, healthEn } from './health';
 import { toolkitZh, toolkitEn } from './toolkit';
+import { authZh, authEn } from './auth';
 
 /** 扁平 dotted key 词典：按领域分 chunk，chunk 内 zh/en 成对、文件级强制
  * key 对齐（漏译编译失败），合并后这里再兜一层类型。 */
@@ -25,6 +26,7 @@ export const zh = {
   ...tasksZh,
   ...healthZh,
   ...toolkitZh,
+  ...authZh,
 };
 
 export const en: Record<keyof typeof zh, string> = {
@@ -39,6 +41,7 @@ export const en: Record<keyof typeof zh, string> = {
   ...tasksEn,
   ...healthEn,
   ...toolkitEn,
+  ...authEn,
 };
 
 export type MessageKey = keyof typeof zh;

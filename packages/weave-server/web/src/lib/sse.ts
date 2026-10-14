@@ -1,4 +1,5 @@
 import { api } from './api';
+import { authState, recheckAuth, subscribeAuth } from './auth';
 
 /**
  * 全站唯一的 /events 客户端。
@@ -22,7 +23,9 @@ const handlers = new Set<FrameHandler>();
 const invalidators = new Map<string, () => void>();
 let source: EventSource | null = null;
 
-function ensureSource(): EventSource {
+function ensureSource(): EventSource | null {
+  // 未登录不建连（连上也是 401）：登录成功后由认证态订阅者补连，或新订阅者触发。
+  if (authState() !== 'authenticated') return null;
   if (source) return source;
   source = new EventSource(api.eventsUrl());
   source.onmessage = (ev) => {
@@ -36,10 +39,28 @@ function ensureSource(): EventSource {
     if (frame.type === 'invalidate') invalidators.get(String(frame.key))?.();
     for (const handler of handlers) handler(frame);
   };
-  // EventSource 自带重连：出错不做事，交给浏览器退避重试。
-  source.onerror = () => {};
+  // EventSource 自带重连，但错误也可能是被 401 顶掉：复核认证态，未登录即整条
+  // 流关掉（停止无意义重试），登录后自动补连（见下方认证态订阅）。
+  source.onerror = () => {
+    recheckAuth();
+  };
   return source;
 }
+
+/** 断开并置空（认证态切到未登录时调用；下次登录后 ensureSource 重建）。 */
+function closeSource(): void {
+  source?.close();
+  source = null;
+}
+
+// 认证态驱动连接：登录 → 补连（既有订阅者已在表里，不会漏帧）；登出/被拒 → 断开。
+subscribeAuth(() => {
+  if (authState() === 'authenticated') {
+    ensureSource();
+    return;
+  }
+  closeSource();
+});
 
 /** 订阅整条流；返回退订函数。 */
 export function subscribeSse(handler: FrameHandler): () => void {

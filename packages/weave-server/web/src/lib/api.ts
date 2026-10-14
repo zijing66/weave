@@ -7,6 +7,7 @@
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride, ToolScope, ToolStateRow } from '@weavecode/core/tool';
 import { HARNESS_ORDER } from './harness-meta';
+import { markUnauthorized } from './auth';
 
 const BASE = '/api';
 
@@ -18,6 +19,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
+  if (res.status === 401) {
+    // 会话失效/未登录：置匿名 → App 随即渲染登录页；错误照抛（调用方仍可读文案）。
+    markUnauthorized();
+    throw new Error(await errorText(res));
+  }
   if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as T;
 }

@@ -50,10 +50,12 @@ import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { Library, PanelLeft, Settings, X } from 'lucide-react';
+import { Library, LogOut, PanelLeft, Settings, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { logout, refreshAuth, useAuthState } from '@/lib/auth';
+import { LoginPage } from '@/components/LoginPage';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
@@ -65,7 +67,28 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 const pluginEffective = (rows: readonly PluginRow[], runtime: PluginRuntime, key: string): boolean =>
   rows.some((r) => r.harness === runtime && r.key === key && r.effective);
 
+/**
+ * 认证门：未探测 → 极简骨架（不闪内容）；未登录 → **默认落登录页**（仅密码，
+ * 无改密入口——改密只走 CLI）；已登录 → 原 dashboard 本体。
+ * 任一 API 401 / SSE 被拒也会把状态打回 anonymous（见 lib/api.ts、lib/sse.ts）。
+ */
 export default function App() {
+  const auth = useAuthState();
+  useEffect(() => {
+    void refreshAuth();
+  }, []);
+  if (auth === 'unknown') {
+    return (
+      <div className="grid min-h-dvh place-items-center bg-neutral-950 text-xs text-neutral-600">
+        weave
+      </div>
+    );
+  }
+  if (auth === 'anonymous') return <LoginPage />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const t = useT();
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selected, setSelected] = useState<ProjectRow | null>(null);
@@ -1107,6 +1130,13 @@ export default function App() {
               title={t('app.settingsTooltip')}
             >
               <Settings className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => void logout()}
+              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title={t('auth.logout')}
+            >
+              <LogOut className="h-4 w-4" />
             </button>
           </div>
 
