@@ -221,8 +221,8 @@ auto 的裁决基准 `turnOpen` 已由 `listWithCounts` 算好（harness 无关�
 
 ### D4 寻址与回复
 
-- 主键 = sessionId（全局唯一）；UI/CLI 辅以 title 模糊匹配（CLI `weave msg send <name-or-id>`）。
-- 消息行带 `fromSessionId`——**回复 = from 即 to**（UI 一键回、CLI `weave msg reply`）。
+- 主键 = sessionId（全局唯一）；UI 辅以 title 模糊匹配。
+- 消息行带 `fromSessionId`——**回复 = from 即 to**（UI 一键回）。
 - LAN（L5）扩展 `<machine>:<sessionId>` 前缀寻址，一期恒本地。
 
 ### D5 信封与递归防护
@@ -242,11 +242,12 @@ auto 的裁决基准 `turnOpen` 已由 `listWithCounts` 算好（harness 无关�
    通道支持校验）；**序列编排器**——手动触发的多步消息模板链（hop 上限）。
    分组维度 = 项目 / harness 泳道切换。
 
-### D7 CLI 发起面：`weave msg`（agent 会话内协作入口）
+### D7 CLI 发起面：`weave msg`（已移除）
 
-`weave msg ls [sessionId]` / `weave msg send <to> <text> [--mode]` / `weave msg watch <to>`
-/ `weave msg reply`。走 daemon HTTP 同一路由、同一能力面——agent 在会话内发起编排的
-入口（ListAgents/SendMessage 的 CLI 对等物）；人用 dashboard、agent 用 CLI，同一消息域。
+> 2026-10-14 产品定案：人在终端直接在目标会话窗口输入，CLI 注入面无必要——整树
+> 删除（ls / send / watch / reply），`sessionEnv` 槽随唯一消费者摘除；web 为唯一
+> 人工注入面，watch 走会话列表铃铛。历史形态见批 3 实施记录①，定案见「批后修复
+> 与定案」③。
 
 ### D8 局域网联邦（设计预留，L5 不实现）
 
@@ -385,7 +386,7 @@ web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
 
 ### 批 3 实施记录（2026-10-15 落库，三笔：① CLI `9f9ca8d` ② 引擎 `a0624e7` ③ 画布 `47da60c`）
 
-**① CLI 发起面（`weave msg`）**：
+**① CLI 发起面（`weave msg`；2026-10-14 整树移除，见「批后修复与定案」③）**：
 
 - **`MessagingSurface.sessionEnv` 新槽**：会话内 env 变量名是 harness 知识——claude 声明
   `CLAUDE_CODE_SESSION_ID`，CLI 经 registry 面取，不散写 harness env 名。这是 D4「agent
@@ -446,7 +447,7 @@ web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
 全量 910/910；③ 布局纯函数 4 例，web 93/93、全仓 126 文件 1320/1320 绿；两 tsc
 （server+harness 包根、web）全绿。
 
-### 批后修复与定案（2026-10-14，两笔：`5ee36f0` + `509f393`）
+### 批后修复与定案（2026-10-14，三笔：`5ee36f0` + `509f393` + `a4bfac3`）
 
 **① 无头回合 win32 ENOENT 根治（`promptStdin` 契约）**：`claude` 在 Windows 上是
 npm 的 `.cmd` shim，`CreateProcess` 不认、不经 shell spawn 必 ENOENT（批 1 在
@@ -466,6 +467,12 @@ stdin 传递（实测 `claude --resume <sid> -p` 读管道），命令行只剩�
 默认与 `reply`、web 弹窗初始选项（inject 不支持的面回 auto）。`auto` 的「忙→inject、
 闲→headless」语义**原样保留**——它是编排的语义（序列步驱动无人值守会话），显式选
 它的人知道自己在干什么；缺省即安全。
+
+**③ CLI 发起面移除（产品定案，`a4bfac3`）**：人在终端就直接在目标会话窗口输入，
+CLI 注入面无必要——`weave msg`（ls / send / watch / reply）**整树删除**，消息注入收敛
+web 单入口（会话消息弹窗 + 编排画布），watch 订阅走 web 会话列表铃铛（引擎零改动）。
+`MessagingSurface.sessionEnv` 槽随之摘除（唯一消费者是 CLI 的会话内身份定位；D7 记为
+已移除）；`fromKind='cli'` 类型保留（历史行渲染），服务端路由与裁决零改动。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
@@ -494,7 +501,7 @@ CronCreate 与 SendMessage 共用「载荷入队 → 非抢占 → 回合边界�
 
 | 触发源（何时/为何入队） | 形态 | 批次 |
 |---|---|---|
-| manual | dashboard 按钮 / `weave msg send` | 批 1/3 |
+| manual | dashboard 按钮（唯一人工面；CLI `weave msg` 已移除） | 批 1/3 |
 | lifecycle event（idle） | watch 引擎 onIngest idleSignals | 批 2 |
 | rule（hook 规则自动域） | dispatcher 既有链——**留在 dispatch 域不合并**（D1 边界） | 已有 |
 | time | daemon 侧 scheduler 表，`from_kind='scheduler'` | 批 6 候选 |
