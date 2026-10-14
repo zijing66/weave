@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride } from '@weavecode/core/tool';
 import { api, type ToolkitPack, type PluginRow, type AssetScope } from '@/lib/api';
@@ -25,6 +25,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { groupByRepo, toggleIn } from '@/lib/repo-groups';
+import { StatusPill, statusTone } from '@/components/ui/status-pill';
 
 /** 导出给 LibraryPanel 插件包区复用（同一 kind 徽标语言）。 */
 export const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
@@ -247,6 +248,18 @@ export function ToolkitSection({
   ]);
   const anyExpanded = collapsed.size === 0;
 
+  /** 默认全折叠：数据到达时把各级 key 一次性铺满折叠集；用户自己动过之后不再自动铺。 */
+  const userTouchedFold = useRef(false);
+  useEffect(() => {
+    if (userTouchedFold.current || allFoldKeys.length === 0) return;
+    setCollapsed(new Set(allFoldKeys));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 以 join 串做指纹，避免数组新引用每渲染都触发
+  }, [allFoldKeys.join('|')]);
+  const toggleFold = (key: string): void => {
+    userTouchedFold.current = true;
+    setCollapsed((prev) => toggleIn(prev, key));
+  };
+
   if (packs === null) {
     return <p className="text-xs text-neutral-600">{t('toolkit.loading')}</p>;
   }
@@ -399,7 +412,10 @@ export function ToolkitSection({
           <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
           <button
             type="button"
-            onClick={() => setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set())}
+            onClick={() => {
+              userTouchedFold.current = true;
+              setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set());
+            }}
             className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
             title={anyExpanded ? t('toolkit.collapseAllGroups') : t('toolkit.expandAllGroups')}
           >
@@ -426,7 +442,7 @@ export function ToolkitSection({
             <div
               role="button"
               tabIndex={0}
-              onClick={() => setCollapsed((prev) => toggleIn(prev, repo.key))}
+              onClick={() => toggleFold(repo.key)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -447,6 +463,18 @@ export function ToolkitSection({
                 {isLocal ? t('repo.local') : repo.namespace}
               </span>
               {allBuiltin && <Badge className="bg-amber-900/40 text-amber-300">{t('toolkit.prov.builtin')}</Badge>}
+              {/* 折叠条总结 tag：数量 + 启用状态数量（类型由包行徽标体现） */}
+              <StatusPill
+                tone={statusTone(
+                  repo.groups.filter((p) => p.enabled).length,
+                  repo.groups.length,
+                )}
+              >
+                {t('repo.enabledCount', {
+                  done: repo.groups.filter((p) => p.enabled).length,
+                  total: repo.groups.length,
+                })}
+              </StatusPill>
               <span className="shrink-0 text-[10px] text-neutral-600" title={t('repo.namespaceTip')}>
                 {t('repo.packCount', { n: packCount })}
               </span>
@@ -467,7 +495,7 @@ export function ToolkitSection({
                         <div
                           role="button"
                           tabIndex={0}
-                          onClick={() => setCollapsed((prev) => toggleIn(prev, scopeKey))}
+                          onClick={() => toggleFold(scopeKey)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();

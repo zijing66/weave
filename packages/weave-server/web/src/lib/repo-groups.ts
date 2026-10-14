@@ -14,8 +14,14 @@ export interface RepoGroup<T> {
 
 export const LOCAL_REPO_KEY = '__local__';
 
-/** 按仓库 namespace 聚合；「本地」排最前，其余按市场名排序。 */
-export function groupByRepo<T extends { namespace?: string }>(groups: T[]): RepoGroup<T>[] {
+/**
+ * 按仓库 namespace 聚合；次序 = **内置（有的成员 provenance === 'builtin'）→ 本地 →
+ * 其余按市场名**。内置必须排最前（用户口径：所有资源管理里内置都置顶）；判据取成员
+ * 自带的 provenance，不硬编码市场名。
+ */
+export function groupByRepo<T extends { namespace?: string; provenance?: string }>(
+  groups: T[],
+): RepoGroup<T>[] {
   const byRepo = new Map<string, RepoGroup<T>>();
   for (const g of groups) {
     const key = g.namespace ?? LOCAL_REPO_KEY;
@@ -27,12 +33,14 @@ export function groupByRepo<T extends { namespace?: string }>(groups: T[]): Repo
     entry.groups.push(g);
     byRepo.set(key, entry);
   }
-  return [...byRepo.values()].sort((a, b) =>
-    a.namespace === undefined
-      ? -1
-      : b.namespace === undefined
-        ? 1
-        : a.namespace.localeCompare(b.namespace),
+  const rank = (entry: RepoGroup<T>): number => {
+    if (entry.namespace === undefined) return 1; // 本地
+    return entry.groups.some((g) => g.provenance === 'builtin') ? 0 : 2; // 内置最前
+  };
+  return [...byRepo.values()].sort(
+    (a, b) =>
+      rank(a) - rank(b) ||
+      (a.namespace ?? '').localeCompare(b.namespace ?? ''),
   );
 }
 

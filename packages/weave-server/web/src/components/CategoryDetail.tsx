@@ -29,6 +29,8 @@ import {
   type OpenDetailFn,
 } from '@/components/SkillGrid';
 import { McpGrid } from '@/components/McpGrid';
+import { StatusPill, statusTone } from '@/components/ui/status-pill';
+import { countEffectiveSkills } from '@/lib/skill-stats';
 import { AgentBadge } from '@/components/AgentBadge';
 import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
@@ -62,20 +64,36 @@ function externalGroups<T extends { pluginKey?: string }>(groups: readonly T[]):
 }
 
 /**
+ * 外部块的「已生效」计数：MCP 行读行上的 `effective`；技能按同一口径（只有显式禁用
+ * 才算不生效；项目态技能行没有包级禁用概念 → 全算生效）。
+ */
+function externalEffectiveCount(
+  skills: readonly unknown[],
+  mcp: readonly { effective?: boolean }[],
+  groups: readonly SkillGroup[] | undefined,
+): number {
+  const skillDone = groups ? countEffectiveSkills(externalGroups(groups)).effective : skills.length;
+  return skillDone + mcp.filter((row) => row.effective !== false).length;
+}
+
+/**
  * 主视图里的「外部资源」折叠块：装的是**不属于任何插件包**的技能与 MCP（包内的随包
  * 启停，不在这里露面）。默认展开——它是看到外置条目的唯一入口。
  */
 function ExternalAssetsSection({
   title,
   note,
+  tag,
   children,
 }: {
   title: string;
   note: string;
+  tag?: ReactNode;
   children: ReactNode;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(true);
+  // 默认折叠（与资源管理其余折叠条一致）
+  const [open, setOpen] = useState(false);
   return (
     <section className="rounded-xl border border-white/[0.06] bg-neutral-900/40">
       <button
@@ -90,6 +108,7 @@ function ExternalAssetsSection({
           <ChevronRight className="h-3 w-3 text-neutral-500" />
         )}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
+        {tag}
         <span className="text-[11px] text-neutral-500">{note}</span>
       </button>
       {open && <div className="space-y-2 px-3 pb-3">{children}</div>}
@@ -415,6 +434,19 @@ export function CategoryDetail({
           <ExternalAssetsSection
             title={t('category.externalAssets')}
             note={t('category.externalAssetsNote')}
+            tag={
+              <StatusPill
+                tone={statusTone(
+                  externalEffectiveCount(skills, mcp, isGlobal ? groups : undefined),
+                  skills.length + mcp.length,
+                )}
+              >
+                {t('category.externalAssetsSummary', {
+                  skills: skills.length,
+                  mcp: mcp.length,
+                })}
+              </StatusPill>
+            }
           >
             <SkillGrid
               skills={skills}

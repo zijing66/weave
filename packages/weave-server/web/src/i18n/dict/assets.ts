@@ -40,6 +40,7 @@ export const assetsZh = {
   'repo.local': '本地',
   'repo.namespaceTip': '仓库 namespace：该市场下所有插件都归这一块',
   'repo.packCount': '{n} 个包',
+  'repo.enabledCount': '已启 {done} / {total}',
   'repo.formLink': '链接',
   'repo.formCopy': '副本',
   'repo.formLegend': '链接 / 副本',
@@ -70,6 +71,7 @@ export const assetsZh = {
   // —— 主视图里的「外部资源」折叠块（不属任何包的技能/MCP） ——
   'category.externalAssets': '外部资源',
   'category.externalAssetsNote': '不在任何插件包内（外置）',
+  'category.externalAssetsSummary': '技能 {skills} · MCP {mcp}',
 
   // —— McpGrid ——
   'mcp.headingGlobal': '全局 MCP Servers',
@@ -147,6 +149,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'repo.local': 'Local',
   'repo.namespaceTip': 'Repository namespace: every plugin from this marketplace groups here',
   'repo.packCount': '{n} packs',
+  'repo.enabledCount': '{done} / {total} enabled',
   'repo.formLink': 'linked',
   'repo.formCopy': 'copied',
   'repo.formLegend': 'linked / copied',
@@ -176,6 +179,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   // —— "External" collapsible block in the main view (skills/MCP outside any pack) ——
   'category.externalAssets': 'External',
   'category.externalAssetsNote': 'not part of any plugin pack',
+  'category.externalAssetsSummary': 'skills {skills} · MCP {mcp}',
 
   // —— McpGrid ——
   'mcp.headingGlobal': 'Global MCP Servers',
