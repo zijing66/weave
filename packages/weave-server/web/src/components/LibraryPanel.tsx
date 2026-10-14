@@ -49,6 +49,7 @@ import {
   FileCode,
   RefreshCw,
   PackageX,
+  Package,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -365,6 +366,16 @@ export function LibraryPanel({
       return next;
     });
 
+  // 市场源三节折叠态（内置 / 本地 / Git；默认全展开）。
+  const [marketCollapsed, setMarketCollapsed] = useState<Set<string>>(new Set());
+  const toggleMarketSection = (key: string) =>
+    setMarketCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   // Section-level collapse (Skill templates / MCP templates / Update hints).
   const [sectionsCollapsed, setSectionsCollapsed] = useState<Set<string>>(new Set());
   const toggleSection = (key: string) =>
@@ -374,6 +385,24 @@ export function LibraryPanel({
       else next.add(key);
       return next;
     });
+
+  // 市场源分节：内置置顶 → 本地（目录导入 + legacy 外部源）→ Git 最后。
+  const builtinMarkets = market.filter((m) => m.source === 'builtin');
+  const localMarkets = market.filter((m) => m.source === 'dir' || m.source === 'legacy');
+  const gitMarkets = market.filter((m) => m.source === 'git');
+
+  /** 三节共用的源卡片渲染（选中态 / 更新状态 / 迁入 / 移除 的口径全在这）。 */
+  const marketCard = (item: MarketItem) => (
+    <MarketCard
+      key={item.id}
+      item={item}
+      selected={selectedId === item.id}
+      status={marketStatus.get(item.id)}
+      onSelect={setSelectedId}
+      onMigrate={(it) => void migrateLibrary(it)}
+      onRemove={(it) => (it.managed ? setRemoveTarget(it) : void removeItem(it))}
+    />
+  );
 
   const outdatedSkills = (updates?.skills ?? []).filter((u) => u.outdated);
   const outdatedMcp = (updates?.mcp ?? []).filter((u) => u.outdated);
@@ -557,91 +586,46 @@ export function LibraryPanel({
             </button>
           </div>
         )}
-        {market.length > 0 && (
-          <ul className="space-y-0.5">
-            {market.map((item) => {
-              const migrateBusy = fb.stateOf(`lib-migrate:${item.id}`) === 'loading';
-              const removeState = fb.stateOf(`lib-remove:${item.id}`);
-              return (
-                <li key={item.id} className="flex items-center gap-1">
-                  <button
-                    onClick={() => setSelectedId(item.id)}
-                    className={cn(
-                      'flex-1 min-w-0 text-left rounded px-1.5 py-1',
-                      selectedId === item.id ? 'bg-neutral-800' : 'hover:bg-neutral-900',
-                    )}
-                    title={item.path}
-                  >
-                    <span className="flex items-center gap-1 min-w-0">
-                      {/* 名字即仓库名：资源管理里那一级折叠块用的就是它（服务端给的
-                          namespace），两处必须同名才认得出是同一个仓库。 */}
-                      <span className="text-xs truncate" title={t('repo.namespaceTip')}>
-                        {item.managed && item.resourceId ? item.resourceId : item.path}
-                      </span>
-                      <MarketSourceBadge source={item.source} />
-                      {/* 资产类型 tag（与资源管理文件树同款样式/词表），多个计 ×N */}
-                      {item.tags &&
-                        BUCKET_ORDER.filter((tag) => item.tags![tag] !== undefined).map((tag) => (
-                          <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
-                            {tag}
-                            {item.tags![tag]! > 1 && (
-                              <span className="ml-1 tabular-nums text-[10px] opacity-70">
-                                ×{item.tags![tag]}
-                              </span>
-                            )}
-                          </span>
-                        ))}
-                    </span>
-                    {item.source === 'git' && (item.origin || item.importedAt) && (
-                      <span className="block text-[10px] text-neutral-600 truncate">
-                        {item.origin}
-                        {item.origin && item.importedAt ? ' · ' : ''}
-                        {item.importedAt
-                          ? t('library.importedAt', { date: item.importedAt.slice(0, 10) })
-                          : ''}
-                      </span>
-                    )}
-                  </button>
-                  <MarketStatusBadge status={marketStatus.get(item.id)} />
-                  {/* 内置仓例外：它不是导入来的（无源可迁、无副本可删，落点还是指向
-                      包内容的链接）——服务端对此恒 409/拒绝，此处不摆按钮。 */}
-                  {item.legacy && (
-                    <button
-                      onClick={() => void migrateLibrary(item)}
-                      disabled={migrateBusy}
-                      title={t('library.migrateTip')}
-                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50 disabled:opacity-40"
-                    >
-                      {migrateBusy ? t('library.migrating') : t('library.migrate')}
-                    </button>
-                  )}
-                  {!item.builtin && (
-                    <button
-                      onClick={() =>
-                        item.managed ? setRemoveTarget(item) : void removeItem(item)
-                      }
-                      disabled={removeState === 'loading'}
-                      title={
-                        item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')
-                      }
-                      className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                    >
-                      <FeedbackIcon
-                        state={removeState}
-                        className="h-3 w-3"
-                        icon={<Trash2 className="h-3 w-3" />}
-                      />
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </div>
 
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {/* 市场源三节折叠块：内置 → 本地（目录导入 + legacy 外部源）→ Git；
+            每源一张独立卡片，点卡片选中该库。 */}
+        {builtinMarkets.length > 0 && (
+          <TemplateSection
+            icon={<Package className="h-3.5 w-3.5 text-emerald-400" />}
+            title={t('library.marketSectionBuiltin')}
+            count={builtinMarkets.length}
+            open={!marketCollapsed.has('builtin')}
+            onToggle={() => toggleMarketSection('builtin')}
+          >
+            {builtinMarkets.map(marketCard)}
+          </TemplateSection>
+        )}
+        {localMarkets.length > 0 && (
+          <TemplateSection
+            icon={<Folder className="h-3.5 w-3.5 text-blue-400" />}
+            title={t('library.marketSectionLocal')}
+            count={localMarkets.length}
+            open={!marketCollapsed.has('local')}
+            onToggle={() => toggleMarketSection('local')}
+          >
+            {localMarkets.map(marketCard)}
+          </TemplateSection>
+        )}
+        {gitMarkets.length > 0 && (
+          <TemplateSection
+            icon={<GitBranch className="h-3.5 w-3.5 text-violet-400" />}
+            title={t('library.marketSectionGit')}
+            count={gitMarkets.length}
+            open={!marketCollapsed.has('git')}
+            onToggle={() => toggleMarketSection('git')}
+          >
+            {gitMarkets.map(marketCard)}
+          </TemplateSection>
+        )}
+
         {noTemplates && (
           <div className="rounded-md border border-dashed border-white/[0.08] bg-neutral-900/40 p-4 text-center">
             <PackageX className="h-5 w-5 mx-auto text-neutral-600 mb-1" />
@@ -1161,6 +1145,117 @@ function MarketStatusBadge({ status }: { status?: MarketUpdateStatus }) {
   );
 }
 
+/** 市场源卡片：整卡点击选中该库；行内操作（迁入 / 移除）stopPropagation。
+ *  行1 = 库名 + 状态徽标 + 迁入/移除；行2 = 来源徽标 + 资产类型 tag + git 溯源。 */
+function MarketCard({
+  item,
+  selected,
+  status,
+  onSelect,
+  onMigrate,
+  onRemove,
+}: {
+  item: MarketItem;
+  selected: boolean;
+  status?: MarketUpdateStatus;
+  onSelect: (id: number) => void;
+  onMigrate: (item: MarketItem) => void;
+  onRemove: (item: MarketItem) => void;
+}) {
+  const t = useT();
+  const fb = useActionFeedback();
+  const migrateBusy = fb.stateOf(`lib-migrate:${item.id}`) === 'loading';
+  const removeState = fb.stateOf(`lib-remove:${item.id}`);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(item.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(item.id);
+        }
+      }}
+      className={cn(
+        'rounded-md border px-2 py-1.5 space-y-1 cursor-pointer select-none',
+        'focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none',
+        selected
+          ? 'border-neutral-700 bg-neutral-800/80'
+          : 'border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]',
+      )}
+      title={item.path}
+    >
+      <div className="flex items-center gap-1">
+        {/* 名字即仓库名：资源管理里那一级折叠块用的就是它（服务端给的
+            namespace），两处必须同名才认得出是同一个仓库。 */}
+        <span className="min-w-0 truncate text-xs font-medium text-neutral-200" title={t('repo.namespaceTip')}>
+          {item.managed && item.resourceId ? item.resourceId : item.path}
+        </span>
+        <span className="ml-auto shrink-0 flex items-center gap-1">
+          <MarketStatusBadge status={status} />
+          {item.legacy && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onMigrate(item);
+              }}
+              disabled={migrateBusy}
+              title={t('library.migrateTip')}
+              className="rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50 disabled:opacity-40"
+            >
+              {migrateBusy ? t('library.migrating') : t('library.migrate')}
+            </button>
+          )}
+          {/* 内置仓例外：它不是导入来的（无源可迁、无副本可删，落点还是指向
+              包内容的链接）——服务端对此恒 409/拒绝，此处不摆按钮。 */}
+          {!item.builtin && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(item);
+              }}
+              disabled={removeState === 'loading'}
+              title={item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')}
+              className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed"
+            >
+              <FeedbackIcon
+                state={removeState}
+                className="h-3 w-3"
+                icon={<Trash2 className="h-3 w-3" />}
+              />
+            </button>
+          )}
+        </span>
+      </div>
+      <div className="flex items-center gap-1 min-w-0 flex-wrap">
+        <MarketSourceBadge source={item.source} />
+        {/* 资产类型 tag（与资源管理文件树同款样式/词表），多个计 ×N */}
+        {item.tags &&
+          BUCKET_ORDER.filter((tag) => item.tags![tag] !== undefined).map((tag) => (
+            <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
+              {tag}
+              {item.tags![tag]! > 1 && (
+                <span className="ml-1 tabular-nums text-[10px] opacity-70">
+                  ×{item.tags![tag]}
+                </span>
+              )}
+            </span>
+          ))}
+        {item.source === 'git' && (item.origin || item.importedAt) && (
+          <span className="ml-auto text-[10px] text-neutral-600 truncate">
+            {item.origin}
+            {item.origin && item.importedAt ? ' · ' : ''}
+            {item.importedAt
+              ? t('library.importedAt', { date: item.importedAt.slice(0, 10) })
+              : ''}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Group skills by their parent `skills/` directory so a library with multiple
  * folders (e.g. `lib/coding/skills/review` + `lib/writing/skills/docs`) shows
@@ -1248,7 +1343,8 @@ function TemplateSection({
 }: {
   icon: ReactNode;
   title: string;
-  hint: string;
+  /** 右侧浅色操作提示；折叠块型区块（如市场源三节）可省。 */
+  hint?: string;
   /** Item count shown as a tag (stays visible when collapsed). */
   count?: number;
   /** Controlled collapse state (lifted so expand/collapse-all can drive it). */
@@ -1280,7 +1376,7 @@ function TemplateSection({
         {icon}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
         {count !== undefined && <Badge variant="other">{count}</Badge>}
-        <span className="text-[11px] text-neutral-500 ml-auto">{hint}</span>
+        {hint && <span className="text-[11px] text-neutral-500 ml-auto">{hint}</span>}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}
     </section>
