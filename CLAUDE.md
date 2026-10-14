@@ -4,42 +4,33 @@
 > Re-run `weave init` to regenerate.
 
 <!-- weave:start -->
-## Behavioral Rules
+## 行为准则
 
-- Follow existing code conventions and patterns in this project
-- Prefer editing existing files over creating new ones
-- Don't add features, refactor, or introduce abstractions beyond the task
-- Three similar lines is better than a premature abstraction
-- Write no comments unless the WHY is non-obvious
-- Never write multi-paragraph explanations in code
-- Don't add error handling for states that can't happen
+- 遵循本项目既有的代码约定与模式
+- 优先改既有文件，不要新建
+- 不为任务之外的东西加功能、做重构或引入抽象
+- 三行相似代码好过一处过早抽象
+- 除非「为什么」不明显，否则不写注释
+- 代码里绝不写多段解释
+- 不为不可能发生的状态加错误处理
 
-## File Organization
+## 文件组织
 
-- Source code: `src/`
-- Tests: co-located `*.test.ts` or `__tests__/` directories
-- Config files at project root
-- Use existing directory structure — don't invent new top-level folders
+- 源码：`src/`
+- 测试：与源文件同目录的 `*.test.ts` 或 `__tests__/` 目录
+- 配置文件放项目根目录
+- 沿用既有目录结构——不要新造顶层目录
 
-## Weave Commands
+## Weave 命令
 
-- `/review` — Code review current changes
-- `/test` — Write or update tests
-- `/explain` — Explain selected code
-- `/scaffold` — Generate component scaffold
+- `/review` — 审查当前改动
+- `/test` — 编写或更新测试
+- `/explain` — 解释选中的代码
+- `/scaffold` — 生成组件脚手架
 
-## Skills
+## 技能
 
-Reusable skills live in `skills/` (agent skills standard: one directory per
-skill with a `SKILL.md`). Invoke a skill by name when the task matches one.
-
-## weave 注入的消息
-
-以 `[weave] ` 开头的用户消息来自 weave 控制台（dashboard / 编排）的注入，不是坐在终端前的人手打的：
-
-- 去掉该标记后的全文就是完整指令，**照它执行**；
-- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；
-- 该标记之外的普通用户消息 = 用户本人输入，正常对待。
+可复用技能放 `skills/`（agent skills 标准：一个技能一个目录，内含 `SKILL.md`）。任务命中某个技能时按名调用。
 
 <!-- weave:end -->
 

@@ -139,6 +139,12 @@ export const en: Record<keyof typeof zh, string> = {
   'init.multiselect.invalid': 'Ignored unrecognized selection(s): {keys}',
   'init.noPeerFace': 'no equivalent surface',
   'init.stepSkipped': 'Skipped {step}: {reason}',
+  // --- CLAUDE.md managed block (generated per locale) ---
+  'claudemd.rules': '## Behavioral Rules\n\n- Follow existing code conventions and patterns in this project\n- Prefer editing existing files over creating new ones\n- Don\'t add features, refactor, or introduce abstractions beyond the task\n- Three similar lines is better than a premature abstraction\n- Write no comments unless the WHY is non-obvious\n- Never write multi-paragraph explanations in code\n- Don\'t add error handling for states that can\'t happen\n\n',
+  'claudemd.files': '## File Organization\n\n- Source code: `src/`\n- Tests: co-located `*.test.ts` or `__tests__/` directories\n- Config files at project root\n- Use existing directory structure — don\'t invent new top-level folders\n\n',
+  'claudemd.security': '## Security\n\n- Never commit secrets, credentials, or API keys\n- Validate all user input at system boundaries\n- Don\'t introduce XSS, SQL injection, or command injection vectors\n- Prefer parameterized queries and safe APIs over string concatenation\n\n',
+  'claudemd.commands': '## Weave Commands\n\n- `/review` — Code review current changes\n- `/test` — Write or update tests\n- `/explain` — Explain selected code\n- `/scaffold` — Generate component scaffold\n\n',
+  'claudemd.skills': '## Skills\n\nReusable skills live in `skills/` (agent skills standard: one directory per\nskill with a `SKILL.md`). Invoke a skill by name when the task matches one.\n\n',
   'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---
   'harness.instructionLinkNotMaterialised.message':

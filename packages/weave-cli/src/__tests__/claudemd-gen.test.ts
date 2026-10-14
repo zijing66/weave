@@ -1,10 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import { WEAVE_INJECTION_MARKER } from '@weavecode/core';
+import { setLocale } from '../i18n/index';
 import {
   generateClaudeMd,
   generateClaudeMdSection,
   mergeClaudeMd,
 } from '../init/claudemd-gen';
+
+// 托管块按 locale 生成（默认 locale 是 zh-CN）：本文件按英文断言，末尾另有一条
+// 中文用例。文件级隔离，改全局 locale 不会漏到别的测试文件。
+beforeAll(() => setLocale('en'));
+afterAll(() => setLocale('zh-CN'));
 
 describe('generateClaudeMd', () => {
   it('includes the project name as H1', () => {
@@ -63,11 +69,19 @@ describe('generateClaudeMdSection', () => {
     expect(section).not.toContain('# p\n');
   });
 
-  it('解释控制台注入标记（标记取自 core 单一事实源，不手抄）', () => {
-    const section = generateClaudeMdSection({ template: 'minimal', projectName: 'p' });
-    expect(section).toContain('## weave 注入的消息');
-    expect(section).toContain(`\`${WEAVE_INJECTION_MARKER}\``);
-    expect(WEAVE_INJECTION_MARKER).toBe('[weave] ');
+  it('不写入产品内部机制：注入标记语义属 weave 自己的文档，不进项目文件', () => {
+    const section = generateClaudeMdSection({ template: 'full', projectName: 'p' });
+    expect(section).not.toContain(WEAVE_INJECTION_MARKER);
+    expect(section).not.toContain('注入');
+  });
+
+  it('按 locale 生成：zh-CN 出中文块，英文键不泄漏', () => {
+    setLocale('zh-CN');
+    const section = generateClaudeMdSection({ template: 'full', projectName: 'p' });
+    expect(section).toContain('## 行为准则');
+    expect(section).toContain('## 安全');
+    expect(section).not.toContain('## Behavioral Rules');
+    setLocale('en');
   });
 });
 

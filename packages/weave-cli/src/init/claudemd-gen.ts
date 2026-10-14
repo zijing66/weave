@@ -1,4 +1,4 @@
-import { WEAVE_INJECTION_MARKER } from '@weavecode/core';
+import { t } from '../i18n/index.js';
 
 export type ClaudeMdTemplate = 'minimal' | 'standard' | 'full';
 
@@ -12,16 +12,23 @@ export interface ClaudeMdGeneratorInput {
  *
  * weave writes ONE instruction file and links the other name to it
  * (`AGENTS.md -> CLAUDE.md`, see instruction-link.ts), so this content has to
- * serve every agent that reads either name — Claude Code and Codex both. The
- * header wording is therefore agent-neutral, and the managed block carries both
- * the weave command list and the skills note.
+ * serve every agent that reads either name — Claude Code and Codex both.
+ *
+ * The block text lives in the CLI dictionary (`claudemd.*`) and renders in the
+ * active locale. Only project-facing conventions belong here: weave's own
+ * internals (how the dashboard injects messages, marker semantics, …) are
+ * product knowledge rather than this project's, so they are documented in
+ * weave's own repo instead of being written into every user project.
  */
 
 /** Delimit weave's managed block so re-init can replace it in place. */
 export const WEAVE_BLOCK_START = '<!-- weave:start -->';
 export const WEAVE_BLOCK_END = '<!-- weave:end -->';
 
-/** weave 生成的整个文件都带这条 header——uninstall 据此判「整文件是 weave 的」。 */
+/**
+ * weave 生成的整个文件都带这条 header——uninstall 据此判「整文件是 weave 的」，
+ * 所以它是**判据**而非文案：保持英文、不随 locale 变。
+ */
 export const WEAVE_MANAGED_HEADER = '> This file is managed by [weave](https://github.com/zijing66/weave) — a coding-agent harness.';
 
 function header(name: string): string {
@@ -29,79 +36,6 @@ function header(name: string): string {
 
 > This file is managed by [weave](https://github.com/zijing66/weave) — a coding-agent harness.
 > Re-run \`weave init\` to regenerate.
-
-`;
-}
-
-function behavioralRules(): string {
-  return `## Behavioral Rules
-
-- Follow existing code conventions and patterns in this project
-- Prefer editing existing files over creating new ones
-- Don't add features, refactor, or introduce abstractions beyond the task
-- Three similar lines is better than a premature abstraction
-- Write no comments unless the WHY is non-obvious
-- Never write multi-paragraph explanations in code
-- Don't add error handling for states that can't happen
-
-`;
-}
-
-function fileRules(): string {
-  return `## File Organization
-
-- Source code: \`src/\`
-- Tests: co-located \`*.test.ts\` or \`__tests__/\` directories
-- Config files at project root
-- Use existing directory structure — don't invent new top-level folders
-
-`;
-}
-
-function securityRules(): string {
-  return `## Security
-
-- Never commit secrets, credentials, or API keys
-- Validate all user input at system boundaries
-- Don't introduce XSS, SQL injection, or command injection vectors
-- Prefer parameterized queries and safe APIs over string concatenation
-
-`;
-}
-
-function gettingStarted(): string {
-  return `## Weave Commands
-
-- \`/review\` — Code review current changes
-- \`/test\` — Write or update tests
-- \`/explain\` — Explain selected code
-- \`/scaffold\` — Generate component scaffold
-
-`;
-}
-
-function skillsNote(): string {
-  return `## Skills
-
-Reusable skills live in \`skills/\` (agent skills standard: one directory per
-skill with a \`SKILL.md\`). Invoke a skill by name when the task matches one.
-
-`;
-}
-
-/**
- * 控制台注入消息的标记说明：weave 把控制台/dashboard 的 prompt 直接写进会话
- * （语义上是「用户消息」，会话分不出是谁敲的），标记 + 这段说明就是唯一的可见
- * 凭据。标记本身来自 core 单一事实源，别在这里手抄字面量。
- */
-function injectedPromptNote(): string {
-  return `## weave 注入的消息
-
-以 \`${WEAVE_INJECTION_MARKER}\` 开头的用户消息来自 weave 控制台（dashboard / 编排）的注入，不是坐在终端前的人手打的：
-
-- 去掉该标记后的全文就是完整指令，**照它执行**；
-- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；
-- 该标记之外的普通用户消息 = 用户本人输入，正常对待。
 
 `;
 }
@@ -115,19 +49,18 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
   const { template } = input;
 
   let content = `${WEAVE_BLOCK_START}\n`;
-  content += behavioralRules();
+  content += t('claudemd.rules');
 
   if (template === 'standard' || template === 'full') {
-    content += fileRules();
+    content += t('claudemd.files');
   }
 
   if (template === 'full') {
-    content += securityRules();
+    content += t('claudemd.security');
   }
 
-  content += gettingStarted();
-  content += skillsNote();
-  content += injectedPromptNote();
+  content += t('claudemd.commands');
+  content += t('claudemd.skills');
   content += `${WEAVE_BLOCK_END}\n`;
   return content;
 }

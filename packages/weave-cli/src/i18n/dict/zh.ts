@@ -136,6 +136,12 @@ export const zh = {
   'init.noPeerFace': '无对等面',
   'init.stepSkipped': '已跳过 {step}：{reason}',
   'init.removed': '  已按标记清理 {count} 个遗留生成物。\n',
+  // --- CLAUDE.md 托管块（按 locale 生成；仅项目相关约定，产品内部机制不写进项目文件）---
+  'claudemd.rules': '## 行为准则\n\n- 遵循本项目既有的代码约定与模式\n- 优先改既有文件，不要新建\n- 不为任务之外的东西加功能、做重构或引入抽象\n- 三行相似代码好过一处过早抽象\n- 除非「为什么」不明显，否则不写注释\n- 代码里绝不写多段解释\n- 不为不可能发生的状态加错误处理\n\n',
+  'claudemd.files': '## 文件组织\n\n- 源码：`src/`\n- 测试：与源文件同目录的 `*.test.ts` 或 `__tests__/` 目录\n- 配置文件放项目根目录\n- 沿用既有目录结构——不要新造顶层目录\n\n',
+  'claudemd.security': '## 安全\n\n- 绝不提交密钥、凭据或 API key\n- 在系统边界校验所有用户输入\n- 不引入 XSS、SQL 注入、命令注入面\n- 优先参数化查询与安全 API，而不是字符串拼接\n\n',
+  'claudemd.commands': '## Weave 命令\n\n- `/review` — 审查当前改动\n- `/test` — 编写或更新测试\n- `/explain` — 解释选中的代码\n- `/scaffold` — 生成组件脚手架\n\n',
+  'claudemd.skills': '## 技能\n\n可复用技能放 `skills/`（agent skills 标准：一个技能一个目录，内含 `SKILL.md`）。任务命中某个技能时按名调用。\n\n',
   // --- harness 健康检查 message / fix ---
   'harness.instructionLinkNotMaterialised.message': '{agents} 是内容为 "{claude}" 的普通文件——git 把软链接检出成了文本。',
   'harness.instructionLinkNotMaterialised.fix': '启用开发者模式，然后运行 `git config core.symlinks true` 并重新检出该文件。',

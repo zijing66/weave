@@ -159,10 +159,10 @@ export type HookRule = z.infer<typeof HookRuleSchema>;
 export const WEAVE_PLUGIN_MANIFEST = 'weave-plugin.json';
 
 /**
- * weave 注入消息的来源标记（唯一事实源：server 直投载荷用它当前缀，
- * `weave init` 生成的 CLAUDE.md 块用它向会话解释这个标记的含义）。
+ * weave 注入消息的来源标记（唯一事实源：server 的直投路径用它当前缀）。
  * 直投路径把消息写成语义上的「用户消息」——会话分不出是手打还是控制台注入，
- * 这个标记 + CLAUDE.md 里的说明就是唯一的可见凭据。
+ * 这个标记就是转录里唯一可见的凭据。标记语义归 weave 自己的文档，**不写进
+ * 项目文件**（项目 CLAUDE.md 只放项目相关约定）。
  */
 export const WEAVE_INJECTION_MARKER = '[weave] ';
 

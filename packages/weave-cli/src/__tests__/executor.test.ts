@@ -180,7 +180,8 @@ describe('executeInit', () => {
     // the real file carries the content
     const content = await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8');
     expect(content).toContain('weave:start');
-    expect(content).toContain('## Skills');
+    // 块内容按 locale 生成（默认 zh-CN），断言用 locale 无关的结束标记
+    expect(content).toContain('weave:end');
   });
 
   it('adopts an existing AGENTS.md instead of overwriting it', async () => {
