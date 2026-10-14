@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
   skillSourceRuntime,
@@ -13,7 +14,6 @@ import {
   type PluginRow,
   type PluginRuntime,
   type ProjectRow,
-  type InstallCapabilities,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
@@ -30,10 +30,7 @@ import {
 } from '@/components/SkillGrid';
 import { McpGrid } from '@/components/McpGrid';
 import { AgentBadge } from '@/components/AgentBadge';
-import {
-  FileAssetTree,
-  type FileAssetRow,
-} from '@/components/FileAssetTree';
+import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
@@ -42,22 +39,64 @@ import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { SequenceCanvas } from '@/components/tasks/SequenceCanvas';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
-import { Code2, PackageX } from 'lucide-react';
+import { ChevronDown, ChevronRight, Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
 
-/** Second-level tab on the 资源管理 page: which exclusive asset panel shows. */
-export type AssetTab = 'files' | 'skills' | 'mcp' | 'plugins';
+/**
+ * 资源管理页的**视图**（不是类型 tab）：以插件包为准的主视图，与只读的文件视图。
+ * 原「文件/技能/MCP/插件」四 tab 层已去掉——技能与 MCP 里不属任何包的（外置）并进
+ * 主视图的「外部资源」折叠块，包内的随包启停（不在此露面）。
+ */
+export type ResourceView = 'packs' | 'files';
 
-const ASSET_TABS: AssetTab[] = ['files', 'skills', 'mcp', 'plugins'];
+/** 视图按钮表（顺序即展示顺序）。 */
+const VIEWS: { key: ResourceView; label: MessageKey }[] = [
+  { key: 'packs', label: 'assetView.packs' },
+  { key: 'files', label: 'assetView.files' },
+];
 
-/** Tab labels stay the raw English terms (术语纪律一致). */
-const ASSET_TAB_LABELS: Record<AssetTab, MessageKey> = {
-  files: 'assetTab.files',
-  skills: 'assetTab.skills',
-  mcp: 'assetTab.mcp',
-  plugins: 'assetTab.plugins',
-};
+/** 外置 = 不属于任何包的技能分组（包内的随包启停，不进「外部资源」块）。 */
+function externalGroups<T extends { pluginKey?: string }>(groups: readonly T[]): T[] {
+  return groups.filter((group) => !group.pluginKey);
+}
+
+/**
+ * 主视图里的「外部资源」折叠块：装的是**不属于任何插件包**的技能与 MCP（包内的随包
+ * 启停，不在这里露面）。默认展开——它是看到外置条目的唯一入口。
+ */
+function ExternalAssetsSection({
+  title,
+  note,
+  children,
+}: {
+  title: string;
+  note: string;
+  children: ReactNode;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(true);
+  return (
+    <section className="rounded-xl border border-white/[0.06] bg-neutral-900/40">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        title={open ? t('common.collapse') : t('common.expand')}
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-left [&_svg]:pointer-events-none"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 text-neutral-500" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-neutral-500" />
+        )}
+        <span className="text-xs font-semibold text-neutral-300">{title}</span>
+        <span className="text-[11px] text-neutral-500">{note}</span>
+      </button>
+      {open && <div className="space-y-2 px-3 pb-3">{children}</div>}
+    </section>
+  );
+}
+
 
 /** Harness-tool filter for the sections on the 资源管理 page. */
 export type RuntimeTab = Harness | 'all';
@@ -76,8 +115,8 @@ export function CategoryDetail({
   projectId,
   mode,
   category,
-  assetTab,
-  onAssetTabChange,
+  resourceView,
+  onResourceViewChange,
   statuslineNonce,
   assets,
   globalAssets,
@@ -89,7 +128,6 @@ export function CategoryDetail({
   onUninstallSkill,
   onUninstallMcp,
   onCycleMcpEnable,
-  onUninstallFileAsset,
   onCyclePluginState,
   onUninstallPlugin,
   onOpenFile,
@@ -98,15 +136,14 @@ export function CategoryDetail({
   onOpenSession,
   initialSessionId,
   dragPayload,
-  capabilities,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
   projectId: number;
   mode: Mode;
   category: MainCategory;
-  /** Files-page asset tab (lifted to App so it survives category switches). */
-  assetTab: AssetTab;
-  onAssetTabChange: (tab: AssetTab) => void;
+  /** 资源管理页视图（提升到 App，切分类来回不丢）。 */
+  resourceView: ResourceView;
+  onResourceViewChange: (view: ResourceView) => void;
   /** Bumped when re-entering the statusline panel → remounts with a fresh tab. */
   statuslineNonce: number;
   assets: AssetEntry[];
@@ -122,7 +159,6 @@ export function CategoryDetail({
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   /** MCP 启停三态循环：落盘与行刷新由 App 统一负责。 */
   onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
-  onUninstallFileAsset: (row: FileAssetRow, scope?: AssetScope) => void | Promise<void>;
   /** 插件逐档启用覆写循环（§4 ②推广）：交语义（harness + 键 + 档位 + 下一态）。 */
   onCyclePluginState: (
     runtime: PluginRuntime,
@@ -141,8 +177,6 @@ export function CategoryDetail({
   initialSessionId?: string;
   /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
   dragPayload: DragPayload | null;
-  /** 安装属性矩阵（App 传入）：文件树卸载门控数据源（§6-4）。 */
-  capabilities: InstallCapabilities | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
@@ -298,30 +332,30 @@ export function CategoryDetail({
         </div>
       )}
 
-      {/* 资源管理页：AssetTab 行（四个类型 tab 互斥）→ 对应内容 */}
+      {/* 资源管理页：**视图**切换（插件包为主 / 查看文件只读）——不再是类型 tab 层 */}
       {category === 'files' && (
         <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
-          {ASSET_TABS.map((tab) => (
+          {VIEWS.map((view) => (
             <button
-              key={tab}
-              onClick={() => onAssetTabChange(tab)}
+              key={view.key}
+              onClick={() => onResourceViewChange(view.key)}
               className={cn(
                 'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                assetTab === tab
+                resourceView === view.key
                   ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
                   : 'text-neutral-500 hover:text-neutral-300',
               )}
             >
-              {t(ASSET_TAB_LABELS[tab])}
+              {t(view.label)}
             </button>
           ))}
         </div>
       )}
 
-      {/* 文件 tab：目录树（chips 类型筛选）。修订 ui-redesign D2 并集规则——
-          树不再常驻页顶，只在 files tab 下渲染（提交信息声明）。 */}
+      {/* 查看文件（只读视图）：目录树照旧按类型 chips 筛选，但**不给管理动作**
+          ——装/卸/启停归主视图（插件包/外部资源），这里只负责看。 */}
       {category === 'files' &&
-        assetTab === 'files' &&
+        resourceView === 'files' &&
         !isGlobal &&
         (treeAssets.length === 0 ? (
           runtimeTab !== 'claude' && runtimeTab !== 'all' ? (
@@ -346,14 +380,12 @@ export function CategoryDetail({
             scope={scope}
             assets={treeAssets}
             updates={fileUpdates}
-            capabilities={capabilities}
-            onUninstall={(row) => onUninstallFileAsset(row, 'project')}
             onOpenFile={onOpenFile}
           />
         ))}
 
       {category === 'files' &&
-        assetTab === 'files' &&
+        resourceView === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
@@ -370,53 +402,55 @@ export function CategoryDetail({
             scope={scope}
             assets={globalTreeAssets}
             updates={fileUpdates}
-            capabilities={capabilities}
-            onUninstall={(row) => onUninstallFileAsset(row, 'user')}
             onOpenFile={onOpenFile}
           />
         ))}
 
-      {category === 'files' && assetTab === 'skills' && (
-        <SkillGrid
-          skills={skills}
-          groups={isGlobal ? groups : undefined}
-          globalGroupsReadOnly={isGlobal ? undefined : groups}
-          updates={skillUpdates}
-          empty={
-            runtimeTab === 'codex'
-              ? isGlobal
-                ? t('category.emptySkillsGlobalCodex')
-                : t('category.emptySkillsProjectCodex')
-              : isGlobal
-                ? t('category.emptySkillsGlobal')
-                : t('category.emptySkillsProject')
-          }
-          onUninstallSkill={onUninstallSkill}
-          onOpenDetail={onOpenSkillDetail}
-          onCyclePluginState={onCyclePluginState}
-          onUninstallPlugin={onUninstallPlugin}
-        />
-      )}
+      {category === 'files' && resourceView === 'packs' && (
+        <>
+          {/* 主区：插件包（包内技能/MCP 随包启停，不另行露面） */}
+          <PluginAssetsPanel projectId={projectId} mode={mode} runtimeTab={runtimeTab} />
 
-      {category === 'files' && assetTab === 'mcp' && (
-        <McpGrid
-          rows={mcp}
-          scope={scope}
-          updates={mcpUpdates}
-          empty={
-            runtimeTab === 'codex'
-              ? t('category.emptyMcpCodex')
-              : isGlobal
-                ? t('category.emptyMcpGlobal')
-                : t('category.emptyMcpProject')
-          }
-          onUninstallMcp={onUninstallMcp}
-          onCycleMcpEnable={onCycleMcpEnable}
-        />
-      )}
-
-      {category === 'files' && assetTab === 'plugins' && (
-        <PluginAssetsPanel projectId={projectId} mode={mode} runtimeTab={runtimeTab} />
+          {/* 外部资源：不属于任何包的 skills / MCP 自成一折叠块（用户定：外置单独一块） */}
+          <ExternalAssetsSection
+            title={t('category.externalAssets')}
+            note={t('category.externalAssetsNote')}
+          >
+            <SkillGrid
+              skills={skills}
+              groups={isGlobal ? externalGroups(groups) : undefined}
+              globalGroupsReadOnly={isGlobal ? undefined : externalGroups(groups)}
+              updates={skillUpdates}
+              empty={
+                runtimeTab === 'codex'
+                  ? isGlobal
+                    ? t('category.emptySkillsGlobalCodex')
+                    : t('category.emptySkillsProjectCodex')
+                  : isGlobal
+                    ? t('category.emptySkillsGlobal')
+                    : t('category.emptySkillsProject')
+              }
+              onUninstallSkill={onUninstallSkill}
+              onOpenDetail={onOpenSkillDetail}
+              onCyclePluginState={onCyclePluginState}
+              onUninstallPlugin={onUninstallPlugin}
+            />
+            <McpGrid
+              rows={mcp}
+              scope={scope}
+              updates={mcpUpdates}
+              empty={
+                runtimeTab === 'codex'
+                  ? t('category.emptyMcpCodex')
+                  : isGlobal
+                    ? t('category.emptyMcpGlobal')
+                    : t('category.emptyMcpProject')
+              }
+              onUninstallMcp={onUninstallMcp}
+              onCycleMcpEnable={onCycleMcpEnable}
+            />
+          </ExternalAssetsSection>
+        </>
       )}
 
       {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}

@@ -40,7 +40,7 @@ import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { type MainCategory } from '@/components/CategoryBar';
-import { type AssetTab } from '@/components/CategoryDetail';
+// （原 assetTab 类型随四 tab 层一并移除：资源市场侧栏在文件分类下四区段全列）
 import {
   GripVertical,
   Trash2,
@@ -84,7 +84,7 @@ interface LibraryPanelProps {
   /** Which main category is active — the panel shows matching installable lists. */
   category: MainCategory;
   /** Files-page asset tab: splits the skills/MCP template sections. */
-  assetTab: AssetTab;
+  /** 资源市场侧栏不再按类型 tab 过滤：四区段全列（都默认折叠）。 */
   /** Install-to scope, driven by the current project/global context. */
   scope: AssetScope;
   /** 安装属性矩阵（GET /capabilities）；未加载时谓词全放行。 */
@@ -103,7 +103,6 @@ export function LibraryPanel({
   updates,
   onUpdateAsset,
   category,
-  assetTab,
   scope,
   capabilities,
   projectId,
@@ -412,10 +411,11 @@ export function LibraryPanel({
   // MCP / file templates are tab-exclusive (files tab owns the generic
   // single-file templates; plugin section lands with the market plugin area).
   const isFiles = category === 'files';
-  const showSkills = isFiles && assetTab === 'skills';
-  const showFileTemplates = isFiles && assetTab === 'files';
-  const showMcp = isFiles && assetTab === 'mcp';
-  const showPlugins = isFiles && assetTab === 'plugins';
+  // 四 tab 层已去掉：文件分类下四个区段都列（各自默认折叠，不挤屏）
+  const showSkills = isFiles;
+  const showFileTemplates = isFiles;
+  const showMcp = isFiles;
+  const showPlugins = isFiles;
   const noTemplates = !showSkills && !showMcp && !showFileTemplates && !showPlugins;
 
   // Sections and groups that are currently rendered — collapse-all targets.

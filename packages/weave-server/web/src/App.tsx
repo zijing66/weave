@@ -40,8 +40,7 @@ import { notifyBrowser } from '@/lib/browser-notify';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
-import { CategoryDetail, type Mode, type AssetTab } from '@/components/CategoryDetail';
-import { type FileAssetRow } from '@/components/FileAssetTree';
+import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { LibraryPanel } from '@/components/LibraryPanel';
 import { FileViewer } from '@/components/FileViewer';
@@ -142,7 +141,8 @@ function Dashboard() {
   const [mainCategory, setMainCategory] = useState<MainCategory>('tasks');
   // Files-page asset tab: lifted here so it survives category switches
   // (leaving files and coming back keeps the tab; starts on skills).
-  const [assetTab, setAssetTab] = useState<AssetTab>('files');
+  // 资源管理页视图（提升到此，切分类来回不丢）：'packs' = 以插件包为主；'files' = 只读文件视图
+  const [resourceView, setResourceView] = useState<ResourceView>('packs');
   const [statuslineNonce, setStatuslineNonce] = useState(0);
   const [statuslineSource, setStatuslineSource] = useState<StatuslineSource | null>(null);
   const [drawerSkill, setDrawerSkill] = useState<{
@@ -682,22 +682,8 @@ function Dashboard() {
     [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
-  const handleUninstallFileAsset = useCallback(
-    async (row: FileAssetRow, scope: AssetScope = 'project') => {
-      const target = selected ?? projects[0];
-      if (!target) return;
-      const res = await api.uninstall(target.id, {
-        category: row.category as FileAssetCategory,
-        name: row.name,
-        scope,
-        ...(row.agent ? { agent: row.agent } : {}),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshUpdates(target);
-    },
-    [selected, projects, refreshAssets, refreshUpdates],
-  );
+  // 说明：文件类资产的卸载入口随「文件视图降级为只读」一并撤下（资源管理以插件包为准）；
+  // 服务端 POST /projects/:id/uninstall 仍在，日后要恢复入口只需再加回一个 handler。
 
   const handleUninstallMcp = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
@@ -1099,7 +1085,6 @@ function Dashboard() {
       updates={updates}
       onUpdateAsset={updateAssetSafely}
       category={mainCategory}
-      assetTab={assetTab}
       scope={globalMode ? 'user' : 'project'}
       capabilities={installCaps}
       projectId={activeProject.id}
@@ -1282,8 +1267,8 @@ function Dashboard() {
                         projectId={activeProject!.id}
                         mode={mode}
                         category={mainCategory}
-                        assetTab={assetTab}
-                        onAssetTabChange={setAssetTab}
+                        resourceView={resourceView}
+                        onResourceViewChange={setResourceView}
                         statuslineNonce={statuslineNonce}
                         assets={assets}
                         globalAssets={globalAssets}
@@ -1295,7 +1280,6 @@ function Dashboard() {
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
                         onCycleMcpEnable={handleCycleMcpEnable}
-                        onUninstallFileAsset={handleUninstallFileAsset}
                         onCyclePluginState={handleCyclePluginState}
                         onUninstallPlugin={handleUninstallPlugin}
                         onOpenFile={(relPath) => {
@@ -1310,7 +1294,6 @@ function Dashboard() {
                         onOpenSession={openSessionInProject}
                         initialSessionId={initialSessionId ?? undefined}
                         dragPayload={dragPayload}
-                        capabilities={installCaps}
                       />
                     )}
                   </div>

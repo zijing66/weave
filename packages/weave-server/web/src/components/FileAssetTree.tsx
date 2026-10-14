@@ -162,7 +162,8 @@ function AssetTreeNode({
   collapsed: Set<string>;
   onToggle: (path: string) => void;
   onOpenFile: (relPath: string) => void;
-  onUninstall: (row: FileAssetRow) => void | Promise<void>;
+  /** 缺省 = **只读视图**（不给卸载按钮）：资源管理里文件视图降级为查看用。 */
+  onUninstall?: (row: FileAssetRow) => void | Promise<void>;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -235,7 +236,7 @@ function AssetTreeNode({
             </Badge>
           )}
         </button>
-        {uninstallable && (
+        {uninstallable && onUninstall && (
           <button
             type="button"
             disabled={uninstallState === 'loading'}
@@ -243,7 +244,7 @@ function AssetTreeNode({
               void fb.run(
                 uninstallKey,
                 async () => {
-                  await onUninstall(row);
+                  await onUninstall?.(row);
                   show('success', t('fileTree.uninstalled', { name }));
                 },
                 { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
@@ -323,7 +324,8 @@ export function FileAssetTree({
   capabilities?: InstallCapabilities | null;
   /** Update info already filtered to this mode's scope. */
   updates?: FileAssetUpdate[];
-  onUninstall: (row: FileAssetRow) => void | Promise<void>;
+  /** 缺省 = 只读视图（不给卸载按钮）。 */
+  onUninstall?: (row: FileAssetRow) => void | Promise<void>;
   onOpenFile: (relPath: string) => void;
 }) {
   const t = useT();
