@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { countEffectiveSkills } from '@/lib/skill-stats';
+import { StatusPill, statusTone } from '@/components/ui/status-pill';
 import { groupByRepo, toggleIn, LOCAL_REPO_KEY } from '@/lib/repo-groups';
 import {
   Trash2,
@@ -346,16 +347,9 @@ export function SkillGrid({
 }
 
 /** `已生效 N / M` pill — how many of the listed skills are actually in effect.
- * Green when everything is live, amber when a disabled plugin is holding some
- * back, neutral when there is nothing to count. */
+ * 配色档（绿/琥珀/灰）与折叠条共用 `ui/status-pill`。 */
 function EffectivePill({ effective, total }: { effective: number; total: number }) {
   const t = useT();
-  const tone =
-    total === 0
-      ? 'bg-neutral-800 text-neutral-500'
-      : effective === total
-        ? 'bg-emerald-900/40 text-emerald-300'
-        : 'bg-amber-900/30 text-amber-300';
   const title =
     total === 0
       ? t('skillGrid.effNone')
@@ -364,16 +358,10 @@ function EffectivePill({ effective, total }: { effective: number; total: number 
         : t('skillGrid.effDisabled', { n: total - effective });
 
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums',
-        tone,
-      )}
-      title={title}
-    >
+    <StatusPill tone={statusTone(effective, total)} title={title}>
       <Power className="h-3 w-3" />
       {t('skillGrid.effective', { done: effective, total })}
-    </span>
+    </StatusPill>
   );
 }
 

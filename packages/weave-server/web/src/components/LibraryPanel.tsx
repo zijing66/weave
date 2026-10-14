@@ -34,6 +34,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { SkeletonCards } from '@/components/ui/skeleton';
+import { StatusPill, statusTone } from '@/components/ui/status-pill';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
@@ -367,20 +368,13 @@ export function LibraryPanel({
       return next;
     });
 
-  // 市场源三节折叠态（内置 / 本地 / Git；默认全展开）。
-  const [marketCollapsed, setMarketCollapsed] = useState<Set<string>>(new Set());
-  const toggleMarketSection = (key: string) =>
-    setMarketCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  // Section-level collapse (Skill templates / MCP templates / Update hints).
-  const [sectionsCollapsed, setSectionsCollapsed] = useState<Set<string>>(new Set());
+  // 折叠态用**展开集**（默认空 = 资源管理内所有折叠条都默认折叠）；市场源三节
+  // 'builtin'/'local'/'git' 与资产子区 SECTION_* 共用一套 key。展开集而非折叠集：
+  // 数据是异步到的，重扫时展开意图不该丢。
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const isOpen = (key: string): boolean => expandedSections.has(key);
   const toggleSection = (key: string) =>
-    setSectionsCollapsed((prev) => {
+    setExpandedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -436,18 +430,33 @@ export function LibraryPanel({
   ];
   const groupKeys = groupSkills(skills).map(([g]) => g || '__root__');
   const pluginKeys = plugins.map((pl) => `plugin:${pl.relPath || pl.name}`);
+  // 折叠条 pill 的计数：只算**有已装概念**的子区（技能 / 插件包）；文件、MCP 与市场源
+  // 三节没有"已装"判据，仍用数量徽标——不硬凑一个假状态。
+  const installedSkillCount = skills.filter((s) => installedSkillNames.has(s.name)).length;
+  const installedPackCount = plugins.filter((pl) => {
+    const pack = toolkitPacks?.find((p) => normPath(p.dir) === normPath(pl.dirPath)) ?? null;
+    return pack?.installed === true;
+  }).length;
+
+  const marketKeys = [
+    ...(builtinMarkets.length > 0 ? ['builtin'] : []),
+    ...(localMarkets.length > 0 ? ['local'] : []),
+    ...(gitMarkets.length > 0 ? ['git'] : []),
+  ];
+  const sectionKeys = [...marketKeys, ...visibleSections];
+
   const anyCollapsed =
-    visibleSections.some((k) => sectionsCollapsed.has(k)) ||
+    sectionKeys.some((k) => !expandedSections.has(k)) ||
     groupKeys.some((k) => collapsedGroups.has(k)) ||
     pluginKeys.some((k) => !expandedPlugins.has(k));
   /** One button that flips between expand-all and collapse-all. */
   function toggleAll() {
     if (anyCollapsed) {
-      setSectionsCollapsed(new Set());
+      setExpandedSections(new Set(sectionKeys));
       setCollapsedGroups(new Set());
       setExpandedPlugins(new Set(pluginKeys));
     } else {
-      setSectionsCollapsed(new Set(visibleSections));
+      setExpandedSections(new Set());
       setCollapsedGroups(new Set(groupKeys));
       setExpandedPlugins(new Set());
     }
@@ -600,8 +609,8 @@ export function LibraryPanel({
             icon={<Package className="h-3.5 w-3.5 text-emerald-400" />}
             title={t('library.marketSectionBuiltin')}
             count={builtinMarkets.length}
-            open={!marketCollapsed.has('builtin')}
-            onToggle={() => toggleMarketSection('builtin')}
+            open={isOpen('builtin')}
+            onToggle={() => toggleSection('builtin')}
           >
             {builtinMarkets.map(marketCard)}
           </TemplateSection>
@@ -611,8 +620,8 @@ export function LibraryPanel({
             icon={<Folder className="h-3.5 w-3.5 text-blue-400" />}
             title={t('library.marketSectionLocal')}
             count={localMarkets.length}
-            open={!marketCollapsed.has('local')}
-            onToggle={() => toggleMarketSection('local')}
+            open={isOpen('local')}
+            onToggle={() => toggleSection('local')}
           >
             {localMarkets.map(marketCard)}
           </TemplateSection>
@@ -622,8 +631,8 @@ export function LibraryPanel({
             icon={<GitBranch className="h-3.5 w-3.5 text-violet-400" />}
             title={t('library.marketSectionGit')}
             count={gitMarkets.length}
-            open={!marketCollapsed.has('git')}
-            onToggle={() => toggleMarketSection('git')}
+            open={isOpen('git')}
+            onToggle={() => toggleSection('git')}
           >
             {gitMarkets.map(marketCard)}
           </TemplateSection>
@@ -648,7 +657,12 @@ export function LibraryPanel({
             title={t('library.sectionSkills')}
             hint={t('library.hintDragInstall')}
             count={skills.length}
-            open={!sectionsCollapsed.has(SECTION_SKILLS)}
+            tag={
+              <StatusPill tone={statusTone(installedSkillCount, skills.length)}>
+                {t('library.tagInstalled', { done: installedSkillCount, total: skills.length })}
+              </StatusPill>
+            }
+            open={isOpen(SECTION_SKILLS)}
             onToggle={() => toggleSection(SECTION_SKILLS)}
           >
             {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
@@ -733,7 +747,7 @@ export function LibraryPanel({
             title={t('library.sectionFiles')}
             hint={t('library.hintClickInstall')}
             count={fileTemplates.length}
-            open={!sectionsCollapsed.has(SECTION_FILES)}
+            open={isOpen(SECTION_FILES)}
             onToggle={() => toggleSection(SECTION_FILES)}
           >
             {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
@@ -797,7 +811,7 @@ export function LibraryPanel({
             title={t('library.sectionMcp')}
             hint={t('library.hintClickAdd')}
             count={mcp.length}
-            open={!sectionsCollapsed.has(SECTION_MCP)}
+            open={isOpen(SECTION_MCP)}
             onToggle={() => toggleSection(SECTION_MCP)}
           >
             {mcp.length === 0 && (
@@ -855,7 +869,12 @@ export function LibraryPanel({
             title={t('library.sectionPlugins')}
             hint={t('library.pluginsSectionHint')}
             count={plugins.length}
-            open={!sectionsCollapsed.has(SECTION_PLUGINS)}
+            tag={
+              <StatusPill tone={statusTone(installedPackCount, plugins.length)}>
+                {t('library.tagInstalled', { done: installedPackCount, total: plugins.length })}
+              </StatusPill>
+            }
+            open={isOpen(SECTION_PLUGINS)}
             onToggle={() => toggleSection(SECTION_PLUGINS)}
           >
             {loading && <p className="text-xs text-neutral-500">{t('library.scanning')}</p>}
@@ -1047,7 +1066,7 @@ export function LibraryPanel({
             title={t('library.sectionUpdates')}
             hint={t('library.hintOverwrite')}
             count={outdatedSkills.length + outdatedMcp.length + outdatedFiles.length}
-            open={!sectionsCollapsed.has(SECTION_UPDATES)}
+            open={isOpen(SECTION_UPDATES)}
             onToggle={() => toggleSection(SECTION_UPDATES)}
           >
             {outdatedSkills.map((u) => (
@@ -1342,6 +1361,7 @@ function TemplateSection({
   title,
   hint,
   count,
+  tag,
   open,
   onToggle,
   children,
@@ -1352,6 +1372,8 @@ function TemplateSection({
   hint?: string;
   /** Item count shown as a tag (stays visible when collapsed). */
   count?: number;
+  /** 自定义折叠条 tag（给了就取代数量徽标）——状态 pill 走 `ui/status-pill` 口径。 */
+  tag?: ReactNode;
   /** Controlled collapse state (lifted so expand/collapse-all can drive it). */
   open: boolean;
   onToggle: () => void;
@@ -1380,7 +1402,7 @@ function TemplateSection({
         )}
         {icon}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
-        {count !== undefined && <Badge variant="other">{count}</Badge>}
+        {tag ?? (count !== undefined && <Badge variant="other">{count}</Badge>)}
         {hint && <span className="text-[11px] text-neutral-500 ml-auto">{hint}</span>}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}
