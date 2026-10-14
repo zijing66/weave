@@ -128,6 +128,160 @@ describe('onEvent：ingest 命中 idleSignals', () => {
     expect(frames).toHaveLength(1);
     expect(d.send).toHaveBeenCalledTimes(1);
   });
+
+  it('reason 随帧回带：turnEnd 订阅在 Stop 上 == turnEnd，空闲订阅在 SessionEnd 上 == idle', () => {
+    const { engine, frames } = setup();
+    watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['turnEnd'],
+    });
+    watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['idle'],
+    });
+    engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'claude' });
+    expect(frames[0]).toMatchObject({ reason: 'turnEnd' });
+    engine.onEvent({ sessionId: 'a', eventType: 'SessionEnd', source: 'claude' });
+    expect(frames[1]).toMatchObject({ reason: 'idle' });
+  });
+
+  it('turnEnd 订阅不认 SessionEnd（只听一轮对话结束，HARNESS_LIFECYCLE.close）', () => {
+    const { engine, frames } = setup();
+    const watch = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['turnEnd'],
+    });
+    engine.onEvent({ sessionId: 'a', eventType: 'SessionEnd', source: 'claude' });
+    expect(frames).toHaveLength(0);
+    expect(watches.getById(watch.id)?.firedAt).toBeNull();
+  });
+});
+
+describe('messageFailed：投递失败/超时', () => {
+  const finished = (
+    bus: HookEventBus,
+    sessionId: string,
+    status: 'succeeded' | 'failed' | 'timeout',
+  ): void => {
+    bus.emit({ kind: 'message.finished', messageId: 'm-1', sessionId, status, at: 'now' });
+  };
+
+  it('failed/timeout → fire（reason=messageFailed）；succeeded 不 fire', () => {
+    const { bus, engine, frames } = setup();
+    watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['messageFailed'],
+    });
+    finished(bus, 'a', 'succeeded');
+    expect(frames).toHaveLength(0);
+    finished(bus, 'a', 'failed');
+    expect(frames[0]).toMatchObject({ reason: 'messageFailed', targetSessionId: 'a' });
+    // 已 fire（one-shot）：再来的 timeout 不再响
+    finished(bus, 'a', 'timeout');
+    expect(frames).toHaveLength(1);
+  });
+
+  it('消息终态属别的会话 → 不 fire', () => {
+    const { bus, engine, frames } = setup();
+    const watch = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['messageFailed'],
+    });
+    finished(bus, 'w', 'failed');
+    expect(frames).toHaveLength(0);
+    expect(watches.getById(watch.id)?.firedAt).toBeNull();
+  });
+
+  it('纯投递类订阅不参与即时段与 terminated 补射（等的是投递事件）', () => {
+    const { bus, engine, frames } = setup();
+    const watch = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a', // a 已 Stop = 空闲
+      notify: null,
+      onEvents: ['messageFailed'],
+    });
+    engine.created(watch);
+    expect(frames).toHaveLength(0);
+
+    const dead = new WatchEngine({
+      watches,
+      deliverer: deliverer(),
+      sessions,
+      bus,
+      livenessOf: () => new Map([['a', false]]),
+    });
+    expect(dead.sweepTerminated()).toBe(0);
+    expect(watches.getById(watch.id)?.firedAt).toBeNull();
+  });
+
+  it('会话订阅（watcher）缺省文案按 reason 措辞', () => {
+    const { bus, engine, d } = setup();
+    watches.insert({
+      watcherSessionId: 'w',
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['messageFailed'],
+    });
+    finished(bus, 'a', 'timeout');
+    expect((d.send.mock.calls[0]![0] as SendInput).text).toContain('failed message delivery');
+  });
+});
+
+describe('提醒次数：一次（计数）与持久化', () => {
+  it('次数订阅：跨已选类型共享一个计数，用尽即失效', () => {
+    vi.useFakeTimers();
+    try {
+      const { bus, engine, frames } = setup();
+      const watch = watches.insert({
+        watcherSessionId: null,
+        targetSessionId: 'a',
+        notify: null,
+        onEvents: ['turnEnd', 'messageFailed'],
+        times: 2,
+      });
+      engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'claude' }); // 第 1 次（turnEnd）
+      vi.advanceTimersByTime(5_000);
+      bus.emit({ kind: 'message.finished', messageId: 'm-1', sessionId: 'a', status: 'failed', at: 'now' });
+      expect(frames).toHaveLength(2); // 第 2 次（messageFailed）——同一计数
+      vi.advanceTimersByTime(5_000);
+      engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'claude' });
+      expect(frames).toHaveLength(2); // 次数用尽：不再提醒
+      expect(watches.getById(watch.id)?.firedAt).not.toBeNull();
+      expect(watches.listPending()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('持久化订阅：每次命中都提醒、不落定', () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, frames } = setup();
+      const watch = watches.insert({
+        watcherSessionId: null,
+        targetSessionId: 'a',
+        notify: null,
+        times: null,
+      });
+      engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'claude' });
+      vi.advanceTimersByTime(5_000);
+      engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'claude' });
+      expect(frames).toHaveLength(2);
+      expect(watches.getById(watch.id)?.firedAt).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('created：订阅落库即时段', () => {
@@ -216,11 +370,39 @@ describe('SessionWatchRepository（in-memory 直覆盖）', () => {
     const w1 = watches.insert({ watcherSessionId: null, targetSessionId: 'a', notify: null });
     const w2 = watches.insert({ watcherSessionId: 'w', targetSessionId: 'a', notify: 'n' });
     expect(w1.id).toBeGreaterThan(0);
+    expect(w1.remaining).toBe(1); // 缺省一次
     expect(watches.listPendingByTarget('a')).toHaveLength(2);
-    expect(watches.markFired(w1.id)).toBe(true);
-    expect(watches.markFired(w1.id)).toBe(false); // CAS：已 fire 不再翻
+    expect(watches.consumeHit(w1.id)).not.toBeNull();
+    expect(watches.consumeHit(w1.id)).toBeNull(); // 次数耗尽：不再命中
     expect(watches.listPendingByTarget('a')).toMatchObject([{ id: w2.id }]);
     expect(watches.listPending()).toHaveLength(1);
+  });
+
+  it('consumeHit：计数订阅逐次减一、归零落 fired_at；持久化（null）永不落定', () => {
+    const counted = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      times: 2,
+    });
+    expect(watches.consumeHit(counted.id)).toMatchObject({ remaining: 1, firedAt: null });
+    const last = watches.consumeHit(counted.id);
+    expect(last).toMatchObject({ remaining: 0 });
+    expect(last!.firedAt).not.toBeNull(); // 最后一次同时落定
+    expect(watches.consumeHit(counted.id)).toBeNull();
+    expect(watches.getById(counted.id)?.firedAt).not.toBeNull();
+
+    const forever = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      times: null,
+    });
+    expect(forever.remaining).toBeNull();
+    for (let i = 0; i < 3; i++) {
+      expect(watches.consumeHit(forever.id)).toMatchObject({ remaining: null });
+    }
+    expect(watches.getById(forever.id)?.firedAt).toBeNull();
   });
 
   it('deleteBySession 双端清理；deleteById 幂等', () => {

@@ -35,6 +35,7 @@ import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
@@ -170,6 +171,12 @@ async function main(): Promise<void> {
     { shouldRun: () => dataBus.hasSubscribers() },
   );
   terminalRefresher.start();
+  // 在途消息角标（会话行）：无定时器——message.* 帧驱动重算、值变才推快照。
+  const inflightRefresher = new InflightCountsRefresher(
+    () => messageDeliverer.listInflightCounts(),
+    dataBus,
+    hookBus,
+  );
   // 空会话自动清理（与生产入口同一装配点）：dev 入口此前漏挂 → 只残留一条
   // SessionStart 的会话在 dev 下永不消失，一直挂在会话列表里显示「就绪」。
   startSessionSweeper({
@@ -210,6 +217,7 @@ async function main(): Promise<void> {
     hookBus,
     dataBus,
     terminalRefresher,
+    inflightRefresher,
     hookDispatcher,
     hookRunner,
     messageDeliverer,

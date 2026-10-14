@@ -1,18 +1,33 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+/**
+ * 会话订阅的触发类型（命中其一即 fire）：
+ *   idle          = 目标空闲（harness 的 idleSignals 全集，批 2 语义）
+ *   turnEnd       = 一轮对话结束（HARNESS_LIFECYCLE[<harness>].close，claude = Stop）
+ *   messageFailed = 该会话有消息投递失败/超时（管道 message.finished 帧）
+ * 一条订阅可含多种（订阅时选）；老行/未指定 = 缺省 idle。
+ */
+export type WatchOn = 'idle' | 'turnEnd' | 'messageFailed';
+export const WATCH_ON_VALUES: readonly WatchOn[] = ['idle', 'turnEnd', 'messageFailed'];
+export const DEFAULT_WATCH_ON: readonly WatchOn[] = ['idle'];
+
 export interface SessionWatchRow {
   id: number;
   /** null = dashboard 订阅（fire 走 SSE/toast）；会话 id = 通知注入该会话。 */
   watcherSessionId: string | null;
   targetSessionId: string;
+  /** 触发类型集（至少一项）。 */
+  onEvents: WatchOn[];
+  /** 剩余提醒次数（**所有已选类型共用**）；null = 持久化（不自动失效）。 */
+  remaining: number | null;
   /** 注入 watcher 会话的文本；null = fire 时按目标会话渲染缺省文案。 */
   notify: string | null;
-  /** one-shot 落定时刻；null = pending。 */
+  /** 落定时刻（次数耗尽或 one-shot 命中）；null = 仍然有效。 */
   firedAt: string | null;
   createdAt: string;
 }
 
-/** session_watches 空闲订阅域（session-orchestration 批 2）：one-shot，fire 即失效。 */
+/** session_watches 会话订阅域（session-orchestration 批 2 + 提醒类型）：one-shot，fire 即失效。 */
 export class SessionWatchRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -20,13 +35,23 @@ export class SessionWatchRepository {
     watcherSessionId: string | null;
     targetSessionId: string;
     notify: string | null;
+    onEvents?: readonly WatchOn[];
+    /** 提醒次数；null/缺省 = 1（一次，批 2 语义）；显式 null 传「持久化」用 remaining。 */
+    times?: number | null;
   }): SessionWatchRow {
     const result = this.db
       .prepare(
-        `INSERT INTO session_watches (watcher_session_id, target_session_id, notify, created_at)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO session_watches (watcher_session_id, target_session_id, notify, on_events, remaining, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.watcherSessionId, input.targetSessionId, input.notify, new Date().toISOString());
+      .run(
+        input.watcherSessionId,
+        input.targetSessionId,
+        input.notify,
+        JSON.stringify(input.onEvents?.length ? input.onEvents : DEFAULT_WATCH_ON),
+        input.times === undefined ? 1 : input.times,
+        new Date().toISOString(),
+      );
     return this.getById(Number(result.lastInsertRowid))!;
   }
 
@@ -52,17 +77,26 @@ export class SessionWatchRepository {
   }
 
   /**
-   * one-shot 落定（CAS：fired_at 已落的行不再翻）——返回 false 即并发方已 fire，
+   * 命中一次（CAS）：持久化订阅只校验仍未落定；计数订阅原子减一，减到 0 同时落
+   * fired_at（失效）。返回 false = 已失效（并发方已吃掉最后一次 / 次数耗尽）——
    * 调用方必须放弃副作用（防同批 Stop/SessionEnd 双事件双投递）。
    */
-  markFired(id: number): boolean {
-    return (
-      Number(
-        this.db
-          .prepare('UPDATE session_watches SET fired_at = ? WHERE id = ? AND fired_at IS NULL')
-          .run(new Date().toISOString(), id).changes,
-      ) === 1
+  consumeHit(id: number): SessionWatchRow | null {
+    const row = this.getById(id);
+    if (!row || row.firedAt !== null) return null;
+    if (row.remaining === null) return row; // 持久化：不消耗
+    if (row.remaining <= 0) return null;
+    const next = row.remaining - 1;
+    const firedAt = next === 0 ? new Date().toISOString() : null;
+    const changes = Number(
+      this.db
+        .prepare(
+          `UPDATE session_watches SET remaining = ?, fired_at = ?
+           WHERE id = ? AND fired_at IS NULL AND remaining = ?`,
+        )
+        .run(next, firedAt, id, row.remaining).changes,
     );
+    return changes === 1 ? { ...row, remaining: next, firedAt } : null;
   }
 
   deleteById(id: number): boolean {
@@ -99,8 +133,23 @@ function toWatch(row: Record<string, unknown>): SessionWatchRow {
     id: Number(row.id),
     watcherSessionId: row.watcher_session_id == null ? null : String(row.watcher_session_id),
     targetSessionId: String(row.target_session_id),
+    onEvents: parseOn(row.on_events),
+    remaining: row.remaining == null ? null : Number(row.remaining),
     notify: row.notify == null ? null : String(row.notify),
     firedAt: row.fired_at == null ? null : String(row.fired_at),
     createdAt: String(row.created_at),
   };
+}
+
+/** 触发类型集解析：坏值/空/老行（列未写）= 缺省 idle。 */
+export function parseOn(raw: unknown): WatchOn[] {
+  if (typeof raw !== 'string' || !raw) return [...DEFAULT_WATCH_ON];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [...DEFAULT_WATCH_ON];
+    const kinds = parsed.filter((v): v is WatchOn => WATCH_ON_VALUES.includes(v as WatchOn));
+    return kinds.length ? kinds : [...DEFAULT_WATCH_ON];
+  } catch {
+    return [...DEFAULT_WATCH_ON];
+  }
 }

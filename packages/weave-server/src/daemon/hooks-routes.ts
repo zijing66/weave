@@ -18,6 +18,7 @@ import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
+import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
 
 /**
@@ -57,10 +58,14 @@ const SendMessageBody = z.object({
   fromSessionId: z.string().min(1).nullable().optional(),
 });
 
-/** 空闲订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast）。 */
+/** 会话订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast + 浏览器通知）；
+ *  on = 触发类型集（缺省 idle，批 2 语义）。 */
 const CreateWatchBody = z.object({
   watcherSessionId: z.string().min(1).nullable().optional(),
   notify: z.string().min(1).max(20_000).nullable().optional(),
+  on: z.array(z.enum(['idle', 'turnEnd', 'messageFailed'])).min(1).optional(),
+  /** 提醒次数：1..100；null = 持久化（不自动失效）；缺省 1（一次）。 */
+  times: z.number().int().min(1).max(100).nullable().optional(),
 });
 
 const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
@@ -328,15 +333,10 @@ export async function handleHooksRoutes(
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
     const sessions = deps.hookSessions.listWithCounts(projectId);
     // claude 注册表判活随返回：true/false=判得动，null=判不动（codex/新鲜会话）不猜
+    // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
     const liveness = claudeLivenessById();
-    // 在途消息计数（会话行角标）：管道口径 = 队列 pending ∪ 内存 delivering/running
-    const inflight = deps.messageDeliverer?.listInflightCounts() ?? new Map<string, number>();
     sendJson(res, 200, {
-      sessions: sessions.map((s) => ({
-        ...s,
-        pidAlive: pidAliveOf(s, liveness),
-        inflight: inflight.get(s.sessionId) ?? 0,
-      })),
+      sessions: sessions.map((s) => ({ ...s, pidAlive: pidAliveOf(s, liveness) })),
     });
     return true;
   }
@@ -557,13 +557,30 @@ export async function handleHooksRoutes(
         return true;
       }
       const targetSurface = messagingSurfaceFor(targetSrc);
-      if (targetSurface.idleSignals.length === 0) {
+      const on = body.on ?? [...DEFAULT_WATCH_ON];
+      // 按订阅类型逐个验通道：空闲/回合结束要 idleSignals（批 2 判据）；
+      // 投递失败要该会话「可被投递」（prompt 列 || inject/headless），否则永不可达。
+      if ((on.includes('idle') || on.includes('turnEnd')) && targetSurface.idleSignals.length === 0) {
         sendJson(
           res,
           409,
           { error: targetSurface.unsupportedReasons?.watch ?? `Harness "${targetSrc}" does not support idle watching` },
         );
         return true;
+      }
+      if (on.includes('messageFailed')) {
+        const messageable =
+          promptChannelOf(targetSurface, deps.messageDeliverer?.hasTerminalChannel() ?? false) ||
+          targetSurface.inject !== null ||
+          targetSurface.headless !== null;
+        if (!messageable) {
+          sendJson(res, 409, {
+            error:
+              targetSurface.unsupportedReasons?.prompt ??
+              `Harness "${targetSrc}" supports no messaging channel`,
+          });
+          return true;
+        }
       }
       // 会话订阅方：通知注入它的 inject 通道必须在场（否则 fire 时必然无声丢弃）
       if (body.watcherSessionId) {
@@ -592,6 +609,8 @@ export async function handleHooksRoutes(
         watcherSessionId: body.watcherSessionId ?? null,
         targetSessionId: sessionId,
         notify: body.notify ?? null,
+        onEvents: on,
+        times: body.times === undefined ? 1 : body.times,
       });
       // 目标此刻已空闲 → 立即 fire（不等下一拍；one-shot 语义即「答案就是现在」）
       deps.watchEngine?.created(watch);

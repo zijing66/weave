@@ -96,13 +96,17 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_seen_at);
 
--- 跨会话编排（session-orchestration）：空闲订阅 + 序列表保留。点对点消息域
+-- 跨会话编排（session-orchestration）：会话订阅 + 序列表保留。点对点消息域
 -- 已重塑为纯递送管道（本地文件 + 内存态，不落库）——session_messages 表退役。
+-- on_events = 触发类型集 JSON（['idle'] 缺省 | 'turnEnd' | 'messageFailed' 的组合）；
+-- remaining = 剩余提醒次数（**所有已选类型共用一个计数**），NULL = 持久化（不失效）。
 CREATE TABLE IF NOT EXISTS session_watches (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   watcher_session_id TEXT,
   target_session_id  TEXT NOT NULL,
   notify             TEXT,
+  on_events          TEXT,
+  remaining          INTEGER,
   fired_at           TEXT,
   created_at         TEXT NOT NULL
 );
@@ -150,7 +154,28 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   db.exec('DROP TABLE IF EXISTS session_messages');
   migrateHookRulesColumns(db);
   migrateProjectsColumns(db);
+  migrateSessionWatchesColumns(db);
   return db;
+}
+
+/**
+ * 会话订阅的列级兜底：存量库补 on_events（触发类型集，NULL = 老行 → 读侧
+ * parseOn 归一为缺省 idle）与 remaining（剩余次数；老行按 1 回填——批 2 的
+ * 订阅是 one-shot，不能因为 NULL 被读成「持久化」）。
+ */
+function migrateSessionWatchesColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(session_watches)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
+  if (!cols.has('on_events')) db.exec('ALTER TABLE session_watches ADD COLUMN on_events TEXT');
+  if (!cols.has('remaining')) {
+    db.exec('ALTER TABLE session_watches ADD COLUMN remaining INTEGER');
+    db.exec('UPDATE session_watches SET remaining = 1');
+  }
 }
 
 /**

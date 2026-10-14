@@ -29,6 +29,7 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
@@ -191,6 +192,13 @@ export function startDaemon(): void {
     { shouldRun: () => dataBus.hasSubscribers() },
   );
   terminalRefresher.start();
+  // 在途消息角标同理，但没有定时器：变化源全是 message.* 帧（事件驱动），
+  // 帧到即重算、值变才推绝对值快照；新 SSE 客户端接入补一份首帧。
+  const inflightRefresher = new InflightCountsRefresher(
+    () => messageDeliverer.listInflightCounts(),
+    dataBus,
+    hookBus,
+  );
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
   startSessionSweeper({
@@ -232,6 +240,7 @@ export function startDaemon(): void {
     hookBus,
     dataBus,
     terminalRefresher,
+    inflightRefresher,
     hookDispatcher,
     hookRunner,
     messageDeliverer,

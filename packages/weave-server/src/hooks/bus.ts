@@ -62,14 +62,16 @@ export type HookBusMessage =
       status: 'succeeded' | 'failed' | 'timeout';
       at: string;
     }
-  // ---- 空闲订阅域（session-orchestration 批 2）：one-shot fire 广播 ----
-  // watcher null = dashboard 订阅（web toast）；有值 = 会话订阅（通知已走消息域注入，
-  // 该会话的线程会另收 message.* 帧）。
+  // ---- 会话订阅域（session-orchestration 批 2 + 提醒类型）：one-shot fire 广播 ----
+  // watcher null = dashboard 订阅（web toast + 浏览器通知）；有值 = 会话订阅
+  // （通知已走消息域注入，该会话的线程会另收 message.* 帧）。reason = 命中的
+  // 触发类型（web 据此措辞通知正文）。
   | {
       kind: 'watch.fired';
       watchId: number;
       targetSessionId: string;
       watcherSessionId: string | null;
+      reason: 'idle' | 'turnEnd' | 'messageFailed';
       at: string;
     }
   // ---- 序列域（session-orchestration 批 3）：步触发/终态广播（编排画布实时） ----

@@ -602,6 +602,18 @@ wezterm，还有 terminal、ghostty」）：
   prompt）——取代批 3 的 rearm 补 fire 语义，已在途 injected/delivered 步
   续等 idle 不受影响。hop 上限（步数 ≤3）不动。
 - **watch 通知**：同样纯管道（outbox 行、消费即删），本就非历史——零改动。
+- **会话提醒订阅扩型**（用户 2026-10-15 定案：订阅按钮选「下一条命中的消息」，
+  且「可以选择一次性（次数可手动添数字）还是持久化，所有已选消息类型都在计数
+  范围」）：`session_watches.on_events` = 触发类型集（`idle` 空闲 / `turnEnd`
+  一轮对话结束 = `HARNESS_LIFECYCLE[<harness>].close` / `messageFailed` 投递
+  失败·超时），`remaining` = 剩余次数（**已选类型共用一个计数**，NULL = 持久化
+  不失效；老行迁移回填 1 保批 2 语义）。命中走 `consumeHit` CAS（减到 0 同时落
+  `fired_at`）；同一次转场的邻接事件（Stop 紧随 SessionEnd）在 1s 窗口内只算
+  一次。fire 的 `watch.fired` 帧带 `reason`，web 据此措辞 toast/浏览器通知。
+- **在途消息角标 = SSE push 非重拉**（用户口径「所有消息优先事件驱动、SSE 推送
+  前端」）：`InflightCountsRefresher` 无定时器——`message.*` 帧驱动重算，
+  值变才推 `push 'inflightCounts'` 绝对值快照（漏帧由下一次推自我校正），
+  新 SSE 客户端接入补一份首帧；`GET /sessions` 不带该字段（单源）。
 - **`MessageDeliverer` 裁决单点保留**：能力矩阵、404/409 语义拒绝、auto
   忙闲裁决全不变；只有落点从「DB 行 + outbox」变「文件队列 + 内存态」。
 

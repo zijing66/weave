@@ -17,6 +17,7 @@ import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
 import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
@@ -156,6 +157,8 @@ export interface WeaveServerDeps {
   dataBus?: DataBus;
   /** 终端角标的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
   terminalRefresher?: TerminalCountsRefresher;
+  /** 在途消息角标（会话行）的推送器：新 SSE 客户端接入时补一份首帧快照。 */
+  inflightRefresher?: InflightCountsRefresher;
   /** Event dispatcher; hook 文件化后由 inbox 消费线程（inbox-worker）驱动。 */
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
@@ -1491,6 +1494,9 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
       }),
     );
   }
+
+  // 新客户端补一份在途消息角标快照：推送只在变化时发，首帧不该等到下一次消息事件。
+  deps.inflightRefresher?.refreshNow();
 
   req.on('close', () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
