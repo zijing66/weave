@@ -1121,6 +1121,8 @@ function Dashboard() {
               <PanelLeft className="h-4 w-4" />
             </button>
             <TrafficLight />
+            {/* 品牌标记：public/weave-logo.svg（与 favicon 同一份文件，单一来源） */}
+            <img src="/weave-logo.svg" alt="" className="h-[18px] w-[18px] shrink-0" />
             <span className="text-sm font-semibold tracking-tight text-neutral-200">Weave</span>
             <span className="text-xs text-neutral-500">
               {t('app.projectCount', { n: projects.length })}
