@@ -24,7 +24,7 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -67,6 +67,8 @@ export function TasksPanel({
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
   const [groupWindow, setGroupWindow] = useState(10);
+  /** 折叠条搜索：按组头可见文字过滤（开组 prompt 为主）；空串 = 不过滤。 */
+  const [search, setSearch] = useState('');
   /** 事件游标已翻到最早（最新窗口不满一条完整批，或更早批次拉空）。 */
   const [olderExhausted, setOlderExhausted] = useState(false);
   /** 事件拉取中——空窗期不得冒充「该会话还没有采集到事件」。 */
@@ -184,6 +186,7 @@ export function TasksPanel({
     setOlderExhausted(false);
     setExpandedGroupId('');
     setGroupWindow(10);
+    setSearch('');
     if (selectedId) void refreshEvents(selectedId);
   }, [selectedId, refreshEvents]);
 
@@ -249,6 +252,18 @@ export function TasksPanel({
     }
     return null; // 默认全折叠：画布点击展开才按需挂载
   }, [groups, expandedGroupId]);
+
+  /** 折叠条搜索：按组头可见文字（开组 prompt，缺失回落首事件类型）过滤；空 query 不过滤。 */
+  const query = search.trim().toLowerCase();
+  const matchedGroups = useMemo(() => {
+    if (!query) return null;
+    return groups.filter(
+      (g) =>
+        (g.prompt ?? (g.preSession ? '' : g.events[0]?.eventType ?? '')).toLowerCase().includes(
+          query,
+        ),
+    );
+  }, [groups, query]);
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
@@ -366,7 +381,9 @@ export function TasksPanel({
   // 组头列表滚动窗口（折叠条级）：**倒序**（最新组在顶），更早的向列表底部
   // 方向滚——触底自动加载：先扩渲染窗口（10 条/批），组已全渲染且事件游标
   // 还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
-  const shownGroups = groups.slice(-groupWindow).reverse();
+  const shownGroups = matchedGroups
+    ? matchedGroups.slice().reverse()
+    : groups.slice(-groupWindow).reverse();
   const olderRemaining = groups.length - shownGroups.length;
   const canLoadOlderEvents = !olderExhausted && events.length > 0;
   const hasOlder = olderRemaining > 0 || canLoadOlderEvents;
@@ -425,6 +442,21 @@ export function TasksPanel({
     void loadOlderGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, groups.length, olderExhausted, events.length]);
+
+  // 搜索态自动前翻：折叠条搜索须覆盖整条会话（只搜已加载窗口会漏）——query
+  // 非空时先扩满渲染窗口，再逐批拉更早事件直到翻到底；普通浏览路径不受影响。
+  useEffect(() => {
+    if (!query || !selectedId || olderExhausted || events.length === 0) return;
+    if (groups.length > groupWindow) {
+      setGroupWindow(groups.length);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadOlderGroups();
+    }, 250);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, selectedId, olderExhausted, events.length, groups.length, groupWindow]);
 
   const onDropDispatch = (dispatchId: number, sessionId: string): void => {
     const session = (sessions ?? []).find((s) => s.sessionId === sessionId);
@@ -501,8 +533,31 @@ export function TasksPanel({
   const chainEl = (
     <section className="flex min-w-0 min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 pb-2">
-        <Activity className="h-3.5 w-3.5 text-rose-400" />
-        <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
+        <Activity className="h-3.5 w-3.5 shrink-0 text-rose-400" />
+        <h3 className="shrink-0 text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
+        <div className="relative w-36 shrink-0 lg:w-44">
+          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('tasks.searchPlaceholder')}
+            className="h-6 w-full rounded border border-white/[0.08] bg-neutral-900 pl-6 pr-5 text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:border-white/20 focus:outline-none"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+        {matchedGroups && (
+          <span className="shrink-0 text-[10px] text-neutral-500">
+            {t('tasks.searchMatches', { n: matchedGroups.length })}
+          </span>
+        )}
         <span className="ml-auto text-[10px] text-neutral-600">{t('tasks.legendNote')}</span>
       </div>
 
@@ -572,6 +627,18 @@ export function TasksPanel({
           <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {t('tasks.chainCatchUp')}
+          </p>
+        ) : matchedGroups && matchedGroups.length === 0 ? (
+          /* 搜索无命中：更早批次还在补拉时不能断言无匹配（继续转圈），翻到底才落定。 */
+          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
+            {olderExhausted ? (
+              t('tasks.searchNoMatch')
+            ) : (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t('tasks.chainCatchUp')}
+              </>
+            )}
           </p>
         ) : (
           /* 事件区域：relative 外壳——遮罩 absolute 固定在区域底边（不随滚动
