@@ -3,8 +3,9 @@
  *
  * Unlike the production entry (spawned by `weave daemon start`, which reads
  * the daemon state file), this binds the default port and logs to stdout so
- * `tsx watch` can hot-reload during development. The daemon has no auth token
- * — it binds 127.0.0.1 only, so the machine boundary is the trust boundary.
+ * `tsx watch` can hot-reload during development. Binding host follows the same
+ * `server.bindHost` setting (default 0.0.0.0) and the same dashboard auth as
+ * production — 前台运行，首启的初始密码直接打在屏幕上。
  */
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
@@ -36,9 +37,10 @@ import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
-import { DEFAULT_PORT, DAEMON_HOST, findFreePort, isPortFree } from './port.js';
+import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
-import { setDaemonSettingsDb } from './settings.js';
+import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
+import { AuthService } from './dashboard-auth.js';
 import { resolveStaticDir } from './static.js';
 
 // daemon 若启于 Claude Code 会话内，环境携带的 CLAUDE_CODE_CHILD_SESSION 会
@@ -60,6 +62,11 @@ async function main(): Promise<void> {
 
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
+  const bindHost = readDaemonSettingsSync().server?.bindHost ?? DEFAULT_BIND_HOST;
+  const auth = new AuthService();
+  if (auth.initialPassword) {
+    console.log(`[dev] initial dashboard password: ${auth.initialPassword}`);
+  }
   const projects = new ProjectRepository(db);
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
@@ -213,6 +220,7 @@ async function main(): Promise<void> {
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
     toolkit,
+    auth,
   });
 
   const shutdown = (): void => {
@@ -224,8 +232,10 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  server.listen(port, DAEMON_HOST, () => {
-    console.log(`[dev] weave daemon listening on http://${DAEMON_HOST}:${port}`);
+  server.listen(port, bindHost, () => {
+    writeDaemonState({ pid: process.pid, port, startedAt: new Date().toISOString(), host: bindHost });
+    console.log(`[dev] weave daemon listening on http://${bindHost}:${port}`);
+    console.log(`[dev] cli/dashboard local url: http://${DAEMON_HOST}:${port}`);
     console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
     if (staticDir) console.log(`[dev] static: ${staticDir}`);
     else console.log('[dev] static: (web/dist not built — run pnpm build:web)');

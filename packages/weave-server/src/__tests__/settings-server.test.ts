@@ -91,6 +91,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
+      server: { bindHost: '0.0.0.0' }, // 监听绑定（归一化补默认，默认放开）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
     expect(autoStartCalls).toEqual([false]);

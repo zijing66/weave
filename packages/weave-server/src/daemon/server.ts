@@ -115,6 +115,8 @@ import { DAEMON_HOST } from './port.js';
 import { pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../surfaces.js';
 import { readPluginRows } from '../install/plugin-rows.js';
 import { installPluginPack } from '../install/plugin-install.js';
+import { handleAuthRoutes } from './auth-routes.js';
+import type { AuthService } from './dashboard-auth.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
 
@@ -183,9 +185,11 @@ export interface WeaveServerDeps {
   toolkit?: ToolkitService;
   /** 插件安装面（plugins/uninstall 依赖它）；缺省经 registry 取 Claude 面，测试注入 fake exec。 */
   pluginSurface?: PluginSurface;
+  /** dashboard 平面认证（见 auth.ts）。缺省不装 = 开放（存量测试口径），生产由 start/dev-entry 装配。 */
+  auth?: AuthService;
 }
 
-/** Create the daemon HTTP server (bound to 127.0.0.1, no TLS). */
+/** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
 export function createWeaveServer(deps: WeaveServerDeps): Server {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
@@ -220,8 +224,18 @@ async function handleRequest(
     return;
   }
 
-  // 无 daemon token：daemon 只绑 127.0.0.1（port.ts DAEMON_HOST），本机即边界。
-  // 项目级鉴权（hooks 采集 ptoken）在各自的采集链路里，与此处无关。
+  // /auth/* —— 认证子系统自身（登录/登出/改密/状态），门豁免：登录页要用它。
+  if (await handleAuthRoutes(req, res, deps, pathname)) return;
+
+  // 认证门（装 auth 才生效）：除「HTML 导航 + 真实静态文件」外一律要凭据——
+  // 浏览器 fetch/SSE、CLI 全部走同一条判定（会话 cookie 或本机令牌）。放行 HTML
+  // 与静态文件是因为登录页必须未认证可载；导航类请求带的是 SPA 外壳，不含数据。
+  if (deps.auth && !isPublicRequest(req, pathname, deps)) {
+    if (!deps.auth.isAuthenticated(req.headers)) {
+      sendJson(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+  }
 
   // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。
   if (await handleHooksRoutes(req, res, deps, pathname, url)) return;
@@ -1484,6 +1498,26 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
   req.on('close', () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   });
+}
+
+/**
+ * 门豁免判定：HTML 导航（SPA 外壳/登录页，浏览器导航必带 `Accept: text/html`，
+ * 而 fetch/EventSource 不带）+ staticDir 下真实存在的静态文件。API 数据一律不豁免。
+ */
+function isPublicRequest(
+  req: IncomingMessage,
+  pathname: string,
+  deps: WeaveServerDeps,
+): boolean {
+  if (pathname === '/health') return true;
+  if (req.method !== 'GET') return false;
+  if ((req.headers.accept ?? '').includes('text/html')) return true;
+  if (!deps.staticDir) return false;
+  const safe = path.normalize(pathname).replace(/^([/\\]\.\.[/\\])+/, '');
+  const filePath = path.join(deps.staticDir, safe);
+  return (
+    filePath.startsWith(deps.staticDir) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()
+  );
 }
 
 /** Serve a static file from `staticDir`, falling back to index.html (SPA). */

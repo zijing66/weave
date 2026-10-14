@@ -30,9 +30,10 @@ import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { readTerminalCounts } from './opener.js';
-import { DAEMON_HOST } from './port.js';
+import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
-import { setDaemonSettingsDb } from './settings.js';
+import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
+import { AuthService } from './dashboard-auth.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
 
@@ -41,10 +42,10 @@ delete process.env.CLAUDE_CODE_CHILD_SESSION;
 
 /**
  * Start the daemon in the current process. Reads port from the daemon state
- * file (written by `weave daemon start`), binds the HTTP server (127.0.0.1
- * only — no auth token, the machine boundary is the trust boundary), starts
- * watching all registered projects, wires up hook ingestion, and statically
- * hosts the built SPA if present.
+ * file (written by `weave daemon start`), binds the HTTP server on the
+ * configured host (settings `server.bindHost`，默认 0.0.0.0——由 dashboard
+ * 密码认证兜底，见 auth.ts), starts watching all registered projects, wires up
+ * hook ingestion, and statically hosts the built SPA if present.
  */
 export function startDaemon(): void {
   const state = readDaemonState();
@@ -54,6 +55,14 @@ export function startDaemon(): void {
   }
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
+  const bindHost = readDaemonSettingsSync().server?.bindHost ?? DEFAULT_BIND_HOST;
+  // dashboard 认证（监听放开的配套）：口令材料落 <dataDir>/auth.json。首启生成的
+  // 初始密码已写入 initial-password 标记文件——本进程 detached/stdio:ignore 启动，
+  // 打印必丢，领取通道是 CLI（`weave dashboard`/`weave chpass` 读标记并显示一次）。
+  const auth = new AuthService();
+  if (auth.initialPassword) {
+    console.log(`[weave] initial dashboard password: ${auth.initialPassword}`);
+  }
   const projects = new ProjectRepository(db);
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
@@ -232,6 +241,7 @@ export function startDaemon(): void {
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
     toolkit,
+    auth,
   });
 
   const shutdown = (): void => {
@@ -246,9 +256,9 @@ export function startDaemon(): void {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  server.listen(state.port, DAEMON_HOST, () => {
-    // Record the real pid now that we are listening.
-    writeDaemonState({ ...state, pid: process.pid });
+  server.listen(state.port, bindHost, () => {
+    // Record the real pid + actual bind host now that we are listening.
+    writeDaemonState({ ...state, pid: process.pid, host: bindHost });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
   });

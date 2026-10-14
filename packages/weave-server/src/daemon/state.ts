@@ -5,6 +5,8 @@ export interface DaemonState {
   pid: number;
   port: number;
   startedAt: string;
+  /** 实际绑定地址（供 CLI 打印局域网访问地址；旧状态文件无此字段）。 */
+  host?: string;
 }
 
 export function readDaemonState(): DaemonState | null {

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../db/db.js';
 import { getDbPath } from '../db/paths.js';
+import { DEFAULT_BIND_HOST } from './port.js';
 
 /**
  * Daemon-level settings (as opposed to per-project or harness settings):
@@ -62,6 +63,8 @@ export interface DaemonSettings {
   events?: EventsSettings;
   /** 开机自启动 daemon（系统级自启动项；缺省关闭——读时归一化）。 */
   startup?: StartupSettings;
+  /** 监听面（绑定地址；缺省放开 0.0.0.0——读时归一化）。 */
+  server?: ServerSettings;
 }
 
 export interface HooksSettings {
@@ -76,6 +79,11 @@ export interface EventsSettings {
 /** daemon 是否随系统登录自启（默认关）。 */
 export interface StartupSettings {
   launchOnLogin: boolean;
+}
+
+/** 监听面设置：绑定地址（默认放开 0.0.0.0，由 dashboard 密码认证兜底；可改回 127.0.0.1）。 */
+export interface ServerSettings {
+  bindHost: string;
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -94,12 +102,16 @@ export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
 
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
 
+/** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。 */
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST };
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
   hooks: DEFAULT_HOOKS_SETTINGS,
   events: DEFAULT_EVENTS_SETTINGS,
   startup: DEFAULT_STARTUP_SETTINGS,
+  server: DEFAULT_SERVER_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -166,6 +178,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
   const events = (obj.events ?? {}) as Partial<EventsSettings>;
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
+  const server = (obj.server ?? {}) as Partial<ServerSettings>;
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -188,6 +201,12 @@ function mergeDefaults(raw: unknown): DaemonSettings {
           ? startup.launchOnLogin
           : DEFAULT_STARTUP_SETTINGS.launchOnLogin,
     },
+    server: {
+      bindHost:
+        typeof server.bindHost === 'string' && server.bindHost.trim() !== ''
+          ? server.bindHost.trim()
+          : DEFAULT_SERVER_SETTINGS.bindHost,
+    },
   };
 }
 
@@ -203,6 +222,7 @@ const KEYS = {
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
   startupLaunchOnLogin: 'startup.launchOnLogin',
+  serverBindHost: 'server.bindHost',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -256,6 +276,7 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.startupLaunchOnLogin)
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
+    ...(map.has(KEYS.serverBindHost) ? { server: { bindHost: map.get(KEYS.serverBindHost)! } } : {}),
   });
 }
 
@@ -271,6 +292,7 @@ function toEntries(settings: DaemonSettings): [string, string][] {
       String(settings.events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS),
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
+    [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],
   ];
 }
 

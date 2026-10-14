@@ -15,3 +15,13 @@ export function getDbPath(): string {
 export function getDaemonStatePath(): string {
   return path.join(getDataDir(), 'daemon.json');
 }
+
+/** Absolute path to the daemon auth file (password hash + secrets, 0600). */
+export function getAuthPath(): string {
+  return path.join(getDataDir(), 'auth.json');
+}
+
+/** Absolute path to the one-shot initial-password marker (0600; 首个 CLI 命令领取后即删). */
+export function getInitialPasswordPath(): string {
+  return path.join(getDataDir(), 'initial-password');
+}
