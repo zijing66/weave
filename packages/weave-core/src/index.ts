@@ -22,6 +22,7 @@ export {
   PluginRuleEntrySchema,
   WeavePluginManifestSchema,
   WEAVE_PLUGIN_MANIFEST,
+  WEAVE_INJECTION_MARKER,
   CLAUDE_HOOK_EVENTS,
   INJECTABLE_HOOK_EVENTS,
 } from './types.js';

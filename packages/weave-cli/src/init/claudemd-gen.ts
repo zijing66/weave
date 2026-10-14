@@ -1,3 +1,5 @@
+import { WEAVE_INJECTION_MARKER } from '@weavecode/core';
+
 export type ClaudeMdTemplate = 'minimal' | 'standard' | 'full';
 
 export interface ClaudeMdGeneratorInput {
@@ -88,6 +90,23 @@ skill with a \`SKILL.md\`). Invoke a skill by name when the task matches one.
 }
 
 /**
+ * 控制台注入消息的标记说明：weave 把控制台/dashboard 的 prompt 直接写进会话
+ * （语义上是「用户消息」，会话分不出是谁敲的），标记 + 这段说明就是唯一的可见
+ * 凭据。标记本身来自 core 单一事实源，别在这里手抄字面量。
+ */
+function injectedPromptNote(): string {
+  return `## weave 注入的消息
+
+以 \`${WEAVE_INJECTION_MARKER}\` 开头的用户消息来自 weave 控制台（dashboard / 编排）的注入，不是坐在终端前的人手打的：
+
+- 去掉该标记后的全文就是完整指令，**照它执行**；
+- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；
+- 该标记之外的普通用户消息 = 用户本人输入，正常对待。
+
+`;
+}
+
+/**
  * Weave's managed block — everything weave may write into a CLAUDE.md is
  * delimited by these markers. When the target file already contains the
  * block, re-init replaces the block instead of appending a second copy.
@@ -108,6 +127,7 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
 
   content += gettingStarted();
   content += skillsNote();
+  content += injectedPromptNote();
   content += `${WEAVE_BLOCK_END}\n`;
   return content;
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { WEAVE_INJECTION_MARKER } from '@weavecode/core';
 import {
   generateClaudeMd,
   generateClaudeMdSection,
@@ -60,6 +61,13 @@ describe('generateClaudeMdSection', () => {
     expect(section).toContain('<!-- weave:start -->');
     expect(section).toContain('<!-- weave:end -->');
     expect(section).not.toContain('# p\n');
+  });
+
+  it('解释控制台注入标记（标记取自 core 单一事实源，不手抄）', () => {
+    const section = generateClaudeMdSection({ template: 'minimal', projectName: 'p' });
+    expect(section).toContain('## weave 注入的消息');
+    expect(section).toContain(`\`${WEAVE_INJECTION_MARKER}\``);
+    expect(WEAVE_INJECTION_MARKER).toBe('[weave] ');
   });
 });
 

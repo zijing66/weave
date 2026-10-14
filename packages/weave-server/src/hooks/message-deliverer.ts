@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { isHarness, type Harness } from '@weavecode/core';
+import { WEAVE_INJECTION_MARKER, isHarness, type Harness } from '@weavecode/core';
 import type { MessagingSurface, MessageMeta, PromptRelaySpec } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -151,9 +151,10 @@ const ACK_MIN_TEXT = 8;
  * （会话看起来像用户自己敲的），标一句让转录以后能分辨「这不是我敲的」。
  * 实测（本机 2.1.296）不改变回复形态、不改变模型的发送者归属；它**给不了**
  * 系统级来源语义（那只有中继路径有：目标被明确告知「来自另一个会话」并受
- * 跨会话限制）。不想要就删这一个常量。
+ * 跨会话限制）。标记值来自 core 单一事实源——`weave init` 生成的 CLAUDE.md 块
+ * 用同一个常量向会话解释它的含义（见 weave-cli/src/init/claudemd-gen.ts）。
  */
-const INBOX_SOURCE_PREFIX = '[weave] ';
+const INBOX_SOURCE_PREFIX = WEAVE_INJECTION_MARKER;
 
 /**
  * 回执比对归一：剥掉 Claude Code 给会话间消息裹的外壳（`<cross-session-message
