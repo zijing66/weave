@@ -342,6 +342,47 @@ CREATE TABLE session_watches (
 验证：harness 契约 5/5、deliverer 裁决 15/15、web dict/tasks 38/38、合并态全量
 server 88 文件 867/867 绿；两 tsc（server+harness 包根、web）全绿。
 
+### 批 2 实施记录（2026-10-14 落库）
+
+watch 引擎 + 路由 + web 铃铛面全量落地，与设计的偏差与定案：
+
+- **触发点从 dispatcher 迁到 ingest 消费链**（设计原文「dispatcher.onIngest 单点」）：
+  实际挂 `handleIngestedRecords`（inbox-worker，消息域）——dispatcher 是规则自动域，
+  有 `readHooksEnabled` 早退门控，watch 不该被规则开关连坐；消息域与规则域分离，
+  dispatcher 零改动。
+- **`created()` 即时 fire 超设计补齐**：订阅落库时目标已空闲（`turnOpenOf===false`
+  服务端基线）→ 立即 fire 不等下一拍——「空闲时提醒我」点在空闲会话上，答案就是
+  现在；turnOpen 未知（null，行刚消失的竞态）不猜，留给 ingest/补射路径。
+- **fire 同步化**：markFired CAS 先行 + bus.emit 均同步，`fire()` 收敛为同步方法
+  （返回是否真的落定）；inject 投递 fire-and-forget、拒绝不回滚不重试（one-shot
+  已落定）。CAS 即同批 Stop+SessionEnd 双事件与「补射 × ingest 竞速」的统一收敛点
+  ——三路径任意竞速都只有一条副作用。
+- **路由集超设计**：新增 `GET /messaging/watches`（pending 全量；web 自行按
+  `watcherSessionId===null` 过滤 dashboard 行——会话订阅由服务端注入通知，不占铃铛）。
+  POST 校验链：目标面 idleSignals 空 → 409（reason 优先面声明）；watcher 会话的
+  inject 通道缺席 → 409（fire 时必然无声丢弃，提前拒）。
+- **sweep 补射挂既有时钟**（7.3-1 落地）：`SessionSweeper.sweep()` 清空循环**之后**
+  调 `sweepTerminated()`——同 tick 内刚清掉的空会话的 watch 拿到确定性释放；判死
+  数据源 = `listWithCounts()` 行（带 harness/lastSeenAt/eventCount 计算字段）过
+  `pidAliveOf`，目标行消失 = 等待不可解 → fire；null 不猜。
+- **purge/archive 联动不计数**：`deleteBySession`/`deleteByProject`（双端 OR）挂上，
+  但 purged 返回形状不变（archive 测试零改动）——行数极少的域不值得为计数改公共
+  API 形状。
+- **web prop 改造**：SessionList 的 `messagers` 过滤集 → 完整
+  `capabilities: ReadonlyMap<Harness, MessagingCapability>`（行内按字段判：
+  消息按钮 inject||headless、铃铛 watch 位）——「表驱动门控」不再预过滤，未来加
+  按位零改动。铃铛形态：Bell（未订）/ BellRing amber（已订，点击取消）；fb 键
+  `watch:<sessionId>`，`watch.fired` 帧重拉订阅面。
+- **App toast**：SSE hook 帧分支 `watch.fired && watcherSessionId===null` → info
+  toast（label 查会话表回落 id 前 8 位）；会话订阅的通知已由服务端注入其线程
+  （message.* 帧走面板弹窗），App 不重复打扰。`HookFrame` 镜像加
+  watchId/targetSessionId/watcherSessionId 三字段。
+- **镜像修正**：api.ts `MessagingCapability.unsupportedReasons` 批 1 笔误写成
+  `string[]`，实为按通道键对象（无消费方，随手修）。
+
+验证：watch-engine 15/15、sweeper 扩展 6/6、全量 server 89 文件 883/883 绿、
+web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
+
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
 Claude Code 的定时任务机制（CronCreate）与 SendMessage 是**同一投递底座的两个前端**——
