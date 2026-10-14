@@ -107,6 +107,9 @@ export interface MessageDelivererDeps {
   surfaceFor?: (harness: Harness) => MessagingSurface;
   /** 层② 终端 send-text 通道（装配侧按 TerminalBackend 能力注入；缺省无兜底）。 */
   terminal?: PromptTerminal;
+  /** 冲洗节流：同一会话两次投递之间的最小间隔（毫秒）；缺省 1000。Claude Code 对
+   *  同一会话的快速突发会在**发送侧**拒收（见 docs/plan/session-orchestration.md）。 */
+  flushGapMs?: number;
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -130,6 +133,12 @@ type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 
 /** 中继进程的工作目录：中性 cwd，避开项目 hooks（spike 实测防幽灵事件）。 */
 const relayCwd = () => tmpdir();
+
+/** 冲洗节流（防 Claude Code 发送侧突发拒收）：一轮最多投递几条 + 条间最小间隔。 */
+const FLUSH_PASS_MAX = 5;
+const FLUSH_GAP_MS = 1_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MessageDeliverer {
   private readonly headless: HeadlessRunner;
@@ -268,7 +277,12 @@ export class MessageDeliverer {
     return this.terminalChannel() != null;
   }
 
-  /** 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。 */
+  /**
+   * 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。
+   * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
+   * 条、条间至少 `flushGapMs`（中继路径本就被同会话中继闸天然间隔，终端路径没有，
+   * 所以节流在这里统一兜）。超出的留队列，下轮触发（ingest / 刷新器）继续。
+   */
   async flushSession(sessionId: string): Promise<void> {
     if (!this.queuedSessions.has(sessionId)) return;
     const session = this.deps.sessions.getBySessionId(sessionId);
@@ -282,7 +296,10 @@ export class MessageDeliverer {
     }
     const surface = this.surfaceOfSession(sessionId);
     const relay = surface?.prompt ?? null;
+    let delivered = 0;
     for (const entry of entries) {
+      if (delivered >= FLUSH_PASS_MAX) return; // 本轮量到：余下留队列，下轮触发继续
+      if (delivered > 0) await sleep(this.deps.flushGapMs ?? FLUSH_GAP_MS);
       const peer = relay?.resolve(sessionId) ?? null;
       if (relay && peer) {
         const msg: PipeMessage = {
@@ -299,6 +316,7 @@ export class MessageDeliverer {
         const started = this.runRelay(msg, relay, peer.name);
         if (started) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
+          delivered++;
           continue;
         }
         // 同会话中继在途：本轮到此为止，剩余行留队列
@@ -320,6 +338,7 @@ export class MessageDeliverer {
             at: entry.at,
           });
           await this.runTerminalPrompt(entry.id, pane.id, entry.text);
+          delivered++;
           continue;
         }
       }

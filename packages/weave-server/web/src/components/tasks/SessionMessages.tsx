@@ -177,7 +177,10 @@ export function SessionMessages({
               <div key={m.id} className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
                   <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                    <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
+                    <Badge
+                      title={m.status === 'delivered' ? t('tasks.msgDeliveredHint') : undefined}
+                      className={cn('shrink-0', STATUS_BADGE[m.status])}
+                    >
                       {t(STATUS_KEY[m.status])}
                     </Badge>
                     <span className="shrink-0 text-[10px] text-neutral-600">

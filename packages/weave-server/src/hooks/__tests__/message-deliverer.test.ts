@@ -523,6 +523,56 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listInflightCounts().size).toBe(0);
   });
 
+  it('冲洗节流：一轮最多 5 条（防发送侧突发拒收），余下留队列', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sent: string[] = [];
+    const sendText = vi.fn().mockImplementation(async (paneId: string, text: string) => {
+      sent.push(`${paneId}:${text}`);
+    });
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    // 走层② 终端通道（没有同会话中继闸，唯一可能连发突发的路径）
+    let panes: Array<{ id: string; title: string; cwd: string }> = [];
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => noNative,
+        flushGapMs: 0,
+        terminal: {
+          available: () => true,
+          listPanes: async () => panes,
+          sendText,
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+    // pane 还没出现：7 条全部积压入队
+    for (let i = 1; i <= 7; i++) {
+      await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: `m${i}`,
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+    }
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(7);
+
+    panes = [{ id: 'p1', title: 'msg-target', cwd: PROJECT_PATH }];
+    await deliverer.flushSession(SESSION_ID);
+    expect(sent).toHaveLength(5); // 一轮上限
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2); // 余下留队列
+
+    await deliverer.flushSession(SESSION_ID); // 下一轮继续
+    expect(sent).toHaveLength(7);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
   it('中继作为子进程启动（非 detached）——三平台同一语义，并随 daemon 退出被回收', async () => {
     const fake = createFakeSpawn();
     const killImpl = vi.fn();

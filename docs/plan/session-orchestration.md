@@ -539,6 +539,22 @@ send-text、注意多终端」——早期「send-text 作主通道」作废，�
   idle 立即唤醒、忙则下一 tool round 到达）。
 - 中继显示名 `-n weave`——**原文即消息体**，不加信封（claude 的消息头
   `Message from @weave:` 自带出处）。
+- **官方文档核对（2026-10-15，`code.claude.com/docs/en/cross-session-messaging`）**——
+  本机 2.1.296 满足全部门槛（native Windows ≥2.1.234、同机非 Anthropic 提供商
+  ≥2.1.248、`notify_when_idle` ≥2.1.236）。四条硬事实写进实现口径：
+  ① **`delivered` ≠ 已读**：接收侧三态 Delivered / **Held**（暂扣，等人批准）/
+  **Refused**（静默丢弃，接收方无任何可见变化）——中继 exit 0 只证明「交给了对方
+  Claude Code」，weave 从发送侧**无法判知**后两者，UI 文案不得说成「已读」；
+  ② **尺寸上限**：本机消息序列化后 ~100 万字符超限即在**发送侧**拒收——我们 API
+  限 20k（产品口径）远低于它，安全；
+  ③ **突发上限**：同一会话快速连发会在发送侧被拒（拒收文案教「批量或等待」），
+  故 flushSession 节流：一轮 ≤5 条、条间 ≥1s（中继路径本被同会话中继闸天然间隔，
+  终端路径没有 → 节流统一兜）；接收侧另有 loop 节流（重复消息短窗内丢弃、
+  队列上限 50 条）；
+  ④ **bare 模式不绑 inbox**（该会话收不到消息、不出现在 agent 列表）——与我们
+  实测的 `--bare` 跑偏吻合，再次坐实中继不得用 `--bare`。
+  另：投递走**本机 per-session socket、不经 Anthropic 服务器**；验证可达性用
+  `/status` 的 `Peer address` 行与 `/list-agents`（别名 `/peers`）。
 - **中继进程的启动/退出契约**（用户 2026-10-15：应当正确启动与退出、不持续占用
   系统资源、作为子进程而非独立进程，且三平台兼容）：中继 `detached: false` ——
   win32 shell 模式本就非 detached（实测 shell+detached 丢管道输出），POSIX 不再
