@@ -323,9 +323,9 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     const mkInput = () => ({
       projectId: project.id,
       source: 'claude' as const,
-      eventType: 'PostToolUse',
+      eventType: 'UserPromptSubmit',
       sessionId: 's1',
-      payload: JSON.stringify({ eventType: 'PostToolUse', toolName: 'Edit', toolInput: null, raw: {} }),
+      payload: JSON.stringify({ eventType: 'UserPromptSubmit', toolName: null, toolInput: null, raw: {} }),
     });
     const input = mkInput();
 

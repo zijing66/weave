@@ -56,6 +56,7 @@ describe('generateHookHandler（脚本形态）', () => {
     expect(out).toContain('additionalContext');
     expect(out).toContain('sessionTitle');
     expect(out).toContain('deliveredTitle');
+    expect(out).toContain("const TITLE_EVENTS = ['SessionStart', 'UserPromptSubmit']");
     expect(out).toContain('DISPATCH_MARKER');
     expect(out).toContain('consumeOutbox');
     expect(out).toContain('DEDUPE_WINDOW_MS = 60000');
@@ -235,7 +236,11 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
         '\n',
     );
 
-    const { stdout } = await runHook({ hook_event_name: 'Stop', session_id: 's1', cwd: projectDir });
+    const { stdout } = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: projectDir,
+    });
     const payload = JSON.parse(stdout) as {
       hookSpecificOutput: { additionalContext: string; sessionTitle: string };
     };
@@ -252,16 +257,55 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     expect(existsSync(inboxPath())).toBe(true);
   });
 
+  it('pendingTitle 只在标题生效事件下发：工具事件下发即弃（Claude 2.1.296 实测）', async () => {
+    // Claude Code 只在 SessionStart/UserPromptSubmit 应用 hookSpecificOutput.
+    // sessionTitle——工具事件 hook_success 落档但 custom-title 不变。工具事件若
+    // 也带回执，daemon 会把 pending 误落定，改名从此永不再投递（待生效假清）。
+    writeMirror({ version: 1, project: 'proj', pendingTitles: { s1: '新会话名' }, rules: [] });
+
+    const tool = await runHook({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      cwd: projectDir,
+      tool_name: 'Edit',
+      tool_input: {},
+    });
+    expect(tool.stdout).toBe(''); // 不下发标题，也不带回执
+    const acks = () =>
+      readFileSync(inboxPath(), 'utf8')
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l) as { report: { deliveredTitle: string | null } });
+    expect(acks().map((l) => l.report.deliveredTitle)).toEqual([null]);
+
+    const ups = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: projectDir,
+    });
+    expect(JSON.parse(ups.stdout).hookSpecificOutput.sessionTitle).toBe('新会话名');
+    expect(acks().map((l) => l.report.deliveredTitle)).toEqual([null, '新会话名']);
+  });
+
   it('stop_hook_active=true 时闭嘴：宿主已让 agent 继续过，再输出就是让它空转', async () => {
-    // 用 pendingTitle 而不是规则：规则有 60s 去重、第二枪本来也会被压掉，
-    // 那样就测不出守卫本身；而 title 每枪都会重新下发。
-    writeMirror({ version: 1, project: 'proj', pendingTitles: { s9: '待生效名字' }, rules: [] });
+    // 用 outbox 顺延注入作载体（无 60s 去重、title 又不在 Stop 事件下发）：
+    // 守卫若失效，第二枪会照常输出新写的顺延内容。
+    writeMirror({ version: 1, project: 'proj', pendingTitles: {}, rules: [] });
+    const writeOutbox = (text: string) => {
+      mkdirSync(path.dirname(outboxPath()), { recursive: true });
+      writeFileSync(
+        outboxPath(),
+        JSON.stringify({ sessionId: 's9', text, at: new Date().toISOString() }) + '\n',
+      );
+    };
 
-    // 第一枪（stop_hook_active 缺省 = 未继续过）：正常下发
+    // 第一枪（stop_hook_active 缺省 = 未继续过）：照常顺延注入
+    writeOutbox('第一段顺延');
     const ask = await runHook({ hook_event_name: 'Stop', session_id: 's9', cwd: projectDir });
-    expect(JSON.parse(ask.stdout).hookSpecificOutput.sessionTitle).toBe('待生效名字');
+    expect(JSON.parse(ask.stdout).hookSpecificOutput.additionalContext).toContain('第一段顺延');
 
-    // 第二枪：宿主带 stop_hook_active=true 问回来 → 必须静默
+    // 第二枪：宿主带 stop_hook_active=true 问回来 → 必须静默（连 outbox 都不消费）
+    writeOutbox('第二段顺延');
     const again = await runHook({
       hook_event_name: 'Stop',
       session_id: 's9',
@@ -270,13 +314,9 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     });
     expect(again.status).toBe(0);
     expect(again.stdout).toBe('');
-    // 采集不受守卫影响：两枪都进了 inbox；且静默枪没有交付回执（没下发就不落定）
-    const shotLines = readFileSync(inboxPath(), 'utf8')
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l) as { report: { deliveredTitle: string | null } });
-    expect(shotLines).toHaveLength(2);
-    expect(shotLines.map((l) => l.report.deliveredTitle)).toEqual(['待生效名字', null]);
+    // 采集不受守卫影响：两枪都进了 inbox；第二段顺延原样留在盘上
+    expect(readFileSync(inboxPath(), 'utf8').trim().split('\n')).toHaveLength(2);
+    expect(readFileSync(outboxPath(), 'utf8')).toContain('第二段顺延');
   });
 
   it('stop_hook_active=true 只对 Stop/SubagentStop 生效，别的注入事件不受影响', async () => {

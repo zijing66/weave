@@ -1,5 +1,10 @@
 import type { HookRule, HookDispatchStatus, HookDispatchMode } from '@weavecode/core';
-import { INJECTABLE_EVENTS, hookSourceHarness, type Harness } from '@weavecode/core';
+import {
+  INJECTABLE_EVENTS,
+  TITLE_EFFECTIVE_EVENTS,
+  hookSourceHarness,
+  type Harness,
+} from '@weavecode/core';
 import type { NormalizedHookPayload } from './types.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { PluginHost, PluginHandler, PluginHandlerResult } from './plugin-loader.js';
@@ -105,10 +110,11 @@ export class HookDispatcher {
       // 会话 rename 双向（独立于规则匹配）：
       // 读——payload 的 session_title（/rename 或 --name 后下一次上报）做 diff 采纳；
       // 写——dashboard 挂的 pending_title 经 mirror 随 hook 响应下发（hook-handler
-      // 本地渲染，sessionTitle 与 /rename 同效）。落定闸门 = 交付回执（回执值与
-      // pending 同值 = 本事件确实把新名交给了会话——工具事件（PostToolUse/Stop 等）
-      // 生效当拍即落定，不必等会话下一次上报标题）；旧 handler 无回执时维持
-      // 「携带 session_title 上报」启发式（UserPromptSubmit/SessionStart）。
+      // 本地渲染，sessionTitle 与 /rename 同效）。落定闸门 = 交付回执：回执值与
+      // pending 同值、且事件在标题生效表内（TITLE_EFFECTIVE_EVENTS——Claude Code
+      // 只在 SessionStart/UserPromptSubmit 应用 sessionTitle，工具事件下发即弃；
+      // 旧 handler 在工具事件也带回执，照单落定会把 pending 误清、改名永不再投递）。
+      // 旧 handler 无回执时维持「携带 session_title 上报」启发式（同为两事件）。
       // 回执与 pending 不同值（hook 之后用户又改过名）→ 旧回执作废不落定。
       // 会话未真正应用时，下一次上报的旧标题经 diff 通道把 title 改回（自纠）。
       const outcome: IngestOutcome = {};
@@ -131,8 +137,11 @@ export class HookDispatcher {
         const pending = this.deps.sessions.getBySessionId(ctx.sessionId)?.pendingTitle;
         if (pending) {
           outcome.sessionTitle = pending;
+          const titleEffective = (TITLE_EFFECTIVE_EVENTS[ctx.source] as readonly string[]).includes(
+            ctx.payload.eventType,
+          );
           if (
-            (ctx.deliveredTitle === pending || reported !== null) &&
+            ((ctx.deliveredTitle === pending && titleEffective) || reported !== null) &&
             this.deps.sessions.confirmPendingTitle(ctx.sessionId, pending)
           ) {
             this.deps.bus.emit({

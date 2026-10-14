@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { HARNESS_EVENTS, HARNESS_LIFECYCLE } from '../harness';
+import { HARNESS_EVENTS, HARNESS_LIFECYCLE, INJECTABLE_EVENTS, TITLE_EFFECTIVE_EVENTS } from '../harness';
+
+describe('TITLE_EFFECTIVE_EVENTS', () => {
+  it('覆盖全部 harness 键，且 ⊆ INJECTABLE_EVENTS（能生效的必先可注入）', () => {
+    expect(Object.keys(TITLE_EFFECTIVE_EVENTS).sort()).toEqual(Object.keys(HARNESS_EVENTS).sort());
+    for (const [harness, events] of Object.entries(TITLE_EFFECTIVE_EVENTS)) {
+      for (const event of events) {
+        expect((INJECTABLE_EVENTS[harness as keyof typeof INJECTABLE_EVENTS] as readonly string[])).toContain(event);
+      }
+    }
+  });
+
+  it('claude：SessionStart/UserPromptSubmit——Claude Code 只在此应用 sessionTitle', () => {
+    expect(TITLE_EFFECTIVE_EVENTS.claude).toEqual(['SessionStart', 'UserPromptSubmit']);
+  });
+});
 
 describe('HARNESS_LIFECYCLE', () => {
   it('覆盖 HARNESS_EVENTS 的全部 harness 键', () => {

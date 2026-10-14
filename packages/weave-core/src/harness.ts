@@ -54,6 +54,19 @@ export const INJECTABLE_EVENTS = {
 } satisfies Record<Harness, readonly string[]>;
 
 /**
+ * sessionTitle 生效事件表——hookSpecificOutput.sessionTitle 只在这些事件被
+ * Claude Code 真正应用；工具事件（PostToolUse/Stop 等）下发即弃（hook_success
+ * 落档但 custom-title 不变，2.1.296 实测）。改名交付（hook-handler）与回执
+ * 落定（dispatcher）都以此表为门——在非生效事件交付并落定，会把 pending 误清
+ * 而会话从未更名，改名从此永不再投递。
+ */
+export const TITLE_EFFECTIVE_EVENTS = {
+  claude: ['SessionStart', 'UserPromptSubmit'] as const,
+  /** Codex 无标题通道；空值占位，类型完整。 */
+  codex: [] as const,
+} satisfies Record<Harness, readonly string[]>;
+
+/**
  * 全 harness 事件**并集**——插件 manifest 的 `requires.events` /
  * `subscribe.events` 校验值域。插件不绑单一 harness，故按全集校验；
  * 有事件的 harness 只有 claude 时，并集即 `HARNESS_EVENTS.claude`（行为不变）。

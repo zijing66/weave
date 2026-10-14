@@ -45,9 +45,13 @@ const os = require('os');
 const crypto = require('crypto');
 
 const HOOK_GUARD_MS = 2000;
-// Events that can carry additionalContext/sessionTitle back via hook output
-// (Claude Code contract; mirrors INJECTABLE_EVENTS.claude server-side).
+// Events that can carry additionalContext back via hook output (Claude Code
+// contract; mirrors INJECTABLE_EVENTS.claude server-side).
 const INJECTABLE_EVENTS = ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop', 'SubagentStop'];
+// Claude Code applies hookSpecificOutput.sessionTitle ONLY on these events
+// (mirrors TITLE_EFFECTIVE_EVENTS.claude) — tool events record hook_success
+// but drop the field (verified against 2.1.296).
+const TITLE_EVENTS = ['SessionStart', 'UserPromptSubmit'];
 const INBOX_MAX_BYTES = 4 * 1024 * 1024;
 const INBOX_MAX_LINES = 1000;
 const OUTBOX_MAX_LINES = 200;
@@ -285,12 +289,15 @@ async function main() {
     parsed.stop_hook_active === true;
   var injectable = INJECTABLE_EVENTS.indexOf(eventType) !== -1;
 
-  // 改名交付回执：本事件确会把 pendingTitle 随响应下发（injectable 且未被
-  // 静默；读不到 mirror = 没下发）。daemon 拿回执落定 pending_title——「改名
-  // 待生效」徽标在生效当拍清除，不必等会话下一次上报标题。
+  // 改名交付回执：本事件确会把 pendingTitle 随响应下发——仅标题生效事件
+  // （SessionStart/UserPromptSubmit，Claude Code 只在此应用 sessionTitle，
+  // 工具事件下发即弃），且 injectable 未被静默、读得到 mirror。daemon 拿回执
+  // 落定 pending_title——「改名待生效」徽标在生效当拍清除。非标题事件照常
+  // 下发 additionalContext（注入不受影响）。
+  var titleEvent = TITLE_EVENTS.indexOf(eventType) !== -1;
   var deliveredTitle = null;
   var mirror = injectable && !silenced ? readMirror(hooksDir(), token) : null;
-  if (mirror && sessionId && mirror.pendingTitles) {
+  if (titleEvent && mirror && sessionId && mirror.pendingTitles) {
     var pending = mirror.pendingTitles[sessionId];
     if (typeof pending === 'string' && pending) deliveredTitle = pending;
   }
