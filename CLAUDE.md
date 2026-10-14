@@ -40,7 +40,7 @@ skill with a `SKILL.md`). Invoke a skill by name when the task matches one.
 ## Architecture
 
 - 抽象类全仓**仅两处**、皆为模板方法：`InitPipeline`（`weave-harness/src/init/pipeline.ts`，经 `@weavecode/harness` 导出）固定 init 骨架；`TerminalBackend`（`packages/weave-server/src/daemon/opener.ts`）固定终端后端骨架「取候选 → 按序尝试 → 全失败抛真相」，子类只填候选与真正不同的流程（wezterm 覆写 `run` 走 mux），`settings → 后端` 的唯一入口 = `terminalBackendFor`，「这个 preset 能不能反查已开窗口」归后端的 `enumerable`——调用方不得散写 preset 白名单。本条曾写作「不新增其他抽象类」，那是**过时描述**而非禁令；新增抽象类按需即可，但扩张前先与项目所有者确认。
-- 七能力槽（init / events / assets / resume / detect / plugins / messaging）+ `HarnessRegistry` 统一装配；`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。
+- 九能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / capture）+ `HarnessRegistry` 统一装配；`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。
 - 依赖硬约束：`@weavecode/harness → @weavecode/core` 是唯一 harness 外向依赖；core 只放纯类型与表（`HARNESS_*` 注册表）。
 - web（`packages/weave-server/web`）仅 `import type` 引用 core/harness（tsconfig paths + vite alias 源码直引）。
 - 面向抽象与接口编程、避免硬编码：harness 专属格式/路径/键形不得在 server、cli、web 内自拼或散写，一律经能力面（`PluginSurface` / `AssetSurface` 等）取；server 只传语义参数（如「包名 + 市场身份」），harness 负责自己的表示法。
