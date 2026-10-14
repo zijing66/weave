@@ -446,6 +446,27 @@ web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
 全量 910/910；③ 布局纯函数 4 例，web 93/93、全仓 126 文件 1320/1320 绿；两 tsc
 （server+harness 包根、web）全绿。
 
+### 批后修复与定案（2026-10-14，两笔：`5ee36f0` + `509f393`）
+
+**① 无头回合 win32 ENOENT 根治（`promptStdin` 契约）**：`claude` 在 Windows 上是
+npm 的 `.cmd` shim，`CreateProcess` 不认、不经 shell spawn 必 ENOENT（批 1 在
+resume-runner 注释里显式延后的「生产细节」）。修法进契约而不进 runner 私有逻辑：
+`ResumeCommandSpec.promptStdin?: boolean`——true 时 args 不含 prompt、prompt 经
+stdin 传递（实测 `claude --resume <sid> -p` 读管道），命令行只剩裸名 bin + 固定参数
++ sessionId（uuid），**无用户内容**，win32 由此可安全经 shell 启动（joined 单串、
+免 node 对 args+shell 的 DEP0190 警告；bin 为带路径覆盖值时不走 shell、直接 spawn
+真实 exe）。实测踩掉的第二个坑：**win32 下 `shell+detached` 组合管道输出全丢**
+（exit=0 但 stdout 空），故 shell 模式必关 detached——POSIX 的进程组强杀语义
+不变。端到端实机验证：shell 单串 + stdin prompt + resume 临时会话回复成功。
+
+**② 手动发送缺省 inject（产品语义定案）**：人机消息不该无头抢占——已有窗口的会话
+下一拍 hook 事件注入，未开的会话入 outbox 队列、**随其下次 SessionStart 加载**
+（`INJECTABLE_EVENTS.claude` 本就含 SessionStart，无需新机制）。落点：路由缺省
+（`POST /sessions/:id/messages` body.mode 缺省 auto→inject）、CLI `weave msg send`
+默认与 `reply`、web 弹窗初始选项（inject 不支持的面回 auto）。`auto` 的「忙→inject、
+闲→headless」语义**原样保留**——它是编排的语义（序列步驱动无人值守会话），显式选
+它的人知道自己在干什么；缺省即安全。
+
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
 Claude Code 的定时任务机制（CronCreate）与 SendMessage 是**同一投递底座的两个前端**——
