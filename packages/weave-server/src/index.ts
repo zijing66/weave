@@ -190,7 +190,8 @@ export type {
   SegmentKey,
 } from './statusline/config.js';
 export { WEAVE_VERSION } from './version.js';
-export { generateStatuslineScript } from './statusline/generator.js';
+export { generateStatuslineScript, statuslineCacheDir } from './statusline/generator.js';
+export { StatuslineCacheSweeper, startStatuslineCacheSweeper } from './statusline/cache-sweeper.js';
 export {
   readStatuslineConfig,
   writeStatuslineConfig,

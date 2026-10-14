@@ -31,6 +31,7 @@ import { loadAllPlugins } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
+import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from './server.js';
 import { DataBus } from './data-bus.js';
@@ -189,6 +190,9 @@ async function main(): Promise<void> {
     watchEngine,
     sequenceEngine,
   });
+  // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
+  // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。
+  startStatuslineCacheSweeper();
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,

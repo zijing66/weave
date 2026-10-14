@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { StatuslineConfig, StatuslineNamedColor } from './config.js';
 import {
   CONTEXT_STYLE_FORMAT,
@@ -5,7 +6,20 @@ import {
   SEGMENT_DEFAULT_FORMAT,
   SEGMENT_ORDER,
 } from './config.js';
+import { getDataDir } from '../db/paths.js';
 import { WEAVE_VERSION } from '../version.js';
+
+/**
+ * 渲染缓存的落点：weave dataDir 下（`<dataDir>/statusline/<session>.json`）。
+ *
+ * 旧版写系统临时目录、且按 cwd 分文件——cwd 会随子目录与测试临时目录无限
+ * 增殖，实测两天攒下 1151 个文件且无人回收。统一收进 dataDir 后，按会话
+ * 一个文件（分会话自带天然上限），过期条目与陈旧文件由 daemon 的
+ * `StatuslineCacheSweeper` 回收。
+ */
+export function statuslineCacheDir(): string {
+  return path.join(getDataDir(), 'statusline');
+}
 
 /**
  * Generate the `helpers/statusline.cjs` source for a config.
@@ -80,8 +94,12 @@ const GIT_CHANGES_TTL_SEC = 5;
 /** A failed git lookup is re-probed this soon, never cached for a full TTL. */
 const GIT_RETRY_TTL_SEC = 5;
 
-export function generateStatuslineScript(config: StatuslineConfig): string {
+export function generateStatuslineScript(
+  config: StatuslineConfig,
+  opts: { cacheDir?: string } = {},
+): string {
   const embeddedConfig = JSON.stringify(config);
+  const embeddedCacheDir = JSON.stringify(opts.cacheDir ?? statuslineCacheDir());
   const embeddedAnsi = JSON.stringify(ANSI);
   const embeddedBg = JSON.stringify(BG);
   const embeddedFormats = JSON.stringify(SEGMENT_DEFAULT_FORMAT);
@@ -106,6 +124,7 @@ const BAR_CELLS = ${BAR_CELLS};
 const GIT_IDENTITY_TTL = ${GIT_IDENTITY_TTL_SEC};
 const GIT_CHANGES_TTL = ${GIT_CHANGES_TTL_SEC};
 const GIT_RETRY_TTL = ${GIT_RETRY_TTL_SEC};
+const CACHE_DIR = ${embeddedCacheDir};
 // Stamped into the row-0 logo so the running version is always visible.
 const WEAVE_VERSION = ${JSON.stringify(WEAVE_VERSION)};
 // Powerline glyphs (Nerd Font), configurable via CONFIG.powerline: undefined
@@ -172,12 +191,95 @@ function dim(text) {
   return '\\x1b[2;90m' + text + '\\x1b[0m';
 }
 
+// --- render cache -----------------------------------------------------------
+// Every render is a fresh process, so the file — not the process — is what
+// carries the git segment values and the transcript scan across renders. One
+// file per session under CACHE_DIR; the layers inside it are keyed by directory
+// (git) and transcript (tokens), so a session that moves between directories
+// adds an entry instead of a file. The daemon's sweeper drops expired entries
+// and files of sessions that stopped rendering.
+//
+// Top level on purpose: flush() below writes it after main() returns, so a
+// render that throws half-way still keeps what it had already scanned.
+var CACHE_FILE = null;
+var CACHE = null;
+// 只在真有条目落定时才回写：纯命中的渲染零写盘（旧实现同样只在未命中时写）。
+var CACHE_DIRTY = false;
+
+// Session key: Claude Code's session id, then the transcript basename, then a
+// cwd digest for hosts that send neither.
+function cacheKeyOf(input) {
+  var path = require('path');
+  var raw = (input.session_id != null && String(input.session_id))
+    || (typeof input.transcript_path === 'string'
+      ? path.basename(input.transcript_path, '.jsonl')
+      : '');
+  if (raw) return raw.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 64) || 'session';
+  var crypto = require('crypto');
+  var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
+  return crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 16);
+}
+
+function initCache(input) {
+  var path = require('path');
+  CACHE_FILE = path.join(CACHE_DIR, cacheKeyOf(input) + '.json');
+}
+
+// Lazily read once per render: a render that touches no cached segment must not
+// create a file at all.
+function cache() {
+  if (CACHE) return CACHE;
+  var fs = require('fs');
+  var loaded = null;
+  try { loaded = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch (e) {}
+  CACHE = loaded && typeof loaded === 'object' ? loaded : {};
+  CACHE.v = 1;
+  if (!CACHE.git || typeof CACHE.git !== 'object') CACHE.git = {};
+  if (!CACHE.tokens || typeof CACHE.tokens !== 'object') CACHE.tokens = {};
+  return CACHE;
+}
+
+function flushCache() {
+  if (!CACHE || !CACHE_FILE || !CACHE_DIRTY) return;
+  var fs = require('fs');
+  var path = require('path');
+  CACHE.updatedAt = Date.now();
+  var tmp = CACHE_FILE + '.' + process.pid + '.tmp';
+  var payload = JSON.stringify(CACHE);
+  // atomic replace: renders overlap while Claude Code re-runs on a debounce
+  function put() { fs.writeFileSync(tmp, payload); fs.renameSync(tmp, CACHE_FILE); }
+  try {
+    put();
+  } catch (e) {
+    // steady state the directory is already there — pay mkdir only when it is not
+    try { fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true }); put(); } catch (e2) {}
+  }
+}
+
+// Git-derived segments cost a subprocess each, and Claude Code re-invokes us far
+// more often than the value changes. A failed lookup — not a repo, git missing
+// from PATH — is cached too, so a directory that never has git stops being
+// re-probed on every render; but only for the short retry window, since holding
+// a failure for an identity's full TTL would hide the segment for an hour.
+function cachedGit(key, ttlSec, produce) {
+  var now = Date.now();
+  var store = cache();
+  var hit = store.git[key];
+  if (hit && hit.expires > now) return hit.value;
+  var value = produce();
+  var ttl = value == null ? Math.min(ttlSec, GIT_RETRY_TTL) : ttlSec;
+  store.git[key] = { expires: now + ttl * 1000, value: value };
+  CACHE_DIRTY = true;
+  return value;
+}
+
 function main(raw) {
 var input = {};
 try { input = JSON.parse(raw || ''); } catch (e) {}
 
 var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
 var path = require('path');
+initCache(input);
 
 // Normalise a used-percentage from Claude Code: value may be 0-100 or a 0-1 fraction.
 function pctOf(value) {
@@ -275,39 +377,9 @@ function gitConfigValue(dir, key) {
   } catch (e) { return ''; }
 }
 
-// Git-derived segments cost a subprocess each, and every render is a fresh
-// process — so persisting the value across runs is the only way to pay that
-// cost less often than Claude Code invokes us (the trick sessionTokens already
-// uses for the transcript scan). Keyed by segment + directory, so every session
-// in one repo shares a single entry. A failed lookup — not a repo, git missing
-// from PATH — is cached too, so a directory that never has git stops being
-// re-probed on every render; but only for the short retry window, since holding
-// a failure for an identity's full TTL would hide the segment for an hour.
-function cachedGit(key, ttlSec, produce) {
-  var fs = require('fs');
-  var os = require('os');
-  var crypto = require('crypto');
-  var hash = crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
-  var file = path.join(os.tmpdir(), 'weave-slc-' + hash + '.json');
-  var now = Date.now();
-  try {
-    var hit = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (hit && hit.expires > now) return hit.value;
-  } catch (e) {}
-  var value = produce();
-  var ttl = value == null ? Math.min(ttlSec, GIT_RETRY_TTL) : ttlSec;
-  try {
-    // atomic replace: renders overlap while Claude Code re-runs on a debounce
-    var tmp = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ expires: now + ttl * 1000, value: value }));
-    fs.renameSync(tmp, file);
-  } catch (e) {}
-  return value;
-}
-
 // Cumulative session tokens, read from the transcript Claude Code points us at.
 //
-// The scan is incremental: a small cache keyed by transcript path records how
+// The scan is incremental: a tokens entry keyed by transcript path records how
 // many bytes have been consumed and the running total, so steady-state renders
 // read only the newly appended tail. The same assistant message is written once
 // per content block (measured: 73 usage records for 26 distinct messages in one
@@ -316,32 +388,29 @@ function cachedGit(key, ttlSec, produce) {
 function sessionTokens(transcriptPath) {
   if (!transcriptPath) return null;
   var fs = require('fs');
-  var os = require('os');
-  var crypto = require('crypto');
   var stat;
   try { stat = fs.statSync(transcriptPath); } catch (e) { return null; }
   if (!stat.size) return null;
 
-  var key = crypto.createHash('sha1').update(transcriptPath).digest('hex').slice(0, 16);
-  var cacheFile = path.join(os.tmpdir(), 'weave-sl-' + key + '.json');
-  var cache = null;
-  try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch (e) {}
-  if (!cache || typeof cache.offset !== 'number' || typeof cache.total !== 'number' || !Array.isArray(cache.ids)) {
-    cache = { offset: 0, total: 0, ids: [] };
+  var store = cache();
+  var entry = store.tokens[transcriptPath];
+  if (!entry || typeof entry.offset !== 'number' || typeof entry.total !== 'number' || !Array.isArray(entry.ids)) {
+    entry = { offset: 0, total: 0, ids: [] };
   }
   // a shorter file means it was truncated or rewritten (/compact) — start over
-  if (stat.size < cache.offset) cache = { offset: 0, total: 0, ids: [] };
-  if (stat.size === cache.offset) return cache.total || null;
+  if (stat.size < entry.offset) entry = { offset: 0, total: 0, ids: [] };
+  store.tokens[transcriptPath] = entry;
+  if (stat.size === entry.offset) return entry.total || null;
 
-  var len = Math.min(stat.size - cache.offset, ${TRANSCRIPT_CHUNK});
+  var len = Math.min(stat.size - entry.offset, ${TRANSCRIPT_CHUNK});
   var buf = Buffer.alloc(len);
   var read = 0;
   var fd = -1;
   try {
     fd = fs.openSync(transcriptPath, 'r');
-    read = fs.readSync(fd, buf, 0, len, cache.offset);
+    read = fs.readSync(fd, buf, 0, len, entry.offset);
   } catch (e) {
-    return cache.total || null;
+    return entry.total || null;
   } finally {
     if (fd >= 0) { try { fs.closeSync(fd); } catch (e) {} }
   }
@@ -349,11 +418,11 @@ function sessionTokens(transcriptPath) {
   var chunk = buf.slice(0, read).toString('utf8');
   var lastNewline = chunk.lastIndexOf('\\n');
   // no complete line yet (or the tail is mid-write) — leave it for the next run
-  if (lastNewline < 0) return cache.total || null;
+  if (lastNewline < 0) return entry.total || null;
   var consumed = lastNewline + 1;
 
   var seen = {};
-  for (var s = 0; s < cache.ids.length; s++) seen[cache.ids[s]] = true;
+  for (var s = 0; s < entry.ids.length; s++) seen[entry.ids[s]] = true;
   var lines = chunk.slice(0, consumed).split('\\n');
   for (var i = 0; i < lines.length; i++) {
     if (!lines[i]) continue;
@@ -365,22 +434,16 @@ function sessionTokens(transcriptPath) {
     var id = msg.id || (rec && rec.uuid);
     if (!id || seen[id]) continue;
     seen[id] = true;
-    cache.ids.push(id);
-    cache.total += (usage.input_tokens || 0) + (usage.output_tokens || 0)
+    entry.ids.push(id);
+    entry.total += (usage.input_tokens || 0) + (usage.output_tokens || 0)
       + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
   }
-  cache.offset += consumed;
-  if (cache.ids.length > ${TRANSCRIPT_ID_CAP}) {
-    cache.ids = cache.ids.slice(cache.ids.length - ${TRANSCRIPT_ID_CAP});
+  entry.offset += consumed;
+  if (entry.ids.length > ${TRANSCRIPT_ID_CAP}) {
+    entry.ids = entry.ids.slice(entry.ids.length - ${TRANSCRIPT_ID_CAP});
   }
-  try {
-    // atomic replace: Claude Code can overlap renders, and a half-written
-    // cache would silently corrupt the running total
-    var tmp = cacheFile + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(cache));
-    fs.renameSync(tmp, cacheFile);
-  } catch (e) {}
-  return cache.total || null;
+  CACHE_DIRTY = true;
+  return entry.total || null;
 }
 
 // Tokens in the context window: prefer the component breakdown, then the
@@ -706,6 +769,8 @@ function flush() {
   if (flushed) return;
   flushed = true;
   try { main(raw); } catch (e) {}
+  // 缓存回写在渲染之后：主流程中途抛错也保住这一轮扫到的增量
+  try { flushCache(); } catch (e) {}
   process.exit(0);
 }
 process.stdin.setEncoding('utf8');

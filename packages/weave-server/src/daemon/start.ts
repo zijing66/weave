@@ -8,6 +8,7 @@ import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
+import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
@@ -211,6 +212,9 @@ export function startDaemon(): void {
     watchEngine,
     sequenceEngine,
   });
+  // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
+  // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。
+  startStatuslineCacheSweeper();
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,

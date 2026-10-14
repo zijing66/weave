@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,27 @@ function runScript(script: string, stdin: unknown): string {
   rmSync(dir, { recursive: true, force: true });
   return r.stdout;
 }
+
+// 渲染缓存的落点是 dataDir（`<configDir>/weave/statusline`）——重定向到临时目录：
+// 既不写脏真实 dataDir，又让同一测试文件内的多次渲染共享同一份缓存
+// （累加 / 重写 / 身份缓存那几个用例靠的就是跨渲染持久化）。
+let slCacheHome = '';
+let savedAppdata: string | undefined;
+let savedXdg: string | undefined;
+beforeAll(() => {
+  slCacheHome = mkdtempSync(join(tmpdir(), 'weave-sl-data-'));
+  savedAppdata = process.env.APPDATA;
+  savedXdg = process.env.XDG_CONFIG_HOME;
+  process.env.APPDATA = slCacheHome;
+  process.env.XDG_CONFIG_HOME = slCacheHome;
+});
+afterAll(() => {
+  if (savedAppdata === undefined) delete process.env.APPDATA;
+  else process.env.APPDATA = savedAppdata;
+  if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedXdg;
+  rmSync(slCacheHome, { recursive: true, force: true });
+});
 
 describe('statusline — stdin 不关闭时仍须自行退出（孤儿回归）', () => {
   // 旧实现用同步 readFileSync(0) 读 stdin：宿主不关闭 stdin 时事件循环被堵死，
