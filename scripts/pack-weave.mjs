@@ -3,8 +3,15 @@
  * Pack the all-in-one @weavecode/weave tarball with the five weave packages
  * BUNDLED INSIDE (bundleDependencies layout): `npm install <tgz>` yields a
  * working `weave` with the daemon + dashboard, no registry copies of
- * @weavecode/* needed. External deps (zod, ink, react, …) still resolve from
- * the registry at install time — only the weave monorepo is bundled.
+ * @weavecode/* needed.
+ *
+ * The five packages' external deps (zod, chokidar, ink, react, smol-toml + their
+ * transitive closure) are bundled too — NOT fetched from the registry at install
+ * time. Reason: npm's GLOBAL install trusts a tarball's node_modules as the
+ * package's complete tree and never resolves its `dependencies`, so a bundle
+ * holding only @weavecode/* lands with empty zod/ink/… directories and the CLI
+ * dies on startup (`ERR_MODULE_NOT_FOUND … zod/index.js`). Project-style installs
+ * happened to resolve them, global ones never did.
  *
  *   node scripts/pack-weave.mjs [--skip-build]   → dist/weavecode-weave-<v>.tgz
  *
@@ -56,7 +63,7 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
   // not symlinks — the ranges only matter to npm's tree builder).
   // Externals (zod/ink/…) are collected across the five: npm treats a bundle as
   // self-contained and does NOT fetch bundled packages' own deps, so the union
-  // must ride on the umbrella's dependencies to be installed at top level.
+  // must ride on the umbrella's dependencies (and be bundled with it).
   const externals = {};
   for (const dir of PACKAGES) {
     const src = path.join(root, 'packages', dir);
@@ -97,6 +104,29 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
     }
   }
 
+  // Externals ride in the tarball as well (see the header): a nested closure so
+  // each one carries its own transitive deps — bundleDependencies then pulls the
+  // whole subtree in with each top-level name.
+  const extNames = Object.keys(externals);
+  if (extNames.length > 0) {
+    const extStage = path.join(root, 'dist', '.pack-stage', 'ext');
+    await mkdir(extStage, { recursive: true });
+    await writeFile(
+      path.join(extStage, 'package.json'),
+      JSON.stringify(
+        { name: 'weave-externals-stage', private: true, dependencies: externals },
+        null,
+        2,
+      ) + '\n',
+    );
+    run('npm install --omit=dev --install-strategy=nested --ignore-scripts --no-audit --no-fund', extStage);
+    for (const name of extNames) {
+      await cp(path.join(extStage, 'node_modules', name), path.join(stage, 'node_modules', name), {
+        recursive: true,
+      });
+    }
+  }
+
   // Umbrella manifest: the five are BOTH dependencies (npm requirement) and
   // bundleDependencies (include them in the tarball instead of fetching).
   await cp(path.join(root, 'packages', 'weave', 'bin'), path.join(stage, 'bin'), { recursive: true });
@@ -113,7 +143,7 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
           ...Object.fromEntries(bundled.map((n) => [n, `^${versionOf[n]}`])),
           ...externals,
         },
-        bundleDependencies: bundled,
+        bundleDependencies: [...bundled, ...extNames],
       },
       null,
       2,
