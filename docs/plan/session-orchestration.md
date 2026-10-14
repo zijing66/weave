@@ -318,7 +318,7 @@ CREATE TABLE session_watches (
 | **批 4** codex 对齐 | B0 落地后**只改 `codex/messaging.ts` 声明**（发现/注入/无头逐项点亮），server/web/CLI 零改动 | B0 调研 |
 | **批 5** 局域网联邦 | origin 字段批 1 已带；peer 注册 + MessageRouter + capabilities 互报 + pairing 安全面；**触发源形态 = remote，入参面不变**（第七章） | 批 1–3 稳定后 |
 | **批 6** 定时投递（候选） | daemon 侧 scheduler 表（cron/一次性，durable 天然成立）+ `from_kind='scheduler'`，**复用 MessageDeliverer 全套零改动**；抖动纪律与载荷自包含见第七章 | 批 1 稳定后评估 |
-| **批 7** 消息域重塑 | prompt 通道（send-text 打原文 + promptbox 队列）+ `session_messages` 退役（不入库、纯文件管道）+ web 在途视图 + 序列 interrupted 语义（设计见「消息域重塑」节） | 批 1–3 |
+| **批 7** 消息域重塑 | prompt 通道（claude SendMessage 受限中继 + promptbox 队列）+ `session_messages` 退役（不入库、纯文件管道）+ web 在途视图 + 序列 interrupted 语义（设计见「消息域重塑」节） | 批 1–3 |
 
 ### 批 1 实施记录（2026-10-14 落库）
 
@@ -487,11 +487,14 @@ fromKind/fromSessionId 入参面保留（批 5 联邦转发正需）。
 
 ### 消息域重塑（2026-10-15 产品定案）：prompt 通道 + 纯文件管道
 
-用户三轮定案（原话）：
+用户四轮定案（原话）：
 
 > 「不对，我的会话消息是给会话发prompt，不是headless」
-> 模式收敛拍板：**prompt 缺省 + 三模式保留**
+> 模式收敛拍板：**prompt 缺省 + 三模式保留**（后经下两条收敛为：手动面
+> 仅 prompt，三模式留给编排域）
 > 「会话消息不要入库，仅落本地文件，消息消费后就移除了」
+> 「会话消息选项记得清理」「claude 自身不是有 sendmessage 机制吗，不要
+> 通过 terminal 完成」
 
 **总纲：消息域 = 纯递送管道，不是记录系统。** 消息的唯一归宿是目标会话
 自己的转录（claude 的 jsonl），weave 只在投递前短暂持有；送达即删，无任何
@@ -512,32 +515,45 @@ messageId 反查，均被本定案重塑。
   渲染里（路由 fromKind/fromSessionId 入参面保留，批 5 联邦正需）。
 - **prompt 队列独立成 `promptbox/`，与 outbox 严格分离**：outbox 行由目标
   会话内 handler 消费成 additionalContext（跨端契约不动）；prompt 行由
-  **daemon** 冲洗（send-text 打进终端），handler 永不碰。
-- **prompt 通道（新）**：
-  - 语义 = 往目标会话的终端 pane 打**原文**（真·用户 prompt、窗口可见、
-    不加 `[weave message]` 信封——是人在给会话说话）+ 提交键；多行文本用
-    paste 语义。
-  - pane↔session 映射双保险：① weave `wezterm cli spawn` 返回 pane_id →
-    daemon 记 sessionId↔pane（主路径）；② 手动开窗走终端标题匹配（claude
-    自写会话标题进终端标题；忙时 `✳` spinner 前缀剥掉再比；本机
-    `wezterm cli list` 无 foreground_process/tty 字段，Windows 限制）；
-    歧义（同名多窗）拒绝不打。
-  - 没开的会话入 promptbox 队列；SessionStart hook 到达（claude TUI 就绪）
-    且 pane 可寻时 send-text 冲洗。
-  - 门控 = 终端后端 `enumerable`（wezterm 有），`prompt` 列进
-    `/messaging/capabilities` 矩阵。
-  - 实施第一步 = spike 实测 Claude Code TUI 行为（scratch pane，勿打用户
-    活窗口）：send-text 的 paste 语义、多行、提交键。
-- **三模式保留（inject/headless/auto）为显式高级选项**，编排域（序列步 /
-  watch notify / 画布连线）继续用，编排语义不变：
+  **daemon** 冲洗，handler 永不碰。
+
+**prompt 通道 = claude 原生 peer messaging，经受限中继**（spike 实测定案，
+2026-10-15；早期「wezterm send-text 打终端」方案作废——用户定案不走
+terminal）：
+
+- claude 每个持久会话在 peer 注册表 `~/.claude/sessions/<pid>.json` 登记
+  `sessionId/name/status/messagingSocketPath`（命名管 `\\.\pipe\LOCAL\
+  cc-msg-<32hex>`，私有帧协议 `uds-messaging` + inbox auth——**weave 不
+  逆向、不直连**，走公开工具契约）。
+- 投递 = 受限 headless 中继：`claude -p --no-session-persistence
+  --tools SendMessage,ListAgents -n weave` + stdin 指令（**中性 cwd**——
+  避开项目 hooks 报幽灵事件；`--no-session-persistence` = 不入 peer 注册
+  表零污染；实测 15.8s 全环、目标窗口可见 `Message from @weave: <原文>`、
+  idle 立即唤醒、忙则下一 tool round 到达、回复可回中继进程）。
+- 中继显示名 `-n weave`——**原文即消息体**，不加信封（claude 的消息头
+  `Message from @weave:` 自带出处）。
+- **没开的会话**：SendMessage 只达活会话 → 入 promptbox 队列，peer 注册表
+  出现该 sessionId 时中继冲洗（隐藏刷新器形状：只在队列非空时探、值变化
+  才推）；weave 项目的会话另由 ingest 事件即时触发冲洗（双触发幂等）。
+- 门控 = `MessagingSurface.prompt`（claude 声明中继规格；codex 等**不支持
+  sendMessage 机制的面声明 null + 原因**——按钮置灰带原因、路由 409 +
+  `unsupportedReasons.prompt`，与 inject/headless 同一裁决表口径；未来 harness
+  自带等价机制 = 实现自己的 prompt 规格，server/web 零改动点亮），
+  `prompt` 列进 `/messaging/capabilities` 矩阵；peer 注册表读取
+  （sessionId→name/存活）是 harness 知识，落 claude adapter。
+- **手动弹窗无模式选项**（用户定案「选项清理」）：纯文本框 + 发送，恒走
+  prompt 通道。
+- **三模式保留（inject/headless/auto）为编排域显式选项**（序列步 / 画布
+  连线 / watch notify），编排语义不变；序列步新增 prompt 模式（完成判据 =
+  idle 推进，同 inject 口径）：
   - inject：outbox 行（既有通道不动）；
   - headless：进程终态仅**内存 + SSE**，不落库；daemon 重启即丢（显式高级
     选项的合理代价）；`promptStdin` 契约不动；
   - auto：忙→inject 闲→headless 裁决不动。
-- **web 弹窗**：模式选择器 prompt 缺省 + 三模式保留（全表驱动门控）；线程
-  视图 → **在途视图**——daemon 聚合 promptbox 文件 ∪ headless 内存态，
-  `GET /sessions/:id/messages` 改读聚合源，`message.*` 帧的 id 改为管道
-  发号（非 DB 主键）；送达即从列表消失，「历史」在会话自己的转录里。
+- **web 线程视图 → 在途视图**：daemon 聚合 promptbox 文件 ∪ 内存态（中继
+  运行中 / headless 运行中），`GET /sessions/:id/messages` 改读聚合源，
+  `message.*` 帧的 id 改为管道发号（非 DB 主键）；送达即从列表消失，
+  「历史」在会话自己的转录里。
 - **序列引擎适配**：`session_sequences` 表保留（编排状态非消息）；
   `steps[].messageId` 语义改为管道发号的内存关联（不再反查消息行）；
   画布步状态着色改 `sequence.*` 帧驱动；**重启时在途步标记 interrupted、
@@ -547,9 +563,10 @@ messageId 反查，均被本定案重塑。
 - **`MessageDeliverer` 裁决单点保留**：能力矩阵、404/409 语义拒绝、auto
   忙闲裁决全不变；只有落点从「DB 行 + outbox」变「文件队列 + 内存态」。
 
-**实施批次**：① prompt spike（wezterm send-text + TUI 实测）→ ② 存储切换
-（表退役 + promptbox + deliverer 管道化）→ ③ web 弹窗（prompt 缺省 + 在途
-视图）→ ④ 序列引擎适配（内存步态 + interrupted 语义）。
+**实施批次**：① prompt spike（已毕，结论如上）→ ② 存储切换（表退役 +
+promptbox + deliverer 管道化 + 中继 runner + peer 注册表 adapter +
+capabilities prompt 列）→ ③ web（弹窗纯 prompt 发送 + 在途视图 + 画布/序列
+模式选项加 prompt）→ ④ 序列引擎适配（内存步态 + interrupted 语义）。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
