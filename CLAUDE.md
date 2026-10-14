@@ -33,6 +33,14 @@
 Reusable skills live in `skills/` (agent skills standard: one directory per
 skill with a `SKILL.md`). Invoke a skill by name when the task matches one.
 
+## weave 注入的消息
+
+以 `[weave] ` 开头的用户消息来自 weave 控制台（dashboard / 编排）的注入，不是坐在终端前的人手打的：
+
+- 去掉该标记后的全文就是完整指令，**照它执行**；
+- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；
+- 该标记之外的普通用户消息 = 用户本人输入，正常对待。
+
 <!-- weave:end -->
 
 <!-- 以下节写在标记块外：weave init 只按 weave:start/end 合并标记块，块外人工内容 append-only 保留（packages/weave-cli/src/init/claudemd-gen.ts mergeClaudeMd）。 -->
