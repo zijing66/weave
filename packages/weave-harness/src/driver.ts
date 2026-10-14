@@ -163,11 +163,26 @@ export interface ResumeCommandSpec {
 }
 
 /** 消息通道名——支持矩阵与原因文案的键。 */
-export type MessagingChannel = 'discovery' | 'inject' | 'headless' | 'watch';
+export type MessagingChannel = 'discovery' | 'prompt' | 'inject' | 'headless' | 'watch';
 
 /** 非抢占注入通道规格：注入可骑乘的事件（hook-handler 在这些事件上消化 outbox 行）。 */
 export interface InjectChannelSpec {
   rideEvents: readonly string[];
+}
+
+/**
+ * prompt 通道中继规格（消息域重塑）：用受限 headless 进程调 harness 原生
+ * peer 消息（claude SendMessage）投到已开的目标会话。设计见
+ * docs/plan/session-orchestration.md 消息域重塑节。
+ */
+export interface PromptRelaySpec {
+  /** 中继命令（固定参数）；投递指令全文走 stdin——命令行无用户内容，win32 .cmd shim 可安全经 shell 启动。 */
+  readonly bin: string;
+  readonly args: readonly string[];
+  /** 目标会话里消息显示的发送方名（claude：`-n <senderName>`）。 */
+  readonly senderName: string;
+  /** sessionId → peer 寻址名（在 peer 注册表中登记 = 会话开着才有）；null = 未登记，走终端兜底或排队。 */
+  resolve(sessionId: string): { name: string } | null;
 }
 
 /** 信封渲染入参。 */
@@ -188,6 +203,8 @@ export interface MessagingSurface {
   readonly harness: Harness;
   /** 会话发现：该 harness 会话能否成为编排目标。 */
   readonly discovery: boolean;
+  /** prompt 通道（层① 原生 peer 消息中继）；null = 无原生机制（层② 终端 send-text 兜底或层③ 队列）。 */
+  readonly prompt: PromptRelaySpec | null;
   /** 非抢占注入通道（忙排）；null = 不支持。 */
   readonly inject: InjectChannelSpec | null;
   /** 无头强制回合通道（闲投）；null = 不支持。引用 resume 槽规格对象，不复制。 */

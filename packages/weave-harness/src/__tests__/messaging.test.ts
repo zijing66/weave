@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { HARNESS_LIFECYCLE, INJECTABLE_EVENTS } from '@weavecode/core';
 import { CLAUDE_MESSAGING } from '../claude/messaging.js';
+import { CLAUDE_PROMPT_RELAY } from '../claude/prompt.js';
 import { CLAUDE_RESUME } from '../claude/resume.js';
 import { CODEX_MESSAGING } from '../codex/messaging.js';
 import { CLAUDE_DRIVER, CODEX_DRIVER } from '../index.js';
@@ -28,6 +29,16 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_MESSAGING.headless).toBe(CLAUDE_RESUME);
   });
 
+  it('claude：prompt = CLAUDE_PROMPT_RELAY 对象引用（单源不复制）', () => {
+    expect(CLAUDE_MESSAGING.prompt).toBe(CLAUDE_PROMPT_RELAY);
+    // 命令行固定参数、无用户内容；stdin 投递指令由 server 拼。
+    expect(CLAUDE_PROMPT_RELAY.args.every((a) => !a.includes('\n'))).toBe(true);
+    expect(CLAUDE_PROMPT_RELAY.args).toContain('--no-session-persistence');
+    expect(CLAUDE_PROMPT_RELAY.args).toContain('--tools');
+    expect(CLAUDE_PROMPT_RELAY.senderName).toBe('weave');
+    expect(typeof CLAUDE_PROMPT_RELAY.resolve).toBe('function');
+  });
+
   it('claude：idleSignals 取值生命周期表（close + 会话级终点），不手抄', () => {
     expect(CLAUDE_MESSAGING.idleSignals).toEqual([
       ...HARNESS_LIFECYCLE.claude.close,
@@ -41,13 +52,14 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
   });
 
-  it('codex：全通道 null/空 + 四通道 reasons 齐全（可渲染「为什么置灰」）', () => {
+  it('codex：全通道 null/空 + 五通道 reasons 齐全（可渲染「为什么置灰」）', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);
+    expect(CODEX_MESSAGING.prompt).toBeNull();
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
     expect(CODEX_MESSAGING.idleSignals).toEqual([]);
-    for (const channel of ['discovery', 'inject', 'headless', 'watch'] as const) {
+    for (const channel of ['discovery', 'prompt', 'inject', 'headless', 'watch'] as const) {
       expect(CODEX_MESSAGING.unsupportedReasons?.[channel]).toBeTruthy();
     }
   });
