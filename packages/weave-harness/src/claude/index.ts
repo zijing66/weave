@@ -17,6 +17,7 @@ export { CLAUDE_RESUME } from './resume.js';
 export { CLAUDE_DETECTOR } from './detect.js';
 export { CLAUDE_MESSAGING } from './messaging.js';
 export { CLAUDE_PROMPT_RELAY } from './prompt.js';
+export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { resolveClaudePeer } from './peers.js';
 export {
   CLAUDE_CAPTURE,

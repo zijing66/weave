@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { HARNESS_LIFECYCLE, INJECTABLE_EVENTS } from '@weavecode/core';
 import { CLAUDE_MESSAGING } from '../claude/messaging.js';
+import { CLAUDE_PROMPT_INBOX } from '../claude/prompt-inbox.js';
 import { CLAUDE_PROMPT_RELAY } from '../claude/prompt.js';
 import { CLAUDE_RESUME } from '../claude/resume.js';
 import { CODEX_MESSAGING } from '../codex/messaging.js';
@@ -77,10 +78,24 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
   });
 
+  it('claude：promptInbox = CLAUDE_PROMPT_INBOX 对象引用（inbox socket 是 claude 专属机制）', () => {
+    expect(CLAUDE_MESSAGING.promptInbox).toBe(CLAUDE_PROMPT_INBOX);
+    // 平台差异：native Windows 必须带 auth 行；POSIX 可选
+    expect(CLAUDE_PROMPT_INBOX.requiresAuthOn('win32')).toBe(true);
+    expect(CLAUDE_PROMPT_INBOX.requiresAuthOn('darwin')).toBe(false);
+    // 组帧归 harness：auth 行 + user 行（换行分隔），token 缺省即省掉 auth 行
+    const frame = CLAUDE_PROMPT_INBOX.frame({ token: 't1', text: 'hi' });
+    expect(frame.split('\n').filter(Boolean)).toHaveLength(2);
+    expect(frame).toContain('"type":"auth"');
+    expect(frame).toContain('"content":"hi"');
+    expect(CLAUDE_PROMPT_INBOX.frame({ token: null, text: 'hi' }).split('\n').filter(Boolean)).toHaveLength(1);
+  });
+
   it('codex：全通道 null/空 + 五通道 reasons 齐全（可渲染「为什么置灰」）', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);
     expect(CODEX_MESSAGING.prompt).toBeNull();
+    expect(CODEX_MESSAGING.promptInbox).toBeNull();
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
     expect(CODEX_MESSAGING.idleSignals).toEqual([]);

@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
-import type { MessagingSurface, PromptRelaySpec } from '@weavecode/harness';
+import net from 'node:net';
+import { randomBytes } from 'node:crypto';
+import { CLAUDE_PROMPT_INBOX, type MessagingSurface, type PromptRelaySpec } from '@weavecode/harness';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
@@ -78,12 +80,31 @@ function relaySurface(resolve: (sessionId: string) => { name: string } | null = 
     harness: 'claude',
     discovery: true,
     prompt: relay,
+    promptInbox: CLAUDE_PROMPT_INBOX,
     inject: { rideEvents: ['UserPromptSubmit'] },
     headless: null,
     idleSignals: ['Stop'],
   };
   return { relay, surface };
 }
+
+/** 假会话 inbox：起一个本地地址（win32 命名管 / POSIX unix socket），回传收到的字节。 */
+const fakeInboxAt = (path: string, onData: (text: string) => void): Promise<net.Server> =>
+  new Promise((resolve) => {
+    const server = net.createServer((conn) => {
+      let buf = '';
+      conn.on('data', (c) => {
+        buf += String(c);
+      });
+      conn.on('end', () => onData(buf));
+    });
+    server.listen(path, () => resolve(server));
+  });
+
+const uniqueInboxPath = (): string =>
+  process.platform === 'win32'
+    ? `\\\\.\\pipe\\weave-msg-test-${randomBytes(8).toString('hex')}`
+    : `/tmp/weave-msg-test-${randomBytes(8).toString('hex')}.sock`;
 
 describe('MessageDeliverer 裁决表', () => {
   let db: ReturnType<typeof openDatabase>;
@@ -649,6 +670,174 @@ describe('MessageDeliverer 裁决表', () => {
     );
     await second.flushSession(SESSION_ID);
     expect(fake.children[0]!.stdin.writes[0]).toContain('[one-way]');
+  });
+
+  it('自续冲洗：一轮到量后自动继续，排空积压（不必等下一次事件）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sent: string[] = [];
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      promptInbox: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    let panes: Array<{ id: string; title: string; cwd: string }> = [];
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => noNative,
+        flushGapMs: 0,
+        terminal: {
+          available: () => true,
+          listPanes: async () => panes,
+          sendText: async (_paneId, text) => {
+            sent.push(text);
+          },
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+    for (let i = 1; i <= 7; i++) {
+      await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: `auto${i}`,
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+    }
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(7);
+
+    panes = [{ id: 'p1', title: 'msg-target', cwd: PROJECT_PATH }];
+    await deliverer.flushSession(SESSION_ID); // 只调一次：自续把剩下 2 条也发完
+    await vi.waitFor(() => expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0));
+    expect(sent).toHaveLength(7);
+  });
+
+  it('层①-a inbox 直投：oneWay + 已登记目标 → 走 socket（不起中继进程）', async () => {
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'socket 直投正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivered' });
+    expect(fake.calls).toHaveLength(0); // 没有起中继进程
+    await new Promise((r) => setTimeout(r, 50));
+    expect(got).toContain('socket 直投正文');
+    expect(got).toContain('"type":"auth"');
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      status: 'delivered',
+      via: 'socket',
+    });
+    inbox.close();
+  });
+
+  it('层①-a 失败即回落中继：目标地址不存在 → 仍投出去（走中继）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: uniqueInboxPath(), token: 'tok' });
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'fallback 正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(1); // 回落：起了中继
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'relay',
+    });
+  });
+
+  it('编排域（非 oneWay）即使有 inbox 目标也先走中继——保留 @weave 身份', async () => {
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok' });
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'sequence step',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(fake.calls).toHaveLength(1);
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'relay',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(got).toBe('');
+    inbox.close();
+  });
+
+  it('投递回执：会话 UPS 原文（带 Claude Code 外壳）命中在途条目 → acked + 帧', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '回执比对正文（够长）',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(deliverer.getMessage(id)?.acked).toBeUndefined();
+
+    // Claude Code 把会话间消息裹在自己的外壳里；比对必须剥壳
+    deliverer.onSessionPrompt(
+      SESSION_ID,
+      `<cross-session-message from="uds:\\\\?\\pipe\\LOCAL\\cc-msg-x">回执比对正文（够长）</cross-session-message>`,
+    );
+    expect(deliverer.getMessage(id)?.acked).toBe(true);
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.acknowledged', messageId: id }),
+    );
+
+    // 短文本（< ACK_MIN_TEXT）不参与匹配：防误配
+    const tiny = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'ok',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    deliverer.onSessionPrompt(SESSION_ID, 'ok');
+    expect(deliverer.getMessage((tiny as { messageId: string }).messageId)?.acked).toBeUndefined();
   });
 
   it('中继不设超时：等多久都留在途中（等待发生在目标会话内，不得误判 timeout）', async () => {

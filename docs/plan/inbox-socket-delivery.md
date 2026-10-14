@@ -1,8 +1,27 @@
-# 层① 换底：经 Inbox Socket 直投（已端到端验证，待实施）
+# 层①-a：经 Inbox Socket 直投（已实施）
 
-> 状态：**已验证、待实施**。本机 2.1.296 + native Windows 实测通过（2026-10-15）。
+> 状态：**已实施**（2026-10-15）。本机 2.1.296 + native Windows 实测通过。
 > 依据 = 官方 `cross-session-messaging#the-sessions-inbox-socket` 小节 + CLI 自己
 > 打印的注入配方（`--debug` 的 `[uds-messaging] Inject messages …` INFO 行）。
+>
+> **落地位置（harness 隔离：机制归 claude adapter，server 只留通用传输）**
+> - 规格：`weave-harness/src/claude/prompt-inbox.ts`（`CLAUDE_PROMPT_INBOX`：
+>   两个 env 名 + 平台认证要求 + 组帧），经 `MessagingSurface.promptInbox` 声明；
+>   codex = `null` → server 完全不尝试。
+> - 传输：`weave-server/src/hooks/inbox-socket.ts`（连/写/关/超时 + 内存注册表）。
+> - 凭据上报：hook 脚本（`capture.ts` 生成，env 名取自同一规格）把
+>   `{socket, token}` 写进 inbox 行**旁路字段** → worker 交给主线程注册表
+>   （**不进 payload、不落库、不进 UI、不写日志**）。
+> - 分派：手动面（`oneWay`）socket 优先 → 失败回落中继 → 终端 → 队列；
+>   编排域仍先走中继（保留 `Message from @weave` 来源语义）。
+> - 回执：会话自己的 `UserPromptSubmit`（`payload.raw.prompt`）与在途条目匹配
+>   （剥掉 `<cross-session-message …>` 外壳后比对）→ `acked` + `message.acknowledged` 帧。
+>
+> **中继为何保留**：见 CLAUDE.md 同名条目——①来源语义（跨会话限制 vs 用户权威）
+> ②唯一可能的回复面 ③覆盖非 weave 会话/存量未升级 hook 的项目。
+> **凭据不持久化**：每会话进程一份（resume 后 socket 名重生成）；自愈 =
+> 每次 hook 事件覆盖刷新 + 首次中继投递把凭据带回。
+> **待定**：要不要在 socket 载荷前加 `[weave]` 来源前缀（现状 = 完全等同用户输入）。
 
 ## 为什么（现状对照）
 

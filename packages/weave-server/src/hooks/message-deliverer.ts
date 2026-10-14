@@ -10,6 +10,7 @@ import { normalizeDirKey } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
 import { appendOutbox, hooksRoot } from './mirror.js';
+import { InboxSocketRegistry, deliverViaInboxSocket } from './inbox-socket.js';
 import {
   appendPromptbox,
   readAllPromptbox,
@@ -64,6 +65,10 @@ export interface PipeMessage {
   mode: MessageMode;
   /** 单向注入（手动面：无接收方会话，中继载荷带「无需回复」注记）；编排域不置。 */
   oneWay?: boolean;
+  /** prompt 通道的实际落法（socket 直投 / 中继 / 终端 send-text）。 */
+  via?: 'socket' | 'relay' | 'terminal';
+  /** 投递回执：会话自己的 UserPromptSubmit 与本文匹配上了（真到达，非「已交给」）。 */
+  acked?: boolean;
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -138,6 +143,21 @@ const relayCwd = () => tmpdir();
 const FLUSH_PASS_MAX = 5;
 const FLUSH_GAP_MS = 1_000;
 
+/** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
+const ACK_MIN_TEXT = 8;
+
+/**
+ * 回执比对归一：剥掉 Claude Code 给会话间消息裹的外壳（`<cross-session-message
+ * from="uds:…" …>…</cross-session-message>`）再折叠空白——socket 直投的原文
+ * 是裸文本、中继投递的会带壳，两边都归一成同一形态再比。
+ */
+function normalizePromptText(text: string): string {
+  return text
+    .replace(/<\/?cross-session-message[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MessageDeliverer {
@@ -147,6 +167,12 @@ export class MessageDeliverer {
   private readonly memory = new Map<string, PipeMessage>();
   /** 有队列行的会话（ingest 冲洗守卫 + 刷新器探活索引；构造时从磁盘重建）。 */
   private readonly queuedSessions: Set<string>;
+  /** 会话 inbox 直投目标（hook 旁路上报；token 只在内存）。 */
+  private readonly inboxSockets = new InboxSocketRegistry();
+  /** 已排自续冲洗的会话（防重复排拍）。 */
+  private readonly flushScheduled = new Set<string>();
+  /** 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。 */
+  private readonly flushing = new Set<string>();
 
   constructor(private readonly deps: MessageDelivererDeps) {
     this.headless =
@@ -278,13 +304,72 @@ export class MessageDeliverer {
   }
 
   /**
+   * 自续冲洗：本轮投出去过（有进展）但队列仍有行 → 隔一拍继续，直到排空。
+   * 只有「有进展」才续（通道不可用时不续，避免热循环）；沿用节流间隔作拍长。
+   */
+  private scheduleFlushContinuation(sessionId: string): void {
+    if (this.flushScheduled.has(sessionId)) return;
+    this.flushScheduled.add(sessionId);
+    const timer = setTimeout(() => {
+      this.flushScheduled.delete(sessionId);
+      void this.flushSession(sessionId);
+    }, this.deps.flushGapMs ?? FLUSH_GAP_MS);
+    timer.unref?.();
+  }
+
+  /**
+   * hook 旁路上报的会话 inbox 目标（内存态；socket 空 = 该会话此刻不可直投）。
+   * token 只在此存活，不落库、不进 UI、不写日志。
+   */
+  noteInboxSocket(sessionId: string, target: { socket: string; token: string | null } | null): void {
+    this.inboxSockets.set(sessionId, target);
+  }
+
+  /**
+   * 投递回执：会话自己的 UserPromptSubmit 到了 —— 其 prompt 原文与在途条目匹配
+   * 即成真（`acked`）。中继/终端/socket 三路通用（中继的原文外面裹着 Claude Code
+   * 自己的 `<cross-session-message …>` 壳，比对时归一掉）。
+   */
+  onSessionPrompt(sessionId: string, prompt: string): void {
+    const seen = normalizePromptText(prompt);
+    if (!seen) return;
+    for (const msg of [...this.memory.values()].reverse()) {
+      if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
+      const want = normalizePromptText(msg.text);
+      if (!want || want.length < ACK_MIN_TEXT || !seen.includes(want)) continue;
+      this.memory.set(msg.id, { ...msg, acked: true });
+      this.bus({
+        kind: 'message.acknowledged',
+        messageId: msg.id,
+        sessionId,
+        at: new Date().toISOString(),
+      });
+      return; // 一条 UPS 只核销一条在途（新→旧找第一条匹配）
+    }
+  }
+
+  /**
    * 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。
    * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
    * 条、条间至少 `flushGapMs`（中继路径本就被同会话中继闸天然间隔，终端路径没有，
    * 所以节流在这里统一兜）。超出的留队列，下轮触发（ingest / 刷新器）继续。
    */
   async flushSession(sessionId: string): Promise<void> {
+    // 重入闸：冲洗是异步的（终端通道要 await 枚举 pane），两条触发源（事件 + 自续/刷新器）
+    // 并发进来会各自读到同一批队列行 → 同一消息被投两次。
+    if (this.flushing.has(sessionId)) return;
     if (!this.queuedSessions.has(sessionId)) return;
+    this.flushing.add(sessionId);
+    try {
+      await this.flushSessionInner(sessionId);
+    } catch {
+      // 冲洗失败永不影响调用方（事件路径是 fire-and-forget；自续拍可能与拆除竞态）
+    } finally {
+      this.flushing.delete(sessionId);
+    }
+  }
+
+  private async flushSessionInner(sessionId: string): Promise<void> {
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (session?.projectId == null) return;
     const project = this.deps.projects.getById(session.projectId);
@@ -298,7 +383,11 @@ export class MessageDeliverer {
     const relay = surface?.prompt ?? null;
     let delivered = 0;
     for (const entry of entries) {
-      if (delivered >= FLUSH_PASS_MAX) return; // 本轮量到：余下留队列，下轮触发继续
+      if (delivered >= FLUSH_PASS_MAX) {
+        // 本轮量到：余下留队列，**自续下一拍**（socket 直投是毫秒级，不该等下一次事件）
+        this.scheduleFlushContinuation(sessionId);
+        return;
+      }
       if (delivered > 0) await sleep(this.deps.flushGapMs ?? FLUSH_GAP_MS);
       const peer = relay?.resolve(sessionId) ?? null;
       if (relay && peer) {
@@ -308,6 +397,7 @@ export class MessageDeliverer {
           text: entry.text,
           mode: 'prompt',
           oneWay: entry.oneWay === true,
+          via: 'relay',
           channel: 'prompt',
           status: 'pending',
           at: entry.at,
@@ -333,6 +423,7 @@ export class MessageDeliverer {
             text: entry.text,
             mode: 'prompt',
             oneWay: entry.oneWay === true,
+            via: 'terminal',
             channel: 'prompt',
             status: 'delivering',
             at: entry.at,
@@ -367,6 +458,7 @@ export class MessageDeliverer {
     }
     removed += removePromptboxBySession(this.hooksDir, sessionId);
     this.queuedSessions.delete(sessionId);
+    this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     return removed;
   }
 
@@ -377,6 +469,7 @@ export class MessageDeliverer {
       const session = this.deps.sessions.getBySessionId(msg.sessionId);
       if (session?.projectId === projectId) {
         this.memory.delete(id);
+        this.inboxSockets.forget(msg.sessionId);
         removed++;
       }
     }
@@ -476,10 +569,39 @@ export class MessageDeliverer {
     project: { token: string; path: string },
     surface: MessagingSurface,
   ): Promise<SendResult> {
+    // 层①-a 会话本地收件箱直投（毫秒级、零进程零 LLM）：**机制由 harness 声明**
+    // （`surface.promptInbox`；claude = inbox socket，其他 harness = null 即完全不尝试），
+    // 目标地址由 hook 旁路上报。**手动面（oneWay）优先**——它把消息当用户 prompt
+    // 注入（无回复面）；编排域先走中继（那里才带 @weave 身份）。
+    // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
+    const inboxSpec = surface.promptInbox;
+    const inboxTarget = this.inboxSockets.get(entry.sessionId);
+    if (inboxSpec && entry.oneWay === true && inboxTarget) {
+      this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
+      try {
+        await deliverViaInboxSocket(inboxSpec, inboxTarget, entry.text);
+        const delivered: PipeMessage = {
+          ...this.memory.get(entry.id)!,
+          status: 'delivered',
+          via: 'socket',
+        };
+        this.memory.set(entry.id, delivered);
+        this.bus({
+          kind: 'message.delivered',
+          messageId: entry.id,
+          sessionId: entry.sessionId,
+          at: new Date().toISOString(),
+        });
+        return { ok: true, messageId: entry.id, status: 'delivered', message: delivered };
+      } catch {
+        this.memory.delete(entry.id); // 回落：不留痕，下面走中继/终端/队列
+      }
+    }
+
     const relay = surface.prompt;
     const peer = relay?.resolve(entry.sessionId) ?? null;
     if (relay && peer) {
-      this.memory.set(entry.id, { ...entry, status: 'delivering' });
+      this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'relay' });
       if (this.runRelay(entry, relay, peer.name)) {
         return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
       }
@@ -488,7 +610,7 @@ export class MessageDeliverer {
     } else if (this.terminalChannel()) {
       const pane = await this.terminalPaneFor(session, project);
       if (pane) {
-        this.memory.set(entry.id, { ...entry, status: 'delivering' });
+        this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
         void this.runTerminalPrompt(entry.id, pane.id, entry.text);
         return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
       }
@@ -541,6 +663,8 @@ export class MessageDeliverer {
   private settleRelay(messageId: string, result: HeadlessSettleResult): void {
     const msg = this.memory.get(messageId);
     if (!msg) return;
+    // 中继退出 = 同会话中继闸释放：若还有积压，继续下一批（不必等下一次事件）
+    if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
     if (result.status === 'succeeded') {
       this.memory.set(messageId, { ...msg, status: 'delivered' });
       this.bus({

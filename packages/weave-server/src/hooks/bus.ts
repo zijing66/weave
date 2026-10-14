@@ -55,6 +55,8 @@ export type HookBusMessage =
   // ---- 消息域（消息域重塑：纯管道）：与 dispatch.* 分域，幂等键 = messageId（管道发号）----
   | { kind: 'message.created'; messageId: string; sessionId: string; mode: string; at: string }
   | { kind: 'message.delivered'; messageId: string; sessionId: string; at: string }
+  /** 投递回执：目标会话自己的 UserPromptSubmit 与在途条目匹配上了（真到达）。 */
+  | { kind: 'message.acknowledged'; messageId: string; sessionId: string; at: string }
   | {
       kind: 'message.finished';
       messageId: string;

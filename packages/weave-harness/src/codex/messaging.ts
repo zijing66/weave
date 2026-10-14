@@ -10,6 +10,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   harness: 'codex',
   discovery: false,
   prompt: null,
+  promptInbox: null,
   inject: null,
   headless: null,
   idleSignals: [],

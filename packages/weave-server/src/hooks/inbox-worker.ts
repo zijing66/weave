@@ -40,6 +40,11 @@ export interface InboxRecord {
   input: HookEventInput;
   /** hook-handler 的改名交付回执（未下发 = null）——透传 dispatcher 落定 pending。 */
   deliveredTitle?: string | null;
+  /**
+   * 该会话的 inbox 直投凭据（hook 进程是会话自己的 child，继承这两个 env）。
+   * **旁路字段：不进 payload、不落库**——主线程只放内存供 layer① 直投用。
+   */
+  messaging?: { socket: string; token: string | null } | null;
 }
 
 export interface InboxDrainDeps {
@@ -53,6 +58,7 @@ export interface InboxDrainDeps {
 interface InboxLine {
   token: string;
   report: HookReport;
+  messaging: { socket: string; token: string | null } | null;
 }
 
 /**
@@ -103,14 +109,26 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
   }
   const groups = new Map<
     string,
-    { project?: ProjectRow; lines: string[]; inputs: HookEventInput[]; delivered: (string | null)[] }
+    {
+      project?: ProjectRow;
+      lines: string[];
+      inputs: HookEventInput[];
+      delivered: (string | null)[];
+      messaging: InboxLine['messaging'];
+    }
   >();
   for (const text of lines) {
     const line = text.trim();
     if (!line) continue;
     const parsed = parseLine(line);
     if (!parsed) continue; // 坏行直接丢（重试无意义）
-    const group = groups.get(parsed.token) ?? { lines: [], inputs: [], delivered: [] };
+    const group = groups.get(parsed.token) ?? {
+      lines: [],
+      inputs: [],
+      delivered: [],
+      messaging: null,
+    };
+    if (parsed.messaging) group.messaging = parsed.messaging;
     group.lines.push(line);
     if (!group.project) {
       group.project = deps.projects.getByToken(parsed.token); // 项目已删 → 整组丢
@@ -144,6 +162,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
           projectId: group.project.id,
           input: group.inputs[i]!,
           deliveredTitle: group.delivered[i] ?? null,
+          messaging: group.messaging,
         });
       }
     } catch {
@@ -211,13 +230,25 @@ function needsSessionRow(
   return inputs.some((i) => i.sessionId === sessionId && i.eventType !== 'SessionStart');
 }
 
-/** 行形 `{v, token, report}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
+/** 行形 `{v, token, report, messaging?}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
 function parseLine(line: string): InboxLine | null {
   try {
-    const obj = JSON.parse(line) as { token?: unknown; report?: HookReport } | null;
+    const obj = JSON.parse(line) as {
+      token?: unknown;
+      report?: HookReport;
+      messaging?: { socket?: unknown; token?: unknown } | null;
+    } | null;
     if (!obj || typeof obj.token !== 'string' || !obj.token) return null;
     if (!obj.report || typeof obj.report !== 'object') return null;
-    return { token: obj.token, report: obj.report };
+    const sock = obj.messaging?.socket;
+    const messaging =
+      typeof sock === 'string' && sock
+        ? {
+            socket: sock,
+            token: typeof obj.messaging?.token === 'string' ? obj.messaging.token : null,
+          }
+        : null;
+    return { token: obj.token, report: obj.report, messaging };
   } catch {
     return null;
   }
@@ -263,8 +294,13 @@ export interface IngestedHandlerDeps {
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
   /** 序列引擎（批 3）：inject 步的完成判据 = 目标 idleSignals 事件。 */
   sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
-  /** prompt 队列冲洗（消息域重塑）：目标会话有事件 = 活着，即时试递（fire-and-forget）。 */
-  messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
+  /** prompt 队列冲洗 + inbox 直投凭据上报 + 投递回执（消息域重塑）；缺省功能降级。 */
+  messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'> & {
+    /** hook 旁路上报的会话 inbox 目标（内存态）。 */
+    noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
+    /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）。 */
+    onSessionPrompt?(sessionId: string, prompt: string): void;
+  };
 }
 
 /**
@@ -302,6 +338,12 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         eventType: record.input.eventType,
         source: record.input.source,
       });
+      if (record.messaging) deps.messagePipe?.noteInboxSocket?.(record.input.sessionId, record.messaging);
+      // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）
+      if (record.input.eventType === 'UserPromptSubmit') {
+        const prompt = promptTextOf(payload);
+        if (prompt) deps.messagePipe?.onSessionPrompt?.(record.input.sessionId, prompt);
+      }
       if (deps.messagePipe?.hasQueued(record.input.sessionId)) {
         void deps.messagePipe.flushSession(record.input.sessionId);
       }
@@ -333,6 +375,12 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       })
       .catch(() => {}); // 分发失败永不影响采集
   }
+}
+
+/** UPS 的 prompt 原文（raw.prompt）；非 UPS/缺字段 = null。 */
+function promptTextOf(payload: NormalizedHookPayload | null): string | null {
+  const raw = payload?.raw as { prompt?: unknown } | null | undefined;
+  return typeof raw?.prompt === 'string' && raw.prompt ? raw.prompt : null;
 }
 
 // ---- worker 自举（daemon 侧唯一实例） ----

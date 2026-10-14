@@ -3,6 +3,7 @@ import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { HARNESS_DIRS, HARNESS_EVENTS, INJECTABLE_EVENTS, type Harness } from '@weavecode/core';
 import type { CaptureDeps, CaptureState, CaptureSurface } from '../driver.js';
+import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 
 /**
  * weave 采集集成（hook-handler 脚本 + settings hooks 组）的 claude 实现——
@@ -90,6 +91,15 @@ function hooksDir() {
   return path.join(configDir(), 'weave', 'hooks');
 }
 
+// 会话自己的 inbox 直投凭据（Claude Code 在每个启用跨会话消息的会话里导出给
+// 该会话的 hooks 与 Bash）：daemon 侧只放内存、不落库不进 UI —— 上报走 inbox
+// 行的旁路字段（不进 report/payload）。
+function messagingEnv() {
+  var sock = process.env.${CLAUDE_PROMPT_INBOX.socketEnv};
+  if (!sock) return null;
+  return { socket: sock, token: process.env.${CLAUDE_PROMPT_INBOX.tokenEnv} || null };
+}
+
 function readStdin() {
   return new Promise(function (resolve) {
     var data = '';
@@ -111,7 +121,7 @@ function appendInbox(dir, token, report) {
     try {
       if (fs.statSync(file).size > INBOX_MAX_BYTES) trimFile(file, INBOX_MAX_LINES);
     } catch {}
-    fs.appendFileSync(file, JSON.stringify({ v: 1, token: token, report: report }) + '\\n');
+    fs.appendFileSync(file, JSON.stringify({ v: 1, token: token, report: report, messaging: messagingEnv() }) + '\\n');
   } catch {}
 }
 

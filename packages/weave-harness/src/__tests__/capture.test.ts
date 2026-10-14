@@ -29,6 +29,14 @@ const HD = path.join('proj', '.claude', 'helpers');
 describe('captureHookGroup 组形（项目档与 user 档同形）', () => {
   const helpersDir = path.join('proj', '.claude', 'helpers');
 
+  it('生成的 hook-handler 上报会话 inbox 凭据（env 名取自 claude 规格，不手抄）', () => {
+    const script = generateHookHandler('0.0.0-test');
+    expect(script).toContain('CLAUDE_CODE_MESSAGING_SOCKET');
+    expect(script).toContain('CLAUDE_CODE_MESSAGING_TOKEN');
+    // 旁路字段进 inbox 行（不进 report/payload —— daemon 侧只放内存）
+    expect(script).toContain('messaging: messagingEnv()');
+  });
+
   it('七事件全形：matcher=* + 三层结构 + 命令指向 helpers 下的 hook-handler.cjs', () => {
     const group = captureHookGroup('PostToolUse', helpersDir)[0] as Record<string, unknown>;
     expect(group['matcher']).toBe('*');

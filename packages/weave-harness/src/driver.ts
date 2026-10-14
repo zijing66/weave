@@ -201,6 +201,22 @@ export interface MessageMeta {
 }
 
 /**
+ * 会话本地收件箱直投规格（层①-a，**harness 专属机制**：claude = inbox socket）。
+ * server 只做通用传输（连地址 → 写帧 → 关），协议与键名归 harness；无此机制的
+ * harness 声明 null（缺席无法渲染「为什么置灰」）。
+ */
+export interface PromptInboxSpec {
+  /** 会话把「可直投地址」导出的环境变量名（hook 脚本据此读取上报）。 */
+  readonly socketEnv: string;
+  /** 会话把「凭据」导出的环境变量名。 */
+  readonly tokenEnv: string;
+  /** 该平台是否必须带认证（claude：native Windows 必须，POSIX 可选）。 */
+  requiresAuthOn(platform: string): boolean;
+  /** 组帧：一次连接要写的完整字节串（分隔符由 harness 定）。token = null 即无凭据。 */
+  frame(input: { token: string | null; text: string }): string;
+}
+
+/**
  * 会话消息能力面（session-orchestration 批 1）：每 harness 一份声明式规格，
  * server 的 MessageDeliverer 按面裁决支持状态与编排控制；claude = 完整参考实现，
  * codex = 显式不支持面（缺席无法渲染「为什么置灰」）。设计见
@@ -212,6 +228,8 @@ export interface MessagingSurface {
   readonly discovery: boolean;
   /** prompt 通道（层① 原生 peer 消息中继）；null = 无原生机制（层② 终端 send-text 兜底或层③ 队列）。 */
   readonly prompt: PromptRelaySpec | null;
+  /** 会话本地收件箱直投（层①-a，毫秒级）；null = 该 harness 没有这类机制。 */
+  readonly promptInbox: PromptInboxSpec | null;
   /** 非抢占注入通道（忙排）；null = 不支持。 */
   readonly inject: InjectChannelSpec | null;
   /** 无头强制回合通道（闲投）；null = 不支持。引用 resume 槽规格对象，不复制。 */
