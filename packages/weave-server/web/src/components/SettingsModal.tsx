@@ -345,19 +345,48 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <div className="flex items-center gap-1">
-                <input
-                  list="weave-ai-models"
-                  value={settings?.ai?.model ?? ''}
-                  onChange={(e) =>
-                    setSettings((s) =>
-                      s === null
-                        ? s
-                        : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
-                    )
-                  }
-                  placeholder={t('settings.aiModelPlaceholder')}
-                  className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+                {/* 拉到候选 → 原生 select（样式可跟暗色，同「终端预设」口径）；
+                    没拉到（有的网关没有 /models）→ 回退文本框手填。
+                    刻意不用 <datalist>：它的弹层由浏览器/系统画，浅色且不可控。 */}
+                {models.length > 0 ? (
+                  <select
+                    value={settings?.ai?.model ?? ''}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s === null
+                          ? s
+                          : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
+                      )
+                    }
+                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {/* 已存模型不在列表里（网关换过/曾手填）也要能显示，别静默丢值 */}
+                    {(settings?.ai?.model ?? '') === '' && (
+                      <option value="">{t('settings.aiModelPlaceholder')}</option>
+                    )}
+                    {settings?.ai?.model && !models.includes(settings.ai.model) && (
+                      <option value={settings.ai.model}>{settings.ai.model}</option>
+                    )}
+                    {models.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={settings?.ai?.model ?? ''}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s === null
+                          ? s
+                          : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
+                      )
+                    }
+                    placeholder={t('settings.aiModelPlaceholder')}
+                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -383,12 +412,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   {t('settings.aiModelFetch')}
                 </button>
               </div>
-              {/* 拉取到的候选（datalist：可挑可手填——有的网关没有 /models） */}
-              <datalist id="weave-ai-models">
-                {models.map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
             </div>
             <div className="flex items-center gap-2">
               <input
