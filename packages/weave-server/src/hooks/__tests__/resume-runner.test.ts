@@ -13,9 +13,19 @@ import { ResumeRunner, type ResumeRunnerDeps, type SpawnLike } from '../resume-r
 const PROJECT_PATH = '/resume-proj';
 const SESSION_ID = 'sess-resume';
 
+/** 结构上满足 SpawnChild.stdin 的假管道：记录 prompt 写入。 */
+class FakeStdin extends EventEmitter {
+  readonly writes: string[] = [];
+  write(chunk: string): void {
+    this.writes.push(chunk);
+  }
+  end(): void {}
+}
+
 /** 结构上满足 SpawnChild 的假子进程：测试手动触发 exit/error/data 事件。 */
 class FakeChild extends EventEmitter {
   readonly pid = 4242;
+  readonly stdin = new FakeStdin();
   readonly stdout = new EventEmitter();
   readonly stderr = new EventEmitter();
 }
@@ -120,12 +130,17 @@ describe('ResumeRunner', () => {
     expect(dispatches.getById(dispatch.id)?.status).toBe('running');
     expect(fake.calls).toHaveLength(1);
     const call = fake.calls[0]!;
-    expect(call.cmd).toBe('fake-claude');
-    expect(call.args).toEqual(['--resume', SESSION_ID, '-p', dispatch.prompt]);
+    // CLAUDE_RESUME.promptStdin：prompt 不上命令行、经 stdin 传递。win32 裸名
+    // bin 走 shell（joined 单串、免 detached），其余平台 bin+args 直接 spawn。
+    const onWin = process.platform === 'win32';
+    expect(call.cmd).toBe(onWin ? `fake-claude --resume ${SESSION_ID} -p` : 'fake-claude');
+    expect(call.args).toEqual(onWin ? [] : ['--resume', SESSION_ID, '-p']);
     expect(call.options.cwd).toBe(PROJECT_PATH);
-    expect(call.options.detached).toBe(true);
+    expect(call.options.detached).toBe(!onWin);
     expect(call.options.windowsHide).toBe(true);
-    expect(call.options.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+    expect(call.options.stdio).toEqual(['pipe', 'pipe', 'pipe']);
+    expect(call.options.shell).toBe(onWin ? true : undefined);
+    expect(fake.children[0]!.stdin.writes).toEqual([dispatch.prompt]);
     expect(call.options.env?.WEAVE_HOOK_DISPATCH).toBe('1');
     // resume 出的是正常会话：child-session 标记必须被剥离（否则 transcript 不落盘）
     expect(call.options.env?.['CLAUDE_CODE_CHILD_SESSION']).toBeUndefined();

@@ -17,6 +17,7 @@ export interface SpawnChild {
   /** listener 用 `(...args: never[]) => void`：never 可赋给任意具体参数类型，
    *  调用方得以直接写 `(code: number | null) => …` 而无需类型断言。 */
   on(event: string, listener: (...args: never[]) => void): unknown;
+  stdin?: { on(event: string, listener: (...args: never[]) => void): unknown; write(chunk: string): unknown; end(): unknown } | null;
   stdout?: { on(event: string, listener: (...args: never[]) => void): unknown } | null;
   stderr?: { on(event: string, listener: (...args: never[]) => void): unknown } | null;
 }
@@ -94,12 +95,22 @@ export class HeadlessRunner {
   /** spawn 并挂上输出收集 / 退出 / 超时监听；同步完成，不等待退出。 */
   private watch(input: HeadlessRunInput, state: { settled: boolean }): void {
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const args = input.spec.args(input.sessionId, input.prompt);
+    // promptStdin 规格：prompt 走 stdin、命令行只剩 bin+固定参数+sessionId。
+    // win32 的 claude 是 .cmd shim（CreateProcess 不认，不经 shell 必 ENOENT），
+    // 此时命令行整体（裸名 bin + 无用户内容）作为单串经 shell 启动——无注入面，
+    // 也不触发 node 对 args+shell 的 DEP0190 警告；detached 必须关掉（实测
+    // win32 下 shell+detached 管道输出全丢、只余 exit code）。bin 是带路径的
+    // 覆盖值（可能含空格）时不走 shell，按真实 exe 直接 spawn。
+    const viaStdin = input.spec.promptStdin === true;
+    const args = input.spec.args(input.sessionId, viaStdin ? '' : input.prompt);
+    const useShell =
+      viaStdin && process.platform === 'win32' && !/[\s"\\/]/.test(input.bin);
     const options: SpawnOptions = {
       cwd: input.cwd,
-      detached: true, // POSIX 下自成进程组，超时可整组强杀
+      detached: !useShell, // POSIX 下自成进程组，超时可整组强杀
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: useShell,
+      stdio: [viaStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       // 递归标记：子进程派生的后代也能识别「weave 发起」。
       // 同时剥离 CLAUDE_CODE_CHILD_SESSION：daemon 可能启于某个 Claude Code
       // 会话内（环境继承了 child-session 标记），resume 出的是正常会话——
@@ -113,7 +124,20 @@ export class HeadlessRunner {
         return env;
       })(),
     };
-    const child = this.spawnImpl(input.bin, args, options);
+    const child = useShell
+      ? this.spawnImpl([input.bin, ...args].join(' '), [], options)
+      : this.spawnImpl(input.bin, args, options);
+
+    if (viaStdin) {
+      // EPIPE（子进程未读完先退）吞掉；终态由 exit/error 事件落定。
+      child.stdin?.on('error', () => {});
+      try {
+        child.stdin?.write(input.prompt);
+        child.stdin?.end();
+      } catch {
+        // 同步写失败同上：不影响终态路径
+      }
+    }
 
     // 输出收集：stdout / stderr 各截断 32KB 后合并为 output。
     const stdoutChunks: Buffer[] = [];

@@ -24,8 +24,18 @@ const TOKEN = 'mtoken';
 const SESSION_ID = 'sess-msg';
 const CODEX_SESSION = 'sess-cdx';
 
+/** 结构上满足 SpawnChild.stdin 的假管道：记录 prompt 写入。 */
+class FakeStdin extends EventEmitter {
+  readonly writes: string[] = [];
+  write(chunk: string): void {
+    this.writes.push(chunk);
+  }
+  end(): void {}
+}
+
 class FakeChild extends EventEmitter {
   readonly pid = 7777;
+  readonly stdin = new FakeStdin();
   readonly stdout = new EventEmitter();
   readonly stderr = new EventEmitter();
 }
@@ -199,8 +209,11 @@ describe('MessageDeliverer 裁决表', () => {
     });
     expect(result).toMatchObject({ ok: true, status: 'running' });
     expect(fake.calls).toHaveLength(1);
-    expect(fake.calls[0]!.cmd).toBe('fake-claude');
-    expect(fake.calls[0]!.args).toEqual(['--resume', SESSION_ID, '-p', expect.stringContaining('run this')]);
+    // CLAUDE_RESUME.promptStdin：信封经 stdin，命令行无用户内容（win32 = joined 串）
+    const onWin = process.platform === 'win32';
+    expect(fake.calls[0]!.cmd).toBe(onWin ? `fake-claude --resume ${SESSION_ID} -p` : 'fake-claude');
+    expect(fake.calls[0]!.args).toEqual(onWin ? [] : ['--resume', SESSION_ID, '-p']);
+    expect(fake.children[0]!.stdin.writes[0]).toContain('run this');
     expect(fake.calls[0]!.options.cwd).toBe(PROJECT_PATH);
 
     fake.children[0]!.stdout.emit('data', Buffer.from('answer'));

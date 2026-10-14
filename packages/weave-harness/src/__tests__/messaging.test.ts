@@ -40,6 +40,11 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_MESSAGING.sessionEnv).toBe('CLAUDE_CODE_SESSION_ID');
   });
 
+  it('claude：headless 规格 promptStdin——args 不含 prompt（命令行无用户内容）', () => {
+    expect(CLAUDE_RESUME.promptStdin).toBe(true);
+    expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
+  });
+
   it('codex：全通道 null/空 + 四通道 reasons 齐全（可渲染「为什么置灰」）', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);

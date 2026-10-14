@@ -1,14 +1,18 @@
 import type { ResumeCommandSpec } from '../driver.js';
 
 /**
- * 批 4b 迁入：Claude resume 命令规格——bin/args 逐字来自 server
- * `resume-runner.ts` 现状（`claude --resume <sessionId> -p <prompt>`）；
- * `WEAVE_CLAUDE_BIN` / `claudeBin` 环境与测试覆盖由 runner 保留。
+ * 批 4b 迁入：Claude resume 命令规格；`WEAVE_CLAUDE_BIN` / `claudeBin` 环境与
+ * 测试覆盖由 runner 保留。prompt 走 stdin（`claude --resume <sessionId> -p`
+ * 无位置参数时读管道）——命令行不含用户内容，Windows 的 .cmd shim 由此可
+ * 经 shell 安全启动。
  */
 export const CLAUDE_RESUME: ResumeCommandSpec = {
   supported: true,
   bin: 'claude',
-  args: (sessionId, prompt) => ['--resume', sessionId, '-p', prompt],
+  // prompt 经 stdin（-p 无位置参数时读管道）；命令行无用户内容 → win32 可安全
+  // 经 shell 启动解析 .cmd shim（不经 shell spawn 'claude' 必 ENOENT）。
+  args: (sessionId) => ['--resume', sessionId, '-p'],
+  promptStdin: true,
   // 交互式打开：无 -p，进终端后由用户继续对话。
   openArgs: (sessionId) => ['--resume', sessionId],
 };

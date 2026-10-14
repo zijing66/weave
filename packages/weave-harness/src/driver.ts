@@ -150,6 +150,12 @@ export interface ResumeCommandSpec {
   /** 拼 spawn 参数，如 `['--resume', sessionId, '-p', prompt]`。 */
   args(sessionId: string, prompt: string): string[];
   /**
+   * true = prompt 经 stdin 传递（args 应忽略 prompt 参数、不含它）。使命：
+   * win32 下命令行只剩 bin + 固定参数 + sessionId，无用户内容，runner 可安全
+   * 经 shell 启动以解析 npm 的 .cmd shim（不经 shell 直接 spawn 必 ENOENT）。
+   */
+  promptStdin?: boolean;
+  /**
    * 交互式终端打开参数（无 `-p` prompt），如 `['--resume', sessionId]`——
    * 「在默认终端打开会话」消费；缺省 = 该 harness 不支持交互式打开（501）。
    */

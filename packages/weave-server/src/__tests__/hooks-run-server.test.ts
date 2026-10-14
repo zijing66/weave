@@ -14,9 +14,19 @@ import { createWeaveServer } from '../daemon/server.js';
 
 const SESSION_ID = 'sess-run';
 
+/** 结构上满足 SpawnChild.stdin 的假管道：记录 prompt 写入。 */
+class FakeStdin extends EventEmitter {
+  readonly writes: string[] = [];
+  write(chunk: string): void {
+    this.writes.push(chunk);
+  }
+  end(): void {}
+}
+
 /** 结构上满足 SpawnChild 的假子进程（不真调 claude）。 */
 class FakeChild extends EventEmitter {
   readonly pid = 7777;
+  readonly stdin = new FakeStdin();
   readonly stdout = new EventEmitter();
   readonly stderr = new EventEmitter();
 }
@@ -70,8 +80,10 @@ describe('daemon server POST /hooks/dispatches/:id/run', () => {
     const bus = new HookEventBus();
     children = [];
     spawnArgs = [];
-    const spawnImpl: SpawnLike = (_cmd, args) => {
-      spawnArgs.push(args);
+    // 归一记录：win32 shell 模式下命令行是 joined 单串（args 空），其余平台
+    // bin+args 分离——两者拼成同一形状断言，免平台条件分支。
+    const spawnImpl: SpawnLike = (cmd, args) => {
+      spawnArgs.push([args.length ? `${cmd} ${args.join(' ')}` : cmd]);
       const child = new FakeChild();
       children.push(child);
       return child;
@@ -135,7 +147,9 @@ describe('daemon server POST /hooks/dispatches/:id/run', () => {
     expect(await res.json()).toEqual({ ok: true, dispatchId: pendingId });
 
     expect(children).toHaveLength(1);
-    expect(spawnArgs[0]).toEqual(['--resume', SESSION_ID, '-p', '跑一次']);
+    // CLAUDE_RESUME.promptStdin：prompt 经 stdin、命令行无用户内容
+    expect(spawnArgs[0]).toEqual([`fake-claude --resume ${SESSION_ID} -p`]);
+    expect(children[0]!.stdin.writes).toEqual(['跑一次']);
 
     children[0]!.stdout.emit('data', Buffer.from('run 输出'));
     children[0]!.emit('exit', 0, null);
