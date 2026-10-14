@@ -23,3 +23,6 @@ dist/
 
 # codegraph
 .codegraph/
+
+# archify
+.archify/
