@@ -190,6 +190,14 @@ export class MessageDeliverer {
       status: 'pending',
       at: meta.at,
     };
+    const result =
+      channel === 'inject'
+        ? this.deliverInject(entry, project.token, meta, surface)
+        : channel === 'headless'
+          ? this.deliverHeadless(entry, project.path, meta, surface)
+          : await this.deliverPrompt(entry, session, project, surface);
+    // created 广播放在**在途状态建立之后**：它同时是派生面（在途角标推送）的重算
+    // 依据，早发会让刚进在途的消息漏一拍（投递中的消息不上角标）。
     this.bus({
       kind: 'message.created',
       messageId: entry.id,
@@ -197,10 +205,7 @@ export class MessageDeliverer {
       mode: entry.mode,
       at: entry.at,
     });
-
-    if (channel === 'inject') return this.deliverInject(entry, project.token, meta, surface);
-    if (channel === 'headless') return this.deliverHeadless(entry, project.path, meta, surface);
-    return this.deliverPrompt(entry, session, project, surface);
+    return result;
   }
 
   /** 管道消息现查（内存态；sequence 引擎 / 路由回显用）。 */

@@ -523,6 +523,31 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listInflightCounts().size).toBe(0);
   });
 
+  it('message.created 在在途状态建立之后才广播——角标推送重算不落后一拍', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(() => null); // 会话没开 → 入队（pending）
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    // 在 created 帧到达的那一刻取计数（角标推送就是这么算的）
+    const atCreated: number[] = [];
+    bus.subscribe((m) => {
+      if (m.kind === 'message.created') {
+        atCreated.push(deliverer.listInflightCounts().get(SESSION_ID) ?? 0);
+      }
+    });
+    pushEvent(SESSION_ID, 'Stop');
+
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued for badge',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(atCreated).toEqual([1]);
+  });
+
   it('prompt 层③：oneWay 随队列行落盘——换投递器（daemon 重启）后冲洗仍带单向标记', async () => {
     const fake = createFakeSpawn();
     const { surface } = relaySurface(() => null); // 会话没开 → 入队
