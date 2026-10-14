@@ -536,9 +536,19 @@ send-text、注意多终端」——早期「send-text 作主通道」作废，�
   --tools SendMessage,ListAgents -n weave` + stdin 指令（**中性 cwd**——
   避开项目 hooks 报幽灵事件；`--no-session-persistence` = 不入 peer 注册
   表零污染；实测 15.8s 全环、目标窗口可见 `Message from @weave: <原文>`、
-  idle 立即唤醒、忙则下一 tool round 到达、回复可回中继进程）。
+  idle 立即唤醒、忙则下一 tool round 到达）。
 - 中继显示名 `-n weave`——**原文即消息体**，不加信封（claude 的消息头
   `Message from @weave:` 自带出处）。
+- **单向注入**（用户 2026-10-15 追问「sendmessage 对其他会话来说是在聊天、
+  会回消息，可不可以要求不回复，我只是想给模板会话注入 prompt」）：中继指令
+  末尾是「发完即 stop」，进程随即退出——**根本没有接收方会话**。目标若按
+  聊天习惯回一条，回的是个已消失的 @weave（打空、无害但白烧一轮），故投递
+  载荷**头部固定带单向注记**（`[weave one-way injection — no reply is
+  expected: …]`）。weave 能控的只有两样：中继进程的 stdin 指令 + 投递载荷
+  文本；目标的回不回是 model 判断，没有可设置的协议级「免回复」开关——所以
+  注记是**文本内引导**而非硬闸，属诚实能力声明的一部分。指令全文归 harness
+  规格（`PromptRelaySpec.instruction`，claude adapter 实现），server 只传
+  peer 寻址名 + 原文。
 
 **层② 终端 send-text 兜底**（无原生 peer 消息的 harness，如 codex）——**经
 `TerminalBackend` 抽象泛化，不散写 wezterm**（用户定案「多终端支持，不仅是

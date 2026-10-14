@@ -70,6 +70,7 @@ function relaySurface(resolve: (sessionId: string) => { name: string } | null = 
     bin: 'fake-relay',
     args: ['-p', '--no-session-persistence'],
     senderName: 'weave',
+    instruction: (peerName, text) => `Send to "${peerName}": ${text}`,
     resolve,
   };
   const surface: MessagingSurface = {
@@ -457,9 +458,8 @@ describe('MessageDeliverer 裁决表', () => {
     // 中性 cwd（防项目 hooks 幽灵事件），不是项目路径
     expect(fake.calls[0]!.options.cwd).not.toBe(PROJECT_PATH);
     const stdinText = fake.children[0]!.stdin.writes[0]!;
-    expect(stdinText).toContain(PEER_NAME);
-    expect(stdinText).toContain('go check the build');
-    expect(stdinText).toContain('SendMessage');
+    // 指令全文由 harness 规格给出（server 只传 peer 名 + 原文，逐字透传）
+    expect(stdinText).toBe(`Send to "${PEER_NAME}": go check the build`);
     // 队列不落行（层① 命中即时投递）
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
 

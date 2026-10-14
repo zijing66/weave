@@ -39,6 +39,17 @@ describe('MessagingSurface 契约', () => {
     expect(typeof CLAUDE_PROMPT_RELAY.resolve).toBe('function');
   });
 
+  it('claude：中继指令含单向注记——目标读到的载荷先声明无需回复，再是原文', () => {
+    const instruction = CLAUDE_PROMPT_RELAY.instruction('peer-a', 'go check the build');
+    expect(instruction).toContain('"peer-a"');
+    expect(instruction).toContain('SendMessage');
+    expect(instruction).toContain('go check the build');
+    // 注记在载荷头部（先于原文）
+    expect(instruction.indexOf('one-way')).toBeLessThan(
+      instruction.indexOf('go check the build'),
+    );
+  });
+
   it('claude：idleSignals 取值生命周期表（close + 会话级终点），不手抄', () => {
     expect(CLAUDE_MESSAGING.idleSignals).toEqual([
       ...HARNESS_LIFECYCLE.claude.close,

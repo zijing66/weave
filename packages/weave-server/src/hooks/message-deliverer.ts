@@ -122,11 +122,6 @@ export type SendResult =
 /** 通道裁决结果：mode=auto 落到实际通道后才存在。 */
 type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 
-/** 中继投递指令：给受限 headless 进程的 stdin prompt（spike 实测配方）。 */
-function relayInstruction(peerName: string, text: string): string {
-  return `Send the following message verbatim to the Claude session named "${peerName}" using the SendMessage tool, then stop. Do not use any other tool.\n\n${text}`;
-}
-
 /** 中继进程的工作目录：中性 cwd，避开项目 hooks（spike 实测防幽灵事件）。 */
 const relayCwd = () => tmpdir();
 
@@ -470,7 +465,7 @@ export class MessageDeliverer {
       return this.headless.run({
         sessionId: `prompt-relay:${entry.sessionId}`,
         cwd: relayCwd(),
-        prompt: relayInstruction(peerName, entry.text),
+        prompt: relay.instruction(peerName, entry.text),
         spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
         timeoutMs: this.deps.relayTimeoutMs ?? 120_000,
