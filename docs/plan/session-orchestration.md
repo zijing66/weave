@@ -447,7 +447,7 @@ web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
 全量 910/910；③ 布局纯函数 4 例，web 93/93、全仓 126 文件 1320/1320 绿；两 tsc
 （server+harness 包根、web）全绿。
 
-### 批后修复与定案（2026-10-14，三笔：`5ee36f0` + `509f393` + `a4bfac3`）
+### 批后修复与定案（2026-10-14，四笔：`5ee36f0` + `509f393` + `a4bfac3` + `7c51d45`）
 
 **① 无头回合 win32 ENOENT 根治（`promptStdin` 契约）**：`claude` 在 Windows 上是
 npm 的 `.cmd` shim，`CreateProcess` 不认、不经 shell spawn 必 ENOENT（批 1 在
@@ -472,7 +472,9 @@ stdin 传递（实测 `claude --resume <sid> -p` 读管道），命令行只剩�
 CLI 注入面无必要——`weave msg`（ls / send / watch / reply）**整树删除**，消息注入收敛
 web 单入口（会话消息弹窗 + 编排画布），watch 订阅走 web 会话列表铃铛（引擎零改动）。
 `MessagingSurface.sessionEnv` 槽随之摘除（唯一消费者是 CLI 的会话内身份定位；D7 记为
-已移除）；`fromKind='cli'` 类型保留（历史行渲染），服务端路由与裁决零改动。
+已移除）；`fromKind='cli'` 亦清理（`7c51d45`）——union 收敛 `'dashboard' | 'session'`
+（`'session'` 由 watch 引擎产出；用户 DB 实测零 cli 行，无历史渲染包袱），路由
+fromKind/fromSessionId 入参面保留（批 5 联邦转发正需）。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
