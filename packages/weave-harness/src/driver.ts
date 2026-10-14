@@ -188,6 +188,9 @@ export interface MessagingSurface {
   readonly headless: ResumeCommandSpec | null;
   /** 空闲信号事件名（watch 触发源）；空数组 = 不支持空闲订阅。 */
   readonly idleSignals: readonly string[];
+  /** 跑在该 harness 会话内的子进程可读「当前会话 id」的 env 变量名（CLI 身份
+   *  自动定位用）；undefined = 无此机制。 */
+  readonly sessionEnv?: string;
   /** 注入信封渲染（缺省 = server 的 weave 统一信封）。 */
   renderEnvelope?(text: string, meta: MessageMeta): string;
   /** 不支持通道的语义原因（409 文案与 UI tooltip 直用）。 */
