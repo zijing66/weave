@@ -50,11 +50,12 @@ import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { Library, LogOut, PanelLeft, Settings, X } from 'lucide-react';
+import { Github, Library, LogOut, PanelLeft, Settings, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
+import { WEAVE_REPO_URL, formatStars, useRepoStars } from '@/lib/github';
 import { LoginPage } from '@/components/LoginPage';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
@@ -95,6 +96,8 @@ function Dashboard() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
   const [shellReady, setShellReady] = useState(false);
+  // 顶栏 GitHub 链接的 star 数（浏览器直取 + localStorage 缓存；未知 = null）
+  const stars = useRepoStars();
   const [selected, setSelected] = useState<ProjectRow | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
@@ -1132,9 +1135,22 @@ function Dashboard() {
             >
               <Library className="h-4 w-4" />
             </button>
+            {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边 */}
+            <a
+              href={WEAVE_REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-auto inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title={t('app.githubTip')}
+            >
+              <Github className="h-4 w-4" />
+              {stars !== null && (
+                <span className="text-[11px] tabular-nums">{formatStars(stars)}</span>
+              )}
+            </a>
             <button
               onClick={() => setSettingsOpen(true)}
-              className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
               title={t('app.settingsTooltip')}
             >
               <Settings className="h-4 w-4" />

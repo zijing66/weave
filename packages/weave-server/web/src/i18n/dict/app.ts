@@ -3,6 +3,7 @@ export const appZh = {
   // —— App 壳 ——
   'app.projectCount': '{n} 个项目',
   'app.settingsTooltip': '设置（默认终端等）',
+  'app.githubTip': '在 GitHub 上查看源码（附 star 数）',
   'app.resizeLeft': '拖拽调整左侧宽度',
   'app.resizeRight': '拖拽调整右侧宽度',
   'app.resizeTaskHeight': '拖拽调整任务区高度',
@@ -99,6 +100,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   // —— App shell ——
   'app.projectCount': '{n} projects',
   'app.settingsTooltip': 'Settings (default terminal, etc.)',
+  'app.githubTip': 'View the source on GitHub (stars)',
   'app.resizeLeft': 'Drag to resize the left pane',
   'app.resizeRight': 'Drag to resize the right pane',
   'app.resizeTaskHeight': 'Drag to resize the task area height',
