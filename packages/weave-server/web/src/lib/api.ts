@@ -334,7 +334,19 @@ export interface MessagingCapability {
   inject: boolean;
   headless: boolean;
   watch: boolean;
-  unsupportedReasons: string[] | null;
+  unsupportedReasons: Partial<Record<'discovery' | 'inject' | 'headless' | 'watch', string>> | null;
+}
+
+/** mirror of `SessionWatchRow` in packages/weave-server/src/repositories/session-watches.ts。 */
+export interface SessionWatchRow {
+  id: number;
+  /** null = dashboard 订阅（本面板创建的都是 null）。 */
+  watcherSessionId: string | null;
+  targetSessionId: string;
+  notify: string | null;
+  /** null = pending；fire 后行不再出现在列表（one-shot）。 */
+  firedAt: string | null;
+  createdAt: string;
 }
 
 export interface LibraryRow {
@@ -1005,6 +1017,24 @@ export const api = {
     apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(
       (r) => r.capabilities,
     ),
+  /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
+  listSessionWatches: (): Promise<SessionWatchRow[]> =>
+    apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),
+  /** 订阅空闲提醒（one-shot：fire 即失效）。非 2xx（目标不支持/会话不在）抛 Error。 */
+  createSessionWatch: (
+    sessionId: string,
+    body: { watcherSessionId?: string | null; notify?: string | null } = {},
+  ): Promise<{ ok: boolean; watchId: number; watch: SessionWatchRow }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/watch`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 取消订阅。 */
+  deleteSessionWatch: (sessionId: string, watchId: number): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/watch`, {
+      method: 'DELETE',
+      body: JSON.stringify({ watchId }),
+    }),
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>

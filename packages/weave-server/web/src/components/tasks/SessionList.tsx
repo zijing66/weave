@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { type SessionRow, type SessionWatchRow, type MessagingCapability } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
-import { type SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
 import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Check, Copy, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
+import { Bell, BellRing, Check, Copy, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
@@ -31,8 +31,11 @@ export function SessionList({
   onDropDispatch,
   onOpenTerminal,
   openTerminalStateOf,
-  messagers,
+  capabilities,
   onOpenMessages,
+  watchOf,
+  watchStateOf,
+  onToggleWatch,
   onDelete,
   deleteStateOf,
 }: {
@@ -45,10 +48,16 @@ export function SessionList({
   onOpenTerminal: (sessionId: string) => void;
   /** 打开会话终端按钮的反馈态（loading → ✅ → 还原，防连点重复 spawn）。 */
   openTerminalStateOf?: (sessionId: string) => ActionState;
-  /** 可收消息的 harness 集（服务端 MessagingSurface 派生矩阵；null = 矩阵未载）。 */
-  messagers?: ReadonlySet<Harness> | null;
+  /** 消息能力矩阵（服务端 MessagingSurface 派生，完整表不过滤；null = 未载）。 */
+  capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
   /** 打开该会话的消息线程（弹窗内投递/查看）。 */
   onOpenMessages: (sessionId: string) => void;
+  /** 该会话当前的 pending 订阅行（无 = 未订阅）。 */
+  watchOf?: (sessionId: string) => SessionWatchRow | undefined;
+  /** 订阅按钮的反馈态（loading → ✅ → 还原）。 */
+  watchStateOf?: (sessionId: string) => ActionState;
+  /** 订阅/取消订阅（one-shot：fire 即失效）。 */
+  onToggleWatch: (sessionId: string) => void;
   /** 删除该会话（含事件与派发；调用方负责确认与报错）。 */
   onDelete: (sessionId: string) => void;
   /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
@@ -87,6 +96,8 @@ export function SessionList({
       {sessions.map((s) => {
         const status = statuses.get(s.sessionId) ?? 'open';
         const selected = s.sessionId === selectedId;
+        const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
+        const watch = watchOf?.(s.sessionId);
         return (
           <li key={s.sessionId}>
             <div
@@ -186,9 +197,9 @@ export function SessionList({
                       </button>
                     )}
                     {/* 消息线程入口：能力真源 = 服务端 MessagingSurface 派生矩阵
-                        （表驱动门控，不写死 harness 白名单）；harness 未知（无事件）
-                        的会话不现按钮。 */}
-                    {s.harness != null && messagers?.has(s.harness) && (
+                        （表驱动门控，不写死 harness 白名单——任一通道在场即入口）；
+                        harness 未知（无事件）的会话不现按钮。 */}
+                    {cap && (cap.inject || cap.headless) && (
                       <button
                         type="button"
                         title={t('tasks.messageTooltip')}
@@ -199,6 +210,31 @@ export function SessionList({
                         className={ACTION_BTN}
                       >
                         <MessageSquareText className="h-3 w-3" />
+                      </button>
+                    )}
+                    {/* 空闲订阅（one-shot）：门控同上表 watch 位。已有订阅 = 铃铛
+                        亮起（amber），再点取消；fire 后行消失、铃铛自然回空。 */}
+                    {cap?.watch && (
+                      <button
+                        type="button"
+                        title={watch ? t('tasks.watchActiveTooltip') : t('tasks.watchTooltip')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleWatch(s.sessionId);
+                        }}
+                        className={ACTION_BTN}
+                      >
+                        <FeedbackIcon
+                          state={watchStateOf?.(s.sessionId) ?? 'idle'}
+                          className="h-3 w-3"
+                          icon={
+                            watch ? (
+                              <BellRing className="h-3 w-3 text-amber-300" />
+                            ) : (
+                              <Bell className="h-3 w-3" />
+                            )
+                          }
+                        />
                       </button>
                     )}
                     <button

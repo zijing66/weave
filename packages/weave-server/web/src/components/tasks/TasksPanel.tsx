@@ -6,6 +6,7 @@ import {
   type HookEventRow,
   type HookRule,
   type MessagingCapability,
+  type SessionWatchRow,
   type TerminalTarget,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -103,22 +104,67 @@ export function TasksPanel({
   }, [projectId, initialSessionId]);
 
   // 消息能力矩阵（服务端 MessagingSurface 纯派生）：按钮门控与弹窗模式选项的
-  // 唯一真源——web 只渲染不判定，不写死 harness 白名单。
+  // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
+  // 的面也在），行内各按钮按字段自取。
   const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
   useEffect(() => {
     api.messagingCapabilities().then(setMessagingCaps).catch(() => {});
   }, []);
-  const { capabilityByHarness, messagers } = useMemo(() => {
+  const capabilityMap = useMemo(() => {
     const m = new Map<Harness, MessagingCapability>();
-    const s = new Set<Harness>();
-    for (const c of messagingCaps ?? []) {
-      if (c.inject || c.headless) {
-        m.set(c.harness, c);
-        s.add(c.harness);
-      }
-    }
-    return { capabilityByHarness: m, messagers: s };
+    for (const c of messagingCaps ?? []) m.set(c.harness, c);
+    return m;
   }, [messagingCaps]);
+
+  // 空闲订阅面（批 2）：全部 pending，面板只渲染本 dashboard 订的行
+  //（watcherSessionId === null）——会话订阅由服务端注入通知，不占铃铛。
+  const [watches, setWatches] = useState<SessionWatchRow[] | null>(null);
+  const refreshWatches = useCallback(() => {
+    api.listSessionWatches().then(setWatches).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshWatches();
+  }, [refreshWatches]);
+  const dashboardWatches = useMemo(() => {
+    const m = new Map<string, SessionWatchRow>();
+    for (const w of watches ?? []) {
+      if (w.watcherSessionId === null) m.set(w.targetSessionId, w);
+    }
+    return m;
+  }, [watches]);
+  const watchOf = useCallback(
+    (sessionId: string) => dashboardWatches.get(sessionId),
+    [dashboardWatches],
+  );
+  const watchStateOf = useCallback((sessionId: string) => fb.stateOf(`watch:${sessionId}`), [fb]);
+  const onToggleWatch = useCallback(
+    (sessionId: string): void => {
+      const existing = dashboardWatches.get(sessionId);
+      void fb.run(
+        `watch:${sessionId}`,
+        async () => {
+          if (existing) await api.deleteSessionWatch(sessionId, existing.id);
+          else await api.createSessionWatch(sessionId);
+          refreshWatches();
+        },
+        {
+          fail: (e) =>
+            t(existing ? 'tasks.unwatchFailed' : 'tasks.watchFailed', { error: errorText(e) }),
+        },
+      );
+    },
+    [fb, t, dashboardWatches, refreshWatches],
+  );
+
+  // watch.fired 帧：订阅落定（fire 即失效）→ 重拉订阅面，铃铛归位。
+  useEffect(() => {
+    const onHook = (e: Event): void => {
+      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+      if (f.kind === 'watch.fired') refreshWatches();
+    };
+    window.addEventListener('weave:hook', onHook);
+    return () => window.removeEventListener('weave:hook', onHook);
+  }, [refreshWatches]);
 
   // 会话列表就绪后补默认选中（初始选中会话优先；用户点击后 prev 非空，不再覆盖）。
   useEffect(() => {
@@ -272,7 +318,7 @@ export function TasksPanel({
   const onOpenMessages = useCallback(
     (sessionId: string): void => {
       const row = sessions?.find((s) => s.sessionId === sessionId);
-      const capability = row?.harness ? capabilityByHarness.get(row.harness) : undefined;
+      const capability = row?.harness ? capabilityMap.get(row.harness) : undefined;
       if (!capability) return;
       setMessagesTarget({
         sessionId,
@@ -280,7 +326,7 @@ export function TasksPanel({
         capability,
       });
     },
-    [sessions, capabilityByHarness],
+    [sessions, capabilityMap],
   );
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
@@ -479,8 +525,11 @@ export function TasksPanel({
             onDropDispatch={onDropDispatch}
             onOpenTerminal={onOpenTerminal}
             openTerminalStateOf={openTerminalStateOf}
-            messagers={messagingCaps === null ? null : messagers}
+            capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
+            watchOf={watchOf}
+            watchStateOf={watchStateOf}
+            onToggleWatch={onToggleWatch}
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
           />

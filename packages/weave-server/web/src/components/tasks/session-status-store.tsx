@@ -31,6 +31,11 @@ export interface HookFrame {
   eventId?: number;
   dispatchId?: number;
   status?: string;
+  /** watch.fired 帧（空闲订阅 one-shot 落定）：目标/订阅方 id——dashboard 订阅
+   *  （watcherSessionId null）由此弹 toast，任务面板据此重拉订阅列表。 */
+  watchId?: number;
+  targetSessionId?: string;
+  watcherSessionId?: string | null;
 }
 
 interface SessionStatusValue {

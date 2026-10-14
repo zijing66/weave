@@ -34,6 +34,7 @@ import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capa
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { registerInvalidator, subscribeSse } from '@/lib/sse';
+import { sessionLabel } from '@/lib/hook-payload';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -481,6 +482,16 @@ export default function App() {
         // stream; the Hooks / Tasks panels listen for them on `weave:hook`.
         // 会话状态/计数由全局状态总线按同一批帧维护（main.tsx 挂的 Provider）。
         if (frame.type === 'hook') {
+          // 空闲订阅落定（批 2）：dashboard 订阅 toast 提醒——会话订阅的通知已由
+          // 服务端注入其线程（message.* 帧走面板弹窗），这里不重复打扰。
+          if (
+            frame.kind === 'watch.fired' &&
+            frame.watcherSessionId == null &&
+            typeof frame.targetSessionId === 'string'
+          ) {
+            const row = allSessions?.find((s) => s.sessionId === frame.targetSessionId);
+            show('info', t('tasks.watchOn', { label: sessionLabel(row?.title ?? null, frame.targetSessionId) }));
+          }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;
         }
