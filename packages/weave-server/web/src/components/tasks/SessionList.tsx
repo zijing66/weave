@@ -200,10 +200,10 @@ export function SessionList({
                         />
                       </button>
                     )}
-                    {/* 消息线程入口：能力真源 = 服务端 MessagingSurface 派生矩阵
-                        （表驱动门控，不写死 harness 白名单——任一通道在场即入口）；
+                    {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
+                        （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
                         harness 未知（无事件）的会话不现按钮。 */}
-                    {cap && (cap.inject || cap.headless) && (
+                    {cap?.prompt && (
                       <button
                         type="button"
                         title={t('tasks.messageTooltip')}

@@ -7,14 +7,16 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
-import { formatTime, sessionLabel } from '@/lib/hook-payload';
+import { formatTime } from '@/lib/hook-payload';
 import type { HookFrame } from './session-status-store';
 
-/** 消息状态徽标（queued/injected 在途 = 冷色，succeeded = 绿，failed/timeout = 红）。 */
+/** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */
 const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
-  queued: 'bg-amber-900/40 text-amber-300',
-  injected: 'bg-sky-900/40 text-sky-300',
+  pending: 'bg-amber-900/40 text-amber-300',
+  delivering: 'bg-sky-900/40 text-sky-300',
   running: 'bg-sky-900/40 text-sky-300',
+  injected: 'bg-sky-900/40 text-sky-300',
+  delivered: 'bg-emerald-900/40 text-emerald-300',
   succeeded: 'bg-emerald-900/40 text-emerald-300',
   failed: 'bg-red-900/40 text-red-300',
   timeout: 'bg-red-900/40 text-red-300',
@@ -22,40 +24,29 @@ const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
 const STATUS_KEY: Record<
   SessionMessageRow['status'],
   | 'tasks.msgStatusQueued'
-  | 'tasks.msgStatusInjected'
+  | 'tasks.msgStatusDelivering'
   | 'tasks.msgStatusRunning'
+  | 'tasks.msgStatusInjected'
+  | 'tasks.msgStatusDelivered'
   | 'tasks.msgStatusSucceeded'
   | 'tasks.msgStatusFailed'
   | 'tasks.msgStatusTimeout'
 > = {
-  queued: 'tasks.msgStatusQueued',
-  injected: 'tasks.msgStatusInjected',
+  pending: 'tasks.msgStatusQueued',
+  delivering: 'tasks.msgStatusDelivering',
   running: 'tasks.msgStatusRunning',
+  injected: 'tasks.msgStatusInjected',
+  delivered: 'tasks.msgStatusDelivered',
   succeeded: 'tasks.msgStatusSucceeded',
   failed: 'tasks.msgStatusFailed',
   timeout: 'tasks.msgStatusTimeout',
 };
-const FROM_KEY: Record<
-  SessionMessageRow['fromKind'],
-  'tasks.msgFromDashboard' | 'tasks.msgFromSession'
-> = {
-  dashboard: 'tasks.msgFromDashboard',
-  session: 'tasks.msgFromSession',
-};
-const MODE_KEY: Record<
-  SessionMessageRow['mode'],
-  'tasks.msgModeAuto' | 'tasks.msgModeInject' | 'tasks.msgModeHeadless'
-> = {
-  auto: 'tasks.msgModeAuto',
-  inject: 'tasks.msgModeInject',
-  headless: 'tasks.msgModeHeadless',
-};
 
 /**
- * 会话消息线程弹窗（session-orchestration 批 1）：双向时间线（该会话收到的
- * 靠右、它自己发出的靠左）+ 投递Composer。模式选项按能力矩阵门控（表驱动，
- * web 不写死 harness）；线程刷新挂 App 转发的 weave:hook 帧（kind=message.*、
- * sessionId 定向），不新开轮询。
+ * 会话消息弹窗（消息域重塑批 ③）：该会话的在途投递视图 + Composer。
+ * 投递无模式选择——服务端恒走 prompt 通道全自动（原生 SendMessage 中继 →
+ * 终端 send-text 降级 → 未开会话积压队列），故 web 不展示也不传 mode。
+ * 刷新挂 App 转发的 weave:hook 帧（kind=message.*、sessionId 定向），不新开轮询。
  */
 export function SessionMessages({
   sessionId,
@@ -74,11 +65,6 @@ export function SessionMessages({
   const fb = useActionFeedback();
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
-  // 缺省 inject：开着的会话下一拍注入，未开的入队、随其下次 SessionStart 加载
-  // （inject 不支持的面回 auto——选项本身按能力门控，auto 恒在）。
-  const [mode, setMode] = useState<'auto' | 'inject' | 'headless'>(
-    capability.inject ? 'inject' : 'auto',
-  );
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
@@ -144,7 +130,7 @@ export function SessionMessages({
     void fb.run(
       `sendMsg:${sessionId}`,
       async () => {
-        await api.sendSessionMessage(sessionId, { text, mode });
+        await api.sendSessionMessage(sessionId, { text });
         await refresh();
       },
       { fail: (e) => t('tasks.msgSendFailed', { error: errorText(e) }) },
@@ -175,7 +161,7 @@ export function SessionMessages({
           </button>
         </div>
 
-        {/* 线程主体：该会话收到的靠右（含控制台与其他会话的投递），它发出的靠左 */}
+        {/* 在途视图：每行都是投给本会话的消息（送达即消失，历史在会话转录里） */}
         <div ref={threadRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
           {messages === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
@@ -187,54 +173,36 @@ export function SessionMessages({
               {t('tasks.messagesEmpty')}
             </p>
           ) : (
-            messages.map((m) => {
-              const outgoing = m.fromSessionId === sessionId;
-              return (
-                <div key={m.id} className={outgoing ? 'flex' : 'flex justify-end'}>
-                  <div
-                    className={`max-w-[85%] rounded-lg border px-2 py-1.5 ${
-                      outgoing
-                        ? 'border-white/[0.06] bg-white/[0.02]'
-                        : 'border-blue-500/20 bg-blue-500/[0.06]'
-                    }`}
-                  >
-                    <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      <Badge className="shrink-0 bg-neutral-800 text-neutral-400">
-                        {outgoing
-                          ? t('tasks.msgFromSelf')
-                          : m.fromKind === 'session' && m.fromSessionId
-                            ? t('tasks.msgFromSessionId', {
-                                id: sessionLabel(null, m.fromSessionId),
-                              })
-                            : t(FROM_KEY[m.fromKind])}
-                      </Badge>
-                      <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
-                        {t(STATUS_KEY[m.status])}
-                      </Badge>
-                      <span className="shrink-0 text-[10px] text-neutral-600">
-                        {t(MODE_KEY[m.mode])} · {formatTime(m.createdAt)}
-                      </span>
-                    </div>
-                    <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
-                      {m.text}
-                    </p>
-                    {m.error && (
-                      <p className="mt-1 break-words text-[11px] text-red-400">{m.error}</p>
-                    )}
-                    {m.output && (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-[10px] text-neutral-500">
-                          {t('tasks.msgOutput')}
-                        </summary>
-                        <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-400">
-                          {m.output}
-                        </pre>
-                      </details>
-                    )}
+            messages.map((m) => (
+              <div key={m.id} className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
+                  <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                    <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
+                      {t(STATUS_KEY[m.status])}
+                    </Badge>
+                    <span className="shrink-0 text-[10px] text-neutral-600">
+                      {formatTime(m.at)}
+                    </span>
                   </div>
+                  <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
+                    {m.text}
+                  </p>
+                  {m.error && (
+                    <p className="mt-1 break-words text-[11px] text-red-400">{m.error}</p>
+                  )}
+                  {m.output && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[10px] text-neutral-500">
+                        {t('tasks.msgOutput')}
+                      </summary>
+                      <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-400">
+                        {m.output}
+                      </pre>
+                    </details>
+                  )}
                 </div>
-              );
-            })
+              </div>
+            ))
           )}
         </div>
 
@@ -244,10 +212,9 @@ export function SessionMessages({
           </p>
         )}
 
-        {/* Composer：模式选项按能力矩阵门控（表驱动，不写死 harness）。
-            <lg 纵排——输入框满宽在上、模式+发送一行在下（横排会被选择器挤窄），
-            桌面横排原样。 */}
-        <div className="mt-2 flex shrink-0 flex-col gap-2 lg:flex-row lg:items-end">
+        {/* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
+            harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。 */}
+        <div className="mt-2 flex shrink-0 items-end gap-1.5">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -259,36 +226,30 @@ export function SessionMessages({
             }}
             placeholder={t('tasks.messagesPlaceholder')}
             rows={2}
-            className="min-w-0 w-full resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40 lg:w-auto lg:flex-1"
+            className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
           />
-          <div className="flex gap-1.5 lg:shrink-0 lg:flex-col lg:gap-1">
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as typeof mode)}
-              className="min-w-0 flex-1 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200 lg:flex-none"
-            >
-              <option value="auto">{t('tasks.msgModeAutoHint')}</option>
-              {capability.inject && (
-                <option value="inject">{t('tasks.msgModeInjectHint')}</option>
-              )}
-              {capability.headless && (
-                <option value="headless">{t('tasks.msgModeHeadlessHint')}</option>
-              )}
-            </select>
-            <button
-              type="button"
-              disabled={!draft.trim() || fb.stateOf(`sendMsg:${sessionId}`) === 'loading'}
-              onClick={send}
-              className="inline-flex flex-1 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 lg:flex-none"
-            >
-              <FeedbackIcon
-                state={fb.stateOf(`sendMsg:${sessionId}`)}
-                className="h-3 w-3"
-                icon={<Send className="h-3 w-3" />}
-              />
-              {t('tasks.messagesSend')}
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={
+              !capability.prompt ||
+              !draft.trim() ||
+              fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+            }
+            title={
+              capability.prompt
+                ? undefined
+                : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+            }
+            onClick={send}
+            className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+          >
+            <FeedbackIcon
+              state={fb.stateOf(`sendMsg:${sessionId}`)}
+              className="h-3 w-3"
+              icon={<Send className="h-3 w-3" />}
+            />
+            {t('tasks.messagesSend')}
+          </button>
         </div>
       </div>
     </div>,

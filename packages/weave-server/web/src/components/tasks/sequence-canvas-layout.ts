@@ -1,12 +1,12 @@
 import type { Harness } from '@weavecode/core/harness';
-import type { SessionMessageRow, SessionRow } from '@/lib/api';
+import type { SessionRow } from '@/lib/api';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 
 /**
  * 编排画布布局（纯函数，可单测）：会话按 harness 泳道分列（名表序，未知
- * harness 归末列），泳道内按输入序（状态总线列表 = 新在前）纵向排布；消息
- * 为边——只有两端会话都在画布上的会话间消息才成边（dashboard/cli 投递无
- * 源节点，由节点的「收」计数承载）。
+ * harness 归末列），泳道内按输入序（状态总线列表 = 新在前）纵向排布。
+ * 消息不再是边——管道态不记录发起方（消息域重塑：在途视图只答「投给谁」），
+ * 会话间收发不成图；在途量由节点计数与表头承载。
  */
 
 /** 渲染节点宽（对齐 SequenceCanvas 节点的 w-[260px]）。 */
@@ -30,14 +30,6 @@ export interface LaidSessionNode {
   y: number;
 }
 
-export interface LaidMessageEdge {
-  /** `m:<messageId>`。 */
-  key: string;
-  message: SessionMessageRow;
-  sourceKey: string;
-  targetKey: string;
-}
-
 export interface LaidLane {
   harness: Harness | null;
   /** 泳道左缘 x（节点 x 与标签 x 同值）。 */
@@ -47,7 +39,6 @@ export interface LaidLane {
 
 export interface LaidSequenceCanvas {
   nodes: LaidSessionNode[];
-  edges: LaidMessageEdge[];
   lanes: LaidLane[];
 }
 
@@ -57,11 +48,7 @@ function laneIndex(harness: Harness | null | undefined): number {
   return HARNESS_ORDER.length;
 }
 
-export function layoutSequenceCanvas(
-  sessions: readonly SessionRow[],
-  /** 去重后的会话间消息（调用方从各会话线程聚合，每条恰一次）。 */
-  messages: readonly SessionMessageRow[],
-): LaidSequenceCanvas {
+export function layoutSequenceCanvas(sessions: readonly SessionRow[]): LaidSequenceCanvas {
   const present = new Map<number, { harness: Harness | null; count: number }>();
   for (const s of sessions) {
     const idx = laneIndex(s.harness);
@@ -79,7 +66,6 @@ export function layoutSequenceCanvas(
   }));
 
   const nextRow = lanes.map(() => 0);
-  const nodeOf = new Map<string, LaidSessionNode>();
   const nodes: LaidSessionNode[] = [];
   for (const s of sessions) {
     const lane = remap.get(laneIndex(s.harness)) ?? 0;
@@ -93,33 +79,8 @@ export function layoutSequenceCanvas(
       x: lane * SEQ_LANE_W,
       y: SEQ_LANE_HEADER_H + row * SEQ_ROW_H,
     };
-    nodeOf.set(s.sessionId, node);
     nodes.push(node);
   }
 
-  const edges: LaidMessageEdge[] = [];
-  for (const m of messages) {
-    // 两端都在画布上才成边；dashboard/cli 投递（fromSessionId null）天然落空。
-    const source = m.fromSessionId != null ? nodeOf.get(m.fromSessionId) : undefined;
-    const target = nodeOf.get(m.toSessionId);
-    if (!source || !target) continue;
-    edges.push({
-      key: `m:${m.id}`,
-      message: m,
-      sourceKey: source.key,
-      targetKey: target.key,
-    });
-  }
-  return { nodes, edges, lanes };
-}
-
-/** 每会话线程 → 会话间消息去重切片：双向线程里每条会话间消息恰出现一次
- *  （在发送方的线程里 fromSessionId === 自己）；dashboard/cli 投递无源端，
- *  不进边集合（接收计数走全量线程）。 */
-export function outgoingOf(threadBySession: ReadonlyMap<string, SessionMessageRow[]>): SessionMessageRow[] {
-  const out: SessionMessageRow[] = [];
-  for (const [sessionId, list] of threadBySession) {
-    for (const m of list) if (m.fromSessionId === sessionId) out.push(m);
-  }
-  return out;
+  return { nodes, lanes };
 }

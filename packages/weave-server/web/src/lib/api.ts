@@ -315,32 +315,37 @@ export const INJECTABLE_HOOK_EVENTS = [
   'SubagentStop',
 ] as const;
 
-/** mirror of `SessionMessageRow` in packages/weave-server/src/repositories/session-messages.ts。 */
+/** mirror of `PipeMessage` in packages/weave-server/src/hooks/message-deliverer.ts——
+ *  在途视图（GET /sessions/:id/messages = listVisible：promptbox 队列行 ∪ 内存态），
+ *  送达即从列表消失，历史在会话自己的转录里。管道不记录发起方。 */
 export interface SessionMessageRow {
-  id: number;
-  fromKind: 'dashboard' | 'session';
-  fromSessionId: string | null;
-  toSessionId: string;
+  /** 管道发号（uuid，全生命周期稳定；序列步 messageId 反查此值）。 */
+  id: string;
+  /** 目标会话（本视图每行都是投给它的）。 */
+  sessionId: string;
   text: string;
-  /** inject = 非抢占注入（忙排）；headless = 强制回合；auto = 服务端按忙闲裁决后落实际通道。 */
-  mode: 'inject' | 'headless' | 'auto';
-  status: 'queued' | 'injected' | 'running' | 'succeeded' | 'failed' | 'timeout';
+  mode: 'prompt' | 'inject' | 'headless' | 'auto';
+  /** 实际投递通道（auto 落定后回填；pending = 尚未裁决）。 */
+  channel: 'prompt' | 'inject' | 'headless' | null;
+  status: 'pending' | 'delivering' | 'running' | 'injected' | 'delivered' | 'succeeded' | 'failed' | 'timeout';
   output: string | null;
   error: string | null;
-  createdAt: string;
-  deliveredAt: string | null;
-  finishedAt: string | null;
+  at: string;
 }
 
 /** mirror of MessagingSurface 派生能力矩阵（GET /messaging/capabilities 行）——
- *  web 只渲染不判定：按钮门控、模式选择器选项都从这张表来。 */
+ *  web 只渲染不判定：按钮门控、编排域模式选项都从这张表来。 */
 export interface MessagingCapability {
   harness: Harness;
   discovery: boolean;
+  /** 人工投递唯一通道（层① 原生中继 || 层② 终端 send-text，随 settings 变）。 */
+  prompt: boolean;
   inject: boolean;
   headless: boolean;
   watch: boolean;
-  unsupportedReasons: Partial<Record<'discovery' | 'inject' | 'headless' | 'watch', string>> | null;
+  unsupportedReasons: Partial<
+    Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch', string>
+  > | null;
 }
 
 /** mirror of `SessionWatchRow` in packages/weave-server/src/repositories/session-watches.ts。 */
@@ -360,8 +365,8 @@ export interface SequenceStep {
   to: string;
   text: string;
   mode: 'inject' | 'headless' | 'auto';
-  /** 步触发后回填的消息行 id（缺省 = 尚未触发）。 */
-  messageId?: number;
+  /** 步触发后回填的管道发号（缺省 = 尚未触发）。 */
+  messageId?: string;
 }
 
 /** mirror of `SessionSequenceRow`（session_sequences 表行；steps 已解析为数组）。 */
@@ -1030,12 +1035,13 @@ export const api = {
     apiFetch<{ messages: SessionMessageRow[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
     ).then((r) => r.messages),
-  /** 投递消息到会话：auto 按忙闲裁决（忙→注入排队，闲→无头强开回合）；
-   *  非 2xx（会话忙/无项目/无头被占等）由 apiFetch 抛 Error（error 字段原文）。 */
+  /** 投递消息到会话：恒 prompt 通道、全自动无模式入参（原生 SendMessage 中继 →
+   *  终端 send-text 降级 → 未开会话积压队列）；层①② 皆无才 409，
+   *  由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
-    body: { text: string; mode?: 'inject' | 'headless' | 'auto' },
-  ): Promise<{ ok: boolean; messageId: number; status: string; message?: SessionMessageRow }> =>
+    body: { text: string },
+  ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
       body: JSON.stringify(body),

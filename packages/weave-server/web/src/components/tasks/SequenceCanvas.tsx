@@ -3,10 +3,8 @@ import {
   Background,
   Controls,
   Handle,
-  MarkerType,
   Position,
   ReactFlow,
-  type Edge,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
@@ -34,15 +32,11 @@ import type { SessionStatus } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { HarnessIcon } from './HarnessIcon';
 import { SessionMessages } from './SessionMessages';
-import {
-  layoutSequenceCanvas,
-  outgoingOf,
-  type LaidLane,
-} from './sequence-canvas-layout';
+import { layoutSequenceCanvas, type LaidLane } from './sequence-canvas-layout';
 
 /**
- * 编排画布（session-orchestration 批 3 ③）：本项目会话按 harness 泳道排布，
- * 会话间消息为边（状态着色）；下方 = 序列触发 builder（步 ≤3、会话与通道都按
+ * 编排画布（session-orchestration 批 3 ③）：本项目会话按 harness 泳道排布
+ * （在途消息计数挂在节点上）；下方 = 序列触发 builder（步 ≤3、会话与通道都按
  * 能力矩阵门控——web 只渲染不判定）+ 序列列表（进度/终态/取消）。刷新全部挂
  * App 转发的 weave:hook 帧（message.* → 线程重拉、sequence.* → 序列重拉），
  * 不新开 EventSource、不定时轮询。
@@ -53,15 +47,6 @@ interface BuilderStep {
   text: string;
   mode: 'auto' | 'inject' | 'headless';
 }
-
-const SEQ_EDGE_COLOR: Record<SessionMessageRow['status'], string> = {
-  queued: '#fbbf24',
-  injected: '#22d3ee',
-  running: '#60a5fa',
-  succeeded: '#34d399',
-  failed: '#f87171',
-  timeout: '#f87171',
-};
 
 const SEQ_STATUS_KEY: Record<
   SessionSequenceRow['status'],
@@ -92,15 +77,19 @@ const MSG_STATUS_KEY: Record<
   Extract<
     MessageKey,
     | 'tasks.msgStatusQueued'
+    | 'tasks.msgStatusDelivering'
     | 'tasks.msgStatusInjected'
+    | 'tasks.msgStatusDelivered'
     | 'tasks.msgStatusRunning'
     | 'tasks.msgStatusSucceeded'
     | 'tasks.msgStatusFailed'
     | 'tasks.msgStatusTimeout'
   >
 > = {
-  queued: 'tasks.msgStatusQueued',
+  pending: 'tasks.msgStatusQueued',
+  delivering: 'tasks.msgStatusDelivering',
   injected: 'tasks.msgStatusInjected',
+  delivered: 'tasks.msgStatusDelivered',
   running: 'tasks.msgStatusRunning',
   succeeded: 'tasks.msgStatusSucceeded',
   failed: 'tasks.msgStatusFailed',
@@ -115,7 +104,6 @@ type SessionNodeData = {
   session: SessionRow;
   status: SessionStatus;
   capable: boolean;
-  sent: number;
   received: number;
   onOpenMessages: (sessionId: string) => void;
 };
@@ -123,7 +111,7 @@ type SessionFlowNode = Node<SessionNodeData, 'seqSession'>;
 
 function SessionNode({ data }: NodeProps<SessionFlowNode>) {
   const t = useT();
-  const { session, status, capable, sent, received, onOpenMessages } = data;
+  const { session, status, capable, received, onOpenMessages } = data;
   return (
     <div
       className={cn(
@@ -142,7 +130,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
           {sessionLabel(session.title, session.sessionId)}
         </span>
         <span className="block truncate text-[10px] text-neutral-500">
-          {t('orch.sent', { n: sent })} · {t('orch.received', { n: received })}
+          {t('orch.received', { n: received })}
         </span>
       </div>
       {/* 可收消息徽标：能力真源 = 服务端 MessagingSurface 派生矩阵（表驱动）。 */}
@@ -243,9 +231,9 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
     const ids = new Set((sessions ?? []).map((s) => s.sessionId));
     return sequences.filter((seq) => seq.steps.some((step) => ids.has(step.to)));
   }, [sequences, sessions]);
-  /** 步触发的消息行（进度/终态着色）：threads 全量平铺索引。 */
+  /** 步触发的在途消息（进度/终态着色）：threads 全量平铺索引（键 = 管道发号）。 */
   const messageById = useMemo(() => {
-    const m = new Map<number, SessionMessageRow>();
+    const m = new Map<string, SessionMessageRow>();
     for (const list of threads?.values() ?? []) for (const msg of list) m.set(msg.id, msg);
     return m;
   }, [threads]);
@@ -285,14 +273,13 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
   }, [refreshThreads, refreshSequences]);
 
   // ---- 画布 ----
-  const messages = useMemo(
-    () => (threads === null ? null : outgoingOf(threads)),
-    [threads],
-  );
-  const laid = useMemo(
-    () => layoutSequenceCanvas(sessions ?? [], messages ?? []),
-    [sessions, messages],
-  );
+  const laid = useMemo(() => layoutSequenceCanvas(sessions ?? []), [sessions]);
+  /** 在途消息总量（各会话线程和；表头计数，无会话间边语义）。 */
+  const inFlight = useMemo(() => {
+    let n = 0;
+    for (const list of threads?.values() ?? []) n += list.length;
+    return n;
+  }, [threads]);
 
   const openMessages = useCallback(
     (sessionId: string): void => {
@@ -329,8 +316,7 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
           session: s,
           status: statuses.get(s.sessionId) ?? 'open',
           capable: !!cap && (cap.inject || cap.headless),
-          sent: thread?.filter((m) => m.fromSessionId === s.sessionId).length ?? 0,
-          received: thread?.filter((m) => m.fromSessionId !== s.sessionId).length ?? 0,
+          received: thread?.length ?? 0,
           onOpenMessages: openMessages,
         },
         draggable: true,
@@ -338,25 +324,6 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
     });
     return [...laneNodes, ...sessionNodes];
   }, [laid, capabilityMap, statuses, threads, openMessages]);
-
-  const flowEdges: Edge[] = useMemo(
-    () =>
-      laid.edges.map((e) => {
-        const color = SEQ_EDGE_COLOR[e.message.status];
-        return {
-          id: e.key,
-          source: e.sourceKey,
-          target: e.targetKey,
-          sourceHandle: 'r',
-          targetHandle: 'l',
-          type: 'smoothstep',
-          animated: e.message.status === 'running',
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color },
-          style: { stroke: color, strokeWidth: 1.8 },
-        } satisfies Edge;
-      }),
-    [laid.edges],
-  );
 
   // ---- 触发 builder ----
   const [builderName, setBuilderName] = useState('');
@@ -455,9 +422,7 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
         <Waypoints className="h-3.5 w-3.5 text-teal-400" />
         <h3 className="text-sm font-semibold text-neutral-200">{t('orch.title')}</h3>
         <span className="text-[11px] text-neutral-500">
-          {messages === null
-            ? t('hooks.loading')
-            : t('orch.messages', { n: laid.edges.length })}
+          {threads === null ? t('hooks.loading') : t('orch.messages', { n: inFlight })}
         </span>
         <RefreshIconButton
           className="ml-auto"
@@ -482,7 +447,6 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
         ) : (
           <ReactFlow
             nodes={flowNodes}
-            edges={flowEdges}
             nodeTypes={nodeTypes}
             fitView
             fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
