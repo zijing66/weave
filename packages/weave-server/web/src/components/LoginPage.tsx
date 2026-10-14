@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Lock } from 'lucide-react';
 import { AuthError, login } from '@/lib/auth';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -39,7 +38,8 @@ export function LoginPage() {
         }}
       >
         <div className="mb-5 flex items-center gap-2 text-neutral-200">
-          <Lock className="h-4 w-4 text-neutral-500" />
+          {/* 品牌标记：与顶栏 / favicon 同一份 public/weave-logo.svg（单一来源） */}
+          <img src="/weave-logo.svg" alt="" className="h-[18px] w-[18px] shrink-0" />
           <span className="text-sm font-medium">{t('auth.title')}</span>
         </div>
         {/* 登录凭据的**唯一**归属框：current-password 让浏览器把保存的密码稳定填这里；
