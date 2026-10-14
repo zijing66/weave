@@ -383,6 +383,69 @@ watch 引擎 + 路由 + web 铃铛面全量落地，与设计的偏差与定案�
 验证：watch-engine 15/15、sweeper 扩展 6/6、全量 server 89 文件 883/883 绿、
 web 10 文件 89/89 绿；两 tsc（server+harness 包根、web）全绿。
 
+### 批 3 实施记录（2026-10-15 落库，三笔：① CLI `9f9ca8d` ② 引擎 `a0624e7` ③ 画布 `47da60c`）
+
+**① CLI 发起面（`weave msg`）**：
+
+- **`MessagingSurface.sessionEnv` 新槽**：会话内 env 变量名是 harness 知识——claude 声明
+  `CLAUDE_CODE_SESSION_ID`，CLI 经 registry 面取，不散写 harness env 名。这是 D4「agent
+  在会话内发起编排」的寻址底座：CLI 进程读自己的 sessionEnv 即知 fromSessionId。
+- `weave msg ls [ref]`（可寻址会话表 + 线程查看，MSG 列按能力矩阵门控）/ `send <ref> <text>
+  [--mode]`（fromKind=cli，会话内自动带 from）/ `watch <ref> [--notify]`（会话内 = 通知
+  注入本会话；会话外 = dashboard 订阅）/ `reply <text>`（from 即 to，D4）。
+- 寻址三级：精确 id → id 前缀 → 标题模糊，多命中带候选报错；纯函数单测覆盖。
+
+**② 序列编排器（server）**：
+
+- **无状态引擎设计**：`SequenceEngine` 无内存权威态，全部状态在 `session_sequences` 行
+  （steps JSON 携带 messageId——步触发后回填，是重启恢复的判据）；`cursor` = 正在等待
+  完成的步下标。步完成判据按通道分叉：headless 步 = bus `message.finished` 帧
+  （messageId 匹配 `steps[cursor]`）；inject 步 = ingest 到达目标会话 idleSignals 事件
+  （经面取，与 WatchEngine 同口径同竞态）。步完成 → `advanceCursor` CAS（同批
+  Stop+SessionEnd 双事件只赢一次）→ fire 下一步；终态 `finish` CAS。
+- **hop 上限定案 = steps ≤ 3**（D5 防环）：路由 400 直拒，引擎不数 hop——步数即链长，
+  上限在创建点收口比运行时计数更简单。
+- **同步失败窗口补判**：headless 同步失败路径（isBusy 竞态/spawn throw）在 send 返回前
+  就发 finished 帧——彼时 messageId 尚未落库、帧匹配不上，故 send 返回后按消息行终态
+  补判（succeeded → advance；failed/timeout → finish）。`rearm()` 对称覆盖宕机窗口：
+  未触发步（messageId null）→ 补 fire；injected → 续等；running → finish failed
+  「daemon restarted during headless step」；已落终态但帧未达 → 按行终态补推进。
+- **trigger await 化**：路由创建即 `await trigger(row)` 后重读行再返回——响应带
+  `steps[0].messageId`（画布首步状态可即时渲染）。
+- **骑乘竞态已知残差**：inject 步的 idle 推进可能在骑乘 Stop 事件上提前一拍
+  （additionalContext 使宿主续跑，Stop 本身是 injectable 事件）——与 WatchEngine 同
+  口径，引擎头注释记录，不另加机制；inject 到死闲会话永不推进（用户显式选择非抢占）。
+- 路由步级前置校验（404/400/409 带步号）；bus 帧 `sequence.step` / `sequence.finished`
+  走既有 hook 帧形透传；级联四处（purge `deleteMentioning` / archive
+  `deleteByProject` / sweeper `sweepTerminated` / inbox `onEvent`）。
+- **顺带补批 2 缺口**：start.ts/dev-entry.ts 的 sweeper 调用此前漏传
+  `watches: sessionWatches`（purge 的 watch 级联在两入口失效）——随本批装配补上。
+
+**③ 编排画布（web）**：
+
+- **挂载定案：新 `MainCategory 'orchestrate'` 第五卡**（Waypoints/teal）——App.tsx 零
+  改动（selectCategory 泛型本就吃新枚举；画布自管高度不进 'tasks' 的 overflow-hidden
+  特例）；`countFor` 复用项目会话数。编译器替我们找到的第二个穷举点：LibraryPanel
+  `categoryLabel` 补分支。
+- **布局纯函数抽离**（`sequence-canvas-layout.ts`，可单测）：会话按 harness 泳道分列
+  （名表序、未知归末列、只给在场 harness 开道），泳道内纵排；消息为边——两端会话
+  都在画布上才成边（dashboard/cli 投递无源端，由节点「收」计数承载）。
+- **线程聚合 N 次拉取**：每会话 `listSessionMessages` 聚合，取「本会话发出」切片去重
+  （双向线程里每条会话间消息恰出现一次）；重拉只看会话 id 集是否真变（状态总线每帧
+  refetch 都换数组身份，不能挂身份依赖）。
+- **门控全表驱动**：builder 目标会话按 inject||headless 过滤、通道选项按所选会话能力
+  展开（与 SessionMessages 同口径）；目标会话消失诚实降级（清选择保文本回 auto），
+  不留幽灵值。
+- **SSE 防抖同族**：`message.*` 帧定向本项目会话重拉线程、`sequence.*` 重拉序列
+  （帧不带项目语义，防抖后一次 GET 足够便宜）；序列列表按「任一步目标命中本项目
+  会话」客户端过滤（服务端一张全量表，`deleteMentioning` 同判据）。
+- 序列行：状态徽标 + 进度（cursor+1/n）+ 逐步明细（messageId 反查消息行状态着色，
+  未触发显式「未触发」）+ running 可取消；点击可收消息节点开 SessionMessages 弹窗。
+
+验证：① CLI 寻址纯函数 10 例 + harness 契约 9/9；② engine 20 + 路由 6 + sweeper 1，
+全量 910/910；③ 布局纯函数 4 例，web 93/93、全仓 126 文件 1320/1320 绿；两 tsc
+（server+harness 包根、web）全绿。
+
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 
 Claude Code 的定时任务机制（CronCreate）与 SendMessage 是**同一投递底座的两个前端**——
