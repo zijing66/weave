@@ -119,6 +119,7 @@ flowchart TD
     SSE["handleSse ★GET /events 单通道<br/>帧域 asset / project / hook + push / invalidate"]
     REF["隐藏刷新器（terminal-counts 形状）<br/>有 SSE 客户端才探 · 变化才推"]
     MSG["message-deliverer 裁决表<br/>inject（忙排 outbox）｜headless（闲投 resume）"]
+    AUTH["认证门 · deps.auth<br/>密码 / 会话 cookie / x-weave-local 本机令牌<br/>（豁免 /health、/auth/*、HTML 与静态文件）"]
     OP["TerminalBackend 候选链<br/>（settings → terminalBackendFor）"]
     DB[("node:sqlite<br/>projects · sessions · hook_events<br/>session_messages · watches …")]
   end
@@ -141,11 +142,12 @@ flowchart TD
   REF --> SSE
   SSE -->|"data: {type,…}"| WSSE
   WSSE --> UI
-  UI -->|"REST（api.ts）"| daemon
+  UI -->|"REST（api.ts，带会话 cookie）"| AUTH
+  WEAVE -->|"REST（带本机令牌）"| AUTH
+  AUTH -->|"放行 → 各路由"| HP
   MSG -->|"headless spawn 宿主 CLI"| CC
   OP -->|"开终端窗口"| CC
   OP -->|"开终端窗口"| CX2
-  WEAVE -->|"HTTP"| daemon
   MKT --- HP
 ```
 
@@ -154,6 +156,7 @@ flowchart TD
 - **SSE 单通道**：dashboard ↔ 服务端只有 `GET /events` 一条事件流；无事件源的数据（终端窗口数、会话存活）由后端隐藏刷新器补，前端不得 `new EventSource`、不得轮询。
 - **inject 回程**：消息投递的 inject 通道写 outbox，随目标会话下一拍 hook 送达（非抢占）；headless 通道走共享无头核（与 resume dispatch 同实例 = 同会话并发闸跨域生效）。
 - **市场身份判据**唯一实现 = `server/market/identity.ts` 的 `marketIdOf`；插件注册键形 `<name>@<marketplace>` 唯一拼装点 = `PluginSurface.pluginKey`。
+- **认证门**：`deps.auth`（`daemon/dashboard-auth.ts`）装在 `handleRequest` 最前——会话 cookie（浏览器）/ 本机令牌（CLI 与 hooks）二者认一；改密只走 CLI（本机令牌），web 无改密入口，401 一律回登录页。**绑定**：settings `server.bindHost` 默认 `0.0.0.0`（局域网可达，由上面的认证兜底），CLI 客户端仍连 `127.0.0.1`（`DAEMON_HOST` 与 bindHost 是两个概念）。
 
 ## 四、工具对象模型与资源三层
 
