@@ -52,12 +52,12 @@ export type HookBusMessage =
   /** 更名生效确认：reported title 落库（pending 清除）后广播，dashboard 据此
    *  把「改名待生效」徽标切换为已生效的新名字。 */
   | { kind: 'session.renamed'; sessionId: string; title: string; at: string }
-  // ---- 消息域（session-orchestration 批 1）：与 dispatch.* 分域，幂等键 = messageId ----
-  | { kind: 'message.created'; messageId: number; sessionId: string; mode: string; at: string }
-  | { kind: 'message.delivered'; messageId: number; sessionId: string; at: string }
+  // ---- 消息域（消息域重塑：纯管道）：与 dispatch.* 分域，幂等键 = messageId（管道发号）----
+  | { kind: 'message.created'; messageId: string; sessionId: string; mode: string; at: string }
+  | { kind: 'message.delivered'; messageId: string; sessionId: string; at: string }
   | {
       kind: 'message.finished';
-      messageId: number;
+      messageId: string;
       sessionId: string;
       status: 'succeeded' | 'failed' | 'timeout';
       at: string;

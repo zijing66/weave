@@ -1,13 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { MessageMode } from './session-messages';
+import type { MessageMode } from '../hooks/message-deliverer.js';
 
-/** 序列步（steps JSON 的一格）。messageId 为步触发后回填的消息行 id。 */
+/** 序列步（steps JSON 的一格）。messageId 为步触发后回填的管道发号（内存关联，非 DB 行）。 */
 export interface SequenceStep {
   to: string;
   text: string;
   mode: MessageMode;
   /** null = 本步尚未触发（或触发前落库）；重启恢复时区分等待通道用。 */
-  messageId?: number;
+  messageId?: string;
 }
 
 export type SequenceStatus = 'running' | 'done' | 'failed' | 'cancelled';
@@ -91,8 +91,8 @@ export class SessionSequenceRepository {
     );
   }
 
-  /** 步触发后回填 messageId（步数组读改写后整体落库，单线程无竞态）。 */
-  setStepMessage(id: number, stepIndex: number, messageId: number): void {
+  /** 步触发后回填 messageId（管道发号；步数组读改写后整体落库，单线程无竞态）。 */
+  setStepMessage(id: number, stepIndex: number, messageId: string): void {
     const row = this.getById(id);
     if (!row || row.steps[stepIndex] == null) return;
     row.steps[stepIndex].messageId = messageId;

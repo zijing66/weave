@@ -5,24 +5,30 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
-import type { MessagingSurface } from '@weavecode/harness';
+import type { MessagingSurface, PromptRelaySpec } from '@weavecode/harness';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { SessionRepository } from '../../repositories/sessions.js';
-import { SessionMessageRepository } from '../../repositories/session-messages.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { HeadlessRunner, type SpawnLike } from '../headless-runner.js';
-import { MessageDeliverer, type MessageDelivererDeps, type SendResult } from '../message-deliverer.js';
+import {
+  MessageDeliverer,
+  type MessageDelivererDeps,
+  type PromptTerminal,
+  type SendResult,
+} from '../message-deliverer.js';
 import { ResumeRunner } from '../resume-runner.js';
 import { hookShardId } from '../mirror.js';
+import { readPromptbox } from '../promptbox.js';
 
 const PROJECT_PATH = '/msg-proj';
 const TOKEN = 'mtoken';
 const SESSION_ID = 'sess-msg';
 const CODEX_SESSION = 'sess-cdx';
+const PEER_NAME = 'msg-target';
 
 /** 结构上满足 SpawnChild.stdin 的假管道：记录 prompt 写入。 */
 class FakeStdin extends EventEmitter {
@@ -58,11 +64,29 @@ function createFakeSpawn() {
   return { calls, children, spawnImpl };
 }
 
+/** prompt 测试面：resolve 可控的中继规格（默认命中 PEER_NAME）。 */
+function relaySurface(resolve: (sessionId: string) => { name: string } | null = () => ({ name: PEER_NAME })) {
+  const relay: PromptRelaySpec = {
+    bin: 'fake-relay',
+    args: ['-p', '--no-session-persistence'],
+    senderName: 'weave',
+    resolve,
+  };
+  const surface: MessagingSurface = {
+    harness: 'claude',
+    discovery: true,
+    prompt: relay,
+    inject: { rideEvents: ['UserPromptSubmit'] },
+    headless: null,
+    idleSignals: ['Stop'],
+  };
+  return { relay, surface };
+}
+
 describe('MessageDeliverer 裁决表', () => {
   let db: ReturnType<typeof openDatabase>;
   let sessions: SessionRepository;
   let events: HookEventRepository;
-  let messages: SessionMessageRepository;
   let bus: HookEventBus;
   let busEvents: HookBusMessage[];
   let projectId: number;
@@ -72,7 +96,6 @@ describe('MessageDeliverer 裁决表', () => {
     events.insert({ projectId, source, eventType, sessionId, payload: '{}' });
 
   const makeDeps = (extra: Partial<MessageDelivererDeps> = {}): MessageDelivererDeps => ({
-    messages,
     sessions,
     projects: new ProjectRepository(db),
     hookEvents: events,
@@ -102,7 +125,6 @@ describe('MessageDeliverer 裁决表', () => {
     projectId = project.id;
     sessions = new SessionRepository(db);
     events = new HookEventRepository(db);
-    messages = new SessionMessageRepository(db);
     bus = new HookEventBus();
     busEvents = [];
     bus.subscribe((m) => busEvents.push(m));
@@ -116,11 +138,11 @@ describe('MessageDeliverer 裁决表', () => {
     rmSync(hooksDir, { recursive: true, force: true });
   });
 
-  it('会话不存在 → 404，且不落行', async () => {
+  it('会话不存在 → 404，且无任何管道痕迹', async () => {
     const deliverer = new MessageDeliverer(makeDeps());
     const result = await send(deliverer, { toSessionId: 'sess-unknown' });
     expect(result).toMatchObject({ ok: false, status: 404 });
-    expect(messages.listBySession('sess-unknown')).toHaveLength(0);
+    expect(deliverer.listVisible('sess-unknown')).toHaveLength(0);
   });
 
   it('harness 无法判定（零事件）→ 400', async () => {
@@ -129,38 +151,30 @@ describe('MessageDeliverer 裁决表', () => {
     expect(result).toMatchObject({ ok: false, status: 400 });
   });
 
-  it('codex 面：inject / headless / auto 任一模式均 409 + 面内原因', async () => {
+  it('codex 面：inject / headless / auto / prompt（无终端通道）均 409 + 面内原因', async () => {
     const deliverer = new MessageDeliverer(makeDeps());
     pushEvent(CODEX_SESSION, 'Stop', 'codex');
-    const inject = await deliverer.send({
+    for (const mode of ['inject', 'headless', 'auto', 'prompt'] as const) {
+      const result = await deliverer.send({
+        toSessionId: CODEX_SESSION,
+        text: 'hi',
+        mode,
+        fromKind: 'dashboard',
+      });
+      expect(result, mode).toMatchObject({ ok: false, status: 409 });
+    }
+    const prompt = await deliverer.send({
       toSessionId: CODEX_SESSION,
       text: 'hi',
-      mode: 'inject',
+      mode: 'prompt',
       fromKind: 'dashboard',
     });
-    expect(inject).toMatchObject({ ok: false, status: 409 });
-    expect((inject as Extract<SendResult, { ok: false }>).error).toContain('Codex');
-
-    const headless = await deliverer.send({
-      toSessionId: CODEX_SESSION,
-      text: 'hi',
-      mode: 'headless',
-      fromKind: 'dashboard',
-    });
-    expect(headless).toMatchObject({ ok: false, status: 409 });
-
-    // auto 闲 → headless（null → 409）；忙 → inject（null → 409）：全通道 null 无路可走
-    const autoIdle = await deliverer.send({
-      toSessionId: CODEX_SESSION,
-      text: 'hi',
-      mode: 'auto',
-      fromKind: 'dashboard',
-    });
-    expect(autoIdle).toMatchObject({ ok: false, status: 409 });
-    expect(messages.listBySession(CODEX_SESSION)).toHaveLength(0);
+    expect((prompt as Extract<SendResult, { ok: false }>).error).toContain('Codex');
+    expect(deliverer.listVisible(CODEX_SESSION)).toHaveLength(0);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
   });
 
-  it('inject 通道：信封落 outbox → injected + deliveredAt + created/delivered 帧', async () => {
+  it('inject 通道：信封落 outbox → injected + created/delivered 帧', async () => {
     const deliverer = new MessageDeliverer(makeDeps());
     pushEvent(SESSION_ID, 'UserPromptSubmit');
 
@@ -182,15 +196,14 @@ describe('MessageDeliverer 裁决表', () => {
     expect(entry.text).toContain('mode=inject');
     expect(entry.text.endsWith('hello body')).toBe(true);
 
-    const row = messages.listBySession(SESSION_ID)[0]!;
-    expect(row.status).toBe('injected');
-    expect(row.deliveredAt).not.toBeNull();
-    expect(row.mode).toBe('inject');
+    const msg = deliverer.getMessage(result.ok ? result.messageId : '')!;
+    expect(msg.status).toBe('injected');
+    expect(msg.mode).toBe('inject');
     expect(busEvents).toContainEqual(
       expect.objectContaining({ kind: 'message.created', sessionId: SESSION_ID }),
     );
     expect(busEvents).toContainEqual(
-      expect.objectContaining({ kind: 'message.delivered', messageId: row.id }),
+      expect.objectContaining({ kind: 'message.delivered', messageId: msg.id }),
     );
   });
 
@@ -208,6 +221,7 @@ describe('MessageDeliverer 裁决表', () => {
       fromKind: 'dashboard',
     });
     expect(result).toMatchObject({ ok: true, status: 'running' });
+    expect(typeof (result as { messageId: string }).messageId).toBe('string');
     expect(fake.calls).toHaveLength(1);
     // CLAUDE_RESUME.promptStdin：信封经 stdin，命令行无用户内容（win32 = joined 串）
     const onWin = process.platform === 'win32';
@@ -219,13 +233,14 @@ describe('MessageDeliverer 裁决表', () => {
     fake.children[0]!.stdout.emit('data', Buffer.from('answer'));
     fake.children[0]!.emit('exit', 0, null);
 
-    const row = messages.listBySession(SESSION_ID)[0]!;
-    expect(row.status).toBe('succeeded');
-    expect(row.output).toContain('answer');
-    expect(row.finishedAt).not.toBeNull();
+    const msg = deliverer.getMessage((result as { messageId: string }).messageId)!;
+    expect(msg.status).toBe('succeeded');
+    expect(msg.output).toContain('answer');
     expect(busEvents).toContainEqual(
-      expect.objectContaining({ kind: 'message.finished', messageId: row.id, status: 'succeeded' }),
+      expect.objectContaining({ kind: 'message.finished', messageId: msg.id, status: 'succeeded' }),
     );
+    // 终态驻留在途视图（headless 结果可见 = 设计语义）
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.status)).toContain('succeeded');
   });
 
   it('auto 忙（turnOpen）→ inject 落 outbox，绝不无头抢占', async () => {
@@ -236,7 +251,7 @@ describe('MessageDeliverer 裁决表', () => {
 
     const result = await send(deliverer, {});
     expect(result).toMatchObject({ ok: true, status: 'injected' });
-    expect(messages.listBySession(SESSION_ID)[0]!.mode).toBe('auto');
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)!.mode).toBe('auto');
     expect(readFileSync(join(hooksDir, 'outbox', `${hookShardId(TOKEN)}.jsonl`), 'utf8')).toContain(
       'mode=inject',
     );
@@ -253,13 +268,14 @@ describe('MessageDeliverer 裁决表', () => {
     const result = await send(deliverer, {});
     expect(result).toMatchObject({ ok: true, status: 'running' });
     expect(fake.calls).toHaveLength(1);
-    expect(messages.listBySession(SESSION_ID)[0]!.mode).toBe('auto');
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)!.mode).toBe('auto');
   });
 
   it('auto 忙 + 面无 inject 通道 → 409（不降级无头抢占）', async () => {
     const noInject: MessagingSurface = {
       harness: 'claude',
       discovery: true,
+      prompt: null,
       inject: null,
       headless: {
         supported: true,
@@ -275,13 +291,14 @@ describe('MessageDeliverer 裁决表', () => {
     const result = await send(deliverer, {});
     expect(result).toMatchObject({ ok: false, status: 409 });
     expect((result as Extract<SendResult, { ok: false }>).error).toContain('no inject channel');
-    expect(messages.listBySession(SESSION_ID)).toHaveLength(0);
+    expect(deliverer.listVisible(SESSION_ID)).toHaveLength(0);
   });
 
   it('auto 闲 + 面无 headless 通道 → 409', async () => {
     const noHeadless: MessagingSurface = {
       harness: 'claude',
       discovery: true,
+      prompt: null,
       inject: { rideEvents: ['UserPromptSubmit'] },
       headless: null,
       idleSignals: ['Stop'],
@@ -295,7 +312,7 @@ describe('MessageDeliverer 裁决表', () => {
     expect((result as Extract<SendResult, { ok: false }>).error).toContain('no headless channel');
   });
 
-  it('无项目 → 400（两通道都需要项目）', async () => {
+  it('无项目 → 400（各通道都需要项目）', async () => {
     sessions.touch('sess-orphan', null);
     pushEvent('sess-orphan', 'UserPromptSubmit');
     const deliverer = new MessageDeliverer(makeDeps());
@@ -360,6 +377,7 @@ describe('MessageDeliverer 裁决表', () => {
     const custom: MessagingSurface = {
       harness: 'claude',
       discovery: true,
+      prompt: null,
       inject: { rideEvents: ['UserPromptSubmit'] },
       headless: null,
       idleSignals: ['Stop'],
@@ -386,15 +404,15 @@ describe('MessageDeliverer 裁决表', () => {
       makeDeps({ spawnImpl: fake.spawnImpl, bin: 'fake-claude' }),
     );
     pushEvent(SESSION_ID, 'Stop');
-    await send(deliverer, { mode: 'headless' });
+    const result = await send(deliverer, { mode: 'headless' });
 
     fake.children[0]!.stderr.emit('data', Buffer.from('boom'));
     fake.children[0]!.emit('exit', 3, null);
 
-    const row = messages.listBySession(SESSION_ID)[0]!;
-    expect(row.status).toBe('failed');
-    expect(row.error).toContain('exit 3');
-    expect(row.error).toContain('boom');
+    const msg = deliverer.getMessage((result as { messageId: string }).messageId)!;
+    expect(msg.status).toBe('failed');
+    expect(msg.error).toContain('exit 3');
+    expect(msg.error).toContain('boom');
   });
 
   it('headless 超时 → timeout + kill', async () => {
@@ -404,31 +422,314 @@ describe('MessageDeliverer 裁决表', () => {
       makeDeps({ spawnImpl: fake.spawnImpl, bin: 'fake-claude', timeoutMs: 30, killImpl }),
     );
     pushEvent(SESSION_ID, 'Stop');
-    await send(deliverer, { mode: 'headless' });
+    const result = await send(deliverer, { mode: 'headless' });
 
-    await vi.waitFor(() => expect(messages.listBySession(SESSION_ID)[0]!.status).toBe('timeout'), {
-      timeout: 2000,
-      interval: 10,
-    });
+    await vi.waitFor(
+      () => expect(deliverer.getMessage((result as { messageId: string }).messageId)!.status).toBe('timeout'),
+      { timeout: 2000, interval: 10 },
+    );
     expect(killImpl).toHaveBeenCalledWith(7777);
   });
 
-  it('线程双向：listBySession 圈收发两端', async () => {
-    const deliverer = new MessageDeliverer(makeDeps());
-    pushEvent(SESSION_ID, 'UserPromptSubmit');
-    pushEvent('sess-other', 'UserPromptSubmit');
-    sessions.touch('sess-other', projectId);
+  // ---- prompt 通道（消息域重塑）：层① 中继 / 层② 终端兜底 / 层③ 队列 ----
 
+  it('prompt 层①：中继 spawn——固定参数 + stdin 指令（含 peer 名与原文）；退出 0 = delivered', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'go check the build',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(1);
+    const onWin = process.platform === 'win32';
+    expect(fake.calls[0]!.cmd).toBe(
+      onWin ? 'fake-relay -p --no-session-persistence' : 'fake-relay',
+    );
+    expect(fake.calls[0]!.args).toEqual(onWin ? [] : ['-p', '--no-session-persistence']);
+    // 中性 cwd（防项目 hooks 幽灵事件），不是项目路径
+    expect(fake.calls[0]!.options.cwd).not.toBe(PROJECT_PATH);
+    const stdinText = fake.children[0]!.stdin.writes[0]!;
+    expect(stdinText).toContain(PEER_NAME);
+    expect(stdinText).toContain('go check the build');
+    expect(stdinText).toContain('SendMessage');
+    // 队列不落行（层① 命中即时投递）
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+
+    fake.children[0]!.emit('exit', 0, null);
+    const msg = deliverer.getMessage((result as { messageId: string }).messageId)!;
+    expect(msg.status).toBe('delivered');
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.delivered', messageId: msg.id }),
+    );
+    // delivered 不在在途视图（送达即从列表消失）
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(msg.id);
+  });
+
+  it('prompt 层① 中继键 = 合成键：目标会话 headless 被占不挡中继', async () => {
+    const fake = createFakeSpawn();
+    const headless = new HeadlessRunner({ spawnImpl: fake.spawnImpl });
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ headless, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    // 先占住目标会话的 headless 闸
+    expect(
+      headless.run({
+        sessionId: SESSION_ID,
+        cwd: PROJECT_PATH,
+        prompt: 'occupy',
+        spec: {
+          supported: true,
+          bin: 'fake-claude',
+          args: (sid) => ['--resume', sid, '-p'],
+          promptStdin: true,
+        },
+        bin: 'fake-claude',
+      }),
+    ).toBe(true);
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'via relay',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(2); // 占位 spawn + 中继 spawn
+  });
+
+  it('prompt 层③：peer 未登记（会话没开）→ 入 promptbox 队列；登记出现后 flushSession 中继冲洗', async () => {
+    const fake = createFakeSpawn();
+    let registered = false;
+    const { surface } = relaySurface((sessionId) =>
+      registered ? { name: PEER_NAME } : null,
+    );
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued hello',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+    expect(fake.calls).toHaveLength(0);
+    const queued = readPromptbox(hooksDir, TOKEN);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.text).toBe('queued hello');
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(true);
+    // pending 在在途视图里
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.status)).toContain('pending');
+
+    // 会话开了（peer 注册表出现）→ 冲洗：中继启动 + 行删除
+    registered = true;
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.children[0]!.stdin.writes[0]).toContain(PEER_NAME);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)!.status).toBe('delivering');
+  });
+
+  it('prompt 层③ 驻留：peer 仍缺 → flushSession 幂等不动行；中继失败不回队（failed 可见）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(() => null); // 永不登记
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'stays queued',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(0);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1); // 行留队列
+
+    // 层① 闪现（登记了一瞬）→ 中继非 0 退出 → failed 留内存可见、不回队
+    const flaky = relaySurface((sessionId) => ({ name: PEER_NAME }));
+    const flakyDeliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => flaky.surface, bin: 'fake-relay' }),
+    );
+    const queued = readPromptbox(hooksDir, TOKEN);
+    // 直接对 flaky 面发一条即时中继，然后让它失败
+    const flakyResult = await flakyDeliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'will fail',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    fake.children[fake.children.length - 1]!.emit('exit', 1, null);
+    const failedMsg = flakyDeliverer.getMessage((flakyResult as { messageId: string }).messageId)!;
+    expect(failedMsg.status).toBe('failed');
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.finished', messageId: failedMsg.id, status: 'failed' }),
+    );
+    expect(readPromptbox(hooksDir, TOKEN).some((e) => e.id === failedMsg.id)).toBe(false);
+    void queued;
+  });
+
+  it('prompt 层②：无原生面 + 终端通道——pane 标题（剥 spinner）+ cwd 匹配即注入；歧义拒绝', async () => {
+    const sessions2 = sessions; // 标题挂在会话行上
+    sessions.touch(SESSION_ID, projectId);
+    // 会话标题：listWithCounts 之前先确保 title 存在——SessionRepository.touch 不带 title；
+    // 直接经 UPDATE 语句落（测试专用窄口）
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('✳ msg-target', SESSION_ID);
+    void sessions2;
+    const panes = [
+      { id: 'pane-1', title: '✳ msg-target', cwd: PROJECT_PATH },
+      { id: 'pane-2', title: 'other', cwd: PROJECT_PATH },
+    ];
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const terminal: PromptTerminal = {
+      listPanes: vi.fn().mockResolvedValue(panes),
+      sendText,
+    };
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+      unsupportedReasons: { prompt: 'no native channel (test)' },
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => noNative, terminal }),
+    );
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'terminal hello',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(sendText).toHaveBeenCalledWith('pane-1', 'terminal hello');
+    await vi.waitFor(() =>
+      expect(deliverer.getMessage((result as { messageId: string }).messageId)!.status).toBe('delivered'),
+    );
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+
+    // 歧义（两个 pane 同标题同 cwd）→ 拒绝 → 入队
+    const ambiguous: PromptTerminal = {
+      listPanes: vi.fn().mockResolvedValue([
+        { id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH },
+        { id: 'pane-3', title: 'msg-target', cwd: PROJECT_PATH },
+      ]),
+      sendText,
+    };
+    const ambDeliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => noNative, terminal: ambiguous }),
+    );
+    const ambResult = await ambDeliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'ambiguous',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(ambResult).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+  });
+
+  it('prompt 层② 队列冲洗：pane 出现后 flushSession 经终端注入删行', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    let panes: Array<{ id: string; title: string; cwd: string }> = [];
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const terminal: PromptTerminal = {
+      listPanes: vi.fn().mockImplementation(async () => panes),
+      sendText,
+    };
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => noNative, terminal }),
+    );
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'wait for pane',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+
+    panes = [{ id: 'pane-9', title: 'msg-target', cwd: PROJECT_PATH }];
+    await deliverer.flushSession(SESSION_ID);
+    expect(sendText).toHaveBeenCalledWith('pane-9', 'wait for pane');
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(deliverer.getMessage((result as { messageId: string }).messageId)!.status).toBe('delivered'),
+    );
+  });
+
+  it('级联清理：forgetSession 清内存态 + 队列行；forgetProject 按项目归属清', async () => {
+    const { surface } = relaySurface(() => null);
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
+    pushEvent(SESSION_ID, 'Stop');
+    pushEvent(CODEX_SESSION, 'Stop');
     await deliverer.send({
       toSessionId: SESSION_ID,
-      text: 'in',
-      mode: 'inject',
-      fromKind: 'session',
-      fromSessionId: 'sess-other',
+      text: 'a',
+      mode: 'prompt',
+      fromKind: 'dashboard',
     });
-    const thread = messages.listBySession('sess-other');
-    expect(thread).toHaveLength(1);
-    expect(thread[0]!.fromSessionId).toBe('sess-other');
-    expect(thread[0]!.toSessionId).toBe(SESSION_ID);
+    await deliverer.send({
+      toSessionId: CODEX_SESSION,
+      text: 'b',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+
+    const removed = deliverer.forgetSession(SESSION_ID);
+    expect(removed).toBe(1);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+
+    const removedProject = deliverer.forgetProject(projectId);
+    expect(removedProject).toBe(1);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.hasQueued(CODEX_SESSION)).toBe(false);
+  });
+
+  it('在途视图聚合：promptbox pending ∪ 内存 delivering/running/终态', async () => {
+    const { surface } = relaySurface(() => null);
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
+    pushEvent(SESSION_ID, 'Stop');
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'pending one',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    const visible = deliverer.listVisible(SESSION_ID);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({ status: 'pending', channel: 'prompt', text: 'pending one' });
   });
 });

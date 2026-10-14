@@ -96,25 +96,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_seen_at);
 
--- 跨会话编排（session-orchestration）：点对点消息域（手动编排，与规则驱动的
--- hook_dispatches 分域）。session_watches 批 2 接触发器，表先建。
-CREATE TABLE IF NOT EXISTS session_messages (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  from_kind       TEXT NOT NULL,
-  from_session_id TEXT,
-  to_session_id   TEXT NOT NULL,
-  text            TEXT NOT NULL,
-  mode            TEXT NOT NULL,
-  status          TEXT NOT NULL,
-  output          TEXT,
-  error           TEXT,
-  created_at      TEXT NOT NULL,
-  delivered_at    TEXT,
-  finished_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_session_messages_to ON session_messages(to_session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_session_messages_from ON session_messages(from_session_id, created_at);
-
+-- 跨会话编排（session-orchestration）：空闲订阅 + 序列表保留。点对点消息域
+-- 已重塑为纯递送管道（本地文件 + 内存态，不落库）——session_messages 表退役。
 CREATE TABLE IF NOT EXISTS session_watches (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   watcher_session_id TEXT,
@@ -126,8 +109,9 @@ CREATE TABLE IF NOT EXISTS session_watches (
 CREATE INDEX IF NOT EXISTS idx_session_watches_target ON session_watches(target_session_id, fired_at);
 
 -- 跨会话序列（批 3）：手工编排的多步链。steps JSON = [{to,text,mode,
--- messageId?}]，messageId 为步触发后回填的消息行 id（重启恢复判据）；
+-- messageId?}]，messageId 为步触发后回填的管道发号（内存关联）；
 -- cursor = 正在等待完成的步下标。引擎无内存权威态，全部状态在行。
+-- 消息域重塑（消息域退役）：上表 session_messages 随管道化 DROP。
 CREATE TABLE IF NOT EXISTS session_sequences (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL DEFAULT '',
@@ -161,6 +145,9 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
+  // 消息域重塑：session_messages 退役（消息 = 纯递送管道，本地文件 + 内存态）。
+  // 存量行均为测试数据，随表删；DROP 幂等。
+  db.exec('DROP TABLE IF EXISTS session_messages');
   migrateHookRulesColumns(db);
   migrateProjectsColumns(db);
   return db;

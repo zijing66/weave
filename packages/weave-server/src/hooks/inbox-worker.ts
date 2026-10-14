@@ -12,6 +12,7 @@ import { appendOutbox } from './mirror.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 import type { WatchEngine } from './watch-engine.js';
 import type { SequenceEngine } from './sequence-engine.js';
+import type { MessageDeliverer } from './message-deliverer.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -262,6 +263,8 @@ export interface IngestedHandlerDeps {
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
   /** 序列引擎（批 3）：inject 步的完成判据 = 目标 idleSignals 事件。 */
   sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
+  /** prompt 队列冲洗（消息域重塑）：目标会话有事件 = 活着，即时试递（fire-and-forget）。 */
+  messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
 }
 
 /**
@@ -299,6 +302,9 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         eventType: record.input.eventType,
         source: record.input.source,
       });
+      if (deps.messagePipe?.hasQueued(record.input.sessionId)) {
+        void deps.messagePipe.flushSession(record.input.sessionId);
+      }
     }
     if (!deps.dispatcher) continue;
     void deps.dispatcher

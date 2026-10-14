@@ -6,6 +6,8 @@ import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SequenceEngine } from '../hooks/sequence-engine.js';
 import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
+import { promptboxPathOf } from '../hooks/promptbox.js';
+import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import {
   startInboxWorker,
   handleIngestedRecords,
@@ -28,9 +30,11 @@ export interface HookPipelineDeps {
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
   /** 序列引擎（批 3）：同透传——inject 步完成判据挂在 ingest 消费路径。 */
   sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
+  /** prompt 队列冲洗（消息域重塑）：ingest 事件 = 会话活着，即时试递队列行。 */
+  messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
 }
 
-/** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox）。 */
+/** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
 function pipelineFilesOf(hooksDir: string, shardId: string): string[] {
   return [
     join(hooksDir, 'inbox', `${shardId}.jsonl`),
@@ -38,6 +42,7 @@ function pipelineFilesOf(hooksDir: string, shardId: string): string[] {
     join(hooksDir, 'inbox', `${shardId}${INBOX_FAILED_SUFFIX}`),
     mirrorPathOf(hooksDir, shardId),
     outboxPathOf(hooksDir, shardId),
+    promptboxPathOf(hooksDir, shardId),
   ];
 }
 
@@ -79,7 +84,7 @@ export function purgeOrphanPipelineFiles(deps: {
 }): number {
   const live = new Set(deps.projects.list().map((p) => hookShardId(p.token)));
   let removed = 0;
-  for (const dir of ['inbox', 'mirror', 'outbox']) {
+  for (const dir of ['inbox', 'mirror', 'outbox', 'promptbox']) {
     let names: string[];
     try {
       names = readdirSync(join(deps.hooksDir, dir));
@@ -143,6 +148,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         dispatcher: deps.dispatcher,
         watchEngine: deps.watchEngine,
         sequenceEngine: deps.sequenceEngine,
+        messagePipe: deps.messagePipe,
       },
       records,
     );

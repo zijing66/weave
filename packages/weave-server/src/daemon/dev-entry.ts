@@ -22,7 +22,7 @@ import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
-import { SessionMessageRepository } from '../repositories/session-messages.js';
+import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
@@ -131,15 +131,15 @@ async function main(): Promise<void> {
     resumeSpec: harnesses.get('claude')?.resume,
     headless: headlessRunner,
   });
-  const sessionMessages = new SessionMessageRepository(db);
+  // 消息域（消息域重塑，与 start.ts 同装配）：纯递送管道 + 隐藏冲洗器。
   const messageDeliverer = new MessageDeliverer({
-    messages: sessionMessages,
     sessions: hookSessions,
     projects,
     hookEvents,
     bus: hookBus,
     headless: headlessRunner,
   });
+  startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
   const sessionWatches = new SessionWatchRepository(db);
   const watchEngine = new WatchEngine({
@@ -152,7 +152,6 @@ async function main(): Promise<void> {
   const sessionSequences = new SessionSequenceRepository(db);
   const sequenceEngine = new SequenceEngine({
     sequences: sessionSequences,
-    messages: sessionMessages,
     deliverer: messageDeliverer,
     sessions: hookSessions,
     bus: hookBus,
@@ -175,7 +174,7 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     events: hookEvents,
     dispatches: hookDispatches,
-    messages: sessionMessages,
+    deliverer: messageDeliverer,
     watches: sessionWatches,
     sequences: sessionSequences,
     watchEngine,
@@ -190,6 +189,7 @@ async function main(): Promise<void> {
     dispatcher: hookDispatcher,
     watchEngine,
     sequenceEngine,
+    messagePipe: messageDeliverer,
   });
   const staticDir = resolveStaticDir();
 
@@ -210,7 +210,6 @@ async function main(): Promise<void> {
     terminalRefresher,
     hookDispatcher,
     hookRunner,
-    sessionMessages,
     messageDeliverer,
     sessionWatches,
     watchEngine,

@@ -20,7 +20,6 @@ import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
-import type { SessionMessageRepository } from '../repositories/session-messages.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import type { SequenceEngine } from '../hooks/sequence-engine.js';
@@ -161,9 +160,7 @@ export interface WeaveServerDeps {
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
   hookRunner?: ResumeRunner;
-  /** session-orchestration 批 1：点对点消息存储；GET /sessions/:id/messages 依赖它。 */
-  sessionMessages?: SessionMessageRepository;
-  /** 消息投递器（裁决表 + 双通道）；POST /sessions/:id/messages 依赖它。 */
+  /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
   /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
   sessionWatches?: SessionWatchRepository;
@@ -1350,9 +1347,9 @@ async function handleRequest(
     }
     const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
-    // 消息域先于会话行清（双端 sessionId 都靠 sessions 子查询圈行）；订阅/序列同形
+    // 消息域先于会话行清（内存态按会话→项目归属圈；队列行按会话清）；订阅/序列同形
     // （序列按项目会话集圈「任一步目标」行，同样必须在会话行删除前执行）
-    const messages = deps.sessionMessages?.deleteByProject(project.id) ?? 0;
+    const messages = deps.messageDeliverer?.forgetProject(project.id) ?? 0;
     deps.sessionWatches?.deleteByProject(project.id);
     deps.sessionSequences?.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;

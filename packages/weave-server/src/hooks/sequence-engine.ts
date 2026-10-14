@@ -1,12 +1,11 @@
 import type { Harness } from '@weavecode/core';
 import type { MessagingSurface } from '@weavecode/harness';
-import type { SessionMessageRepository } from '../repositories/session-messages.js';
 import type { SessionSequenceRepository, SessionSequenceRow } from '../repositories/session-sequences.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
 import type { HookBusMessage, HookEventBus } from './bus.js';
-import type { MessageDeliverer } from './message-deliverer.js';
+import type { MessageDeliverer, PipeMessage } from './message-deliverer.js';
 
 /** D5 跳数上限：一次序列至多 3 步（A→B→C），POST 侧静态校验。 */
 export const SEQUENCE_HOP_LIMIT = 3;
@@ -33,8 +32,8 @@ export class SequenceEngine {
         SessionSequenceRepository,
         'getById' | 'listRunning' | 'advanceCursor' | 'finish' | 'setStepMessage'
       >;
-      messages: Pick<SessionMessageRepository, 'getById'>;
-      deliverer: Pick<MessageDeliverer, 'send'>;
+      /** 消息域重塑：步↔消息关联走管道发号 + 内存注册表（无 DB 行可反查）。 */
+      deliverer: Pick<MessageDeliverer, 'send' | 'getMessage'>;
       sessions: Pick<SessionRepository, 'listWithCounts'>;
       bus: HookEventBus;
       /** 能力面访问器（测试注入）；缺省 surfaces.ts 模块级 registry。 */
@@ -73,8 +72,8 @@ export class SequenceEngine {
           void this.fire(row.id, row.cursor);
           continue;
         }
-        const msg = this.deps.messages.getById(step.messageId);
-        if (msg?.status === 'injected') continue; // idle-wait：监听恢复即续等
+        const msg = this.deps.deliverer.getMessage(step.messageId);
+        if (msg?.status === 'injected' || msg?.status === 'delivered') continue; // idle-wait：监听恢复即续等
         if (msg?.status === 'running') {
           this.finish(row.id, 'failed', 'daemon restarted during headless step');
           continue;
@@ -99,8 +98,8 @@ export class SequenceEngine {
       for (const row of this.deps.sequences.listRunning()) {
         const step = row.steps[row.cursor];
         if (!step || step.to !== input.sessionId || step.messageId == null) continue;
-        const msg = this.deps.messages.getById(step.messageId);
-        if (msg?.status === 'injected') this.advance(row);
+        const msg = this.deps.deliverer.getMessage(step.messageId);
+        if (msg?.status === 'injected' || msg?.status === 'delivered') this.advance(row);
       }
     } catch {
       // 面缺席/库错误都不影响采集
@@ -162,7 +161,7 @@ export class SequenceEngine {
       }
       this.deps.sequences.setStepMessage(id, stepIndex, result.messageId);
       if (result.status === 'running') {
-        const msg = this.deps.messages.getById(result.messageId);
+        const msg: PipeMessage | null = this.deps.deliverer.getMessage(result.messageId);
         if (msg?.status === 'succeeded' || msg?.status === 'failed' || msg?.status === 'timeout') {
           if (msg.status === 'succeeded') {
             const fresh = this.deps.sequences.getById(id);

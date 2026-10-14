@@ -11,11 +11,13 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { SessionRepository } from '../repositories/sessions.js';
-import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb } from '../daemon/settings.js';
 import { drainInboxOnce, type InboxDrainDeps } from '../hooks/inbox-worker.js';
 import { hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { HookEventBus } from '../hooks/bus.js';
+import { promptboxPathOf } from '../hooks/promptbox.js';
 
 const TOK_A = 'tok-archive-a';
 const TOK_B = 'tok-archive-b';
@@ -45,7 +47,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
   let hookEvents: HookEventRepository;
   let sessions: SessionRepository;
   let dispatches: HookDispatchRepository;
-  let sessionMessages: SessionMessageRepository;
+  let deliverer: MessageDeliverer;
   let idA: number;
   let idB: number;
 
@@ -59,7 +61,6 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     hookEvents = new HookEventRepository(db);
     sessions = new SessionRepository(db);
     dispatches = new HookDispatchRepository(db);
-    sessionMessages = new SessionMessageRepository(db);
     setDaemonSettingsDb(db);
     // 派发行有 rule_id 外键（ON DELETE CASCADE），先落一条规则行
     db.prepare(
@@ -82,14 +83,17 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     hookEvents.insert({ projectId: idB, source: 'claude', eventType: 'Stop', sessionId: 'sess-b2', payload: '{}' });
     hookEvents.insert({ projectId: idA, source: 'claude', eventType: 'Stop', sessionId: 'sess-a1', payload: '{}' });
     dispatches.insert({ ruleId: 'rule-arch', eventId: ev1, sessionId: 'sess-b1', prompt: 'do', status: 'pending', mode: 'manual' });
-    // B 的会话消息（消息域第四条删除路径）
-    sessionMessages.insert({
-      fromKind: 'dashboard',
+    // B 的会话消息（消息域第四条删除路径——管道口径：prompt 队列行）
+    deliverer = new MessageDeliverer({
+      sessions, projects, hookEvents, bus: new HookEventBus(), hooksDir,
+    });
+    const queued = await deliverer.send({
       toSessionId: 'sess-b1',
       text: 'msg',
-      mode: 'inject',
-      status: 'injected',
+      mode: 'prompt',
+      fromKind: 'dashboard',
     });
+    if (!queued.ok) throw new Error(`seed prompt message failed: ${queued.error}`);
     // B 的管道文件（inbox 活文件 + mirror + outbox）——归档即焚的对象
     writeFileSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_B)}.jsonl`), inboxLine(TOK_B, 'Stop', 'sess-b1'));
     writeFileSync(mirrorPathOf(hooksDir, hookShardId(TOK_B)), '{}');
@@ -103,7 +107,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
       hookEvents,
       hookSessions: sessions,
       hookDispatches: dispatches,
-      sessionMessages,
+      messageDeliverer: deliverer,
       hooksDir,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -125,17 +129,19 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
       purged: { events: number; dispatches: number; sessions: number; messages: number };
     };
     expect(data.project.archivedAt).toBeTruthy();
-    // 事件 2（B 的）+ 派发 1 + 会话 2（B 的）+ 消息 1（B 的）——A 的一概不动
+    // 事件 2（B 的）+ 派发 1 + 会话 2（B 的）+ 消息 1（B 的队列行）——A 的一概不动
     expect(data.purged).toEqual({ events: 2, dispatches: 1, sessions: 2, messages: 1 });
     expect(hookEvents.listByProject(idB)).toHaveLength(0);
     expect(sessions.list(idB)).toHaveLength(0);
     expect(dispatches.list({ sessionId: 'sess-b1' })).toHaveLength(0);
     expect(hookEvents.listByProject(idA)).toHaveLength(1);
+    expect(deliverer.hasQueued('sess-b1')).toBe(false);
 
-    // 管道文件：B 的三处焚毁，A 的原样
+    // 管道文件：B 的四处焚毁（含 promptbox），A 的原样
     expect(existsSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_B)}.jsonl`))).toBe(false);
     expect(existsSync(mirrorPathOf(hooksDir, hookShardId(TOK_B)))).toBe(false);
     expect(existsSync(outboxPathOf(hooksDir, hookShardId(TOK_B)))).toBe(false);
+    expect(existsSync(promptboxPathOf(hooksDir, hookShardId(TOK_B)))).toBe(false);
     expect(existsSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_A)}.jsonl`))).toBe(true);
   });
 

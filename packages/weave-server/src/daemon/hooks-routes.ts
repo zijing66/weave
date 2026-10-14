@@ -47,11 +47,11 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 
-/** 点对点消息投递：mode/fromKind 缺省 inject/dashboard——手动发送不无头抢占，
- * 未开的会话入 outbox 队列、随其下次 SessionStart 加载；fromSessionId 会话间编排用。 */
+/** 点对点消息投递（消息域重塑）：mode 缺省 prompt——原生中继/终端兜底/队列
+ * 三层递送（绝不无头抢占）；inject/headless/auto 保留为编排域显式选项。 */
 const SendMessageBody = z.object({
   text: z.string().min(1).max(20_000),
-  mode: z.enum(['inject', 'headless', 'auto']).optional(),
+  mode: z.enum(['prompt', 'inject', 'headless', 'auto']).optional(),
   fromKind: z.enum(['dashboard', 'session']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
 });
@@ -369,7 +369,7 @@ export async function handleHooksRoutes(
         sessions: deps.hookSessions,
         events: deps.hookEvents,
         dispatches: deps.hookDispatches,
-        messages: deps.sessionMessages,
+        deliverer: deps.messageDeliverer,
         watches: deps.sessionWatches,
       },
       sessionId,
@@ -464,12 +464,12 @@ export async function handleHooksRoutes(
     return true;
   }
 
-  // ---- 消息域（session-orchestration 批 1）：线程读 + 投递 ----
+  // ---- 消息域（消息域重塑：纯递送管道）：在途视图读 + 投递 ----
   const messagesMatch = pathname.match(/^\/sessions\/([^/]+)\/messages$/);
   if (messagesMatch) {
     const sessionId = decodeURIComponent(messagesMatch[1]!);
     if (req.method === 'GET') {
-      if (!deps.sessionMessages) {
+      if (!deps.messageDeliverer) {
         sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
         return true;
       }
@@ -477,7 +477,7 @@ export async function handleHooksRoutes(
         sendJson(res, 404, { error: 'Session not found' });
         return true;
       }
-      sendJson(res, 200, { messages: deps.sessionMessages.listBySession(sessionId, 300) });
+      sendJson(res, 200, { messages: deps.messageDeliverer.listVisible(sessionId) });
       return true;
     }
     if (req.method === 'POST') {
@@ -495,13 +495,17 @@ export async function handleHooksRoutes(
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,
         text: body.text,
-        mode: body.mode ?? 'inject',
+        mode: body.mode ?? 'auto',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,
       });
       if (result.ok) {
-        const message = deps.sessionMessages?.getById(result.messageId);
-        sendJson(res, 201, { ok: true, messageId: result.messageId, status: result.status, message });
+        sendJson(res, 201, {
+          ok: true,
+          messageId: result.messageId,
+          status: result.status,
+          message: result.message,
+        });
       } else {
         sendJson(res, result.status, { error: result.error });
       }
@@ -695,12 +699,15 @@ export async function handleHooksRoutes(
     return true;
   }
 
-  // ---- 能力矩阵：纯派生自 MessagingSurface（无第二事实源），web 按表渲染徽标 ----
+  // ---- 能力矩阵：纯派生自 MessagingSurface + 终端通道装配态（无第二事实源） ----
   if (pathname === '/messaging/capabilities' && req.method === 'GET') {
+    // prompt 列 = 层① 原生中继 || 层② 终端 send-text 兜底（随 settings/机器变）。
+    const terminalChannel = deps.messageDeliverer?.hasTerminalChannel() ?? false;
     sendJson(res, 200, {
       capabilities: messagingSurfaces().map(({ harness, surface }) => ({
         harness,
         discovery: surface.discovery,
+        prompt: surface.prompt !== null || terminalChannel,
         inject: surface.inject !== null,
         headless: surface.headless !== null,
         watch: surface.idleSignals.length > 0,

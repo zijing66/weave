@@ -8,7 +8,6 @@ import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { SessionRepository } from '../repositories/sessions.js';
-import { SessionMessageRepository } from '../repositories/session-messages.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SequenceEngine } from '../hooks/sequence-engine.js';
@@ -26,17 +25,8 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
   let port: number;
   let hooksDir: string;
   let sequences: SessionSequenceRepository;
-  let messages: SessionMessageRepository;
+  let deliverer: MessageDeliverer;
   let projectId: number;
-
-  const seed = (sessionId: string, source: 'claude' | 'codex', eventTypes: string[]): void => {
-    const sessions = new SessionRepository(db);
-    sessions.touch(sessionId, projectId);
-    const events = new HookEventRepository(db);
-    for (const eventType of eventTypes) {
-      events.insert({ projectId, source, eventType, sessionId, payload: '{}' });
-    }
-  };
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
@@ -44,7 +34,6 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
     projectId = projects.register({ path: '/p', name: 'p', token: 'tk', source: 'init' }).id;
     const hookEvents = new HookEventRepository(db);
     const hookSessions = new SessionRepository(db);
-    messages = new SessionMessageRepository(db);
     sequences = new SessionSequenceRepository(db);
     hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-seq-srv-'));
 
@@ -61,11 +50,11 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
     sessions.touch('bare', projectId);
 
     const bus = new HookEventBus();
-    const deliverer = new MessageDeliverer({
-      messages, sessions: hookSessions, projects, hookEvents, bus, hooksDir,
+    deliverer = new MessageDeliverer({
+      sessions: hookSessions, projects, hookEvents, bus, hooksDir,
     });
     const sequenceEngine = new SequenceEngine({
-      sequences, messages, deliverer, sessions: hookSessions, bus,
+      sequences, deliverer, sessions: hookSessions, bus,
     });
 
     server = createWeaveServer({
@@ -73,7 +62,7 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
       port: 0,
       hookEvents,
       hookSessions,
-      sessionMessages: messages,
+      messageDeliverer: deliverer,
       sessionSequences: sequences,
       sequenceEngine,
       hooksDir,
@@ -118,7 +107,7 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
     expect(((await codex.json()) as { error: string }).error).toContain('Step 2');
   });
 
-  it('创建即触发步 0：201 + 行 running + 消息行已落（inject 走 outbox）', async () => {
+  it('创建即触发步 0：201 + 行 running + 消息经管道可查（inject 走 outbox）', async () => {
     const res = await post('/messaging/sequences', {
       name: 'chain',
       steps: [step('a', 'inject'), step('b', 'inject')],
@@ -126,14 +115,15 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
     expect(res.status).toBe(201);
     const data = (await res.json()) as {
       ok: boolean;
-      sequence: { id: number; status: string; cursor: number; steps: Array<{ messageId?: number }> };
+      sequence: { id: number; status: string; cursor: number; steps: Array<{ messageId?: string }> };
     };
     expect(data.ok).toBe(true);
     expect(data.sequence.status).toBe('running');
-    expect(data.sequence.steps[0]!.messageId).toBeGreaterThan(0); // trigger 已同步回填
+    const messageId = data.sequence.steps[0]!.messageId!;
+    expect(typeof messageId).toBe('string'); // trigger 已同步回填（管道发号）
+    expect(deliverer.getMessage(messageId)).toMatchObject({ sessionId: 'a', status: 'injected' });
     const row = sequences.getById(data.sequence.id)!;
     expect(row.cursor).toBe(0);
-    expect(messages.listBySession('a', 1)).toHaveLength(1);
   });
 
   it('GET 列表形状（新在前）', async () => {
