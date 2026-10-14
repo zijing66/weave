@@ -8,6 +8,7 @@ import {
   HookDispatchStatusSchema,
   isHarness,
 } from '@weavecode/core';
+import type { MessagingSurface } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
@@ -72,13 +73,18 @@ const CreateSequenceBody = z.object({
       z.object({
         to: z.string().min(1),
         text: z.string().min(1).max(20_000),
-        mode: z.enum(['inject', 'headless', 'auto']).optional(),
+        mode: z.enum(['prompt', 'inject', 'headless', 'auto']).optional(),
       }),
     )
     .min(1),
 });
 
 const InstallBody = z.object({ src: z.string().min(1) });
+
+/** prompt 通道可用性（与投递裁决同口径）：层① 原生中继 || 层② 终端 send-text 兜底。 */
+function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
+  return surface.prompt !== null || terminalChannel;
+}
 
 export async function handleHooksRoutes(
   req: IncomingMessage,
@@ -649,6 +655,8 @@ export async function handleHooksRoutes(
       }
       // 全部目标前置校验（每步 404/400/409 指明步号）：中途失败 = 步 1 已发出去、
       // 链断在半路，比创建前拒绝差得多——宁可先验完再触发步 0。
+      // 按步的 mode 检验对应通道（prompt = 原生中继 || 终端兜底，与能力矩阵同源）。
+      const terminalChannel = deps.messageDeliverer?.hasTerminalChannel() ?? false;
       for (let i = 0; i < body.steps.length; i++) {
         const step = body.steps[i]!;
         const target = deps.hookSessions.getBySessionId(step.to);
@@ -663,10 +671,21 @@ export async function handleHooksRoutes(
           return true;
         }
         const surface = messagingSurfaceFor(src);
-        if (!surface.inject && !surface.headless) {
-          sendJson(res, 409, {
-            error: `Step ${i + 1}: ${surface.unsupportedReasons?.inject ?? `Harness "${src}" supports no messaging channel`}`,
-          });
+        const mode = step.mode ?? 'auto';
+        const supported =
+          mode === 'prompt'
+            ? promptChannelOf(surface, terminalChannel)
+            : mode === 'inject'
+              ? surface.inject !== null
+              : mode === 'headless'
+                ? surface.headless !== null
+                : surface.inject !== null || surface.headless !== null;
+        if (!supported) {
+          const why =
+            mode === 'auto'
+              ? surface.unsupportedReasons?.inject ?? `Harness "${src}" supports no messaging channel`
+              : surface.unsupportedReasons?.[mode] ?? `Harness "${src}" does not support the ${mode} channel`;
+          sendJson(res, 409, { error: `Step ${i + 1}: ${why}` });
           return true;
         }
       }
@@ -710,7 +729,7 @@ export async function handleHooksRoutes(
       capabilities: messagingSurfaces().map(({ harness, surface }) => ({
         harness,
         discovery: surface.discovery,
-        prompt: surface.prompt !== null || terminalChannel,
+        prompt: promptChannelOf(surface, terminalChannel),
         inject: surface.inject !== null,
         headless: surface.headless !== null,
         watch: surface.idleSignals.length > 0,

@@ -56,9 +56,11 @@ export class SequenceEngine {
   }
 
   /**
-   * daemon 重启恢复：running 序列按行重挂——未触发步补 fire；headless 步的
-   * settle 回调已随旧进程死（spawn detached 仍活但终态无人回写）→ 按失败
-   * 收尾；已落终态但帧未达（宕机窗口）→ 按行终态补推进。boot 不阻塞。
+   * daemon 重启恢复：running 序列按行重挂——injected/delivered 步续等 idle
+   * （不重发）；messageId 缺席或注册表已随进程死 → **判 interrupted，不重发**
+   * （批 3 的补 fire 语义作废：宁可人续，不往会话重复打 prompt）；headless 步
+   * 的 settle 回调已死 → 按失败收尾；已落终态但帧未达（宕机窗口）→ 按行终态
+   * 补推进。boot 不阻塞。
    */
   rearm(): void {
     try {
@@ -69,7 +71,8 @@ export class SequenceEngine {
           continue;
         }
         if (step.messageId == null) {
-          void this.fire(row.id, row.cursor);
+          // insert 后、send 发号前的窗口崩溃：无从判知 prompt 是否已打出去
+          this.finish(row.id, 'failed', `step ${row.cursor + 1} interrupted — daemon restarted, not re-sent`);
           continue;
         }
         const msg = this.deps.deliverer.getMessage(step.messageId);

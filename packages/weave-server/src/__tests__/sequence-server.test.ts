@@ -107,6 +107,26 @@ describe('daemon server sequence endpoints（POST/GET/DELETE /messaging/sequence
     expect(((await codex.json()) as { error: string }).error).toContain('Step 2');
   });
 
+  it('prompt 步：claude 目标可建（层① 原生中继门控）——未开会话落 promptbox 队列且不带单向标记', async () => {
+    const res = await post('/messaging/sequences', { steps: [step('a', 'prompt')] });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as { sequence: { id: number; steps: Array<{ messageId?: string }> } };
+    const messageId = data.sequence.steps[0]!.messageId!;
+    expect(sequences.getById(data.sequence.id)!.steps[0]!.mode).toBe('prompt');
+    // 编排步 = 双向对话：不置 oneWay（手动面才单向）
+    expect(deliverer.listVisible('a')).toContainEqual(
+      expect.objectContaining({ id: messageId, mode: 'prompt', status: 'pending', oneWay: false }),
+    );
+  });
+
+  it('prompt 步：codex 目标（无原生中继 + 无终端通道）→ 409 指明步号与 prompt 原因', async () => {
+    const res = await post('/messaging/sequences', { steps: [step('a'), step('cx', 'prompt')] });
+    expect(res.status).toBe(409);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toContain('Step 2');
+    expect(data.error).toContain('Codex has no native peer-messaging channel');
+  });
+
   it('创建即触发步 0：201 + 行 running + 消息经管道可查（inject 走 outbox）', async () => {
     const res = await post('/messaging/sequences', {
       name: 'chain',

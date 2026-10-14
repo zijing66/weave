@@ -596,19 +596,22 @@ wezterm，还有 terminal、ghostty」）：
   「历史」在会话自己的转录里。
 - **序列引擎适配**：`session_sequences` 表保留（编排状态非消息）；
   `steps[].messageId` 语义改为管道发号的内存关联（不再反查消息行）；
-  画布步状态着色改 `sequence.*` 帧驱动；**重启时在途步标记 interrupted、
-  不自动重发**（宁可人续，不往会话重复打 prompt）——取代批 3 的 rearm
-  补 fire 语义。hop 上限（步数 ≤3）不动。
+  步 mode 增 `prompt`（步级前置校验按 mode 验对应通道：prompt = 原生中继
+  ‖ 终端兜底，与能力矩阵同源）；画布步状态着色改 `sequence.*` 帧驱动；
+  **重启时未确认步标记 interrupted、不重发**（宁可人续，不往会话重复打
+  prompt）——取代批 3 的 rearm 补 fire 语义，已在途 injected/delivered 步
+  续等 idle 不受影响。hop 上限（步数 ≤3）不动。
 - **watch 通知**：同样纯管道（outbox 行、消费即删），本就非历史——零改动。
 - **`MessageDeliverer` 裁决单点保留**：能力矩阵、404/409 语义拒绝、auto
   忙闲裁决全不变；只有落点从「DB 行 + outbox」变「文件队列 + 内存态」。
 
-**实施批次**：① prompt spike（已毕，结论如上）→ ② 存储切换（表退役 +
+**实施批次**：① prompt spike（已毕，结论如上）→ ② 存储切换（已毕：表退役 +
 promptbox + deliverer 管道化 + 中继 runner + peer 注册表 adapter + 层②
 send-text 兜底：TerminalBackend 文本通道能力 + wezterm 实现 + pane 映射 +
-队列双触发冲洗 + capabilities prompt 列）→ ③ web（弹窗纯 prompt 发送 +
-在途视图 + 画布/序列模式选项加 prompt）→ ④ 序列引擎适配（内存步态 +
-interrupted 语义）。
+队列双触发冲洗 + capabilities prompt 列）→ ③ web（已毕：弹窗纯 prompt 发送 +
+在途视图；画布步 mode 加 prompt 选项待随 ④ 点亮）→ ④ 序列引擎适配（已毕：
+步 mode `prompt` + 按 mode 的步级前置校验、interrupted 语义取代补 fire；
+剩画布选项一处属 web 面）。
 
 ## 第七章 机制族参考：CronCreate 与「触发源 ⊥ 投递通道」（架构参考）
 

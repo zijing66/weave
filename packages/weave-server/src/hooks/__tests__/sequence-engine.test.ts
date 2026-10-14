@@ -350,12 +350,15 @@ describe('rearm：daemon 重启恢复', () => {
     expect(after.error).toContain('message missing');
   });
 
-  it('未触发步（messageId 空）→ 补 fire', async () => {
-    sequences.insert({ name: '', steps: steps(['a', 'inject']) }); // 不 trigger 直接留库
+  it('未触发步（messageId 空）→ 判 interrupted，不补 fire（批 3 语义作废）', async () => {
+    const row = sequences.insert({ name: '', steps: steps(['a', 'inject']) }); // 不 trigger 直接留库
     const { engine, d } = engineOn();
     engine.rearm();
     await flush();
-    expect(d.send).toHaveBeenCalledTimes(1);
+    expect(d.send).not.toHaveBeenCalled();
+    const after = sequences.getById(row.id)!;
+    expect(after.status).toBe('failed');
+    expect(after.error).toContain('interrupted');
   });
 
   it('宕机窗口错过 finished 帧 → 按注册表终态补推进（succeeded → done）', async () => {
