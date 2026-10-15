@@ -15,7 +15,7 @@ import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 /** True when a weave daemon answers /health on `port`. */
-async function probeDaemon(port: number): Promise<boolean> {
+export async function probeDaemon(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://${DAEMON_HOST}:${port}/health`);
     if (!res.ok) return false;

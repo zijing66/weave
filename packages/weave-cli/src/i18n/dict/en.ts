@@ -33,6 +33,7 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.dashboard.desc': 'Open the web console in a browser (starts the daemon if needed)',
   'cmd.chpass.desc': 'Change the dashboard login password (new password given; no old password needed locally)',
   'cmd.scan.desc': 'Scan for weave-initialized projects and register them',
+  'cmd.doctor.desc': 'Diagnose local wiring: is this checkout registered with the local weave server',
   // --- command option descriptions ---
   'flag.init.preset': 'Configuration preset: minimal, default, or full',
   'flag.init.force': 'Overwrite existing files',
@@ -51,6 +52,38 @@ export const en: Record<keyof typeof zh, string> = {
   'out.daemon.statusRunning': 'Daemon: running (pid {pid}, port {port}, up {uptime}s)',
   'out.daemon.urlsTitle': 'Access URLs:',
   'out.daemon.statusStale': 'Daemon: stale state (pid {pid}, port {port} not responding)',
+  // --- doctor command output ---
+  'out.doctor.header': '\n  Weave Doctor — local wiring\n',
+  'out.doctor.dir': 'directory',
+  'out.doctor.initialized': 'initialized',
+  'out.doctor.yes': 'yes',
+  'out.doctor.no': 'no',
+  'out.doctor.daemon': 'daemon',
+  'out.doctor.daemonRunning': 'running on port {port}',
+  'out.doctor.daemonStopped': 'not running',
+  'out.doctor.registered': 'registered',
+  'out.doctor.registeredYes': 'yes (id {id}, source {source})',
+  'out.doctor.registeredNo': 'no — this checkout is not in the local registry',
+  'out.doctor.registeredArchived': 'archived (id {id})',
+  'out.doctor.token': 'token',
+  'out.doctor.tokenOk': 'ok',
+  'out.doctor.tokenMissing': 'missing (.weave/token absent)',
+  'out.doctor.tokenUnregistered': 'present, but the project is not registered',
+  'out.doctor.tokenStale': 'stale — differs from the registry token',
+  'out.doctor.warnNotRegistered':
+    'This project carries weave files but is not registered with the local weave server.',
+  'out.doctor.fixInit':
+    'Run `weave init` to (re)register this checkout, refresh harness files, and rewrite local paths.',
+  'out.doctor.fixScan': 'Or `weave scan -d <parent>` to discover and register projects in bulk.',
+  'out.doctor.warnArchived':
+    'This project is registered but archived — restore it from the dashboard to use it again.',
+  'out.doctor.warnTokenMissing':
+    'Registered, but `.weave/token` is missing — hooks cannot authenticate until it is regenerated.',
+  'out.doctor.warnTokenStale':
+    'Registered, but `.weave/token` belongs to another checkout — regenerate it.',
+  'out.doctor.ok': 'OK — this checkout is registered and its token matches.',
+  'out.doctor.fixDaemon':
+    'The daemon is not running; start it with `weave daemon start` when you need collection.',
   // --- dashboard command output ---
   'out.dash.browserFailed': '(could not launch a browser automatically — open it manually)',
   'out.dash.stopHint': 'Stop it later with `weave daemon stop`.',

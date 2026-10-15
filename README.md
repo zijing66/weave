@@ -65,6 +65,7 @@ namespace block next to the built-in `weave` one.
 | `weave init` | Scaffold harness files into a project |
 | `weave scan` | Discover and register projects |
 | `weave status` | Show harness status for a project |
+| `weave doctor` | Diagnose local wiring (registration, token, daemon) |
 | `weave daemon start\|stop\|status` | Manage the local daemon |
 | `weave dashboard` | Open the dashboard in a browser |
 

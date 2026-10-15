@@ -237,6 +237,8 @@ Weave 是一个 Claude Code harness 工具，可对任意已有项目执行 `wea
 
 ### C2. `weave doctor` — P1
 
+> **部分实现注记（2026-10）**：已落地「本机接线」诊断——守护进程是否在跑、这条检出是否在本机注册表（SQLite `projects`）、`.weave/token` 是否存在且与注册表一致，并复用 `checkHarness` 的配置问题清单。典型场景：仓库重拉取后带着 weave 文件却从没在本机 init，`weave status` 只看文件、看不出「没注册」。下方的格式校验项（JSON 合法性、Node 版本、`--fix`）尚未实现。
+
 **描述**：诊断配置问题，提供修复建议。
 
 **检查项**：
