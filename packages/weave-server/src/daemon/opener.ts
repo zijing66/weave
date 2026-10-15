@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import { readDaemonSettings, type TerminalPreset, type TerminalSettings } from './settings.js';
 
 /**
@@ -170,6 +171,11 @@ export abstract class TerminalBackend {
   /** prompt 层② 兜底：枚举可注入文本的 pane；无通道的后端空表（不谎报）。 */
   async listPromptPanes(): Promise<PromptPaneTarget[]> {
     return [];
+  }
+
+  /** 层② 定位：pane env → pane id；无定位能力的后端 null（回落标题+cwd，不猜）。 */
+  async locatePane(_env: Record<string, string>): Promise<string | null> {
+    return null;
   }
 
   /** prompt 层② 兜底：向枚举所得 pane 注入 prompt 原文并提交；无通道的后端明确拒绝。 */
@@ -545,6 +551,16 @@ class WeztermBackend extends TerminalBackend {
   }
 
   /**
+   * 层② 定位（hook 旁路上报的 pane env → prompt pane id）：pane 号 + mux socket
+   * 归位到该实例的活动 pane。**含存在性校验**——socket 对不上活 mux、pane 已不在
+   * 一律 null（调用方回落标题+cwd 启发式，宁可少答也不往别人的 pane 打键）。
+   */
+  override async locatePane(env: Record<string, string>): Promise<string | null> {
+    const { muxes } = await weztermLiveMuxes();
+    return weztermPaneFromEnv(env, muxes, this.platform);
+  }
+
+  /**
    * prompt 层② 注入（spike 字节级实测配方）：bracketed paste 打原文（内含
    * CR 是字面内容、不会被终端解释提交）→ `--no-paste` 补一记 CR 提交。mux
    * 实时重枚举定位，目标没了 throw（消息转可见失败，不静默丢）。
@@ -652,6 +668,10 @@ class AutoBackend extends TerminalBackend {
     return this.attachBackend().listPromptPanes();
   }
 
+  override locatePane(env: Record<string, string>): Promise<string | null> {
+    return this.attachBackend().locatePane(env);
+  }
+
   override sendPromptText(paneId: string, text: string): Promise<void> {
     return this.attachBackend().sendPromptText(paneId, text);
   }
@@ -698,6 +718,7 @@ export function promptTerminalChannel(
 ): {
   available(): boolean;
   listPanes(): Promise<PromptPaneTarget[]>;
+  locatePane(env: Record<string, string>): Promise<string | null>;
   sendText(paneId: string, text: string): Promise<void>;
   sendKeys(paneId: string, keys: string): Promise<void>;
 } {
@@ -707,6 +728,10 @@ export function promptTerminalChannel(
     listPanes: async () => {
       const backend = backendOf();
       return backend.textAddressable ? await backend.listPromptPanes() : [];
+    },
+    locatePane: async (env) => {
+      const backend = backendOf();
+      return backend.textAddressable ? await backend.locatePane(env) : null;
     },
     sendText: async (paneId, text) => {
       const backend = backendOf();
@@ -1007,6 +1032,25 @@ export interface AttachTarget {
 /** mux socket → 不透明短标识（不回传本机路径）。 */
 export function weztermMuxKey(socket: string): string {
   return createHash('sha256').update(socket).digest('hex').slice(0, 8);
+}
+
+/**
+ * 层② 定位（纯函数）：hook 上报的 pane env × 活 mux 表 → prompt pane id。
+ * 键缺、socket 对不上活 mux、pane 号已不在 = null（宁可回落，不猜）。
+ */
+export function weztermPaneFromEnv(
+  env: Record<string, string>,
+  muxes: readonly { socket: string; panes: readonly { paneId: number }[] }[],
+  platform: NodeJS.Platform,
+): string | null {
+  const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+  const pane = env[paneKey];
+  const socket = env[socketKey];
+  if (!pane || !socket) return null;
+  const key = normalizeDirKey(socket, platform);
+  const mux = muxes.find((m) => normalizeDirKey(m.socket, platform) === key);
+  if (!mux || !mux.panes.some((p) => String(p.paneId) === pane)) return null;
+  return `${weztermMuxKey(mux.socket)}:${pane}`;
 }
 
 /** 目标 id ↔ (mux, window, tab) 解码；坏 id → null。 */

@@ -1,0 +1,18 @@
+/**
+ * 终端把「我在哪个 pane」导出的环境变量名（按 preset 分表）——跨端契约表：
+ * hook 脚本（生在会话自己的 pane 里，继承这些 env）据此捕获上报，server 侧终端
+ * 后端据此把捕获值解析回自己的 pane 表示法。两端同源取用，不各写一份。
+ *
+ * 语义限定：只收「同一台机器上能唯一定位一个 pane」的变量。没有这种变量的终端
+ * （如 Windows Terminal 只有窗口级 session id）不列——层② 回落标题+cwd 启发式，
+ * 而不是拿一个不唯一的键硬猜。
+ */
+export const TERMINAL_LOCATOR_ENV = {
+  /** wezterm：pane 号 + 该实例的 mux socket（两者一起才唯一）。 */
+  wezterm: ['WEZTERM_PANE', 'WEZTERM_UNIX_SOCKET'],
+} as const satisfies Record<string, readonly string[]>;
+
+/** 全部 preset 的定位键并集（hook 脚本一次性捕获用；去重保序）。 */
+export const TERMINAL_LOCATOR_ENV_KEYS: readonly string[] = [
+  ...new Set(Object.values(TERMINAL_LOCATOR_ENV).flat()),
+];

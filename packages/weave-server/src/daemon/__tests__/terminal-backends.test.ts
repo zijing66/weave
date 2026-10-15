@@ -16,6 +16,8 @@ import {
   SocketProbeGate,
   terminalAppTargets,
   terminalBackendFor,
+  weztermMuxKey,
+  weztermPaneFromEnv,
   weztermSocketCandidates,
   wtPanes,
   wtWindowSlug,
@@ -474,6 +476,33 @@ describe('weztermSocketCandidates — 同一 socket 的两种字符串形态只�
       else process.env.WEZTERM_UNIX_SOCKET = prevSocket;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('weztermPaneFromEnv — hook 上报的 pane env 定位（纯函数）', () => {
+  const SOCK = 'D:\\Users\\u\\.local\\share\\wezterm\\gui-sock-28500';
+  const MUXES = [{ socket: SOCK, panes: [{ paneId: 0 }, { paneId: 6 }] }];
+  const envOf = (pane: string, socket: string) => ({
+    WEZTERM_PANE: pane,
+    WEZTERM_UNIX_SOCKET: socket,
+  });
+
+  it('pane 号 + 同实例 socket → 该 pane 的 prompt pane id', () => {
+    expect(weztermPaneFromEnv(envOf('0', SOCK), MUXES, 'win32')).toBe(
+      `${weztermMuxKey(SOCK)}:0`,
+    );
+    // 大小写/分隔符形态差异不影响命中（归一比较，id 用枚举到的真 socket 算）
+    expect(
+      weztermPaneFromEnv(envOf('6', SOCK.toLowerCase().replace(/\\/g, '/')), MUXES, 'win32'),
+    ).toBe(`${weztermMuxKey(SOCK)}:6`);
+  });
+
+  it('键缺、socket 对不上活 mux、pane 已不在 → null（回落标题+cwd，不猜）', () => {
+    expect(weztermPaneFromEnv({}, MUXES, 'win32')).toBeNull();
+    expect(weztermPaneFromEnv({ WEZTERM_PANE: '0' }, MUXES, 'win32')).toBeNull();
+    expect(weztermPaneFromEnv(envOf('0', 'D:/other/gui-sock-1'), MUXES, 'win32')).toBeNull();
+    expect(weztermPaneFromEnv(envOf('3', SOCK), MUXES, 'win32')).toBeNull();
+    expect(weztermPaneFromEnv(envOf('0', SOCK), [], 'win32')).toBeNull();
   });
 });
 

@@ -1123,6 +1123,69 @@ describe('MessageDeliverer 裁决表', () => {
     );
   });
 
+  it('prompt 层② pane 定位：hook 上报的 locator 优先，命中就不列 pane 猜标题', async () => {
+    // 标题刻意留空（= 落库旧值已漂移/从未重命名）：locator 仍必须命中，
+    // 否则回落到标题+cwd 是 0 命中 → 409。
+    db.prepare('UPDATE sessions SET title = NULL WHERE session_id = ?').run(SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const locatePane = vi.fn().mockResolvedValue('mux-abc:6');
+    const terminal: PromptTerminal = {
+      available: () => true,
+      listPanes: vi.fn().mockResolvedValue([]),
+      sendText,
+      sendKeys: vi.fn(),
+      locatePane,
+    };
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => noNative, terminal }));
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+    const env = { WEZTERM_PANE: '6', WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-1' };
+    deliverer.notePaneEnv(SESSION_ID, env);
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'located hello',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(locatePane).toHaveBeenCalledWith(env);
+    expect(sendText).toHaveBeenCalledWith('mux-abc:6', 'located hello');
+    expect(terminal.listPanes).not.toHaveBeenCalled();
+
+    // locator 定位不到（pane 已关/换 mux）→ 回落标题+cwd，不猜也不误注入
+    const fallbackText = vi.fn().mockResolvedValue(undefined);
+    const fallback: PromptTerminal = {
+      available: () => true,
+      listPanes: vi
+        .fn()
+        .mockResolvedValue([{ id: 'pane-7', title: 'msg-target', cwd: PROJECT_PATH }]),
+      sendText: fallbackText,
+      sendKeys: vi.fn(),
+      locatePane: vi.fn().mockResolvedValue(null),
+    };
+    const fbDeliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => noNative, terminal: fallback }));
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    fbDeliverer.notePaneEnv(SESSION_ID, env);
+
+    const fbResult = await fbDeliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'fallback hello',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(fbResult).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fallbackText).toHaveBeenCalledWith('pane-7', 'fallback hello');
+  });
+
   it('级联清理：forgetSession 清内存态 + 队列行；forgetProject 按项目归属清', async () => {
     const { surface } = relaySurface(() => null);
     const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));

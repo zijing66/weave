@@ -45,8 +45,11 @@ describe('generateHookHandler（脚本形态）', () => {
     expect(out).toContain("'mirror'");
     expect(out).toContain("'outbox'");
     expect(out).toContain('MIRROR_VERSION = 1');
-    // 行形契约：{v, token, report, messaging}（messaging = 层① 收件箱凭据旁路）
-    expect(out).toContain('{ v: 1, token: token, report: report, messaging: messagingEnv() }');
+    // 行形契约：{v, token, report, messaging, terminal}
+    // （messaging = 层① 收件箱凭据旁路；terminal = 层② pane 定位键旁路）
+    expect(out).toContain(
+      '{ v: 1, token: token, report: report, messaging: messagingEnv(), terminal: terminalEnv() }',
+    );
   });
 
   it('本地渲染注入 + 顺延 outbox + 标题，并带 60s 去重', () => {

@@ -93,6 +93,44 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(existsSync(file.replace('.jsonl', INBOX_CLAIM_SUFFIX))).toBe(false);
   });
 
+  it('terminal 定位 env 逐行解析：同批两会话各拿自己的 pane，不取整组最后一个', () => {
+    const locator = (pane: string) => ({
+      terminal: { WEZTERM_PANE: pane, WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-1' },
+    });
+    const withEnv = (token: string, eventType: string, sessionId: string, pane: string): string =>
+      JSON.stringify({
+        v: 1,
+        token,
+        report: {
+          source: 'claude',
+          eventType,
+          sessionId,
+          cwd: '/proj',
+          payload: JSON.stringify({ hook_event_name: eventType, session_id: sessionId, cwd: '/proj' }),
+        },
+        ...locator(pane),
+      }) + '\n';
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    writeFileSync(
+      file,
+      withEnv(TOKEN, 'Stop', 's1', '0') +
+        inboxLine(TOKEN, 'Stop', 's2') +
+        withEnv(TOKEN, 'Stop', 's3', '6'),
+    );
+
+    const bySession = new Map(drainInboxOnce(deps()).map((r) => [r.input.sessionId, r.terminalEnv]));
+    expect(bySession.get('s1')).toEqual({
+      WEZTERM_PANE: '0',
+      WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-1',
+    });
+    expect(bySession.get('s3')).toEqual({
+      WEZTERM_PANE: '6',
+      WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-1',
+    });
+    // 没上报的行 = null（不是拿邻行的值）
+    expect(bySession.get('s2')).toBeNull();
+  });
+
   it('坏行/未知 token 行直接丢，不拖垮同文件的好行', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
     writeFileSync(

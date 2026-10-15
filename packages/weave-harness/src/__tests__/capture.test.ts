@@ -14,7 +14,7 @@ import {
   sweepWeaveHookEvents,
   uninstallUserCapture,
 } from '../claude/capture.js';
-import { HARNESS_EVENTS, INJECTABLE_EVENTS } from '@weavecode/core';
+import { HARNESS_EVENTS, INJECTABLE_EVENTS, TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
 
 function tempHome(): string {
   return mkdtempSync(path.join(tmpdir(), 'weave-capture-'));
@@ -35,6 +35,12 @@ describe('captureHookGroup 组形（项目档与 user 档同形）', () => {
     expect(script).toContain('CLAUDE_CODE_MESSAGING_TOKEN');
     // 旁路字段进 inbox 行（不进 report/payload —— daemon 侧只放内存）
     expect(script).toContain('messaging: messagingEnv()');
+  });
+
+  it('生成的 hook-handler 上报终端 pane 定位键（键名取自 core 表，不手抄）', () => {
+    const script = generateHookHandler('0.0.0-test');
+    for (const key of TERMINAL_LOCATOR_ENV_KEYS) expect(script).toContain(JSON.stringify(key));
+    expect(script).toContain('terminal: terminalEnv()');
   });
 
   it('七事件全形：matcher=* + 三层结构 + 命令指向 helpers 下的 hook-handler.cjs', () => {

@@ -1,7 +1,13 @@
 import { homedir } from 'node:os';
 import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { HARNESS_DIRS, HARNESS_EVENTS, INJECTABLE_EVENTS, type Harness } from '@weavecode/core';
+import {
+  HARNESS_DIRS,
+  HARNESS_EVENTS,
+  INJECTABLE_EVENTS,
+  TERMINAL_LOCATOR_ENV_KEYS,
+  type Harness,
+} from '@weavecode/core';
 import type { CaptureDeps, CaptureState, CaptureSurface } from '../driver.js';
 import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 
@@ -53,6 +59,10 @@ const INJECTABLE_EVENTS = ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'S
 // (mirrors TITLE_EFFECTIVE_EVENTS.claude) — tool events record hook_success
 // but drop the field (verified against 2.1.296).
 const TITLE_EVENTS = ['SessionStart', 'UserPromptSubmit'];
+// Terminal pane locator env (mirrors TERMINAL_LOCATOR_ENV_KEYS in @weavecode/core):
+// captured in the pane's own child process and reported on the inbox line's side
+// channel, so the daemon can address THIS session's pane exactly.
+const TERMINAL_ENV_KEYS = ${JSON.stringify(TERMINAL_LOCATOR_ENV_KEYS)};
 const INBOX_MAX_BYTES = 4 * 1024 * 1024;
 const INBOX_MAX_LINES = 1000;
 const OUTBOX_MAX_LINES = 200;
@@ -100,6 +110,19 @@ function messagingEnv() {
   return { socket: sock, token: process.env.${CLAUDE_PROMPT_INBOX.tokenEnv} || null };
 }
 
+// 终端把「本 pane」导出的环境变量（wezterm 等）。本进程生在会话自己的 pane 里，
+// 继承得到；daemon 侧据此精确定位会话的 pane（层② 注入 / 作答的目标），
+// 标题+cwd 只是回落。没有一个键可见 = 该终端无定位能力 → 上报 null（不猜）。
+function terminalEnv() {
+  var out = {};
+  var any = false;
+  for (var i = 0; i < TERMINAL_ENV_KEYS.length; i++) {
+    var v = process.env[TERMINAL_ENV_KEYS[i]];
+    if (v) { out[TERMINAL_ENV_KEYS[i]] = v; any = true; }
+  }
+  return any ? out : null;
+}
+
 function readStdin() {
   return new Promise(function (resolve) {
     var data = '';
@@ -121,7 +144,7 @@ function appendInbox(dir, token, report) {
     try {
       if (fs.statSync(file).size > INBOX_MAX_BYTES) trimFile(file, INBOX_MAX_LINES);
     } catch {}
-    fs.appendFileSync(file, JSON.stringify({ v: 1, token: token, report: report, messaging: messagingEnv() }) + '\\n');
+    fs.appendFileSync(file, JSON.stringify({ v: 1, token: token, report: report, messaging: messagingEnv(), terminal: terminalEnv() }) + '\\n');
   } catch {}
 }
 

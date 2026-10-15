@@ -46,6 +46,12 @@ export interface InboxRecord {
    * **旁路字段：不进 payload、不落库**——主线程只放内存供 layer① 直投用。
    */
   messaging?: { socket: string; token: string | null } | null;
+  /**
+   * 该会话所在终端 pane 的定位 env（hook 进程生在会话自己的 pane 里）。
+   * **逐行字段**（同一 claim 里不同会话的 pane 不同，不能像 messaging 那样取整组
+   * 最后一个——错配会把键序打进别的会话的模态框）；同样不进 payload、不落库。
+   */
+  terminalEnv?: Record<string, string> | null;
 }
 
 export interface InboxDrainDeps {
@@ -60,6 +66,7 @@ interface InboxLine {
   token: string;
   report: HookReport;
   messaging: { socket: string; token: string | null } | null;
+  terminalEnv: Record<string, string> | null;
 }
 
 /**
@@ -115,6 +122,8 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       lines: string[];
       inputs: HookEventInput[];
       delivered: (string | null)[];
+      /** 与 inputs 逐行对齐（pane 定位是会话级事实，不能取组内最后一个）。 */
+      terminals: (Record<string, string> | null)[];
       messaging: InboxLine['messaging'];
     }
   >();
@@ -127,6 +136,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       lines: [],
       inputs: [],
       delivered: [],
+      terminals: [],
       messaging: null,
     };
     if (parsed.messaging) group.messaging = parsed.messaging;
@@ -145,6 +155,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
     try {
       group.inputs.push(adapter.normalize(parsed.report, group.project.id) as HookEventInput);
       group.delivered.push(parsed.report.deliveredTitle ?? null);
+      group.terminals.push(parsed.terminalEnv);
     } catch {
       // 单条坏报告不拖垮整批
     }
@@ -164,6 +175,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
           input: group.inputs[i]!,
           deliveredTitle: group.delivered[i] ?? null,
           messaging: group.messaging,
+          terminalEnv: group.terminals[i] ?? null,
         });
       }
     } catch {
@@ -231,13 +243,14 @@ function needsSessionRow(
   return inputs.some((i) => i.sessionId === sessionId && i.eventType !== 'SessionStart');
 }
 
-/** 行形 `{v, token, report, messaging?}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
+/** 行形 `{v, token, report, messaging?, terminal?}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
 function parseLine(line: string): InboxLine | null {
   try {
     const obj = JSON.parse(line) as {
       token?: unknown;
       report?: HookReport;
       messaging?: { socket?: unknown; token?: unknown } | null;
+      terminal?: unknown;
     } | null;
     if (!obj || typeof obj.token !== 'string' || !obj.token) return null;
     if (!obj.report || typeof obj.report !== 'object') return null;
@@ -249,10 +262,20 @@ function parseLine(line: string): InboxLine | null {
             token: typeof obj.messaging?.token === 'string' ? obj.messaging.token : null,
           }
         : null;
-    return { token: obj.token, report: obj.report, messaging };
+    return { token: obj.token, report: obj.report, messaging, terminalEnv: parseTerminalEnv(obj.terminal) };
   } catch {
     return null;
   }
+}
+
+/** 终端定位 env：非空字符串值的键才收（值不是字符串/空串 = 该键不可用）。 */
+function parseTerminalEnv(raw: unknown): Record<string, string> | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value) env[key] = value;
+  }
+  return Object.keys(env).length > 0 ? env : null;
 }
 
 /**
@@ -299,6 +322,8 @@ export interface IngestedHandlerDeps {
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'> & {
     /** hook 旁路上报的会话 inbox 目标（内存态）。 */
     noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
+    /** hook 旁路上报的会话 pane 定位 env（内存态；层② 精确定位用）。 */
+    notePaneEnv?(sessionId: string, env: Record<string, string>): void;
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）。 */
     onSessionPrompt?(sessionId: string, prompt: string): void;
   };
@@ -349,6 +374,7 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         source: record.input.source,
       });
       if (record.messaging) deps.messagePipe?.noteInboxSocket?.(record.input.sessionId, record.messaging);
+      if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）
       if (record.input.eventType === 'UserPromptSubmit') {
         const prompt = promptTextOf(payload);

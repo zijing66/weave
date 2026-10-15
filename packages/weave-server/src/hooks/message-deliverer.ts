@@ -87,6 +87,11 @@ export interface PromptTerminal {
   available(): boolean;
   /** 可注入 pane（id / 标题 / 工作目录；取不到的字段为 null）。 */
   listPanes(): Promise<Array<{ id: string; title: string | null; cwd: string | null }>>;
+  /**
+   * 终端定位（hook 旁路上报的 pane env → pane id，**含存在性校验**：解析不出、
+   * mux 或 pane 已不在 = null）。可缺省（老装配/无定位能力的终端 = 恒回落标题+cwd）。
+   */
+  locatePane?(env: Record<string, string>): Promise<string | null>;
   /** 往 pane 注入一段 prompt（原文 + 提交键）。 */
   sendText(paneId: string, text: string): Promise<void>;
   /** 裸键序注入（作答路径：模态框只吃键盘，不吃粘贴文本）。 */
@@ -214,6 +219,8 @@ export class MessageDeliverer {
   private readonly queuedSessions: Set<string>;
   /** 会话 inbox 直投目标（hook 旁路上报；token 只在内存）。 */
   private readonly inboxSockets = new InboxSocketRegistry();
+  /** 会话所在终端 pane 的定位 env（hook 旁路上报；纯内存，随会话走）。 */
+  private readonly paneEnvs = new Map<string, Record<string, string>>();
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
   /** 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。 */
@@ -386,6 +393,14 @@ export class MessageDeliverer {
    */
   noteInboxSocket(sessionId: string, target: { socket: string; token: string | null } | null): void {
     this.inboxSockets.set(sessionId, target);
+  }
+
+  /**
+   * hook 旁路上报的会话 pane 定位 env（**每个 hook 事件覆盖刷新**：会话换 pane /
+   * resume 到新窗口后，下一次事件就把定位改过来，与 inbox 凭据同一自愈口径）。
+   */
+  notePaneEnv(sessionId: string, env: Record<string, string>): void {
+    this.paneEnvs.set(sessionId, env);
   }
 
   /**
@@ -639,6 +654,7 @@ export class MessageDeliverer {
     this.queuedSessions.delete(sessionId);
     this.stalled.delete(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
+    this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     return removed;
   }
 
@@ -650,6 +666,7 @@ export class MessageDeliverer {
       if (session?.projectId === projectId) {
         this.memory.delete(id);
         this.inboxSockets.forget(msg.sessionId);
+        this.paneEnvs.delete(msg.sessionId);
         this.stalled.delete(msg.sessionId);
         removed++;
       }
@@ -711,13 +728,24 @@ export class MessageDeliverer {
     );
   }
 
-  /** 层② pane 匹配：标题（剥 spinner 前缀，字符集含 ◐ 等输入等待态）== 会话标题 且 cwd == 项目路径（归一比较）；歧义拒绝不打。 */
+  /**
+   * 目标会话的 pane：① **hook 旁路上报的终端定位**（精确——会话自己所在的 pane，
+   * 与标题是否漂移无关，也覆盖从没上报过标题的会话；后端已做存在性校验）→
+   * ② 回落「标题（剥 spinner 前缀，字符集含 ◐ 等输入等待态）+ 项目 cwd」启发式
+   * （无定位能力的终端 / 老 hook），歧义拒绝不打。
+   */
   private async terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
   ): Promise<{ id: string } | null> {
     const terminal = this.terminalChannel();
-    if (!terminal || !session.title) return null;
+    if (!terminal) return null;
+    const env = this.paneEnvs.get(session.sessionId);
+    if (env) {
+      const located = await terminal.locatePane?.(env).catch(() => null);
+      if (located) return { id: located };
+    }
+    if (!session.title) return null;
     const want = session.title.replace(/^[✻✽✶✳✢⋅◦✦✧∘◐◑◒◓*]+\s*/, '');
     const pathKey = normalizeDirKey(project.path, process.platform);
     let panes: Array<{ id: string; title: string | null; cwd: string | null }>;
