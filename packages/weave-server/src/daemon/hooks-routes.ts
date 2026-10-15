@@ -528,6 +528,22 @@ export async function handleHooksRoutes(
     }
   }
 
+  // ---- 手动重发（暂停闸解除动作）：prompt 通道 failed / delivered-未回执 才可重发 ----
+  const resendMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/resend$/);
+  if (resendMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const result = await deps.messageDeliverer.resend(decodeURIComponent(resendMatch[2]!));
+    if (result.ok) {
+      sendJson(res, 200, { ok: true, messageId: result.messageId, status: result.status, message: result.message });
+    } else {
+      sendJson(res, result.status, { error: result.error });
+    }
+    return true;
+  }
+
   // ---- 空闲订阅域（session-orchestration 批 2）：one-shot「空闲时提醒我」 ----
   const watchMatch = pathname.match(/^\/sessions\/([^/]+)\/watch$/);
   if (watchMatch) {

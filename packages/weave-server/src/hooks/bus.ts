@@ -57,6 +57,15 @@ export type HookBusMessage =
   | { kind: 'message.delivered'; messageId: string; sessionId: string; at: string }
   /** 投递回执：目标会话自己的 UserPromptSubmit 与在途条目匹配上了（真到达）。 */
   | { kind: 'message.acknowledged'; messageId: string; sessionId: string; at: string }
+  /** 队列暂停闸置位：未回执超窗（unacked）或投递失败（failed）——该会话后续队列
+   *  暂停冲洗，手动重发或回执解除；成因消息带 stalled 标记常驻在途视图。 */
+  | {
+      kind: 'message.stalled';
+      messageId: string;
+      sessionId: string;
+      reason: 'unacked' | 'failed';
+      at: string;
+    }
   | {
       kind: 'message.finished';
       messageId: string;

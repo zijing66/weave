@@ -492,8 +492,8 @@ describe('MessageDeliverer 裁决表', () => {
     expect(busEvents).toContainEqual(
       expect.objectContaining({ kind: 'message.delivered', messageId: msg.id }),
     );
-    // delivered 不在在途视图（送达即从列表消失）
-    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(msg.id);
+    // delivered 短时驻留在途视图（60s 窗口内展示 via/acked；过后消失）
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(msg.id);
   });
 
   it('prompt 层①：编排域发送（非 oneWay）不带单向标记——双向对话保留', async () => {
@@ -1160,5 +1160,222 @@ describe('MessageDeliverer 裁决表', () => {
     const visible = deliverer.listVisible(SESSION_ID);
     expect(visible).toHaveLength(1);
     expect(visible[0]).toMatchObject({ status: 'pending', channel: 'prompt', text: 'pending one' });
+  });
+
+  // ---- 终态驻留（决定①）：delivered 在窗口内展示 via/acked，窗口过后消失 ----
+
+  it('终态驻留：socket 直投 delivered 带 via/settledAt 短时可见，窗口过后消失', async () => {
+    const path = uniqueInboxPath();
+    const inbox = await fakeInboxAt(path, () => {});
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        visibleTtlMs: 80,
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok' });
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'ttl visibility body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(deliverer.getMessage(id)).toMatchObject({
+      status: 'delivered',
+      via: 'socket',
+      settledAt: expect.any(String),
+    });
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(id);
+    await new Promise((r) => setTimeout(r, 160));
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(id);
+    inbox.close();
+  });
+
+  // ---- 未回执闸（决定②）：超窗未回执暂停队列；回执命中 / 手动重发解除 ----
+
+  it('未回执闸：送达超窗未回执 → stalled 帧 + 队列暂停；回执命中 → 解闸自续排空', async () => {
+    const fake = createFakeSpawn();
+    let registered = true;
+    const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        flushGapMs: 0,
+        ackStallMs: 80,
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    // 第一条：中继投递成功（delivered），但不给回执
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'no receipt body here',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const firstId = (first as { messageId: string }).messageId;
+    fake.children[0]!.emit('exit', 0, null);
+
+    // 第二条：peer 瞬时消失 → 入队
+    registered = false;
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued behind no-receipt',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 超窗 → 置闸（成因消息常驻在途视图）
+    await new Promise((r) => setTimeout(r, 160));
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.stalled', messageId: firstId, reason: 'unacked' }),
+    );
+    expect(deliverer.getMessage(firstId)!.stalled).toBe(true);
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(firstId);
+
+    // 闸住：peer 重新登记，flushSession 也不投
+    registered = true;
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(1);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 回执命中 → 解闸 + 自续冲洗把队列行投出去
+    deliverer.onSessionPrompt(SESSION_ID, 'no receipt body here');
+    expect(deliverer.getMessage(firstId)!.stalled).toBe(false);
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    fake.children[1]!.emit('exit', 0, null);
+    expect(deliverer.getMessage(firstId)!.acked).toBe(true);
+  });
+
+  it('投递失败置闸：中继非 0 退出后不再自动续冲洗；手动重发解闸并恢复队列', async () => {
+    const fake = createFakeSpawn();
+    let registered = true;
+    const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        flushGapMs: 0,
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'failing relay body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const firstId = (first as { messageId: string }).messageId;
+    fake.children[0]!.emit('exit', 1, null);
+    expect(deliverer.getMessage(firstId)).toMatchObject({ status: 'failed', stalled: true });
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.stalled', messageId: firstId, reason: 'failed' }),
+    );
+
+    // 队列积压被闸挡住（peer 在场也不投）
+    registered = false;
+    const second = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued after failure',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(second).toMatchObject({ ok: true, status: 'pending' });
+    registered = true;
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(1); // 没有新中继
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 手动重发：failed 消息重走投递（中继闸已释放 → 再起一个中继）
+    const resend = await deliverer.resend(firstId);
+    expect(resend).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(2);
+    fake.children[1]!.emit('exit', 0, null);
+    expect(deliverer.getMessage(firstId)!.status).toBe('delivered');
+
+    // 解闸后：积压行经自续冲洗投出
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(3));
+    fake.children[2]!.emit('exit', 0, null);
+    await vi.waitFor(() => expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0));
+  });
+
+  it('重发只对 failed / delivered-未回执 开放：未知 404、已回执 409', async () => {
+    const path = uniqueInboxPath();
+    const inbox = await fakeInboxAt(path, () => {});
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok' });
+
+    await expect(deliverer.resend('no-such-message')).resolves.toMatchObject({
+      ok: false,
+      status: 404,
+    });
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'acked then resend rejected',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    deliverer.onSessionPrompt(SESSION_ID, 'acked then resend rejected');
+    await expect(deliverer.resend(id)).resolves.toMatchObject({ ok: false, status: 409 });
+    inbox.close();
+  });
+
+  it('重发回落入队：通道全缺时旧内存态清干净（同 id 不双行），peer 回来后正常冲洗', async () => {
+    const fake = createFakeSpawn();
+    let registered = true;
+    const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'resend queue fallback body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (first as { messageId: string }).messageId;
+    fake.children[0]!.emit('exit', 1, null); // failed + 置闸
+
+    // 通道全缺（peer 消失、无终端）→ 重发回落入队；旧内存态必须清干净
+    registered = false;
+    const resend = await deliverer.resend(id);
+    expect(resend).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+    expect(deliverer.getMessage(id)).toBeNull();
+    expect(deliverer.listVisible(SESSION_ID).filter((m) => m.id === id)).toHaveLength(1);
+
+    // peer 回来 → 冲洗正常投出（中继指令带 oneWay 标记）
+    registered = true;
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.children[1]!.stdin.writes[0]).toContain('[one-way]');
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
   });
 });

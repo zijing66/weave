@@ -69,6 +69,10 @@ export interface PipeMessage {
   via?: 'socket' | 'relay' | 'terminal';
   /** 投递回执：会话自己的 UserPromptSubmit 与本文匹配上了（真到达，非「已交给」）。 */
   acked?: boolean;
+  /** 终态落定时刻（在途视图驻留窗口的起点；在途态无值）。 */
+  settledAt?: string | null;
+  /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
+  stalled?: boolean;
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -115,6 +119,12 @@ export interface MessageDelivererDeps {
   /** 冲洗节流：同一会话两次投递之间的最小间隔（毫秒）；缺省 1000。Claude Code 对
    *  同一会话的快速突发会在**发送侧**拒收（见 docs/plan/session-orchestration.md）。 */
   flushGapMs?: number;
+  /** 终态驻留窗口（毫秒）；缺省 60s——delivered/injected/succeeded 短时留在在途
+   *  视图展示 via/acked，过后消失（failed/timeout/暂停闸成因常驻）。 */
+  visibleTtlMs?: number;
+  /** 未回执闸窗口（毫秒）；缺省 120s——prompt 送达后没等到 UPS 回执即暂停该会话
+   *  的队列冲洗（防继续向 Held/Refused 的会话灌消息），手动重发或回执解除。 */
+  ackStallMs?: number;
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -142,6 +152,10 @@ const relayCwd = () => tmpdir();
 /** 冲洗节流（防 Claude Code 发送侧突发拒收）：一轮最多投递几条 + 条间最小间隔。 */
 const FLUSH_PASS_MAX = 5;
 const FLUSH_GAP_MS = 1_000;
+
+/** 终态驻留窗口与未回执闸的缺省时长（见 deps 同名注入位）。 */
+const VISIBLE_TTL_MS = 60_000;
+const ACK_STALL_MS = 120_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
@@ -186,6 +200,8 @@ export class MessageDeliverer {
   private readonly flushScheduled = new Set<string>();
   /** 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。 */
   private readonly flushing = new Set<string>();
+  /** 队列暂停闸（sessionId → 成因消息）：未回执超窗 / 投递失败即置；重发或回执解除。 */
+  private readonly stalled = new Map<string, { messageId: string; reason: 'unacked' | 'failed' }>();
 
   constructor(private readonly deps: MessageDelivererDeps) {
     this.headless =
@@ -261,9 +277,15 @@ export class MessageDeliverer {
     return this.memory.get(id) ?? null;
   }
 
-  /** 在途视图（GET /sessions/:id/messages）：promptbox 待递送 ∪ 内存非终待态。 */
+  /**
+   * 在途视图（GET /sessions/:id/messages）：promptbox 待递送 ∪ 内存态——
+   * 在途（delivering/running）与 failed/timeout/暂停闸成因常驻；delivered/
+   * injected/succeeded 在驻留窗口（visibleTtlMs）内展示 via/acked，过后消失
+   * （历史在目标会话自己的转录里）。
+   */
   listVisible(sessionId: string): PipeMessage[] {
-    const visible = new Set<PipeStatus>(['delivering', 'running', 'succeeded', 'failed', 'timeout']);
+    const ttl = this.deps.visibleTtlMs ?? VISIBLE_TTL_MS;
+    const now = Date.now();
     const out: PipeMessage[] = [];
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (session?.projectId != null) {
@@ -285,7 +307,17 @@ export class MessageDeliverer {
       }
     }
     for (const msg of this.memory.values()) {
-      if (msg.sessionId === sessionId && visible.has(msg.status)) out.push(msg);
+      if (msg.sessionId !== sessionId) continue;
+      if (msg.stalled === true || msg.status === 'delivering' || msg.status === 'running') {
+        out.push(msg);
+        continue;
+      }
+      if (msg.status === 'failed' || msg.status === 'timeout') {
+        out.push(msg);
+        continue;
+      }
+      const settled = msg.settledAt ? Date.parse(msg.settledAt) : NaN;
+      if (!Number.isNaN(settled) && now - settled < ttl) out.push(msg);
     }
     return out.sort((a, b) => (a.at < b.at ? -1 : 1));
   }
@@ -350,7 +382,12 @@ export class MessageDeliverer {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
       if (!want || want.length < ACK_MIN_TEXT || !seen.includes(want)) continue;
-      this.memory.set(msg.id, { ...msg, acked: true });
+      this.memory.set(msg.id, { ...msg, acked: true, stalled: false });
+      // 回执命中暂停闸成因 → 闸解除：若还有积压，继续排空（不必等下一次事件）
+      if (this.stalled.get(sessionId)?.messageId === msg.id) {
+        this.stalled.delete(sessionId);
+        if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+      }
       this.bus({
         kind: 'message.acknowledged',
         messageId: msg.id,
@@ -361,6 +398,72 @@ export class MessageDeliverer {
     }
   }
 
+  /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */
+  private armAckWatch(msg: PipeMessage): void {
+    const timer = setTimeout(
+      () => {
+        const current = this.memory.get(msg.id);
+        if (!current || current.acked || current.status !== 'delivered') return;
+        this.stall(current.sessionId, current, 'unacked');
+      },
+      this.deps.ackStallMs ?? ACK_STALL_MS,
+    );
+    timer.unref?.();
+  }
+
+  /** 置闸：成因消息标记 stalled（常驻在途视图）+ message.stalled 帧（web 重拉）。 */
+  private stall(sessionId: string, msg: PipeMessage, reason: 'unacked' | 'failed'): void {
+    this.stalled.set(sessionId, { messageId: msg.id, reason });
+    const current = this.memory.get(msg.id);
+    if (current) this.memory.set(msg.id, { ...current, stalled: true });
+    this.bus({
+      kind: 'message.stalled',
+      messageId: msg.id,
+      sessionId,
+      reason,
+      at: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * 手动重发（暂停闸的解除动作）：prompt 通道 failed 或 delivered-未回执 的消息
+   * 重走投递（socket → 中继 → 终端 → 队列），重发即解闸并重新布防回执闸。
+   */
+  async resend(messageId: string): Promise<SendResult> {
+    const msg = this.memory.get(messageId);
+    if (!msg) return { ok: false, status: 404, error: 'Message not found' };
+    const resendable =
+      msg.channel === 'prompt' &&
+      (msg.status === 'failed' || (msg.status === 'delivered' && !msg.acked));
+    if (!resendable) return { ok: false, status: 409, error: 'Message is not resendable' };
+    const session = this.deps.sessions.getBySessionId(msg.sessionId);
+    if (!session) return { ok: false, status: 404, error: 'Session not found' };
+    if (session.projectId == null) {
+      return { ok: false, status: 400, error: 'Session is not bound to a project' };
+    }
+    const project = this.deps.projects.getById(session.projectId);
+    if (!project) return { ok: false, status: 404, error: 'Project not found' };
+    const surface = this.surfaceOfSession(msg.sessionId);
+    if (!surface) {
+      return { ok: false, status: 400, error: 'Session has no hook events to determine its harness' };
+    }
+    if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
+    // 旧内存态先清：deliverPrompt 的活路径会重建；回落入队时同 id 不能双行
+    // （内存 failed/delivered 行 + promptbox pending 行）。
+    this.memory.delete(messageId);
+    const entry: PipeMessage = { ...msg, status: 'pending', stalled: false, acked: false, settledAt: null };
+    const result = await this.deliverPrompt(entry, session, project, surface);
+    // created 放在在途状态建立之后（与 send() 同口径：它是在途角标重算的依据）
+    this.bus({
+      kind: 'message.created',
+      messageId: entry.id,
+      sessionId: entry.sessionId,
+      mode: entry.mode,
+      at: new Date().toISOString(),
+    });
+    return result;
+  }
+
   /**
    * 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。
    * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
@@ -368,6 +471,8 @@ export class MessageDeliverer {
    * 所以节流在这里统一兜）。超出的留队列，下轮触发（ingest / 刷新器）继续。
    */
   async flushSession(sessionId: string): Promise<void> {
+    // 暂停闸：未回执超窗 / 投递失败——继续灌只会堆更多不可确认的消息，等重发或回执。
+    if (this.stalled.has(sessionId)) return;
     // 重入闸：冲洗是异步的（终端通道要 await 枚举 pane），两条触发源（事件 + 自续/刷新器）
     // 并发进来会各自读到同一批队列行 → 同一消息被投两次。
     if (this.flushing.has(sessionId)) return;
@@ -396,6 +501,8 @@ export class MessageDeliverer {
     const relay = surface?.prompt ?? null;
     let delivered = 0;
     for (const entry of entries) {
+      // 本轮中途置闸（中继即败 / 终端注入失败都是异步落定）：立即停，余下留队列
+      if (this.stalled.has(sessionId)) return;
       if (delivered >= FLUSH_PASS_MAX) {
         // 本轮量到：余下留队列，**自续下一拍**（socket 直投是毫秒级，不该等下一次事件）
         this.scheduleFlushContinuation(sessionId);
@@ -471,6 +578,7 @@ export class MessageDeliverer {
     }
     removed += removePromptboxBySession(this.hooksDir, sessionId);
     this.queuedSessions.delete(sessionId);
+    this.stalled.delete(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     return removed;
   }
@@ -483,6 +591,7 @@ export class MessageDeliverer {
       if (session?.projectId === projectId) {
         this.memory.delete(id);
         this.inboxSockets.forget(msg.sessionId);
+        this.stalled.delete(msg.sessionId);
         removed++;
       }
     }
@@ -598,8 +707,10 @@ export class MessageDeliverer {
           ...this.memory.get(entry.id)!,
           status: 'delivered',
           via: 'socket',
+          settledAt: new Date().toISOString(),
         };
         this.memory.set(entry.id, delivered);
+        this.armAckWatch(delivered);
         this.bus({
           kind: 'message.delivered',
           messageId: entry.id,
@@ -671,16 +782,23 @@ export class MessageDeliverer {
   }
 
   /**
-   * 中继终态：成功 = delivered（+message.delivered）；失败 = failed 留内存可见
-   * （+message.finished），不自动重试（避免对活着但拒收的会话反复打中继）。
+   * 中继终态：成功 = delivered（+message.delivered，布防回执闸；中继闸释放后若还有
+   * 积压继续下一批）；失败 = failed 留内存可见（+message.finished）并置暂停闸——
+   * 不自动重试（避免对活着但拒收的会话反复打中继），手动重发解除。
    */
   private settleRelay(messageId: string, result: HeadlessSettleResult): void {
     const msg = this.memory.get(messageId);
     if (!msg) return;
-    // 中继退出 = 同会话中继闸释放：若还有积压，继续下一批（不必等下一次事件）
-    if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
     if (result.status === 'succeeded') {
-      this.memory.set(messageId, { ...msg, status: 'delivered' });
+      // 中继退出 = 同会话中继闸释放：若还有积压，继续下一批（不必等下一次事件）
+      if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
+      const delivered: PipeMessage = {
+        ...msg,
+        status: 'delivered',
+        settledAt: new Date().toISOString(),
+      };
+      this.memory.set(messageId, delivered);
+      this.armAckWatch(delivered);
       this.bus({
         kind: 'message.delivered',
         messageId,
@@ -689,11 +807,14 @@ export class MessageDeliverer {
       });
       return;
     }
-    this.memory.set(messageId, {
+    const failed: PipeMessage = {
       ...msg,
       status: 'failed',
       error: result.error ?? `prompt relay ${result.status}`,
-    });
+      settledAt: new Date().toISOString(),
+    };
+    this.memory.set(messageId, failed);
+    this.stall(msg.sessionId, failed, 'failed');
     this.bus({
       kind: 'message.finished',
       messageId,
@@ -711,7 +832,9 @@ export class MessageDeliverer {
     if (!terminal) return;
     try {
       await terminal.sendText(paneId, text);
-      this.memory.set(messageId, { ...msg, status: 'delivered' });
+      const delivered: PipeMessage = { ...msg, status: 'delivered', settledAt: new Date().toISOString() };
+      this.memory.set(messageId, delivered);
+      this.armAckWatch(delivered);
       this.bus({
         kind: 'message.delivered',
         messageId,
@@ -719,11 +842,14 @@ export class MessageDeliverer {
         at: new Date().toISOString(),
       });
     } catch (err) {
-      this.memory.set(messageId, {
+      const failed: PipeMessage = {
         ...msg,
         status: 'failed',
         error: err instanceof Error ? err.message : String(err),
-      });
+        settledAt: new Date().toISOString(),
+      };
+      this.memory.set(messageId, failed);
+      this.stall(msg.sessionId, failed, 'failed');
       this.bus({
         kind: 'message.finished',
         messageId,
@@ -743,7 +869,7 @@ export class MessageDeliverer {
   ): SendResult {
     const envelope = this.renderEnvelope(entry.text, meta, surface);
     appendOutbox(this.hooksDir, token, [{ sessionId: entry.sessionId, text: envelope }]);
-    const msg: PipeMessage = { ...entry, status: 'injected' };
+    const msg: PipeMessage = { ...entry, status: 'injected', settledAt: new Date().toISOString() };
     this.memory.set(msg.id, msg);
     this.bus({
       kind: 'message.delivered',
@@ -815,6 +941,7 @@ export class MessageDeliverer {
         status: result.status,
         output: result.output,
         error: result.error,
+        settledAt: new Date().toISOString(),
       });
       this.bus({
         kind: 'message.finished',

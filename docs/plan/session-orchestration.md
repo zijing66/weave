@@ -617,8 +617,21 @@ wezterm，还有 terminal、ghostty」）：
   - auto：忙→inject 闲→headless 裁决不动。
 - **web 线程视图 → 在途视图**：daemon 聚合 promptbox 文件 ∪ 内存态（中继
   运行中 / headless 运行中），`GET /sessions/:id/messages` 改读聚合源，
-  `message.*` 帧的 id 改为管道发号（非 DB 主键）；送达即从列表消失，
-  「历史」在会话自己的转录里。
+  `message.*` 帧的 id 改为管道发号（非 DB 主键）；「历史」在会话自己的转录里。
+- **终态驻留（用户 2026-10-15 定案①「要」）**：delivered/injected/succeeded
+  在 `settledAt` 后 60s（`visibleTtlMs`）内留在在途视图，行上展示 `via`
+  （直投/中继/终端）与 `acked`（UPS 回执命中）；过窗即消失——web 侧同口径
+  （`settledAt + 60s` 本地隐藏，到最近一条过期时刻一次性重渲染，非轮询）。
+  failed/timeout 与暂停闸成因（stalled）常驻（可重发/告警）。
+- **未回执闸（用户定案②「要暂停，并且可手动重发」）**：prompt 送达后
+  `ackStallMs`（缺省 120s）内没等到 UPS 回执，或中继/终端投递失败 → 该会话
+  **队列冲洗暂停**（`flushSession` 直接返回，防继续向 Held/Refused 的会话灌
+  消息）；成因消息标 `stalled` 常驻视图 + `message.stalled` 帧（web 据此弹
+  重发按钮）。解除路径两条：成因消息收到回执（onSessionPrompt 命中 → 解闸 +
+  自续排空积压）或手动重发（`POST /sessions/:id/messages/:mid/resend`，只对
+  prompt 通道 failed / delivered-未回执 开放，重走 socket→中继→终端→队列并
+  重新布防回执闸）。慢会话（长 tool round 里、prompt 排队待处理）会被误伤
+  暂停——已接受的代价：它处理到该 prompt 时 UPS 自会解闸，真卡死则人手重发。
 - **序列引擎适配**：`session_sequences` 表保留（编排状态非消息）；
   `steps[].messageId` 语义改为管道发号的内存关联（不再反查消息行）；
   步 mode 增 `prompt`（步级前置校验按 mode 验对应通道：prompt = 原生中继
