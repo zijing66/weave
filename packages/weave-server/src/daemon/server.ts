@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weavecode/core';
-import { checkHarness, isHarness } from '@weavecode/core';
+import { checkHarness, isHarness, HARNESS_KEYS } from '@weavecode/core';
 import type { EventSource, HarnessRegistry, PluginSurface } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -377,6 +377,49 @@ async function handleRequest(
         setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
       }
       sendJson(res, 200, { ok: true, target: body.target, path: project.path });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
+    }
+    return;
+  }
+
+  // --- start a new session inside a terminal the project already has open ---
+  // POST /projects/:id/new-session — 复用具名终端：命令 = harness 裸 bin（新会话，
+  // 不带 resume 参数——`openArgs` 才是 resume），落点由终端后端的复用逻辑决定
+  // （同项目目录的既有 pane 分屏，没有就退化成新窗口）。所以「本项目已有已打开
+  // 终端」是硬前置：没有可复用的 pane 就不是「新建会话在既有终端里」而是替用户
+  // 再开一个窗口。前端按同一事实（终端数角标）置灰，这里再判一次——角标是推来的
+  // 快照、可能陈旧，闸门不能只挂在前端。
+  const newSessionMatch = pathname.match(/^\/projects\/(\d+)\/new-session$/);
+  if (newSessionMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(newSessionMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    // 起哪个 harness = 注册表首个（claude）；换注册表就换默认，不写死名字。
+    const harness = HARNESS_KEYS[0]!;
+    const spec = deps.harnesses?.get(harness)?.resume;
+    if (!spec?.bin) {
+      sendJson(res, 501, { error: `Harness "${harness}" cannot start an interactive session` });
+      return;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    const counts = await readTerminalCounts([project], opener);
+    if ((counts[project.id] ?? 0) === 0) {
+      sendJson(res, 409, {
+        error: 'No terminal is open for this project — open one first (the new session reuses it)',
+      });
+      return;
+    }
+    try {
+      const stat = await fs.promises.stat(project.path);
+      if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+      const settings = await readDaemonSettings();
+      await opener.runInTerminal(project.path, [spec.bin], settings.terminal);
+      // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
+      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+      sendJson(res, 200, { ok: true, command: spec.bin, cwd: project.path });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }

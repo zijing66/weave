@@ -154,6 +154,7 @@ export function CategoryDetail({
   projects,
   onOpenSession,
   initialSessionId,
+  terminalCount,
   dragPayload,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
@@ -194,6 +195,8 @@ export function CategoryDetail({
   onOpenSession: (projectId: number, sessionId: string) => void;
   /** 全局总览跳进项目任务视图时的初始选中会话。 */
   initialSessionId?: string;
+  /** 锚点项目已打开的终端数（App 的 push 状态直传）——任务视图「新建会话」的前置。 */
+  terminalCount: number;
   /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
   dragPayload: DragPayload | null;
 }) {
@@ -492,7 +495,11 @@ export function CategoryDetail({
         (isGlobal ? (
           <GlobalTasksOverview projects={projects} onOpenSession={onOpenSession} />
         ) : (
-          <TasksPanel projectId={projectId} initialSessionId={initialSessionId} />
+          <TasksPanel
+            projectId={projectId}
+            initialSessionId={initialSessionId}
+            terminalCount={terminalCount}
+          />
         ))}
 
       {/* 编排：项目级 = 跨会话序列画布；全局级 = 占位（序列目标随项目会话走）。 */}

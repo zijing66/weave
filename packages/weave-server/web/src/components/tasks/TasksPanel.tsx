@@ -12,6 +12,7 @@ import {
   type WatchOn,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +29,7 @@ import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search, Square, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -47,6 +48,10 @@ const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey>
   insecure: 'tasks.notifyInsecure',
 };
 
+/** 开终端「等转绿」上限：claude 启动即写存活注册表、通常 1–3s 内转绿；超过这个
+ *  时限还没登记（进程当场退出之类）就放行——按钮不能永久卡在 loading 里点不动。 */
+const OPEN_TERMINAL_ALIVE_MS = 30_000;
+
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
  * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
@@ -57,10 +62,14 @@ const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey>
 export function TasksPanel({
   projectId,
   initialSessionId,
+  terminalCount,
 }: {
   projectId: number;
   /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
   initialSessionId?: string;
+  /** 本项目已打开的终端数（后端 push 的角标快照，与项目卡同源）——「新建会话」
+   *  的硬前置：新会话要落进已开的终端里，没有已开终端就无处可落。 */
+  terminalCount: number;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -106,6 +115,47 @@ export function TasksPanel({
     () => (allSessions === null ? null : allSessions.filter((s) => s.projectId === projectId)),
     [allSessions, projectId],
   );
+
+  /** 会话行的同步影子：等「转绿」时要现读最新行，拿不到下一次 render 的闭包。 */
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+
+  /** 等转绿的等待者：pidAlive 由后端 liveness push 补丁到会话行，行一变就放行
+   *  对应承诺（不轮询）。 */
+  const aliveWaiters = useRef(new Map<string, () => void>());
+  useEffect(() => {
+    for (const s of sessions ?? []) {
+      if (!s.pidAlive) continue;
+      aliveWaiters.current.get(s.sessionId)?.();
+      aliveWaiters.current.delete(s.sessionId);
+    }
+  }, [sessions]);
+  useEffect(
+    () => () => {
+      for (const release of aliveWaiters.current.values()) release();
+      aliveWaiters.current.clear();
+    },
+    [],
+  );
+
+  /** 等该会话的 claude 进程转绿（或超时）：开终端按钮的 loading 一直挂到这时为止
+   *  ——「已 spawn、绿还没到」的空窗里，多点是再起一个 claude --resume 抢同一会话。
+   *  转绿判据、以及「进程当场退出」的兜底放行，都在这里收口。 */
+  const waitTerminalAlive = useCallback((sessionId: string): Promise<void> => {
+    if (sessionsRef.current?.some((s) => s.sessionId === sessionId && s.pidAlive)) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const timer = window.setTimeout(() => {
+        aliveWaiters.current.delete(sessionId);
+        resolve();
+      }, OPEN_TERMINAL_ALIVE_MS);
+      aliveWaiters.current.set(sessionId, () => {
+        window.clearTimeout(timer);
+        resolve();
+      });
+    });
+  }, []);
 
   const refreshEvents = useCallback(
     async (sessionId: string) => {
@@ -394,8 +444,10 @@ export function TasksPanel({
       独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
       spawn），成功无 toast（窗口弹出即反馈），失败 toast。
       `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。
-      开完补一次会话行刷新：pidAlive 尽早转绿（绿 = 已开且按钮禁用），
-      缩短「已打开但图标还没变」的可重复点击窗口。 */
+      **loading 一直挂到图标转绿**：开完先补一次会话行刷新（绿尽早到），再到
+      pidAlive 为止（liveness push 补丁、超时兜底）——绿即已开（按钮同时被
+      pidAlive 禁用），中间那段空窗里按钮还在转圈、点不动，不会多起一个 claude
+      抢同一会话。 */
   const runOpenTerminal = useCallback(
     (sessionId: string, target?: string): void => {
       void fb.run(
@@ -403,12 +455,26 @@ export function TasksPanel({
         async () => {
           await api.openSessionTerminal(sessionId, target);
           await refreshStatus();
+          await waitTerminalAlive(sessionId);
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       );
     },
-    [fb, t, refreshStatus],
+    [fb, t, refreshStatus, waitTerminalAlive],
   );
+
+  /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
+      打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
+      fb 键按项目隔离：loading 在途吞连点，防重复 spawn。 */
+  const runNewSession = useCallback((): void => {
+    void fb.run(
+      `newSession:${projectId}`,
+      async () => {
+        await api.startProjectSession(projectId);
+      },
+      { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
+    );
+  }, [fb, projectId, t]);
 
   /** 多终端选择弹窗（项目开着多个终端时才现形）。 */
   const [terminalPicker, setTerminalPicker] = useState<{
@@ -971,6 +1037,29 @@ export function TasksPanel({
           <span className="text-[11px] text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
+          {/* 新建会话：落点 = 项目已打开的终端（服务端复用其 pane 分屏），故没
+              有已开终端时置灰——同一事实也由服务端 409 把关，前端只是镜像。 */}
+          <button
+            type="button"
+            disabled={terminalCount === 0}
+            title={
+              terminalCount === 0 ? t('tasks.newSessionNeedsTerminal') : t('tasks.newSessionTip')
+            }
+            onClick={runNewSession}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
+              terminalCount === 0
+                ? 'cursor-not-allowed text-neutral-600'
+                : 'text-neutral-200 hover:bg-neutral-800',
+            )}
+          >
+            <FeedbackIcon
+              state={fb.stateOf(`newSession:${projectId}`)}
+              className="h-3 w-3"
+              icon={<Plus className="h-3 w-3" />}
+            />
+            {t('tasks.newSession')}
+          </button>
           <RefreshIconButton
             className="ml-auto"
             title={t('tasks.refresh')}

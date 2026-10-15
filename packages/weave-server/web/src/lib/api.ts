@@ -1104,6 +1104,13 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
       { method: 'POST', body: JSON.stringify(target ? { target } : {}) },
     ),
+  /** 在项目**已打开的终端**里起一个新会话（服务端复用该项目目录的既有 pane；
+   *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。 */
+  startProjectSession: (projectId: number): Promise<{ ok: boolean; command: string }> =>
+    apiFetch<{ ok: boolean; command: string }>(`/projects/${projectId}/new-session`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
   /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。 */
   listProjectTerminals: (projectId: number): Promise<TerminalTarget[]> =>
     apiFetch<{ terminals: TerminalTarget[] }>(`/projects/${projectId}/terminals`).then(
