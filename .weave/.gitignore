@@ -1,3 +1,6 @@
 # weave — generated; do not commit
 *
 !.gitignore
+# 例外：项目级插件源入库（.weave/ 其余运行态文件继续忽略）
+!plugins/
+!plugins/**

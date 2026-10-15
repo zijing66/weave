@@ -8,6 +8,8 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 
 dashboard AI 助手的系统提示词由 `packages/weave-server/src/daemon/ai-context.ts` 的 `buildSystemPrompt` 现场装配，三源为：固定前言 + `docs/ARCHITECTURE.md` + `docs/FEATURES.md` + 内置市场全部 `SKILL.md`（`<dataDir>/market/weave`）。装配刻意不缓存——**提示词的保鲜 = 这几个源文件的保鲜**，本 agent 的全部工作就是让它们不与代码漂移。
 
+本 agent 是 weave 仓库自用的项目级插件（源在 `.weave/plugins/ai-prompt-auditor/`，由 init/同步物化进 `.claude/agents/`），不对其他用户分发。
+
 ## 审计触发
 
 代码发生以下任一类改动后：CLI 命令面增删改、daemon 路由/设置项/SSE 数据域变化、内置包清单增删、消息/提醒/问答行为语义变化。
@@ -20,7 +22,7 @@ dashboard AI 助手的系统提示词由 `packages/weave-server/src/daemon/ai-co
 | daemon 路由/功能域 | `packages/weave-server/src/daemon/server.ts` 的 `handleRequest` 分发 + 各 `*-routes.ts` |
 | 设置键与默认值 | settings 读写实现与 `GET /settings` 响应 |
 | SSE 数据域 | `packages/weave-server/src/daemon/data-bus.ts` 的 `DataKey` |
-| 内置包清单 | `packages/weave-templates/src/resources/weave-market/`（marketplace.json + 树）+ 三个测试硬编码清单 |
+| 内置包清单 | `packages/weave-templates/src/resources/weave-market/`（marketplace.json + 树）+ 各测试硬编码清单 |
 | 用户可见行为 | `weave-user-guide` 的 `SKILL.md` |
 
 ## 审计法

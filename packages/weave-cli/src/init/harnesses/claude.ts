@@ -287,38 +287,34 @@ async function copyAgents(st: InitStepState): Promise<void> {
 async function injectPluginTemplates(st: InitStepState): Promise<void> {
   // ---- Step 6b: 插件模板注入（扩展点③）----
   // 扫描插件根目录 manifest.templates 并复制（name 冲突内置优先；与核心模板
-  // 同用 writeFileIfAbsent 的 force/skipped 语义）。
-  if (st.components.skills || st.components.commands || st.components.agents) {
-    try {
-      const { registered: pluginTemplates } = await registerPluginTemplates(st.targetDir);
-      for (const entry of pluginTemplates) {
-        const src = templateRegistry.resolvePath(entry);
-        if (entry.category === 'skill') {
-          if (!st.components.skills) continue;
-          await copyTemplateDir(
-            src,
-            path.join(st.skillsDir, path.basename(src)),
-            st.force,
-            st.created,
-            st.skipped,
-          );
-          continue;
-        }
-        if (entry.category === 'command' && !st.components.commands) continue;
-        if (entry.category === 'agent' && !st.components.agents) continue;
-        const destDir = entry.category === 'command' ? st.commandsDir : st.agentsDir;
-        const destFile = path.join(destDir, path.basename(src));
-        try {
-          const content = await readFile(src, 'utf-8');
-          if (await writeFileIfAbsent(destFile, content, st.force)) st.created.files.push(destFile);
-          else st.skipped.push(destFile);
-        } catch (err) {
-          logger.warn(t('init.copyTemplatesFailed', { srcDir: src, error: String(err) }));
-        }
+  // 同用 writeFileIfAbsent 的 force/skipped 语义）。组件开关只管核心模板——
+  // 插件模板是插件自己的交付物，被识别即 opt-in，不受 components 门控。
+  try {
+    const { registered: pluginTemplates } = await registerPluginTemplates(st.targetDir);
+    for (const entry of pluginTemplates) {
+      const src = templateRegistry.resolvePath(entry);
+      if (entry.category === 'skill') {
+        await copyTemplateDir(
+          src,
+          path.join(st.skillsDir, path.basename(src)),
+          st.force,
+          st.created,
+          st.skipped,
+        );
+        continue;
       }
-    } catch (err) {
-      logger.warn(t('init.copyTemplatesFailed', { srcDir: 'plugins', error: String(err) }));
+      const destDir = entry.category === 'command' ? st.commandsDir : st.agentsDir;
+      const destFile = path.join(destDir, path.basename(src));
+      try {
+        const content = await readFile(src, 'utf-8');
+        if (await writeFileIfAbsent(destFile, content, st.force)) st.created.files.push(destFile);
+        else st.skipped.push(destFile);
+      } catch (err) {
+        logger.warn(t('init.copyTemplatesFailed', { srcDir: src, error: String(err) }));
+      }
     }
+  } catch (err) {
+    logger.warn(t('init.copyTemplatesFailed', { srcDir: 'plugins', error: String(err) }));
   }
 }
 

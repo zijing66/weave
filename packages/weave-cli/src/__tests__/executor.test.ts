@@ -170,6 +170,42 @@ describe('executeInit', () => {
     expect(second.created.files).not.toContain(path.join(tmpDir, '.claude', '.gitignore'));
   });
 
+  it('leaves a user-edited nested .gitignore alone (narrow exceptions survive re-init)', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+    const edited = '# weave — generated; do not commit\n*\n!.gitignore\n!plugins/\n!plugins/**\n';
+    const nested = path.join(tmpDir, '.weave');
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, '.gitignore'), edited);
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readFile(path.join(nested, '.gitignore'), 'utf-8')).toBe(edited);
+  });
+
+  // ---- Step 6b: plugin templates bypass the core component switches ----
+  it('injects project plugin templates even with agents/commands components off', async () => {
+    const id = `exec-plug-${Date.now()}`;
+    const plugDir = path.join(tmpDir, '.weave', 'plugins', id);
+    await mkdir(path.join(plugDir, 'agents'), { recursive: true });
+    await mkdir(path.join(plugDir, 'commands'), { recursive: true });
+    await writeFile(
+      path.join(plugDir, 'weave-plugin.json'),
+      JSON.stringify({
+        manifestVersion: 1,
+        id,
+        name: id,
+        version: '0.1.0',
+        templates: { agents: ['agents/my-agent.md'], commands: ['commands/my-cmd.md'] },
+      }),
+    );
+    await writeFile(path.join(plugDir, 'agents', 'my-agent.md'), '---\nname: my-agent\ndescription: t\n---\nbody');
+    await writeFile(path.join(plugDir, 'commands', 'my-cmd.md'), '# my-cmd');
+
+    const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(result.success).toBe(true);
+    expect(await readFile(path.join(tmpDir, '.claude', 'agents', 'my-agent.md'), 'utf-8')).toContain('my-agent');
+    expect(await readFile(path.join(tmpDir, '.claude', 'commands', 'my-cmd.md'), 'utf-8')).toContain('my-cmd');
+  });
+
   // ---- Step 8: CLAUDE.md and AGENTS.md resolve to one file ----
   it('links AGENTS.md to CLAUDE.md on a fresh install', async () => {
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });

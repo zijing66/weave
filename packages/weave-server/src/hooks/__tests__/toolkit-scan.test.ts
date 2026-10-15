@@ -223,7 +223,6 @@ describe('toolkit-scan 识别与发现', () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();
     expect(ids).toEqual([
-      'ai-prompt-auditor',
       'file-guard',
       'md-lint',
       'mission-control',
@@ -231,11 +230,6 @@ describe('toolkit-scan 识别与发现', () => {
       'weave-user-guide',
     ]);
     const byId = new Map(packs.map((p) => [p.id, p]));
-    expect(byId.get('ai-prompt-auditor')).toMatchObject({
-      scope: 'weave-dev',
-      kind: 'surface',
-      targets: ['claude'],
-    });
     expect(byId.get('weave-user-guide')).toMatchObject({
       scope: 'core-skills',
       kind: 'skill',

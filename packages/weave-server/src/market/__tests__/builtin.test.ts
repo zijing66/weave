@@ -60,7 +60,6 @@ describe('内置仓落地（market/builtin）', () => {
       provenance: 'builtin',
     });
     expect(packs.map((p) => p.id).sort()).toEqual([
-      'ai-prompt-auditor',
       'file-guard',
       'md-lint',
       'mission-control',
@@ -71,7 +70,6 @@ describe('内置仓落地（market/builtin）', () => {
       'core-skills',
       'doc-hooks',
       'session-mods',
-      'weave-dev',
     ]);
   });
 

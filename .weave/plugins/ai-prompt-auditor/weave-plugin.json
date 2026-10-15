@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "ai-prompt-auditor",
+  "name": "AI Prompt Auditor",
+  "version": "0.1.0",
+  "description": "审计 dashboard AI 助手提示词三源对代码的新鲜度并直接修复（weave 仓库自用的项目级插件，不进内置市场）",
+  "author": "weave",
+  "templates": {
+    "agents": ["agents/ai-prompt-auditor.md"],
+    "commands": ["commands/audit-ai-prompt.md"]
+  }
+}

@@ -231,8 +231,11 @@ export const NESTED_GITIGNORE = `# weave — generated; do not commit
  *
  * The user's own root `.gitignore` is never touched (`.git/info/exclude` is not
  * used either — it is machine-local, so a teammate cloning the repo would not
- * inherit the rule). Idempotent; a no-op outside a git repository, matching the
- * previous behaviour for projects weave is run in before `git init`.
+ * inherit the rule). A file that already exists — the constant or a version the
+ * user edited (e.g. a narrow `!plugins/` exception to track project plugin
+ * sources) — is left alone: weave never clobbers a `.gitignore`. Idempotent; a
+ * no-op outside a git repository, matching the previous behaviour for projects
+ * weave is run in before `git init`.
  */
 async function ensureNestedGitignore(
   targetDir: string,
@@ -242,8 +245,7 @@ async function ensureNestedGitignore(
   if (!(await findGitRepoRoot(targetDir))) return;
 
   const file = path.join(dir, '.gitignore');
-  const existing = await readTextIfPresent(file);
-  if (existing === NESTED_GITIGNORE) return;
+  if ((await readTextIfPresent(file)) !== null) return;
 
   await ensureDir(dir);
   await writeFile(file, NESTED_GITIGNORE, 'utf-8');
