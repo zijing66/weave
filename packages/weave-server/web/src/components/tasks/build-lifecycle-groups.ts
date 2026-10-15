@@ -1,5 +1,5 @@
 import type { HookDispatch, HookEventRow } from '@/lib/api';
-import { agentDispatchOf, taskNotificationOf } from '@/lib/hook-payload';
+import { agentDispatchOf, parseDetail, taskNotificationOf } from '@/lib/hook-payload';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 
 /**
@@ -25,6 +25,8 @@ export interface LifecycleGroup {
   subagentStops: number;
   /** 组内派发的异步子代理数（PostToolUse.toolResponse.agentId，组头「子代理 ×n」）。 */
   agentsDispatched: number;
+  /** 组内阻塞式问答工具调用数（PreToolUse，组头「问答 ×n」）。 */
+  questions: number;
 }
 
 export const PRE_SESSION_GROUP_ID = 'pre-session';
@@ -83,11 +85,19 @@ export function buildLifecycleGroups(
         preSession: true,
         subagentStops: 0,
         agentsDispatched: 0,
+        questions: 0,
       });
       closed.add(g); // 引导组不是 turn——收尾不标「未正常结束」
     }
     g.events.push(event);
     if (event.eventType === lifecycle.subagentStop) g.subagentStops++;
+    // 问答工具按 PreToolUse 计一次（PostToolUse 配对，不重复计）。
+    if (
+      event.eventType === 'PreToolUse' &&
+      lifecycle.questionTools.includes(parseDetail(event.payload).toolName ?? '')
+    ) {
+      g.questions++;
+    }
     const ad = agentDispatchOf(event);
     if (ad) {
       g.agentsDispatched++;
@@ -129,6 +139,7 @@ export function buildLifecycleGroups(
         dispatches: [],
         subagentStops: 0,
         agentsDispatched: 0,
+        questions: 0,
       });
       if (pid) {
         group.promptId = pid;
@@ -192,6 +203,7 @@ export function buildLifecycleGroups(
       dispatches: [],
       subagentStops: 0,
       agentsDispatched: 0,
+      questions: 0,
     });
     closed.add(orphan); // 游离组不是 turn——不标「未正常结束」
     orphan.dispatches.push(dispatch);

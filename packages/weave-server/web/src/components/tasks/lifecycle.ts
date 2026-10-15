@@ -11,7 +11,14 @@ export const HARNESS_LIFECYCLE = {
     close: ['Stop'],
     sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: 'SubagentStop',
+    questionTools: ['AskUserQuestion', 'ExitPlanMode'],
   },
   /** Codex 事件 B0 闸门未开，空值占位（与 core 同步）。 */
-  codex: { open: '', close: [], sessionMarkers: [], subagentStop: '' },
+  codex: {
+    open: '',
+    close: [],
+    sessionMarkers: [],
+    subagentStop: '',
+    questionTools: [],
+  },
 } satisfies Record<Harness, HarnessLifecycle>;

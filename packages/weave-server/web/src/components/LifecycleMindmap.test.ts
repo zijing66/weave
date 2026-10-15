@@ -34,6 +34,7 @@ const group = (over: Partial<LifecycleGroup>): LifecycleGroup => ({
   dispatches: [],
   subagentStops: 0,
   agentsDispatched: 0,
+  questions: 0,
   ...over,
 });
 

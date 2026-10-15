@@ -102,8 +102,13 @@ export function SessionList({
   inflightOf: (sessionId: string) => number;
   /** 该会话的待答阻塞问题（无 = 不挂起）。 */
   questionOf?: (sessionId: string) => PendingQuestionEntry | undefined;
-  /** 远程作答（questionKey + 选项下标；键序由服务端 harness 规格拼装）。 */
-  onAnswer?: (sessionId: string, questionKey: string, optionIndex: number) => void;
+  /** 远程作答（questionKey + 选项下标 + 自定义输入文本；键序由服务端 harness 规格拼装）。 */
+  onAnswer?: (
+    sessionId: string,
+    questionKey: string,
+    optionIndex: number,
+    text?: string,
+  ) => void;
   /** 作答按钮的反馈态（loading → ✅ → 还原，防重复键序）。 */
   answerStateOf?: (sessionId: string, questionKey: string) => ActionState;
   /** 待答弹窗目标（null = 关；entry 消失 = 全部答完/解除，弹窗随之自关）。
@@ -565,8 +570,8 @@ export function SessionList({
                 entry.questions.find((q) => answerStateOf?.(answerFor, q.key) === 'loading')?.key ??
                 null
               }
-              onAnswer={(questionKey, optionIndex) =>
-                onAnswer?.(answerFor, questionKey, optionIndex)
+              onAnswer={(questionKey, optionIndex, text) =>
+                onAnswer?.(answerFor, questionKey, optionIndex, text)
               }
               onClose={() => onSetAnswerFor(null)}
             />

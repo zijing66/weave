@@ -387,6 +387,10 @@ export interface PendingQuestionOption {
   keys: string;
   label: string;
   description?: string | null;
+  /** 宿主自有尾行「自定义输入」：作答时须带文本（终端会进文本框）。 */
+  input?: boolean;
+  /** 宿主自有尾行「结束整个提问去聊天」：无文本，按下即结束提问。 */
+  chat?: boolean;
 }
 
 /** mirror of `BlockingQuestion`：待答问题面——问题文案/选项保留原文（终端模态框
@@ -1137,10 +1141,12 @@ export const api = {
     sessionId: string,
     questionKey: string,
     optionIndex: number,
+    /** 自定义输入行的文本（其余行省略）。 */
+    text?: string,
   ): Promise<{ ok: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/answer`, {
       method: 'POST',
-      body: JSON.stringify({ questionKey, optionIndex }),
+      body: JSON.stringify({ questionKey, optionIndex, text }),
     }),
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>

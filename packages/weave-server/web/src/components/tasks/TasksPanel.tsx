@@ -197,11 +197,11 @@ export function TasksPanel({
   );
   /** 远程作答：成功即乐观摘问（服务端口径），失败 toast（键序没进终端，可重试）。 */
   const onAnswerQuestion = useCallback(
-    (sessionId: string, questionKey: string, optionIndex: number): void => {
+    (sessionId: string, questionKey: string, optionIndex: number, text?: string): void => {
       void fb.run(
         `answer:${sessionId}:${questionKey}`,
         async () => {
-          await api.answerQuestion(sessionId, questionKey, optionIndex);
+          await api.answerQuestion(sessionId, questionKey, optionIndex, text);
           await refreshStatus();
         },
         { fail: (e) => t('tasks.answerFailed', { error: errorText(e) }) },
@@ -809,6 +809,11 @@ export function TasksPanel({
                       >
                         {t('tasks.answerPendingTag')}
                       </button>
+                    )}
+                    {g.questions > 0 && (
+                      <Badge className="shrink-0 bg-teal-900/40 text-teal-300">
+                        {t('tasks.groupQuestions', { n: g.questions })}
+                      </Badge>
                     )}
                     {g.subagentStops > 0 && (
                       <Badge className="shrink-0 bg-purple-900/40 text-purple-300">

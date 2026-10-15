@@ -77,6 +77,24 @@ describe('buildLifecycleGroups', () => {
     expect(groups[0]!.subagentStops).toBe(2);
   });
 
+  it('③-b 问答工具按 PreToolUse 计数（PostToolUse 配对不重复计）', () => {
+    const tool = (id: number, eventType: string, toolName: string) =>
+      event(id, eventType, JSON.stringify({ toolName }));
+    const groups = buildLifecycleGroups(
+      [
+        promptEvent(1, 'p'),
+        tool(2, 'PreToolUse', 'AskUserQuestion'),
+        tool(3, 'PostToolUse', 'AskUserQuestion'),
+        tool(4, 'PreToolUse', 'ExitPlanMode'),
+        tool(5, 'PreToolUse', 'Read'),
+        event(6, 'Stop'),
+      ],
+      [],
+      claude,
+    );
+    expect(groups[0]!.questions).toBe(2);
+  });
+
   it('④ dispatch 按 eventId 归组；null 与窗口外 → orphan 游离组单列', () => {
     const groups = buildLifecycleGroups(
       [promptEvent(1, 'a'), event(2), promptEvent(3, 'b'), event(4, 'Stop')],
@@ -122,6 +140,7 @@ describe('buildLifecycleGroups', () => {
       close: ['TurnClose'],
       sessionMarkers: ['EpochStart', 'EpochEnd'],
       subagentStop: 'ChildDone',
+      questionTools: ['AskUserQuestion'],
     } as const;
     const groups = buildLifecycleGroups(
       [
