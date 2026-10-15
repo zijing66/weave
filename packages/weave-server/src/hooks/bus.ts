@@ -85,6 +85,16 @@ export type HookBusMessage =
       reason: 'idle' | 'turnEnd' | 'messageFailed';
       at: string;
     }
+  // ---- 阻塞问答域：会话新挂起一个待答（无 → 有）广播 ----
+  // 只作提醒（web toast + 浏览器通知，不自动弹作答框——作答入口恒为手动点会话行
+  // 提问图标）；问题面本身不走帧，仍由 GET /messaging/questions 拉。
+  | {
+      kind: 'question.pending';
+      sessionId: string;
+      harness: string;
+      count: number;
+      at: string;
+    }
   // ---- 序列域（session-orchestration 批 3）：步触发/终态广播（编排画布实时） ----
   | { kind: 'sequence.step'; sequenceId: number; cursor: number; at: string }
   | {

@@ -196,6 +196,16 @@ export function startDaemon(): void {
   const questionTracker = new QuestionTracker({
     sessions: hookSessions,
     hookEvents,
+    // 新挂起待答 → 广播提醒帧（web 弹 toast/系统通知；作答入口仍是手动点图标）。
+    onPending: (entry) => {
+      hookBus.emit({
+        kind: 'question.pending',
+        sessionId: entry.sessionId,
+        harness: entry.harness,
+        count: entry.questions.length,
+        at: entry.at,
+      });
+    },
   });
   questionTracker.seedFromDb();
   const watch = new WatchService(projects);

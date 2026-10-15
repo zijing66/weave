@@ -260,6 +260,12 @@ export function TasksPanel({
     return () => window.removeEventListener('weave:hook', onHook);
   }, [refreshWatches]);
 
+  // 待答面无了（答完/解除/被换掉）而弹窗已随之自关 → 目标一并归位；否则 answerFor
+  // 还留着旧会话 id，该会话下次挂起会「无点击自动弹脸」。
+  useEffect(() => {
+    if (answerFor && !questionOf(answerFor)?.questions.length) setAnswerFor(null);
+  }, [answerFor, questionOf]);
+
   // 会话列表就绪后补默认选中（初始选中会话优先；用户点击后 prev 非空，不再覆盖）。
   useEffect(() => {
     setSelectedId((prev) => prev ?? sessions?.[0]?.sessionId ?? null);

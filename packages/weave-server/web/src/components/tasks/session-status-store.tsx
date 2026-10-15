@@ -38,6 +38,8 @@ export interface HookFrame {
   watchId?: number;
   targetSessionId?: string;
   watcherSessionId?: string | null;
+  /** question.pending 帧（新挂起待答）：只作提醒，问题面另由会话状态总线拉。 */
+  count?: number;
 }
 
 interface SessionStatusValue {

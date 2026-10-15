@@ -541,6 +541,15 @@ function Dashboard() {
             // （tag 与 Web Push 载荷同值——页面开/关两条通道先后到达只显示一条）
             void notifyBrowser(t('tasks.watchNotifyTitle'), body, `weave-watch-${frame.targetSessionId}`);
           }
+          // 新挂起待答（AskUserQuestion / 计划 / 权限确认）：同样只提醒——刻意不自动
+          // 弹作答框，作答入口恒为手动点会话行的提问图标（问题面另拉，帧只带计数）。
+          if (frame.kind === 'question.pending' && typeof frame.sessionId === 'string') {
+            const row = allSessions?.find((s) => s.sessionId === frame.sessionId);
+            const label = sessionLabel(row?.title ?? null, frame.sessionId);
+            const body = t('tasks.questionPending', { label });
+            show('info', body);
+            void notifyBrowser(t('tasks.questionPendingTitle'), body, `weave-question-${frame.sessionId}`);
+          }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;
         }

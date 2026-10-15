@@ -52,6 +52,8 @@ export interface QuestionTrackerDeps {
   hookEvents: Pick<HookEventRepository, 'listBySession'>;
   /** 能力面访问器（测试注入）；缺省 surfaces.ts 模块级 registry。 */
   surfaceFor?: (harness: Harness) => BlockingPromptSpec | null;
+  /** 新挂起待答（无 → 有）时广播（dashboard 提醒）；不传 = 不广播。 */
+  onPending?: (entry: PendingQuestionEntry) => void;
 }
 
 /** seed 重放窗口：最近事件条数（阻塞 Pre→Post 之间事件很少，12 足够覆盖）。 */
@@ -64,6 +66,8 @@ export class QuestionTracker {
   private readonly lastPreTool = new Map<string, { toolName: string; toolInput: unknown }>();
   /** 会话当前权限模式（最近一条带 raw.permission_mode 的事件）。 */
   private readonly permissionMode = new Map<string, string>();
+  /** seedFromDb 重放期间不广播（重建不是新发生）。 */
+  private seeding = false;
 
   constructor(private readonly deps: QuestionTrackerDeps) {}
 
@@ -91,13 +95,17 @@ export class QuestionTracker {
         this.lastPreTool.set(sessionId, { toolName, toolInput: payload.toolInput });
       }
       if (toolName && spec.blockingTools.includes(toolName)) {
-        this.pending.set(sessionId, {
+        const prev = this.pending.get(sessionId);
+        const entry: PendingQuestionEntry = {
           sessionId,
           harness: this.harnessOf(input.source),
           kind: 'question',
           questions: spec.parseQuestions(toolName, payload.toolInput),
           at: new Date().toISOString(),
-        });
+        };
+        this.pending.set(sessionId, entry);
+        // 只播「无 → 有」（同一会话连续挂起不重复打扰）；重放重建不算新发生。
+        if (!this.seeding && prev?.kind !== 'question') this.deps.onPending?.(entry);
       }
       return;
     }
@@ -154,16 +162,21 @@ export class QuestionTracker {
 
   /** daemon 重启重建：每会话重放最近事件窗口，末态即当前待答面。 */
   seedFromDb(): void {
-    for (const session of this.deps.sessions.list()) {
-      for (const row of this.deps.hookEvents.listBySession(session.sessionId, SEED_WINDOW)) {
-        let payload: NormalizedHookPayload | null = null;
-        try {
-          payload = JSON.parse(row.payload) as NormalizedHookPayload;
-        } catch {
-          payload = null;
+    this.seeding = true;
+    try {
+      for (const session of this.deps.sessions.list()) {
+        for (const row of this.deps.hookEvents.listBySession(session.sessionId, SEED_WINDOW)) {
+          let payload: NormalizedHookPayload | null = null;
+          try {
+            payload = JSON.parse(row.payload) as NormalizedHookPayload;
+          } catch {
+            payload = null;
+          }
+          this.onEvent({ sessionId: session.sessionId, source: row.source, payload });
         }
-        this.onEvent({ sessionId: session.sessionId, source: row.source, payload });
       }
+    } finally {
+      this.seeding = false;
     }
   }
 

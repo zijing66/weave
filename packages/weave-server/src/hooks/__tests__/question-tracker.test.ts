@@ -239,6 +239,46 @@ describe('QuestionTracker 状态机', () => {
     expect(tracker.get(SESSION)).toBeNull();
   });
 
+  it('新挂起待答广播 onPending：只在「无 → 有」时播一次', () => {
+    const seen: string[] = [];
+    const t2 = new QuestionTracker({
+      sessions,
+      hookEvents: events,
+      onPending: (e) => seen.push(e.sessionId),
+    });
+    const feed2 = (p: NormalizedHookPayload): void =>
+      t2.onEvent({ sessionId: SESSION, source: 'claude', payload: p });
+
+    feed2(preTool('AskUserQuestion', AUA_INPUT));
+    expect(seen).toEqual([SESSION]);
+    // 同一会话连续挂起（未清除）→ 不重复打扰
+    feed2(preTool('AskUserQuestion', AUA_INPUT));
+    expect(seen).toEqual([SESSION]);
+    // 答完再挂起 → 算新的一次
+    feed2(postTool('AskUserQuestion'));
+    feed2(preTool('AskUserQuestion', AUA_INPUT));
+    expect(seen).toEqual([SESSION, SESSION]);
+  });
+
+  it('seedFromDb 重放重建不广播 onPending（重建不是新发生）', () => {
+    events.insert({
+      projectId,
+      source: 'claude',
+      eventType: 'PreToolUse',
+      sessionId: SESSION,
+      payload: JSON.stringify(preTool('AskUserQuestion', AUA_INPUT)),
+    });
+    const seen: string[] = [];
+    const t2 = new QuestionTracker({
+      sessions,
+      hookEvents: events,
+      onPending: (e) => seen.push(e.sessionId),
+    });
+    t2.seedFromDb();
+    expect(seen).toEqual([]);
+    expect(t2.get(SESSION)).not.toBeNull();
+  });
+
   it('snapshot 新在前；forgetSession 级联清', () => {
     feed(SESSION, preTool('ExitPlanMode', {}));
     feed(CODEX, preTool('ExitPlanMode', {})); // 后到 = 新
