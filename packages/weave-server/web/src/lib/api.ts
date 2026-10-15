@@ -382,13 +382,18 @@ export interface SessionWatchRow {
   createdAt: string;
 }
 
-/** mirror of `BlockingQuestionOption`（harness 规格拼装：web 只传下标，键序不下发）。 */
+/** mirror of `BlockingQuestionOption`（harness 规格拼装：web 只传下标，键序不下发）。
+ *  `keys` 是**原子序列**——宿主 TUI 把一次写入的连续字符当粘贴，故每元素独立成键。 */
 export interface PendingQuestionOption {
-  keys: string;
+  keys: string[];
   label: string;
   description?: string | null;
   /** 宿主自有尾行「自定义输入」：作答时须带文本（终端会进文本框）。 */
   input?: boolean;
+  /** 该行选中后到文本框的走位键（多选要在选项列表里按 ↓ 挪到文本框）。 */
+  textFocus?: string[];
+  /** 文本框内送文本后的收尾键（回车 / 内联 Submit）。 */
+  textTail?: string[];
   /** 宿主自有尾行「结束整个提问去聊天」：无文本，按下即结束提问。 */
   chat?: boolean;
 }
@@ -402,6 +407,18 @@ export interface PendingQuestion {
   question: string;
   options: PendingQuestionOption[];
   multiSelect: boolean;
+  /** 收尾屏（宿主模态框尾部的「提交 / 取消」tab）：不是宿主的第 n 个问题，
+   *  是整 call 的落定动作——`questions ≥ 2 || 任一问多选` 才有，恒在面末尾。 */
+  submit?: boolean;
+}
+
+/** 一问的作答（web 只送下标与文本，键序由服务端按面拼）。 */
+export interface AnswerPick {
+  questionKey: string;
+  /** 选中的选项下标（空 = 未作答）。 */
+  options: number[];
+  /** 自定义输入行的文本（仅当选中了 `input` 行）。 */
+  text?: string;
 }
 
 /** mirror of `PendingQuestionEntry`（GET /messaging/questions 行）。 */
@@ -1136,17 +1153,15 @@ export const api = {
     apiFetch<{ questions: PendingQuestionEntry[] }>('/messaging/questions').then(
       (r) => r.questions,
     ),
-  /** 远程作答：只传问题键 + 选项下标（键序由服务端 harness 规格拼装并白名单校验）。 */
+  /** 远程作答：整 call 一次提交（只传问题键 + 选项下标，键序由服务端 harness
+   *  规格拼装并白名单校验）。 */
   answerQuestion: (
     sessionId: string,
-    questionKey: string,
-    optionIndex: number,
-    /** 自定义输入行的文本（其余行省略）。 */
-    text?: string,
+    answers: AnswerPick[],
   ): Promise<{ ok: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/answer`, {
       method: 'POST',
-      body: JSON.stringify({ questionKey, optionIndex, text }),
+      body: JSON.stringify({ answers }),
     }),
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>

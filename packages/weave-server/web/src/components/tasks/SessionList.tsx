@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { type SessionRow, type SessionWatchRow, type MessagingCapability, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
+import { type SessionRow, type SessionWatchRow, type MessagingCapability, type AnswerPick, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
@@ -102,15 +102,11 @@ export function SessionList({
   inflightOf: (sessionId: string) => number;
   /** 该会话的待答阻塞问题（无 = 不挂起）。 */
   questionOf?: (sessionId: string) => PendingQuestionEntry | undefined;
-  /** 远程作答（questionKey + 选项下标 + 自定义输入文本；键序由服务端 harness 规格拼装）。 */
-  onAnswer?: (
-    sessionId: string,
-    questionKey: string,
-    optionIndex: number,
-    text?: string,
-  ) => void;
+  /** 远程作答（整 call 一次提交：问题键 + 选项下标 + 自定义输入文本；键序由
+   *  服务端 harness 规格拼装）。 */
+  onAnswer?: (sessionId: string, answers: AnswerPick[]) => void;
   /** 作答按钮的反馈态（loading → ✅ → 还原，防重复键序）。 */
-  answerStateOf?: (sessionId: string, questionKey: string) => ActionState;
+  answerStateOf?: (sessionId: string) => ActionState;
   /** 待答弹窗目标（null = 关；entry 消失 = 全部答完/解除，弹窗随之自关）。
    *  受控：会话行图标与事件链（组头 tag / 画布卡片）共用同一份——单一弹窗
    *  实例，不叠开。 */
@@ -566,13 +562,8 @@ export function SessionList({
                 answerFor,
               )}
               entry={entry}
-              busyKey={
-                entry.questions.find((q) => answerStateOf?.(answerFor, q.key) === 'loading')?.key ??
-                null
-              }
-              onAnswer={(questionKey, optionIndex, text) =>
-                onAnswer?.(answerFor, questionKey, optionIndex, text)
-              }
+              busy={answerStateOf?.(answerFor) === 'loading'}
+              onAnswer={(answers) => onAnswer?.(answerFor, answers)}
               onClose={() => onSetAnswerFor(null)}
             />
           );

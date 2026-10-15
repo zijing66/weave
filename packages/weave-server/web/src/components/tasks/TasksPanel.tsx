@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness } from '@weavecode/core/harness';
 import {
   api,
+  type AnswerPick,
   type HookDispatch,
   type HookEventRow,
   type HookRule,
@@ -195,13 +196,14 @@ export function TasksPanel({
     (sessionId: string) => questions.get(sessionId),
     [questions],
   );
-  /** 远程作答：成功即乐观摘问（服务端口径），失败 toast（键序没进终端，可重试）。 */
+  /** 远程作答：整 call 一次提交，成功即乐观摘问（服务端口径），失败 toast
+   *  （键序没进终端，可重试）。 */
   const onAnswerQuestion = useCallback(
-    (sessionId: string, questionKey: string, optionIndex: number, text?: string): void => {
+    (sessionId: string, answers: AnswerPick[]): void => {
       void fb.run(
-        `answer:${sessionId}:${questionKey}`,
+        `answer:${sessionId}`,
         async () => {
-          await api.answerQuestion(sessionId, questionKey, optionIndex, text);
+          await api.answerQuestion(sessionId, answers);
           await refreshStatus();
         },
         { fail: (e) => t('tasks.answerFailed', { error: errorText(e) }) },
@@ -210,7 +212,7 @@ export function TasksPanel({
     [fb, t, refreshStatus],
   );
   const answerStateOf = useCallback(
-    (sessionId: string, questionKey: string) => fb.stateOf(`answer:${sessionId}:${questionKey}`),
+    (sessionId: string) => fb.stateOf(`answer:${sessionId}`),
     [fb],
   );
   const onSubscribeWatch = useCallback(
