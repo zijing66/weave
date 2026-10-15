@@ -52,13 +52,10 @@
     "@weavecode/core": "workspace:^",
     "@weavecode/harness": "workspace:^",
     "@weavecode/server": "workspace:^",
-    "@weavecode/templates": "workspace:^",
-    "ink": "^5.0.0",
-    "react": "^18.3.1"
+    "@weavecode/templates": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/react": "^18.3.31",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   },

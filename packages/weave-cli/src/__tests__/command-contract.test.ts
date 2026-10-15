@@ -6,7 +6,6 @@ import { daemonCommand } from '../commands/daemon';
 import { dashboardCommand } from '../commands/dashboard';
 import { scanCommand } from '../commands/scan';
 import { chpassCommand } from '../commands/chpass';
-import { statuslineCommand } from '../commands/statusline';
 import { zh, en, type MessageKey } from '../i18n/dict';
 import { makeT } from '../i18n/t';
 import type { Command } from '../parser';
@@ -20,7 +19,6 @@ const COMMANDS: Command[] = [
   dashboardCommand,
   scanCommand,
   chpassCommand,
-  statuslineCommand,
 ];
 
 const zhT = makeT(zh, zh);

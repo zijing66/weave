@@ -25,8 +25,7 @@ weave dashboard     # open the local dashboard
   removed endpoint and would report nothing).
 - **`weave dashboard`** — a web UI for projects, sessions, hooks, plugins, and
   installs. Served by the daemon itself.
-- **`weave scan` / `weave status` / `weave statusline`** — project discovery,
-  harness status, and a statusline preview.
+- **`weave scan` / `weave status`** — project discovery and harness status.
 
 ## Built-in resources
 
@@ -68,7 +67,6 @@ namespace block next to the built-in `weave` one.
 | `weave status` | Show harness status for a project |
 | `weave daemon start\|stop\|status` | Manage the local daemon |
 | `weave dashboard` | Open the dashboard in a browser |
-| `weave statusline preview` | Preview the statusline |
 
 ## Packages
 

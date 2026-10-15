@@ -20,7 +20,6 @@ weave dashboard
 | `weave status` | Show harness status for a project |
 | `weave daemon start\|stop\|status` | Manage the local daemon |
 | `weave dashboard` | Open the dashboard in a browser |
-| `weave statusline preview` | Preview the statusline |
 
 Requires Node.js >= 22.5.
 

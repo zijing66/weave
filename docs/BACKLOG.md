@@ -65,7 +65,7 @@
 
 **为什么不内嵌 Ink**：statusline 脚本由 Claude Code 每次交互重新 spawn，React reconciler 的启动开销（~200ms+）会显著拖慢每次交互的渲染；且 `node_modules` 依赖破坏脚本的零依赖可移植性。
 
-**已落地的替代**：`weave statusline preview`（`packages/weave-cli/src/statusline/preview.tsx`）用 Ink 做交互式 TUI 预览——运行**真实生成脚本**、解析其 ANSI 输出重渲染，`w` 一键写回配置。
+**曾落地的替代（已移除，2026-10）**：`weave statusline preview` 用 Ink 做交互式 TUI 预览——运行**真实生成脚本**、解析其 ANSI 输出重渲染、`w` 一键写回配置。删除理由：dashboard 的 `StatuslinePanel` 已有等价的编辑 + 实时预览（JS 镜像，免服务端往返），真实脚本的渲染保真由 `weave-server/src/statusline/__tests__/statusline.test.ts` 的 `runScript` 断言覆盖，CLI 侧成为冗余的第二编辑面；随之移除 `weave-cli` 的 `ink`/`react` 依赖。
 
 ---
 
@@ -115,10 +115,9 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 | 文件资产模板扫描（库内 `commands/`、`agents/` 等目录） | `weave-server/src/install/scanner.ts` |
 | 前端 agent 分区切换（Claude / Codex / 全部）+ 新类别网格 | `weave-web/src/components/`（`FileAssetGrid`、`SkillGrid`、`LibraryPanel`） |
 | Instructions 查看（CLAUDE.md / AGENTS.md） | `CategoryDetail.tsx` commands 分类 |
-| statusline 预览 TUI（Ink，真实脚本回放） | `weave-cli/src/statusline/preview.tsx` |
 | statusline powerline 桥接渲染 + `padding: 0` + `--no-optional-locks`（对齐 ccstatusline） | `weave-server/src/statusline/generator.ts` |
 | statusline refreshInterval 默认 10s（事件驱动为主，定时为辅） | `weave-server/src/statusline/config.ts` |
-| statusline 全自定义：`label`/`format` 模板、256 色与 hex 真彩、可配进度条、`changes` 的 `(+N, -N)`、`tokens` 的会话累计（transcript 按 `message.id` 去重 + 增量缓存） | `weave-server/src/statusline/{config,generator,manager}.ts`、`weave-cli/src/statusline/{preview.tsx,ansi.ts}`、`weave-web/src/components/StatuslinePanel.tsx` |
+| statusline 全自定义：`label`/`format` 模板、256 色与 hex 真彩、可配进度条、`changes` 的 `(+N, -N)`、`tokens` 的会话累计（transcript 按 `message.id` 去重 + 增量缓存） | `weave-server/src/statusline/{config,generator,manager}.ts`、`weave-web/src/components/StatuslinePanel.tsx` |
 | `weave init` 产出真实 statusline 脚本（原先只写占位 stub）+ 嵌套自忽略 `.gitignore` | `weave-cli/src/init/executor.ts` |
 | harness 健康检查（软连接未落盘 / 指令文件重复 / 悬挂软连接 / statusLine 绝对路径失效） | `weave-cli/src/init/harness-checks.ts`，由 `weave status` 输出 |
 | `weave init` 多 harness（`--harness` flag / TTY 交互多选 / Codex init 落 `.codex/skills`）+ `weave scan`/`weave status` harness marker 探测认 `.codex`（架构重构批 5，commit 8bb411d） | `weave-cli/src/commands/{init,scan,status}.ts`、`init/harnesses/codex.ts`、`@weave/harness` Detector |

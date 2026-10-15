@@ -33,8 +33,6 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.dashboard.desc': 'Open the web console in a browser (starts the daemon if needed)',
   'cmd.chpass.desc': 'Change the dashboard login password (new password given; no old password needed locally)',
   'cmd.scan.desc': 'Scan for weave-initialized projects and register them',
-  'cmd.statusline.desc': 'Statusline tools (preview TUI)',
-  'cmd.statusline.preview.desc': 'Interactive Ink preview of the statusline',
   // --- command option descriptions ---
   'flag.init.preset': 'Configuration preset: minimal, default, or full',
   'flag.init.force': 'Overwrite existing files',
@@ -45,7 +43,6 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
-  'flag.statusline.preview.project': 'Target project path (default: cwd)',
   // --- daemon command output ---
   'out.daemon.alreadyRunning': 'Daemon already running on port {port}',
   'out.daemon.started': 'Daemon started on http://{host}:{port}',
@@ -102,8 +99,6 @@ export const en: Record<keyof typeof zh, string> = {
   'out.status.issuesFound': '  {count} issue(s) found:\n',
   'out.status.issue': '    - {message}',
   'out.status.fix': '      fix: {fix}',
-  // --- statusline command output ---
-  'out.statusline.pathMissing': 'Project path does not exist: {path}',
   // --- init flow output and table headers ---
   'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
   'init.presetTarget': '  Preset: {preset}  |  Target: {target}\n',
@@ -178,27 +173,4 @@ export const en: Record<keyof typeof zh, string> = {
   'ilink.linkFailed': 'Could not create {link} -> {target} ({path}): {detail}',
   'ilink.symlinkNotAllowed':
     'this system does not allow symlinks without elevation. On Windows, enable Developer Mode (Settings > System > For developers) or run weave init from an elevated shell, then retry.',
-  // --- statusline preview TUI ---
-  'preview.saved': 'Wrote config and regenerated the statusline script',
-  'preview.writeFailed': 'Write failed: {error}',
-  'preview.unsaved': ' ●unsaved',
-  'preview.scriptError': 'script error: {error}',
-  'preview.scriptExit': 'exit {status}',
-  'preview.rendering': 'rendering…',
-  'preview.layoutHelp': 'layout — ↑↓←→ move · space toggle',
-  'preview.rowLabel': 'row {row}  ',
-  'preview.editConfirm': ' Enter confirm · Esc cancel',
-  'preview.headerMeta':
-    'source: {source} · refresh: {refresh}s · align: {align} · powerline: {powerline}',
-  'preview.on': 'on',
-  'preview.off': 'off',
-  'preview.segDetail': 'color {color} · bold {bold} · merge {merge} · icon {icon}{style}',
-  'preview.styleSuffix': ' · style {style}',
-  'preview.labelValue': 'label {value}',
-  'preview.formatValue': 'format {value}',
-  'preview.barLine': 'bar {cells} cells {glyphs} · labelSep {labelSep}',
-  'preview.keysHelp':
-    'keys: c color · b bold · m merge · i icon · v context style · n label · f format · [ ] bar cells · B bar glyph · L label separator · a align · p powerline · g powerline separator · l logo color · s separator · r re-render · w write · q quit',
-  'preview.reRendered': 're-rendered',
-  'preview.writing': 'writing…',
 };

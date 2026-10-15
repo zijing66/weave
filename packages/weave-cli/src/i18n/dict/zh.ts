@@ -32,8 +32,6 @@ export const zh = {
   'cmd.dashboard.desc': '在浏览器中打开 web 控制台（必要时先启动守护进程）',
   'cmd.chpass.desc': '修改 dashboard 登录密码（指定新密码；本机执行不需要旧密码）',
   'cmd.scan.desc': '扫描已初始化 weave 的项目并注册',
-  'cmd.statusline.desc': 'statusline 工具（预览 TUI）',
-  'cmd.statusline.preview.desc': 'statusline 的交互式 Ink 预览',
   // --- 命令选项描述 ---
   'flag.init.preset': '配置预设：minimal、default 或 full',
   'flag.init.force': '覆盖已存在的文件',
@@ -44,7 +42,6 @@ export const zh = {
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',
   'flag.dashboard.noOpen': '只打印 dashboard URL，不打开浏览器',
-  'flag.statusline.preview.project': '目标项目路径（默认：当前目录）',
   // --- daemon 命令运行时输出 ---
   'out.daemon.alreadyRunning': '守护进程已在 {port} 端口运行',
   'out.daemon.started': '守护进程已启动：http://{host}:{port}',
@@ -100,8 +97,6 @@ export const zh = {
   'out.status.issuesFound': '  发现 {count} 个问题：\n',
   'out.status.issue': '    - {message}',
   'out.status.fix': '      修复：{fix}',
-  // --- statusline 命令运行时输出 ---
-  'out.statusline.pathMissing': '项目路径不存在：{path}',
   // --- init 流程输出与表头 ---
   'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
   'init.presetTarget': '  预设：{preset}  |  目标：{target}\n',
@@ -164,25 +159,4 @@ export const zh = {
   'ilink.replaceDetail': '将把 AGENTS.md 替换为指向 CLAUDE.md 的软连接（原文件会备份到 {backupDir}）。',
   'ilink.linkFailed': '无法创建 {link} -> {target}（{path}）：{detail}',
   'ilink.symlinkNotAllowed': '此系统不允许未提权创建软链接。在 Windows 上请启用开发者模式（设置 > 系统 > 开发者选项），或从提权终端运行 weave init，然后重试。',
-  // --- statusline 预览 TUI ---
-  'preview.saved': '已写入并重新生成 statusline 脚本',
-  'preview.writeFailed': '写入失败：{error}',
-  'preview.unsaved': ' ●未保存',
-  'preview.scriptError': '脚本错误：{error}',
-  'preview.scriptExit': '退出码 {status}',
-  'preview.rendering': '渲染中…',
-  'preview.layoutHelp': 'layout — ↑↓←→ 移动 · space 开关',
-  'preview.rowLabel': '第 {row} 行  ',
-  'preview.editConfirm': ' Enter 确认 · Esc 取消',
-  'preview.headerMeta': '来源 {source} · 刷新 {refresh}s · 对齐 {align} · powerline {powerline}',
-  'preview.on': '开',
-  'preview.off': '关',
-  'preview.segDetail': '颜色 {color} · 粗体 {bold} · 合并 {merge} · 图标 {icon}{style}',
-  'preview.styleSuffix': ' · 样式 {style}',
-  'preview.labelValue': '标签 {value}',
-  'preview.formatValue': '模板 {value}',
-  'preview.barLine': 'bar {cells}格 {glyphs} · labelSep {labelSep}',
-  'preview.keysHelp': 'keys: c 颜色 · b 粗体 · m 合并 · i 图标 · v 上下文样式 · n 标签 · f 模板 · [ ] bar 格数 · B bar 字形 · L 标签分隔符 · a 对齐 · p powerline · g powerline 分隔符 · l logo 颜色 · s 分隔符 · r 重渲染 · w 写入 · q 退出',
-  'preview.reRendered': '已重新渲染',
-  'preview.writing': '写入中…',
 };

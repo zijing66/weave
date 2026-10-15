@@ -502,8 +502,8 @@ packages/weave-server/src/hooks/presets/harness-tools/<scope>/<pack>/  # 内置�
 
 **mod 绘制规范（ink 决策）**：mod 运行在**无 Node 的模块环境**，绘制必须走引擎
 `$.ui.resolve(e)` 元素表（`Box/Text/Button`，API 形态与 Ink 相近、经验直接复用）——
-**ink 不进 mods**（自写 stdout 会与 CC 终端渲染冲突）。ink 保留给 weave 自身独立
-进程 TUI（现 `weave statusline preview` 已用；未来 `weave hooks` 交互面板等沿用）；
+**ink 不进 mods**（自写 stdout 会与 CC 终端渲染冲突）。ink 预留给 weave 自身独立
+进程 TUI（`weave hooks` 交互面板等；`weave statusline preview` 曾是唯一实例，已删）；
 statusline 脚本不内嵌 Ink 的既有裁决（BACKLOG §7）继续有效。
 
 **二期候选（不入首批）**：command/agent 类工具、`weave-dashboard` mod、
