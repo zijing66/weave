@@ -19,8 +19,8 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 const ACTION_BTN =
   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200';
 
-/** 活动序重排落地周期：事件流实时刷新行数据，但顺序只攒到这里统一落一次
- *  （成员增删例外——新会话即时置顶，不等周期），避免列表随事件抖动。 */
+/** 活动序重排落地周期：事件流实时刷新行数据与成员增删，但既有行的重排只由
+ *  这个定时器统一落地，避免会话更新时列表频繁跳动。 */
 export const RESORT_INTERVAL_MS = 10_000;
 /** FLIP 位移动画时长：周期重排时卡片从旧位滑到新位。 */
 const FLIP_DURATION_MS = 450;
@@ -37,19 +37,26 @@ export function byActivity(a: SessionRow, b: SessionRow): number {
   );
 }
 
-/** 同成员判定（顺序无关）：成员变了才即时重排，纯活动变化等周期 tick。 */
-const sameMembers = (a: readonly string[], b: readonly string[]): boolean => {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((id) => set.has(id));
-};
+/**
+ * 顺序快照合并（成员增删路径）：既有行的相对序**冻结**——会话更新不重排它们；
+ * 只做两件即时的事：新行插到最前（它们是刚创建的，活动序必在顶）、消失行移除。
+ * 真正的活动序重排交给周期 tick。`sorted` 提供成员集与新行先后。
+ */
+export function mergeNewRows(prev: readonly string[], sorted: readonly string[]): string[] {
+  const live = new Set(sorted);
+  const kept = prev.filter((id) => live.has(id));
+  const known = new Set(kept);
+  const fresh = sorted.filter((id) => !known.has(id));
+  return [...fresh, ...kept];
+}
 
 /**
  * 任务视图左栏：会话列表。行内元素 = 名称（title 回退 sessionId 前 8 位，
  * hover 出完整值可复制）+ 状态图标（运行中动效 / 打开静态）+ 事件计数 +
  * pendingTitle 徽标 + 幽灵会话自动清理倒计时 + 行内改名 + 指令拖拽落点。
- * 顺序 = 活动序（byActivity）：数据随事件流实时刷新，顺序只在成员增删即时
- * 落、其余攒 RESORT_INTERVAL_MS 周期统一落，落位带 FLIP 滑动动画。
+ * 顺序 = 活动序（byActivity）：数据随事件流实时刷新，但顺序只在
+ * RESORT_INTERVAL_MS 周期统一落（落位带 FLIP 滑动动画）——成员增删只做
+ * 增行/删行（新行即时置顶），既有行不随会话更新重排。
  */
 export function SessionList({
   sessions,
@@ -134,10 +141,16 @@ export function SessionList({
   }, [sortedIds]);
   const [appliedIds, setAppliedIds] = useState<string[] | null>(null);
 
-  // 成员变化（首载/新增/删除）→ 立即按最新顺序落位（useLayoutEffect：新会话
-  // 首绘即在正确位置，不闪底再跳顶）；纯活动变化不动，攒到周期 tick 统一落。
+  // 成员增删（首载/新增/删除）→ 只增量落位：新行即时置顶、消失行即时移除，
+  // 既有行保持相对序不动（不随会话更新重排）；活动序重排等周期 tick。
   useLayoutEffect(() => {
-    setAppliedIds((prev) => (prev !== null && sameMembers(prev, sortedIds) ? prev : sortedIds));
+    setAppliedIds((prev) => {
+      if (prev === null) return sortedIds;
+      const next = mergeNewRows(prev, sortedIds);
+      return next.length === prev.length && next.every((id, i) => id === prev[i])
+        ? prev
+        : next;
+    });
   }, [sortedIds]);
 
   // 周期 tick：把攒下的活动变化统一落地；顺序没变就保持引用，不空转重渲染。
@@ -155,8 +168,8 @@ export function SessionList({
     return () => window.clearInterval(timer);
   }, []);
 
-  /** 渲染顺序 = appliedIds 冻结序，行数据取最新（新会话在 layout effect 前
-   *  的一帧经 byId 兜底自然落尾，commit 后即归位）。 */
+  /** 渲染顺序 = appliedIds 冻结序，行数据取最新（appliedIds 落后于 sessions
+   *  的一帧里，未见的新行按新在前兜底置顶，commit 后即归位）。 */
   const rows = useMemo(() => {
     if (appliedIds === null) return sessions.slice().sort(byActivity);
     const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
@@ -166,11 +179,11 @@ export function SessionList({
       if (s) ordered.push(s);
     }
     const seen = new Set(ordered.map((s) => s.sessionId));
-    for (const s of sessions) if (!seen.has(s.sessionId)) ordered.push(s);
-    return ordered;
+    const unseen = sessions.filter((s) => !seen.has(s.sessionId));
+    return [...unseen, ...ordered];
   }, [sessions, appliedIds]);
 
-  // ---- FLIP：顺序快照切换（周期重排/成员增删）时，卡片从旧位平滑滑到新位。
+  // ---- FLIP：周期重排时卡片从旧位平滑滑到新位。
   // 每次 commit 量一遍各行的 offsetTop 存快照（布局位，不受进行中 transform
   // 影响）；下一拍位移了的行先瞬时摆回旧位，再过渡回新位。
   const rowEls = useRef(new Map<string, HTMLLIElement>());

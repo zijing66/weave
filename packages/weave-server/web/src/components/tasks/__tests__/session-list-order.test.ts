@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '@/lib/api';
-import { byActivity } from '../SessionList';
+import { byActivity, mergeNewRows } from '../SessionList';
 
 const row = (over: Partial<SessionRow>): SessionRow => ({
   sessionId: 's',
@@ -15,6 +15,8 @@ const row = (over: Partial<SessionRow>): SessionRow => ({
 /**
  * 会话列表排序口径（byActivity）：活动序——lastSeenAt 倒序、createdAt 决胜。
  * 静默列表（lastSeenAt 同为各自创建时刻）等价创建时间倒序；活跃会话上浮。
+ * 顺序落地（mergeNewRows）：既有行的重排只由周期 tick 落地，成员增删路径只
+ * 做「新行置顶 + 消失行移除」，既有行相对序冻结。
  */
 
 describe('byActivity（活动序）', () => {
@@ -37,5 +39,24 @@ describe('byActivity（活动序）', () => {
       row({ sessionId: 'b', createdAt: '2026-10-12T00:00:00.000Z', lastSeenAt: '2026-10-12T00:00:00.000Z' }),
     ];
     expect(list.slice().sort(byActivity).map((s) => s.sessionId)).toEqual(['c', 'b', 'a']);
+  });
+});
+
+describe('mergeNewRows（成员增删时的顺序快照合并）', () => {
+  it('既有行相对序冻结：活动序变了也不重排，等周期 tick 落地', () => {
+    expect(mergeNewRows(['a', 'b'], ['b', 'a'])).toEqual(['a', 'b']);
+  });
+
+  it('新行即时置顶（先后取 sorted）', () => {
+    expect(mergeNewRows(['a', 'b'], ['c', 'a', 'b'])).toEqual(['c', 'a', 'b']);
+    expect(mergeNewRows(['a', 'b'], ['d', 'c', 'a'])).toEqual(['d', 'c', 'a']);
+  });
+
+  it('消失行即时移除，其余相对序不变', () => {
+    expect(mergeNewRows(['a', 'b', 'c'], ['a', 'c'])).toEqual(['a', 'c']);
+  });
+
+  it('无成员变化时内容不变（同序引用由调用方检查）', () => {
+    expect(mergeNewRows(['a', 'b'], ['a', 'b'])).toEqual(['a', 'b']);
   });
 });
