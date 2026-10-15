@@ -190,7 +190,7 @@ async function main(): Promise<void> {
   const terminalRefresher = new TerminalCountsRefresher(
     () => readTerminalCounts(projects.list()),
     dataBus,
-    { shouldRun: () => dataBus.hasSubscribers() },
+    { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );
   terminalRefresher.start();
   // 会话存活（终端按钮图标）：与生产入口同一装配——被杀进程无 hook 事件，

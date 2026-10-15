@@ -64,21 +64,55 @@ describe('TerminalCountsRefresher', () => {
     expect(frames).toHaveLength(1); // 值没变 → 不重复推
   });
 
-  it('探测失败不推不抛，下一个周期照常恢复', async () => {
+  it('探测失败不推不抛，下一个周期照常恢复；lastSnapshot 保留旧值', async () => {
     const bus = new DataBus();
     const frames = collect(bus);
-    let broken = true;
+    let broken = false;
     const refresher = new TerminalCountsRefresher(async () => {
       if (broken) throw new Error('wezterm cli 挂死');
       return { 1: 3 };
     }, bus);
 
-    await expect(refresher.tick()).resolves.toBeUndefined();
-    expect(frames).toHaveLength(0); // 失败不推、角标保留旧值
-
-    broken = false;
     await refresher.tick();
     expect(frames).toHaveLength(1);
+    expect(refresher.lastSnapshot).toEqual({ 1: 3 });
+
+    broken = true;
+    await refresher.tick();
+    expect(frames).toHaveLength(1); // 失败不推、角标保留旧值
+    expect(refresher.lastSnapshot).toEqual({ 1: 3 }); // 快照也不回退
+  });
+
+  it('新客户端接入：先补上次快照帧，再后台对账推差量；还没探过则不补', async () => {
+    const bus = new DataBus();
+    const frames = collect(bus);
+    let counts: Record<number, number> = { 1: 0 };
+    const refresher = new TerminalCountsRefresher(async () => ({ ...counts }), bus);
+
+    refresher.onSubscriberJoin(); // 还没探过：不补帧、只触发首探
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
+    expect(frames[0]).toEqual({ key: 'terminalCounts', payload: { counts: { 1: 0 } } });
+
+    counts = { 1: 4 };
+    refresher.onSubscriberJoin(); // 已有快照：同值补帧 + 后台对账推差量
+    await vi.waitFor(() => expect(frames).toHaveLength(3));
+    expect(frames[1]).toEqual({ key: 'terminalCounts', payload: { counts: { 1: 0 } } });
+    expect(frames[2]).toEqual({ key: 'terminalCounts', payload: { counts: { 1: 4 } } });
+  });
+
+  it('启动饱和窗口内 tick 跳过探测，refreshNow（用户动作）穿透', async () => {
+    const bus = new DataBus();
+    const snapshot = vi.fn(async () => ({ 1: 1 }));
+    const refresher = new TerminalCountsRefresher(snapshot, bus, { graceMs: 60_000 });
+    refresher.start();
+
+    await refresher.tick();
+    expect(snapshot).not.toHaveBeenCalled(); // 窗口内不探（陈旧值路径）
+
+    await refresher.refreshNow();
+    expect(snapshot).toHaveBeenCalledTimes(1); // 用户动作不受限
+
+    refresher.stop();
   });
 
   it('防重入：上一次扫描未完成时跳过本次（探测要 spawn 子进程）', async () => {

@@ -213,7 +213,7 @@ export function startDaemon(): void {
   const terminalRefresher = new TerminalCountsRefresher(
     () => readTerminalCounts(projects.list()),
     dataBus,
-    { shouldRun: () => dataBus.hasSubscribers() },
+    { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );
   terminalRefresher.start();
   // 会话存活（终端按钮图标）同理：claude 进程被杀无 hook 事件，GET 的 pidAlive

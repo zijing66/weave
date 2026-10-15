@@ -222,22 +222,10 @@ function Dashboard() {
     [refreshProjects, t],
   );
 
-  // 项目卡终端角标（已开终端窗口数）：初值拉一次，之后由服务端 push 帧驱动——
-  // 后端「有人看时每 30s 探一次、只在值变化时推」。前端不再有任何定时器：探测
-  // 本身要 spawn `wezterm cli`，轮询留在前端会按打开的看板数翻倍。
+  // 项目卡终端角标（已开终端窗口数）：纯 push 帧驱动——SSE 接入即补上次快照
+  // 首帧、后台对账后推差量。前端零请求零定时器：探测要 spawn `wezterm cli`，
+  // 任何前端主动拉都会把 spawn 带回请求关键路径。
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getTerminalCounts()
-      .then((counts) => {
-        if (!cancelled) setTerminalCounts(counts);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const onVisible = () => {
@@ -822,15 +810,9 @@ function Dashboard() {
       void fb.run(
         `open-${target}:${p.id}`,
         async () => {
+          // 开终端后的角标对账在服务端做（新窗 cwd 上报有一拍延迟，600ms 后探
+          // 一次、差量走 push 帧）——前端不再拉 /terminals/counts。
           await api.openProject(p.id, target);
-          // 新窗落地到 cwd 上报有一拍延迟：略等再对一次账。服务端开窗后的对账
-          // 是**立刻**发的，那时 wezterm 还没报出新窗 cwd，所以这里补一枪一次性
-          // 拉取（不是轮询：只在用户点了按钮之后发生一次）。
-          if (target === 'terminal') {
-            window.setTimeout(() => {
-              api.getTerminalCounts().then(setTerminalCounts).catch(() => {});
-            }, 600);
-          }
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       ),

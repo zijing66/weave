@@ -937,11 +937,6 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ ids }),
     }).then((r) => r.projects),
-  /** 项目卡终端角标：projectId → 已打开终端窗口数（JSON 键是字符串，转回数字）。 */
-  getTerminalCounts: (): Promise<Record<number, number>> =>
-    apiFetch<{ counts: Record<string, number> }>('/terminals/counts').then((r) =>
-      Object.fromEntries(Object.entries(r.counts).map(([k, v]) => [Number(k), v])),
-    ),
   listAssets: (projectPath: string): Promise<AssetEntry[]> =>
     apiFetch<{ projectPath: string; assets: AssetEntry[] }>(
       `/assets?path=${encodeURIComponent(projectPath)}`,

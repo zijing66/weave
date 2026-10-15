@@ -1310,30 +1310,43 @@ export class SocketProbeGate {
 /** 进程内的探活失败记忆（见 SocketProbeGate）。 */
 const probeGate = new SocketProbeGate();
 
-/** 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。 */
-async function weztermLiveMuxes(): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
+/**
+ * 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。
+ * light = 只取计数要的字段（socket+panes）：跳过 `list-clients`（每 socket 省
+ * 一半 spawn），workspace/idleMs 留空——仅供 `weztermLiveMuxesCached`（计数）用，
+ * run/落点决策恒走全量。候选**并行**探：串行时 N 个 mux 的墙钟是 N×，
+ * 事件循环饱和窗口里被排队放大成秒级。
+ */
+async function weztermLiveMuxes(
+  light = false,
+): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
   const candidates = weztermSocketCandidates(process.platform);
-  const muxes: WeztermMux[] = [];
-  for (const socket of candidates) {
-    // 已知坏的 socket 不再重探：死 socket 会把 cli 挂死或踢出幽灵 mux-server。
-    if (!probeGate.shouldProbe(socket)) continue;
-    const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
-    if (!listed?.ok) {
-      // 干净的非零退出 = 该 socket 路径永久失效；超时/起不来只回避。
-      if (listed && !listed.timedOut) probeGate.failed(socket);
-      else probeGate.cooledDown(socket);
-      continue;
-    }
-    probeGate.succeeded(socket);
-    const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
-    const active = weztermActiveClient(clients?.ok ? clients.out : null);
-    muxes.push({
-      socket,
-      panes: parseWeztermPanes(listed.out),
-      workspace: active?.workspace ?? null,
-      idleMs: active?.idleMs ?? Number.POSITIVE_INFINITY,
-    });
-  }
+  const muxes = (
+    await Promise.all(
+      candidates.map(async (socket) => {
+        // 已知坏的 socket 不再重探：死 socket 会把 cli 挂死或踢出幽灵 mux-server。
+        if (!probeGate.shouldProbe(socket)) return null;
+        const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+        if (!listed?.ok) {
+          // 干净的非零退出 = 该 socket 路径永久失效；超时/起不来只回避。
+          if (listed && !listed.timedOut) probeGate.failed(socket);
+          else probeGate.cooledDown(socket);
+          return null;
+        }
+        probeGate.succeeded(socket);
+        const panes = parseWeztermPanes(listed.out);
+        if (light) return { socket, panes, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
+        const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
+        const active = weztermActiveClient(clients?.ok ? clients.out : null);
+        return {
+          socket,
+          panes,
+          workspace: active?.workspace ?? null,
+          idleMs: active?.idleMs ?? Number.POSITIVE_INFINITY,
+        } satisfies WeztermMux;
+      }),
+    )
+  ).filter((m): m is WeztermMux => m !== null);
   return { muxes, candidates };
 }
 
@@ -1457,18 +1470,17 @@ export async function readTerminalCounts(
 }
 
 /**
- * 探活结果短缓存（10s）：角标轮询 + 焦点回归/开窗后刷新会在瞬间打多枪。
- * TTL 必须**大于**前端轮询间隔（App.tsx 是 5s），否则每枪都穿透、缓存等于
- * 不存在——而一枪要对**每个存活 socket** spawn 一次 `wezterm cli list`
- * （实测 wall ~180ms / CPU 62–125ms；机器上残留的幽灵 GUI 会把 socket 数放大）。
- * **只给计数用**：runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到
- * 刚关掉的 pane）。
+ * 探活结果短缓存（10s）：角标的周期探测 + 开窗后对账 + GET 后台对账会在
+ * 瞬间打多枪，缓存挡掉重复 spawn——一枪要对**每个存活 socket** spawn 一次
+ * `wezterm cli list`（实测 wall ~180ms / CPU 62–125ms；残留幽灵 GUI 会把
+ * socket 数放大）。**只给计数用**（light 探测，workspace/idle 留空）：
+ * runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到刚关掉的 pane）。
  */
 let muxCache: { at: number; muxes: WeztermMux[] } | null = null;
 
 async function weztermLiveMuxesCached(): Promise<WeztermMux[]> {
   if (muxCache && Date.now() - muxCache.at < 10000) return muxCache.muxes;
-  const { muxes } = await weztermLiveMuxes();
+  const { muxes } = await weztermLiveMuxes(true);
   muxCache = { at: Date.now(), muxes };
   return muxes;
 }

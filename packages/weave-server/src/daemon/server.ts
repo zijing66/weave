@@ -368,8 +368,9 @@ async function handleRequest(
       } else {
         const settings = await readDaemonSettings();
         await opener.openTerminal(project.path, settings.terminal);
-        // 角标立刻对账，不等隐藏刷新的下一个周期
-        void deps.terminalRefresher?.refreshNow();
+        // 角标对账：新窗 pane 的 cwd 上报有一拍延迟，立即探也看不到增量——
+        // 600ms 后对一次账（原先由前端 setTimeout 拉 GET，改服务端自对账）。
+        setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
       }
       sendJson(res, 200, { ok: true, target: body.target, path: project.path });
     } catch (e) {
@@ -1471,9 +1472,17 @@ async function handleRequest(
 
   // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
   // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
+  // 陈旧值先给、后台对账：探测 = 每存活 socket spawn 一次 `wezterm cli`（实测
+  // ~200ms），不该让响应等它；增量经 push 帧到达，正常消费方（SSE 客户端）
+  // 不需要再打这枪。未接刷新器（测试注入缝）才现探。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
-    const opener = deps.opener ?? defaultProjectOpener;
-    sendJson(res, 200, { counts: await readTerminalCounts(deps.projects.list(), opener) });
+    if (deps.terminalRefresher) {
+      sendJson(res, 200, { counts: deps.terminalRefresher.lastSnapshot ?? {} });
+      void deps.terminalRefresher.tick(true);
+    } else {
+      const opener = deps.opener ?? defaultProjectOpener;
+      sendJson(res, 200, { counts: await readTerminalCounts(deps.projects.list(), opener) });
+    }
     return;
   }
 
@@ -1539,6 +1548,8 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
 
   // 新客户端补一份在途消息角标快照：推送只在变化时发，首帧不该等到下一次消息事件。
   deps.inflightRefresher?.refreshNow();
+  // 终端角标同理：先补上次快照（无则跳过），再后台对一次账补差量——前端零轮询。
+  deps.terminalRefresher?.onSubscriberJoin();
 
   req.on('close', () => {
     for (const unsubscribe of unsubscribes) unsubscribe();

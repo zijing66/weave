@@ -477,8 +477,8 @@ export async function handleHooksRoutes(
       } else {
         await opener.runInTerminal(project.path, argv, settings.terminal);
       }
-      // 角标立刻对账，不等隐藏刷新的下一个周期
-      void deps.terminalRefresher?.refreshNow();
+      // 角标对账：新 pane 的 cwd 上报有一拍延迟（立即探看不到增量），600ms 后补一枪。
+      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
       sendJson(res, 200, {
         ok: true,
         sessionId,
