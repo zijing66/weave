@@ -39,7 +39,9 @@ import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { SessionLivenessRefresher } from './session-liveness-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
+import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
@@ -182,6 +184,22 @@ async function main(): Promise<void> {
     { shouldRun: () => dataBus.hasSubscribers() },
   );
   terminalRefresher.start();
+  // 会话存活（终端按钮图标）：与生产入口同一装配——被杀进程无 hook 事件，
+  // GET 的 pidAlive 卡旧值；15s 一拍、值变才推判得动的绝对值快照。
+  const livenessRefresher = new SessionLivenessRefresher(
+    () => {
+      const liveness = claudeLivenessById();
+      const alive: Record<string, boolean> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        const v = pidAliveOf(s, liveness);
+        if (v !== null) alive[s.sessionId] = v;
+      }
+      return alive;
+    },
+    dataBus,
+    { shouldRun: () => dataBus.hasSubscribers() },
+  );
+  livenessRefresher.start();
   // 在途消息角标（会话行）：无定时器——message.* 帧驱动重算、值变才推快照。
   const inflightRefresher = new InflightCountsRefresher(
     () => messageDeliverer.listInflightCounts(),
@@ -261,6 +279,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     terminalRefresher.stop();
+    livenessRefresher.stop();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     void hookPipeline.stop();

@@ -19,6 +19,7 @@ export type DataKey =
   | 'statusline'
   | 'sessions'
   | 'terminalCounts'
+  | 'sessionLiveness'
   | 'inflightCounts'
   | 'assets'
   | 'toolkit'

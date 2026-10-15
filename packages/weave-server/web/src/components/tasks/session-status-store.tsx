@@ -117,6 +117,29 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // 终端按钮图标（pidAlive）：后端隐藏刷新器推判得动的绝对值快照——claude 进程
+  // 被杀（关终端窗）没有 hook 事件，GET 的值会卡死常绿；只补丁命中行，null 态
+  // （codex/新鲜会话）不进快照、不猜。sessions 变 → statuses 派生自愈。
+  useEffect(
+    () =>
+      subscribeSse((frame) => {
+        if (frame.type !== 'push' || frame.key !== 'sessionLiveness') return;
+        const alive = (frame.payload as { alive?: Record<string, boolean> }).alive ?? {};
+        setSessions((prev) => {
+          if (!prev) return prev;
+          let changed = false;
+          const next = prev.map((s) => {
+            const v = alive[s.sessionId];
+            if (v === undefined || s.pidAlive === v) return s;
+            changed = true;
+            return { ...s, pidAlive: v };
+          });
+          return changed ? next : prev;
+        });
+      }),
+    [],
+  );
+
   useEffect(() => {
     let timer: number | null = null;
     const refetch = (): void => {
