@@ -93,10 +93,11 @@ function osascriptRun(
 //
 // 骨架固定为「取候选 → 按序尝试 → 全失败抛真相」（TerminalBackend.spawnFirst），
 // 子类只填两处差异：候选表、以及流程真的不同的那个 preset（wezterm 的 run 必须走
-// mux 通道）。**枚举能力也归后端**：「这个 preset 能不能反查已开窗口」不再是调用方
-// 散写的 `preset === 'wezterm'` 白名单，而是后端覆没覆写那两个方法——不支持就走
-// 基类空实现（角标不显示，不谎报）。文本注入（prompt 层② send-text 兜底）同此：
-// `textAddressable` 即后端的诚实声明。
+// mux 通道）。**能力全归后端**，一律「覆写 = 有，基类空实现 = 没有」：
+// enumerable（能否反查已开窗口，不是调用方散写的 `preset === 'wezterm'` 白名单）、
+// textAddressable（能否注入文本 / 裸键序）、locatePane（能否把 hook 上报的 pane env
+// 解析回本后端的 pane 表示法——pane 表示法是后端私有知识，调用方只见不透明 id）。
+// 不支持就走基类空实现（角标不显示 / 层② 诚实置灰 / 回落标题+cwd 启发式，不谎报）。
 
 /**
  * prompt 层② 兜底的注入落点：后端枚举出的可打文本 pane。

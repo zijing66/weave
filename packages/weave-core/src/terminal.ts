@@ -3,6 +3,13 @@
  * hook 脚本（生在会话自己的 pane 里，继承这些 env）据此捕获上报，server 侧终端
  * 后端据此把捕获值解析回自己的 pane 表示法。两端同源取用，不各写一份。
  *
+ * 键 = 终端 preset 名（与设置里的 preset 同字面）；值是「一起才唯一」的那组键。
+ *
+ * 新增终端：① 本表加一条；② 该终端后端覆写 `TerminalBackend.locatePane`（env →
+ * 本后端 pane id，**必须含存在性校验**，失效即 null 而不是猜）；③ 它还得是
+ * `textAddressable`——定位只为「往这个 pane 打文本 / 打键序」服务。没有文本通道
+ * 的 preset 不列：hook 脚本会白捕获一堆永远用不上的 env。
+ *
  * 语义限定：只收「同一台机器上能唯一定位一个 pane」的变量。没有这种变量的终端
  * （如 Windows Terminal 只有窗口级 session id）不列——层② 回落标题+cwd 启发式，
  * 而不是拿一个不唯一的键硬猜。
