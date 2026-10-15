@@ -585,6 +585,33 @@ export class MessageDeliverer {
   }
 
   /**
+   * 删除一条在途视图里的消息行（dashboard「删除」）：内存行摘掉，该行不再出现在
+   * 这个会话的对话尾巴上（**不影响已投递的内容**——真到了会话，转录里的记录仍在）。
+   * 若它正是暂停闸的成因 → 一并解闸（否则闸留着却没有成因行可看、可操作），
+   * 并续排空积压（下一条各自重新布防回执闸）。在飞（delivering/running）的行不删：
+   * 落定回调会把行写回来，删了也白删。
+   */
+  dismiss(messageId: string): AnswerResult {
+    const msg = this.memory.get(messageId);
+    if (!msg) return { ok: false, status: 404, error: 'Message not found' };
+    if (msg.status === 'delivering' || msg.status === 'running') {
+      return { ok: false, status: 409, error: 'Message is still in flight' };
+    }
+    this.memory.delete(messageId);
+    if (this.stalled.get(msg.sessionId)?.messageId === messageId) {
+      this.stalled.delete(msg.sessionId);
+      if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
+    }
+    this.bus({
+      kind: 'message.dismissed',
+      messageId,
+      sessionId: msg.sessionId,
+      at: new Date().toISOString(),
+    });
+    return { ok: true };
+  }
+
+  /**
    * 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。
    * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
    * 条、条间至少 `flushGapMs`（中继路径本就被同会话中继闸天然间隔，终端路径没有，

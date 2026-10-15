@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { attachDeliveries, conversationOf } from '../SessionMessages';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import {
+  attachDeliveries,
+  conversationOf,
+  readConvCache,
+  writeConvCache,
+  type ConvEntry,
+} from '../SessionMessages';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
 import type { HookEventRow, SessionMessageRow } from '@/lib/api';
 
@@ -99,5 +105,52 @@ describe('attachDeliveries', () => {
       ],
     );
     expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m-new', 'm-old']);
+  });
+});
+
+describe('对话缓存（sessionStorage）', () => {
+  const store = new Map<string, string>();
+  const conv = (id: number, over: Partial<ConvEntry> = {}): ConvEntry => ({
+    key: `e${id}`,
+    eventId: id,
+    role: 'user',
+    at: at(id),
+    text: `t${id}`,
+    ...over,
+  });
+
+  beforeEach(() => {
+    store.clear();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('写进去读回来：条目与时序原样，投递行不进缓存', () => {
+    const entries = [conv(1), conv(2), conv(3, { role: 'assistant', pipe: delivery({ id: 'm9' }) })];
+    writeConvCache('s1', entries);
+    expect(readConvCache('s1')).toEqual([conv(1), conv(2), conv(3, { role: 'assistant' })]);
+    expect(readConvCache('别的会话')).toBeNull();
+  });
+
+  it('只留尾巴若干条（长会话的翻页历史不一直堆在会话存储里）', () => {
+    writeConvCache(
+      's1',
+      Array.from({ length: 70 }, (_, i) => conv(i + 1)),
+    );
+    const cached = readConvCache('s1')!;
+    expect(cached).toHaveLength(60);
+    expect(cached[0]!.eventId).toBe(11);
+    expect(cached[59]!.eventId).toBe(70);
+  });
+
+  it('过期的、写坏的、没写过的都当没有（缓存是加速不是功能）', () => {
+    store.set('weave:conv:s1', JSON.stringify({ at: 0, entries: [conv(1)] }));
+    expect(readConvCache('s1')).toBeNull();
+    store.set('weave:conv:s1', '{ 这不是 json');
+    expect(readConvCache('s1')).toBeNull();
+    expect(readConvCache('从没写过')).toBeNull();
   });
 });

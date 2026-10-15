@@ -586,6 +586,22 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 删除在途视图里的消息行（暂停闸成因也能删：删即解闸并续排空）----
+  const dismissMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/dismiss$/);
+  if (dismissMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const result = deps.messageDeliverer.dismiss(decodeURIComponent(dismissMatch[2]!));
+    if (result.ok) {
+      sendJson(res, 200, { ok: true });
+    } else {
+      sendJson(res, result.status, { error: result.error });
+    }
+    return true;
+  }
+
   // ---- 阻塞问答：待答清单（AskUserQuestion / 计划确认 / 权限确认的实时状态）----
   if (pathname === '/messaging/questions' && req.method === 'GET') {
     if (!deps.questionTracker) {

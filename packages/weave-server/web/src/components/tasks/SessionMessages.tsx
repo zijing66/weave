@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Loader2, RotateCcw, Send, X } from 'lucide-react';
+import { Check, Loader2, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -23,6 +23,46 @@ const CONV_PAGE = 10;
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
+
+/**
+ * 对话缓存（sessionStorage）：重开弹窗先拿缓存即时出画，再被服务端那一页对账
+ * 续接/替换——省掉每次开弹窗都等服务端那一趟，服务端压力也随之降下来。**时序
+ * 由条目自带的 eventId 定**（合并游标就是它），缓存只是同一批条目的提前副本，
+ * 不引入第二事实源：过期条目按 eventId 被服务端页覆盖，投递行（pipe）恒现拉。
+ */
+const CONV_CACHE_TTL_MS = 10 * 60_000;
+const CONV_CACHE_MAX = 60;
+
+/** 命中且没过期才用；读不出/写满了都当没有——缓存是加速，不是功能。 */
+export function readConvCache(sessionId: string): ConvEntry[] | null {
+  try {
+    const raw = sessionStorage.getItem(`weave:conv:${sessionId}`);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as { at?: number; entries?: ConvEntry[] };
+    if (typeof cached.at !== 'number' || Date.now() - cached.at > CONV_CACHE_TTL_MS) return null;
+    return cached.entries?.length ? cached.entries : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeConvCache(sessionId: string, entries: readonly ConvEntry[]): void {
+  try {
+    sessionStorage.setItem(
+      `weave:conv:${sessionId}`,
+      JSON.stringify({
+        at: Date.now(),
+        // 只留尾巴若干条（够首屏用，别把长会话的翻页历史一直堆在会话存储里）；
+        // 投递行是瞬时状态，不进缓存
+        entries: entries
+          .slice(-CONV_CACHE_MAX)
+          .map(({ pipe: _pipe, ...entry }) => entry),
+      }),
+    );
+  } catch {
+    // 配额满 / 隐私模式禁写：静默降级成每次都拉服务端
+  }
+}
 
 /** prompt 通道实际落法的展示键（socket 直投 / 中继 / 终端 send-text）。 */
 const VIA_KEY: Record<
@@ -179,7 +219,8 @@ export function SessionMessages({
     [lifecycle],
   );
 
-  const [entries, setEntries] = useState<ConvEntry[] | null>(null);
+  // 首屏先给缓存（有就即时出画），loadNewest 那一页回来按 eventId 对账
+  const [entries, setEntries] = useState<ConvEntry[] | null>(() => readConvCache(sessionId));
   /** 更早的那头翻到底了（事件保留期的起点）。 */
   const [headDone, setHeadDone] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -240,6 +281,10 @@ export function SessionMessages({
     void loadNewest();
     void refreshMessages();
   }, [loadNewest, refreshMessages]);
+
+  useEffect(() => {
+    if (entries && entries.length > 0) writeConvCache(sessionId, entries);
+  }, [entries, sessionId]);
 
   // SSE：开/闭轮事件帧补对话尾部，message.* 帧刷在途投递行（各自防抖）
   useEffect(() => {
@@ -474,28 +519,54 @@ export function SessionMessages({
                         <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
                       )}
                       {pipe && (pipe.status === 'failed' || pipe.stalled === true) && (
-                        <button
-                          type="button"
-                          disabled={fb.stateOf(`resend:${pipe.id}`) === 'loading'}
-                          onClick={() =>
-                            void fb.run(
-                              `resend:${pipe.id}`,
-                              async () => {
-                                await api.resendSessionMessage(sessionId, pipe.id);
-                                await refreshMessages();
-                              },
-                              { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
-                            )
-                          }
-                          className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
-                        >
-                          <FeedbackIcon
-                            state={fb.stateOf(`resend:${pipe.id}`)}
-                            className="h-3 w-3"
-                            icon={<RotateCcw className="h-3 w-3" />}
-                          />
-                          {t('tasks.msgResend')}
-                        </button>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={fb.stateOf(`resend:${pipe.id}`) === 'loading'}
+                            onClick={() =>
+                              void fb.run(
+                                `resend:${pipe.id}`,
+                                async () => {
+                                  await api.resendSessionMessage(sessionId, pipe.id);
+                                  await refreshMessages();
+                                },
+                                { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
+                              )
+                            }
+                            className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                          >
+                            <FeedbackIcon
+                              state={fb.stateOf(`resend:${pipe.id}`)}
+                              className="h-3 w-3"
+                              icon={<RotateCcw className="h-3 w-3" />}
+                            />
+                            {t('tasks.msgResend')}
+                          </button>
+                          {/* 删除：这条从对话里彻底消失（是暂停闸成因时一并解闸并续排空） */}
+                          <button
+                            type="button"
+                            title={t('tasks.msgDismissHint')}
+                            disabled={fb.stateOf(`dismiss:${pipe.id}`) === 'loading'}
+                            onClick={() =>
+                              void fb.run(
+                                `dismiss:${pipe.id}`,
+                                async () => {
+                                  await api.dismissSessionMessage(sessionId, pipe.id);
+                                  await refreshMessages();
+                                },
+                                { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
+                              )
+                            }
+                            className="inline-flex items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-40"
+                          >
+                            <FeedbackIcon
+                              state={fb.stateOf(`dismiss:${pipe.id}`)}
+                              className="h-3 w-3"
+                              icon={<Trash2 className="h-3 w-3" />}
+                            />
+                            {t('tasks.msgDismiss')}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

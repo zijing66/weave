@@ -1152,6 +1152,12 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/resend`,
       { method: 'POST' },
     ),
+  /** 删除一条在途/终态消息行：该行不再出现在会话对话尾巴上（是暂停闸成因时
+   *  删即解闸并续排空积压）；在飞（delivering/running）409、未知 404。 */
+  dismissSessionMessage: (sessionId: string, messageId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/dismiss`, {
+      method: 'POST',
+    }),
   /** 消息能力矩阵（服务端 MessagingSurface 纯派生，无第二事实源）。 */
   messagingCapabilities: (): Promise<MessagingCapability[]> =>
     apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(

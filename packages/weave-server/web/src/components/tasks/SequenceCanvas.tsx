@@ -705,6 +705,7 @@ export function SequenceCanvas({
       {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（复用任务视图弹窗）。 */}
       {messagesTarget && (
         <SessionMessages
+          key={messagesTarget.sessionId}
           sessionId={messagesTarget.sessionId}
           projectId={messagesTarget.projectId}
           label={messagesTarget.label}

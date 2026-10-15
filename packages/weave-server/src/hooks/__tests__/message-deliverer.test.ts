@@ -1448,6 +1448,83 @@ describe('MessageDeliverer 裁决表', () => {
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
   });
 
+  describe('dismiss（删掉在途视图里的一行）', () => {
+    it('删成因行：视图里不再有它、解闸并续排空积压；未知 id 404', async () => {
+      const fake = createFakeSpawn();
+      let registered = true;
+      const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+      const deliverer = new MessageDeliverer(
+        makeDeps({
+          spawnImpl: fake.spawnImpl,
+          surfaceFor: () => surface,
+          bin: 'fake-relay',
+          flushGapMs: 0,
+        }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const first = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'dismissed failing body',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      const firstId = (first as { messageId: string }).messageId;
+      fake.children[0]!.emit('exit', 1, null); // failed + 置闸
+      expect(deliverer.getMessage(firstId)).toMatchObject({ status: 'failed', stalled: true });
+
+      // 积压行被闸挡着（peer 在场也不投）
+      registered = false;
+      await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'queued behind dismissed',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+      registered = true;
+      await deliverer.flushSession(SESSION_ID);
+      expect(fake.calls).toHaveLength(1);
+
+      expect(deliverer.dismiss('no-such-message')).toMatchObject({ ok: false, status: 404 });
+
+      // 删掉成因行：行没了、闸解了、积压经自续冲洗投出
+      expect(deliverer.dismiss(firstId)).toMatchObject({ ok: true });
+      expect(deliverer.getMessage(firstId)).toBeNull();
+      expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(firstId);
+      expect(busEvents).toContainEqual(
+        expect.objectContaining({ kind: 'message.dismissed', messageId: firstId }),
+      );
+      await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+      fake.children[1]!.emit('exit', 0, null);
+    });
+
+    it('在飞的行不删：delivering 期间 409（落定回调会把行写回来）', async () => {
+      const fake = createFakeSpawn();
+      const { surface } = relaySurface();
+      const deliverer = new MessageDeliverer(
+        makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const sent = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'in-flight dismiss rejected',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      const id = (sent as { messageId: string }).messageId;
+      expect(deliverer.getMessage(id)!.status).toBe('delivering');
+      expect(deliverer.dismiss(id)).toMatchObject({ ok: false, status: 409 });
+      fake.children[0]!.emit('exit', 0, null);
+      expect(deliverer.getMessage(id)!.status).toBe('delivered');
+    });
+  });
+
   describe('answer（阻塞问答作答）', () => {
     const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
       const sendKeys = vi.fn().mockResolvedValue(undefined);

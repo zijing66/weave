@@ -73,6 +73,9 @@ export type HookBusMessage =
       status: 'succeeded' | 'failed' | 'timeout';
       at: string;
     }
+  /** 在途/终态消息行被删除（dashboard 在途视图的「删除」）：该行不再出现在
+   * 会话的对话尾巴上（历史仍在目标会话自己的转录里）。 */
+  | { kind: 'message.dismissed'; messageId: string; sessionId: string; at: string }
   // ---- 会话订阅域（session-orchestration 批 2 + 提醒类型）：one-shot fire 广播 ----
   // watcher null = dashboard 订阅（web toast + 浏览器通知）；有值 = 会话订阅
   // （通知已走消息域注入，该会话的线程会另收 message.* 帧）。reason = 命中的
