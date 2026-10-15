@@ -23,8 +23,9 @@ export interface PushPayload {
  * Web Push 发送器（提醒通道的第三条腿）：浏览器把 dashboard 关掉后，本地
  * 通知路径全死——只有厂商推送服务能唤起 SW 的 push 事件。订阅 hookBus 的
  * `watch.fired`（watcher null = dashboard 订阅，与 web toast 同口径；会话
- * 订阅的通知已走消息域注入，不推）。发送失败永不影响采集（hooks 非阻塞
- * 不变式）：404/410 = 浏览器端已撤销 → 删行自愈；网络错误保留订阅下轮再试。
+ * 订阅的通知已走消息域注入，不推）与 `question.pending`（待答提醒默认开启，
+ * 无订阅概念）。发送失败永不影响采集（hooks 非阻塞不变式）：404/410 =
+ * 浏览器端已撤销 → 删行自愈；网络错误保留订阅下轮再试。
  */
 export class PushNotifier {
   private readonly vapid: { publicKey: string; privateKey: string };
@@ -54,18 +55,37 @@ export class PushNotifier {
   }
 
   private onBus(message: Parameters<HookEventBus['emit']>[0]): void {
-    if (message.kind !== 'watch.fired' || message.watcherSessionId !== null) return;
-    const target = this.deps.sessions.getBySessionId(message.targetSessionId);
-    const label = target?.title ?? message.targetSessionId.slice(0, 8);
-    const payload: PushPayload = {
-      title: 'weave',
-      body: `Session ${label} ${watchReasonPhrase(message.reason)}`,
-      tag: `weave-watch-${message.targetSessionId}`,
-      url: '/',
-    };
+    const payload = this.payloadFor(message);
+    if (!payload) return;
     const subs = this.deps.subscriptions.list();
     if (subs.length === 0) return;
     void this.pushAll(subs, JSON.stringify(payload));
+  }
+
+  /** 该帧推不推、推什么；不推的帧返回 null（tag 与 web 本地通知同值，双通道去重）。 */
+  private payloadFor(message: Parameters<HookEventBus['emit']>[0]): PushPayload | null {
+    if (message.kind === 'watch.fired') {
+      if (message.watcherSessionId !== null) return null;
+      return {
+        title: 'weave',
+        body: `Session ${this.labelOf(message.targetSessionId)} ${watchReasonPhrase(message.reason)}`,
+        tag: `weave-watch-${message.targetSessionId}`,
+        url: '/',
+      };
+    }
+    if (message.kind === 'question.pending') {
+      return {
+        title: 'weave',
+        body: `Session ${this.labelOf(message.sessionId)} is waiting for your answer`,
+        tag: `weave-question-${message.sessionId}`,
+        url: '/',
+      };
+    }
+    return null;
+  }
+
+  private labelOf(sessionId: string): string {
+    return this.deps.sessions.getBySessionId(sessionId)?.title ?? sessionId.slice(0, 8);
   }
 
   private async pushAll(subs: PushSubscriptionRow[], payload: string): Promise<void> {

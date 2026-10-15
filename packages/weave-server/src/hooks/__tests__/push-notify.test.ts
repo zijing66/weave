@@ -13,8 +13,9 @@ import type { PushSubscriptionRow } from '../../repositories/push-subscriptions.
 
 /**
  * 提醒推送（第三条腿）：VAPID 密钥落盘复用、watch.fired 仅 dashboard 订阅
- * （watcher null）触发、payload 自包含（label + 触发短语 + 去重 tag）、
- * 推送服务回绝（404/410）清行自愈、其他错误保留订阅。
+ * （watcher null）触发、question.pending 无订阅概念默认推、payload 自包含
+ * （label + 触发短语 + 去重 tag）、推送服务回绝（404/410）清行自愈、其他错误
+ * 保留订阅。
  */
 
 let db: DatabaseSync;
@@ -171,6 +172,33 @@ describe('watch.fired 分流', () => {
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
     const payload = JSON.parse(send.mock.calls[0][1]) as PushPayload;
     expect(payload.body).toBe('Session a finished its turn');
+  });
+});
+
+describe('question.pending 分流', () => {
+  it('新挂起待答 → 组载荷群发（tag 与 web 本地通知同值）', async () => {
+    sessions.touch('a', projectId);
+    sessions.setPendingTitle('a', 'adapter 工作');
+    subs.upsert({ endpoint: 'https://push/1', p256dh: 'k', auth: 'a' });
+    const send = vi.fn(async (_sub: PushSubscriptionRow, _payload: string) => {});
+    const { bus } = makeNotifier(send);
+
+    bus.emit({
+      kind: 'question.pending',
+      sessionId: 'a',
+      harness: 'claude',
+      count: 1,
+      at: new Date().toISOString(),
+    });
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const payload = JSON.parse(send.mock.calls[0][1]) as PushPayload;
+    expect(payload).toEqual({
+      title: 'weave',
+      body: 'Session adapter 工作 is waiting for your answer',
+      tag: 'weave-question-a',
+      url: '/',
+    });
   });
 });
 

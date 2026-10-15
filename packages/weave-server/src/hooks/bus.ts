@@ -86,8 +86,9 @@ export type HookBusMessage =
       at: string;
     }
   // ---- 阻塞问答域：会话新挂起一个待答（无 → 有）广播 ----
-  // 只作提醒（web toast + 浏览器通知，不自动弹作答框——作答入口恒为手动点会话行
-  // 提问图标）；问题面本身不走帧，仍由 GET /messaging/questions 拉。
+  // 只作提醒（默认开启三腿：web toast + 浏览器通知 + Web Push，不自动弹作答框——
+  // 作答入口恒为手动点会话行提问图标）；不塞进 watch 触发类型集（那是订阅方主动
+  // 订阅的模型，阻塞提醒该是默认的）。问题面本身不走帧，仍由 GET /messaging/questions 拉。
   | {
       kind: 'question.pending';
       sessionId: string;
