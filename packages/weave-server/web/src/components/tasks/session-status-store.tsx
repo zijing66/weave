@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, type HookDispatch, type PendingQuestionEntry, type SessionRow } from '@/lib/api';
+import { useAuthState } from '@/lib/auth';
 import { subscribeSse } from '@/lib/sse';
 import {
   countSessionsByHarness,
@@ -67,6 +68,7 @@ const Ctx = createContext<SessionStatusValue | null>(null);
  * 各自推导（且各自漏掉别人的输入），状态会漂移。
  */
 export function SessionStatusProvider({ children }: { children: ReactNode }) {
+  const auth = useAuthState();
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [dispatches, setDispatches] = useState<HookDispatch[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -104,9 +106,11 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     return message;
   }, []);
 
+  // 认证前不拉：Provider 挂在认证门之上，登录页阶段发请求必 401，而错误会一直
+  // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (auth === 'authenticated') void refresh();
+  }, [auth, refresh]);
 
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
