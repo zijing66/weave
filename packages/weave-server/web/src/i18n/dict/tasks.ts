@@ -54,6 +54,7 @@ export const tasksZh = {
   'tasks.msgResendFailed': '重发失败：{error}',
   'tasks.msgDismiss': '删除',
   'tasks.msgDismissHint': '把这条从对话里删掉（不再展示；暂停闸成因一并解闸）。已经送到会话的内容不受影响',
+  'tasks.msgDismissQueuedHint': '这条还没投递出去（压在队列里）——删掉即取消发送',
   'tasks.msgDismissFailed': '删除失败：{error}',
   'tasks.msgStatusQueued': '排队中',
   'tasks.msgStatusDelivering': '投递中',
@@ -248,6 +249,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.msgDismiss': 'Delete',
   'tasks.msgDismissHint':
     'Remove this row from the conversation (never shown again; if it is why the queue is paused, the pause is lifted). Content already delivered to the session is unaffected',
+  'tasks.msgDismissQueuedHint':
+    'Not delivered yet (still queued) — deleting it cancels the send',
   'tasks.msgDismissFailed': 'Delete failed: {error}',
   'tasks.msgStatusQueued': 'Queued',
   'tasks.msgStatusDelivering': 'Delivering',

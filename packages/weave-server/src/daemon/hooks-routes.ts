@@ -586,14 +586,18 @@ export async function handleHooksRoutes(
     return true;
   }
 
-  // ---- 删除在途视图里的消息行（暂停闸成因也能删：删即解闸并续排空）----
+  // ---- 删除在途视图里的消息行（暂停闸成因也能删：删即解闸并续排空；
+  //      队列待递送行删 = 取消发送）----
   const dismissMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/dismiss$/);
   if (dismissMatch && req.method === 'POST') {
     if (!deps.messageDeliverer) {
       sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
       return true;
     }
-    const result = deps.messageDeliverer.dismiss(decodeURIComponent(dismissMatch[2]!));
+    const result = deps.messageDeliverer.dismiss(
+      decodeURIComponent(dismissMatch[1]!),
+      decodeURIComponent(dismissMatch[2]!),
+    );
     if (result.ok) {
       sendJson(res, 200, { ok: true });
     } else {

@@ -561,34 +561,44 @@ export function SessionMessages({
                       {pipe?.error && (
                         <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
                       )}
-                      {pipe && (pipe.status === 'failed' || pipe.stalled === true) && (
+                      {pipe &&
+                        (pipe.status === 'failed' ||
+                          pipe.status === 'pending' ||
+                          pipe.stalled === true) && (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {(pipe.status === 'failed' || pipe.stalled === true) && (
+                            <button
+                              type="button"
+                              disabled={fb.stateOf(`resend:${pipe.id}`) === 'loading'}
+                              onClick={() =>
+                                void fb.run(
+                                  `resend:${pipe.id}`,
+                                  async () => {
+                                    await api.resendSessionMessage(sessionId, pipe.id);
+                                    await refreshMessages();
+                                  },
+                                  { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
+                                )
+                              }
+                              className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                            >
+                              <FeedbackIcon
+                                state={fb.stateOf(`resend:${pipe.id}`)}
+                                className="h-3 w-3"
+                                icon={<RotateCcw className="h-3 w-3" />}
+                              />
+                              {t('tasks.msgResend')}
+                            </button>
+                          )}
+                          {/* 删除：这条从对话里彻底消失（是暂停闸成因时一并解闸并续排空；
+                              还在队列里的 pending 行则是取消发送） */}
                           <button
                             type="button"
-                            disabled={fb.stateOf(`resend:${pipe.id}`) === 'loading'}
-                            onClick={() =>
-                              void fb.run(
-                                `resend:${pipe.id}`,
-                                async () => {
-                                  await api.resendSessionMessage(sessionId, pipe.id);
-                                  await refreshMessages();
-                                },
-                                { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
-                              )
-                            }
-                            className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
-                          >
-                            <FeedbackIcon
-                              state={fb.stateOf(`resend:${pipe.id}`)}
-                              className="h-3 w-3"
-                              icon={<RotateCcw className="h-3 w-3" />}
-                            />
-                            {t('tasks.msgResend')}
-                          </button>
-                          {/* 删除：这条从对话里彻底消失（是暂停闸成因时一并解闸并续排空） */}
-                          <button
-                            type="button"
-                            title={t('tasks.msgDismissHint')}
+                            title={t(
+                              pipe.status === 'pending'
+                                ? 'tasks.msgDismissQueuedHint'
+                                : 'tasks.msgDismissHint',
+                            )}
                             disabled={fb.stateOf(`dismiss:${pipe.id}`) === 'loading'}
                             onClick={() =>
                               void fb.run(

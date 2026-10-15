@@ -1488,10 +1488,13 @@ describe('MessageDeliverer 裁决表', () => {
       await deliverer.flushSession(SESSION_ID);
       expect(fake.calls).toHaveLength(1);
 
-      expect(deliverer.dismiss('no-such-message')).toMatchObject({ ok: false, status: 404 });
+      expect(deliverer.dismiss(SESSION_ID, 'no-such-message')).toMatchObject({
+        ok: false,
+        status: 404,
+      });
 
       // 删掉成因行：行没了、闸解了、积压经自续冲洗投出
-      expect(deliverer.dismiss(firstId)).toMatchObject({ ok: true });
+      expect(deliverer.dismiss(SESSION_ID, firstId)).toMatchObject({ ok: true });
       expect(deliverer.getMessage(firstId)).toBeNull();
       expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(firstId);
       expect(busEvents).toContainEqual(
@@ -1519,9 +1522,94 @@ describe('MessageDeliverer 裁决表', () => {
       });
       const id = (sent as { messageId: string }).messageId;
       expect(deliverer.getMessage(id)!.status).toBe('delivering');
-      expect(deliverer.dismiss(id)).toMatchObject({ ok: false, status: 409 });
+      expect(deliverer.dismiss(SESSION_ID, id)).toMatchObject({ ok: false, status: 409 });
       fake.children[0]!.emit('exit', 0, null);
       expect(deliverer.getMessage(id)!.status).toBe('delivered');
+    });
+
+    it('删队列待递送行 = 取消发送：行从队列与视图消失、索引清干净（再冲洗也不投）', async () => {
+      const fake = createFakeSpawn();
+      let registered = false; // peer 未登记 → 入队 pending
+      const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+      const deliverer = new MessageDeliverer(
+        makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const sent = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'queued then cancelled',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      const id = (sent as { messageId: string }).messageId;
+      expect(sent).toMatchObject({ ok: true, status: 'pending' });
+      expect(deliverer.getMessage(id)).toBeNull(); // pending 只活在 promptbox 文件里
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+      expect(deliverer.dismiss(SESSION_ID, id)).toMatchObject({ ok: true });
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+      expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(id);
+      expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+      expect(busEvents).toContainEqual(
+        expect.objectContaining({ kind: 'message.dismissed', messageId: id, sessionId: SESSION_ID }),
+      );
+
+      // 通道回来了也不投（行已不在队列）
+      registered = true;
+      await deliverer.flushSession(SESSION_ID);
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('冲洗读到之后被删的行不投出（删除是取消发送，不是「读到时还在」）', async () => {
+      const fake = createFakeSpawn();
+      const { surface } = relaySurface(() => null); // 无 peer → 走层② 终端
+      let available = false;
+      let release!: () => void;
+      const blocked = new Promise<void>((r) => {
+        release = r;
+      });
+      const sendText = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => available,
+        listPanes: vi.fn().mockResolvedValue([{ id: '7', title: null, cwd: null }]),
+        locatePane: vi.fn(async () => {
+          await blocked;
+          return '7';
+        }),
+        sendText,
+        sendKeys: vi.fn(),
+      };
+      const deliverer = new MessageDeliverer(
+        makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, terminal, flushGapMs: 0 }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const ids: string[] = [];
+      for (const text of ['flush first', 'flush second']) {
+        const sent = await deliverer.send({
+          toSessionId: SESSION_ID,
+          text,
+          mode: 'prompt',
+          fromKind: 'dashboard',
+          oneWay: true,
+        });
+        ids.push((sent as { messageId: string }).messageId);
+      }
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+
+      // 通道恢复 → 冲洗（本轮把两行都读进手里），首行定位被卡住
+      available = true;
+      deliverer.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '7' });
+      const flushing = deliverer.flushSession(SESSION_ID);
+      expect(deliverer.dismiss(SESSION_ID, ids[1]!)).toMatchObject({ ok: true });
+      release();
+      await flushing;
+
+      expect(sendText).toHaveBeenCalledTimes(1);
+      expect(sendText.mock.calls[0]![1]).toContain('flush first');
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
     });
   });
 

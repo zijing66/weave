@@ -170,6 +170,9 @@ const ACK_STALL_MS = 120_000;
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
 
+/** 刚删掉的队列行 id 保留多少条（冲洗的「先读盘 → 逐条投递」竞态闸，见 dismissedIds）。 */
+const DISMISS_GUARD_MAX = 200;
+
 /**
  * 作答键序白名单（安全闸）：逐个**原子**验形态——作答面不能变成任意键序注入
  * 通道（键序若打进已关的模态框会漏进输入框执行）。原子要么是宿主的键（选项
@@ -235,6 +238,12 @@ export class MessageDeliverer {
   private readonly flushing = new Set<string>();
   /** 队列暂停闸（sessionId → 成因消息）：未回执超窗 / 投递失败即置；重发或回执解除。 */
   private readonly stalled = new Map<string, { messageId: string; reason: 'unacked' | 'failed' }>();
+  /**
+   * 刚删掉的队列行 id：冲洗「先把队列读进内存、再逐条投递」——这中间被删的行
+   * 仍在手里那一批里，靠它跳过（否则删掉的消息照样发出去）。只兜这一个窗口，
+   * 故只留最近 `DISMISS_GUARD_MAX` 条。
+   */
+  private readonly dismissedIds = new Set<string>();
 
   constructor(private readonly deps: MessageDelivererDeps) {
     this.headless =
@@ -585,30 +594,55 @@ export class MessageDeliverer {
   }
 
   /**
-   * 删除一条在途视图里的消息行（dashboard「删除」）：内存行摘掉，该行不再出现在
-   * 这个会话的对话尾巴上（**不影响已投递的内容**——真到了会话，转录里的记录仍在）。
-   * 若它正是暂停闸的成因 → 一并解闸（否则闸留着却没有成因行可看、可操作），
-   * 并续排空积压（下一条各自重新布防回执闸）。在飞（delivering/running）的行不删：
-   * 落定回调会把行写回来，删了也白删。
+   * 删除一条在途视图里的消息行（dashboard「删除」）：内存行摘掉、队列待递送行
+   * （pending 只活在 promptbox 文件里）删行——两种都不再出现在这个会话的对话尾巴上。
+   * 内存行**不影响已投递的内容**（真到了会话，转录里的记录仍在）；队列行则是
+   * **取消发送**（还没出去）。内存行若正是暂停闸的成因 → 一并解闸（否则闸留着却
+   * 没有成因行可看、可操作），并续排空积压（下一条各自重新布防回执闸）。在飞
+   * （delivering/running）的行不删：落定回调会把行写回来，删了也白删。
    */
-  dismiss(messageId: string): AnswerResult {
+  dismiss(sessionId: string, messageId: string): AnswerResult {
     const msg = this.memory.get(messageId);
-    if (!msg) return { ok: false, status: 404, error: 'Message not found' };
-    if (msg.status === 'delivering' || msg.status === 'running') {
-      return { ok: false, status: 409, error: 'Message is still in flight' };
-    }
-    this.memory.delete(messageId);
-    if (this.stalled.get(msg.sessionId)?.messageId === messageId) {
-      this.stalled.delete(msg.sessionId);
-      if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
+    if (msg) {
+      if (msg.status === 'delivering' || msg.status === 'running') {
+        return { ok: false, status: 409, error: 'Message is still in flight' };
+      }
+      this.memory.delete(messageId);
+      if (this.stalled.get(msg.sessionId)?.messageId === messageId) {
+        this.stalled.delete(msg.sessionId);
+        if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
+      }
+    } else if (!this.dropQueued(sessionId, messageId)) {
+      return { ok: false, status: 404, error: 'Message not found' };
     }
     this.bus({
       kind: 'message.dismissed',
       messageId,
-      sessionId: msg.sessionId,
+      sessionId,
       at: new Date().toISOString(),
     });
     return { ok: true };
+  }
+
+  /** 删掉队列里的一条待递送行（读到的行自己带 sessionId，配不上即不算命中）。 */
+  private dropQueued(sessionId: string, messageId: string): boolean {
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    if (session?.projectId == null) return false;
+    const project = this.deps.projects.getById(session.projectId);
+    if (!project) return false;
+    const rows = readPromptbox(this.hooksDir, project.token);
+    if (!rows.some((e) => e.id === messageId && e.sessionId === sessionId)) return false;
+    removePromptboxEntries(this.hooksDir, project.token, new Set([messageId]));
+    this.dismissedIds.add(messageId);
+    while (this.dismissedIds.size > DISMISS_GUARD_MAX) {
+      const oldest = this.dismissedIds.values().next().value;
+      if (oldest === undefined) break;
+      this.dismissedIds.delete(oldest);
+    }
+    if (!rows.some((e) => e.sessionId === sessionId && e.id !== messageId)) {
+      this.queuedSessions.delete(sessionId);
+    }
+    return true;
   }
 
   /**
@@ -650,6 +684,8 @@ export class MessageDeliverer {
     for (const entry of entries) {
       // 本轮中途置闸（中继即败 / 终端注入失败都是异步落定）：立即停，余下留队列
       if (this.stalled.has(sessionId)) return;
+      // 本轮读到之后被删掉的行（dashboard「删除」是取消发送）：跳过
+      if (this.dismissedIds.has(entry.id)) continue;
       if (delivered >= FLUSH_PASS_MAX) {
         // 本轮量到：余下留队列，**自续下一拍**（socket 直投是毫秒级，不该等下一次事件）
         this.scheduleFlushContinuation(sessionId);
