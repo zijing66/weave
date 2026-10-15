@@ -51,6 +51,7 @@ export const zh = {
   'out.daemon.stopped': '守护进程已停止（pid {pid}）。',
   'out.daemon.statusNotRunning': '守护进程：未运行',
   'out.daemon.statusRunning': '守护进程：运行中（pid {pid}，端口 {port}，已运行 {uptime}s）',
+  'out.daemon.urlsTitle': '访问地址：',
   'out.daemon.statusStale': '守护进程：状态过期（pid {pid}，端口 {port} 无响应）',
   // --- dashboard 命令运行时输出 ---
   'out.dash.browserFailed': '（无法自动启动浏览器——请手动打开）',

@@ -52,6 +52,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.daemon.stopped': 'Daemon stopped (pid {pid}).',
   'out.daemon.statusNotRunning': 'Daemon: not running',
   'out.daemon.statusRunning': 'Daemon: running (pid {pid}, port {port}, up {uptime}s)',
+  'out.daemon.urlsTitle': 'Access URLs:',
   'out.daemon.statusStale': 'Daemon: stale state (pid {pid}, port {port} not responding)',
   // --- dashboard command output ---
   'out.dash.browserFailed': '(could not launch a browser automatically — open it manually)',

@@ -3,12 +3,20 @@
  * 页面内的 toast 保留——两者互不替代（toast 只在看得见页面时有用）。
  * 该 API 仅安全上下文（HTTPS/localhost）可用：手机经局域网 HTTP 访问时整体被
  * 浏览器禁用，见 ensureNotifyPermission 的 insecure 态。
+ * Android Chromium 禁用 new Notification() 构造器——SW 的 showNotification
+ * 优先（见 public/sw.js），构造器只作 SW 缺位时的兜底。
  */
 
 /** 发一条系统通知；未授权/不支持时静默跳过（调用方仍有 toast 兜底）。 */
-export function notifyBrowser(title: string, body?: string): void {
+export async function notifyBrowser(title: string, body?: string): Promise<void> {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   try {
+    const reg =
+      'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
+    if (reg) {
+      await reg.showNotification(title, body ? { body } : undefined);
+      return;
+    }
     new Notification(title, body ? { body } : undefined);
   } catch {
     // 通知构造失败不影响页面其余反馈

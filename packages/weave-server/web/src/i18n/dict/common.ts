@@ -9,6 +9,7 @@ export const commonZh = {
   'common.empty': '（空）',
   'common.expand': '展开',
   'common.collapse': '折叠',
+  'common.copy': '复制',
 };
 
 export const commonEn: Record<keyof typeof commonZh, string> = {
@@ -21,4 +22,5 @@ export const commonEn: Record<keyof typeof commonZh, string> = {
   'common.empty': '(empty)',
   'common.expand': 'Expand',
   'common.collapse': 'Collapse',
+  'common.copy': 'Copy',
 };

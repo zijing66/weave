@@ -673,8 +673,8 @@ export interface DaemonSettings {
   hooks: { enabled: boolean };
   /** 开机自启 daemon（默认关）。 */
   startup?: { launchOnLogin: boolean };
-  /** 监听绑定地址（默认 0.0.0.0）。 */
-  server?: { bindHost: string };
+  /** 监听绑定地址（默认 0.0.0.0）+ 局域网 HTTPS 端口（0 = 关）。 */
+  server?: { bindHost: string; tlsPort?: number };
   /**
    * AI 助手（OpenAI 兼容端点）。地址/模型是非密配置；`apiKey` 是**只写**字段
    * （服务端拆存 `<dataDir>/ai.json`，GET/PUT 都不回显），`apiKeySet` 是服务端派生布尔。
@@ -687,10 +687,19 @@ export interface TerminalPresetMeta {
   label: string;
 }
 
+/** GET /settings 附带的对外访问地址（服务端 accessUrls 派生，全部 IP × 已开协议）。 */
+export interface AccessUrl {
+  url: string;
+  protocol: 'http' | 'https';
+  /** local = 本机回环；lan = 局域网其他设备可达。 */
+  scope: 'local' | 'lan';
+}
+
 export interface DaemonSettingsBundle {
   settings: DaemonSettings;
   presets: TerminalPresetMeta[];
   platform: string;
+  urls?: AccessUrl[];
 }
 
 /** user 档采集状态行（GET/PUT /capture；§6-2d 安装即启用，无独立开关位）。 */

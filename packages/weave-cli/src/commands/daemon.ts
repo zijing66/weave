@@ -8,6 +8,7 @@ import {
   writeDaemonState,
   clearDaemonState,
   resolveDaemonEntry,
+  accessUrls,
 } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
@@ -127,6 +128,12 @@ async function statusAction(): Promise<void> {
         uptime: Math.round(health.uptimeMs / 1000),
       }),
     );
+    // 全部访问地址（IP × 协议）；与设置页同一事实源（server 的 accessUrls）。
+    const urls = accessUrls(port, state?.tlsPort ?? 0);
+    if (urls.length > 0) {
+      logger.dim(t('out.daemon.urlsTitle'));
+      logger.dim(urls.map((u) => `  ${u.url}`).join('\n'));
+    }
   } else if (state) {
     logger.warn(t('out.daemon.statusStale', { pid: state.pid, port: state.port }));
   } else {

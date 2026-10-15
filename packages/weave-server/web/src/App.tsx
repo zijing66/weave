@@ -550,7 +550,7 @@ function Dashboard() {
             );
             show('info', body);
             // toast 之外补系统通知：标签页切走/最小化时 toast 看不见，通知才叫「提醒」
-            notifyBrowser(t('tasks.watchNotifyTitle'), body);
+            void notifyBrowser(t('tasks.watchNotifyTitle'), body);
           }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;

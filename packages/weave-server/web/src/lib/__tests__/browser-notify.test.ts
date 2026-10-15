@@ -16,23 +16,33 @@ const withNotification = (permission: string, requestPermission?: () => Promise<
 afterEach(() => vi.unstubAllGlobals());
 
 describe('notifyBrowser', () => {
-  it('无 Notification（环境不支持）→ 静默跳过，不抛', () => {
+  it('无 Notification（环境不支持）→ 静默跳过，不抛', async () => {
     vi.stubGlobal('Notification', undefined);
-    expect(() => notifyBrowser('t', 'b')).not.toThrow();
+    await expect(notifyBrowser('t', 'b')).resolves.toBeUndefined();
   });
 
-  it('未授权 → 不发（调用方 toast 兜底）', () => {
+  it('未授权 → 不发（调用方 toast 兜底）', async () => {
     const ctor = vi.fn();
     vi.stubGlobal('Notification', Object.assign(ctor, { permission: 'default' }));
-    notifyBrowser('t', 'b');
+    await notifyBrowser('t', 'b');
     expect(ctor).not.toHaveBeenCalled();
   });
 
-  it('已授权 → 标题 + 正文', () => {
+  it('已授权 → 标题 + 正文（无 SW 时走构造器兜底）', async () => {
     const ctor = vi.fn();
     vi.stubGlobal('Notification', Object.assign(ctor, { permission: 'granted' }));
-    notifyBrowser('会话空闲提醒', '「a」已空闲');
+    await notifyBrowser('会话空闲提醒', '「a」已空闲');
     expect(ctor).toHaveBeenCalledWith('会话空闲提醒', { body: '「a」已空闲' });
+  });
+
+  it('已授权 + SW 已注册 → showNotification 优先（Android Chromium 只认它）', async () => {
+    const ctor = vi.fn();
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('Notification', Object.assign(ctor, { permission: 'granted' }));
+    vi.stubGlobal('navigator', { serviceWorker: { getRegistration: () => Promise.resolve({ showNotification }) } });
+    await notifyBrowser('会话空闲提醒', '「a」已空闲');
+    expect(showNotification).toHaveBeenCalledWith('会话空闲提醒', { body: '「a」已空闲' });
+    expect(ctor).not.toHaveBeenCalled();
   });
 });
 

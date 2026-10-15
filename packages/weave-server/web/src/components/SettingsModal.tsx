@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type DaemonSettings, type Locale, type TerminalPreset } from '@/lib/api';
+import { api, type AccessUrl, type DaemonSettings, type Locale, type TerminalPreset } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
+  Copy,
   Database,
   Eye,
   EyeOff,
+  Globe,
   Languages,
   Power,
   RefreshCw,
@@ -46,6 +48,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { locale, t, setLocale } = useI18n();
   const [settings, setSettings] = useState<DaemonSettingsExt | null>(null);
   const [presets, setPresets] = useState<Array<{ id: TerminalPreset; label: string }>>([]);
+  /** 对外访问地址（服务端派生，只读展示面）。 */
+  const [urls, setUrls] = useState<AccessUrl[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // AI key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
@@ -54,6 +58,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   /** 服务端拉回的模型候选（datalist 用；空 = 还没拉/网关没有 /models）。 */
   const [models, setModels] = useState<string[]>([]);
+  /** 逐行复制 URL 的反馈（1.5s ✓，折叠条同款惯例）。 */
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const fb = useActionFeedback();
 
   /**
@@ -91,6 +97,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       .then((r) => {
         setSettings(r.settings as DaemonSettingsExt); // 运行时含 events（server 归一化回传）
         setPresets(r.presets);
+        setUrls(r.urls ?? []);
         // 已配置（存的地址 + key 齐全）**不自动拉**——模型一般已选好，按需点「拉取模型」；
         // 只有首次配置（未配置态）在表单两栏填齐后才自动拉一次（见下面的 debounce effect）。
       })
@@ -325,6 +332,53 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
           </div>
+
+          {/* 对外访问地址：服务端派生（全部 IP × 已开协议），只读展示 + 逐行复制。 */}
+          {urls.length > 0 && (
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+                <Globe className="h-3.5 w-3.5 text-neutral-500" />
+                {t('settings.accessUrls')}
+              </label>
+              <p className="text-[11px] text-neutral-500">{t('settings.accessUrlsHint')}</p>
+              <ul className="space-y-1">
+                {urls.map((u) => (
+                  <li key={u.url} className="flex items-center gap-1.5">
+                    <span
+                      className={
+                        u.protocol === 'https'
+                          ? 'rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400'
+                          : 'rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-neutral-400'
+                      }
+                    >
+                      {u.scope === 'lan' ? t('settings.urlLan') : t('settings.urlLocal')} ·{' '}
+                      {u.protocol.toUpperCase()}
+                    </span>
+                    <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-white/[0.06] px-2 py-1 text-[11px] text-neutral-300">
+                      {u.url}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(u.url).then(() => {
+                          setCopiedUrl(u.url);
+                          window.setTimeout(() => setCopiedUrl(null), 1500);
+                        });
+                      }}
+                      title={t('common.copy')}
+                      className="shrink-0 rounded p-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+                    >
+                      {copiedUrl === u.url ? (
+                        <span className="text-[10px] text-emerald-400">✓</span>
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">

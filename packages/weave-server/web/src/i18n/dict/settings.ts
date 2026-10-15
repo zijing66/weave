@@ -16,6 +16,11 @@ export const settingsZh = {
   'settings.retentionDaysHint':
     'hook 事件日志的被动清理阈值：超过该天数的日志在下一次跨天写入时删除（无定时任务）；保存后下一条事件即按新值清理。',
   'settings.daysUnit': '天',
+  'settings.accessUrls': '访问地址',
+  'settings.accessUrlsHint':
+    '本机与局域网设备访问 dashboard 的完整地址；https 端口用于手机浏览器通知（自签证书，首次访问需在浏览器接受）。',
+  'settings.urlLan': '局域网',
+  'settings.urlLocal': '本机',
 };
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
@@ -37,4 +42,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.retentionDaysHint':
     'Passive cleanup threshold for hook event logs: older logs are deleted on the first write after the next day boundary (no scheduled job); saving takes effect on the next event.',
   'settings.daysUnit': 'days',
+  'settings.accessUrls': 'Access URLs',
+  'settings.accessUrlsHint':
+    'Full URLs for this dashboard on loopback and LAN devices; the https port is what phone browsers need for notifications (self-signed — accept it on first visit).',
+  'settings.urlLan': 'LAN',
+  'settings.urlLocal': 'Local',
 };
