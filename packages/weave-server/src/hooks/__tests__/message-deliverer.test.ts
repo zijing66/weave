@@ -1425,6 +1425,23 @@ describe('MessageDeliverer 裁决表', () => {
       expect(sendKeys).not.toHaveBeenCalled();
     });
 
+    it('自定义输入键序：数字 + 文本 + CR 放行；内嵌控制字符仍 400', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '◐ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.answer(SESSION_ID, '4自己写一个\r')).resolves.toEqual({ ok: true });
+      expect(sendKeys).toHaveBeenCalledWith('pane-1', '4自己写一个\r');
+      for (const keys of ['4a\rb\r', '4\u001b[D\r', '4a\nb\r']) {
+        await expect(deliverer.answer(SESSION_ID, keys)).resolves.toMatchObject({
+          ok: false,
+          status: 400,
+        });
+      }
+    });
+
     it('会话不存在 404；pane 找不到 409（窗口没开/歧义）', async () => {
       const { terminal } = paneFixture([]);
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));

@@ -87,12 +87,15 @@ describe('QuestionTracker 状态机', () => {
     const q = entry.questions[0]!;
     expect(q.question).toBe('Which library?');
     expect(q.header).toBe('Library');
-    expect(q.options).toHaveLength(2);
     expect(q.options[0]).toMatchObject({ label: 'Redis', keys: '1' });
     expect(q.options[1]).toMatchObject({ label: 'SQLite', keys: '2' });
+    // 宿主尾行：n+1 = Other（自定义输入）、n+2 = Chat about this（仅单选）
+    expect(q.options.map((o) => o.label)).toEqual(['Redis', 'SQLite', 'Other', 'Chat about this']);
+    expect(q.options[2]).toMatchObject({ keys: '3', input: true });
+    expect(q.options[3]).toMatchObject({ keys: '4', chat: true });
   });
 
-  it('多选问题：选项键序补一记 CR（数字勾选 + 回车确认）', () => {
+  it('多选问题：选项键序补一记 CR（数字勾选 + 回车确认）；尾行无 Chat', () => {
     feed(
       SESSION,
       preTool('AskUserQuestion', {
@@ -105,7 +108,11 @@ describe('QuestionTracker 状态机', () => {
         ],
       }),
     );
-    expect(tracker.get(SESSION)!.questions[0]!.options.map((o) => o.keys)).toEqual(['1\r', '2\r']);
+    expect(tracker.get(SESSION)!.questions[0]!.options.map((o) => o.keys)).toEqual([
+      '1\r',
+      '2\r',
+      '3',
+    ]);
   });
 
   it('坏 toolInput → OPAQUE 兜底（看得见阻塞、无远程作答面）', () => {
@@ -188,6 +195,18 @@ describe('QuestionTracker 状态机', () => {
     feed(SESSION, pre('AskUserQuestion'));
     feed(SESSION, notification('permission_prompt'));
     expect(tracker.get(SESSION)!.kind).toBe('question');
+  });
+
+  it('dontAsk 同属静默模式（不提示权限、未预批准直接拒）', () => {
+    const pre = (tool: string): NormalizedHookPayload =>
+      payload({
+        eventType: 'PreToolUse',
+        toolName: tool,
+        raw: { permission_mode: 'dontAsk' },
+      });
+    feed(SESSION, pre('PowerShell'));
+    feed(SESSION, notification('permission_prompt'));
+    expect(tracker.get(SESSION)).toBeNull();
   });
 
   it('权限确认无前导工具事件 → 通用文案（不瞎猜工具）', () => {

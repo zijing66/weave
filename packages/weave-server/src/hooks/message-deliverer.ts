@@ -173,6 +173,12 @@ const ACK_MIN_TEXT = 8;
 const ANSWER_KEYS = /^[1-9](\r)?$/;
 
 /**
+ * 自定义输入行的键序（宿主自有尾行「Other」）：序号 + 文本 + 提交 CR。文本无
+ * 控制字符——CR/LF/ESC 之类若混进来就成了「任意键序注入」，不只是打字。
+ */
+const ANSWER_TEXT_KEYS = /^[1-9][^\x00-\x1f\x7f]*\r$/;
+
+/**
  * socket 直投的来源标注（只作用于这条路径）：socket 消息是**裸 user 文本**
  * （会话看起来像用户自己敲的），标一句让转录以后能分辨「这不是我敲的」。
  * 实测（本机 2.1.296）不改变回复形态、不改变模型的发送者归属；它**给不了**
@@ -444,7 +450,9 @@ export class MessageDeliverer {
    * 方乐观标记已答（PostToolUse 到达照常清除）。
    */
   async answer(sessionId: string, keys: string): Promise<AnswerResult> {
-    if (!ANSWER_KEYS.test(keys)) return { ok: false, status: 400, error: 'Invalid answer keys' };
+    if (!ANSWER_KEYS.test(keys) && !ANSWER_TEXT_KEYS.test(keys)) {
+      return { ok: false, status: 400, error: 'Invalid answer keys' };
+    }
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
     if (session.projectId == null) {

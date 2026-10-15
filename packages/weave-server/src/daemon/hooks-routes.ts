@@ -63,6 +63,8 @@ const SendMessageBody = z.object({
 const AnswerBody = z.object({
   questionKey: z.string().min(1),
   optionIndex: z.number().int().min(0),
+  /** 宿主自有「自定义输入」行的文本（该行会在终端进文本框）。 */
+  text: z.string().max(2000).optional(),
 });
 
 /** 会话订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast + 浏览器通知）；
@@ -616,7 +618,14 @@ export async function handleHooksRoutes(
       sendJson(res, 400, { error: 'Invalid option index' });
       return true;
     }
-    const result = await deps.messageDeliverer.answer(sessionId, option.keys);
+    // 自定义输入行：先按数字选中该行（终端变文本框），再送文本与提交 CR。
+    const text = body.text?.trim() ?? '';
+    if (option.input && !text) {
+      sendJson(res, 400, { error: 'Text required for this option' });
+      return true;
+    }
+    const keys = option.input ? `${option.keys}${text}\r` : option.keys;
+    const result = await deps.messageDeliverer.answer(sessionId, keys);
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;
