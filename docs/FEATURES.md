@@ -1,562 +1,73 @@
-# Weave Harness — 完整功能范围
+# Weave — 功能总览（当前态）
 
-> 版本：0.1.0 | 更新日期：2026-08-07
-> 参考实现：ruflo (claude-flow v3.34.0)
+> weave 是多 harness 的 coding-agent 管理工具：`weave init` 往项目里注入 harness 能力，后台 daemon 采集事件，web dashboard 提供全局项目 × 会话的统一视图。支持 Claude Code 与 Codex 两个 harness（能力差异见 `docs/ARCHITECTURE.md` 的槽表；行为硬约束见仓库 `CLAUDE.md` 的 Architecture 节）。
+> 本文只列**当前已实现**的功能。安装与命令速查另见内置技能 `weave-user-guide`。
 
-Weave 是一个 Claude Code harness 工具，可对任意已有项目执行 `weave init`，注入 Claude Code 插件能力。设计理念来自 ruflo，但聚焦于 harness 层而非完整的 agent 编排平台。
+## 一、CLI 命令面（8 个顶层命令）
 
----
+| 命令 | 作用 | 常用参数 |
+|---|---|---|
+| `weave init` | 在当前项目初始化 harness：目录树（`.claude/`、`.weave/`）、settings 合并、helpers、`.mcp.json`、CLAUDE.md 生成块、skills/commands/agents 模板、插件模板注入 | `-p minimal/default/full`、`--force`、`--no-interactive`、`-d <dir>`、`--harness claude,codex`、`--hooks` |
+| `weave uninstall` | 移除 init 生成物（init 提交恰为 HEAD 时回滚指针，否则生成卸载提交） | `-d <dir>` |
+| `weave status` | 查看当前项目 harness 状态 | `-d <dir>` |
+| `weave daemon start\|stop\|status` | 管理后台守护进程（start 不开浏览器） | — |
+| `weave dashboard` | 在浏览器打开 web 控制台（必要时先起 daemon） | `--no-open` |
+| `weave scan` | 扫描并注册 weave 已初始化的项目 | `-d <dir>` |
+| `weave chpass <新密码>` | 修改 dashboard 登录密码（本机执行免旧密码；dashboard 端无改密入口） | — |
+| `weave doctor` | 诊断本机与 weave server 的接线（检出是否注册、daemon 可达性） | `-d <dir>` |
 
-## A. Harness 注入（`weave init` 核心）
+init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文件仅追加合并不覆盖；CLAUDE.md 只有 `weave:start/end` 块是生成的；根 `.gitignore` 与用户改过的嵌套 `.gitignore` 永不覆写；`.claude/`、`.weave/` 各带自忽略 `.gitignore`（想跟踪项目级插件源需窄例外，见第五节）。
 
-> **已实现注记（架构重构批 3/5，commit 3e0465c / 8bb411d）**：A1–A5 已模板方法化（`InitPipeline` + `InitOrchestrator`），`weave init` 支持 `--harness` 多 harness 选择（Claude / Codex），详见 `docs/plan/template-method-harness-refactor.md`。
+## 二、daemon 与 dashboard 功能域
 
-### A1. 目录结构注入 — P0
+**项目列表**：前端活动序（lastSeenAt 倒序、新会话置顶、静默沉底，10s 周期统一落地 + FLIP 动画）；行内开终端 / 开资源管理器快捷（终端窗口数角标，后端隐藏刷新器探测）；「有更新待同步（n）— 点击立即同步」角标（对照已装资产与库源，hover 懒拉 + 点击 `sync-all`）；autoSync 开关（开着则后台自动同步）；归档（清空历史会话与管道文件、可恢复）；拖拽排序。
 
-**描述**：在目标项目中创建 `.claude/` 目录树，作为 Claude Code 的工作空间结构。
+**会话列表**：数据随 SSE 事件流实时刷新；行内改名（`pending_title` 随下一拍 hook 回执生效）；在途消息角标（`push` 帧绝对值快照，事件驱动非轮询）+ 消息线程图标 amber 态；无 prompt 幽灵会话 10 分钟自动清理（行内倒计时可见）；会话删除走级联清理。
 
-**目标目录**：
-```
-.claude/
-├── skills/          # 技能定义
-├── commands/        # slash commands
-├── agents/          # 代理角色定义
-└── helpers/         # 辅助脚本
-```
+**事件链（LifecycleMindmap）**：会话事件的树状生命周期图——转场节点、subagent 子树、指令挂点；pending 指令路径 amber 高光沿 event → group 回传。
 
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/executor.ts` — `executeInit()` 的 Step 2
+**指令池（hooks dispatches）**：规则触发的指令走 pending → injected → running → succeeded/failed/timeout 生命周期；`auto`（事件自动派发）/ `manual`（人工补派）两模式；指令链路与事件链联动高光。
 
-**预期产出**：
-- `ensureDir` 工具函数，递归创建目录
-- 跳过已存在的目录（除非 `--force`）
-- 返回已创建/已跳过的目录清单
+**hooks 规则与插件面**：规则包（内置 `rules/` + 市场安装）可启停；插件按 builtin / user / project 三作用域加载，项目级启停覆写；插件热重载（文件变更防抖重扫）；插件包安装 / 卸载（走 harness 能力面）。
 
----
+**问答面**：阻塞式问题（AskUserQuestion / 计划确认 / 权限确认）的远程作答——会话行问答角标 + 弹窗按钮镜像终端模态框的键序作答；权限确认自动补最近工具上下文；daemon 重启后从事件重放重建待答面。
 
-### A2. settings.json 生成 — P0
+**消息域**：三个触发源 × 自动三层投递。手动发送（dashboard 弹窗，无模式选项——恒走 prompt 通道按优先级自动完成）、会话提醒订阅、序列编排（步数上限 3 hop，步级可选 inject / headless / auto / prompt 模式，重启后在途步标 interrupted 不自动重发）。prompt 通道三层：①原生中继（claude SendMessage，目标会话可见 `Message from @weave`）→ ②终端 send-text 兜底（经终端后端泛化，bracketed paste + CR 提交）→ ③promptbox 队列（daemon 写、hook 消费，双触发冲洗）。投递终态在途视图可查 `via` / 回执；prompt 送达未回执或投递失败会暂停该会话队列冲洗，回执命中或手动重发解闸。
 
-**描述**：生成 `.claude/settings.json`，配置 Claude Code 的行为。
+**提醒订阅**：按会话订阅触发类型集（`idle` 空闲 / `turnEnd` 回合结束 / `messageFailed` 投递失败）+ 次数（NULL = 持久化）；命中经三通道通知——页面内 toast、浏览器系统通知（安全上下文 + SW）、Web Push（页面关掉仍可达，VAPID + aes128gcm，订阅撤销自愈）。触发即重新拉取目标会话状态。
 
-**配置项**：
-- `hooks`：PreToolUse、PostToolUse、UserPromptSubmit 等事件钩子（指向 helpers/ 下的脚本）
-- `permissions.allow`：允许的操作列表（如 `Bash(npx weave*)`）
-- `permissions.deny`：禁止的操作列表（如 `Read(./.env*)`）
-- `env`：环境变量注入
-- `model`：默认模型配置
-- `statusLine`：状态栏配置
+**AI 助手**（dashboard 右下角浮层，配置齐才显示）：服务端代理转发到 OpenAI 兼容端点（`POST {baseUrl}/chat/completions`），流式增量转自家 `{delta}/{done}/{error}` 帧；网关不支持流式时自动记 24 小时并降级非流式；api key 只写不回显。
 
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/settings-generator.ts`
+**设置面**：`server.bindHost`（默认 `0.0.0.0`，可改回 `127.0.0.1`）、`server.tlsPort`（HTTPS 双监听，0 = 关）、`ai.baseUrl` / `ai.model` / `ai.apiKey`（只写，GET 只回 `apiKeySet`）、终端后端预设。
 
-**预期产出**：
-- `generateSettingsJson(options): Record<string, unknown>` 纯函数
-- 合并已有 settings（不覆盖用户自定义项）
-- hooks 块仅在 helpers 组件同时启用时生成
+**资源管理三层**（互不越级）：①市场副本层——资源市场侧栏导入 / 移除（`market/<id>/` 副本，移除插件装面副本有破坏性确认）；②安装/卸载层——装到项目 skills / 文件资产 / MCP / 工具箱包 / 全局个人 skills / harness 插件注册表；③启用/停用层——包开关 / settings 落盘。**工具箱**五形态包：`skill` / `rule` / `mod`（hooks 规则 + 处理器）/ `hook` / `surface`（裸 agents/commands 解包进项目 `.claude/`）。**全局文件资产**：`~/.claude`、`~/.codex` 下受控白名单文件树管理。市场更新检查（`check-updates`）与刷新（`refresh`）。
 
----
+**statusline 面板**：默认 / 全局两档状态栏配置预览与编辑。
 
-### A3. MCP 配置生成 — P1
+**fs 浏览**：服务端受控的文件树浏览（`/fs/roots`、`/fs/children`），供资产选择器等消费。
 
-**描述**：生成 `.mcp.json`，注册 MCP (Model Context Protocol) server。
+## 三、认证与网络
 
-**配置结构**：
-```json
-{
-  "mcpServers": {
-    "weave": {
-      "command": "npx",
-      "args": ["weave", "mcp", "start"],
-      "env": {}
-    }
-  }
-}
-```
+- 口令材料落 `<dataDir>/auth.json`（0600）：密码（scrypt hash）、30 天无状态签名会话 cookie、本机令牌 `x-weave-local`（CLI 与 hooks 免密——同机同用户即管理员）。
+- 改密只走 CLI（`weave chpass`）；web 侧 401 一律打回登录页、未登录不建 SSE 连接；`/health`、`/auth/*` 与静态资源豁免。
+- 监听：HTTP 按 `server.bindHost`；可选自签 HTTPS 第二监听（`server.tlsPort`，证书自动重签、失败降级仅警告）；访问地址枚举由 `weave daemon status` 与 `GET /settings` 的 `urls` 同源给出。手机浏览器要系统通知必须走 https origin。
 
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/mcp-generator.ts`
+## 四、采集与数据
 
-**预期产出**：
-- `generateMcpJson(options): Record<string, unknown>` 纯函数
-- 平台感知（Windows 用 `cmd /c npx`，Unix 用 `npx`）
-- 合并已有 `.mcp.json`（不覆盖其他 server 配置）
+- Claude Code 的 hook 事件经采集管线入 daemon → sqlite 镜像 + SSE 帧推送（`asset` / `project` / `hook` 是既有帧域，`push` / `invalidate` 是数据域）。
+- inject 通道回程走 outbox（随目标会话下一拍 hook 送达，非抢占）；promptbox 队列与 outbox 严格分离。
+- 数据目录 = `<configDir>/weave/`：`daemon.json`、`auth.json`、`ai.json`、`push.json`、`market/`、`hooks/`、`certs/`、`weave.db`。
+- 事件有全局保留期；收到过 prompt 的长会话只按保留期清理，绝不走自动删。
 
----
+## 五、项目级插件根（`<project>/.weave/plugins/`）
 
-### A4. CLAUDE.md 生成 — P0
+放在约定位置即被识别（项目作用域，不全局化）：
 
-**描述**：在项目根目录生成 `CLAUDE.md`，作为 Claude Code 的项目级指令文件。
+- `weave-plugin.json` 声明 `rules` / `handlers` / `mcpServers` / `templates`；daemon 按项目加载（scope = project）并热重载；`weave init` 把 `templates`（skills / commands / agents）物化进项目 `.claude/`，插件模板不受核心组件开关门控（插件被识别即 opt-in）。
+- 想让源进版本库：`.weave/.gitignore` 加窄例外（`!plugins/` + `!plugins/**`）——init 不会覆写用户改过的嵌套 `.gitignore`。
+- weave 仓库自用示例：`ai-prompt-auditor`（`/audit-ai-prompt`）。
 
-**模板类型**：
-| 模板 | 说明 |
-|------|------|
-| `minimal` | 最小配置，仅项目简介和基本规则 |
-| `standard` | 标准配置，含行为规则、文件组织、开发流程 |
-| `full` | 完整配置，含安全策略、性能指南、agent 协作协议 |
+## 六、AI 助手上下文与保鲜
 
-**内容段落**：
-- 项目概述与技术栈
-- 行为规则（编码规范、提交规范）
-- 文件组织规则
-- 测试要求
-- 安全约束
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/claudemd-generator.ts`
-
-**预期产出**：
-- `generateClaudeMd(options): string` 纯函数
-- 段落可组合（各段落独立函数，按模板拼接）
-- 不覆盖已存在的 CLAUDE.md（除非 `--force`）
-
----
-
-### A5. Runtime 配置 — P1
-
-**描述**：生成 `.weave/config.yaml`，存储 harness 的运行时状态。
-
-**配置内容**：
-- 初始化时间戳
-- 使用的 preset 名称
-- 已启用的组件清单
-- weave 版本号
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/executor.ts` — runtime config 写入步骤
-
-**预期产出**：
-- `.weave/config.yaml` 文件
-- 用于 `weave status` 和 `weave doctor` 读取状态
-
----
-
-## B. 插件内容模板
-
-### B1. Skills 技能系统 — P0
-
-**描述**：SKILL.md 文件定义特定任务的技能，放置在 `.claude/skills/` 下。Claude Code 启动时自动加载。
-
-**内置技能（初始集）**：
-
-| 技能名 | 功能 |
-|--------|------|
-| `code-review` | 代码审查流程指引 |
-| `project-navigation` | 项目结构导航与代码定位 |
-| `testing` | 测试编写规范与策略 |
-| `refactoring` | 重构方法论与安全步骤 |
-
-**ruflo 参考**：ruflo 内置 8+ core skills、17+ 领域 skills
-
-**预期产出**：
-- `src/templates/skills/<name>/SKILL.md` 模板文件
-- 模板注册表记录每个 skill 的元数据
-- 支持 `weave add skill <name>` 动态添加
-
----
-
-### B2. Commands 命令系统 — P1
-
-**描述**：命令 `.md` 文件定义 Claude Code 的 slash commands，放置在 `.claude/commands/` 下。
-
-**内置命令（初始集）**：
-
-| 命令名 | 功能 |
-|--------|------|
-| `/review` | 触发代码审查流程 |
-| `/scaffold` | 脚手架生成（组件、模块） |
-| `/explain` | 代码解释与文档生成 |
-| `/test` | 测试生成与运行指引 |
-
-**ruflo 参考**：ruflo 内置 100+ commands 跨 18 个分类
-
-**预期产出**：
-- `src/templates/commands/<name>.md` 模板文件
-- 模板注册表记录每个 command 的元数据
-
----
-
-### B3. Agents 代理系统 — P1
-
-**描述**：Agent 定义 `.md` 文件定义专用代理角色，放置在 `.claude/agents/` 下。
-
-**内置代理（初始集）**：
-
-| 代理名 | 角色 |
-|--------|------|
-| `coder` | 编码执行者，专注实现 |
-| `reviewer` | 代码审查者，专注质量 |
-| `researcher` | 研究者，探索与分析 |
-| `planner` | 规划者，方案设计 |
-
-**ruflo 参考**：ruflo 内置 60+ agents 跨 25+ 分类
-
-**预期产出**：
-- `src/templates/agents/<name>.md` 模板文件
-- 每个 agent 定义包含：角色描述、能力范围、行为约束
-
----
-
-### B4. Helpers 辅助脚本 — P1
-
-**描述**：CJS/MJS 辅助脚本，放置在 `.claude/helpers/` 下，为 hooks 和 statusline 提供运行时支持。
-
-**内置脚本**：
-
-| 脚本名 | 功能 |
-|--------|------|
-| `hook-handler.cjs` | 通用 hook 处理器，接收 JSON stdin，分发事件 |
-| `statusline.cjs` | 状态栏渲染脚本 |
-| `pre-commit.sh` | Git pre-commit 钩子 |
-| `post-commit.sh` | Git post-commit 钩子 |
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/helpers-generator.ts`
-
-**预期产出**：
-- `generateHookHandler(): string` 纯函数
-- `generateStatusline(): string` 纯函数
-- 脚本以字符串形式生成，写入文件
-
----
-
-## C. 生命周期管理
-
-### C1. `weave status` — P0
-
-> **部分实现注记（架构重构批 5，commit 8bb411d）**：`weave scan` / `weave status` 的 harness marker 探测走 Detector 策略，已认 `.claude` 与 `.codex`（含 `CLAUDE.md`/`AGENTS.md`）。
-
-**描述**：检查当前项目 harness 状态，显示已注入的组件清单。
-
-**输出内容**：
-- harness 是否已初始化
-- 已注入的 skills/commands/agents 列表
-- settings.json 状态（是否存在、是否有修改）
-- weave 版本 vs harness 版本
-
-**ruflo 参考**：`init check` 子命令
-
-**预期产出**：
-- 读取 `.weave/config.yaml` 和 `.claude/` 目录
-- 格式化输出状态表格
-
----
-
-### C2. `weave doctor` — P1
-
-> **部分实现注记（2026-10）**：已落地「本机接线」诊断——守护进程是否在跑、这条检出是否在本机注册表（SQLite `projects`）、`.weave/token` 是否存在且与注册表一致，并复用 `checkHarness` 的配置问题清单。典型场景：仓库重拉取后带着 weave 文件却从没在本机 init，`weave status` 只看文件、看不出「没注册」。下方的格式校验项（JSON 合法性、Node 版本、`--fix`）尚未实现。
-
-**描述**：诊断配置问题，提供修复建议。
-
-**检查项**：
-- `.claude/settings.json` 是否为有效 JSON
-- hooks 脚本是否存在且可执行
-- skills/commands/agents 文件完整性
-- `.mcp.json` 格式校验
-- Node.js 版本兼容性
-
-**ruflo 参考**：`doctor` 命令
-
-**预期产出**：
-- 问题清单 + 修复建议
-- `--fix` 自动修复可修复的问题
-
----
-
-### C3. `weave add <type> <name>` — P1
-
-**描述**：动态添加单个插件组件。
-
-**用法**：
-```
-weave add skill code-review
-weave add command review
-weave add agent coder
-weave add helper hook-handler
-```
-
-**ruflo 参考**：`init skills`、`init hooks` 子命令
-
-**预期产出**：
-- 从模板注册表查找并复制单个组件
-- 不影响其他已有组件
-
----
-
-### C4. `weave remove <type> <name>` — P2
-
-**描述**：移除已注入的 harness 组件。
-
-**安全措施**：
-- 确认提示（除非 `--yes`）
-- 不删除用户自定义内容（通过 checksum 区分）
-
-**ruflo 参考**：`eject` 命令
-
-**预期产出**：
-- 删除指定组件文件
-- 更新 `.weave/config.yaml`
-
----
-
-### C5. `weave upgrade` — P2
-
-**描述**：更新 helpers/skills 到新版本，保留用户自定义数据。
-
-**策略**：
-- 比对文件 checksum，仅更新未修改的模板文件
-- 用户修改过的文件标记为冲突，提示手动合并
-- `--add-missing` 仅添加缺失组件，不覆盖
-
-**ruflo 参考**：`init upgrade` 子命令 + `helper-refresh.ts`
-
-**预期产出**：
-- 版本戳对比
-- 增量更新逻辑
-
----
-
-## D. 进阶功能
-
-### D1. 配置校验系统 — P1
-
-**描述**：Zod schema 配置校验，支持多配置源合并。
-
-**Schema 定义**：
-- `InitOptionsSchema`：初始化选项校验
-- `SettingsSchema`：settings.json 结构校验
-- `McpConfigSchema`：MCP 配置校验
-- `WeaveConfigSchema`：runtime 配置校验
-
-**ruflo 参考**：`@claude-flow/shared/src/core/config/schema.ts`
-
-**预期产出**：
-- 所有配置类型通过 Zod 定义
-- 运行时校验 + 友好的错误提示
-- `ConfigLoader` 支持多源合并（默认值 < 文件 < 环境变量 < CLI 参数）
-
----
-
-### D2. 插件注册表 — P2
-
-**描述**：可扩展的模板/插件注册机制，支持第三方扩展。
-
-**注册类型**：
-- Skills 注册
-- Commands 注册
-- Agents 注册
-- Helpers 注册
-
-**ruflo 参考**：`@claude-flow/shared/src/plugin-registry.ts`
-
-**预期产出**：
-- `TemplateRegistry` 类，支持动态注册与发现 ✅（`register()` 动态注册已落地，
-  供 D3.1 插件模板扩展点③使用）
-- 扩展点机制（可挂载新的模板源）✅（hooks 插件扩展点已落地，见 D3.1；
-  npm 模板源仍待做）
-- 第三方可通过 npm 包提供额外模板（待做）
-
----
-
-### D3. Hooks 事件系统 — P2 ✅（一期已实现）
-
-**描述**：基于 Claude Code hooks 的自动事件响应系统——采集 → 规则匹配 → 下游分发 → 可视化。
-
-**采集面**（`weave init` 默认全集写入 settings.json；`--hooks` 可裁剪）：
-| 事件 | 触发时机 |
-|------|---------|
-| `PreToolUse` | 工具调用前 |
-| `PostToolUse` | 工具调用后（文档更新识别：pathGlobs `**/*.md`） |
-| `UserPromptSubmit` | 用户提交 prompt 时（session_title diff 检测 /rename） |
-| `SessionStart` | 会话开始时 |
-| `Stop` | 一轮结束时 |
-| `SubagentStop` | 子 agent 结束时 |
-| `Notification` | 通知触发时 |
-
-**架构**（`weave-server/src/hooks/`）：
-- `registry.ts` — 规则内存索引（SQLite `hook_rules` 加载，priority 降序，inject 白名单校验）
-- `dispatcher.ts` — ingest 响应路径同步匹配；四种下游处理器：
-  `log`（记账）/ `webhook`（出站转发，HMAC 签名）/ `inject`（渲染指令入池 + 经
-  `additionalContext` 同步注入当前会话）/ `manual`（只入池，dashboard 复制或拖到会话执行）
-- `sessions.ts`（repository）— 会话 rename 双向：读 `session_title` diff、写 `pending_title`
-  经 hook 输出 `sessionTitle`（与 `/rename` 同效）
-- `resume-runner.ts` — 指令池手动执行：detached spawn `claude --resume <sid> -p`，状态机回写
-- `bus.ts` — HookEventBus → SSE `/events`（帧 `type:'hook'`）实时推送
-- 全局总开关：daemon settings `hooks.enabled`；规则级开关：`enabled` 字段（API/CLI/dashboard）
-
-**管理面**：
-- dashboard Hooks 面板（@xyflow/react 数据流链路图：事件源→规则→处理器→会话，SSE 高亮）
-- REST：`/hooks/rules` CRUD+toggle、`/hooks/dispatches`、`/hooks/dispatches/:id/run`、`/sessions`
-
-**标记清扫**：weave 生成物全部带标记（settings.json 组=路径 marker、helper 脚本=`@version weave@`）；
-re-init 时按标记清除多余/过期条目（`mergeSettingsJson` 组级清扫 + executor 目录清扫，记入 `removed`）。
-
-**Codex**：hooks 在 config.toml 且 schema 未稳定——一期不接，保留 `HookAdapter` 扩展点（加 `codex-adapter.ts` 即可）。
-
-**ruflo 参考**：`@claude-flow/shared/src/hooks/registry.ts`（Map-按事件索引 + priority 形态）
-
-**预期产出** ✅：
-- `HookRegistry` 类，管理事件订阅与分发 ✅（registry + dispatcher）
-- hooks 配置写入 settings.json ✅（7 事件全集 + 清扫）
-- hook-handler.cjs 作为通用事件处理器 ✅（转发 + 响应注入中继）
-
-#### D3.1 插件系统（基础设施二期）✅
-
-**描述**：预定义全局 hook 以**插件包**形态分发——带 `weave-plugin.json` manifest 的
-自包含目录放在约定位置即被 daemon 自动识别（SPI 式接入），AI 仅凭
-`docs/PLUGIN-SPEC.md` 即可生成完整可用插件。
-
-- **扫描位置**：内置 `presets/`（3 个预设：文档更新检查/跨项目交互/轮末总结，
-  默认禁用）→ `<configDir>/weave/plugins/` → 项目 `.weave/plugins/`。
-- **扩展点全集**：① hook 规则（复用 `HookRuleSchema`，`origin`/`plugin_id` 标记，
-  upsert 保用户开关）② 自定义处理器 `handler.mjs`（dispatcher plugin 分支，
-  与 inject/manual 同防线：60s 去重/超时/白名单/catch-all）③ 模板注入
-  （TemplateRegistry 动态注册 + init 复制）④ MCP server 定义（init 合并，
-  同名 namespace 化）⑤ `@file:` 指令模板（含 workflow 引导语）⑦ 事件订阅
-  （`subscribe.entry` 导出 onEvent，ingest fire-and-forget 转发）。
-- **热重载**：三根目录 chokidar 监听防抖 1s 重扫；消失/重载失败的插件级联
-  删规则卸处理器；SSE `plugin.reloaded/plugin.toggled` 帧。
-- **管理面**：`GET/POST /hooks/plugins`（安装/卸载）、`POST …/toggle`（级联开关）、
-  dashboard 插件区段。
-- **分发四通道**：目录扫描 / `POST /hooks/plugins` 安装（installed.json 清单）/
-  `search`（sources.json 索引源）/ `exportPlugin` 打包分享（后两者为 server API，
-  无 CLI 入口）。
-- **workflow 结合**：inject 模板注入指令 → Claude 会话内原生 Workflow/子 agent
-  编排（无自有引擎）；防递归走既有 DISPATCH_MARKER + 60s 去重。
-- **AI 验收**：`fixtures/changelog-reminder`（按规范生成的样本）+ 固定回归测试；
-  `docs/PLUGIN-SPEC.md` §10 开发流程。
-
----
-
-### D4. 项目自动检测 — P1
-
-**描述**：检测当前项目的语言、框架、包管理器，自动选择合适的模板集。
-
-**检测能力**：
-| 检测项 | 方法 |
-|--------|------|
-| 语言 | 文件扩展名统计 + package.json/go.mod/Cargo.toml |
-| 框架 | 依赖列表分析（react/vue/angular/express/nest 等） |
-| 包管理器 | lock 文件检测（package-lock.json/yarn.lock/pnpm-lock.yaml） |
-| 测试框架 | 依赖中的 jest/vitest/mocha/pytest |
-| Node 版本 | .nvmrc/.node-version/package.json engines |
-
-**ruflo 参考**：`detectPlatform()` in `types.ts` + Codex auto-detection
-
-**预期产出**：
-- `detectProject(targetDir): ProjectInfo` 函数
-- 根据检测结果自动选择 preset 和模板集
-- 可通过 `--preset` 手动覆盖
-
----
-
-### D5. 安全策略层 — P2
-
-**描述**：参考 ruflo 的 MetaHarness，提供 MCP 安全策略与危险命令拦截。
-
-**安全能力**：
-- MCP 工具调用白名单/黑名单
-- 危险命令模式匹配（rm -rf、sudo、git push --force 等）
-- 文件访问控制（禁止读取 .env、credentials 等敏感文件）
-
-**ruflo 参考**：`.harness/mcp-policy.json`
-
-**预期产出**：
-- `.weave/policy.json` 策略文件
-- hook-handler 中集成策略检查
-- 默认安全基线（deny 敏感文件、拦截危险命令）
-
----
-
-## E. 架构支撑
-
-### E1. 自定义 CLI Parser — P0
-
-**描述**：实现自定义命令行参数解析器，支持子命令嵌套、flag 类型、短选项等。
-
-**能力**：
-- 长选项（`--preset full`）和短选项（`-f`）
-- `--key=value` 语法
-- boolean/string/array flag 类型
-- `--no-*` 否定语法
-- 子命令解析（`weave init --force`、`weave add skill code-review`）
-- 多级子命令（最多 3 级）
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/parser.ts`（`CommandParser` 类，约 300 行）
-
-**预期产出**：
-- `CommandParser` 类
-- 支持命令定义、flag 定义、验证、帮助生成
-
----
-
-### E2. 模板注册机制 — P0
-
-**描述**：可扩展的模板发现与注册系统，管理所有内置模板的元数据和路径。
-
-**设计**：
-```typescript
-interface TemplateEntry {
-  name: string;
-  category: 'skill' | 'command' | 'agent';
-  sourcePath: string;    // 包内相对路径
-  description: string;
-  tags: string[];
-}
-```
-
-**ruflo 参考**：`v3/@claude-flow/codex/src/templates/index.ts`
-
-**预期产出**：
-- `TemplateRegistry` 类
-- 硬编码清单（初期），可扩展为目录扫描
-- 按 category 查询、按 name 查找
-
----
-
-### E3. Helper 自动刷新 — P2
-
-**描述**：版本戳机制，CLI 执行时自动检查并更新已注入的 helpers。
-
-**机制**：
-- 每个 helper 文件头部嵌入版本戳（`// weave@0.1.0`）
-- CLI 执行时对比版本戳，过期则重新生成
-- 用户修改过的文件通过 checksum 检测，不自动覆盖
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/helper-refresh.ts`
-
-**预期产出**：
-- 版本戳读写函数
-- 自动刷新逻辑（每次 CLI 命令时触发）
-
----
-
-### E4. Helper 签名验证 — P2
-
-**描述**：SHA256 完整性校验，确保 helpers 未被篡改。
-
-**机制**：
-- 生成时计算 SHA256 hash，写入 `.weave/helpers.manifest.json`
-- 加载时校验 hash，不匹配则告警并重新生成
-
-**ruflo 参考**：`v3/@claude-flow/cli/src/init/helper-signing.ts`
-
-**预期产出**：
-- `computeHash(content): string` 工具函数
-- manifest 文件生成与校验
-
----
-
-## 优先级汇总
-
-| 优先级 | 功能编号 | 说明 |
-|--------|---------|------|
-| **P0（核心）** | A1, A2, A4, B1, C1, E1, E2 | 首批实现，跑通 init 流程 |
-| **P1（重要）** | A3, A5, B2, B3, B4, C2, C3, D1, D4 | 第二批，完善功能 |
-| **P2（扩展）** | C4, C5, D2, D3, D5, E3, E4 | 第三批，进阶能力 |
-
----
-
-## 技术决策
-
-| 决策 | 选择 | 理由 |
-|------|------|------|
-| 语言 | TypeScript ESM (ES2022) | 与 ruflo 一致，类型安全 |
-| 包管理 | pnpm monorepo | 用户偏好，便于后续分包 |
-| CLI 框架 | 自定义 parser | 参考 ruflo，支持子命令嵌套 |
-| 校验 | Zod | 配置 schema 运行时校验 |
-| 测试 | vitest | ESM 原生，快速 |
-| 模板引擎 | 模板字面量 | 内容为静态 markdown/text，无需额外引擎 |
+- 系统上下文由 `daemon/ai-context.ts` 现场装配、无缓存：固定前言 + `docs/ARCHITECTURE.md` + `docs/FEATURES.md`（本文）+ 内置市场全部 `SKILL.md`（上限 40 文件 / 60k 字符）。`docs/FEATURES.md` 是 docs 命中判据文件（存在性 marker），**不可删**；安装态找不到 docs 则降级只注入技能（`/ai/status` 的 `docsFound` 可查）。
+- 三源新鲜度由项目级插件 `ai-prompt-auditor` 子 agent 专职审计（抽取主张 → 对照代码权威 → 差异清单 → 直接修复 → 回归测试）。
