@@ -2,14 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
-import { SessionRepository, type SessionRow } from '../../repositories/sessions.js';
+import { SessionRepository } from '../../repositories/sessions.js';
+import { PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
-import { EMPTY_SESSION_GRACE_MS, SessionSweeper, isEmptySession } from '../session-sweeper.js';
+import { SessionSweeper } from '../session-sweeper.js';
 
 /**
- * 空会话清理回归：只在库里残留一条 SessionStart 的会话（开了就 /resume 走掉）
- * 延迟清掉，但**刚开的新会话长得一模一样** —— 保活窗口就是那条分界线。
+ * 无 prompt 幽灵会话清理回归：从未收到 UserPromptSubmit 的会话（开了就走——
+ * SessionStart 单例，或 SessionStart + 闲置 Notification 组合）静默过保活窗即清，
+ * 但**刚开的会话长得一模一样**——保活窗口就是那条分界线。收到过 prompt 的
+ * 长会话永不被自动清（遵循全局事件保留期）。
  */
 
 let db: DatabaseSync;
@@ -40,66 +43,70 @@ const seed = (sessionId: string, eventTypes: string[]): void => {
   }
 };
 
-const row = (over: Partial<SessionRow>): SessionRow =>
-  ({
-    sessionId: 's',
-    projectId: 1,
-    title: null,
-    pendingTitle: null,
-    lastSeenAt: new Date(0).toISOString(),
-    createdAt: new Date(0).toISOString(),
-    eventCount: 1,
-    lastEventType: 'SessionStart',
-    ...over,
-  }) as SessionRow;
+/** 把会话行改成「最后一次活动在 msAgo 之前」（autoDeleteAt 锚定 last_seen_at）。 */
+const age = (sessionId: string, msAgo: number): void => {
+  db.prepare('UPDATE sessions SET last_seen_at = ? WHERE session_id = ?').run(
+    new Date(Date.now() - msAgo).toISOString(),
+    sessionId,
+  );
+};
 
-describe('isEmptySession 判据', () => {
-  const now = 1_700_000_000_000;
-  const fresh = new Date(now - 1_000).toISOString();
-  const stale = new Date(now - EMPTY_SESSION_GRACE_MS - 1_000).toISOString();
-
-  it('只有一条 SessionStart 且过了保活窗口 → 空', () => {
-    expect(isEmptySession(row({ lastSeenAt: stale }), now)).toBe(true);
+describe('幽灵会话判据（listWithCounts 的 autoDeleteAt）', () => {
+  it('从未收到 UserPromptSubmit → 期限 = lastSeenAt + 保活窗（判据唯一实现）', () => {
+    seed('g-single', ['SessionStart']);
+    // 实库真实形状：开了之后只等来一条闲置 Notification，从未提交 prompt
+    seed('g-notify', ['SessionStart', 'Notification']);
+    for (const id of ['g-single', 'g-notify']) {
+      const row = sessions.listWithCounts().find((s) => s.sessionId === id)!;
+      expect(row.autoDeleteAt).toBeTruthy();
+      expect(Date.parse(row.autoDeleteAt!) - Date.parse(row.lastSeenAt)).toBe(
+        PROMPTLESS_GRACE_MS,
+      );
+    }
   });
 
-  it('刚开的会话（窗口内）不算空 —— 这是延迟的全部意义', () => {
-    expect(isEmptySession(row({ lastSeenAt: fresh }), now)).toBe(false);
-  });
-
-  it('有后续事件、或最后一条不是 SessionStart → 不算空', () => {
-    expect(isEmptySession(row({ lastSeenAt: stale, eventCount: 2 }), now)).toBe(false);
-    expect(isEmptySession(row({ lastSeenAt: stale, lastEventType: 'UserPromptSubmit' }), now)).toBe(
-      false,
-    );
+  it('收到过 UserPromptSubmit（哪怕只此一条）→ null：长会话遵循全局保留期，永不自动删', () => {
+    seed('real-full', ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']);
+    seed('real-ups-only', ['UserPromptSubmit']);
+    for (const id of ['real-full', 'real-ups-only']) {
+      const row = sessions.listWithCounts().find((s) => s.sessionId === id)!;
+      expect(row.autoDeleteAt).toBeNull();
+    }
   });
 });
 
 describe('SessionSweeper.sweep', () => {
-  it('清掉空+旧，保留空+新与有内容；重复调用幂等', () => {
-    seed('a-empty', ['SessionStart']);
-    seed('b-used', ['SessionStart', 'UserPromptSubmit']);
+  it('保活窗内的幽灵不清；窗过即清（含 SessionStart+Notification 形状）；有 prompt 的不动；幂等', () => {
+    seed('a-ghost', ['SessionStart']);
+    seed('b-ghost', ['SessionStart', 'Notification']);
+    seed('c-real', ['SessionStart', 'UserPromptSubmit']);
 
     // 都在保活窗口内 → 一个都不清
     expect(new SessionSweeper({ sessions, events, dispatches }).sweep()).toBe(0);
-    expect(sessions.getBySessionId('a-empty')).toBeDefined();
+    expect(sessions.getBySessionId('a-ghost')).toBeDefined();
 
-    // 时间推过窗口 → 只清空会话，有内容的不动
+    // 静默推过窗口 → 只清无 prompt 的两个；c-real 同样静默过窗但有 prompt，
+    // 长会话遵循全局生命周期，不自动删
+    age('a-ghost', PROMPTLESS_GRACE_MS + 60_000);
+    age('b-ghost', PROMPTLESS_GRACE_MS + 60_000);
+    age('c-real', PROMPTLESS_GRACE_MS + 60_000);
     const later = new SessionSweeper(
       { sessions, events, dispatches },
-      () => Date.now() + EMPTY_SESSION_GRACE_MS + 60_000,
+      () => Date.now() + 1_000,
     );
-    expect(later.sweep()).toBe(1);
-    expect(sessions.getBySessionId('a-empty')).toBeUndefined();
-    expect(events.listBySession('a-empty')).toHaveLength(0);
-    expect(sessions.getBySessionId('b-used')).toBeDefined();
+    expect(later.sweep()).toBe(2);
+    expect(sessions.getBySessionId('a-ghost')).toBeUndefined();
+    expect(events.listBySession('b-ghost')).toHaveLength(0);
+    expect(sessions.getBySessionId('c-real')).toBeDefined();
     expect(later.sweep()).toBe(0);
   });
 
   it('start() 启动即扫一轮（不等首个 5 分钟间隔——dev 重启周期常短于间隔）', () => {
-    seed('a-boot', ['SessionStart']);
+    seed('a-boot', ['SessionStart', 'Notification']);
+    age('a-boot', PROMPTLESS_GRACE_MS + 60_000);
     const sweeper = new SessionSweeper(
       { sessions, events, dispatches },
-      () => Date.now() + EMPTY_SESSION_GRACE_MS + 60_000,
+      () => Date.now() + 1_000,
     );
     clearInterval(sweeper.start());
     expect(sessions.getBySessionId('a-boot')).toBeUndefined();

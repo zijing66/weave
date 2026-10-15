@@ -20,7 +20,14 @@ export interface SessionRow {
   /** 最新一条 hook 事件类型（listWithCounts 查询填充）——web 状态总线判「关闭」
    *  （SessionEnd）不必再为每个会话拉事件。 */
   lastEventType?: string | null;
+  /** 无 prompt 幽灵会话的自动清理时刻（= lastSeenAt + 保活窗；listWithCounts
+   *  派生，null = 收到过 prompt 的正常会话，只走全局事件保留期）。 */
+  autoDeleteAt?: string | null;
 }
+
+/** 无 prompt（纯会话引导事件）会话的保活窗：静默超过该窗即自动清理——刚开的
+ *  会话在第一条 prompt 落下前正是这个形状，窗口就是「延迟删除」的分界线。 */
+export const PROMPTLESS_GRACE_MS = 10 * 60_000;
 
 /**
  * sessions 表：daemon 自存的会话标题（不写回 Claude Code 内部文件）。
@@ -100,6 +107,13 @@ export class SessionRepository {
         harness: isHarness(raw) ? raw : null,
         turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
         lastEventType: lastEventType ?? null,
+        // 幽灵会话判据（唯一实现）：从未收到 UserPromptSubmit——它的事件全是会话
+        // 引导类（SessionStart、闲置 Notification 等）。期限随行下发，web 渲染倒
+        // 计时 tag；SessionSweeper 过期即清（长会话 lastUps 非空 → null，永不自动删）。
+        autoDeleteAt:
+          lastUps == null
+            ? new Date(Date.parse(String(row.last_seen_at)) + PROMPTLESS_GRACE_MS).toISOString()
+            : null,
       };
     });
   }
