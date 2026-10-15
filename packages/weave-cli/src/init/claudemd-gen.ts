@@ -69,7 +69,6 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
     content += t('claudemd.security');
   }
 
-  content += t('claudemd.commands');
   content += t('claudemd.skills');
   content += injectedPromptNote();
   content += `${WEAVE_BLOCK_END}\n`;

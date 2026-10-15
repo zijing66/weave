@@ -42,10 +42,16 @@ describe('generateClaudeMd', () => {
     expect(standard).not.toContain('## Security');
   });
 
-  it('always lists weave commands', () => {
+  it('不广告市场里的命令：默认 preset 的 commands/agents 都不装，写进块就是假的', () => {
+    const md = generateClaudeMd({ template: 'full', projectName: 'p' });
+    expect(md).not.toContain('/review');
+    expect(md).not.toContain('/scaffold');
+  });
+
+  it('技能段落点是 harness 自己的目录（不是项目根 skills/）', () => {
     const md = generateClaudeMd({ template: 'minimal', projectName: 'p' });
-    expect(md).toContain('/review');
-    expect(md).toContain('/test');
+    expect(md).toContain('.claude/skills/');
+    expect(md).not.toContain('live in `skills/`');
   });
 
   it('is deterministic for the same inputs', () => {

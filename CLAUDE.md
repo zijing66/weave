@@ -21,16 +21,9 @@
 - 配置文件放项目根目录
 - 沿用既有目录结构——不要新造顶层目录
 
-## Weave 命令
-
-- `/review` — 审查当前改动
-- `/test` — 编写或更新测试
-- `/explain` — 解释选中的代码
-- `/scaffold` — 生成组件脚手架
-
 ## 技能
 
-可复用技能放 `skills/`（agent skills 标准：一个技能一个目录，内含 `SKILL.md`）。任务命中某个技能时按名调用。
+可复用技能放 harness 自己的技能目录（Claude Code 为 `.claude/skills/`）：一个技能一个目录、内含 `SKILL.md`；任务命中某个技能时按名调用。
 
 ## weave 注入的消息
 
