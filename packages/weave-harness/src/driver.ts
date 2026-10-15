@@ -201,26 +201,37 @@ export interface MessageMeta {
   mode: string;
 }
 
-/** 阻塞式问答的选项（含作答键序——宿主模态框只吃键盘）。 */
+/**
+ * 阻塞式问答的选项（含作答键序——宿主模态框只吃键盘）。键序给的是**原子表**：
+ * 每个元素 = 一次独立击键写。宿主把同一批到达的多个文本字符当成一次粘贴/过滤
+ * 输入（实测「11」把数字当筛选字串、一个都不选），故「数字 + 数字」必须分两次发。
+ */
 export interface BlockingQuestionOption {
-  /** 作答键序（裸击键：选项序号；多选问题补一记 CR 提交）。 */
-  keys: string;
+  /** 击键原子（`[1-9]` 选项序号 / `\t` 下一个 tab / `\r` 回车 / `\x1b[B` 下移）。 */
+  keys: readonly string[];
   label: string;
   description?: string | null;
-  /** 宿主自有尾行「自定义输入」：keys 只选中该行，提交时随文本一起送。 */
+  /** 宿主自有尾行「自定义输入」：keys 只选中该行（多选 = 勾选），文本由作答侧拼在中间。 */
   input?: boolean;
-  /** 宿主自有尾行「结束整个提问去聊天」：无文本，按 keys 即结束提问。 */
+  /** input 行：进文本框前要打的焦点键（多选 = 下移该行之前的行数；单选数字即变文本框，不给）。 */
+  textFocus?: readonly string[];
+  /** input 行：文本之后要打的键（多选 = 移出文本框到内联 Next/Submit 再回车；单选 = 回车）。 */
+  textTail?: readonly string[];
+  /** 宿主自有尾行「结束整个提问去聊天」：按下 keys 即结束提问，后续键序不再打。 */
   chat?: boolean;
 }
 
 /** 阻塞式问答的问题面（PreToolUse 载荷归一化；web 直渲染，选项原文展示）。 */
 export interface BlockingQuestion {
-  /** 稳定键（作答路由定位：`<tool>:<头或问句前缀>`）。 */
+  /** 稳定键（作答路由定位：`<tool>:<头或问句前缀>`；提交步 = `<tool>:submit`）。 */
   key: string;
   header?: string | null;
   question: string;
   options: readonly BlockingQuestionOption[];
   multiSelect: boolean;
+  /** 提交步：宿主模态框尾部的「提交/取消」屏（`questions≥2 || 任一 multiSelect` 才有）——
+   *  不是宿主的第 n 个问题 tab，web 把它渲染成弹窗底部的动作。 */
+  submit?: boolean;
 }
 
 /**

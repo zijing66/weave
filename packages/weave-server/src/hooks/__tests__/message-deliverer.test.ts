@@ -1460,7 +1460,7 @@ describe('MessageDeliverer 裁决表', () => {
       return { terminal, sendKeys };
     };
 
-    it('选项键序打进 pane（spinner 前缀含 ◐ 输入等待态也能匹配）', async () => {
+    it('选项键序逐个原子打进 pane（spinner 前缀含 ◐ 输入等待态也能匹配）', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run(
         '◐ msg-target',
         SESSION_ID,
@@ -1471,34 +1471,52 @@ describe('MessageDeliverer 裁决表', () => {
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));
       pushEvent(SESSION_ID, 'Stop');
 
-      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toEqual({ ok: true });
+      await expect(deliverer.answer(SESSION_ID, ['1'])).resolves.toEqual({ ok: true });
       expect(sendKeys).toHaveBeenCalledWith('pane-1', '1');
-      // 多选形态（数字 + CR）同过白名单
-      await expect(deliverer.answer(SESSION_ID, '2\r')).resolves.toEqual({ ok: true });
-      expect(sendKeys).toHaveBeenCalledWith('pane-1', '2\r');
+      // 多问一次提交：数字 / Tab / 下移 / 提交数字各自成一次击键写（宿主把同一批
+      // 多个文本字符当一次粘贴，拼在一起会被当筛选字串）
+      sendKeys.mockClear();
+      await expect(
+        deliverer.answer(SESSION_ID, ['2', '\t', '\x1b[B', '\x1b[B', '自定', '\t', '\r', '\t', '1']),
+      ).resolves.toEqual({ ok: true });
+      expect(sendKeys.mock.calls.map((c) => c[1])).toEqual([
+        '2',
+        '\t',
+        '\x1b[B',
+        '\x1b[B',
+        '自定',
+        '\t',
+        '\r',
+        '\t',
+        '1',
+      ]);
     });
 
-    it('键序白名单：非「数字 + 可选 CR」一律 400（作答面不是键序注入通道）', async () => {
+    it('原子白名单：非「宿主键 / 无控制字符文本」一律 400（作答面不是键序注入通道）', async () => {
       const { terminal, sendKeys } = paneFixture([]);
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));
-      for (const keys of ['abc', '1\r2', '12', '\r', '1\n', '']) {
-        const result = await deliverer.answer(SESSION_ID, keys);
-        expect(result, JSON.stringify(keys)).toMatchObject({ ok: false, status: 400 });
+      for (const atoms of [[], ['12'], ['abc'], ['\r\r'], ['1\n'], ['\x1b[D'], ['1', 'a\rb']]) {
+        // 注：'12' / 'abc' 本身是无控制字符文本、合法作**文本原子**，但落在键位
+        // （首个原子）就是往会话打任意文本 → 400。
+        const result = await deliverer.answer(SESSION_ID, atoms);
+        expect(result, JSON.stringify(atoms)).toMatchObject({ ok: false, status: 400 });
       }
       expect(sendKeys).not.toHaveBeenCalled();
     });
 
-    it('自定义输入键序：数字 + 文本 + CR 放行；内嵌控制字符仍 400', async () => {
+    it('文本原子：中文/数字文本放行；内嵌控制字符仍 400', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '◐ msg-target', cwd: PROJECT_PATH },
       ]);
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));
 
-      await expect(deliverer.answer(SESSION_ID, '4自己写一个\r')).resolves.toEqual({ ok: true });
-      expect(sendKeys).toHaveBeenCalledWith('pane-1', '4自己写一个\r');
-      for (const keys of ['4a\rb\r', '4\u001b[D\r', '4a\nb\r']) {
-        await expect(deliverer.answer(SESSION_ID, keys)).resolves.toMatchObject({
+      await expect(deliverer.answer(SESSION_ID, ['4', '自己写一个', '\r'])).resolves.toEqual({
+        ok: true,
+      });
+      expect(sendKeys.mock.calls.map((c) => c[1])).toEqual(['4', '自己写一个', '\r']);
+      for (const atoms of [['4', 'a\rb', '\r'], ['4', '\u001b[D', '\r']]) {
+        await expect(deliverer.answer(SESSION_ID, atoms)).resolves.toMatchObject({
           ok: false,
           status: 400,
         });
@@ -1508,12 +1526,12 @@ describe('MessageDeliverer 裁决表', () => {
     it('会话不存在 404；pane 找不到 409（窗口没开/歧义）', async () => {
       const { terminal } = paneFixture([]);
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));
-      await expect(deliverer.answer('sess-ghost', '1')).resolves.toMatchObject({
+      await expect(deliverer.answer('sess-ghost', ['1'])).resolves.toMatchObject({
         ok: false,
         status: 404,
       });
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
-      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toMatchObject({
+      await expect(deliverer.answer(SESSION_ID, ['1'])).resolves.toMatchObject({
         ok: false,
         status: 409,
       });
@@ -1521,7 +1539,7 @@ describe('MessageDeliverer 裁决表', () => {
 
     it('无终端通道 409（层② 是作答的唯一通道）', async () => {
       const deliverer = new MessageDeliverer(makeDeps());
-      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toMatchObject({
+      await expect(deliverer.answer(SESSION_ID, ['1'])).resolves.toMatchObject({
         ok: false,
         status: 409,
       });

@@ -171,17 +171,22 @@ const ACK_STALL_MS = 120_000;
 const ACK_MIN_TEXT = 8;
 
 /**
- * 作答键序白名单（安全闸）：只准「选项序号 + 可选 CR」进终端——作答面不能
- * 变成任意键序注入通道（键序若打进已关的模态框会漏进输入框执行）。键序本身
- * 由 harness 规格拼装（选项 keys），这里只验形态。
+ * 作答键序白名单（安全闸）：逐个**原子**验形态——作答面不能变成任意键序注入
+ * 通道（键序若打进已关的模态框会漏进输入框执行）。原子要么是宿主的键（选项
+ * 序号 / Tab / 回车 / 下移），要么是自定义输入行的文本（无控制字符——CR/LF/ESC
+ * 混进来就成了任意键序注入，不只是打字）。原子表本身由 harness 规格拼装
+ * （选项 keys / textFocus / textTail），这里只验形态。
  */
-const ANSWER_KEYS = /^[1-9](\r)?$/;
+const ANSWER_ATOM = /^(?:[1-9]|\t|\r|\x1b\[B)$/;
+const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
 
 /**
- * 自定义输入行的键序（宿主自有尾行「Other」）：序号 + 文本 + 提交 CR。文本无
- * 控制字符——CR/LF/ESC 之类若混进来就成了「任意键序注入」，不只是打字。
+ * 原子之间的间隔（毫秒）：宿主把同一批到达的多个文本字符当成一次粘贴/过滤输入
+ * （实机「11」被当筛选字串，一个选项都没选上），所以键序必须一次一个原子地写。
+ * win32 上 `wezterm cli send-text` 每次调用本身就要 ~100ms（进程启动），实际间隔
+ * 更大；这里给 POSIX（走 socket，调用毫秒级）兜底。
  */
-const ANSWER_TEXT_KEYS = /^[1-9][^\x00-\x1f\x7f]*\r$/;
+const ANSWER_ATOM_GAP_MS = 120;
 
 /**
  * socket 直投的来源标注（只作用于这条路径）：socket 消息是**裸 user 文本**
@@ -464,8 +469,14 @@ export class MessageDeliverer {
    * 标题 + cwd 判定（歧义/找不到 pane = 409，不去别的终端乱打）。成功由调用
    * 方乐观标记已答（PostToolUse 到达照常清除）。
    */
-  async answer(sessionId: string, keys: string): Promise<AnswerResult> {
-    if (!ANSWER_KEYS.test(keys) && !ANSWER_TEXT_KEYS.test(keys)) {
+  async answer(sessionId: string, atoms: readonly string[]): Promise<AnswerResult> {
+    // 首个原子必须是键：文本原子只能跟在「选中输入行」的键后面（拼装侧的不变量，
+    // 这里再验一次——文本原子落在键位就是往会话里打任意文本）。
+    if (
+      atoms.length === 0 ||
+      !ANSWER_ATOM.test(atoms[0]!) ||
+      atoms.some((a) => !ANSWER_ATOM.test(a) && !ANSWER_TEXT.test(a))
+    ) {
       return { ok: false, status: 400, error: 'Invalid answer keys' };
     }
     const session = this.deps.sessions.getBySessionId(sessionId);
@@ -492,7 +503,10 @@ export class MessageDeliverer {
       };
     }
     try {
-      await terminal.sendKeys(pane.id, keys);
+      for (const [i, atom] of atoms.entries()) {
+        if (i > 0) await sleep(ANSWER_ATOM_GAP_MS);
+        await terminal.sendKeys(pane.id, atom);
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };

@@ -191,15 +191,11 @@ export class QuestionTracker {
   }
 
   /**
-   * 作答已发（乐观落位，防重复作答——键序若打进已关的模态框会漏进输入框）；
-   * 多问题面只摘答的那问，PostToolUse 到达时照常整条清除。
+   * 作答已发（乐观落位，防重复作答——键序若打进已关的模态框会漏进输入框）。
+   * 整 call 一次提交（含 Submit 步），故整条摘除；PostToolUse 到达照常再清一次。
    */
-  markAnswered(sessionId: string, questionKey: string): void {
-    const entry = this.pending.get(sessionId);
-    if (!entry) return;
-    const rest = entry.questions.filter((q) => q.key !== questionKey);
-    if (rest.length === 0) this.pending.delete(sessionId);
-    else this.pending.set(sessionId, { ...entry, questions: rest });
+  markAnswered(sessionId: string): void {
+    this.pending.delete(sessionId);
   }
 
   /** 会话删除级联。 */

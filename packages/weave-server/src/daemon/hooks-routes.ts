@@ -13,6 +13,7 @@ import type { WeaveServerDeps } from './server.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { purgeSession } from '../hooks/session-purge.js';
+import { composeAnswerAtoms } from '../hooks/answer-keys.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
@@ -58,13 +59,20 @@ const SendMessageBody = z.object({
   fromSessionId: z.string().min(1).nullable().optional(),
 });
 
-/** 阻塞问答作答：定位问题（questionKey）+ 选项下标；键序由 harness 规格拼装，
- *  服务端白名单校验后经终端通道打进 pane。 */
+/** 阻塞问答作答：整 call 一次提交（含收尾屏的 Submit/Cancel 选项）——每问送选项
+ *  下标（多选 = 勾选集，空 = 未作答）、输入行另带文本；键序由 harness 规格拼装，
+ *  服务端白名单逐个原子校验后经终端通道打进 pane。 */
 const AnswerBody = z.object({
-  questionKey: z.string().min(1),
-  optionIndex: z.number().int().min(0),
-  /** 宿主自有「自定义输入」行的文本（该行会在终端进文本框）。 */
-  text: z.string().max(2000).optional(),
+  answers: z
+    .array(
+      z.object({
+        questionKey: z.string().min(1),
+        options: z.array(z.number().int().min(0)).max(32),
+        /** 宿主自有「自定义输入」行的文本（该行会在终端进文本框）。 */
+        text: z.string().max(2000).optional(),
+      }),
+    )
+    .min(1),
 });
 
 /** 会话订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast + 浏览器通知）；
@@ -608,32 +616,20 @@ export async function handleHooksRoutes(
       sendJson(res, 409, { error: 'Session has no pending question' });
       return true;
     }
-    const question = entry.questions.find((q) => q.key === body.questionKey);
-    if (!question) {
-      sendJson(res, 404, { error: 'Question not found in this session' });
+    const composed = composeAnswerAtoms(entry.questions, body.answers);
+    if (!composed.ok) {
+      sendJson(res, 400, { error: composed.error });
       return true;
     }
-    const option = question.options[body.optionIndex];
-    if (!option) {
-      sendJson(res, 400, { error: 'Invalid option index' });
-      return true;
-    }
-    // 自定义输入行：先按数字选中该行（终端变文本框），再送文本与提交 CR。
-    const text = body.text?.trim() ?? '';
-    if (option.input && !text) {
-      sendJson(res, 400, { error: 'Text required for this option' });
-      return true;
-    }
-    const keys = option.input ? `${option.keys}${text}\r` : option.keys;
-    const result = await deps.messageDeliverer.answer(sessionId, keys);
+    const result = await deps.messageDeliverer.answer(sessionId, composed.atoms);
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;
     }
-    // 乐观落位：作答成功即摘问题（PostToolUse 到达照常整条清除）——防重复作答
+    // 乐观落位：作答成功即整条摘除（PostToolUse 到达照常再清一次）——防重复作答
     // 把键序打进已关的模态框、漏进输入框执行。
-    deps.questionTracker.markAnswered(sessionId, body.questionKey);
-    sendJson(res, 200, { ok: true, sessionId, questionKey: body.questionKey });
+    deps.questionTracker.markAnswered(sessionId);
+    sendJson(res, 200, { ok: true, sessionId });
     return true;
   }
 

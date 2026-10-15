@@ -87,15 +87,22 @@ describe('QuestionTracker 状态机', () => {
     const q = entry.questions[0]!;
     expect(q.question).toBe('Which library?');
     expect(q.header).toBe('Library');
-    expect(q.options[0]).toMatchObject({ label: 'Redis', keys: '1' });
-    expect(q.options[1]).toMatchObject({ label: 'SQLite', keys: '2' });
-    // 宿主尾行：n+1 = Other（自定义输入）、n+2 = Chat about this（仅单选）
-    expect(q.options.map((o) => o.label)).toEqual(['Redis', 'SQLite', 'Other', 'Chat about this']);
-    expect(q.options[2]).toMatchObject({ keys: '3', input: true });
-    expect(q.options[3]).toMatchObject({ keys: '4', chat: true });
+    expect(q.options[0]).toMatchObject({ label: 'Redis', keys: ['1'] });
+    expect(q.options[1]).toMatchObject({ label: 'SQLite', keys: ['2'] });
+    // 宿主尾行：n+1 = Other（自定义输入，单选数字即变文本框 + 回车收尾）、
+    // n+2 = Chat about this（两模式都有）；一问单选 → 无 Submit 步
+    expect(q.options.map((o) => o.label)).toEqual([
+      'Redis',
+      'SQLite',
+      'Type something',
+      'Chat about this',
+    ]);
+    expect(q.options[2]).toMatchObject({ keys: ['3'], input: true, textTail: ['\r'] });
+    expect(q.options[3]).toMatchObject({ keys: ['4'], chat: true });
+    expect(q.submit).toBeUndefined();
   });
 
-  it('多选问题：选项键序补一记 CR（数字勾选 + 回车确认）；尾行无 Chat', () => {
+  it('多选问题：数字只勾选（不补 CR）、尾行（Other/Chat）与 Submit 步都在末尾', () => {
     feed(
       SESSION,
       preTool('AskUserQuestion', {
@@ -108,11 +115,15 @@ describe('QuestionTracker 状态机', () => {
         ],
       }),
     );
-    expect(tracker.get(SESSION)!.questions[0]!.options.map((o) => o.keys)).toEqual([
-      '1\r',
-      '2\r',
-      '3',
-    ]);
+    const questions = tracker.get(SESSION)!.questions;
+    expect(questions[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2'], ['3'], ['4']]);
+    expect(questions[0]!.options[2]).toMatchObject({ input: true, textTail: ['\t', '\r'] });
+    expect(questions[0]!.options[3]).toMatchObject({ label: 'Chat about this', chat: true });
+    expect(questions.at(-1)).toMatchObject({
+      key: 'AskUserQuestion:submit',
+      submit: true,
+      options: [{ keys: ['\t', '1'] }, { keys: ['\t', '2'] }],
+    });
   });
 
   it('坏 toolInput → OPAQUE 兜底（看得见阻塞、无远程作答面）', () => {
@@ -237,7 +248,7 @@ describe('QuestionTracker 状态机', () => {
     expect(tracker.get(CODEX)).toBeNull();
   });
 
-  it('markAnswered：多问题面只摘答的那问，摘空即删条目', () => {
+  it('markAnswered：整 call 一次提交 → 整条摘除（无条目 = 空操作）', () => {
     feed(
       SESSION,
       preTool('AskUserQuestion', {
@@ -247,14 +258,10 @@ describe('QuestionTracker 状态机', () => {
         ],
       }),
     );
-    const first = tracker.get(SESSION)!.questions[0]!;
-    tracker.markAnswered(SESSION, first.key);
-    const rest = tracker.get(SESSION)!;
-    expect(rest.questions.map((q) => q.question)).toEqual(['Q2']);
-    tracker.markAnswered(SESSION, rest.questions[0]!.key);
+    expect(tracker.get(SESSION)).not.toBeNull();
+    tracker.markAnswered(SESSION);
     expect(tracker.get(SESSION)).toBeNull();
-    // 未知键 / 无条目 = 空操作
-    tracker.markAnswered(SESSION, 'nope');
+    tracker.markAnswered(SESSION);
     expect(tracker.get(SESSION)).toBeNull();
   });
 
