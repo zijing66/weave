@@ -47,8 +47,9 @@ export function WatchPicker({
   onClose: () => void;
 }) {
   const t = useT();
+  // 无既有订阅 → 默认全选（用户少点两下）；已订阅 → 展示订阅现状。
   const [selected, setSelected] = useState<Set<WatchOn>>(
-    () => new Set(current?.onEvents.length ? current.onEvents : ['idle']),
+    () => new Set(current?.onEvents.length ? current.onEvents : KINDS),
   );
   const [times, setTimes] = useState<number>(() => current?.remaining ?? 1);
   const [persistent, setPersistent] = useState<boolean>(
