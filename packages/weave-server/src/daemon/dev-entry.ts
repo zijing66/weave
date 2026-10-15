@@ -7,6 +7,7 @@
  * `server.bindHost` setting (default 0.0.0.0) and the same dashboard auth as
  * production — 前台运行，首启的初始密码直接打在屏幕上。
  */
+import http from 'node:http';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -33,7 +34,8 @@ import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { WatchService } from '../watch/watch-service.js';
-import { createWeaveServer } from './server.js';
+import { weaveRequestHandler } from './server.js';
+import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
@@ -41,7 +43,7 @@ import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
-import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
+import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
 import { resolveStaticDir } from './static.js';
 
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const bindHost = readDaemonSettingsSync().server?.bindHost ?? DEFAULT_BIND_HOST;
+  const tlsPort = readDaemonSettingsSync().server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort;
   const auth = new AuthService();
   if (auth.initialPassword) {
     console.log(`[dev] initial dashboard password: ${auth.initialPassword}`);
@@ -206,9 +209,11 @@ async function main(): Promise<void> {
   });
   const staticDir = resolveStaticDir();
 
-  const server = createWeaveServer({
+  // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
+  const requestHandler = weaveRequestHandler({
     projects,
     port,
+    tlsPort,
     watch,
     hookEvents,
     adapters,
@@ -235,6 +240,14 @@ async function main(): Promise<void> {
     toolkit,
     auth,
   });
+  const server = http.createServer(requestHandler);
+
+  // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；失败降级仅警告）。
+  let tls: TlsListener | null = null;
+  void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
+    tls = r;
+    if (r) console.log(`[dev] weave daemon tls listening on https://${bindHost}:${r.port}`);
+  });
 
   const shutdown = (): void => {
     terminalRefresher.stop();
@@ -242,13 +255,14 @@ async function main(): Promise<void> {
     headlessRunner.killAll();
     void hookPipeline.stop();
     server.close();
+    tls?.server.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
   server.listen(port, bindHost, () => {
-    writeDaemonState({ pid: process.pid, port, startedAt: new Date().toISOString(), host: bindHost });
+    writeDaemonState({ pid: process.pid, port, startedAt: new Date().toISOString(), host: bindHost, tlsPort });
     console.log(`[dev] weave daemon listening on http://${bindHost}:${port}`);
     console.log(`[dev] cli/dashboard local url: http://${DAEMON_HOST}:${port}`);
     console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);

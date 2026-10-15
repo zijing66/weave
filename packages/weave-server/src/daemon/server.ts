@@ -120,6 +120,7 @@ import { installPluginPack } from '../install/plugin-install.js';
 import { handleAuthRoutes } from './auth-routes.js';
 import { handleAiRoutes } from './ai-routes.js';
 import { hasAiKey, writeAiKey } from './ai-config.js';
+import { accessUrls } from './tls.js';
 import type { AuthService } from './dashboard-auth.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
@@ -127,6 +128,8 @@ export const DAEMON_VERSION = WEAVE_VERSION;
 export interface WeaveServerDeps {
   projects: ProjectRepository;
   port: number;
+  /** 局域网 HTTPS 监听端口（settings server.tlsPort；0/缺省 = 未开，/settings 的访问地址据此派生）。 */
+  tlsPort?: number;
   /** File watch service; optional so tests can run without chokidar. */
   watch?: WatchService;
   /** Hook event repository; optional so non-ingestion tests can omit it. */
@@ -195,14 +198,24 @@ export interface WeaveServerDeps {
   aiKeyPath?: string;
 }
 
-/** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
-export function createWeaveServer(deps: WeaveServerDeps): Server {
+/**
+ * 请求 handler 工厂（http 与 https 两个监听共享同一份，含 fingerprint 缓存）。
+ * 传给 createServer 前先在这里做一次 deps 缺省补齐，别在两处各建一份缓存。
+ */
+export function weaveRequestHandler(
+  deps: WeaveServerDeps,
+): (req: IncomingMessage, res: ServerResponse) => void {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
   const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache };
-  return http.createServer((req, res) => {
+  return (req, res) => {
     void handleRequest(req, res, serverDeps);
-  });
+  };
+}
+
+/** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
+export function createWeaveServer(deps: WeaveServerDeps): Server {
+  return http.createServer(weaveRequestHandler(deps));
 }
 
 async function handleRequest(
@@ -285,6 +298,8 @@ async function handleRequest(
         settings: withAiStatus(await readDaemonSettings(), deps.aiKeyPath),
         presets: terminalPresetsFor(process.platform),
         platform: process.platform,
+        // 对外访问地址（设置页展示面）：全部局域网 IP × 已开协议。
+        urls: accessUrls(deps.port, deps.tlsPort ?? 0),
       });
       return;
     }

@@ -77,11 +77,15 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       settings: { terminal: { preset: string } };
       presets: Array<{ id: string }>;
       platform: string;
+      urls: Array<{ url: string; protocol: string; scope: string }>;
     };
     expect(data.settings.terminal.preset).toBe('auto');
     expect(data.presets.some((p) => p.id === 'auto')).toBe(true);
     expect(data.presets.some((p) => p.id === 'custom')).toBe(true);
     expect(typeof data.platform).toBe('string');
+    // 访问地址派生面：本机回环 http 在列（deps.port 派生）；未开 tls → 无 https 项
+    expect(data.urls.some((u) => u.url.startsWith('http://localhost:'))).toBe(true);
+    expect(data.urls.every((u) => u.protocol === 'http')).toBe(true);
   });
 
   it('PUT /settings persists and returns the normalized settings', async () => {
@@ -98,7 +102,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
-      server: { bindHost: '0.0.0.0' }, // 监听绑定（归一化补默认，默认放开）
+      server: { bindHost: '0.0.0.0', tlsPort: 6443 }, // 监听绑定 + 局域网 HTTPS 端口（归一化补默认）
       ai: { baseUrl: '', model: '', apiKeySet: false }, // AI 助手（归一化补默认，默认未配置）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）

@@ -7,6 +7,8 @@ export interface DaemonState {
   startedAt: string;
   /** 实际绑定地址（供 CLI 打印局域网访问地址；旧状态文件无此字段）。 */
   host?: string;
+  /** 局域网 HTTPS 监听端口（0/缺省 = 未开；旧状态文件无此字段）。 */
+  tlsPort?: number;
 }
 
 export function readDaemonState(): DaemonState | null {

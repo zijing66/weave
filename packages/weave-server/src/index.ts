@@ -27,8 +27,10 @@ export { DEFAULT_PORT, DAEMON_HOST, isPortFree, findFreePort } from './daemon/po
 export { readDaemonState, writeDaemonState, clearDaemonState } from './daemon/state.js';
 export type { DaemonState } from './daemon/state.js';
 export { generateToken } from './daemon/auth.js';
-export { createWeaveServer, DAEMON_VERSION } from './daemon/server.js';
+export { createWeaveServer, weaveRequestHandler, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
+export { accessUrls, lanIps, ensureDaemonCert, startTlsServer, daemonCertsDir } from './daemon/tls.js';
+export type { AccessUrl, DaemonCert, TlsListener } from './daemon/tls.js';
 export {
   readDaemonSettings,
   writeDaemonSettings,

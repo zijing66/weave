@@ -83,9 +83,11 @@ export interface StartupSettings {
   launchOnLogin: boolean;
 }
 
-/** 监听面设置：绑定地址（默认放开 0.0.0.0，由 dashboard 密码认证兜底；可改回 127.0.0.1）。 */
+/** 监听面设置：绑定地址（默认放开 0.0.0.0，由 dashboard 密码认证兜底；可改回 127.0.0.1）+ HTTPS 端口。 */
 export interface ServerSettings {
   bindHost: string;
+  /** 局域网 HTTPS 监听端口（自签证书，手机浏览器通知的前提）；0 = 关闭。 */
+  tlsPort: number;
 }
 
 /**
@@ -113,8 +115,8 @@ export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
 
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
 
-/** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。 */
-export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST };
+/** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。HTTPS 与 HTTP 并存（见 daemon/tls.ts）。 */
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST, tlsPort: 6443 };
 
 /** 缺省未配置（地址/模型皆空）——助手按钮此时不显示。 */
 export const DEFAULT_AI_SETTINGS: AiSettings = { baseUrl: '', model: '' };
@@ -187,6 +189,13 @@ export function terminalPresetsFor(platform: NodeJS.Platform): TerminalPresetMet
   return ids.map((id) => ({ id, label: PRESET_LABELS[id] }));
 }
 
+/** tlsPort 归一：0-65535 的整数（0 = 关闭 HTTPS）；其余（缺省/坏值）回落默认端口。 */
+function normalizeTlsPort(raw: unknown): number {
+  return Number.isInteger(raw) && (raw as number) >= 0 && (raw as number) <= 65535
+    ? (raw as number)
+    : DEFAULT_SERVER_SETTINGS.tlsPort;
+}
+
 function mergeDefaults(raw: unknown): DaemonSettings {
   const obj = (raw ?? {}) as Partial<DaemonSettings>;
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
@@ -222,6 +231,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
         typeof server.bindHost === 'string' && server.bindHost.trim() !== ''
           ? server.bindHost.trim()
           : DEFAULT_SERVER_SETTINGS.bindHost,
+      tlsPort: normalizeTlsPort(server.tlsPort),
     },
     ai: {
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl.trim() : '',
@@ -243,6 +253,7 @@ const KEYS = {
   eventRetentionDays: 'events.retentionDays',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
+  serverTlsPort: 'server.tlsPort',
   aiBaseUrl: 'ai.baseUrl',
   aiModel: 'ai.model',
 } as const;
@@ -298,7 +309,14 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.startupLaunchOnLogin)
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
-    ...(map.has(KEYS.serverBindHost) ? { server: { bindHost: map.get(KEYS.serverBindHost)! } } : {}),
+    ...(map.has(KEYS.serverBindHost) || map.has(KEYS.serverTlsPort)
+      ? {
+          server: {
+            ...(map.has(KEYS.serverBindHost) ? { bindHost: map.get(KEYS.serverBindHost)! } : {}),
+            ...(map.has(KEYS.serverTlsPort) ? { tlsPort: Number(map.get(KEYS.serverTlsPort)) } : {}),
+          },
+        }
+      : {}),
     ...(map.has(KEYS.aiBaseUrl) || map.has(KEYS.aiModel)
       ? { ai: { baseUrl: map.get(KEYS.aiBaseUrl) ?? '', model: map.get(KEYS.aiModel) ?? '' } }
       : {}),
@@ -318,6 +336,7 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
     [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],
+    [KEYS.serverTlsPort, String(settings.server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort)],
     [KEYS.aiBaseUrl, settings.ai?.baseUrl ?? ''],
     [KEYS.aiModel, settings.ai?.model ?? ''],
   ];

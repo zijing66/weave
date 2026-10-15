@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -27,14 +28,15 @@ import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
-import { createWeaveServer } from './server.js';
+import { weaveRequestHandler } from './server.js';
+import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
-import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
+import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
@@ -58,6 +60,7 @@ export function startDaemon(): void {
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const bindHost = readDaemonSettingsSync().server?.bindHost ?? DEFAULT_BIND_HOST;
+  const tlsPort = readDaemonSettingsSync().server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort;
   // dashboard 认证（监听放开的配套）：口令材料落 <dataDir>/auth.json。首启生成的
   // 初始密码已写入 initial-password 标记文件——本进程 detached/stdio:ignore 启动，
   // 打印必丢，领取通道是 CLI（`weave dashboard`/`weave chpass` 读标记并显示一次）。
@@ -228,9 +231,11 @@ export function startDaemon(): void {
   });
   const staticDir = resolveStaticDir();
 
-  const server = createWeaveServer({
+  // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
+  const requestHandler = weaveRequestHandler({
     projects,
     port: state.port,
+    tlsPort,
     watch,
     hookEvents,
     adapters,
@@ -258,6 +263,13 @@ export function startDaemon(): void {
     toolkit,
     auth,
   });
+  const server = http.createServer(requestHandler);
+
+  // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；端口被占等失败仅警告降级）。
+  let tls: TlsListener | null = null;
+  void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
+    tls = r;
+  });
 
   const shutdown = (): void => {
     stopPluginWatch?.();
@@ -268,6 +280,7 @@ export function startDaemon(): void {
     headlessRunner.killAll();
     void hookPipeline.stop();
     server.close();
+    tls?.server.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
@@ -275,7 +288,7 @@ export function startDaemon(): void {
 
   server.listen(state.port, bindHost, () => {
     // Record the real pid + actual bind host now that we are listening.
-    writeDaemonState({ ...state, pid: process.pid, host: bindHost });
+    writeDaemonState({ ...state, pid: process.pid, host: bindHost, tlsPort });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
   });
