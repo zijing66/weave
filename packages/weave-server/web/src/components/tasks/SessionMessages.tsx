@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, RotateCcw, Send, X } from 'lucide-react';
+import { Check, Loader2, RotateCcw, Send, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -309,25 +309,29 @@ export function SessionMessages({
     [entries, manualDeliveries],
   );
 
-  // 新消息进对话后贴底（用户没往上翻历史时不抢滚动位置）
+  // 贴底意图只在滚动时记：新内容一进 DOM 容器就变高，渲染完再判「是否贴底」必然
+  // 判成「用户在上翻」，长回复于是永不跟随。尾条变了 = 尾部真进了新内容 → 跟随；
+  // 向上翻页是往头部插，尾条不动、视口不被抢。
+  const stick = useRef(true);
   const atBottom = (): boolean => {
     const el = threadRef.current;
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
-  const prevCount = useRef(0);
+  const tailKey = thread[thread.length - 1]?.key;
+  const lastTail = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (entries === null || thread.length <= prevCount.current) return;
-    if (prevCount.current === 0 || atBottom()) {
-      const el = threadRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-    prevCount.current = thread.length;
-  }, [entries, thread.length]);
+    if (entries === null || tailKey === lastTail.current) return;
+    lastTail.current = tailKey;
+    if (!stick.current) return;
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [entries, tailKey]);
 
   const send = (): void => {
     const text = draft.trim();
     if (!text) return;
     setDraft('');
+    stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
       `sendMsg:${sessionId}`,
       async () => {
@@ -370,6 +374,7 @@ export function SessionMessages({
         <div
           ref={threadRef}
           onScroll={() => {
+            stick.current = atBottom();
             if ((threadRef.current?.scrollTop ?? 1) <= 24) void loadEarlier();
           }}
           className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
@@ -406,7 +411,17 @@ export function SessionMessages({
                 }
                 const pipe = m.pipe;
                 return (
-                  <div key={m.key} className="flex justify-end">
+                  <div key={m.key} className="flex items-end justify-end gap-1">
+                    {/* 回执 = 会话真收到（UPS 带上同文案）：气泡左下角一枚灰勾，
+                        与后台推送的 acked 同源；「已送达」不等于已读，不画第二枚。 */}
+                    {pipe?.acked === true && (
+                      <span
+                        title={t('tasks.msgAcked')}
+                        className="mb-0.5 shrink-0 text-neutral-500"
+                      >
+                        <Check className="h-3 w-3" />
+                      </span>
+                    )}
                     <div className="min-w-0 max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
                       {pipe && (
                         <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -421,11 +436,6 @@ export function SessionMessages({
                           {pipe.via && (
                             <span className="shrink-0 text-[10px] text-neutral-500">
                               {t(VIA_KEY[pipe.via])}
-                            </span>
-                          )}
-                          {pipe.acked === true && (
-                            <span className="shrink-0 text-[10px] text-emerald-400">
-                              {t('tasks.msgAcked')}
                             </span>
                           )}
                           {pipe.stalled === true && (
