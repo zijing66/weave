@@ -37,7 +37,16 @@ describe('ClaudeCodeAdapter', () => {
     expect(norm.toolResponse).toEqual({ ok: true });
     expect(norm.cwd).toBe('/proj');
     expect(norm.transcriptPath).toBe('/proj/t.jsonl');
-    expect(norm.raw).toEqual(raw);
+    // raw 里与顶层重复的键折叠成指回外层的引用（其余原文逐字段保留）
+    expect(norm.raw).toEqual({
+      hook_event_name: 'PostToolUse',
+      session_id: 'sess-1',
+      tool_name: '<$.toolName>',
+      tool_input: '<$.toolInput>',
+      tool_response: '<$.toolResponse>',
+      cwd: '<$.cwd>',
+      transcript_path: '<$.transcriptPath>',
+    });
   });
 
   it('falls back to hook_event_name when report.eventType is empty', () => {

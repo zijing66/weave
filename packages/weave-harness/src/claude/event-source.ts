@@ -49,6 +49,60 @@ function pick<T = unknown>(raw: Record<string, unknown>, ...keys: string[]): T |
 }
 
 /**
+ * 与顶层派生字段同源同值的 raw 键（键形是 agent 协议知识，只在此声明）。
+ * 两份存的是同一份数据——实测 39.5k 历史事件里 tool_response 重复 138MB、
+ * tool_input 18.9MB，占 payload 45%——所以 raw 里命中的键改写成指回外层的
+ * JSONPath 引用，键形保留；要原文时用 {@link expandPayloadRefs} 按路径取回。
+ */
+const REF_FIELDS: ReadonlyArray<readonly [outer: string, keys: readonly string[]]> = [
+  ['toolName', ['tool_name', 'toolName']],
+  ['toolInput', ['tool_input', 'toolInput']],
+  ['toolResponse', ['tool_response', 'toolResponse']],
+  ['cwd', ['cwd']],
+  ['transcriptPath', ['transcript_path', 'transcriptPath']],
+];
+
+/** 引用值形：`<$.toolResponse>`（尖括号标记，不会与真实路径串混淆）。 */
+const REF_RE = /^<\$\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)>$/;
+
+/** raw 的浅拷贝：命中的重复键 → 指向顶层同名字段的引用，其余键原样。 */
+function compactRaw(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw };
+  for (const [outer, keys] of REF_FIELDS) {
+    for (const k of keys) {
+      if (k in out) out[k] = `<$.${outer}>`;
+    }
+  }
+  return out;
+}
+
+/**
+ * 还原 {@link compactRaw} 折叠掉的字段（按 JSONPath 从外层取回），其余原样。
+ * 只有真的要读原始 tool_response / tool_input 时才需要——两者都被提升到顶层，
+ * 现有消费方全部读顶层，故读侧默认不必调用。
+ */
+export function expandPayloadRefs(payload: Record<string, unknown>): Record<string, unknown> {
+  const raw = payload.raw;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return payload;
+  const out: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(out)) {
+    const m = typeof v === 'string' ? REF_RE.exec(v) : null;
+    if (m) out[k] = readPath(payload, m[1]!);
+  }
+  return { ...payload, raw: out };
+}
+
+/** 按点分路径取值（缺段/非对象 → null）。 */
+function readPath(obj: Record<string, unknown>, dotted: string): unknown {
+  let cur: unknown = obj;
+  for (const seg of dotted.split('.')) {
+    if (!cur || typeof cur !== 'object') return null;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur ?? null;
+}
+
+/**
  * Normalizes Claude Code hook events. Claude Code sends snake_case fields via
  * stdin (session_id, hook_event_name, tool_name, tool_input, tool_response,
  * transcript_path, cwd); camelCase variants are tolerated for safety.
@@ -70,7 +124,7 @@ export class ClaudeEventSource implements EventSource {
       toolResponse: pick(raw, 'tool_response', 'toolResponse'),
       cwd: report.cwd ?? pick(raw, 'cwd'),
       transcriptPath: pick(raw, 'transcript_path', 'transcriptPath'),
-      raw,
+      raw: compactRaw(raw),
     };
 
     return {

@@ -9,7 +9,7 @@ import { CLAUDE_BLOCKING_PROMPT as CLAUDE_QUESTIONS } from './questions.js';
 import { CLAUDE_RESUME } from './resume.js';
 import { CLAUDE_DETECTOR } from './detect.js';
 
-export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts } from './event-source.js';
+export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
 export { CLAUDE_PLUGINS, createClaudePluginSurface, WEAVE_MARKETPLACE } from './plugins.js';
 export type { PluginExecutor, PluginExecResult } from './plugins.js';
