@@ -282,6 +282,7 @@ export function SessionList({
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
         const watch = watchOf?.(s.sessionId);
         const inflight = inflightOf(s.sessionId);
+        const openTermState = openTerminalStateOf?.(s.sessionId) ?? 'idle';
         // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
         const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
           (q) => !q.submit,
@@ -359,11 +360,12 @@ export function SessionList({
                         codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
                         该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
                         图标转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮
-                        一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。 */}
+                        一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。
+                        loading 的挂法见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
                     {s.harness === 'claude' && (
                       <button
                         type="button"
-                        disabled={!!s.pidAlive}
+                        disabled={!!s.pidAlive || openTermState === 'loading'}
                         title={
                           s.pidAlive
                             ? t('tasks.sessionTerminalRunning')
@@ -375,13 +377,13 @@ export function SessionList({
                         }}
                         className={cn(
                           ACTION_BTN,
-                          // 已打开：不吃 hover 反馈（否则看着还能点）
-                          s.pidAlive &&
+                          // 已打开 / 开启中：不吃 hover 反馈（否则看着还能点）
+                          (s.pidAlive || openTermState === 'loading') &&
                             'disabled:cursor-not-allowed hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
                         )}
                       >
                         <FeedbackIcon
-                          state={openTerminalStateOf?.(s.sessionId) ?? 'idle'}
+                          state={openTermState}
                           className="h-3 w-3"
                           icon={
                             <SquareTerminal
