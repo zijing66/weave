@@ -257,6 +257,22 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // 「重新扫描」：重登记根（运行期新登记项目）+ 重扫 + watcher 重挂。启动时不存在的
+  // 根挂不上 watcher（见 plugin-loader 的 watchRoots），运行期才建起来的靠这一下纳管。
+  if (pathname === '/hooks/plugins/rescan' && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    try {
+      await deps.hookPlugins.rescan();
+      sendJson(res, 200, { ok: true, plugins: deps.hookPlugins.list().length });
+    } catch (err) {
+      sendJson(res, 500, { error: err instanceof Error ? err.message : 'Rescan failed' });
+    }
+    return true;
+  }
+
   const pluginToggleMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/toggle$/);
   if (pluginToggleMatch && req.method === 'POST') {
     if (!deps.hookPlugins) {

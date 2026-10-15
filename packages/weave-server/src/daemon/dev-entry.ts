@@ -31,7 +31,7 @@ import { PushNotifier } from '../hooks/push-notify.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { SequenceEngine } from '../hooks/sequence-engine.js';
-import { loadAllPlugins } from '../hooks/plugin-loader.js';
+import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
@@ -114,11 +114,18 @@ async function main(): Promise<void> {
     for (const r of rejected) console.log(`[dev]   rejected ${r.id}: ${r.error}`);
   }
   hookPlugins.watchRoots(); // 热重载（dev 下改插件文件即时生效）
+  // 「重新扫描」与 start.ts 同口径（dev 下也要能纳管运行期新建的根）
+  const pluginManager: PluginManager = {
+    list: () => hookPlugins.list(),
+    setPluginEnabled: (id, enabled) => hookPlugins.setPluginEnabled(id, enabled),
+    reloadAll: () => hookPlugins.reloadAll(),
+    rescan: () => hookPlugins.rescanRoots(projects.list(), libraries),
+  };
   // 批 10 工具包服务（loader 已就绪，直接挂载）
   const toolkit = new ToolkitService({
     projects,
     states: new PluginStateRepository(db),
-    plugins: hookPlugins,
+    plugins: pluginManager,
     libraries,
   });
   const hookDispatcher = new HookDispatcher({
@@ -283,7 +290,7 @@ async function main(): Promise<void> {
     sequenceEngine,
     pushSubscriptions,
     pushNotifier,
-    hookPlugins,
+    hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
     toolkit,

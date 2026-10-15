@@ -86,6 +86,8 @@ export interface PluginManager {
   setPluginEnabled(pluginId: string, enabled: boolean): boolean;
   /** 重扫全部已登记根（安装/卸载后立即生效，不等热重载防抖）。 */
   reloadAll(): Promise<void>;
+  /** 手动重新扫描（dashboard 按钮）：重登记当前项目集的插件根 → 重扫 → 重挂 watcher。 */
+  rescan(): Promise<void>;
 }
 
 export interface LoadedPluginInfo {
@@ -325,6 +327,27 @@ export class WeavePluginLoader implements PluginHost {
         : this.loadRoot(root, meta.scope, meta.projectId);
       await scan.catch(() => {});
     }
+  }
+
+  /** 停掉当前一代 watcher（重新监听前、daemon 关闭时调用；可重复调用）。 */
+  stopWatching(): void {
+    this.watchStop?.();
+  }
+
+  /**
+   * 重新监听（dashboard 手动「重新扫描」）：按当前项目集重登记根 → 停旧 watcher
+   * → 重扫 → 对当前存在的根重挂。启动时不存在的根挂不上 watcher（chokidar 会上溯
+   * 到祖先目录，见 watchRoots），运行期才建起来的根靠这一下重新纳管；项目集也重读，
+   * 运行期新登记项目的 `.weave/plugins` 否则要等重启才被登记。
+   */
+  async rescanRoots(
+    projects: ReadonlyArray<{ id: number; path: string }>,
+    libraries?: Pick<LibraryRepository, 'list'>,
+  ): Promise<void> {
+    await registerPluginRoots(this, { libraries }, projects);
+    this.stopWatching();
+    await this.reloadAll();
+    this.watchRoots();
   }
 
   /** 插件级开关：写 plugin_states 并级联启停其全部规则（保留规则级差异）。 */
@@ -598,24 +621,18 @@ function patchPluginHandler(handler: unknown, pluginId: string): unknown {
 }
 
 /**
- * SPI 全量加载：工具包扫描根（内置仓 `plugins/` + M3 managed 市场资源根，批 10/装载桥）
- * → 内置规则包根（内置仓 `rules/`）→ 全局 `<configDir>/weave/plugins/`
+ * 登记并扫描全部插件根：工具包扫描根（内置仓 `plugins/` + M3 managed 市场资源根，批 10/
+ * 装载桥）→ 内置规则包根（内置仓 `rules/`）→ 全局 `<configDir>/weave/plugins/`
  * → 各注册项目 `<project>/.weave/plugins/`。放在约定位置即被识别（用户决策的接入形态）。
  * 工具包根先注册：浅层根扫描据此跳过已登记的深度根（不生成幽灵包位）。
  * 任一根目录失败不抛（loadRoot 内部已吞 readdir 错误）。
+ * 启动装载与运行期「重新扫描」共用这一份派生——分两处必然漂移。
  */
-export async function loadAllPlugins(
-  deps: {
-    rules: HookRuleRepository;
-    registry: HookRuleRegistry;
-    states: PluginStateRepository;
-    bus?: HookEventBus;
-    /** managed 市场资源（M3 装载桥）；缺省不装载市场根。 */
-    libraries?: Pick<LibraryRepository, 'list'>;
-  },
+export async function registerPluginRoots(
+  loader: WeavePluginLoader,
+  deps: { libraries?: Pick<LibraryRepository, 'list'> },
   projects: ReadonlyArray<{ id: number; path: string }>,
-): Promise<{ loader: WeavePluginLoader; loaded: LoadedPluginInfo[] }> {
-  const loader = new WeavePluginLoader(deps);
+): Promise<LoadedPluginInfo[]> {
   const loaded: LoadedPluginInfo[] = [];
 
   // 批 10：工具包深度根（内置 + 市场）——weave 成分走本加载器，天然停用待开关。
@@ -654,5 +671,22 @@ export async function loadAllPlugins(
       )),
     );
   }
+  return loaded;
+}
+
+/** SPI 全量加载：建 loader + 登记全部根（见 registerPluginRoots）。 */
+export async function loadAllPlugins(
+  deps: {
+    rules: HookRuleRepository;
+    registry: HookRuleRegistry;
+    states: PluginStateRepository;
+    bus?: HookEventBus;
+    /** managed 市场资源（M3 装载桥）；缺省不装载市场根。 */
+    libraries?: Pick<LibraryRepository, 'list'>;
+  },
+  projects: ReadonlyArray<{ id: number; path: string }>,
+): Promise<{ loader: WeavePluginLoader; loaded: LoadedPluginInfo[] }> {
+  const loader = new WeavePluginLoader(deps);
+  const loaded = await registerPluginRoots(loader, deps, projects);
   return { loader, loaded };
 }

@@ -89,13 +89,16 @@ export function startDaemon(): void {
     getHandler: () => undefined,
     getConfig: () => ({}),
   };
-  let stopPluginWatch: (() => void) | undefined;
   let pluginLoaderRef: WeavePluginLoader | undefined;
   const pluginManager: PluginManager = {
     list: () => pluginLoaderRef?.list() ?? [],
     setPluginEnabled: (id, enabled) => pluginLoaderRef?.setPluginEnabled(id, enabled) ?? false,
     reloadAll: async () => {
       await pluginLoaderRef?.reloadAll();
+    },
+    // 手动重新扫描（dashboard 按钮）：重登记根 → 重扫 → watcher 重挂（见 rescanRoots）。
+    rescan: async () => {
+      await pluginLoaderRef?.rescanRoots(projects.list(), libraries);
     },
   };
   // 批 10 工具包服务（扫描/开关）；states 与 loader 同库同表。
@@ -139,7 +142,7 @@ export function startDaemon(): void {
       pluginLoaderRef = loader;
       pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
       pluginHostHolder.getConfig = (id) => loader.getConfig(id);
-      stopPluginWatch = loader.watchRoots();
+      loader.watchRoots();
     });
   // session-orchestration 批 1：dispatch 域（ResumeRunner）与 message 域
   // （MessageDeliverer）共享同一无头执行核 = 同会话并发闸跨域生效。
@@ -323,7 +326,7 @@ export function startDaemon(): void {
   });
 
   const shutdown = (): void => {
-    stopPluginWatch?.();
+    pluginLoaderRef?.stopWatching(); // 取当前一代 watcher（「重新扫描」会换代，不能存启动时那个 stop）
     terminalRefresher.stop();
     livenessRefresher.stop();
     syncScheduler.stop();

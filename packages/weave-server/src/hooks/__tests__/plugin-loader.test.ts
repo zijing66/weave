@@ -538,3 +538,65 @@ describe('AI 生成验收：changelog-reminder（按 docs/PLUGIN-SPEC.md 生成�
     expect(outcome.additionalContext).toBeUndefined();
   });
 });
+
+describe('热重载根的纳管边界（缺根不挂 watcher / 手动重新扫描）', () => {
+  let db: DatabaseSync;
+  let loader: WeavePluginLoader;
+  let base: string;
+  let savedAppdata: string | undefined;
+  let savedXdg: string | undefined;
+
+  beforeEach(async () => {
+    base = await mkdtemp(path.join(tmpdir(), 'weave-rescan-'));
+    // dataDir 重定向：rescanRoots 会重登记全局根，别去读真数据目录
+    savedAppdata = process.env.APPDATA;
+    savedXdg = process.env.XDG_CONFIG_HOME;
+    process.env.APPDATA = base;
+    process.env.XDG_CONFIG_HOME = base;
+    db = openDatabase(':memory:');
+    loader = new WeavePluginLoader({
+      rules: new HookRuleRepository(db),
+      registry: new HookRuleRegistry(new HookRuleRepository(db)),
+      states: new PluginStateRepository(db),
+    });
+  });
+
+  afterEach(async () => {
+    loader.stopWatching();
+    if (savedAppdata === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = savedAppdata;
+    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = savedXdg;
+    db.close();
+    await rm(base, { recursive: true, force: true });
+  });
+
+  it('根在启动时不存在 → watchRoots 不纳管（挂不上），rescanRoots 后重扫进来', async () => {
+    const projectPath = path.join(base, 'proj');
+    const pluginsRoot = path.join(projectPath, '.weave', 'plugins');
+    // 启动态：根不存在（loadRoot 登记该根，readdir 失败即「无插件」）
+    expect(await loader.loadRoot(pluginsRoot, 'project', 7)).toHaveLength(0);
+    loader.watchRoots();
+
+    // 运行期才把根建起来：缺根的根挂不上 watcher（chokidar 会上溯挂祖先目录，
+    // 见 watchRoots 注释），这些写入不会触发重扫——插件此刻不可见。
+    await writePlugin(pluginsRoot, 'doc-update-check', BASE_MANIFEST, {
+      'rules.json': JSON.stringify(BASE_RULES),
+    });
+    expect(loader.list()).toHaveLength(0);
+
+    await loader.rescanRoots([{ id: 7, path: projectPath }]);
+    expect(loader.list().map((p) => p.id)).toEqual(['doc-update-check']);
+  });
+
+  it('运行期新登记的项目：rescanRoots 一并登记其 .weave/plugins（不必等重启）', async () => {
+    const projectPath = path.join(base, 'proj-late');
+    await writePlugin(path.join(projectPath, '.weave', 'plugins'), 'doc-update-check', BASE_MANIFEST, {
+      'rules.json': JSON.stringify(BASE_RULES),
+    });
+
+    await loader.rescanRoots([{ id: 9, path: projectPath }]);
+    expect(loader.list().map((p) => p.id)).toEqual(['doc-update-check']);
+    expect(loader.list()[0]).toMatchObject({ scope: 'project', projectId: 9 });
+  });
+});
