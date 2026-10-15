@@ -105,6 +105,11 @@ export interface HarnessLifecycle {
   sessionMarkers: readonly string[];
   /** 组内计数、不独立成组。 */
   subagentStop: string;
+  /**
+   * 阻塞式问答工具（组头「问答 ×n」计数；`questions` 规格的 blockingTools 共用
+   * 此表——谁是问答工具只说一处）。空数组 = 该 harness 无阻塞问答。
+   */
+  questionTools: readonly string[];
 }
 
 /**
@@ -117,9 +122,10 @@ export const HARNESS_LIFECYCLE = {
     close: ['Stop'],
     sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: 'SubagentStop',
+    questionTools: ['AskUserQuestion', 'ExitPlanMode'],
   },
   /** Codex 事件待批 2 B0 调研锁定（同 HARNESS_EVENTS 闸）；空值占位，类型完整。 */
-  codex: { open: '', close: [], sessionMarkers: [], subagentStop: '' },
+  codex: { open: '', close: [], sessionMarkers: [], subagentStop: '', questionTools: [] },
 } satisfies Record<Harness, HarnessLifecycle>;
 
 /**

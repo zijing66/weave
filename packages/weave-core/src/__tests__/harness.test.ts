@@ -27,6 +27,7 @@ describe('HARNESS_LIFECYCLE', () => {
       close: ['Stop'],
       sessionMarkers: ['SessionStart', 'SessionEnd'],
       subagentStop: 'SubagentStop',
+      questionTools: ['AskUserQuestion', 'ExitPlanMode'],
     });
   });
 
@@ -36,6 +37,7 @@ describe('HARNESS_LIFECYCLE', () => {
       close: [],
       sessionMarkers: [],
       subagentStop: '',
+      questionTools: [],
     });
     expect(HARNESS_EVENTS.codex).toHaveLength(0);
   });

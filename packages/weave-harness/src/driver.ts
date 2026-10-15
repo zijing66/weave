@@ -207,6 +207,10 @@ export interface BlockingQuestionOption {
   keys: string;
   label: string;
   description?: string | null;
+  /** 宿主自有尾行「自定义输入」：keys 只选中该行，提交时随文本一起送。 */
+  input?: boolean;
+  /** 宿主自有尾行「结束整个提问去聊天」：无文本，按 keys 即结束提问。 */
+  chat?: boolean;
 }
 
 /** 阻塞式问答的问题面（PreToolUse 载荷归一化；web 直渲染，选项原文展示）。 */

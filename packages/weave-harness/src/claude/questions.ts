@@ -1,3 +1,4 @@
+import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } from '../driver.js';
 
 /**
@@ -56,6 +57,27 @@ function optionKeys(displayIndex: number, multiSelect: boolean): string {
   return multiSelect ? `${displayIndex + 1}\r` : String(displayIndex + 1);
 }
 
+/**
+ * 宿主在选项列表尾部追加的自有行（实测模态框渲染）：`n+1` = Other（选中即变
+ * 文本框，**键序不含 CR**——文本与提交 CR 由作答侧拼在后面）、`n+2` = Chat
+ * about this（**仅单选**，按数字即结束整个提问回到聊天）。n = 该问题自己的
+ * 选项数，故每问各算。
+ */
+function hostRows(optionCount: number, multiSelect: boolean): BlockingQuestionOption[] {
+  const rows: BlockingQuestionOption[] = [
+    {
+      keys: String(optionCount + 1),
+      label: 'Other',
+      description: multiSelect ? 'Type something' : 'Type something.',
+      input: true,
+    },
+  ];
+  if (!multiSelect) {
+    rows.push({ keys: String(optionCount + 2), label: 'Chat about this', chat: true });
+  }
+  return rows;
+}
+
 function str(v: unknown): string | null {
   return typeof v === 'string' && v ? v : null;
 }
@@ -79,10 +101,13 @@ function parseOptions(raw: unknown, multiSelect: boolean): BlockingQuestionOptio
 }
 
 export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
-  blockingTools: ['AskUserQuestion', 'ExitPlanMode'],
+  blockingTools: HARNESS_LIFECYCLE.claude.questionTools,
   permissionNotificationType: 'permission_prompt',
-  // 实测该模式下 claude 不弹权限对话框（权限 Notification 全是噪声）
-  silentPermissionModes: ['bypassPermissions'],
+  // 宿主自身模式表（`claude --help` 的 permission mode 说明）里只有这两个
+  // 结构上不弹权限框：bypassPermissions = 跳过全部检查；dontAsk = 不提示、
+  // 未预批准直接拒。acceptEdits 只自动放行文件编辑（命令仍弹，实测有真对话框）、
+  // auto 由分类器裁决但仍可能落到用户、plan 的计划批准就是从这来的——都不进名单。
+  silentPermissionModes: ['bypassPermissions', 'dontAsk'],
   permissionQuestion(ctx) {
     const detail = ctx.toolName
       ? `${ctx.toolName}${ctx.toolInput ? ` ${previewOf(ctx.toolInput)}` : ''}`
@@ -121,7 +146,7 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
           key: `AskUserQuestion:${face}`,
           header,
           question,
-          options,
+          options: [...options, ...hostRows(options.length, multiSelect)],
           multiSelect,
         });
       }
