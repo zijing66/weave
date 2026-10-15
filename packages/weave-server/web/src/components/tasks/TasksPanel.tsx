@@ -32,8 +32,16 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
-import { ensureNotifyPermission } from '@/lib/browser-notify';
+import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 import { useMediaQuery } from '@/lib/use-media-query';
+import type { MessageKey } from '@/i18n/dict';
+
+/** 权限失败态 → toast 文案键：成因不同口径不同（手机 HTTP 访问是 insecure 不是 denied）。 */
+const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
+  denied: 'tasks.notifyDenied',
+  unsupported: 'tasks.notifyUnsupported',
+  insecure: 'tasks.notifyInsecure',
+};
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
@@ -174,9 +182,9 @@ export function TasksPanel({
         `watch:${sessionId}`,
         async () => {
           // 订阅 = 用户手势：此刻申请通知权限（须在手势里，浏览器才弹窗）。
-          // 拒绝/不支持则退化为页面内 toast——明确告知，不静默降级。
-          const granted = await ensureNotifyPermission();
-          if (!granted) show('info', t('tasks.notifyDenied'));
+          // 拒绝/不支持/HTTP 访问皆退化为页面内 toast——明确告知成因，不静默降级。
+          const permission = await ensureNotifyPermission();
+          if (permission !== 'granted') show('info', t(NOTIFY_TOAST_KEY[permission]));
           await api.createSessionWatch(sessionId, { on, times });
           refreshWatches();
         },

@@ -3,7 +3,8 @@ import { ensureNotifyPermission, notifyBrowser } from '../browser-notify';
 
 /**
  * 浏览器通知门控（node 环境没有 Notification → stub 全局）：未授权一律不发，
- * 权限申请只在缺省态发起（denied 不再反复弹窗）。
+ * 权限申请只在缺省态发起（denied 不再反复弹窗）。失败三分态各自可辨：
+ * insecure（手机 HTTP 访问）≠ denied（用户拒绝）≠ unsupported（无 API）。
  */
 
 const withNotification = (permission: string, requestPermission?: () => Promise<string>) =>
@@ -36,24 +37,37 @@ describe('notifyBrowser', () => {
 });
 
 describe('ensureNotifyPermission', () => {
-  it('已授权 → true，不再申请', async () => {
+  it('无 Notification API（iOS 普通标签页）→ unsupported', async () => {
+    vi.stubGlobal('Notification', undefined);
+    expect(await ensureNotifyPermission()).toBe('unsupported');
+  });
+
+  it('非安全上下文（手机经局域网 HTTP 访问）→ insecure，permission 恒报 denied 也不去申请', async () => {
     const requestPermission = vi.fn();
-    withNotification('granted', requestPermission);
-    expect(await ensureNotifyPermission()).toBe(true);
+    vi.stubGlobal('isSecureContext', false);
+    withNotification('denied', requestPermission);
+    expect(await ensureNotifyPermission()).toBe('insecure');
     expect(requestPermission).not.toHaveBeenCalled();
   });
 
-  it('已拒绝 → false，不重复弹窗', async () => {
+  it('已授权 → granted，不再申请', async () => {
+    const requestPermission = vi.fn();
+    withNotification('granted', requestPermission);
+    expect(await ensureNotifyPermission()).toBe('granted');
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('已拒绝 → denied，不重复弹窗', async () => {
     const requestPermission = vi.fn();
     withNotification('denied', requestPermission);
-    expect(await ensureNotifyPermission()).toBe(false);
+    expect(await ensureNotifyPermission()).toBe('denied');
     expect(requestPermission).not.toHaveBeenCalled();
   });
 
   it('缺省态 → 申请并按其结果', async () => {
     const requestPermission = vi.fn().mockResolvedValue('granted');
     withNotification('default', requestPermission);
-    expect(await ensureNotifyPermission()).toBe(true);
+    expect(await ensureNotifyPermission()).toBe('granted');
     expect(requestPermission).toHaveBeenCalledTimes(1);
   });
 });
