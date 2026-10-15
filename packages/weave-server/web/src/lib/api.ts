@@ -1001,6 +1001,11 @@ export const api = {
     apiFetch<{ ok: boolean }>(`/hooks/plugins/${encodeURIComponent(id)}/uninstall`, {
       method: 'POST',
     }).then(() => undefined),
+  /** 手动重新扫描插件根：重登记根 → 重扫 → watcher 重挂（运行期新建的根由此纳管）。 */
+  rescanHookPlugins: (): Promise<number> =>
+    apiFetch<{ ok: boolean; plugins: number }>('/hooks/plugins/rescan', {
+      method: 'POST',
+    }).then((r) => r.plugins),
   // ---- 批 10 工具包（toolkit）----
   listToolkit: (projectId: number): Promise<ToolkitListResult> =>
     apiFetch<ToolkitListResult>(`/projects/${projectId}/toolkit`),

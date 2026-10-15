@@ -105,6 +105,20 @@ export function HooksPluginsSection({
     );
   };
 
+  // 手动重新扫描：热重载只覆盖「启动时已存在的根」，运行期才建起来的根要这一下
+  const rescan = (): void => {
+    void fb.run(
+      'rescan',
+      async () => {
+        const count = await api.rescanHookPlugins();
+        refresh();
+        notifyRulesChanged();
+        show('success', t('hooks.plugins.rescanOk', { n: count }));
+      },
+      { fail: (e) => t('hooks.plugins.rescanFail', { error: errorText(e) }) },
+    );
+  };
+
   if (plugins === null) return null;
 
   const globalStatusById = new Map((globalPlugins ?? []).map((p) => [p.id, p.status]));
@@ -202,10 +216,22 @@ export function HooksPluginsSection({
           </div>
         );
       })}
-      <p className="flex items-center gap-1 text-[10px] text-neutral-600">
-        <RotateCw className="h-3 w-3" />
-        {t('hooks.plugins.hotReload')}
-      </p>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="flex items-center gap-1 text-[10px] text-neutral-600">
+          <RotateCw className="h-3 w-3" />
+          {t('hooks.plugins.hotReload')}
+        </p>
+        {/* 手动纳管运行期新建的根：启动时不存在的根挂不上 watcher（不热重载） */}
+        <button
+          type="button"
+          onClick={rescan}
+          title={t('hooks.plugins.rescanTip')}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-white/[0.06] hover:text-neutral-200"
+        >
+          <FeedbackIcon state={fb.stateOf('rescan')} className="h-3 w-3" icon={<RotateCw className="h-3 w-3" />} />
+          {t('hooks.plugins.rescan')}
+        </button>
+      </div>
 
       {/* 卸载确认弹窗：替代原生 window.confirm */}
       <ConfirmDialog

@@ -130,6 +130,11 @@ export const hooksZh = {
     '默认启用开关：启停该插件全部规则（各项目可单独覆盖，规则级开关保留）',
   'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
   'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
+  'hooks.plugins.rescan': '重新扫描',
+  'hooks.plugins.rescanTip':
+    '重扫全部插件根并重新挂载监听——守护进程启动时还不存在的根（手工建的目录、刚 init 的项目）由此纳管',
+  'hooks.plugins.rescanOk': '插件根已重新扫描（当前 {n} 个插件）',
+  'hooks.plugins.rescanFail': '重新扫描失败：{error}',
   'hooks.plugins.expand': '展开该插件的规则',
   'hooks.plugins.collapse': '折叠该插件的规则',
   'hooks.plugins.uninstallTip': '卸载插件（删除目录）',
@@ -284,6 +289,11 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
     'Default switch: enable/disable all rules of this plugin (projects can override; per-rule switches are kept)',
   'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
   'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
+  'hooks.plugins.rescan': 'Rescan',
+  'hooks.plugins.rescanTip':
+    'Rescan every plugin root and re-attach watchers — roots that did not exist when the daemon started (hand-made directories, freshly inited projects) get picked up',
+  'hooks.plugins.rescanOk': 'Plugin roots rescanned ({n} plugins)',
+  'hooks.plugins.rescanFail': 'Rescan failed: {error}',
   'hooks.plugins.expand': "Expand this plugin's rules",
   'hooks.plugins.collapse': "Collapse this plugin's rules",
   'hooks.plugins.uninstallTip': 'Uninstall plugin (remove directory)',
