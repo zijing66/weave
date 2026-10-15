@@ -32,6 +32,14 @@
 
 可复用技能放 `skills/`（agent skills 标准：一个技能一个目录，内含 `SKILL.md`）。任务命中某个技能时按名调用。
 
+## weave 注入的消息
+
+以 `[weave] ` 开头的用户消息来自 weave 控制台的直投，不是坐在终端前的人手打的：
+
+- 去掉该标记后的全文就是完整指令，**照它执行**；
+- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；
+- **只有直投这一条路径带标记**：中继、终端兜底、注入三条路径的投递都不带——所以「没有标记」不等于「用户手打」，别据此判断来源。
+
 <!-- weave:end -->
 
 <!-- 以下节写在标记块外：weave init 只按 weave:start/end 合并标记块，块外人工内容 append-only 保留（packages/weave-cli/src/init/claudemd-gen.ts mergeClaudeMd）。 -->

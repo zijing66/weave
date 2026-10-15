@@ -69,10 +69,13 @@ describe('generateClaudeMdSection', () => {
     expect(section).not.toContain('# p\n');
   });
 
-  it('不写入产品内部机制：注入标记语义属 weave 自己的文档，不进项目文件', () => {
-    const section = generateClaudeMdSection({ template: 'full', projectName: 'p' });
-    expect(section).not.toContain(WEAVE_INJECTION_MARKER);
-    expect(section).not.toContain('注入');
+  it('解释控制台注入标记（标记取自 core 单一事实源，不手抄；且讲清只有直投带标记）', () => {
+    const section = generateClaudeMdSection({ template: 'minimal', projectName: 'p' });
+    expect(section).toContain('## weave-injected messages');
+    expect(section).toContain(`\`${WEAVE_INJECTION_MARKER}\``);
+    expect(WEAVE_INJECTION_MARKER).toBe('[weave] ');
+    // 原描述把「无标记」默认成「用户手打」——中继/终端兜底/注入都不带标记，必须写明
+    expect(section).toContain('does not mean');
   });
 
   it('按 locale 生成：zh-CN 出中文块，英文键不泄漏', () => {
@@ -80,6 +83,8 @@ describe('generateClaudeMdSection', () => {
     const section = generateClaudeMdSection({ template: 'full', projectName: 'p' });
     expect(section).toContain('## 行为准则');
     expect(section).toContain('## 安全');
+    expect(section).toContain('## weave 注入的消息');
+    expect(section).toContain(`\`${WEAVE_INJECTION_MARKER}\``);
     expect(section).not.toContain('## Behavioral Rules');
     setLocale('en');
   });

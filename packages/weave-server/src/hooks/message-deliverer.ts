@@ -151,9 +151,11 @@ const ACK_MIN_TEXT = 8;
  * （会话看起来像用户自己敲的），标一句让转录以后能分辨「这不是我敲的」。
  * 实测（本机 2.1.296）不改变回复形态、不改变模型的发送者归属；它**给不了**
  * 系统级来源语义（那只有中继路径有：目标被明确告知「来自另一个会话」并受
- * 跨会话限制）。标记值来自 core 单一事实源；标记**只**加在这一条路径——中继
- * （CC 的 `<cross-session-message>` 壳）、终端 send-text（裸文本）、注入
- * （additionalContext）都不带，别把「无标记」当作「人打的」判据。
+ * 跨会话限制）。标记值来自 core 单一事实源——`weave init` 生成的 CLAUDE.md 块用
+ * 同一个常量向会话解释它的含义（见 weave-cli/src/init/claudemd-gen.ts）。标记
+ * **只**加在这一条路径：中继（CC 的 `<cross-session-message>` 壳）、终端
+ * send-text（裸文本）、注入（additionalContext）都不带，别把「无标记」当
+ * 「人打的」判据。
  */
 const INBOX_SOURCE_PREFIX = WEAVE_INJECTION_MARKER;
 
