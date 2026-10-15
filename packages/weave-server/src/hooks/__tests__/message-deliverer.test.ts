@@ -1545,4 +1545,46 @@ describe('MessageDeliverer 裁决表', () => {
       });
     });
   });
+
+  describe('interrupt（停止按钮 → 一记 ESC）', () => {
+    const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue(panes),
+        sendText: vi.fn(),
+        sendKeys,
+      };
+      return { terminal, sendKeys };
+    };
+
+    it('往 pane 打恰好一记 ESC（连打两次在 claude 里是历史回退菜单）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toEqual({ ok: true });
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
+    });
+
+    it('与作答同一套落点判定：会话没有 404 / 无终端通道 409 / pane 找不到 409', async () => {
+      const { terminal, sendKeys } = paneFixture([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      await expect(deliverer.interrupt('sess-ghost')).resolves.toMatchObject({
+        ok: false,
+        status: 404,
+      });
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+      await expect(new MessageDeliverer(makeDeps()).interrupt(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+      expect(sendKeys).not.toHaveBeenCalled();
+    });
+  });
 });

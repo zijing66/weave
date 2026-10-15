@@ -180,6 +180,9 @@ const ACK_MIN_TEXT = 8;
 const ANSWER_ATOM = /^(?:[1-9]|\t|\r|\x1b\[B)$/;
 const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
 
+/** 中断键 = 一记 ESC（claude 里连打两次是历史回退菜单，故只打一记）。 */
+const ESC = '\x1b';
+
 /**
  * 原子之间的间隔（毫秒）：宿主把同一批到达的多个文本字符当成一次粘贴/过滤输入
  * （实机「11」被当筛选字串，一个选项都没选上），所以键序必须一次一个原子地写。
@@ -479,6 +482,43 @@ export class MessageDeliverer {
     ) {
       return { ok: false, status: 400, error: 'Invalid answer keys' };
     }
+    const target = await this.sessionKeysTarget(sessionId, 'Answering');
+    if (!target.ok) return target;
+    try {
+      for (const [i, atom] of atoms.entries()) {
+        if (i > 0) await sleep(ANSWER_ATOM_GAP_MS);
+        await target.terminal.sendKeys(target.paneId, atom);
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 中断目标会话正在跑的回合（dashboard 停止按钮）：往 pane 打**一记 ESC**。
+   * 键序固定死在服务端（**不当参数收**）——这条通道一放开就是任意击键注入；
+   * 且只打一记：claude 里 ESC 一次是中断，连打两次是开历史回退菜单。
+   */
+  async interrupt(sessionId: string): Promise<AnswerResult> {
+    const target = await this.sessionKeysTarget(sessionId, 'Interrupting');
+    if (!target.ok) return target;
+    try {
+      await target.terminal.sendKeys(target.paneId, ESC);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 键序注入路径（作答 / 中断）共用的落点解析：会话 → 项目 → 终端通道 → pane。
+   * 全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP。
+   */
+  private async sessionKeysTarget(
+    sessionId: string,
+    what: string,
+  ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
     if (session.projectId == null) {
@@ -491,7 +531,7 @@ export class MessageDeliverer {
       return {
         ok: false,
         status: 409,
-        error: 'Answering needs a text-capable terminal (pick wezterm in settings)',
+        error: `${what} needs a text-capable terminal (pick wezterm in settings)`,
       };
     }
     const pane = await this.terminalPaneFor(session, project);
@@ -502,15 +542,7 @@ export class MessageDeliverer {
         error: 'Session pane not found — is the session window open?',
       };
     }
-    try {
-      for (const [i, atom] of atoms.entries()) {
-        if (i > 0) await sleep(ANSWER_ATOM_GAP_MS);
-        await terminal.sendKeys(pane.id, atom);
-      }
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
-    }
+    return { ok: true, terminal, paneId: pane.id };
   }
 
   /**

@@ -633,6 +633,23 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）----
+  const interruptMatch = pathname.match(/^\/sessions\/([^/]+)\/interrupt$/);
+  if (interruptMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(interruptMatch[1]!);
+    const result = await deps.messageDeliverer.interrupt(sessionId);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
   // ---- 空闲订阅域（session-orchestration 批 2）：one-shot「空闲时提醒我」 ----
   const watchMatch = pathname.match(/^\/sessions\/([^/]+)\/watch$/);
   if (watchMatch) {
