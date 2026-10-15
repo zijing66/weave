@@ -157,6 +157,14 @@ describe('QuestionTracker 状态机', () => {
     expect(q.options.map((o) => o.label)).toEqual(['Yes', "Yes, and don't ask again this session", 'No (esc)']);
   });
 
+  it('阻塞工具进行中的 permission_prompt → 不覆盖问题面（claude 恒补发的噪声）', () => {
+    feed(SESSION, preTool('AskUserQuestion', AUA_INPUT));
+    feed(SESSION, notification('permission_prompt')); // claude 在 PreToolUse 后 ~6s 必发
+    const entry = tracker.get(SESSION)!;
+    expect(entry.kind).toBe('question');
+    expect(entry.questions[0]!.question).toBe('Which library?');
+  });
+
   it('权限确认无前导工具事件 → 通用文案（不瞎猜工具）', () => {
     feed(SESSION, notification('permission_prompt'));
     expect(tracker.get(SESSION)!.questions[0]!.question).toBe('Claude needs your permission');

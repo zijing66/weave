@@ -15,6 +15,11 @@ import type { NormalizedHookPayload } from './types.js';
  * 清除：PostToolUse(同名阻塞工具) 与 UserPromptSubmit/Stop（question 态），
  * permission 态由任意后续非 Notification 事件清（对话框了结必有下文）。
  * daemon 重启由 seedFromDb 按最近事件窗口重放重建。
+ *
+ * 例外：阻塞工具进行中（question 态）的 permission_prompt 不改写问题面——
+ * 实测 claude 对 AskUserQuestion/ExitPlanMode 恒在 PreToolUse 后 ~6s 补发一条
+ * permission_prompt（bypassPermissions 模式也发，即纯噪声），若照单覆盖，dashboard
+ * 会在用户思考的中途把真问题换成合成权限面（选项含义完全不同，答下去发错键序）。
  */
 
 /** 会话当前的待答问题（内存态；事件流派生）。 */
@@ -90,6 +95,8 @@ export class QuestionTracker {
         spec.permissionNotificationType &&
         notificationTypeOf(payload.raw) === spec.permissionNotificationType
       ) {
+        // 阻塞工具自己等输入期间补发的噪声提醒：问题面已在，别覆盖（见类注释）。
+        if (this.pending.get(sessionId)?.kind === 'question') return;
         const ctx = this.lastPreTool.get(sessionId) ?? { toolName: null, toolInput: null };
         this.pending.set(sessionId, {
           sessionId,
