@@ -407,6 +407,29 @@ describe('SessionWatchRepository（in-memory 直覆盖）', () => {
     expect(watches.getById(forever.id)?.firedAt).toBeNull();
   });
 
+  it('updateById：pending 行改类型集/次数（含转持久化 null）；已落定行拒绝改', () => {
+    seed('a', ['SessionStart']);
+    const w = watches.insert({
+      watcherSessionId: null,
+      targetSessionId: 'a',
+      notify: null,
+      onEvents: ['idle'],
+      times: 1,
+    });
+    // 修改 = 改写原行（id 不动、不新增 pending 行）
+    const updated = watches.updateById(w.id, { onEvents: ['idle', 'turnEnd'], remaining: 3 });
+    expect(updated).toMatchObject({ id: w.id, remaining: 3, onEvents: ['idle', 'turnEnd'] });
+    expect(watches.listPendingByTarget('a')).toHaveLength(1);
+    // 次数可写回 null = 转持久化
+    expect(watches.updateById(w.id, { remaining: null })).toMatchObject({ remaining: null });
+    expect(watches.getById(w.id)?.firedAt).toBeNull();
+    // 计数耗尽落定（fired_at 非空）后不可再改
+    const one = watches.insert({ watcherSessionId: null, targetSessionId: 'a', notify: null });
+    watches.consumeHit(one.id);
+    expect(watches.getById(one.id)?.firedAt).not.toBeNull();
+    expect(watches.updateById(one.id, { remaining: 5 })).toBeUndefined();
+  });
+
   it('deleteBySession 双端清理；deleteById 幂等', () => {
     const w = watches.insert({ watcherSessionId: 'w', targetSessionId: 'a', notify: null });
     watches.insert({ watcherSessionId: null, targetSessionId: 'w', notify: null });

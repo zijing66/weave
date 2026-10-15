@@ -681,16 +681,31 @@ export async function handleHooksRoutes(
           return true;
         }
       }
-      const watch = deps.sessionWatches.insert({
-        watcherSessionId: body.watcherSessionId ?? null,
-        targetSessionId: sessionId,
-        notify: body.notify ?? null,
-        onEvents: on,
-        times: body.times === undefined ? 1 : body.times,
-      });
+      // dashboard 订阅（watcherSessionId null）按「每目标至多一行」upsert：同目标
+      // 已有 pending dashboard 行 → 原行改写类型集/次数（id/createdAt 不动），不再
+      // 插影子行——否则旧行在 UI 里不可见但仍会 fire。会话订阅方多行合法，走 insert。
+      const times = body.times === undefined ? 1 : body.times;
+      const existing =
+        (body.watcherSessionId ?? null) === null
+          ? deps.sessionWatches
+              .listPendingByTarget(sessionId)
+              .find((w) => w.watcherSessionId === null)
+          : undefined;
+      const updated = existing
+        ? deps.sessionWatches.updateById(existing.id, { onEvents: on, remaining: times })
+        : undefined;
+      // existing 在读取到写入之间恰好落定（并发 fire 改了 fired_at）→ 退回新订阅
+      const watch = updated ??
+        deps.sessionWatches.insert({
+          watcherSessionId: body.watcherSessionId ?? null,
+          targetSessionId: sessionId,
+          notify: body.notify ?? null,
+          onEvents: on,
+          times,
+        });
       // 目标此刻已空闲 → 立即 fire（不等下一拍；one-shot 语义即「答案就是现在」）
       deps.watchEngine?.created(watch);
-      sendJson(res, 201, { ok: true, watchId: watch.id, watch });
+      sendJson(res, updated ? 200 : 201, { ok: true, watchId: watch.id, watch });
       return true;
     }
     if (req.method === 'DELETE') {

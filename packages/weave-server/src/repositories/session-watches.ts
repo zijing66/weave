@@ -103,6 +103,26 @@ export class SessionWatchRepository {
     return row && row.remaining === null && row.firedAt === null ? row : null;
   }
 
+  /** 改写待触发订阅的类型集/剩余次数（dashboard 订阅修改即 upsert 的落点）；
+   *  已落定（fired）行不可改，返回 undefined。 */
+  updateById(
+    id: number,
+    patch: { onEvents?: WatchOn[]; remaining: number | null },
+  ): SessionWatchRow | undefined {
+    const current = this.getById(id);
+    if (!current || current.firedAt !== null) return undefined;
+    this.db
+      .prepare(
+        'UPDATE session_watches SET on_events = ?, remaining = ? WHERE id = ? AND fired_at IS NULL',
+      )
+      .run(
+        JSON.stringify(patch.onEvents ?? current.onEvents),
+        patch.remaining,
+        id,
+      );
+    return this.getById(id);
+  }
+
   deleteById(id: number): boolean {
     return Number(this.db.prepare('DELETE FROM session_watches WHERE id = ?').run(id).changes) === 1;
   }
