@@ -29,9 +29,9 @@ const RANGE_LABEL: Record<RangeKey, MessageKey> = {
 };
 
 /**
- * 行序：冻结的活动序 → 按 projectId 分桶（首次出现定组序 = 组间按各自最新活跃、
- * 同项目相邻，组内保持活动序）。冻结序未见的新行按「新在前」兜底置顶。未知项目
- * 归同一尾桶。
+ * 行序：冻结的活动序快照，与会话列表逐行同口径（跨项目混排，不按项目分组）。
+ * 冻结序落后于数据的一帧里，未见的新行按「新在前」兜底置顶；冻结序里已消失
+ * 的会话即时移除。
  */
 export function globalOverviewRows(
   sessions: readonly SessionRow[],
@@ -44,28 +44,18 @@ export function globalOverviewRows(
     if (s) ordered.push(s);
   }
   const seen = new Set(ordered.map((s) => s.sessionId));
-  const order: number[] = [];
-  const buckets = new Map<number, SessionRow[]>();
-  for (const s of [...sessions.filter((x) => !seen.has(x.sessionId)), ...ordered]) {
-    const key = s.projectId ?? -1;
-    if (!buckets.has(key)) {
-      buckets.set(key, []);
-      order.push(key);
-    }
-    buckets.get(key)!.push(s);
-  }
-  return order.flatMap((key) => buckets.get(key)!);
+  return [...sessions.filter((s) => !seen.has(s.sessionId)), ...ordered];
 }
 
 /**
  * 全局任务总览（D9 只读跨项目聚合，不新造 API）：会话与状态全部取全局状态
- * 总线（SessionStatusProvider，与项目行徽标/任务视图同一份推导），按 projectId
- * 分组展示；行点击 → App 跳进对应项目任务视图（initialSessionId）。
+ * 总线（SessionStatusProvider，与项目行徽标/任务视图同一份推导），行内带项目名；
+ * 行点击 → App 跳进对应项目任务视图（initialSessionId）。
  * 查询条件：项目下拉 + 时间段（当天/1·3·7·30 天内/大于 30 天/自定义起止），
  * 全部客户端过滤（列表本就是最新窗口，不新造查询 API）。
  * 行序与会话列表同口径：前端活动序（`byActivity` 排、`useActivityOrder` 门控
- * 落地、`useFlipRows` 滑动动画）——服务端列表恒 created_at 倒序，活动序是前端
- * 层的事；过滤条件换批则立即采用新序，不做增量合并。
+ * 落地、`useFlipRows` 滑动动画），跨项目混排不分组——服务端列表恒 created_at
+ * 倒序，活动序是前端层的事；过滤条件换批则立即采用新序，不做增量合并。
  */
 export function GlobalTasksOverview({
   projects,
