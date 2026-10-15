@@ -106,8 +106,9 @@ export class QuestionTracker {
         spec.permissionNotificationType &&
         notificationTypeOf(payload.raw) === spec.permissionNotificationType
       ) {
-        // bypassPermissions 下不存在权限对话框，permission_prompt 必是噪声。
-        if (this.permissionMode.get(sessionId) === 'bypassPermissions') return;
+        // 静默模式（名单归 harness 规格，如 claude 的 bypassPermissions）不弹对话框。
+        const mode = this.permissionMode.get(sessionId);
+        if (mode != null && spec.silentPermissionModes.includes(mode)) return;
         // 阻塞工具自己等输入期间补发的噪声提醒：问题面已在，别覆盖（见类注释）。
         // 判据两条件同时成立才压——只压「正卡在阻塞工具里、且这条提醒就是该工具自己」的
         // 情形；真权限对话框（lastPreTool = 待批工具）照常置位，不会被误吞。

@@ -81,6 +81,8 @@ function parseOptions(raw: unknown, multiSelect: boolean): BlockingQuestionOptio
 export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
   blockingTools: ['AskUserQuestion', 'ExitPlanMode'],
   permissionNotificationType: 'permission_prompt',
+  // 实测该模式下 claude 不弹权限对话框（权限 Notification 全是噪声）
+  silentPermissionModes: ['bypassPermissions'],
   permissionQuestion(ctx) {
     const detail = ctx.toolName
       ? `${ctx.toolName}${ctx.toolInput ? ` ${previewOf(ctx.toolInput)}` : ''}`

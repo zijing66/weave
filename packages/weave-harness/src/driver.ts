@@ -229,6 +229,11 @@ export interface BlockingPromptSpec {
   readonly blockingTools: readonly string[];
   /** 权限确认的 Notification 类型（raw.notification_type）；null = 无此机制。 */
   readonly permissionNotificationType: string | null;
+  /**
+   * 宿主在此（些）权限模式（raw.permission_mode）下**不弹**权限对话框——
+   * 该时段的权限 Notification 恒为噪声，server 直接忽略；空数组 = 无模式概念。
+   */
+  readonly silentPermissionModes: readonly string[];
   /** 权限确认的问题面（选项键序随宿主 UI 固定；上文 = 最近一次 PreToolUse）。 */
   permissionQuestion(context: { toolName: string | null; toolInput: unknown }): BlockingQuestion;
   /** 阻塞工具的 PreToolUse toolInput → 问题列表（含合成问题：计划确认的 toolInput 恒空）。 */
