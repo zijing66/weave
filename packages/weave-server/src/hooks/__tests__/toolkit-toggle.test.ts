@@ -359,6 +359,23 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     ).toBe(false);
   });
 
+  it('真树冒烟：ai-prompt-auditor 表面解包——agents/commands 落项目 .claude、写账本、禁用还原', async () => {
+    const { pack } = await service.enable(project.id, 'ai-prompt-auditor');
+    expect(pack.enabled).toBe(true);
+    const files = Object.keys(await snapshot(projectDir));
+    expect(files).toContain('.claude/agents/ai-prompt-auditor.md');
+    expect(files).toContain('.claude/commands/audit-ai-prompt.md');
+    // 裸表面包：不触 CC CLI、写 checksum 账本
+    expect(execCalls).toHaveLength(0);
+    expect(files).toContain('.weave/toolkit/ai-prompt-auditor.json');
+
+    await service.disable(project.id, 'ai-prompt-auditor');
+    const after = await snapshot(projectDir);
+    expect(after['.claude/agents/ai-prompt-auditor.md']).toBeUndefined();
+    expect(after['.claude/commands/audit-ai-prompt.md']).toBeUndefined();
+    expect(after['.weave/toolkit/ai-prompt-auditor.json']).toBeUndefined();
+  });
+
   it('存量项目副本读时自愈：record 前缀条目按 checksum 删副本重写 record；孤儿副本报 legacyCopies 并可清理', async () => {
     // 伪造旧管线状态：CC 包整体复制进项目插件位 + 记录文件
     const rel = '.claude/plugins/weave-plugin-creator/skills/weave-plugin-creator/SKILL.md';

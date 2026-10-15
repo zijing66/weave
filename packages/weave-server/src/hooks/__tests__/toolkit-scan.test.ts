@@ -219,10 +219,11 @@ describe('toolkit-scan 识别与发现', () => {
     }
   });
 
-  it('内置真实树冒烟：5 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
+  it('内置真实树冒烟：6 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();
     expect(ids).toEqual([
+      'ai-prompt-auditor',
       'file-guard',
       'md-lint',
       'mission-control',
@@ -230,6 +231,11 @@ describe('toolkit-scan 识别与发现', () => {
       'weave-user-guide',
     ]);
     const byId = new Map(packs.map((p) => [p.id, p]));
+    expect(byId.get('ai-prompt-auditor')).toMatchObject({
+      scope: 'weave-dev',
+      kind: 'surface',
+      targets: ['claude'],
+    });
     expect(byId.get('weave-user-guide')).toMatchObject({
       scope: 'core-skills',
       kind: 'skill',

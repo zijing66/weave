@@ -101,6 +101,7 @@ describe('daemon /toolkit routes', () => {
       packs: Array<{ id: string; enabled: boolean; installed: boolean; provenance: string; kind: string }>;
     };
     expect(data.packs.map((p) => p.id).sort()).toEqual([
+      'ai-prompt-auditor',
       'file-guard',
       'md-lint',
       'mission-control',
