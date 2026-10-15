@@ -94,6 +94,7 @@ import {
 import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/config.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
+import { detectPluginTemplateUpdates } from '../install/plugin-templates.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
@@ -1123,15 +1124,20 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Project not found' });
       return;
     }
+    const cache = deps.fingerprintCache ?? new FingerprintCache();
     if (!deps.libraries) {
-      sendJson(res, 200, { skills: [], mcp: [], files: [], available: 0 });
+      // 项目自有 weave 源（`.weave/plugins` 模板）不依赖 libraries——无库时照样报漂移
+      const pluginTemplates = await detectPluginTemplateUpdates(project.path, cache);
+      sendJson(res, 200, {
+        skills: [],
+        mcp: [],
+        files: [],
+        pluginTemplates,
+        available: pluginTemplates.filter((t) => t.outdated).length,
+      });
       return;
     }
-    const report = await detectUpdates(
-      project.path,
-      deps.libraries.list(),
-      deps.fingerprintCache ?? new FingerprintCache(),
-    );
+    const report = await detectUpdates(project.path, deps.libraries.list(), cache);
     sendJson(res, 200, report);
     return;
   }

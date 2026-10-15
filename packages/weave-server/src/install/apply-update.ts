@@ -15,6 +15,7 @@ import {
   type LibraryIndex,
 } from './library-index.js';
 import { detectUpdates } from './updates.js';
+import { materializePluginTemplate } from './plugin-templates.js';
 import { FingerprintCache } from './fingerprint.js';
 import { FILE_ASSET_SPECS, fileAssetTargetDir, isFileAssetCategory } from './file-assets.js';
 import { assetSurfaceFor } from '../surfaces.js';
@@ -137,6 +138,12 @@ export async function syncAll(
       idx,
     );
     updated.push({ category: f.category, name: f.name, scope: f.scope });
+  }
+  // 项目插件模板：源在项目自己的 `.weave/plugins`，显式同步动作覆盖物化。
+  for (const t of report.pluginTemplates) {
+    if (!t.outdated) continue;
+    await materializePluginTemplate(t);
+    updated.push({ category: t.category, name: t.name, scope: 'project' });
   }
   return { updated, skipped: 0 };
 }

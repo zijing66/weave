@@ -17,6 +17,10 @@ import { FILE_ASSET_CATEGORIES, FILE_ASSET_SPECS } from './file-assets.js';
 import type { FileAssetCategory } from './file-assets.js';
 import { assetSurfaces } from '../surfaces.js';
 import { readInstalledLedger } from './install-ledger.js';
+import {
+  detectPluginTemplateUpdates,
+  type PluginTemplateUpdate,
+} from './plugin-templates.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -81,7 +85,9 @@ export interface UpdateReport {
   skills: SkillUpdate[];
   mcp: McpUpdate[];
   files: FileAssetUpdate[];
-  /** Count of outdated, non-custom assets. */
+  /** 项目自有 weave 源（`.weave/plugins` 的 manifest.templates）的物化漂移。 */
+  pluginTemplates: PluginTemplateUpdate[];
+  /** Count of outdated, non-custom assets (plugin templates included). */
   available: number;
 }
 
@@ -102,10 +108,13 @@ export async function detectUpdates(
   const files = await detectFileAssetUpdates(projectPath, cache, idx);
   // 账本补齐：报告是按盘面枚举的，"账上有、报告里没有"就等于盘上已被删除。
   await mergeMissingFromLedger(projectPath, { skills, mcp, files }, idx);
+  // 项目自有 weave 源无账本（声明即期望态），不随 libraries 存亡——独立扫描。
+  const pluginTemplates = await detectPluginTemplateUpdates(projectPath, cache);
   const available = skills.filter((s) => !s.custom && s.outdated).length
     + mcp.filter((s) => !s.custom && s.outdated).length
-    + files.filter((s) => !s.custom && s.outdated).length;
-  return { skills, mcp, files, available };
+    + files.filter((s) => !s.custom && s.outdated).length
+    + pluginTemplates.filter((t) => t.outdated).length;
+  return { skills, mcp, files, pluginTemplates, available };
 }
 
 /**
