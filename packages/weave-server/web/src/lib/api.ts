@@ -318,8 +318,10 @@ export const INJECTABLE_HOOK_EVENTS = [
 ] as const;
 
 /** mirror of `PipeMessage` in packages/weave-server/src/hooks/message-deliverer.ts——
- *  在途视图（GET /sessions/:id/messages = listVisible：promptbox 队列行 ∪ 内存态），
- *  送达即从列表消失，历史在会话自己的转录里。管道不记录发起方。 */
+ *  在途视图（GET /sessions/:id/messages = listVisible：promptbox 队列行 ∪ 内存态）。
+ *  终态短时驻留：delivered/injected/succeeded 在 settledAt+60s 内可见（展示
+ *  via/acked），过后消失；failed/timeout/暂停闸成因（stalled）常驻。
+ *  历史在会话自己的转录里，管道不记录发起方。 */
 export interface SessionMessageRow {
   /** 管道发号（uuid，全生命周期稳定；序列步 messageId 反查此值）。 */
   id: string;
@@ -329,7 +331,15 @@ export interface SessionMessageRow {
   mode: 'prompt' | 'inject' | 'headless' | 'auto';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
+  /** prompt 通道的实际落法（socket 直投 / 中继 / 终端 send-text）。 */
+  via?: 'socket' | 'relay' | 'terminal' | null;
   status: 'pending' | 'delivering' | 'running' | 'injected' | 'delivered' | 'succeeded' | 'failed' | 'timeout';
+  /** 投递回执：目标会话自己的 UserPromptSubmit 与本文匹配上了（真到达）。 */
+  acked?: boolean | null;
+  /** 终态落定时刻（驻留窗口起点；在途态无值）。 */
+  settledAt?: string | null;
+  /** 本条 = 该会话队列暂停闸的成因（未回执超窗/投递失败）；重发或回执清除。 */
+  stalled?: boolean | null;
   output: string | null;
   error: string | null;
   at: string;
@@ -1062,6 +1072,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** 手动重发（队列暂停闸的解除动作）：只对 prompt 通道 failed / delivered-未回执
+   *  开放（其余 409、未知 404 由 apiFetch 抛 Error 原文）。 */
+  resendSessionMessage: (
+    sessionId: string,
+    messageId: string,
+  ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
+    apiFetch(
+      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/resend`,
+      { method: 'POST' },
+    ),
   /** 消息能力矩阵（服务端 MessagingSurface 纯派生，无第二事实源）。 */
   messagingCapabilities: (): Promise<MessagingCapability[]> =>
     apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(

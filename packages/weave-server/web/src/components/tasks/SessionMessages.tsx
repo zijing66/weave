@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Send, X } from 'lucide-react';
+import { Loader2, RotateCcw, Send, X } from 'lucide-react';
 import { api, type MessagingCapability, type SessionMessageRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
@@ -9,6 +9,27 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { formatTime } from '@/lib/hook-payload';
 import type { HookFrame } from './session-status-store';
+
+/** 终态驻留窗口（mirror 服务端 VISIBLE_TTL_MS）：settledAt 过窗即从线程隐藏。 */
+const SETTLED_VISIBLE_MS = 60_000;
+
+/** 驻留判定：暂停闸成因 / failed·timeout 常驻（可重发/告警），其余终态看窗口。 */
+const settledVisible = (m: SessionMessageRow): boolean => {
+  if (m.stalled === true) return true;
+  if (m.status === 'failed' || m.status === 'timeout') return true;
+  if (!m.settledAt) return true;
+  return Date.now() - Date.parse(m.settledAt) < SETTLED_VISIBLE_MS;
+};
+
+/** prompt 通道实际落法的展示键（socket 直投 / 中继 / 终端 send-text）。 */
+const VIA_KEY: Record<
+  NonNullable<SessionMessageRow['via']>,
+  'tasks.msgViaSocket' | 'tasks.msgViaRelay' | 'tasks.msgViaTerminal'
+> = {
+  socket: 'tasks.msgViaSocket',
+  relay: 'tasks.msgViaRelay',
+  terminal: 'tasks.msgViaTerminal',
+};
 
 /** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */
 const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
@@ -46,6 +67,8 @@ const STATUS_KEY: Record<
  * 会话消息弹窗（消息域重塑批 ③）：该会话的在途投递视图 + Composer。
  * 投递无模式选择——服务端恒走 prompt 通道全自动（原生 SendMessage 中继 →
  * 终端 send-text 降级 → 未开会话积压队列），故 web 不展示也不传 mode。
+ * 终态短时驻留（60s）展示 via/回执；未回执超窗或投递失败会暂停该会话队列，
+ * 成因行常驻并给「重发」按钮（解闸动作）。
  * 刷新挂 App 转发的 weave:hook 帧（kind=message.*、sessionId 定向），不新开轮询。
  */
 export function SessionMessages({
@@ -108,6 +131,21 @@ export function SessionMessages({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // 驻留窗口到点自动隐藏（服务端同口径过滤；这里只管两次重拉之间的本地
+  // 一次性重渲染——到最近一条过期时刻触发，不是数据轮询）。
+  const [, forceRerender] = useReducer((v: number) => v + 1, 0);
+  useEffect(() => {
+    if (!messages) return;
+    const now = Date.now();
+    const upcoming = messages
+      .filter((m) => m.settledAt && settledVisible(m))
+      .map((m) => Date.parse(m.settledAt!) + SETTLED_VISIBLE_MS)
+      .filter((t) => t > now);
+    if (upcoming.length === 0) return;
+    const timer = window.setTimeout(forceRerender, Math.min(...upcoming) - now);
+    return () => window.clearTimeout(timer);
+  }, [messages]);
+
   // 新消息进线程后贴底（用户没往上翻历史时不抢滚动位置）
   const atBottom = (): boolean => {
     const el = threadRef.current;
@@ -161,19 +199,20 @@ export function SessionMessages({
           </button>
         </div>
 
-        {/* 在途视图：每行都是投给本会话的消息（送达即消失，历史在会话转录里） */}
+        {/* 在途视图：每行都是投给本会话的消息（终态短时驻留展示 via/回执，
+            过窗隐藏；历史在会话自己的转录里） */}
         <div ref={threadRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
           {messages === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t('hooks.loading')}
             </p>
-          ) : messages.length === 0 ? (
+          ) : messages.filter(settledVisible).length === 0 ? (
             <p className="pt-6 text-center text-xs text-neutral-600">
               {t('tasks.messagesEmpty')}
             </p>
           ) : (
-            messages.map((m) => (
+            messages.filter(settledVisible).map((m) => (
               <div key={m.id} className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
                   <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -183,6 +222,21 @@ export function SessionMessages({
                     >
                       {t(STATUS_KEY[m.status])}
                     </Badge>
+                    {m.via && (
+                      <span className="shrink-0 text-[10px] text-neutral-500">
+                        {t(VIA_KEY[m.via])}
+                      </span>
+                    )}
+                    {m.acked === true && (
+                      <span className="shrink-0 text-[10px] text-emerald-400">
+                        {t('tasks.msgAcked')}
+                      </span>
+                    )}
+                    {m.stalled === true && (
+                      <span className="shrink-0 text-[10px] text-amber-400">
+                        {t('tasks.msgStalled')}
+                      </span>
+                    )}
                     <span className="shrink-0 text-[10px] text-neutral-600">
                       {formatTime(m.at)}
                     </span>
@@ -202,6 +256,30 @@ export function SessionMessages({
                         {m.output}
                       </pre>
                     </details>
+                  )}
+                  {(m.status === 'failed' || m.stalled === true) && (
+                    <button
+                      type="button"
+                      disabled={fb.stateOf(`resend:${m.id}`) === 'loading'}
+                      onClick={() =>
+                        void fb.run(
+                          `resend:${m.id}`,
+                          async () => {
+                            await api.resendSessionMessage(sessionId, m.id);
+                            await refresh();
+                          },
+                          { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
+                        )
+                      }
+                      className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf(`resend:${m.id}`)}
+                        className="h-3 w-3"
+                        icon={<RotateCcw className="h-3 w-3" />}
+                      />
+                      {t('tasks.msgResend')}
+                    </button>
                   )}
                 </div>
               </div>
