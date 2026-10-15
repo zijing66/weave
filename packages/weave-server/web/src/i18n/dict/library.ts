@@ -19,6 +19,8 @@ export const libraryZh = {
   'picker.selectedCount': '已选 {count} 项',
   'picker.add': '添加',
   'picker.addCount': '添加（{count}）',
+  'picker.pathPlaceholder': '完整路径：勾选文件夹后显示在此，也可粘贴一个路径',
+  'picker.addPathTip': '把这一路径加入选择',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': '混合展示全部 harness 工具的资产',
@@ -185,6 +187,8 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'picker.selectedCount': '{count} selected',
   'picker.add': 'Add',
   'picker.addCount': 'Add ({count})',
+  'picker.pathPlaceholder': 'Full path: shown here after checking a folder, or paste one',
+  'picker.addPathTip': 'Add this path to the selection',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': 'Mix assets from every harness tool',

@@ -49,6 +49,13 @@ const ROOT_ORDER: BrowseRoot['kind'][] = [
   'root',
 ];
 
+/** 粘贴来的路径多为资源管理器「复制为路径」形（整体带引号、Windows 带尾分隔符）。 */
+export function cleanPath(raw: string): string {
+  const p = raw.trim().replace(/^"(.*)"$/s, '$1');
+  if (/^[a-zA-Z]:[\\/]$/.test(p)) return p;
+  return p.replace(/[\\/]+$/, '').trim();
+}
+
 /** A node in the lazily-loaded directory tree. Roots are synthesized entries
  * (label comes from `kind`); children are plain subdirectories. */
 interface TreeNode {
@@ -74,6 +81,8 @@ export function DirectoryPickerModal({
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string[]>([]);
+  /** 顶部完整路径行：树里勾选时显示该文件夹，也可直接粘贴一个路径加入选择。 */
+  const [pathInput, setPathInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const t = useT();
 
@@ -123,13 +132,25 @@ export function DirectoryPickerModal({
     [childrenByPath, loadingPaths, loadChildren],
   );
 
-  const toggleCheck = useCallback((dirPath: string) => {
-    setSelected((prev) =>
-      prev.includes(dirPath) ? prev.filter((p) => p !== dirPath) : [...prev, dirPath],
-    );
-  }, []);
+  const toggleCheck = useCallback(
+    (dirPath: string) => {
+      const on = !selected.includes(dirPath);
+      const next = on ? [...selected, dirPath] : selected.filter((p) => p !== dirPath);
+      setSelected(next);
+      setPathInput(next.length > 0 ? next[next.length - 1]! : '');
+    },
+    [selected],
+  );
 
   const existing = useMemo(() => new Set(existingPaths), [existingPaths]);
+
+  /** 顶行提交：粘贴的路径（资源管理器带引号形也认）加进选择，已添加的忽略。 */
+  const commitPath = useCallback(() => {
+    const p = cleanPath(pathInput);
+    setPathInput(p);
+    if (!p || selected.includes(p) || existing.has(p)) return;
+    setSelected([...selected, p]);
+  }, [pathInput, selected, existing]);
 
   function renderNodes(nodes: TreeNode[], depth: number): ReactNode[] {
     const rows: ReactNode[] = [];
@@ -253,6 +274,30 @@ export function DirectoryPickerModal({
           </button>
         </header>
 
+        {/* 完整绝对路径行：树里勾选后在这里显示（树内的名字会被截断），也可直接
+            粘贴一个路径加入选择，不必逐层展开。 */}
+        <div className="shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-white/[0.06]">
+          <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+          <input
+            value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitPath();
+            }}
+            placeholder={t('picker.pathPlaceholder')}
+            spellCheck={false}
+            className="flex-1 min-w-0 bg-neutral-900 rounded px-2 py-1 text-xs font-mono text-neutral-200"
+          />
+          <button
+            onClick={commitPath}
+            disabled={!pathInput.trim()}
+            title={t('picker.addPathTip')}
+            className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+          >
+            {t('picker.add')}
+          </button>
+        </div>
+
         <div className="flex-1 flex overflow-hidden">
           <aside className="w-44 shrink-0 border-r border-white/[0.06] overflow-y-auto p-2 space-y-0.5 frosted">
             <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">
@@ -329,6 +374,7 @@ export function DirectoryPickerModal({
             onClick={() => {
               onConfirm(selected);
               setSelected([]);
+              setPathInput('');
             }}
             disabled={selected.length === 0}
             className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
