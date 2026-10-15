@@ -99,6 +99,26 @@ const NODE_H = 56;
 /** 行距大于节点高度：父子边的 smoothstep 折线才有可见竖直段（DAG 连线）。 */
 const ROW_H = 128;
 
+/**
+ * 簇内还有工具调用没返回（PreToolUse 未等到同 tool_use_id 的 PostToolUse）——
+ * 未完成的簇不画尾回环（同派发环「未收到返回不闭环」口径）。缺 tool_use_id 的
+ * 事件（非 claude 来源）退化按 Pre 计数多于 Post 判。
+ */
+function toolClusterRunning(events: readonly HookEventRow[]): boolean {
+  const open = new Set<string>();
+  let idless = 0;
+  for (const e of events) {
+    const id = rawOf(e).tool_use_id;
+    if (typeof id !== 'string' || !id) {
+      idless += e.eventType === 'PreToolUse' ? 1 : -1;
+      continue;
+    }
+    if (e.eventType === 'PostToolUse') open.delete(id);
+    else open.add(id);
+  }
+  return open.size > 0 || idless > 0;
+}
+
 /** SessionStart 携带的会话 model（其余事件类型无 model 字段）。 */
 function sessionModelOf(event: HookEventRow): string | undefined {
   if (event.eventType !== 'SessionStart') return undefined;
@@ -505,6 +525,8 @@ export function layoutMindmap(
     // 内置 smoothstep 会横穿成员列（水平段固定在 target 高度），手算绕行
     // 才成环。y 对齐 handle 实际锚点：源=节点中线（'c' 左出中点），
     // 目标=右缘 78%（'rt'），首尾段才水平不斜。
+    // 簇内还有在飞的工具调用 → 不画回环（回路虚线得等真返回）。
+    if (toolClusterRunning(c.clusterEvents ?? [])) continue;
     const lastKid = c.children[c.children.length - 1]!;
     const ys = (yOf.get(lastKid.key) ?? 0) + NODE_H / 2;
     const yt = (yOf.get(c.key) ?? 0) + NODE_H * 0.78;

@@ -236,6 +236,37 @@ describe('layoutMindmap', () => {
     expect(collapsed.edges.some((e) => e.clusterLoop)).toBe(false);
   });
 
+  it('工具调用未返回：簇不画尾回环；PostToolUse 到达才闭环', () => {
+    const pre = (id: number, tid: string): HookEventRow =>
+      ev(id, 'PreToolUse', JSON.stringify({ raw: { tool_use_id: tid } }));
+    const post = (id: number, tid: string): HookEventRow =>
+      ev(id, 'PostToolUse', JSON.stringify({ raw: { tool_use_id: tid } }));
+    const run = (extra: HookEventRow[]) =>
+      layoutMindmap(
+        [
+          group({
+            id: 'turn:1',
+            open: true, // 进行中：没等到 Stop
+            events: [ev(1, 'UserPromptSubmit'), pre(2, 'a'), post(3, 'a'), pre(4, 'b'), ...extra],
+          }),
+        ],
+        new Set(['g:turn:1', 'c:2']),
+      );
+    // call_b 在飞（Pre 未等到同名 Post）→ 只下探不成环
+    const flying = run([]);
+    expect(flying.nodes.some((n) => n.kind === 'cluster')).toBe(true);
+    expect(flying.edges.map((e) => e.id)).toEqual([
+      'g:turn:1->e:1',
+      'e:1->c:2',
+      'c:2->e:2',
+      'e:2->e:3',
+      'e:3->e:4',
+    ]);
+    // call_b 返回 → 末成员回环补上
+    const done = run([post(5, 'b')]);
+    expect(done.edges.find((e) => e.clusterLoop)?.source).toBe('e:5');
+  });
+
   it('孤立工具事件与命中指令的工具事件不进簇', () => {
     const groups = [
       group({
