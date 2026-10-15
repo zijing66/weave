@@ -49,6 +49,25 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
+/** ISO → 时刻戳：当天只给时分秒，跨天补月日（对话条目逐条显示）。 */
+export function formatStamp(iso: string): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString();
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
+/** 用户 prompt 原文（归一化 payload 的 raw.prompt）；空/缺失返回 null。 */
+export function promptOf(event: HookEventRow): string | null {
+  return str(rawOf(event).prompt);
+}
+
+/** 每轮 Stop 携带的最终 assistant 消息（raw.last_assistant_message）；空/缺失返回 null。 */
+export function turnSummaryOf(event: HookEventRow): string | null {
+  return str(rawOf(event).last_assistant_message);
+}
+
 /** 会话短标签（title 回退 sessionId 前 8 位）。 */
 export function sessionLabel(title: string | null, sessionId: string): string {
   return title ?? sessionId.slice(0, 8);

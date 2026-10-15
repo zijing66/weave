@@ -1,25 +1,28 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, RotateCcw, Send, X } from 'lucide-react';
-import { api, type MessagingCapability, type SessionMessageRow } from '@/lib/api';
+import type { HarnessLifecycle } from '@weavecode/core/harness';
+import {
+  api,
+  type HookEventRow,
+  type MessagingCapability,
+  type SessionMessageRow,
+} from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
-import { formatTime } from '@/lib/hook-payload';
+import { formatStamp, promptOf, taskNotificationOf, turnSummaryOf } from '@/lib/hook-payload';
+import { HARNESS_LIFECYCLE } from './lifecycle';
 import type { HookFrame } from './session-status-store';
 
-/** 终态驻留窗口（mirror 服务端 VISIBLE_TTL_MS）：settledAt 过窗即从线程隐藏。 */
-const SETTLED_VISIBLE_MS = 60_000;
+/** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
+const CONV_PAGE = 10;
 
-/** 驻留判定：暂停闸成因 / failed·timeout 常驻（可重发/告警），其余终态看窗口。 */
-const settledVisible = (m: SessionMessageRow): boolean => {
-  if (m.stalled === true) return true;
-  if (m.status === 'failed' || m.status === 'timeout') return true;
-  if (!m.settledAt) return true;
-  return Date.now() - Date.parse(m.settledAt) < SETTLED_VISIBLE_MS;
-};
+/** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
+const CLAIM_MS = 10 * 60_000;
 
 /** prompt 通道实际落法的展示键（socket 直投 / 中继 / 终端 send-text）。 */
 const VIA_KEY: Record<
@@ -63,21 +66,100 @@ const STATUS_KEY: Record<
   timeout: 'tasks.msgStatusTimeout',
 };
 
+/** 对话条目：用户投递的 prompt，或每轮 Stop 的最终总结消息。 */
+export interface ConvEntry {
+  key: string;
+  /** 事件 id（向上翻页的游标锚）；只在尾巴上的投递行没有。 */
+  eventId?: number;
+  role: 'user' | 'assistant';
+  at: string;
+  text: string;
+  /** 认领到的投递行：状态/回执/重发挂在气泡上，不另起一条。 */
+  pipe?: SessionMessageRow;
+}
+
 /**
- * 会话消息弹窗（消息域重塑批 ③）：该会话的在途投递视图 + Composer。
+ * 事件 → 对话条目：只认开轮（用户 prompt 原文）与闭轮（Stop 携带的最终
+ * assistant 消息）两类事件。工具调用、通知、会话标记都不是对话，中间的
+ * assistant 输出也不进——转录在会话自己那边，这里只要每轮的收尾总结。
+ */
+export function conversationOf(
+  events: readonly HookEventRow[],
+  lifecycle: HarnessLifecycle,
+): ConvEntry[] {
+  const out: ConvEntry[] = [];
+  for (const e of events) {
+    if (e.eventType === lifecycle.open) {
+      // 子代理返回通知不是人发的 prompt（分组同口径丢弃）
+      if (taskNotificationOf(e)) continue;
+      const text = promptOf(e);
+      if (text) out.push({ key: `e${e.id}`, eventId: e.id, role: 'user', at: e.createdAt, text });
+    } else if (lifecycle.close.includes(e.eventType)) {
+      const text = turnSummaryOf(e);
+      if (text)
+        out.push({ key: `e${e.id}`, eventId: e.id, role: 'assistant', at: e.createdAt, text });
+    }
+  }
+  return out;
+}
+
+/**
+ * 投递行归位：同文案、时刻相近的事件条目认领它（不重复渲染）；认领不到的
+ * ——Held/Refused 的「已送达」、失败、暂停闸成因、还没落进事件流的——排在
+ * 对话尾巴上（丢在中间会翻不到，重发按钮也就没人点得到）。可见期沿用服务端
+ * 驻留窗口（settled 60s、failed/timeout/stalled 常驻），本视图不再另设窗口。
+ */
+export function attachDeliveries(
+  entries: readonly ConvEntry[],
+  deliveries: readonly SessionMessageRow[],
+): ConvEntry[] {
+  const taken = new Set<string>();
+  const claim = (entry: ConvEntry): SessionMessageRow | undefined => {
+    let best: SessionMessageRow | undefined;
+    let bestGap = CLAIM_MS;
+    for (const m of deliveries) {
+      if (taken.has(m.id) || m.text !== entry.text) continue;
+      const gap = Math.abs(Date.parse(m.at) - Date.parse(entry.at));
+      if (gap < bestGap) {
+        best = m;
+        bestGap = gap;
+      }
+    }
+    if (best) taken.add(best.id);
+    return best;
+  };
+  const out: ConvEntry[] = entries.map((entry) => {
+    if (entry.role !== 'user') return entry;
+    const pipe = claim(entry);
+    return pipe ? { ...entry, pipe } : entry;
+  });
+  const orphan = deliveries
+    .filter((m) => !taken.has(m.id))
+    .map((m) => ({ key: `m${m.id}`, role: 'user' as const, at: m.at, text: m.text, pipe: m }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+  return [...out, ...orphan];
+}
+
+/**
+ * 会话对话弹窗：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
+ * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
+ * 流本身——**不落库、不复制存储**，前端翻页直接查事件（`types` 只取开/闭
+ * 轮两类，不拉整条事件链），翻过的页留在组件状态里，向上滚到顶再取更早。
  * 投递无模式选择——服务端恒走 prompt 通道全自动（原生 SendMessage 中继 →
  * 终端 send-text 降级 → 未开会话积压队列），故 web 不展示也不传 mode。
- * 终态短时驻留（60s）展示 via/回执；未回执超窗或投递失败会暂停该会话队列，
- * 成因行常驻并给「重发」按钮（解闸动作）。
- * 刷新挂 App 转发的 weave:hook 帧（kind=message.*、sessionId 定向），不新开轮询。
+ * 刷新挂 App 转发的 weave:hook 帧（开/闭轮事件 + message.*，sessionId 定向），
+ * 不新开轮询。
  */
 export function SessionMessages({
   sessionId,
+  projectId,
   label,
   capability,
   onClose,
 }: {
   sessionId: string;
+  /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
+  projectId: number;
   /** 会话显示名（title 回退 sessionId 前 8 位，调用方已解好）。 */
   label: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
@@ -86,34 +168,90 @@ export function SessionMessages({
 }) {
   const t = useT();
   const fb = useActionFeedback();
+  const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
+  /** 对话事件类型（开轮 + 闭轮）：闭轮表为空的 harness 没有对话面可取。 */
+  const convTypes = useMemo(
+    () => [lifecycle.open, ...lifecycle.close].filter(Boolean),
+    [lifecycle],
+  );
+
+  const [entries, setEntries] = useState<ConvEntry[] | null>(null);
+  /** 更早的那头翻到底了（事件保留期的起点）。 */
+  const [headDone, setHeadDone] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  /** 向上翻页插入新条目后要补的滚动高度（渲染后按差值补，视口不跳）。 */
+  const scrollFix = useRef<number | null>(null);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const fail = useCallback((e: unknown): void => {
+    setError(e instanceof Error ? e.message : String(e));
+  }, []);
+
+  /** 最新一页：与手上这批重叠就续接（保留翻过的旧页），不重叠整批换成新页
+   *  ——宁可重翻，也不留一段看不见的空档。 */
+  const loadNewest = useCallback(async (): Promise<void> => {
+    try {
+      if (convTypes.length === 0) {
+        setEntries([]);
+        setHeadDone(true);
+        return;
+      }
+      const events = await api.listSessionHooks(
+        projectId,
+        sessionId,
+        CONV_PAGE,
+        undefined,
+        convTypes,
+      );
+      const page = conversationOf(events, lifecycle);
+      setHeadDone(events.length < CONV_PAGE);
+      setEntries((prev) => {
+        const prevNewest = prev?.length ? prev[prev.length - 1]!.eventId : undefined;
+        const pageOldest = page[0]?.eventId;
+        if (prevNewest === undefined || pageOldest === undefined || pageOldest > prevNewest) {
+          return page;
+        }
+        return [...prev!.filter((e) => (e.eventId ?? 0) < pageOldest), ...page];
+      });
+      setError(null);
+    } catch (e) {
+      fail(e);
+    }
+  }, [convTypes, fail, lifecycle, projectId, sessionId]);
+
+  /** 在途投递面（消息域管道视图，送达即删的本地队列 + 内存态）。 */
+  const refreshMessages = useCallback(async (): Promise<void> => {
     try {
       setMessages(await api.listSessionMessages(sessionId));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      fail(e);
     }
-  }, [sessionId]);
+  }, [fail, sessionId]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void loadNewest();
+    void refreshMessages();
+  }, [loadNewest, refreshMessages]);
 
-  // SSE：message.* 帧定向刷新本线程（created 入列 / delivered·finished 状态翻转）
+  // SSE：开/闭轮事件帧补对话尾部，message.* 帧刷在途投递行（各自防抖）
   useEffect(() => {
     let timer: number | null = null;
     const onHook = (e: Event): void => {
       const f = (e as CustomEvent<HookFrame>).detail ?? {};
-      if (!f.kind?.startsWith('message.') || f.sessionId !== sessionId) return;
+      if (f.sessionId !== sessionId) return;
+      const convEvent =
+        f.kind === 'event.ingested' &&
+        (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? ''));
+      if (!convEvent && !f.kind?.startsWith('message.')) return;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
-        void refresh();
+        if (convEvent) void loadNewest();
+        else void refreshMessages();
       }, 500);
     };
     window.addEventListener('weave:hook', onHook);
@@ -121,7 +259,7 @@ export function SessionMessages({
       window.removeEventListener('weave:hook', onHook);
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [refresh, sessionId]);
+  }, [lifecycle, loadNewest, refreshMessages, sessionId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -131,35 +269,57 @@ export function SessionMessages({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // 驻留窗口到点自动隐藏（服务端同口径过滤；这里只管两次重拉之间的本地
-  // 一次性重渲染——到最近一条过期时刻触发，不是数据轮询）。
-  const [, forceRerender] = useReducer((v: number) => v + 1, 0);
-  useEffect(() => {
-    if (!messages) return;
-    const now = Date.now();
-    const upcoming = messages
-      .filter((m) => m.settledAt && settledVisible(m))
-      .map((m) => Date.parse(m.settledAt!) + SETTLED_VISIBLE_MS)
-      .filter((t) => t > now);
-    if (upcoming.length === 0) return;
-    const timer = window.setTimeout(forceRerender, Math.min(...upcoming) - now);
-    return () => window.clearTimeout(timer);
-  }, [messages]);
+  /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
+  const loadEarlier = useCallback(async (): Promise<void> => {
+    const oldest = entries?.[0]?.eventId;
+    if (oldest === undefined || loadingEarlier || headDone) return;
+    setLoadingEarlier(true);
+    try {
+      const events = await api.listSessionHooks(projectId, sessionId, CONV_PAGE, oldest, convTypes);
+      setHeadDone(events.length < CONV_PAGE);
+      const older = conversationOf(events, lifecycle);
+      if (older.length > 0) {
+        scrollFix.current = threadRef.current?.scrollHeight ?? null;
+        setEntries((prev) => [...older, ...(prev ?? [])]);
+      }
+    } catch (e) {
+      fail(e);
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [convTypes, entries, fail, headDone, lifecycle, loadingEarlier, projectId, sessionId]);
 
-  // 新消息进线程后贴底（用户没往上翻历史时不抢滚动位置）
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (!el || scrollFix.current === null) return;
+    el.scrollTop += el.scrollHeight - scrollFix.current;
+    scrollFix.current = null;
+  }, [entries]);
+
+  /** 人工投递才进对话：编排域的注入/无头消息不是用户说的话。 */
+  const manualDeliveries = useMemo(
+    () => (messages ?? []).filter((m) => m.mode === 'prompt'),
+    [messages],
+  );
+  const thread = useMemo(
+    () => attachDeliveries(entries ?? [], manualDeliveries),
+    [entries, manualDeliveries],
+  );
+
+  // 新消息进对话后贴底（用户没往上翻历史时不抢滚动位置）
   const atBottom = (): boolean => {
     const el = threadRef.current;
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
   const prevCount = useRef(0);
   useEffect(() => {
-    if (!messages || messages.length <= prevCount.current) return;
+    if (entries === null || thread.length <= prevCount.current) return;
     if (prevCount.current === 0 || atBottom()) {
       const el = threadRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     }
-    prevCount.current = messages.length;
-  }, [messages]);
+    prevCount.current = thread.length;
+  }, [entries, thread.length]);
 
   const send = (): void => {
     const text = draft.trim();
@@ -169,7 +329,7 @@ export function SessionMessages({
       `sendMsg:${sessionId}`,
       async () => {
         await api.sendSessionMessage(sessionId, { text });
-        await refresh();
+        await refreshMessages();
       },
       { fail: (e) => t('tasks.msgSendFailed', { error: errorText(e) }) },
     );
@@ -199,91 +359,119 @@ export function SessionMessages({
           </button>
         </div>
 
-        {/* 在途视图：每行都是投给本会话的消息（终态短时驻留展示 via/回执，
-            过窗隐藏；历史在会话自己的转录里） */}
-        <div ref={threadRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-          {messages === null ? (
+        {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
+            尾巴上常驻还没落进事件流的投递行（Held/失败/暂停闸成因 + 重发） */}
+        <div
+          ref={threadRef}
+          onScroll={() => {
+            if ((threadRef.current?.scrollTop ?? 1) <= 24) void loadEarlier();
+          }}
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+        >
+          {entries === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t('hooks.loading')}
             </p>
-          ) : messages.filter(settledVisible).length === 0 ? (
+          ) : thread.length === 0 ? (
             <p className="pt-6 text-center text-xs text-neutral-600">
               {t('tasks.messagesEmpty')}
             </p>
           ) : (
-            messages.filter(settledVisible).map((m) => (
-              <div key={m.id} className="flex justify-end">
-                <div className="max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
-                  <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                    <Badge
-                      title={m.status === 'delivered' ? t('tasks.msgDeliveredHint') : undefined}
-                      className={cn('shrink-0', STATUS_BADGE[m.status])}
-                    >
-                      {t(STATUS_KEY[m.status])}
-                    </Badge>
-                    {m.via && (
-                      <span className="shrink-0 text-[10px] text-neutral-500">
-                        {t(VIA_KEY[m.via])}
-                      </span>
-                    )}
-                    {m.acked === true && (
-                      <span className="shrink-0 text-[10px] text-emerald-400">
-                        {t('tasks.msgAcked')}
-                      </span>
-                    )}
-                    {m.stalled === true && (
-                      <span className="shrink-0 text-[10px] text-amber-400">
-                        {t('tasks.msgStalled')}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-[10px] text-neutral-600">
-                      {formatTime(m.at)}
-                    </span>
+            <>
+              {loadingEarlier && (
+                <p className="flex items-center justify-center gap-1.5 pt-1 text-[10px] text-neutral-600">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {t('tasks.msgEarlier')}
+                </p>
+              )}
+              {thread.map((m) => {
+                if (m.role === 'assistant') {
+                  return (
+                    <div key={m.key} className="flex justify-start">
+                      <div className="min-w-0 max-w-[92%] rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
+                        <span className="mb-0.5 block text-[10px] text-neutral-600">
+                          {formatStamp(m.at)}
+                        </span>
+                        <AssistantMarkdown text={m.text} />
+                      </div>
+                    </div>
+                  );
+                }
+                const pipe = m.pipe;
+                return (
+                  <div key={m.key} className="flex justify-end">
+                    <div className="min-w-0 max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
+                      {pipe && (
+                        <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          <Badge
+                            title={
+                              pipe.status === 'delivered' ? t('tasks.msgDeliveredHint') : undefined
+                            }
+                            className={cn('shrink-0', STATUS_BADGE[pipe.status])}
+                          >
+                            {t(STATUS_KEY[pipe.status])}
+                          </Badge>
+                          {pipe.via && (
+                            <span className="shrink-0 text-[10px] text-neutral-500">
+                              {t(VIA_KEY[pipe.via])}
+                            </span>
+                          )}
+                          {pipe.acked === true && (
+                            <span className="shrink-0 text-[10px] text-emerald-400">
+                              {t('tasks.msgAcked')}
+                            </span>
+                          )}
+                          {pipe.stalled === true && (
+                            <span className="shrink-0 text-[10px] text-amber-400">
+                              {t('tasks.msgStalled')}
+                            </span>
+                          )}
+                          <span className="shrink-0 text-[10px] text-neutral-600">
+                            {formatStamp(m.at)}
+                          </span>
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
+                        {m.text}
+                      </p>
+                      {pipe?.error && (
+                        <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
+                      )}
+                      {!pipe && (
+                        <span className="mt-0.5 block text-right text-[10px] text-neutral-600">
+                          {formatStamp(m.at)}
+                        </span>
+                      )}
+                      {pipe && (pipe.status === 'failed' || pipe.stalled === true) && (
+                        <button
+                          type="button"
+                          disabled={fb.stateOf(`resend:${pipe.id}`) === 'loading'}
+                          onClick={() =>
+                            void fb.run(
+                              `resend:${pipe.id}`,
+                              async () => {
+                                await api.resendSessionMessage(sessionId, pipe.id);
+                                await refreshMessages();
+                              },
+                              { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
+                            )
+                          }
+                          className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                        >
+                          <FeedbackIcon
+                            state={fb.stateOf(`resend:${pipe.id}`)}
+                            className="h-3 w-3"
+                            icon={<RotateCcw className="h-3 w-3" />}
+                          />
+                          {t('tasks.msgResend')}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
-                    {m.text}
-                  </p>
-                  {m.error && (
-                    <p className="mt-1 break-words text-[11px] text-red-400">{m.error}</p>
-                  )}
-                  {m.output && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-[10px] text-neutral-500">
-                        {t('tasks.msgOutput')}
-                      </summary>
-                      <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-400">
-                        {m.output}
-                      </pre>
-                    </details>
-                  )}
-                  {(m.status === 'failed' || m.stalled === true) && (
-                    <button
-                      type="button"
-                      disabled={fb.stateOf(`resend:${m.id}`) === 'loading'}
-                      onClick={() =>
-                        void fb.run(
-                          `resend:${m.id}`,
-                          async () => {
-                            await api.resendSessionMessage(sessionId, m.id);
-                            await refresh();
-                          },
-                          { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
-                        )
-                      }
-                      className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
-                    >
-                      <FeedbackIcon
-                        state={fb.stateOf(`resend:${m.id}`)}
-                        className="h-3 w-3"
-                        icon={<RotateCcw className="h-3 w-3" />}
-                      />
-                      {t('tasks.msgResend')}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
+                );
+              })}
+            </>
           )}
         </div>
 

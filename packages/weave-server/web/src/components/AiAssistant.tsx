@@ -26,7 +26,7 @@ import { useT } from '@/i18n/I18nProvider';
  * 代码 11px、标题只比正文大半档，行内元素逐项收边距。链接强制新开页签：点一下不能
  * 把 dashboard 导航走。
  */
-function AssistantMarkdown({ text }: { text: string }) {
+export function AssistantMarkdown({ text }: { text: string }) {
   return (
     <div
       className={

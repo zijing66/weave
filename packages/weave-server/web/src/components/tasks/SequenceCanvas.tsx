@@ -289,11 +289,12 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
       if (!row || !capability) return;
       setMessagesTarget({
         sessionId,
+        projectId: row.projectId ?? projectId,
         label: sessionLabel(row.title, sessionId),
         capability,
       });
     },
-    [capabilityMap],
+    [capabilityMap, projectId],
   );
 
   const flowNodes: Node[] = useMemo(() => {
@@ -406,9 +407,10 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
   // ---- 序列列表 ----
   const [expandedSeqId, setExpandedSeqId] = useState<number | null>(null);
 
-  /** 消息线程弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
+  /** 对话弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
   const [messagesTarget, setMessagesTarget] = useState<{
     sessionId: string;
+    projectId: number;
     label: string;
     capability: MessagingCapability;
   } | null>(null);
@@ -693,10 +695,11 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
         )}
       </div>
 
-      {/* 会话消息线程：双向时间线 + 投递（复用任务视图弹窗）。 */}
+      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（复用任务视图弹窗）。 */}
       {messagesTarget && (
         <SessionMessages
           sessionId={messagesTarget.sessionId}
+          projectId={messagesTarget.projectId}
           label={messagesTarget.label}
           capability={messagesTarget.capability}
           onClose={() => setMessagesTarget(null)}

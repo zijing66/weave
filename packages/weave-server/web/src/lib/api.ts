@@ -966,17 +966,19 @@ export const api = {
   listGlobalFileAssets: (): Promise<AssetEntry[]> =>
     apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
   /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。
-   *  `beforeId` 游标翻页：只取比游更早的事件（组头「加载更早」向前翻）。 */
+   *  `beforeId` 游标翻页：只取比游更早的事件（组头「加载更早」向前翻）。
+   *  `types` 非空只取这些事件类型（对话视图只翻开/闭轮事件）。 */
   listSessionHooks: (
     projectId: number,
     sessionId: string,
     limit = 300,
     beforeId?: number,
+    types?: readonly string[],
   ): Promise<HookEventRow[]> =>
     apiFetch<{ events: HookEventRow[] }>(
       `/projects/${projectId}/hooks?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}${
         beforeId === undefined ? '' : `&beforeId=${beforeId}`
-      }`,
+      }${types?.length ? `&types=${encodeURIComponent(types.join(','))}` : ''}`,
     ).then((r) => r.events),
 
   // --- hooks rules / dispatches / sessions ---

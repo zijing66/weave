@@ -506,9 +506,10 @@ export function TasksPanel({
     [fb],
   );
 
-  /** 消息线程弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
+  /** 对话弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
   const [messagesTarget, setMessagesTarget] = useState<{
     sessionId: string;
+    projectId: number;
     label: string;
     capability: MessagingCapability;
   } | null>(null);
@@ -519,11 +520,12 @@ export function TasksPanel({
       if (!capability) return;
       setMessagesTarget({
         sessionId,
+        projectId: row?.projectId ?? projectId,
         label: sessionLabel(row?.title ?? null, sessionId),
         capability,
       });
     },
-    [sessions, capabilityMap],
+    [sessions, capabilityMap, projectId],
   );
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
@@ -1195,10 +1197,11 @@ export function TasksPanel({
         />
       )}
 
-      {/* 会话消息线程：双向时间线 + 投递（模式选项按能力矩阵门控） */}
+      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（投递按能力矩阵门控） */}
       {messagesTarget && (
         <SessionMessages
           sessionId={messagesTarget.sessionId}
+          projectId={messagesTarget.projectId}
           label={messagesTarget.label}
           capability={messagesTarget.capability}
           onClose={() => setMessagesTarget(null)}
