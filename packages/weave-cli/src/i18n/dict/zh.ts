@@ -7,11 +7,15 @@ export const zh = {
   'help.usage': '用法：weave <命令> [选项]',
   'help.commands': '命令：',
   'help.globalOptions': '全局选项：',
+  'help.subcommands': '可用子命令：',
   // --- 解析与运行错误 ---
   'cli.unknownCommand': '未知命令：{command}',
   'cli.error': '错误：{error}',
   'cli.missingRequired': '缺少必填选项：--{name}',
   'cli.invalidChoice': '--{name} 的取值 "{value}" 无效，可选值：{choices}',
+  'cli.missingSubcommand': '命令 {command} 需要一个子命令',
+  'cli.unknownSubcommand': '未知子命令：{command} {subcommand}',
+  'cli.unexpectedPositional': '命令 {command} 不接受参数「{arg}」',
   // --- 全局选项 ---
   'flag.help': '显示帮助',
   'flag.version': '显示版本',
@@ -44,7 +48,6 @@ export const zh = {
   // --- daemon 命令运行时输出 ---
   'out.daemon.alreadyRunning': '守护进程已在 {port} 端口运行',
   'out.daemon.started': '守护进程已启动：http://{host}:{port}',
-  'out.daemon.noState': '未找到守护进程状态文件——守护进程未在运行。',
   'out.daemon.stopped': '守护进程已停止（pid {pid}）。',
   'out.daemon.statusNotRunning': '守护进程：未运行',
   'out.daemon.statusRunning': '守护进程：运行中（pid {pid}，端口 {port}，已运行 {uptime}s）',

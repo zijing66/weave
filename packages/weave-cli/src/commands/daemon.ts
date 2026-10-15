@@ -76,30 +76,50 @@ async function startAction(): Promise<void> {
   logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
 }
 
-async function stopAction(): Promise<void> {
-  const state = readDaemonState();
-  if (!state) {
-    logger.warn(t('out.daemon.noState'));
-    return;
-  }
-  try {
-    process.kill(state.pid);
-  } catch {
-    // Stale pid — fall through to clear state.
-  }
-  clearDaemonState();
-  logger.success(t('out.daemon.stopped', { pid: state.pid }));
+/** /health 的活体数据（probe 之后取 pid 等真实值）。 */
+async function fetchHealth(port: number): Promise<{ pid: number; port: number; uptimeMs: number }> {
+  const res = await fetch(`http://${DAEMON_HOST}:${port}/health`);
+  return (await res.json()) as { pid: number; port: number; uptimeMs: number };
 }
 
-async function statusAction(): Promise<void> {
+/**
+ * 停止守护进程。活体优先：/health 报的是当前监听者的真实 pid；状态文件的
+ * pid 可能陈尸（kill 它会误伤 pid 回收后的无关进程），只在探针失败时兜底。
+ */
+async function stopAction(): Promise<void> {
   const state = readDaemonState();
-  if (!state) {
+  const port = state?.port ?? DEFAULT_PORT;
+  let pid = state?.pid;
+  if (await probeDaemon(port)) {
+    pid = (await fetchHealth(port)).pid;
+  } else if (!state) {
     logger.info(t('out.daemon.statusNotRunning'));
     return;
   }
-  if (await probeDaemon(state.port)) {
-    const res = await fetch(`http://${DAEMON_HOST}:${state.port}/health`);
-    const health = (await res.json()) as { pid: number; port: number; uptimeMs: number };
+
+  let killedPid: number | undefined;
+  if (pid) {
+    try {
+      process.kill(pid);
+      killedPid = pid;
+    } catch {
+      // 已死/陈尸 pid——落空即清理状态。
+    }
+  }
+  clearDaemonState();
+  if (killedPid !== undefined) {
+    logger.success(t('out.daemon.stopped', { pid: killedPid }));
+  } else {
+    logger.warn(t('out.daemon.statusStale', { pid: pid ?? 0, port }));
+  }
+}
+
+/** 状态文件缺失不代表没在跑（上次 stop/异常退出可能清了它）——照探默认端口。 */
+async function statusAction(): Promise<void> {
+  const state = readDaemonState();
+  const port = state?.port ?? DEFAULT_PORT;
+  if (await probeDaemon(port)) {
+    const health = await fetchHealth(port);
     logger.info(
       t('out.daemon.statusRunning', {
         pid: health.pid,
@@ -107,10 +127,10 @@ async function statusAction(): Promise<void> {
         uptime: Math.round(health.uptimeMs / 1000),
       }),
     );
+  } else if (state) {
+    logger.warn(t('out.daemon.statusStale', { pid: state.pid, port: state.port }));
   } else {
-    logger.warn(
-      t('out.daemon.statusStale', { pid: state.pid, port: state.port }),
-    );
+    logger.info(t('out.daemon.statusNotRunning'));
   }
 }
 

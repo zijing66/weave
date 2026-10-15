@@ -31,6 +31,8 @@ export interface Command {
   subcommands?: Command[];
   /** Called when this command is matched */
   action?: (context: CommandContext) => Promise<void> | void;
+  /** Max positional args accepted (default 0 — extras are a CLI error). */
+  maxPositionals?: number;
 }
 
 /** Context passed to a command's action handler */

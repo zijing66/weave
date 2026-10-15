@@ -8,11 +8,15 @@ export const en: Record<keyof typeof zh, string> = {
   'help.usage': 'Usage: weave <command> [options]',
   'help.commands': 'Commands:',
   'help.globalOptions': 'Global options:',
+  'help.subcommands': 'Available subcommands:',
   // --- parse / run errors ---
   'cli.unknownCommand': 'Unknown command: {command}',
   'cli.error': 'Error: {error}',
   'cli.missingRequired': 'Missing required option: --{name}',
   'cli.invalidChoice': 'Invalid value for --{name}: "{value}". Choices: {choices}',
+  'cli.missingSubcommand': 'Command {command} requires a subcommand',
+  'cli.unknownSubcommand': 'Unknown subcommand: {command} {subcommand}',
+  'cli.unexpectedPositional': 'Command {command} does not accept argument "{arg}"',
   // --- global options ---
   'flag.help': 'Show help',
   'flag.version': 'Show version',
@@ -45,7 +49,6 @@ export const en: Record<keyof typeof zh, string> = {
   // --- daemon command output ---
   'out.daemon.alreadyRunning': 'Daemon already running on port {port}',
   'out.daemon.started': 'Daemon started on http://{host}:{port}',
-  'out.daemon.noState': 'No daemon state found — daemon is not running.',
   'out.daemon.stopped': 'Daemon stopped (pid {pid}).',
   'out.daemon.statusNotRunning': 'Daemon: not running',
   'out.daemon.statusRunning': 'Daemon: running (pid {pid}, port {port}, up {uptime}s)',

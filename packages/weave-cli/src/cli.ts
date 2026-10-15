@@ -25,6 +25,17 @@ function readVersion(): string {
   }
 }
 
+/** Render one command (with its subcommands, indented) as help lines. */
+function printCommandEntry(cmd: Command): void {
+  if (!cmd.description) return;
+  console.log(`  ${cmd.name.padEnd(12)}${t(cmd.description as MessageKey)}`);
+  for (const sub of cmd.subcommands ?? []) {
+    const names = [sub.name, ...(sub.aliases ?? [])].join(', ');
+    const desc = sub.description ? t(sub.description as MessageKey) : '';
+    console.log(`    ${names.padEnd(12)}${desc}`);
+  }
+}
+
 /** Help renders command/option `description` fields as dict keys. */
 function showHelp(parser: CommandParser): void {
   const version = readVersion();
@@ -32,14 +43,22 @@ function showHelp(parser: CommandParser): void {
   console.log(`${t('help.usage')}\n`);
   console.log(t('help.commands'));
   for (const cmd of parser.getAllCommands()) {
-    if (cmd.description) {
-      console.log(`  ${cmd.name.padEnd(12)}${t(cmd.description as MessageKey)}`);
-    }
+    printCommandEntry(cmd);
   }
   console.log(`\n${t('help.globalOptions')}`);
   for (const opt of parser.getGlobalOptions()) {
     const flag = opt.short ? `-${opt.short}, --${opt.name}` : `    --${opt.name}`;
     console.log(`  ${flag.padEnd(20)}${t(opt.description as MessageKey)}`);
+  }
+}
+
+/** 父命令缺/错子命令时的可用子命令清单（stderr，紧随错误行）。 */
+function showSubcommandHelp(cmd: Command): void {
+  console.error(t('help.subcommands'));
+  for (const sub of cmd.subcommands ?? []) {
+    const names = [sub.name, ...(sub.aliases ?? [])].join(', ');
+    const desc = sub.description ? t(sub.description as MessageKey) : '';
+    console.error(`  ${names.padEnd(12)}${desc}`);
   }
 }
 
@@ -89,7 +108,31 @@ export class CLI {
     }
 
     if (!cmd?.action) {
+      // 父命令（有子命令无 action）裸调用或尾部词不是其子命令——别误报
+      // unknown command；parser 把不匹配的尾部词留在 positionals 里。
+      if (cmd?.subcommands?.length) {
+        const attempted = result.positional[0];
+        if (attempted) {
+          console.error(t('cli.unknownSubcommand', { command: cmd.name, subcommand: attempted }));
+        } else {
+          console.error(t('cli.missingSubcommand', { command: cmd.name }));
+        }
+        showSubcommandHelp(cmd);
+        process.exit(1);
+      }
       console.error(t('cli.unknownCommand', { command: result.command.join(' ') }));
+      showHelp(this.parser);
+      process.exit(1);
+    }
+
+    // 叶子命令拒绝多余位置参数——此前 `weave dashboard stop` 里的 stop 被
+    // 静默忽略、照常打开了控制台。
+    const maxPositionals = cmd.maxPositionals ?? 0;
+    if (result.positional.length > maxPositionals) {
+      const path = result.command.join(' ');
+      console.error(
+        t('cli.unexpectedPositional', { command: path, arg: result.positional[maxPositionals] }),
+      );
       showHelp(this.parser);
       process.exit(1);
     }

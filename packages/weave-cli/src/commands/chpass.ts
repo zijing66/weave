@@ -44,4 +44,5 @@ export const chpassCommand: Command = {
   name: 'chpass',
   description: 'cmd.chpass.desc',
   action: chpassAction,
+  maxPositionals: 1,
 };
