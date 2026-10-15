@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { copyText } from '@/lib/clipboard';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
 import { NumberStepper } from '@/components/ui/number-stepper';
@@ -422,7 +423,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        void navigator.clipboard.writeText(u.url).then(() => {
+                        void copyText(u.url).then((ok) => {
+                          if (!ok) {
+                            show('error', t('common.copyFailed'));
+                            return;
+                          }
                           setCopiedUrl(u.url);
                           window.setTimeout(() => setCopiedUrl(null), 1500);
                         });

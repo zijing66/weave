@@ -10,6 +10,7 @@ export const commonZh = {
   'common.expand': '展开',
   'common.collapse': '折叠',
   'common.copy': '复制',
+  'common.copyFailed': '复制失败：浏览器未放行剪贴板（手机请用页面上的 HTTPS 地址访问）',
   'common.decrease': '减少',
   'common.increase': '增加',
 };
@@ -25,6 +26,8 @@ export const commonEn: Record<keyof typeof commonZh, string> = {
   'common.expand': 'Expand',
   'common.collapse': 'Collapse',
   'common.copy': 'Copy',
+  'common.copyFailed': 'Copy failed: the browser blocked clipboard access (on a phone, use the HTTPS address)',
+
   'common.decrease': 'Decrease',
   'common.increase': 'Increase',
 };

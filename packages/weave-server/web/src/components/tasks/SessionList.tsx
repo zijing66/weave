@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useToast } from '@/components/Toast';
+import { copyText } from '@/lib/clipboard';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { WatchPicker } from './WatchPicker';
@@ -126,6 +128,7 @@ export function SessionList({
   deleteStateOf?: (sessionId: string) => ActionState;
 }) {
   const t = useT();
+  const { show } = useToast();
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -245,7 +248,11 @@ export function SessionList({
   };
 
   const copyId = (sessionId: string): void => {
-    void navigator.clipboard.writeText(sessionId).then(() => {
+    void copyText(sessionId).then((ok) => {
+      if (!ok) {
+        show('error', t('common.copyFailed'));
+        return;
+      }
       setCopiedId(sessionId);
       window.setTimeout(() => setCopiedId(null), 1500);
     });

@@ -34,6 +34,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { copyText } from '@/lib/clipboard';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
@@ -580,7 +581,11 @@ export function TasksPanel({
   const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null);
   const copyGroupPrompt = (g: { id: string; prompt?: string }): void => {
     if (!g.prompt) return;
-    void navigator.clipboard.writeText(g.prompt).then(() => {
+    void copyText(g.prompt).then((ok) => {
+      if (!ok) {
+        show('error', t('common.copyFailed'));
+        return;
+      }
       setCopiedGroupId(g.id);
       window.setTimeout(() => setCopiedGroupId(null), 1500);
     });
@@ -887,7 +892,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           onInterrupt(selectedId);
                         }}
-                        className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-red-900/40 hover:text-red-300"
+                        className="shrink-0 rounded p-0.5 text-red-400/80 transition-colors hover:bg-red-900/40 hover:text-red-300"
                       >
                         <FeedbackIcon
                           state={fb.stateOf(`interrupt:${selectedId}`)}
