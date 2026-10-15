@@ -23,6 +23,10 @@ import type { NormalizedHookPayload } from './types.js';
  * 判据 = 该提醒归属 lastPreTool 且 lastPreTool 是阻塞工具：真权限对话框归属的是要批的
  * 那个工具（PreToolUse(PowerShell) → permission_prompt → PostToolUse(PowerShell)），
  * 归属非阻塞工具，照常置位，不会被误吞。
+ *
+ * 另一条：`bypassPermissions` 模式下 claude 根本不弹权限对话框（实测该模式所有
+ * permission_prompt 都是噪声），一律忽略——模式由随事件到达的 raw.permission_mode
+ * 逐条 latch（Notification 自带的 payload 不含此键，取最近一条带它的）。
  */
 
 /** 会话当前的待答问题（内存态；事件流派生）。 */
@@ -58,6 +62,8 @@ export class QuestionTracker {
   private readonly pending = new Map<string, PendingQuestionEntry>();
   /** 权限确认的上下文（最近一次 PreToolUse）：Notification 不带工具面，从这补。 */
   private readonly lastPreTool = new Map<string, { toolName: string; toolInput: unknown }>();
+  /** 会话当前权限模式（最近一条带 raw.permission_mode 的事件）。 */
+  private readonly permissionMode = new Map<string, string>();
 
   constructor(private readonly deps: QuestionTrackerDeps) {}
 
@@ -77,6 +83,8 @@ export class QuestionTracker {
     if (!spec) return;
     const sessionId = input.sessionId;
     const toolName = typeof payload.toolName === 'string' ? payload.toolName : null;
+    const mode = permissionModeOf(payload.raw);
+    if (mode) this.permissionMode.set(sessionId, mode);
 
     if (payload.eventType === 'PreToolUse') {
       if (toolName) {
@@ -98,6 +106,8 @@ export class QuestionTracker {
         spec.permissionNotificationType &&
         notificationTypeOf(payload.raw) === spec.permissionNotificationType
       ) {
+        // bypassPermissions 下不存在权限对话框，permission_prompt 必是噪声。
+        if (this.permissionMode.get(sessionId) === 'bypassPermissions') return;
         // 阻塞工具自己等输入期间补发的噪声提醒：问题面已在，别覆盖（见类注释）。
         // 判据两条件同时成立才压——只压「正卡在阻塞工具里、且这条提醒就是该工具自己」的
         // 情形；真权限对话框（lastPreTool = 待批工具）照常置位，不会被误吞。
@@ -182,11 +192,19 @@ export class QuestionTracker {
   forgetSession(sessionId: string): void {
     this.pending.delete(sessionId);
     this.lastPreTool.delete(sessionId);
+    this.permissionMode.delete(sessionId);
   }
 
   private harnessOf(source: string): Harness {
     return source as Harness; // specOf 已验 isHarness
   }
+}
+
+/** 会话权限模式（raw.permission_mode）；缺键 = null（保持上次 latch）。 */
+function permissionModeOf(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const mode = (raw as { permission_mode?: unknown }).permission_mode;
+  return typeof mode === 'string' && mode ? mode : null;
 }
 
 /** Notification 的分类键（raw.notification_type）；非 Notification/缺键 = null。 */

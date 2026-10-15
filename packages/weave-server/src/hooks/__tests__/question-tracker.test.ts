@@ -174,6 +174,22 @@ describe('QuestionTracker 状态机', () => {
     expect(entry.questions[0]!.question).toContain('PowerShell');
   });
 
+  it('bypassPermissions 模式下 permission_prompt 恒为噪声（该模式不弹权限对话框）', () => {
+    const pre = (tool: string): NormalizedHookPayload =>
+      payload({
+        eventType: 'PreToolUse',
+        toolName: tool,
+        raw: { permission_mode: 'bypassPermissions' },
+      });
+    feed(SESSION, pre('PowerShell'));
+    feed(SESSION, notification('permission_prompt'));
+    expect(tracker.get(SESSION)).toBeNull();
+
+    feed(SESSION, pre('AskUserQuestion'));
+    feed(SESSION, notification('permission_prompt'));
+    expect(tracker.get(SESSION)!.kind).toBe('question');
+  });
+
   it('权限确认无前导工具事件 → 通用文案（不瞎猜工具）', () => {
     feed(SESSION, notification('permission_prompt'));
     expect(tracker.get(SESSION)!.questions[0]!.question).toBe('Claude needs your permission');
