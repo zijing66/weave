@@ -98,7 +98,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             setPushState(await pushChannelState());
             return;
           }
-          const result = await ensurePushSubscribed();
+          const result = await ensurePushSubscribed({ force: true });
           if (result !== 'ok') {
             show('info', t('settings.pushFailed'));
             setPushState(await pushChannelState());
