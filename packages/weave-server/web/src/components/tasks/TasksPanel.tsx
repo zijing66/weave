@@ -85,6 +85,8 @@ export function TasksPanel({
   } | null>(null);
   /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
+  /** 待答弹窗目标（会话行图标与事件链组头/画布 tag 共开同一份；null = 关）。 */
+  const [answerFor, setAnswerFor] = useState<string | null>(null);
   /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
   const [groupWindow, setGroupWindow] = useState(10);
   /** 折叠条搜索：按组头可见文字过滤（开组 prompt 为主）；空串 = 不过滤。 */
@@ -785,6 +787,23 @@ export function TasksPanel({
                           {t('tasks.groupOpen')}
                         </Badge>
                       ))}
+                    {/* 最新组被挂起（AskUserQuestion/计划/权限确认）：组头亮待答
+                        tag，点击即远程作答——与画布根节点 tag、会话行图标同开一弹窗。 */}
+                    {isLatestGroup && questionOf(selectedId) && (
+                      <button
+                        type="button"
+                        title={t('tasks.answerActiveTooltip', {
+                          n: questionOf(selectedId)!.questions.length,
+                        })}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAnswerFor(selectedId);
+                        }}
+                        className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-[10px] font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
+                      >
+                        {t('tasks.answerPendingTag')}
+                      </button>
+                    )}
                     {g.subagentStops > 0 && (
                       <Badge className="shrink-0 bg-purple-900/40 text-purple-300">
                         {t('tasks.groupSubagent', { n: g.subagentStops })}
@@ -844,6 +863,8 @@ export function TasksPanel({
                           focusGroupId={g.id}
                           focusGroup={g}
                           running={isLatestGroup && activeStatus === 'running'}
+                          answerable={isLatestGroup && !!questionOf(selectedId)}
+                          onOpenAnswer={() => setAnswerFor(selectedId)}
                         />
                         <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
                           {t('tasks.legendNote')}
@@ -934,6 +955,8 @@ export function TasksPanel({
             questionOf={questionOf}
             onAnswer={onAnswerQuestion}
             answerStateOf={answerStateOf}
+            answerFor={answerFor}
+            onSetAnswerFor={setAnswerFor}
             watchOf={watchOf}
             watchStateOf={watchStateOf}
             onSubscribeWatch={onSubscribeWatch}

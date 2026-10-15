@@ -567,6 +567,9 @@ type MindmapData = {
   onToggle: (key: string) => void;
   /** 点击节点 → 右上角独立明细面板。 */
   onOpenDetail: (node: LaidNode) => void;
+  /** 组根节点挂「待答」tag（会话被阻塞问题挂起，调用方判定）→ 点击远程作答。 */
+  answerable?: boolean;
+  onOpenAnswer?: () => void;
 };
 type MindmapFlowNode = Node<MindmapData, 'mindmap'>;
 
@@ -593,7 +596,7 @@ function ModelTag({ model }: { model: string }) {
 function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
   const t = useT();
   const runningGroups = useContext(RunningGroupsCtx);
-  const { node, flash, onToggle, onOpenDetail } = data;
+  const { node, flash, onToggle, onOpenDetail, answerable, onOpenAnswer } = data;
   const chevron = node.expandable ? (
     <button
       type="button"
@@ -640,6 +643,20 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
                 {t('hooks.mindmap.openTag')}
               </span>
             ))}
+          {answerable && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenAnswer?.();
+              }}
+              className={tagCls(
+                'bg-amber-900/50 font-medium text-amber-300 transition-colors hover:bg-amber-800/60 hover:text-amber-200',
+              )}
+            >
+              {t('tasks.answerPendingTag')}
+            </button>
+          )}
           {g.subagentStops > 0 && (
             <span className={tagCls('bg-orange-900/40 text-orange-300')}>
               {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
@@ -931,6 +948,8 @@ export function LifecycleMindmap({
   focusGroupId,
   focusGroup,
   running,
+  answerable,
+  onOpenAnswer,
 }: {
   projectId: number;
   sessionId: string;
@@ -950,6 +969,11 @@ export function LifecycleMindmap({
   focusGroup?: LifecycleGroup;
   /** 会话正在干活（最新 turn 未 Stop = 执行中）：组头 tag 显「执行中」而非「未正常结束」。 */
   running?: boolean;
+  /** 该组根节点是否挂「待答」tag（调用方按会话待答态 + 该组是否被阻塞的
+   *  当前组判定；点击 tag 打开调用方的作答弹窗——组件不自持问答面）。 */
+  answerable?: boolean;
+  /** 点根节点待答 tag 的回调（打开远程作答弹窗）。 */
+  onOpenAnswer?: () => void;
 }) {
   const t = useT();
   /** 生命周期表按会话 harness 取（D7——分组差异是 harness 知识，不写死 claude）。 */
@@ -1096,10 +1120,12 @@ export function LifecycleMindmap({
           ruleName: n.dispatch ? (ruleInfo.get(n.dispatch.ruleId)?.name ?? undefined) : undefined,
           onToggle,
           onOpenDetail: openDetail,
+          answerable: n.kind === 'group' && (answerable ?? false),
+          onOpenAnswer,
         },
         draggable: true,
       })),
-    [laid.nodes, flashKey, ruleInfo, onToggle, openDetail],
+    [laid.nodes, flashKey, ruleInfo, onToggle, openDetail, answerable, onOpenAnswer],
   );
   // 箭头 + 亮蓝加粗：显著表达调用方向。锚点四分：同列时序链底出顶入；
   // 跨列层级右出左入；closure（组闭环）左出左入走外侧通道、实线成环；

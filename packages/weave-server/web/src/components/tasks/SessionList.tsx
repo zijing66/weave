@@ -74,6 +74,8 @@ export function SessionList({
   questionOf,
   onAnswer,
   answerStateOf,
+  answerFor,
+  onSetAnswerFor,
   watchOf,
   watchStateOf,
   onSubscribeWatch,
@@ -104,6 +106,11 @@ export function SessionList({
   onAnswer?: (sessionId: string, questionKey: string, optionIndex: number) => void;
   /** 作答按钮的反馈态（loading → ✅ → 还原，防重复键序）。 */
   answerStateOf?: (sessionId: string, questionKey: string) => ActionState;
+  /** 待答弹窗目标（null = 关；entry 消失 = 全部答完/解除，弹窗随之自关）。
+   *  受控：会话行图标与事件链（组头 tag / 画布卡片）共用同一份——单一弹窗
+   *  实例，不叠开。 */
+  answerFor: string | null;
+  onSetAnswerFor: (sessionId: string | null) => void;
   /** 该会话当前的 pending 订阅行（无 = 未订阅）。 */
   watchOf?: (sessionId: string) => SessionWatchRow | undefined;
   /** 订阅按钮的反馈态（loading → ✅ → 还原）。 */
@@ -120,8 +127,6 @@ export function SessionList({
   const t = useT();
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
-  /** 待答弹窗目标（null = 关；entry 消失 = 全部答完/解除，弹窗随之自关）。 */
-  const [answerFor, setAnswerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -369,7 +374,7 @@ export function SessionList({
                         })}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setAnswerFor(s.sessionId);
+                          onSetAnswerFor(s.sessionId);
                         }}
                         className={cn(
                           ACTION_BTN,
@@ -563,7 +568,7 @@ export function SessionList({
               onAnswer={(questionKey, optionIndex) =>
                 onAnswer?.(answerFor, questionKey, optionIndex)
               }
-              onClose={() => setAnswerFor(null)}
+              onClose={() => onSetAnswerFor(null)}
             />
           );
         })()}
