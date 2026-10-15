@@ -382,7 +382,7 @@ export function SessionMessages({
             stick.current = atBottom();
             if ((threadRef.current?.scrollTop ?? 1) <= 24) void loadEarlier();
           }}
-          className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden pr-1"
         >
           {entries === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
@@ -405,7 +405,9 @@ export function SessionMessages({
                 if (m.role === 'assistant') {
                   return (
                     <div key={m.key} className="flex justify-start">
-                      <div className="min-w-0 max-w-[92%] rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
+                      {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
+                          不把整块对话撑出横向滚动条 */}
+                      <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
                         <span className="mb-0.5 block text-[10px] text-neutral-600">
                           {formatStamp(m.at)}
                         </span>
@@ -437,44 +439,39 @@ export function SessionMessages({
                     {/* weave 发的（右栏投递）保持蓝底，终端里自己打的走中性底 */}
                     <div
                       className={cn(
-                        'min-w-0 max-w-[85%] rounded-lg border px-2 py-1.5',
+                        'min-w-0 max-w-[85%] overflow-x-auto rounded-lg border px-2 py-1.5',
                         pipe
                           ? 'border-blue-500/20 bg-blue-500/[0.06]'
                           : 'border-white/[0.08] bg-white/[0.02]',
                       )}
                     >
-                      {pipe && (
-                        <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                          {pipe.status !== 'delivered' && (
-                            <Badge className={cn('shrink-0', STATUS_BADGE[pipe.status])}>
-                              {t(STATUS_KEY[pipe.status])}
-                            </Badge>
-                          )}
-                          {pipe.via && (
-                            <span className="shrink-0 text-[10px] text-neutral-500">
-                              {t(VIA_KEY[pipe.via])}
-                            </span>
-                          )}
-                          {pipe.stalled === true && (
-                            <span className="shrink-0 text-[10px] text-amber-400">
-                              {t('tasks.msgStalled')}
-                            </span>
-                          )}
-                          <span className="shrink-0 text-[10px] text-neutral-600">
-                            {formatStamp(m.at)}
+                      {/* 时刻与左侧回复气泡同布局：气泡上部、靠屏幕边缘那一侧
+                          （这里右对齐），投递状态徽标与它并排 */}
+                      <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {pipe !== undefined && pipe.status !== 'delivered' && (
+                          <Badge className={cn('shrink-0', STATUS_BADGE[pipe.status])}>
+                            {t(STATUS_KEY[pipe.status])}
+                          </Badge>
+                        )}
+                        {pipe !== undefined && pipe.via != null && (
+                          <span className="shrink-0 text-[10px] text-neutral-500">
+                            {t(VIA_KEY[pipe.via])}
                           </span>
-                        </div>
-                      )}
+                        )}
+                        {pipe?.stalled === true && (
+                          <span className="shrink-0 text-[10px] text-amber-400">
+                            {t('tasks.msgStalled')}
+                          </span>
+                        )}
+                        <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
+                          {formatStamp(m.at)}
+                        </span>
+                      </div>
                       <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
                         {m.text}
                       </p>
                       {pipe?.error && (
                         <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
-                      )}
-                      {!pipe && (
-                        <span className="mt-0.5 block text-right text-[10px] text-neutral-600">
-                          {formatStamp(m.at)}
-                        </span>
                       )}
                       {pipe && (pipe.status === 'failed' || pipe.stalled === true) && (
                         <button
