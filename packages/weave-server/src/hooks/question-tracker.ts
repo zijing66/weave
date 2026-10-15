@@ -16,10 +16,13 @@ import type { NormalizedHookPayload } from './types.js';
  * permission 态由任意后续非 Notification 事件清（对话框了结必有下文）。
  * daemon 重启由 seedFromDb 按最近事件窗口重放重建。
  *
- * 例外：阻塞工具进行中（question 态）的 permission_prompt 不改写问题面——
+ * 例外：卡在阻塞工具里时，该工具自己补发的 permission_prompt 不改写问题面——
  * 实测 claude 对 AskUserQuestion/ExitPlanMode 恒在 PreToolUse 后 ~6s 补发一条
- * permission_prompt（bypassPermissions 模式也发，即纯噪声），若照单覆盖，dashboard
- * 会在用户思考的中途把真问题换成合成权限面（选项含义完全不同，答下去发错键序）。
+ * permission_prompt（bypassPermissions 模式也发，即纯噪声；可重复发），若照单覆盖，
+ * dashboard 会在用户思考的中途把真问题换成合成权限面（选项含义完全不同，答下去发错键序）。
+ * 判据 = 该提醒归属 lastPreTool 且 lastPreTool 是阻塞工具：真权限对话框归属的是要批的
+ * 那个工具（PreToolUse(PowerShell) → permission_prompt → PostToolUse(PowerShell)），
+ * 归属非阻塞工具，照常置位，不会被误吞。
  */
 
 /** 会话当前的待答问题（内存态；事件流派生）。 */
@@ -96,7 +99,16 @@ export class QuestionTracker {
         notificationTypeOf(payload.raw) === spec.permissionNotificationType
       ) {
         // 阻塞工具自己等输入期间补发的噪声提醒：问题面已在，别覆盖（见类注释）。
-        if (this.pending.get(sessionId)?.kind === 'question') return;
+        // 判据两条件同时成立才压——只压「正卡在阻塞工具里、且这条提醒就是该工具自己」的
+        // 情形；真权限对话框（lastPreTool = 待批工具）照常置位，不会被误吞。
+        const last = this.lastPreTool.get(sessionId);
+        if (
+          this.pending.get(sessionId)?.kind === 'question' &&
+          last != null &&
+          spec.blockingTools.includes(last.toolName)
+        ) {
+          return;
+        }
         const ctx = this.lastPreTool.get(sessionId) ?? { toolName: null, toolInput: null };
         this.pending.set(sessionId, {
           sessionId,

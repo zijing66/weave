@@ -165,6 +165,15 @@ describe('QuestionTracker 状态机', () => {
     expect(entry.questions[0]!.question).toBe('Which library?');
   });
 
+  it('真权限对话框（归属非阻塞工具）不受抑制——该覆盖就覆盖', () => {
+    feed(SESSION, preTool('AskUserQuestion', AUA_INPUT));
+    feed(SESSION, preTool('PowerShell', { command: 'npm publish' }));
+    feed(SESSION, notification('permission_prompt'));
+    const entry = tracker.get(SESSION)!;
+    expect(entry.kind).toBe('permission');
+    expect(entry.questions[0]!.question).toContain('PowerShell');
+  });
+
   it('权限确认无前导工具事件 → 通用文案（不瞎猜工具）', () => {
     feed(SESSION, notification('permission_prompt'));
     expect(tracker.get(SESSION)!.questions[0]!.question).toBe('Claude needs your permission');
