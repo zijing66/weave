@@ -1163,6 +1163,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ answers }),
     }),
+  /** 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）。 */
+  interruptSession: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: 'POST' }),
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>
     apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),

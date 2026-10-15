@@ -28,7 +28,7 @@ import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -214,6 +214,21 @@ export function TasksPanel({
   const answerStateOf = useCallback(
     (sessionId: string) => fb.stateOf(`answer:${sessionId}`),
     [fb],
+  );
+  /** 停止会话：向 pane 打一记 ESC（长工具卡住 / API 报错重试 / 模态框都吃这一记），
+   *  打不进终端的原因由 409 文案说清（没开窗口、终端不支持文本）。 */
+  const onInterrupt = useCallback(
+    (sessionId: string): void => {
+      void fb.run(
+        `interrupt:${sessionId}`,
+        async () => {
+          await api.interruptSession(sessionId);
+          show('success', t('tasks.stopOk'));
+        },
+        { fail: (e) => t('tasks.stopFail', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, show],
   );
   const onSubscribeWatch = useCallback(
     (sessionId: string, on: WatchOn[], times: number | null): void => {
@@ -860,6 +875,26 @@ export function TasksPanel({
                       <span className="shrink-0">
                         <HarnessIcon harness={selectedHarness} running />
                       </span>
+                    )}
+                    {/* 停止：最新组头（该会话当前那一折）上的会话级动作——会话还活着
+                        就有可停的东西，不按 running 门控（卡在 API 报错重试时会静默超
+                        窗口、状态回落 open，恰好是最需要这一记的时候）。 */}
+                    {isLatestGroup && activeStatus !== 'closed' && activeStatus !== 'terminated' && (
+                      <button
+                        type="button"
+                        title={t('tasks.stopTooltip')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInterrupt(selectedId);
+                        }}
+                        className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-red-900/40 hover:text-red-300"
+                      >
+                        <FeedbackIcon
+                          state={fb.stateOf(`interrupt:${selectedId}`)}
+                          className="h-3 w-3"
+                          icon={<Square className="h-3 w-3" />}
+                        />
+                      </button>
                     )}
                   </div>
                   {expanded && (
