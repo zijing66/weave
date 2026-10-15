@@ -31,12 +31,14 @@ import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
+import { detectProjectUpdateCounts } from '../install/updates.js';
 import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { SessionLivenessRefresher } from './session-liveness-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
+import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
@@ -214,15 +216,25 @@ export function startDaemon(): void {
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
+  // 数据变更帧总线：SSE 的载荷推送源（各隐藏刷新器共用一条）。
+  const dataBus = new DataBus();
+  // 项目行「有更新待同步」角标：项目插件源（`.weave/plugins` 的模板）变更 →
+  // 重算全项目漂移、值变才推绝对值快照（含 0）。
+  const updatesRefresher = new ProjectUpdatesRefresher(
+    () => detectProjectUpdateCounts(projects.list(), libraries.list(), fingerprintCache),
+    dataBus,
+    hookBus,
+    () => dataBus.hasSubscribers(),
+  );
   const syncScheduler = new SyncScheduler(projects, libraries, {
     cache: fingerprintCache,
     plugins: pluginManager,
+    onSynced: () => void updatesRefresher.refreshNow(true),
   });
   syncScheduler.start();
-  // 数据变更帧总线 + 终端角标的隐藏刷新：前端不再轮询角标，改由后端「有人看时
-  // 每 30s 探一次、只在值变化时推」。探测本身要 spawn `wezterm cli`，所以绑
-  // SSE 客户端数——没人开看板就一次都不探。
-  const dataBus = new DataBus();
+  // 终端角标的隐藏刷新：前端不再轮询角标，改由后端「有人看时每 30s 探一次、
+  // 只在值变化时推」。探测本身要 spawn `wezterm cli`，所以绑 SSE 客户端数
+  // ——没人开看板就一次都不探。
   const terminalRefresher = new TerminalCountsRefresher(
     () => readTerminalCounts(projects.list()),
     dataBus,
@@ -301,6 +313,7 @@ export function startDaemon(): void {
     dataBus,
     terminalRefresher,
     inflightRefresher,
+    updatesRefresher,
     hookDispatcher,
     hookRunner,
     messageDeliverer,

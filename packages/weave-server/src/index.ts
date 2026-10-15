@@ -123,7 +123,12 @@ export type { SkillSource, LibraryIndex, FileAssetSource } from './install/libra
 export { hashSkillDir, maxMtimeDir, hashMcpConfig, hashFile, FingerprintCache } from './install/fingerprint.js';
 export type { FingerprintCacheEntry } from './install/fingerprint.js';
 export { projectFileNamespaces, projectPackFiles } from './hooks/toolkit.js';
-export { detectUpdates, detectSkillUpdates, detectFileAssetUpdates } from './install/updates.js';
+export {
+  detectUpdates,
+  detectSkillUpdates,
+  detectFileAssetUpdates,
+  detectProjectUpdateCounts,
+} from './install/updates.js';
 export type { SkillUpdate, McpUpdate, FileAssetUpdate, UpdateReport } from './install/updates.js';
 export { detectPluginTemplateUpdates } from './install/plugin-templates.js';
 export type { PluginTemplateUpdate, PluginTemplateCategory } from './install/plugin-templates.js';

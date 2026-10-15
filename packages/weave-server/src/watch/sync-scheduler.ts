@@ -25,6 +25,12 @@ export interface SyncSchedulerOptions {
   cache?: FingerprintCache;
   /** 插件清单源（D3 项目同步的 knownIds）；缺省跳过插件同步。 */
   plugins?: Pick<PluginManager, 'list'>;
+  /**
+   * 一轮同步落地后的对账面（项目角标刷新器）。资产写盘会经 watch → SSE 回流，
+   * 但项目插件模板的物化落点（`.claude/` 副本）不带 plugin.reloaded——角标只能
+   * 靠这一下对账，否则 autoSync 清掉漂移后角标会一直亮着。
+   */
+  onSynced?: () => void;
 }
 
 export class SyncScheduler {
@@ -32,6 +38,7 @@ export class SyncScheduler {
   private readonly intervalMs: number;
   private readonly cache: FingerprintCache;
   private readonly plugins?: Pick<PluginManager, 'list'>;
+  private readonly onSynced?: () => void;
   private running = false;
 
   constructor(
@@ -42,6 +49,7 @@ export class SyncScheduler {
     this.intervalMs = options.intervalMs ?? 60_000;
     this.cache = options.cache ?? new FingerprintCache();
     this.plugins = options.plugins;
+    this.onSynced = options.onSynced;
   }
 
   start(): void {
@@ -81,6 +89,7 @@ export class SyncScheduler {
         if (report.available === 0) continue;
         await syncAll(project.path, libs, this.cache, index);
         await markSynced(project.path, new Date().toISOString());
+        this.onSynced?.();
       }
     } finally {
       this.running = false;

@@ -43,6 +43,9 @@ import { DataBus } from './data-bus.js';
 import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import { SessionLivenessRefresher } from './session-liveness-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
+import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
+import { FingerprintCache } from '../install/fingerprint.js';
+import { detectProjectUpdateCounts } from '../install/updates.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
@@ -232,6 +235,15 @@ async function main(): Promise<void> {
     dataBus,
     hookBus,
   );
+  // 项目行「有更新待同步」角标：项目插件根变更（plugin.reloaded）重算、值变才推。
+  // dev 入口没有 SyncScheduler（autoSync 不在此跑），故只有事件与新客户端两个触发源。
+  const updatesFingerprints = new FingerprintCache();
+  const updatesRefresher = new ProjectUpdatesRefresher(
+    () => detectProjectUpdateCounts(projects.list(), libraries.list(), updatesFingerprints),
+    dataBus,
+    hookBus,
+    () => dataBus.hasSubscribers(),
+  );
   // 空会话自动清理（与生产入口同一装配点）：dev 入口此前漏挂 → 只残留一条
   // SessionStart 的会话在 dev 下永不消失，一直挂在会话列表里显示「就绪」。
   startSessionSweeper({
@@ -280,6 +292,7 @@ async function main(): Promise<void> {
     dataBus,
     terminalRefresher,
     inflightRefresher,
+    updatesRefresher,
     hookDispatcher,
     hookRunner,
     messageDeliverer,

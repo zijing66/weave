@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { detectPluginTemplateUpdates, materializePluginTemplate } from '../plugin-templates.js';
-import { detectUpdates } from '../updates.js';
+import { detectProjectUpdateCounts, detectUpdates } from '../updates.js';
 import { syncAll } from '../apply-update.js';
 import { FingerprintCache } from '../fingerprint.js';
 
@@ -99,5 +99,23 @@ describe('更新报告 / 同步面接入', () => {
     expect(existsSync(targetOf('agent'))).toBe(true);
     expect(existsSync(path.join(targetOf('skill'), 'SKILL.md'))).toBe(true);
     expect((await detectUpdates(projectDir, [], new FingerprintCache())).available).toBe(0);
+  });
+
+  it('detectProjectUpdateCounts 一次算全项目（无漂移 = 0，角标推送面数据源）', async () => {
+    writePlugin();
+    const empty = mkdtempSync(path.join(tmpdir(), 'weave-pt-empty-'));
+    try {
+      const counts = await detectProjectUpdateCounts(
+        [
+          { id: 1, path: projectDir },
+          { id: 2, path: empty },
+        ],
+        [],
+        new FingerprintCache(),
+      );
+      expect(counts).toEqual({ 1: 2, 2: 0 });
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });

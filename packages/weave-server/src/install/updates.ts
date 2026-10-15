@@ -118,6 +118,25 @@ export async function detectUpdates(
 }
 
 /**
+ * 全项目「有更新待同步」计数（projectId → available，含 0）：项目行角标推送面
+ * 的数据源。与 `GET /projects/:id/updates` 同一检测函数（同源不双算），库索引
+ * 一轮构建一次、整轮复用。
+ */
+export async function detectProjectUpdateCounts(
+  projects: ReadonlyArray<{ id: number; path: string }>,
+  libraries: LibraryRow[],
+  cache: FingerprintCache,
+): Promise<Record<number, number>> {
+  const index = await buildLibraryIndex(libraries);
+  const counts: Record<number, number> = {};
+  for (const project of projects) {
+    const report = await detectUpdates(project.path, libraries, cache, index);
+    counts[project.id] = report.available;
+  }
+  return counts;
+}
+
+/**
  * 把账本里"账上有、盘上无"的资产并进报告（标记 `missing` + `outdated`，复用
  * syncAll 已有的重装路径）。库源已消失的条目跳过——无从重装，标出来只会让
  * 同步报错。scope 只认 project：全局资产是用户级共享，不随项目同步走。

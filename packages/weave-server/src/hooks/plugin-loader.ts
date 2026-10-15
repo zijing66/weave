@@ -290,7 +290,11 @@ export class WeavePluginLoader implements PluginHost {
     const watchers = [...this.roots.entries()]
       .filter(([root]) => existsSync(root))
       .map(([root, meta]) => {
-        const w = fsWatch(root, { ignoreInitial: true, depth: meta.deep ? 6 : 2 });
+        // 浅根只需 2 层（manifest/rules 都在一二层）；项目根多要一层——模板源可落
+        // `skills/<name>/SKILL.md`（相对根深度 3），只到 2 会漏掉这类改动，项目行
+        // 的「有更新待同步」角标就不亮。
+        const depth = meta.deep ? 6 : meta.projectId !== null ? 3 : 2;
+        const w = fsWatch(root, { ignoreInitial: true, depth });
         w.on('all', () => {
           const existing = timers.get(root);
           if (existing) clearTimeout(existing);

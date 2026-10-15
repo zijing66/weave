@@ -18,6 +18,7 @@ import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
 import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
+import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
@@ -170,6 +171,8 @@ export interface WeaveServerDeps {
   terminalRefresher?: TerminalCountsRefresher;
   /** 在途消息角标（会话行）的推送器：新 SSE 客户端接入时补一份首帧快照。 */
   inflightRefresher?: InflightCountsRefresher;
+  /** 项目行「有更新待同步」角标（含项目插件模板漂移）：源变更/同步落地后对账。 */
+  updatesRefresher?: ProjectUpdatesRefresher;
   /** Event dispatcher; hook 文件化后由 inbox 消费线程（inbox-worker）驱动。 */
   hookDispatcher?: HookDispatcher;
   /** 指令池 resume 执行器；POST /hooks/dispatches/:id/run 依赖它。 */
@@ -1219,6 +1222,9 @@ async function handleRequest(
         // 失败只丢附加字段，不改资产同步结果（R8）
       }
       sendJson(res, 200, payload);
+      // 角标对账：物化落点是 `.claude/` 副本（不动 `.weave/plugins` 源），不会
+      // 触发 plugin.reloaded——同步动作自己推一帧绝对值，其他客户端才不用等 hover。
+      void deps.updatesRefresher?.refreshNow(true);
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Sync failed' });
     }
@@ -1556,6 +1562,8 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
   deps.inflightRefresher?.refreshNow();
   // 终端角标同理：先补上次快照（无则跳过），再后台对一次账补差量——前端零轮询。
   deps.terminalRefresher?.onSubscriberJoin();
+  // 项目行更新角标：补一份绝对值快照（含 0），页面一打开即准确，不必等 hover。
+  deps.updatesRefresher?.onSubscriberJoin();
 
   req.on('close', () => {
     for (const unsubscribe of unsubscribes) unsubscribe();

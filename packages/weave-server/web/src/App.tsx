@@ -553,9 +553,15 @@ function Dashboard() {
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;
         }
-        // 数据帧：后端已算好的载荷直接写状态（目前只有终端角标）。
+        // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
         if (frame.type === 'push' && frame.key === 'terminalCounts') {
           setTerminalCounts((frame.payload as { counts: Record<number, number> }).counts);
+          return;
+        }
+        // 项目更新角标：绝对值快照整体覆盖（含 0 = 角标归零）——与 hover 懒拉共用
+        // 同一个 updatesMap，push 到达后即以它为准，不双源。
+        if (frame.type === 'push' && frame.key === 'updates') {
+          setUpdatesMap((frame.payload as { counts: Record<number, number> }).counts ?? {});
           return;
         }
         // 其余数据帧是失效键，收到后按 key 调既有 fetcher 重拉（后续逐个接入）。
