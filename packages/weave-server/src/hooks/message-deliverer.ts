@@ -94,7 +94,7 @@ export interface PromptTerminal {
   locatePane?(env: Record<string, string>): Promise<string | null>;
   /** 往 pane 注入一段 prompt（原文 + 提交键）。 */
   sendText(paneId: string, text: string): Promise<void>;
-  /** 裸键序注入（作答路径：模态框只吃键盘，不吃粘贴文本）。 */
+  /** 裸键序注入（作答的选项键 / 中断的 ESC：模态框只吃键盘，不吃粘贴文本）。 */
   sendKeys(paneId: string, keys: string): Promise<void>;
 }
 

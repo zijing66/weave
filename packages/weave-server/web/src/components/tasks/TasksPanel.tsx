@@ -935,7 +935,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           copyGroupPrompt(g);
                         }}
-                        className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200"
                       >
                         {copiedGroupId === g.id ? (
                           <Check className="h-3 w-3 text-emerald-400" />
@@ -960,7 +960,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           onInterrupt(selectedId);
                         }}
-                        className="shrink-0 rounded p-0.5 text-red-400/80 transition-colors hover:bg-red-900/40 hover:text-red-300"
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-red-300"
                       >
                         <FeedbackIcon
                           state={fb.stateOf(`interrupt:${selectedId}`)}

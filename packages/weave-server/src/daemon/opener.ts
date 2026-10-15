@@ -590,15 +590,16 @@ class WeztermBackend extends TerminalBackend {
   }
 
   /**
-   * 阻塞问答作答：裸键序（数字 + 可选 CR）原样进 pty——`--no-paste` 绕过
-   * bracketed paste，CR 字节即回车键。mux 定位口径与 sendPromptText 同。
+   * 裸键序进 pty（阻塞问答作答 / 会话中断的 ESC 共用这一条通道）：`--no-paste`
+   * 绕过 bracketed paste，CR 字节即回车键、ESC 即中断。mux 定位口径与
+   * sendPromptText 同。
    */
   override async sendKeys(paneId: string, keys: string): Promise<void> {
     const parsed = parsePromptPaneId(paneId);
     if (!parsed) throw new Error(`Invalid prompt pane "${paneId}"`);
     const { muxes } = await weztermLiveMuxes();
     const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
-    if (!mux) throw new Error('wezterm instance is gone — cannot send answer keys');
+    if (!mux) throw new Error('wezterm instance is gone — cannot send keys to the pane');
     const pane = String(parsed.paneId);
     const sent = await weztermCli(
       ['cli', 'send-text', '--pane-id', pane, '--no-paste', keys],
