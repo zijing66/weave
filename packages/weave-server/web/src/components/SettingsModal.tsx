@@ -23,7 +23,16 @@ import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
+import { NumberStepper } from '@/components/ui/number-stepper';
 import { registerInvalidator } from '@/lib/sse';
+import { useToast } from '@/components/Toast';
+import {
+  ensurePushSubscribed,
+  pushChannelState,
+  unsubscribePush,
+  type PushChannelState,
+} from '@/lib/push';
+import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 
 /** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events——本地扩展。 */
 type DaemonSettingsExt = DaemonSettings & { events?: { retentionDays: number } };
@@ -308,29 +317,40 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </label>
             <p className="text-[11px] text-neutral-500">{t('settings.retentionDaysHint')}</p>
             <div className="flex items-center gap-2">
-              <input
-                type="number"
+              <NumberStepper
+                value={settings?.events?.retentionDays ?? DEFAULT_RETENTION_DAYS}
                 min={1}
                 max={3650}
-                value={settings?.events?.retentionDays ?? DEFAULT_RETENTION_DAYS}
-                onChange={(e) => {
-                  const n = Number.parseInt(e.target.value, 10);
-                  setSettings((s) =>
-                    s
-                      ? {
-                          ...s,
-                          events: {
-                            retentionDays:
-                              Number.isFinite(n) && n >= 1 ? Math.min(n, 3650) : 1,
-                          },
-                        }
-                      : s,
-                  );
-                }}
-                className="w-24 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                onChange={(v) =>
+                  setSettings((s) => (s ? { ...s, events: { retentionDays: v } } : s))
+                }
+                title={t('settings.retentionDays')}
               />
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
+          </div>
+
+          {/* 推送通道（本浏览器开关，非 daemon 配置）：页面关掉后提醒仍能到达。 */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Bell className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="text-xs font-medium text-neutral-300">{t('settings.push')}</label>
+              <span className="ml-auto">
+                <Switch
+                  checked={pushState === 'on'}
+                  disabled={pushState == null || pushState === 'insecure' || pushState === 'unsupported'}
+                  onChange={onTogglePush}
+                  title={t('settings.push')}
+                />
+              </span>
+            </div>
+            <p className="text-[11px] text-neutral-500">
+              {pushState === 'insecure'
+                ? t('settings.pushInsecure')
+                : pushState === 'unsupported'
+                  ? t('settings.pushUnsupported')
+                  : t('settings.pushHint')}
+            </p>
           </div>
 
           {/* 对外访问地址：服务端派生（全部 IP × 已开协议），只读展示 + 逐行复制。 */}

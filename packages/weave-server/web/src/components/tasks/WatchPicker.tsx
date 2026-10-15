@@ -4,6 +4,7 @@ import { Check, X } from 'lucide-react';
 import type { SessionWatchRow, WatchOn } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
+import { NumberStepper } from '@/components/ui/number-stepper';
 
 /** 可选触发类型（顺序即展示序）；标签/说明全走 i18n 表。 */
 const KINDS: WatchOn[] = ['idle', 'turnEnd', 'messageFailed'];
@@ -137,14 +138,13 @@ export function WatchPicker({
           <span className="text-[11px] text-neutral-400">
             {t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
           </span>
-          <input
-            type="number"
+          <NumberStepper
+            value={times}
             min={1}
             max={100}
-            value={times}
             disabled={persistent}
-            onChange={(e) => setTimes(Math.min(100, Math.max(1, Number(e.target.value) || 1)))}
-            className="w-16 rounded border border-white/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none disabled:opacity-40"
+            onChange={setTimes}
+            title={t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
           />
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-neutral-300">
             <input
@@ -168,7 +168,7 @@ export function WatchPicker({
             }
             className="flex-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
           >
-            {t('tasks.watchSubscribe')}
+            {t(current ? 'tasks.watchUpdate' : 'tasks.watchSubscribe')}
           </button>
           {current && (
             <button

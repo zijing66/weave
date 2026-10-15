@@ -36,6 +36,7 @@ import {
   parseColorInput,
 } from '@/lib/statusline-color';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { NumberStepper } from '@/components/ui/number-stepper';
 import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -860,14 +861,12 @@ export function StatuslinePanel({
             <span className="text-neutral-600">|</span>
             <label className="flex items-center gap-1.5">
               {t('statusline.refresh')}
-              <input
-                type="number"
-                min={1}
+              <NumberStepper
                 value={config.refreshInterval}
+                min={1}
                 disabled={!editable}
-                onChange={(e) => patch({ refreshInterval: Math.max(1, Number(e.target.value) || 1) })}
-                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-12 text-center disabled:opacity-40"
-                title={t('statusline.refreshHint')}
+                onChange={(v) => patch({ refreshInterval: v })}
+                title={t('statusline.refresh')}
               />
               <span className="text-neutral-600">s</span>
               <span className="text-neutral-600 text-[10px]">{t('statusline.refreshNote')}</span>
@@ -952,14 +951,12 @@ export function StatuslinePanel({
           <div className="flex items-center gap-3 text-xs text-neutral-400">
             <label className="flex items-center gap-2">
               {t('statusline.bar')}
-              <input
-                type="number"
+              <NumberStepper
+                value={config.bar.cells}
                 min={1}
                 max={40}
-                value={config.bar.cells}
                 disabled={!editable}
-                onChange={(e) => patch({ bar: { ...config.bar, cells: Number(e.target.value) || 1 } })}
-                className="bg-neutral-900 rounded px-2 py-0.5 font-mono w-14 disabled:opacity-40"
+                onChange={(v) => patch({ bar: { ...config.bar, cells: v } })}
                 title={t('statusline.barCellsHint')}
               />
             </label>
