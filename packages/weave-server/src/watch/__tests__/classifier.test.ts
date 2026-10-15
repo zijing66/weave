@@ -21,7 +21,7 @@ describe('classifyAsset', () => {
     ['.claude/settings.local.json', 'settings'],
     ['.claude/skills/foo/SKILL.md', 'skill'],
     ['.claude/commands/review.md', 'command'],
-    ['.claude/agents/coder.md', 'agent'],
+    ['.claude/agents/writer.md', 'agent'],
     ['.claude/helpers/format.sh', 'helper'],
     ['.claude/todos/abc.md', 'other'],
     ['.weave/token', 'other'],

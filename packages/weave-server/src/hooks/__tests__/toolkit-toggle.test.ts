@@ -210,14 +210,14 @@ describe('toolkit 启用/禁用（硬闸）', () => {
 
   it('闸①：enable 全局安装+项目启用（项目零副本、CC-only 不写 toolkit 账本）；disable 关项目启用、全局保留', async () => {
     const before = await snapshot(projectDir);
-    const { pack } = await service.enable(project.id, 'docs-reminder');
+    const { pack } = await service.enable(project.id, 'weave-plugin-creator');
     expect(pack.enabled).toBe(true);
     const landed = await snapshot(projectDir);
     // 项目零 CC 副本（宿主不扫描项目插件位）
     expect(Object.keys(landed).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
     // CC-only 包不写 `.weave/toolkit/` 账本——生效链只在 installed_plugins +
     // 项目 enabledPlugins（用户边界：mod 启用与 weave 装配账本无关）
-    expect(landed['.weave/toolkit/docs-reminder.json']).toBeUndefined();
+    expect(landed['.weave/toolkit/weave-plugin-creator.json']).toBeUndefined();
     // 全局位落盘：weave marketplace 拷贝 + installed_plugins 登记
     const mktCopy = JSON.parse(
       await readFile(
@@ -226,19 +226,19 @@ describe('toolkit 启用/禁用（硬闸）', () => {
           '.claude',
           'weave-marketplace',
           'plugins',
-          'docs-reminder',
+          'weave-plugin-creator',
           '.claude-plugin',
           'plugin.json',
         ),
         'utf8',
       ),
     ) as { name?: string };
-    expect(mktCopy.name).toBe('docs-reminder');
-    expect(await installedKeys()).toContain('docs-reminder@weave');
+    expect(mktCopy.name).toBe('weave-plugin-creator');
+    expect(await installedKeys()).toContain('weave-plugin-creator@weave');
     // 项目 enabledPlugins 开
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'docs-reminder@weave': true });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-plugin-creator@weave': true });
 
-    await service.disable(project.id, 'docs-reminder');
+    await service.disable(project.id, 'weave-plugin-creator');
     const after = await snapshot(projectDir);
     const { '.claude/settings.json': _beforeSettings, ...beforeRest } = before;
     const { '.claude/settings.json': _afterSettings, ...afterRest } = after;
@@ -248,60 +248,60 @@ describe('toolkit 启用/禁用（硬闸）', () => {
       await readFile(path.join(projectDir, '.claude', 'settings.json'), 'utf8'),
     ) as Record<string, unknown>;
     expect(settings.hooks).toHaveProperty('Stop');
-    expect(settings.enabledPlugins).toEqual({ 'docs-reminder@weave': false });
+    expect(settings.enabledPlugins).toEqual({ 'weave-plugin-creator@weave': false });
     // 全局安装保留；记录按既有语义删除
-    expect(await installedKeys()).toContain('docs-reminder@weave');
-    expect(after['.weave/toolkit/docs-reminder.json']).toBeUndefined();
+    expect(await installedKeys()).toContain('weave-plugin-creator@weave');
+    expect(after['.weave/toolkit/weave-plugin-creator.json']).toBeUndefined();
   });
 
   it('闸②：改写分支——改写文件保留，其余按 checksum 还原；全局安装保留', async () => {
-    await service.enable(project.id, 'code-review');
-    const rewritten = '.codex/skills/code-review/SKILL.md';
+    await service.enable(project.id, 'weave-user-guide');
+    const rewritten = '.codex/skills/weave-user-guide/SKILL.md';
     await writeFile(path.join(projectDir, ...rewritten.split('/')), '// user rewrote this\n');
 
-    await service.disable(project.id, 'code-review');
+    await service.disable(project.id, 'weave-user-guide');
     const after = await snapshot(projectDir);
     expect(after[rewritten]).toBe(await hashFile(path.join(projectDir, ...rewritten.split('/'))));
     // 项目零 CC 副本；记录删除
     expect(Object.keys(after).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
-    expect(after['.weave/toolkit/code-review.json']).toBeUndefined();
+    expect(after['.weave/toolkit/weave-user-guide.json']).toBeUndefined();
     // 用户原文件仍在
     expect(after['.claude/settings.json']).toBeTruthy();
     // 全局安装保留（disable 只关项目启用）
-    expect(await installedKeys()).toContain('code-review@weave');
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': false });
+    expect(await installedKeys()).toContain('weave-user-guide@weave');
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-user-guide@weave': false });
   });
 
   it('闸③：重复 enable 幂等——第二次无任何写入（快照零变化）', async () => {
-    await service.enable(project.id, 'docs-reminder');
+    await service.enable(project.id, 'weave-plugin-creator');
     const first = await snapshot(projectDir);
-    const again = await service.enable(project.id, 'docs-reminder');
+    const again = await service.enable(project.id, 'weave-plugin-creator');
     expect(again.pack.enabled).toBe(true);
     expect(await snapshot(projectDir)).toEqual(first);
   });
 
   it('闸④：非 targets 表面零写入（项目零 CC 副本；双目标双落）', async () => {
-    await service.enable(project.id, 'docs-reminder');
+    await service.enable(project.id, 'weave-plugin-creator');
     const files = Object.keys(await snapshot(projectDir));
     expect(files.some((f) => f.startsWith('.codex/'))).toBe(false);
     expect(files.some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
 
-    await service.enable(project.id, 'code-review');
+    await service.enable(project.id, 'weave-user-guide');
     const all = await snapshot(projectDir);
     // claude：全局安装，项目零副本
-    expect(all['.claude/plugins/code-review/.claude-plugin/plugin.json']).toBeUndefined();
-    expect(await installedKeys()).toContain('code-review@weave');
+    expect(all['.claude/plugins/weave-user-guide/.claude-plugin/plugin.json']).toBeUndefined();
+    expect(await installedKeys()).toContain('weave-user-guide@weave');
     // codex：表面解包 skills（cc 包不重复解 claude skills）
-    expect(all['.codex/skills/code-review/SKILL.md']).toBeTruthy();
-    expect(all['.claude/skills/code-review/SKILL.md']).toBeUndefined();
+    expect(all['.codex/skills/weave-user-guide/SKILL.md']).toBeTruthy();
+    expect(all['.claude/skills/weave-user-guide/SKILL.md']).toBeUndefined();
   });
 
   it('闸⑤：内置与市场同包 enable 结果一致（provenance/注册键随来源，其余零差）', async () => {
     // 镜像内置结构到市场根（scope 字段也要一致）
     await cp(BUILTIN_ROOT, extRoot, { recursive: true });
 
-    const a = await service.enable(project.id, 'code-review', BUILTIN_ROOT);
-    const b = await service.enable(project2.id, 'code-review', extRoot);
+    const a = await service.enable(project.id, 'weave-user-guide', BUILTIN_ROOT);
+    const b = await service.enable(project2.id, 'weave-user-guide', extRoot);
 
     // namespace 与 key 同源（都由来源根经 marketIdOf 决定）：随来源而异的字段
     // 一并剔除，剩下的是「包内容推出来的东西」。⚠ 本用例的内置根是**包内源码目录**
@@ -315,8 +315,8 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     expect(a.pack.provenance).toBe('builtin');
     expect(b.pack.provenance).toBe('market');
     // 注册键随市场身份——不同来源不撞同一个 CC 注册位
-    expect(a.pack.key).toBe('code-review@weave');
-    expect(b.pack.key).toBe('code-review@tk-mkt');
+    expect(a.pack.key).toBe('weave-user-guide@weave');
+    expect(b.pack.key).toBe('weave-user-guide@tk-mkt');
     // 实际落盘（表面解包部分）逐文件一致；项目零 CC 副本
     const landed = async (dir: string): Promise<Record<string, string>> => {
       const snap = await snapshot(dir);
@@ -329,52 +329,52 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     // 各注册键各装一次（namespace 不同 = 不同插件，不共用全局位）
     expect(execCalls.filter((args) => args[1] === 'install')).toHaveLength(2);
     expect(await installedKeys()).toEqual(
-      expect.arrayContaining(['code-review@weave', 'code-review@tk-mkt']),
+      expect.arrayContaining(['weave-user-guide@weave', 'weave-user-guide@tk-mkt']),
     );
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': true });
-    expect(await enabledPluginsOf(project2.path)).toEqual({ 'code-review@tk-mkt': true });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-user-guide@weave': true });
+    expect(await enabledPluginsOf(project2.path)).toEqual({ 'weave-user-guide@tk-mkt': true });
   });
 
   it('两项目共享全局位、enabledPlugins 各自独立', async () => {
-    await service.enable(project.id, 'code-review');
-    await service.enable(project2.id, 'code-review');
+    await service.enable(project.id, 'weave-user-guide');
+    await service.enable(project2.id, 'weave-user-guide');
 
     // 全局位只装一次（两项目共享同一全局安装）
     expect(execCalls.filter((args) => args[1] === 'install')).toHaveLength(1);
-    expect(await installedKeys()).toContain('code-review@weave');
+    expect(await installedKeys()).toContain('weave-user-guide@weave');
 
     // enabledPlugins 各自独立：各项目自己的 settings
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': true });
-    expect(await enabledPluginsOf(project2.path)).toEqual({ 'code-review@weave': true });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-user-guide@weave': true });
+    expect(await enabledPluginsOf(project2.path)).toEqual({ 'weave-user-guide@weave': true });
 
     // 关 project2 不影响 project1
-    await service.disable(project2.id, 'code-review');
-    expect(await enabledPluginsOf(project2.path)).toEqual({ 'code-review@weave': false });
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'code-review@weave': true });
-    expect((await service.list(project.id)).packs.find((p) => p.id === 'code-review')?.enabled).toBe(
+    await service.disable(project2.id, 'weave-user-guide');
+    expect(await enabledPluginsOf(project2.path)).toEqual({ 'weave-user-guide@weave': false });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-user-guide@weave': true });
+    expect((await service.list(project.id)).packs.find((p) => p.id === 'weave-user-guide')?.enabled).toBe(
       true,
     );
     expect(
-      (await service.list(project2.id)).packs.find((p) => p.id === 'code-review')?.enabled,
+      (await service.list(project2.id)).packs.find((p) => p.id === 'weave-user-guide')?.enabled,
     ).toBe(false);
   });
 
   it('存量项目副本读时自愈：record 前缀条目按 checksum 删副本重写 record；孤儿副本报 legacyCopies 并可清理', async () => {
     // 伪造旧管线状态：CC 包整体复制进项目插件位 + 记录文件
-    const rel = '.claude/plugins/docs-reminder/hooks/reminder.cjs';
+    const rel = '.claude/plugins/weave-plugin-creator/skills/weave-plugin-creator/SKILL.md';
     const abs = path.join(projectDir, ...rel.split('/'));
     await mkdir(path.dirname(abs), { recursive: true });
     await writeFile(abs, '// copied by legacy pipeline\n');
-    const recPath = path.join(projectDir, '.weave', 'toolkit', 'docs-reminder.json');
+    const recPath = path.join(projectDir, '.weave', 'toolkit', 'weave-plugin-creator.json');
     await mkdir(path.dirname(recPath), { recursive: true });
     await writeFile(
       recPath,
       JSON.stringify(
         {
-          packId: 'docs-reminder',
+          packId: 'weave-plugin-creator',
           provenance: 'builtin',
           sourceRoot: BUILTIN_ROOT,
-          sourceDir: path.join(BUILTIN_ROOT, 'doc-hooks', 'docs-reminder'),
+          sourceDir: path.join(BUILTIN_ROOT, 'core-skills', 'weave-plugin-creator'),
           enabledAt: new Date().toISOString(),
           files: { [rel]: await hashFile(abs) },
         },
@@ -527,11 +527,11 @@ describe('toolkit 启用/禁用（硬闸）', () => {
 
   it('meta 索引同步：enable 记入 projects.meta.toolkit.enabled，disable 移除', async () => {
     expect(projects.getMeta(project.id)?.['toolkit']).toBeUndefined();
-    await service.enable(project.id, 'docs-reminder');
+    await service.enable(project.id, 'weave-plugin-creator');
     expect(projects.getMeta(project.id)).toMatchObject({
-      toolkit: { enabled: ['docs-reminder'] },
+      toolkit: { enabled: ['weave-plugin-creator'] },
     });
-    await service.disable(project.id, 'docs-reminder');
+    await service.disable(project.id, 'weave-plugin-creator');
     expect(projects.getMeta(project.id)).toMatchObject({ toolkit: { enabled: [] } });
   });
 
@@ -577,20 +577,20 @@ describe('toolkit 启用/禁用（硬闸）', () => {
 
   it('用户文件冲突 append-only：目标已存在不同内容时不覆盖、禁用不删', async () => {
     // 项目里预置 codex 表面同路径用户文件（内容不同于包内）
-    const userFile = path.join(projectDir, '.codex', 'skills', 'project-navigation', 'SKILL.md');
+    const userFile = path.join(projectDir, '.codex', 'skills', 'weave-user-guide', 'SKILL.md');
     await mkdir(path.dirname(userFile), { recursive: true });
     await writeFile(userFile, '# my own navigation skill\n');
     const userHash = await hashFile(userFile);
 
-    await service.enable(project.id, 'project-navigation');
+    await service.enable(project.id, 'weave-user-guide');
     expect(await hashFile(userFile)).toBe(userHash); // 启用不覆盖用户文件
 
-    await service.disable(project.id, 'project-navigation');
+    await service.disable(project.id, 'weave-user-guide');
     const after = await snapshot(projectDir);
     // 用户文件保留（内容未变）
-    expect(after['.codex/skills/project-navigation/SKILL.md']).toBe(userHash);
+    expect(after['.codex/skills/weave-user-guide/SKILL.md']).toBe(userHash);
     // 项目零 CC 副本（批 3：原「插件位被还原」断言升级为零副本）
     expect(Object.keys(after).some((f) => f.startsWith('.claude/plugins/'))).toBe(false);
-    expect(await enabledPluginsOf(projectDir)).toEqual({ 'project-navigation@weave': false });
+    expect(await enabledPluginsOf(projectDir)).toEqual({ 'weave-user-guide@weave': false });
   });
 });

@@ -13,8 +13,9 @@ export interface TemplateEntry {
 
 /**
  * Map of category → entries. Adding a template = adding one line here + the .md file
- * in the built-in repo's `init/` (commands/agents carry no frontmatter, so the
- * description is authored here rather than derived).
+ * in the built-in repo's `init/` (commands carry no frontmatter; agents must carry
+ * `name` + `description` frontmatter or the host won't register them — keep it in
+ * sync with the description here).
  */
 const MANIFEST: TemplateEntry[] = [
   // Skills（仓内不自带可直拷的 skill——skills 由仓内插件包提供）
@@ -24,10 +25,10 @@ const MANIFEST: TemplateEntry[] = [
   { name: 'explain', category: 'command', sourcePath: 'resources/weave-market/init/commands/explain.md', description: 'Explain selected code' },
   { name: 'test', category: 'command', sourcePath: 'resources/weave-market/init/commands/test.md', description: 'Write or update tests' },
   // Agents
-  { name: 'coder', category: 'agent', sourcePath: 'resources/weave-market/init/agents/coder.md', description: 'Focused implementation agent' },
-  { name: 'reviewer', category: 'agent', sourcePath: 'resources/weave-market/init/agents/reviewer.md', description: 'Code review specialist' },
+  { name: 'writer', category: 'agent', sourcePath: 'resources/weave-market/init/agents/writer.md', description: 'Focused drafting agent' },
+  { name: 'reviewer', category: 'agent', sourcePath: 'resources/weave-market/init/agents/reviewer.md', description: 'Critical review specialist' },
   { name: 'researcher', category: 'agent', sourcePath: 'resources/weave-market/init/agents/researcher.md', description: 'Exploration and analysis agent' },
-  { name: 'planner', category: 'agent', sourcePath: 'resources/weave-market/init/agents/planner.md', description: 'Architecture and planning agent' },
+  { name: 'planner', category: 'agent', sourcePath: 'resources/weave-market/init/agents/planner.md', description: 'Planning and design agent' },
 ];
 
 export class TemplateRegistry {

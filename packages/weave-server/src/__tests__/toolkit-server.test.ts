@@ -101,21 +101,17 @@ describe('daemon /toolkit routes', () => {
       packs: Array<{ id: string; enabled: boolean; installed: boolean; provenance: string; kind: string }>;
     };
     expect(data.packs.map((p) => p.id).sort()).toEqual([
-      'code-review',
-      'docs-reminder',
       'file-guard',
       'md-lint',
       'mission-control',
-      'project-navigation',
-      'refactoring',
-      'testing',
       'weave-plugin-creator',
+      'weave-user-guide',
     ]);
     expect(data.packs.every((p) => p.provenance === 'builtin')).toBe(true);
     expect(data.packs.every((p) => p.enabled === false)).toBe(true);
     // installed 字段恒在（CC/mod=全局安装态、表面包=落盘记录、weave=装载即源）
     expect(data.packs.every((p) => typeof p.installed === 'boolean')).toBe(true);
-    expect(data.packs.find((p) => p.id === 'code-review')!.installed).toBe(false);
+    expect(data.packs.find((p) => p.id === 'weave-user-guide')!.installed).toBe(false);
     expect(data.packs.find((p) => p.id === 'md-lint')!.installed).toBe(true); // weave 装载即源
   });
 
@@ -126,7 +122,7 @@ describe('daemon /toolkit routes', () => {
 
   it('POST enable→disable：幂等、返回后置状态', async () => {
     const enable = async (): Promise<{ pack: { enabled: boolean; installed: boolean }; warnings: string[] }> => {
-      const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/enable`), {
+      const res = await fetch(url(`/projects/${projectId}/toolkit/weave-plugin-creator/enable`), {
         method: 'POST',
       });
       expect(res.status).toBe(200);
@@ -139,7 +135,7 @@ describe('daemon /toolkit routes', () => {
     expect(second.pack.enabled).toBe(true);
 
     const disable = async (): Promise<{ pack: { enabled: boolean; installed: boolean } }> => {
-      const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/disable`), {
+      const res = await fetch(url(`/projects/${projectId}/toolkit/weave-plugin-creator/disable`), {
         method: 'POST',
       });
       expect(res.status).toBe(200);
@@ -151,7 +147,7 @@ describe('daemon /toolkit routes', () => {
   });
 
   it('POST uninstall：200 返回后置状态；未知包 404', async () => {
-    const res = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/uninstall`), {
+    const res = await fetch(url(`/projects/${projectId}/toolkit/weave-plugin-creator/uninstall`), {
       method: 'POST',
     });
     expect(res.status).toBe(200);
@@ -169,7 +165,7 @@ describe('daemon /toolkit routes', () => {
       method: 'POST',
     });
     expect(res.status).toBe(404);
-    const bad = await fetch(url(`/projects/${projectId}/toolkit/docs-reminder/enable`));
+    const bad = await fetch(url(`/projects/${projectId}/toolkit/weave-plugin-creator/enable`));
     expect(bad.status).toBe(405);
   });
 

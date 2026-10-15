@@ -1,0 +1,8 @@
+{
+  "name": "weave-user-guide",
+  "version": "0.1.0",
+  "description": "Weave user manual: CLI commands, daemon/dashboard, auth and TLS, resource layers, messaging/reminders/questions, troubleshooting",
+  "author": {
+    "name": "weave"
+  }
+}

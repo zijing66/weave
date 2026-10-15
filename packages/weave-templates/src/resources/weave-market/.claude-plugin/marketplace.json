@@ -6,40 +6,16 @@
   },
   "plugins": [
     {
-      "name": "code-review",
-      "description": "Constructive code review workflow: read the diff, verify findings, report most-severe first",
-      "version": "0.1.0",
-      "source": "./plugins/core-skills/code-review"
-    },
-    {
-      "name": "project-navigation",
-      "description": "Locate and understand code fast: Glob/Grep first, read before editing",
-      "version": "0.1.0",
-      "source": "./plugins/core-skills/project-navigation"
-    },
-    {
-      "name": "refactoring",
-      "description": "Safe restructuring guidance: tests first, one change at a time, delete dead code",
-      "version": "0.1.0",
-      "source": "./plugins/core-skills/refactoring"
-    },
-    {
-      "name": "testing",
-      "description": "Test authoring and execution guidance for this project (vitest, behavior verification)",
-      "version": "0.1.0",
-      "source": "./plugins/core-skills/testing"
-    },
-    {
       "name": "weave-plugin-creator",
       "description": "Weave plugin development guide: rule packs, CC plugins, mods and skill bundles — formats, manifests, and the load/verify loop",
       "version": "0.1.0",
       "source": "./plugins/core-skills/weave-plugin-creator"
     },
     {
-      "name": "docs-reminder",
-      "description": "Remind to check documentation consistency after Markdown edits (classic hooks, derived from the changelog-reminder fixture)",
+      "name": "weave-user-guide",
+      "description": "Weave user manual: CLI commands, daemon/dashboard, auth and TLS, resource layers, messaging/reminders/questions, troubleshooting",
       "version": "0.1.0",
-      "source": "./plugins/doc-hooks/docs-reminder"
+      "source": "./plugins/core-skills/weave-user-guide"
     },
     {
       "name": "file-guard",

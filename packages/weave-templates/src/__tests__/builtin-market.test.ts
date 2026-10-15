@@ -64,6 +64,28 @@ describe('内置仓结构（resources/weave-market）', () => {
     expect((await dirsIn(path.join(REPO, 'init'))).sort()).toEqual(['agents', 'commands']);
   });
 
+  it('仓内所有 agents/*.md 都带合法 frontmatter（无 name+description 宿主不注册）', async () => {
+    const agentFiles: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(abs);
+        else if (entry.isFile() && dir.endsWith(`${path.sep}agents`) && entry.name.endsWith('.md'))
+          agentFiles.push(abs);
+      }
+    };
+    await walk(REPO);
+    expect(agentFiles.length).toBeGreaterThan(0);
+    for (const file of agentFiles) {
+      const text = await readFile(file, 'utf8');
+      const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
+      expect(m, `${file} 缺 frontmatter`).toBeTruthy();
+      const fm = m![1];
+      expect(fm, `${file} frontmatter 缺 name`).toMatch(/^name:\s*\S+/m);
+      expect(fm, `${file} frontmatter 缺 description`).toMatch(/^description:\s*\S+/m);
+    }
+  });
+
   it('清单与 plugins/ 下的 CC 包双向一致', async () => {
     const manifest = JSON.parse(
       await readFile(path.join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'),

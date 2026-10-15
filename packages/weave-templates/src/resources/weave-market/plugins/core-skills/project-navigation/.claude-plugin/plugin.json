@@ -1,8 +1,0 @@
-{
-  "name": "project-navigation",
-  "version": "0.1.0",
-  "description": "Locate and understand code fast: Glob/Grep first, read before editing",
-  "author": {
-    "name": "weave"
-  }
-}

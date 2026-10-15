@@ -25,9 +25,9 @@ describe('TemplateRegistry', () => {
 
   it('resolves source paths to absolute paths', () => {
     const reg = new TemplateRegistry();
-    const entry = reg.getByName('coder');
+    const entry = reg.getByName('writer');
     const resolved = reg.resolvePath(entry!);
-    expect(resolved.endsWith('coder.md')).toBe(true);
+    expect(resolved.endsWith('writer.md')).toBe(true);
     expect(resolved).toMatch(/^(\/|[A-Za-z]:\\)/); // absolute path
   });
 

@@ -1,8 +1,0 @@
-{
-  "name": "code-review",
-  "version": "0.1.0",
-  "description": "Constructive code review workflow: read the diff, verify findings, report most-severe first",
-  "author": {
-    "name": "weave"
-  }
-}

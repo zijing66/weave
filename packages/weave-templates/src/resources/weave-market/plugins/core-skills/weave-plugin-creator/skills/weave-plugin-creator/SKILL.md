@@ -124,7 +124,7 @@ export default {
 
 - `.claude-plugin/plugin.json`：`{name, version, description, author}`（CC 原生清单）
 - `weave.json`：`{targets: ["claude"], kind}`——kind 取 `skill | hook | mod | rule | surface`，缺省按内容推导
-- skills 包：`skills/<name>/SKILL.md`（agent skills 标准：frontmatter `name` + `description`）；commands/agents 为单文件 `*.md`
+- skills 包：`skills/<name>/SKILL.md`（agent skills 标准：frontmatter `name` + `description`）；commands 为单文件 `*.md`；**agents 单文件也必须带 frontmatter（`name` + `description`），否则宿主不注册**
 - mod：`hooks/hooks.json` = `{"modules":["./register.tsx"]}`，`register.tsx` 用 Claude Code 的
   `Register` API（`on('tool.call', {tool:'Edit'}, ($, e, next) => …)`，返回 `{deny}` 即拦截）；
   **宿主 Claude Code ≥ 2.1.287**，enable 时有版本闸
@@ -142,7 +142,7 @@ CC 插件形态的包（有 `.claude-plugin`）启用时走「Claude 全局安�
 | `<project>/.weave/plugins/<id>/` | 单项目 | 随 git 分发，规则只对该项目生效 |
 | 内置 / 市场包 | — | 无需手放：daemon 启动时把内置仓落到 `<数据目录>/market/weave/`，市场导入的包落 `<数据目录>/market/<市场id>/` |
 
-CC 包注册键形 `<name>@<市场>`；内置市场身份 = `weave`（如 `code-review@weave`）。
+CC 包注册键形 `<name>@<市场>`；内置市场身份 = `weave`（如 `weave-plugin-creator@weave`）。
 
 ## 四、验证回路
 

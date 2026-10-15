@@ -1,4 +1,0 @@
-{
-  "targets": ["claude", "codex"],
-  "kind": "skill"
-}
