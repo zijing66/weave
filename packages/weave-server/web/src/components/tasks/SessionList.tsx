@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type SessionRow, type SessionWatchRow, type MessagingCapability, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
@@ -19,10 +19,37 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 const ACTION_BTN =
   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200';
 
+/** 活动序重排落地周期：事件流实时刷新行数据，但顺序只攒到这里统一落一次
+ *  （成员增删例外——新会话即时置顶，不等周期），避免列表随事件抖动。 */
+export const RESORT_INTERVAL_MS = 10_000;
+/** FLIP 位移动画时长：周期重排时卡片从旧位滑到新位。 */
+const FLIP_DURATION_MS = 450;
+
+/**
+ * 会话排序口径（活动序）：lastSeenAt（最后一条 hook 事件时刻）倒序、createdAt
+ * 决胜——活跃会话上浮、新会话落地即置顶、静默的沉底；对完全静默的列表等价于
+ * 创建时间倒序（服务端列表恒 created_at 倒序，活动序是前端层的事）。
+ */
+export function byActivity(a: SessionRow, b: SessionRow): number {
+  return (
+    Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt) ||
+    Date.parse(b.createdAt) - Date.parse(a.createdAt)
+  );
+}
+
+/** 同成员判定（顺序无关）：成员变了才即时重排，纯活动变化等周期 tick。 */
+const sameMembers = (a: readonly string[], b: readonly string[]): boolean => {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+};
+
 /**
  * 任务视图左栏：会话列表。行内元素 = 名称（title 回退 sessionId 前 8 位，
  * hover 出完整值可复制）+ 状态图标（运行中动效 / 打开静态）+ 事件计数 +
- * pendingTitle 徽标 + 行内改名 + 指令拖拽落点。
+ * pendingTitle 徽标 + 幽灵会话自动清理倒计时 + 行内改名 + 指令拖拽落点。
+ * 顺序 = 活动序（byActivity）：数据随事件流实时刷新，顺序只在成员增删即时
+ * 落、其余攒 RESORT_INTERVAL_MS 周期统一落，落位带 FLIP 滑动动画。
  */
 export function SessionList({
   sessions,
@@ -94,6 +121,96 @@ export function SessionList({
   const [droppingId, setDroppingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // ---- 顺序门控：sortedIds 随事件流实时算，appliedIds 只在「成员变化」或
+  // 周期 tick 时取快照——两次快照之间顺序冻结（不随事件实时跳动），行内容
+  //（计数/状态/角标）仍实时刷新。
+  const sortedIds = useMemo(
+    () => sessions.slice().sort(byActivity).map((s) => s.sessionId),
+    [sessions],
+  );
+  const sortedIdsRef = useRef(sortedIds);
+  useEffect(() => {
+    sortedIdsRef.current = sortedIds;
+  }, [sortedIds]);
+  const [appliedIds, setAppliedIds] = useState<string[] | null>(null);
+
+  // 成员变化（首载/新增/删除）→ 立即按最新顺序落位（useLayoutEffect：新会话
+  // 首绘即在正确位置，不闪底再跳顶）；纯活动变化不动，攒到周期 tick 统一落。
+  useLayoutEffect(() => {
+    setAppliedIds((prev) => (prev !== null && sameMembers(prev, sortedIds) ? prev : sortedIds));
+  }, [sortedIds]);
+
+  // 周期 tick：把攒下的活动变化统一落地；顺序没变就保持引用，不空转重渲染。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAppliedIds((prev) => {
+        const next = sortedIdsRef.current;
+        return prev !== null &&
+          prev.length === next.length &&
+          prev.every((id, i) => id === next[i])
+          ? prev
+          : next;
+      });
+    }, RESORT_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  /** 渲染顺序 = appliedIds 冻结序，行数据取最新（新会话在 layout effect 前
+   *  的一帧经 byId 兜底自然落尾，commit 后即归位）。 */
+  const rows = useMemo(() => {
+    if (appliedIds === null) return sessions.slice().sort(byActivity);
+    const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
+    const ordered: SessionRow[] = [];
+    for (const id of appliedIds) {
+      const s = byId.get(id);
+      if (s) ordered.push(s);
+    }
+    const seen = new Set(ordered.map((s) => s.sessionId));
+    for (const s of sessions) if (!seen.has(s.sessionId)) ordered.push(s);
+    return ordered;
+  }, [sessions, appliedIds]);
+
+  // ---- FLIP：顺序快照切换（周期重排/成员增删）时，卡片从旧位平滑滑到新位。
+  // 每次 commit 量一遍各行的 offsetTop 存快照（布局位，不受进行中 transform
+  // 影响）；下一拍位移了的行先瞬时摆回旧位，再过渡回新位。
+  const rowEls = useRef(new Map<string, HTMLLIElement>());
+  const rowTops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const els = rowEls.current;
+    if (els.size === 0) {
+      rowTops.current = new Map();
+      return;
+    }
+    const prev = rowTops.current;
+    const tops = new Map<string, number>();
+    const moved: Array<[HTMLLIElement, number]> = [];
+    for (const [id, el] of els) {
+      const top = el.offsetTop;
+      tops.set(id, top);
+      const old = prev.get(id);
+      if (old !== undefined && Math.abs(old - top) >= 1) moved.push([el, old - top]);
+    }
+    rowTops.current = tops;
+    if (moved.length === 0) return;
+    for (const [el] of moved) el.style.transition = 'none';
+    for (const [el, delta] of moved) el.style.transform = `translateY(${delta}px)`;
+    void moved[0]![0].offsetHeight; // 回流固化起始位，再开过渡
+    for (const [el] of moved) {
+      el.style.transition = `transform ${FLIP_DURATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+      el.style.transform = '';
+    }
+  });
+
+  // 幽灵会话倒计时走针：有到期行才起 30s 本地计时（纯展示刷新，不拉数据；
+  // 事件流驱动的重渲染本身也在刷新读数，计时器只兜住完全静默的页面）。
+  const [now, setNow] = useState(() => Date.now());
+  const hasDeadline = sessions.some((s) => s.autoDeleteAt != null);
+  useEffect(() => {
+    if (!hasDeadline) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [hasDeadline]);
+
   useEffect(() => {
     if (editingId) inputRef.current?.focus();
   }, [editingId]);
@@ -117,14 +234,20 @@ export function SessionList({
 
   return (
     <ul className="space-y-1.5">
-      {sessions.map((s) => {
+      {rows.map((s) => {
         const status = statuses.get(s.sessionId) ?? 'open';
         const selected = s.sessionId === selectedId;
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
         const watch = watchOf?.(s.sessionId);
         const inflight = inflightOf(s.sessionId);
         return (
-          <li key={s.sessionId}>
+          <li
+            key={s.sessionId}
+            ref={(el) => {
+              if (el) rowEls.current.set(s.sessionId, el);
+              else rowEls.current.delete(s.sessionId);
+            }}
+          >
             <div
               role="button"
               tabIndex={0}
@@ -390,6 +513,17 @@ export function SessionList({
                     <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
                       {t(STATUS_KEY[status])}
                     </Badge>
+                    {/* 幽灵会话（从未收到 prompt）自动清理倒计时：服务端 autoDeleteAt
+                        派生，SessionSweeper 过期即清——到点前给用户留个明白账。 */}
+                    {s.autoDeleteAt && (
+                      <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
+                        {Date.parse(s.autoDeleteAt) - now > 60_000
+                          ? t('tasks.autoDeleteIn', {
+                              n: Math.ceil((Date.parse(s.autoDeleteAt) - now) / 60_000),
+                            })
+                          : t('tasks.autoDeleteSoon')}
+                      </Badge>
+                    )}
                   </div>
                 </>
               )}

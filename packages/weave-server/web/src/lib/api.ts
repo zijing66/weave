@@ -294,6 +294,9 @@ export interface SessionRow {
   lastEventType?: string | null;
   /** claude 注册表判活：false=进程确死（判 terminated）；null=查不到登记（codex 等）不猜。 */
   pidAlive?: boolean | null;
+  /** 无 prompt 幽灵会话的自动清理时刻（服务端 listWithCounts 派生；null = 正常会话）。
+   *  服务端 SessionSweeper 过期即清，行内渲染倒计时 tag。 */
+  autoDeleteAt?: string | null;
 }
 
 /** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
