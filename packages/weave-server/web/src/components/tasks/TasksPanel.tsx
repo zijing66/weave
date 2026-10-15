@@ -801,7 +801,8 @@ export function TasksPanel({
                       <button
                         type="button"
                         title={t('tasks.answerActiveTooltip', {
-                          n: questionOf(selectedId)!.questions.length,
+                          // 不含收尾屏：它不是宿主的问题 tab
+                          n: questionOf(selectedId)!.questions.filter((q) => !q.submit).length,
                         })}
                         onClick={(e) => {
                           e.stopPropagation();

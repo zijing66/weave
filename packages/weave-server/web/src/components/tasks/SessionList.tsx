@@ -259,6 +259,10 @@ export function SessionList({
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
         const watch = watchOf?.(s.sessionId);
         const inflight = inflightOf(s.sessionId);
+        // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
+        const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
+          (q) => !q.submit,
+        ).length;
         return (
           <li
             key={s.sessionId}
@@ -370,9 +374,7 @@ export function SessionList({
                     {questionOf?.(s.sessionId) && (
                       <button
                         type="button"
-                        title={t('tasks.answerActiveTooltip', {
-                          n: questionOf(s.sessionId)!.questions.length,
-                        })}
+                        title={t('tasks.answerActiveTooltip', { n: pendingCount })}
                         onClick={(e) => {
                           e.stopPropagation();
                           onSetAnswerFor(s.sessionId);
@@ -388,7 +390,7 @@ export function SessionList({
                           aria-hidden
                           className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
                         >
-                          {questionOf(s.sessionId)!.questions.length}
+                          {pendingCount}
                         </span>
                       </button>
                     )}
