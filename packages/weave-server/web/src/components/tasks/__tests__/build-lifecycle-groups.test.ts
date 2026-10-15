@@ -134,6 +134,34 @@ describe('buildLifecycleGroups', () => {
     expect(mid[0]!.events.map((e) => e.id)).toEqual([1, 2]);
   });
 
+  it('⑤-b 轮内会话标记不关组：自动压缩（同 pid 的 SessionStart）后 Stop 照常正常结束', () => {
+    const raw = (o: object) => JSON.stringify({ raw: o });
+    const groups = buildLifecycleGroups(
+      [
+        event(1, 'UserPromptSubmit', raw({ prompt_id: 'A', prompt: '长轮' })),
+        event(2, 'SessionStart', raw({ prompt_id: 'A', source: 'compact' })),
+        event(3, 'UserPromptSubmit', raw({ prompt_id: 'A', prompt: '轮内追加' })),
+        event(4, 'Stop', raw({ prompt_id: 'A' })),
+      ],
+      [],
+      claude,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.events.map((e) => e.id)).toEqual([1, 2, 3, 4]);
+    expect(groups[0]!.open).toBeUndefined();
+
+    // 压缩后这轮没有 Stop（窗口关掉）→ 仍按未正常结束收尾
+    const noStop = buildLifecycleGroups(
+      [
+        event(1, 'UserPromptSubmit', raw({ prompt_id: 'A', prompt: '长轮' })),
+        event(2, 'SessionStart', raw({ prompt_id: 'A', source: 'compact' })),
+      ],
+      [],
+      claude,
+    );
+    expect(noStop[0]!.open).toBe(true);
+  });
+
   it('表驱动：注入非 claude 表按表分组，claude 事件名不被硬编码识别', () => {
     const synthetic = {
       open: 'TurnOpen',

@@ -38,6 +38,7 @@ export const ORPHAN_GROUP_ID = 'orphan';
  *   按 prompt_id 晚到时精确关回自己的组（正常结束）；只有始终没有 Stop 的组
  *   才在收尾标「未正常结束」（用户提前提交 prompt 时旧组仍在执行的场景）。
  * - 无 prompt_id（旧数据/坏 payload）回落原包夹行为：事件挂 current→last→pre。
+ * - 会话标记：带 current 自己 prompt_id 的（轮内自动压缩）不关组；其余按中断关。
  * - dispatch 仍按 eventId ∈ 组事件集归组；null/窗口外 → orphan 游离组。
  * - **task-notification 不开组**：UserPromptSubmit 携带 <task-notification>
  *   时按 tool-use-id/task-id 归回派发所在的组（子代理返回与原派发闭环，
@@ -164,13 +165,17 @@ export function buildLifecycleGroups(
       continue;
     }
     if (lifecycle.sessionMarkers.includes(type)) {
-      // 会话标记不切组；开着的 current 按中断关组（① 的 SessionEnd 边界、
-      // 中途 resume 的 SessionStart 同理）——pid 事件仍精确归位。
+      // 会话标记不切组。开着的 current 只在标记另有归属时按中断关组（① 的
+      // SessionEnd 边界、中途 resume 的 SessionStart）——pid 事件仍精确归位。
       const byPidGroup = pid ? byPid.get(pid) : undefined;
+      // 标记带着 current 自己的 prompt_id = **轮内标记**：claude 自动压缩的
+      // SessionStart(source=compact) 就是这么来的，这轮还在跑，不是边界。
+      // 判中断关组的话，晚到的 Stop 撞上已 closed 的组，徽标永远清不掉。
+      const midTurn = byPidGroup !== undefined && byPidGroup === current;
       const target = byPidGroup ?? current;
       if (target) target.events.push(event);
       else attach(event, pid);
-      if (current && !closed.has(current)) closeGroup(current, true);
+      if (!midTurn && current && !closed.has(current)) closeGroup(current, true);
       continue;
     }
     attach(event, pid); // ③ SubagentStop 在此入组计数，不独立成组
