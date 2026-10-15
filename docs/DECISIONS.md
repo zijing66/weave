@@ -4,6 +4,8 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-10-15
 
+- **API 报错可观测性实测（本机）**：报错**只落转录 JSONL**，hook 域没有这个信号——`{"type":"assistant","isApiErrorMessage":true,"error":"server_error|invalid_request|unknown","apiErrorStatus":400|402|500,"message":{"model":"<synthetic>", usage 全 0}}`，紧邻一条 `{"type":"system","subtype":"turn_duration"}` = **该 turn 已结束**（之后是人补一句「继续」）。反证：全库 `notification_type` 只观测到 `idle_prompt`(359)/`permission_prompt`(95)/`agent_needs_input`(2)/`agent_completed`(1) 四种，无 error 类；最近 400 条 Stop/Notification 的 `last_assistant_message` 无一条是报错原文。规模：199 个会话里 25 个中招、共 70 条；报错前静默 p50=4s / p90=739s / max=3457s（长尾 = ESC 唯一有用的窗口）。文本三类语义：`500 litellm.InternalServerError - Connection error` / `Request timed out` = 可重试；`402 ... Insufficient Balance` = 重试无用；`400 ... exceeds the model's maximum context length` / `Prompt is too long · automatic compaction failed` = 须 /compact 或新会话。据此**会话中断**能力的语义边界 = ESC 只救在途重试，报错落定后该重发（规则见 CLAUDE.md）。
+- **会话中断落地**（6e64d1e 服务端 + 64add74 web）：`POST /sessions/:id/interrupt` 打一记 ESC；停止按钮落事件链最新组头折叠条，不按 running 门控。ESC 裸字节可达实测：`wezterm cli send-text --no-paste` + raw 模式 stdin 收到 `1b`。CLI 不提供停止命令（用户裁决「cli 不需要」）。
 - **终态驻留 + 未回执闸定案**：delivered/injected/succeeded 在 `settledAt`+60s 内留在在途视图展示 `via`/`acked`；prompt 送达 `ackStallMs`（缺省 120s）未回执、或中继/终端投递失败 → 该会话队列冲洗暂停（`flushSession` 闸），成因消息标 `stalled`。规则全文见 CLAUDE.md「消息/编排域」。
 - **中继启动开关实测（本机）**：`--strict-mcp-config --disable-slash-commands` 恒开（实测仍能正确应答、工具白名单照旧）；`--bare` 快 ~9×（38s→2.5s）但当版本 `--tools` 白名单失效（实测中继跑去调 WebSearch 不投递）+ 只认 API key（OAuth 认证失败）——查到但不可用，禁用。
 
