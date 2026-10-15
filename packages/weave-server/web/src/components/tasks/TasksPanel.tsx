@@ -11,6 +11,7 @@ import {
   type WatchOn,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { registerInvalidator } from '@/lib/sse';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
@@ -142,9 +143,18 @@ export function TasksPanel({
   // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
   // 的面也在），行内各按钮按字段自取。
   const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
-  useEffect(() => {
+  const refreshMessagingCaps = useCallback(() => {
     api.messagingCapabilities().then(setMessagingCaps).catch(() => {});
   }, []);
+  useEffect(() => {
+    refreshMessagingCaps();
+  }, [refreshMessagingCaps]);
+  // prompt 列合成终端通道（随 settings 变）——设置保存推 invalidate('settings')
+  // 帧，接到重拉上，按钮门控不卡旧值。
+  useEffect(
+    () => registerInvalidator('settings', refreshMessagingCaps),
+    [refreshMessagingCaps],
+  );
   const capabilityMap = useMemo(() => {
     const m = new Map<Harness, MessagingCapability>();
     for (const c of messagingCaps ?? []) m.set(c.harness, c);
