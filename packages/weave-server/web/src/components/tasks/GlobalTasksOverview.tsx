@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import type { MessageKey } from '@/i18n/dict';
+import type { SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
+import { byActivity, useActivityOrder, useFlipRows } from './SessionList';
 import { STATUS_BADGE, STATUS_KEY } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
@@ -27,11 +29,43 @@ const RANGE_LABEL: Record<RangeKey, MessageKey> = {
 };
 
 /**
+ * 行序：冻结的活动序 → 按 projectId 分桶（首次出现定组序 = 组间按各自最新活跃、
+ * 同项目相邻，组内保持活动序）。冻结序未见的新行按「新在前」兜底置顶。未知项目
+ * 归同一尾桶。
+ */
+export function globalOverviewRows(
+  sessions: readonly SessionRow[],
+  appliedIds: readonly string[],
+): SessionRow[] {
+  const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
+  const ordered: SessionRow[] = [];
+  for (const id of appliedIds) {
+    const s = byId.get(id);
+    if (s) ordered.push(s);
+  }
+  const seen = new Set(ordered.map((s) => s.sessionId));
+  const order: number[] = [];
+  const buckets = new Map<number, SessionRow[]>();
+  for (const s of [...sessions.filter((x) => !seen.has(x.sessionId)), ...ordered]) {
+    const key = s.projectId ?? -1;
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+    }
+    buckets.get(key)!.push(s);
+  }
+  return order.flatMap((key) => buckets.get(key)!);
+}
+
+/**
  * 全局任务总览（D9 只读跨项目聚合，不新造 API）：会话与状态全部取全局状态
  * 总线（SessionStatusProvider，与项目行徽标/任务视图同一份推导），按 projectId
  * 分组展示；行点击 → App 跳进对应项目任务视图（initialSessionId）。
  * 查询条件：项目下拉 + 时间段（当天/1·3·7·30 天内/大于 30 天/自定义起止），
  * 全部客户端过滤（列表本就是最新窗口，不新造查询 API）。
+ * 行序与会话列表同口径：前端活动序（`byActivity` 排、`useActivityOrder` 门控
+ * 落地、`useFlipRows` 滑动动画）——服务端列表恒 created_at 倒序，活动序是前端
+ * 层的事；过滤条件换批则立即采用新序，不做增量合并。
  */
 export function GlobalTasksOverview({
   projects,
@@ -87,29 +121,28 @@ export function GlobalTasksOverview({
     });
   }, [sessions, projectFilter, range, fromDate, toDate]);
 
-  // 按 projectId 分组：会话本就按活跃倒序，按首次出现分桶即「同项目相邻 + 组间按最新活跃」。
+  // 行序 = 活动序（同会话列表口径）：sortedIds 随事件流实时算，落地序只在成员
+  // 变化或周期 tick 时取快照（见 useActivityOrder）；过滤条件换批走 filterKey。
+  const filterKey = `${projectFilter}|${range}|${fromDate}|${toDate}`;
+  const sortedIds = useMemo(
+    () => filtered.slice().sort(byActivity).map((s) => s.sessionId),
+    [filtered],
+  );
+  const appliedIds = useActivityOrder(sortedIds, filterKey);
+
   const rows = useMemo(() => {
     const nameOf = new Map(projects.map((p) => [p.id, p.name]));
-    const order: number[] = [];
-    const buckets = new Map<number, NonNullable<typeof sessions>>();
-    for (const s of filtered) {
-      const key = s.projectId ?? -1;
-      if (!buckets.has(key)) {
-        buckets.set(key, []);
-        order.push(key);
-      }
-      buckets.get(key)!.push(s);
-    }
-    return order.flatMap((key) =>
-      buckets.get(key)!.map((session) => ({
-        session,
-        projectName:
-          key === -1
-            ? t('tasks.overviewUnknownProject')
-            : nameOf.get(key) ?? t('tasks.overviewUnknownProject'),
-      })),
-    );
-  }, [filtered, projects, t]);
+    return globalOverviewRows(filtered, appliedIds).map((session) => ({
+      session,
+      projectName:
+        session.projectId == null
+          ? t('tasks.overviewUnknownProject')
+          : nameOf.get(session.projectId) ?? t('tasks.overviewUnknownProject'),
+    }));
+  }, [filtered, appliedIds, projects, t]);
+
+  const rowEls = useRef(new Map<string, HTMLLIElement>());
+  useFlipRows(rowEls);
 
   return (
     <div className="space-y-3">
@@ -213,7 +246,13 @@ export function GlobalTasksOverview({
               const status = statuses.get(s.sessionId) ?? 'open';
               const clickable = s.projectId != null;
               return (
-                <li key={s.sessionId}>
+                <li
+                  key={s.sessionId}
+                  ref={(el) => {
+                    if (el) rowEls.current.set(s.sessionId, el);
+                    else rowEls.current.delete(s.sessionId);
+                  }}
+                >
                   <div
                     role={clickable ? 'button' : undefined}
                     tabIndex={clickable ? 0 : undefined}
