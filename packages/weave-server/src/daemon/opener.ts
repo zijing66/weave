@@ -179,6 +179,13 @@ export abstract class TerminalBackend {
     );
   }
 
+  /** 阻塞问答作答：裸键序注入（模态框只吃键盘，不吃粘贴文本）；无通道的后端明确拒绝。 */
+  async sendKeys(_paneId: string, _keys: string): Promise<void> {
+    throw new Error(
+      `Terminal preset "${this.preset}" cannot send keys to an open pane — pick wezterm in settings`,
+    );
+  }
+
   /** 按候选顺序起一个；全失败抛真相（含试过哪些命令）。 */
   protected async spawnFirst(candidates: TerminalLaunch[], emptyReason: string): Promise<void> {
     for (const launch of candidates) {
@@ -564,6 +571,28 @@ class WeztermBackend extends TerminalBackend {
       );
     }
   }
+
+  /**
+   * 阻塞问答作答：裸键序（数字 + 可选 CR）原样进 pty——`--no-paste` 绕过
+   * bracketed paste，CR 字节即回车键。mux 定位口径与 sendPromptText 同。
+   */
+  override async sendKeys(paneId: string, keys: string): Promise<void> {
+    const parsed = parsePromptPaneId(paneId);
+    if (!parsed) throw new Error(`Invalid prompt pane "${paneId}"`);
+    const { muxes } = await weztermLiveMuxes();
+    const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
+    if (!mux) throw new Error('wezterm instance is gone — cannot send answer keys');
+    const pane = String(parsed.paneId);
+    const sent = await weztermCli(
+      ['cli', 'send-text', '--pane-id', pane, '--no-paste', keys],
+      mux.socket,
+    );
+    if (!sent?.ok) {
+      throw new Error(
+        weztermStepError(['cli', 'send-text', '--pane-id', pane, '--no-paste', '<keys>'], mux.socket, sent),
+      );
+    }
+  }
 }
 
 /** auto：把本平台的具名 preset 候选按序串起来（与具名条目同源）。 */
@@ -626,6 +655,10 @@ class AutoBackend extends TerminalBackend {
   override sendPromptText(paneId: string, text: string): Promise<void> {
     return this.attachBackend().sendPromptText(paneId, text);
   }
+
+  override sendKeys(paneId: string, keys: string): Promise<void> {
+    return this.attachBackend().sendKeys(paneId, keys);
+  }
 }
 
 const BACKEND_FACTORIES: Record<
@@ -666,6 +699,7 @@ export function promptTerminalChannel(
   available(): boolean;
   listPanes(): Promise<PromptPaneTarget[]>;
   sendText(paneId: string, text: string): Promise<void>;
+  sendKeys(paneId: string, keys: string): Promise<void>;
 } {
   const backendOf = () => terminalBackendFor(settings());
   return {
@@ -682,6 +716,15 @@ export function promptTerminalChannel(
         );
       }
       await backend.sendPromptText(paneId, text);
+    },
+    sendKeys: async (paneId, keys) => {
+      const backend = backendOf();
+      if (!backend.textAddressable) {
+        throw new Error(
+          `Terminal preset "${backend.preset}" cannot send keys to an open pane — pick wezterm in settings`,
+        );
+      }
+      await backend.sendKeys(paneId, keys);
     },
   };
 }

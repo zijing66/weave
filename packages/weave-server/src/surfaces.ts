@@ -2,6 +2,7 @@ import type { Harness } from '@weavecode/core';
 import {
   createRuntimeRegistry,
   type AssetSurface,
+  type BlockingPromptSpec,
   type CaptureSurface,
   type MessagingSurface,
   type PluginStateSurface,
@@ -104,4 +105,12 @@ export function captureSurfaces(): Array<{ harness: Harness; surface: CaptureSur
     .all()
     .filter((d) => d.capture !== undefined)
     .map((d) => ({ harness: d.id, surface: d.capture! }));
+}
+
+/**
+ * 按 harness 取阻塞式交互面（AskUserQuestion/计划/权限确认）；null = 该
+ * harness 无此机制（不跟踪、不作答）——codex 无此类交互，缺席即静默。
+ */
+export function blockingPromptFor(harness: Harness): BlockingPromptSpec | null {
+  return registry.get(harness)?.questions ?? null;
 }

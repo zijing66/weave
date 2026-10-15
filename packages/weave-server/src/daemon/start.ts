@@ -18,6 +18,7 @@ import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
@@ -178,6 +179,13 @@ export function startDaemon(): void {
     bus: hookBus,
   });
   sequenceEngine.rearm();
+  // 阻塞问答跟踪（AskUserQuestion / 计划与权限确认）：内存状态机挂 ingest
+  // 事件流（inbox-worker 消费线程驱动），重启即 seedFromDb 重放补状态。
+  const questionTracker = new QuestionTracker({
+    sessions: hookSessions,
+    hookEvents,
+  });
+  questionTracker.seedFromDb();
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -214,6 +222,7 @@ export function startDaemon(): void {
     sequences: sessionSequences,
     watchEngine,
     sequenceEngine,
+    questions: questionTracker,
   });
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。
@@ -228,6 +237,7 @@ export function startDaemon(): void {
     watchEngine,
     sequenceEngine,
     messagePipe: messageDeliverer,
+    questionTracker,
   });
   const staticDir = resolveStaticDir();
 
@@ -253,6 +263,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    questionTracker,
     sessionWatches,
     watchEngine,
     sessionSequences,

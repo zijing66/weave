@@ -58,6 +58,13 @@ const SendMessageBody = z.object({
   fromSessionId: z.string().min(1).nullable().optional(),
 });
 
+/** 阻塞问答作答：定位问题（questionKey）+ 选项下标；键序由 harness 规格拼装，
+ *  服务端白名单校验后经终端通道打进 pane。 */
+const AnswerBody = z.object({
+  questionKey: z.string().min(1),
+  optionIndex: z.number().int().min(0),
+});
+
 /** 会话订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast + 浏览器通知）；
  *  on = 触发类型集（缺省 idle，批 2 语义）。 */
 const CreateWatchBody = z.object({
@@ -383,6 +390,7 @@ export async function handleHooksRoutes(
         dispatches: deps.hookDispatches,
         deliverer: deps.messageDeliverer,
         watches: deps.sessionWatches,
+        questions: deps.questionTracker,
       },
       sessionId,
     );
@@ -541,6 +549,58 @@ export async function handleHooksRoutes(
     } else {
       sendJson(res, result.status, { error: result.error });
     }
+    return true;
+  }
+
+  // ---- 阻塞问答：待答清单（AskUserQuestion / 计划确认 / 权限确认的实时状态）----
+  if (pathname === '/messaging/questions' && req.method === 'GET') {
+    if (!deps.questionTracker) {
+      sendJson(res, 503, { error: 'Question tracking unavailable' });
+      return true;
+    }
+    sendJson(res, 200, { questions: deps.questionTracker.snapshot() });
+    return true;
+  }
+
+  // ---- 阻塞问答作答：选项下标 → harness 拼的键序 → 终端 pane（模态框只吃键盘）----
+  const answerMatch = pathname.match(/^\/sessions\/([^/]+)\/answer$/);
+  if (answerMatch && req.method === 'POST') {
+    if (!deps.questionTracker || !deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Question tracking unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(answerMatch[1]!);
+    let body: z.infer<typeof AnswerBody>;
+    try {
+      body = AnswerBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const entry = deps.questionTracker.get(sessionId);
+    if (!entry) {
+      sendJson(res, 409, { error: 'Session has no pending question' });
+      return true;
+    }
+    const question = entry.questions.find((q) => q.key === body.questionKey);
+    if (!question) {
+      sendJson(res, 404, { error: 'Question not found in this session' });
+      return true;
+    }
+    const option = question.options[body.optionIndex];
+    if (!option) {
+      sendJson(res, 400, { error: 'Invalid option index' });
+      return true;
+    }
+    const result = await deps.messageDeliverer.answer(sessionId, option.keys);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    // 乐观落位：作答成功即摘问题（PostToolUse 到达照常整条清除）——防重复作答
+    // 把键序打进已关的模态框、漏进输入框执行。
+    deps.questionTracker.markAnswered(sessionId, body.questionKey);
+    sendJson(res, 200, { ok: true, sessionId, questionKey: body.questionKey });
     return true;
   }
 

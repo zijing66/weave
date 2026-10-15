@@ -66,6 +66,7 @@ export function TasksPanel({
     dispatches,
     statuses,
     inflight: inflightCounts,
+    questions,
     refresh: refreshStatus,
   } = useSessionStatus();
   // <lg 两屏走查：列表态 ⇄ 事件链全屏态（点会话进、收起回），桌面恒双栏 inline。
@@ -175,6 +176,29 @@ export function TasksPanel({
   const inflightOf = useCallback(
     (sessionId: string) => inflightCounts.get(sessionId) ?? 0,
     [inflightCounts],
+  );
+  /** 待答阻塞问题（总线随帧刷新）：会话行问答图标的 amber + 角标。 */
+  const questionOf = useCallback(
+    (sessionId: string) => questions.get(sessionId),
+    [questions],
+  );
+  /** 远程作答：成功即乐观摘问（服务端口径），失败 toast（键序没进终端，可重试）。 */
+  const onAnswerQuestion = useCallback(
+    (sessionId: string, questionKey: string, optionIndex: number): void => {
+      void fb.run(
+        `answer:${sessionId}:${questionKey}`,
+        async () => {
+          await api.answerQuestion(sessionId, questionKey, optionIndex);
+          await refreshStatus();
+        },
+        { fail: (e) => t('tasks.answerFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, refreshStatus],
+  );
+  const answerStateOf = useCallback(
+    (sessionId: string, questionKey: string) => fb.stateOf(`answer:${sessionId}:${questionKey}`),
+    [fb],
   );
   const onSubscribeWatch = useCallback(
     (sessionId: string, on: WatchOn[], times: number | null): void => {
@@ -890,6 +914,9 @@ export function TasksPanel({
             capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
             inflightOf={inflightOf}
+            questionOf={questionOf}
+            onAnswer={onAnswerQuestion}
+            answerStateOf={answerStateOf}
             watchOf={watchOf}
             watchStateOf={watchStateOf}
             onSubscribeWatch={onSubscribeWatch}

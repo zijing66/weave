@@ -20,6 +20,7 @@ import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import type { QuestionTracker } from '../hooks/question-tracker.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
@@ -172,6 +173,8 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
+  /** 阻塞问答跟踪器（AskUserQuestion / 计划与权限确认）；/messaging/questions 与 /sessions/:id/answer 依赖它。 */
+  questionTracker?: QuestionTracker;
   /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
   sessionWatches?: SessionWatchRepository;
   /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */

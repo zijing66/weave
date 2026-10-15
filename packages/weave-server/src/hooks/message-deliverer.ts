@@ -89,6 +89,8 @@ export interface PromptTerminal {
   listPanes(): Promise<Array<{ id: string; title: string | null; cwd: string | null }>>;
   /** 往 pane 注入一段 prompt（原文 + 提交键）。 */
   sendText(paneId: string, text: string): Promise<void>;
+  /** 裸键序注入（作答路径：模态框只吃键盘，不吃粘贴文本）。 */
+  sendKeys(paneId: string, keys: string): Promise<void>;
 }
 
 export interface MessageDelivererDeps {
@@ -143,6 +145,9 @@ export type SendResult =
   | { ok: true; messageId: string; status: PipeStatus; message: PipeMessage }
   | { ok: false; status: 400 | 404 | 409; error: string };
 
+/** answer() 返回（作答不建消息条目，无 messageId）。 */
+export type AnswerResult = { ok: true } | { ok: false; status: 400 | 404 | 409; error: string };
+
 /** 通道裁决结果：mode=auto 落到实际通道后才存在。 */
 type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 
@@ -159,6 +164,13 @@ const ACK_STALL_MS = 120_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
+
+/**
+ * 作答键序白名单（安全闸）：只准「选项序号 + 可选 CR」进终端——作答面不能
+ * 变成任意键序注入通道（键序若打进已关的模态框会漏进输入框执行）。键序本身
+ * 由 harness 规格拼装（选项 keys），这里只验形态。
+ */
+const ANSWER_KEYS = /^[1-9](\r)?$/;
 
 /**
  * socket 直投的来源标注（只作用于这条路径）：socket 消息是**裸 user 文本**
@@ -426,6 +438,45 @@ export class MessageDeliverer {
   }
 
   /**
+   * 远程作答（阻塞式交互）：向目标会话所在 pane 发裸键序——模态框只吃键盘，
+   * inbox/中继投递答不了。键序经白名单（`ANSWER_KEYS`）；pane 匹配复用层② 的
+   * 标题 + cwd 判定（歧义/找不到 pane = 409，不去别的终端乱打）。成功由调用
+   * 方乐观标记已答（PostToolUse 到达照常清除）。
+   */
+  async answer(sessionId: string, keys: string): Promise<AnswerResult> {
+    if (!ANSWER_KEYS.test(keys)) return { ok: false, status: 400, error: 'Invalid answer keys' };
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    if (!session) return { ok: false, status: 404, error: 'Session not found' };
+    if (session.projectId == null) {
+      return { ok: false, status: 400, error: 'Session is not bound to a project' };
+    }
+    const project = this.deps.projects.getById(session.projectId);
+    if (!project) return { ok: false, status: 404, error: 'Project not found' };
+    const terminal = this.terminalChannel();
+    if (!terminal) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'Answering needs a text-capable terminal (pick wezterm in settings)',
+      };
+    }
+    const pane = await this.terminalPaneFor(session, project);
+    if (!pane) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'Session pane not found — is the session window open?',
+      };
+    }
+    try {
+      await terminal.sendKeys(pane.id, keys);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * 手动重发（暂停闸的解除动作）：prompt 通道 failed 或 delivered-未回执 的消息
    * 重走投递（socket → 中继 → 终端 → 队列），重发即解闸并重新布防回执闸。
    */
@@ -652,14 +703,14 @@ export class MessageDeliverer {
     );
   }
 
-  /** 层② pane 匹配：标题（剥 ✳ spinner 前缀）== 会话标题 且 cwd == 项目路径（归一比较）；歧义拒绝不打。 */
+  /** 层② pane 匹配：标题（剥 spinner 前缀，字符集含 ◐ 等输入等待态）== 会话标题 且 cwd == 项目路径（归一比较）；歧义拒绝不打。 */
   private async terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
   ): Promise<{ id: string } | null> {
     const terminal = this.terminalChannel();
     if (!terminal || !session.title) return null;
-    const want = session.title.replace(/^[✳*]+\s*/, '');
+    const want = session.title.replace(/^[✻✽✶✳✢⋅◦✦✧∘◐◑◒◓*]+\s*/, '');
     const pathKey = normalizeDirKey(project.path, process.platform);
     let panes: Array<{ id: string; title: string | null; cwd: string | null }>;
     try {
@@ -672,7 +723,7 @@ export class MessageDeliverer {
         p.title != null &&
         p.cwd != null &&
         pathKey != null &&
-        p.title.replace(/^[✳*]+\s*/, '') === want &&
+        p.title.replace(/^[✻✽✶✳✢⋅◦✦✧∘◐◑◒◓*]+\s*/, '') === want &&
         normalizeDirKey(p.cwd, process.platform) === pathKey,
     );
     return hits.length === 1 ? hits[0]! : null;

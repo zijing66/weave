@@ -379,6 +379,34 @@ export interface SessionWatchRow {
   createdAt: string;
 }
 
+/** mirror of `BlockingQuestionOption`（harness 规格拼装：web 只传下标，键序不下发）。 */
+export interface PendingQuestionOption {
+  keys: string;
+  label: string;
+  description?: string | null;
+}
+
+/** mirror of `BlockingQuestion`：待答问题面——问题文案/选项保留原文（终端模态框
+ *  里就是这个英文面），UI chrome（角标/标题/按钮）走 i18n。 */
+export interface PendingQuestion {
+  /** 稳定键（作答路由定位）。 */
+  key: string;
+  header?: string | null;
+  question: string;
+  options: PendingQuestionOption[];
+  multiSelect: boolean;
+}
+
+/** mirror of `PendingQuestionEntry`（GET /messaging/questions 行）。 */
+export interface PendingQuestionEntry {
+  sessionId: string;
+  harness: Harness;
+  /** question = AskUserQuestion/计划确认；permission = 权限确认。 */
+  kind: 'question' | 'permission';
+  questions: PendingQuestion[];
+  at: string;
+}
+
 /** mirror of `SequenceStep` in packages/weave-server/src/repositories/session-sequences.ts。 */
 export interface SequenceStep {
   to: string;
@@ -1096,6 +1124,21 @@ export const api = {
     apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(
       (r) => r.capabilities,
     ),
+  /** 阻塞问答待答面（AskUserQuestion / 计划确认 / 权限确认的实时状态）。 */
+  listQuestions: (): Promise<PendingQuestionEntry[]> =>
+    apiFetch<{ questions: PendingQuestionEntry[] }>('/messaging/questions').then(
+      (r) => r.questions,
+    ),
+  /** 远程作答：只传问题键 + 选项下标（键序由服务端 harness 规格拼装并白名单校验）。 */
+  answerQuestion: (
+    sessionId: string,
+    questionKey: string,
+    optionIndex: number,
+  ): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ questionKey, optionIndex }),
+    }),
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>
     apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),

@@ -18,6 +18,7 @@ export type HarnessCapability =
   | 'plugins'
   | 'pluginState'
   | 'messaging'
+  | 'questions'
   | 'capture';
 
 /**
@@ -200,6 +201,40 @@ export interface MessageMeta {
   mode: string;
 }
 
+/** 阻塞式问答的选项（含作答键序——宿主模态框只吃键盘）。 */
+export interface BlockingQuestionOption {
+  /** 作答键序（裸击键：选项序号；多选问题补一记 CR 提交）。 */
+  keys: string;
+  label: string;
+  description?: string | null;
+}
+
+/** 阻塞式问答的问题面（PreToolUse 载荷归一化；web 直渲染，选项原文展示）。 */
+export interface BlockingQuestion {
+  /** 稳定键（作答路由定位：`<tool>:<头或问句前缀>`）。 */
+  key: string;
+  header?: string | null;
+  question: string;
+  options: readonly BlockingQuestionOption[];
+  multiSelect: boolean;
+}
+
+/**
+ * 阻塞式交互面（会话卡住等输入：AskUserQuestion / 计划确认 / 权限确认）：
+ * 哪些工具会挂起、权限通知类型、问题面归一化与作答键序全归 harness——
+ * server 只做状态机与终端传输，web 只渲染不拼键序。
+ */
+export interface BlockingPromptSpec {
+  /** 阻塞工具名：PreToolUse 置位、PostToolUse 同名清除。 */
+  readonly blockingTools: readonly string[];
+  /** 权限确认的 Notification 类型（raw.notification_type）；null = 无此机制。 */
+  readonly permissionNotificationType: string | null;
+  /** 权限确认的问题面（选项键序随宿主 UI 固定；上文 = 最近一次 PreToolUse）。 */
+  permissionQuestion(context: { toolName: string | null; toolInput: unknown }): BlockingQuestion;
+  /** 阻塞工具的 PreToolUse toolInput → 问题列表（含合成问题：计划确认的 toolInput 恒空）。 */
+  parseQuestions(toolName: string, toolInput: unknown): BlockingQuestion[];
+}
+
 /**
  * 会话本地收件箱直投规格（层①-a，**harness 专属机制**：claude = inbox socket）。
  * server 只做通用传输（连地址 → 写帧 → 关），协议与键名归 harness；无此机制的
@@ -377,6 +412,7 @@ export interface HarnessDriver {
   plugins?: PluginSurface;
   pluginState?: PluginStateSurface;
   messaging?: MessagingSurface;
+  questions?: BlockingPromptSpec;
   capture?: CaptureSurface;
 }
 

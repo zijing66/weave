@@ -8,6 +8,7 @@ import type { SequenceEngine } from '../hooks/sequence-engine.js';
 import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
 import { promptboxPathOf } from '../hooks/promptbox.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import type { QuestionTracker } from '../hooks/question-tracker.js';
 import {
   startInboxWorker,
   handleIngestedRecords,
@@ -32,6 +33,8 @@ export interface HookPipelineDeps {
   sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
   /** prompt 队列冲洗（消息域重塑）：ingest 事件 = 会话活着，即时试递队列行。 */
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
+  /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
+  questionTracker?: Pick<QuestionTracker, 'onEvent'>;
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -149,6 +152,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         watchEngine: deps.watchEngine,
         sequenceEngine: deps.sequenceEngine,
         messagePipe: deps.messagePipe,
+        questionTracker: deps.questionTracker,
       },
       records,
     );

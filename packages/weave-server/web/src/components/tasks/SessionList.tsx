@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { type SessionRow, type SessionWatchRow, type MessagingCapability, type WatchOn } from '@/lib/api';
+import { type SessionRow, type SessionWatchRow, type MessagingCapability, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
@@ -7,11 +7,12 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Bell, BellRing, Check, Copy, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
+import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { WatchPicker } from './WatchPicker';
+import { QuestionAnswer } from './QuestionAnswer';
 import { SessionStatusIcon } from './SessionStatusIcon';
 
 /** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
@@ -36,6 +37,9 @@ export function SessionList({
   capabilities,
   onOpenMessages,
   inflightOf,
+  questionOf,
+  onAnswer,
+  answerStateOf,
   watchOf,
   watchStateOf,
   onSubscribeWatch,
@@ -60,6 +64,12 @@ export function SessionList({
   onOpenMessages: (sessionId: string) => void;
   /** 该会话在途消息条数（服务端 SSE push 快照）——有则消息图标转 amber + 角标。 */
   inflightOf: (sessionId: string) => number;
+  /** 该会话的待答阻塞问题（无 = 不挂起）。 */
+  questionOf?: (sessionId: string) => PendingQuestionEntry | undefined;
+  /** 远程作答（questionKey + 选项下标；键序由服务端 harness 规格拼装）。 */
+  onAnswer?: (sessionId: string, questionKey: string, optionIndex: number) => void;
+  /** 作答按钮的反馈态（loading → ✅ → 还原，防重复键序）。 */
+  answerStateOf?: (sessionId: string, questionKey: string) => ActionState;
   /** 该会话当前的 pending 订阅行（无 = 未订阅）。 */
   watchOf?: (sessionId: string) => SessionWatchRow | undefined;
   /** 订阅按钮的反馈态（loading → ✅ → 还原）。 */
@@ -76,6 +86,8 @@ export function SessionList({
   const t = useT();
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
+  /** 待答弹窗目标（null = 关；entry 消失 = 全部答完/解除，弹窗随之自关）。 */
+  const [answerFor, setAnswerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -208,6 +220,34 @@ export function SessionList({
                             />
                           }
                         />
+                      </button>
+                    )}
+                    {/* 阻塞问答入口：该会话被 AskUserQuestion / 计划 / 权限确认
+                        挂起时才出现（无待答不占位）——amber + 问题数角标，点开
+                        远程作答弹窗。 */}
+                    {questionOf?.(s.sessionId) && (
+                      <button
+                        type="button"
+                        title={t('tasks.answerActiveTooltip', {
+                          n: questionOf(s.sessionId)!.questions.length,
+                        })}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAnswerFor(s.sessionId);
+                        }}
+                        className={cn(
+                          ACTION_BTN,
+                          'relative',
+                          'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                        )}
+                      >
+                        <HelpCircle className="h-3 w-3 text-amber-300" />
+                        <span
+                          aria-hidden
+                          className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                        >
+                          {questionOf(s.sessionId)!.questions.length}
+                        </span>
                       </button>
                     )}
                     {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
@@ -357,6 +397,29 @@ export function SessionList({
           </li>
         );
       })}
+      {answerFor &&
+        (() => {
+          // 弹窗开着但待答面没了（答完/解除/会话删除）→ 随之自关
+          const entry = questionOf?.(answerFor);
+          if (!entry || entry.questions.length === 0) return null;
+          return (
+            <QuestionAnswer
+              label={sessionLabel(
+                sessions.find((s) => s.sessionId === answerFor)?.title ?? null,
+                answerFor,
+              )}
+              entry={entry}
+              busyKey={
+                entry.questions.find((q) => answerStateOf?.(answerFor, q.key) === 'loading')?.key ??
+                null
+              }
+              onAnswer={(questionKey, optionIndex) =>
+                onAnswer?.(answerFor, questionKey, optionIndex)
+              }
+              onClose={() => setAnswerFor(null)}
+            />
+          );
+        })()}
       {watchPickerFor && (
         <WatchPicker
           label={

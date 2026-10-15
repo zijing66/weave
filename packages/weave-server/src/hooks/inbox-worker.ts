@@ -13,6 +13,7 @@ import type { HookReport, NormalizedHookPayload } from './types.js';
 import type { WatchEngine } from './watch-engine.js';
 import type { SequenceEngine } from './sequence-engine.js';
 import type { MessageDeliverer } from './message-deliverer.js';
+import type { QuestionTracker } from './question-tracker.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -301,6 +302,8 @@ export interface IngestedHandlerDeps {
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）。 */
     onSessionPrompt?(sessionId: string, prompt: string): void;
   };
+  /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
+  questionTracker?: Pick<QuestionTracker, 'onEvent'>;
 }
 
 /**
@@ -328,6 +331,13 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       at: new Date().toISOString(),
     });
     if (record.input.sessionId) {
+      // 阻塞式问答状态机：Pre/PostToolUse 与 Notification 带 toolName/raw，
+      // 帧域没有这些——跟踪必须挂在解析后的 payload 上（与 watch 引擎平行）。
+      deps.questionTracker?.onEvent({
+        sessionId: record.input.sessionId,
+        source: record.input.source,
+        payload,
+      });
       deps.watchEngine?.onEvent({
         sessionId: record.input.sessionId,
         eventType: record.input.eventType,

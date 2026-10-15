@@ -568,6 +568,7 @@ describe('MessageDeliverer 裁决表', () => {
           available: () => true,
           listPanes: async () => panes,
           sendText,
+          sendKeys: vi.fn(),
         },
       }),
     );
@@ -695,6 +696,7 @@ describe('MessageDeliverer 裁决表', () => {
           sendText: async (_paneId, text) => {
             sent.push(text);
           },
+          sendKeys: vi.fn(),
         },
       }),
     );
@@ -988,6 +990,7 @@ describe('MessageDeliverer 裁决表', () => {
       available: () => false,
       listPanes: vi.fn(),
       sendText: vi.fn(),
+      sendKeys: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1028,6 +1031,7 @@ describe('MessageDeliverer 裁决表', () => {
       available: () => true,
       listPanes: vi.fn().mockResolvedValue(panes),
       sendText,
+      sendKeys: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1064,6 +1068,7 @@ describe('MessageDeliverer 裁决表', () => {
         { id: 'pane-3', title: 'msg-target', cwd: PROJECT_PATH },
       ]),
       sendText,
+      sendKeys: vi.fn(),
     };
     const ambDeliverer = new MessageDeliverer(
       makeDeps({ surfaceFor: () => noNative, terminal: ambiguous }),
@@ -1086,6 +1091,7 @@ describe('MessageDeliverer 裁决表', () => {
       available: () => true,
       listPanes: vi.fn().mockImplementation(async () => panes),
       sendText,
+      sendKeys: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1377,5 +1383,68 @@ describe('MessageDeliverer 裁决表', () => {
     expect(fake.calls).toHaveLength(2);
     expect(fake.children[1]!.stdin.writes[0]).toContain('[one-way]');
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
+  describe('answer（阻塞问答作答）', () => {
+    const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue(panes),
+        sendText: vi.fn(),
+        sendKeys,
+      };
+      return { terminal, sendKeys };
+    };
+
+    it('选项键序打进 pane（spinner 前缀含 ◐ 输入等待态也能匹配）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run(
+        '◐ msg-target',
+        SESSION_ID,
+      );
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '◐ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop');
+
+      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toEqual({ ok: true });
+      expect(sendKeys).toHaveBeenCalledWith('pane-1', '1');
+      // 多选形态（数字 + CR）同过白名单
+      await expect(deliverer.answer(SESSION_ID, '2\r')).resolves.toEqual({ ok: true });
+      expect(sendKeys).toHaveBeenCalledWith('pane-1', '2\r');
+    });
+
+    it('键序白名单：非「数字 + 可选 CR」一律 400（作答面不是键序注入通道）', async () => {
+      const { terminal, sendKeys } = paneFixture([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      for (const keys of ['abc', '1\r2', '12', '\r', '1\n', '']) {
+        const result = await deliverer.answer(SESSION_ID, keys);
+        expect(result, JSON.stringify(keys)).toMatchObject({ ok: false, status: 400 });
+      }
+      expect(sendKeys).not.toHaveBeenCalled();
+    });
+
+    it('会话不存在 404；pane 找不到 409（窗口没开/歧义）', async () => {
+      const { terminal } = paneFixture([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      await expect(deliverer.answer('sess-ghost', '1')).resolves.toMatchObject({
+        ok: false,
+        status: 404,
+      });
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+    });
+
+    it('无终端通道 409（层② 是作答的唯一通道）', async () => {
+      const deliverer = new MessageDeliverer(makeDeps());
+      await expect(deliverer.answer(SESSION_ID, '1')).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+    });
   });
 });

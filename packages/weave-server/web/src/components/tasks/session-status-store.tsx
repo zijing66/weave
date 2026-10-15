@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type HookDispatch, type SessionRow } from '@/lib/api';
+import { api, type HookDispatch, type PendingQuestionEntry, type SessionRow } from '@/lib/api';
 import { subscribeSse } from '@/lib/sse';
 import {
   countSessionsByHarness,
@@ -52,6 +52,8 @@ interface SessionStatusValue {
   error: string | null;
   /** sessionId → 在途消息条数（服务端 push 'inflightCounts' 的绝对值快照）。 */
   inflight: Map<string, number>;
+  /** sessionId → 待答阻塞问题（AskUserQuestion / 计划与权限确认）。 */
+  questions: Map<string, PendingQuestionEntry>;
   /** 手动重拉（刷新按钮；SSE 之外兜底）。 */
   refresh: () => Promise<void>;
 }
@@ -76,11 +78,15 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   const [subagents, setSubagents] = useState<Map<string, Map<string, number>>>(new Map());
   /** 在途消息角标（后端 push 的绝对值快照；漏帧由下一次推自我校正）。 */
   const [inflight, setInflight] = useState<Map<string, number>>(new Map());
+  /** 待答阻塞问题：随 hook 帧的 500ms 防抖重拉（tracker 是事件驱动的内存态，
+   *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
+  const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
 
   const refresh = useCallback(async () => {
-    const [s, d] = await Promise.allSettled([
+    const [s, d, q] = await Promise.allSettled([
       api.listSessions(),
       api.listHookDispatches({ limit: 200 }),
+      api.listQuestions(),
     ]);
     if (s.status === 'fulfilled') {
       setSessions(s.value);
@@ -90,6 +96,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     }
     // 派发列表失败不报错——状态推导降级为 lastSeenAt/turnOpen，不打扰用户
     if (d.status === 'fulfilled') setDispatches(d.value);
+    // 待答面同理静默降级（老 daemon 未升级 = 无此路由）
+    if (q.status === 'fulfilled') {
+      setQuestions(new Map(q.value.map((entry) => [entry.sessionId, entry])));
+    }
   }, []);
 
   useEffect(() => {
@@ -260,8 +270,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   }, [sessions, statuses]);
 
   const value = useMemo<SessionStatusValue>(
-    () => ({ sessions, dispatches, statuses, projectStats, error, inflight, refresh }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, refresh],
+    () => ({ sessions, dispatches, statuses, projectStats, error, inflight, questions, refresh }),
+    [sessions, dispatches, statuses, projectStats, error, inflight, questions, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

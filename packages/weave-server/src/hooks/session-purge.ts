@@ -4,6 +4,7 @@ import type { SessionSequenceRepository } from '../repositories/session-sequence
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { MessageDeliverer } from './message-deliverer.js';
+import type { QuestionTracker } from './question-tracker.js';
 
 export interface SessionPurgeDeps {
   sessions: SessionRepository;
@@ -15,6 +16,8 @@ export interface SessionPurgeDeps {
   watches?: Pick<SessionWatchRepository, 'deleteBySession'>;
   /** 跨会话序列（批 3）：任一步目标指向该会话的行一并清（不计数）。 */
   sequences?: Pick<SessionSequenceRepository, 'deleteMentioning'>;
+  /** 阻塞问答：待答内存态一并清（不计数）。 */
+  questions?: Pick<QuestionTracker, 'forgetSession'>;
 }
 
 /**
@@ -30,6 +33,7 @@ export function purgeSession(
   const messages = deps.deliverer?.forgetSession(sessionId) ?? 0;
   deps.watches?.deleteBySession(sessionId);
   deps.sequences?.deleteMentioning(new Set([sessionId]));
+  deps.questions?.forgetSession(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };
 }

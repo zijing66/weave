@@ -14,11 +14,11 @@ flowchart TD
   end
 
   subgraph hpkg["@weavecode/harness · 抽象定义的家"]
-    D1["driver.ts ★槽清单唯一权威<br/>9 能力槽接口 + HarnessDriver<br/>+ HarnessRegistry（先到先得）"]
+    D1["driver.ts ★槽清单唯一权威<br/>10 能力槽接口 + HarnessDriver<br/>+ HarnessRegistry（先到先得）"]
     D2["init/pipeline.ts<br/>InitPipeline（模板方法①）"]
     D3["registry-wiring.ts<br/>HARNESS_DRIVERS 总表<br/>+ createRuntimeRegistry"]
-    subgraph CL["claude/ · 8 槽实现"]
-      C1["assets · events · resume · detect ·<br/>plugins · pluginState · messaging · capture"]
+    subgraph CL["claude/ · 9 槽实现"]
+      C1["assets · events · resume · detect ·<br/>plugins · pluginState · messaging · questions · capture"]
     end
     subgraph CX["codex/ · 4 槽实现"]
       X1["assets · detect · pluginState · messaging<br/>（events / resume / plugins 无对等物，永不注册）"]

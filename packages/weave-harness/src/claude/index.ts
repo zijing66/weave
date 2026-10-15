@@ -5,6 +5,7 @@ import { CLAUDE_EVENT_SOURCE } from './event-source.js';
 import { CLAUDE_MESSAGING } from './messaging.js';
 import { CLAUDE_PLUGINS } from './plugins.js';
 import { CLAUDE_PLUGIN_STATE } from './plugin-state.js';
+import { CLAUDE_BLOCKING_PROMPT as CLAUDE_QUESTIONS } from './questions.js';
 import { CLAUDE_RESUME } from './resume.js';
 import { CLAUDE_DETECTOR } from './detect.js';
 
@@ -16,6 +17,7 @@ export { CLAUDE_PLUGIN_STATE } from './plugin-state.js';
 export { CLAUDE_RESUME } from './resume.js';
 export { CLAUDE_DETECTOR } from './detect.js';
 export { CLAUDE_MESSAGING } from './messaging.js';
+export { CLAUDE_BLOCKING_PROMPT } from './questions.js';
 export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { resolveClaudePeer } from './peers.js';
@@ -36,8 +38,8 @@ export {
 /**
  * Claude 接入模块的驱动：批 4a 补 assets、批 4b 补 events/resume、批 5 补
  * detect、批 3 补 plugins、P2 补 pluginState、session-orchestration 批 1 补
- * messaging、tool-object-model §6-2 补 capture——init 槽不在此（init 实现
- * 半球留 cli，由 init/wiring 携带）。
+ * messaging、阻塞式问答补 questions、tool-object-model §6-2 补 capture——
+ * init 槽不在此（init 实现半球留 cli，由 init/wiring 携带）。
  */
 export const CLAUDE_DRIVER: HarnessDriver = {
   id: 'claude',
@@ -50,6 +52,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'plugins',
     'pluginState',
     'messaging',
+    'questions',
     'capture',
   ],
   assets: CLAUDE_ASSETS,
@@ -59,5 +62,6 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   plugins: CLAUDE_PLUGINS,
   pluginState: CLAUDE_PLUGIN_STATE,
   messaging: CLAUDE_MESSAGING,
+  questions: CLAUDE_QUESTIONS,
   capture: CLAUDE_CAPTURE,
 };

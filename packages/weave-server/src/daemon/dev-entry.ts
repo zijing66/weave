@@ -23,6 +23,7 @@ import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
@@ -164,6 +165,12 @@ async function main(): Promise<void> {
     bus: hookBus,
   });
   sequenceEngine.rearm();
+  // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
+  const questionTracker = new QuestionTracker({
+    sessions: hookSessions,
+    hookEvents,
+  });
+  questionTracker.seedFromDb();
   const watch = new WatchService(projects);
   watch.start();
   // 数据变更帧总线 + 终端角标隐藏刷新：前端不再轮询角标，改由后端「有人看时每
@@ -192,6 +199,7 @@ async function main(): Promise<void> {
     sequences: sessionSequences,
     watchEngine,
     sequenceEngine,
+    questions: questionTracker,
   });
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。
@@ -206,6 +214,7 @@ async function main(): Promise<void> {
     watchEngine,
     sequenceEngine,
     messagePipe: messageDeliverer,
+    questionTracker,
   });
   const staticDir = resolveStaticDir();
 
@@ -230,6 +239,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    questionTracker,
     sessionWatches,
     watchEngine,
     sessionSequences,
