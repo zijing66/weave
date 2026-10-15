@@ -1,5 +1,13 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, lstatSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  watch as fsWatch,
+} from 'node:fs';
+import type { FSWatcher as NodeFSWatcher } from 'node:fs';
 import path from 'node:path';
 import { watch } from 'chokidar';
 import type { FSWatcher } from 'chokidar';
@@ -46,6 +54,16 @@ export interface WatchServiceOptions {
   reconcileMs?: number;
   /** Custom ignore predicate (project-relative posix path). Default: shouldIgnore. */
   isIgnored?: (rel: string) => boolean;
+  /** 全局个人技能根来源（缺省 = 各 harness 在 `~` 下的根）；测试注入用。 */
+  globalRootSource?: () => Array<{ harness: Harness; root: string }>;
+}
+
+/** 一个全局技能根的监听：根自身一条非递归（根级条目增删/直接落在根里的文件）
+ *  + 每个可见目录条目一条递归（真身——Windows 的递归监听不穿软链）。 */
+interface GlobalRootRecord {
+  harness: Harness;
+  root: NodeFSWatcher;
+  entries: Map<string, { real: string; watcher: NodeFSWatcher }>;
 }
 
 /**
@@ -64,15 +82,14 @@ export class WatchService {
   private readonly debounceMs: number;
   private readonly reconcileMs: number;
   private readonly isIgnored: (rel: string) => boolean;
+  private readonly globalRootSource: () => Array<{ harness: Harness; root: string }>;
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pending = new Map<string, Map<string, AssetChangeEvent>>();
   private reconcileTimer: NodeJS.Timeout | undefined;
   // Global personal skill roots (~/.claude/skills/, ~/.agents/skills/, and the
   // deprecated ~/.codex/skills/) watched
   // for live preview of symlinked skills. Keyed by absolute root path.
-  private readonly globalWatchers = new Map<string, FSWatcher>();
-  /** 各全局根的归属 harness（根来自 surface，归属即 surface 自身）。 */
-  private readonly globalOwners = new Map<string, Harness>();
+  private readonly globalRoots = new Map<string, GlobalRootRecord>();
   private readonly globalPending = new Map<string, AssetChangeEvent>();
   private globalTimer: NodeJS.Timeout | undefined;
 
@@ -83,6 +100,7 @@ export class WatchService {
     this.debounceMs = options.debounceMs ?? 300;
     this.reconcileMs = options.reconcileMs ?? 5000;
     this.isIgnored = options.isIgnored ?? shouldIgnore;
+    this.globalRootSource = options.globalRootSource ?? globalPersonalSkillRootsOwned;
   }
 
   /** Begin watching all currently-registered projects + periodic reconcile. */
@@ -95,8 +113,7 @@ export class WatchService {
   stop(): void {
     for (const w of this.watchers.values()) void w.close();
     this.watchers.clear();
-    for (const w of this.globalWatchers.values()) void w.close();
-    this.globalWatchers.clear();
+    for (const root of [...this.globalRoots.keys()]) this.unwatchGlobalRoot(root);
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
     this.pending.clear();
@@ -145,20 +162,18 @@ export class WatchService {
   /** Watch any existing personal skill root that is not yet watched, and drop
    * watchers for roots that have disappeared. */
   private reconcileGlobalRoots(): void {
-    const owned = globalPersonalSkillRootsOwned();
+    const owned = this.globalRootSource();
     const roots = new Set(owned.map((o) => o.root));
     for (const { harness, root } of owned) {
-      if (this.globalWatchers.has(root)) continue;
+      if (this.globalRoots.has(root)) {
+        this.syncGlobalEntries(root); // 新装/卸载的条目即时挂上或摘掉
+        continue;
+      }
       if (!existsSync(root)) continue; // created later — picked up next reconcile
       this.watchGlobalRoot(root, harness);
     }
-    for (const root of [...this.globalWatchers.keys()]) {
-      if (!roots.has(root) || !existsSync(root)) {
-        const w = this.globalWatchers.get(root);
-        if (w) void w.close();
-        this.globalWatchers.delete(root);
-        this.globalOwners.delete(root);
-      }
+    for (const root of [...this.globalRoots.keys()]) {
+      if (!roots.has(root) || !existsSync(root)) this.unwatchGlobalRoot(root);
     }
   }
 
@@ -221,40 +236,100 @@ export class WatchService {
     this.cache.clear(projectPath);
   }
 
-  /** Watch a personal skill root (`~/.claude/skills/`, `~/.agents/skills/`, or the
+  /**
+   * Watch a personal skill root (`~/.claude/skills/`, `~/.agents/skills/`, or the
    * deprecated `~/.codex/skills/`).
-   * `followSymlinks` (default) lets edits to a symlinked skill's original files
-   * (the link target, e.g. a dev repo) surface as events on the link path,
-   * matching the abs paths returned by `listGlobalSkillFiles`. `ignoreInitial`
-   * avoids flooding with add-events for every existing file at startup. */
+   *
+   * 目录级递归 `fs.watch`：根下每个可见目录条目一条（软链解到真身——Windows 的
+   * 递归监听不穿软链），一个句柄覆盖整棵子树。chokidar 是逐实体 fs.watch：13k 文件
+   * 的技能源仓库要开 13k 句柄、扫 20s、烧 24s CPU，单线程 daemon 启动后十几秒内
+   * 端点全被拖慢；同一观测集换递归监听是 10 句柄、毫秒级就绪。事件按真身映回根内
+   * 相对路径，与 `listGlobalSkillFiles` 给出的路径形一致。 */
   private watchGlobalRoot(root: string, harness: Harness): void {
-    const w = watch('.', {
-      cwd: root,
-      ignored: (testPath: string) => path.basename(testPath).startsWith('.'),
-      ignoreInitial: true,
-      followSymlinks: true,
-      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+    const watcher = fsWatch(root, (_ev, fname) => {
+      // 根级条目增删/改指（新装、卸载技能）→ 重挂条目监听；直接落在根里的文件照常入队
+      this.syncGlobalEntries(root);
+      if (fname) this.emitGlobalPath(root, normalizeRelPath(String(fname)));
     });
-    this.globalWatchers.set(root, w);
-    this.globalOwners.set(root, harness);
-    w.on('add', (p) => this.onGlobalFile(root, p, 'add'));
-    w.on('change', (p) => this.onGlobalFile(root, p, 'change'));
-    w.on('unlink', (p) => this.onGlobalFile(root, p, 'unlink'));
-    w.on('error', (err) => this.emitter.emit('watch-error', err));
+    watcher.on('error', (err) => this.emitter.emit('watch-error', err));
+    this.globalRoots.set(root, { harness, root: watcher, entries: new Map() });
+    this.syncGlobalEntries(root);
   }
 
-  /** Handle a change inside a global personal skill root. Events carry the
-   * GLOBAL_SENTINEL projectPath so App.tsx's project cache ignores them; the
-   * open skill drawer subscribes to its own EventSource and re-fetches.
-   * agent 取该根的归属 harness（watchGlobalRoot 设立时记下，不解析路径段）。 */
-  private onGlobalFile(root: string, rawPath: string, kind: AssetChangeKind): void {
-    const relPath = normalizeRelPath(rawPath);
+  /** 把根下每个可见目录条目挂上递归监听（解软链到真身）；移除或改指真身的摘掉。 */
+  private syncGlobalEntries(root: string): void {
+    const record = this.globalRoots.get(root);
+    if (!record) return;
+    let names: string[];
+    try {
+      names = readdirSync(root);
+    } catch {
+      return; // 根暂不可读——下轮 reconcile 再看
+    }
+    const live = new Set<string>();
+    for (const name of names) {
+      if (name.startsWith('.')) continue;
+      const link = path.join(root, name);
+      let real: string;
+      try {
+        if (!statSync(link).isDirectory()) continue; // 文件条目归根监听管
+        real = realpathSync(link);
+      } catch {
+        continue; // 悬空软链 / 竞态删除
+      }
+      live.add(name);
+      const cur = record.entries.get(name);
+      if (cur?.real === real) continue;
+      if (cur) {
+        cur.watcher.close();
+        record.entries.delete(name);
+      }
+      const watcher = fsWatch(real, { recursive: true }, (_ev, fname) => {
+        if (fname) this.emitGlobalPath(root, normalizeRelPath(path.join(name, String(fname))));
+      });
+      // 真身目录被删/移走：句柄失效，摘掉交回 reconcile 重挂
+      watcher.on('error', () => {
+        watcher.close();
+        record.entries.delete(name);
+      });
+      record.entries.set(name, { real, watcher });
+    }
+    for (const [name, entry] of record.entries) {
+      if (live.has(name)) continue;
+      entry.watcher.close();
+      record.entries.delete(name);
+    }
+  }
+
+  private unwatchGlobalRoot(root: string): void {
+    const record = this.globalRoots.get(root);
+    if (!record) return;
+    record.root.close();
+    for (const e of record.entries.values()) e.watcher.close();
+    this.globalRoots.delete(root);
+  }
+
+  /** 根内相对路径 → 全局事件。Events carry the GLOBAL_SENTINEL projectPath so
+   * App.tsx's project cache ignores them; the open skill drawer subscribes to its
+   * own EventSource and re-fetches. agent 取该根的归属 harness（挂监听时记下，
+   * 不解析路径段）；目录变动不产生文件事件（与旧实现只消费 add/change/unlink 同口径）。 */
+  private emitGlobalPath(root: string, relPath: string): void {
+    if (!relPath) return;
+    // 任一段以 '.' 开头即不观测（旧谓词按 basename 逐条判，等价）
+    if (relPath.split('/').some((seg) => seg.startsWith('.'))) return;
     const absPath = path.join(root, relPath);
+    let kind: AssetChangeKind = 'unlink';
+    try {
+      if (!statSync(absPath).isFile()) return;
+      kind = 'change';
+    } catch {
+      // 已消失 → unlink（保留初值）
+    }
     this.enqueueGlobal({
       projectPath: GLOBAL_SENTINEL,
       projectName: 'global',
       category: 'skill',
-      agent: this.globalOwners.get(root) ?? 'claude',
+      agent: this.globalRoots.get(root)?.harness ?? 'claude',
       relPath,
       absPath,
       kind,
