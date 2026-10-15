@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useT } from '@/i18n/I18nProvider';
+import { useToast } from '@/components/Toast';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
@@ -40,6 +41,7 @@ export function GlobalTasksOverview({
   onOpenSession: (projectId: number, sessionId: string) => void;
 }) {
   const t = useT();
+  const { show } = useToast();
   const { sessions, statuses, error, refresh } = useSessionStatus();
   const [projectFilter, setProjectFilter] = useState<number | 'all'>('all');
   const [range, setRange] = useState<RangeKey>('all');
@@ -121,7 +123,14 @@ export function GlobalTasksOverview({
               ? String(filtered.length)
               : `${filtered.length} / ${sessions?.length ?? 0}`}
         </span>
-        <RefreshIconButton className="ml-auto" title={t('tasks.refresh')} onClick={refresh} />
+        <RefreshIconButton
+          className="ml-auto"
+          title={t('tasks.refresh')}
+          onClick={async () => {
+            const err = await refresh();
+            show(err ? 'error' : 'success', err ?? t('tasks.refreshed'));
+          }}
+        />
       </div>
 
       {/* 查询条件：项目 + 时间段（客户端过滤，不新造 API） */}

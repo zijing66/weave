@@ -893,7 +893,10 @@ export function TasksPanel({
           <RefreshIconButton
             className="ml-auto"
             title={t('tasks.refresh')}
-            onClick={refreshStatus}
+            onClick={async () => {
+              const err = await refreshStatus();
+              show(err ? 'error' : 'success', err ?? t('tasks.refreshed'));
+            }}
           />
         </div>
         {error && (

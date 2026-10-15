@@ -54,8 +54,8 @@ interface SessionStatusValue {
   inflight: Map<string, number>;
   /** sessionId → 待答阻塞问题（AskUserQuestion / 计划与权限确认）。 */
   questions: Map<string, PendingQuestionEntry>;
-  /** 手动重拉（刷新按钮；SSE 之外兜底）。 */
-  refresh: () => Promise<void>;
+  /** 手动重拉（刷新按钮；SSE 之外兜底）。resolve = 会话列表拉取失败的原因，成功为 null。 */
+  refresh: () => Promise<string | null>;
 }
 
 const Ctx = createContext<SessionStatusValue | null>(null);
@@ -82,24 +82,26 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
    *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<string | null> => {
     const [s, d, q] = await Promise.allSettled([
       api.listSessions(),
       api.listHookDispatches({ limit: 200 }),
       api.listQuestions(),
     ]);
-    if (s.status === 'fulfilled') {
-      setSessions(s.value);
-      setError(null);
-    } else {
-      setError(s.reason instanceof Error ? s.reason.message : String(s.reason));
-    }
     // 派发列表失败不报错——状态推导降级为 lastSeenAt/turnOpen，不打扰用户
     if (d.status === 'fulfilled') setDispatches(d.value);
     // 待答面同理静默降级（老 daemon 未升级 = 无此路由）
     if (q.status === 'fulfilled') {
       setQuestions(new Map(q.value.map((entry) => [entry.sessionId, entry])));
     }
+    if (s.status === 'fulfilled') {
+      setSessions(s.value);
+      setError(null);
+      return null;
+    }
+    const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
+    setError(message);
+    return message;
   }, []);
 
   useEffect(() => {
