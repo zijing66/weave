@@ -417,27 +417,39 @@ export function SessionMessages({
                 const pipe = m.pipe;
                 return (
                   <div key={m.key} className="flex items-end justify-end gap-1">
-                    {/* 回执 = 会话真收到（UPS 带上同文案）：气泡左下角一枚灰勾，
-                        与后台推送的 acked 同源；「已送达」不等于已读，不画第二枚。 */}
+                    {/* 投递终态收成气泡左下角一枚小圆点：空心 = 已送达（可能被暂扣/拒收，
+                        不等于已读），灰底白勾 = 已回执（会话真收到）。只有 weave 发出去的
+                        消息才有这一步——终端里自己打的话没有投递可言。 */}
                     {pipe?.acked === true && (
                       <span
                         title={t('tasks.msgAcked')}
-                        className="mb-0.5 shrink-0 text-neutral-500"
+                        className="mb-0.5 inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full bg-neutral-500 text-neutral-900"
                       >
-                        <Check className="h-3 w-3" />
+                        <Check className="h-2 w-2" strokeWidth={3} />
                       </span>
                     )}
-                    <div className="min-w-0 max-w-[85%] rounded-lg border border-blue-500/20 bg-blue-500/[0.06] px-2 py-1.5">
+                    {pipe && pipe.acked !== true && pipe.status === 'delivered' && (
+                      <span
+                        title={t('tasks.msgDeliveredHint')}
+                        className="mb-0.5 h-3 w-3 shrink-0 rounded-full border border-neutral-500"
+                      />
+                    )}
+                    {/* weave 发的（右栏投递）保持蓝底，终端里自己打的走中性底 */}
+                    <div
+                      className={cn(
+                        'min-w-0 max-w-[85%] rounded-lg border px-2 py-1.5',
+                        pipe
+                          ? 'border-blue-500/20 bg-blue-500/[0.06]'
+                          : 'border-white/[0.08] bg-white/[0.02]',
+                      )}
+                    >
                       {pipe && (
                         <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                          <Badge
-                            title={
-                              pipe.status === 'delivered' ? t('tasks.msgDeliveredHint') : undefined
-                            }
-                            className={cn('shrink-0', STATUS_BADGE[pipe.status])}
-                          >
-                            {t(STATUS_KEY[pipe.status])}
-                          </Badge>
+                          {pipe.status !== 'delivered' && (
+                            <Badge className={cn('shrink-0', STATUS_BADGE[pipe.status])}>
+                              {t(STATUS_KEY[pipe.status])}
+                            </Badge>
+                          )}
                           {pipe.via && (
                             <span className="shrink-0 text-[10px] text-neutral-500">
                               {t(VIA_KEY[pipe.via])}
