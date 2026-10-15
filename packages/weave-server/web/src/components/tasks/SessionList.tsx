@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type SessionRow, type SessionWatchRow, type MessagingCapability, type AnswerPick, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,82 @@ export function mergeNewRows(prev: readonly string[], sorted: readonly string[])
   const known = new Set(kept);
   const fresh = sorted.filter((id) => !known.has(id));
   return [...fresh, ...kept];
+}
+
+/** 逐位相等（顺序快照比较；同一引用直接相等）。 */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+/**
+ * 活动序门控（会话列表与全局总览共用）：ids 随事件流实时算，落地序只在
+ * 「成员变化」或 RESORT_INTERVAL_MS 周期 tick 时取快照——两次快照之间顺序
+ * 冻结（不随事件实时跳动），行内容仍实时刷新。resetKey 变化 = 换了一批成员
+ * （过滤条件变了），立即采用新序，不做增量合并。入参 ids 需已按活动序排好。
+ */
+export function useActivityOrder(ids: readonly string[], resetKey?: string): readonly string[] {
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
+  const [applied, setApplied] = useState<readonly string[]>(ids);
+  const keyRef = useRef(resetKey);
+
+  // 成员增删（首载/新增/删除）→ 只增量落位：新行即时置顶、消失行即时移除，
+  // 既有行保持相对序不动（不随会话更新重排）；活动序重排等周期 tick。
+  useLayoutEffect(() => {
+    if (keyRef.current !== resetKey) {
+      keyRef.current = resetKey;
+      setApplied(ids);
+      return;
+    }
+    setApplied((prev) => {
+      const next = mergeNewRows(prev, ids);
+      return sameIds(prev, next) ? prev : next;
+    });
+  }, [ids, resetKey]);
+
+  // 周期 tick：把攒下的活动变化统一落地；顺序没变就保持引用，不空转重渲染。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setApplied((prev) => (sameIds(prev, idsRef.current) ? prev : idsRef.current));
+    }, RESORT_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return applied;
+}
+
+/**
+ * 行位移动画（FLIP）：重排时行从旧位平滑滑到新位。每次 commit 量一遍各行的
+ * offsetTop 存快照（布局位，不受进行中 transform 影响）；下一拍位移了的行先
+ * 瞬时摆回旧位，再过渡回新位。行元素以 id 为键登记进 rowEls。
+ */
+export function useFlipRows(rowEls: RefObject<Map<string, HTMLLIElement>>): void {
+  const rowTops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const els = rowEls.current;
+    if (els.size === 0) {
+      rowTops.current = new Map();
+      return;
+    }
+    const prev = rowTops.current;
+    const tops = new Map<string, number>();
+    const moved: Array<[HTMLLIElement, number]> = [];
+    for (const [id, el] of els) {
+      const top = el.offsetTop;
+      tops.set(id, top);
+      const old = prev.get(id);
+      if (old !== undefined && Math.abs(old - top) >= 1) moved.push([el, old - top]);
+    }
+    rowTops.current = tops;
+    if (moved.length === 0) return;
+    for (const [el] of moved) el.style.transition = 'none';
+    for (const [el, delta] of moved) el.style.transform = `translateY(${delta}px)`;
+    void moved[0]![0].offsetHeight; // 回流固化起始位，再开过渡
+    for (const [el] of moved) {
+      el.style.transition = `transform ${FLIP_DURATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
+      el.style.transform = '';
+    }
+  });
 }
 
 /**
@@ -137,50 +213,18 @@ export function SessionList({
   const [droppingId, setDroppingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // ---- 顺序门控：sortedIds 随事件流实时算，appliedIds 只在「成员变化」或
-  // 周期 tick 时取快照——两次快照之间顺序冻结（不随事件实时跳动），行内容
-  //（计数/状态/角标）仍实时刷新。
+  // ---- 顺序门控：sortedIds 随事件流实时算，落地序只在「成员变化」或周期 tick
+  // 时取快照（见 useActivityOrder）——两次快照之间顺序冻结（不随事件实时跳动），
+  // 行内容（计数/状态/角标）仍实时刷新。
   const sortedIds = useMemo(
     () => sessions.slice().sort(byActivity).map((s) => s.sessionId),
     [sessions],
   );
-  const sortedIdsRef = useRef(sortedIds);
-  useEffect(() => {
-    sortedIdsRef.current = sortedIds;
-  }, [sortedIds]);
-  const [appliedIds, setAppliedIds] = useState<string[] | null>(null);
+  const appliedIds = useActivityOrder(sortedIds);
 
-  // 成员增删（首载/新增/删除）→ 只增量落位：新行即时置顶、消失行即时移除，
-  // 既有行保持相对序不动（不随会话更新重排）；活动序重排等周期 tick。
-  useLayoutEffect(() => {
-    setAppliedIds((prev) => {
-      if (prev === null) return sortedIds;
-      const next = mergeNewRows(prev, sortedIds);
-      return next.length === prev.length && next.every((id, i) => id === prev[i])
-        ? prev
-        : next;
-    });
-  }, [sortedIds]);
-
-  // 周期 tick：把攒下的活动变化统一落地；顺序没变就保持引用，不空转重渲染。
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setAppliedIds((prev) => {
-        const next = sortedIdsRef.current;
-        return prev !== null &&
-          prev.length === next.length &&
-          prev.every((id, i) => id === next[i])
-          ? prev
-          : next;
-      });
-    }, RESORT_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  /** 渲染顺序 = appliedIds 冻结序，行数据取最新（appliedIds 落后于 sessions
-   *  的一帧里，未见的新行按新在前兜底置顶，commit 后即归位）。 */
+  /** 渲染顺序 = 冻结序，行数据取最新（冻结序落后于 sessions 的一帧里，未见的
+   *  新行按新在前兜底置顶，commit 后即归位）。 */
   const rows = useMemo(() => {
-    if (appliedIds === null) return sessions.slice().sort(byActivity);
     const byId = new Map(sessions.map((s) => [s.sessionId, s] as const));
     const ordered: SessionRow[] = [];
     for (const id of appliedIds) {
@@ -192,36 +236,8 @@ export function SessionList({
     return [...unseen, ...ordered];
   }, [sessions, appliedIds]);
 
-  // ---- FLIP：周期重排时卡片从旧位平滑滑到新位。
-  // 每次 commit 量一遍各行的 offsetTop 存快照（布局位，不受进行中 transform
-  // 影响）；下一拍位移了的行先瞬时摆回旧位，再过渡回新位。
   const rowEls = useRef(new Map<string, HTMLLIElement>());
-  const rowTops = useRef(new Map<string, number>());
-  useLayoutEffect(() => {
-    const els = rowEls.current;
-    if (els.size === 0) {
-      rowTops.current = new Map();
-      return;
-    }
-    const prev = rowTops.current;
-    const tops = new Map<string, number>();
-    const moved: Array<[HTMLLIElement, number]> = [];
-    for (const [id, el] of els) {
-      const top = el.offsetTop;
-      tops.set(id, top);
-      const old = prev.get(id);
-      if (old !== undefined && Math.abs(old - top) >= 1) moved.push([el, old - top]);
-    }
-    rowTops.current = tops;
-    if (moved.length === 0) return;
-    for (const [el] of moved) el.style.transition = 'none';
-    for (const [el, delta] of moved) el.style.transform = `translateY(${delta}px)`;
-    void moved[0]![0].offsetHeight; // 回流固化起始位，再开过渡
-    for (const [el] of moved) {
-      el.style.transition = `transform ${FLIP_DURATION_MS}ms cubic-bezier(0.2, 0, 0, 1)`;
-      el.style.transform = '';
-    }
-  });
+  useFlipRows(rowEls);
 
   // 幽灵会话倒计时走针：有到期行才起 30s 本地计时（纯展示刷新，不拉数据；
   // 事件流驱动的重渲染本身也在刷新读数，计时器只兜住完全静默的页面）。
