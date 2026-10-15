@@ -16,7 +16,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { formatStamp, promptOf, taskNotificationOf, turnSummaryOf } from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
-import type { HookFrame } from './session-status-store';
+import { useSessionStatus, type HookFrame } from './session-status-store';
 
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
@@ -171,6 +171,7 @@ export function SessionMessages({
 }) {
   const t = useT();
   const fb = useActionFeedback();
+  const { statuses } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   /** 对话事件类型（开轮 + 闭轮）：闭轮表为空的 harness 没有对话面可取。 */
   const convTypes = useMemo(
@@ -318,6 +319,10 @@ export function SessionMessages({
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
   const tailKey = thread[thread.length - 1]?.key;
+  /** 会话正在跑这一轮（状态总线与会话行同一判据，含 5min 静默兜底）而尾条仍是
+   *  用户那条 → 回复还在路上，尾上挂一枚「生成中」。 */
+  const generating =
+    statuses.get(sessionId) === 'running' && thread[thread.length - 1]?.role === 'user';
   const lastTail = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (entries === null || tailKey === lastTail.current) return;
@@ -487,6 +492,14 @@ export function SessionMessages({
                   </div>
                 );
               })}
+              {generating && (
+                <div className="flex justify-start">
+                  <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {t('tasks.msgGenerating')}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
