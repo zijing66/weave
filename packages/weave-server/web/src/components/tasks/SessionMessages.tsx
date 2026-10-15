@@ -555,9 +555,12 @@ export function SessionMessages({
                           {formatStamp(m.at)}
                         </span>
                       </div>
-                      <p className="whitespace-pre-wrap break-words text-xs text-neutral-200">
-                        {m.text}
-                      </p>
+                      {/* 投递原文同样走 markdown 预览（与左侧回复气泡同渲染器）；
+                          `pre-wrap` 保住段落里的软换行——markdown 默认把单换行并成
+                          一行，而用户常整段粘贴多行文本 */}
+                      <div className="[&_p]:whitespace-pre-wrap">
+                        <AssistantMarkdown text={m.text} />
+                      </div>
                       {pipe?.error && (
                         <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
                       )}

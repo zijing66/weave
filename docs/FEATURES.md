@@ -34,7 +34,7 @@ init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文�
 
 **问答面**：阻塞式问题（AskUserQuestion / 计划确认 / 权限确认）的远程作答——会话行问答角标 + 弹窗按钮镜像终端模态框的键序作答。多问 / 多选面按宿主同款渲染成「逐问勾选 + 收尾屏」表单，一次性提交整份作答（未答完禁用提交）；单问单选的单问面点行即答。权限确认自动补最近工具上下文；daemon 重启后从事件重放重建待答面。
 
-**消息域**：三个触发源 × 自动三层投递。手动发送（dashboard 弹窗，无模式选项——恒走 prompt 通道按优先级自动完成）、会话提醒订阅、序列编排（步数上限 3 hop，步级可选 inject / headless / auto / prompt 模式，重启后在途步标 interrupted 不自动重发）。prompt 通道三层：①原生中继（claude SendMessage，目标会话可见 `Message from @weave`）→ ②终端 send-text 兜底（经终端后端泛化，bracketed paste + CR 提交）→ ③promptbox 队列（daemon 写、hook 消费，双触发冲洗）。投递终态在途视图可查 `via` / 回执；prompt 送达未回执或投递失败会暂停该会话队列冲洗，回执命中或手动重发解闸。 **对话弹窗**（会话行图标）：用户投递的 prompt + 每轮 Stop 的最终总结（`raw.last_assistant_message`），不落库、只查既有事件流（开/闭轮两类事件 + `beforeId` 游标翻页）——默认最新 10 条、向上滚动加载更早、已翻页留前端、逐条时刻戳；投递行的 `via`/回执/重发挂在被认领的气泡上，Held/失败/暂停闸成因排在尾部。
+**消息域**：三个触发源 × 自动三层投递。手动发送（dashboard 弹窗，无模式选项——恒走 prompt 通道按优先级自动完成）、会话提醒订阅、序列编排（步数上限 3 hop，步级可选 inject / headless / auto / prompt 模式，重启后在途步标 interrupted 不自动重发）。prompt 通道三层：①原生中继（claude SendMessage，目标会话可见 `Message from @weave`）→ ②终端 send-text 兜底（经终端后端泛化，bracketed paste + CR 提交）→ ③promptbox 队列（daemon 写、hook 消费，双触发冲洗）。投递终态在途视图可查 `via` / 回执；prompt 送达未回执或投递失败会暂停该会话队列冲洗，回执命中或手动重发解闸。 **对话弹窗**（会话行图标）：用户投递的 prompt + 每轮 Stop 的最终总结（`raw.last_assistant_message`），不落库、只查既有事件流（开/闭轮两类事件 + `beforeId` 游标翻页）——默认最新 10 条、向上滚动加载更早、已翻页留前端、逐条时刻戳；投递行的 `via`/回执/重发挂在被认领的气泡上，Held/失败/暂停闸成因排在尾部；两侧气泡都走 markdown 预览（同一渲染器，用户原文的段落保留软换行）。
 
 **提醒订阅**：按会话订阅触发类型集（`idle` 空闲 / `turnEnd` 回合结束 / `messageFailed` 投递失败）+ 次数（NULL = 持久化）；命中经三通道通知——页面内 toast、浏览器系统通知（安全上下文 + SW）、Web Push（页面关掉仍可达，VAPID + aes128gcm，订阅撤销自愈）。触发即重新拉取目标会话状态。
 
