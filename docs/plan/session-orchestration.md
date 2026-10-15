@@ -744,3 +744,35 @@ CronCreate 与 SendMessage 共用「载荷入队 → 非抢占 → 回合边界�
 - watch：idleSignals 触发（经面取事件名，非散写）、一次性失效、terminated 补射、
   dashboard/会话双投递形态。
 - web：tsc 两跑（包根 + web）+ 组件测试镜像派生逻辑（支持徽标、模式选择器门控）。
+
+## 增补：提醒推送第三条腿——Web Push（2026-10-15 落地）
+
+前两条腿的边界：toast 走 SSE（页面开着才有）、浏览器通知走
+`browser-notify.ts`（页面开着 + 该浏览器授过权）。dashboard 页面一关，
+本地路径全死——补 Web Push：厂商推送服务（FCM/WNS/APNs）在后台唤起
+Service Worker 的 `push` 事件，进程活着就能弹通知。手机端依赖此前落地的
+HTTPS 双监听（Push/Notification API 均要求安全上下文，HTTP局域网地址
+`pushChannelState()` 直接报 `insecure`）。
+
+- **范围与 toast 同口径**：`PushNotifier` 订阅 hookBus，`watch.fired` 且
+  `watcherSessionId === null`（dashboard 发起的订阅）才推——会话订阅方的
+  通知已走消息域注入，不双发。
+- **订阅模型**：每浏览器安装一份，`push_subscriptions` 表以 endpoint
+  （推送服务分配的绝对 URL）为主键，同 endpoint 重订阅覆写密钥。多浏览器/
+  多主机各自订阅，fire 时全体群发、不分发起者。生命周期由推送服务裁决：
+  发送收到 404/410 = 浏览器已撤销 → 删行自愈；其他错误保留行下轮重试。
+- **VAPID**：`<dataDir>/push.json` 0600（auth.json/ai.json 同口径，不进
+  UI 可读的 settings 表），首次生成、坏文件重生成、原子写。`GET
+  /messaging/push/key` 分发公钥给订阅面。**钥轮换 = 旧订阅全废**（推送服务
+  按订阅时的公钥验签）——前端检测既有订阅的 `applicationServerKey` ≠
+  服务端公钥即退订重订。
+- **载荷加密**：web-push 库做 ECDH + aes128gcm（密钥材料 = 订阅的
+  p256dh/auth），推送服务只见密文；载荷 `{title, body, tag, url}`，
+  body 单源复用 `watchReasonPhrase`（server 拼好，SW 零逻辑），TTL 3600。
+- **去重**：与页面本地通知共用 tag `weave-watch-<sessionId>`——同 tag
+  互相替换，页面开着时双通道同达只弹一条。
+- **浏览器侧**（`web/src/lib/push.ts`）：订阅动作挂在「订阅提醒」手势里
+  （与通知权限申请同一手势，失败静默降级到现状）；设置页另有独立开关
+  （`pushChannelState` 四态展示，失败可见告知——失败不静默惯例）。SW
+  （`sw.js`）加 `push` 事件（非 JSON 载荷弹占位通知满足 userVisibleOnly
+  契约）与 `notificationclick` 聚焦/开窗，仍无 fetch handler。

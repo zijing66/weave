@@ -1165,6 +1165,21 @@ export const api = {
       method: 'DELETE',
       body: JSON.stringify({ watchId }),
     }),
+  /** Web Push：服务端 VAPID 公钥（pushManager.subscribe 的 applicationServerKey）。 */
+  pushPublicKey: (): Promise<{ publicKey: string }> =>
+    apiFetch<{ publicKey: string }>('/messaging/push/key'),
+  /** 注册本浏览器的推送订阅（endpoint 由推送服务分配；同 endpoint 覆写）。 */
+  pushSubscribe: (body: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+  }): Promise<{ ok: boolean }> =>
+    apiFetch('/messaging/push/subscribe', { method: 'POST', body: JSON.stringify(body) }),
+  /** 撤销推送订阅（设置页开关关向）。 */
+  pushUnsubscribe: (endpoint: string): Promise<{ ok: boolean }> =>
+    apiFetch('/messaging/push/unsubscribe', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint }),
+    }),
   /** 跨会话序列列表（新在前；编排画布用，全项目共用一张表）。 */
   listSessionSequences: (): Promise<SessionSequenceRow[]> =>
     apiFetch<{ sequences: SessionSequenceRow[] }>('/messaging/sequences').then(

@@ -34,6 +34,7 @@ import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
+import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
 import type { MessageKey } from '@/i18n/dict';
 
@@ -219,6 +220,9 @@ export function TasksPanel({
           // 拒绝/不支持/HTTP 访问皆退化为页面内 toast——明确告知成因，不静默降级。
           const permission = await ensureNotifyPermission();
           if (permission !== 'granted') show('info', t(NOTIFY_TOAST_KEY[permission]));
+          // 同一手势里尽量把推送也订上（页面关掉后仍可达的通道）；失败静默
+          // 降级到「页面开着才提醒」，不打扰订阅本身。
+          await ensurePushSubscribed();
           await api.createSessionWatch(sessionId, { on, times });
           refreshWatches();
         },

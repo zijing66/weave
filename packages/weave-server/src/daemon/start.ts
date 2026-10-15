@@ -21,6 +21,8 @@ import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
+import { PushNotifier } from '../hooks/push-notify.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { SequenceEngine } from '../hooks/sequence-engine.js';
@@ -171,6 +173,14 @@ export function startDaemon(): void {
     sessions: hookSessions,
     bus: hookBus,
   });
+  // Web Push 发送器（提醒第三条腿）：dashboard 订阅 fire 时向全部浏览器订阅
+  // 推送——页面关着本地通知路径全死，只有厂商推送服务能唤起 SW。
+  const pushSubscriptions = new PushSubscriptionRepository(db);
+  const pushNotifier = new PushNotifier({
+    subscriptions: pushSubscriptions,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
   // session-orchestration 批 3：序列引擎（无状态 bus 监听 + DB 推进），启动
   // rearm 恢复重启前的 running 序列。
   const sessionSequences = new SessionSequenceRepository(db);
@@ -286,6 +296,8 @@ export function startDaemon(): void {
     watchEngine,
     sessionSequences,
     sequenceEngine,
+    pushSubscriptions,
+    pushNotifier,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

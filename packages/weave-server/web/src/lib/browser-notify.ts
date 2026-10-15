@@ -7,17 +7,22 @@
  * 优先（见 public/sw.js），构造器只作 SW 缺位时的兜底。
  */
 
-/** 发一条系统通知；未授权/不支持时静默跳过（调用方仍有 toast 兜底）。 */
-export async function notifyBrowser(title: string, body?: string): Promise<void> {
+/**
+ * 发一条系统通知；未授权/不支持时静默跳过（调用方仍有 toast 兜底）。
+ * tag：同 tag 的通知互相替换——Web Push 通道（页面关着）与本条（页面开着）
+ * 先后到达时只显示一条，不双弹。
+ */
+export async function notifyBrowser(title: string, body?: string, tag?: string): Promise<void> {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   try {
+    const options = { ...(body ? { body } : {}), ...(tag ? { tag } : {}) };
     const reg =
       'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     if (reg) {
-      await reg.showNotification(title, body ? { body } : undefined);
+      await reg.showNotification(title, Object.keys(options).length ? options : undefined);
       return;
     }
-    new Notification(title, body ? { body } : undefined);
+    new Notification(title, Object.keys(options).length ? options : undefined);
   } catch {
     // 通知构造失败不影响页面其余反馈
   }

@@ -21,6 +21,12 @@ export const settingsZh = {
     '本机与局域网设备访问 dashboard 的完整地址；https 端口用于手机浏览器通知（自签证书，首次访问需在浏览器接受）。',
   'settings.urlLan': '局域网',
   'settings.urlLocal': '本机',
+  'settings.push': '推送提醒',
+  'settings.pushHint':
+    '提醒的推送通道：dashboard 页面关闭后仍可到达本浏览器（逐设备开关，多台主机各自打开即可都收到）。',
+  'settings.pushInsecure': '推送需 HTTPS 访问（当前页面是非安全上下文，浏览器禁用推送）。',
+  'settings.pushUnsupported': '此浏览器不支持 Web Push（iOS 需将本站加到主屏幕后可用）。',
+  'settings.pushFailed': '推送订阅未成功——提醒保持「页面开着才通知」。',
 };
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
@@ -47,4 +53,10 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
     'Full URLs for this dashboard on loopback and LAN devices; the https port is what phone browsers need for notifications (self-signed — accept it on first visit).',
   'settings.urlLan': 'LAN',
   'settings.urlLocal': 'Local',
+  'settings.push': 'Push alerts',
+  'settings.pushHint':
+    'Push channel for watch alerts: reaches this browser even with the dashboard closed (per-device toggle — enable it on each host that should receive pushes).',
+  'settings.pushInsecure': 'Push requires HTTPS access (this page is an insecure context; the browser blocks push).',
+  'settings.pushUnsupported': 'This browser has no Web Push support (on iOS, add the site to the Home Screen first).',
+  'settings.pushFailed': 'Push subscription failed — alerts stay page-open-only.',
 };

@@ -550,7 +550,8 @@ function Dashboard() {
             );
             show('info', body);
             // toast 之外补系统通知：标签页切走/最小化时 toast 看不见，通知才叫「提醒」
-            void notifyBrowser(t('tasks.watchNotifyTitle'), body);
+            // （tag 与 Web Push 载荷同值——页面开/关两条通道先后到达只显示一条）
+            void notifyBrowser(t('tasks.watchNotifyTitle'), body, `weave-watch-${frame.targetSessionId}`);
           }
           window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
           return;

@@ -177,12 +177,15 @@ export class WatchEngine {
   private defaultNotify(targetSessionId: string, reason: WatchOn): string {
     const target = this.deps.sessions.getBySessionId(targetSessionId);
     const label = target?.title ?? targetSessionId.slice(0, 8);
-    const what =
-      reason === 'messageFailed'
-        ? 'had a failed message delivery'
-        : reason === 'turnEnd'
-          ? 'finished its turn'
-          : 'is now idle';
-    return `Session ${label} ${what} (trigger=watch:${targetSessionId})`;
+    return `Session ${label} ${watchReasonPhrase(reason)} (trigger=watch:${targetSessionId})`;
   }
+}
+
+/** 触发类型的英文措辞（注入文本与推送载荷共用同一出处）。 */
+export function watchReasonPhrase(reason: WatchOn): string {
+  return reason === 'messageFailed'
+    ? 'had a failed message delivery'
+    : reason === 'turnEnd'
+      ? 'finished its turn'
+      : 'is now idle';
 }

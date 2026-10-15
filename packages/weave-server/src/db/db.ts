@@ -135,6 +135,16 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Web Push 订阅（每个浏览器安装一份；endpoint 是推送服务的绝对 URL，
+-- 天然唯一键）。推送服务回 404/410 = 订阅已被浏览器端撤销 → 发送侧删除。
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint   TEXT PRIMARY KEY,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  user_agent TEXT,
+  created_at TEXT NOT NULL
+);
 `;
 
 /** Open (creating + migrating if needed) the weave database. */

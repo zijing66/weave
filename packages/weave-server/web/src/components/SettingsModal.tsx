@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
+  Bell,
   Copy,
   Database,
   Eye,
@@ -40,6 +41,13 @@ type DaemonSettingsExt = DaemonSettings & { events?: { retentionDays: number } }
 /** 与 server DEFAULT_EVENT_RETENTION_DAYS 一致的展示兜底。 */
 const DEFAULT_RETENTION_DAYS = 90;
 
+/** 权限未授的成因文案（tasks 字典的三态，与订阅手势同款）。 */
+const PUSH_PERMISSION_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
+  denied: 'tasks.notifyDenied',
+  unsupported: 'tasks.notifyUnsupported',
+  insecure: 'tasks.notifyInsecure',
+};
+
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
@@ -69,7 +77,41 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [models, setModels] = useState<string[]>([]);
   /** 逐行复制 URL 的反馈（1.5s ✓，折叠条同款惯例）。 */
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  /** 本浏览器推送通道态（逐设备开关，不属于 daemon settings——不进保存流程）。 */
+  const [pushState, setPushState] = useState<PushChannelState | null>(null);
   const fb = useActionFeedback();
+  const { show } = useToast();
+
+  useEffect(() => {
+    if (!open) return;
+    void pushChannelState().then(setPushState);
+  }, [open]);
+
+  /** 推送开关：开向 = 权限申请 + 订阅（手势内）；失败可见（不静默回弹）。 */
+  const onTogglePush = useCallback(
+    (on: boolean): void => {
+      void (async () => {
+        if (on) {
+          const permission = await ensureNotifyPermission();
+          if (permission !== 'granted') {
+            show('info', t(PUSH_PERMISSION_KEY[permission]));
+            setPushState(await pushChannelState());
+            return;
+          }
+          const result = await ensurePushSubscribed();
+          if (result !== 'ok') {
+            show('info', t('settings.pushFailed'));
+            setPushState(await pushChannelState());
+            return;
+          }
+        } else {
+          await unsubscribePush();
+        }
+        setPushState(await pushChannelState());
+      })();
+    },
+    [t, show],
+  );
 
   /**
    * 拉模型列表（走服务端代理 `POST /ai/models`）。`silent` = 自动拉取：

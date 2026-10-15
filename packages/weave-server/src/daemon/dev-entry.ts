@@ -26,6 +26,8 @@ import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
+import { PushNotifier } from '../hooks/push-notify.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { SequenceEngine } from '../hooks/sequence-engine.js';
@@ -158,6 +160,13 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     bus: hookBus,
   });
+  // Web Push 发送器（与生产入口同一装配）：fire 时向浏览器推送订阅投递。
+  const pushSubscriptions = new PushSubscriptionRepository(db);
+  const pushNotifier = new PushNotifier({
+    subscriptions: pushSubscriptions,
+    sessions: hookSessions,
+    bus: hookBus,
+  });
   // session-orchestration 批 3（与 start.ts 同装配）：序列引擎 + 重启恢复。
   const sessionSequences = new SessionSequenceRepository(db);
   const sequenceEngine = new SequenceEngine({
@@ -262,6 +271,8 @@ async function main(): Promise<void> {
     watchEngine,
     sessionSequences,
     sequenceEngine,
+    pushSubscriptions,
+    pushNotifier,
     hookPlugins,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),

@@ -30,3 +30,8 @@ export function getInitialPasswordPath(): string {
 export function getAiKeyPath(): string {
   return path.join(getDataDir(), 'ai.json');
 }
+
+/** Absolute path to the Web Push VAPID keypair file (`{ publicKey, privateKey }`, 0600). */
+export function getPushKeysPath(): string {
+  return path.join(getDataDir(), 'push.json');
+}

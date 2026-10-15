@@ -23,6 +23,8 @@ import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
+import type { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
+import type { PushNotifier } from '../hooks/push-notify.js';
 import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import type { SequenceEngine } from '../hooks/sequence-engine.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
@@ -177,6 +179,10 @@ export interface WeaveServerDeps {
   questionTracker?: QuestionTracker;
   /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
   sessionWatches?: SessionWatchRepository;
+  /** Web Push 订阅存储；POST /messaging/push/(un)subscribe 依赖它。 */
+  pushSubscriptions?: PushSubscriptionRepository;
+  /** Web Push 发送器（提醒第三条腿）；GET /messaging/push/key 依赖它。 */
+  pushNotifier?: Pick<PushNotifier, 'publicKey'>;
   /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */
   watchEngine?: Pick<WatchEngine, 'created'>;
   /** 跨会话序列存储（批 3）；/messaging/sequences 依赖它。 */

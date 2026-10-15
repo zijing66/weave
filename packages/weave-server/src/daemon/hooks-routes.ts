@@ -77,6 +77,14 @@ const CreateWatchBody = z.object({
 
 const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
 
+/** Web Push 订阅注册：endpoint = 浏览器推送服务分配的绝对 URL；keys = 载荷加密密钥对。 */
+const SubscribePushBody = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+});
+
+const UnsubscribePushBody = z.object({ endpoint: z.string().url() });
+
 /** 跨会话序列（批 3）：步数上限单独校验（错误文案要带 hop limit 语义）。 */
 const CreateSequenceBody = z.object({
   name: z.string().max(200).optional(),
@@ -738,6 +746,51 @@ export async function handleHooksRoutes(
       return true;
     }
     sendJson(res, 200, { watches: deps.sessionWatches.listPending() });
+    return true;
+  }
+
+  // ---- Web Push（提醒第三条腿）：applicationServerKey + 浏览器订阅注册/撤销 ----
+  if (pathname === '/messaging/push/key' && req.method === 'GET') {
+    if (!deps.pushNotifier) {
+      sendJson(res, 503, { error: 'Push subsystem unavailable' });
+      return true;
+    }
+    sendJson(res, 200, { publicKey: deps.pushNotifier.publicKey() });
+    return true;
+  }
+
+  if (pathname === '/messaging/push/subscribe' && req.method === 'POST') {
+    if (!deps.pushSubscriptions) {
+      sendJson(res, 503, { error: 'Push subsystem unavailable' });
+      return true;
+    }
+    try {
+      const body = SubscribePushBody.parse(await readJson(req));
+      const subscription = deps.pushSubscriptions.upsert({
+        endpoint: body.endpoint,
+        p256dh: body.keys.p256dh,
+        auth: body.keys.auth,
+        userAgent: req.headers['user-agent'] ?? null,
+      });
+      sendJson(res, 201, { ok: true, subscription });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
+    return true;
+  }
+
+  if (pathname === '/messaging/push/unsubscribe' && req.method === 'POST') {
+    if (!deps.pushSubscriptions) {
+      sendJson(res, 503, { error: 'Push subsystem unavailable' });
+      return true;
+    }
+    try {
+      const body = UnsubscribePushBody.parse(await readJson(req));
+      deps.pushSubscriptions.deleteByEndpoint(body.endpoint);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
     return true;
   }
 
