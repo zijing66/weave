@@ -776,7 +776,9 @@ export function TasksPanel({
                   key={g.id}
                   className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.015]"
                 >
-                  {/* div role=button：内嵌复制按钮（button 嵌套 button 非法） */}
+                  {/* div role=button：内嵌复制按钮（button 嵌套 button 非法）。
+                      flex-wrap：窄屏一排徽标放不下（手机上加号角标更多），不折行会把
+                      最右的复制/停止按钮挤出可视区。 */}
                   <div
                     role="button"
                     tabIndex={0}
@@ -787,7 +789,7 @@ export function TasksPanel({
                         setExpandedGroupId(expanded ? '' : g.id);
                       }
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
+                    className="flex w-full flex-wrap cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
                   >
                     {expanded ? (
                       <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
