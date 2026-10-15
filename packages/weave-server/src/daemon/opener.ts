@@ -1220,20 +1220,38 @@ function weztermGuiSocksIn(dir: string): string[] {
 }
 
 /**
+ * socket 字符串 → 比较键。win 下 wezterm 注进 pane env 的路径是**混合分隔符**
+ * （`D:\Users\x\.local/share/wezterm/gui-sock-<pid>`），而 join() 拼出候选时是
+ * 全反斜杠——同一 socket 两种形态，裸 Set 去重失效会把同一 mux 记成两个候选，
+ * 窗口计数按 (socket, windowId) 去重也随之翻倍。
+ */
+function socketCompareKey(path: string, platform: NodeJS.Platform): string {
+  const s = path.replace(/\\/g, '/');
+  return platform === 'win32' ? s.toLowerCase() : s;
+}
+
+/**
  * 候选 mux socket：进程 env 显式指定的最优先（daemon 一般没有，pane 内才有），
  * 其次存活 GUI 的 gui-sock-*（新的在前 ≈ 最近开的 wezterm 实例）。
  * 跳过裸 `sock`：指向死 mux-server 时 cli 会原地拉起一个无人看的幽灵 server
  * 还 rc=0 返回空世界，会造成新一轮假成功。
  */
-function weztermSocketCandidates(platform: NodeJS.Platform): string[] {
+export function weztermSocketCandidates(platform: NodeJS.Platform): string[] {
   const out: string[] = [];
-  if (process.env.WEZTERM_UNIX_SOCKET) out.push(process.env.WEZTERM_UNIX_SOCKET);
+  const seen = new Set<string>();
+  const push = (path: string): void => {
+    const key = socketCompareKey(path, platform);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(path);
+  };
+  if (process.env.WEZTERM_UNIX_SOCKET) push(process.env.WEZTERM_UNIX_SOCKET);
   const home = platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
-  if (home) out.push(...weztermGuiSocksIn(join(home, '.local', 'share', 'wezterm')));
+  if (home) weztermGuiSocksIn(join(home, '.local', 'share', 'wezterm')).forEach(push);
   if (platform !== 'win32' && process.env.XDG_RUNTIME_DIR) {
-    out.push(...weztermGuiSocksIn(join(process.env.XDG_RUNTIME_DIR, 'wezterm')));
+    weztermGuiSocksIn(join(process.env.XDG_RUNTIME_DIR, 'wezterm')).forEach(push);
   }
-  return [...new Set(out)];
+  return out;
 }
 
 /** 一个探活通过的 mux：socket + pane 世界 + 活跃 client（workspace 与 idle）。 */

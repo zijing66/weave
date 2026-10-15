@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseLsofCwds,
   parsePromptPaneId,
@@ -13,6 +16,7 @@ import {
   SocketProbeGate,
   terminalAppTargets,
   terminalBackendFor,
+  weztermSocketCandidates,
   wtPanes,
   wtWindowSlug,
 } from '../opener.js';
@@ -420,6 +424,56 @@ describe('终端后端 — Windows Terminal 通道（进程表反查 + 命名窗
       args: ['-w', wtWindowSlug(DIR), '-d', DIR, 'cmd.exe', '/k', 'claude --resume abc'],
     });
     expect(commands('wt', 'darwin')).toEqual([]);
+  });
+});
+
+describe('weztermSocketCandidates — 同一 socket 的两种字符串形态只算一个候选', () => {
+  it('env 混合分隔符与 join 全反斜杠指向同一 socket：不双计（窗口数不翻倍）', () => {
+    const home = mkdtempSync(join(tmpdir(), 'weave-wezterm-'));
+    const prevHome = process.env.USERPROFILE;
+    const prevSocket = process.env.WEZTERM_UNIX_SOCKET;
+    try {
+      const sockDir = join(home, '.local', 'share', 'wezterm');
+      mkdirSync(sockDir, { recursive: true });
+      // gui-sock 名内嵌 pid 探活——用本测试进程 pid 必过
+      writeFileSync(join(sockDir, `gui-sock-${process.pid}`), '');
+      process.env.USERPROFILE = home;
+      // wezterm 注进 pane env 的形态：盘符段反斜杠 + 其余正斜杠
+      process.env.WEZTERM_UNIX_SOCKET = `${home}/.local/share/wezterm/gui-sock-${process.pid}`;
+
+      const candidates = weztermSocketCandidates('win32');
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toBe(process.env.WEZTERM_UNIX_SOCKET); // env 形态最优先保留
+    } finally {
+      process.env.USERPROFILE = prevHome;
+      if (prevSocket === undefined) delete process.env.WEZTERM_UNIX_SOCKET;
+      else process.env.WEZTERM_UNIX_SOCKET = prevSocket;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('env 未设时仍枚举存活 gui-sock（死 pid 的跳过）', () => {
+    const home = mkdtempSync(join(tmpdir(), 'weave-wezterm-'));
+    const prevHome = process.env.USERPROFILE;
+    const prevSocket = process.env.WEZTERM_UNIX_SOCKET;
+    try {
+      const sockDir = join(home, '.local', 'share', 'wezterm');
+      mkdirSync(sockDir, { recursive: true });
+      writeFileSync(join(sockDir, `gui-sock-${process.pid}`), '');
+      writeFileSync(join(sockDir, 'gui-sock-999999999'), ''); // 必死 pid
+      writeFileSync(join(sockDir, 'agent.12345'), ''); // 非 gui-sock 形态
+      process.env.USERPROFILE = home;
+      delete process.env.WEZTERM_UNIX_SOCKET;
+
+      expect(weztermSocketCandidates('win32')).toEqual([
+        join(sockDir, `gui-sock-${process.pid}`),
+      ]);
+    } finally {
+      process.env.USERPROFILE = prevHome;
+      if (prevSocket === undefined) delete process.env.WEZTERM_UNIX_SOCKET;
+      else process.env.WEZTERM_UNIX_SOCKET = prevSocket;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
