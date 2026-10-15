@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -280,27 +281,33 @@ export class WeavePluginLoader implements PluginHost {
   watchRoots(debounceMs = 1000): () => void {
     if (this.watchStop) return this.watchStop;
     const timers = new Map<string, NodeJS.Timeout>();
-    const watchers = [...this.roots.entries()].map(([root, meta]) => {
-      const w = fsWatch(root, { ignoreInitial: true, depth: meta.deep ? 6 : 2 });
-      w.on('all', () => {
-        const existing = timers.get(root);
-        if (existing) clearTimeout(existing);
-        timers.set(
-          root,
-          setTimeout(() => {
-            timers.delete(root);
-            const current = this.roots.get(root);
-            if (!current) return;
-            const scan = current.deep
-              ? this.loadToolkitRoot(root, current.scope, current.projectId)
-              : this.loadRoot(root, current.scope, current.projectId);
-            void scan.catch(() => {});
-          }, debounceMs),
-        );
+    // 不存在的根不挂 watcher：chokidar 对不存在的路径会改挂到最近存在的祖先上
+    //（已删项目根上溯可达 %TEMP%，`<dataDir>/plugins` 上溯可达数据目录），祖先
+    // 目录每变一次就被整目录重列一次。根后来被创建由安装/卸载 API 的 reloadAll
+    // 兜底——与 WatchService 跳过磁盘上已消失的项目目录同口径。
+    const watchers = [...this.roots.entries()]
+      .filter(([root]) => existsSync(root))
+      .map(([root, meta]) => {
+        const w = fsWatch(root, { ignoreInitial: true, depth: meta.deep ? 6 : 2 });
+        w.on('all', () => {
+          const existing = timers.get(root);
+          if (existing) clearTimeout(existing);
+          timers.set(
+            root,
+            setTimeout(() => {
+              timers.delete(root);
+              const current = this.roots.get(root);
+              if (!current) return;
+              const scan = current.deep
+                ? this.loadToolkitRoot(root, current.scope, current.projectId)
+                : this.loadRoot(root, current.scope, current.projectId);
+              void scan.catch(() => {});
+            }, debounceMs),
+          );
+        });
+        w.on('error', () => {}); // 监听失败不崩 daemon
+        return w;
       });
-      w.on('error', () => {}); // 监听失败不崩 daemon
-      return w;
-    });
     this.watchStop = () => {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
