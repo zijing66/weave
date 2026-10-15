@@ -499,6 +499,7 @@ export function CategoryDetail({
             projectId={projectId}
             initialSessionId={initialSessionId}
             terminalCount={terminalCount}
+            projectLabel={projects.find((p) => p.id === projectId)?.name ?? ''}
           />
         ))}
 
@@ -507,7 +508,10 @@ export function CategoryDetail({
         (isGlobal ? (
           <p className="pt-6 text-center text-xs text-neutral-600">{t('orch.globalHint')}</p>
         ) : (
-          <SequenceCanvas projectId={projectId} />
+          <SequenceCanvas
+            projectId={projectId}
+            projectLabel={projects.find((p) => p.id === projectId)?.name ?? ''}
+          />
         ))}
 
       {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}

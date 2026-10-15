@@ -162,7 +162,14 @@ const nodeTypes = { seqSession: SessionNode, seqLane: LaneNode };
 // 组件
 // ---------------------------------------------------------------------------
 
-export function SequenceCanvas({ projectId }: { projectId: number }) {
+export function SequenceCanvas({
+  projectId,
+  projectLabel,
+}: {
+  projectId: number;
+  /** 项目目录名（对话弹窗标题副行；CategoryDetail 按 projectId 解好）。 */
+  projectLabel: string;
+}) {
   const t = useT();
   const fb = useActionFeedback();
   const { sessions: allSessions, statuses } = useSessionStatus();
@@ -701,6 +708,7 @@ export function SequenceCanvas({ projectId }: { projectId: number }) {
           sessionId={messagesTarget.sessionId}
           projectId={messagesTarget.projectId}
           label={messagesTarget.label}
+          projectLabel={projectLabel}
           capability={messagesTarget.capability}
           onClose={() => setMessagesTarget(null)}
         />

@@ -63,6 +63,7 @@ export function TasksPanel({
   projectId,
   initialSessionId,
   terminalCount,
+  projectLabel,
 }: {
   projectId: number;
   /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
@@ -70,6 +71,8 @@ export function TasksPanel({
   /** 本项目已打开的终端数（后端 push 的角标快照，与项目卡同源）——「新建会话」
    *  的硬前置：新会话要落进已开的终端里，没有已开终端就无处可落。 */
   terminalCount: number;
+  /** 项目目录名（对话弹窗标题副行；CategoryDetail 按 projectId 解好）。 */
+  projectLabel: string;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -1203,6 +1206,7 @@ export function TasksPanel({
           sessionId={messagesTarget.sessionId}
           projectId={messagesTarget.projectId}
           label={messagesTarget.label}
+          projectLabel={projectLabel}
           capability={messagesTarget.capability}
           onClose={() => setMessagesTarget(null)}
         />

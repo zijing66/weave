@@ -154,6 +154,7 @@ export function SessionMessages({
   sessionId,
   projectId,
   label,
+  projectLabel,
   capability,
   onClose,
 }: {
@@ -162,6 +163,8 @@ export function SessionMessages({
   projectId: number;
   /** 会话显示名（title 回退 sessionId 前 8 位，调用方已解好）。 */
   label: string;
+  /** 项目目录名（标题副行）：跨项目同名会话只靠会话名分不清。 */
+  projectLabel: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
   capability: MessagingCapability;
   onClose: () => void;
@@ -345,9 +348,12 @@ export function SessionMessages({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">
-          <p className="min-w-0 truncate text-xs font-medium text-neutral-200">
-            {t('tasks.messagesTitle')} · {label}
-          </p>
+          <div className="min-w-0">
+            <p className="truncate text-xs font-medium text-neutral-200">
+              {t('tasks.messagesTitle')} · {label}
+            </p>
+            <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
+          </div>
           <button
             type="button"
             title={t('tasks.messagesClose')}
