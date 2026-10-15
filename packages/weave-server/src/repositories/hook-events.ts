@@ -130,17 +130,26 @@ export class HookEventRepository {
     );
   }
 
-  listBySession(sessionId: string, limit = 300, beforeId?: number): HookEventRow[] {
-    const rows =
-      beforeId == null
-        ? this.db
-            .prepare('SELECT * FROM hook_events WHERE session_id = ? ORDER BY id DESC LIMIT ?')
-            .all(sessionId, limit)
-        : this.db
-            .prepare(
-              'SELECT * FROM hook_events WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?',
-            )
-            .all(sessionId, beforeId, limit);
+  /** `types` 非空只取这些事件类型（对话视图按开/闭轮类型翻页，不拉整条事件链）。 */
+  listBySession(
+    sessionId: string,
+    limit = 300,
+    beforeId?: number,
+    types?: readonly string[],
+  ): HookEventRow[] {
+    const conds = ['session_id = ?'];
+    const params: (string | number)[] = [sessionId];
+    if (beforeId != null) {
+      conds.push('id < ?');
+      params.push(beforeId);
+    }
+    if (types?.length) {
+      conds.push(`event_type IN (${types.map(() => '?').join(',')})`);
+      params.push(...types);
+    }
+    const rows = this.db
+      .prepare(`SELECT * FROM hook_events WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ?`)
+      .all(...params, limit);
     return rows.map((row) => toHookEvent(row)).reverse();
   }
 }

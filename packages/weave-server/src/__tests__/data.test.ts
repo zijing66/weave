@@ -43,6 +43,26 @@ describe('data layer', () => {
     db.close();
   });
 
+  it('filters session events by type and cursor (conversation paging)', () => {
+    const db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    const hooks = new HookEventRepository(db);
+
+    const p = projects.register({ path: '/y', name: 'y', token: 'ty', source: 'init' });
+    const add = (eventType: string) =>
+      hooks.insert({ projectId: p.id, source: 'claude', eventType, sessionId: 's2', payload: '{}' });
+    const ids = [add('UserPromptSubmit'), add('PreToolUse'), add('Stop'), add('UserPromptSubmit')];
+
+    const conv = hooks.listBySession('s2', 300, undefined, ['UserPromptSubmit', 'Stop']);
+    expect(conv.map((e) => e.eventType)).toEqual(['UserPromptSubmit', 'Stop', 'UserPromptSubmit']);
+    // 游标翻页只取更早的（升序返回，游标 = 手上最旧那条的 id）
+    expect(hooks.listBySession('s2', 300, ids[2]!, ['UserPromptSubmit']).map((e) => e.id)).toEqual([
+      ids[0],
+    ]);
+    expect(hooks.listBySession('s2', 300, undefined, ['UserPromptSubmit'])).toHaveLength(2);
+    db.close();
+  });
+
   it('adds libraries idempotently', () => {
     const db = openDatabase(':memory:');
     const libs = new LibraryRepository(db);
