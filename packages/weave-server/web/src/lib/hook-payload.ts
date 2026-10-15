@@ -58,6 +58,14 @@ export function formatStamp(iso: string): string {
     : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
+/**
+ * weave 直投消息的来源标记（mirror `@weavecode/core` 的 WEAVE_INJECTION_MARKER
+ * ——web 运行时不能 import core 值，同 `tasks/lifecycle.ts` 的镜像口径，改那边
+ * 同步这里）。socket 直投走这条通道，会话转录里因此带着它：web 拿它认「这条是
+ * weave 发的，不是终端里敲的」，并把它从正文里摘掉、改用一枚 tag 呈现。
+ */
+export const WEAVE_MARKER = '[weave] ';
+
 /** 用户 prompt 原文（归一化 payload 的 raw.prompt）；空/缺失返回 null。 */
 export function promptOf(event: HookEventRow): string | null {
   return str(rawOf(event).prompt);

@@ -69,6 +69,20 @@ describe('conversationOf', () => {
     );
     expect(entries.map((e) => [e.role, e.text])).toEqual([['assistant', '  有内容  ']]);
   });
+
+  it('③ 直投消息摘掉来源标记并记 fromWeave（标记不当作正文）', () => {
+    const entries = conversationOf(
+      [
+        event(1, 'UserPromptSubmit', { prompt: '[weave] 帮我看看这个' }),
+        event(2, 'UserPromptSubmit', { prompt: '终端里自己敲的' }),
+      ],
+      claude,
+    );
+    expect(entries.map((e) => [e.text, e.fromWeave])).toEqual([
+      ['帮我看看这个', true],
+      ['终端里自己敲的', false],
+    ]);
+  });
 });
 
 describe('attachDeliveries', () => {
@@ -105,6 +119,36 @@ describe('attachDeliveries', () => {
       ],
     );
     expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m-new', 'm-old']);
+  });
+
+  it('④ 直投消息只出现一条：摘掉来源标记的条目认领得到它自己的投递行', () => {
+    const entries = conversationOf(
+      [event(1, 'UserPromptSubmit', { prompt: '[weave] 帮我看看这个' })],
+      claude,
+    );
+    const thread = attachDeliveries(
+      entries,
+      [delivery({ id: 'm1', text: '帮我看看这个', at: at(1), status: 'delivered', settledAt: at(1) })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]!.pipe?.id).toBe('m1');
+  });
+
+  it('⑤ 中继带壳的原文也认领得到（Claude Code 把会话间消息裹了壳，原文在里面）', () => {
+    const thread = attachDeliveries(
+      [{ ...userEntry, text: '<cross-session-message from="uds:x">hi</cross-session-message>' }],
+      [delivery({ id: 'm2', text: 'hi', at: at(10), status: 'delivered', settledAt: at(10) })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]!.pipe?.id).toBe('m2');
+  });
+
+  it('⑥ 短文案只认全等：「ok」不会被含着它的别的条目认走', () => {
+    const thread = attachDeliveries(
+      [{ ...userEntry, text: '好，ok，我看看' }],
+      [delivery({ id: 'm3', text: 'ok', at: at(10), status: 'failed' })],
+    );
+    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['e1', 'm3']);
   });
 });
 

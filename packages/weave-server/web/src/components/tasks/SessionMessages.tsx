@@ -14,7 +14,13 @@ import { Badge } from '@/components/ui/badge';
 import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
-import { formatStamp, promptOf, taskNotificationOf, turnSummaryOf } from '@/lib/hook-payload';
+import {
+  formatStamp,
+  promptOf,
+  taskNotificationOf,
+  turnSummaryOf,
+  WEAVE_MARKER,
+} from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 
@@ -114,6 +120,8 @@ export interface ConvEntry {
   role: 'user' | 'assistant';
   at: string;
   text: string;
+  /** 转录里带 weave 直投标记（标记已从 text 摘掉，改在气泡上呈现 tag）。 */
+  fromWeave?: boolean;
   /** 认领到的投递行：状态/回执/重发挂在气泡上，不另起一条。 */
   pipe?: SessionMessageRow;
 }
@@ -122,6 +130,8 @@ export interface ConvEntry {
  * 事件 → 对话条目：只认开轮（用户 prompt 原文）与闭轮（Stop 携带的最终
  * assistant 消息）两类事件。工具调用、通知、会话标记都不是对话，中间的
  * assistant 输出也不进——转录在会话自己那边，这里只要每轮的收尾总结。
+ * 直投消息的正文带着来源标记（`WEAVE_MARKER`）——摘掉、记成 `fromWeave`，
+ * 不然气泡里既多出一段死标记，也和投递行的原文对不上（会重复一条）。
  */
 export function conversationOf(
   events: readonly HookEventRow[],
@@ -132,8 +142,17 @@ export function conversationOf(
     if (e.eventType === lifecycle.open) {
       // 子代理返回通知不是人发的 prompt（分组同口径丢弃）
       if (taskNotificationOf(e)) continue;
-      const text = promptOf(e);
-      if (text) out.push({ key: `e${e.id}`, eventId: e.id, role: 'user', at: e.createdAt, text });
+      const raw = promptOf(e);
+      if (!raw) continue;
+      const fromWeave = raw.startsWith(WEAVE_MARKER);
+      out.push({
+        key: `e${e.id}`,
+        eventId: e.id,
+        role: 'user',
+        at: e.createdAt,
+        text: fromWeave ? raw.slice(WEAVE_MARKER.length) : raw,
+        fromWeave,
+      });
     } else if (lifecycle.close.includes(e.eventType)) {
       const text = turnSummaryOf(e);
       if (text)
@@ -141,6 +160,25 @@ export function conversationOf(
     }
   }
   return out;
+}
+
+/**
+ * 文案归一（`claims` 的比对形态）：会话那侧的原文外面会被加东西——直投带
+ * weave 来源标记、中继带 Claude Code 的 `<cross-session-message>` 外壳——剥掉
+ * 它们、折叠空白，两侧才是同一形态（服务端回执比对是同一条规则，见
+ * `message-deliverer.ts` 的 normalizePromptText）。旧缓存里还带着标记的条目
+ * 也据此与自己的投递行对上，不会各显示一条。
+ */
+function normalizeText(text: string): string {
+  return (text.startsWith(WEAVE_MARKER) ? text.slice(WEAVE_MARKER.length) : text)
+    .replace(/<\/?cross-session-message[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 投递行与事件条目是不是同一条消息（归一后全等）。 */
+function claims(entryText: string, rowText: string): boolean {
+  return normalizeText(entryText) === normalizeText(rowText);
 }
 
 /**
@@ -158,7 +196,7 @@ export function attachDeliveries(
     let best: SessionMessageRow | undefined;
     let bestGap = CLAIM_MS;
     for (const m of deliveries) {
-      if (taken.has(m.id) || m.text !== entry.text) continue;
+      if (taken.has(m.id) || !claims(entry.text, m.text)) continue;
       const gap = Math.abs(Date.parse(m.at) - Date.parse(entry.at));
       if (gap < bestGap) {
         best = m;
@@ -491,8 +529,13 @@ export function SessionMessages({
                       )}
                     >
                       {/* 时刻与左侧回复气泡同布局：气泡上部、靠屏幕边缘那一侧
-                          （这里右对齐），投递状态徽标与它并排 */}
+                          （这里右对齐），weave 来源 tag 与投递状态徽标和它并排 */}
                       <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {m.fromWeave && (
+                          <span className="shrink-0 rounded bg-blue-500/15 px-1 py-px text-[10px] font-medium text-blue-300">
+                            weave
+                          </span>
+                        )}
                         {pipe !== undefined && pipe.status !== 'delivered' && (
                           <Badge className={cn('shrink-0', STATUS_BADGE[pipe.status])}>
                             {t(STATUS_KEY[pipe.status])}
