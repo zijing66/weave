@@ -8,8 +8,7 @@ export const tasksZh = {
   'tasks.refresh': '刷新',
   'tasks.refreshed': '已刷新',
   'tasks.newSession': '新建会话',
-  'tasks.newSessionTip': '在本项目已打开的终端里起一个新会话',
-  'tasks.newSessionNeedsTerminal': '本项目还没有已打开的终端——先在项目卡点「终端」',
+  'tasks.newSessionTip': '起一个新会话（先复用本项目的终端，没有就新开一个）',
   'tasks.newSessionNoHarness': '本项目已接入的 harness 都不能起交互会话——重跑 weave init 选一个',
   'tasks.newSessionFailed': '新建会话失败：{error}',
   'tasks.newSessionStarting': '正在新建会话…',
@@ -224,9 +223,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.refresh': 'Refresh',
   'tasks.refreshed': 'Refreshed',
   'tasks.newSession': 'New session',
-  'tasks.newSessionTip': 'Start a new session in a terminal this project already has open',
-  'tasks.newSessionNeedsTerminal':
-    'No terminal is open for this project — open one from the project card first',
+  'tasks.newSessionTip': "Start a new session (reuses this project's terminal, or opens a new one)",
   'tasks.newSessionNoHarness':
     'No harness integrated in this project can start an interactive session — re-run weave init and pick one',
   'tasks.newSessionFailed': 'Failed to start a new session: {error}',

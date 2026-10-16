@@ -1310,7 +1310,6 @@ function Dashboard() {
                         projects={projects}
                         onOpenSession={openSessionInProject}
                         initialSessionId={initialSessionId ?? undefined}
-                        terminalCount={terminalCounts[activeProject!.id] ?? 0}
                         dragPayload={dragPayload}
                       />
                     )}

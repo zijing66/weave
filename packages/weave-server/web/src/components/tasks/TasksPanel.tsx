@@ -65,16 +65,12 @@ const OPEN_TERMINAL_ALIVE_MS = 30_000;
 export function TasksPanel({
   projectId,
   initialSessionId,
-  terminalCount,
   projectLabel,
   harnesses,
 }: {
   projectId: number;
   /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
   initialSessionId?: string;
-  /** 本项目已打开的终端数（后端 push 的角标快照，与项目卡同源）——「新建会话」
-   *  的硬前置：新会话要落进已开的终端里，没有已开终端就无处可落。 */
-  terminalCount: number;
   /** 项目目录名（对话弹窗标题副行；CategoryDetail 按 projectId 解好）。 */
   projectLabel: string;
   /** 本项目已接入的 harness（init 选择结果，与项目卡标签同源）。 */
@@ -499,7 +495,7 @@ export function TasksPanel({
   );
   /** 多个能起的才弹窗选（同「终端附加目标」口径）；单个直接起、0 个按钮置灰。 */
   const [harnessPicker, setHarnessPicker] = useState(false);
-  const canNewSession = terminalCount > 0 && startableHarnesses.length > 0;
+  const canNewSession = startableHarnesses.length > 0;
   /** 起会话在途（spawn 要几秒）：按钮同置灰——只转圈不禁用的话，看着像没反应又点一次。
       连点的真去重在 `fb.run`（loading 吞重复调用），这里只是把同一事实摆到按钮上。 */
   const newSessionBusy = fb.stateOf(`newSession:${projectId}`) === 'loading';
@@ -1085,20 +1081,18 @@ export function TasksPanel({
           <span className="text-[11px] text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
-          {/* 新建会话：落点 = 项目已打开的终端（服务端复用其 pane 分屏），故没
-              有已开终端时置灰——同一事实也由服务端 409 把关，前端只是镜像。
-              起哪个 harness = 本项目已接入里能起交互会话的那些（0 个也置灰）。 */}
+          {/* 新建会话：不依赖已开终端——落点由终端后端自决（复用本项目的 pane
+              分屏，没有就新开一个；连实例都没开时服务端报因，前端 toast 转达）。
+              起哪个 harness = 本项目已接入里能起交互会话的那些（0 个才置灰）。 */}
           <button
             type="button"
             disabled={!canNewSession || newSessionBusy}
             title={
               newSessionBusy
                 ? t('tasks.newSessionStarting')
-                : terminalCount === 0
-                  ? t('tasks.newSessionNeedsTerminal')
-                  : startableHarnesses.length === 0
-                    ? t('tasks.newSessionNoHarness')
-                    : t('tasks.newSessionTip')
+                : startableHarnesses.length === 0
+                  ? t('tasks.newSessionNoHarness')
+                  : t('tasks.newSessionTip')
             }
             onClick={onNewSession}
             className={cn(

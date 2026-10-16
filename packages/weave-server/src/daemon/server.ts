@@ -390,13 +390,11 @@ async function handleRequest(
     return;
   }
 
-  // --- start a new session inside a terminal the project already has open ---
-  // POST /projects/:id/new-session — 复用具名终端：命令 = harness 裸 bin（新会话，
+  // --- start a new session in this project's terminal ---
+  // POST /projects/:id/new-session — 落进本项目的终端：命令 = harness 裸 bin（新会话，
   // 不带 resume 参数——`openArgs` 才是 resume），落点由终端后端的复用逻辑决定
-  // （同项目目录的既有 pane 分屏，没有就退化成新窗口）。所以「本项目已有已打开
-  // 终端」是硬前置：没有可复用的 pane 就不是「新建会话在既有终端里」而是替用户
-  // 再开一个窗口。前端按同一事实（终端数角标）置灰，这里再判一次——角标是推来的
-  // 快照、可能陈旧，闸门不能只挂在前端。
+  // （同项目目录的既有 pane 分屏 → 没有就新窗口；wezterm 连实例都没开则后端报因）。
+  // **不要求「本项目已打开终端」**：没有就自己开一个，新建会话不靠先手动开终端。
   const newSessionMatch = pathname.match(/^\/projects\/(\d+)\/new-session$/);
   if (newSessionMatch && req.method === 'POST') {
     const project = deps.projects.getById(Number(newSessionMatch[1]));
@@ -435,13 +433,6 @@ async function handleRequest(
     }
     const spec = picked.spec!;
     const opener = deps.opener ?? defaultProjectOpener;
-    const counts = await readTerminalCounts([project], opener);
-    if ((counts[project.id] ?? 0) === 0) {
-      sendJson(res, 409, {
-        error: 'No terminal is open for this project — open one first (the new session reuses it)',
-      });
-      return;
-    }
     try {
       const stat = await fs.promises.stat(project.path);
       if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
