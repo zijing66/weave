@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Bot, Send, Square, Trash2, X } from 'lucide-react';
 import { aiStatus, streamChat, type AiChatMessage, type AiStatus } from '@/lib/ai';
 import { errorText } from '@/lib/action-feedback';
@@ -17,9 +18,10 @@ import { useT } from '@/i18n/I18nProvider';
  * 这是长动作而非一次性动作，故不用 useActionFeedback 的三态。
  */
 /**
- * 助手回答的 Markdown 预览（**只认简单文本格式**）：标题 / 粗斜体 / 行内与围栏代码 /
- * 列表 / 引用 / 链接。刻意不挂 GFM 与代码高亮插件——窄气泡里表格、HTML、任务列表都
- * 读不动，简单格式反而清爽。
+ * 助手回答的 Markdown 预览：标题 / 粗斜体 / 行内与围栏代码 / 列表 / 引用 / 链接，
+ * 另挂 `remark-gfm` 只为**表格**（会话总结里表格常见；顺带拿到删除线、任务列表与
+ * 裸链接）。仍不挂代码高亮——窄气泡里花花绿绿反而不好读。表格天生比气泡宽，故由
+ * `table` 组件包一层自身横滚（同气泡里长串的处理口径）。
  *
  * **字号整体适配气泡**：不用仓内的 `prose`（typography 插件最小档是 prose-sm = 14px，
  * 比对话框正文 12px 大一圈，视觉上明显不配），改为手写紧凑样式——正文锁 `text-xs`、
@@ -42,12 +44,21 @@ export function AssistantMarkdown({ text }: { text: string }) {
         '[&_h3]:mt-1.5 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-medium ' +
         '[&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-700 [&_blockquote]:pl-2 [&_blockquote]:text-neutral-400 ' +
         '[&_a]:text-blue-400 [&_a]:underline ' +
+        '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px] ' +
+        '[&_th]:border [&_th]:border-white/[0.08] [&_th]:bg-neutral-950/40 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium ' +
+        '[&_td]:border [&_td]:border-white/[0.08] [&_td]:px-1.5 [&_td]:py-1 [&_td]:align-top ' +
         '[&_hr]:my-2 [&_hr]:border-white/[0.08]'
       }
     >
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+          table: ({ node: _node, ...props }) => (
+            <div className="my-1.5 max-w-full overflow-x-auto">
+              <table {...props} />
+            </div>
+          ),
         }}
       >
         {text}
