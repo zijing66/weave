@@ -38,6 +38,25 @@ export interface CaptureDeps {
 }
 
 /**
+ * 生成脚本的健康（诊断面只读）：脚本正文即 harness 知识（它上报哪些旁路事实），
+ * 故判据归各 harness，server 只聚合不自拼。
+ */
+export interface CaptureScriptHealth {
+  /** 生效的是哪一支：user 档采集 installed 即 user，否则项目档；两处都没有 = none。 */
+  source: 'user' | 'project' | 'none';
+  /** 生效脚本文件在。 */
+  present: boolean;
+  /** 带 weave 版本标记（weave 生成物；无标记 = 用户自写，weave 不认）。 */
+  weaveOwned: boolean;
+  /** 标记里读到的生成版本；读不到 = null。 */
+  generatedVersion: string | null;
+  /** 脚本含会话 inbox 凭据上报（判据 = 正文出现 PromptInboxSpec.socketEnv）。 */
+  reportsInbox: boolean;
+  /** 脚本含 pane 定位 env 上报。 */
+  reportsPaneEnv: boolean;
+}
+
+/**
  * 采集安装面：weave 事件采集集成（整个 dashboard 的地基）按工具对象建模，
  * user 档安装/启用是硬性要求——跨项目采集，不依赖逐项目 init。安装即启用
  * （user settings 里有采集组 = 采集在 firing，无独立启停开关）。
@@ -52,6 +71,8 @@ export interface CaptureSurface {
   uninstallUserCapture(deps?: CaptureDeps): Promise<void>;
   /** 项目档去重：user 档接管时清扫该项目 settings 的采集组（缺/坏文件 = 已达目的）。 */
   stripProjectCapture(projectPath: string): Promise<void>;
+  /** 生效采集脚本的健康（诊断面；`projectPath` 缺省只判 user 档）。 */
+  scriptHealth(deps?: CaptureDeps & { projectPath?: string }): Promise<CaptureScriptHealth>;
 }
 
 /**

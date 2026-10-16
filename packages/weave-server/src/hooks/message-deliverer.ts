@@ -173,6 +173,27 @@ export type SendResult =
 /** answer() 返回（作答不建消息条目，无 messageId）。 */
 export type AnswerResult = { ok: true } | { ok: false; status: 400 | 404 | 409; error: string };
 
+/** 通道现况：ready = 现在就能投；unknown = 判不动（终端只剩标题/cwd 回落，被动面看不出来）。 */
+interface ChannelState<R extends string> {
+  status: 'ready' | 'unavailable' | 'unknown';
+  reason: R | null;
+}
+
+/** 会话级投递诊断（`diagnose` 返回值；只含布尔与枚举，无凭据值）。 */
+export interface SessionDeliveryDiagnosis {
+  /** 存活三态（同 `pidAliveOf` 口径：判不动 = null）。 */
+  alive: boolean | null;
+  inbox: ChannelState<'no-mechanism' | 'no-credentials' | 'auth-token-required'>;
+  relay: ChannelState<'no-mechanism' | 'no-peer-name'>;
+  terminal: ChannelState<'no-backend' | 'no-pane-env'>;
+  /** 该会话有没有上报过 pane 定位 env。 */
+  paneEnvReported: boolean;
+  /** 队列里压着的行数。 */
+  pending: number;
+  /** 暂停闸是否已置（未回执超窗 / 投递失败）。 */
+  stalled: boolean;
+}
+
 /** 通道裁决结果：mode=auto 落到实际通道后才存在。 */
 type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 
@@ -473,6 +494,58 @@ export class MessageDeliverer {
     const terminal = this.terminalChannel();
     if (!terminal?.locateScreens || this.paneEnvs.size === 0) return {};
     return terminal.locateScreens(Object.fromEntries(this.paneEnvs));
+  }
+
+  /**
+   * 会话级投递诊断（只读内存态 + 既有 repo，纯现算）：三通道各自「现在能不能投」
+   * + 队列积压/暂停闸。判定条件集就是投递路径的可用前提，不另立第二份事实源。
+   *
+   * 只回布尔与枚举——**socket 地址与 token 永不出栈**（与「凭据不进 UI/日志」同口径）。
+   */
+  diagnose(sessionId: string): SessionDeliveryDiagnosis {
+    const surface = this.surfaceOfSession(sessionId);
+    const row = this.deps.sessions.livenessRowOf(sessionId);
+    const alive = row ? pidAliveOf(row, this.deps.livenessOf?.() ?? claudeLivenessById()) : null;
+
+    const inboxSpec = surface?.promptInbox ?? null;
+    const target = this.inboxSockets.get(sessionId);
+    const inbox: SessionDeliveryDiagnosis['inbox'] = !inboxSpec
+      ? { status: 'unavailable', reason: 'no-mechanism' }
+      : !target
+        ? { status: 'unavailable', reason: 'no-credentials' }
+        : inboxSpec.requiresAuthOn(process.platform) && !target.token
+          ? { status: 'unavailable', reason: 'auth-token-required' }
+          : { status: 'ready', reason: null };
+
+    const peer = surface?.prompt?.resolve(sessionId) ?? null;
+    const relay: SessionDeliveryDiagnosis['relay'] = !surface?.prompt
+      ? { status: 'unavailable', reason: 'no-mechanism' }
+      : peer
+        ? { status: 'ready', reason: null }
+        : { status: 'unavailable', reason: 'no-peer-name' };
+
+    const paneEnvReported = this.paneEnvs.has(sessionId);
+    const terminal: SessionDeliveryDiagnosis['terminal'] = !this.terminalChannel()
+      ? { status: 'unavailable', reason: 'no-backend' }
+      : paneEnvReported
+        ? { status: 'ready', reason: null }
+        : { status: 'unknown', reason: 'no-pane-env' };
+
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
+    const pending = project
+      ? readPromptbox(this.hooksDir, project.token).filter((e) => e.sessionId === sessionId).length
+      : 0;
+
+    return {
+      alive,
+      inbox,
+      relay,
+      terminal,
+      paneEnvReported,
+      pending,
+      stalled: this.stalled.has(sessionId),
+    };
   }
 
   /**

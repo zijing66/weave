@@ -8,17 +8,20 @@ import {
   HookDispatchStatusSchema,
   isHarness,
 } from '@weavecode/core';
-import type { MessagingSurface } from '@weavecode/harness';
+import type { CaptureScriptHealth, MessagingSurface } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
+import type { SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { composeAnswerAtoms } from '../hooks/answer-keys.js';
 import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
-import { readDaemonSettings } from './settings.js';
+import { readDaemonSettings, readDaemonSettingsSync, readHooksEnabled } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
-import { messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
+import { captureSurfaces, messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
+import { getDataDir } from '../db/paths.js';
+import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
 
@@ -114,6 +117,36 @@ const InstallBody = z.object({ src: z.string().min(1) });
 /** prompt 通道可用性（与投递裁决同口径）：层① 原生中继 || 层② 终端 send-text 兜底。 */
 function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
   return surface.prompt !== null || terminalChannel;
+}
+
+/**
+ * 投递诊断的「修法码」：每条 = 一个「消息为什么送不到」的成因（判定条件见
+ * `MessageDeliverer.diagnose` 与 `CaptureScriptHealth`）。只出机器码，文案归 CLI/web。
+ * 与通道 reason 重叠的不重复报（脚本压根不上报时，「没凭据」不是独立成因）。
+ */
+function deliveryHints(input: {
+  diag: SessionDeliveryDiagnosis | null;
+  capture: CaptureScriptHealth | null;
+  eventCount: number;
+}): string[] {
+  const { diag, capture, eventCount } = input;
+  const hints: string[] = [];
+  if (!capture || capture.source === 'none' || !capture.present) hints.push('no-hook-script');
+  else if (!capture.weaveOwned) hints.push('hook-script-not-weave');
+  else if (!capture.reportsInbox) hints.push('hook-script-stale');
+  if (eventCount === 0) hints.push('no-events');
+  if (!diag) return hints;
+  if (diag.alive === false) hints.push('not-running');
+  if (diag.inbox.reason === 'no-credentials' && capture?.reportsInbox === true) {
+    hints.push('no-inbox-credentials');
+  }
+  if (diag.inbox.reason === 'auth-token-required') hints.push('inbox-token-required');
+  if (diag.relay.reason === 'no-peer-name') hints.push('no-peer-name');
+  if (diag.terminal.reason === 'no-backend') hints.push('terminal-no-backend');
+  if (diag.terminal.reason === 'no-pane-env') hints.push('terminal-no-pane-env');
+  if (diag.pending > 0) hints.push('queued');
+  if (diag.stalled) hints.push('stalled');
+  return hints;
 }
 
 export async function handleHooksRoutes(
@@ -976,6 +1009,80 @@ export async function handleHooksRoutes(
         watch: surface.idleSignals.length > 0,
         unsupportedReasons: surface.unsupportedReasons ?? null,
       })),
+    });
+    return true;
+  }
+
+  // ---- 投递诊断：daemon + 项目采集脚本健康 + 会话通道矩阵（被动只读现算） ----
+  // 判据集 = 各通道「何时不可用」的全部条件（见 MessageDeliverer.diagnose / CaptureSurface.
+  // scriptHealth），不探端口、不起子进程、不落库、不回传凭据值。?session= / ?project= 收窄。
+  if (pathname === '/messaging/diagnostics' && req.method === 'GET') {
+    if (!deps.messageDeliverer || !deps.hookSessions) {
+      sendJson(res, 503, { error: 'Message subsystem unavailable' });
+      return true;
+    }
+    const sessionFilter = url.searchParams.get('session');
+    const projectFilter = url.searchParams.get('project');
+    const captures = captureSurfaces();
+    const projects = deps.projects.list();
+
+    const projectRows = await Promise.all(
+      projects.map(async (p) => ({
+        id: p.id,
+        name: p.name,
+        path: p.path,
+        captures: await Promise.all(
+          captures.map(async ({ harness, surface }) => ({
+            harness,
+            ...(await surface.scriptHealth({ projectPath: p.path })),
+          })),
+        ),
+      })),
+    );
+    const captureOf = (projectId: number | null, harness: string | null) =>
+      projectRows
+        .find((p) => p.id === projectId)
+        ?.captures.find((c) => c.harness === harness) ?? null;
+
+    const liveness = claudeLivenessById();
+    const rows = deps.hookSessions.listWithCounts(
+      sessionFilter ? undefined : projectFilter ? Number(projectFilter) : undefined,
+    );
+    const sessions = rows
+      .filter((s) => (sessionFilter ? s.sessionId === sessionFilter : pidAliveOf(s, liveness) !== false))
+      .map((s) => {
+        const diag = deps.messageDeliverer!.diagnose(s.sessionId);
+        const capture = captureOf(s.projectId, s.harness ?? null);
+        const channels = { inbox: diag.inbox, relay: diag.relay, terminal: diag.terminal };
+        return {
+          sessionId: s.sessionId,
+          projectId: s.projectId,
+          harness: s.harness ?? null,
+          title: s.title,
+          lastSeenAt: s.lastSeenAt,
+          eventCount: s.eventCount ?? 0,
+          lastEventType: s.lastEventType ?? null,
+          alive: diag.alive,
+          paneEnvReported: diag.paneEnvReported,
+          channels,
+          queue: { pending: diag.pending, stalled: diag.stalled },
+          reachable: Object.values(channels).some((c) => c.status === 'ready'),
+          hints: deliveryHints({ diag, capture, eventCount: s.eventCount ?? 0 }),
+        };
+      });
+
+    sendJson(res, 200, {
+      daemon: {
+        version: WEAVE_VERSION,
+        platform: process.platform,
+        dataDir: getDataDir(),
+        uptimeMs: Math.round(process.uptime() * 1000),
+        terminalPreset: readDaemonSettingsSync().terminal.preset,
+        terminalTextChannel: deps.messageDeliverer.hasTerminalChannel(),
+        hooksEnabled: readHooksEnabled(),
+      },
+      projects: projectRows,
+      sessions,
     });
     return true;
   }

@@ -8,7 +8,7 @@ import {
   TERMINAL_LOCATOR_ENV_KEYS,
   type Harness,
 } from '@weavecode/core';
-import type { CaptureDeps, CaptureState, CaptureSurface } from '../driver.js';
+import type { CaptureDeps, CaptureScriptHealth, CaptureState, CaptureSurface } from '../driver.js';
 import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 
 /**
@@ -543,6 +543,41 @@ export async function readUserCapture(deps: CaptureDeps = {}): Promise<CaptureSt
 }
 
 /**
+ * 生效采集脚本的健康（诊断面只读）：与运行时同判据取「哪一支在 firing」——
+ * user settings 里有采集组 = user 档脚本；否则项目档（给了 `projectPath` 才看得到）；
+ * 两支都指不到 = none。`source` 是**生效分支**（不是「文件在不在」，后者是 `present`）。
+ * 判的是正文「会不会上报」而非「能不能跑」：脚本是旧版 weave 生成的（升级 npm
+ * 包不会重写它）就不含凭据上报，dashboard 于是永远收不到 inbox 目标。
+ */
+export async function readScriptHealth(
+  deps: CaptureDeps & { projectPath?: string } = {},
+): Promise<CaptureScriptHealth> {
+  const home = deps.home ?? homedir();
+  const userScript = path.join(userHelpersDir(home), 'hook-handler.cjs');
+  const projectScript = deps.projectPath
+    ? path.join(deps.projectPath, HARNESS_DIRS.claude.projectDir, 'helpers', 'hook-handler.cjs')
+    : null;
+  const installed = (await readUserCapture({ home })).installed;
+  const source: CaptureScriptHealth['source'] = installed ? 'user' : projectScript ? 'project' : 'none';
+  const file = installed ? userScript : (projectScript ?? userScript);
+
+  let content: string | null = null;
+  try {
+    content = await readFile(file, 'utf-8');
+  } catch {
+    content = null;
+  }
+  return {
+    source,
+    present: content !== null,
+    weaveOwned: content !== null && content.includes(WEAVE_HELPER_MARKER),
+    generatedVersion: content?.match(/@version weave@(\S+)/)?.[1] ?? null,
+    reportsInbox: content !== null && content.includes(CLAUDE_PROMPT_INBOX.socketEnv),
+    reportsPaneEnv: content !== null && content.includes('terminalEnv()'),
+  };
+}
+
+/**
  * user 档采集安装（幂等）：user 级 hook-handler 脚本 + `~/.claude/settings.json`
  * 的 weave 采集组（marker 清扫后并入，用户其余键永不动）。脚本锚点在 cwd/token，
  * 与落点无关——同一脚本项目档/user 档通用。
@@ -600,4 +635,5 @@ export const CLAUDE_CAPTURE: CaptureSurface = {
   installUserCapture: (deps) => installUserCapture(deps),
   uninstallUserCapture: (deps) => uninstallUserCapture(deps),
   stripProjectCapture,
+  scriptHealth: (deps) => readScriptHealth(deps),
 };
