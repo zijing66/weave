@@ -577,6 +577,10 @@ class WeztermBackend extends TerminalBackend {
    * 一律 null（调用方回落标题+cwd 启发式，宁可少答也不往别人的 pane 打键）。
    */
   override async locatePane(env: Record<string, string>): Promise<string | null> {
+    // 两个定位键缺任一即判「不是 wezterm 会话」：先判再枚举，省一轮 spawn
+    // （判据与 weztermPaneFromEnv 同一条件，只是挪到枚举之前）。
+    const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+    if (!env[paneKey] || !env[socketKey]) return null;
     const { muxes } = await weztermLiveMuxes();
     return weztermPaneFromEnv(env, muxes, this.platform);
   }
@@ -749,9 +753,14 @@ export function terminalBackendFor(
 }
 
 /**
- * prompt 层② 兜底通道适配（MessageDeliverer 的 PromptTerminal 形状）：settings
- * 每次调用重新取后端（preset 运行期可改），`textAddressable` 即「层② 可用」的
- * 诚实声明——能力矩阵与投递裁决都经 available() 取用，不支持的 preset 不谎报。
+ * prompt 层② 兜底通道适配（MessageDeliverer 的 PromptTerminal 形状）。
+ *
+ * 取后端分两处，因为「开窗」与「对话」是两个问题：
+ * - `settings.terminal` 答「weave 该往哪个终端开窗」——`listPanes`（标题+cwd
+ *   启发式回落的枚举面）用它，没有 env 的会话只在用户指明过的终端世界里猜；
+ * - 会话**自己上报的 pane env**（`WEZTERM_*`）答「这个会话此刻在哪个终端里」——
+ *   定位与击键按它走。换 preset 是纯开窗偏好，不该否掉活在 wezterm pane 里的
+ *   会话（否则停止/作答/层② 投递会集体失效——`wt` 与 win32 的 `auto` 文本位皆 false）。
  */
 export function promptTerminalChannel(
   settings: () => TerminalSettings,
@@ -763,39 +772,23 @@ export function promptTerminalChannel(
   sendText(paneId: string, text: string): Promise<void>;
   sendKeys(paneId: string, keys: string): Promise<void>;
 } {
-  const backendOf = () => terminalBackendFor(settings());
+  const configuredBackend = () => terminalBackendFor(settings());
+  // 配置的后端能打字就用它；否则用 wezterm 后端（全仓唯一实现文本通道的后端，
+  // pane env 的解析与 pane id 的表示法也都出自它）。
+  const paneBackend = () => {
+    const backend = configuredBackend();
+    return backend.textAddressable ? backend : new WeztermBackend(process.platform);
+  };
   return {
-    available: () => backendOf().textAddressable,
+    available: () => paneBackend().textAddressable,
     listPanes: async () => {
-      const backend = backendOf();
+      const backend = configuredBackend();
       return backend.textAddressable ? await backend.listPromptPanes() : [];
     },
-    locatePane: async (env) => {
-      const backend = backendOf();
-      return backend.textAddressable ? await backend.locatePane(env) : null;
-    },
-    locateScreens: async (envs) => {
-      const backend = backendOf();
-      return backend.textAddressable ? await backend.locateScreens(envs) : {};
-    },
-    sendText: async (paneId, text) => {
-      const backend = backendOf();
-      if (!backend.textAddressable) {
-        throw new Error(
-          `Terminal preset "${backend.preset}" cannot send text into an open pane — pick wezterm in settings`,
-        );
-      }
-      await backend.sendPromptText(paneId, text);
-    },
-    sendKeys: async (paneId, keys) => {
-      const backend = backendOf();
-      if (!backend.textAddressable) {
-        throw new Error(
-          `Terminal preset "${backend.preset}" cannot send keys to an open pane — pick wezterm in settings`,
-        );
-      }
-      await backend.sendKeys(paneId, keys);
-    },
+    locatePane: async (env) => await paneBackend().locatePane(env),
+    locateScreens: async (envs) => await paneBackend().locateScreens(envs),
+    sendText: async (paneId, text) => await paneBackend().sendPromptText(paneId, text),
+    sendKeys: async (paneId, keys) => await paneBackend().sendKeys(paneId, keys),
   };
 }
 

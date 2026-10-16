@@ -206,18 +206,22 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     expect(parsePromptPaneId(':7')).toBeNull();
   });
 
-  it('promptTerminalChannel 适配器：随 settings 后端变化，available 不谎报、注入有明确拒绝', async () => {
+  it('promptTerminalChannel：定位/击键按 pane env 证据走，与开窗 preset 无关', async () => {
     let current = settings('wezterm');
     const channel = promptTerminalChannel(() => current);
-    expect(channel.available()).toBe(true);
 
-    // 运行期换 preset：通道声明跟着变（能力矩阵同一拍感知）
+    // 运行期把开窗 preset 换成 wt（用户点设置里那个下拉）：文本通道不受影响——
+    // 会话活在 wezterm pane 里，pane env 才是归属凭据，不能被开窗偏好否掉。
     current = settings('wt');
-    expect(channel.available()).toBe(false);
+    expect(channel.available()).toBe(true);
+    // 启发式回落的枚举面仍只在 preset 指向的世界里：wt 不是文本通道 → 空表，
+    // 不跨世界拿标题+cwd 去猜（否则 macOS terminal preset 的用户会被误 ESC）。
     await expect(channel.listPanes()).resolves.toEqual([]);
-    await expect(channel.sendText('deadbeef:7', 'hi')).rejects.toThrow(
-      'Terminal preset "wt" cannot send text into an open pane',
-    );
+    // 定位键不全 → 不是 wezterm 会话，判 null（且不为此枚举 mux）
+    await expect(channel.locatePane({ WEZTERM_PANE: '7' })).resolves.toBeNull();
+    // 击键不再被 preset 挡在门外：pane id 直接进 wezterm 通道（坏 id 的报错出自
+    // wezterm 后端 = 路由确实换了；旧代码这里会吐 preset 的「pick wezterm」）。
+    await expect(channel.sendKeys('bad-id', '\x1b')).rejects.toThrow('Invalid prompt pane "bad-id"');
   });
 
   it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {

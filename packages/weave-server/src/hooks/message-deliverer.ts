@@ -619,7 +619,7 @@ export class MessageDeliverer {
     ) {
       return { ok: false, status: 400, error: 'Invalid answer keys' };
     }
-    const target = await this.sessionKeysTarget(sessionId, 'Answering');
+    const target = await this.sessionKeysTarget(sessionId);
     if (!target.ok) return target;
     try {
       for (const [i, atom] of atoms.entries()) {
@@ -638,7 +638,7 @@ export class MessageDeliverer {
    * 且只打一记：claude 里 ESC 一次是中断，连打两次是开历史回退菜单。
    */
   async interrupt(sessionId: string): Promise<AnswerResult> {
-    const target = await this.sessionKeysTarget(sessionId, 'Interrupting');
+    const target = await this.sessionKeysTarget(sessionId);
     if (!target.ok) return target;
     try {
       await target.terminal.sendKeys(target.paneId, ESC);
@@ -650,11 +650,11 @@ export class MessageDeliverer {
 
   /**
    * 键序注入路径（作答 / 中断）共用的落点解析：会话 → 项目 → 终端通道 → pane。
-   * 全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP。
+   * 全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP；
+   * 两条 409 是给用户看的（web 直拼在「停止失败：」后面），故写成中文修法。
    */
   private async sessionKeysTarget(
     sessionId: string,
-    what: string,
   ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
@@ -665,18 +665,14 @@ export class MessageDeliverer {
     if (!project) return { ok: false, status: 404, error: 'Project not found' };
     const terminal = this.terminalChannel();
     if (!terminal) {
-      return {
-        ok: false,
-        status: 409,
-        error: `${what} needs a text-capable terminal (pick wezterm in settings)`,
-      };
+      return { ok: false, status: 409, error: '终端通道未装配，无法远程击键' };
     }
     const pane = await this.terminalPaneFor(session, project);
     if (!pane) {
       return {
         ok: false,
         status: 409,
-        error: 'Session pane not found — is the session window open?',
+        error: '找不到会话所在的终端窗口（只有 wezterm 里的会话能被远程击键）',
       };
     }
     return { ok: true, terminal, paneId: pane.id };
@@ -1015,7 +1011,7 @@ export class MessageDeliverer {
     return hits.length === 1 ? hits[0]! : null;
   }
 
-  /** 层② 通道现取（available 是随 settings 变的诚实声明，不可缓存到构造期）。 */
+  /** 层② 通道现取（装配期注入；与 settings 的 preset 无关，只有「没装」才是 null）。 */
   private terminalChannel(): PromptTerminal | null {
     const terminal = this.deps.terminal;
     return terminal && terminal.available() ? terminal : null;

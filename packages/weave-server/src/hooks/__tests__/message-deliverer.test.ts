@@ -2099,10 +2099,12 @@ describe('MessageDeliverer 裁决表', () => {
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
         ok: false,
         status: 409,
+        error: '找不到会话所在的终端窗口（只有 wezterm 里的会话能被远程击键）',
       });
       await expect(new MessageDeliverer(makeDeps()).interrupt(SESSION_ID)).resolves.toMatchObject({
         ok: false,
         status: 409,
+        error: '终端通道未装配，无法远程击键',
       });
       expect(sendKeys).not.toHaveBeenCalled();
     });
