@@ -8,7 +8,9 @@ import { HarnessRegistry, type HarnessDriver } from './driver.js';
  * 编译失败）；注册与消费皆由本表派生，不再手写 id 清单。
  *
  * init 槽不在此（init 实现半球留 cli，由 `weave-cli/src/init/wiring.ts`
- * unregister + 携带 init 重新注册）。
+ * unregister + 携带 init 重新注册）——但 init 的**生成期望态**在 harness
+ * （`init/generated.ts`），daemon 的 init 文件漂移检测/自动同步直接调它，
+ * 与 cli 落盘同一套生成器。
  */
 export const HARNESS_DRIVERS = {
   claude: CLAUDE_DRIVER,

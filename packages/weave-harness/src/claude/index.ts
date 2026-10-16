@@ -35,6 +35,14 @@ export {
   stripProjectCapture,
   HOOK_HANDLER_MARKER,
 } from './capture.js';
+export {
+  generateSettingsJson,
+  mergeSettingsJson,
+  stripWeaveSettings,
+  type SettingsGeneratorInput,
+} from './settings-gen.js';
+export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from './mcp-gen.js';
+export { generateAutoMemoryHook } from './helpers-gen.js';
 
 /**
  * Claude 接入模块的驱动：批 4a 补 assets、批 4b 补 events/resume、批 5 补
