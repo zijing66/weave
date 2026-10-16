@@ -165,8 +165,19 @@ function expectedFor(entry: InitGeneratedFile, onDisk: string | null): string | 
   return entry.content;
 }
 
+/** init 跑过没：`.weave/config.yaml` 在不在。没有就谈不上「生成物漂移」。 */
+async function inited(projectPath: string): Promise<boolean> {
+  try {
+    await readFile(path.join(projectPath, '.weave', 'config.yaml'), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 一个项目的 init 生成物漂移清单（含全部条目，`outdated` 标注是否需同步）。 */
 export async function detectInitFileUpdates(projectPath: string): Promise<InitFileUpdate[]> {
+  if (!(await inited(projectPath))) return [];
   const runtime = await readInitRuntime(projectPath);
   const ctx = contextFor(projectPath, runtime);
   const harnesses: Harness[] =

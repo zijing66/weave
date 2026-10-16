@@ -5,12 +5,16 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { buildLibraryIndex } from '../install/library-index.js';
 import { detectUpdates } from '../install/updates.js';
 import { syncAll } from '../install/apply-update.js';
-import { readProjectConfig, markSynced } from '../install/project-config.js';
+import { markSynced } from '../install/project-config.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
 
 /**
- * SyncScheduler — periodically applies outdated updates to projects that have
- * opted into auto-sync (`.weave/config.json` → `autoSync: true`).
+ * SyncScheduler — periodically applies outdated updates to every project.
+ *
+ * **自动/手动由 git 分类单点决定，不再是 per-project 开关**（用户裁决）：不进 git
+ * 的 init 生成物与资产由这里自动刷新；会进 git 的一律只报不写，dashboard 提醒
+ * 用户跑 `weave init`。所以 tick 无条件扫全部项目，落盘范围由 `syncAll` 内部按
+ * git 归类分流。
  *
  * This is decoupled from the WatchService's 5s reconcile: sync runs on a longer
  * cadence (default 60s) because it rehashes source directories and writes
@@ -65,7 +69,7 @@ export class SyncScheduler {
     }
   }
 
-  /** One sync sweep across all projects opted into auto-sync. */
+  /** One sync sweep across all projects. */
   async tick(): Promise<void> {
     if (this.running) return; // avoid overlapping sweeps
     if (!this.libraries) return;
@@ -76,8 +80,6 @@ export class SyncScheduler {
       const index = await buildLibraryIndex(libs);
       const knownIds = this.plugins?.list().map((p) => p.id);
       for (const project of this.projects.list()) {
-        const cfg = await readProjectConfig(project.path);
-        if (!cfg.autoSync) continue;
         if (knownIds) {
           try {
             syncPlugins(project, knownIds, { projects: this.projects });

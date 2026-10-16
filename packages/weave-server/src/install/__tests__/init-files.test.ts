@@ -63,6 +63,10 @@ function read(rel: string): string {
 const handlerRel = '.claude/helpers/hook-handler.cjs';
 
 describe('detectInitFileUpdates', () => {
+  it('没跑过 init 的项目（无 config.yaml）→ 空清单，不往里塞生成物', async () => {
+    expect(await detectInitFileUpdates(projectDir)).toEqual([]);
+  });
+
   it('盘上缺失 → 全部 outdated；非 git 仓库 → 全部 auto', async () => {
     writeConfig();
     const updates = await detectInitFileUpdates(projectDir);

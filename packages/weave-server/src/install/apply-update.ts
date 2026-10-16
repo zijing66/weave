@@ -16,6 +16,7 @@ import {
 } from './library-index.js';
 import { detectUpdates } from './updates.js';
 import { materializePluginTemplate } from './plugin-templates.js';
+import { applyInitFile } from './init-files.js';
 import { FingerprintCache } from './fingerprint.js';
 import { FILE_ASSET_SPECS, fileAssetTargetDir, isFileAssetCategory } from './file-assets.js';
 import { assetSurfaceFor } from '../surfaces.js';
@@ -37,7 +38,7 @@ import type { LibraryRow } from '../repositories/libraries.js';
  */
 
 export interface ApplyUpdateInput {
-  category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style';
+  category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style' | 'init';
   name: string;
   scope: 'project' | 'user';
   /** Which agent's surface to refresh (skills + codex MCP matter). */
@@ -144,6 +145,12 @@ export async function syncAll(
     if (!t.outdated) continue;
     await materializePluginTemplate(t);
     updated.push({ category: t.category, name: t.name, scope: 'project' });
+  }
+  // init 生成物：只落「不进 git」的（applyInitFile 内部再挡一道）；会进 git 的
+  // 那部分留给用户跑 `weave init`，同步域不代写。
+  for (const f of report.initFiles) {
+    if (!(await applyInitFile(f))) continue;
+    updated.push({ category: 'init', name: f.relPath, scope: 'project' });
   }
   return { updated, skipped: 0 };
 }

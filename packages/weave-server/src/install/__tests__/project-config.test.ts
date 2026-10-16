@@ -16,8 +16,9 @@ describe('project-config', () => {
   });
 
   it('writes and reads back', async () => {
-    await writeProjectConfig(project, { autoSync: true, lastSyncAt: null });
-    expect((await readProjectConfig(project)).autoSync).toBe(true);
+    const iso = new Date().toISOString();
+    await writeProjectConfig(project, { lastSyncAt: iso });
+    expect((await readProjectConfig(project)).lastSyncAt).toBe(iso);
   });
 
   it('markSynced stamps lastSyncAt', async () => {

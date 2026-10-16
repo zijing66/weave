@@ -4,24 +4,21 @@ import path from 'node:path';
 /**
  * Per-project weave configuration, stored as `.weave/config.json`.
  *
- * Currently holds only the auto-sync toggle + last-sync timestamp. This is
- * weave's own bookkeeping (not Claude Code's settings.json), so it lives under
- * `.weave/` alongside statusline.json — both are ignored by the watch service
- * as "weave-owned" sidecars.
+ * Currently holds only the last-sync timestamp. This is weave's own bookkeeping
+ * (not Claude Code's settings.json), so it lives under `.weave/` alongside
+ * statusline.json — both are ignored by the watch service as "weave-owned"
+ * sidecars. (同步范围由 git 分类单点决定，这里不再有 autoSync 开关。)
  */
 
 const WEAVE_DIR = '.weave';
 const CONFIG_FILE = 'config.json';
 
 export interface ProjectConfig {
-  /** When true, the SyncScheduler auto-applies outdated updates on its tick. */
-  autoSync: boolean;
   /** ISO timestamp of the last successful sync (null if never). */
   lastSyncAt: string | null;
 }
 
 export const DEFAULT_PROJECT_CONFIG: ProjectConfig = {
-  autoSync: false,
   lastSyncAt: null,
 };
 
@@ -31,7 +28,6 @@ function configPath(projectPath: string): string {
 
 function merge(parsed: Partial<ProjectConfig>): ProjectConfig {
   return {
-    autoSync: parsed.autoSync ?? DEFAULT_PROJECT_CONFIG.autoSync,
     lastSyncAt: parsed.lastSyncAt ?? DEFAULT_PROJECT_CONFIG.lastSyncAt,
   };
 }

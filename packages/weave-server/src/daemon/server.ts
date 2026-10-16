@@ -1301,7 +1301,7 @@ async function handleRequest(
     return;
   }
 
-  // --- project weave config (auto-sync toggle) ---
+  // --- project weave config（同步范围由 git 分类单点决定，这里只有 lastSyncAt）---
   const configMatch = pathname.match(/^\/projects\/(\d+)\/config$/);
   if (configMatch) {
     const project = deps.projects.getById(Number(configMatch[1]));
@@ -1323,7 +1323,6 @@ async function handleRequest(
       }
       const current = await readProjectConfig(project.path);
       const next: ProjectConfig = {
-        autoSync: body.autoSync ?? current.autoSync,
         lastSyncAt: body.lastSyncAt ?? current.lastSyncAt,
       };
       await writeProjectConfig(project.path, next);

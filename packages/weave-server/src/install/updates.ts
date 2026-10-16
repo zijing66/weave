@@ -21,6 +21,7 @@ import {
   detectPluginTemplateUpdates,
   type PluginTemplateUpdate,
 } from './plugin-templates.js';
+import { detectInitFileUpdates, needsInit, type InitFileUpdate } from './init-files.js';
 import type { LibraryRow } from '../repositories/libraries.js';
 
 /**
@@ -87,8 +88,12 @@ export interface UpdateReport {
   files: FileAssetUpdate[];
   /** 项目自有 weave 源（`.weave/plugins` 的 manifest.templates）的物化漂移。 */
   pluginTemplates: PluginTemplateUpdate[];
-  /** Count of outdated, non-custom assets (plugin templates included). */
+  /** init 生成物的漂移（不进 git 的可自愈；会进 git 的只报不写）。 */
+  initFiles: InitFileUpdate[];
+  /** Count of outdated assets sync can actually apply（含 auto 归类的 init 文件）。 */
   available: number;
+  /** 会进 git 的 init 文件有漂移 → dashboard 提醒用户跑 `weave init`。 */
+  needsInit: boolean;
 }
 
 /**
@@ -110,11 +115,22 @@ export async function detectUpdates(
   await mergeMissingFromLedger(projectPath, { skills, mcp, files }, idx);
   // 项目自有 weave 源无账本（声明即期望态），不随 libraries 存亡——独立扫描。
   const pluginTemplates = await detectPluginTemplateUpdates(projectPath, cache);
+  // init 生成物同样无账本（期望态由 harness 生成器给），按 git 归类分流。
+  const initFiles = await detectInitFileUpdates(projectPath);
   const available = skills.filter((s) => !s.custom && s.outdated).length
     + mcp.filter((s) => !s.custom && s.outdated).length
     + files.filter((s) => !s.custom && s.outdated).length
-    + pluginTemplates.filter((t) => t.outdated).length;
-  return { skills, mcp, files, pluginTemplates, available };
+    + pluginTemplates.filter((t) => t.outdated).length
+    + initFiles.filter((f) => f.outdated && f.syncClass === 'auto').length;
+  return {
+    skills,
+    mcp,
+    files,
+    pluginTemplates,
+    initFiles,
+    available,
+    needsInit: needsInit(initFiles),
+  };
 }
 
 /**
