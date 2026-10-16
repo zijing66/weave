@@ -3,7 +3,7 @@ import { type SessionRow, type SessionTerminal, type SessionWatchRow, type Messa
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
-import { sessionLabel } from '@/lib/hook-payload';
+import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { useT } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
@@ -595,6 +595,10 @@ export function SessionList({
               )}
               <span className="shrink-0 text-[10px] text-neutral-500">
                 {t('tasks.events', { n: s.eventCount ?? 0 })}
+              </span>
+              {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
+              <span className="shrink-0 text-[10px] text-neutral-500">
+                {formatTime(s.lastSeenAt)}
               </span>
               {s.harness && (
                 <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
