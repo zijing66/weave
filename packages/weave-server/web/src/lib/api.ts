@@ -320,6 +320,9 @@ export interface SessionRow {
   pidAlive?: boolean | null;
   /** 该会话所在的**可见屏幕**（终端里的一块屏）；null = 反查不到（没分组信息）。 */
   terminal?: SessionTerminal | null;
+  /** 已中断时刻（ms）：转录最后一条「请求被用户中断」标记晚于最后一条 hook 事件
+   *  ——ESC 打断后多数连 Stop 都不发，这是该状态的唯一来源；null = 没中断。 */
+  interruptedAt?: number | null;
   /** 无 prompt 幽灵会话的自动清理时刻（服务端 listWithCounts 派生；null = 正常会话）。
    *  服务端 SessionSweeper 过期即清，行内渲染倒计时 tag。 */
   autoDeleteAt?: string | null;

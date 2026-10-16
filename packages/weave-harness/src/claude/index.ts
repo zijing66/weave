@@ -20,6 +20,7 @@ export { CLAUDE_MESSAGING } from './messaging.js';
 export { CLAUDE_BLOCKING_PROMPT } from './questions.js';
 export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
+export { interruptMarkerAt } from './transcript.js';
 export { resolveClaudePeer } from './peers.js';
 export {
   CLAUDE_CAPTURE,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CheckCheck, Copy, Download, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, Copy, Download, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -572,8 +572,10 @@ export function SessionMessages({
   const status = statuses.get(sessionId);
   /** 尾上的在途提示：压缩中（状态总线同一判据；压缩与尾条是谁无关，照挂）显
    *  「压缩会话中…」，否则会话正在跑这一轮（含 5min 静默兜底）而尾条仍是用户
-   *  那条 → 回复还在路上，显「生成中…」。 */
+   *  那条 → 回复还在路上，显「生成中…」；中断态压在这两者之上（ESC 打断后宿主
+   *  多不发 Stop，回合口子还开着，不先判它就会一直卡在「生成中…」）。 */
   const compacting = status === 'compacting';
+  const interrupted = status === 'interrupted';
   const generating =
     compacting || (status === 'running' && thread[thread.length - 1]?.role === 'user');
   const lastTail = useRef<string | undefined>(undefined);
@@ -831,22 +833,6 @@ export function SessionMessages({
             <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {/* 停止：与事件链组头那枚同一判据（回合开着才露）、同一动作、同一 fb 键 */}
-            {stoppable && (
-              <button
-                type="button"
-                title={t('tasks.stopTooltip')}
-                aria-label={t('tasks.stopTooltip')}
-                onClick={() => onInterrupt(sessionId)}
-                className="inline-flex h-6 w-6 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-red-300"
-              >
-                <FeedbackIcon
-                  state={interruptStateOf(sessionId)}
-                  className="h-3.5 w-3.5"
-                  icon={<Square className="h-3.5 w-3.5" />}
-                />
-              </button>
-            )}
             <button
               type="button"
               title={t('tasks.messagesClose')}
@@ -1099,11 +1085,19 @@ export function SessionMessages({
                   </div>
                 );
               })}
-              {generating && (
+              {(generating || interrupted) && (
                 <div className="flex justify-start">
                   <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    {compacting ? t('tasks.msgCompacting') : t('tasks.msgGenerating')}
+                    {interrupted ? (
+                      <Ban className="h-3 w-3" />
+                    ) : (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    )}
+                    {interrupted
+                      ? t('tasks.msgInterrupted')
+                      : compacting
+                        ? t('tasks.msgCompacting')
+                        : t('tasks.msgGenerating')}
                   </div>
                 </div>
               )}
@@ -1192,6 +1186,23 @@ export function SessionMessages({
               rows={2}
               className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
             />
+            {/* 停止：贴在发送按钮边上（回合开着才露、与事件链组头同一判据与 fb 键） */}
+            {stoppable && (
+              <button
+                type="button"
+                title={t('tasks.stopTooltip')}
+                aria-label={t('tasks.stopTooltip')}
+                onClick={() => onInterrupt(sessionId)}
+                className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300"
+              >
+                <FeedbackIcon
+                  state={interruptStateOf(sessionId)}
+                  className="h-3 w-3"
+                  icon={<Square className="h-3 w-3" />}
+                />
+                {t('tasks.stop')}
+              </button>
+            )}
             <button
               type="button"
               disabled={

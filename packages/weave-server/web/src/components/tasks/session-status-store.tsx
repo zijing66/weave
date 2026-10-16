@@ -154,6 +154,29 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // 会话中断态（已中断）：ESC 打断后多数连 Stop 都不发，真相在转录里——后端按
+  // 「标记晚于最后一条事件」算成绝对时刻推下来，不在快照里即已恢复（被新事件盖过）。
+  useEffect(
+    () =>
+      subscribeSse((frame) => {
+        if (frame.type !== 'push' || frame.key !== 'sessionInterrupt') return;
+        const interrupted =
+          (frame.payload as { interrupted?: Record<string, number> }).interrupted ?? {};
+        setSessions((prev) => {
+          if (!prev) return prev;
+          let changed = false;
+          const next = prev.map((s) => {
+            const v = interrupted[s.sessionId] ?? null;
+            if ((s.interruptedAt ?? null) === v) return s;
+            changed = true;
+            return { ...s, interruptedAt: v };
+          });
+          return changed ? next : prev;
+        });
+      }),
+    [],
+  );
+
   // 会话所在可见屏幕（列表分块）：同一个隐藏刷新器的另一半快照——pane 关了/换了
   // 屏幕同样没有 hook 事件，靠这一帧自愈。未上报定位的会话不在快照里（不动）；
   // 反查不到时值是 null，据此把已分块的行摘出块外（不谎报旧屏幕）。
@@ -310,6 +333,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
             latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
           overlay: overlay.get(s.sessionId),
           turnOpen: s.turnOpen,
+          interruptedAt: s.interruptedAt ?? undefined,
           harness: s.harness,
           now,
         }),

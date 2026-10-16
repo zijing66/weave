@@ -36,7 +36,8 @@ import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
-import { SessionLivenessRefresher } from './session-liveness-refresher.js';
+import { SnapshotRefresher } from './snapshot-refresher.js';
+import { SessionProbe } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
@@ -218,6 +219,8 @@ export function startDaemon(): void {
   const fingerprintCache = new FingerprintCache();
   // 数据变更帧总线：SSE 的载荷推送源（各隐藏刷新器共用一条）。
   const dataBus = new DataBus();
+  // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
+  const sessionProbe = new SessionProbe();
   // 项目行「有更新待同步」角标：项目插件源（`.weave/plugins` 的模板）变更 →
   // 重算全项目漂移、值变才推绝对值快照（含 0）。
   const updatesRefresher = new ProjectUpdatesRefresher(
@@ -247,7 +250,7 @@ export function startDaemon(): void {
   terminalRefresher.start();
   // 会话存活（终端按钮图标）同理：claude 进程被杀无 hook 事件，GET 的 pidAlive
   // 会卡旧值——判活零 spawn（注册表 + kill 0），15s 一拍、只推判得动的快照。
-  const livenessRefresher = new SessionLivenessRefresher(
+  const livenessRefresher = new SnapshotRefresher(
     () => {
       const liveness = claudeLivenessById();
       const alive: Record<string, boolean> = {};
@@ -255,12 +258,29 @@ export function startDaemon(): void {
         const v = pidAliveOf(s, liveness);
         if (v !== null) alive[s.sessionId] = v;
       }
-      return alive;
+      return { alive };
     },
     dataBus,
-    { shouldRun: () => dataBus.hasSubscribers() },
+    { key: 'sessionLiveness', shouldRun: () => dataBus.hasSubscribers() },
   );
   livenessRefresher.start();
+  // 会话中断态同理，且更极端：按 ESC 打断后多数连 Stop 都不发（实测 45 次里 41 次），
+  // 会话会永远停在「生成中」。只探「看着还在跑」的会话（turnOpen），周期比判活短
+  // ——零子进程，就一次 statSync（文件没长过连读都省）。
+  const interruptRefresher = new SnapshotRefresher(
+    () => {
+      const interrupted: Record<string, number> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        if (s.turnOpen !== true) continue;
+        const at = sessionProbe.interruptedAt(s.sessionId, s.lastSeenAt);
+        if (at !== null) interrupted[s.sessionId] = at;
+      }
+      return { interrupted };
+    },
+    dataBus,
+    { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
+  );
+  interruptRefresher.start();
   // 在途消息角标同理，但没有定时器：变化源全是 message.* 帧（事件驱动），
   // 帧到即重算、值变才推绝对值快照；新 SSE 客户端接入补一份首帧。
   const inflightRefresher = new InflightCountsRefresher(
@@ -280,6 +300,7 @@ export function startDaemon(): void {
     watchEngine,
     sequenceEngine,
     questions: questionTracker,
+    probe: sessionProbe,
   });
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。
@@ -295,6 +316,7 @@ export function startDaemon(): void {
     sequenceEngine,
     messagePipe: messageDeliverer,
     questionTracker,
+    sessionProbe,
   });
   const staticDir = resolveStaticDir();
 
@@ -316,6 +338,8 @@ export function startDaemon(): void {
     hookBus,
     dataBus,
     terminalRefresher,
+    interruptRefresher,
+    sessionProbe,
     inflightRefresher,
     updatesRefresher,
     hookDispatcher,
@@ -346,6 +370,7 @@ export function startDaemon(): void {
     pluginLoaderRef?.stopWatching(); // 取当前一代 watcher（「重新扫描」会换代，不能存启动时那个 stop）
     terminalRefresher.stop();
     livenessRefresher.stop();
+    interruptRefresher.stop();
     syncScheduler.stop();
     watch.stop();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源

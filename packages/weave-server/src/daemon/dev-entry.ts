@@ -41,7 +41,8 @@ import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
-import { SessionLivenessRefresher } from './session-liveness-refresher.js';
+import { SnapshotRefresher } from './snapshot-refresher.js';
+import { SessionProbe } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -208,6 +209,8 @@ async function main(): Promise<void> {
   // 后端「有人看时每 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，
   // 绑 SSE 客户端数。
   const dataBus = new DataBus();
+  // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
+  const sessionProbe = new SessionProbe();
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => ({
       counts: await readTerminalCounts(projects.list()),
@@ -219,7 +222,7 @@ async function main(): Promise<void> {
   terminalRefresher.start();
   // 会话存活（终端按钮图标）：与生产入口同一装配——被杀进程无 hook 事件，
   // GET 的 pidAlive 卡旧值；15s 一拍、值变才推判得动的绝对值快照。
-  const livenessRefresher = new SessionLivenessRefresher(
+  const livenessRefresher = new SnapshotRefresher(
     () => {
       const liveness = claudeLivenessById();
       const alive: Record<string, boolean> = {};
@@ -227,12 +230,27 @@ async function main(): Promise<void> {
         const v = pidAliveOf(s, liveness);
         if (v !== null) alive[s.sessionId] = v;
       }
-      return alive;
+      return { alive };
     },
     dataBus,
-    { shouldRun: () => dataBus.hasSubscribers() },
+    { key: 'sessionLiveness', shouldRun: () => dataBus.hasSubscribers() },
   );
   livenessRefresher.start();
+  // 会话中断态（同上）：ESC 打断后多数连 Stop 都不发，只探看着还在跑的会话。
+  const interruptRefresher = new SnapshotRefresher(
+    () => {
+      const interrupted: Record<string, number> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        if (s.turnOpen !== true) continue;
+        const at = sessionProbe.interruptedAt(s.sessionId, s.lastSeenAt);
+        if (at !== null) interrupted[s.sessionId] = at;
+      }
+      return { interrupted };
+    },
+    dataBus,
+    { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
+  );
+  interruptRefresher.start();
   // 在途消息角标（会话行）：无定时器——message.* 帧驱动重算、值变才推快照。
   const inflightRefresher = new InflightCountsRefresher(
     () => messageDeliverer.listInflightCounts(),
@@ -260,6 +278,7 @@ async function main(): Promise<void> {
     watchEngine,
     sequenceEngine,
     questions: questionTracker,
+    probe: sessionProbe,
   });
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。
@@ -275,6 +294,7 @@ async function main(): Promise<void> {
     sequenceEngine,
     messagePipe: messageDeliverer,
     questionTracker,
+    sessionProbe,
   });
   const staticDir = resolveStaticDir();
 
@@ -295,6 +315,8 @@ async function main(): Promise<void> {
     hookBus,
     dataBus,
     terminalRefresher,
+    interruptRefresher,
+    sessionProbe,
     inflightRefresher,
     updatesRefresher,
     hookDispatcher,
@@ -325,6 +347,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     terminalRefresher.stop();
     livenessRefresher.stop();
+    interruptRefresher.stop();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     void hookPipeline.stop();

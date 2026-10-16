@@ -18,6 +18,8 @@ import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
 import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
+import type { SnapshotRefresher } from './snapshot-refresher.js';
+import type { SessionProbe } from './session-probe.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
@@ -170,6 +172,10 @@ export interface WeaveServerDeps {
   dataBus?: DataBus;
   /** 终端世界（角标计数 + 会话所在屏幕）的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
   terminalRefresher?: TerminalTopologyRefresher;
+  /** 会话中断态快照刷新器（ESC 打断后多数连 Stop 都不发）：中断成功后即时补一拍。 */
+  interruptRefresher?: SnapshotRefresher;
+  /** 会话转录探测（中断态判据）：GET /sessions 逐行现算；缺省不带该字段。 */
+  sessionProbe?: SessionProbe;
   /** 在途消息角标（会话行）的推送器：新 SSE 客户端接入时补一份首帧快照。 */
   inflightRefresher?: InflightCountsRefresher;
   /** 项目行「有更新待同步」角标（含项目插件模板漂移）：源变更/同步落地后对账。 */

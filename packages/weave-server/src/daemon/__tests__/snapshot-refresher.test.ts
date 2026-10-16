@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DataBus, type DataFrame } from '../data-bus.js';
-import { SessionLivenessRefresher } from '../session-liveness-refresher.js';
+import { SnapshotRefresher } from '../snapshot-refresher.js';
 
 /** 收集总线上推出去的帧。 */
 function collect(bus: DataBus): DataFrame[] {
@@ -9,12 +9,12 @@ function collect(bus: DataBus): DataFrame[] {
   return frames;
 }
 
-describe('SessionLivenessRefresher', () => {
+describe('SnapshotRefresher', () => {
   it('只在值变化时推帧（相同快照不重复推）', () => {
     const bus = new DataBus();
     const frames = collect(bus);
     let alive: Record<string, boolean> = { s1: true };
-    const refresher = new SessionLivenessRefresher(() => ({ ...alive }), bus);
+    const refresher = new SnapshotRefresher(() => ({ alive }), bus, { key: 'sessionLiveness' });
 
     refresher.tick();
     refresher.tick();
@@ -34,7 +34,10 @@ describe('SessionLivenessRefresher', () => {
     const bus = new DataBus();
     const snapshot = vi.fn(() => ({ s1: true }));
     let watching = false;
-    const refresher = new SessionLivenessRefresher(snapshot, bus, { shouldRun: () => watching });
+    const refresher = new SnapshotRefresher(snapshot, bus, {
+      key: 'sessionLiveness',
+      shouldRun: () => watching,
+    });
 
     refresher.tick();
     expect(snapshot).not.toHaveBeenCalled();
@@ -48,10 +51,14 @@ describe('SessionLivenessRefresher', () => {
     const bus = new DataBus();
     const frames = collect(bus);
     let broken = true;
-    const refresher = new SessionLivenessRefresher(() => {
-      if (broken) throw new Error('注册表目录读不了');
-      return { s1: true };
-    }, bus);
+    const refresher = new SnapshotRefresher(
+      () => {
+        if (broken) throw new Error('注册表目录读不了');
+        return { alive: { s1: true } };
+      },
+      bus,
+      { key: 'sessionLiveness' },
+    );
 
     expect(() => refresher.tick()).not.toThrow();
     expect(frames).toHaveLength(0); // 失败不推、图标保留旧值
@@ -67,7 +74,8 @@ describe('SessionLivenessRefresher', () => {
       const bus = new DataBus();
       const frames = collect(bus);
       let alive: Record<string, boolean> = { s1: true };
-      const refresher = new SessionLivenessRefresher(() => ({ ...alive }), bus, {
+      const refresher = new SnapshotRefresher(() => ({ alive }), bus, {
+        key: 'sessionLiveness',
         intervalMs: 15_000,
       });
 

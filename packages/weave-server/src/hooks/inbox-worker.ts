@@ -329,6 +329,8 @@ export interface IngestedHandlerDeps {
   };
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）。 */
+  sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
 }
 
 /**
@@ -374,6 +376,8 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         source: record.input.source,
       });
       if (record.messaging) deps.messagePipe?.noteInboxSocket?.(record.input.sessionId, record.messaging);
+      // 转录路径（中断态探测）：与 pane env 同口径——每次事件覆盖刷新、只留内存。
+      deps.sessionProbe?.noteTranscript(record.input.sessionId, payload?.transcriptPath ?? null);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）
       if (record.input.eventType === 'UserPromptSubmit') {

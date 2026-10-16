@@ -18,6 +18,8 @@ export interface SessionPurgeDeps {
   sequences?: Pick<SessionSequenceRepository, 'deleteMentioning'>;
   /** 阻塞问答：待答内存态一并清（不计数）。 */
   questions?: Pick<QuestionTracker, 'forgetSession'>;
+  /** 转录探测：内存里的 transcriptPath 一并清（不计数）。 */
+  probe?: { forget(sessionId: string): void };
 }
 
 /**
@@ -34,6 +36,7 @@ export function purgeSession(
   deps.watches?.deleteBySession(sessionId);
   deps.sequences?.deleteMentioning(new Set([sessionId]));
   deps.questions?.forgetSession(sessionId);
+  deps.probe?.forget(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };
 }

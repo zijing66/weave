@@ -35,6 +35,8 @@ export interface HookPipelineDeps {
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
   /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 会话转录路径上报（中断态探测；同 pane env 口径）。 */
+  sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -153,6 +155,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         sequenceEngine: deps.sequenceEngine,
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
+        sessionProbe: deps.sessionProbe,
       },
       records,
     );

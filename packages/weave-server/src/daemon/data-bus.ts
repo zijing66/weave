@@ -20,6 +20,7 @@ export type DataKey =
   | 'sessions'
   | 'terminalTopology'
   | 'sessionLiveness'
+  | 'sessionInterrupt'
   | 'inflightCounts'
   | 'assets'
   | 'toolkit'

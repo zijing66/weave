@@ -155,6 +155,59 @@ describe('deriveSessionStatus', () => {
       }),
     ).toBe('open');
   });
+
+  it('转录中断标记晚于最后一条事件 → interrupted（压过 turnOpen 与压缩态）', () => {
+    // ESC 打断后宿主多数连 Stop 都不发，turnOpen 一直开着——不压住就永远「运行中」
+    expect(
+      deriveSessionStatus({
+        ...base,
+        lastSeenAt: ago(60_000),
+        turnOpen: true,
+        interruptedAt: NOW - 30_000,
+      }),
+    ).toBe('interrupted');
+    // 中断标记也比「最新事件是压缩开始」更新时，中断更靠前
+    expect(
+      deriveSessionStatus({
+        ...base,
+        harness: 'claude',
+        lastSeenAt: ago(60_000),
+        latestEventType: 'PreCompact',
+        turnOpen: true,
+        interruptedAt: NOW - 30_000,
+      }),
+    ).toBe('interrupted');
+  });
+
+  it('中断标记不比最后一条事件新就不认（本地新事件一到即顶掉，不等下一拍探测）', () => {
+    expect(
+      deriveSessionStatus({
+        ...base,
+        lastSeenAt: ago(10_000),
+        turnOpen: true,
+        interruptedAt: NOW - 60_000,
+      }),
+    ).toBe('running');
+    // 无标记（null/undefined）不改判
+    expect(
+      deriveSessionStatus({ ...base, lastSeenAt: ago(10_000), turnOpen: true, interruptedAt: null }),
+    ).toBe('running');
+  });
+
+  it('中断态只压得住还在等结果的回合：正常退出 / 判死各有更硬的依据', () => {
+    const interruptedAt = NOW - 30_000;
+    expect(
+      deriveSessionStatus({
+        ...base,
+        lastSeenAt: ago(60_000),
+        latestEventType: 'SessionEnd',
+        interruptedAt,
+      }),
+    ).toBe('closed');
+    expect(
+      deriveSessionStatus({ ...base, lastSeenAt: ago(60_000), pidAlive: false, interruptedAt }),
+    ).toBe('terminated');
+  });
 });
 
 describe('canInterrupt', () => {
@@ -174,6 +227,11 @@ describe('canInterrupt', () => {
     expect(canInterrupt('terminated', true)).toBe(false);
     expect(canInterrupt('failed', true)).toBe(false);
     expect(canInterrupt('closed')).toBe(false);
+  });
+
+  it('已中断不露——这一轮已经停下来了（turnOpen 还挂着是它没发 Stop，不是还有活）', () => {
+    expect(canInterrupt('interrupted', true)).toBe(false);
+    expect(canInterrupt('interrupted', undefined)).toBe(false);
   });
 
   it('回合开合未知（无回合信号的 harness / 旧 daemon）按状态兜底', () => {
@@ -237,6 +295,18 @@ describe('countSessionsByHarness', () => {
     ]);
     expect(countSessionsByHarness(rows, compacting)).toEqual([
       { harness: 'claude', running: 1, open: 1 },
+    ]);
+  });
+
+  it('已中断算「打开」— 同在等输入，只是这一轮被 ESC 收的场', () => {
+    const interrupted = new Map<string, SessionStatus>([
+      ['a', 'interrupted'],
+      ['b', 'open'],
+      ['c', 'closed'],
+      ['d', 'failed'],
+    ]);
+    expect(countSessionsByHarness(rows, interrupted)).toEqual([
+      { harness: 'claude', running: 0, open: 2 },
     ]);
   });
 

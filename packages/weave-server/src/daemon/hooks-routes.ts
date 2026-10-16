@@ -384,6 +384,9 @@ export async function handleHooksRoutes(
         ...s,
         pidAlive: pidAliveOf(s, liveness),
         terminal: screens[s.sessionId] ?? null,
+        // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
+        interruptedAt:
+          s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
       })),
     });
     return true;
@@ -432,6 +435,7 @@ export async function handleHooksRoutes(
         deliverer: deps.messageDeliverer,
         watches: deps.sessionWatches,
         questions: deps.questionTracker,
+        probe: deps.sessionProbe,
       },
       sessionId,
     );
@@ -673,6 +677,9 @@ export async function handleHooksRoutes(
       sendJson(res, result.status, { error: result.error });
       return true;
     }
+    // 打断之后 claude 要过一下才把中断标记写进转录：补一拍探针，让「生成中」尽快
+    // 变成「已中断」（不补则要等下一个周期）。同 terminalTopology 的即时刷新口径。
+    setTimeout(() => deps.interruptRefresher?.tick(), 1_500);
     sendJson(res, 200, { ok: true, sessionId });
     return true;
   }
