@@ -212,36 +212,22 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
 /**
  * 一组事件的批量落库：单事务 insertMany + 会话 touch 按 sessionId 去重。
  * 返回与 inputs 对齐的新行 id 列表（主线程按记录补 SSE / 规则分发）。
+ *
+ * **会话行随首个事件即建**（含仅一条 SessionStart 的新会话）：新建会话要**马上**
+ * 出现在会话列表，「只带 SessionStart 就不建档」那条旧判据已推翻（它让刚起的
+ * 会话要等到第一条 prompt 或闲置 Notification 才现身）。没等到 prompt 的空会话
+ * 照样不会久留——`listWithCounts` 的 autoDeleteAt 给它一个 10 分钟期限、
+ * SessionSweeper 过期即清（复用手动删会话级联）。
  */
 function insertBatch(deps: InboxDrainDeps, project: ProjectRow, inputs: HookEventInput[]): number[] {
   const ids = deps.hookEvents.insertMany(inputs);
   const touched = new Set<string>();
   for (const input of inputs) {
-    if (input.sessionId && !touched.has(input.sessionId)) {
-      touched.add(input.sessionId);
-      if (needsSessionRow(deps.hookSessions, input.sessionId, inputs)) {
-        deps.hookSessions.touch(input.sessionId, project.id);
-      }
-    }
+    if (!input.sessionId || touched.has(input.sessionId)) continue;
+    touched.add(input.sessionId);
+    deps.hookSessions.touch(input.sessionId, project.id);
   }
   return ids;
-}
-
-/**
- * 会话行建档判据（「仅残留 SessionStart 的会话不入库」的唯一拦截点）：
- * 库里还没有该会话行、且本批属于它的事件全是 SessionStart → 事件照收
- * （hook_events 是采集日志、保留期统一清理），但不为它建会话行——开了
- * 就 /resume 走掉的空会话自此不出现在会话列表。携带真实事件的那一批
- * 才建档，早先漏记的 SessionStart 经 session_id 自然归队（事件序 =
- * 插入序，链语义不破）；此改动前的存量空行由 session-sweeper 兜底清。
- */
-function needsSessionRow(
-  sessions: SessionRepository,
-  sessionId: string,
-  inputs: readonly HookEventInput[],
-): boolean {
-  if (sessions.getBySessionId(sessionId)) return true;
-  return inputs.some((i) => i.sessionId === sessionId && i.eventType !== 'SessionStart');
 }
 
 /** 行形 `{v, token, report, messaging?, terminal?}`；require 三样齐全（缺 token 无从归因，直接丢）。 */

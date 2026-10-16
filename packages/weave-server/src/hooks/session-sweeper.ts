@@ -11,9 +11,10 @@ export const SWEEP_INTERVAL_MS = 5 * 60_000;
  * `listWithCounts`（`autoDeleteAt` 计算列）——本清扫器只做「过期即清」；
  * 收到过 prompt 的会话 autoDeleteAt 为 null，永不自动删（遵循全局事件保留期）。
  *
- * 注：新入库路径已不再为「仅 SessionStart」会话建行（inbox-worker 的
- * needsSessionRow 判据）；本清扫器管住其余一切无 prompt 形状与该改动之前的
- * 遗留存量行。
+ * 注：入库路径对**每个**首现 sessionId 都建档（含仅一条 SessionStart 的新会话
+ * ——新建会话要马上出现在列表），所以「无 prompt 的空行」是常态而非例外，
+ * 全靠本清扫器按 autoDeleteAt 兜底清走；只有 long-running（收过 prompt）
+ * 的行不设期限。
  */
 export class SessionSweeper {
   constructor(

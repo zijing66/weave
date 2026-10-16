@@ -193,32 +193,36 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(existsSync(file)).toBe(false);
   });
 
-  it('仅 SessionStart 的新会话：事件照收，但不建会话行（空会话不入库）', () => {
+  it('仅 SessionStart 的新会话：照建档（新建会话要马上出现在列表），并带幽灵期限', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
-    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-empty'));
+    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-new'));
 
     const records = drainInboxOnce(deps());
-    expect(records).toHaveLength(1); // 事件照收（采集日志完整）
+    expect(records).toHaveLength(1);
     expect(hookEvents.listByProject(projectId).map((r) => r.eventType)).toEqual(['SessionStart']);
-    // 核心判据：空会话不建档 → 会话列表永不被它污染
-    expect(hookSessions.list(projectId)).toHaveLength(0);
+    // 核心判据：首现 sessionId 即建档，不等第一条 prompt
+    const rows = hookSessions.listWithCounts(projectId);
+    expect(rows.map((s) => s.sessionId)).toEqual(['s-new']);
+    expect(rows[0]?.eventCount).toBe(1);
+    // 没等到 prompt → 有期限（SessionSweeper 过期即清），不是永久行
+    expect(rows[0]?.autoDeleteAt).toBeTruthy();
     expect(existsSync(file)).toBe(false);
   });
 
-  it('带真实事件的那批才建档；早先漏记的 SessionStart 经 session_id 归队', () => {
+  it('SessionStart 先建档，后续事件进同一行；收到 prompt 后期限消失', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
     writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-late'));
     drainInboxOnce(deps());
-    expect(hookSessions.list(projectId)).toHaveLength(0);
+    expect(hookSessions.listWithCounts(projectId).map((s) => s.sessionId)).toEqual(['s-late']);
 
     writeFileSync(file, inboxLine(TOKEN, 'UserPromptSubmit', 's-late'));
     const records = drainInboxOnce(deps());
     expect(records).toHaveLength(1);
     expect(hookSessions.list(projectId).map((s) => s.sessionId)).toEqual(['s-late']);
-    // 归队：事件计数把早先漏记的 SessionStart 一并算进（链语义不破）
     const row = hookSessions.listWithCounts(projectId).find((s) => s.sessionId === 's-late');
     expect(row?.eventCount).toBe(2);
     expect(row?.lastEventType).toBe('UserPromptSubmit');
+    expect(row?.autoDeleteAt).toBeNull();
   });
 
   it('已有会话行照常 touch（resume 的 SessionStart 放行）', () => {
