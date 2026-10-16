@@ -221,7 +221,7 @@ export function QuestionAnswer({
           </button>
         </div>
         <p className="pb-2 text-[11px] leading-relaxed text-neutral-500">
-          {t('tasks.answerPickerHint')}
+          {anyPreview ? t('tasks.answerPickerHintPreview') : t('tasks.answerPickerHint')}
         </p>
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {questions.map((q) => {
