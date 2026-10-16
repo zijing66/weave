@@ -121,6 +121,7 @@ describe('daemon /capture', () => {
     expect(Object.keys(user.hooks).sort()).toEqual([
       'Notification',
       'PostToolUse',
+      'PreCompact',
       'PreToolUse',
       'SessionStart',
       'Stop',
