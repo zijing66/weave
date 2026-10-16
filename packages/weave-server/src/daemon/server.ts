@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { WEAVE_VERSION } from '../version.js';
 import type { Harness } from '@weavecode/core';
-import { checkHarness, isHarness, HARNESS_KEYS } from '@weavecode/core';
+import { checkHarness, isHarness } from '@weavecode/core';
 import type { EventSource, HarnessRegistry, PluginSurface } from '@weavecode/harness';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -126,6 +126,7 @@ import { handleAuthRoutes } from './auth-routes.js';
 import { handleAiRoutes } from './ai-routes.js';
 import { hasAiKey, writeAiKey } from './ai-config.js';
 import { accessUrls } from './tls.js';
+import { projectHarnesses, withProjectHarnesses } from './project-harnesses.js';
 import type { AuthService } from './dashboard-auth.js';
 
 export const DAEMON_VERSION = WEAVE_VERSION;
@@ -403,13 +404,36 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Project not found' });
       return;
     }
-    // 起哪个 harness = 注册表首个（claude）；换注册表就换默认，不写死名字。
-    const harness = HARNESS_KEYS[0]!;
-    const spec = deps.harnesses?.get(harness)?.resume;
-    if (!spec?.bin) {
-      sendJson(res, 501, { error: `Harness "${harness}" cannot start an interactive session` });
+    let body: { harness?: unknown };
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
+    // 起哪个 harness = 项目 init 选择结果里的；请求体指定则用它。未接入的不许起
+    // （不替用户跨配置起会话），能起交互会话的 = resume 槽有裸 bin（codex 无 → 501）。
+    const integrated = await projectHarnesses(project.path, deps.harnesses);
+    if (body.harness !== undefined && !isHarness(body.harness)) {
+      sendJson(res, 400, { error: 'Invalid "harness"' });
+      return;
+    }
+    const requested = body.harness as Harness | undefined;
+    if (requested && !integrated.some((h) => h.id === requested)) {
+      sendJson(res, 409, { error: `Harness "${requested}" is not integrated in this project` });
+      return;
+    }
+    const wanted = requested ? [requested] : integrated.map((h) => h.id);
+    const picked = wanted
+      .map((id) => ({ id, spec: deps.harnesses?.get(id)?.resume }))
+      .find((c) => c.spec?.bin);
+    if (!picked) {
+      sendJson(res, 501, {
+        error: `Harness "${wanted[0]}" cannot start an interactive session`,
+      });
+      return;
+    }
+    const spec = picked.spec!;
     const opener = deps.opener ?? defaultProjectOpener;
     const counts = await readTerminalCounts([project], opener);
     if ((counts[project.id] ?? 0) === 0) {
@@ -1423,13 +1447,17 @@ async function handleRequest(
   }
 
   if (pathname === '/projects' && req.method === 'GET') {
-    sendJson(res, 200, { projects: deps.projects.list() });
+    sendJson(res, 200, {
+      projects: await withProjectHarnesses(deps.projects.list(), deps.harnesses),
+    });
     return;
   }
 
   // GET /projects/archived — 归档面数据（仅基础信息；历史会话已在归档时清空）。
   if (pathname === '/projects/archived' && req.method === 'GET') {
-    sendJson(res, 200, { projects: deps.projects.listArchived() });
+    sendJson(res, 200, {
+      projects: await withProjectHarnesses(deps.projects.listArchived(), deps.harnesses),
+    });
     return;
   }
 
