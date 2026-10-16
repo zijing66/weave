@@ -327,297 +327,297 @@ export function SessionList({
 
   /** 一行会话卡：分块内与散行共用同一份 JSX，位次容器由外层决定。 */
   const renderRow = (s: SessionRow): ReactNode => {
-        const status = statuses.get(s.sessionId) ?? 'open';
-        const selected = s.sessionId === selectedId;
-        const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
-        const watch = watchOf?.(s.sessionId);
-        const inflight = inflightOf(s.sessionId);
-        const openTermState = openTerminalStateOf?.(s.sessionId) ?? 'idle';
-        // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
-        const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
-          (q) => !q.submit,
-        ).length;
-        return (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelect(s.sessionId)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onSelect(s.sessionId);
-                }
-              }}
-              onDoubleClick={(e) => {
-                // tooltip 承诺「双击改名」——行上直接双击即进编辑（铅笔为 hover 备选）
-                e.stopPropagation();
-                if (editingId !== s.sessionId) startRename(s);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDroppingId(s.sessionId);
-              }}
-              onDragLeave={() => setDroppingId((prev) => (prev === s.sessionId ? null : prev))}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDroppingId(null);
-                const id = getDispatchDrag(e.dataTransfer);
-                if (id !== null) onDropDispatch(id, s.sessionId);
-              }}
-              title={droppingId === s.sessionId ? t('tasks.dropTip') : s.sessionId}
-              className={cn(
-                'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
-                selected
-                  ? 'border-blue-500/50 bg-blue-500/10'
-                  : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10] hover:bg-white/[0.04]',
-                highlightId === s.sessionId && 'border-rose-400/70',
-                droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
-              )}
-            >
-              {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
-                  codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
-              <SessionStatusIcon status={status} harness={s.harness} />
+    const status = statuses.get(s.sessionId) ?? 'open';
+    const selected = s.sessionId === selectedId;
+    const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
+    const watch = watchOf?.(s.sessionId);
+    const inflight = inflightOf(s.sessionId);
+    const openTermState = openTerminalStateOf?.(s.sessionId) ?? 'idle';
+    // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
+    const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
+      (q) => !q.submit,
+    ).length;
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(s.sessionId)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect(s.sessionId);
+          }
+        }}
+        onDoubleClick={(e) => {
+          // tooltip 承诺「双击改名」——行上直接双击即进编辑（铅笔为 hover 备选）
+          e.stopPropagation();
+          if (editingId !== s.sessionId) startRename(s);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDroppingId(s.sessionId);
+        }}
+        onDragLeave={() => setDroppingId((prev) => (prev === s.sessionId ? null : prev))}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDroppingId(null);
+          const id = getDispatchDrag(e.dataTransfer);
+          if (id !== null) onDropDispatch(id, s.sessionId);
+        }}
+        title={droppingId === s.sessionId ? t('tasks.dropTip') : s.sessionId}
+        className={cn(
+          'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
+          selected
+            ? 'border-blue-500/50 bg-blue-500/10'
+            : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10] hover:bg-white/[0.04]',
+          highlightId === s.sessionId && 'border-rose-400/70',
+          droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
+        )}
+      >
+        {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
+            codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
+        <SessionStatusIcon status={status} harness={s.harness} />
 
-              {editingId === s.sessionId ? (
-                <input
-                  ref={inputRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename();
-                    if (e.key === 'Escape') setEditingId(null);
+        {editingId === s.sessionId ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') setEditingId(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            placeholder={t('tasks.renamePlaceholder')}
+            className="min-w-0 flex-1 rounded border border-blue-500/40 bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-100 focus:outline-none"
+          />
+        ) : (
+          <>
+            {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行） */}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
+              {sessionLabel(s.title, s.sessionId)}
+            </span>
+            <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
+              {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
+                  codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
+                  该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
+                  图标转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮
+                  一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。
+                  loading 的挂法见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
+              {s.harness === 'claude' && (
+                <button
+                  type="button"
+                  disabled={!!s.pidAlive || openTermState === 'loading'}
+                  title={
+                    s.pidAlive
+                      ? t('tasks.sessionTerminalRunning')
+                      : t('tasks.openSessionTerminal')
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenTerminal(s.sessionId);
                   }}
-                  onClick={(e) => e.stopPropagation()}
-                  placeholder={t('tasks.renamePlaceholder')}
-                  className="min-w-0 flex-1 rounded border border-blue-500/40 bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-100 focus:outline-none"
-                />
-              ) : (
-                <>
-                  {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行） */}
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
-                    {sessionLabel(s.title, s.sessionId)}
-                  </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
-                    {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
-                        codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
-                        该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
-                        图标转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮
-                        一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。
-                        loading 的挂法见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
-                    {s.harness === 'claude' && (
-                      <button
-                        type="button"
-                        disabled={!!s.pidAlive || openTermState === 'loading'}
-                        title={
-                          s.pidAlive
-                            ? t('tasks.sessionTerminalRunning')
-                            : t('tasks.openSessionTerminal')
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenTerminal(s.sessionId);
-                        }}
-                        className={cn(
-                          ACTION_BTN,
-                          // 已打开 / 开启中：不吃 hover 反馈（否则看着还能点）
-                          (s.pidAlive || openTermState === 'loading') &&
-                            'disabled:cursor-not-allowed hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
-                        )}
-                      >
-                        <FeedbackIcon
-                          state={openTermState}
-                          className="h-3 w-3"
-                          icon={
-                            <SquareTerminal
-                              className={cn('h-3 w-3', s.pidAlive && 'text-emerald-400')}
-                            />
-                          }
-                        />
-                      </button>
-                    )}
-                    {/* 阻塞问答入口：该会话被 AskUserQuestion / 计划 / 权限确认
-                        挂起时才出现（无待答不占位）——amber + 问题数角标，点开
-                        远程作答弹窗。 */}
-                    {questionOf?.(s.sessionId) && (
-                      <button
-                        type="button"
-                        title={t('tasks.answerActiveTooltip', { n: pendingCount })}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSetAnswerFor(s.sessionId);
-                        }}
-                        className={cn(
-                          ACTION_BTN,
-                          'relative',
-                          'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
-                        )}
-                      >
-                        <HelpCircle className="h-3 w-3 text-amber-300" />
-                        <span
-                          aria-hidden
-                          className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
-                        >
-                          {pendingCount}
-                        </span>
-                      </button>
-                    )}
-                    {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
-                        （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
-                        harness 未知（无事件）的会话不现按钮。
-                        有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标，
-                        常态（0 条）保持原样。 */}
-                    {cap?.prompt && (
-                      <button
-                        type="button"
-                        title={
-                          inflight > 0
-                            ? t('tasks.messageInflight', { n: inflight })
-                            : t('tasks.messageTooltip')
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenMessages(s.sessionId);
-                        }}
-                        className={cn(
-                          ACTION_BTN,
-                          'relative',
-                          inflight > 0 &&
-                            'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
-                        )}
-                      >
-                        <MessageSquareText
-                          className={cn('h-3 w-3', inflight > 0 && 'text-amber-300')}
-                        />
-                        {inflight > 0 && (
-                          <span
-                            aria-hidden
-                            className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
-                          >
-                            {inflight > 9 ? '9+' : inflight}
-                          </span>
-                        )}
-                      </button>
-                    )}
-                    {/* 会话提醒订阅：点开选触发类型 + 次数 → 订阅下一条命中的消息。
-                        已有订阅 = 铃铛亮起（amber）+ 角标显示**剩余次数**（持久化显
-                        ∞）——每 fire 一次刷新即减一，不是初始配置的次数；
-                        次数用尽订阅消失、铃铛自然回空。 */}
-                    {cap?.watch && (
-                      <button
-                        type="button"
-                        title={
-                          watch
-                            ? t('tasks.watchActiveTooltip', {
-                                n: watch.remaining === null ? '∞' : String(watch.remaining),
-                              })
-                            : t('tasks.watchTooltip')
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setWatchPickerFor(s.sessionId);
-                        }}
-                        className={cn(ACTION_BTN, 'relative')}
-                      >
-                        <FeedbackIcon
-                          state={watchStateOf?.(s.sessionId) ?? 'idle'}
-                          className="h-3 w-3"
-                          icon={
-                            watch ? (
-                              <BellRing className="h-3 w-3 text-amber-300" />
-                            ) : (
-                              <Bell className="h-3 w-3" />
-                            )
-                          }
-                        />
-                        {watch && (
-                          <span
-                            aria-hidden
-                            className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
-                          >
-                            {watch.remaining === null ? '∞' : watch.remaining}
-                          </span>
-                        )}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      title={t('tasks.renameTip')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        startRename(s);
-                      }}
-                      className={ACTION_BTN}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      title={copiedId === s.sessionId ? t('tasks.copied') : t('tasks.copySessionId')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyId(s.sessionId);
-                      }}
-                      className={ACTION_BTN}
-                    >
-                      {copiedId === s.sessionId ? (
-                        <Check className="h-3 w-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      title={t('tasks.deleteTooltip')}
-                      aria-label={t('tasks.deleteSession')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(s.sessionId);
-                      }}
-                      className={cn(ACTION_BTN, 'hover:text-red-400')}
-                    >
-                      <FeedbackIcon
-                        state={deleteStateOf?.(s.sessionId) ?? 'idle'}
-                        className="h-3 w-3"
-                        icon={<Trash2 className="h-3 w-3" />}
+                  className={cn(
+                    ACTION_BTN,
+                    // 已打开 / 开启中：不吃 hover 反馈（否则看着还能点）
+                    (s.pidAlive || openTermState === 'loading') &&
+                      'disabled:cursor-not-allowed hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
+                  )}
+                >
+                  <FeedbackIcon
+                    state={openTermState}
+                    className="h-3 w-3"
+                    icon={
+                      <SquareTerminal
+                        className={cn('h-3 w-3', s.pidAlive && 'text-emerald-400')}
                       />
-                    </button>
+                    }
+                  />
+                </button>
+              )}
+              {/* 阻塞问答入口：该会话被 AskUserQuestion / 计划 / 权限确认
+                  挂起时才出现（无待答不占位）——amber + 问题数角标，点开
+                  远程作答弹窗。 */}
+              {questionOf?.(s.sessionId) && (
+                <button
+                  type="button"
+                  title={t('tasks.answerActiveTooltip', { n: pendingCount })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSetAnswerFor(s.sessionId);
+                  }}
+                  className={cn(
+                    ACTION_BTN,
+                    'relative',
+                    'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                  )}
+                >
+                  <HelpCircle className="h-3 w-3 text-amber-300" />
+                  <span
+                    aria-hidden
+                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                  >
+                    {pendingCount}
                   </span>
-                  {/* 第 2 行：徽标组（basis-full 恒换行，状态 Badge 固定第 2 行） */}
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 basis-full">
-                    {s.pendingTitle && (
-                      <Badge
-                        title={t('tasks.renamePendingTip')}
-                        className="shrink-0 bg-amber-900/40 text-amber-300"
-                      >
-                        {t('tasks.pendingTitle')}
-                      </Badge>
-                    )}
-                    <span className="shrink-0 text-[10px] text-neutral-500">
-                      {t('tasks.events', { n: s.eventCount ?? 0 })}
+                </button>
+              )}
+              {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
+                  （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
+                  harness 未知（无事件）的会话不现按钮。
+                  有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标，
+                  常态（0 条）保持原样。 */}
+              {cap?.prompt && (
+                <button
+                  type="button"
+                  title={
+                    inflight > 0
+                      ? t('tasks.messageInflight', { n: inflight })
+                      : t('tasks.messageTooltip')
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenMessages(s.sessionId);
+                  }}
+                  className={cn(
+                    ACTION_BTN,
+                    'relative',
+                    inflight > 0 &&
+                      'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                  )}
+                >
+                  <MessageSquareText
+                    className={cn('h-3 w-3', inflight > 0 && 'text-amber-300')}
+                  />
+                  {inflight > 0 && (
+                    <span
+                      aria-hidden
+                      className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                    >
+                      {inflight > 9 ? '9+' : inflight}
                     </span>
-                    {s.harness && (
-                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
-                    )}
-                    <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
-                      {t(STATUS_KEY[status])}
-                    </Badge>
-                    {/* 幽灵会话（从未收到 prompt）自动清理倒计时：服务端 autoDeleteAt
-                        派生，SessionSweeper 过期即清——到点前给用户留个明白账。 */}
-                    {s.autoDeleteAt && (
-                      <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
-                        {Date.parse(s.autoDeleteAt) - now > 60_000
-                          ? t('tasks.autoDeleteIn', {
-                              n: Math.ceil((Date.parse(s.autoDeleteAt) - now) / 60_000),
-                            })
-                          : t('tasks.autoDeleteSoon')}
-                      </Badge>
-                    )}
-                  </div>
-                </>
+                  )}
+                </button>
+              )}
+              {/* 会话提醒订阅：点开选触发类型 + 次数 → 订阅下一条命中的消息。
+                  已有订阅 = 铃铛亮起（amber）+ 角标显示**剩余次数**（持久化显
+                  ∞）——每 fire 一次刷新即减一，不是初始配置的次数；
+                  次数用尽订阅消失、铃铛自然回空。 */}
+              {cap?.watch && (
+                <button
+                  type="button"
+                  title={
+                    watch
+                      ? t('tasks.watchActiveTooltip', {
+                          n: watch.remaining === null ? '∞' : String(watch.remaining),
+                        })
+                      : t('tasks.watchTooltip')
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setWatchPickerFor(s.sessionId);
+                  }}
+                  className={cn(ACTION_BTN, 'relative')}
+                >
+                  <FeedbackIcon
+                    state={watchStateOf?.(s.sessionId) ?? 'idle'}
+                    className="h-3 w-3"
+                    icon={
+                      watch ? (
+                        <BellRing className="h-3 w-3 text-amber-300" />
+                      ) : (
+                        <Bell className="h-3 w-3" />
+                      )
+                    }
+                  />
+                  {watch && (
+                    <span
+                      aria-hidden
+                      className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                    >
+                      {watch.remaining === null ? '∞' : watch.remaining}
+                    </span>
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                title={t('tasks.renameTip')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startRename(s);
+                }}
+                className={ACTION_BTN}
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                title={copiedId === s.sessionId ? t('tasks.copied') : t('tasks.copySessionId')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyId(s.sessionId);
+                }}
+                className={ACTION_BTN}
+              >
+                {copiedId === s.sessionId ? (
+                  <Check className="h-3 w-3 text-emerald-400" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </button>
+              <button
+                type="button"
+                title={t('tasks.deleteTooltip')}
+                aria-label={t('tasks.deleteSession')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(s.sessionId);
+                }}
+                className={cn(ACTION_BTN, 'hover:text-red-400')}
+              >
+                <FeedbackIcon
+                  state={deleteStateOf?.(s.sessionId) ?? 'idle'}
+                  className="h-3 w-3"
+                  icon={<Trash2 className="h-3 w-3" />}
+                />
+              </button>
+            </span>
+            {/* 第 2 行：徽标组（basis-full 恒换行，状态 Badge 固定第 2 行） */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 basis-full">
+              {s.pendingTitle && (
+                <Badge
+                  title={t('tasks.renamePendingTip')}
+                  className="shrink-0 bg-amber-900/40 text-amber-300"
+                >
+                  {t('tasks.pendingTitle')}
+                </Badge>
+              )}
+              <span className="shrink-0 text-[10px] text-neutral-500">
+                {t('tasks.events', { n: s.eventCount ?? 0 })}
+              </span>
+              {s.harness && (
+                <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+              )}
+              <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
+                {t(STATUS_KEY[status])}
+              </Badge>
+              {/* 幽灵会话（从未收到 prompt）自动清理倒计时：服务端 autoDeleteAt
+                  派生，SessionSweeper 过期即清——到点前给用户留个明白账。 */}
+              {s.autoDeleteAt && (
+                <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
+                  {Date.parse(s.autoDeleteAt) - now > 60_000
+                    ? t('tasks.autoDeleteIn', {
+                        n: Math.ceil((Date.parse(s.autoDeleteAt) - now) / 60_000),
+                      })
+                    : t('tasks.autoDeleteSoon')}
+                </Badge>
               )}
             </div>
-        );
+          </>
+        )}
+      </div>
+    );
   };
 
   /** 分块后的渲染项：同屏会话聚块，散行原位（见 groupByTerminal）。 */
