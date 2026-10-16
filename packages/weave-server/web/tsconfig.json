@@ -14,8 +14,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@weavecode/core/harness": ["../../../weave-core/src/harness.ts"],
-      "@weavecode/core/tool": ["../../../weave-core/src/tool.ts"]
+      "@weavecode/core/harness": ["../../weave-core/src/harness.ts"],
+      "@weavecode/core/tool": ["../../weave-core/src/tool.ts"]
     },
     "noEmit": true
   },
