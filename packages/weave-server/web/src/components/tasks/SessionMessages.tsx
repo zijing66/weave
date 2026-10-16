@@ -27,11 +27,12 @@ import { errorText, useActionFeedback, type ActionState } from '@/lib/action-fee
 import {
   formatStamp,
   promptOf,
+  rawOf,
   stripPromptDecor,
   taskNotificationOf,
   turnSummaryOf,
 } from '@/lib/hook-payload';
-import { HARNESS_LIFECYCLE } from './lifecycle';
+import { HARNESS_COMPACTION, HARNESS_LIFECYCLE, isCompactionEnd } from './lifecycle';
 import { canInterrupt, hasTurnSignal } from './session-status';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 
@@ -123,12 +124,13 @@ const STATUS_KEY: Record<
   timeout: 'tasks.msgStatusTimeout',
 };
 
-/** 对话条目：用户投递的 prompt，或每轮 Stop 的最终总结消息。 */
+/** 对话条目：用户投递的 prompt、每轮 Stop 的最终总结，或一枚压缩分隔（不是
+ *  对话内容，只标「上下文在这里断过一次」——正文恒空）。 */
 export interface ConvEntry {
   key: string;
   /** 事件 id（向上翻页的游标锚）；只在尾巴上的投递行没有。 */
   eventId?: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'compaction';
   at: string;
   text: string;
   /** weave 投递的（直投或中继）：正文里的运输装饰已摘掉，改在气泡上呈现 tag。 */
@@ -141,18 +143,23 @@ export interface ConvEntry {
 
 /**
  * 事件 → 对话条目：只认开轮（用户 prompt 原文）与闭轮（Stop 携带的最终
- * assistant 消息）两类事件。工具调用、通知、会话标记都不是对话，中间的
- * assistant 输出也不进——转录在会话自己那边，这里只要每轮的收尾总结。
+ * assistant 消息）两类事件，外加**压缩分隔**（该 harness 的压缩收尾笔，见
+ * `HARNESS_COMPACTION`——历史上哪里断过上下文，是读长会话时最想知道的一件事）。
+ * 工具调用、通知、会话标记都不是对话，中间的 assistant 输出也不进——转录在
+ * 会话自己那边，这里只要每轮的收尾总结。
  * prompt 原文先剥运输装饰（直投标记 / 中继壳 / 壳内单向注记）：装饰不是内容，
  * 留着既在气泡里露馅，也和投递行的原文对不上（同一条消息会显示两遍）。
  */
 export function conversationOf(
   events: readonly HookEventRow[],
   lifecycle: HarnessLifecycle,
+  harness?: string | null,
 ): ConvEntry[] {
   const out: ConvEntry[] = [];
   for (const e of events) {
-    if (e.eventType === lifecycle.open) {
+    if (isCompactionEnd(harness, e.eventType, rawOf(e).source)) {
+      out.push({ key: `e${e.id}`, eventId: e.id, role: 'compaction', at: e.createdAt, text: '' });
+    } else if (e.eventType === lifecycle.open) {
       // 子代理返回通知不是人发的 prompt（分组同口径丢弃）
       if (taskNotificationOf(e)) continue;
       const raw = promptOf(e);
@@ -252,12 +259,14 @@ export function exportStamp(iso: string): string {
   );
 }
 
-/** 角色文案由调用方给（i18n 不写进纯函数），条目间空行分隔。 */
+/** 角色文案由调用方给（i18n 不写进纯函数），条目间空行分隔。压缩分隔不是对话
+ *  内容，导出时略过（复制/导出的是「说了什么」，不是时间线排版）。 */
 export function exportConversationText(
   entries: readonly ConvEntry[],
   labels: { user: string; assistant: string },
 ): string {
   return entries
+    .filter((e) => e.role !== 'compaction')
     .map(
       (e) =>
         `[${exportStamp(e.at)}] ${e.role === 'user' ? labels.user : labels.assistant}\n${e.text}`,
@@ -277,9 +286,12 @@ type ConvMenu =
 const MENU_W = 168;
 const MENU_H = 72;
 
-/** 进图片的条目：正文原样（剥运输装饰是展示层的事，这里就是气泡里那串文本）。 */
+/** 进图片的条目：正文原样（剥运输装饰是展示层的事，这里就是气泡里那串文本）。
+ *  压缩分隔不是对话内容，不进图。 */
 const toImageEntries = (entries: readonly ConvEntry[]): ConvImageEntry[] =>
-  entries.map((e) => ({ role: e.role, at: e.at, text: e.text }));
+  entries
+    .filter((e) => e.role !== 'compaction')
+    .map((e) => ({ role: e.role as ConvImageEntry['role'], at: e.at, text: e.text }));
 
 /** 弹窗尺寸：宽度跟屏幕走（宽屏优先，窄屏交给 `w-full` 类），拖角可改并记住；
  *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
@@ -366,10 +378,13 @@ export function SessionMessages({
   const fb = useActionFeedback();
   const { statuses, sessions } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
-  /** 对话事件类型（开轮 + 闭轮）：闭轮表为空的 harness 没有对话面可取。 */
+  /** 对话事件类型（开轮 + 闭轮 + 压缩收尾笔）：闭轮表为空的 harness 没有对话面可取。 */
   const convTypes = useMemo(
-    () => [lifecycle.open, ...lifecycle.close].filter(Boolean),
-    [lifecycle],
+    () =>
+      [lifecycle.open, ...lifecycle.close, HARNESS_COMPACTION[capability.harness]?.end ?? ''].filter(
+        Boolean,
+      ),
+    [capability.harness, lifecycle],
   );
 
   // 首屏先给缓存（有就即时出画），loadNewest 那一页回来按 eventId 对账
@@ -422,7 +437,7 @@ export function SessionMessages({
         undefined,
         convTypes,
       );
-      const page = conversationOf(events, lifecycle);
+      const page = conversationOf(events, lifecycle, capability.harness);
       setHeadDone(events.length < CONV_PAGE);
       setEntries((prev) => {
         const prevNewest = prev?.length ? prev[prev.length - 1]!.eventId : undefined;
@@ -436,7 +451,7 @@ export function SessionMessages({
     } catch (e) {
       fail(e);
     }
-  }, [convTypes, fail, lifecycle, projectId, sessionId]);
+  }, [capability.harness, convTypes, fail, lifecycle, projectId, sessionId]);
 
   /** 在途投递面（消息域管道视图，送达即删的本地队列 + 内存态）。 */
   const refreshMessages = useCallback(async (): Promise<void> => {
@@ -531,7 +546,7 @@ export function SessionMessages({
     try {
       const events = await api.listSessionHooks(projectId, sessionId, CONV_PAGE, oldest, convTypes);
       setHeadDone(events.length < CONV_PAGE);
-      const older = conversationOf(events, lifecycle);
+      const older = conversationOf(events, lifecycle, capability.harness);
       if (older.length > 0) {
         scrollFix.current = threadRef.current?.scrollHeight ?? null;
         setEntries((prev) => [...older, ...(prev ?? [])]);
@@ -541,7 +556,17 @@ export function SessionMessages({
     } finally {
       setLoadingEarlier(false);
     }
-  }, [convTypes, entries, fail, headDone, lifecycle, loadingEarlier, projectId, sessionId]);
+  }, [
+    capability.harness,
+    convTypes,
+    entries,
+    fail,
+    headDone,
+    lifecycle,
+    loadingEarlier,
+    projectId,
+    sessionId,
+  ]);
 
   useLayoutEffect(() => {
     const el = threadRef.current;
@@ -619,11 +644,14 @@ export function SessionMessages({
   /** 勾上的条目（顺序 = 对话序，与手上这批的顺序一致）。 */
   const pickedEntries = (): ConvEntry[] => thread.filter((e) => picked.has(e.key));
 
+  /** 可勾选的条目 = 除压缩分隔（它不是谁说的话，没有可复制的正文）。 */
+  const selectable = thread.filter((e) => e.role !== 'compaction');
+
   /** 全选的范围 = 已加载的全部条目（不是当前过滤可见的那些：过滤只看显示，
    *  勾选面不跟着变，正如过滤不收回已有的勾）。 */
-  const allPicked = thread.length > 0 && thread.every((e) => picked.has(e.key));
+  const allPicked = selectable.length > 0 && selectable.every((e) => picked.has(e.key));
   const toggleAll = (): void =>
-    setPicked(allPicked ? new Set() : new Set(thread.map((e) => e.key)));
+    setPicked(allPicked ? new Set() : new Set(selectable.map((e) => e.key)));
 
   const copyPicked = (): void => {
     const chosen = pickedEntries();
@@ -921,6 +949,18 @@ export function SessionMessages({
                 </p>
               )}
               {visible.map((m) => {
+                if (m.role === 'compaction') {
+                  // 压缩分隔：不是谁说的话，只标上下文在这里断过一次（不参与勾选）
+                  return (
+                    <div key={m.key} className="flex items-center gap-2 py-1 text-[10px] text-neutral-600">
+                      <span className="h-px flex-1 bg-white/[0.08]" />
+                      <span className="shrink-0">
+                        {t('hooks.mindmap.compactTag')} · {formatStamp(m.at)}
+                      </span>
+                      <span className="h-px flex-1 bg-white/[0.08]" />
+                    </div>
+                  );
+                }
                 if (m.role === 'assistant') {
                   return (
                     <div

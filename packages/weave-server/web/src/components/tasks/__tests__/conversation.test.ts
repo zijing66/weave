@@ -119,6 +119,33 @@ describe('conversationOf', () => {
       ['同步一下进度', false, 'weave-4e'],
     ]);
   });
+
+  it('⑥ 压缩收尾笔落成一条分隔（正文空、带 eventId）；别的 source / 别的 harness 不落', () => {
+    const events = [
+      event(1, 'UserPromptSubmit', { prompt: '压之前' }),
+      event(2, 'SessionStart', { source: 'compact' }),
+      event(3, 'SessionStart', { source: 'startup' }),
+      event(4, 'SessionStart', { source: 'compact' }),
+    ];
+    expect(
+      conversationOf(events, claude, 'claude').map((e) => [e.role, e.text, e.eventId]),
+    ).toEqual([
+      ['user', '压之前', 1],
+      ['compaction', '', 2],
+      ['compaction', '', 4],
+    ]);
+    // 未报 harness（老调用）与别的 harness：没有压缩概念，SessionStart 一概不进
+    expect(conversationOf([event(2, 'SessionStart', { source: 'compact' })], claude)).toEqual([]);
+    expect(
+      conversationOf([event(2, 'SessionStart', { source: 'compact' })], claude, 'codex'),
+    ).toEqual([]);
+  });
+
+  it('⑦ 压缩开始事件（PreCompact）不是收尾笔，不落分隔', () => {
+    expect(
+      conversationOf([event(1, 'PreCompact', { trigger: 'auto' })], claude, 'claude'),
+    ).toEqual([]);
+  });
 });
 
 describe('attachDeliveries', () => {
@@ -229,6 +256,21 @@ describe('filterThread', () => {
     expect(out).not.toBe(thread);
     expect(thread).toHaveLength(3);
   });
+
+  it('④ 压缩分隔只在「全部」里露面（它不是谁发的）', () => {
+    const withDivider: ConvEntry[] = [
+      ...thread,
+      { key: 'e4', role: 'compaction', at: at(4), text: '' },
+    ];
+    expect(filterThread(withDivider, 'all').map((e) => e.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'compaction',
+    ]);
+    expect(filterThread(withDivider, 'user').map((e) => e.key)).toEqual(['e1', 'e3']);
+    expect(filterThread(withDivider, 'assistant').map((e) => e.key)).toEqual(['e2']);
+  });
 });
 
 describe('导出到剪贴板', () => {
@@ -265,6 +307,18 @@ describe('导出到剪贴板', () => {
     );
     expect(text).toBe('[2026-10-16 01:02:03] Me\n第一行\n第二行');
     expect(exportConversationText([], { user: '我', assistant: '会话' })).toBe('');
+  });
+
+  it('④ 压缩分隔不进导出（导出的是说了什么，不是时间线排版）', () => {
+    const text = exportConversationText(
+      [
+        { key: 'e1', role: 'user', at: ts(1, 0, 0), text: 'A' },
+        { key: 'e2', role: 'compaction', at: ts(1, 1, 0), text: '' },
+        { key: 'e3', role: 'assistant', at: ts(1, 2, 0), text: 'B' },
+      ],
+      { user: '我', assistant: '会话' },
+    );
+    expect(text).toBe('[2026-10-16 01:00:00] 我\nA\n\n[2026-10-16 01:02:00] 会话\nB');
   });
 });
 
