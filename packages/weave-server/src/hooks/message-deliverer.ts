@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WEAVE_INJECTION_MARKER, isHarness, type Harness } from '@weavecode/core';
 import type { MessagingSurface, MessageMeta, PromptRelaySpec } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
@@ -10,7 +11,7 @@ import { normalizeDirKey, type SessionTerminal } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
 import { appendOutbox, hooksRoot } from './mirror.js';
-import { InboxSocketRegistry, deliverViaInboxSocket } from './inbox-socket.js';
+import { INBOX_TARGETS_FILE, InboxSocketRegistry, deliverViaInboxSocket } from './inbox-socket.js';
 import {
   appendPromptbox,
   readAllPromptbox,
@@ -235,8 +236,8 @@ export class MessageDeliverer {
   private readonly memory = new Map<string, PipeMessage>();
   /** 有队列行的会话（ingest 冲洗守卫 + 刷新器探活索引；构造时从磁盘重建）。 */
   private readonly queuedSessions: Set<string>;
-  /** 会话 inbox 直投目标（hook 旁路上报；token 只在内存）。 */
-  private readonly inboxSockets = new InboxSocketRegistry();
+  /** 会话 inbox 直投目标（hook 旁路上报，落 `<dataDir>/hooks/inbox-targets.json` 0600）。 */
+  private readonly inboxSockets: InboxSocketRegistry;
   /** 会话所在终端 pane 的定位 env（hook 旁路上报；纯内存，随会话走）。 */
   private readonly paneEnvs = new Map<string, Record<string, string>>();
   /** 已排自续冲洗的会话（防重复排拍）。 */
@@ -256,6 +257,9 @@ export class MessageDeliverer {
     this.headless =
       deps.headless ?? new HeadlessRunner({ spawnImpl: deps.spawnImpl, killImpl: deps.killImpl });
     this.hooksDir = deps.hooksDir ?? hooksRoot();
+    // 直投凭据落盘：**只解 daemon 自己的重启**（凭据活在会话进程里，重启不动它），
+    // 会话自己重启/resume 换了 socket 靠下一次 hook 事件覆盖（连不上即回落）。
+    this.inboxSockets = new InboxSocketRegistry(join(this.hooksDir, INBOX_TARGETS_FILE));
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
   }
 

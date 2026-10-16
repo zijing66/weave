@@ -24,6 +24,7 @@ import {
 } from '../message-deliverer.js';
 import { ResumeRunner } from '../resume-runner.js';
 import { hookShardId } from '../mirror.js';
+import { INBOX_TARGETS_FILE } from '../inbox-socket.js';
 import { readPromptbox } from '../promptbox.js';
 
 const PROJECT_PATH = '/msg-proj';
@@ -752,6 +753,38 @@ describe('MessageDeliverer 裁决表', () => {
     inbox.close();
   });
 
+  it('层①-a 凭据落盘：daemon 重启（新投递器，内存空）后仍直投，不回落中继/终端', async () => {
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const first = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    first.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-restart' });
+
+    // 重启：新投递器只从盘上捡凭据（凭据活在会话进程里，没跟着 daemon 一起没）
+    const second = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    const result = await second.send({
+      toSessionId: SESSION_ID,
+      text: '重启后直投',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivered' });
+    expect(fake.calls).toHaveLength(0); // 没有起中继进程
+    await new Promise((r) => setTimeout(r, 50));
+    expect(got).toContain('[weave] 重启后直投');
+    inbox.close();
+  });
+
   it('层①-a 失败即回落中继：目标地址不存在 → 仍投出去（走中继）', async () => {
     const fake = createFakeSpawn();
     const { surface } = relaySurface();
@@ -1328,11 +1361,16 @@ describe('MessageDeliverer 裁决表', () => {
       fromKind: 'dashboard',
     });
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+    deliverer.noteInboxSocket(SESSION_ID, { socket: '\\\\.\\pipe\\local\\gone', token: 't' });
+    const targetsFile = join(hooksDir, INBOX_TARGETS_FILE);
+    expect(readFileSync(targetsFile, 'utf8')).toContain(SESSION_ID);
 
     const removed = deliverer.forgetSession(SESSION_ID);
     expect(removed).toBe(1);
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
     expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+    // 凭据随会话走：内存态与盘上行一起清
+    expect(readFileSync(targetsFile, 'utf8')).not.toContain(SESSION_ID);
 
     const removedProject = deliverer.forgetProject(projectId);
     expect(removedProject).toBe(1);

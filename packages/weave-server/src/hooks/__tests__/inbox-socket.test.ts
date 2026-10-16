@@ -1,5 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import net from 'node:net';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { CLAUDE_PROMPT_INBOX } from '@weavecode/harness';
 import {
@@ -123,5 +126,43 @@ describe('helpers', () => {
     expect(reg.get('s2')).toBeUndefined();
     reg.forget('s1');
     expect(reg.get('s1')).toBeUndefined();
+  });
+});
+
+describe('InboxSocketRegistry 落盘（daemon 重启后仍可直投）', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'weave-inbox-targets-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('上报即落盘、新实例读回；forget 连盘上一起清', () => {
+    const file = join(dir, 'inbox-targets.json');
+    const first = new InboxSocketRegistry(file);
+    first.set('s1', { socket: 'a', token: 't1' });
+    first.set('s2', { socket: 'b', token: null });
+
+    const second = new InboxSocketRegistry(file);
+    expect(second.get('s1')).toEqual({ socket: 'a', token: 't1' });
+    expect(second.get('s2')).toEqual({ socket: 'b', token: null });
+
+    second.forget('s1');
+    expect(new InboxSocketRegistry(file).get('s1')).toBeUndefined();
+    expect(new InboxSocketRegistry(file).get('s2')).toEqual({ socket: 'b', token: null });
+  });
+
+  it('缺失 / 坏文件 / 形状不像凭据 → 一律当没有，不抛', () => {
+    const file = join(dir, 'inbox-targets.json');
+    expect(new InboxSocketRegistry(file).get('s1')).toBeUndefined();
+
+    writeFileSync(file, '{ not json');
+    expect(new InboxSocketRegistry(file).get('s1')).toBeUndefined();
+
+    writeFileSync(file, JSON.stringify({ s1: { token: 't' }, s2: { socket: 'ok' } }));
+    const reg = new InboxSocketRegistry(file);
+    expect(reg.get('s1')).toBeUndefined();
+    expect(reg.get('s2')).toEqual({ socket: 'ok', token: null });
   });
 });
