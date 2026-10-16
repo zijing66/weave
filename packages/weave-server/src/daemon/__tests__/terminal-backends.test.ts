@@ -20,6 +20,7 @@ import {
   weztermMuxKey,
   weztermPaneFromEnv,
   weztermSocketCandidates,
+  weztermCliArgs,
   wtPanes,
   wtWindowSlug,
 } from '../opener.js';
@@ -482,6 +483,30 @@ describe('weztermSocketCandidates — 同一 socket 的两种字符串形态只�
       else process.env.WEZTERM_UNIX_SOCKET = prevSocket;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('weztermCliArgs — 恒带 --no-auto-start（cli 对失联 socket 会拉起永不退出的 mux-server）', () => {
+  it('cli 子命令插在 cli 与子命令之间', () => {
+    expect(weztermCliArgs(['cli', 'list', '--format', 'json'])).toEqual([
+      'cli',
+      '--no-auto-start',
+      'list',
+      '--format',
+      'json',
+    ]);
+    expect(weztermCliArgs(['cli', 'send-text', '--pane-id', '3', 'hi'])).toEqual([
+      'cli',
+      '--no-auto-start',
+      'send-text',
+      '--pane-id',
+      '3',
+      'hi',
+    ]);
+  });
+
+  it('非 cli 前缀的调用原样透传（当前没有，防将来误伤）', () => {
+    expect(weztermCliArgs(['start', '--cwd', '/p'])).toEqual(['start', '--cwd', '/p']);
   });
 });
 

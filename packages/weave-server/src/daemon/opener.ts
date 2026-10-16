@@ -1328,9 +1328,19 @@ function captureCommand(
  * wezterm cli 子调用：null = 进程起不来（ENOENT 等）；其余带 rc/stdout/stderr。
  * socket 非空时经 WEZTERM_UNIX_SOCKET 指定 mux——daemon 不在 pane 里，没有
  * wezterm 注入的这个 env，不显式点名就会去连默认 sock/残留 socket 而误判。
+ *
+ * 恒带 `--no-auto-start`：cli 缺省「连不上 socket 就原地拉起 wezterm-mux-server
+ * --daemonize」——该进程永不退出、还继承调用方的 stdio 管道把探活挂到超时，对着
+ * 陈旧/失联 socket 探一次就泄一个（实测攒过 16 个，复盘见 docs/DECISIONS.md）。
+ * 带上后连不上是干净的 rc≠0，probeGate 据此判永久死。
  */
 function weztermCli(args: string[], socket: string): Promise<CaptureResult | null> {
-  return captureCommand('wezterm', args, { ...process.env, WEZTERM_UNIX_SOCKET: socket });
+  return captureCommand('wezterm', weztermCliArgs(args), { ...process.env, WEZTERM_UNIX_SOCKET: socket });
+}
+
+/** cli 子命令参数 → 补上 `--no-auto-start`（须落在 `cli` 与子命令之间）。 */
+export function weztermCliArgs(args: readonly string[]): string[] {
+  return args[0] === 'cli' ? ['cli', '--no-auto-start', ...args.slice(1)] : [...args];
 }
 
 /** cli 步骤失败的诊断文案：socket + 命令 + stderr/超时，经路由 400 → 前端 toast。 */
@@ -1385,8 +1395,9 @@ function socketCompareKey(path: string, platform: NodeJS.Platform): string {
 /**
  * 候选 mux socket：进程 env 显式指定的最优先（daemon 一般没有，pane 内才有），
  * 其次存活 GUI 的 gui-sock-*（新的在前 ≈ 最近开的 wezterm 实例）。
- * 跳过裸 `sock`：指向死 mux-server 时 cli 会原地拉起一个无人看的幽灵 server
- * 还 rc=0 返回空世界，会造成新一轮假成功。
+ * 跳过裸 `sock`：默认 socket 不按 GUI pid 命名、判活无据——历史教训是 cli 对它
+ * 原地拉起幽灵 server 后 rc=0 返回空世界、假成功一轮接一轮（见 DECISIONS）；
+ * wezterm 注进 pane env 的恒是 gui-sock-<pid>，跳过它不丢发现面。
  */
 export function weztermSocketCandidates(platform: NodeJS.Platform): string[] {
   const out: string[] = [];
@@ -1421,9 +1432,9 @@ const PROBE_TIMEOUT_COOLDOWN_MS = 60_000;
  * 探活失败的 socket 记忆——避免对已知坏 socket 反复 spawn `wezterm cli`。
  *
  * 为什么需要：陈旧的 `gui-sock-<pid>` 不会自己消失（wezterm 退出不清理，实测
- * 攒到过 48 个），而对着死 socket 跑 `wezterm cli` 会**原地拉起幽灵 mux-server，
- * 甚至挂死**——实测一次探活 >250s 不返回，且代码里 5s 超时后的 kill「对卡死
- * 进程可能无效」，于是每次枚举都再堆一个。
+ * 攒到过 48 个），对它们反复 spawn 纯属浪费（`--no-auto-start` 后死 socket
+ * 是快速 rc≠0，不再是当年「原地拉起幽灵 mux-server、探活 >250s 不返回」的
+ * 自伤——复盘见 docs/DECISIONS.md）。
  *
  * 判据的分寸：socket 路径与 GUI 的 pid 绑定，**进程死则该路径永久失效**（新 GUI
  * 必然是新 pid → 新路径），所以「干净的非零退出」可以永久记住；而**超时/起不来
@@ -1476,7 +1487,7 @@ async function weztermLiveMuxes(
   const muxes = (
     await Promise.all(
       candidates.map(async (socket) => {
-        // 已知坏的 socket 不再重探：死 socket 会把 cli 挂死或踢出幽灵 mux-server。
+        // 已知坏的 socket 不再重探：省 spawn，半死的 GUI 也不必反复挂满 5s 超时。
         if (!probeGate.shouldProbe(socket)) return null;
         const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
         if (!listed?.ok) {
