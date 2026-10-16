@@ -129,7 +129,13 @@ export {
   detectFileAssetUpdates,
   detectProjectUpdateCounts,
 } from './install/updates.js';
-export type { SkillUpdate, McpUpdate, FileAssetUpdate, UpdateReport } from './install/updates.js';
+export type {
+  SkillUpdate,
+  McpUpdate,
+  FileAssetUpdate,
+  UpdateReport,
+  ProjectUpdateSummary,
+} from './install/updates.js';
 export { detectPluginTemplateUpdates } from './install/plugin-templates.js';
 export type { PluginTemplateUpdate, PluginTemplateCategory } from './install/plugin-templates.js';
 export {

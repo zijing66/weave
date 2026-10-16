@@ -14,13 +14,8 @@ export const appZh = {
   'app.syncAllTooltip': '立即同步全部可同步项（{n}）：更新过期资产 + 装回被删除的已安装资产',
   'app.syncAll': '全部同步',
   'app.scopeCoverageTooltip':
-    '同步范围 = 库资产：Skills、MCP、单文件资产（commands / agents / workflows / rules / output-styles）。① 有新版的更新；② 被删除的已安装资产会装回；③ 本地改过（custom）的跳过。不含 statusline（状态栏面板自己管保存/覆盖）与 init 产物（helpers / hooks / CLAUDE.md，需 weave init）。',
-  'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理',
-  'app.autoSyncOnTooltip': '自动同步已开启 — daemon 每约 60 秒自动应用过期资产更新；点击改为手动',
-  'app.autoSyncOffTooltip':
-    '自动同步已关闭 — 过期资产只提示、不自动更新；点击开启（daemon 每约 60 秒自动应用）',
-  'app.autoSyncOn': '自动同步 开',
-  'app.autoSyncOff': '自动同步 关',
+    '同步范围 = ① 库资产：Skills、MCP、单文件资产（commands / agents / workflows / rules / output-styles）—— 有新版的更新、被删除的已安装资产装回、本地改过（custom）的跳过；② init 生成物里不进 git 的（helpers / settings 的 weave 组等）自动刷新。会进 git 的（如 CLAUDE.md）只提示不代写，需在终端跑 weave init。不含 statusline（状态栏面板自己管保存/覆盖）。',
+  'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理 · init 生成物',
   'app.needProjectAnchor': '需要至少注册一个项目作为全局数据源。',
   'app.selectProject': '请选择一个项目',
   'app.selectProjectForAssets': '请选择一个项目，资产将安装到该项目。',
@@ -37,10 +32,13 @@ export const appZh = {
   'project.openInTerminal': '在终端中打开',
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
-  // 行内快捷操作（批 8）：autoSync 开关与打开两项复用上方 app.autoSync* /
-  // project.openIn* 词条，不重复新增。
+  // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
+  // 会进 git 的 init 文件漂移了：同步域不代写，只提醒用户去终端跑 init
+  'project.needsInit': '待 init',
+  'project.needsInitTip':
+    '有会进 git 的 init 文件漂移了 —— 同步域不代写这部分，请打开终端执行 weave init（生成 + commit 流程不变）',
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
   'project.sessionsOpen': '{n} 个会话就绪（等输入）',
@@ -88,12 +86,9 @@ export const appZh = {
   'toast.synced': '已同步 {n} 项',
   'toast.nothingToSync': '没有需要同步的项',
   'toast.sessionDeleted': '已删除会话（{n} 条事件）',
-  'toast.autoSyncOn': '自动同步已开启',
-  'toast.autoSyncOff': '自动同步已关闭',
 
   'errors.syncFailed': '同步失败：{error}',
   'errors.updateFailed': '更新失败：{error}',
-  'errors.configUpdateFailed': '配置更新失败：{error}',
   'errors.pluginToggleFailed': '插件启用状态更新失败：{error}',
   'errors.openFailed': '打开失败：{error}',
 };
@@ -114,14 +109,8 @@ export const appEn: Record<keyof typeof appZh, string> = {
     'Sync everything syncable now ({n}): update outdated assets and reinstall deleted ones',
   'app.syncAll': 'Sync all',
   'app.scopeCoverageTooltip':
-    'Sync scope = library assets: Skills, MCP, single-file assets (commands / agents / workflows / rules / output-styles). (1) newer versions are applied; (2) installed assets that were deleted are reinstalled; (3) locally modified (custom) entries are skipped. Excludes the statusline (the statusline panel owns save/overwrite) and init artefacts (helpers / hooks / CLAUDE.md — those need `weave init`).',
-  'app.scopeCoverageChip': 'Covers Skills · MCP · resources',
-  'app.autoSyncOnTooltip':
-    'Auto-sync is ON — the daemon applies outdated asset updates about every 60 seconds; click to switch to manual',
-  'app.autoSyncOffTooltip':
-    'Auto-sync is OFF — outdated assets are only flagged, not updated; click to enable (the daemon applies them about every 60 seconds)',
-  'app.autoSyncOn': 'Auto-sync ON',
-  'app.autoSyncOff': 'Auto-sync OFF',
+    'Sync scope = (1) library assets: Skills, MCP, single-file assets (commands / agents / workflows / rules / output-styles) — newer versions are applied, deleted installed assets are reinstalled, locally modified (custom) entries are skipped; (2) init artefacts that do not enter git (helpers / the weave group of settings, etc.) are refreshed automatically. Ones that do enter git (e.g. CLAUDE.md) are only flagged — run `weave init` in a terminal for those. Excludes the statusline (the statusline panel owns save/overwrite).',
+  'app.scopeCoverageChip': 'Covers Skills · MCP · resources · init artefacts',
   'app.needProjectAnchor': 'Register at least one project to serve as the global data source.',
   'app.selectProject': 'Select a project',
   'app.selectProjectForAssets': 'Select a project to install assets into.',
@@ -140,6 +129,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.terminalsOpen': '{n} terminal(s) open',
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
+  'project.needsInit': 'needs init',
+  'project.needsInitTip':
+    'An init file that enters git has drifted — sync will not write those. Open a terminal and run `weave init` (the generate + commit flow is unchanged).',
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
   'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
@@ -188,12 +180,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.synced': 'Synced {n} item(s)',
   'toast.nothingToSync': 'Nothing needs syncing',
   'toast.sessionDeleted': 'Session deleted ({n} events)',
-  'toast.autoSyncOn': 'Auto-sync turned ON',
-  'toast.autoSyncOff': 'Auto-sync turned OFF',
 
   'errors.syncFailed': 'Sync failed: {error}',
   'errors.updateFailed': 'Update failed: {error}',
-  'errors.configUpdateFailed': 'Config update failed: {error}',
   'errors.pluginToggleFailed': 'Plugin toggle failed: {error}',
   'errors.openFailed': 'Open failed: {error}',
 };

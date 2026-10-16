@@ -265,7 +265,7 @@ async function main(): Promise<void> {
     hookBus,
   );
   // 项目行「有更新待同步」角标：项目插件根变更（plugin.reloaded）重算、值变才推。
-  // dev 入口没有 SyncScheduler（autoSync 不在此跑），故只有事件与新客户端两个触发源。
+  // dev 入口没有 SyncScheduler（自动同步不在此跑），故只有事件与新客户端两个触发源。
   const updatesFingerprints = new FingerprintCache();
   const updatesRefresher = new ProjectUpdatesRefresher(
     () => detectProjectUpdateCounts(projects.list(), libraries.list(), updatesFingerprints),

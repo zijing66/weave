@@ -24,7 +24,7 @@ import {
   type SkillAsset,
   type StatuslineSource,
   type UpdateReport,
-  type ProjectConfig,
+  type ProjectUpdateSummary,
   type GlobalSkillGroup,
   type PluginRow,
   type PluginRuntime,
@@ -146,11 +146,11 @@ function Dashboard() {
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginRows, setPluginRows] = useState<PluginRow[]>([]);
-  // Per-project config cache (autoSync etc.) — single source for the top bar
-  // chip (selected project) and the row quick-action toggles alike.
-  const [configMap, setConfigMap] = useState<Record<number, ProjectConfig>>({});
-  // Row pending-update counts — hover-lazy + cached per project id.
-  const [updatesMap, setUpdatesMap] = useState<Record<number, number>>({});
+  // Per-project update summary — hover-lazy + cached per project id. Carries
+  // both the badge count and the 「待 init」 reminder (same fetch, one cache).
+  const [updatesMap, setUpdatesMap] = useState<
+    Record<number, { available: number; needsInit: boolean }>
+  >({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   // 统一消息提示：原先是顶栏下一行小红字（滚走就看不见）→ 一律走 toast。
   // setError 保留原名，全部既有调用点自动改道（一次改，处处统一）。
@@ -273,7 +273,10 @@ function Dashboard() {
   // 共用同一份取数，不为行列表单独再拉。
   useEffect(() => {
     if (selected && updates) {
-      setUpdatesMap((prev) => ({ ...prev, [selected.id]: updates.available }));
+      setUpdatesMap((prev) => ({
+        ...prev,
+        [selected.id]: { available: updates.available, needsInit: updates.needsInit },
+      }));
     }
   }, [updates, selected]);
 
@@ -283,25 +286,6 @@ function Dashboard() {
   const refreshPluginRows = useCallback((p: ProjectRow) => {
     api.listPluginState(p.id).then(setPluginRows).catch(() => {});
   }, []);
-
-  const refreshConfig = useCallback((p: ProjectRow) => {
-    api.getProjectConfig(p.id)
-      .then((c) => setConfigMap((prev) => ({ ...prev, [p.id]: c })))
-      .catch(() => {});
-  }, []);
-
-  // 行内 autoSync 供给：项目列表到达时按 id 各拉一次 config 并缓存（已有/在途
-  // 跳过）——一次批量轻拉后全程复用，避免每行渲染各发一请求。
-  const configInFlight = useRef<Set<number>>(new Set());
-  useEffect(() => {
-    for (const p of projects) {
-      if (configMap[p.id] || configInFlight.current.has(p.id)) continue;
-      configInFlight.current.add(p.id);
-      api.getProjectConfig(p.id)
-        .then((c) => setConfigMap((prev) => ({ ...prev, [p.id]: c })))
-        .catch(() => configInFlight.current.delete(p.id));
-    }
-  }, [projects, configMap]);
 
   // 行内 updates 计数：行 hover 懒加载 + 按 id 缓存（listUpdates 要算指纹，
   // 不做全量预拉）；force 供行同步后重拉。
@@ -314,7 +298,10 @@ function Dashboard() {
       api.listUpdates(projectId)
         .then((r) => {
           updatesInFlight.current.delete(projectId);
-          setUpdatesMap((prev) => ({ ...prev, [projectId]: r.available }));
+          setUpdatesMap((prev) => ({
+            ...prev,
+            [projectId]: { available: r.available, needsInit: r.needsInit },
+          }));
         })
         .catch(() => updatesInFlight.current.delete(projectId));
     },
@@ -357,13 +344,12 @@ function Dashboard() {
       refreshUpdates(p);
       refreshGlobalSkills(p);
       refreshPluginRows(p);
-      refreshConfig(p);
       api
         .getStatusline(p.id)
         .then((r) => setStatuslineSource(r.config.source))
         .catch(() => {});
     },
-    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshPluginRows, refreshConfig],
+    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshPluginRows],
   );
 
   /** Enter the global pseudo-project. Global data is machine-wide, so any
@@ -580,11 +566,11 @@ function Dashboard() {
       ),
     [],
   );
-  // 项目更新角标：绝对值快照整体覆盖（含 0 = 角标归零）——与 hover 懒拉共用
-  // 同一个 updatesMap，push 到达后即以它为准，不双源。
+  // 项目更新摘要（角标条数 + 待 init 提醒）：绝对值快照整体覆盖（含 0/false =
+  // 归零）——与 hover 懒拉共用同一个 updatesMap，push 到达后即以它为准，不双源。
   useEffect(
     () =>
-      subscribePush<{ counts: Record<number, number> }>('updates', (p) =>
+      subscribePush<{ counts: Record<number, ProjectUpdateSummary> }>('updates', (p) =>
         setUpdatesMap(p.counts ?? {}),
       ),
     [],
@@ -798,40 +784,8 @@ function Dashboard() {
     [selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
   );
 
-  const handleToggleAutoSync = useCallback(
-    async (target?: ProjectRow): Promise<boolean> => {
-      const p = target ?? selected;
-      if (!p) return false;
-      // 配置缓存未加载时先取真值——否则会拿 {autoSync:false,lastSyncAt:null} 兜底，
-      // 把 lastSyncAt 覆写成 null（服务端的 `??` 救不了显式 null）。
-      const current = configMap[p.id] ?? (await api.getProjectConfig(p.id));
-      const next = { ...current, autoSync: !current.autoSync };
-      setConfigMap((prev) => ({ ...prev, [p.id]: next }));
-      const res = await api.putProjectConfig(p.id, next);
-      if (!res.ok) {
-        refreshConfig(p);
-        throw new Error(`${res.status} ${await res.text()}`);
-      }
-      return next.autoSync;
-    },
-    [selected, configMap, refreshConfig],
-  );
-
   // 行内与顶栏共用的反馈包装：state 按 key 记（行内按项目 id，顶栏用 current/all）。
-  const autoSyncActionStateOf = useCallback((id: number) => fb.stateOf(`auto:${id}`), [fb]);
   const syncActionStateOf = useCallback((id: number) => fb.stateOf(`sync:${id}`), [fb]);
-  const toggleAutoSyncWithFeedback = useCallback(
-    (p: ProjectRow) =>
-      fb.run(
-        `auto:${p.id}`,
-        async () => {
-          const on = await handleToggleAutoSync(p);
-          show('success', on ? t('toast.autoSyncOn') : t('toast.autoSyncOff'));
-        },
-        { fail: (e) => t('errors.configUpdateFailed', { error: errorText(e) }) },
-      ),
-    [fb, handleToggleAutoSync, show, t],
-  );
   const syncNowWithFeedback = useCallback(
     (p: ProjectRow) =>
       fb.run(
@@ -1072,8 +1026,6 @@ function Dashboard() {
   const mode: Mode = globalMode ? 'global' : 'project';
   const activeProject = selected ?? projects[0];
   const noAnchor = globalMode && !activeProject;
-  // 顶栏自动同步开关：与行内按钮同读 configMap（选中项目一条数据源）。
-  const autoSyncOn = selected ? (configMap[selected.id]?.autoSync ?? false) : false;
 
   // 左右两栏各只挂载一份：桌面 inline 栏与移动滑出抽屉复用同一 JSX（isDesktop
   // 互斥渲染，不会双挂载）。移动端选中项目顺手收抽屉（setMobilePanel(null)
@@ -1096,11 +1048,9 @@ function Dashboard() {
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onHoverProject={ensureUpdates}
-      autoSyncOf={(id) => configMap[id]?.autoSync}
-      updatesOf={(id) => updatesMap[id]}
-      autoSyncStateOf={autoSyncActionStateOf}
+      updatesOf={(id) => updatesMap[id]?.available}
+      needsInitOf={(id) => updatesMap[id]?.needsInit}
       syncStateOf={syncActionStateOf}
-      onToggleAutoSync={(p) => void toggleAutoSyncWithFeedback(p)}
       onSyncNow={(p) => void syncNowWithFeedback(p)}
       sessionStatsOf={(id) => projectStats.get(id)}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
@@ -1256,40 +1206,22 @@ function Dashboard() {
                         {t('app.syncAll')}
                       </button>
                     )}
+                    {/* 会进 git 的 init 文件漂移了：同步域不代写，提醒去终端跑 init。 */}
+                    {!globalMode && updates?.needsInit && (
+                      <span
+                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium"
+                        title={t('project.needsInitTip')}
+                      >
+                        {t('project.needsInit')}
+                      </span>
+                    )}
                     {!globalMode && selected && (
-                      <>
-                        {/* Both controls below run the same server-side syncAll,
-                            so one chip states the scope for the pair. */}
-                        <span
-                          className="shrink-0 hidden lg:inline-flex rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
-                          title={t('app.scopeCoverageTooltip')}
-                        >
-                          {t('app.scopeCoverageChip')}
-                        </span>
-                        <button
-                          onClick={() =>
-                            void fb.run(
-                              'auto:current',
-                              async () => {
-                                const on = await handleToggleAutoSync();
-                                show('success', on ? t('toast.autoSyncOn') : t('toast.autoSyncOff'));
-                              },
-                              { fail: (e) => t('errors.configUpdateFailed', { error: errorText(e) }) },
-                            )
-                          }
-                          aria-pressed={autoSyncOn}
-                          title={`${autoSyncOn ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
-                          className={cn(
-                            'shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
-                            autoSyncOn
-                              ? 'bg-emerald-900/40 text-emerald-300'
-                              : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
-                          )}
-                        >
-                          <FeedbackIcon state={fb.stateOf('auto:current')} className="h-3 w-3" />
-                          {autoSyncOn ? t('app.autoSyncOn') : t('app.autoSyncOff')}
-                        </button>
-                      </>
+                      <span
+                        className="shrink-0 hidden lg:inline-flex rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
+                        title={t('app.scopeCoverageTooltip')}
+                      >
+                        {t('app.scopeCoverageChip')}
+                      </span>
                     )}
                   </div>
 

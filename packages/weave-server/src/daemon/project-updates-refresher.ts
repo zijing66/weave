@@ -1,5 +1,6 @@
 import type { DataBus } from './data-bus.js';
 import type { HookEventBus } from '../hooks/bus.js';
+import type { ProjectUpdateSummary } from '../install/updates.js';
 
 /**
  * ProjectUpdatesRefresher — 项目行「有更新待同步」角标的数据面（SSE 推送）。
@@ -12,15 +13,15 @@ import type { HookEventBus } from '../hooks/bus.js';
  */
 export class ProjectUpdatesRefresher {
   /** 上次取到的快照（null = 还没算过）；新客户端首帧的数据源。 */
-  private lastCounts: Record<number, number> | null = null;
+  private lastCounts: Record<number, ProjectUpdateSummary> | null = null;
   /** 上次推送的取值指纹；相同则不再推（只推变化）。 */
   private lastFingerprint: string | null = null;
   /** 重算要读盘/算指纹，防重入（并发重算会让快照乱序到达）。 */
   private running = false;
 
   constructor(
-    /** 现算一份每项目待同步数（projectId → 条数，含 0）；失败应 throw，由本类吞掉。 */
-    private readonly snapshot: () => Promise<Record<number, number>>,
+    /** 现算一份每项目更新摘要（含 0/false）；失败应 throw，由本类吞掉。 */
+    private readonly snapshot: () => Promise<Record<number, ProjectUpdateSummary>>,
     private readonly bus: DataBus,
     hookBus: HookEventBus,
     /** 是否值得重算（一般为「有 SSE 客户端」）。缺省恒真（测试用）。 */

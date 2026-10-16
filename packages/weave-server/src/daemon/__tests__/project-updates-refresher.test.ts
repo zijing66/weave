@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { DataBus, type DataFrame } from '../data-bus.js';
 import { HookEventBus } from '../../hooks/bus.js';
 import { ProjectUpdatesRefresher } from '../project-updates-refresher.js';
+import type { ProjectUpdateSummary } from '../../install/updates.js';
 
 /** 收集总线上推出去的帧。 */
 function collect(bus: DataBus): DataFrame[] {
@@ -25,7 +26,10 @@ describe('ProjectUpdatesRefresher', () => {
   it('只在值变化时推帧（绝对值快照含 0）', async () => {
     const bus = new DataBus();
     const frames = collect(bus);
-    let counts: Record<number, number> = { 1: 0, 2: 1 };
+    let counts: Record<number, ProjectUpdateSummary> = {
+      1: { available: 0, needsInit: false },
+      2: { available: 1, needsInit: true },
+    };
     const refresher = new ProjectUpdatesRefresher(
       async () => ({ ...counts }),
       bus,
@@ -36,15 +40,23 @@ describe('ProjectUpdatesRefresher', () => {
     await refresher.refreshNow();
     expect(frames).toHaveLength(1); // 首次推，同值第二次不推
 
-    counts = { 1: 0, 2: 0 };
+    counts = { 1: { available: 0, needsInit: false }, 2: { available: 0, needsInit: false } };
     await refresher.refreshNow();
     expect(frames).toHaveLength(2);
-    expect(frames[1]).toEqual({ key: 'updates', payload: { counts: { 1: 0, 2: 0 } } });
+    expect(frames[1]).toEqual({
+      key: 'updates',
+      payload: {
+        counts: {
+          1: { available: 0, needsInit: false },
+          2: { available: 0, needsInit: false },
+        },
+      },
+    });
   });
 
   it('没人看时不重算；refreshNow(true)（同步落地）穿透', async () => {
     const bus = new DataBus();
-    const snapshot = vi.fn(async () => ({ 1: 1 }));
+    const snapshot = vi.fn(async () => ({ 1: { available: 1, needsInit: false } }));
     const refresher = new ProjectUpdatesRefresher(snapshot, bus, new HookEventBus(), () => false);
 
     await refresher.refreshNow();
@@ -58,20 +70,23 @@ describe('ProjectUpdatesRefresher', () => {
     const bus = new DataBus();
     const hookBus = new HookEventBus();
     const frames = collect(bus);
-    const snapshot = vi.fn(async () => ({ 1: 2 }));
+    const snapshot = vi.fn(async () => ({ 1: { available: 2, needsInit: true } }));
     new ProjectUpdatesRefresher(snapshot, bus, hookBus);
 
     expect(snapshot).not.toHaveBeenCalled();
     reloaded(hookBus);
     await vi.waitFor(() => expect(frames).toHaveLength(1));
-    expect(frames[0]).toEqual({ key: 'updates', payload: { counts: { 1: 2 } } });
+    expect(frames[0]).toEqual({
+      key: 'updates',
+      payload: { counts: { 1: { available: 2, needsInit: true } } },
+    });
     expect(snapshot).toHaveBeenCalledTimes(1);
   });
 
   it('新客户端接入：先补上次快照帧（值没变也补），再后台对账推差量', async () => {
     const bus = new DataBus();
     const frames = collect(bus);
-    let counts: Record<number, number> = { 1: 0 };
+    let counts: Record<number, ProjectUpdateSummary> = { 1: { available: 0, needsInit: false } };
     const refresher = new ProjectUpdatesRefresher(
       async () => ({ ...counts }),
       bus,
@@ -80,13 +95,22 @@ describe('ProjectUpdatesRefresher', () => {
 
     refresher.onSubscriberJoin(); // 还没算过：不补帧，只触发首算
     await vi.waitFor(() => expect(frames).toHaveLength(1));
-    expect(frames[0]).toEqual({ key: 'updates', payload: { counts: { 1: 0 } } });
+    expect(frames[0]).toEqual({
+      key: 'updates',
+      payload: { counts: { 1: { available: 0, needsInit: false } } },
+    });
 
-    counts = { 1: 2 };
+    counts = { 1: { available: 2, needsInit: false } };
     refresher.onSubscriberJoin(); // 已有快照：无条件补帧（旧值）+ 后台对账推差量
     await vi.waitFor(() => expect(frames).toHaveLength(3));
-    expect(frames[1]).toEqual({ key: 'updates', payload: { counts: { 1: 0 } } });
-    expect(frames[2]).toEqual({ key: 'updates', payload: { counts: { 1: 2 } } });
+    expect(frames[1]).toEqual({
+      key: 'updates',
+      payload: { counts: { 1: { available: 0, needsInit: false } } },
+    });
+    expect(frames[2]).toEqual({
+      key: 'updates',
+      payload: { counts: { 1: { available: 2, needsInit: false } } },
+    });
   });
 
   it('扫描失败不推不抛，触发源下一次照常恢复', async () => {
@@ -96,7 +120,7 @@ describe('ProjectUpdatesRefresher', () => {
     let broken = false;
     const snapshot = vi.fn(async () => {
       if (broken) throw new Error('读盘失败');
-      return { 1: 3 };
+      return { 1: { available: 3, needsInit: false } };
     });
     new ProjectUpdatesRefresher(snapshot, bus, hookBus);
 
@@ -118,7 +142,7 @@ describe('ProjectUpdatesRefresher', () => {
     });
     const snapshot = vi.fn(async () => {
       await gate;
-      return { 1: 1 };
+      return { 1: { available: 1, needsInit: false } };
     });
     const refresher = new ProjectUpdatesRefresher(snapshot, bus, new HookEventBus());
 

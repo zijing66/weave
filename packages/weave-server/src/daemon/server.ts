@@ -98,6 +98,7 @@ import { DEFAULT_STATUSLINE_CONFIG, type StatuslineConfig } from '../statusline/
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectUpdates } from '../install/updates.js';
 import { detectPluginTemplateUpdates } from '../install/plugin-templates.js';
+import { detectInitFileUpdates, needsInit } from '../install/init-files.js';
 import { readBody, sendJson } from './http.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
@@ -1199,14 +1200,20 @@ async function handleRequest(
     }
     const cache = deps.fingerprintCache ?? new FingerprintCache();
     if (!deps.libraries) {
-      // 项目自有 weave 源（`.weave/plugins` 模板）不依赖 libraries——无库时照样报漂移
+      // 项目自有 weave 源（`.weave/plugins` 模板）与 init 生成物都不依赖 libraries
+      // ——无库时照样报漂移（init 那半边是「待 init」提醒的唯一数据源）。
       const pluginTemplates = await detectPluginTemplateUpdates(project.path, cache);
+      const initFiles = await detectInitFileUpdates(project.path);
       sendJson(res, 200, {
         skills: [],
         mcp: [],
         files: [],
         pluginTemplates,
-        available: pluginTemplates.filter((t) => t.outdated).length,
+        initFiles,
+        available:
+          pluginTemplates.filter((t) => t.outdated).length
+          + initFiles.filter((f) => f.outdated && f.syncClass === 'auto').length,
+        needsInit: needsInit(initFiles),
       });
       return;
     }

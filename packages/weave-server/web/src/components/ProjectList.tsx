@@ -33,8 +33,6 @@ import {
   GripVertical,
   RefreshCw,
   Terminal,
-  ToggleLeft,
-  ToggleRight,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -52,16 +50,13 @@ interface ProjectListProps {
   onOpenTerminal: (p: ProjectRow) => void;
   /** Row hover → lazily fetch + cache that project's pending-update count. */
   onHoverProject?: (projectId: number) => void;
-  /** Row quick action: autoSync flag (undefined until the config cache loads). */
-  autoSyncOf?: (projectId: number) => boolean | undefined;
   /** Row quick action: pending update count (undefined until hover-loaded). */
   updatesOf?: (projectId: number) => number | undefined;
-  /** Row quick action: flip autoSync for the row's project. */
-  onToggleAutoSync?: (p: ProjectRow) => void;
+  /** 「待 init」提示：会进 git 的 init 文件有漂移（undefined until hover-loaded）。 */
+  needsInitOf?: (projectId: number) => boolean | undefined;
   /** Row quick action: run one sync for the row's project. */
   onSyncNow?: (p: ProjectRow) => void;
   /** 行内按钮反馈态（loading → ✅ → 2s 复原），由 App 的 useActionFeedback 供。 */
-  autoSyncStateOf?: (projectId: number) => ActionState;
   syncStateOf?: (projectId: number) => ActionState;
   /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
   openExplorerStateOf?: (projectId: number) => ActionState;
@@ -102,11 +97,9 @@ export function ProjectList({
   onOpenExplorer,
   onOpenTerminal,
   onHoverProject,
-  autoSyncOf,
   updatesOf,
-  onToggleAutoSync,
+  needsInitOf,
   onSyncNow,
-  autoSyncStateOf,
   syncStateOf,
   openExplorerStateOf,
   openTerminalStateOf,
@@ -257,8 +250,8 @@ export function ProjectList({
         <DndContext sensors={sortSensors} onDragEnd={onSortEnd}>
           <SortableContext items={projects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
         {projects.map((p) => {
-          const autoSync = autoSyncOf?.(p.id);
           const pending = updatesOf?.(p.id);
+          const needsInit = needsInitOf?.(p.id);
           const stats = sessionStatsOf?.(p.id) ?? [];
           const terminals = terminalsOf?.(p.id) ?? 0;
           return (
@@ -341,23 +334,14 @@ export function ProjectList({
               {/* 快捷操作簇（批 8）：卡内独立一行换行展示，不与文字同行重叠。
                   stopPropagation 在 QuickButton 内双保险。 */}
               <div className="flex items-center gap-1 px-2 pb-1 pl-9">
-                <QuickButton
-                  title={`${autoSync ? t('app.autoSyncOnTooltip') : t('app.autoSyncOffTooltip')}\n\n${t('app.scopeCoverageTooltip')}`}
-                  pressed={autoSync}
-                  onClick={() => onToggleAutoSync?.(p)}
-                >
-                  <FeedbackIcon
-                    state={autoSyncStateOf?.(p.id) ?? 'idle'}
-                    className="h-3.5 w-3.5"
-                    icon={
-                      autoSync ? (
-                        <ToggleRight className="h-3.5 w-3.5 text-emerald-400" />
-                      ) : (
-                        <ToggleLeft className="h-3.5 w-3.5 text-neutral-400" />
-                      )
-                    }
-                  />
-                </QuickButton>
+                {needsInit && (
+                  <span
+                    title={t('project.needsInitTip')}
+                    className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-[10px] leading-4 text-amber-300"
+                  >
+                    {t('project.needsInit')}
+                  </span>
+                )}
                 <span className="relative">
                   <QuickButton
                     title={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}

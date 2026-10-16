@@ -113,7 +113,10 @@ describe('更新报告 / 同步面接入', () => {
         [],
         new FingerprintCache(),
       );
-      expect(counts).toEqual({ 1: 2, 2: 0 });
+      expect(counts).toEqual({
+        1: { available: 2, needsInit: false },
+        2: { available: 0, needsInit: false },
+      });
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }

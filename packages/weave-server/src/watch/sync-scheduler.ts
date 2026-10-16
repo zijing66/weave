@@ -32,7 +32,7 @@ export interface SyncSchedulerOptions {
   /**
    * 一轮同步落地后的对账面（项目角标刷新器）。资产写盘会经 watch → SSE 回流，
    * 但项目插件模板的物化落点（`.claude/` 副本）不带 plugin.reloaded——角标只能
-   * 靠这一下对账，否则 autoSync 清掉漂移后角标会一直亮着。
+   * 靠这一下对账，否则自动同步清掉漂移后角标会一直亮着。
    */
   onSynced?: () => void;
 }

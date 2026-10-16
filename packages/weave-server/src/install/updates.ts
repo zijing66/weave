@@ -133,23 +133,31 @@ export async function detectUpdates(
   };
 }
 
+/** 项目行推送面的一行摘要：角标条数 + 「待 init」提醒（同一次检测的两个面）。 */
+export interface ProjectUpdateSummary {
+  /** 可代写同步的过期项数（含 auto 归类的 init 文件）。 */
+  available: number;
+  /** 会进 git 的 init 文件有漂移 → 提醒用户跑 `weave init`。 */
+  needsInit: boolean;
+}
+
 /**
- * 全项目「有更新待同步」计数（projectId → available，含 0）：项目行角标推送面
- * 的数据源。与 `GET /projects/:id/updates` 同一检测函数（同源不双算），库索引
- * 一轮构建一次、整轮复用。
+ * 全项目更新摘要（projectId → 摘要，含 0/false）：项目行角标推送面的数据源。
+ * 与 `GET /projects/:id/updates` 同一检测函数（同源不双算），库索引一轮构建
+ * 一次、整轮复用。
  */
 export async function detectProjectUpdateCounts(
   projects: ReadonlyArray<{ id: number; path: string }>,
   libraries: LibraryRow[],
   cache: FingerprintCache,
-): Promise<Record<number, number>> {
+): Promise<Record<number, ProjectUpdateSummary>> {
   const index = await buildLibraryIndex(libraries);
-  const counts: Record<number, number> = {};
+  const out: Record<number, ProjectUpdateSummary> = {};
   for (const project of projects) {
     const report = await detectUpdates(project.path, libraries, cache, index);
-    counts[project.id] = report.available;
+    out[project.id] = { available: report.available, needsInit: report.needsInit };
   }
-  return counts;
+  return out;
 }
 
 /**

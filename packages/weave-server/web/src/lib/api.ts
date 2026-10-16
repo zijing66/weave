@@ -323,8 +323,8 @@ export interface SessionRow {
   /** 已中断时刻（ms）：转录最后一条「请求被用户中断」标记晚于最后一条 hook 事件
    *  ——ESC 打断后多数连 Stop 都不发，这是该状态的唯一来源；null = 没中断。 */
   interruptedAt?: number | null;
-  /** 无 prompt 幽灵会话的自动清理时刻（服务端 listWithCounts 派生；null = 正常会话）。
-   *  服务端 SessionSweeper 过期即清，行内渲染倒计时 tag。 */
+  /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
+   *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;
 }
 
@@ -688,6 +688,14 @@ export interface UpdateReport {
   files: FileAssetUpdate[];
   mcp: McpUpdate[];
   available: number;
+  /** 会进 git 的 init 文件有漂移 → 提醒用户去终端跑 `weave init`（不代写）。 */
+  needsInit: boolean;
+}
+
+/** 项目行推送面的一行摘要（与 UpdateReport 的同名两字同源）。 */
+export interface ProjectUpdateSummary {
+  available: number;
+  needsInit: boolean;
 }
 
 /** Where a global skill was resolved from (grouping key in the global view).
@@ -728,7 +736,6 @@ export type PluginRow = ToolStateRow;
 export type PluginRuntime = Harness;
 
 export interface ProjectConfig {
-  autoSync: boolean;
   lastSyncAt: string | null;
 }
 
