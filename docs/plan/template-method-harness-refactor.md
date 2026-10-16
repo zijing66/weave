@@ -9,7 +9,7 @@
 ## Context
 
 用户要求：**高度抽象整个 weave 功能（模板方法+抽象模板），harness 接入可插拔按接口实现**；
-`weave init` **交互式多选 harness**；参考 cordis（`<repo-root>\cordis`）；
+`weave init` **交互式多选 harness**；参考 cordis；
 结构修订：① 接入实现按 harness 聚合成独立目录（claude/codex 各一个模块）② **web 并入 server 不单独成包**。
 
 **设计总纲**：全仓仅 **1 个 abstract class（`InitPipeline`）**；其余四类用接口策略+表驱动；

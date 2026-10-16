@@ -405,10 +405,10 @@ describe('终端后端 — Windows Terminal 通道（进程表反查 + 命名窗
   });
 
   it('命名窗口名：同路径稳定、大小写不敏感路径同名、不同路径必不同', () => {
-    const slug = wtWindowSlug('<repo-root>\\weave');
-    expect(slug).toBe(wtWindowSlug('<repo-root>\\weave'));
-    expect(slug).toBe(wtWindowSlug('<repo-root>\\weave')); // win32 键归一含小写
-    expect(wtWindowSlug('<repo-root>\\other')).not.toBe(slug);
+    const slug = wtWindowSlug('C:\\work\\weave');
+    expect(slug).toBe(wtWindowSlug('C:\\work\\weave'));
+    expect(slug).toBe(wtWindowSlug('c:\\work\\weave')); // win32 键归一含小写
+    expect(wtWindowSlug('C:\\work\\other')).not.toBe(slug);
     expect(slug).toMatch(/^weave-[a-z0-9-]+-[0-9a-f]{8}$/);
   });
 

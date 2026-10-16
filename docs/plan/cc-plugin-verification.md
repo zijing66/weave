@@ -1,6 +1,6 @@
 # CC 原生插件机制 H1-H5 验证结论（批 3 前置）
 
-> 调研日期：2026-10-04 ｜ 环境：Windows 11，Claude Code `2.1.288`，`~/.claude` = `<home>\.claude`
+> 调研日期：2026-10-04 ｜ 环境：Windows 11，Claude Code `2.1.288`
 > 方法：只读观察 + 一次完全可逆的临时插件安装实验（实验后三份状态文件 sha256 与实验前逐一比对**完全一致**，临时 marketplace/cache 已删净）。
 > 本文档为批 3「CC 原生包全局安装纠正」（docs/plan/ui-redesign.md R4）的前置验证记录。
 
@@ -32,7 +32,7 @@
     "<name>@<marketplace>": [
       {
         "scope": "user",
-        "installPath": "<home>\\.claude\\plugins\\cache\\<marketplace>\\<plugin>\\<version>",
+        "installPath": "C:\\Users\\<user>\\.claude\\plugins\\cache\\<marketplace>\\<plugin>\\<version>",
         "version": "1.0.0",
         "installedAt": "…Z",
         "lastUpdated": "…Z",
@@ -88,7 +88,7 @@ claude plugin install "./not-a-plugin-dir"
 - 文档（mods/overview）原句：**「A mod installs as a plugin, from a marketplace.」**，且「Install plugins covers marketplaces, scopes … all of which apply to a plugin that contains a mod without changes」；mod = 插件内 `hooks/hooks.json` + hooks 模块（`register.js/.tsx`），三件套 `plugin.json + hooks/hooks.json + register.*`。
 - mod 关闭/安装与插件一致（`/plugin` Installed 页 / `claude plugin enable|disable|uninstall`），无独立注册文件。
 - `~/.claude/dev-mods/<session-uuid>/`：文档（mods/create）说明这是「Claude 在会话中现场写的 mod」的存放目录（`~/.claude/dev-mods/<session-id>/<mod-name>/`），**不进 installed_plugins.json**，属临时/开发态，与安装机制无关（本机该目录当前为空壳）。
-- 本机 Weave 项目 `<repo-root>\weave\.claude\plugins\{file-guard,mission-control}` 即标准 mod 三件套，`claude plugin validate` 均通过（file-guard: `tool.call{Edit/Write/Bash}` + `$.ui.toast`；mission-control: `session.start/prompt.submit/tool.call/ui.render` 等），但**未在 installed_plugins.json 注册**（详见 H4）。
+- 本机 Weave 项目 `.claude/plugins/{file-guard,mission-control}` 即标准 mod 三件套，`claude plugin validate` 均通过（file-guard: `tool.call{Edit/Write/Bash}` + `$.ui.toast`；mission-control: `session.start/prompt.submit/tool.call/ui.render` 等），但**未在 installed_plugins.json 注册**（详见 H4）。
 - Weave 代码侧同一契约：`packages/weave-server/src/hooks/toolkit.ts:76` 注释「mod 类包的宿主版本下限（Claude Code ≥ 2.1.287 契约）」，`MIN_MOD_HOST_VERSION` / `evaluateModHostGate` 与本文档 H2 结论一致。
 - `claude plugin test`（“Run a mod's tests”）与 `claude plugin details`（Hooks 组件清单）均把 mod 当普通插件对待。
 
@@ -130,7 +130,7 @@ claude plugin install "./not-a-plugin-dir"
   1. `@<marketplace>`：settings `enabledPlugins` 声明（需已安装或相对路径源）；
   2. `@skills-dir`：把含 `.claude-plugin/plugin.json` 的目录放在**项目 `.claude/skills/`** 下（按 manifest `defaultEnabled`，受 workspace trust 门控，且只从主工作目录的 `.claude/skills/` 读取）；
   3. `@inline`：`--plugin-dir` / `--plugin-url` / `CLAUDE_CODE_PLUGIN_DIRS` 环境变量（仅本会话）。
-- 本机佐证：在 `<repo-root>\weave` 下运行 `claude plugin list`（及 `--json`）只列 6 个 user scope 插件，**无 file-guard / mission-control**；`claude plugin details file-guard` → `Plugin "file-guard" not found`。项目 `.claude/settings.json` 也无 `enabledPlugins` 键。
+- 本机佐证：在 Weave 项目根下运行 `claude plugin list`（及 `--json`）只列 6 个 user scope 插件，**无 file-guard / mission-control**；`claude plugin details file-guard` → `Plugin "file-guard" not found`。项目 `.claude/settings.json` 也无 `enabledPlugins` 键。
 - 结论：Weave 现存的项目副本（`.claude/plugins/file-guard`、`.claude/plugins/mission-control`）对 **CC 而言是死数据**（只有 Weave 自己的 plugin-loader 会读它们）。
 
 ### 对批 3 的建议

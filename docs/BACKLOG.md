@@ -71,7 +71,7 @@
 
 ## 7b. statusline 渲染对齐 ccstatusline（已完成的部分）
 
-调研 `<repo-root>\public\ccstatusline`（v2.2.12，MIT）的渲染机制后落地的调整：
+调研 `ccstatusline`（v2.2.12，MIT）的渲染机制后落地的调整：
 
 | 借鉴点 | weave 实现 |
 |--------|-----------|

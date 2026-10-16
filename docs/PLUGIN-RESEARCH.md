@@ -154,7 +154,7 @@ export type Register = (on: On, options: PluginOptions) => unknown;
 
 ## 6. 关键出处
 
-### dsh（`<repo-root>\deepseek-harness`）
+### dsh（`deepseek-harness`）
 
 | 位置 | 内容 |
 |---|---|
@@ -169,7 +169,7 @@ export type Register = (on: On, options: PluginOptions) => unknown;
 | `docs/capability-seams.md:574-665` | 92 个 `ctx.*` 服务接缝目录 |
 | `SAFETY.md` | 信任边界自述（无沙箱、插件可损毁主机） |
 
-### Claude Code（`<repo-root>\claude-code`）
+### Claude Code（`claude-code`）
 
 | 位置 | 内容 |
 |---|---|
