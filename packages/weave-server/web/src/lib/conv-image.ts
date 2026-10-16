@@ -475,7 +475,8 @@ export function layoutConversation(
     const contentW = Math.max(0, ...blocks.map((b) => b.w));
     const contentH = blocks.reduce((n, b) => n + b.gap + b.h, 0);
     const w = Math.min(BUBBLE_MAX, contentW + BUBBLE_PAD * 2);
-    const h = META_H + contentH + BUBBLE_PAD * 2;
+    // meta 行画在气泡**上方**（不计入气泡高度，否则每只气泡底部多出一行空）
+    const h = contentH + BUBBLE_PAD * 2;
     bubbles.push({
       role: e.role,
       meta: `${opts.stamp(e.at)} · ${e.role === 'user' ? opts.labels.user : opts.labels.assistant}`,

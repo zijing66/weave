@@ -162,6 +162,13 @@ describe('layoutConversation', () => {
     expect(table.rows.every((r) => r.cells.length === 2)).toBe(true);
   });
 
+  it('气泡下方不留空行（文末换行不算块，meta 行不计入气泡高度）', () => {
+    const b = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '答案一行\n' }], opts).bubbles[0]!;
+    expect(b.blocks.length).toBe(1);
+    expect((b.blocks[0] as FlowBlock).lines.length).toBe(1);
+    expect(b.h).toBe(19 + 20);
+  });
+
   it('块不撑破气泡内宽（超长串硬断）', () => {
     const long = 'x'.repeat(400);
     const layout = layoutConversation(measure, [{ role: 'assistant', at: AT, text: long }], opts);
@@ -212,7 +219,9 @@ describe('layoutConversation', () => {
         expect(w).toBeLessThanOrEqual(inner);
       }
     }
-    expect(b.h).toBe(acc + 35);
+    // 气泡高度 = 内容 + 上下 padding（meta 行画在气泡上方，不算进去）
+    expect(b.h).toBe(acc + 20);
+    expect(b.y).toBe(b.metaY + 15);
     expect(layout.height).toBeGreaterThan(b.h);
   });
 });
