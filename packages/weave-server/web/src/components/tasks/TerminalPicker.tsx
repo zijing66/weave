@@ -8,6 +8,7 @@ import { useT } from '@/i18n/I18nProvider';
  * 会话终端选择弹窗：项目开着多个终端时，问用户把 `claude --resume <id>`
  * 附加到哪个终端。列表由服务端按最近活跃从上往下排好（实例活跃度 →
  * 聚焦 tab → 新建 tab）；只有一个终端时调用方不弹此窗，直接开。
+ * 已长满的目标照列但置灰（让用户看见「这个终端满了」，而不是莫名其妙少一项）。
  */
 export function TerminalPicker({
   targets,
@@ -57,8 +58,9 @@ export function TerminalPicker({
             <li key={target.id}>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || target.full}
                 onClick={() => onPick(target.id)}
+                title={target.full ? t('tasks.terminalTargetFullTip') : undefined}
                 className="w-full rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.06] disabled:opacity-50"
               >
                 <span className="flex items-center gap-1.5">
@@ -66,6 +68,11 @@ export function TerminalPicker({
                     {target.title ??
                       t('tasks.terminalTargetFallback', { w: target.windowId, t: target.tabId })}
                   </span>
+                  {target.full && (
+                    <span className="shrink-0 rounded bg-amber-900/40 px-1 text-[10px] text-amber-300">
+                      {t('tasks.terminalTargetFull', { n: target.paneCount })}
+                    </span>
+                  )}
                   {target.active && (
                     <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
                       {t('tasks.terminalTargetActive')}

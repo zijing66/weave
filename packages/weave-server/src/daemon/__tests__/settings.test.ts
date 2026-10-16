@@ -573,6 +573,29 @@ describe('wezterm mux 会话通道（纯函数）', () => {
     expect(planWeztermReuse('/p/proj', panes, 'linux')).toEqual({ paneId: 5, direction: 'bottom' });
   });
 
+  it('可见屏幕最多 6 个 pane：满的 tab 无落点、有空间的 tab 顶上，第 5 格仍有落点', () => {
+    const six = [
+      mkPane(1, 0, 0),
+      mkPane(2, 60, 0),
+      mkPane(3, 0, 12),
+      mkPane(4, 60, 12),
+      mkPane(5, 0, 24),
+      mkPane(6, 60, 24),
+    ];
+    expect(planWeztermGrid(six)).toBeNull();
+    expect(planWeztermReuse('/p/proj', six, 'linux')).toBeNull();
+    // 第 5 格（右列矮）→ 右列底格向下
+    expect(planWeztermGrid(six.slice(0, 5))).toEqual({ paneId: 4, direction: 'bottom' });
+    // 另一个还放得下的 tab 顶上（几何只看它）
+    expect(planWeztermReuse('/p/proj', [...six, mkPane(7, 0, 0, 1)], 'linux')).toEqual({
+      paneId: 7,
+      direction: 'right',
+    });
+    // 上限数的是该 tab 的全部 pane（含别的目录的）
+    const mixed = [...six.slice(0, 5), mkPane(9, 60, 24, 0, 'file:///p/other')];
+    expect(planWeztermReuse('/p/proj', mixed, 'linux')).toBeNull();
+  });
+
   it('planWeztermNewWindow：workspace 随行，缺省省略', () => {
     expect(planWeztermNewWindow('D:\\proj', 'default')).toEqual([
       'cli',
@@ -721,6 +744,22 @@ describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹�
       planWeztermGrid([pane(0, 1, 10, 'file:///p/proj'), pane(0, 1, 11, 'file:///p/proj', false)]),
     ).toEqual({ paneId: 10, direction: 'right' });
     expect(planWeztermGrid([])).toBeNull();
+  });
+
+  it('full 标记：可见屏幕满 6 个 pane 即为真（前端据此置灰）', () => {
+    const six = Array.from({ length: 6 }, (_, i) => pane(0, 1, 10 + i, 'file:///p/proj'));
+    const [full] = attachTargetsFromMuxes(
+      '/p/proj',
+      [{ socket: '/socks/gui-sock-1', idleMs: 0, panes: six }],
+      'linux',
+    );
+    expect(full).toMatchObject({ paneCount: 6, full: true });
+    const [roomy] = attachTargetsFromMuxes(
+      '/p/proj',
+      [{ socket: '/socks/gui-sock-1', idleMs: 0, panes: six.slice(0, 5) }],
+      'linux',
+    );
+    expect(roomy).toMatchObject({ paneCount: 5, full: false });
   });
 });
 

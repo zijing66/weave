@@ -510,7 +510,8 @@ export function TasksPanel({
   } | null>(null);
 
   /** 点终端按钮：现拉可附加目标（实时枚举，不复用角标轮询数据）——
-   *  多个 → 弹窗选；0/1 个 → 直接开（拉不到列表也不阻塞打开）。 */
+   *  多个**放得下**的 → 弹窗选（满的照列但置灰，看得见原因）；0/1 个 → 直接开
+   *  （自动落点自己挑放得下的 tab，全满就新开终端；拉不到列表也不阻塞打开）。 */
   const onOpenTerminal = useCallback(
     (sessionId: string): void => {
       const projectId = sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null;
@@ -521,8 +522,11 @@ export function TasksPanel({
       api
         .listProjectTerminals(projectId)
         .then((targets) => {
-          if (targets.length > 1) setTerminalPicker({ sessionId, targets });
-          else runOpenTerminal(sessionId);
+          if (targets.filter((target) => !target.full).length > 1) {
+            setTerminalPicker({ sessionId, targets });
+          } else {
+            runOpenTerminal(sessionId);
+          }
         })
         .catch(() => runOpenTerminal(sessionId));
     },

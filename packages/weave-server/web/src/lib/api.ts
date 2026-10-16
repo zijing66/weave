@@ -80,6 +80,8 @@ export interface TerminalTarget {
   matchCount: number;
   paneCount: number;
   active: boolean;
+  /** 这个可见屏幕已长满（pane 数到服务端上限）：不可选，只能新开终端。 */
+  full: boolean;
 }
 
 /** Structured result of one harness health check (core 返回，文案由 web 词典渲染). */

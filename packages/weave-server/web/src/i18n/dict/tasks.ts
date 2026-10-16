@@ -32,6 +32,8 @@ export const tasksZh = {
   'tasks.harnessPickTitle': '在哪个 harness 里新建会话',
   'tasks.terminalTargetFallback': '窗口 {w} · Tab {t}',
   'tasks.terminalTargetActive': '当前聚焦',
+  'tasks.terminalTargetFull': '已满（{n} pane）',
+  'tasks.terminalTargetFullTip': '这个终端已满——新会话只能新开终端（同一可见屏幕最多 6 个 pane）',
   'tasks.terminalTargetDetail': '{match} 个本项目 pane（共 {total}）',
   'tasks.deleteSession': '删除会话',
   'tasks.deleteTooltip': '删除该会话及其全部事件（不可撤销）',
@@ -229,6 +231,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.harnessPickTitle': 'New session in which harness?',
   'tasks.terminalTargetFallback': 'Window {w} · Tab {t}',
   'tasks.terminalTargetActive': 'Focused',
+  'tasks.terminalTargetFull': 'Full ({n} panes)',
+  'tasks.terminalTargetFullTip':
+    'This terminal is full — a new session can only open a new terminal (6 panes per screen max)',
   'tasks.terminalTargetDetail': '{match} pane(s) in this project ({total} total)',
   'tasks.deleteSession': 'Delete session',
   'tasks.deleteTooltip': 'Delete this session and all its events (cannot be undone)',

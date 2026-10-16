@@ -414,6 +414,7 @@ class WtBackend extends TerminalBackend {
         matchCount: count,
         paneCount: count,
         active: false, // pane 归属不了窗口，无从判定聚焦，不谎报
+        full: false, // pane 数反查不到 → 定不了满，不谎报（可达性由落子自愈）
       },
     ];
   }
@@ -943,10 +944,21 @@ export function countWindowsByDir(
   return new Map(dirs.map((d, i) => [d, windows[i]!.size]));
 }
 
-/** 匹配 pane 最多的 tab 复用（平手取最早 tab），tab 内完整 pane 集合参与布局。 */
+/**
+ * 单个终端（一个**可见屏幕** = wezterm 的一个 tab）的 pane 上限：网格 1 2 /
+ * 3 4 / 5 6 长满即停，再要新会话就只能新开窗口。各终端后端的「可见屏幕」定义
+ * 不同——不支持分屏的后端（Terminal.app / 纯 shell preset）没有「挤在同一个
+ * 可见屏幕里」这回事，不设限：每个会话各占一个窗口/tab。
+ */
+export const MAX_PANES_PER_SCREEN = 6;
+
+/** 匹配 pane 最多、且还放得下的 tab 复用（平手取最早 tab）；满的 tab 跳过，
+ *  于是「同一个可见屏幕长满了」自然落到新窗口。tab 内完整 pane 集合参与布局。 */
 function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.Platform) {
   const matches = new Map<number, number>();
+  const totals = new Map<number, number>();
   for (const p of panes) {
+    totals.set(p.tabId, (totals.get(p.tabId) ?? 0) + 1);
     if (normalizeDirKey(p.cwd, platform) === key) {
       matches.set(p.tabId, (matches.get(p.tabId) ?? 0) + 1);
     }
@@ -954,6 +966,7 @@ function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.
   let bestTab: number | null = null;
   let bestCount = 0;
   for (const [tabId, count] of matches) {
+    if ((totals.get(tabId) ?? 0) >= MAX_PANES_PER_SCREEN) continue;
     if (bestTab === null || count > bestCount || (count === bestCount && tabId < bestTab)) {
       bestTab = tabId;
       bestCount = count;
@@ -965,10 +978,11 @@ function pickWeztermTab(key: string, panes: WeztermPaneInfo[], platform: NodeJS.
 /**
  * 一个 tab 内的网格生长：网格按 1 2 / 3 4 / 5 6 生长 —— 首个分屏向右开列，
  * 之后矮列的底格向下延伸，等高取左列。坐标用 `cli list` 报的 left_col/top_row，
- * 用户手工增删 pane 后依旧推导得出，不落持久状态。
+ * 用户手工增删 pane 后依旧推导得出，不落持久状态。长满 `MAX_PANES_PER_SCREEN`
+ * 即无落点（null）——调用方据此新开窗口。
  */
 export function planWeztermGrid(tabPanes: WeztermPaneInfo[]): WeztermSplitTarget | null {
-  if (tabPanes.length === 0) return null;
+  if (tabPanes.length === 0 || tabPanes.length >= MAX_PANES_PER_SCREEN) return null;
   if (tabPanes.length === 1) return { paneId: tabPanes[0]!.paneId, direction: 'right' };
   // 列 = left 值分组（升序）；单列 → 底格向右开第二列；多列 → 矮列底格向下
   const columns = new Map<number, WeztermPaneInfo[]>();
@@ -991,8 +1005,8 @@ export function planWeztermGrid(tabPanes: WeztermPaneInfo[]): WeztermSplitTarget
 }
 
 /**
- * 同项目复用布局：挑「cwd 匹配该项目的 pane 最多」的 tab（平手取最早 tab），
- * 再按 tab 内网格生长推导落点。
+ * 同项目复用布局：挑「cwd 匹配该项目的 pane 最多、且有空间」的 tab（平手取最早
+ * tab），再按 tab 内网格生长推导落点；匹配的 tab 全满 = 无落点（null → 新窗口）。
  */
 export function planWeztermReuse(
   dir: string,
@@ -1015,8 +1029,9 @@ export function planWeztermNewWindow(dir: string, workspace: string | null): str
 
 /**
  * 会话终端可附加目标（多终端弹窗的选项）：一个终端窗口内的一个 tab（wezterm
- * 的 tab 含分屏 pane；Terminal.app 的 tab 即整面）。id 不透明、格式归各后端
- * （wezterm `<mux 短哈希>:<windowId>:<tabId>`，Terminal.app `terminal:<win>:<tab>`）。
+ * 的 tab 含分屏 pane，即一个可见屏幕；Terminal.app 的 tab 即整面）。id 不透明、
+ * 格式归各后端（wezterm `<mux 短哈希>:<windowId>:<tabId>`，Terminal.app
+ * `terminal:<win>:<tab>`）。
  */
 export interface AttachTarget {
   id: string;
@@ -1029,6 +1044,8 @@ export interface AttachTarget {
   paneCount: number;
   /** 该 tab 内含聚焦 pane（窗口正看着它）。 */
   active: boolean;
+  /** 这个可见屏幕已长满（pane 数到上限）：前端置灰，后端定点附加明确拒绝。 */
+  full: boolean;
 }
 
 /** mux socket → 不透明短标识（不回传本机路径）。 */
@@ -1104,6 +1121,7 @@ export function attachTargetsFromMuxes(
         matchCount,
         paneCount: panes.length,
         active: panes.some((p) => p.isActive),
+        full: panes.length >= MAX_PANES_PER_SCREEN,
       });
     }
     rows.sort((a, b) => Number(b.active) - Number(a.active) || b.tabId - a.tabId);
@@ -1397,9 +1415,10 @@ async function weztermLiveMuxes(
 }
 
 /**
- * wezterm run 主通道：同项目 → 分屏复用；否则 → 最活跃 mux 开新窗口；
- * 命令一律 send-text。任何失败（无活 mux / 某步 rc≠0 / 超时）一律 throw——
- * 错误经路由 400 → 前端 toast，绝不静默落到假成功的 legacy start。
+ * wezterm run 主通道：同项目 → 分屏复用（复用目标长满 = 没有可复用落点）；
+ * 否则 → 最活跃 mux 开新窗口；命令一律 send-text。任何失败（无活 mux / 某步
+ * rc≠0 / 超时）一律 throw——错误经路由 400 → 前端 toast，绝不静默落到假成功的
+ * legacy start。
  */
 async function runInWezterm(dir: string, argv: string[]): Promise<void> {
   const platform = process.platform;
@@ -1462,7 +1481,8 @@ async function weztermSpawnAndSend(
 /**
  * 定点附加（用户在会话终端弹窗里选的 tab）：实时重枚举定位目标，目标不在了
  * 就 throw——让前端报「该终端已关闭，请重选」，绝不静默换到别处（换了就是
- * 「我点了 A，命令进了 B」）。
+ * 「我点了 A，命令进了 B」）；已长满同样明确拒绝（**不擅自另开窗口**，那也是
+ * 换地方），前端同一事实置灰，用户自己决定开新终端还是挑别的。
  */
 export async function runInWeztermAt(
   dir: string,
@@ -1479,6 +1499,11 @@ export async function runInWeztermAt(
     (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
   );
   if (tabPanes.length === 0) throw new Error('terminal tab is gone — pick a terminal again');
+  if (tabPanes.length >= MAX_PANES_PER_SCREEN) {
+    throw new Error(
+      `terminal is full (${MAX_PANES_PER_SCREEN} panes) — pick another terminal or open a new one`,
+    );
+  }
   await weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace, platform);
 }
 
@@ -1719,6 +1744,7 @@ export function terminalAppTargets(
     matchCount: 1,
     paneCount: 1,
     active: s.frontmost && s.selected,
+    full: false, // 无分屏：一个会话一个 tab，没有挤满这回事
   }));
 }
 
