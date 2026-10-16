@@ -4,7 +4,7 @@ import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
-import { useT } from '@/i18n/I18nProvider';
+import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
@@ -26,6 +26,20 @@ const ACTION_BTN =
 export const RESORT_INTERVAL_MS = 10_000;
 /** FLIP 位移动画时长：周期重排时卡片从旧位滑到新位。 */
 const FLIP_DURATION_MS = 450;
+
+/** 剩余存活倒计时文案（全会话统一）：按量级走天/时/分三档（ceil），不足一分钟即「即将」。 */
+function remainingLabel(t: TFunc, remainingMs: number): string {
+  if (remainingMs >= 86_400_000) {
+    return t('tasks.autoDeleteInDays', { n: Math.ceil(remainingMs / 86_400_000) });
+  }
+  if (remainingMs >= 3_600_000) {
+    return t('tasks.autoDeleteInHours', { n: Math.ceil(remainingMs / 3_600_000) });
+  }
+  if (remainingMs >= 60_000) {
+    return t('tasks.autoDeleteInMinutes', { n: Math.ceil(remainingMs / 60_000) });
+  }
+  return t('tasks.autoDeleteSoon');
+}
 
 /**
  * 会话排序口径（活动序）：lastSeenAt（最后一条 hook 事件时刻）倒序、createdAt
@@ -284,7 +298,7 @@ export function SessionList({
   const rowEls = useRef(new Map<string, HTMLLIElement>());
   useFlipRows(rowEls);
 
-  // 幽灵会话倒计时走针：有到期行才起 30s 本地计时（纯展示刷新，不拉数据；
+  // 剩余存活倒计时走针：有到期行才起 30s 本地计时（纯展示刷新，不拉数据；
   // 事件流驱动的重渲染本身也在刷新读数，计时器只兜住完全静默的页面）。
   const [now, setNow] = useState(() => Date.now());
   const hasDeadline = sessions.some((s) => s.autoDeleteAt != null);
@@ -606,15 +620,12 @@ export function SessionList({
               <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
                 {t(STATUS_KEY[status])}
               </Badge>
-              {/* 幽灵会话（从未收到 prompt）自动清理倒计时：服务端 autoDeleteAt
-                  派生，SessionSweeper 过期即清——到点前给用户留个明白账。 */}
+              {/* 剩余存活倒计时（全会话统一）：服务端 autoDeleteAt 派生 =
+                  lastSeenAt + 无操作保留窗，SessionSweeper 过期即清——按剩余量级
+                  走天/时/分三档，到点前给用户留个明白账。 */}
               {s.autoDeleteAt && (
                 <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
-                  {Date.parse(s.autoDeleteAt) - now > 60_000
-                    ? t('tasks.autoDeleteIn', {
-                        n: Math.ceil((Date.parse(s.autoDeleteAt) - now) / 60_000),
-                      })
-                    : t('tasks.autoDeleteSoon')}
+                  {remainingLabel(t, Date.parse(s.autoDeleteAt) - now)}
                 </Badge>
               )}
             </div>

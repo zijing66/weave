@@ -15,6 +15,9 @@ export const settingsZh = {
   'settings.retentionDays': '事件日志保留天数',
   'settings.retentionDaysHint':
     'hook 事件日志的被动清理阈值：超过该天数的日志在下一次跨天写入时删除（无定时任务）；保存后下一条事件即按新值清理。',
+  'settings.sessionIdleDays': '会话闲置保留天数',
+  'settings.sessionIdleDaysHint':
+    '保留策略：无操作会话 {n} 天后自动移除——按会话最后更新时间算，会话行内标注剩余存活时间。',
   'settings.daysUnit': '天',
   'settings.accessUrls': '访问地址',
   'settings.accessUrlsHint':
@@ -47,6 +50,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.retentionDays': 'Event log retention (days)',
   'settings.retentionDaysHint':
     'Passive cleanup threshold for hook event logs: older logs are deleted on the first write after the next day boundary (no scheduled job); saving takes effect on the next event.',
+  'settings.sessionIdleDays': 'Session idle retention (days)',
+  'settings.sessionIdleDaysHint':
+    'Policy: idle sessions are auto-removed after {n} days — counted from the session’s last update; each row shows its remaining lifetime.',
   'settings.daysUnit': 'days',
   'settings.accessUrls': 'Access URLs',
   'settings.accessUrlsHint':

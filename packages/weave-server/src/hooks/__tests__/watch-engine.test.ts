@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
+import { setDaemonSettingsDb } from '../../daemon/settings.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { SessionRepository } from '../../repositories/sessions.js';
 import { SessionWatchRepository, type SessionWatchRow } from '../../repositories/session-watches.js';
@@ -22,6 +23,7 @@ let projectId: number;
 
 beforeEach(() => {
   db = openDatabase(':memory:');
+  setDaemonSettingsDb(openDatabase(':memory:'));
   projectId = new ProjectRepository(db).register({
     path: '/p',
     name: 'p',
@@ -33,7 +35,10 @@ beforeEach(() => {
   events = new HookEventRepository(db);
 });
 
-afterEach(() => db.close());
+afterEach(() => {
+  setDaemonSettingsDb(null);
+  db.close();
+});
 
 const seed = (sessionId: string, eventTypes: string[]): void => {
   sessions.touch(sessionId, projectId);

@@ -5,16 +5,13 @@ import type { SequenceEngine } from './sequence-engine.js';
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
 /**
- * 定时清无 prompt 幽灵会话：从未收到 UserPromptSubmit（事件全是会话引导类——
- * 典型形状是开了就走的 SessionStart 单例，或 SessionStart + 闲置 Notification
- * 组合），且静默超过保活窗。判据与期限的单一事实源 = sessions 仓储的
- * `listWithCounts`（`autoDeleteAt` 计算列）——本清扫器只做「过期即清」；
- * 收到过 prompt 的会话 autoDeleteAt 为 null，永不自动删（遵循全局事件保留期）。
+ * 定时清「无操作」过期会话：判据与期限的单一事实源 = sessions 仓储的
+ * `listWithCounts`（`autoDeleteAt` 计算列 = lastSeenAt + settings `sessions.idleDays`
+ * 闲置窗），**全会话统一**——本清扫器只做「过期即清」。
  *
  * 注：入库路径对**每个**首现 sessionId 都建档（含仅一条 SessionStart 的新会话
- * ——新建会话要马上出现在列表），所以「无 prompt 的空行」是常态而非例外，
- * 全靠本清扫器按 autoDeleteAt 兜底清走；只有 long-running（收过 prompt）
- * 的行不设期限。
+ * ——新建会话要马上出现在列表），新会话与长会话同一条闲置移除线：列表里挂够
+ * n 天无操作才自动移除，期限倒计时随行展示。
  */
 export class SessionSweeper {
   constructor(
@@ -46,7 +43,7 @@ export class SessionSweeper {
   start(): NodeJS.Timeout {
     // 启动即扫一轮：首个 tick 要等完整间隔，而 dev 下 tsx watch 随文件改动
     // 频繁重启（重启周期常短于间隔）→ 只靠间隔的清扫器永远赶不上第一拍，
-    // 存量空会话一直挂在会话列表。清理判据自带 10 分钟保活窗，起手扫安全。
+    // 存量过期行一直挂在会话列表。清理判据按闲置窗算（缺省 90 天），起手扫安全。
     this.sweep();
     const timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     timer.unref();

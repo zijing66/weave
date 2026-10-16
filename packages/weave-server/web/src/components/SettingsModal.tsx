@@ -6,6 +6,7 @@ import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
   Bell,
+  Clock,
   Copy,
   Database,
   Eye,
@@ -36,11 +37,15 @@ import {
 } from '@/lib/push';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 
-/** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events——本地扩展。 */
-type DaemonSettingsExt = DaemonSettings & { events?: { retentionDays: number } };
+/** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events/sessions——本地扩展。 */
+type DaemonSettingsExt = DaemonSettings & {
+  events?: { retentionDays: number };
+  sessions?: { idleDays: number };
+};
 
-/** 与 server DEFAULT_EVENT_RETENTION_DAYS 一致的展示兜底。 */
+/** 与 server DEFAULT_EVENT_RETENTION_DAYS / DEFAULT_SESSION_IDLE_DAYS 一致的展示兜底。 */
 const DEFAULT_RETENTION_DAYS = 90;
+const DEFAULT_SESSION_IDLE_DAYS = 90;
 
 /** 权限未授的成因文案（tasks 字典的三态，与订阅手势同款）。 */
 const PUSH_PERMISSION_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
@@ -368,6 +373,31 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   setSettings((s) => (s ? { ...s, events: { retentionDays: v } } : s))
                 }
                 title={t('settings.retentionDays')}
+              />
+              <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
+            </div>
+          </div>
+
+          {/* 会话保留策略：无操作 n 天后自动移除（期限随会话行的剩余存活倒计时下发）。 */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Clock className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.sessionIdleDays')}
+            </label>
+            <p className="text-[11px] text-neutral-500">
+              {t('settings.sessionIdleDaysHint', {
+                n: settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS,
+              })}
+            </p>
+            <div className="flex items-center gap-2">
+              <NumberStepper
+                value={settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS}
+                min={1}
+                max={3650}
+                onChange={(v) =>
+                  setSettings((s) => (s ? { ...s, sessions: { idleDays: v } } : s))
+                }
+                title={t('settings.sessionIdleDays')}
               />
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>

@@ -222,8 +222,8 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
  *
  * **会话行随首个事件即建**（含仅一条 SessionStart 的新会话）：新建会话要**马上**
  * 出现在会话列表，「只带 SessionStart 就不建档」那条旧判据已推翻（它让刚起的
- * 会话要等到第一条 prompt 或闲置 Notification 才现身）。没等到 prompt 的空会话
- * 照样不会久留——`listWithCounts` 的 autoDeleteAt 给它一个 10 分钟期限、
+ * 会话要等到第一条 prompt 或闲置 Notification 才现身）。所有会话同一条闲置
+ * 移除线（`listWithCounts` 的 autoDeleteAt = lastSeenAt + settings `sessions.idleDays`），
  * SessionSweeper 过期即清（复用手动删会话级联）。
  */
 function insertBatch(deps: InboxDrainDeps, project: ProjectRow, inputs: HookEventInput[]): number[] {

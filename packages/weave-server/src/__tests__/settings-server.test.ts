@@ -101,6 +101,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       locale: 'zh-CN',
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
+      sessions: { idleDays: 90 }, // 无操作会话闲置移除窗（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
       server: { bindHost: '0.0.0.0', tlsPort: 6443 }, // 监听绑定 + 局域网 HTTPS 端口（归一化补默认）
       ai: { baseUrl: '', model: '', apiKeySet: false }, // AI 助手（归一化补默认，默认未配置）

@@ -3,6 +3,7 @@ import { openDatabase } from '../../db/db.js';
 import {
   DEFAULT_DAEMON_SETTINGS,
   DEFAULT_EVENT_RETENTION_DAYS,
+  DEFAULT_SESSION_IDLE_DAYS,
   readDaemonSettings,
   readDaemonSettingsSync,
   writeDaemonSettings,
@@ -59,6 +60,7 @@ describe('daemon settings persistence (db key-value)', () => {
     expect(map.get('locale')).toBe('zh-CN');
     expect(map.get('hooks.enabled')).toBe('true');
     expect(map.get('events.retentionDays')).toBe('90');
+    expect(map.get('sessions.idleDays')).toBe('90');
   });
 
   it('an unknown preset falls back to auto; non-string customCommand to empty', async () => {
@@ -79,10 +81,12 @@ describe('daemon settings persistence (db key-value)', () => {
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('nope', 'terminal.preset');
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('fr', 'locale');
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('NaN', 'events.retentionDays');
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('NaN', 'sessions.idleDays');
     const s = await readDaemonSettings();
     expect(s.terminal.preset).toBe('auto'); // 白名单回落
     expect(s.locale).toBe('zh-CN');
     expect(s.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
+    expect(s.sessions?.idleDays).toBe(DEFAULT_SESSION_IDLE_DAYS);
     expect(s.terminal.customCommand).toBe('x'); // 好值不受坏值影响
   });
 
@@ -140,6 +144,26 @@ describe('daemon settings persistence (db key-value)', () => {
       events: { retentionDays: 0 as never },
     });
     expect(bad.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
+  });
+
+  it('sessions.idleDays round-trips（含同步读）；非法值回落默认', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      sessions: { idleDays: 30 },
+    });
+    expect(saved.sessions?.idleDays).toBe(30);
+    expect((await readDaemonSettings()).sessions?.idleDays).toBe(30);
+    expect(readDaemonSettingsSync().sessions?.idleDays).toBe(30);
+
+    const bad = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      sessions: { idleDays: 0 as never },
+    });
+    expect(bad.sessions?.idleDays).toBe(DEFAULT_SESSION_IDLE_DAYS);
   });
 
   it('startup.launchOnLogin round-trips；缺省/非法值回落 false（默认关）', async () => {

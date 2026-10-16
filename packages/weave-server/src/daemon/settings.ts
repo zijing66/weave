@@ -61,6 +61,8 @@ export interface DaemonSettings {
   hooks: HooksSettings;
   /** 事件日志（hook_events）保留策略——缺省走默认值（读时归一化）。 */
   events?: EventsSettings;
+  /** 会话闲置移除策略（无操作 n 天后自动移除）——缺省走默认值（读时归一化）。 */
+  sessions?: SessionsSettings;
   /** 开机自启动 daemon（系统级自启动项；缺省关闭——读时归一化）。 */
   startup?: StartupSettings;
   /** 监听面（绑定地址；缺省放开 0.0.0.0——读时归一化）。 */
@@ -76,6 +78,11 @@ export interface HooksSettings {
 /** hook_events 被动清理保留天数（跨天首条写入时删除更早日志）。 */
 export interface EventsSettings {
   retentionDays: number;
+}
+
+/** 会话闲置移除保留天数（= lastSeenAt 起算的无操作窗，到期自动移除会话行）。 */
+export interface SessionsSettings {
+  idleDays: number;
 }
 
 /** daemon 是否随系统登录自启（默认关）。 */
@@ -113,6 +120,14 @@ export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
   retentionDays: DEFAULT_EVENT_RETENTION_DAYS,
 };
 
+/** 闲置 90 天移除：与事件日志同界（会话行连同其事件一起走），总览「大于30天」
+ *  档仍留有 30-90 天窗口可看；新会话随首个事件即建档，不会被快清误伤。 */
+export const DEFAULT_SESSION_IDLE_DAYS = 90;
+
+export const DEFAULT_SESSIONS_SETTINGS: SessionsSettings = {
+  idleDays: DEFAULT_SESSION_IDLE_DAYS,
+};
+
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
 
 /** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。HTTPS 与 HTTP 并存（见 daemon/tls.ts）。 */
@@ -126,6 +141,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   locale: DEFAULT_LOCALE,
   hooks: DEFAULT_HOOKS_SETTINGS,
   events: DEFAULT_EVENTS_SETTINGS,
+  sessions: DEFAULT_SESSIONS_SETTINGS,
   startup: DEFAULT_STARTUP_SETTINGS,
   server: DEFAULT_SERVER_SETTINGS,
   ai: DEFAULT_AI_SETTINGS,
@@ -201,6 +217,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
   const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
   const events = (obj.events ?? {}) as Partial<EventsSettings>;
+  const sessions = (obj.sessions ?? {}) as Partial<SessionsSettings>;
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const server = (obj.server ?? {}) as Partial<ServerSettings>;
   const ai = (obj.ai ?? {}) as Partial<AiSettings>;
@@ -208,6 +225,10 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
       : DEFAULT_EVENTS_SETTINGS.retentionDays;
+  const idleDays =
+    Number.isInteger(sessions.idleDays) && (sessions.idleDays as number) >= 1
+      ? (sessions.idleDays as number)
+      : DEFAULT_SESSIONS_SETTINGS.idleDays;
   return {
     terminal: {
       preset: ALL_TERMINAL_PRESETS.includes(term.preset as TerminalPreset)
@@ -220,6 +241,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       enabled: typeof hooks.enabled === 'boolean' ? hooks.enabled : DEFAULT_HOOKS_SETTINGS.enabled,
     },
     events: { retentionDays: retention },
+    sessions: { idleDays },
     startup: {
       launchOnLogin:
         typeof startup.launchOnLogin === 'boolean'
@@ -251,6 +273,7 @@ const KEYS = {
   locale: 'locale',
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
+  sessionIdleDays: 'sessions.idleDays',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
   serverTlsPort: 'server.tlsPort',
@@ -306,6 +329,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.eventRetentionDays)
       ? { events: { retentionDays: Number(map.get(KEYS.eventRetentionDays)) } }
       : {}),
+    ...(map.has(KEYS.sessionIdleDays)
+      ? { sessions: { idleDays: Number(map.get(KEYS.sessionIdleDays)) } }
+      : {}),
     ...(map.has(KEYS.startupLaunchOnLogin)
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
@@ -333,6 +359,10 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [
       KEYS.eventRetentionDays,
       String(settings.events?.retentionDays ?? DEFAULT_EVENT_RETENTION_DAYS),
+    ],
+    [
+      KEYS.sessionIdleDays,
+      String(settings.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS),
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
     [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],
