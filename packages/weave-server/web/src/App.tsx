@@ -34,6 +34,7 @@ import {
 import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capabilities';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { registerInvalidator, subscribeFrame, subscribeHook, subscribePush } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
@@ -93,9 +94,32 @@ export default function App() {
 
 function Dashboard() {
   const t = useT();
-  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  // 项目列表 + 归档面（TanStack Query 缓存域·试点，后续域逐个并入）：fetch/缓存/
+  // 失效归 useQuery，重拉统一走 refreshProjects()（= invalidateQueries——SSE 帧
+  // 与变更后的落定都指它）。refetchOnWindowFocus 覆写全局缺省：后台 daemon 侧
+  // reconcile 有 ≤5s 窗口，切回标签页补一枪（替掉原手挂的 visibilitychange 监听）。
+  const queryClient = useQueryClient();
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => api.listProjects(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: 'always',
+    retry: false,
+  });
+  const archivedQuery = useQuery({
+    queryKey: ['projects', 'archived'],
+    queryFn: () => api.listArchivedProjects(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: 'always',
+    retry: false,
+  });
+  const projects = projectsQuery.data ?? [];
+  const archivedProjects = archivedQuery.data ?? [];
+  const refreshProjects = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['projects'] });
+  }, [queryClient]);
   // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
-  const [shellReady, setShellReady] = useState(false);
+  const shellReady = !projectsQuery.isPending;
   // 顶栏 GitHub 链接的 star 数（浏览器直取 + localStorage 缓存；未知 = null）
   const stars = useRepoStars();
   const [selected, setSelected] = useState<ProjectRow | null>(null);
@@ -176,14 +200,13 @@ function Dashboard() {
   });
   const sensors = useSensors(finePointer ? mouseSensor : touchSensor);
 
+  // 首拉失败（还没有任何数据可显示）toast 报因；此后刷新失败静默——与旧 fetcher
+  // 的口径一致（refreshProjects 的 catch 本来就吞错）。
   useEffect(() => {
-    api
-      .listProjects()
-      .then(setProjects)
-      .catch((e) => setError(String(e)))
-      .finally(() => setShellReady(true));
-    api.listArchivedProjects().then(setArchivedProjects).catch(() => {});
-  }, []);
+    if (projectsQuery.isError && projectsQuery.data === undefined) {
+      setError(String(projectsQuery.error));
+    }
+  }, [projectsQuery.isError, projectsQuery.data, projectsQuery.error, setError]);
 
   // 安装属性矩阵（静态）：启动拉一次，下发 LibraryPanel（M6 拖拽 canDrop 也用）。
   const [installCaps, setInstallCaps] = useState<InstallCapabilities | null>(null);
@@ -194,21 +217,14 @@ function Dashboard() {
   // 拖拽中的统一 payload（onDragStart 提升）：落点 canInstall 判定与落定分派共用。
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
 
-  // 归档项目面数据：与活跃列表同源刷新（归档/恢复/SSE project 帧都会带动）。
-  const [archivedProjects, setArchivedProjects] = useState<ProjectRow[]>([]);
-  // 项目列表刷新：SSE project 帧（另一进程 weave init/scan 落库 → daemon
-  // reconcile 检出）触发整表重拉；visibilitychange 兜底 ≤5s reconcile 窗口。
-  // 归档面一并重拉——归档/恢复后 dataBus 的 projects 失效键走同一条路。
-  const refreshProjects = useCallback(() => {
-    api.listProjects().then(setProjects).catch(() => {});
-    api.listArchivedProjects().then(setArchivedProjects).catch(() => {});
-  }, []);
+  // 归档面与 SSE/变更刷新的说明见顶部查询块（['projects'] 前缀两面齐刷）。
 
   // 项目行拖拽排序落定：乐观重排（落点即时反馈），持久化失败回滚到服务端
-  // 真值并报因（失败不静默）。
+  // 真值并报因（失败不静默）。乐观更新直接写查询缓存（setQueryData）。
   const handleProjectReorder = useCallback(
     (ids: number[]) => {
-      setProjects((prev) => {
+      queryClient.setQueryData<ProjectRow[]>(['projects'], (prev) => {
+        if (!prev) return prev;
         const byId = new Map(prev.map((p) => [p.id, p]));
         const next = ids.map((id) => byId.get(id)).filter((p): p is ProjectRow => !!p);
         for (const p of prev) if (!ids.includes(p.id)) next.push(p);
@@ -219,21 +235,13 @@ function Dashboard() {
         refreshProjects();
       });
     },
-    [refreshProjects, t],
+    [queryClient, setError, t, refreshProjects],
   );
 
   // 项目卡终端角标（已开终端窗口数）：纯 push 帧驱动——SSE 接入即补上次快照
   // 首帧、后台对账后推差量。前端零请求零定时器：探测要 spawn `wezterm cli`，
   // 任何前端主动拉都会把 spawn 带回请求关键路径。
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
-
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refreshProjects();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [refreshProjects]);
 
   const refreshAssets = useCallback((p: ProjectRow) => {
     api.listAssets(p.path).then(setAssets).catch(() => {});
