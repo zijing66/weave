@@ -19,8 +19,12 @@ export interface SseFrame {
 type FrameHandler = (frame: SseFrame) => void;
 
 const handlers = new Set<FrameHandler>();
-/** key → 重拉函数：收到 `invalidate` 帧时被调用（`push` 帧由订阅者自己写状态）。 */
-const invalidators = new Map<string, () => void>();
+/**
+ * key → 重拉函数集合：收到 `invalidate` 帧时**每个**注册者都调（`push` 帧由订阅者自己写状态）。
+ * 一个 key 常有多方关心（`settings` 就有设置弹窗、会话面板的能力矩阵、右下角 AI 助手三处），
+ * 单槽 Map 会让后注册者挤掉先来的——典型症状是「设置里填完 AI 配置，助手浮层要刷新页面才出现」。
+ */
+const invalidators = new Map<string, Set<() => void>>();
 let source: EventSource | null = null;
 
 function ensureSource(): EventSource | null {
@@ -36,7 +40,9 @@ function ensureSource(): EventSource | null {
       return; // 坏帧丢掉，不断流
     }
     // invalidate 帧：按 key 找注册过的重拉函数（push 帧没这个语义，直接广播）。
-    if (frame.type === 'invalidate') invalidators.get(String(frame.key))?.();
+    if (frame.type === 'invalidate') {
+      for (const run of invalidators.get(String(frame.key)) ?? []) run();
+    }
     for (const handler of handlers) handler(frame);
   };
   // EventSource 自带重连，但错误也可能是被 401 顶掉：复核认证态，未登录即整条
@@ -74,12 +80,15 @@ export function subscribeSse(handler: FrameHandler): () => void {
 /**
  * 注册某个数据域的「重拉」函数：服务端写操作成功后推 `{type:'invalidate', key}`
  * 帧，这里就把它接到组件既有的 fetcher 上——组件不必再写「成功后手动 refresh」
- * 的胶水。返回退订；同一 key 后注册者生效（组件重挂载时自然替换）。
+ * 的胶水。同一 key 的每个注册者都会被调到（互不挤占），返回退订只摘自己那一个。
  */
 export function registerInvalidator(key: string, run: () => void): () => void {
   ensureSource();
-  invalidators.set(key, run);
+  const set = invalidators.get(key) ?? new Set<() => void>();
+  invalidators.set(key, set);
+  set.add(run);
   return () => {
-    if (invalidators.get(key) === run) invalidators.delete(key);
+    set.delete(run);
+    if (set.size === 0) invalidators.delete(key);
   };
 }

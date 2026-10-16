@@ -96,4 +96,31 @@ describe('lib/sse', () => {
 
     offSubscribe();
   });
+
+  it('同一 key 的多个注册者都被调到，退订只摘自己', async () => {
+    await markAuthenticated();
+    const { subscribeSse, registerInvalidator } = await import('../sse');
+    const offSubscribe = subscribeSse(() => {});
+    const calls: string[] = [];
+    // 三处都关心 settings（设置弹窗 / 会话面板能力矩阵 / AI 助手浮层），
+    // 单槽 Map 时只有最后注册的那个收得到——AI 助手就落后成「要刷新页面才出现」。
+    const offA = registerInvalidator('settings', () => calls.push('a'));
+    const offB = registerInvalidator('settings', () => calls.push('b'));
+    const offC = registerInvalidator('settings', () => calls.push('c'));
+    const source = FakeEventSource.latest!;
+
+    source.emit({ type: 'invalidate', key: 'settings' });
+    expect(calls).toEqual(['a', 'b', 'c']);
+
+    offB();
+    source.emit({ type: 'invalidate', key: 'settings' });
+    expect(calls.slice(3)).toEqual(['a', 'c']); // 摘了 b，其余照旧
+
+    offA();
+    offC();
+    expect(() => source.emit({ type: 'invalidate', key: 'settings' })).not.toThrow();
+    expect(calls.length).toBe(5); // 全退订后没人接，也不炸
+
+    offSubscribe();
+  });
 });
