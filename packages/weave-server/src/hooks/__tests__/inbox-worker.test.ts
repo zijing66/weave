@@ -131,6 +131,35 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(bySession.get('s2')).toBeNull();
   });
 
+  it('inbox 直投凭据逐行解析：同批两会话各拿自己的 socket，不取整组最后一个', () => {
+    const withSock = (eventType: string, sessionId: string, socket: string | null): string =>
+      JSON.stringify({
+        v: 1,
+        token: TOKEN,
+        report: {
+          source: 'claude',
+          eventType,
+          sessionId,
+          cwd: '/proj',
+          payload: JSON.stringify({ hook_event_name: eventType, session_id: sessionId, cwd: '/proj' }),
+        },
+        ...(socket ? { messaging: { socket, token: `${sessionId}-tok` } } : {}),
+      }) + '\n';
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    writeFileSync(
+      file,
+      withSock('Stop', 's1', 'D:/sock/s1.sock') +
+        withSock('Stop', 's2', null) +
+        withSock('Stop', 's3', 'D:/sock/s3.sock'),
+    );
+
+    const bySession = new Map(drainInboxOnce(deps()).map((r) => [r.input.sessionId, r.messaging]));
+    expect(bySession.get('s1')).toEqual({ socket: 'D:/sock/s1.sock', token: 's1-tok' });
+    expect(bySession.get('s3')).toEqual({ socket: 'D:/sock/s3.sock', token: 's3-tok' });
+    // 没上报的行 = null（拿邻行的 socket 会把消息直投进别的会话）
+    expect(bySession.get('s2')).toBeNull();
+  });
+
   it('坏行/未知 token 行直接丢，不拖垮同文件的好行', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
     writeFileSync(

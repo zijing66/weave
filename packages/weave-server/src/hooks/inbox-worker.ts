@@ -27,6 +27,11 @@ import type { QuestionTracker } from './question-tracker.js';
  * 为 `.failed.jsonl` 防毒丸热循环。行内 token 解析项目（项目已删 → 丢行，同
  * 旧 /hooks 401 语义；归档项目同样丢行——server 不消费，行即焚）；不可归因
  * 的坏行直接丢（重试无意义）。
+ *
+ * **shard 按项目 token 分片**（hook-handler 认 token 不认会话）⇒ 同一 claim 里
+ * 常混着**同项目多个会话**的行。故凡会话级事实（inbox 凭据、pane env、改名回执）
+ * 一律**逐行**取，不得按组聚合——取整组最后一个会把 A 会话的 socket 记到 B 头上，
+ * 而直投照这个映射送，消息就落进别的会话（实事故，见 docs/DECISIONS.md）。
  */
 
 export const INBOX_TICK_MS = 200;
@@ -44,13 +49,14 @@ export interface InboxRecord {
   deliveredTitle?: string | null;
   /**
    * 该会话的 inbox 直投凭据（hook 进程是会话自己的 child，继承这两个 env）。
-   * **旁路字段：不进 payload、不落库**——主线程只放内存供 layer① 直投用。
+   * **逐行字段**（同 claim 里各会话的 socket 不同）；**旁路字段：不进 payload、
+   * 不落库**——主线程只放内存供 layer① 直投用。
    */
   messaging?: { socket: string; token: string | null } | null;
   /**
    * 该会话所在终端 pane 的定位 env（hook 进程生在会话自己的 pane 里）。
-   * **逐行字段**（同一 claim 里不同会话的 pane 不同，不能像 messaging 那样取整组
-   * 最后一个——错配会把键序打进别的会话的模态框）；同样不进 payload、不落库。
+   * **逐行字段**（同一 claim 里不同会话的 pane 不同——错配会把键序打进别的会话
+   * 的模态框）；同样不进 payload、不落库。
    */
   terminalEnv?: Record<string, string> | null;
 }
@@ -125,7 +131,8 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       delivered: (string | null)[];
       /** 与 inputs 逐行对齐（pane 定位是会话级事实，不能取组内最后一个）。 */
       terminals: (Record<string, string> | null)[];
-      messaging: InboxLine['messaging'];
+      /** 同上：inbox 凭据也是会话级事实——组内最后一个的 socket 不是别人的。 */
+      messaging: (InboxLine['messaging'])[];
     }
   >();
   for (const text of lines) {
@@ -138,9 +145,8 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       inputs: [],
       delivered: [],
       terminals: [],
-      messaging: null,
+      messaging: [],
     };
-    if (parsed.messaging) group.messaging = parsed.messaging;
     group.lines.push(line);
     if (!group.project) {
       group.project = deps.projects.getByToken(parsed.token); // 项目已删 → 整组丢
@@ -157,6 +163,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       group.inputs.push(adapter.normalize(parsed.report, group.project.id) as HookEventInput);
       group.delivered.push(parsed.report.deliveredTitle ?? null);
       group.terminals.push(parsed.terminalEnv);
+      group.messaging.push(parsed.messaging);
     } catch {
       // 单条坏报告不拖垮整批
     }
@@ -175,7 +182,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
           projectId: group.project.id,
           input: group.inputs[i]!,
           deliveredTitle: group.delivered[i] ?? null,
-          messaging: group.messaging,
+          messaging: group.messaging[i] ?? null,
           terminalEnv: group.terminals[i] ?? null,
         });
       }
