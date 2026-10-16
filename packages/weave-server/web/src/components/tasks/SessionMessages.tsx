@@ -393,10 +393,13 @@ export function SessionMessages({
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
   const tailKey = thread[thread.length - 1]?.key;
-  /** 会话正在跑这一轮（状态总线与会话行同一判据，含 5min 静默兜底）而尾条仍是
-   *  用户那条 → 回复还在路上，尾上挂一枚「生成中」。 */
+  const status = statuses.get(sessionId);
+  /** 尾上的在途提示：压缩中（状态总线同一判据；压缩与尾条是谁无关，照挂）显
+   *  「压缩会话中…」，否则会话正在跑这一轮（含 5min 静默兜底）而尾条仍是用户
+   *  那条 → 回复还在路上，显「生成中…」。 */
+  const compacting = status === 'compacting';
   const generating =
-    statuses.get(sessionId) === 'running' && thread[thread.length - 1]?.role === 'user';
+    compacting || (status === 'running' && thread[thread.length - 1]?.role === 'user');
   const lastTail = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (entries === null || tailKey === lastTail.current) return;
@@ -630,7 +633,7 @@ export function SessionMessages({
                 <div className="flex justify-start">
                   <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    {t('tasks.msgGenerating')}
+                    {compacting ? t('tasks.msgCompacting') : t('tasks.msgGenerating')}
                   </div>
                 </div>
               )}

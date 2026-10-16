@@ -27,6 +27,7 @@ import {
   ORPHAN_GROUP_ID,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
+import { isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
@@ -910,7 +911,7 @@ export function TasksPanel({
                       </Badge>
                     )}
                     {g.open &&
-                      (isLatestGroup && activeStatus === 'running' ? (
+                      (isLatestGroup && isSessionBusy(activeStatus) ? (
                         <Badge className="shrink-0 bg-emerald-900/40 text-emerald-300">
                           {t('tasks.groupRunning')}
                         </Badge>
@@ -980,7 +981,7 @@ export function TasksPanel({
                         )}
                       </button>
                     )}
-                    {(isLatestGroup && g.open && activeStatus === 'running') && (
+                    {(isLatestGroup && g.open && isSessionBusy(activeStatus)) && (
                       <span className="shrink-0">
                         <HarnessIcon harness={selectedHarness} running />
                       </span>
@@ -1020,7 +1021,7 @@ export function TasksPanel({
                           harness={selectedHarness}
                           focusGroupId={g.id}
                           focusGroup={g}
-                          running={isLatestGroup && activeStatus === 'running'}
+                          running={isLatestGroup && isSessionBusy(activeStatus)}
                           answerable={isLatestGroup && !!questionOf(selectedId)}
                           onOpenAnswer={() => setAnswerFor(selectedId)}
                         />

@@ -41,6 +41,8 @@ export {
   TITLE_EFFECTIVE_EVENTS,
   HARNESS_DIRS,
   HARNESS_LIFECYCLE,
+  HARNESS_COMPACTION,
+  type HarnessCompaction,
   isHarness,
 } from './harness.js';
 export { TERMINAL_LOCATOR_ENV, TERMINAL_LOCATOR_ENV_KEYS } from './terminal.js';

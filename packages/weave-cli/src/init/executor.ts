@@ -198,6 +198,7 @@ export async function executeInit(
       hooks.stop,
       hooks.subagentStop,
       hooks.notification,
+      hooks.preCompact,
     ]
       .filter(Boolean).length,
   };

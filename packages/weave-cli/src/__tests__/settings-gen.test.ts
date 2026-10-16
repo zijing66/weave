@@ -31,10 +31,11 @@ describe('generateSettingsJson', () => {
     });
     expect(settings.hooks).toBeDefined();
     const hooks = settings.hooks as Record<string, unknown>;
-    // 采集面全集（7 事件）
+    // 采集面全集（8 事件）
     expect(Object.keys(hooks).sort()).toEqual([
       'Notification',
       'PostToolUse',
+      'PreCompact',
       'PreToolUse',
       'SessionStart',
       'Stop',
@@ -62,6 +63,7 @@ describe('generateSettingsJson', () => {
       stop: false,
       subagentStop: false,
       notification: false,
+      preCompact: false,
       timeout: 5000,
       continueOnError: true,
     };
@@ -280,6 +282,7 @@ describe('mergeSettingsJson', () => {
         stop: false,
         subagentStop: false,
         notification: false,
+        preCompact: false,
         timeout: 5000,
         continueOnError: true,
       },

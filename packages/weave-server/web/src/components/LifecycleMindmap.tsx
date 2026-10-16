@@ -33,7 +33,7 @@ import {
   ORPHAN_GROUP_ID,
   type LifecycleGroup,
 } from '@/components/tasks/build-lifecycle-groups';
-import { HARNESS_LIFECYCLE } from '@/components/tasks/lifecycle';
+import { HARNESS_LIFECYCLE, isCompactionEnd } from '@/components/tasks/lifecycle';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { Harness, HarnessLifecycle } from '@weavecode/core/harness';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
@@ -709,6 +709,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
     const e = node.event;
     const isSub = node.kind === 'subagent';
     const summary = summarizeEvent(e);
+    const compacted = isCompactionEnd(e.source, e.eventType, rawOf(e).source);
     body = (
       <>
         <span className="flex flex-wrap items-center gap-1">
@@ -717,6 +718,11 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           >
             {e.eventType}
           </span>
+          {compacted && (
+            <span className={tagCls('bg-amber-900/40 text-amber-300')}>
+              {t('hooks.mindmap.compactTag')}
+            </span>
+          )}
           {isSub && (
             <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
               subagent
@@ -1258,6 +1264,11 @@ export function LifecycleMindmap({
             >
               {e.eventType}
             </span>
+            {isCompactionEnd(e.source, e.eventType, rawOf(e).source) && (
+              <span className={tagCls('bg-amber-900/40 text-amber-300')}>
+                {t('hooks.mindmap.compactTag')}
+              </span>
+            )}
             {n.agentId && (
               <span className={tagCls('border border-orange-700/50 bg-orange-950/60 text-orange-300')}>
                 agent …{n.agentId.slice(-8)}

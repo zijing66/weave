@@ -335,6 +335,7 @@ export const CLAUDE_HOOK_EVENTS = [
   'Stop',
   'SubagentStop',
   'Notification',
+  'PreCompact',
 ] as const;
 
 /** mirror of `INJECTABLE_HOOK_EVENTS` — inject 处理器只允许这些事件（服务端 400）。 */

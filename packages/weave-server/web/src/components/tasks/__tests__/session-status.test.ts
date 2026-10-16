@@ -111,6 +111,48 @@ describe('deriveSessionStatus', () => {
     expect(deriveSessionStatus({ ...base, pidAlive: null, turnOpen: false })).toBe('open');
     expect(deriveSessionStatus({ ...base, pidAlive: true, turnOpen: false })).toBe('open');
   });
+
+  it('最新事件是压缩开始事件 → compacting（压过回合逻辑：压缩期间无事件）', () => {
+    const compacting: StatusInput = {
+      ...base,
+      harness: 'claude',
+      lastSeenAt: ago(60_000),
+      latestEventType: 'PreCompact',
+      turnOpen: true,
+    };
+    expect(deriveSessionStatus(compacting)).toBe('compacting');
+    // 回合已关也一样（手动 /compact 落在 idle 上）
+    expect(deriveSessionStatus({ ...compacting, turnOpen: false })).toBe('compacting');
+  });
+
+  it('压缩态只认本 harness 的表：别的 harness / 未报 harness 不判', () => {
+    const at = { lastSeenAt: ago(1_000), latestEventType: 'PreCompact', turnOpen: true };
+    expect(deriveSessionStatus({ ...base, ...at, harness: 'codex' })).toBe('running');
+    expect(deriveSessionStatus({ ...base, ...at })).toBe('running');
+  });
+
+  it('压缩收尾（后续事件顶掉）与超窗兜底：不在压缩中就按常规判', () => {
+    // 收尾笔 SessionStart(source=compact) 成为最新事件 → 回常规逻辑
+    expect(
+      deriveSessionStatus({
+        ...base,
+        harness: 'claude',
+        lastSeenAt: ago(1_000),
+        latestEventType: 'SessionStart',
+        turnOpen: true,
+      }),
+    ).toBe('running');
+    // 会话被杀在压缩中：超 10min 无任何事件 → 不永久卡「压缩中」
+    expect(
+      deriveSessionStatus({
+        ...base,
+        harness: 'claude',
+        lastSeenAt: ago(601_000),
+        latestEventType: 'PreCompact',
+        turnOpen: true,
+      }),
+    ).toBe('open');
+  });
 });
 
 describe('countSessionsByHarness', () => {
@@ -144,6 +186,18 @@ describe('countSessionsByHarness', () => {
       'claude',
       'codex',
       null,
+    ]);
+  });
+
+  it('压缩中算运行中（会话正忙，项目行不掉成「打开」）', () => {
+    const compacting = new Map<string, SessionStatus>([
+      ['a', 'compacting'],
+      ['b', 'open'],
+      ['c', 'closed'],
+      ['d', 'failed'],
+    ]);
+    expect(countSessionsByHarness(rows, compacting)).toEqual([
+      { harness: 'claude', running: 1, open: 1 },
     ]);
   });
 

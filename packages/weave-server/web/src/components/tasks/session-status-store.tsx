@@ -310,6 +310,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
             latest !== undefined && (latest.status === 'failed' || latest.status === 'timeout'),
           overlay: overlay.get(s.sessionId),
           turnOpen: s.turnOpen,
+          harness: s.harness,
           now,
         }),
       );

@@ -22,6 +22,7 @@ const HOOK_KEYS = [
   'stop',
   'subagentStop',
   'notification',
+  'preCompact',
 ] as const;
 
 /**

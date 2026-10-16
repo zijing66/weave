@@ -31,6 +31,8 @@ export const HooksConfigSchema = z.object({
   stop: z.boolean(),
   subagentStop: z.boolean(),
   notification: z.boolean(),
+  /** 压缩开始事件（压缩态实时信号；收尾笔 SessionStart 无开关，恒在采集面）。 */
+  preCompact: z.boolean(),
   timeout: z.number().default(5000),
   continueOnError: z.boolean().default(true),
 });
@@ -372,6 +374,7 @@ export const DEFAULT_HOOKS: HooksConfig = {
   stop: true,
   subagentStop: true,
   notification: true,
+  preCompact: true,
   timeout: 5000,
   continueOnError: true,
 };

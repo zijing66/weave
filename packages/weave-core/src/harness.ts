@@ -38,6 +38,8 @@ export const HARNESS_EVENTS = {
     'Stop',
     'SubagentStop',
     'Notification',
+    /** 压缩开始（宿主在压缩前发，携带 trigger=manual/auto）——压缩态的实时信号。 */
+    'PreCompact',
   ] as const,
   /** Codex 事件待批 2 B0 调研锁定（BACKLOG §10-6）；一期不注册（B0 闸门）。 */
   codex: [] as const,
@@ -127,6 +129,30 @@ export const HARNESS_LIFECYCLE = {
   /** Codex 事件待批 2 B0 调研锁定（同 HARNESS_EVENTS 闸）；空值占位，类型完整。 */
   codex: { open: '', close: [], sessionMarkers: [], subagentStop: '', questionTools: [] },
 } satisfies Record<Harness, HarnessLifecycle>;
+
+/** 压缩信号表的条目形状（谁在压缩、哪些事件是压缩）——压缩差异是 harness 知识。 */
+export interface HarnessCompaction {
+  /** 压缩开始事件：置实时「压缩中」态的唯一信号（最新事件是它即压缩中）。 */
+  start: string | null;
+  /** 压缩收尾事件类型（`start` 之后宿主发的那一笔）；无则 null。 */
+  end: string | null;
+  /** 收尾事件的 `raw.source` 取值——同类型事件有多种来源（startup/resume/clear/compact）时用它认出来。 */
+  endSource: string | null;
+}
+
+/**
+ * 压缩信号表——「会话在压缩上下文」按 harness 声明（web 经 tasks/lifecycle.ts
+ * 常量镜像）：压缩态 = 最新事件是 `start`（后续任何事件 / 超窗自然顶掉）；
+ * 事件链那一笔 = `end` 事件且 raw.source === `endSource`。全 null = 该 harness
+ * 无压缩概念。claude 的收尾笔是 `SessionStart(source=compact)`（实测压缩串 =
+ * PreCompact → 摘要 → 收尾重启，收尾笔早就在采集面里，故事件链标记对存量会话
+ * 即时可见；而实时态要看 `start`，须重跑 weave init 才有）。
+ */
+export const HARNESS_COMPACTION = {
+  claude: { start: 'PreCompact', end: 'SessionStart', endSource: 'compact' },
+  /** Codex 待调研；空值占位，类型完整。 */
+  codex: { start: null, end: null, endSource: null },
+} satisfies Record<Harness, HarnessCompaction>;
 
 /**
  * 可选 harness 键序（= 名单表）：`--harness` flag 值域与 init 交互多选的

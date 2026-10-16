@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { HARNESS_EVENTS, HARNESS_LIFECYCLE, INJECTABLE_EVENTS, TITLE_EFFECTIVE_EVENTS } from '../harness';
+import {
+  HARNESS_COMPACTION,
+  HARNESS_EVENTS,
+  HARNESS_LIFECYCLE,
+  INJECTABLE_EVENTS,
+  TITLE_EFFECTIVE_EVENTS,
+} from '../harness';
 
 describe('TITLE_EFFECTIVE_EVENTS', () => {
   it('覆盖全部 harness 键，且 ⊆ INJECTABLE_EVENTS（能生效的必先可注入）', () => {
@@ -13,6 +19,29 @@ describe('TITLE_EFFECTIVE_EVENTS', () => {
 
   it('claude：SessionStart/UserPromptSubmit——Claude Code 只在此应用 sessionTitle', () => {
     expect(TITLE_EFFECTIVE_EVENTS.claude).toEqual(['SessionStart', 'UserPromptSubmit']);
+  });
+});
+
+describe('HARNESS_COMPACTION', () => {
+  it('覆盖 HARNESS_EVENTS 的全部 harness 键', () => {
+    expect(Object.keys(HARNESS_COMPACTION).sort()).toEqual(Object.keys(HARNESS_EVENTS).sort());
+  });
+
+  it('claude：PreCompact 起、SessionStart(source=compact) 收', () => {
+    expect(HARNESS_COMPACTION.claude).toEqual({
+      start: 'PreCompact',
+      end: 'SessionStart',
+      endSource: 'compact',
+    });
+  });
+
+  it('claude：两个信号事件都在采集面内（不在面内 = 表里写了也收不到）', () => {
+    expect(HARNESS_EVENTS.claude).toContain('PreCompact');
+    expect(HARNESS_EVENTS.claude).toContain('SessionStart');
+  });
+
+  it('codex 占位全 null（无压缩信号）', () => {
+    expect(HARNESS_COMPACTION.codex).toEqual({ start: null, end: null, endSource: null });
   });
 });
 

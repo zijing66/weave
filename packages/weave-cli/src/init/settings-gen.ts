@@ -40,6 +40,7 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
     if (hooks.stop) hooksMap['Stop'] = captureHookGroup('Stop', helpersDir);
     if (hooks.subagentStop) hooksMap['SubagentStop'] = captureHookGroup('SubagentStop', helpersDir);
     if (hooks.notification) hooksMap['Notification'] = captureHookGroup('Notification', helpersDir);
+    if (hooks.preCompact) hooksMap['PreCompact'] = captureHookGroup('PreCompact', helpersDir);
 
     // 即使全被裁剪也写空对象：merge 语义靠「键存在」判定 helpers 是否启用，
     // 从而把 weave 的旧 hook 组整体清掉（weave 组 = 本次生成结果，空即清光）。
