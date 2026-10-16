@@ -495,6 +495,9 @@ export function TasksPanel({
   /** 多个能起的才弹窗选（同「终端附加目标」口径）；单个直接起、0 个按钮置灰。 */
   const [harnessPicker, setHarnessPicker] = useState(false);
   const canNewSession = terminalCount > 0 && startableHarnesses.length > 0;
+  /** 起会话在途（spawn 要几秒）：按钮同置灰——只转圈不禁用的话，看着像没反应又点一次。
+      连点的真去重在 `fb.run`（loading 吞重复调用），这里只是把同一事实摆到按钮上。 */
+  const newSessionBusy = fb.stateOf(`newSession:${projectId}`) === 'loading';
   const onNewSession = useCallback((): void => {
     if (startableHarnesses.length > 1) {
       setHarnessPicker(true);
@@ -1075,13 +1078,15 @@ export function TasksPanel({
               起哪个 harness = 本项目已接入里能起交互会话的那些（0 个也置灰）。 */}
           <button
             type="button"
-            disabled={!canNewSession}
+            disabled={!canNewSession || newSessionBusy}
             title={
-              terminalCount === 0
-                ? t('tasks.newSessionNeedsTerminal')
-                : startableHarnesses.length === 0
-                  ? t('tasks.newSessionNoHarness')
-                  : t('tasks.newSessionTip')
+              newSessionBusy
+                ? t('tasks.newSessionStarting')
+                : terminalCount === 0
+                  ? t('tasks.newSessionNeedsTerminal')
+                  : startableHarnesses.length === 0
+                    ? t('tasks.newSessionNoHarness')
+                    : t('tasks.newSessionTip')
             }
             onClick={onNewSession}
             className={cn(
@@ -1089,6 +1094,7 @@ export function TasksPanel({
               !canNewSession
                 ? 'cursor-not-allowed text-neutral-600'
                 : 'text-neutral-200 hover:bg-neutral-800',
+              newSessionBusy && 'cursor-progress opacity-70 hover:bg-neutral-900/90',
             )}
           >
             <FeedbackIcon
