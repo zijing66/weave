@@ -22,12 +22,32 @@ import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } fro
  * - 每问尾部宿主自有行 = `n+1` Other（`+↓×n+文本+尾巴`）、`n+2` Chat（两模式都有，
  *   按数字即结束整个提问）；
  * - 选项文案刻意保留英文原文——dashboard 显示的就是终端里那个英文模态框将发生的事。
+ *
+ * **预览模式**（单选且任一选项带 `preview` 时宿主换的左右分栏形态；多选即使带预览
+ * 也落回上表旧形态）：左栏选项（**不渲染描述**）、右栏预览 + `Notes:` 行、下方
+ * `Chat about this`——数字只挪高亮、**回车才提交**、`n` 进备注框、↓ 到最后一项再按
+ * 才进聊天行（那里回车即结束提问）。没有 Other 行，自定义文本改走备注行；备注只挂
+ * 在「挪过高亮」的选项上，只填备注不选选项则宿主自己答成 `(notes only)` 字串。
  */
 
 /** 下移（模态框行间导航）。 */
 const DOWN = '\x1b[B';
 /** 下一个 tab（多选勾完、或跳过未作答的问题；Submit 屏上再按是空操作——实测不绕回）。 */
 const TAB = '\t';
+
+/** 预览模式（宿主左右分栏形态）的原文字串——实机 claude 2.1.296 口径。 */
+const PREVIEW_MAX_CHARS = 2000;
+/** 宿主右栏在预览过长 / 含隐形字符时的原文（预览不被展示，选项面就该被比较）。 */
+const PREVIEW_WITHHELD =
+  '(preview cannot be shown in full — compare the option labels and descriptions instead)';
+/** 宿主右栏在某选项不带预览时的原文。 */
+const PREVIEW_NONE = 'No preview available';
+/** 备注行的焦点键：宿主预览面里按 `n` 进备注框（不是数字，故与选项行不同型）。 */
+const NOTES_KEY = 'n';
+/** 备注行未聚焦时宿主的原文（dim italic 提示）。 */
+const NOTES_HINT = 'press n to add notes';
+/** 隐形 / 双向控制字符（宿主会把它们中和掉，改得动就整条不展示）。 */
+const INVISIBLE_CHARS = /[\p{M}\u200b-\u200f\u2028-\u202e\u2060-\u206f\u180b-\u180f\ufe0e\ufe0f]/u;
 
 /** 计划确认的合成问题（ExitPlanMode 的 toolInput 恒空，宿主 UI 选项固定）。 */
 const PLAN_QUESTION: BlockingQuestion = {
@@ -125,9 +145,62 @@ function parseOptions(raw: unknown): BlockingQuestionOption[] {
       keys: [String(out.length + 1)],
       label,
       description: typeof description === 'string' && description ? description : null,
+      preview: previewPaneText((item as { preview?: unknown }).preview),
     });
   }
   return out;
+}
+
+/**
+ * 宿主右栏的原文（`h3` 的 preview 归一）：无可见内容 = 该选项**没有预览**（返回 null，
+ * 连模式判据都不算它一个）；超长 / 含隐形字符 = 内容不被展示（右栏给固定原文）。
+ */
+function previewPaneText(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  if (raw.length > PREVIEW_MAX_CHARS) return PREVIEW_WITHHELD;
+  if (!raw.replace(/�/g, '').trim()) return null;
+  return INVISIBLE_CHARS.test(raw) ? PREVIEW_WITHHELD : raw;
+}
+
+/**
+ * 预览模式的选项键：数字**只挪高亮**、回车才提交，且宿主只为「挪过高亮」的选项
+ * 保存备注（备注挂在当前高亮项上、没挪过则退化成「(notes only)」）——故先挪到
+ * 别处、第二记落在目标上。单选项无处可挪，这时备注行整个不给（见 `previewTail`）。
+ */
+function previewMoveKeys(index: number, count: number): string[] {
+  if (count < 2) return [String(index + 1)];
+  return [String(index === 0 ? 2 : 1), String(index + 1)];
+}
+
+/** 预览模式的选项行：提交另需回车；右栏原文随行下发（无预览 = 宿主的占位原文）。 */
+function previewOptionRows(options: readonly BlockingQuestionOption[]): BlockingQuestionOption[] {
+  return options.map((option, i) => ({
+    keys: previewMoveKeys(i, options.length),
+    commit: ['\r'],
+    label: option.label,
+    description: option.description,
+    preview: option.preview ?? PREVIEW_NONE,
+  }));
+}
+
+/**
+ * 预览模式的尾行（**没有** `n+1` Other 行——自定义文本改走 `n` 备注行）：
+ * 备注行 = `n` 进文本框（文本非空才发得出去）；聊天行 = 数字到最后一项再 ↓ 才进得去，
+ * 那里按回车即结束整个提问。
+ */
+function previewTail(count: number): BlockingQuestionOption[] {
+  const rows: BlockingQuestionOption[] = [];
+  if (count >= 2) {
+    rows.push({
+      keys: [NOTES_KEY],
+      label: 'Notes:',
+      description: NOTES_HINT,
+      input: true,
+      textTail: ['\r'],
+    });
+  }
+  rows.push({ keys: [String(count), DOWN, '\r'], label: 'Chat about this', chat: true });
+  return rows;
 }
 
 export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
@@ -172,12 +245,17 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
         const options = parseOptions((q as { options?: unknown }).options);
         if (!question || options.length === 0) continue;
         const face = header ?? question.slice(0, 24);
+        // 宿主预览模式（单选 + 任一选项带预览；多选即使带预览也落回旧形态）。
+        const previewMode = !multiSelect && options.some((o) => o.preview != null);
         out.push({
           key: `AskUserQuestion:${face}`,
           header,
           question,
-          options: [...options, ...hostRows(options.length, multiSelect)],
+          options: previewMode
+            ? [...previewOptionRows(options), ...previewTail(options.length)]
+            : [...options, ...hostRows(options.length, multiSelect)],
           multiSelect,
+          previewMode,
         });
       }
       if (out.length === 0) return [OPAQUE_QUESTION];

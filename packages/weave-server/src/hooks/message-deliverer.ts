@@ -183,11 +183,11 @@ const DISMISS_GUARD_MAX = 200;
 /**
  * 作答键序白名单（安全闸）：逐个**原子**验形态——作答面不能变成任意键序注入
  * 通道（键序若打进已关的模态框会漏进输入框执行）。原子要么是宿主的键（选项
- * 序号 / Tab / 回车 / 下移），要么是自定义输入行的文本（无控制字符——CR/LF/ESC
- * 混进来就成了任意键序注入，不只是打字）。原子表本身由 harness 规格拼装
- * （选项 keys / textFocus / textTail），这里只验形态。
+ * 序号 / Tab / 回车 / 下移 / 预览面的 `n` 备注键），要么是自定义输入行的文本
+ * （无控制字符——CR/LF/ESC 混进来就成了任意键序注入，不只是打字）。原子表本身
+ * 由 harness 规格拼装（选项 keys / textFocus / textTail），这里只验形态。
  */
-const ANSWER_ATOM = /^(?:[1-9]|\t|\r|\x1b\[B)$/;
+const ANSWER_ATOM = /^(?:[1-9]|n|\t|\r|\x1b\[B)$/;
 const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
 
 /** 中断键 = 一记 ESC（claude 里连打两次是历史回退菜单，故只打一记）。 */

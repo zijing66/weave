@@ -9,7 +9,8 @@ import type { BlockingQuestion } from '@weavecode/harness';
  * - 未作答的问题要补一记 Tab 走过去——宿主允许空作答，但不走开的话下一个问题的
  *   数字会落在上一个 tab 上；
  * - 多选勾选不推进焦点（单选数字自带推进、输入行尾键自带推进），故多选答完也要 Tab；
- * - `chat` 行与收尾屏（Submit）结束整 call，后面的键不能再打（会落进聊天输入框）。
+ * - `chat` 行与收尾屏（Submit）结束整 call，后面的键不能再打（会落进聊天输入框）；
+ * - 预览模式的选项键只挪高亮，提交靠选项自己的 `commit`（没选输入行时补在键序尾）。
  */
 
 /** 一问的作答（web 只送下标与文本，键序由服务端按面拼）。 */
@@ -47,14 +48,18 @@ export function composeAnswerAtoms(
     if (q.submit && chosen.length !== 1) {
       return { ok: false, error: 'Submit choice required to finish the call' };
     }
-    if (!q.multiSelect && chosen.length > 1) {
-      return { ok: false, error: `Single-select question got ${chosen.length} options: ${q.key}` };
+    // 预览模式的一次作答 = 选项行 + 备注行（备注挂在选项上，见规格），故单选数只点数选项行。
+    const selected = chosen.filter((o) => !o!.input);
+    if (!q.multiSelect && selected.length > 1) {
+      return { ok: false, error: `Single-select question got ${selected.length} options: ${q.key}` };
     }
     const text = pick?.text?.trim() ?? '';
     const input = chosen.find((o) => o.input);
     if (input && !text) return { ok: false, error: `Text required for this option: ${q.key}` };
     for (const option of chosen) atoms.push(...option!.keys);
     if (input) atoms.push(...(input.textFocus ?? []), text, ...(input.textTail ?? ['\r']));
+    // 选项的提交键：键序只挪高亮时（预览模式）提交另需一记回车；选了输入行则由该行尾键提交。
+    else for (const option of chosen) atoms.push(...(option!.commit ?? []));
     // chat 行结束整个提问、收尾屏落定整 call —— 后面的键都会落进聊天输入框。
     if (q.submit || chosen.some((o) => o.chat)) break;
     // 输入行的尾键自带推进（回车 / 内联 Submit）；多选勾选与空作答没有，要手动走。

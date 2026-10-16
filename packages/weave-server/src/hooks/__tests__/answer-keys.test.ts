@@ -114,4 +114,61 @@ describe('composeAnswerAtoms', () => {
     );
     expect(fail([], [{ question: 'Q' }])).toMatch(/no answerable options/);
   });
+
+  describe('预览模式（单选 + 选项带 preview）', () => {
+    const previewed = {
+      question: 'Pick a layout',
+      header: 'P1',
+      options: [
+        { label: 'Sidebar', preview: '|nav| main' },
+        { label: 'Stacked', preview: 'nav\nmain' },
+      ],
+    };
+
+    it('只选选项：挪高亮的两记数字 + 回车（提交靠选项的 commit）', () => {
+      expect(atomsOf([previewed], [{ questionKey: 'AskUserQuestion:P1', options: [1] }])).toEqual([
+        '1',
+        '2',
+        '\r',
+      ]);
+    });
+
+    it('选项 + 备注：挪高亮 → `n` → 文本 → 回车（备注挂在挪过高亮的选项上）', () => {
+      expect(
+        atomsOf([previewed], [
+          { questionKey: 'AskUserQuestion:P1', options: [0, 2], text: '  再宽点  ' },
+        ]),
+      ).toEqual(['2', '1', 'n', '再宽点', '\r']);
+    });
+
+    it('只填备注（不选选项）：`n` + 文本 + 回车——宿主自己答成 (notes only)', () => {
+      expect(
+        atomsOf([previewed], [{ questionKey: 'AskUserQuestion:P1', options: [2], text: '偏窄' }]),
+      ).toEqual(['n', '偏窄', '\r']);
+    });
+
+    it('聊天行：到最后一项的 ↓ + 回车结束整 call（后面的问题不再打）', () => {
+      const questions = [previewed, { ...single, header: 'S2' }];
+      expect(
+        atomsOf(questions, [
+          { questionKey: 'AskUserQuestion:P1', options: [3] },
+          { questionKey: 'AskUserQuestion:S2', options: [0] },
+          { questionKey: submitKey, options: [0] },
+        ]),
+      ).toEqual(['2', '\x1b[B', '\r']);
+    });
+
+    it('单选数只点数选项行：选了备注行不算第二选；备注行缺文本照样拒', () => {
+      const out = composeAnswerAtoms(
+        parse([previewed]),
+        [{ questionKey: 'AskUserQuestion:P1', options: [0, 1] }],
+      );
+      expect(out.ok ? 'ok' : out.error).toMatch(/Single-select/);
+      const noText = composeAnswerAtoms(
+        parse([previewed]),
+        [{ questionKey: 'AskUserQuestion:P1', options: [0, 2] }],
+      );
+      expect(noText.ok ? 'ok' : noText.error).toMatch(/Text required/);
+    });
+  });
 });

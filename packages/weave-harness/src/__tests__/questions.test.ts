@@ -76,4 +76,94 @@ describe('claude 阻塞问答面', () => {
     ]);
     expect(CLAUDE_BLOCKING_PROMPT.parseQuestions('AskUserQuestion', {})[0]!.options).toEqual([]);
   });
+
+  describe('预览模式（单选 + 任一选项带 preview）', () => {
+    const previewed = {
+      question: 'Pick a layout',
+      header: 'P1',
+      options: [
+        { label: 'Sidebar', preview: '|nav| main' },
+        { label: 'Stacked', preview: 'nav\nmain' },
+      ],
+    };
+
+    it('左右分栏面：数字只挪高亮（先挪到别处好让备注挂得上）、提交另给回车；无 Other 行', () => {
+      const [q] = parse([previewed]);
+      expect(q!.previewMode).toBe(true);
+      expect(q!.options.map((o) => o.label)).toEqual([
+        'Sidebar',
+        'Stacked',
+        'Notes:',
+        'Chat about this',
+      ]);
+      expect(q!.options[0]).toMatchObject({
+        keys: ['2', '1'],
+        commit: ['\r'],
+        preview: '|nav| main',
+      });
+      expect(q!.options[1]).toMatchObject({ keys: ['1', '2'], commit: ['\r'], preview: 'nav\nmain' });
+      expect(q!.options[0]!.input).toBeUndefined();
+      expect(q!.options[0]!.chat).toBeUndefined();
+    });
+
+    it('备注行 = `n` 进文本框（文本非空才发）；聊天行 = 到最后一项再 ↓ 才进得去', () => {
+      const [q] = parse([previewed]);
+      const notes = q!.options[2]!;
+      expect(notes).toMatchObject({
+        keys: ['n'],
+        label: 'Notes:',
+        description: 'press n to add notes',
+        input: true,
+        textTail: ['\r'],
+      });
+      expect(notes.textFocus).toBeUndefined();
+      expect(q!.options[3]).toMatchObject({
+        keys: ['2', '\x1b[B', '\r'],
+        label: 'Chat about this',
+        chat: true,
+      });
+    });
+
+    it('右栏原文：无可见内容 = 该选项没有预览（右栏给宿主占位原文）', () => {
+      const [q] = parse([
+        { ...previewed, options: [{ label: 'A', preview: 'ok' }, { label: 'B', preview: '   ' }] },
+      ]);
+      expect(q!.options[0]!.preview).toBe('ok');
+      expect(q!.options[1]!.preview).toBe('No preview available');
+    });
+
+    it('超长 / 含隐形字符的预览 = 不被展示（右栏给宿主原文）', () => {
+      const [q] = parse([
+        {
+          ...previewed,
+          options: [
+            { label: 'A', preview: 'x'.repeat(2001) },
+            { label: 'B', preview: 'ok​' },
+          ],
+        },
+      ]);
+      const withheld =
+        '(preview cannot be shown in full — compare the option labels and descriptions instead)';
+      expect(q!.options[0]!.preview).toBe(withheld);
+      expect(q!.options[1]!.preview).toBe(withheld);
+    });
+
+    it('多选项带预览也落回旧形态；全程无预览则模式不触发', () => {
+      const [multiQ] = parse([{ ...previewed, multiSelect: true }]);
+      expect(multiQ!.previewMode).toBe(false);
+      expect(multiQ!.options.map((o) => o.label)).toContain('Type something');
+
+      const [plain] = parse([{ ...previewed, options: [{ label: 'A' }, { label: 'B' }] }]);
+      expect(plain!.previewMode).toBe(false);
+      expect(plain!.options.map((o) => o.label)).toContain('Type something');
+    });
+
+    it('单选项：无处挪高亮（备注挂不上选项），故不给备注行、键序只一记数字 + 回车', () => {
+      const [q] = parse([{ ...previewed, options: [{ label: 'Only', preview: 'solo' }] }]);
+      expect(q!.options.map((o) => o.label)).toEqual(['Only', 'Chat about this']);
+      expect(q!.options[0]).toMatchObject({ keys: ['1'], commit: ['\r'] });
+      expect(q!.options[1]).toMatchObject({ keys: ['1', '\x1b[B', '\r'], chat: true });
+      expect(q!.submit).toBeUndefined();
+    });
+  });
 });

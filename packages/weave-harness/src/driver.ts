@@ -207,7 +207,7 @@ export interface MessageMeta {
  * 输入（实测「11」把数字当筛选字串、一个都不选），故「数字 + 数字」必须分两次发。
  */
 export interface BlockingQuestionOption {
-  /** 击键原子（`[1-9]` 选项序号 / `\t` 下一个 tab / `\r` 回车 / `\x1b[B` 下移）。 */
+  /** 击键原子（`[1-9]` 选项序号 / `\t` 下一个 tab / `\r` 回车 / `\x1b[B` 下移 / `n` 备注框）。 */
   keys: readonly string[];
   label: string;
   description?: string | null;
@@ -219,6 +219,10 @@ export interface BlockingQuestionOption {
   textTail?: readonly string[];
   /** 宿主自有尾行「结束整个提问去聊天」：按下 keys 即结束提问，后续键序不再打。 */
   chat?: boolean;
+  /** 预览模式右栏原文（该选项被高亮时宿主显示的东西；含宿主「不展示/无预览」的占位串）。 */
+  preview?: string | null;
+  /** 预览模式：keys 只挪高亮，**提交另需这一串**——但同问选了 input 行时由该行的尾键提交。 */
+  commit?: readonly string[];
 }
 
 /** 阻塞式问答的问题面（PreToolUse 载荷归一化；web 直渲染，选项原文展示）。 */
@@ -232,6 +236,9 @@ export interface BlockingQuestion {
   /** 提交步：宿主模态框尾部的「提交/取消」屏（`questions≥2 || 任一 multiSelect` 才有）——
    *  不是宿主的第 n 个问题 tab，web 把它渲染成弹窗底部的动作。 */
   submit?: boolean;
+  /** 宿主预览模式（单选且任一选项带 `preview`）：左右分栏（选项 | 预览），尾行只有 chat，
+   *  自定义文本走 `n` 备注行。选项文案与描述在宿主这一形态下**不渲染**（右栏取而代之）。 */
+  previewMode?: boolean;
 }
 
 /**
