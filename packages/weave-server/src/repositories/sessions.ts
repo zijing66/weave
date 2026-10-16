@@ -138,6 +138,46 @@ export class SessionRepository {
   }
 
   /**
+   * 单会话判活输入（`daemon/claude-liveness.ts` 的 `pidAliveOf` 消费形状）——
+   * harness / lastEventType / eventCount 都是 listWithCounts 的计算字段，单行版与
+   * 列表版同源同判据（同 turnOpenOf 的先例）。会话不存在 → null。
+   */
+  livenessRowOf(sessionId: string): {
+    sessionId: string;
+    harness: Harness | null;
+    lastSeenAt: string;
+    lastEventType: string | null;
+    eventCount: number;
+  } | null {
+    const row = this.db
+      .prepare(
+        'SELECT s.session_id, s.last_seen_at, COUNT(e.id) AS event_count, ' +
+          "(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, " +
+          "(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type " +
+          'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id ' +
+          'WHERE s.session_id = ? GROUP BY s.session_id',
+      )
+      .get(sessionId) as
+      | {
+          session_id?: unknown;
+          last_seen_at?: unknown;
+          event_count?: unknown;
+          harness?: unknown;
+          last_event_type?: unknown;
+        }
+      | undefined;
+    if (!row) return null;
+    const harness = row.harness;
+    return {
+      sessionId: String(row.session_id),
+      harness: isHarness(harness) ? harness : null,
+      lastSeenAt: String(row.last_seen_at),
+      lastEventType: row.last_event_type == null ? null : String(row.last_event_type),
+      eventCount: Number(row.event_count ?? 0),
+    };
+  }
+
+  /**
    * dashboard 改名：display 名（title）立即落，pending_title 负责把新名同步给
    * Claude 侧（下次 SessionStart(resume)/UserPromptSubmit 经 hook 下发）——dashboard
    * 不再替闲置会话代持旧名，徽标只表示「Claude 侧还没同步」。

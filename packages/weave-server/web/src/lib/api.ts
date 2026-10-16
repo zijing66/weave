@@ -373,6 +373,8 @@ export interface SessionMessageRow {
   settledAt?: string | null;
   /** 本条 = 该会话队列暂停闸的成因（未回执超窗/投递失败）；重发或回执清除。 */
   stalled?: boolean | null;
+  /** 判死而没投出去（会话进程不在、三层全无通路）= `failed` 的成因；web 据此出中文说明。 */
+  reason?: 'offline' | null;
   output: string | null;
   error: string | null;
   at: string;

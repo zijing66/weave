@@ -93,6 +93,8 @@ export const tasksZh = {
   'tasks.msgDismissHint': '把这条从对话里删掉（不再展示；暂停闸成因一并解闸）。已经送到会话的内容不受影响',
   'tasks.msgDismissQueuedHint': '这条还没投递出去（压在队列里）——删掉即取消发送',
   'tasks.msgDismissFailed': '删除失败：{error}',
+  'tasks.msgOffline': '会话未运行——消息没有送出去（先打开该会话，再点重发）',
+  'tasks.msgOfflineToast': '会话未运行，消息没有送出去',
   'tasks.msgStatusQueued': '排队中',
   'tasks.msgStatusDelivering': '投递中',
   'tasks.msgStatusInjected': '已注入',
@@ -329,6 +331,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.msgDismissQueuedHint':
     'Not delivered yet (still queued) — deleting it cancels the send',
   'tasks.msgDismissFailed': 'Delete failed: {error}',
+  'tasks.msgOffline': 'Session is not running — the message was not sent (open the session, then resend)',
+  'tasks.msgOfflineToast': 'Session is not running — nothing was sent',
   'tasks.msgStatusQueued': 'Queued',
   'tasks.msgStatusDelivering': 'Delivering',
   'tasks.msgStatusInjected': 'Injected',

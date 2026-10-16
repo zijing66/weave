@@ -23,6 +23,7 @@ import {
   type SendResult,
 } from '../message-deliverer.js';
 import { ResumeRunner } from '../resume-runner.js';
+import { CLAUDE_REG_GRACE_MS } from '../../daemon/claude-liveness.js';
 import { hookShardId } from '../mirror.js';
 import { INBOX_TARGETS_FILE } from '../inbox-socket.js';
 import { readPromptbox } from '../promptbox.js';
@@ -118,6 +119,12 @@ describe('MessageDeliverer 裁决表', () => {
 
   const pushEvent = (sessionId: string, eventType: string, source: 'claude' | 'codex' = 'claude') =>
     events.insert({ projectId, source, eventType, sessionId, payload: '{}' });
+
+  /** 把 last_seen 推回新会话豁免窗之外（判活的「不是新鲜会话」前提）。 */
+  const backdateLastSeen = (sessionId: string) =>
+    db
+      .prepare('UPDATE sessions SET last_seen_at = ? WHERE session_id = ?')
+      .run(new Date(Date.now() - CLAUDE_REG_GRACE_MS * 10).toISOString(), sessionId);
 
   const makeDeps = (extra: Partial<MessageDelivererDeps> = {}): MessageDelivererDeps => ({
     sessions,
@@ -1140,6 +1147,139 @@ describe('MessageDeliverer 裁决表', () => {
     );
     expect(readPromptbox(hooksDir, TOKEN).some((e) => e.id === failedMsg.id)).toBe(false);
     void queued;
+  });
+
+  it('判死：三层全无通路 + 目标进程不在 → 不假装排队，落 failed + offline（不置暂停闸）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(() => null); // peer 未登记
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        livenessOf: () => new Map([[SESSION_ID, false]]),
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '谁也收不到',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'failed' });
+    if (!result.ok) throw new Error('unreachable');
+    const failed = result.message;
+    expect(failed.reason).toBe('offline');
+    expect(failed.error).toBe('Session is not running');
+    expect(fake.calls).toHaveLength(0);
+    // 不入队：没有死信排在队列里等一个永远不来的取件人
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+    // 终态 + 帧（既有 messageFailed 订阅提醒照常），且不置暂停闸（不挡重发）
+    expect(deliverer.getMessage(failed.id)!.status).toBe('failed');
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.finished', messageId: failed.id, status: 'failed' }),
+    );
+    expect(busEvents.some((m) => m.kind === 'message.stalled')).toBe(false);
+    const visible = deliverer.listVisible(SESSION_ID).find((m) => m.id === failed.id);
+    expect(visible).toMatchObject({ status: 'failed', reason: 'offline' });
+
+    // 同判据的另一半：注册表里查无此人（daemon 重启后凭据图还没建回来、
+    // 或进程被强杀没清登记）+ 早已过新会话豁免窗 → 同样判死，不靠注入的图。
+    backdateLastSeen(SESSION_ID);
+    const noReg = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => surface, livenessOf: () => new Map() }),
+    );
+    const stale = await noReg.send({
+      toSessionId: SESSION_ID,
+      text: '同样送不出去',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(stale).toMatchObject({ ok: true, status: 'failed' });
+  });
+
+  it('判不动 → 照旧入队 pending，绝不误判死', async () => {
+    const { surface } = relaySurface(() => null);
+    // ① 存活图里没有该会话，但会话刚活动过（claude 登记文件可能还没落盘）→ 不猜
+    const unknown = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => surface, livenessOf: () => new Map() }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const queued = await unknown.send({
+      toSessionId: SESSION_ID,
+      text: '留队列',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(queued).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // ② codex：登记表是 claude 自己的东西，codex 会话永远查不到；即便早就过
+    // 豁免窗也不判（判活判据只认 claude，别的 harness 落 null）→ 照旧入队
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const codex = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => noNative,
+        livenessOf: () => new Map(),
+        terminal: {
+          available: () => true,
+          listPanes: async () => [],
+          sendText: vi.fn(),
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(CODEX_SESSION, 'Stop', 'codex');
+    backdateLastSeen(CODEX_SESSION);
+    const codexResult = await codex.send({
+      toSessionId: CODEX_SESSION,
+      text: 'codex 留队列',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(codexResult).toMatchObject({ ok: true, status: 'pending' });
+  });
+
+  it('冲洗判死：队列整批转 offline 并清队（不再每轮白探 pane）', async () => {
+    const { surface } = relaySurface(() => null);
+    let alive = false;
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        livenessOf: () => (alive ? new Map([[SESSION_ID, false]]) : new Map()),
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    for (const text of ['第一条', '第二条']) {
+      const r = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text,
+        mode: 'prompt',
+        fromKind: 'dashboard',
+      });
+      expect(r).toMatchObject({ status: 'pending' });
+    }
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+
+    alive = true; // 会话死了
+    await deliverer.flushSession(SESSION_ID);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+    expect(
+      busEvents.filter((m) => m.kind === 'message.finished').map((m) => m.status),
+    ).toEqual(['failed', 'failed']);
+    const rows = deliverer.listVisible(SESSION_ID);
+    expect(rows.map((m) => m.reason)).toEqual(['offline', 'offline']);
   });
 
   it('终端通道注入但 available()=false（settings 换了不支持的后端）→ prompt 409、矩阵不亮', async () => {

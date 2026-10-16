@@ -823,7 +823,10 @@ export function SessionMessages({
     void fb.run(
       `sendMsg:${sessionId}`,
       async () => {
-        await api.sendSessionMessage(sessionId, { text });
+        const res = await api.sendSessionMessage(sessionId, { text });
+        // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
+        // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
+        if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
         await refreshMessages();
       },
       { fail: (e) => t('tasks.msgSendFailed', { error: errorText(e) }) },
@@ -1062,8 +1065,15 @@ export function SessionMessages({
                       <div className="[&_p]:whitespace-pre-wrap">
                         <AssistantMarkdown text={m.text} />
                       </div>
-                      {pipe?.error && (
-                        <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
+                      {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
+                      {pipe?.reason === 'offline' ? (
+                        <p className="mt-1 break-words text-[11px] text-amber-400">
+                          {t('tasks.msgOffline')}
+                        </p>
+                      ) : (
+                        pipe?.error && (
+                          <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
+                        )
                       )}
                       {/* 多选态里重发/删除不渲染——它们会跟「点气泡即勾选」抢点击 */}
                       {!selecting &&

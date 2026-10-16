@@ -7,6 +7,7 @@ import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
+import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
 import { normalizeDirKey, type SessionTerminal } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
@@ -19,6 +20,7 @@ import {
   removePromptboxBySession,
   removePromptboxEntries,
   scanQueuedSessionIds,
+  type PromptboxEntry,
 } from './promptbox.js';
 
 /**
@@ -35,6 +37,11 @@ import {
  * 内存态注册表只放「pending 之后」的消息（投递中 / headless 在途 / 终态结果）；
  * pending 只存在于 promptbox 文件。重启即丢 headless 终态 = 显式高级选项的
  * 已文档代价。通道规格全部来自 MessagingSurface 能力面，本类不含 harness 硬编码。
+ *
+ * 层③ 只收「还有可能送达」的行：三层全无通路且目标已判死（claude 注册表
+ * `pidAlive === false`）时**不入队**，落 failed + `reason: 'offline'`（web 出中文
+ * 说明）——死会话的队列行永远不会被取走，排在那里只是骗人。判不动（null）不猜，
+ * 照旧入队。
  *
  * send() 校验失败同步返回错误码；成功立即返回（inject 已落 outbox，headless
  * 「已启动」，prompt 视层可用性返回 delivering/pending），终态经回调后台落定，
@@ -74,6 +81,8 @@ export interface PipeMessage {
   settledAt?: string | null;
   /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
   stalled?: boolean;
+  /** 判死而没投出去（会话进程不在、三层全无通路）：`failed` 的成因，web 据此出中文说明。 */
+  reason?: 'offline';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -140,6 +149,9 @@ export interface MessageDelivererDeps {
   /** 未回执闸窗口（毫秒）；缺省 120s——prompt 送达后没等到 UPS 回执即暂停该会话
    *  的队列冲洗（防继续向 Held/Refused 的会话灌消息），手动重发或回执解除。 */
   ackStallMs?: number;
+  /** 会话存活图（测试注入）；缺省 `claudeLivenessById()`——同两个引擎（watch/sequence）
+   *  的取法：没有注册表就空图，会话一律「查不动」，不猜。 */
+  livenessOf?: () => Map<string, boolean>;
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -177,6 +189,9 @@ const ACK_STALL_MS = 120_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
+
+/** 判死落定时的技术性成因（用户可见的中文说明在 web，经 `reason` 标记译出）。 */
+const OFFLINE_ERROR = 'Session is not running';
 
 /** 刚删掉的队列行 id 保留多少条（冲洗的「先读盘 → 逐条投递」竞态闸，见 dismissedIds）。 */
 const DISMISS_GUARD_MAX = 200;
@@ -761,8 +776,17 @@ export class MessageDeliverer {
           }
         }
       }
-      // 层均不可用（会话没开 / pane 找不到）：留队列等下轮触发
-      if (!handled) return;
+      // 层均不可用（会话没开 / pane 找不到）：已判死的会话里队列行全是死信，
+      // 整批落 offline 并清队（不再每 15s 白探一轮 pane 枚举）；判不动留队列等下轮。
+      if (!handled) {
+        if (this.sessionJudgedDead(sessionId)) {
+          this.failQueuedOffline(
+            sessionId,
+            entries.filter((e) => !this.dismissedIds.has(e.id)),
+          );
+        }
+        return;
+      }
     }
     const rest = readPromptbox(this.hooksDir, project.token).filter((e) => e.sessionId === sessionId);
     if (rest.length === 0) this.queuedSessions.delete(sessionId);
@@ -946,6 +970,11 @@ export class MessageDeliverer {
         }
       }
     }
+    // 三层全无通路（没凭据 / 没 peer / 没 pane）：只有目标真的不在跑了才判死，
+    // 判不出来（null）照旧入队等下一次事件或刷新器。
+    if (this.sessionJudgedDead(entry.sessionId)) {
+      return { ok: true, messageId: entry.id, status: 'failed', message: this.failOffline(entry) };
+    }
     this.queueEntry(entry, project.token);
     const pending: PipeMessage = { ...entry, status: 'pending' };
     return { ok: true, messageId: entry.id, status: 'pending', message: pending };
@@ -986,6 +1015,66 @@ export class MessageDeliverer {
       { id: entry.id, sessionId: entry.sessionId, text: entry.text, oneWay: entry.oneWay === true },
     ]);
     this.queuedSessions.add(entry.sessionId);
+  }
+
+  /**
+   * 该会话是否已判死：claude 注册表 `pidAlive === false` 才认，`null` 不猜
+   * （codex / 新会话豁免窗 / SessionStart 空壳行都落 null）。判据与「已终止」
+   * 态、两条 terminated 补射同源（claude-liveness 的 pidAliveOf）——消息行与
+   * 会话行不会各说各话。
+   */
+  private sessionJudgedDead(sessionId: string): boolean {
+    const row = this.deps.sessions.livenessRowOf(sessionId);
+    if (!row) return false;
+    const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
+    return pidAliveOf(row, liveness) === false;
+  }
+
+  /**
+   * 判死落定：三层全无通路、目标进程又不在——**不假装排队**，落 `failed` +
+   * `reason: 'offline'`（`message.finished` 帧照抛，既有 messageFailed 订阅提醒
+   * 生效）。**刻意不置暂停闸**：队列整批转 offline 后已空，闸只会挡住用户重发
+   * ——重发是有意的可逆出口（判活残差 / 会话其实活着时，一点就回来）。
+   */
+  private failOffline(entry: PipeMessage): PipeMessage {
+    const at = new Date().toISOString();
+    const failed: PipeMessage = {
+      ...entry,
+      status: 'failed',
+      reason: 'offline',
+      error: OFFLINE_ERROR,
+      settledAt: at,
+    };
+    this.memory.set(entry.id, failed);
+    this.bus({
+      kind: 'message.finished',
+      messageId: entry.id,
+      sessionId: entry.sessionId,
+      status: 'failed',
+      at,
+    });
+    return failed;
+  }
+
+  /** 冲洗时判死：**该会话全部队列行**都是死信（死会话投不进去），整批落定 + 清队。 */
+  private failQueuedOffline(sessionId: string, entries: readonly PromptboxEntry[]): void {
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
+    if (!project || entries.length === 0) return;
+    for (const entry of entries) {
+      this.failOffline({
+        id: entry.id,
+        sessionId,
+        text: entry.text,
+        mode: 'prompt',
+        oneWay: entry.oneWay === true,
+        channel: 'prompt',
+        status: 'pending',
+        at: entry.at,
+      });
+    }
+    removePromptboxEntries(this.hooksDir, project.token, new Set(entries.map((e) => e.id)));
+    this.queuedSessions.delete(sessionId);
   }
 
   /**
