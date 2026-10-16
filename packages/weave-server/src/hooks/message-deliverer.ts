@@ -6,7 +6,7 @@ import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
-import { normalizeDirKey } from '../daemon/opener.js';
+import { normalizeDirKey, type SessionTerminal } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
 import { appendOutbox, hooksRoot } from './mirror.js';
@@ -92,6 +92,13 @@ export interface PromptTerminal {
    * mux 或 pane 已不在 = null）。可缺省（老装配/无定位能力的终端 = 恒回落标题+cwd）。
    */
   locatePane?(env: Record<string, string>): Promise<string | null>;
+  /**
+   * 会话 → 所在可见屏幕（会话列表分块的数据面）。可缺省（无枚举能力的终端 =
+   * 恒空表，那些会话不分组）；env 表批量进出（后端一次枚举摊平全部会话）。
+   */
+  locateScreens?(
+    envs: Record<string, Record<string, string>>,
+  ): Promise<Record<string, SessionTerminal | null>>;
   /** 往 pane 注入一段 prompt（原文 + 提交键）。 */
   sendText(paneId: string, text: string): Promise<void>;
   /** 裸键序注入（作答的选项键 / 中断的 ESC：模态框只吃键盘，不吃粘贴文本）。 */
@@ -421,6 +428,16 @@ export class MessageDeliverer {
   }
 
   /**
+   * 会话 → 所在可见屏幕（会话列表分块的数据面，只读）。旁路 env 与投递路径共用
+   * 同一份缓存，不另采一次；后端没有反查能力 = 空表（那些会话不分组）。
+   */
+  async sessionTerminals(): Promise<Record<string, SessionTerminal | null>> {
+    const terminal = this.terminalChannel();
+    if (!terminal?.locateScreens || this.paneEnvs.size === 0) return {};
+    return terminal.locateScreens(Object.fromEntries(this.paneEnvs));
+  }
+
+  /**
    * 投递回执：会话自己的 UserPromptSubmit 到了 —— 其 prompt 原文与在途条目匹配
    * 即成真（`acked`）。中继/终端/socket 三路通用（中继的原文外面裹着 Claude Code
    * 自己的 `<cross-session-message …>` 壳，比对时归一掉）。
@@ -646,7 +663,8 @@ export class MessageDeliverer {
   }
 
   /**
-   * 队列冲洗（幂等）：层① 命中 → 中继；层② pane 命中 → send-text；都不行留队列。
+   * 队列冲洗（幂等）：直投命中即走；否则中继 / 终端按面定序（手动面终端优先）；
+   * 都不行留队列。
    * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
    * 条、条间至少 `flushGapMs`（中继路径本就被同会话中继闸天然间隔，终端路径没有，
    * 所以节流在这里统一兜）。超出的留队列，下轮触发（ingest / 刷新器）继续。
@@ -692,52 +710,55 @@ export class MessageDeliverer {
         return;
       }
       if (delivered > 0) await sleep(this.deps.flushGapMs ?? FLUSH_GAP_MS);
-      const peer = relay?.resolve(sessionId) ?? null;
-      if (relay && peer) {
-        const msg: PipeMessage = {
-          id: entry.id,
-          sessionId,
-          text: entry.text,
-          mode: 'prompt',
-          oneWay: entry.oneWay === true,
-          via: 'relay',
-          channel: 'prompt',
-          status: 'pending',
-          at: entry.at,
-        };
-        this.memory.set(msg.id, { ...msg, status: 'delivering' });
-        const started = this.runRelay(msg, relay, peer.name);
-        if (started) {
-          removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
-          delivered++;
-          continue;
-        }
-        // 同会话中继在途：本轮到此为止，剩余行留队列
-        this.memory.delete(msg.id);
-        return;
+      const msg: PipeMessage = {
+        id: entry.id,
+        sessionId,
+        text: entry.text,
+        mode: 'prompt',
+        oneWay: entry.oneWay === true,
+        via: 'socket',
+        channel: 'prompt',
+        status: 'pending',
+        at: entry.at,
+      };
+      // 层①-a 直投优先：冲洗正是被「刚上报凭据的那条 hook 事件」触发的（本机毫秒级、
+      // 零进程零 LLM），队列里的手动面行不该绕过它直奔中继。
+      if (surface && (await this.tryInboxDeliver(msg, surface))) {
+        removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
+        delivered++;
+        continue;
       }
-      if (this.terminalChannel()) {
-        const pane = await this.terminalPaneFor(session, project);
-        if (pane) {
+      const peer = relay?.resolve(sessionId) ?? null;
+      // 层序同即时路径（手动面中继退最后）；本轮中继起不来就停轮，余行留队列。
+      const layers: Array<'relay' | 'terminal'> = msg.oneWay === true ? ['terminal', 'relay'] : ['relay', 'terminal'];
+      let handled = false;
+      for (const layer of layers) {
+        if (layer === 'relay' && relay && peer) {
+          this.memory.set(msg.id, { ...msg, status: 'delivering', via: 'relay' });
+          if (!this.runRelay(msg, relay, peer.name)) {
+            // 同会话中继在途：本轮到此为止，剩余行留队列
+            this.memory.delete(msg.id);
+            return;
+          }
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
-          this.memory.set(entry.id, {
-            id: entry.id,
-            sessionId,
-            text: entry.text,
-            mode: 'prompt',
-            oneWay: entry.oneWay === true,
-            via: 'terminal',
-            channel: 'prompt',
-            status: 'delivering',
-            at: entry.at,
-          });
-          await this.runTerminalPrompt(entry.id, pane.id, entry.text);
           delivered++;
-          continue;
+          handled = true;
+          break;
+        }
+        if (layer === 'terminal' && this.terminalChannel()) {
+          const pane = await this.terminalPaneFor(session, project);
+          if (pane) {
+            removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
+            this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
+            await this.runTerminalPrompt(msg.id, pane.id, msg.text);
+            delivered++;
+            handled = true;
+            break;
+          }
         }
       }
       // 层均不可用（会话没开 / pane 找不到）：留队列等下轮触发
-      return;
+      if (!handled) return;
     }
     const rest = readPromptbox(this.hooksDir, project.token).filter((e) => e.sessionId === sessionId);
     if (rest.length === 0) this.queuedSessions.delete(sessionId);
@@ -892,53 +913,67 @@ export class MessageDeliverer {
     // 目标地址由 hook 旁路上报。**手动面（oneWay）优先**——它把消息当用户 prompt
     // 注入（无回复面）；编排域先走中继（那里才带 @weave 身份）。
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
-    const inboxSpec = surface.promptInbox;
-    const inboxTarget = this.inboxSockets.get(entry.sessionId);
-    if (inboxSpec && entry.oneWay === true && inboxTarget) {
-      this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
-      try {
-        // 来源标注只加在这里（中继路径有系统级来源，见 INBOX_SOURCE_PREFIX 注释）
-        await deliverViaInboxSocket(inboxSpec, inboxTarget, `${INBOX_SOURCE_PREFIX}${entry.text}`);
-        const delivered: PipeMessage = {
-          ...this.memory.get(entry.id)!,
-          status: 'delivered',
-          via: 'socket',
-          settledAt: new Date().toISOString(),
-        };
-        this.memory.set(entry.id, delivered);
-        this.armAckWatch(delivered);
-        this.bus({
-          kind: 'message.delivered',
-          messageId: entry.id,
-          sessionId: entry.sessionId,
-          at: new Date().toISOString(),
-        });
-        return { ok: true, messageId: entry.id, status: 'delivered', message: delivered };
-      } catch {
-        this.memory.delete(entry.id); // 回落：不留痕，下面走中继/终端/队列
-      }
+    const socketDelivered = await this.tryInboxDeliver(entry, surface);
+    if (socketDelivered) {
+      return { ok: true, messageId: entry.id, status: 'delivered', message: socketDelivered };
     }
 
     const relay = surface.prompt;
     const peer = relay?.resolve(entry.sessionId) ?? null;
-    if (relay && peer) {
-      this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'relay' });
-      if (this.runRelay(entry, relay, peer.name)) {
-        return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
+    // 层序随面变：**手动面（oneWay）中继退到最后**——跨会话包裹与「无需回复」注记
+    // 只是同义外壳，却要多起一个 headless 子进程；层② 终端注入才是裸 user 文本的
+    // 同形态替代。编排域反之：那里的 @weave 身份正是要投递的东西。
+    const layers: Array<'relay' | 'terminal'> = entry.oneWay === true ? ['terminal', 'relay'] : ['relay', 'terminal'];
+    for (const layer of layers) {
+      if (layer === 'relay' && relay && peer) {
+        this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'relay' });
+        if (this.runRelay(entry, relay, peer.name)) {
+          return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
+        }
+        // 同会话中继在途：落队列，下轮冲洗
+        this.memory.delete(entry.id);
       }
-      // 同会话中继在途：落队列，下轮冲洗
-      this.memory.delete(entry.id);
-    } else if (this.terminalChannel()) {
-      const pane = await this.terminalPaneFor(session, project);
-      if (pane) {
-        this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
-        void this.runTerminalPrompt(entry.id, pane.id, entry.text);
-        return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
+      if (layer === 'terminal' && this.terminalChannel()) {
+        const pane = await this.terminalPaneFor(session, project);
+        if (pane) {
+          this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
+          void this.runTerminalPrompt(entry.id, pane.id, entry.text);
+          return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
+        }
       }
     }
     this.queueEntry(entry, project.token);
     const pending: PipeMessage = { ...entry, status: 'pending' };
     return { ok: true, messageId: entry.id, status: 'pending', message: pending };
+  }
+
+  /**
+   * 层①-a 直投尝试：成功返回落定后的内存行；回落（无面 / 非手动 / 无目标 / 写失败）
+   * 返回 null。**队列冲洗也走它**——冲洗恰好由「刚上报凭据的那条 hook 事件」触发，
+   * 命中率最高；队列绕过它直奔中继，手动面就会凭空多出跨会话包裹与英文注记。
+   */
+  private async tryInboxDeliver(entry: PipeMessage, surface: MessagingSurface): Promise<PipeMessage | null> {
+    const spec = surface.promptInbox;
+    const target = this.inboxSockets.get(entry.sessionId);
+    if (!spec || entry.oneWay !== true || !target) return null;
+    this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
+    try {
+      await deliverViaInboxSocket(spec, target, `${INBOX_SOURCE_PREFIX}${entry.text}`);
+    } catch {
+      // 凭据失效（resume 后 socket 名重生成等）：回落，不留痕
+      this.memory.delete(entry.id);
+      return null;
+    }
+    const delivered: PipeMessage = {
+      ...this.memory.get(entry.id)!,
+      status: 'delivered',
+      via: 'socket',
+      settledAt: new Date().toISOString(),
+    };
+    this.memory.set(entry.id, delivered);
+    this.armAckWatch(delivered);
+    this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
+    return delivered;
   }
 
   /** 入队（promptbox 追加 + 会话索引登记）。 */

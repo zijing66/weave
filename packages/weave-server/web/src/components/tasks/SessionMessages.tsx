@@ -17,9 +17,9 @@ import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import {
   formatStamp,
   promptOf,
+  stripPromptDecor,
   taskNotificationOf,
   turnSummaryOf,
-  WEAVE_MARKER,
 } from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { useSessionStatus, type HookFrame } from './session-status-store';
@@ -120,8 +120,10 @@ export interface ConvEntry {
   role: 'user' | 'assistant';
   at: string;
   text: string;
-  /** 转录里带 weave 直投标记（标记已从 text 摘掉，改在气泡上呈现 tag）。 */
+  /** weave 投递的（直投或中继）：正文里的运输装饰已摘掉，改在气泡上呈现 tag。 */
   fromWeave?: boolean;
+  /** 中继壳里的发送方名（非 weave = 别的会话自己发的 CC 会话间消息）。 */
+  fromName?: string | null;
   /** 认领到的投递行：状态/回执/重发挂在气泡上，不另起一条。 */
   pipe?: SessionMessageRow;
 }
@@ -130,8 +132,8 @@ export interface ConvEntry {
  * 事件 → 对话条目：只认开轮（用户 prompt 原文）与闭轮（Stop 携带的最终
  * assistant 消息）两类事件。工具调用、通知、会话标记都不是对话，中间的
  * assistant 输出也不进——转录在会话自己那边，这里只要每轮的收尾总结。
- * 直投消息的正文带着来源标记（`WEAVE_MARKER`）——摘掉、记成 `fromWeave`，
- * 不然气泡里既多出一段死标记，也和投递行的原文对不上（会重复一条）。
+ * prompt 原文先剥运输装饰（直投标记 / 中继壳 / 壳内单向注记）：装饰不是内容，
+ * 留着既在气泡里露馅，也和投递行的原文对不上（同一条消息会显示两遍）。
  */
 export function conversationOf(
   events: readonly HookEventRow[],
@@ -144,15 +146,8 @@ export function conversationOf(
       if (taskNotificationOf(e)) continue;
       const raw = promptOf(e);
       if (!raw) continue;
-      const fromWeave = raw.startsWith(WEAVE_MARKER);
-      out.push({
-        key: `e${e.id}`,
-        eventId: e.id,
-        role: 'user',
-        at: e.createdAt,
-        text: fromWeave ? raw.slice(WEAVE_MARKER.length) : raw,
-        fromWeave,
-      });
+      const { text, fromWeave, fromName } = stripPromptDecor(raw);
+      out.push({ key: `e${e.id}`, eventId: e.id, role: 'user', at: e.createdAt, text, fromWeave, fromName });
     } else if (lifecycle.close.includes(e.eventType)) {
       const text = turnSummaryOf(e);
       if (text)
@@ -163,17 +158,13 @@ export function conversationOf(
 }
 
 /**
- * 文案归一（`claims` 的比对形态）：会话那侧的原文外面会被加东西——直投带
- * weave 来源标记、中继带 Claude Code 的 `<cross-session-message>` 外壳——剥掉
- * 它们、折叠空白，两侧才是同一形态（服务端回执比对是同一条规则，见
- * `message-deliverer.ts` 的 normalizePromptText）。旧缓存里还带着标记的条目
- * 也据此与自己的投递行对上，不会各显示一条。
+ * 文案归一（`claims` 的比对形态）：会话那侧的原文外面会被加东西（`stripPromptDecor`
+ * 剥的那些）——剥掉、折叠空白，两侧才是同一形态（服务端回执比对是同一条规则，
+ * 见 `message-deliverer.ts` 的 normalizePromptText；它另外只剥壳、不剥注记，
+ * 因为那边是包含匹配）。
  */
 function normalizeText(text: string): string {
-  return (text.startsWith(WEAVE_MARKER) ? text.slice(WEAVE_MARKER.length) : text)
-    .replace(/<\/?cross-session-message[^>]*>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return stripPromptDecor(text).text.replace(/\s+/g, ' ').trim();
 }
 
 /** 投递行与事件条目是不是同一条消息（归一后全等）。 */
@@ -534,6 +525,13 @@ export function SessionMessages({
                         {m.fromWeave && (
                           <span className="shrink-0 rounded bg-blue-500/15 px-1 py-px text-[10px] font-medium text-blue-300">
                             weave
+                          </span>
+                        )}
+                        {/* 不是 weave 发的会话间消息（别的会话用 CC 自己的 SendMessage）：
+                            挂发送方会话名，与终端里手敲的 prompt 区分开 */}
+                        {m.fromWeave !== true && m.fromName != null && (
+                          <span className="shrink-0 rounded border border-white/[0.12] px-1 py-px text-[10px] text-neutral-400">
+                            {m.fromName}
                           </span>
                         )}
                         {pipe !== undefined && pipe.status !== 'delivered' && (

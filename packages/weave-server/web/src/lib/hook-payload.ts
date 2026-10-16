@@ -66,6 +66,43 @@ export function formatStamp(iso: string): string {
  */
 export const WEAVE_MARKER = '[weave] ';
 
+/** 中继壳的发送方名 = weave（mirror `weave-harness/src/claude/prompt.ts` 的 `senderName`）。 */
+const WEAVE_SENDER = 'weave';
+
+/** Claude Code 给会话间消息裹的壳：中继投递与「别的会话用 CC 自己的 SendMessage」都长这样。 */
+const RELAY_WRAP = /<cross-session-message([^>]*)>([\s\S]*)<\/cross-session-message>/;
+const FROM_NAME = /from-name="([^"]*)"/;
+
+/** 中继载荷首行的单向注记（mirror 同上 `ONE_WAY_NOTE`：手动面无接收方会话，故带注记）。 */
+const ONE_WAY_NOTE = /^\[weave one-way injection — no reply is expected[^\]]*\]\s*/;
+
+/** prompt 原文剥掉运输装饰后的样子（气泡该显示的正文 + 它是谁发的）。 */
+export interface PromptDecor {
+  text: string;
+  /** weave 投递的（socket 直投的标记，或中继壳的 `from-name="weave"`）。 */
+  fromWeave: boolean;
+  /** 中继壳里的发送方名（非 weave = 别的会话自己发的）；无壳为 null。 */
+  fromName: string | null;
+}
+
+/**
+ * 会话转录里的 prompt 原文 → 正文 + 来源：运输装饰（直投的来源标记、中继的 CC
+ * 壳与壳内单向注记）不是内容，气泡里不该看见——它们也是「投递行认领不到自己
+ * 的那条转录、同一条消息显示两遍」的成因。
+ */
+export function stripPromptDecor(raw: string): PromptDecor {
+  let out = raw.startsWith(WEAVE_MARKER) ? raw.slice(WEAVE_MARKER.length) : raw;
+  const fromMarker = out !== raw;
+  const wrap = RELAY_WRAP.exec(out);
+  const fromName = wrap ? (FROM_NAME.exec(wrap[1])?.[1] ?? null) : null;
+  if (wrap) {
+    out = wrap[2];
+    out = out.startsWith('\n') ? out.slice(1) : out;
+  }
+  out = out.replace(ONE_WAY_NOTE, '');
+  return { text: out.trim(), fromWeave: fromMarker || fromName === WEAVE_SENDER, fromName };
+}
+
 /** 用户 prompt 原文（归一化 payload 的 raw.prompt）；空/缺失返回 null。 */
 export function promptOf(event: HookEventRow): string | null {
   return str(rawOf(event).prompt);

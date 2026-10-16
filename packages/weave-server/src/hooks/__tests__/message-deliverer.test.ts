@@ -775,6 +775,130 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  it('层①-a 无凭据时手动面先走终端：中继退到最后（跨会话外壳不是手动面要的东西）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface(); // peer 已登记：中继此刻可用
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'manual plain',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(sendText).toHaveBeenCalledWith('pane-1', 'manual plain');
+    expect(fake.calls).toHaveLength(0); // 没起中继子进程
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'terminal',
+    });
+  });
+
+  it('层序随面变：编排域（非 oneWay）有终端通道仍先走中继', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'orchestration',
+      mode: 'prompt',
+      fromKind: 'sequence',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(1);
+    expect(sendText).not.toHaveBeenCalled();
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'relay',
+    });
+  });
+
+  it('层①-a 队列冲洗优先直投：凭据在手时手动面行走 socket，不落中继也不打终端', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    let registered = false;
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    let panes: Array<{ id: string; title: string; cwd: string }> = [];
+    const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        flushGapMs: 0,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () => panes,
+          sendText,
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    // 发的那一刻：无凭据 + pane 没出现 + peer 未登记 → 入队
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'queued one-way',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result).toMatchObject({ status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 冲洗那一刻三条路都可用（凭据正是刚上报的）：直投必须是第一顺位
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+    registered = true;
+    panes = [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }];
+    await deliverer.flushSession(SESSION_ID);
+    await vi.waitFor(() => expect(got).toContain('queued one-way'));
+    expect(sendText).not.toHaveBeenCalled();
+    expect(fake.calls).toHaveLength(0);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      status: 'delivered',
+      via: 'socket',
+    });
+    inbox.close();
+  });
+
   it('编排域（非 oneWay）即使有 inbox 目标也先走中继——保留 @weave 身份', async () => {
     const path = uniqueInboxPath();
     let got = '';

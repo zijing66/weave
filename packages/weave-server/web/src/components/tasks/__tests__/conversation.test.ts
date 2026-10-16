@@ -83,6 +83,39 @@ describe('conversationOf', () => {
       ['终端里自己敲的', false],
     ]);
   });
+
+  it('④ 中继载荷：剥掉 CC 壳与壳内单向注记，正文只剩原文并记 fromWeave', () => {
+    const entries = conversationOf(
+      [
+        event(1, 'UserPromptSubmit', {
+          prompt:
+            '<cross-session-message from="uds:\\\\.\\pipe\\LOCAL\\cc-msg-1" from-name="weave" from-mode="bypass">\n' +
+            '[weave one-way injection — no reply is expected: do not call SendMessage or ListAgents, just act on this prompt in this session.]\n\n' +
+            '重发一次\n</cross-session-message>',
+        }),
+      ],
+      claude,
+    );
+    expect(entries.map((e) => [e.text, e.fromWeave, e.fromName])).toEqual([
+      ['重发一次', true, 'weave'],
+    ]);
+  });
+
+  it('⑤ 别的会话自己发的 CC 会话间消息：壳也剥掉，但不是 weave 发的（挂发送方名）', () => {
+    const entries = conversationOf(
+      [
+        event(1, 'UserPromptSubmit', {
+          prompt:
+            '<cross-session-message from="uds:x" from-name="weave-4e" from-mode="bypass">\n' +
+            '同步一下进度\n</cross-session-message>',
+        }),
+      ],
+      claude,
+    );
+    expect(entries.map((e) => [e.text, e.fromWeave, e.fromName])).toEqual([
+      ['同步一下进度', false, 'weave-4e'],
+    ]);
+  });
 });
 
 describe('attachDeliveries', () => {
@@ -143,7 +176,27 @@ describe('attachDeliveries', () => {
     expect(thread[0]!.pipe?.id).toBe('m2');
   });
 
-  it('⑥ 短文案只认全等：「ok」不会被含着它的别的条目认走', () => {
+  it('⑥ 中继投递的转录条目认领得回自己的投递行（壳+注记不是正文，否则会重复一条）', () => {
+    const entries = conversationOf(
+      [
+        event(1, 'UserPromptSubmit', {
+          prompt:
+            '<cross-session-message from="uds:x" from-name="weave" from-mode="bypass">\n' +
+            '[weave one-way injection — no reply is expected: do not call SendMessage or ListAgents, just act on this prompt in this session.]\n\n' +
+            '帮我看看这个\n</cross-session-message>',
+        }),
+      ],
+      claude,
+    );
+    const thread = attachDeliveries(
+      entries,
+      [delivery({ id: 'm1', text: '帮我看看这个', at: at(1), status: 'delivered', settledAt: at(1) })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]!.pipe?.id).toBe('m1');
+  });
+
+  it('⑦ 短文案只认全等：「ok」不会被含着它的别的条目认走', () => {
     const thread = attachDeliveries(
       [{ ...userEntry, text: '好，ok，我看看' }],
       [delivery({ id: 'm3', text: 'ok', at: at(10), status: 'failed' })],
