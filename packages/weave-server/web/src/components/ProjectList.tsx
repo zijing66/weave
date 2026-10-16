@@ -89,6 +89,10 @@ interface ProjectMenu {
   project: ProjectRow;
 }
 
+/** 触屏长按开菜单的门槛（与对话弹窗里的同一套手感：位移超过它算滑动，不算长按）。 */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 8;
+
 export function ProjectList({
   projects,
   selectedId,
@@ -143,28 +147,60 @@ export function ProjectList({
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Any interaction outside the menu closes it (click, another right-click,
-  // scroll, Esc). Clicks INSIDE the menu are left to the item buttons' own
+  // Any interaction outside the menu closes it (press, another right-click,
+  // scroll, Esc). Events INSIDE the menu are left to the item buttons' own
   // onClick (which closes the menu itself): closing here first would flush
   // synchronously mid-dispatch, unmount the button before the delegated
   // listener on <body> runs, and React drops the click on the detached target.
+  // 触发用 pointerdown 而非 click：触屏长按开菜单后，抬手还会补一个 click，
+  // 那一击会当场把刚开的菜单关掉（pointerdown 不会被补发）。
   useEffect(() => {
     if (!menu) return;
     const close = (e: Event): void => {
       if (menuRef.current?.contains(e.target as Node)) return;
       setMenu(null);
     };
-    window.addEventListener('click', close, true);
+    window.addEventListener('pointerdown', close, true);
     window.addEventListener('contextmenu', close, true);
     window.addEventListener('scroll', close, { capture: true, passive: true });
     window.addEventListener('keydown', close);
     return () => {
-      window.removeEventListener('click', close, true);
+      window.removeEventListener('pointerdown', close, true);
       window.removeEventListener('contextmenu', close, true);
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('keydown', close);
     };
   }, [menu]);
+
+  /** 触屏长按 = 右键的等价动作（移动端没有右键这回事）；抬手补的那个 click
+   *  要吞掉，否则它顺带点选这个项目（用户要的是菜单里那一项）。 */
+  const suppressClick = useRef(false);
+  const press = useRef<{ x: number; y: number; timer: number } | null>(null);
+  const clearPress = (): void => {
+    if (!press.current) return;
+    window.clearTimeout(press.current.timer);
+    press.current = null;
+  };
+  const onPressDown = (project: ProjectRow) => (e: React.PointerEvent): void => {
+    // 上一轮长按若没等到补发的那个 click，别把这一次的点击也吞了
+    suppressClick.current = false;
+    if (finePointer || e.button !== 0) return;
+    const { clientX: x, clientY: y } = e;
+    const timer = window.setTimeout(() => {
+      press.current = null;
+      suppressClick.current = true;
+      setMenu({ x, y, project });
+    }, LONG_PRESS_MS);
+    press.current = { x, y, timer };
+  };
+  const onPressMove = (e: React.PointerEvent): void => {
+    const p = press.current;
+    if (!p) return;
+    // 位移即取消：滑动列表 / 拖拽手柄都不是长按
+    if (Math.abs(e.clientX - p.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - p.y) > LONG_PRESS_SLOP) {
+      clearPress();
+    }
+  };
 
   return (
     <div className="flex flex-col">
@@ -252,10 +288,23 @@ export function ProjectList({
                   <GripVertical className="h-3.5 w-3.5" />
                 </span>
               <button
-                onClick={() => onSelect(p)}
+                onClick={() => {
+                  // 长按刚开的菜单：这一击是抬手补的，不当点选
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
+                    return;
+                  }
+                  onSelect(p);
+                }}
+                onPointerDown={onPressDown(p)}
+                onPointerMove={onPressMove}
+                onPointerUp={clearPress}
+                onPointerCancel={clearPress}
                 onContextMenu={(e) => {
+                  // 触屏长按也会弹原生菜单：一律压掉，但那条路走长按
                   e.preventDefault();
                   e.stopPropagation();
+                  if (!finePointer) return;
                   setMenu({ x: e.clientX, y: e.clientY, project: p });
                 }}
                 className={cn(

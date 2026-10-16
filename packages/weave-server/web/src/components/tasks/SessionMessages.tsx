@@ -290,13 +290,16 @@ function loadConvSize(): ConvSize {
   }
 }
 
-/** 多选态气泡旁的勾选框（点击面是整个气泡，这里只显示状态）。 */
-function CheckBox({ on }: { on: boolean }) {
+/** 多选态气泡旁的勾选框（点击面是整个气泡，这里只显示状态）。
+ *  位置贴在气泡的「内容那一侧」的上沿：自己发的在气泡左边、回复在气泡右边
+ *  （两类气泡的正文都朝中间流），`self-start` 让它在底部对齐的行里仍贴顶。 */
+function CheckBox({ on, className }: { on: boolean; className?: string }) {
   return (
     <span
       className={cn(
-        'mb-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
+        'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center self-start rounded border',
         on ? 'border-blue-400 bg-blue-500 text-white' : 'border-neutral-600 bg-neutral-900',
+        className,
       )}
     >
       {on && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
@@ -602,6 +605,8 @@ export function SessionMessages({
 
   /** 触屏长按进多选（桌面走右键菜单；鼠标不该有长按这回事）。 */
   const onPressDown = (key: string) => (e: React.PointerEvent): void => {
+    // 上一轮长按若没等到补发的那个 click，别把这一次的点击也吞了
+    suppressTap.current = null;
     if (!coarse || selecting || e.button !== 0) return;
     const timer = window.setTimeout(() => {
       press.current = null;
@@ -839,7 +844,6 @@ export function SessionMessages({
                       {...rowProps(m.key)}
                       className={cn('flex justify-start', selecting && 'select-none')}
                     >
-                      {selecting && <CheckBox on={picked.has(m.key)} />}
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
                           不把整块对话撑出横向滚动条 */}
                       <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
@@ -848,6 +852,7 @@ export function SessionMessages({
                         </span>
                         <AssistantMarkdown text={m.text} />
                       </div>
+                      {selecting && <CheckBox on={picked.has(m.key)} className="ml-1.5 mt-1" />}
                     </div>
                   );
                 }
@@ -858,7 +863,7 @@ export function SessionMessages({
                     {...rowProps(m.key)}
                     className={cn('flex items-end justify-end gap-1', selecting && 'select-none')}
                   >
-                    {selecting && <CheckBox on={picked.has(m.key)} />}
+                    {selecting && <CheckBox on={picked.has(m.key)} className="mr-1.5 mt-1" />}
                     {/* 投递终态收成气泡左下角一枚小圆点：空心 = 已送达（可能被暂扣/拒收，
                         不等于已读），灰底白勾 = 已回执（会话真收到）。只有 weave 发出去的
                         消息才有这一步——终端里自己打的话没有投递可言。 */}
@@ -876,13 +881,15 @@ export function SessionMessages({
                         className="mb-0.5 h-3 w-3 shrink-0 rounded-full border border-neutral-500"
                       />
                     )}
-                    {/* weave 发的（右栏投递）保持蓝底，终端里自己打的走中性底 */}
+                    {/* 气泡色分两侧：**回复（左）走中性灰、发送（右）走蓝**，一眼分得开；
+                        同一侧再按投递来源分深浅——weave 投递的深一点，终端里手敲的浅一点
+                        （tag/回执点另说，那两样才是「投递成功与否」） */}
                     <div
                       className={cn(
                         'min-w-0 max-w-[85%] overflow-x-auto rounded-lg border px-2 py-1.5',
                         pipe
-                          ? 'border-blue-500/20 bg-blue-500/[0.06]'
-                          : 'border-white/[0.08] bg-white/[0.02]',
+                          ? 'border-blue-500/30 bg-blue-500/[0.12]'
+                          : 'border-blue-500/15 bg-blue-500/[0.05]',
                       )}
                     >
                       {/* 时刻与左侧回复气泡同布局：气泡上部、靠屏幕边缘那一侧
