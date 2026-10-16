@@ -169,6 +169,7 @@ describe('buildLifecycleGroups', () => {
       sessionMarkers: ['EpochStart', 'EpochEnd'],
       subagentStop: 'ChildDone',
       questionTools: ['AskUserQuestion'],
+      sessionExit: 'EpochEnd',
     } as const;
     const groups = buildLifecycleGroups(
       [

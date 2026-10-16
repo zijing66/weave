@@ -33,6 +33,8 @@ export const HooksConfigSchema = z.object({
   notification: z.boolean(),
   /** 压缩开始事件（压缩态实时信号；收尾笔 SessionStart 无开关，恒在采集面）。 */
   preCompact: z.boolean(),
+  /** 会话退出事件（旁路凭据/定位随进程作废的信号，web 状态机据此落「关闭」）。 */
+  sessionEnd: z.boolean(),
   timeout: z.number().default(5000),
   continueOnError: z.boolean().default(true),
 });
@@ -375,6 +377,7 @@ export const DEFAULT_HOOKS: HooksConfig = {
   subagentStop: true,
   notification: true,
   preCompact: true,
+  sessionEnd: true,
   timeout: 5000,
   continueOnError: true,
 };

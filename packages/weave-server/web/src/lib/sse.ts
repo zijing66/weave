@@ -2,12 +2,15 @@ import { api } from './api';
 import { authState, recheckAuth, subscribeAuth } from './auth';
 
 /**
- * 全站唯一的 /events 客户端。
+ * 全站唯一的 /events 客户端 + 发布订阅总线。
  *
  * 原先有两处各自 `new EventSource`（本文件外的 App.tsx 与技能抽屉），且 App 那条
- * 的依赖数组含 `selected`——每次切项目/文件都断开重连。这里收敛成一条长连接：
- * 谁想听就 `subscribeSse`。连接在首次订阅时建立、活到页面关闭——SPA 生命周期内
- * 不关，免得 React 严格模式的挂载/卸载抖动造成反复重连。
+ * 的依赖数组含 `selected`——每次切项目/文件都断线重连。这里收敛成一条长连接：
+ * 连接在首次订阅时建立、活到页面关闭——SPA 生命周期内不关，免得 React 严格模式
+ * 的挂载/卸载抖动造成反复重连。分发按帧域拆面：按类型（`subscribeFrame`）、push
+ * 按 key（`subscribePush`）、hook 按 kind（`subscribeHook`）、invalidate 按 key
+ * （`registerInvalidator`）——组件不再各自过滤整条裸流，也不再经 window 事件
+ * 二次转发。
  */
 
 /** 一条 /events 帧。既有域：asset / project / hook；数据域：push / invalidate。 */
@@ -16,9 +19,44 @@ export interface SseFrame {
   [field: string]: unknown;
 }
 
+/** hook 域帧（mirror server hookBus 的 HookBusMessage，字段按 kind 可选）。 */
+export interface HookFrame {
+  kind?: string;
+  sessionId?: string | null;
+  eventType?: string;
+  /** 事件源子 agent id（raw.agent_id；SubagentStop 时 = 刚结束的子 agent）。 */
+  agentId?: string;
+  /** 后台子 agent 出生信号（PostToolUse Agent isAsync 的 tool_response.agentId）。 */
+  spawnAgentId?: string;
+  /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
+  backgroundTasks?: Array<{ id: string; status: string }>;
+  ruleId?: string;
+  eventId?: number;
+  dispatchId?: number;
+  status?: string;
+  /** watch.fired 帧（空闲订阅 one-shot 落定）：目标/订阅方 id——dashboard 订阅
+   *  （watcherSessionId null）由此弹 toast，任务面板据此重拉订阅列表。 */
+  watchId?: number;
+  targetSessionId?: string;
+  watcherSessionId?: string | null;
+  /** question.pending 帧（新挂起待答）：只作提醒，问题面另由会话状态总线拉。 */
+  count?: number;
+  /** watch.fired 帧的命中类型（idle / turnEnd / messageFailed——提醒正文按它措辞）。 */
+  reason?: string;
+}
+
 type FrameHandler = (frame: SseFrame) => void;
 
+/** 裸流订阅（测试与真要整条流的地方才用；组件应走按域拆面的订阅口）。 */
 const handlers = new Set<FrameHandler>();
+/** 帧类型 → 订阅者（`subscribeFrame`）。 */
+const byType = new Map<string, Set<FrameHandler>>();
+/** push key → 订阅者（`subscribePush`，payload 后端已算好）。 */
+const pushSubs = new Map<string, Set<(payload: unknown) => void>>();
+/** hook 帧全量订阅者（`subscribeHook` 不带 kinds）。 */
+const hookAll = new Set<(frame: HookFrame) => void>();
+/** kind（精确或 `前缀.`）→ 订阅者（`subscribeHook` 带 kinds）。 */
+const hookByKind = new Map<string, Set<(frame: HookFrame) => void>>();
 /**
  * key → 重拉函数集合：收到 `invalidate` 帧时**每个**注册者都调（`push` 帧由订阅者自己写状态）。
  * 一个 key 常有多方关心（`settings` 就有设置弹窗、会话面板的能力矩阵、右下角 AI 助手三处），
@@ -39,7 +77,20 @@ function ensureSource(): EventSource | null {
     } catch {
       return; // 坏帧丢掉，不断流
     }
-    // invalidate 帧：按 key 找注册过的重拉函数（push 帧没这个语义，直接广播）。
+    // 按帧域分发到各订阅面（同一面的订阅者互不挤占；裸流订阅者最后整帧广播）。
+    for (const handler of byType.get(frame.type) ?? []) handler(frame);
+    if (frame.type === 'push') {
+      for (const run of pushSubs.get(String(frame.key)) ?? []) run(frame.payload);
+    }
+    if (frame.type === 'hook' && typeof frame.kind === 'string') {
+      const hook = frame as HookFrame;
+      for (const run of hookAll) run(hook);
+      for (const [kind, set] of hookByKind) {
+        if (kind === frame.kind || (kind.endsWith('.') && frame.kind.startsWith(kind))) {
+          for (const run of set) run(hook);
+        }
+      }
+    }
     if (frame.type === 'invalidate') {
       for (const run of invalidators.get(String(frame.key)) ?? []) run();
     }
@@ -68,12 +119,71 @@ subscribeAuth(() => {
   closeSource();
 });
 
-/** 订阅整条流；返回退订函数。 */
+/** 订阅整条裸流；返回退订函数（组件优先走下面按域拆面的订阅口）。 */
 export function subscribeSse(handler: FrameHandler): () => void {
   ensureSource();
   handlers.add(handler);
   return () => {
     handlers.delete(handler);
+  };
+}
+
+/** 按帧类型订阅（`'asset'` / `'project'` / …），handler 只收该类型的帧。
+ *  `T` 是消费方对该域帧的视图（如 AssetChangeEvent）——信封的 `type` 已被分发
+ *  掉，类型匹配由订阅点保证，这里不做运行时校验。 */
+export function subscribeFrame<T = SseFrame>(
+  type: string,
+  handler: (frame: T) => void,
+): () => void {
+  ensureSource();
+  const set = byType.get(type) ?? new Set<FrameHandler>();
+  byType.set(type, set);
+  set.add(handler as FrameHandler);
+  return () => {
+    set.delete(handler as FrameHandler);
+    if (set.size === 0) byType.delete(type);
+  };
+}
+
+/** push 帧按 key 订阅：payload 后端已算好，直接写状态（绝对值快照）。 */
+export function subscribePush<T = unknown>(key: string, handler: (payload: T) => void): () => void {
+  ensureSource();
+  const set = pushSubs.get(key) ?? new Set<(payload: unknown) => void>();
+  pushSubs.set(key, set);
+  set.add(handler as (payload: unknown) => void);
+  return () => {
+    set.delete(handler as (payload: unknown) => void);
+    if (set.size === 0) pushSubs.delete(key);
+  };
+}
+
+/**
+ * hook 域订阅：缺省收全部 hook 帧；传 `kinds` 只收匹配项——条目是精确 kind
+ * （`'watch.fired'`）或前缀（`'message.'` = `message.*` 全家）。
+ */
+export function subscribeHook(
+  handler: (frame: HookFrame) => void,
+  kinds?: readonly string[],
+): () => void {
+  ensureSource();
+  if (!kinds) {
+    hookAll.add(handler);
+    return () => {
+      hookAll.delete(handler);
+    };
+  }
+  for (const kind of kinds) {
+    const set = hookByKind.get(kind) ?? new Set<(frame: HookFrame) => void>();
+    hookByKind.set(kind, set);
+    set.add(handler);
+  }
+  return () => {
+    for (const kind of kinds) {
+      const set = hookByKind.get(kind);
+      if (!set) continue;
+      set.delete(handler);
+      if (set.size === 0) hookByKind.delete(kind);
+    }
   };
 }
 

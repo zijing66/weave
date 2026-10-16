@@ -447,6 +447,25 @@ export class MessageDeliverer {
   }
 
   /**
+   * 会话退出（`SessionEnd` 到达）：旁路事实随进程作废——inbox 凭据出盘（旧 socket
+   * 已死，留着只会让下一次投递白试一轮）、pane 定位清（窗口随会话关）。**会话行与
+   * 它的对话照常保留**（那是历史，不是旁路事实），所以不走 `forgetSession` 的删会话
+   * 级联；压队的行此刻也已成死信 → 一并按 offline 落定（同 A 的口径）。
+   */
+  sessionExited(sessionId: string): void {
+    this.inboxSockets.forget(sessionId);
+    this.paneEnvs.delete(sessionId);
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
+    if (!project) return;
+    const entries = readPromptbox(this.hooksDir, project.token).filter((e) => e.sessionId === sessionId);
+    this.failQueuedOffline(
+      sessionId,
+      entries.filter((e) => !this.dismissedIds.has(e.id)),
+    );
+  }
+
+  /**
    * 会话 → 所在可见屏幕（会话列表分块的数据面，只读）。旁路 env 与投递路径共用
    * 同一份缓存，不另采一次；后端没有反查能力 = 空表（那些会话不分组）。
    */

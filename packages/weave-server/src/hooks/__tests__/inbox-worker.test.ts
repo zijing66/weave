@@ -292,6 +292,38 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(frames[0]).toMatchObject({ eventId: id, projectId: project.id, eventType: 'Stop' });
   });
 
+  it('SessionEnd 到达即会话退出（谁是退出事件查生命周期表）；codex / 其他事件不动', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const exited: string[] = [];
+    const deps = {
+      projects,
+      hooksDir,
+      bus,
+      messagePipe: {
+        hasQueued: () => false,
+        flushSession: async () => {},
+        sessionExited: (sessionId: string) => exited.push(sessionId),
+      },
+    };
+
+    const record = (eventType: string, source: 'claude' | 'codex', sessionId: string) => {
+      const payload = JSON.stringify({ eventType, raw: {} });
+      return {
+        eventId: hookEvents.insert({ projectId: project.id, source, eventType, sessionId, payload }),
+        projectId: project.id,
+        input: { projectId: project.id, source, eventType, sessionId, payload },
+      };
+    };
+
+    handleIngestedRecords(deps, [record('SessionEnd', 'claude', 's-exit')]);
+    handleIngestedRecords(deps, [record('Stop', 'claude', 's-exit')]);
+    // codex 没有退出事件（表里 null）——即便事件名撞上也不动
+    handleIngestedRecords(deps, [record('SessionEnd', 'codex', 's-codex')]);
+    expect(exited).toEqual(['s-exit']);
+  });
+
   it('dispatcher 的 deferred（未镜像规则/插件产出）写进 outbox 顺延给下一次事件', async () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

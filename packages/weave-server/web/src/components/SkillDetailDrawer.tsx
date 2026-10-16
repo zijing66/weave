@@ -27,7 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
-import { subscribeSse } from '@/lib/sse';
+import { subscribeFrame } from '@/lib/sse';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 import { harnessUiOf } from '@/lib/harness-meta';
 
@@ -306,9 +306,7 @@ export function SkillDetailDrawer({
   // 走全站共享的那条 SSE（lib/sse）——不再自己 new 一条 EventSource。
   useEffect(() => {
     if (!isGlobal) return;
-    return subscribeSse((frame) => {
-      if (frame.type !== 'asset') return;
-      const change = frame as unknown as AssetChangeEvent;
+    return subscribeFrame<AssetChangeEvent>('asset', (change) => {
       const sel = selectedRef.current;
       if (sel && change.absPath === sel.absPath) setRefreshNonce((n) => n + 1);
     });

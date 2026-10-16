@@ -34,7 +34,8 @@ import {
 } from '@/lib/hook-payload';
 import { HARNESS_COMPACTION, HARNESS_LIFECYCLE, isCompactionEnd } from './lifecycle';
 import { canInterrupt, hasTurnSignal } from './session-status';
-import { useSessionStatus, type HookFrame } from './session-status-store';
+import { useSessionStatus } from './session-status-store';
+import { subscribeHook, type HookFrame } from '@/lib/sse';
 
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
@@ -345,7 +346,7 @@ function CheckBox({ on, className }: { on: boolean; className?: string }) {
  * 轮两类，不拉整条事件链），翻过的页留在组件状态里，向上滚到顶再取更早。
  * 投递无模式选择——服务端恒走 prompt 通道全自动（原生 SendMessage 中继 →
  * 终端 send-text 降级 → 未开会话积压队列），故 web 不展示也不传 mode。
- * 刷新挂 App 转发的 weave:hook 帧（开/闭轮事件 + message.*，sessionId 定向），
+ * 刷新挂 SSE 总线的 hook 订阅（开/闭轮事件 + message.*，sessionId 定向），
  * 不新开轮询。
  */
 export function SessionMessages({
@@ -481,8 +482,7 @@ export function SessionMessages({
   // SSE：开/闭轮事件帧补对话尾部，message.* 帧刷在途投递行（各自防抖）
   useEffect(() => {
     let timer: number | null = null;
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+    const onHook = (f: HookFrame): void => {
       if (f.sessionId !== sessionId) return;
       const convEvent =
         f.kind === 'event.ingested' &&
@@ -495,9 +495,9 @@ export function SessionMessages({
         else void refreshMessages();
       }, 500);
     };
-    window.addEventListener('weave:hook', onHook);
+    const off = subscribeHook(onHook);
     return () => {
-      window.removeEventListener('weave:hook', onHook);
+      off();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [lifecycle, loadNewest, refreshMessages, sessionId]);

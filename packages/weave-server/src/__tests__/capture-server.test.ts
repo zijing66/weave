@@ -123,6 +123,7 @@ describe('daemon /capture', () => {
       'PostToolUse',
       'PreCompact',
       'PreToolUse',
+      'SessionEnd',
       'SessionStart',
       'Stop',
       'SubagentStop',

@@ -28,6 +28,11 @@
 > **会话自己** resume/重启换了 socket（旧值即废）：覆盖前那一刻连不上 → 回落
 > 终端/中继，不猜不误投；新值随下一次 hook 事件覆盖写回。会话删除/归档即
 > `forget`（盘上那行一并清）。
+> **退出即清（2026-10-16 改）**：`SessionEnd` 已进采集面（可裁剪开关 `hooks.sessionEnd`，
+> 只覆盖正常退出——kill / 关窗口不发事件；**存量项目须重跑 `weave init`**），到达即
+> `MessageDeliverer.sessionExited`：凭据出盘（盘上那行删除）、pane 定位清，压队的行
+> 一并按 offline 落定；**会话行与它的对话照常保留**（那是历史，不走删会话级联）。
+> 关闭窗口那条残值仍由「连不上即回落」兜底。
 > **来源标记的语义化**（用户提议「给 init 的 CLAUDE.md 告诉它忽略这个提示」）：标记
 > 值来自 core 单一事实源 `WEAVE_INJECTION_MARKER`，两处同源引用——① server 直投载荷
 > 前缀；② `weave init` 生成的 CLAUDE.md 块新增「## weave 注入的消息」一节，向会话
@@ -100,10 +105,10 @@ DB 佐证：hook_events id=33333 session=3de0d761 type=UserPromptSubmit
   （socket 连不上 / auth 被拒 → 立即回落）。
 - **token 与 socket 是本机同用户可读的凭据**：不落库、不进 UI、不写日志；内存态 + 一份
   0600 的落盘件（`<dataDir>/hooks/inbox-targets.json`，与 auth.json 同口径——那份里的
-  localToken 权限更大，故不构成新的信任面）。会话进程消失后这条值就只剩「连不上」，
-  但不会自己消失：**没有 SessionEnd 采集**（今日 DB 里 SessionEnd 事件为 0），所以
-  「退出即删」只能靠落盘件的复写/删除路径（启动、resume、删会话），残值留到会话行
-  被清为止——代价 = 对该会话投递时白连一次本地 socket（毫秒级）后照常回落。
+  localToken 权限更大，故不构成新的信任面）。会话进程消失后这条值就只剩「连不上」——
+  **正常退出由 `SessionEnd`（`sessionExited`）触发即删**；kill / 关窗口不发事件，那类
+  残值留到下一次启动/resume 覆盖或会话行被清为止，代价 = 对该会话投递时白连一次本地
+  socket（毫秒级）后照常回落。
 - **覆盖面**：只有装了 weave hooks 的会话才有 hooks 上报地址 → 非 weave 项目/main
   conversation 之外仍走中继。
 - **CLAUDE.md 那条「peer 私有帧协议/命名管不逆向不直连」需改写**：其立论前提（协议私有、

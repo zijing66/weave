@@ -1282,6 +1282,59 @@ describe('MessageDeliverer 裁决表', () => {
     expect(rows.map((m) => m.reason)).toEqual(['offline', 'offline']);
   });
 
+  it('会话退出（SessionEnd 到达）：凭据出盘、pane 定位清、队列行一并落 offline；会话与对话保留', async () => {
+    const { surface } = relaySurface(() => null);
+    // 判活图恒空 → 只测 SessionEnd 这一条路径（A 的判死另有测试）
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        livenessOf: () => new Map(),
+        terminal: {
+          available: () => true,
+          listPanes: async () => [], // pane 找不到 → 层② 不接，行留队列
+          locateScreens: async (envs) =>
+            Object.fromEntries(
+              Object.keys(envs).map((sid) => [
+                sid,
+                { id: 'w1:0', windowId: 1, tabId: 0, tabsInWindow: 1 },
+              ]),
+            ),
+          sendText: vi.fn(),
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: '\\\\.\\pipe\\local\\gone', token: 't' });
+    deliverer.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '3' });
+    const targetsFile = join(hooksDir, INBOX_TARGETS_FILE);
+    expect(readFileSync(targetsFile, 'utf8')).toContain(SESSION_ID);
+    expect(await deliverer.sessionTerminals()).toHaveProperty(SESSION_ID);
+
+    for (const text of ['退出前第一条', '退出前第二条']) {
+      const r = await deliverer.send({
+        toSessionId: SESSION_ID,
+        text,
+        mode: 'prompt',
+        fromKind: 'dashboard',
+      });
+      expect(r).toMatchObject({ status: 'pending' });
+    }
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+
+    deliverer.sessionExited(SESSION_ID);
+    // 旁路事实随进程作废：凭据出盘（旧 socket 已死，留着只会白试）、定位清
+    expect(readFileSync(targetsFile, 'utf8')).not.toContain(SESSION_ID);
+    expect(await deliverer.sessionTerminals()).toEqual({});
+    // 队列行此刻已成死信 → 一并按 offline 落定并清队
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(deliverer.hasQueued(SESSION_ID)).toBe(false);
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.reason)).toEqual(['offline', 'offline']);
+    // 会话行与对话照常保留（那是历史，不是旁路事实——不走 forgetSession 的删会话级联）
+    expect(sessions.getBySessionId(SESSION_ID)).not.toBeNull();
+    expect(deliverer.listVisible(SESSION_ID).length).toBeGreaterThan(0);
+  });
+
   it('终端通道注入但 available()=false（settings 换了不支持的后端）→ prompt 409、矩阵不亮', async () => {
     const terminal: PromptTerminal = {
       available: () => false,

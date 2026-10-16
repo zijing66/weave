@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFil
 import { join } from 'node:path';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import { createRuntimeRegistry, frameFacts, type EventSource } from '@weavecode/harness';
+import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
 import { openDatabase } from '../db/db.js';
 import { HookEventRepository, type HookEventInput } from '../repositories/hook-events.js';
 import { ProjectRepository, type ProjectRow } from '../repositories/projects.js';
@@ -326,6 +327,8 @@ export interface IngestedHandlerDeps {
     notePaneEnv?(sessionId: string, env: Record<string, string>): void;
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）。 */
     onSessionPrompt?(sessionId: string, prompt: string): void;
+    /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
+    sessionExited?(sessionId: string): void;
   };
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
@@ -383,6 +386,14 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       if (record.input.eventType === 'UserPromptSubmit') {
         const prompt = promptTextOf(payload);
         if (prompt) deps.messagePipe?.onSessionPrompt?.(record.input.sessionId, prompt);
+      }
+      // 会话退出（谁是退出事件归 harness 生命周期表）：旁路事实随进程作废——
+      // inbox 凭据出盘、pane 定位清，压队的行也已成死信（sessionExited 内一并落定）。
+      const exitEvent = isHarness(record.input.source)
+        ? HARNESS_LIFECYCLE[record.input.source].sessionExit
+        : null;
+      if (exitEvent !== null && record.input.eventType === exitEvent) {
+        deps.messagePipe?.sessionExited?.(record.input.sessionId);
       }
       if (deps.messagePipe?.hasQueued(record.input.sessionId)) {
         void deps.messagePipe.flushSession(record.input.sessionId);

@@ -30,7 +30,8 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
-import { useSessionStatus, type HookFrame } from './session-status-store';
+import { useSessionStatus } from './session-status-store';
+import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
@@ -61,7 +62,7 @@ const OPEN_TERMINAL_ALIVE_MS = 30_000;
  * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
  * + 单组合体事件链画布（默认全折叠，点击展开才按需挂载导图）。
  * 会话列表与状态来自全局状态总线（SessionStatusProvider）；本面板只自管事件链
- * 明细：SSE（App 转发的 weave:hook 帧）驱动选中会话的事件按需刷新。
+ * 明细：SSE 总线的 hook 订阅驱动选中会话的事件按需刷新。
  */
 export function TasksPanel({
   projectId,
@@ -330,14 +331,7 @@ export function TasksPanel({
   );
 
   // watch.fired 帧：订阅落定（fire 即失效）→ 重拉订阅面，铃铛归位。
-  useEffect(() => {
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
-      if (f.kind === 'watch.fired') refreshWatches();
-    };
-    window.addEventListener('weave:hook', onHook);
-    return () => window.removeEventListener('weave:hook', onHook);
-  }, [refreshWatches]);
+  useEffect(() => subscribeHook(() => refreshWatches(), ['watch.fired']), [refreshWatches]);
 
   // 待答面无了（答完/解除/被换掉）而弹窗已随之自关 → 目标一并归位；否则 answerFor
   // 还留着旧会话 id，该会话下次挂起会「无点击自动弹脸」。
@@ -361,13 +355,12 @@ export function TasksPanel({
     if (selectedId) void refreshEvents(selectedId);
   }, [selectedId, refreshEvents]);
 
-  // ---- SSE：App 转发的 weave:hook 帧（不新开 EventSource）----
+  // ---- SSE：总线 hook 帧（不新开 EventSource）----
   // 会话状态、会话行计数、派发列表都由全局状态总线按同一批帧维护；本面板只
   // 按需刷新选中会话的事件链（总线的防抖 refetch 会把派发/会话行一并带上）。
   useEffect(() => {
     let refreshTimer: number | null = null;
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+    const onHook = (f: HookFrame): void => {
       if (!selectedId || f.sessionId !== selectedId) return;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
@@ -375,9 +368,9 @@ export function TasksPanel({
         void refreshEvents(selectedId);
       }, 500);
     };
-    window.addEventListener('weave:hook', onHook);
+    const off = subscribeHook(onHook);
     return () => {
-      window.removeEventListener('weave:hook', onHook);
+      off();
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
   }, [refreshEvents, selectedId]);

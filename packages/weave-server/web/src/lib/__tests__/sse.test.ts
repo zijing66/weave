@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /**
- * lib/sse 的两条契约：
+ * lib/sse 的契约：
  *   1. 全站只有一条连接（懒创建、退订不关）——这是「单个 SSE 接口」的实现基础；
- *   2. `invalidate` 帧按 key 分发到注册的重拉函数，`push` 帧不走这条路
- *      （push 由订阅者自己写状态）。
+ *   2. 分发按帧域拆面：`invalidate` 按 key 调重拉函数、`push` 按 key 送 payload、
+ *      `subscribeFrame` 按类型、`subscribeHook` 按 kind（全量/精确/前缀）——
+ *      各订阅面互不挤占（单槽 Map 的教训见 settings 那条用例）。
  */
 
 /** 最小 EventSource 替身：只保留 lib/sse 用到的那几面。 */
@@ -121,6 +122,82 @@ describe('lib/sse', () => {
     expect(() => source.emit({ type: 'invalidate', key: 'settings' })).not.toThrow();
     expect(calls.length).toBe(5); // 全退订后没人接，也不炸
 
+    offSubscribe();
+  });
+
+  it('按帧类型订阅（subscribeFrame）：只收该类型，退订即停', async () => {
+    await markAuthenticated();
+    const { subscribeSse, subscribeFrame } = await import('../sse');
+    const offSubscribe = subscribeSse(() => {});
+    const seen: string[] = [];
+    const off = subscribeFrame<{ relPath: string }>('asset', (f) => seen.push(f.relPath));
+    const source = FakeEventSource.latest!;
+
+    source.emit({ type: 'project' }); // 别的类型的帧不该进来
+    expect(seen).toEqual([]);
+    source.emit({ type: 'asset', relPath: 'a.md' });
+    expect(seen).toEqual(['a.md']);
+
+    off();
+    source.emit({ type: 'asset', relPath: 'b.md' });
+    expect(seen).toEqual(['a.md']);
+    offSubscribe();
+  });
+
+  it('push 帧按 key 订阅（subscribePush）：payload 直达，key 不匹配不打扰', async () => {
+    await markAuthenticated();
+    const { subscribeSse, subscribePush } = await import('../sse');
+    const offSubscribe = subscribeSse(() => {});
+    const seen: number[] = [];
+    const off = subscribePush<{ counts: Record<string, number> }>('inflightCounts', (p) => {
+      seen.push(p.counts['s1'] ?? -1);
+    });
+    const source = FakeEventSource.latest!;
+
+    source.emit({ type: 'push', key: 'updates', payload: { counts: { p1: 2 } } });
+    expect(seen).toEqual([]);
+    source.emit({ type: 'push', key: 'inflightCounts', payload: { counts: { s1: 3 } } });
+    expect(seen).toEqual([3]);
+
+    off();
+    source.emit({ type: 'push', key: 'inflightCounts', payload: { counts: { s1: 4 } } });
+    expect(seen).toEqual([3]);
+    offSubscribe();
+  });
+
+  it('hook 帧订阅（subscribeHook）：全量 / 精确 kind / 前缀 kind 各收各的', async () => {
+    await markAuthenticated();
+    const { subscribeSse, subscribeHook } = await import('../sse');
+    const offSubscribe = subscribeSse(() => {});
+    const all: string[] = [];
+    const exact: string[] = [];
+    const prefix: string[] = [];
+    const offAll = subscribeHook((f) => all.push(f.kind ?? '?'));
+    const offExact = subscribeHook((f) => exact.push(f.kind ?? '?'), ['watch.fired']);
+    const offPrefix = subscribeHook((f) => prefix.push(f.kind ?? '?'), ['message.']);
+    const source = FakeEventSource.latest!;
+
+    source.emit({ type: 'hook', kind: 'event.ingested', sessionId: 's1' });
+    expect(all).toEqual(['event.ingested']);
+    expect(exact).toEqual([]);
+    expect(prefix).toEqual([]);
+
+    source.emit({ type: 'hook', kind: 'message.delivered', sessionId: 's1' });
+    expect(all).toEqual(['event.ingested', 'message.delivered']);
+    expect(exact).toEqual([]);
+    expect(prefix).toEqual(['message.delivered']);
+
+    source.emit({ type: 'hook', kind: 'watch.fired', targetSessionId: 's2' });
+    expect(exact).toEqual(['watch.fired']);
+    expect(prefix).toEqual(['message.delivered']); // watch.fired 不带 message. 前缀
+
+    offExact();
+    source.emit({ type: 'hook', kind: 'watch.fired', targetSessionId: 's3' });
+    expect(exact).toEqual(['watch.fired']); // 退订后不再收
+    expect(all.length).toBe(4); // 全量订阅者不受影响
+
+    offAll();
+    offPrefix();
     offSubscribe();
   });
 });

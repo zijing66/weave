@@ -86,8 +86,8 @@ JSON 数组，每个元素 = `HookRule` 去掉 `id`/`projectId`（加载器生�
 }
 ```
 
-`source.event` 必须是采集面 7 事件之一：
-`PreToolUse / PostToolUse / UserPromptSubmit / SessionStart / Stop / SubagentStop / Notification`。
+`source.event` 必须是采集面 9 事件之一：
+`PreToolUse / PostToolUse / UserPromptSubmit / SessionStart / Stop / SubagentStop / Notification / PreCompact / SessionEnd`。
 
 ### 四种内置 handler + 插件 handler
 
@@ -237,7 +237,7 @@ export default {
 
 1. `weave-plugin.json` 存在、JSON 合法、过 manifest schema；
 2. `id` 合法且非保留前缀（用户插件）、不与已加载插件重复；
-3. `requires.events` ⊆ 采集面 7 事件；
+3. `requires.events` ⊆ 采集面 9 事件；
 4. 每个规则文件存在、为数组、逐条过规则 schema；inject 挂白名单事件；
 5. `@file:` 模板存在且路径不越界；
 6. handler `entry` 存在、路径不越界、动态 import 成功、default 导出含

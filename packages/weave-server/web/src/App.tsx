@@ -34,7 +34,7 @@ import {
 import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capabilities';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
-import { registerInvalidator, subscribeSse } from '@/lib/sse';
+import { registerInvalidator, subscribeFrame, subscribeHook, subscribePush } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
 import { ProjectList } from '@/components/ProjectList';
@@ -505,26 +505,19 @@ function Dashboard() {
     [selected, projects, refreshPluginRows],
   );
 
+  // 项目注册表变更帧：整表重拉后 ProjectList 自然出现新项目。
+  useEffect(() => subscribeFrame('project', refreshProjects), [refreshProjects]);
+
+  // 空闲订阅落定（批 2）：dashboard 订阅 toast 提醒——会话订阅的通知已由服务端
+  // 注入其线程（message.* 帧走面板弹窗），这里不重复打扰。新挂起待答（AskUserQuestion /
+  // 计划 / 权限确认）同样只提醒——刻意不自动弹作答框，作答入口恒为手动点会话行的提问图标
+  // （问题面另拉，帧只带计数）。
   useEffect(
     () =>
-      subscribeSse((frame) => {
-        // 项目注册表变更帧：必须先于 asset 过滤处理（它没有 selected 项目语义），
-        // 整表重拉后 ProjectList 自然出现新项目。
-        if (frame.type === 'project') {
-          refreshProjects();
-          return;
-        }
-        // Hook frames ({ type: 'hook', kind: 'dispatch.*' }) go out on the same
-        // stream; the Hooks / Tasks panels listen for them on `weave:hook`.
-        // 会话状态/计数由全局状态总线按同一批帧维护（main.tsx 挂的 Provider）。
-        if (frame.type === 'hook') {
-          // 空闲订阅落定（批 2）：dashboard 订阅 toast 提醒——会话订阅的通知已由
-          // 服务端注入其线程（message.* 帧走面板弹窗），这里不重复打扰。
-          if (
-            frame.kind === 'watch.fired' &&
-            frame.watcherSessionId == null &&
-            typeof frame.targetSessionId === 'string'
-          ) {
+      subscribeHook(
+        (frame) => {
+          if (frame.kind === 'watch.fired') {
+            if (frame.watcherSessionId != null || typeof frame.targetSessionId !== 'string') return;
             const row = allSessions?.find((s) => s.sessionId === frame.targetSessionId);
             const label = sessionLabel(row?.title ?? null, frame.targetSessionId);
             // 正文按命中的触发类型措辞（session_watches.onEvents 的那一项）
@@ -540,33 +533,46 @@ function Dashboard() {
             // toast 之外补系统通知：标签页切走/最小化时 toast 看不见，通知才叫「提醒」
             // （tag 与 Web Push 载荷同值——页面开/关两条通道先后到达只显示一条）
             void notifyBrowser(t('tasks.watchNotifyTitle'), body, `weave-watch-${frame.targetSessionId}`);
+            return;
           }
-          // 新挂起待答（AskUserQuestion / 计划 / 权限确认）：同样只提醒——刻意不自动
-          // 弹作答框，作答入口恒为手动点会话行的提问图标（问题面另拉，帧只带计数）。
-          if (frame.kind === 'question.pending' && typeof frame.sessionId === 'string') {
-            const row = allSessions?.find((s) => s.sessionId === frame.sessionId);
-            const label = sessionLabel(row?.title ?? null, frame.sessionId);
-            const body = t('tasks.questionPending', { label });
-            show('info', body);
-            void notifyBrowser(t('tasks.questionPendingTitle'), body, `weave-question-${frame.sessionId}`);
-          }
-          window.dispatchEvent(new CustomEvent('weave:hook', { detail: frame }));
-          return;
-        }
-        // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
-        if (frame.type === 'push' && frame.key === 'terminalTopology') {
-          setTerminalCounts((frame.payload as { counts: Record<number, number> }).counts);
-          return;
-        }
-        // 项目更新角标：绝对值快照整体覆盖（含 0 = 角标归零）——与 hover 懒拉共用
-        // 同一个 updatesMap，push 到达后即以它为准，不双源。
-        if (frame.type === 'push' && frame.key === 'updates') {
-          setUpdatesMap((frame.payload as { counts: Record<number, number> }).counts ?? {});
-          return;
-        }
-        // 其余数据帧是失效键，收到后按 key 调既有 fetcher 重拉（后续逐个接入）。
-        if (frame.type !== 'asset') return;
-        const change = frame as unknown as AssetChangeEvent;
+          if (typeof frame.sessionId !== 'string') return;
+          const row = allSessions?.find((s) => s.sessionId === frame.sessionId);
+          const label = sessionLabel(row?.title ?? null, frame.sessionId);
+          const body = t('tasks.questionPending', { label });
+          show('info', body);
+          void notifyBrowser(t('tasks.questionPendingTitle'), body, `weave-question-${frame.sessionId}`);
+        },
+        ['watch.fired', 'question.pending'],
+      ),
+    // 旧巨型 handler 的依赖数组漏了 allSessions/t（toast 找会话名用挂载时的旧表）——
+    // 拆开后各自补齐，陈旧闭包随之消掉。
+    [allSessions, show, t],
+  );
+
+  // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
+  // 终端窗口数：隐藏刷新器推的绝对值快照（会话所在屏幕的另一半在会话状态总线）。
+  useEffect(
+    () =>
+      subscribePush<{ counts: Record<number, number> }>('terminalTopology', (p) =>
+        setTerminalCounts(p.counts),
+      ),
+    [],
+  );
+  // 项目更新角标：绝对值快照整体覆盖（含 0 = 角标归零）——与 hover 懒拉共用
+  // 同一个 updatesMap，push 到达后即以它为准，不双源。
+  useEffect(
+    () =>
+      subscribePush<{ counts: Record<number, number> }>('updates', (p) =>
+        setUpdatesMap(p.counts ?? {}),
+      ),
+    [],
+  );
+
+  // asset 变更帧：只 patch 命中当前项目的行（selected 走 ref 读、不进依赖数组，
+  // 否则每切一次项目就断线重连）。
+  useEffect(
+    () =>
+      subscribeFrame<AssetChangeEvent>('asset', (change) => {
         const sel = selectedRef.current;
         if (!sel || change.projectPath !== sel.path) return;
         setAssets((prev) => {
@@ -592,7 +598,7 @@ function Dashboard() {
         // any asset change may affect update availability
         refreshUpdates(sel);
       }),
-    [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshProjects],
+    [refreshMcp, refreshUpdates, refreshGlobalSkills],
   );
 
   // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /

@@ -44,6 +44,7 @@ const CAPTURE_TAKEN_OVER: HooksConfig = {
   subagentStop: false,
   notification: false,
   preCompact: false,
+  sessionEnd: false,
   timeout: 5000,
   continueOnError: true,
 };

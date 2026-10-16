@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, type HookPlugin } from '@/lib/api';
+import { subscribeHook } from '@/lib/sse';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -28,7 +29,7 @@ function notifyRulesChanged(): void {
  * 只读列表 + effective 开关（批 4 `/hooks/plugins?projectId=`），卸载隐藏。
  * 徽标近似区分跟随/覆盖：批 4 端点未暴露 syncedAt，拿全局列表与项目列表
  * 逐条比对 effective 状态——相同记「跟随全局」，不同记「已单独设置」。
- * 实时刷新挂在 App 转发的 `weave:hook` window 事件（plugin.reloaded/toggled）。
+ * 实时刷新挂在 SSE 总线的 hook 订阅（plugin.reloaded/toggled）。
  *
  * 批 6：安装入口只留「内置仓 + 资源市场」两条（粘贴本地目录/git URL 的输入框
  * 撤掉，后端 `POST /hooks/plugins` 保留）；`renderRules` 是**每个插件块内的
@@ -69,15 +70,14 @@ export function HooksPluginsSection({
 
   useEffect(() => {
     refresh();
-    const onHook = (e: Event) => {
-      const detail = (e as CustomEvent<{ kind?: string }>).detail;
-      if (detail?.kind === 'plugin.reloaded' || detail?.kind === 'plugin.toggled') {
+    const off = subscribeHook(
+      () => {
         refresh();
         notifyRulesChanged(); // 级联规则变化 → 数据流画布随规则集合更新
-      }
-    };
-    window.addEventListener('weave:hook', onHook);
-    return () => window.removeEventListener('weave:hook', onHook);
+      },
+      ['plugin.reloaded', 'plugin.toggled'],
+    );
+    return off;
   }, [refresh]);
 
   const toggle = (p: HookPlugin, enabled: boolean): void => {

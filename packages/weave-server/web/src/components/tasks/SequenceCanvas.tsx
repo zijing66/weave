@@ -28,7 +28,8 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { MessageSquareText, Plus, Waypoints, X } from 'lucide-react';
-import { useSessionStatus, type HookFrame } from './session-status-store';
+import { useSessionStatus } from './session-status-store';
+import { subscribeHook, type HookFrame } from '@/lib/sse';
 import type { SessionStatus } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { HarnessIcon } from './HarnessIcon';
@@ -39,7 +40,7 @@ import { layoutSequenceCanvas, type LaidLane } from './sequence-canvas-layout';
  * 编排画布（session-orchestration 批 3 ③）：本项目会话按 harness 泳道排布
  * （在途消息计数挂在节点上）；下方 = 序列触发 builder（步 ≤3、会话与通道都按
  * 能力矩阵门控——web 只渲染不判定）+ 序列列表（进度/终态/取消）。刷新全部挂
- * App 转发的 weave:hook 帧（message.* → 线程重拉、sequence.* → 序列重拉），
+ * SSE 总线的 hook 订阅（message.* → 线程重拉、sequence.* → 序列重拉），
  * 不新开 EventSource、不定时轮询。
  */
 
@@ -272,10 +273,8 @@ export function SequenceCanvas({
   useEffect(() => {
     let threadTimer: number | null = null;
     let seqTimer: number | null = null;
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
-      const kind = f.kind ?? '';
-      if (kind.startsWith('message.')) {
+    const onHook = (f: HookFrame): void => {
+      if (f.kind?.startsWith('message.')) {
         const mine =
           !f.sessionId ||
           (sessionsRef.current ?? []).some((s) => s.sessionId === f.sessionId);
@@ -285,7 +284,7 @@ export function SequenceCanvas({
           threadTimer = null;
           void refreshThreads();
         }, 500);
-      } else if (kind.startsWith('sequence.')) {
+      } else if (f.kind?.startsWith('sequence.')) {
         if (seqTimer !== null) window.clearTimeout(seqTimer);
         seqTimer = window.setTimeout(() => {
           seqTimer = null;
@@ -293,9 +292,9 @@ export function SequenceCanvas({
         }, 500);
       }
     };
-    window.addEventListener('weave:hook', onHook);
+    const off = subscribeHook(onHook, ['message.', 'sequence.']);
     return () => {
-      window.removeEventListener('weave:hook', onHook);
+      off();
       if (threadTimer !== null) window.clearTimeout(threadTimer);
       if (seqTimer !== null) window.clearTimeout(seqTimer);
     };

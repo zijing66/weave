@@ -15,7 +15,7 @@ import {
   type SessionTerminal,
 } from '@/lib/api';
 import { useAuthState } from '@/lib/auth';
-import { subscribeSse } from '@/lib/sse';
+import { subscribeHook, subscribePush, type HookFrame } from '@/lib/sse';
 import {
   countSessionsByHarness,
   deriveSessionStatus,
@@ -23,30 +23,6 @@ import {
   type HarnessSessionCounts,
   type SessionStatus,
 } from './session-status';
-
-/** App 转发的 hook 帧（mirror bus.ts 的 HookBusMessage，字段按 kind 可选）。 */
-export interface HookFrame {
-  kind?: string;
-  sessionId?: string | null;
-  eventType?: string;
-  /** 事件源子 agent id（raw.agent_id；SubagentStop 时 = 刚结束的子 agent）。 */
-  agentId?: string;
-  /** 后台子 agent 出生信号（PostToolUse Agent isAsync 的 tool_response.agentId）。 */
-  spawnAgentId?: string;
-  /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
-  backgroundTasks?: Array<{ id: string; status: string }>;
-  ruleId?: string;
-  eventId?: number;
-  dispatchId?: number;
-  status?: string;
-  /** watch.fired 帧（空闲订阅 one-shot 落定）：目标/订阅方 id——dashboard 订阅
-   *  （watcherSessionId null）由此弹 toast，任务面板据此重拉订阅列表。 */
-  watchId?: number;
-  targetSessionId?: string;
-  watcherSessionId?: string | null;
-  /** question.pending 帧（新挂起待答）：只作提醒，问题面另由会话状态总线拉。 */
-  count?: number;
-}
 
 interface SessionStatusValue {
   /** 全量会话（daemon 侧最近 200，created_at 倒序）；null = 首次加载中。 */
@@ -70,8 +46,8 @@ interface SessionStatusValue {
 const Ctx = createContext<SessionStatusValue | null>(null);
 
 /**
- * 全局会话状态总线（唯一真源）：一处拉 sessions + dispatches、一处订阅
- * weave:hook 帧（overlay / 子 agent 存活账）、一处推导 deriveSessionStatus。
+ * 全局会话状态总线（唯一真源）：一处拉 sessions + dispatches、一处经 SSE 总线
+ * 订阅 hook 帧（overlay / 子 agent 存活账）、一处推导 deriveSessionStatus。
  * 项目行徽标、任务视图会话列表、全局总览都从这里取——此前三处各自 fetch +
  * 各自推导（且各自漏掉别人的输入），状态会漂移。
  */
@@ -123,10 +99,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
     () =>
-      subscribeSse((frame) => {
-        if (frame.type !== 'push' || frame.key !== 'inflightCounts') return;
-        const counts = (frame.payload as { counts: Record<string, number> }).counts ?? {};
-        setInflight(new Map(Object.entries(counts)));
+      subscribePush<{ counts: Record<string, number> }>('inflightCounts', (p) => {
+        setInflight(new Map(Object.entries(p.counts ?? {})));
       }),
     [],
   );
@@ -136,9 +110,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   // （codex/新鲜会话）不进快照、不猜。sessions 变 → statuses 派生自愈。
   useEffect(
     () =>
-      subscribeSse((frame) => {
-        if (frame.type !== 'push' || frame.key !== 'sessionLiveness') return;
-        const alive = (frame.payload as { alive?: Record<string, boolean> }).alive ?? {};
+      subscribePush<{ alive?: Record<string, boolean> }>('sessionLiveness', (p) => {
+        const alive = p.alive ?? {};
         setSessions((prev) => {
           if (!prev) return prev;
           let changed = false;
@@ -158,10 +131,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   // 「标记晚于最后一条事件」算成绝对时刻推下来，不在快照里即已恢复（被新事件盖过）。
   useEffect(
     () =>
-      subscribeSse((frame) => {
-        if (frame.type !== 'push' || frame.key !== 'sessionInterrupt') return;
-        const interrupted =
-          (frame.payload as { interrupted?: Record<string, number> }).interrupted ?? {};
+      subscribePush<{ interrupted?: Record<string, number> }>('sessionInterrupt', (p) => {
+        const interrupted = p.interrupted ?? {};
         setSessions((prev) => {
           if (!prev) return prev;
           let changed = false;
@@ -182,10 +153,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   // 反查不到时值是 null，据此把已分块的行摘出块外（不谎报旧屏幕）。
   useEffect(
     () =>
-      subscribeSse((frame) => {
-        if (frame.type !== 'push' || frame.key !== 'terminalTopology') return;
-        const screens =
-          (frame.payload as { terminals?: Record<string, SessionTerminal | null> }).terminals ?? {};
+      subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
+        const screens = p.terminals ?? {};
         setSessions((prev) => {
           if (!prev) return prev;
           let changed = false;
@@ -214,8 +183,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       }, 500);
     };
 
-    const onHook = (e: Event): void => {
-      const f = (e as CustomEvent<HookFrame>).detail ?? {};
+    const onHook = (f: HookFrame): void => {
       switch (f.kind) {
         case 'event.ingested': {
           if (!f.sessionId) break;
@@ -285,9 +253,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       refetch();
     };
 
-    window.addEventListener('weave:hook', onHook);
+    const off = subscribeHook(onHook);
     return () => {
-      window.removeEventListener('weave:hook', onHook);
+      off();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [refresh]);

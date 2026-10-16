@@ -75,7 +75,7 @@ JSON 数组，每元素（`id`/`projectId` 由加载器生成）：
 }
 ```
 
-**事件七选一**：`PreToolUse / PostToolUse / UserPromptSubmit / SessionStart / Stop / SubagentStop / Notification`。
+**事件九选一**：`PreToolUse / PostToolUse / UserPromptSubmit / SessionStart / Stop / SubagentStop / Notification / PreCompact / SessionEnd`。
 
 **handler 五型**：
 
@@ -115,7 +115,7 @@ export default {
 
 ### 校验红线（任一不过 → 整插件 rejected，不影响其他插件）
 
-- manifest 过 schema；`requires.events` ⊆ 七事件；inject 挂白名单事件
+- manifest 过 schema；`requires.events` ⊆ 九事件；inject 挂白名单事件
 - 规则文件存在、为数组、逐条过 schema；`@file:` 模板存在且不越界
 - handler `entry` 不越界、动态 import 成功、default 导出 `type` 与 manifest 一致
 - 同 id 与已加载插件重复 → 后者 rejected（先到先得）

@@ -40,6 +40,8 @@ export const HARNESS_EVENTS = {
     'Notification',
     /** 压缩开始（宿主在压缩前发，携带 trigger=manual/auto）——压缩态的实时信号。 */
     'PreCompact',
+    /** 会话退出（宿主进程收尾时发，只覆盖正常退出：kill / 关窗口不发）——退出即清的信号。 */
+    'SessionEnd',
   ] as const,
   /** Codex 事件待批 2 B0 调研锁定（BACKLOG §10-6）；一期不注册（B0 闸门）。 */
   codex: [] as const,
@@ -112,6 +114,12 @@ export interface HarnessLifecycle {
    * 此表——谁是问答工具只说一处）。空数组 = 该 harness 无阻塞问答。
    */
   questionTools: readonly string[];
+  /**
+   * 会话退出事件（旁路事实——inbox 凭据 / pane 定位——随进程作废的信号）；
+   * null = 该 harness 没有这个概念。与 `close` 不同义：`close` 是一轮对话结束，
+   * 这个是一整个会话结束。**只覆盖正常退出**（kill / 关窗口不发）。
+   */
+  sessionExit: string | null;
 }
 
 /**
@@ -125,9 +133,17 @@ export const HARNESS_LIFECYCLE = {
     sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: 'SubagentStop',
     questionTools: ['AskUserQuestion', 'ExitPlanMode'],
+    sessionExit: 'SessionEnd',
   },
   /** Codex 事件待批 2 B0 调研锁定（同 HARNESS_EVENTS 闸）；空值占位，类型完整。 */
-  codex: { open: '', close: [], sessionMarkers: [], subagentStop: '', questionTools: [] },
+  codex: {
+    open: '',
+    close: [],
+    sessionMarkers: [],
+    subagentStop: '',
+    questionTools: [],
+    sessionExit: null,
+  },
 } satisfies Record<Harness, HarnessLifecycle>;
 
 /** 压缩信号表的条目形状（谁在压缩、哪些事件是压缩）——压缩差异是 harness 知识。 */
