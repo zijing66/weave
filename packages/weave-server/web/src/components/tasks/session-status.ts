@@ -20,7 +20,7 @@
 
 import type { Harness } from '@weavecode/core/harness';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
-import { HARNESS_COMPACTION } from './lifecycle';
+import { HARNESS_COMPACTION, HARNESS_LIFECYCLE } from './lifecycle';
 
 export type SessionStatus =
   | 'running'
@@ -108,6 +108,30 @@ export function deriveSessionStatus(input: StatusInput): SessionStatus {
  *  组头徽标 / 画布动效 / 状态图标共用，别各自写 `=== 'running'`。 */
 export function isSessionBusy(status: SessionStatus): boolean {
   return status === 'running' || status === 'compacting';
+}
+
+/** 该 harness 有没有可信的「回合开合」信号——`turnOpen` 的可信度看它。
+ *  事件名归生命周期表，调用方不认 harness 名（同 `isCompactionEnd` 口径）；
+ *  无该信号的 harness 服务端 `turnOpen` 恒 false，那是「未知」不是「已关」。 */
+export function hasTurnSignal(harness: string | null | undefined): boolean {
+  if (harness == null) return false;
+  return !!HARNESS_LIFECYCLE[harness as Harness]?.open;
+}
+
+/** 停止按钮的唯一判据（事件链组头与对话弹窗共用）。
+ *  回合开着 = 有在途的活，含卡在报错重试的长静默窗口——那正是 ESC 唯一有用的一记；
+ *  回合已关（收到 Stop，正常收尾）与关闭/终止/失败落定都没有可停的东西。
+ *  `turnOpen` 未知（无回合信号的 harness、旧 daemon）才按状态兜底。 */
+export function canInterrupt(
+  status: SessionStatus,
+  turnOpen?: boolean | null,
+): boolean {
+  if (status === 'closed' || status === 'terminated' || status === 'failed') {
+    return false;
+  }
+  if (turnOpen === true) return true;
+  if (turnOpen === false) return false;
+  return isSessionBusy(status);
 }
 
 /** 状态 → 展示文案的 dict key。 */

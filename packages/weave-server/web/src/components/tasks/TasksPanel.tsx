@@ -27,7 +27,7 @@ import {
   ORPHAN_GROUP_ID,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
-import { isSessionBusy } from './session-status';
+import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
 import { useSessionStatus, type HookFrame } from './session-status-store';
@@ -289,6 +289,10 @@ export function TasksPanel({
       );
     },
     [fb, t, show],
+  );
+  const interruptStateOf = useCallback(
+    (sessionId: string) => fb.stateOf(`interrupt:${sessionId}`),
+    [fb],
   );
   const onSubscribeWatch = useCallback(
     (sessionId: string, on: WatchOn[], times: number | null): void => {
@@ -745,6 +749,13 @@ export function TasksPanel({
 
   const selectedRow = sessions?.find((s) => s.sessionId === selectedId);
 
+  /** 停止按钮露不露（事件链组头与对话弹窗共用同一判据）：回合开合信号不可信的
+   *  harness（codex）传 undefined 让判据回落到状态。 */
+  const stoppable = canInterrupt(
+    activeStatus,
+    hasTurnSignal(selectedRow?.harness) ? selectedRow?.turnOpen : undefined,
+  );
+
   // 链路区（右栏）：桌面 inline 与 <lg 全屏滑出复用同一 JSX 常量（isDesktop
   // 互斥渲染，不双挂载）——展开态/滚动窗口等状态都在面板级，两态共用。
   const chainEl = (
@@ -986,10 +997,10 @@ export function TasksPanel({
                         <HarnessIcon harness={selectedHarness} running />
                       </span>
                     )}
-                    {/* 停止：最新组头（该会话当前那一折）上的会话级动作——会话还活着
-                        就有可停的东西，不按 running 门控（卡在 API 报错重试时会静默超
-                        窗口、状态回落 open，恰好是最需要这一记的时候）。 */}
-                    {isLatestGroup && activeStatus !== 'closed' && activeStatus !== 'terminated' && (
+                    {/* 停止：最新组头（该会话当前那一折）上的会话级动作——回合开着才露
+                        （含卡在 API 报错重试时的长静默，那是 ESC 唯一有用的一记），
+                        正常收尾后不残留。判据唯一实现 = canInterrupt。 */}
+                    {isLatestGroup && stoppable && (
                       <button
                         type="button"
                         title={t('tasks.stopTooltip')}
@@ -1261,6 +1272,8 @@ export function TasksPanel({
           label={messagesTarget.label}
           projectLabel={projectLabel}
           capability={messagesTarget.capability}
+          onInterrupt={onInterrupt}
+          interruptStateOf={interruptStateOf}
           onClose={() => setMessagesTarget(null)}
         />
       )}

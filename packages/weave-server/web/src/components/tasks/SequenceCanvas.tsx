@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useToast } from '@/components/Toast';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { MessageSquareText, Plus, Waypoints, X } from 'lucide-react';
 import { useSessionStatus, type HookFrame } from './session-status-store';
@@ -172,6 +173,7 @@ export function SequenceCanvas({
 }) {
   const t = useT();
   const fb = useActionFeedback();
+  const { show } = useToast();
   const { sessions: allSessions, statuses } = useSessionStatus();
   const sessions = useMemo(
     () => (allSessions === null ? null : allSessions.filter((s) => s.projectId === projectId)),
@@ -202,6 +204,25 @@ export function SequenceCanvas({
       return row?.harness != null ? capabilityMap.get(row.harness) : undefined;
     },
     [capabilityMap],
+  );
+
+  // 停止会话（对话弹窗头部那枚）：与任务视图组头同一实现。
+  const onInterrupt = useCallback(
+    (sessionId: string): void => {
+      void fb.run(
+        `interrupt:${sessionId}`,
+        async () => {
+          await api.interruptSession(sessionId);
+          show('success', t('tasks.stopOk'));
+        },
+        { fail: (e) => t('tasks.stopFail', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, show],
+  );
+  const interruptStateOf = useCallback(
+    (sessionId: string) => fb.stateOf(`interrupt:${sessionId}`),
+    [fb],
   );
 
   // 每会话消息线程（N 次拉取聚合）：边与收发计数都从这里派生。
@@ -711,6 +732,8 @@ export function SequenceCanvas({
           label={messagesTarget.label}
           projectLabel={projectLabel}
           capability={messagesTarget.capability}
+          onInterrupt={onInterrupt}
+          interruptStateOf={interruptStateOf}
           onClose={() => setMessagesTarget(null)}
         />
       )}

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  canInterrupt,
   countSessionsByHarness,
   deriveSessionStatus,
+  hasTurnSignal,
   type SessionStatus,
   type StatusInput,
 } from '../session-status';
@@ -152,6 +154,43 @@ describe('deriveSessionStatus', () => {
         turnOpen: true,
       }),
     ).toBe('open');
+  });
+});
+
+describe('canInterrupt', () => {
+  it('回合开着就露——含静默超窗（长工具/报错重试正是要 ESC 的时候）', () => {
+    expect(canInterrupt('running', true)).toBe(true);
+    expect(canInterrupt('open', true)).toBe(true);
+    expect(canInterrupt('compacting', true)).toBe(true);
+  });
+
+  it('回合已关（正常收尾）不露，不按状态兜底', () => {
+    expect(canInterrupt('running', false)).toBe(false);
+    expect(canInterrupt('open', false)).toBe(false);
+  });
+
+  it('关闭 / 终止 / 失败落定一律不露', () => {
+    expect(canInterrupt('closed', true)).toBe(false);
+    expect(canInterrupt('terminated', true)).toBe(false);
+    expect(canInterrupt('failed', true)).toBe(false);
+    expect(canInterrupt('closed')).toBe(false);
+  });
+
+  it('回合开合未知（无回合信号的 harness / 旧 daemon）按状态兜底', () => {
+    expect(canInterrupt('running')).toBe(true);
+    expect(canInterrupt('compacting')).toBe(true);
+    expect(canInterrupt('open')).toBe(false);
+    expect(canInterrupt('open', null)).toBe(false);
+  });
+});
+
+describe('hasTurnSignal', () => {
+  it('只认有「回合开合」事件名的 harness（codex 空占位 → false）', () => {
+    expect(hasTurnSignal('claude')).toBe(true);
+    expect(hasTurnSignal('codex')).toBe(false);
+    expect(hasTurnSignal(null)).toBe(false);
+    expect(hasTurnSignal(undefined)).toBe(false);
+    expect(hasTurnSignal('nope')).toBe(false);
   });
 });
 

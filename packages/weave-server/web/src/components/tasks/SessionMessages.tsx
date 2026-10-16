@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Loader2, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Check, Copy, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -13,7 +13,10 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
-import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { useToast } from '@/components/Toast';
+import { copyText } from '@/lib/clipboard';
+import { useMediaQuery } from '@/lib/use-media-query';
+import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
   formatStamp,
   promptOf,
@@ -22,6 +25,7 @@ import {
   turnSummaryOf,
 } from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
+import { canInterrupt, hasTurnSignal } from './session-status';
 import { useSessionStatus, type HookFrame } from './session-status-store';
 
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
@@ -209,6 +213,97 @@ export function attachDeliveries(
   return [...out, ...orphan];
 }
 
+/** 历史过滤：全部 / 只看自己发的 / 只看收到的回复（角色即过滤键）。 */
+export type ConvFilter = 'all' | 'user' | 'assistant';
+
+export const CONV_FILTERS = ['all', 'user', 'assistant'] as const;
+
+const CONV_FILTER_KEY: Record<
+  ConvFilter,
+  'tasks.convFilterAll' | 'tasks.convFilterSent' | 'tasks.convFilterRecv'
+> = {
+  all: 'tasks.convFilterAll',
+  user: 'tasks.convFilterSent',
+  assistant: 'tasks.convFilterRecv',
+};
+
+export function filterThread(
+  thread: readonly ConvEntry[],
+  filter: ConvFilter,
+): ConvEntry[] {
+  return filter === 'all' ? [...thread] : thread.filter((e) => e.role === filter);
+}
+
+/** 导出用的时刻戳：本地 `YYYY-MM-DD HH:mm:ss`。展示用的 `formatStamp` 是给人扫的
+ *  短形（当天只给时分秒），粘到别处会失去日期，导出单独一份。 */
+export function exportStamp(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}
+
+/** 角色文案由调用方给（i18n 不写进纯函数），条目间空行分隔。 */
+export function exportConversationText(
+  entries: readonly ConvEntry[],
+  labels: { user: string; assistant: string },
+): string {
+  return entries
+    .map(
+      (e) =>
+        `[${exportStamp(e.at)}] ${e.role === 'user' ? labels.user : labels.assistant}\n${e.text}`,
+    )
+    .join('\n\n');
+}
+
+/** 触屏长按进多选的门槛：位移超过这个就当是滚动，不算长按。 */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 8;
+
+/** 弹窗尺寸：宽度跟屏幕走（宽屏优先，窄屏交给 `w-full` 类），拖角可改并记住；
+ *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
+type ConvSize = { w: number; h: number };
+const CONV_SIZE_KEY = 'weave:conv-size';
+const SIZE_MIN = { w: 320, h: 220 };
+
+const clampConvSize = (w: number, h: number): ConvSize => ({
+  w: Math.min(Math.max(Math.round(w), SIZE_MIN.w), Math.max(SIZE_MIN.w + 40, innerWidth - 32)),
+  h:
+    h > 0
+      ? Math.min(Math.max(Math.round(h), SIZE_MIN.h), Math.max(SIZE_MIN.h + 40, innerHeight - 32))
+      : 0,
+});
+
+/** 默认宽 = 视口 62%，1100px 封顶（宽屏优先但不铺满整屏）。 */
+const defaultConvSize = (): ConvSize =>
+  clampConvSize(Math.min(1100, Math.round(innerWidth * 0.62)), 0);
+
+function loadConvSize(): ConvSize {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONV_SIZE_KEY) ?? 'null') as ConvSize | null;
+    if (!raw || typeof raw.w !== 'number' || typeof raw.h !== 'number') return defaultConvSize();
+    return clampConvSize(raw.w, raw.h);
+  } catch {
+    return defaultConvSize();
+  }
+}
+
+/** 多选态气泡旁的勾选框（点击面是整个气泡，这里只显示状态）。 */
+function CheckBox({ on }: { on: boolean }) {
+  return (
+    <span
+      className={cn(
+        'mb-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
+        on ? 'border-blue-400 bg-blue-500 text-white' : 'border-neutral-600 bg-neutral-900',
+      )}
+    >
+      {on && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+    </span>
+  );
+}
+
 /**
  * 会话对话弹窗：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
  * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
@@ -225,6 +320,8 @@ export function SessionMessages({
   label,
   projectLabel,
   capability,
+  onInterrupt,
+  interruptStateOf,
   onClose,
 }: {
   sessionId: string;
@@ -236,11 +333,16 @@ export function SessionMessages({
   projectLabel: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
   capability: MessagingCapability;
+  /** 停止会话（向 pane 打一记 ESC）：与事件链组头那枚同一实现、同一 fb 键，
+   *  两处按钮同转同灭。 */
+  onInterrupt: (sessionId: string) => void;
+  interruptStateOf: (sessionId: string) => ActionState;
   onClose: () => void;
 }) {
   const t = useT();
+  const { show } = useToast();
   const fb = useActionFeedback();
-  const { statuses } = useSessionStatus();
+  const { statuses, sessions } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   /** 对话事件类型（开轮 + 闭轮）：闭轮表为空的 harness 没有对话面可取。 */
   const convTypes = useMemo(
@@ -256,9 +358,26 @@ export function SessionMessages({
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<ConvFilter>('all');
+  /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
+  /** 桌面右键菜单（位置 = 指针处；右键那条一并勾上）。 */
+  const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  const [size, setSize] = useState<ConvSize>(() => loadConvSize());
+  const [pos, setPos] = useState({ x: 0, y: 0 });
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   /** 向上翻页插入新条目后要补的滚动高度（渲染后按差值补，视口不跳）。 */
   const scrollFix = useRef<number | null>(null);
+  const grip = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  /** 标题栏拖动（移动整扇窗）：与拖角改大小是两回事。 */
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const press = useRef<{ x: number; y: number; timer: number } | null>(null);
+  /** 长按刚生效那一下：抬手还会补一个 click，得吞掉（否则勾上又立刻勾掉）。 */
+  const suppressTap = useRef<string | null>(null);
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const coarse = useMediaQuery('(pointer: coarse)');
 
   const fail = useCallback((e: unknown): void => {
     setError(e instanceof Error ? e.message : String(e));
@@ -339,13 +458,47 @@ export function SessionMessages({
     };
   }, [lifecycle, loadNewest, refreshMessages, sessionId]);
 
+  // Esc 逐层退：右键菜单 → 多选态 → 关弹窗（一层层退出，不一把关掉）
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (menu) setMenu(null);
+      else if (selecting) {
+        setSelecting(false);
+        setPicked(new Set());
+      } else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [menu, onClose, selecting]);
+
+  // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = (e: Event): void => {
+      if ((e.target as HTMLElement | null)?.closest?.('[data-conv-menu]')) return;
+      e.stopPropagation();
+      setMenu(null);
+    };
+    const close = (): void => setMenu(null);
+    window.addEventListener('pointerdown', dismiss, true);
+    window.addEventListener('contextmenu', dismiss, true);
+    window.addEventListener('wheel', close, { capture: true, passive: true });
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('pointerdown', dismiss, true);
+      window.removeEventListener('contextmenu', dismiss, true);
+      window.removeEventListener('wheel', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [menu]);
+
+  useEffect(
+    () => () => {
+      if (press.current) window.clearTimeout(press.current.timer);
+    },
+    [],
+  );
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {
@@ -409,6 +562,140 @@ export function SessionMessages({
     if (el) el.scrollTop = el.scrollHeight;
   }, [entries, tailKey]);
 
+  const visible = useMemo(() => filterThread(thread, filter), [thread, filter]);
+  /** 停止（与事件链组头同一判据；无回合信号的 harness 传 undefined 回落状态）。 */
+  const stoppable = canInterrupt(
+    status ?? 'open',
+    hasTurnSignal(capability.harness)
+      ? sessions?.find((s) => s.sessionId === sessionId)?.turnOpen
+      : undefined,
+  );
+
+  const togglePick = (key: string): void =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+
+  const enterSelect = (key?: string): void => {
+    setMenu(null);
+    setSelecting(true);
+    if (key !== undefined) setPicked(new Set([key]));
+  };
+
+  const copyPicked = (): void => {
+    const chosen = thread.filter((e) => picked.has(e.key));
+    if (chosen.length === 0) return;
+    const text = exportConversationText(chosen, {
+      user: t('tasks.convRoleUser'),
+      assistant: t('tasks.convRoleAssistant'),
+    });
+    // 通知权限那类失败不静默：复制失败要让用户看得见（还可手动选文本）。
+    void copyText(text).then((ok) =>
+      show(
+        ok ? 'success' : 'error',
+        ok ? t('tasks.convCopyOk', { n: chosen.length }) : t('tasks.convCopyFailed'),
+      ),
+    );
+  };
+
+  /** 触屏长按进多选（桌面走右键菜单；鼠标不该有长按这回事）。 */
+  const onPressDown = (key: string) => (e: React.PointerEvent): void => {
+    if (!coarse || selecting || e.button !== 0) return;
+    const timer = window.setTimeout(() => {
+      press.current = null;
+      suppressTap.current = key;
+      enterSelect(key);
+    }, LONG_PRESS_MS);
+    press.current = { x: e.clientX, y: e.clientY, timer };
+  };
+  const onPressMove = (e: React.PointerEvent): void => {
+    const p = press.current;
+    if (!p) return;
+    if (Math.abs(e.clientX - p.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - p.y) > LONG_PRESS_SLOP) {
+      window.clearTimeout(p.timer);
+      press.current = null;
+    }
+  };
+  const cancelPress = (): void => {
+    if (!press.current) return;
+    window.clearTimeout(press.current.timer);
+    press.current = null;
+  };
+
+  const clampPos = (x: number, y: number, s: ConvSize): { x: number; y: number } => {
+    const box = panelRef.current?.getBoundingClientRect();
+    const limX = Math.max(0, (innerWidth - (box?.width ?? s.w)) / 2 - 12);
+    const limY = Math.max(0, (innerHeight - (box?.height ?? 0)) / 2 - 12);
+    return { x: Math.max(-limX, Math.min(limX, x)), y: Math.max(-limY, Math.min(limY, y)) };
+  };
+
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const box = panelRef.current?.getBoundingClientRect();
+    grip.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h || Math.round(box?.height ?? 0) };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const g = grip.current;
+    if (!g) return;
+    const next = clampConvSize(g.w + (e.clientX - g.x), g.h + (e.clientY - g.y));
+    setSize(next);
+    setPos((p) => clampPos(p.x, p.y, next));
+  };
+  const onGripUp = (): void => {
+    if (!grip.current) return;
+    grip.current = null;
+    setSize((s) => {
+      try {
+        localStorage.setItem(CONV_SIZE_KEY, JSON.stringify(s));
+      } catch {
+        // 隐私模式禁写：尺寸只在本次会话有效
+      }
+      return s;
+    });
+  };
+
+  const onDragDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    // 标题栏上的按钮（停止/关闭/过滤）不是拖动把手
+    if (!isDesktop || (e.target as HTMLElement).closest('button')) return;
+    drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onDragMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const d = drag.current;
+    if (!d) return;
+    setPos(clampPos(d.px + (e.clientX - d.x), d.py + (e.clientY - d.y), size));
+  };
+  const onDragUp = (): void => {
+    drag.current = null;
+  };
+
+  /** 每条气泡的交互面：桌面右键开菜单（进多选并勾上这条），触屏长按同效；
+   *  多选态里点气泡即勾选/取消。 */
+  const rowProps = (key: string): React.HTMLAttributes<HTMLDivElement> => ({
+    onContextMenu: (e) => {
+      if (selecting) return;
+      // 触屏长按同样会弹 contextmenu：原生菜单一律压掉，但那条路我们不用自己的菜单
+      e.preventDefault();
+      if (coarse) return;
+      setMenu({ x: e.clientX, y: e.clientY, key });
+    },
+    onPointerDown: onPressDown(key),
+    onPointerMove: onPressMove,
+    onPointerUp: cancelPress,
+    onPointerCancel: cancelPress,
+    onClick: selecting
+      ? () => {
+          if (suppressTap.current === key) {
+            suppressTap.current = null;
+            return;
+          }
+          togglePick(key);
+        }
+      : undefined,
+  });
+
   const send = (): void => {
     const text = draft.trim();
     if (!text) return;
@@ -430,25 +717,85 @@ export function SessionMessages({
       onClick={onClose}
     >
       <div
-        className="flex h-[70dvh] max-lg:h-[88dvh] w-full max-w-lg flex-col rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        ref={panelRef}
+        // 桌面：宽度跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽
+        style={
+          isDesktop
+            ? {
+                width: size.w,
+                height: size.h || undefined,
+                transform: pos.x || pos.y ? `translate(${pos.x}px, ${pos.y}px)` : undefined,
+              }
+            : undefined
+        }
+        className="relative flex h-[70dvh] max-lg:h-[88dvh] w-full flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-2 pb-2">
+        <div
+          onPointerDown={onDragDown}
+          onPointerMove={onDragMove}
+          onPointerUp={onDragUp}
+          onPointerCancel={onDragUp}
+          className={cn(
+            'flex items-center justify-between gap-2 pb-2',
+            isDesktop && 'cursor-grab active:cursor-grabbing',
+          )}
+        >
           <div className="min-w-0">
             <p className="truncate text-xs font-medium text-neutral-200">
               {t('tasks.messagesTitle')} · {label}
             </p>
             <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
           </div>
-          <button
-            type="button"
-            title={t('tasks.messagesClose')}
-            aria-label={t('tasks.messagesClose')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* 停止：与事件链组头那枚同一判据（回合开着才露）、同一动作、同一 fb 键 */}
+            {stoppable && (
+              <button
+                type="button"
+                title={t('tasks.stopTooltip')}
+                aria-label={t('tasks.stopTooltip')}
+                onClick={() => onInterrupt(sessionId)}
+                className="inline-flex h-6 w-6 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-red-300"
+              >
+                <FeedbackIcon
+                  state={interruptStateOf(sessionId)}
+                  className="h-3.5 w-3.5"
+                  icon={<Square className="h-3.5 w-3.5" />}
+                />
+              </button>
+            )}
+            <button
+              type="button"
+              title={t('tasks.messagesClose')}
+              aria-label={t('tasks.messagesClose')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* 历史过滤：只改显示，不动手上的翻页游标与勾选 */}
+        <div className="flex shrink-0 items-center gap-1 pb-2">
+          {CONV_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              className={cn(
+                'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                filter === f
+                  ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+                  : 'border-white/[0.08] text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {t(CONV_FILTER_KEY[f])}
+            </button>
+          ))}
+          <span className="ml-auto text-[10px] text-neutral-600">
+            {t('tasks.convCount', { n: thread.length })}
+          </span>
         </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
@@ -457,6 +804,7 @@ export function SessionMessages({
           ref={threadRef}
           onScroll={() => {
             stick.current = atBottom();
+            cancelPress(); // 手指在滑 = 不是长按
             if ((threadRef.current?.scrollTop ?? 1) <= 24) void loadEarlier();
           }}
           className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden pr-1"
@@ -478,10 +826,20 @@ export function SessionMessages({
                   {t('tasks.msgEarlier')}
                 </p>
               )}
-              {thread.map((m) => {
+              {visible.length === 0 && (
+                <p className="pt-6 text-center text-xs text-neutral-600">
+                  {t('tasks.convFilterEmpty')}
+                </p>
+              )}
+              {visible.map((m) => {
                 if (m.role === 'assistant') {
                   return (
-                    <div key={m.key} className="flex justify-start">
+                    <div
+                      key={m.key}
+                      {...rowProps(m.key)}
+                      className={cn('flex justify-start', selecting && 'select-none')}
+                    >
+                      {selecting && <CheckBox on={picked.has(m.key)} />}
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
                           不把整块对话撑出横向滚动条 */}
                       <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
@@ -495,7 +853,12 @@ export function SessionMessages({
                 }
                 const pipe = m.pipe;
                 return (
-                  <div key={m.key} className="flex items-end justify-end gap-1">
+                  <div
+                    key={m.key}
+                    {...rowProps(m.key)}
+                    className={cn('flex items-end justify-end gap-1', selecting && 'select-none')}
+                  >
+                    {selecting && <CheckBox on={picked.has(m.key)} />}
                     {/* 投递终态收成气泡左下角一枚小圆点：空心 = 已送达（可能被暂扣/拒收，
                         不等于已读），灰底白勾 = 已回执（会话真收到）。只有 weave 发出去的
                         消息才有这一步——终端里自己打的话没有投递可言。 */}
@@ -565,7 +928,9 @@ export function SessionMessages({
                       {pipe?.error && (
                         <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
                       )}
-                      {pipe &&
+                      {/* 多选态里重发/删除不渲染——它们会跟「点气泡即勾选」抢点击 */}
+                      {!selecting &&
+                        pipe &&
                         (pipe.status === 'failed' ||
                           pipe.status === 'pending' ||
                           pipe.stalled === true) && (
@@ -647,45 +1012,114 @@ export function SessionMessages({
           </p>
         )}
 
-        {/* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
-            harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。 */}
-        <div className="mt-2 flex shrink-0 items-end gap-1.5">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder={t('tasks.messagesPlaceholder')}
-            rows={2}
-            className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
-          />
-          <button
-            type="button"
-            disabled={
-              !capability.prompt ||
-              !draft.trim() ||
-              fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-            }
-            title={
-              capability.prompt
-                ? undefined
-                : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-            }
-            onClick={send}
-            className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
-          >
-            <FeedbackIcon
-              state={fb.stateOf(`sendMsg:${sessionId}`)}
-              className="h-3 w-3"
-              icon={<Send className="h-3 w-3" />}
+        {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆） */}
+        {selecting ? (
+          <div className="mt-2 flex shrink-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-[11px] text-neutral-400">
+              {t('tasks.convSelected', { n: picked.size })}
+            </span>
+            <button
+              type="button"
+              disabled={picked.size === 0}
+              onClick={copyPicked}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
+            >
+              <Copy className="h-3 w-3" />
+              {t('tasks.convCopy')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelecting(false);
+                setPicked(new Set());
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200"
+            >
+              {t('tasks.convCancel')}
+            </button>
+          </div>
+        ) : (
+          /* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
+             harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。 */
+          <div className="mt-2 flex shrink-0 items-end gap-1.5">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder={t('tasks.messagesPlaceholder')}
+              rows={2}
+              className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
             />
-            {t('tasks.messagesSend')}
-          </button>
-        </div>
+            <button
+              type="button"
+              disabled={
+                !capability.prompt ||
+                !draft.trim() ||
+                fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+              }
+              title={
+                capability.prompt
+                  ? undefined
+                  : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+              }
+              onClick={send}
+              className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+            >
+              <FeedbackIcon
+                state={fb.stateOf(`sendMsg:${sessionId}`)}
+                className="h-3 w-3"
+                icon={<Send className="h-3 w-3" />}
+              />
+              {t('tasks.messagesSend')}
+            </button>
+          </div>
+        )}
+
+        {/* 拖角改大小（桌面专属：触屏没有拖窗口这回事） */}
+        {isDesktop && (
+          <div
+            role="separator"
+            title={t('app.resizeDialog')}
+            aria-label={t('app.resizeDialog')}
+            onPointerDown={onGripDown}
+            onPointerMove={onGripMove}
+            onPointerUp={onGripUp}
+            onPointerCancel={onGripUp}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
+          >
+            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-white/20" />
+          </div>
+        )}
+
+        {/* 右键菜单（桌面）：一项「多选」——进多选并勾上右键那条 */}
+        {menu &&
+          createPortal(
+            <div
+              data-conv-menu
+              className="fixed z-[60] rounded-lg border border-white/[0.1] bg-neutral-900 py-1 shadow-mac"
+              style={{
+                left: Math.min(menu.x, window.innerWidth - 160),
+                top: Math.min(menu.y, window.innerHeight - 60),
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => enterSelect(menu.key)}
+                className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+              >
+                <Check className="h-3 w-3 text-neutral-500" />
+                {t('tasks.convSelect')}
+              </button>
+            </div>,
+            document.body,
+          )}
       </div>
     </div>,
     document.body,

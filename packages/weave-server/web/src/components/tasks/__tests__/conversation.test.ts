@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
   conversationOf,
+  exportConversationText,
+  exportStamp,
+  filterThread,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -202,6 +205,66 @@ describe('attachDeliveries', () => {
       [delivery({ id: 'm3', text: 'ok', at: at(10), status: 'failed' })],
     );
     expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['e1', 'm3']);
+  });
+});
+
+describe('filterThread', () => {
+  const thread: ConvEntry[] = [
+    { key: 'e1', role: 'user', at: at(1), text: '问' },
+    { key: 'e2', role: 'assistant', at: at(2), text: '答' },
+    { key: 'e3', role: 'user', at: at(3), text: '再问' },
+  ];
+
+  it('① 全部 = 原序不动（不改手上的顺序）', () => {
+    expect(filterThread(thread, 'all').map((e) => e.key)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('② 「我发的」「回复」各留一半，仍按原时序', () => {
+    expect(filterThread(thread, 'user').map((e) => e.key)).toEqual(['e1', 'e3']);
+    expect(filterThread(thread, 'assistant').map((e) => e.key)).toEqual(['e2']);
+  });
+
+  it('③ 不原地改数组（过滤只影响显示）', () => {
+    const out = filterThread(thread, 'all');
+    expect(out).not.toBe(thread);
+    expect(thread).toHaveLength(3);
+  });
+});
+
+describe('导出到剪贴板', () => {
+  // 本地时区构造，期望值不带时区假设
+  const ts = (h: number, m: number, s: number): string =>
+    new Date(2026, 9, 16, h, m, s).toISOString();
+
+  it('① 时刻戳 = 本地 YYYY-MM-DD HH:mm:ss（补零，粘到别处带得走日期）', () => {
+    expect(exportStamp(ts(9, 8, 5))).toBe('2026-10-16 09:08:05');
+    expect(exportStamp(ts(23, 59, 59))).toBe('2026-10-16 23:59:59');
+  });
+
+  it('② 时刻 + 角色各成一行，条目间空行', () => {
+    const text = exportConversationText(
+      [
+        { key: 'e1', role: 'user', at: ts(9, 38, 52), text: '帮我把这个功能对齐一下' },
+        { key: 'e2', role: 'assistant', at: ts(9, 41, 3), text: '已对齐，改了三个文件。' },
+      ],
+      { user: '我', assistant: '会话' },
+    );
+    expect(text).toBe(
+      '[2026-10-16 09:38:52] 我\n' +
+        '帮我把这个功能对齐一下\n' +
+        '\n' +
+        '[2026-10-16 09:41:03] 会话\n' +
+        '已对齐，改了三个文件。',
+    );
+  });
+
+  it('③ 正文原样（多行/装饰已剥的原文不再加工），空选集给空串', () => {
+    const text = exportConversationText(
+      [{ key: 'e9', role: 'user', at: ts(1, 2, 3), text: '第一行\n第二行' }],
+      { user: 'Me', assistant: 'Session' },
+    );
+    expect(text).toBe('[2026-10-16 01:02:03] Me\n第一行\n第二行');
+    expect(exportConversationText([], { user: '我', assistant: '会话' })).toBe('');
   });
 });
 
