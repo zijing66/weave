@@ -43,6 +43,16 @@ async function errorText(res: Response): Promise<string> {
   return body ? `${res.status} ${body}` : String(res.status);
 }
 
+/**
+ * 项目已接入的一个 harness（服务端由 init 选择结果派生）——项目卡标签与新建会话
+ * 的 harness 选项同源。
+ */
+export interface ProjectHarness {
+  id: Harness;
+  /** true = 能「在既有终端里新建会话」（有 resume 槽裸 bin）；codex 目前为 false。 */
+  canStartSession: boolean;
+}
+
 export interface ProjectRow {
   id: number;
   path: string;
@@ -54,6 +64,8 @@ export interface ProjectRow {
   meta: string | null;
   /** 归档时间（null/undefined = 活跃项目）。 */
   archivedAt?: string | null;
+  /** 已接入的 harness（init 选择结果）；缺省 = 服务端未带（旧响应）。 */
+  harnesses?: ProjectHarness[];
 }
 
 /** 会话终端可附加目标（一个窗口内的一个 tab，按最近活跃排序；id 格式归各终端）。 */
@@ -1107,11 +1119,15 @@ export const api = {
       { method: 'POST', body: JSON.stringify(target ? { target } : {}) },
     ),
   /** 在项目**已打开的终端**里起一个新会话（服务端复用该项目目录的既有 pane；
-   *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。 */
-  startProjectSession: (projectId: number): Promise<{ ok: boolean; command: string }> =>
+   *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。
+   *  `harness` = 起哪个（须为该项目的已接入 harness）；缺省取已接入里第一个能起的。 */
+  startProjectSession: (
+    projectId: number,
+    harness?: Harness,
+  ): Promise<{ ok: boolean; command: string }> =>
     apiFetch<{ ok: boolean; command: string }>(`/projects/${projectId}/new-session`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(harness ? { harness } : {}),
     }),
   /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。 */
   listProjectTerminals: (projectId: number): Promise<TerminalTarget[]> =>

@@ -10,6 +10,7 @@ export const tasksZh = {
   'tasks.newSession': '新建会话',
   'tasks.newSessionTip': '在本项目已打开的终端里起一个新会话',
   'tasks.newSessionNeedsTerminal': '本项目还没有已打开的终端——先在项目卡点「终端」',
+  'tasks.newSessionNoHarness': '本项目已接入的 harness 都不能起交互会话——重跑 weave init 选一个',
   'tasks.newSessionFailed': '新建会话失败：{error}',
   'tasks.statusRunning': '运行中',
   'tasks.statusFailed': '失败',
@@ -28,6 +29,7 @@ export const tasksZh = {
   'tasks.sessionTerminalRunning': '该会话已在终端运行（claude --resume）——不可重复打开',
   'tasks.terminalPickTitle': '选择要附加到的终端',
   'tasks.terminalPickCancel': '取消',
+  'tasks.harnessPickTitle': '在哪个 harness 里新建会话',
   'tasks.terminalTargetFallback': '窗口 {w} · Tab {t}',
   'tasks.terminalTargetActive': '当前聚焦',
   'tasks.terminalTargetDetail': '{match} 个本项目 pane（共 {total}）',
@@ -203,6 +205,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.newSessionTip': 'Start a new session in a terminal this project already has open',
   'tasks.newSessionNeedsTerminal':
     'No terminal is open for this project — open one from the project card first',
+  'tasks.newSessionNoHarness':
+    'No harness integrated in this project can start an interactive session — re-run weave init and pick one',
   'tasks.newSessionFailed': 'Failed to start a new session: {error}',
   'tasks.statusRunning': 'Running',
   'tasks.statusFailed': 'Failed',
@@ -222,6 +226,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
     'A terminal is already running this session (claude --resume) — cannot open again',
   'tasks.terminalPickTitle': 'Choose a terminal to attach to',
   'tasks.terminalPickCancel': 'Cancel',
+  'tasks.harnessPickTitle': 'New session in which harness?',
   'tasks.terminalTargetFallback': 'Window {w} · Tab {t}',
   'tasks.terminalTargetActive': 'Focused',
   'tasks.terminalTargetDetail': '{match} pane(s) in this project ({total} total)',

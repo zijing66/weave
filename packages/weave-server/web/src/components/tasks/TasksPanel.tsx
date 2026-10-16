@@ -7,6 +7,7 @@ import {
   type HookEventRow,
   type HookRule,
   type MessagingCapability,
+  type ProjectHarness,
   type SessionWatchRow,
   type TerminalTarget,
   type WatchOn,
@@ -20,6 +21,7 @@ import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
 import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
+import { HarnessPicker } from './HarnessPicker';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -64,6 +66,7 @@ export function TasksPanel({
   initialSessionId,
   terminalCount,
   projectLabel,
+  harnesses,
 }: {
   projectId: number;
   /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
@@ -73,6 +76,8 @@ export function TasksPanel({
   terminalCount: number;
   /** 项目目录名（对话弹窗标题副行；CategoryDetail 按 projectId 解好）。 */
   projectLabel: string;
+  /** 本项目已接入的 harness（init 选择结果，与项目卡标签同源）。 */
+  harnesses: ProjectHarness[];
 }) {
   const t = useT();
   const { show } = useToast();
@@ -469,15 +474,34 @@ export function TasksPanel({
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
       fb 键按项目隔离：loading 在途吞连点，防重复 spawn。 */
-  const runNewSession = useCallback((): void => {
-    void fb.run(
-      `newSession:${projectId}`,
-      async () => {
-        await api.startProjectSession(projectId);
-      },
-      { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
-    );
-  }, [fb, projectId, t]);
+  const runNewSession = useCallback(
+    (harness?: Harness): void => {
+      void fb.run(
+        `newSession:${projectId}`,
+        async () => {
+          await api.startProjectSession(projectId, harness);
+        },
+        { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, projectId, t],
+  );
+
+  /** 能起交互会话的已接入 harness（本项目 init 选择结果 ∩ 有 resume 槽裸 bin）。 */
+  const startableHarnesses = useMemo(
+    () => harnesses.filter((h) => h.canStartSession).map((h) => h.id),
+    [harnesses],
+  );
+  /** 多个能起的才弹窗选（同「终端附加目标」口径）；单个直接起、0 个按钮置灰。 */
+  const [harnessPicker, setHarnessPicker] = useState(false);
+  const canNewSession = terminalCount > 0 && startableHarnesses.length > 0;
+  const onNewSession = useCallback((): void => {
+    if (startableHarnesses.length > 1) {
+      setHarnessPicker(true);
+      return;
+    }
+    runNewSession(startableHarnesses[0]);
+  }, [startableHarnesses, runNewSession]);
 
   /** 多终端选择弹窗（项目开着多个终端时才现形）。 */
   const [terminalPicker, setTerminalPicker] = useState<{
@@ -1043,17 +1067,22 @@ export function TasksPanel({
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
           {/* 新建会话：落点 = 项目已打开的终端（服务端复用其 pane 分屏），故没
-              有已开终端时置灰——同一事实也由服务端 409 把关，前端只是镜像。 */}
+              有已开终端时置灰——同一事实也由服务端 409 把关，前端只是镜像。
+              起哪个 harness = 本项目已接入里能起交互会话的那些（0 个也置灰）。 */}
           <button
             type="button"
-            disabled={terminalCount === 0}
+            disabled={!canNewSession}
             title={
-              terminalCount === 0 ? t('tasks.newSessionNeedsTerminal') : t('tasks.newSessionTip')
+              terminalCount === 0
+                ? t('tasks.newSessionNeedsTerminal')
+                : startableHarnesses.length === 0
+                  ? t('tasks.newSessionNoHarness')
+                  : t('tasks.newSessionTip')
             }
-            onClick={runNewSession}
+            onClick={onNewSession}
             className={cn(
               'inline-flex items-center gap-1 rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
-              terminalCount === 0
+              !canNewSession
                 ? 'cursor-not-allowed text-neutral-600'
                 : 'text-neutral-200 hover:bg-neutral-800',
             )}
@@ -1197,6 +1226,18 @@ export function TasksPanel({
             runOpenTerminal(sessionId, targetId);
           }}
           onClose={() => setTerminalPicker(null)}
+        />
+      )}
+
+      {/* 新建会话的 harness 选择（多个能起的才现形） */}
+      {harnessPicker && (
+        <HarnessPicker
+          harnesses={startableHarnesses}
+          onPick={(harness) => {
+            setHarnessPicker(false);
+            runNewSession(harness);
+          }}
+          onClose={() => setHarnessPicker(false)}
         />
       )}
 

@@ -4,8 +4,9 @@ import { harnessUiOf } from '@/lib/harness-meta';
 import { cn } from '@/lib/utils';
 
 /**
- * Which runtime an asset belongs to, shown on every card that can hold either
- * agent's copy.
+ * Which runtime a card refers to (an asset's copy, a project's integrated
+ * harnesses — the project card shows one tag per harness), shown wherever both
+ * agents are possible.
  *
  * Colour comes from the single harness-meta table (claude = orange, codex = cyan,
  * unknown = neutral) so one hue means one agent everywhere; the label is the raw

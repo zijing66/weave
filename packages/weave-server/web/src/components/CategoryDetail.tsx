@@ -500,6 +500,7 @@ export function CategoryDetail({
             initialSessionId={initialSessionId}
             terminalCount={terminalCount}
             projectLabel={projects.find((p) => p.id === projectId)?.name ?? ''}
+            harnesses={projects.find((p) => p.id === projectId)?.harnesses ?? []}
           />
         ))}
 
