@@ -11,6 +11,7 @@ import {
   parseWtProcDump,
   parseWtTargetId,
   pickTerminalAppWindow,
+  locatorPresetOf,
   promptTerminalChannel,
   resolveTerminalLaunch,
   sessionScreensFromEnvs,
@@ -206,7 +207,7 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     expect(parsePromptPaneId(':7')).toBeNull();
   });
 
-  it('promptTerminalChannel：定位/击键按 pane env 证据走，与开窗 preset 无关', async () => {
+  it('promptTerminalChannel：定位/击键按会话自己的终端走，与开窗 preset 无关', async () => {
     let current = settings('wezterm');
     const channel = promptTerminalChannel(() => current);
 
@@ -217,11 +218,25 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     // 启发式回落的枚举面仍只在 preset 指向的世界里：wt 不是文本通道 → 空表，
     // 不跨世界拿标题+cwd 去猜（否则 macOS terminal preset 的用户会被误 ESC）。
     await expect(channel.listPanes()).resolves.toEqual([]);
-    // 定位键不全 → 不是 wezterm 会话，判 null（且不为此枚举 mux）
+    // 定位键不全 → 认不出世界，判 null（不猜，也不为此枚举 mux）
     await expect(channel.locatePane({ WEZTERM_PANE: '7' })).resolves.toBeNull();
-    // 击键不再被 preset 挡在门外：pane id 直接进 wezterm 通道（坏 id 的报错出自
-    // wezterm 后端 = 路由确实换了；旧代码这里会吐 preset 的「pick wezterm」）。
+    // 没人认领的 pane id → 通道自身拒绝（文本通道不再有「配置的后端」这条兜底路径）
     await expect(channel.sendKeys('bad-id', '\x1b')).rejects.toThrow('Invalid prompt pane "bad-id"');
+  });
+
+  it('会话的终端归属：env 认世界、pane id 认后端，都不看设置里的 preset', () => {
+    // env → preset：判据是 core 的定位键表，一组键齐了才认（缺键 = 不是那个终端）
+    expect(locatorPresetOf({ WEZTERM_PANE: '7', WEZTERM_UNIX_SOCKET: '/tmp/gui-sock-1' })).toBe(
+      'wezterm',
+    );
+    expect(locatorPresetOf({ WEZTERM_PANE: '7' })).toBeNull();
+    expect(locatorPresetOf({ WT_SESSION: 'x' })).toBeNull();
+    // pane id → 后端：只有发它的那个后端认领（id 表示法归后端，别人不抢）
+    const wezterm = terminalBackendFor(settings('wezterm'), 'win32');
+    const wt = terminalBackendFor(settings('wt'), 'win32');
+    expect(wezterm.ownsPaneId('deadbeef:7')).toBe(true);
+    expect(wezterm.ownsPaneId('terminal:1:2')).toBe(false);
+    expect(wt.ownsPaneId('deadbeef:7')).toBe(false);
   });
 
   it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {

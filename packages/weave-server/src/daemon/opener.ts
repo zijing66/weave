@@ -96,7 +96,9 @@ function osascriptRun(
 // mux 通道）。**能力全归后端**，一律「覆写 = 有，基类空实现 = 没有」：
 // enumerable（能否反查已开窗口，不是调用方散写的 `preset === 'wezterm'` 白名单）、
 // textAddressable（能否注入文本 / 裸键序）、locatePane（能否把 hook 上报的 pane env
-// 解析回本后端的 pane 表示法——pane 表示法是后端私有知识，调用方只见不透明 id）。
+// 解析回本后端的 pane 表示法——pane 表示法是后端私有知识，调用方只见不透明 id）、
+// ownsPaneId（这个 id 是不是本后端发的——**击键/文本按 id 认领后端**，故「往哪个终端
+// 打键」不随设置里的 preset 走）。
 // 不支持就走基类空实现（角标不显示 / 层② 诚实置灰 / 回落标题+cwd 启发式，不谎报）。
 
 /**
@@ -177,6 +179,11 @@ export abstract class TerminalBackend {
   /** 层② 定位：pane env → pane id；无定位能力的后端 null（回落标题+cwd，不猜）。 */
   async locatePane(_env: Record<string, string>): Promise<string | null> {
     return null;
+  }
+
+  /** 这个 pane id 是不是本后端发的（id 表示法归本后端）；默认不是，不抢别人的 id。 */
+  ownsPaneId(_paneId: string): boolean {
+    return false;
   }
 
   /** 会话 → 所在可见屏幕（会话列表分块）；无枚举能力的后端空表（不分组，不猜）。 */
@@ -585,6 +592,11 @@ class WeztermBackend extends TerminalBackend {
     return weztermPaneFromEnv(env, muxes, this.platform);
   }
 
+  /** 本后端的 pane id 表示法 = `<mux 短哈希>:<paneId>`（见 parsePromptPaneId）。 */
+  override ownsPaneId(paneId: string): boolean {
+    return parsePromptPaneId(paneId) !== null;
+  }
+
   /**
    * 会话 → 可见屏幕（会话列表分块）：与 locatePane 同一份旁路 env，但**吃 10s
    * 探活缓存**——分组是展示面，滞后十秒无感，而它由计数探活同一轮触发（共用一次
@@ -753,14 +765,27 @@ export function terminalBackendFor(
 }
 
 /**
+ * 上报的 pane env 属于哪个终端 preset——**每组键齐了才算认得**（缺键 = 不是那个
+ * 终端的会话）。表来自 core 的定位键表（preset 名不散写），故「会话活在哪个终端」
+ * 只有一个事实源。
+ */
+export function locatorPresetOf(env: Record<string, string>): TerminalPreset | null {
+  for (const [preset, keys] of Object.entries(TERMINAL_LOCATOR_ENV)) {
+    if (keys.every((key) => env[key])) return preset as TerminalPreset;
+  }
+  return null;
+}
+
+/**
  * prompt 层② 兜底通道适配（MessageDeliverer 的 PromptTerminal 形状）。
  *
  * 取后端分两处，因为「开窗」与「对话」是两个问题：
  * - `settings.terminal` 答「weave 该往哪个终端开窗」——`listPanes`（标题+cwd
  *   启发式回落的枚举面）用它，没有 env 的会话只在用户指明过的终端世界里猜；
- * - 会话**自己上报的 pane env**（`WEZTERM_*`）答「这个会话此刻在哪个终端里」——
- *   定位与击键按它走。换 preset 是纯开窗偏好，不该否掉活在 wezterm pane 里的
- *   会话（否则停止/作答/层② 投递会集体失效——`wt` 与 win32 的 `auto` 文本位皆 false）。
+ * - 会话**自己上报的 pane env** 答「这个会话此刻在哪个终端里」——定位按它反查
+ *   preset、击键按 **pane id 认领后端**。故换 preset 是纯开窗偏好，已开会话的
+ *   停止/作答照旧（唯一实现文本通道的 wezterm 也不是硬编码回落，而是 `ownsPaneId`
+ *   自然认领；将来别的终端实现这组方法即自动接入）。
  */
 export function promptTerminalChannel(
   settings: () => TerminalSettings,
@@ -772,23 +797,56 @@ export function promptTerminalChannel(
   sendText(paneId: string, text: string): Promise<void>;
   sendKeys(paneId: string, keys: string): Promise<void>;
 } {
-  const configuredBackend = () => terminalBackendFor(settings());
-  // 配置的后端能打字就用它；否则用 wezterm 后端（全仓唯一实现文本通道的后端，
-  // pane env 的解析与 pane id 的表示法也都出自它）。
-  const paneBackend = () => {
-    const backend = configuredBackend();
-    return backend.textAddressable ? backend : new WeztermBackend(process.platform);
+  const backendFor = (preset: TerminalPreset) => terminalBackendFor({ ...settings(), preset });
+  const configuredBackend = () => backendFor(settings().preset);
+  // 能远程击键的终端 = 定位键表里那些 preset（能认领「会话在哪个 pane」是前提）。
+  const paneBackends = (): TerminalBackend[] =>
+    Object.keys(TERMINAL_LOCATOR_ENV).map((preset) => backendFor(preset as TerminalPreset));
+  // 会话说自己活在哪个终端 → 就用那个终端的后端定位（认不出世界 = 不猜，返回 null）。
+  const backendForEnv = (env: Record<string, string>): TerminalBackend | null => {
+    const preset = locatorPresetOf(env);
+    return preset ? backendFor(preset) : null;
   };
+  const backendForPaneId = (paneId: string): TerminalBackend | null =>
+    paneBackends().find((backend) => backend.ownsPaneId(paneId)) ?? null;
   return {
-    available: () => paneBackend().textAddressable,
+    available: () => paneBackends().some((backend) => backend.textAddressable),
     listPanes: async () => {
       const backend = configuredBackend();
       return backend.textAddressable ? await backend.listPromptPanes() : [];
     },
-    locatePane: async (env) => await paneBackend().locatePane(env),
-    locateScreens: async (envs) => await paneBackend().locateScreens(envs),
-    sendText: async (paneId, text) => await paneBackend().sendPromptText(paneId, text),
-    sendKeys: async (paneId, keys) => await paneBackend().sendKeys(paneId, keys),
+    locatePane: async (env) => (await backendForEnv(env)?.locatePane(env)) ?? null,
+    locateScreens: async (envs) => {
+      // 同一批 env 可能来自不同终端世界：按世界分组各问各的后端，认不出的落 null
+      // （契约是「每会话一行」，不缺席）。
+      const out: Record<string, SessionTerminal | null> = {};
+      const groups = new Map<TerminalPreset, Record<string, Record<string, string>>>();
+      for (const [sessionId, env] of Object.entries(envs)) {
+        const preset = locatorPresetOf(env);
+        if (!preset) {
+          out[sessionId] = null;
+          continue;
+        }
+        const group = groups.get(preset) ?? {};
+        group[sessionId] = env;
+        groups.set(preset, group);
+      }
+      for (const [preset, group] of groups) {
+        const found = await backendFor(preset).locateScreens(group);
+        for (const sessionId of Object.keys(group)) out[sessionId] = found[sessionId] ?? null;
+      }
+      return out;
+    },
+    sendText: async (paneId, text) => {
+      const backend = backendForPaneId(paneId);
+      if (!backend) throw new Error(`Invalid prompt pane "${paneId}"`);
+      await backend.sendPromptText(paneId, text);
+    },
+    sendKeys: async (paneId, keys) => {
+      const backend = backendForPaneId(paneId);
+      if (!backend) throw new Error(`Invalid prompt pane "${paneId}"`);
+      await backend.sendKeys(paneId, keys);
+    },
   };
 }
 
