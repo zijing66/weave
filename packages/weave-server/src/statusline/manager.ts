@@ -37,6 +37,11 @@ const STATUSLINE_SCRIPT = 'statusline.cjs';
 const SETTINGS_FILE = '.claude/settings.json';
 const GLOBAL_STATUSLINE_FILE = 'statusline.json';
 
+/** 生成脚本的项目根相对落点（posix）——init 文件漂移检测的比对面。 */
+export function statuslineScriptRelPath(): string {
+  return `${HELPERS_DIR}/${STATUSLINE_SCRIPT}`;
+}
+
 /** Directory for the global template; overridable for tests (defaults to ~/.weave). */
 let globalStatuslineDir = path.join(homedir(), '.weave');
 

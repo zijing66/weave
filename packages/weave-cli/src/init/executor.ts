@@ -8,6 +8,7 @@ import {
   detectPlatform,
   resolveComponents,
   DEFAULT_HOOKS,
+  DEFAULT_MCP,
   HARNESS_DIRS,
   HARNESS_KEYS,
   ensureDir,
@@ -79,6 +80,7 @@ export async function executeInit(
 
   const components = resolveComponents(preset, options.components);
   const hooks = { ...DEFAULT_HOOKS, ...options.hooks };
+  const mcp = { ...DEFAULT_MCP, ...options.mcp };
   const prompt = promptOverride ?? createPromptPort(interactive);
 
   if (!interactive) {
@@ -157,6 +159,10 @@ export async function executeInit(
       preset,
       harnesses: selected,
       components: { settings: components.settings, skills: components.skills, commands: components.commands, agents: components.agents, helpers: components.helpers, mcp: components.mcp, claudeMd: components.claudeMd, agentsMd: components.agentsMd },
+      // 采集/MCP 开关（含 --hooks/--mcp 覆盖结果）一并落档：daemon 的 init 文件
+      // 漂移检测据此重建期望态，不再有第二份默认值可猜。
+      hooks,
+      mcp,
     };
 
     const configPath = path.join(weaveDir, 'config.yaml');

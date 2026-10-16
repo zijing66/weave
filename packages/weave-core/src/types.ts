@@ -272,6 +272,12 @@ export const RuntimeConfigSchema = z.object({
   /** 本次 init 选择的 harness 面（批 5 记录；旧文件无此字段 → undefined，向后兼容）。 */
   harnesses: z.array(HarnessName).optional(),
   components: InitComponentsSchema,
+  /**
+   * 本次 init 生效的采集/MCP 开关（含 `--hooks`/`--mcp` 覆盖结果）——daemon 的
+   * init 文件漂移检测据此重建期望态；旧文件无此字段 → 回落 DEFAULT_*。
+   */
+  hooks: HooksConfigSchema.partial().optional(),
+  mcp: MCPConfigSchema.partial().optional(),
 });
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
