@@ -89,7 +89,7 @@ interface ProjectMenu {
   project: ProjectRow;
 }
 
-/** 触屏长按开菜单的门槛（与对话弹窗里的同一套手感：位移超过它算滑动，不算长按）。 */
+/** 触屏长按开菜单的门槛（位移超过它算滑动，不算长按）。 */
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP = 8;
 

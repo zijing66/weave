@@ -275,9 +275,10 @@ export function exportConversationText(
     .join('\n\n');
 }
 
-/** 触屏长按进多选的门槛：位移超过这个就当是滚动，不算长按。 */
-const LONG_PRESS_MS = 450;
-const LONG_PRESS_SLOP = 8;
+/** 触屏双击开菜单的两枚门槛：两击须落在同一条气泡、间隔不超过 DOUBLE_TAP_MS；
+ *  位移超过 TAP_SLOP 就当是滚动，这一击不算轻点。 */
+const DOUBLE_TAP_MS = 300;
+const TAP_SLOP = 8;
 
 /** 弹出菜单两副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）。 */
 type ConvMenu =
@@ -418,9 +419,10 @@ export function SessionMessages({
   const grip = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   /** 标题栏拖动（移动整扇窗）：与拖角改大小是两回事。 */
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-  const press = useRef<{ x: number; y: number; timer: number } | null>(null);
-  /** 长按刚生效那一下：抬手还会补一个 click，得吞掉（否则勾上又立刻勾掉）。 */
-  const suppressTap = useRef<string | null>(null);
+  /** 手指这会儿落在哪条气泡上（判断这一击是不是轻点：位移超阈值即作废）。 */
+  const tap = useRef<{ key: string; x: number; y: number } | null>(null);
+  /** 上一次轻点：同一条气泡、间隔够短 = 双击，开右键菜单。 */
+  const lastTap = useRef<{ key: string; at: number } | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const coarse = useMediaQuery('(pointer: coarse)');
 
@@ -536,13 +538,6 @@ export function SessionMessages({
       window.removeEventListener('resize', close);
     };
   }, [menu]);
-
-  useEffect(
-    () => () => {
-      if (press.current) window.clearTimeout(press.current.timer);
-    },
-    [],
-  );
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {
@@ -717,30 +712,33 @@ export function SessionMessages({
     setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
   };
 
-  /** 触屏长按进多选（桌面走右键菜单；鼠标不该有长按这回事）。 */
+  /** 触屏双击开菜单（桌面走右键；鼠标不该有双击这回事）。
+   *  多选不再是长按直达——它只是菜单里的一项，双击也只开菜单。 */
   const onPressDown = (key: string) => (e: React.PointerEvent): void => {
-    // 上一轮长按若没等到补发的那个 click，别把这一次的点击也吞了
-    suppressTap.current = null;
     if (!coarse || selecting || e.button !== 0) return;
-    const timer = window.setTimeout(() => {
-      press.current = null;
-      suppressTap.current = key;
-      enterSelect(key);
-    }, LONG_PRESS_MS);
-    press.current = { x: e.clientX, y: e.clientY, timer };
+    tap.current = { key, x: e.clientX, y: e.clientY };
   };
   const onPressMove = (e: React.PointerEvent): void => {
-    const p = press.current;
-    if (!p) return;
-    if (Math.abs(e.clientX - p.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - p.y) > LONG_PRESS_SLOP) {
-      window.clearTimeout(p.timer);
-      press.current = null;
+    const t = tap.current;
+    if (!t) return;
+    if (Math.abs(e.clientX - t.x) > TAP_SLOP || Math.abs(e.clientY - t.y) > TAP_SLOP) {
+      tap.current = null;
     }
   };
-  const cancelPress = (): void => {
-    if (!press.current) return;
-    window.clearTimeout(press.current.timer);
-    press.current = null;
+  /** 抬手定这一击：够近才算轻点，紧接着的下一击落在同一条气泡上就是双击。 */
+  const onPressUp = (key: string) => (e: React.PointerEvent): void => {
+    const t = tap.current;
+    tap.current = null;
+    if (!t || t.key !== key) return;
+    const now = Date.now();
+    const prev = lastTap.current;
+    lastTap.current = { key, at: now };
+    if (!prev || prev.key !== key || now - prev.at > DOUBLE_TAP_MS) return;
+    lastTap.current = null;
+    setMenu({ kind: 'bubble', x: e.clientX, y: e.clientY, key });
+  };
+  const cancelTap = (): void => {
+    tap.current = null;
   };
 
   const clampPos = (x: number, y: number, s: ConvSize): { x: number; y: number } => {
@@ -790,29 +788,21 @@ export function SessionMessages({
     drag.current = null;
   };
 
-  /** 每条气泡的交互面：桌面右键开菜单（进多选并勾上这条），触屏长按同效；
+  /** 每条气泡的交互面：桌面右键开菜单（进多选并勾上这条），触屏双击同效；
    *  多选态里点气泡即勾选/取消。 */
   const rowProps = (key: string): React.HTMLAttributes<HTMLDivElement> => ({
     onContextMenu: (e) => {
       if (selecting) return;
-      // 触屏长按同样会弹 contextmenu：原生菜单一律压掉，但那条路我们不用自己的菜单
+      // 触屏长按也会弹原生 contextmenu：压掉，触屏那条路走双击（见 onPressUp）
       e.preventDefault();
       if (coarse) return;
       setMenu({ kind: 'bubble', x: e.clientX, y: e.clientY, key });
     },
     onPointerDown: onPressDown(key),
     onPointerMove: onPressMove,
-    onPointerUp: cancelPress,
-    onPointerCancel: cancelPress,
-    onClick: selecting
-      ? () => {
-          if (suppressTap.current === key) {
-            suppressTap.current = null;
-            return;
-          }
-          togglePick(key);
-        }
-      : undefined,
+    onPointerUp: onPressUp(key),
+    onPointerCancel: cancelTap,
+    onClick: selecting ? () => togglePick(key) : undefined,
   });
 
   const send = (): void => {
@@ -910,7 +900,7 @@ export function SessionMessages({
           ref={threadRef}
           onScroll={() => {
             stick.current = atBottom();
-            cancelPress(); // 手指在滑 = 不是长按
+            cancelTap(); // 手指在滑 = 这一击不算轻点
             pull.syncEdge();
           }}
           onWheel={(e) => pull.wheel(e.deltaY, e.deltaMode)}
@@ -975,7 +965,11 @@ export function SessionMessages({
                     <div
                       key={m.key}
                       {...rowProps(m.key)}
-                      className={cn('flex justify-start', selecting && 'select-none')}
+                      className={cn(
+                        // touch-manipulation：双击是我们开菜单的手势，压掉移动浏览器的双击缩放
+                        'flex touch-manipulation justify-start',
+                        selecting && 'select-none',
+                      )}
                     >
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
                           不把整块对话撑出横向滚动条 */}
@@ -994,7 +988,11 @@ export function SessionMessages({
                   <div
                     key={m.key}
                     {...rowProps(m.key)}
-                    className={cn('flex items-end justify-end gap-1', selecting && 'select-none')}
+                    className={cn(
+                      // touch-manipulation：同助手气泡，双击开菜单不触发双击缩放
+                      'flex touch-manipulation items-end justify-end gap-1',
+                      selecting && 'select-none',
+                    )}
                   >
                     {selecting && <CheckBox on={picked.has(m.key)} className="mr-1.5 mt-1" />}
                     {/* 投递终态收成气泡左下角一枚小圆点：空心 = 已送达（可能被暂扣/拒收，
