@@ -5,9 +5,8 @@ Pluggable harness drivers for
 pipeline (template method), and per-harness integration modules (Claude Code,
 Codex). Depends only on [`@weavecode/core`](https://www.npmjs.com/package/@weavecode/core).
 
-```bash
-npm install @weavecode/harness
-```
+Ships inside [`@weavecode/weave`](https://www.npmjs.com/package/@weavecode/weave);
+`private` in the monorepo, not published on its own.
 
 ## License
 

@@ -13,8 +13,10 @@ weave daemon start
 weave dashboard
 ```
 
-The dependencies are the five published weave packages; the command table
-lives in [@weavecode/cli](https://github.com/zijing66/weave/tree/main/packages/weave-cli#readme).
+The five weave packages are bundled inside this tarball (they are `private` in
+the monorepo and are not published separately), so a global install pulls this
+one artifact and nothing else from the registry. The command table lives in
+[@weavecode/cli](https://github.com/zijing66/weave/tree/main/packages/weave-cli#readme).
 
 Requires Node.js >= 22.5.
 

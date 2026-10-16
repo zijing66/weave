@@ -4,10 +4,13 @@ Coding-agent harness for Claude Code (and friends): inject skills, commands,
 agents, hooks, and an MCP surface into any project, and watch what the agent
 does from a local dashboard.
 
+[![npm](https://img.shields.io/npm/v/@weavecode/weave.svg)](https://www.npmjs.com/package/@weavecode/weave)
+[![license](https://img.shields.io/npm/l/@weavecode/weave.svg)](./LICENSE)
+
 ```bash
-npm install -g @weavecode/cli
+npm install -g @weavecode/weave
 weave init          # scaffold a project
-weave dashboard     # open the local dashboard
+weave dashboard     # start the daemon (if it is not running) and open the UI
 ```
 
 ## What it does
@@ -27,6 +30,28 @@ weave dashboard     # open the local dashboard
   installs. Served by the daemon itself.
 - **`weave scan` / `weave status`** — project discovery and harness status.
 
+## Dashboard
+
+- **Sessions** — every project's sessions, with live status (running /
+  compacting / interrupted) and a per-turn event chain.
+- **Blocking questions** — AskUserQuestion, plan approvals and permission
+  prompts are surfaced in the browser and answered by injecting the option
+  keystrokes into that session's pane; a new prompt raises a toast, a system
+  notification and a Web Push message.
+- **Messaging** — send a prompt to any session from the dashboard (a session's
+  own inbox socket first, then terminal text injection, then the native peer
+  relay), read the conversation next to the session, and interrupt a running
+  turn with one ESC.
+- **Watch subscriptions** — subscribe to a session's idle / turn-end /
+  message-failed transitions and get notified in-page, as a system
+  notification, and by Web Push once the page is closed.
+- **Resource market** — import a marketplace and install its
+  skills/commands/agents/hooks/plugins into a project or globally, then toggle
+  them; the packages weave ships are one such market.
+- **LAN access** — an optional HTTPS listener with a self-signed certificate,
+  so a phone on the same network can open the dashboard (and receive push
+  notifications); dashboard login is password-protected (`weave chpass`).
+
 ## Built-in resources
 
 Everything weave ships — the `weave init` commands and agents, the built-in
@@ -34,7 +59,7 @@ skills/hooks/rules plugin packs, and the rule packs loaded into the engine —
 lives in one marketplace-shaped directory:
 
 ```
-packages/weave-templates/resources/weave-market/
+packages/weave-templates/src/resources/weave-market/
 ├── .claude-plugin/marketplace.json   # the repo's own manifest
 ├── plugins/<scope>/<pack>/           # toolkit packages (skills, hooks, mods)
 ├── rules/<pack>/                     # rule packs loaded by the weave engine
@@ -67,17 +92,35 @@ namespace block next to the built-in `weave` one.
 | `weave status` | Show harness status for a project |
 | `weave doctor` | Diagnose local wiring (registration, token, daemon) |
 | `weave daemon start\|stop\|status` | Manage the local daemon |
-| `weave dashboard` | Open the dashboard in a browser |
+| `weave dashboard` | Open the dashboard in a browser (starting the daemon if needed) |
+| `weave chpass <new password>` | Change the dashboard login password (locally, no old password needed) |
+| `weave uninstall` | Remove weave's init outputs from a project (rolls back the init commit when it is HEAD, otherwise commits the removal) |
 
 ## Packages
 
+One artifact is published — [`@weavecode/weave`](https://www.npmjs.com/package/@weavecode/weave),
+a self-contained bundle: the compiled CLI, daemon, dashboard and built-in
+resources, with every runtime dependency packed inside the tarball, so a global
+install needs nothing else from the registry. The repo's layers below are
+`private` and are never published on their own.
+
 | Package | Role |
 | --- | --- |
-| [`@weavecode/cli`](https://www.npmjs.com/package/@weavecode/cli) | CLI entry point (`weave` command) |
-| [`@weavecode/server`](https://www.npmjs.com/package/@weavecode/server) | Daemon: HTTP, SQLite, hook ingestion, dashboard host |
-| [`@weavecode/harness`](https://www.npmjs.com/package/@weavecode/harness) | Harness drivers and the init pipeline |
-| [`@weavecode/templates`](https://www.npmjs.com/package/@weavecode/templates) | Built-in skill, command, and agent templates |
-| [`@weavecode/core`](https://www.npmjs.com/package/@weavecode/core) | Shared types and tables |
+| `packages/weave` (`@weavecode/weave`) | The published bundle: CLI + daemon + dashboard + resources |
+| `packages/weave-cli` (`@weavecode/cli`) | CLI entry point (`weave` command) |
+| `packages/weave-server` (`@weavecode/server`) | Daemon: HTTP, SQLite, hook ingestion, dashboard host |
+| `packages/weave-harness` (`@weavecode/harness`) | Harness drivers and the init pipeline |
+| `packages/weave-templates` (`@weavecode/templates`) | Built-in market (skills, commands, agents, rules) |
+| `packages/weave-core` (`@weavecode/core`) | Shared types and tables |
+
+## Requirements
+
+- **Node.js >= 22.5** (the daemon stores data with `node:sqlite`).
+- **Claude Code** and/or **Codex** installed and on `PATH` — weave drives them,
+  it does not bundle them.
+- Optional: a terminal backend weave can address panes in (**wezterm** today).
+  Session interrupt and remote answering work by writing keystrokes into the
+  session's pane, so they need one.
 
 ## Development
 
@@ -96,7 +139,7 @@ Requires Node.js >= 22.5 (uses `node:sqlite`).
 ## Publishing
 
 ```bash
-node scripts/release.mjs <version>   # bump, build, pnpm -r publish
+node scripts/release.mjs <version>   # bump every package, build, publish components with pnpm, then publish the umbrella tgz
 ```
 
 Packages publish under the `@weavecode` scope to the public npm registry.

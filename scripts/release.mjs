@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
  * Lockstep release: bump all packages, build everything (dashboard included),
- * publish the five components to registry.npmjs.org, then publish the
- * all-in-one @weavecode/weave AS THE BUNDLE TARBALL — the exact artifact
- * `pnpm pack:weave` produces (bundleDependencies layout, registry install
- * identical to `npm install dist/weavecode-weave-<v>.tgz`).
+ * then publish the all-in-one @weavecode/weave AS THE BUNDLE TARBALL — the
+ * exact artifact `pnpm pack:weave` produces (bundleDependencies layout,
+ * registry install identical to `npm install dist/weavecode-weave-<v>.tgz`).
  *
  *   node scripts/release.mjs 0.2.0            # bump + build + publish
  *   node scripts/release.mjs 0.2.0 --dry-run  # bump + build + pack check
  *
- * Components publish with `pnpm -C` (workspace:^ rewrites); the umbrella
- * publishes the tgz as-is. --no-git-checks: the version bump is intentionally
- * uncommitted at publish time. Never publish with `npm publish`.
+ * The five components are `private` and ride inside that tarball — only the
+ * umbrella is ever published, so a global install pulls one artifact from the
+ * registry and nothing else. The tgz goes out as-is (workspace:^ rewritten by
+ * pack-weave). --no-git-checks: the version bump is intentionally uncommitted
+ * at publish time. Never publish with `npm publish`.
  */
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -61,10 +62,9 @@ run('pnpm build');
 run('pnpm build:web');
 
 const publishFlags = `--access public --registry=${REGISTRY} --no-git-checks${dryRun ? ' --dry-run' : ''}`;
-for (const dir of COMPONENTS) {
-  run(`pnpm -C packages/${dir} publish ${publishFlags}`);
-}
 
+// COMPONENTS is bumped above but never published on its own: it is bundled
+// inside the umbrella tarball below (see pack-weave.mjs).
 const tgz = await packWeaveTgz({ skipBuild: true });
 run(`pnpm publish ${path.relative(root, tgz)} ${publishFlags}`);
 

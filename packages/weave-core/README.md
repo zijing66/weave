@@ -5,9 +5,8 @@ Shared types, schemas, and tables for
 logic. The `@weavecode/core/harness` subpath holds the harness literal types
 and registry tables consumed by the web UI.
 
-```bash
-npm install @weavecode/core
-```
+Ships inside [`@weavecode/weave`](https://www.npmjs.com/package/@weavecode/weave);
+`private` in the monorepo, not published on its own.
 
 ## License
 
