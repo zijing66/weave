@@ -13,6 +13,7 @@ import {
   pickTerminalAppWindow,
   promptTerminalChannel,
   resolveTerminalLaunch,
+  sessionScreensFromEnvs,
   SocketProbeGate,
   terminalAppTargets,
   terminalBackendFor,
@@ -22,7 +23,12 @@ import {
   wtPanes,
   wtWindowSlug,
 } from '../opener.js';
-import type { TerminalAppSurface, TerminalSettings, WtProcRow } from '../opener.js';
+import type {
+  TerminalAppSurface,
+  TerminalSettings,
+  WeztermPaneInfo,
+  WtProcRow,
+} from '../opener.js';
 
 /**
  * 终端后端的行为钉子。
@@ -503,6 +509,62 @@ describe('weztermPaneFromEnv — hook 上报的 pane env 定位（纯函数）',
     expect(weztermPaneFromEnv(envOf('0', 'D:/other/gui-sock-1'), MUXES, 'win32')).toBeNull();
     expect(weztermPaneFromEnv(envOf('3', SOCK), MUXES, 'win32')).toBeNull();
     expect(weztermPaneFromEnv(envOf('0', SOCK), [], 'win32')).toBeNull();
+  });
+});
+
+describe('sessionScreensFromEnvs — 会话 → 所在可见屏幕（纯函数）', () => {
+  const SOCK = 'D:\\Users\\u\\.local\\share\\wezterm\\gui-sock-28500';
+  const pane = (paneId: number, windowId: number, tabId: number): WeztermPaneInfo => ({
+    windowId,
+    tabId,
+    paneId,
+    cwd: null,
+    left: 0,
+    top: 0,
+    isActive: false,
+    title: null,
+  });
+  // 窗口 0 两个 tab（tab 0 有 0/1 两个 pane，tab 1 有 pane 2）；窗口 1 一个 tab（pane 5）
+  const MUXES = [
+    {
+      socket: SOCK,
+      panes: [pane(0, 0, 0), pane(1, 0, 0), pane(2, 0, 1), pane(5, 1, 2)],
+    },
+  ];
+  const envOf = (paneId: string, socket = SOCK) => ({
+    WEZTERM_PANE: paneId,
+    WEZTERM_UNIX_SOCKET: socket,
+  });
+
+  it('会话归到它那个 pane 所在的 window/tab，块头带同窗口 tab 数', () => {
+    const screens = sessionScreensFromEnvs(
+      { a: envOf('2'), b: envOf('1'), c: envOf('5') },
+      MUXES,
+      'win32',
+    );
+    const key = weztermMuxKey(SOCK);
+    expect(screens.a).toEqual({ id: `${key}:0:1`, windowId: 0, tabId: 1, tabsInWindow: 2 });
+    // 同一块屏上的两个会话给出**同一个 id**（前端据此聚成一块）
+    expect(screens.b).toEqual({ id: `${key}:0:0`, windowId: 0, tabId: 0, tabsInWindow: 2 });
+    expect(screens.c).toEqual({ id: `${key}:1:2`, windowId: 1, tabId: 2, tabsInWindow: 1 });
+  });
+
+  it('键缺、socket 对不上活 mux、pane 已不在 → null（该会话不分组，不猜）', () => {
+    expect(
+      sessionScreensFromEnvs(
+        {
+          gone: envOf('9'),
+          other: envOf('0', 'D:/other/gui-sock-1'),
+          bare: {},
+        },
+        MUXES,
+        'win32',
+      ),
+    ).toEqual({ gone: null, other: null, bare: null });
+  });
+
+  it('空 env 表 → 空结果（没上报过定位的会话不进快照）', () => {
+    expect(sessionScreensFromEnvs({}, MUXES, 'win32')).toEqual({});
   });
 });
 

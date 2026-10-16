@@ -376,8 +376,15 @@ export async function handleHooksRoutes(
     // claude 注册表判活随返回：true/false=判得动，null=判不动（codex/新鲜会话）不猜
     // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
     const liveness = claudeLivenessById();
+    // 会话所在可见屏幕（列表分块）：探测要吃子进程，只能回隐藏刷新器的**上次快照**
+    // （null = 反查不到，不分组），增量经 push 'terminalTopology' 到达——同角标口径。
+    const screens = deps.terminalRefresher?.lastSnapshot?.terminals ?? {};
     sendJson(res, 200, {
-      sessions: sessions.map((s) => ({ ...s, pidAlive: pidAliveOf(s, liveness) })),
+      sessions: sessions.map((s) => ({
+        ...s,
+        pidAlive: pidAliveOf(s, liveness),
+        terminal: screens[s.sessionId] ?? null,
+      })),
     });
     return true;
   }

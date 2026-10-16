@@ -4,7 +4,7 @@ import type { HookEventBus } from '../hooks/bus.js';
 /**
  * InflightCountsRefresher — 会话行「在途消息」角标的数据面（SSE 推送）。
  *
- * 与 TerminalCountsRefresher 同形状（指纹去重、值变才推），但**没有定时器**：
+ * 与 TerminalTopologyRefresher 同形状（指纹去重、值变才推），但**没有定时器**：
  * 在途计数的变化源全是事件（`message.*` 帧），所以由 hook 帧驱动重算即可——
  * 前端零定时器、零轮询，只看到一个推来的帧。推的是**绝对值快照**：漏帧的
  * 客户端在下一次事件自我校正，不累积漂移。

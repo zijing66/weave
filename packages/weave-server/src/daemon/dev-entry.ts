@@ -40,7 +40,7 @@ import { WatchService } from '../watch/watch-service.js';
 import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
-import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SessionLivenessRefresher } from './session-liveness-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
@@ -204,11 +204,15 @@ async function main(): Promise<void> {
   questionTracker.seedFromDb();
   const watch = new WatchService(projects);
   watch.start();
-  // 数据变更帧总线 + 终端角标隐藏刷新：前端不再轮询角标，改由后端「有人看时每
-  // 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，绑 SSE 客户端数。
+  // 数据变更帧总线 + 终端世界隐藏刷新（角标 + 会话分块）：前端不再轮询，改由
+  // 后端「有人看时每 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，
+  // 绑 SSE 客户端数。
   const dataBus = new DataBus();
-  const terminalRefresher = new TerminalCountsRefresher(
-    () => readTerminalCounts(projects.list()),
+  const terminalRefresher = new TerminalTopologyRefresher(
+    async () => ({
+      counts: await readTerminalCounts(projects.list()),
+      terminals: await messageDeliverer.sessionTerminals(),
+    }),
     dataBus,
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );

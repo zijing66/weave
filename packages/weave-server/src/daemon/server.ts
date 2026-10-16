@@ -16,7 +16,7 @@ import { hooksRoot, type MirrorWriter } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
-import type { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
@@ -168,8 +168,8 @@ export interface WeaveServerDeps {
   hookBus?: HookEventBus;
   /** 数据变更帧总线（SSE 第三订阅源：载荷推送 / 失效键）。 */
   dataBus?: DataBus;
-  /** 终端角标的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
-  terminalRefresher?: TerminalCountsRefresher;
+  /** 终端世界（角标计数 + 会话所在屏幕）的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
+  terminalRefresher?: TerminalTopologyRefresher;
   /** 在途消息角标（会话行）的推送器：新 SSE 客户端接入时补一份首帧快照。 */
   inflightRefresher?: InflightCountsRefresher;
   /** 项目行「有更新待同步」角标（含项目插件模板漂移）：源变更/同步落地后对账。 */
@@ -1566,7 +1566,7 @@ async function handleRequest(
   // 不需要再打这枪。未接刷新器（测试注入缝）才现探。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
     if (deps.terminalRefresher) {
-      sendJson(res, 200, { counts: deps.terminalRefresher.lastSnapshot ?? {} });
+      sendJson(res, 200, { counts: deps.terminalRefresher.lastSnapshot?.counts ?? {} });
       void deps.terminalRefresher.tick(true);
     } else {
       const opener = deps.opener ?? defaultProjectOpener;

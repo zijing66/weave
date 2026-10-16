@@ -18,6 +18,11 @@ import { HookEventBus } from '../hooks/bus.js';
 import { WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { handleIngestedRecords, type InboxRecord } from '../hooks/inbox-worker.js';
 import { createWeaveServer } from '../daemon/server.js';
+import { DataBus } from '../daemon/data-bus.js';
+import {
+  TerminalTopologyRefresher,
+  type TerminalTopology,
+} from '../daemon/terminal-topology-refresher.js';
 import { setDaemonSettingsDb, writeDaemonSettings } from '../daemon/settings.js';
 
 const PROJECT_TOKEN = 'ptoken';
@@ -35,6 +40,9 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
   let dispatcher: HookDispatcher;
   let hooksDir: string;
   let projectId: number;
+  let terminalRefresher: TerminalTopologyRefresher;
+  /** 手控的探测结果（会话 → 所在可见屏幕）。 */
+  const topology: TerminalTopology = { counts: {}, terminals: {} };
 
   const auth = { 'content-type': 'application/json' };
   const get = (p: string) => fetch(`http://127.0.0.1:${port}${p}`, { headers: auth });
@@ -70,6 +78,9 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     dispatches = new HookDispatchRepository(db);
     sessions = new SessionRepository(db);
     bus = new HookEventBus();
+    // 终端世界隐藏刷新器（GET /sessions 的 terminal 字段来自它的上次快照）；测试里
+    // 用手控变量当探测结果，不 spawn 任何东西。
+    terminalRefresher = new TerminalTopologyRefresher(async () => topology, new DataBus());
     hooksDir = await mkdtemp(path.join(tmpdir(), 'weave-hooks-api-'));
     dispatcher = new HookDispatcher({
       registry,
@@ -88,6 +99,7 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       hookSessions: sessions,
       hookBus: bus,
       hookDispatcher: dispatcher,
+      terminalRefresher,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -207,6 +219,32 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     } finally {
       ctrl.abort();
     }
+  });
+
+  it('GET /sessions 带会话所在可见屏幕（隐藏刷新器上次快照；没探到 = null）', async () => {
+    seed('sess-screen', 'Stop');
+    const read = async () =>
+      (await (await get('/sessions')).json()) as {
+        sessions: Array<{ sessionId: string; terminal: unknown }>;
+      };
+    const screenOf = async () =>
+      (await read()).sessions.find((s) => s.sessionId === 'sess-screen')!.terminal;
+
+    expect(await screenOf()).toBeNull(); // 还没探过 → 不分组
+
+    topology.terminals['sess-screen'] = {
+      id: 'abcd1234:0:1',
+      windowId: 0,
+      tabId: 1,
+      tabsInWindow: 2,
+    };
+    await terminalRefresher.tick(true);
+    expect(await screenOf()).toEqual({
+      id: 'abcd1234:0:1',
+      windowId: 0,
+      tabId: 1,
+      tabsInWindow: 2,
+    });
   });
 
   it('会话列表随事件出现；PATCH 改名挂 pending_title；未知会话 404', async () => {

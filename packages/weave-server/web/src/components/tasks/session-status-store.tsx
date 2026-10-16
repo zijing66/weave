@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type HookDispatch, type PendingQuestionEntry, type SessionRow } from '@/lib/api';
+import {
+  api,
+  type HookDispatch,
+  type PendingQuestionEntry,
+  type SessionRow,
+  type SessionTerminal,
+} from '@/lib/api';
 import { useAuthState } from '@/lib/auth';
 import { subscribeSse } from '@/lib/sse';
 import {
@@ -141,6 +147,30 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
             if (v === undefined || s.pidAlive === v) return s;
             changed = true;
             return { ...s, pidAlive: v };
+          });
+          return changed ? next : prev;
+        });
+      }),
+    [],
+  );
+
+  // 会话所在可见屏幕（列表分块）：同一个隐藏刷新器的另一半快照——pane 关了/换了
+  // 屏幕同样没有 hook 事件，靠这一帧自愈。未上报定位的会话不在快照里（不动）；
+  // 反查不到时值是 null，据此把已分块的行摘出块外（不谎报旧屏幕）。
+  useEffect(
+    () =>
+      subscribeSse((frame) => {
+        if (frame.type !== 'push' || frame.key !== 'terminalTopology') return;
+        const screens =
+          (frame.payload as { terminals?: Record<string, SessionTerminal | null> }).terminals ?? {};
+        setSessions((prev) => {
+          if (!prev) return prev;
+          let changed = false;
+          const next = prev.map((s) => {
+            const v = screens[s.sessionId];
+            if (v === undefined || s.terminal?.id === v?.id) return s;
+            changed = true;
+            return { ...s, terminal: v };
           });
           return changed ? next : prev;
         });

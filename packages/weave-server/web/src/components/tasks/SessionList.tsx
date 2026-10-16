@@ -1,5 +1,5 @@
-import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { type SessionRow, type SessionWatchRow, type MessagingCapability, type AnswerPick, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type SessionRow, type SessionTerminal, type SessionWatchRow, type MessagingCapability, type AnswerPick, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
@@ -36,6 +36,46 @@ export function byActivity(a: SessionRow, b: SessionRow): number {
   return (
     Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt) ||
     Date.parse(b.createdAt) - Date.parse(a.createdAt)
+  );
+}
+
+/** 一个终端块：块头（终端标识）+ 成员行（块内保持活动序）。 */
+export interface TerminalBlock {
+  kind: 'block';
+  terminal: SessionTerminal;
+  rows: SessionRow[];
+}
+
+/** 渲染项：终端块 或 未分组的散行。 */
+export type SessionListEntry = TerminalBlock | { kind: 'row'; row: SessionRow };
+
+/**
+ * 终端分块（窗口管理）：**同一块可见屏幕**上的会话聚成一块，块的位置 = 首成员
+ * 在活动序里的位置，块内保持活动序。没有屏幕信息的行（没装 hooks / 终端不支持
+ * 反查 / pane 已关）不分组、原位留在块外——不猜它属于哪个终端。一块屏只有一个
+ * 会话时不立块头（那行没跟人挤在一起，立块头只是噪音）。
+ */
+export function groupByTerminal(rows: readonly SessionRow[]): SessionListEntry[] {
+  const out: SessionListEntry[] = [];
+  const blocks = new Map<string, TerminalBlock>();
+  for (const row of rows) {
+    const terminal = row.terminal;
+    if (!terminal) {
+      out.push({ kind: 'row', row });
+      continue;
+    }
+    let block = blocks.get(terminal.id);
+    if (!block) {
+      block = { kind: 'block', terminal, rows: [] };
+      blocks.set(terminal.id, block);
+      out.push(block);
+    }
+    block.rows.push(row);
+  }
+  return out.map((entry) =>
+    entry.kind === 'block' && entry.rows.length === 1
+      ? { kind: 'row', row: entry.rows[0]! }
+      : entry,
   );
 }
 
@@ -205,6 +245,11 @@ export function SessionList({
 }) {
   const t = useT();
   const { show } = useToast();
+  /** 块头文案：同窗口多个 tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
+  const blockTitle = (terminal: SessionTerminal): string =>
+    terminal.tabsInWindow > 1
+      ? t('tasks.terminalBlockTab', { w: terminal.windowId, tab: terminal.tabId })
+      : t('tasks.terminalBlock', { w: terminal.windowId });
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -274,9 +319,14 @@ export function SessionList({
     });
   };
 
-  return (
-    <ul className="space-y-1.5">
-      {rows.map((s) => {
+  /** 行元素登记（FLIP 按 id 量位移，散行与块内同一个口径）。 */
+  const registerRow = (sessionId: string) => (el: HTMLLIElement | null) => {
+    if (el) rowEls.current.set(sessionId, el);
+    else rowEls.current.delete(sessionId);
+  };
+
+  /** 一行会话卡：分块内与散行共用同一份 JSX，位次容器由外层决定。 */
+  const renderRow = (s: SessionRow): ReactNode => {
         const status = statuses.get(s.sessionId) ?? 'open';
         const selected = s.sessionId === selectedId;
         const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
@@ -288,13 +338,6 @@ export function SessionList({
           (q) => !q.submit,
         ).length;
         return (
-          <li
-            key={s.sessionId}
-            ref={(el) => {
-              if (el) rowEls.current.set(s.sessionId, el);
-              else rowEls.current.delete(s.sessionId);
-            }}
-          >
             <div
               role="button"
               tabIndex={0}
@@ -574,9 +617,42 @@ export function SessionList({
                 </>
               )}
             </div>
-          </li>
         );
-      })}
+  };
+
+  /** 分块后的渲染项：同屏会话聚块，散行原位（见 groupByTerminal）。 */
+  const entries = useMemo(() => groupByTerminal(rows), [rows]);
+
+  return (
+    <ul className="space-y-1.5">
+      {entries.map((entry) =>
+        entry.kind === 'row' ? (
+          <li key={entry.row.sessionId} ref={registerRow(entry.row.sessionId)}>
+            {renderRow(entry.row)}
+          </li>
+        ) : (
+          // 块头：这一块可见屏幕的标识 + 会话数——同屏会话靠它分成一组。
+          <li
+            key={`terminal:${entry.terminal.id}`}
+            className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-2"
+          >
+            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] text-neutral-400">
+              <SquareTerminal className="h-3 w-3 shrink-0 text-neutral-500" />
+              <span className="font-medium">{blockTitle(entry.terminal)}</span>
+              <span className="text-neutral-500">
+                {t('tasks.terminalBlockSessions', { n: entry.rows.length })}
+              </span>
+            </div>
+            <ul className="space-y-1.5">
+              {entry.rows.map((s) => (
+                <li key={s.sessionId} ref={registerRow(s.sessionId)}>
+                  {renderRow(s)}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ),
+      )}
       {answerFor &&
         (() => {
           // 弹窗开着但待答面没了（答完/解除/会话删除）→ 随之自关

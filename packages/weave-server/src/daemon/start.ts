@@ -35,7 +35,7 @@ import { detectProjectUpdateCounts } from '../install/updates.js';
 import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
-import { TerminalCountsRefresher } from './terminal-counts-refresher.js';
+import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SessionLivenessRefresher } from './session-liveness-refresher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
@@ -232,11 +232,15 @@ export function startDaemon(): void {
     onSynced: () => void updatesRefresher.refreshNow(true),
   });
   syncScheduler.start();
-  // 终端角标的隐藏刷新：前端不再轮询角标，改由后端「有人看时每 30s 探一次、
-  // 只在值变化时推」。探测本身要 spawn `wezterm cli`，所以绑 SSE 客户端数
-  // ——没人开看板就一次都不探。
-  const terminalRefresher = new TerminalCountsRefresher(
-    () => readTerminalCounts(projects.list()),
+  // 终端世界的隐藏刷新（项目卡角标 + 会话列表分块）：前端不再轮询，改由后端
+  // 「有人看时每 30s 探一次、只在值变化时推」。探测本身要 spawn `wezterm cli`，
+  // 所以绑 SSE 客户端数——没人开看板就一次都不探；会话所在屏幕复用同一份旁路
+  // pane env（后端探活缓存也同源），不为分块多打一枪。
+  const terminalRefresher = new TerminalTopologyRefresher(
+    async () => ({
+      counts: await readTerminalCounts(projects.list()),
+      terminals: await messageDeliverer.sessionTerminals(),
+    }),
     dataBus,
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );

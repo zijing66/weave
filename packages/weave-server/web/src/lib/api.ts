@@ -84,6 +84,16 @@ export interface TerminalTarget {
   full: boolean;
 }
 
+/** 会话所在的**可见屏幕**（终端里的一块屏 = wezterm 一个 tab）：会话列表按它分块。
+ *  id 不透明（只作分组键），窗口/Tab 号供块头文案。mirror of server 的 SessionTerminal。 */
+export interface SessionTerminal {
+  id: string;
+  windowId: number;
+  tabId: number;
+  /** 所在窗口的 tab 数（>1 时块头才标 Tab 号）。 */
+  tabsInWindow: number;
+}
+
 /** Structured result of one harness health check (core 返回，文案由 web 词典渲染). */
 export interface HarnessCheck {
   id: string;
@@ -308,6 +318,8 @@ export interface SessionRow {
   lastEventType?: string | null;
   /** claude 注册表判活：false=进程确死（判 terminated）；null=查不到登记（codex 等）不猜。 */
   pidAlive?: boolean | null;
+  /** 该会话所在的**可见屏幕**（终端里的一块屏）；null = 反查不到（没分组信息）。 */
+  terminal?: SessionTerminal | null;
   /** 无 prompt 幽灵会话的自动清理时刻（服务端 listWithCounts 派生；null = 正常会话）。
    *  服务端 SessionSweeper 过期即清，行内渲染倒计时 tag。 */
   autoDeleteAt?: string | null;
@@ -410,6 +422,10 @@ export interface PendingQuestionOption {
   textTail?: string[];
   /** 宿主自有尾行「结束整个提问去聊天」：无文本，按下即结束提问。 */
   chat?: boolean;
+  /** 预览形态右栏原文（该选项被高亮时宿主显示的东西；不含预览的选项 = 宿主占位原文）。 */
+  preview?: string | null;
+  /** 预览形态：`keys` 只挪高亮，提交另需这一串（没选输入行时由服务端补在键序尾）。 */
+  commit?: string[];
 }
 
 /** mirror of `BlockingQuestion`：待答问题面——问题文案/选项保留原文（终端模态框
@@ -424,6 +440,9 @@ export interface PendingQuestion {
   /** 收尾屏（宿主模态框尾部的「提交 / 取消」tab）：不是宿主的第 n 个问题，
    *  是整 call 的落定动作——`questions ≥ 2 || 任一问多选` 才有，恒在面末尾。 */
   submit?: boolean;
+  /** 宿主预览形态（单选且任一选项带预览）：左右分栏（选项 | 预览）、自定义文本走
+   *  `input` 备注行（宿主 `n` 那行）、**没有** Other 行；选项描述在这一形态里不渲染。 */
+  previewMode?: boolean;
 }
 
 /** 一问的作答（web 只送下标与文本，键序由服务端按面拼）。 */

@@ -96,7 +96,7 @@ describe('daemon server watch endpoints', () => {
     const decoder = new TextDecoder();
     await reader.read(); // ': connected' 问候帧（此时订阅已挂上）
 
-    dataBus.emit({ key: 'terminalCounts', payload: { counts: { 1: 2 } } });
+    dataBus.emit({ key: 'terminalTopology', payload: { counts: { 1: 2 }, terminals: {} } });
     dataBus.emit({ key: 'assets', projectPath: projectDir });
 
     let buffer = '';
@@ -106,7 +106,7 @@ describe('daemon server watch endpoints', () => {
       buffer += decoder.decode(value);
     }
     expect(buffer).toContain('"type":"push"');
-    expect(buffer).toContain('"key":"terminalCounts"');
+    expect(buffer).toContain('"key":"terminalTopology"');
     expect(buffer).toContain('"counts":{"1":2}');
     expect(buffer).toContain('"type":"invalidate"');
     expect(buffer).toContain('"key":"assets"');

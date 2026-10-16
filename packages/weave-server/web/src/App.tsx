@@ -554,7 +554,7 @@ function Dashboard() {
           return;
         }
         // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
-        if (frame.type === 'push' && frame.key === 'terminalCounts') {
+        if (frame.type === 'push' && frame.key === 'terminalTopology') {
           setTerminalCounts((frame.payload as { counts: Record<number, number> }).counts);
           return;
         }

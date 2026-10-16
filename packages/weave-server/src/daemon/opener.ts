@@ -179,6 +179,13 @@ export abstract class TerminalBackend {
     return null;
   }
 
+  /** 会话 → 所在可见屏幕（会话列表分块）；无枚举能力的后端空表（不分组，不猜）。 */
+  async locateScreens(
+    _envs: Record<string, Record<string, string>>,
+  ): Promise<Record<string, SessionTerminal | null>> {
+    return {};
+  }
+
   /** prompt 层② 兜底：向枚举所得 pane 注入 prompt 原文并提交；无通道的后端明确拒绝。 */
   async sendPromptText(_paneId: string, _text: string): Promise<void> {
     throw new Error(
@@ -563,6 +570,18 @@ class WeztermBackend extends TerminalBackend {
   }
 
   /**
+   * 会话 → 可见屏幕（会话列表分块）：与 locatePane 同一份旁路 env，但**吃 10s
+   * 探活缓存**——分组是展示面，滞后十秒无感，而它由计数探活同一轮触发（共用一次
+   * `cli list`），不为此多 spawn。
+   */
+  override async locateScreens(
+    envs: Record<string, Record<string, string>>,
+  ): Promise<Record<string, SessionTerminal | null>> {
+    if (Object.keys(envs).length === 0) return {};
+    return sessionScreensFromEnvs(envs, await weztermLiveMuxesCached(), this.platform);
+  }
+
+  /**
    * prompt 层② 注入（spike 字节级实测配方）：bracketed paste 打原文（内含
    * CR 是字面内容、不会被终端解释提交）→ `--no-paste` 补一记 CR 提交。mux
    * 实时重枚举定位，目标没了 throw（消息转可见失败，不静默丢）。
@@ -675,6 +694,12 @@ class AutoBackend extends TerminalBackend {
     return this.attachBackend().locatePane(env);
   }
 
+  override locateScreens(
+    envs: Record<string, Record<string, string>>,
+  ): Promise<Record<string, SessionTerminal | null>> {
+    return this.attachBackend().locateScreens(envs);
+  }
+
   override sendPromptText(paneId: string, text: string): Promise<void> {
     return this.attachBackend().sendPromptText(paneId, text);
   }
@@ -722,6 +747,7 @@ export function promptTerminalChannel(
   available(): boolean;
   listPanes(): Promise<PromptPaneTarget[]>;
   locatePane(env: Record<string, string>): Promise<string | null>;
+  locateScreens(envs: Record<string, Record<string, string>>): Promise<Record<string, SessionTerminal | null>>;
   sendText(paneId: string, text: string): Promise<void>;
   sendKeys(paneId: string, keys: string): Promise<void>;
 } {
@@ -735,6 +761,10 @@ export function promptTerminalChannel(
     locatePane: async (env) => {
       const backend = backendOf();
       return backend.textAddressable ? await backend.locatePane(env) : null;
+    },
+    locateScreens: async (envs) => {
+      const backend = backendOf();
+      return backend.textAddressable ? await backend.locateScreens(envs) : {};
     },
     sendText: async (paneId, text) => {
       const backend = backendOf();
@@ -1070,6 +1100,52 @@ export function weztermPaneFromEnv(
   const mux = muxes.find((m) => normalizeDirKey(m.socket, platform) === key);
   if (!mux || !mux.panes.some((p) => String(p.paneId) === pane)) return null;
   return `${weztermMuxKey(mux.socket)}:${pane}`;
+}
+
+/**
+ * 会话所在的**可见屏幕**（终端里的一块屏 = wezterm 一个 tab）：会话列表按它分块
+ * ——同一块屏上的会话聚在一起。id 不透明、格式归后端，只作分组键；窗口/Tab 号
+ * 与同窗口 tab 数供块头文案（Tab 号只在同窗口多 tab 时有意义）。
+ */
+export interface SessionTerminal {
+  id: string;
+  windowId: number;
+  tabId: number;
+  tabsInWindow: number;
+}
+
+/**
+ * 会话 → 可见屏幕（纯函数）：hook 上报的 pane env × 活 mux 表。键缺、socket 对
+ * 不上活 mux、pane 号已不在 = null（该会话不分组，不猜）。
+ */
+export function sessionScreensFromEnvs(
+  envs: Record<string, Record<string, string>>,
+  muxes: readonly { socket: string; panes: readonly WeztermPaneInfo[] }[],
+  platform: NodeJS.Platform = process.platform,
+): Record<string, SessionTerminal | null> {
+  const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+  const out: Record<string, SessionTerminal | null> = {};
+  for (const [sessionId, env] of Object.entries(envs)) {
+    const paneId = env[paneKey];
+    const socket = env[socketKey];
+    const mux = socket
+      ? muxes.find((m) => normalizeDirKey(m.socket, platform) === normalizeDirKey(socket, platform))
+      : undefined;
+    const pane = mux?.panes.find((p) => String(p.paneId) === paneId);
+    if (!mux || !pane) {
+      out[sessionId] = null;
+      continue;
+    }
+    out[sessionId] = {
+      id: `${weztermMuxKey(mux.socket)}:${pane.windowId}:${pane.tabId}`,
+      windowId: pane.windowId,
+      tabId: pane.tabId,
+      tabsInWindow: new Set(
+        mux.panes.filter((p) => p.windowId === pane.windowId).map((p) => p.tabId),
+      ).size,
+    };
+  }
+  return out;
 }
 
 /** 目标 id ↔ (mux, window, tab) 解码；坏 id → null。 */
