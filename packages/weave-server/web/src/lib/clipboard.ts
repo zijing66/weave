@@ -17,6 +17,21 @@ export async function copyText(text: string): Promise<boolean> {
   return legacyCopy(text);
 }
 
+/**
+ * 复制图片（分享图片用）：只有 Clipboard API 这一条路——异步剪贴板没有老式回落
+ * （execCommand 喂不进图片）。无 API 或不被支持即 false，调用方改引导「下载 PNG」。
+ */
+export async function copyImage(blob: Blob): Promise<boolean> {
+  const clip = navigator.clipboard;
+  if (!clip?.write || typeof ClipboardItem === 'undefined') return false;
+  try {
+    await clip.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function legacyCopy(text: string): boolean {
   const area = document.createElement('textarea');
   area.value = text;

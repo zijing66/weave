@@ -42,6 +42,7 @@ import { copyText } from '@/lib/clipboard';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { usePullLoad } from '@/lib/pull-load';
 import type { MessageKey } from '@/i18n/dict';
 
 /** 权限失败态 → toast 文案键：成因不同口径不同（手机 HTTP 访问是 insecure 不是 denied）。 */
@@ -113,7 +114,8 @@ export function TasksPanel({
   const [olderExhausted, setOlderExhausted] = useState(false);
   /** 事件拉取中——空窗期不得冒充「该会话还没有采集到事件」。 */
   const [loading, setLoading] = useState(false);
-  const scrollThrottle = useRef<number | null>(null);
+  /** 事件链滚动列表（拉动加载要现读它的位置）。 */
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   /** 本项目会话：总线全量列表按 projectId 过滤（null = 首次加载中，沿用总线状态）。 */
   const sessions = useMemo(
@@ -600,8 +602,8 @@ export function TasksPanel({
   const olderRemaining = groups.length - shownGroups.length;
   const canLoadOlderEvents = !olderExhausted && events.length > 0;
   const hasOlder = olderRemaining > 0 || canLoadOlderEvents;
-  const atListEnd = (el: HTMLElement): boolean =>
-    el.scrollHeight - el.scrollTop - el.clientHeight <= 8;
+  const atListEnd = (el: HTMLElement | null): boolean =>
+    !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
   const loadOlderGroups = async (): Promise<void> => {
     if (olderRemaining > 0) {
       setGroupWindow((w) => w + 10);
@@ -631,21 +633,13 @@ export function TasksPanel({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const throttleLoad = (): void => {
-    const now = Date.now();
-    if (scrollThrottle.current && now - scrollThrottle.current < 600) return;
-    scrollThrottle.current = now;
-    void loadOlderGroups();
-  };
-  const onListScroll = (e: React.UIEvent<HTMLDivElement>): void => {
-    if (!hasOlder || !atListEnd(e.currentTarget)) return;
-    throttleLoad();
-  };
-  /** 触底后继续下滚：内容不再位移 → scroll 不再触发，须由 wheel 补触发。 */
-  const onListWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
-    if (!hasOlder || e.deltaY <= 0 || !atListEnd(e.currentTarget)) return;
-    throttleLoad();
-  };
+  /** 拉动加载（向下那头）：触底后继续滚/拖才取更早，且一拉只取一批。 */
+  const pull = usePullLoad({
+    axis: 'bottom',
+    getEdge: () => atListEnd(listRef.current),
+    onFire: () => void loadOlderGroups(),
+    enabled: hasOlder,
+  });
 
   // 自动补拉：默认承诺「最新 10 条」——头部截断导致窗口内真组不足 10 时，
   // 静默向前翻页直到凑满或翻到底（通常一批 300 事件即够）。
@@ -869,9 +863,19 @@ export function TasksPanel({
               流），内层滚动列表 flex-1 撑满可用高度 */
           <div className="relative flex min-h-0 flex-1 flex-col">
             <div
-              className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1"
-              onScroll={onListScroll}
-              onWheel={onListWheel}
+              ref={listRef}
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-1"
+              onScroll={pull.syncEdge}
+              onWheel={(e) => pull.wheel(e.deltaY, e.deltaMode)}
+              onTouchStart={(e) => pull.touchStart(e.touches[0]?.clientY ?? 0)}
+              onTouchMove={(e) => pull.touchMove(e.touches[0]?.clientY ?? 0)}
+              onTouchEnd={pull.touchEnd}
+              onTouchCancel={pull.touchEnd}
+            >
+            {/* 拉动位移：正文整体往上让位（transform 不进布局） */}
+            <div
+              className="flex shrink-0 flex-col gap-1"
+              style={pull.px > 0 ? { transform: `translateY(-${pull.px}px)` } : undefined}
             >
             {shownGroups.map((g) => {
               const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
@@ -1042,11 +1046,14 @@ export function TasksPanel({
               );
             })}
             </div>
+            </div>
             {/* 底部渐变遮罩：absolute 固定在事件区域底边（不占滚动流）——
                 倒序列表（最新在顶），更早 prompt 向底部滚触底自动加载 */}
             {hasOlder && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-6 text-center">
-                <p className="text-[10px] text-neutral-500">{t('tasks.olderHint')}</p>
+                <p className="text-[10px] text-neutral-500">
+                  {pull.px > 0 ? t('tasks.pullMoreEvents') : t('tasks.olderHint')}
+                </p>
                 <span className="pointer-events-auto mt-1 inline-flex gap-2">
                   <button
                     type="button"

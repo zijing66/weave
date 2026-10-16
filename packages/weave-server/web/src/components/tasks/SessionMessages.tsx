@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Check, CheckCheck, Copy, Download, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -14,8 +14,15 @@ import { Badge } from '@/components/ui/badge';
 import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
-import { copyText } from '@/lib/clipboard';
+import { copyImage, copyText } from '@/lib/clipboard';
+import {
+  downloadBlob,
+  imageFileName,
+  renderConversationImage,
+  type ConvImageEntry,
+} from '@/lib/conv-image';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { usePullLoad } from '@/lib/pull-load';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
   formatStamp,
@@ -262,6 +269,18 @@ export function exportConversationText(
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP = 8;
 
+/** 弹出菜单两副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）。 */
+type ConvMenu =
+  | { kind: 'bubble'; x: number; y: number; key: string }
+  | { kind: 'share'; x: number; y: number };
+
+const MENU_W = 168;
+const MENU_H = 72;
+
+/** 进图片的条目：正文原样（剥运输装饰是展示层的事，这里就是气泡里那串文本）。 */
+const toImageEntries = (entries: readonly ConvEntry[]): ConvImageEntry[] =>
+  entries.map((e) => ({ role: e.role, at: e.at, text: e.text }));
+
 /** 弹窗尺寸：宽度跟屏幕走（宽屏优先，窄屏交给 `w-full` 类），拖角可改并记住；
  *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
 type ConvSize = { w: number; h: number };
@@ -365,8 +384,9 @@ export function SessionMessages({
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
-  /** 桌面右键菜单（位置 = 指针处；右键那条一并勾上）。 */
-  const [menu, setMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
+   *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
+  const [menu, setMenu] = useState<ConvMenu | null>(null);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -566,6 +586,13 @@ export function SessionMessages({
   }, [entries, tailKey]);
 
   const visible = useMemo(() => filterThread(thread, filter), [thread, filter]);
+  /** 拉动加载（向上那头）：贴顶后继续滚/拖才取更早，且一拉只取一页。 */
+  const pull = usePullLoad({
+    axis: 'top',
+    getEdge: () => (threadRef.current?.scrollTop ?? 1) <= 1,
+    onFire: () => void loadEarlier(),
+    enabled: entries !== null && !headDone && !loadingEarlier,
+  });
   /** 停止（与事件链组头同一判据；无回合信号的 harness 传 undefined 回落状态）。 */
   const stoppable = canInterrupt(
     status ?? 'open',
@@ -587,8 +614,17 @@ export function SessionMessages({
     if (key !== undefined) setPicked(new Set([key]));
   };
 
+  /** 勾上的条目（顺序 = 对话序，与手上这批的顺序一致）。 */
+  const pickedEntries = (): ConvEntry[] => thread.filter((e) => picked.has(e.key));
+
+  /** 全选的范围 = 已加载的全部条目（不是当前过滤可见的那些：过滤只看显示，
+   *  勾选面不跟着变，正如过滤不收回已有的勾）。 */
+  const allPicked = thread.length > 0 && thread.every((e) => picked.has(e.key));
+  const toggleAll = (): void =>
+    setPicked(allPicked ? new Set() : new Set(thread.map((e) => e.key)));
+
   const copyPicked = (): void => {
-    const chosen = thread.filter((e) => picked.has(e.key));
+    const chosen = pickedEntries();
     if (chosen.length === 0) return;
     const text = exportConversationText(chosen, {
       user: t('tasks.convRoleUser'),
@@ -601,6 +637,48 @@ export function SessionMessages({
         ok ? t('tasks.convCopyOk', { n: chosen.length }) : t('tasks.convCopyFailed'),
       ),
     );
+  };
+
+  /** 对话 → 图片：canvas 文本卡片，复制到剪贴板或下载 PNG。生成失败与「浏览器
+   *  不给写剪贴板」都当失败报出去（后者引导走下载）。 */
+  const shareImage = (to: 'clipboard' | 'download'): void => {
+    const chosen = pickedEntries();
+    if (chosen.length === 0) return;
+    setMenu(null);
+    void fb.run(
+      `convImg:${sessionId}`,
+      async () => {
+        let blob: Blob;
+        try {
+          blob = await renderConversationImage(toImageEntries(chosen), {
+            title: label,
+            subtitle: `${projectLabel} · ${t('tasks.convImgSubtitle', {
+              at: exportStamp(new Date().toISOString()),
+              n: chosen.length,
+            })}`,
+            labels: { user: t('tasks.convRoleUser'), assistant: t('tasks.convRoleAssistant') },
+            stamp: exportStamp,
+          });
+        } catch (e) {
+          throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+        }
+        if (to === 'download') {
+          downloadBlob(blob, imageFileName(label));
+          show('success', t('tasks.convImgSaved'));
+        } else if (await copyImage(blob)) {
+          show('success', t('tasks.convImgOk', { n: chosen.length }));
+        } else {
+          throw new Error(t('tasks.convImgCopyFailed'));
+        }
+      },
+      { fail: errorText },
+    );
+  };
+
+  /** 分享菜单往上开：底栏在下沿，向下没有可用的地方。 */
+  const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
   };
 
   /** 触屏长按进多选（桌面走右键菜单；鼠标不该有长按这回事）。 */
@@ -684,7 +762,7 @@ export function SessionMessages({
       // 触屏长按同样会弹 contextmenu：原生菜单一律压掉，但那条路我们不用自己的菜单
       e.preventDefault();
       if (coarse) return;
-      setMenu({ x: e.clientX, y: e.clientY, key });
+      setMenu({ kind: 'bubble', x: e.clientX, y: e.clientY, key });
     },
     onPointerDown: onPressDown(key),
     onPointerMove: onPressMove,
@@ -810,10 +888,30 @@ export function SessionMessages({
           onScroll={() => {
             stick.current = atBottom();
             cancelPress(); // 手指在滑 = 不是长按
-            if ((threadRef.current?.scrollTop ?? 1) <= 24) void loadEarlier();
+            pull.syncEdge();
           }}
-          className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden pr-1"
+          onWheel={(e) => pull.wheel(e.deltaY, e.deltaMode)}
+          onTouchStart={(e) => pull.touchStart(e.touches[0]?.clientY ?? 0)}
+          onTouchMove={(e) => pull.touchMove(e.touches[0]?.clientY ?? 0)}
+          onTouchEnd={pull.touchEnd}
+          onTouchCancel={pull.touchEnd}
+          className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain pr-1"
         >
+          {/* 拉动位移：正文整体往下让位（transform 不进布局，故不影响翻页时的滚动补偿），
+              提示贴在这段空隙里跟着走 */}
+          {pull.px > 0 && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute left-0 right-0 top-1 flex justify-center"
+              style={{ transform: `translateY(${pull.px}px)` }}
+            >
+              <span className="text-[10px] text-neutral-600">{t('tasks.pullMore')}</span>
+            </div>
+          )}
+          <div
+            className="space-y-2"
+            style={pull.px > 0 ? { transform: `translateY(${pull.px}px)` } : undefined}
+          >
           {entries === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1011,6 +1109,7 @@ export function SessionMessages({
               )}
             </>
           )}
+          </div>
         </div>
 
         {error && (
@@ -1019,31 +1118,62 @@ export function SessionMessages({
           </p>
         )}
 
-        {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆） */}
+        {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆）。窄屏放不下
+            就整组折到第二行——按钮不等宽也不做横向滚动 */}
         {selecting ? (
-          <div className="mt-2 flex shrink-0 items-center gap-1.5">
+          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="min-w-0 truncate text-[11px] text-neutral-400">
               {t('tasks.convSelected', { n: picked.size })}
             </span>
-            <button
-              type="button"
-              disabled={picked.size === 0}
-              onClick={copyPicked}
-              className="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
-            >
-              <Copy className="h-3 w-3" />
-              {t('tasks.convCopy')}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSelecting(false);
-                setPicked(new Set());
-              }}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200"
-            >
-              {t('tasks.convCancel')}
-            </button>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                disabled={thread.length === 0}
+                onClick={toggleAll}
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40',
+                  allPicked
+                    ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+                    : 'border-white/[0.1] text-neutral-200 hover:border-white/20',
+                )}
+              >
+                <CheckCheck className="h-3 w-3" />
+                {t(allPicked ? 'tasks.convDeselectAll' : 'tasks.convSelectAll')}
+              </button>
+              <button
+                type="button"
+                disabled={picked.size === 0}
+                onClick={copyPicked}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
+              >
+                <Copy className="h-3 w-3" />
+                {t('tasks.convCopy')}
+              </button>
+              <button
+                type="button"
+                disabled={picked.size === 0}
+                onClick={openShareMenu}
+                title={t('tasks.convShare')}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
+              >
+                <FeedbackIcon
+                  state={fb.stateOf(`convImg:${sessionId}`)}
+                  className="h-3 w-3"
+                  icon={<ImageIcon className="h-3 w-3" />}
+                />
+                {t('tasks.convShare')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelecting(false);
+                  setPicked(new Set());
+                }}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200"
+              >
+                {t('tasks.convCancel')}
+              </button>
+            </div>
           </div>
         ) : (
           /* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
@@ -1104,26 +1234,47 @@ export function SessionMessages({
           </div>
         )}
 
-        {/* 右键菜单（桌面）：一项「多选」——进多选并勾上右键那条 */}
+        {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载） */}
         {menu &&
           createPortal(
             <div
               data-conv-menu
               className="fixed z-[60] rounded-lg border border-white/[0.1] bg-neutral-900 py-1 shadow-mac"
               style={{
-                left: Math.min(menu.x, window.innerWidth - 160),
-                top: Math.min(menu.y, window.innerHeight - 60),
+                left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
+                top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <button
-                type="button"
-                onClick={() => enterSelect(menu.key)}
-                className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
-              >
-                <Check className="h-3 w-3 text-neutral-500" />
-                {t('tasks.convSelect')}
-              </button>
+              {menu.kind === 'bubble' ? (
+                <button
+                  type="button"
+                  onClick={() => enterSelect(menu.key)}
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                >
+                  <Check className="h-3 w-3 text-neutral-500" />
+                  {t('tasks.convSelect')}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => shareImage('clipboard')}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                  >
+                    <Copy className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareCopy')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => shareImage('download')}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                  >
+                    <Download className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareDownload')}
+                  </button>
+                </>
+              )}
             </div>,
             document.body,
           )}
