@@ -108,3 +108,84 @@ describe('weave doctor', () => {
     expect(out).toContain('存在，但项目未注册');
   });
 });
+
+// ---- 投递诊断节（GET /messaging/diagnostics）：daemon 的应答由 fetch stub 顶替 ----
+
+/** 一条三层全灭的会话：旧脚本 + 无 pane 通道 + 无 peer name = VDI 那个现场。 */
+const diagPayload = (id: number) => ({
+  daemon: {
+    version: '0.1.0',
+    platform: 'win32',
+    terminalPreset: 'wt',
+    terminalTextChannel: false,
+  },
+  projects: [
+    {
+      id,
+      captures: [
+        {
+          harness: 'claude',
+          source: 'project',
+          present: true,
+          weaveOwned: true,
+          generatedVersion: '0.0.1',
+          reportsInbox: false,
+          reportsPaneEnv: false,
+        },
+      ],
+    },
+  ],
+  sessions: [
+    {
+      sessionId: 'abcdef1234567890',
+      title: 'weave',
+      alive: true,
+      eventCount: 4,
+      lastEventType: 'Stop',
+      channels: {
+        inbox: { status: 'unavailable', reason: 'no-credentials' },
+        relay: { status: 'unavailable', reason: 'no-peer-name' },
+        terminal: { status: 'unavailable', reason: 'no-backend' },
+      },
+      queue: { pending: 2, stalled: false },
+      reachable: false,
+      hints: ['hook-script-stale', 'no-peer-name', 'terminal-no-backend'],
+    },
+  ],
+});
+
+describe('weave doctor 投递诊断', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const stubDaemon = (body: unknown, ok = true) =>
+    vi.stubGlobal('fetch', async () => ({ ok, status: ok ? 200 : 401, json: async () => body }));
+
+  it('daemon 在跑 + 已注册 → 打出通道矩阵与修法码', async () => {
+    const { id } = registerProject(projDir, 'init', hoisted.dbPath);
+    hoisted.daemonRunning = true;
+    stubDaemon(diagPayload(id));
+
+    const out = await run(projDir);
+    expect(out).toContain('消息投递诊断');
+    expect(out).toContain('preset wt（无文本注入通道）');
+    expect(out).toContain('project 档 · 版本 0.0.1 · 凭据上报 否');
+    expect(out).toContain('abcdef12「weave」');
+    expect(out).toContain('不可用（没有凭据）');
+    expect(out).toContain('不可用（注册表里没有 peer name）');
+    expect(out).toContain('不可用（该终端 preset 没有文本注入后端）');
+    expect(out).toContain('队列 2 条');
+    expect(out).toContain('hook 脚本是旧版 weave 生成的');
+  });
+
+  it('daemon 拒答 → 只降级这一节，接线结论照旧', async () => {
+    registerProject(projDir, 'init', hoisted.dbPath);
+    hoisted.daemonRunning = true;
+    stubDaemon({}, false);
+
+    const out = await run(projDir);
+    expect(out).toContain('投递诊断不可用（HTTP 401）');
+    expect(out).toContain('正常——这条检出已注册，令牌一致。');
+  });
+});
