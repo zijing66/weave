@@ -60,11 +60,16 @@ import { WEAVE_REPO_URL, formatStars, useRepoStars } from '@/lib/github';
 import { LoginPage } from '@/components/LoginPage';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
+import { createAwaitGate } from '@/lib/await-gate';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
 const RIGHT_MIN = 260;
 const RIGHT_MAX = 440;
+/** 开终端后等角标上涨的上限：窗口起来 + cwd 上报 + 对账那一拍（服务端 600ms
+ *  后自对账）通常 1~2s；口径只在可枚举的终端后端上成立，探不到就照旧提前收圈，
+ *  别把按钮钉在转圈上。 */
+const OPEN_TERMINAL_COUNT_MS = 8_000;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /** 生效查表（链解析在服务端，前端只读行上的 effective）。 */
@@ -242,6 +247,15 @@ function Dashboard() {
   // 首帧、后台对账后推差量。前端零请求零定时器：探测要 spawn `wezterm cli`，
   // 任何前端主动拉都会把 spawn 带回请求关键路径。
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
+  /** 「开终端」loading 的放行闸：等的是角标上涨（= 那个窗口真起来了）——
+   *  同开会话/新建会话两个按钮的口径，见 lib/await-gate.ts。 */
+  const countsRef = useRef(terminalCounts);
+  countsRef.current = terminalCounts;
+  const terminalGate = useRef(createAwaitGate(OPEN_TERMINAL_COUNT_MS));
+  useEffect(() => {
+    terminalGate.current.poke();
+  }, [terminalCounts]);
+  useEffect(() => () => terminalGate.current.releaseAll(), []);
 
   const refreshAssets = useCallback((p: ProjectRow) => {
     api.listAssets(p.path).then(setAssets).catch(() => {});
@@ -833,7 +847,9 @@ function Dashboard() {
   );
 
   /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
-      失败 toast；成功无 toast——窗口弹出本身就是反馈。 */
+      失败 toast；成功无 toast——窗口弹出本身就是反馈。
+      **终端那把 loading 挂到角标上涨为止**（同「打开会话」「新建会话」口径：窗口
+      真起来才收圈）；explorer 没有可观测的落点，仍以请求返回为准。 */
   const openProjectWithFeedback = useCallback(
     (p: ProjectRow, target: 'explorer' | 'terminal') =>
       void fb.run(
@@ -841,7 +857,13 @@ function Dashboard() {
         async () => {
           // 开终端后的角标对账在服务端做（新窗 cwd 上报有一拍延迟，600ms 后探
           // 一次、差量走 push 帧）——前端不再拉 /terminals/counts。
+          const before = countsRef.current[p.id] ?? 0;
           await api.openProject(p.id, target);
+          if (target !== 'terminal') return;
+          await terminalGate.current.wait(
+            `count:${p.id}`,
+            () => (countsRef.current[p.id] ?? 0) > before,
+          );
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       ),

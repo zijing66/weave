@@ -44,6 +44,7 @@ import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-not
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
+import { createAwaitGate } from '@/lib/await-gate';
 import type { MessageKey } from '@/i18n/dict';
 
 /** 权限失败态 → toast 文案键：成因不同口径不同（手机 HTTP 访问是 insecure 不是 denied）。 */
@@ -128,42 +129,37 @@ export function TasksPanel({
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
 
-  /** 等转绿的等待者：pidAlive 由后端 liveness push 补丁到会话行，行一变就放行
-   *  对应承诺（不轮询）。 */
-  const aliveWaiters = useRef(new Map<string, () => void>());
+  /** 「等已进入」的闸：会话行一变就 poke 一次——开终端与新建会话两个按钮的
+   *  loading 都挂到命中（或超时）为止，不轮询。 */
+  const gate = useRef(createAwaitGate(OPEN_TERMINAL_ALIVE_MS));
   useEffect(() => {
-    for (const s of sessions ?? []) {
-      if (!s.pidAlive) continue;
-      aliveWaiters.current.get(s.sessionId)?.();
-      aliveWaiters.current.delete(s.sessionId);
-    }
+    gate.current.poke();
   }, [sessions]);
-  useEffect(
-    () => () => {
-      for (const release of aliveWaiters.current.values()) release();
-      aliveWaiters.current.clear();
-    },
-    [],
-  );
+  useEffect(() => () => gate.current.releaseAll(), []);
 
   /** 等该会话的 claude 进程转绿（或超时）：开终端按钮的 loading 一直挂到这时为止
    *  ——「已 spawn、绿还没到」的空窗里，多点是再起一个 claude --resume 抢同一会话。
-   *  转绿判据、以及「进程当场退出」的兜底放行，都在这里收口。 */
-  const waitTerminalAlive = useCallback((sessionId: string): Promise<void> => {
-    if (sessionsRef.current?.some((s) => s.sessionId === sessionId && s.pidAlive)) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      const timer = window.setTimeout(() => {
-        aliveWaiters.current.delete(sessionId);
-        resolve();
-      }, OPEN_TERMINAL_ALIVE_MS);
-      aliveWaiters.current.set(sessionId, () => {
-        window.clearTimeout(timer);
-        resolve();
-      });
-    });
-  }, []);
+   *  转绿判据（以及判不动时的超时放行）都在这里收口。 */
+  const waitTerminalAlive = useCallback(
+    (sessionId: string): Promise<void> =>
+      gate.current.wait(
+        `alive:${sessionId}`,
+        () => sessionsRef.current?.some((s) => s.sessionId === sessionId && s.pidAlive) === true,
+      ),
+    [],
+  );
+
+  /** 等新会话行落进列表（或超时）：新建会话的 loading 挂到这时为止——spawn 是异步的
+   *  （新窗 pane 起来、claude 再发 SessionStart 才落行），POST 一返回就收圈等于
+   *  「点完看不出有没有生效」，用户会再点一次起出第二个。 */
+  const waitNewSession = useCallback(
+    (known: ReadonlySet<string>): Promise<void> =>
+      gate.current.wait(
+        `new:${projectId}`,
+        () => sessionsRef.current?.some((s) => !known.has(s.sessionId)) === true,
+      ),
+    [projectId],
+  );
 
   const refreshEvents = useCallback(
     async (sessionId: string) => {
@@ -469,18 +465,22 @@ export function TasksPanel({
 
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
-      fb 键按项目隔离：loading 在途吞连点，防重复 spawn。 */
+      fb 键按项目隔离：loading 在途吞连点，防重复 spawn。
+      **loading 挂到新会话行进列表为止**（同开终端口径——「已 spawn、行还没到」的
+      空窗里按钮还在转圈、点不动，不会多起一个 claude）。 */
   const runNewSession = useCallback(
     (harness?: Harness): void => {
       void fb.run(
         `newSession:${projectId}`,
         async () => {
+          const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
           await api.startProjectSession(projectId, harness);
+          await waitNewSession(known);
         },
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t],
+    [fb, projectId, t, waitNewSession],
   );
 
   /** 能起交互会话的已接入 harness（本项目 init 选择结果 ∩ 有 resume 槽裸 bin）。 */
