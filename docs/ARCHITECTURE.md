@@ -159,6 +159,7 @@ flowchart TD
 
 - **SSE 单通道**：dashboard ↔ 服务端只有 `GET /events` 一条事件流；无事件源的数据（终端窗口数、会话存活）由后端隐藏刷新器补，前端不得 `new EventSource`、不得轮询。
 - **inject 回程**：消息投递的 inject 通道写 outbox，随目标会话下一拍 hook 送达（非抢占）；headless 通道走共享无头核（与 resume dispatch 同实例 = 同会话并发闸跨域生效）。
+- **投递诊断（只读）**：`GET /messaging/diagnostics`（`?project=` / `?session=`）把「采集脚本能力位 × 每会话三通道可用性 × 队列积压 × 暂停闸」派生成一屏——脚本侧经 `CaptureSurface.scriptHealth`（读项目/user 档生成物文本，**不执行**），通道侧经 `MessageDeliverer.diagnose`；`weave doctor` 打人类可读版。**口径恒为被动**：不真连 socket、不枚举 pane、不起中继子进程；**凭据（socket 路径 / token）永不进响应**，只出「有没有」。原因码与修法文案归 server 一处，CLI/web 不自拼。
 - **市场身份判据**唯一实现 = `server/market/identity.ts` 的 `marketIdOf`；插件注册键形 `<name>@<marketplace>` 唯一拼装点 = `PluginSurface.pluginKey`。
 - **认证门**：`deps.auth`（`daemon/dashboard-auth.ts`）装在 `handleRequest` 最前——会话 cookie（浏览器）/ 本机令牌（CLI 与 hooks）二者认一；改密只走 CLI（本机令牌），web 无改密入口，401 一律回登录页。**绑定**：settings `server.bindHost` 默认 `0.0.0.0`（局域网可达，由上面的认证兜底），CLI 客户端仍连 `127.0.0.1`（`DAEMON_HOST` 与 bindHost 是两个概念）。
 
