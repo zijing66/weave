@@ -523,6 +523,18 @@ class WeztermBackend extends TerminalBackend {
     ];
   }
 
+  /**
+   * 开终端（不带命令）：有活实例 → 在实例里开新窗口落子（与会话列表的新终端
+   * 同一条 mux 通道）；一个活实例都没有 → 回落 legacy `start` 起新 GUI（第一台
+   * 终端总得有人开）。**不能只靠 `start`**：Windows 上它恒起一个新 GUI 进程、
+   * 不并进已开实例（实测 `WEZTERM_UNIX_SOCKET` 指着活实例也照样新起），那是
+   * 另一套窗口/实例，跟用户日常那个 wezterm 不是一回事。
+   */
+  override async open(dir: string): Promise<void> {
+    if (await openInWezterm(dir)) return;
+    await super.open(dir);
+  }
+
   override async run(dir: string, argv: string[]): Promise<void> {
     await runInWezterm(dir, argv);
   }
@@ -1491,6 +1503,19 @@ async function weztermLiveMuxes(
 }
 
 /**
+ * 开终端（不带命令）的 mux 通道：有活实例 → 最活跃那个开新窗口；一个都没有
+ * → false（调用方回落 legacy `start` 起新 GUI）。某步失败一律 throw——跟着
+ * `run` 的口径，不静默落到另起一个 GUI 进程。
+ */
+async function openInWezterm(dir: string): Promise<boolean> {
+  const { muxes } = await weztermLiveMuxes();
+  if (muxes.length === 0) return false;
+  const chosen = muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
+  await weztermSpawnPane(chosen.socket, dir, null, chosen.workspace);
+  return true;
+}
+
+/**
  * wezterm run 主通道：同项目 → 分屏复用（复用目标长满 = 没有可复用落点）；
  * 否则 → 最活跃 mux 开新窗口；命令一律 send-text。任何失败（无活 mux / 某步
  * rc≠0 / 超时）一律 throw——错误经路由 400 → 前端 toast，绝不静默落到假成功的
@@ -1522,17 +1547,15 @@ async function runInWezterm(dir: string, argv: string[]): Promise<void> {
 }
 
 /**
- * spawn（分屏/新窗）+ send-text 投递：runInWezterm 与定点附加共用的尾部。
- * split = null → 开新窗口。任何一步失败一律 throw（路由 400 → 前端报因）。
+ * spawn 落 pane（分屏 / 新窗）：runInWezterm、开终端、定点附加共用的前半步。
+ * split = null → 开新窗口。返回新 pane id；任何一步失败一律 throw。
  */
-async function weztermSpawnAndSend(
+async function weztermSpawnPane(
   socket: string,
   dir: string,
-  argv: string[],
   split: WeztermSplitTarget | null,
   workspace: string | null,
-  platform: NodeJS.Platform = process.platform,
-): Promise<void> {
+): Promise<string> {
   const spawnArgs = split
     ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
     : planWeztermNewWindow(dir, workspace);
@@ -1542,6 +1565,22 @@ async function weztermSpawnAndSend(
   if (!/^\d+$/.test(paneId)) {
     throw new Error(`wezterm[${basename(socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
   }
+  return paneId;
+}
+
+/**
+ * spawn + send-text 投递：runInWezterm 与定点附加共用的尾部。任何一步失败一律
+ * throw（路由 400 → 前端报因）。
+ */
+async function weztermSpawnAndSend(
+  socket: string,
+  dir: string,
+  argv: string[],
+  split: WeztermSplitTarget | null,
+  workspace: string | null,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const paneId = await weztermSpawnPane(socket, dir, split, workspace);
   const sendArgs = [
     'cli',
     'send-text',
