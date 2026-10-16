@@ -84,7 +84,6 @@ export const zh = {
   'out.dash.buildHint': '  可用 `pnpm build:web` 构建，或运行 Vite 开发服务器：`pnpm dev:web`（http://localhost:9527）。',
   'out.dash.url': '\n  控制台：{url}\n',
   'out.dash.noOpen': '  （--no-open：不启动浏览器）',
-  'out.dash.lanUrl': '  局域网：{url}',
   'out.dash.initialPassword':
     '\n  初始登录密码：{password}\n  （只显示这一次；可用 `weave chpass <新密码>` 修改）\n',
   // --- chpass 命令运行时输出 ---

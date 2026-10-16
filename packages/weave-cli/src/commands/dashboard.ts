@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { networkInterfaces } from 'node:os';
-import { DAEMON_HOST, readDaemonState, resolveStaticDir } from '@weavecode/server';
+import { accessUrls, DAEMON_HOST, readDaemonState, resolveStaticDir } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
@@ -40,19 +39,6 @@ export function dashboardUrl(port: number): string {
   return `http://${DAEMON_HOST}:${port}/`;
 }
 
-/** 绑非回环时的局域网访问地址（IPv4 非内部）；绑回环 / 无状态文件 → 空表。 */
-export function lanUrls(port: number): string[] {
-  const host = readDaemonState()?.host;
-  if (!host || host === '127.0.0.1' || host === 'localhost') return [];
-  const urls: string[] = [];
-  for (const list of Object.values(networkInterfaces())) {
-    for (const info of list ?? []) {
-      if (info.family === 'IPv4' && !info.internal) urls.push(`http://${info.address}:${port}/`);
-    }
-  }
-  return urls;
-}
-
 async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise<void> {
   const noOpen = Boolean(ctx.flags['noOpen']);
 
@@ -72,9 +58,12 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
 
   const url = dashboardUrl(handle.port);
   logger.info(t('out.dash.url', { url }));
-  // 绑非回环时同时给出局域网地址（另机用同一密码登录）。
-  for (const lan of lanUrls(handle.port)) {
-    logger.info(t('out.dash.lanUrl', { url: lan }));
+  // 全部访问地址（本机 + 局域网 × HTTP/HTTPS）：与 `weave daemon status`、设置页同源
+  // （server 的 accessUrls）。原先只列 HTTP + 非回环 IPv4，把手机要的 https 那条漏了。
+  const urls = accessUrls(handle.port, readDaemonState()?.tlsPort ?? 0);
+  if (urls.length > 0) {
+    logger.dim(t('out.daemon.urlsTitle'));
+    logger.dim(urls.map((u) => `  ${u.url}`).join('\n'));
   }
   // 首启初始密码的一次性领取点（daemon 是 detached 启动，打印必丢）。
   announceInitialPassword();
