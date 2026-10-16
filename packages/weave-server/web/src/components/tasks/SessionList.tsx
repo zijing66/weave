@@ -248,7 +248,7 @@ export function SessionList({
   /** 块头文案：同窗口多个 tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
   const blockTitle = (terminal: SessionTerminal): string =>
     terminal.tabsInWindow > 1
-      ? t('tasks.terminalBlockTab', { w: terminal.windowId, tab: terminal.tabId })
+      ? t('tasks.terminalBlockTab', { w: terminal.windowId, t: terminal.tabId })
       : t('tasks.terminalBlock', { w: terminal.windowId });
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
