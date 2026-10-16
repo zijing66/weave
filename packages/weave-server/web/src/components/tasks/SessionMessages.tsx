@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Check, CheckCheck, Copy, Download, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, Copy, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -354,6 +354,8 @@ export function SessionMessages({
   label,
   projectLabel,
   capability,
+  answerPending,
+  onOpenAnswer,
   onInterrupt,
   interruptStateOf,
   onClose,
@@ -367,6 +369,10 @@ export function SessionMessages({
   projectLabel: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
   capability: MessagingCapability;
+  /** 本会话被阻塞问答挂起（弹窗状态归 TasksPanel，与会话行图标/组头 tag 同一份）。 */
+  answerPending?: boolean;
+  /** 开作答弹窗：尾部那枚「回答」按钮（关掉不丢入口，答完待答面没了按钮随之消失）。 */
+  onOpenAnswer?: () => void;
   /** 停止会话（向 pane 打一记 ESC）：与事件链组头那枚同一实现、同一 fb 键，
    *  两处按钮同转同灭。 */
   onInterrupt: (sessionId: string) => void;
@@ -1125,20 +1131,33 @@ export function SessionMessages({
                   </div>
                 );
               })}
-              {(generating || interrupted) && (
-                <div className="flex justify-start">
-                  <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
-                    {interrupted ? (
-                      <Ban className="h-3 w-3" />
-                    ) : (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    )}
-                    {interrupted
-                      ? t('tasks.msgInterrupted')
-                      : compacting
-                        ? t('tasks.msgCompacting')
-                        : t('tasks.msgGenerating')}
-                  </div>
+              {(answerPending || generating || interrupted) && (
+                <div className="flex flex-wrap items-center justify-start gap-1.5">
+                  {answerPending && (
+                    <button
+                      type="button"
+                      title={t('tasks.answerTooltip')}
+                      onClick={() => onOpenAnswer?.()}
+                      className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-[10px] font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
+                    >
+                      <HelpCircle className="h-3 w-3" />
+                      {t('tasks.convAnswer')}
+                    </button>
+                  )}
+                  {(generating || interrupted) && (
+                    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
+                      {interrupted ? (
+                        <Ban className="h-3 w-3" />
+                      ) : (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      )}
+                      {interrupted
+                        ? t('tasks.msgInterrupted')
+                        : compacting
+                          ? t('tasks.msgCompacting')
+                          : t('tasks.msgGenerating')}
+                    </div>
+                  )}
                 </div>
               )}
             </>

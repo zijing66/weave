@@ -191,9 +191,11 @@ export function QuestionAnswer({
     return opt && !opt.input && !opt.chat ? opt : null;
   };
 
+  // z-60：作答入口在对话窗（SessionMessages，同为 fixed z-50 的门户）里也有一枚，
+  // 弹窗必须压过它——同为 50 时门户按挂载先后定胜负，先开作答再开对话窗就会倒置。
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div

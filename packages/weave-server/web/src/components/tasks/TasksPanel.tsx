@@ -1264,7 +1264,8 @@ export function TasksPanel({
         />
       )}
 
-      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（投递按能力矩阵门控） */}
+      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（投递按能力矩阵门控）；
+          被阻塞问答挂起时尾部多一枚「回答」，开的是同一个待答弹窗（answerFor） */}
       {messagesTarget && (
         <SessionMessages
           key={messagesTarget.sessionId}
@@ -1273,6 +1274,8 @@ export function TasksPanel({
           label={messagesTarget.label}
           projectLabel={projectLabel}
           capability={messagesTarget.capability}
+          answerPending={!!questionOf(messagesTarget.sessionId)}
+          onOpenAnswer={() => setAnswerFor(messagesTarget.sessionId)}
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
           onClose={() => setMessagesTarget(null)}
