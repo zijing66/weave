@@ -153,11 +153,13 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
     mkdirSync(path.dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
+  // WAL 允许跨连接并发读写，但写写仍互斥：inbox 消费线程持有第二个连接，
+  // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。必须先于下面那条
+  // WAL pragma——后者是改写头部的独占写，daemon 正在启动（跑 SCHEMA/迁移）
+  // 时另起的 CLI 撞上它就是无重试的 SQLITE_IOERR（Windows 上报 disk I/O error）。
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
-  // WAL 允许跨连接并发读写，但写写仍互斥：inbox 消费线程持有第二个连接，
-  // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。
-  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
   // 消息域重塑：session_messages 退役（消息 = 纯递送管道，本地文件 + 内存态）。
   // 存量行均为测试数据，随表删；DROP 幂等。
