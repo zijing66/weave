@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-17
+
+- **停止按钮「回成功提示、点了却没反应」的真因：新会话继承了 daemon 自己带进来的 pane 定位键（用户原话「还有 发送esc的停止按钮还是无效，你可以开启会话自行验证，注意不要影响其他代码」，授权实机复现）**：**机制**——Windows Terminal（`wt.exe`）把命令交给新 tab 时**原样转交调用方的 env**（wezterm 后端不受影响：新 pane 的 `WEZTERM_*` 由 wezterm 自己注入）；而 daemon 常被从**某个会话自己的 pane** 里手工起（开发期尤其如此——`tsx watch` 继承启动它的那个 pane 的 env）⇒ `trySpawn` 不带 env 时子进程拿到 `process.env`，weave 开的新会话遂把**别人那个 pane** 认作自己的家：hook 旁路把别人的 `WEZTERM_PANE` / `WEZTERM_UNIX_SOCKET` 报上来，`notePaneEnv` 照收（且存在性校验**恰好通过**——那是个活 pane）⇒ 停止/作答的击键**返回 200、打进别人的会话**：用户点的那个照旧在跑（观感 =「无效」，且因为结果是成功提示，连一行错误都没有），被击中的那个才是受害者；会话列表的同屏分块也一并张冠李戴（新会话挂到别人的屏幕上）。**取证的唯一可靠面** = 实时抓 inbox shard 的裸行：修复前新会话的那一行 `terminal` 是 daemon 启动 pane 的键值，修复后为 `null`。**定案 = daemon 入口剥离 `TERMINAL_LOCATOR_ENV_KEYS`**（`dev-entry.ts` / `start.ts`，与既有的 `CLAUDE_CODE_CHILD_SESSION` 剥离同一处、同一手法同一理由：daemon 自己从不在任何 pane 里，下游 spawn 无需各自防御）。顺带核实剥掉后 wezterm 侧不回归：`weztermSocketCandidates` 的**主动发现**（不给 env 提示）仍列出活 mux，`locatePane` / `locateScreens` 对上报 env 的解析与分块照常。**与前一天那条「409 真因」的分工**：那条是「查不到 pane」（拿不到任何入口），本条是「查到了别人的 pane」（拿对了入口、打错了人）——后者更隐蔽，因为它是成功路径。**残留（结构，不改）**：开窗 preset = `wt` 时 weave 开的会话落在 Windows Terminal，而 wt 没有 per-pane 文本通道 ⇒ 这些会话的停止/作答只能 409（文案已提示「只有 wezterm 里的会话能被远程击键」）；要它们可控就把开窗 preset 换成 wezterm（本机已验证切换后定位走发现、不依赖 daemon 的 env）。
+
 ## 2026-10-16
 
 - **对话气泡的触屏手势：双击开右键菜单，长按不再直达多选（用户原话直投「移动端，会话改成双击出现右键菜单，而不是长按直接多选；只有桌面端是右键打开右键菜单」）**：推翻的是同日「移动端所有右键面一律配长按等价」里**对话弹窗那一路的手势**（该条站立规则收成「默认长按等价 + 对话弹窗例外走双击」，账本见 CLAUDE.md 移动端条第 ⑥ 项）——气泡上触屏长按不再进多选，改为**双击开桌面右键那一份菜单**（多选只是菜单里那一项），桌面端维持只有右键开菜单。**判据**：同一条气泡、两击间隔 ≤300ms、位移 >8px 即取消（沿用长按那套 slop，不夺滚动/拖拽），仍只在 `(pointer: coarse)` 下挂、`onContextMenu` 照旧只 `preventDefault` 压原生菜单；菜单照旧夹在视口内。**坑：移动浏览器的双击缩放会抢手势**——气泡行挂 `touch-manipulation`（`touch-action: manipulation`，pan/pinch 不受影响）压掉它。**顺带删掉「吞掉长按后补发的 click」那套**（`suppressTap` + 卸载清 timer）：双击的两击都落在非多选态（那时 `onClick` 本就 undefined，只有多选态点气泡才勾选），补发 click 无害；菜单外关闭本就走 `pointerdown`，不受 click 干扰。**`ProjectList` 不动**：项目行仍是长按等价（用户只点名「会话」）。

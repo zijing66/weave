@@ -8,6 +8,7 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
+import { TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
@@ -49,8 +50,10 @@ import { AuthService } from './dashboard-auth.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
 
-// 同 dev-entry：入口剥离 Claude Code child-session 标记，防污染派生物。
+// 同 dev-entry：入口剥离 Claude Code child-session 标记与继承来的终端 pane
+// 定位键，防污染派生物（后者留着会让新会话把自己报成活在别人的 pane 里）。
 delete process.env.CLAUDE_CODE_CHILD_SESSION;
+for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
 
 /**
  * Start the daemon in the current process. Reads port from the daemon state

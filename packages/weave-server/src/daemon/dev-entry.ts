@@ -17,6 +17,7 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
+import { TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -62,6 +63,12 @@ import { resolveStaticDir } from './static.js';
 // 下游 spawn 无需各自防御。
 const hadChildMarker = 'CLAUDE_CODE_CHILD_SESSION' in process.env;
 delete process.env.CLAUDE_CODE_CHILD_SESSION;
+
+// 同理剥掉**继承来的终端 pane 定位键**：daemon 从某个会话的 pane 里起时，
+// 这些键会随 env 传给 weave 开的新终端（wt 原样转交调用方 env），新会话遂把
+// 自己报成活在**别人的 pane** 里——停止/作答的击键打进别人的会话。daemon 自己
+// 从不在任何 pane 里（wezterm 后端新 pane 的 WEZTERM_* 由 wezterm 自己注入）。
+for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
 
 async function main(): Promise<void> {
   const port = (await isPortFree(DEFAULT_PORT))
