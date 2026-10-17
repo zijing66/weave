@@ -78,4 +78,31 @@ describe('SessionProbe', () => {
     probe.forget('s1');
     expect(probe.interruptedAt('s1', past)).toBeNull();
   });
+
+  it('currentModel / currentMode 同走一份尾读缓存；未知一律 null（不猜）', () => {
+    const probe = new SessionProbe();
+    expect(probe.currentModel('s1')).toBeNull();
+    expect(probe.currentMode('s1')).toBeNull();
+
+    const file = tmpFile();
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({ type: 'assistant', permissionMode: 'plan', message: { model: 'opus' } }),
+        JSON.stringify({ type: 'user', permissionMode: 'bypassPermissions' }),
+      ].join('\n') + '\n',
+    );
+    probe.noteTranscript('s1', file);
+    expect(probe.currentModel('s1')).toBe('opus');
+    expect(probe.currentMode('s1')).toBe('bypassPermissions');
+
+    // 文件没长 = 缓存命中；长了就按新内容重读
+    expect(probe.currentModel('s1')).toBe('opus');
+    appendFileSync(
+      file,
+      JSON.stringify({ type: 'assistant', permissionMode: 'plan', message: { model: 'ftm' } }) + '\n',
+    );
+    expect(probe.currentModel('s1')).toBe('ftm');
+    expect(probe.currentMode('s1')).toBe('plan');
+  });
 });

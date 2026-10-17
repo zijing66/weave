@@ -170,6 +170,36 @@ export const HARNESS_COMPACTION = {
   codex: { start: null, end: null, endSource: null },
 } satisfies Record<Harness, HarnessCompaction>;
 
+/** 会话控制面的条目形状（执行模式切换 / 模型切换）——差异是 harness 知识。 */
+export interface HarnessSessionControl {
+  /**
+   * 执行模式取值词表（宿主自己的名字，展示原样）。空 = 该 harness 无执行模式
+   * 概念、没有切换这回事。**切换是一记键，不按这张表轮转**——宿主自己算下一个
+   * 模式（实测还会被计划提案、auto 闸插手），故表只供识别与展示。
+   */
+  modeNames: readonly string[];
+  /**
+   * 模型名候选（宿主**别名**，如 claude 的 default/opus/sonnet/haiku/fable）。
+   * 只收稳定别名——网关会增删的具体模型 ID 不进表，由用户按 `/model <名字>` 自填
+   * （名字形态由服务端验）。空 = 无模型切换概念。
+   */
+  modelNames: readonly string[];
+}
+
+/**
+ * 会话控制面表——「怎么切执行模式 / 模型」按 harness 声明（web 经
+ * tasks/lifecycle.ts 常量镜像）；键序与命令形态不在本表（那是服务端投递键序的
+ * 事，见 message-deliverer，同 ESC 先例）。全空 = 该 harness 无此概念。
+ */
+export const HARNESS_SESSION_CONTROL = {
+  claude: {
+    modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
+    modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
+  },
+  /** Codex 待调研；空值占位，类型完整。 */
+  codex: { modeNames: [], modelNames: [] },
+} satisfies Record<Harness, HarnessSessionControl>;
+
 /**
  * 可选 harness 键序（= 名单表）：`--harness` flag 值域与 init 交互多选的
  * 选项表共用（批 5）。经名单表派生而非 `Object.keys(HARNESS_EVENTS)`——

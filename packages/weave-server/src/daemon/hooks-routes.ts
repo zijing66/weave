@@ -90,6 +90,9 @@ const CreateWatchBody = z.object({
 
 const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
 
+/** 模型切换：名字用户自填（网关模型 ID 会增删，不做静态映射表），形态由 deliverer 验。 */
+const SetModelBody = z.object({ model: z.string().min(1).max(128) });
+
 /** Web Push 订阅注册：endpoint = 浏览器推送服务分配的绝对 URL；keys = 载荷加密密钥对。 */
 const SubscribePushBody = z.object({
   endpoint: z.string().url(),
@@ -420,6 +423,11 @@ export async function handleHooksRoutes(
         // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
         interruptedAt:
           s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
+        // 当前模型（转录最后一条真跑过的 message.model）：换模型不发任何 hook 事件，
+        // 只有转录照会；null = 不知道（不猜）。
+        model: deps.sessionProbe?.currentModel(s.sessionId) ?? null,
+        // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
+        mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
       })),
     });
     return true;
@@ -712,6 +720,43 @@ export async function handleHooksRoutes(
     }
     // 打断之后 claude 要过一下才把中断标记写进转录：补一拍探针，让「生成中」尽快
     // 变成「已中断」（不补则要等下一个周期）。同 terminalTopology 的即时刷新口径。
+    setTimeout(() => deps.interruptRefresher?.tick(), 1_500);
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
+  // ---- 执行模式切换：一记 Shift+Tab（宿主自己算下一个模式；键序固定死在服务端）----
+  const modeMatch = pathname.match(/^\/sessions\/([^/]+)\/mode$/);
+  if (modeMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(modeMatch[1]!);
+    const result = await deps.messageDeliverer.cycleMode(sessionId);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
+  // ---- 模型切换：宿主自己的 `/model <名>`（会话级、不落盘）----
+  const modelMatch = pathname.match(/^\/sessions\/([^/]+)\/model$/);
+  if (modelMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(modelMatch[1]!);
+    const body = SetModelBody.parse(await readJson(req));
+    const result = await deps.messageDeliverer.setModel(sessionId, body.model);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    // 换模型会写一条 assistant 记录进转录：补一拍探针，让「当前模型」尽快跟上。
     setTimeout(() => deps.interruptRefresher?.tick(), 1_500);
     sendJson(res, 200, { ok: true, sessionId });
     return true;

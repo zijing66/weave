@@ -2109,4 +2109,82 @@ describe('MessageDeliverer 裁决表', () => {
       expect(sendKeys).not.toHaveBeenCalled();
     });
   });
+
+  describe('cycleMode / setModel（会话控制面）', () => {
+    const paneFixture = () => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const sendText = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue([{ id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH }]),
+        sendText,
+        sendKeys,
+      };
+      return { terminal, sendKeys, sendText };
+    };
+
+    beforeEach(() => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    });
+
+    it('cycleMode 恒打一记 Shift+Tab——键序固定死在服务端，不当参数收', async () => {
+      const { terminal, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.cycleMode(SESSION_ID)).resolves.toEqual({ ok: true });
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b[Z']]);
+    });
+
+    it('setModel 走 sendText（整行粘贴 + 提交）而不是裸键——`/` 会唤起斜杠菜单吃掉参数', async () => {
+      const { terminal, sendText, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.setModel(SESSION_ID, 'sonnet')).resolves.toEqual({ ok: true });
+      expect(sendText.mock.calls).toEqual([['pane-1', '/model sonnet']]);
+      expect(sendKeys).not.toHaveBeenCalled();
+    });
+
+    it('模型名形态不合法当场 400，键一个都不打（名字进命令行，必须堵住注入面）', async () => {
+      const { terminal, sendText, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      // 首尾空白先剥掉（那是输入噪音，进命令行的只有剥完的那个词）
+      await expect(deliverer.setModel(SESSION_ID, '  sonnet  ')).resolves.toEqual({ ok: true });
+      expect(sendText.mock.calls).toEqual([['pane-1', '/model sonnet']]);
+
+      // 含空白的词 / 控制字符（ESC 不是空白，只用 \S 会漏）/ 空 / 超长
+      for (const bad of [
+        'a\r\nb',
+        'x\ry',
+        'a\x1bb',
+        'a\x00b',
+        'a\x7fb',
+        '',
+        '   ',
+        'foo bar',
+        'x'.repeat(129),
+      ]) {
+        await expect(deliverer.setModel(SESSION_ID, bad)).resolves.toMatchObject({ ok: false, status: 400 });
+      }
+      expect(sendText).toHaveBeenCalledTimes(1);
+      expect(sendKeys).not.toHaveBeenCalled();
+    });
+
+    it('与中断同一套落点判定：会话没有 404 / pane 找不到 409', async () => {
+      const { terminal } = paneFixture();
+      vi.mocked(terminal.listPanes).mockResolvedValue([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.cycleMode('sess-ghost')).resolves.toMatchObject({ ok: false, status: 404 });
+      await expect(deliverer.setModel('sess-ghost', 'sonnet')).resolves.toMatchObject({
+        ok: false,
+        status: 404,
+      });
+      await expect(deliverer.cycleMode(SESSION_ID)).resolves.toMatchObject({ ok: false, status: 409 });
+      await expect(deliverer.setModel(SESSION_ID, 'sonnet')).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+    });
+  });
 });

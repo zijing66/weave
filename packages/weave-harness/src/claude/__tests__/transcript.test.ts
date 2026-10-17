@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { interruptMarkerAt } from '../transcript.js';
+import { currentModeAt, currentModelAt, interruptMarkerAt } from '../transcript.js';
 
 const line = (o: unknown): string => JSON.stringify(o);
 
@@ -49,5 +49,44 @@ describe('interruptMarkerAt', () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('currentModelAt', () => {
+  it('取最后一条真跑过的模型；合成行不算', () => {
+    const tail = [
+      line({ type: 'assistant', message: { model: 'opus' } }),
+      line({ type: 'assistant', message: { model: '<synthetic>' } }),
+      line({ type: 'assistant', message: { model: 'ftm' } }),
+    ].join('\n');
+    expect(currentModelAt(tail)).toBe('ftm');
+  });
+
+  it('没有模型 / 坏行 / 空串一律 null（不猜）', () => {
+    expect(currentModelAt('')).toBeNull();
+    expect(currentModelAt(line({ type: 'assistant', message: {} }))).toBeNull();
+    expect(currentModelAt('{"type":"assistant","message":{"model":')).toBeNull();
+    expect(currentModelAt(line({ type: 'assistant', message: { model: '' } }))).toBeNull();
+    // 只有合成行 = 这一段没真跑过模型
+    expect(currentModelAt(line({ type: 'assistant', message: { model: '<synthetic>' } }))).toBeNull();
+  });
+});
+
+describe('currentModeAt', () => {
+  it('取最后一条 permissionMode（尾部按时间序，最后一条即最新）', () => {
+    const tail = [
+      line({ type: 'user', permissionMode: 'default' }),
+      line({ type: 'assistant', permissionMode: 'plan' }),
+      line({ type: 'user', permissionMode: 'bypassPermissions' }),
+    ].join('\n');
+    expect(currentModeAt(tail)).toBe('bypassPermissions');
+  });
+
+  it('没有该字段 / 坏行 / 非串一律 null（不猜）', () => {
+    expect(currentModeAt('')).toBeNull();
+    expect(currentModeAt(line({ type: 'user' }))).toBeNull();
+    expect(currentModeAt('{"type":"user","permissionMode":')).toBeNull();
+    expect(currentModeAt(line({ type: 'user', permissionMode: 3 }))).toBeNull();
+    expect(currentModeAt(line({ type: 'user', permissionMode: '' }))).toBeNull();
   });
 });

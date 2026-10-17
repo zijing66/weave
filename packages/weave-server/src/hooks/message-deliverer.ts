@@ -231,6 +231,25 @@ const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
 const ESC = '\x1b';
 
 /**
+ * 执行模式切换键 = 一记 Shift+Tab。**固定死在服务端，不当参数收**（同 ESC 的理由：
+ * 键序一放开这条通道就成了任意击键注入）。且不按模式名轮转——宿主自己算「下一个
+ * 模式」（实测还会被计划提案、auto 闸插手），故这记键是周期性的，模式名只供识别。
+ */
+const SHIFT_TAB = '\x1b[Z';
+
+/**
+ * 模型切换 = 宿主自己的 `/model <名>`（会话级、不落盘）。走 **sendText**
+ * 而非裸键：`/` 会唤起斜杠命令菜单、连打的字符被当筛选字串（同 `ANSWER_ATOM_GAP_MS`
+ * 记的那件事），整行一次 bracketed paste 才能把参数完整落进输入框。名字**不经任何
+ * 转义**直接进命令行，故形态由服务端验，且**贴着宿主自己的文法**（`/model` 的参数
+ * 是 `\S*`）：一个不含空白、不含控制字符的词、≤128 字符——含换行就成了第二条命令，
+ * 含 ESC/CR 就是任意键序注入，含空格则宿主整行都认不下（`Unknown model`）。注意
+ * 不能只用 `\S`：ESC 不是空白，`a\x1bb` 会溜过去。
+ */
+const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;
+const modelCommand = (name: string) => `/model ${name}`;
+
+/**
  * 原子之间的间隔（毫秒）：宿主把同一批到达的多个文本字符当成一次粘贴/过滤输入
  * （实机「11」被当筛选字串，一个选项都没选上），所以键序必须一次一个原子地写。
  * win32 上 `wezterm cli send-text` 每次调用本身就要 ~100ms（进程启动），实际间隔
@@ -642,6 +661,42 @@ export class MessageDeliverer {
     if (!target.ok) return target;
     try {
       await target.terminal.sendKeys(target.paneId, ESC);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 执行模式切换（Shift+Tab 的远程等价）：一记固定键，宿主自己算下一个模式。
+   * 答「现在是哪个模式」不由这里管——Shift+Tab 不发任何 hook 事件、不落转录，
+   * 实时态只能是 hook 事件里最近一次的 `permission_mode`（「最后已知」）。
+   */
+  async cycleMode(sessionId: string): Promise<AnswerResult> {
+    const target = await this.sessionKeysTarget(sessionId);
+    if (!target.ok) return target;
+    try {
+      await target.terminal.sendKeys(target.paneId, SHIFT_TAB);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 模型切换：往会话的输入行打宿主自己的 `/model <名>` 并提交（会话级、不落盘）。
+   * 名字是**用户自填**的（网关模型 ID 会增删，不做静态映射表），故只验形态不验
+   * 词表——宿主对未知名自己回 `Unknown model '…'`，那句话进会话转录、用户看得见。
+   */
+  async setModel(sessionId: string, name: string): Promise<AnswerResult> {
+    const trimmed = name.trim();
+    if (!MODEL_NAME.test(trimmed)) {
+      return { ok: false, status: 400, error: '模型名形态不合法（不含空白与控制字符，≤128 字符）' };
+    }
+    const target = await this.sessionKeysTarget(sessionId);
+    if (!target.ok) return target;
+    try {
+      await target.terminal.sendText(target.paneId, modelCommand(trimmed));
       return { ok: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };

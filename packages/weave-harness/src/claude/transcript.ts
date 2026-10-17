@@ -46,3 +46,55 @@ export function interruptMarkerAt(tail: string): number | null {
   }
   return newest;
 }
+
+/** 合成条目不跑模型——它是宿主代笔的提示行，不是一次真实推理。 */
+const SYNTHETIC_MODEL = '<synthetic>';
+
+/**
+ * 转录尾部最后一次**真跑过**的模型（assistant 的 `message.model`）。
+ *
+ * 为什么绕到转录：hook 事件只在 `SessionStart` 带 `raw.model`，之后换模型没有
+ * 任何事件照会——实时态只在转录里。宿主的 `/model <名>` 切换是会话级、不落盘，
+ * 故这里只答「最近这一轮用的是什么」，不猜配置。
+ */
+export function currentModelAt(tail: string): string | null {
+  let newest: string | null = null;
+  for (const line of tail.split('\n')) {
+    if (!line.includes('"model"')) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = raw as { message?: { model?: unknown }; model?: unknown };
+    const model = entry?.message?.model ?? entry?.model;
+    if (typeof model !== 'string' || !model || model === SYNTHETIC_MODEL) continue;
+    newest = model; // 尾部按时间顺序，最后一条即最新
+  }
+  return newest;
+}
+
+/**
+ * 转录尾部最后一次的执行模式（条目上的 `permissionMode`）。
+ *
+ * 同模型一样绕到转录：Shift+Tab **不发任何 hook 事件、不写任何转录条目**——模式
+ * 只在之后的条目上照会，故这答的永远是「最后一次活动时是什么模式」，不是此刻。
+ * 宿主自己算下一个模式（还会被计划提案、auto 闸插手），这里只读不猜。
+ */
+export function currentModeAt(tail: string): string | null {
+  let newest: string | null = null;
+  for (const line of tail.split('\n')) {
+    if (!line.includes('permissionMode')) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const mode = (raw as { permissionMode?: unknown })?.permissionMode;
+    if (typeof mode !== 'string' || !mode) continue;
+    newest = mode; // 尾部按时间顺序，最后一条即最新
+  }
+  return newest;
+}
