@@ -13,10 +13,21 @@
  * 不上的 env。
  *
  * 语义限定：只收「同一台机器上能唯一定位一个 pane」的变量。没有这种变量的终端
- * （如 Windows Terminal 只有窗口级 session id）不列——层② 回落标题+cwd 启发式，
- * 而不是拿一个不唯一的键硬猜。
+ * 不列——层② 回落标题+cwd 启发式，而不是拿一个不唯一的键硬猜。
  */
 export const TERMINAL_LOCATOR_ENV = {
+  /**
+   * wt（Windows Terminal）：WT 注入的 profile 标记（认世界）+ 会话进程号。
+   * WT 没有 per-pane 文本通道，它的击键是**附着到该进程的 console 写输入记录**
+   * （见 weave-server 的 WtBackend），目标因此是 pid 不是 pane 号；pid 由 claude
+   * 自己导出给 hooks/Bash（`CLAUDE_PID`），存在性校验 = 该 pid 还活着。
+   *
+   * **排在 wezterm 前面**（`locatorPresetOf` 取首个齐全的组）：终端套终端时外层
+   * 留下的键会一路传下来（在 wezterm 的 shell 里起 wt，WT 里的会话同时带着外层
+   * 的 `WEZTERM_*`），两组的键都齐、env 本身分不出谁在里层。而 pid 认的是**会话
+   * 进程自己**，套几层都对——故 pid 通道优先，wezterm 的 env 只在没有 pid 时说话。
+   */
+  wt: ['WT_PROFILE_ID', 'CLAUDE_PID'],
   /** wezterm：pane 号 + 该实例的 mux socket（两者一起才唯一）。 */
   wezterm: ['WEZTERM_PANE', 'WEZTERM_UNIX_SOCKET'],
 } as const satisfies Record<string, readonly string[]>;

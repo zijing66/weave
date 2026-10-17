@@ -8,6 +8,7 @@ import {
   parsePsRootPids,
   parseTerminalAppDump,
   parseTerminalAppTargetId,
+  parseWtPaneId,
   parseWtProcDump,
   parseWtTargetId,
   pickTerminalAppWindow,
@@ -22,6 +23,8 @@ import {
   weztermPaneFromEnv,
   weztermSocketCandidates,
   weztermCliArgs,
+  wtInjectEncodedScript,
+  wtPanePidFromEnv,
   wtPanes,
   wtWindowSlug,
 } from '../opener.js';
@@ -172,13 +175,13 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     expect(await backend.listTargets('/a')).toEqual([]);
   });
 
-  it('prompt 文本通道能力归后端：只有 wezterm（auto 在无 wezterm attach 的平台不亮）', () => {
+  it('prompt 文本通道能力归后端：wezterm 与 win32 的 wt（auto 在无 attach 通道的平台不亮）', () => {
     expect(terminalBackendFor(settings('wezterm')).textAddressable).toBe(true);
+    expect(terminalBackendFor(settings('wt'), 'win32').textAddressable).toBe(true);
     expect(terminalBackendFor(settings('auto'), 'linux').textAddressable).toBe(true);
     expect(terminalBackendFor(settings('auto'), 'win32').textAddressable).toBe(false);
     expect(terminalBackendFor(settings('auto'), 'darwin').textAddressable).toBe(false);
     for (const preset of [
-      'wt',
       'powershell',
       'cmd',
       'terminal',
@@ -193,10 +196,10 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
   });
 
   it('无文本通道的后端：枚举空表 + 注入明确拒绝（不静默谎报）', async () => {
-    const backend = terminalBackendFor(settings('wt'), 'win32');
+    const backend = terminalBackendFor(settings('powershell'), 'win32');
     await expect(backend.listPromptPanes()).resolves.toEqual([]);
     await expect(backend.sendPromptText('deadbeef:7', 'hi')).rejects.toThrow(
-      'Terminal preset "wt" cannot send text into an open pane',
+      'Terminal preset "powershell" cannot send text into an open pane',
     );
   });
 
@@ -561,6 +564,64 @@ describe('weztermPaneFromEnv — hook 上报的 pane env 定位（纯函数）',
     expect(weztermPaneFromEnv(envOf('0', 'D:/other/gui-sock-1'), MUXES, 'win32')).toBeNull();
     expect(weztermPaneFromEnv(envOf('3', SOCK), MUXES, 'win32')).toBeNull();
     expect(weztermPaneFromEnv(envOf('0', SOCK), [], 'win32')).toBeNull();
+  });
+});
+
+describe('wt 击键通道 — env→pid 定位与 pane id 表示法', () => {
+  const envOf = (pid = '4242', world = 'prof-1') => ({
+    WT_PROFILE_ID: world,
+    CLAUDE_PID: pid,
+  });
+
+  it('定位键齐了才认：profile 标记 + 会话进程号', () => {
+    expect(locatorPresetOf(envOf())).toBe('wt');
+    expect(locatorPresetOf({ WT_PROFILE_ID: 'prof-1' })).toBeNull();
+    expect(locatorPresetOf({ CLAUDE_PID: '4242' })).toBeNull();
+    expect(wtPanePidFromEnv(envOf())).toBe(4242);
+    expect(wtPanePidFromEnv(envOf('0'))).toBeNull();
+    expect(wtPanePidFromEnv(envOf('abc'))).toBeNull();
+  });
+
+  it('pane id = wt:<pid>；坏 id 不认领', () => {
+    expect(parseWtPaneId('wt:4242')).toBe(4242);
+    expect(parseWtPaneId('wt:0')).toBeNull();
+    expect(parseWtPaneId('wt:-1')).toBeNull();
+    expect(parseWtPaneId('4242')).toBeNull();
+    expect(parseWtPaneId('deadbeef:7')).toBeNull();
+  });
+
+  it('只有 win32 有这条通道；pane id 归 wt 认领，wezterm 不抢', () => {
+    const wt = terminalBackendFor(settings('wt'), 'win32');
+    expect(wt.textAddressable).toBe(true);
+    expect(wt.ownsPaneId('wt:4242')).toBe(true);
+    expect(wt.ownsPaneId('deadbeef:7')).toBe(false);
+    expect(terminalBackendFor(settings('wezterm'), 'win32').ownsPaneId('wt:4242')).toBe(false);
+    // 别的平台没有 console 输入记录通道：不谎报
+    expect(terminalBackendFor(settings('wt'), 'darwin').textAddressable).toBe(false);
+  });
+
+  it('定位 = 上报的会话进程号，死了/不是 wt 会话 → null（回落标题+cwd）', async () => {
+    const wt = terminalBackendFor(settings('wt'), 'win32');
+    expect(await wt.locatePane(envOf(String(process.pid)))).toBe(`wt:${process.pid}`);
+    // 999999 恒不在（Windows 上 kill 抛 ESRCH）——存在性校验失败即 null，不猜
+    expect(await wt.locatePane(envOf('999999'))).toBeNull();
+    expect(await wt.locatePane({})).toBeNull();
+  });
+
+  it('坏 pane id 明确拒绝，不会往别的 target 打键', async () => {
+    const wt = terminalBackendFor(settings('wt'), 'win32');
+    await expect(wt.sendKeys('deadbeef:7', '\x1b')).rejects.toThrow('Invalid prompt pane');
+    await expect(wt.sendPromptText('wt:x', 'hi')).rejects.toThrow('Invalid prompt pane');
+  });
+
+  it('注入脚本经 -EncodedCommand 传（UTF-16 base64），键串走 env 不进脚本正文', () => {
+    const decoded = Buffer.from(wtInjectEncodedScript(), 'base64').toString('utf16le');
+    expect(decoded).toContain('AttachConsole');
+    expect(decoded).toContain('WriteConsoleInputW');
+    expect(decoded).toContain('$env:WEAVE_WT_KEYS');
+    expect(decoded).toContain('$env:WEAVE_WT_PID');
+    // here-string 收尾必须在行首，否则 PowerShell 解析报错
+    expect(decoded).toContain(`\n'@\n`);
   });
 });
 

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
+import { pidAlive } from './claude-liveness.js';
 import { readDaemonSettings, type TerminalPreset, type TerminalSettings } from './settings.js';
 
 /**
@@ -395,7 +396,8 @@ class GhosttyBackend extends TerminalBackend {
  */
 class WtBackend extends TerminalBackend {
   constructor(platform: NodeJS.Platform) {
-    super('wt', platform === 'win32', platform);
+    // wt 没有 per-pane 文本通道，但有 console 输入记录通道（见 sendKeys）。
+    super('wt', platform === 'win32', platform, platform === 'win32');
   }
 
   candidates(dir: string, run?: string[]): TerminalLaunch[] {
@@ -456,7 +458,185 @@ class WtBackend extends TerminalBackend {
       `Terminal preset "${this.preset}" is unavailable on this platform`,
     );
   }
+
+  /**
+   * 层② 定位：会话自己上报的 `CLAUDE_PID` 就是那个 pane 的 console 客户端
+   * （hook 是它的子进程，跑在同一个 ConPTY 里）。WT 没有 pane 号通道，故 pane
+   * id = 该 pid；存在性校验 = pid 还活着（死了宁可 null，回落标题+cwd）。
+   */
+  override async locatePane(env: Record<string, string>): Promise<string | null> {
+    const pid = wtPanePidFromEnv(env);
+    if (pid == null || !pidAlive(pid)) return null;
+    return `wt:${pid}`;
+  }
+
+  /** 本后端的 pane id 表示法 = `wt:<pid>`（见 parseWtPaneId）。 */
+  override ownsPaneId(paneId: string): boolean {
+    return parseWtPaneId(paneId) !== null;
+  }
+
+  /**
+   * prompt 层② 注入：bracketed paste 打原文（内含 CR 是字面内容、不提交）→
+   * 补一记 CR 提交。与 wezterm 那条通道同语义，只是键记录直写 console。
+   */
+  override async sendPromptText(paneId: string, text: string): Promise<void> {
+    const pid = parseWtPaneId(paneId);
+    if (pid == null) throw new Error(`Invalid prompt pane "${paneId}"`);
+    await wtInjectKeys(pid, `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}\r`);
+  }
+
+  /** 裸键序（阻塞问答作答 / 中断 ESC）：控制字符按真键记录下发（见 wtInjectKeys）。 */
+  override async sendKeys(paneId: string, keys: string): Promise<void> {
+    const pid = parseWtPaneId(paneId);
+    if (pid == null) throw new Error(`Invalid prompt pane "${paneId}"`);
+    await wtInjectKeys(pid, keys);
+  }
 }
+
+/** wt 的 pane id ↔ 会话进程号；坏 id → null。 */
+export function parseWtPaneId(id: string): number | null {
+  const m = /^wt:(\d+)$/.exec(id);
+  if (!m) return null;
+  const pid = Number(m[1]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/**
+ * 上报的 pane env → wt 要打键的那个 pid；不是 wt 会话（缺世界标记或 pid）→ null。
+ * 纯函数：环境判定与取值一处写，投递路径只做存在性校验。
+ */
+export function wtPanePidFromEnv(env: Record<string, string>): number | null {
+  const [worldKey, pidKey] = TERMINAL_LOCATOR_ENV.wt;
+  if (!env[worldKey]) return null;
+  const raw = env[pidKey];
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const pid = Number(raw);
+  return pid > 0 ? pid : null;
+}
+
+const BRACKETED_PASTE_START = '\x1b[200~';
+const BRACKETED_PASTE_END = '\x1b[201~';
+
+/**
+ * wt 的击键通道：**附着到会话进程的 console 写输入记录**（AttachConsole +
+ * WriteConsoleInput）——WT 不给 per-pane 写入口，而它的每个 pane 都是一个
+ * ConPTY，输入记录写进去与真按键等价（实测：ESC/Tab/CR/方向键/文本字节级到达，
+ * 且**不需要窗口在前台**，不抢焦点）。
+ *
+ * 落地方式：daemon 侧没有可直接调 Win32 的运行时，故起一个 PowerShell 把同一段
+ * C# 现编现用（`Add-Type`，~1s；这是每次击键一条的一次性子进程，不进循环）。
+ * 键串与 pid 走 env 传递（键串 base64）——不拼进脚本文本，免引号注入。
+ *
+ * 失败一律 throw（消息/作答转可见失败，不静默丢）——console 附着不上通常意味着
+ * 目标进程已不是那个 pane 的客户端（换了终端/已退出），正是该让用户看见的真相。
+ */
+async function wtInjectKeys(pid: number, keys: string): Promise<void> {
+  const r = await captureCommand(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', wtInjectEncodedScript()],
+    {
+      ...process.env,
+      WEAVE_WT_PID: String(pid),
+      WEAVE_WT_KEYS: Buffer.from(keys, 'utf8').toString('base64'),
+    },
+    15000,
+  );
+  if (!r) throw new Error('powershell is unavailable — cannot send keys into Windows Terminal');
+  if (r.ok) return;
+  if (r.timedOut) throw new Error('Windows Terminal key injection timed out');
+  throw new Error(`Windows Terminal key injection failed: ${r.err || r.out || 'unknown error'}`);
+}
+
+/** PowerShell 脚本（base64/UTF-16，`-EncodedCommand` 免引号转义）；纯函数，单测覆盖。 */
+export function wtInjectEncodedScript(): string {
+  const script = `$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+${WT_KEY_EVENT_CS}
+'@
+$keys = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:WEAVE_WT_KEYS))
+$r = [WeaveWtKeys]::Send([uint32]$env:WEAVE_WT_PID, $keys)
+if (-not $r.StartsWith('ok:')) { [Console]::Error.WriteLine($r); exit 3 }
+`;
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+/**
+ * 输入记录的最小 P/Invoke 面（ATTACH → 打开 CONIN$ → 写记录 → 释放）。
+ * 控制字符给真 VK（ESC/CR/Tab/BS）——其余字符 VK=0 靠 UnicodeChar 直接成字，
+ * 给错 VK 会变成别的键（如 `-` 曾按 VK_INSERT 翻成 `ESC[2~`，实测踩到）。
+ */
+const WT_KEY_EVENT_CS = `using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct KEY_EVENT_RECORD
+{
+    [MarshalAs(UnmanagedType.Bool)] public bool bKeyDown;
+    public ushort wRepeatCount;
+    public ushort wVirtualKeyCode;
+    public ushort wVirtualScanCode;
+    public char UnicodeChar;
+    public uint dwControlKeyState;
+}
+
+[StructLayout(LayoutKind.Explicit)]
+public struct INPUT_RECORD
+{
+    [FieldOffset(0)] public ushort EventType;
+    [FieldOffset(4)] public KEY_EVENT_RECORD KeyEvent;
+}
+
+public static class WeaveWtKeys
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AttachConsole(uint pid);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool WriteConsoleInputW(IntPtr h, INPUT_RECORD[] recs, uint len, out uint written);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+
+    static ushort VkOf(char c)
+    {
+        if (c == '\\x1b') return 0x1B;
+        if (c == '\\r') return 0x0D;
+        if (c == '\\t') return 0x09;
+        if (c == '\\b') return 0x08;
+        return 0;
+    }
+
+    public static string Send(uint pid, string keys)
+    {
+        FreeConsole();
+        if (!AttachConsole(pid)) return "attach:" + Marshal.GetLastWin32Error();
+        IntPtr h = CreateFileW("CONIN$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (h == new IntPtr(-1))
+        {
+            int e = Marshal.GetLastWin32Error();
+            FreeConsole();
+            return "conin:" + e;
+        }
+        INPUT_RECORD[] recs = new INPUT_RECORD[keys.Length * 2];
+        for (int i = 0; i < keys.Length; i++)
+        {
+            char c = keys[i];
+            ushort vk = VkOf(c);
+            recs[i * 2].EventType = 1;
+            recs[i * 2].KeyEvent = new KEY_EVENT_RECORD { bKeyDown = true, wRepeatCount = 1, wVirtualKeyCode = vk, wVirtualScanCode = 0, UnicodeChar = c, dwControlKeyState = 0 };
+            recs[i * 2 + 1].EventType = 1;
+            recs[i * 2 + 1].KeyEvent = new KEY_EVENT_RECORD { bKeyDown = false, wRepeatCount = 1, wVirtualKeyCode = vk, wVirtualScanCode = 0, UnicodeChar = c, dwControlKeyState = 0 };
+        }
+        uint written;
+        bool ok = WriteConsoleInputW(h, recs, (uint)recs.Length, out written);
+        int err = Marshal.GetLastWin32Error();
+        CloseHandle(h);
+        FreeConsole();
+        return ok ? "ok:" + written : "write:" + err;
+    }
+}`;
 
 /**
  * Terminal.app（macOS）：枚举/定点全走 osascript + ps + lsof——tab 的 tty →
