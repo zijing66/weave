@@ -91,7 +91,7 @@ export class SessionRepository {
       '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, ' +
       '(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type, ' +
       '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
-      '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'SessionEnd\')) AS last_stop ' +
+      '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
     const rows =
       projectId === undefined
@@ -137,7 +137,7 @@ export class SessionRepository {
       .prepare(
         'SELECT ' +
         '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
-        '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = ? AND e4.event_type IN (\'Stop\', \'SessionEnd\')) AS last_stop',
+        '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = ? AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop',
       )
       .get(sessionId, sessionId) as { last_ups?: number | null; last_stop?: number | null } | undefined;
     if (!this.getBySessionId(sessionId)) return null;

@@ -13,7 +13,8 @@ import type {
 export const HARNESS_LIFECYCLE = {
   claude: {
     open: 'UserPromptSubmit',
-    close: ['Stop'],
+    close: ['Stop', 'StopFailure'],
+    closeFailed: ['StopFailure'],
     sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: 'SubagentStop',
     questionTools: ['AskUserQuestion', 'ExitPlanMode'],
@@ -23,6 +24,7 @@ export const HARNESS_LIFECYCLE = {
   codex: {
     open: '',
     close: [],
+    closeFailed: [],
     sessionMarkers: [],
     subagentStop: '',
     questionTools: [],

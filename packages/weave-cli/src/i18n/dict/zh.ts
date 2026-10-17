@@ -38,7 +38,7 @@ export const zh = {
   'flag.init.force': '覆盖已存在的文件',
   'flag.init.noInteractive': '禁用交互式提示',
   'flag.init.hooks':
-    '启用的 hook 事件，逗号分隔（preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification,preCompact,sessionEnd,preModelSwitch）；none 表示全不注册；默认全开',
+    '启用的 hook 事件，逗号分隔（preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,stopFailure,subagentStop,subagentStart,notification,postToolUseFailure,permissionRequest,permissionDenied,preCompact,sessionEnd,preModelSwitch）；none 表示全不注册；默认全开',
   'flag.init.harness': `要初始化的 harness 面，逗号分隔（${HARNESS_KEYS.join('、')}）；缺省时 TTY 下交互多选，默认 ${HARNESS_KEYS[0]}`,
   'flag.dir': '目标目录（默认：当前目录）',
   'flag.scan.dir': '扫描的根目录（默认：当前目录）',

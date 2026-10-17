@@ -53,7 +53,8 @@ describe('HARNESS_LIFECYCLE', () => {
   it('claude 分组关键字段（D7 表形）', () => {
     expect(HARNESS_LIFECYCLE.claude).toEqual({
       open: 'UserPromptSubmit',
-      close: ['Stop'],
+      close: ['Stop', 'StopFailure'],
+      closeFailed: ['StopFailure'],
       sessionMarkers: ['SessionStart', 'SessionEnd'],
       subagentStop: 'SubagentStop',
       questionTools: ['AskUserQuestion', 'ExitPlanMode'],
@@ -65,11 +66,18 @@ describe('HARNESS_LIFECYCLE', () => {
     expect(HARNESS_LIFECYCLE.codex).toEqual({
       open: '',
       close: [],
+      closeFailed: [],
       sessionMarkers: [],
       subagentStop: '',
       questionTools: [],
       sessionExit: null,
     });
     expect(HARNESS_EVENTS.codex).toHaveLength(0);
+  });
+
+  it('close / closeFailed 里的事件都在采集面内（表外事件收不到，关组会失效）', () => {
+    for (const name of [...HARNESS_LIFECYCLE.claude.close, ...HARNESS_LIFECYCLE.claude.closeFailed]) {
+      expect(HARNESS_EVENTS.claude).toContain(name);
+    }
   });
 });

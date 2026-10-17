@@ -75,6 +75,23 @@ function parseConfigYaml(raw: string): Record<string, unknown> {
 }
 
 /**
+ * 落档的 `hooks` 是权威集：init 每次都写全集，缺键 = 那批事件还没被 init 带进来
+ * （新采集事件一律等重跑 `weave init`），不拿默认值顶回去——否则 `--hooks none`
+ * 裁空的项目会在升级后悄悄长出新事件组。字段整个缺席才回落 DEFAULT_*（旧项目的
+ * 「未裁剪」态，正是未加 `--hooks` 时 init 的取值）。
+ */
+function mergeHooks(raw: unknown): HooksConfig {
+  if (typeof raw !== 'object' || raw === null) return DEFAULT_HOOKS;
+  const stored = raw as Partial<HooksConfig>;
+  const unsetOff = Object.fromEntries(
+    (Object.keys(DEFAULT_HOOKS) as (keyof HooksConfig)[])
+      .filter((k) => typeof DEFAULT_HOOKS[k] === 'boolean' && !(k in stored))
+      .map((k) => [k, false]),
+  ) as Partial<HooksConfig>;
+  return { ...DEFAULT_HOOKS, ...unsetOff, ...stored };
+}
+
+/**
  * 读 init 落档的运行时配置。旧项目没有 `hooks`/`mcp`/`components` 字段——
  * 回落 DEFAULT_*（正是未加 `--hooks`/`--mcp` 时 init 的取值）。
  */
@@ -102,7 +119,7 @@ export async function readInitRuntime(projectPath: string): Promise<InitRuntime>
         ? (components as Partial<InitComponents>)
         : undefined,
     ),
-    hooks: { ...DEFAULT_HOOKS, ...(typeof hooks === 'object' && hooks !== null ? hooks : {}) },
+    hooks: mergeHooks(hooks),
     mcp: { ...DEFAULT_MCP, ...(typeof mcp === 'object' && mcp !== null ? mcp : {}) },
   };
 }

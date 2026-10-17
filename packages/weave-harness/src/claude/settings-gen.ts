@@ -38,8 +38,16 @@ export function generateSettingsJson(input: SettingsGeneratorInput): Record<stri
     if (hooks.userPromptSubmit) hooksMap['UserPromptSubmit'] = captureHookGroup('UserPromptSubmit', helpersDir);
     if (hooks.sessionStart) hooksMap['SessionStart'] = captureHookGroup('SessionStart', helpersDir);
     if (hooks.stop) hooksMap['Stop'] = captureHookGroup('Stop', helpersDir);
+    if (hooks.stopFailure) hooksMap['StopFailure'] = captureHookGroup('StopFailure', helpersDir);
     if (hooks.subagentStop) hooksMap['SubagentStop'] = captureHookGroup('SubagentStop', helpersDir);
+    if (hooks.subagentStart) hooksMap['SubagentStart'] = captureHookGroup('SubagentStart', helpersDir);
     if (hooks.notification) hooksMap['Notification'] = captureHookGroup('Notification', helpersDir);
+    if (hooks.postToolUseFailure)
+      hooksMap['PostToolUseFailure'] = captureHookGroup('PostToolUseFailure', helpersDir);
+    if (hooks.permissionRequest)
+      hooksMap['PermissionRequest'] = captureHookGroup('PermissionRequest', helpersDir);
+    if (hooks.permissionDenied)
+      hooksMap['PermissionDenied'] = captureHookGroup('PermissionDenied', helpersDir);
     if (hooks.preCompact) hooksMap['PreCompact'] = captureHookGroup('PreCompact', helpersDir);
     if (hooks.sessionEnd) hooksMap['SessionEnd'] = captureHookGroup('SessionEnd', helpersDir);
     // 模型切换确认：Pre 置位、Post 落定，成对登记（落定笔只服务于这一件事）。

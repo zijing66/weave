@@ -158,7 +158,8 @@ export function buildLifecycleGroups(
       const target = byPidGroup ?? current;
       if (target) {
         target.events.push(event);
-        closeGroup(target, false); // 等到了自己的 Stop = 正常结束
+        // 失败收尾（API 错误）也算关组，但不冒充正常闭环。
+        closeGroup(target, lifecycle.closeFailed.includes(type));
       } else {
         attach(event, pid); // 游离 close（无开组）：挂靠不切组
       }

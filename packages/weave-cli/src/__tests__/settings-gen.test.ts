@@ -34,14 +34,19 @@ describe('generateSettingsJson', () => {
     // 采集面全集（preModelSwitch 一对：Pre 置位 / Post 落定）
     expect(Object.keys(hooks).sort()).toEqual([
       'Notification',
+      'PermissionDenied',
+      'PermissionRequest',
       'PostModelSwitch',
       'PostToolUse',
+      'PostToolUseFailure',
       'PreCompact',
       'PreModelSwitch',
       'PreToolUse',
       'SessionEnd',
       'SessionStart',
       'Stop',
+      'StopFailure',
+      'SubagentStart',
       'SubagentStop',
       'UserPromptSubmit',
     ]);

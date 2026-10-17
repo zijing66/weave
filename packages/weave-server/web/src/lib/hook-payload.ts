@@ -36,7 +36,12 @@ export const EVENT_TYPE_STYLES: Record<string, string> = {
   SessionEnd: 'bg-pink-900/40 text-pink-300',
   Notification: 'bg-amber-900/40 text-amber-300',
   Stop: 'bg-orange-900/40 text-orange-300',
+  StopFailure: 'bg-red-900/40 text-red-300',
   SubagentStop: 'bg-orange-900/40 text-orange-300',
+  SubagentStart: 'bg-orange-900/40 text-orange-300',
+  PostToolUseFailure: 'bg-red-900/40 text-red-300',
+  PermissionRequest: 'bg-amber-900/40 text-amber-300',
+  PermissionDenied: 'bg-red-900/40 text-red-300',
 };
 
 /** 采集来源 → Badge 配色。由 harness-meta 单点表派生（加 harness 自动跟随）。 */

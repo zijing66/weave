@@ -29,8 +29,17 @@ export const HooksConfigSchema = z.object({
   userPromptSubmit: z.boolean(),
   sessionStart: z.boolean(),
   stop: z.boolean(),
+  /** 回合 API 错误收尾（代替 Stop）——不采集则该轮永远卡「生成中」。 */
+  stopFailure: z.boolean(),
   subagentStop: z.boolean(),
+  subagentStart: z.boolean(),
   notification: z.boolean(),
+  /** 工具执行失败（成功面 PostToolUse 之外的失败信号）。 */
+  postToolUseFailure: z.boolean(),
+  /** 即将请求工具权限（比 permission_prompt 即时；带建议的权限更新）。 */
+  permissionRequest: z.boolean(),
+  /** auto 模式分类器拒绝（带 reason）。 */
+  permissionDenied: z.boolean(),
   /** 压缩开始事件（压缩态实时信号；收尾笔 SessionStart 无开关，恒在采集面）。 */
   preCompact: z.boolean(),
   /** 会话退出事件（旁路凭据/定位随进程作废的信号，web 状态机据此落「关闭」）。 */
@@ -382,8 +391,13 @@ export const DEFAULT_HOOKS: HooksConfig = {
   userPromptSubmit: true,
   sessionStart: true,
   stop: true,
+  stopFailure: true,
   subagentStop: true,
+  subagentStart: true,
   notification: true,
+  postToolUseFailure: true,
+  permissionRequest: true,
+  permissionDenied: true,
   preCompact: true,
   sessionEnd: true,
   preModelSwitch: true,

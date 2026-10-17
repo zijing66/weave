@@ -53,6 +53,17 @@ describe('buildLifecycleGroups', () => {
     expect(tail[0]).toMatchObject({ id: 'turn:1', open: true });
   });
 
+  it('StopFailure 关组但标未正常结束（API 错误收尾不冒充正常闭环）', () => {
+    const groups = buildLifecycleGroups(
+      [promptEvent(1, '开工'), event(2), event(3, 'StopFailure')],
+      [],
+      claude,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ id: 'turn:1', open: true });
+    expect(groups[0]!.events.map((e) => e.id)).toEqual([1, 2, 3]);
+  });
+
   it('② 首 prompt 前散事件 → preSession 伪组（无 prompt，标题素材=事件名）', () => {
     const groups = buildLifecycleGroups(
       [event(1, 'SessionStart'), event(2, 'Notification'), promptEvent(3, '开工'), event(4, 'Stop')],
@@ -166,6 +177,7 @@ describe('buildLifecycleGroups', () => {
     const synthetic = {
       open: 'TurnOpen',
       close: ['TurnClose'],
+      closeFailed: [],
       sessionMarkers: ['EpochStart', 'EpochEnd'],
       subagentStop: 'ChildDone',
       questionTools: ['AskUserQuestion'],

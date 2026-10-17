@@ -36,8 +36,21 @@ export const HARNESS_EVENTS = {
     'UserPromptSubmit',
     'SessionStart',
     'Stop',
+    /** 回合因 API 错误收尾时**代替 Stop** 发（rate_limit / auth / billing…，带 error）——
+     *  不登记它这一轮的收尾就永远等不到。无决策控制，纯通知。 */
+    'StopFailure',
     'SubagentStop',
     'Notification',
+    /** 工具执行失败（抛错 / MCP 错误结果；带 error / is_interrupt / duration_ms）——
+     *  权限拒绝与执行前校验拒绝都不发（那是 PermissionDenied / 无事件）。 */
+    'PostToolUseFailure',
+    /** 即将向用户请求工具权限（比 permission_prompt 的 ~6s 延迟即时；带
+     *  permission_suggestions）。可编程 allow/deny，weave 只采集不裁决。 */
+    'PermissionRequest',
+    /** auto 模式分类器拒绝工具调用（带 reason）——仅 auto 模式发。 */
+    'PermissionDenied',
+    /** 子代理启动（agent_id / agent_type）——与 SubagentStop 成对，生命周期补全。 */
+    'SubagentStart',
     /** 压缩开始（宿主在压缩前发，携带 trigger=manual/auto）——压缩态的实时信号。 */
     'PreCompact',
     /** 会话退出（宿主进程收尾时发，只覆盖正常退出：kill / 关窗口不发）——退出即清的信号。 */
@@ -108,8 +121,10 @@ export type InstructionFile = (typeof HARNESS_INSTRUCTION_FILES)[Harness][number
 export interface HarnessLifecycle {
   /** 开启一个 turn 组的事件（组头）。 */
   open: string;
-  /** 正常关闭组的事件。 */
+  /** 关闭组的事件（一轮对话结束，含失败收尾）。 */
   close: readonly string[];
+  /** `close` 里**非正常**收尾的那部分（组头照「未正常结束」标，不冒充正常闭环）。 */
+  closeFailed: readonly string[];
   /** 只作标记的会话级事件（open 组遇之按中断关组，其余不切组）。 */
   sessionMarkers: readonly string[];
   /** 组内计数、不独立成组。 */
@@ -134,7 +149,8 @@ export interface HarnessLifecycle {
 export const HARNESS_LIFECYCLE = {
   claude: {
     open: 'UserPromptSubmit',
-    close: ['Stop'],
+    close: ['Stop', 'StopFailure'],
+    closeFailed: ['StopFailure'],
     sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: 'SubagentStop',
     questionTools: ['AskUserQuestion', 'ExitPlanMode'],
@@ -144,6 +160,7 @@ export const HARNESS_LIFECYCLE = {
   codex: {
     open: '',
     close: [],
+    closeFailed: [],
     sessionMarkers: [],
     subagentStop: '',
     questionTools: [],
