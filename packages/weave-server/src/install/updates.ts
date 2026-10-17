@@ -108,15 +108,19 @@ export async function detectUpdates(
   index?: LibraryIndex,
 ): Promise<UpdateReport> {
   const idx = index ?? (await buildLibraryIndex(libraries));
-  const skills = await detectSkillUpdates(projectPath, cache, idx);
-  const mcp = await detectMcpUpdates(projectPath, idx);
-  const files = await detectFileAssetUpdates(projectPath, cache, idx);
+  // 四路各自独立（技能哈希的 stat 往返、init 文件的 git 子进程、配置读取），
+  // 串起来就是四段耗时相加；并行后总耗时为最慢那一路。
+  const [skills, mcp, files, pluginTemplates, initFiles] = await Promise.all([
+    detectSkillUpdates(projectPath, cache, idx),
+    detectMcpUpdates(projectPath, idx),
+    detectFileAssetUpdates(projectPath, cache, idx),
+    // 项目自有 weave 源无账本（声明即期望态），不随 libraries 存亡——独立扫描。
+    detectPluginTemplateUpdates(projectPath, cache),
+    // init 生成物同样无账本（期望态由 harness 生成器给），按 git 归类分流。
+    detectInitFileUpdates(projectPath),
+  ]);
   // 账本补齐：报告是按盘面枚举的，"账上有、报告里没有"就等于盘上已被删除。
   await mergeMissingFromLedger(projectPath, { skills, mcp, files }, idx);
-  // 项目自有 weave 源无账本（声明即期望态），不随 libraries 存亡——独立扫描。
-  const pluginTemplates = await detectPluginTemplateUpdates(projectPath, cache);
-  // init 生成物同样无账本（期望态由 harness 生成器给），按 git 归类分流。
-  const initFiles = await detectInitFileUpdates(projectPath);
   const available = skills.filter((s) => !s.custom && s.outdated).length
     + mcp.filter((s) => !s.custom && s.outdated).length
     + files.filter((s) => !s.custom && s.outdated).length

@@ -62,40 +62,44 @@ async function collect(
   } catch {
     return;
   }
+  const nested: Promise<void>[] = [];
   for (const e of entries) {
     if (e.name.startsWith('.') && skipNames.has(e.name)) continue;
     if (!skipNames.has(e.name) && e.isDirectory()) {
-      await collect(root, path.join(dir, e.name), out, skipNames);
+      nested.push(collect(root, path.join(dir, e.name), out, skipNames));
     } else if (e.isFile()) {
       out.push({ rel: path.relative(root, dir).replace(/\\/g, '/') + '/' + e.name, abs: path.join(dir, e.name) });
     }
   }
+  await Promise.all(nested);
 }
 
-/** Max mtime (ms) across all files in a tree — cache-invalidation signal. */
+/**
+ * Max mtime (ms) across all files in a tree — cache-invalidation signal.
+ * 逐文件 stat 是这一轮的全部成本（Windows 上每次往返 ~0.1ms、一百来个技能文件
+ * 串起来就是 100ms+），故整层并行发起，只保序不排队。
+ */
 export async function maxMtimeDir(dir: string, skipNames: Set<string> = SKIP_NAMES): Promise<number> {
-  let max = 0;
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {
     return 0;
   }
-  for (const e of entries) {
-    if (e.name.startsWith('.') && skipNames.has(e.name)) continue;
-    const abs = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      max = Math.max(max, await maxMtimeDir(abs, skipNames));
-    } else if (e.isFile()) {
+  const maxes = await Promise.all(
+    entries.map(async (e): Promise<number> => {
+      if (e.name.startsWith('.') && skipNames.has(e.name)) return 0;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) return maxMtimeDir(abs, skipNames);
+      if (!e.isFile()) return 0;
       try {
-        const s = await stat(abs);
-        max = Math.max(max, s.mtimeMs);
+        return (await stat(abs)).mtimeMs;
       } catch {
-        // vanished — ignore
+        return 0; // vanished — ignore
       }
-    }
-  }
-  return max;
+    }),
+  );
+  return maxes.reduce((a, b) => Math.max(a, b), 0);
 }
 
 /** Stable hash of an MCP server config (sorted keys → JSON → sha256). */
