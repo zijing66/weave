@@ -27,18 +27,32 @@ export const RESORT_INTERVAL_MS = 10_000;
 /** FLIP 位移动画时长：周期重排时卡片从旧位滑到新位。 */
 const FLIP_DURATION_MS = 450;
 
-/** 剩余存活倒计时文案（全会话统一）：按量级走天/时/分三档（ceil），不足一分钟即「即将」。 */
-function remainingLabel(t: TFunc, remainingMs: number): string {
-  if (remainingMs >= 86_400_000) {
-    return t('tasks.autoDeleteInDays', { n: Math.ceil(remainingMs / 86_400_000) });
+/** 剩余存活（ms）：期限 − 现在。now 会落后于刚写入的 lastSeenAt（30s tick、时钟差），
+ *  直接相减就把整窗算多一截（90 天显示成 91、1 小时显示成 2 小时）⇒ 封顶到本行自己的窗。 */
+export function remainingMsOf(
+  row: Pick<SessionRow, 'autoDeleteAt' | 'lastSeenAt'>,
+  now: number,
+): number {
+  if (row.autoDeleteAt == null) return 0;
+  return Date.parse(row.autoDeleteAt) - Math.max(now, Date.parse(row.lastSeenAt));
+}
+
+/** 剩余存活倒计时文案：天/时/分三档（ceil）。档位看**取整后**的量（小时不超 23、
+ *  分钟不超 59）——阈值卡原始毫秒会让同量在档边换单位说（1 小时跳「60 分钟」）。 */
+export function remainingLabel(t: TFunc, remainingMs: number): string {
+  const ms = Math.max(0, remainingMs);
+  if (ms < 60_000) {
+    return t('tasks.autoDeleteSoon');
   }
-  if (remainingMs >= 3_600_000) {
-    return t('tasks.autoDeleteInHours', { n: Math.ceil(remainingMs / 3_600_000) });
+  const hours = Math.ceil(ms / 3_600_000);
+  if (hours >= 24) {
+    return t('tasks.autoDeleteInDays', { n: Math.ceil(ms / 86_400_000) });
   }
-  if (remainingMs >= 60_000) {
-    return t('tasks.autoDeleteInMinutes', { n: Math.ceil(remainingMs / 60_000) });
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes >= 60) {
+    return t('tasks.autoDeleteInHours', { n: hours });
   }
-  return t('tasks.autoDeleteSoon');
+  return t('tasks.autoDeleteInMinutes', { n: minutes });
 }
 
 /**
@@ -625,7 +639,7 @@ export function SessionList({
                   ——按剩余量级走天/时/分三档，到点前给用户留个明白账。 */}
               {s.autoDeleteAt && (
                 <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
-                  {remainingLabel(t, Date.parse(s.autoDeleteAt) - now)}
+                  {remainingLabel(t, remainingMsOf(s, now))}
                 </Badge>
               )}
             </div>
