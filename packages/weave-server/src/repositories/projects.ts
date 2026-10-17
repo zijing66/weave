@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { resolve } from 'node:path';
 
 export interface ProjectRow {
   id: number;
@@ -22,6 +23,14 @@ export interface RegisterProjectInput {
   source: 'init' | 'scan';
 }
 
+/**
+ * 项目注册键。`resolve` 同时归一分隔符与尾斜杠——否则 `D:/a/b` 与 `D:\a\b`
+ * 是两行，重复登记还会另发 token 把 hook 事件拐到新行上。
+ */
+function projectKey(path: string): string {
+  return resolve(path);
+}
+
 export class ProjectRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -32,18 +41,19 @@ export class ProjectRepository {
    */
   register(input: RegisterProjectInput): ProjectRow {
     const now = new Date().toISOString();
+    const key = projectKey(input.path);
     this.db
       .prepare(
         `INSERT INTO projects (path, name, token, source, registered_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
       )
-      .run(input.path, input.name, input.token, input.source, now, now);
-    return this.getByPath(input.path)!;
+      .run(key, input.name, input.token, input.source, now, now);
+    return this.getByPath(key)!;
   }
 
   getByPath(path: string): ProjectRow | undefined {
-    const row = this.db.prepare('SELECT * FROM projects WHERE path = ?').get(path);
+    const row = this.db.prepare('SELECT * FROM projects WHERE path = ?').get(projectKey(path));
     return row ? toProject(row) : undefined;
   }
 

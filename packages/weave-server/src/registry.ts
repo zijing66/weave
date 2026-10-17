@@ -1,4 +1,4 @@
-import { basename, join, resolve } from 'node:path';
+import { basename, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { openDatabase } from './db/db.js';
 import { ProjectRepository } from './repositories/projects.js';
@@ -61,7 +61,7 @@ export function unregisterProject(
   const db = openDatabase(dbPath);
   try {
     const projects = new ProjectRepository(db);
-    const row = projects.getByPath(targetDir) ?? projects.getByPath(resolve(targetDir));
+    const row = projects.getByPath(targetDir);
     if (!row) return null;
     const dispatches = new HookDispatchRepository(db).deleteByProject(row.id);
     const events = new HookEventRepository(db).deleteByProject(row.id);
