@@ -246,7 +246,9 @@ export function QuestionAnswer({
                     {q.header}
                   </span>
                 )}
-                <p className="text-xs leading-relaxed text-neutral-200">{q.question}</p>
+                <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-neutral-200">
+                  {q.question}
+                </p>
                 {/* 预览形态：左选项 / 右预览 + 备注行（宿主那一形态的真实布局） */}
                 {q.previewMode && (
                   <>

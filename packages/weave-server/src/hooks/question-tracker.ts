@@ -135,7 +135,13 @@ export class QuestionTracker {
           sessionId,
           harness: this.harnessOf(input.source),
           kind: 'permission',
-          questions: [spec.permissionQuestion(ctx)],
+          questions: [
+            spec.permissionQuestion({
+              ...ctx,
+              message: messageOf(payload.raw),
+              permissionMode: mode ?? null,
+            }),
+          ],
           at: new Date().toISOString(),
         });
       }
@@ -234,6 +240,13 @@ function permissionModeOf(raw: unknown): string | null {
   if (!raw || typeof raw !== 'object') return null;
   const mode = (raw as { permission_mode?: unknown }).permission_mode;
   return typeof mode === 'string' && mode ? mode : null;
+}
+
+/** Notification 的正文字段（raw.message）；缺键 / 空白 = null。 */
+function messageOf(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const message = (raw as { message?: unknown }).message;
+  return typeof message === 'string' && message.trim() ? message : null;
 }
 
 /** Notification 的分类键（raw.notification_type）；非 Notification/缺键 = null。 */

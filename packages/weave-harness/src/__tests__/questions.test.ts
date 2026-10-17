@@ -65,8 +65,56 @@ describe('claude 阻塞问答面', () => {
     const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});
     expect(plan).toHaveLength(1);
     expect(plan[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2'], ['3']]);
-    const perm = CLAUDE_BLOCKING_PROMPT.permissionQuestion({ toolName: 'Bash', toolInput: {} });
+    const perm = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: {},
+      message: null,
+      permissionMode: null,
+    });
     expect(perm.options.map((o) => o.keys)).toEqual([['1'], ['2'], ['3']]);
+  });
+
+  it('权限确认按会话形态选面：auto 分类器只有 2 行（第 2 行是拒绝）', () => {
+    const auto = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: {},
+      message: 'Claude needs your permission',
+      permissionMode: 'auto',
+    });
+    expect(auto.options.map((o) => o.label)).toEqual([
+      'Yes, and tell Claude what to do next',
+      'No',
+    ]);
+    // 经典 3 行第 2 行是「别再问」——发给 2 行对话框会变成「拒绝」，键义完全不同。
+    const classic = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: {},
+      message: null,
+      permissionMode: 'default',
+    });
+    expect(classic.options).toHaveLength(3);
+    expect(classic.options[2]!.label).toContain('do differently');
+    // 原文提到 classifier 也认作分类器形态（模式 latch 可能还没到）。
+    const byMessage = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: {},
+      message: 'An automated safety classifier requires confirmation',
+      permissionMode: null,
+    });
+    expect(byMessage.options).toHaveLength(2);
+  });
+
+  it('权限确认的正文：宿主原文 + 工具摘要各占一行', () => {
+    const face = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: { command: 'rm -rf build' },
+      message: 'Claude needs your permission',
+      permissionMode: 'default',
+    });
+    const lines = face.question.split('\n');
+    expect(lines[0]).toBe('Claude needs your permission');
+    expect(lines[1]).toContain('Bash');
+    expect(lines[1]).toContain('rm -rf build');
   });
 
   it('解析不出问题面 → OPAQUE 兜底（无选项、无 Submit 步）', () => {

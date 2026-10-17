@@ -138,8 +138,8 @@ describe('QuestionTracker 状态机', () => {
     const q = tracker.get(SESSION)!.questions[0]!;
     expect(q.key).toBe('ExitPlanMode:approve');
     expect(q.options.map((o) => o.label)).toEqual([
-      'Yes, and auto-accept edits',
-      'Yes, and manually approve edits',
+      'Yes, auto-accept edits',
+      'Yes, manually approve edits',
       'No, keep planning',
     ]);
   });
@@ -172,7 +172,21 @@ describe('QuestionTracker 状态机', () => {
     const q = entry.questions[0]!;
     expect(q.key).toBe('permission:confirm');
     expect(q.question).toContain('Bash');
-    expect(q.options.map((o) => o.label)).toEqual(['Yes', "Yes, and don't ask again this session", 'No (esc)']);
+    expect(q.options.map((o) => o.label)).toEqual([
+      'Yes',
+      "Yes, and don't ask again for this tool",
+      'No, and tell Claude what to do differently (esc)',
+    ]);
+  });
+
+  it('auto 模式的权限确认 → 2 行分类器面（第 2 行是拒绝，不是「别再问」）', () => {
+    feed(SESSION, payload({ eventType: 'PreToolUse', toolName: 'Bash', toolInput: {}, raw: { permission_mode: 'auto' } }));
+    feed(SESSION, notification('permission_prompt'));
+    const q = tracker.get(SESSION)!.questions[0]!;
+    expect(q.options.map((o) => o.label)).toEqual([
+      'Yes, and tell Claude what to do next',
+      'No',
+    ]);
   });
 
   it('阻塞工具进行中的 permission_prompt → 不覆盖问题面（claude 恒补发的噪声）', () => {

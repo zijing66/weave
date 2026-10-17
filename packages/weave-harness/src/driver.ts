@@ -295,8 +295,19 @@ export interface BlockingPromptSpec {
    * 该时段的权限 Notification 恒为噪声，server 直接忽略；空数组 = 无模式概念。
    */
   readonly silentPermissionModes: readonly string[];
-  /** 权限确认的问题面（选项键序随宿主 UI 固定；上文 = 最近一次 PreToolUse）。 */
-  permissionQuestion(context: { toolName: string | null; toolInput: unknown }): BlockingQuestion;
+  /**
+   * 权限确认的问题面。选项行数与键义**随宿主形态变**（同一份 3 行面发给 2 行对话框
+   * 会把「别再问」打成「拒绝」），故上下文要带齐形态判据：最近一次 PreToolUse 的
+   * 工具面 + Notification 正文 + 会话当时的权限模式。
+   */
+  permissionQuestion(context: {
+    toolName: string | null;
+    toolInput: unknown;
+    /** 宿主对话框原文（Notification 的 raw.message）；缺键 = null。 */
+    message: string | null;
+    /** 会话当时的权限模式（latch 自 raw.permission_mode）；null = 未知。 */
+    permissionMode: string | null;
+  }): BlockingQuestion;
   /** 阻塞工具的 PreToolUse toolInput → 问题列表（含合成问题：计划确认的 toolInput 恒空）。 */
   parseQuestions(toolName: string, toolInput: unknown): BlockingQuestion[];
   /**

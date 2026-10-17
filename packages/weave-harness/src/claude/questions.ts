@@ -56,11 +56,29 @@ const PLAN_QUESTION: BlockingQuestion = {
   question: 'Approve this plan and start execution?',
   multiSelect: false,
   options: [
-    { keys: ['1'], label: 'Yes, and auto-accept edits' },
-    { keys: ['2'], label: 'Yes, and manually approve edits' },
+    { keys: ['1'], label: 'Yes, auto-accept edits' },
+    { keys: ['2'], label: 'Yes, manually approve edits' },
     { keys: ['3'], label: 'No, keep planning' },
   ],
 };
+
+/**
+ * 权限对话框的两种形态——**选项行数与键义完全不同**，按错形态发键就是「想批准
+ * 却拒了」。文案取自宿主二进制字符串表（claude 2.1.296）：
+ * - 经典 = 3 行：`Yes` / `Yes, and don't ask again for <规则>` / `No, and tell
+ *   Claude what to do differently (esc)`；
+ * - auto 模式分类器升级 = 2 行：`Yes, and tell Claude what to do next` / `No`
+ *   （第 2 行在这里是**拒绝**，在经典里是「别再问」）。
+ */
+const CLASSIC_PERMISSION_OPTIONS: readonly BlockingQuestionOption[] = [
+  { keys: ['1'], label: 'Yes' },
+  { keys: ['2'], label: "Yes, and don't ask again for this tool" },
+  { keys: ['3'], label: 'No, and tell Claude what to do differently (esc)' },
+];
+const AUTO_PERMISSION_OPTIONS: readonly BlockingQuestionOption[] = [
+  { keys: ['1'], label: 'Yes, and tell Claude what to do next' },
+  { keys: ['2'], label: 'No' },
+];
 
 /** 解析不出来的兜底问题面：看得见阻塞、没有远程作答（诚实缺席）。 */
 const OPAQUE_QUESTION: BlockingQuestion = {
@@ -244,18 +262,16 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
     const detail = ctx.toolName
       ? `${ctx.toolName}${ctx.toolInput ? ` ${previewOf(ctx.toolInput)}` : ''}`
       : '';
+    // 形态判据：auto 模式把人叫起来的一定是分类器升级（2 行）；原文提到 classifier
+    // 也算。认不出来按经典 3 行走——那是不带 auto 时的默认对话框。
+    const autoFace = ctx.permissionMode === 'auto' || /classifier/i.test(ctx.message ?? '');
+    const head = ctx.message?.trim() || 'Claude needs your permission';
     return {
       key: 'permission:confirm',
-      header: 'Permission',
-      question: detail
-        ? `Claude needs your permission: ${detail}`
-        : 'Claude needs your permission',
+      header: autoFace ? 'Permission (auto mode)' : 'Permission',
+      question: detail ? `${head}\n${detail}` : head,
       multiSelect: false,
-      options: [
-        { keys: ['1'], label: 'Yes' },
-        { keys: ['2'], label: "Yes, and don't ask again this session" },
-        { keys: ['3'], label: 'No (esc)' },
-      ],
+      options: [...(autoFace ? AUTO_PERMISSION_OPTIONS : CLASSIC_PERMISSION_OPTIONS)],
     };
   },
   parseQuestions(toolName, toolInput) {
