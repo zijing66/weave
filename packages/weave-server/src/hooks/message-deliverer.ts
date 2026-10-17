@@ -296,6 +296,16 @@ function normalizePromptText(text: string): string {
     .trim();
 }
 
+/**
+ * 直投的来源标记是**运输装饰、不是正文**：回执比对前从观测到的 prompt 上剥掉。
+ * 只剥观测侧（`msg.text` 是原文，用户自己打 `[weave] …` 不该被改判）——不剥的话
+ * 每条直投消息的 prompt 都比本体多一截，短正文（如「代码提交」）永远认不出自己。
+ */
+function stripInboxMarker(text: string): string {
+  const head = text.trimStart();
+  return head.startsWith(INBOX_SOURCE_PREFIX) ? head.slice(INBOX_SOURCE_PREFIX.length) : head;
+}
+
 /** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
 function stripSpace(text: string): string {
   return text.replace(/\s+/g, '');
@@ -606,12 +616,14 @@ export class MessageDeliverer {
    * 空的 / 只剩 `[Image #N]`，无文本可比，这样一条 UPS 认领最新那条纯图在途。
    */
   onSessionPrompt(sessionId: string, prompt: string): string[] {
-    const seenRaw = normalizePromptText(prompt);
+    const seenRaw = normalizePromptText(stripInboxMarker(prompt));
     const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
     for (const msg of [...this.memory.values()].reverse()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
-      const textHit = !!want && want.length >= ACK_MIN_TEXT && seenRaw.includes(want);
+      // 长文本按「包含」认（宿主可能给 prompt 加前缀/拼多段）；短文本只认**整条相等**
+      // ——不是放宽而是精确：短消息整条相等才没有误配空间，也就轮不到「太短不能比」。
+      const textHit = !!want && (want.length >= ACK_MIN_TEXT ? seenRaw.includes(want) : seenRaw === want);
       const imageHit =
         (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
       if (!textHit && !imageHit) continue;

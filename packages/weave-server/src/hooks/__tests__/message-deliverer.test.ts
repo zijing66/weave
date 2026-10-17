@@ -995,16 +995,24 @@ describe('MessageDeliverer 裁决表', () => {
       expect.objectContaining({ kind: 'message.acknowledged', messageId: id }),
     );
 
-    // 短文本（< ACK_MIN_TEXT）不参与匹配：防误配
-    const tiny = await deliverer.send({
+    // 短文本（< ACK_MIN_TEXT）只认**整条相等**：包含不算，本体相等才算。
+    // 另起一个实例：上面那条中继还在飞，同一会话再发会直接落队列（没有内存行可比）。
+    const shortDeliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: createFakeSpawn().spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    const tiny = await shortDeliverer.send({
       toSessionId: SESSION_ID,
       text: 'ok',
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
     });
-    deliverer.onSessionPrompt(SESSION_ID, 'ok');
-    expect(deliverer.getMessage((tiny as { messageId: string }).messageId)?.acked).toBeUndefined();
+    const tinyId = (tiny as { messageId: string }).messageId;
+    shortDeliverer.onSessionPrompt(SESSION_ID, 'ok 我这边没问题');
+    expect(shortDeliverer.getMessage(tinyId)?.acked).toBeUndefined();
+    // 直投带来源标记：剥掉后本体相等 → 回执（否则短正文永远认不出自己，必被未回执闸误杀）
+    shortDeliverer.onSessionPrompt(SESSION_ID, '[weave] ok');
+    expect(shortDeliverer.getMessage(tinyId)?.acked).toBe(true);
   });
 
   it('中继不设超时：等多久都留在途中（等待发生在目标会话内，不得误判 timeout）', async () => {
