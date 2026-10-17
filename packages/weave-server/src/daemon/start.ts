@@ -345,6 +345,7 @@ export function startDaemon(): void {
     dataBus,
     terminalRefresher,
     interruptRefresher,
+    livenessRefresher,
     sessionProbe,
     inflightRefresher,
     updatesRefresher,

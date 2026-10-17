@@ -125,6 +125,8 @@ export interface PromptTerminal {
   sendText(paneId: string, text: string): Promise<void>;
   /** 裸键序注入（作答的选项键 / 中断的 ESC：模态框只吃键盘，不吃粘贴文本）。 */
   sendKeys(paneId: string, keys: string): Promise<void>;
+  /** 关掉这个 pane（会话生命周期收尾）；无通道的后端明确拒绝。 */
+  closePane(paneId: string): Promise<void>;
 }
 
 export interface MessageDelivererDeps {
@@ -717,6 +719,22 @@ export class MessageDeliverer {
   }
 
   /**
+   * 关掉会话所在的 pane（会话生命周期收尾）：宿主随 pane 一起退出——这是「退出
+   * 会话」的远程等价（harness 没有「请退出」这种信号）。**会话行与它的对话照常
+   * 保留**（那是历史，同 SessionEnd 口径），只把它从「活着」的世界里摘出去。
+   */
+  async closePane(sessionId: string): Promise<AnswerResult> {
+    const target = await this.sessionKeysTarget(sessionId, '关闭');
+    if (!target.ok) return target;
+    try {
+      await target.terminal.closePane(target.paneId);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * 执行模式切换（Shift+Tab 的远程等价）：一记固定键，宿主自己算下一个模式。
    * 答「现在是哪个模式」不由这里管——Shift+Tab 不发任何 hook 事件、不落转录，
    * 实时态只能是 hook 事件里最近一次的 `permission_mode`（「最后已知」）。
@@ -753,12 +771,14 @@ export class MessageDeliverer {
   }
 
   /**
-   * 键序注入路径（作答 / 中断）共用的落点解析：会话 → 项目 → 终端通道 → pane。
-   * 全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP；
-   * 两条 409 是给用户看的（web 直拼在「停止失败：」后面），故写成中文修法。
+   * 键序注入路径（作答 / 中断 / 关 pane）共用的落点解析：会话 → 项目 → 终端通道
+   * → pane。全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP；
+   * 两条 409 是给用户看的（web 直拼在「停止失败：」这类动作名后面），故写成中文
+   * 修法，动作名随调用方换。
    */
   private async sessionKeysTarget(
     sessionId: string,
+    action = '击键',
   ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
@@ -769,14 +789,14 @@ export class MessageDeliverer {
     if (!project) return { ok: false, status: 404, error: 'Project not found' };
     const terminal = this.terminalChannel();
     if (!terminal) {
-      return { ok: false, status: 409, error: '终端通道未装配，无法远程击键' };
+      return { ok: false, status: 409, error: `终端通道未装配，无法远程${action}` };
     }
     const pane = await this.terminalPaneFor(session, project);
     if (!pane) {
       return {
         ok: false,
         status: 409,
-        error: '找不到会话所在的终端窗口——这个会话所在终端没有可用的远程击键通道',
+        error: `找不到会话所在的终端窗口——这个会话所在终端没有可用的远程${action}通道`,
       };
     }
     return { ok: true, terminal, paneId: pane.id };

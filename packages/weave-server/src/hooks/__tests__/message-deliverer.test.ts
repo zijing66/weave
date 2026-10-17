@@ -577,6 +577,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => panes,
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -705,6 +706,7 @@ describe('MessageDeliverer 裁决表', () => {
             sent.push(text);
           },
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -830,6 +832,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -865,6 +868,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -907,6 +911,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => panes,
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -1244,6 +1249,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => [],
           sendText: vi.fn(),
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -1309,6 +1315,7 @@ describe('MessageDeliverer 裁决表', () => {
             ),
           sendText: vi.fn(),
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -1349,6 +1356,7 @@ describe('MessageDeliverer 裁决表', () => {
       listPanes: vi.fn(),
       sendText: vi.fn(),
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1390,6 +1398,7 @@ describe('MessageDeliverer 裁决表', () => {
       listPanes: vi.fn().mockResolvedValue(panes),
       sendText,
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1427,6 +1436,7 @@ describe('MessageDeliverer 裁决表', () => {
       ]),
       sendText,
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
     };
     const ambDeliverer = new MessageDeliverer(
       makeDeps({ surfaceFor: () => noNative, terminal: ambiguous }),
@@ -1450,6 +1460,7 @@ describe('MessageDeliverer 裁决表', () => {
       listPanes: vi.fn().mockImplementation(async () => panes),
       sendText,
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
     };
     const noNative: MessagingSurface = {
       harness: 'codex',
@@ -1492,6 +1503,7 @@ describe('MessageDeliverer 裁决表', () => {
       listPanes: vi.fn().mockResolvedValue([]),
       sendText,
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
       locatePane,
     };
     const noNative: MessagingSurface = {
@@ -1527,6 +1539,7 @@ describe('MessageDeliverer 裁决表', () => {
         .mockResolvedValue([{ id: 'pane-7', title: 'msg-target', cwd: PROJECT_PATH }]),
       sendText: fallbackText,
       sendKeys: vi.fn(),
+      closePane: vi.fn(),
       locatePane: vi.fn().mockResolvedValue(null),
     };
     const fbDeliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => noNative, terminal: fallback }));
@@ -1943,6 +1956,7 @@ describe('MessageDeliverer 裁决表', () => {
         }),
         sendText,
         sendKeys: vi.fn(),
+        closePane: vi.fn(),
       };
       const deliverer = new MessageDeliverer(
         makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, terminal, flushGapMs: 0 }),
@@ -1984,6 +1998,7 @@ describe('MessageDeliverer 裁决表', () => {
         listPanes: vi.fn().mockResolvedValue(panes),
         sendText: vi.fn(),
         sendKeys,
+        closePane: vi.fn(),
       };
       return { terminal, sendKeys };
     };
@@ -2082,6 +2097,7 @@ describe('MessageDeliverer 裁决表', () => {
         listPanes: vi.fn().mockResolvedValue(panes),
         sendText: vi.fn(),
         sendKeys,
+        closePane: vi.fn(),
       };
       return { terminal, sendKeys };
     };
@@ -2118,6 +2134,76 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  describe('closePane（关 pane = 会话生命周期收尾）', () => {
+    const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
+      const closePane = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue(panes),
+        sendText: vi.fn(),
+        sendKeys: vi.fn(),
+        closePane,
+      };
+      return { terminal, closePane };
+    };
+
+    it('按落点关掉那一个 pane（会话行与对话照常保留，不碰库）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, closePane } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      await expect(deliverer.closePane(SESSION_ID)).resolves.toEqual({ ok: true });
+      expect(closePane.mock.calls).toEqual([['pane-1']]);
+      // 会话行与它的对话照常保留（那是历史）——关 pane 只把它从「活着」里摘出去
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE session_id = ?').get(SESSION_ID),
+      ).toMatchObject({ n: 1 });
+    });
+
+    it('与中断同一套落点判定：会话没有 404 / 无终端通道 409 / pane 找不到 409', async () => {
+      const { terminal, closePane } = paneFixture([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      await expect(deliverer.closePane('sess-ghost')).resolves.toMatchObject({
+        ok: false,
+        status: 404,
+      });
+      await expect(deliverer.closePane(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+        error: '找不到会话所在的终端窗口——这个会话所在终端没有可用的远程关闭通道',
+      });
+      await expect(new MessageDeliverer(makeDeps()).closePane(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+        error: '终端通道未装配，无法远程关闭',
+      });
+      expect(closePane).not.toHaveBeenCalled();
+    });
+
+    it('关不掉（后端没这个通道）如实 409，不假装关掉了', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue([
+          { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+        ]),
+        sendText: vi.fn(),
+        sendKeys: vi.fn(),
+        closePane: vi
+          .fn()
+          .mockRejectedValue(new Error('Terminal preset "wt" cannot close an open pane — pick wezterm in settings')),
+      };
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      await expect(deliverer.closePane(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+        error: 'Terminal preset "wt" cannot close an open pane — pick wezterm in settings',
+      });
+    });
+  });
+
   describe('cycleMode / setModel（会话控制面）', () => {
     const paneFixture = () => {
       const sendKeys = vi.fn().mockResolvedValue(undefined);
@@ -2127,6 +2213,7 @@ describe('MessageDeliverer 裁决表', () => {
         listPanes: vi.fn().mockResolvedValue([{ id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH }]),
         sendText,
         sendKeys,
+        closePane: vi.fn(),
       };
       return { terminal, sendKeys, sendText };
     };
@@ -2244,6 +2331,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );
@@ -2279,6 +2367,7 @@ describe('MessageDeliverer 裁决表', () => {
           listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
           sendText,
           sendKeys: vi.fn(),
+          closePane: vi.fn(),
         },
       }),
     );

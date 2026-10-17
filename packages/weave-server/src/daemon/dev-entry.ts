@@ -326,6 +326,7 @@ async function main(): Promise<void> {
     dataBus,
     terminalRefresher,
     interruptRefresher,
+    livenessRefresher,
     sessionProbe,
     inflightRefresher,
     updatesRefresher,

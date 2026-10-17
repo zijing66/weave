@@ -831,6 +831,29 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 关 pane：会话生命周期收尾（宿主随 pane 一起退出；会话行与它的对话照常保留）----
+  const closePaneMatch = pathname.match(/^\/sessions\/([^/]+)\/close-pane$/);
+  if (closePaneMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(closePaneMatch[1]!);
+    const result = await deps.messageDeliverer.closePane(sessionId);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    // pane 没了 = 会话进程也没了，而这两件事都不发 hook 事件：补一拍判活与终端
+    // 分块，让「活着」的图标与分组尽快摘掉（不补则要等 15s/30s 的周期拍）。
+    setTimeout(() => {
+      deps.livenessRefresher?.tick();
+      void deps.terminalRefresher?.refreshNow();
+    }, 600);
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
   // ---- 执行模式切换：一记 Shift+Tab（宿主自己算下一个模式；键序固定死在服务端）----
   const modeMatch = pathname.match(/^\/sessions\/([^/]+)\/mode$/);
   if (modeMatch && req.method === 'POST') {

@@ -117,6 +117,7 @@ import {
   type DaemonSettings,
 } from './settings.js';
 import {
+  closeTerminalsIn,
   defaultProjectOpener,
   readTerminalCounts,
   terminalBackendFor,
@@ -179,6 +180,8 @@ export interface WeaveServerDeps {
   terminalRefresher?: TerminalTopologyRefresher;
   /** 会话中断态快照刷新器（ESC 打断后多数连 Stop 都不发）：中断成功后即时补一拍。 */
   interruptRefresher?: SnapshotRefresher;
+  /** 会话判活快照刷新器（关 pane 后进程死掉同样无 hook 事件）：关完即时补一拍。 */
+  livenessRefresher?: SnapshotRefresher;
   /** 会话转录探测（中断态判据）：GET /sessions 逐行现算；缺省不带该字段。 */
   sessionProbe?: SessionProbe;
   /** 在途消息角标（会话行）的推送器：新 SSE 客户端接入时补一份首帧快照。 */
@@ -427,6 +430,30 @@ async function handleRequest(
       sendJson(res, 200, { ok: true, target: body.target, path: project.path });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
+    }
+    return;
+  }
+
+  // --- close this project's open terminals (project card "关闭终端") ---
+  // 命中判据 = pane 的 cwd **恰为**项目目录（与「终端」角标同一条，不含子目录）：
+  // 逐个关掉这些 pane，窗口里别的 cwd 的 pane 不动（不替用户关掉顺手开着的别的活）。
+  // 关完角标自己掉——与 /open 同口径，600ms 后对一次账。
+  const closeTermMatch = pathname.match(/^\/projects\/(\d+)\/close-terminal$/);
+  if (closeTermMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(closeTermMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    const settings = await readDaemonSettings();
+    try {
+      const close = opener.closeTerminals ?? closeTerminalsIn;
+      const closed = await close(project.path, settings.terminal);
+      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+      sendJson(res, 200, { ok: true, closed });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Close failed' });
     }
     return;
   }

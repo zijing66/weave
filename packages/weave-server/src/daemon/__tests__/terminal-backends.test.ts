@@ -16,6 +16,7 @@ import {
   parseWtPaneId,
   parseWtProcDump,
   parseWtTargetId,
+  panesAtDir,
   pickTerminalAppWindow,
   locatorPresetOf,
   promptTerminalChannel,
@@ -800,5 +801,39 @@ describe('SocketProbeGate — 陈旧 socket 不再反复探', () => {
 
     gate.succeeded('/sock-c');
     expect(gate.shouldProbe('/sock-c', t0 + 2)).toBe(true);
+  });
+});
+
+describe('panesAtDir — 关终端的命中判据（关错就是杀掉用户别的活）', () => {
+  const pane = (id: string, cwd: string | null) => ({ id, title: null, cwd });
+
+  it('cwd 恰为项目目录才算：子目录 / 同名前缀 / 无 cwd 一律不碰', () => {
+    const hit = panesAtDir(
+      [
+        pane('exact', 'D:\\work\\code\\weave'),
+        pane('sub', 'D:\\work\\code\\weave\\packages'),
+        pane('prefix', 'D:\\work\\code\\weave-2'),
+        pane('none', null),
+        pane('other', 'D:\\work\\code\\other'),
+      ],
+      'D:\\work\\code\\weave',
+      'win32',
+    );
+    expect(hit.map((p) => p.id)).toEqual(['exact']);
+  });
+
+  it('win32 不分大小写、斜杠方向不分；posix 分大小写', () => {
+    const panes = [pane('a', 'D:/work/code/Weave'), pane('b', '/home/u/Weave')];
+    expect(panesAtDir(panes, 'd:\\work\\code\\weave', 'win32').map((p) => p.id)).toEqual(['a']);
+    expect(panesAtDir(panes, '/home/u/weave', 'linux').map((p) => p.id)).toEqual([]);
+    expect(panesAtDir(panes, '/home/u/Weave', 'linux').map((p) => p.id)).toEqual(['b']);
+  });
+
+  it('目录换过分隔符也能认回同一个（wezterm 的 cwd 是 / 形态）', () => {
+    expect(
+      panesAtDir([pane('p', 'D:/work/code/weave')], 'D:\\work\\code\\weave', 'win32').map(
+        (p) => p.id,
+      ),
+    ).toEqual(['p']);
   });
 });
