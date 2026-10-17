@@ -165,14 +165,19 @@
   animation: harness-run-codex 1.2s ease-in-out infinite;
 }
 
-/* 生成中滚动带：两份等长副本首尾相接，滚满一份（含那个空档）正好接回原处。 */
-@keyframes weave-ticker {
+/* 生成中滚动带：新事件一到，新的那条从下面滚进来顶掉旧的。 */
+@keyframes weave-ticker-in {
   from {
-    transform: translateX(0);
+    transform: translateY(100%);
+    opacity: 0;
   }
   to {
-    transform: translateX(-50%);
+    transform: translateY(0);
+    opacity: 1;
   }
+}
+.weave-ticker-in {
+  animation: weave-ticker-in 220ms ease-out;
 }
 
 /* ---- 移动端滑出抽屉动效（<lg 布局，一次滑入） ---- */

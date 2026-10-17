@@ -55,14 +55,8 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_MAX_COUNT = 8;
 
-/** 生成中那一行的滚动带：取多少条事件、滚几条、每条裁到多长。
- *  取得多是为了「只认本轮」筛掉旧轮的之后还剩得下几条。 */
+/** 生成中那一行的素材窗口：取最近多少条事件（展示只挑最新那条有内容的）。 */
 const LIVE_FETCH = 40;
-const LIVE_ITEMS = 3;
-const LIVE_CHARS = 40;
-/** 滚动速度（px/s）与两份副本之间的空档：慢到能读，一轮不至于拖太久。 */
-const TICKER_SPEED = 40;
-const TICKER_GAP = 24;
 
 /** 图片判据：MIME 或扩展名（移动浏览器的剪贴板项偶尔不带 type）。 */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -438,53 +432,16 @@ function CheckBox({ on, className }: { on: boolean; className?: string }) {
 }
 
 /**
- * 生成中那一行的滚动带：最近几条事件摘要（同事件链卡片口径）在单行里缓慢左移。
- * 装得下就静止——三五个字不值得摇一遍；装不下才起滚，两份等长副本错开一个空档
- * 首尾相接，滚满一份的位移刚好接回原处（`translateX(-50%)` 与 keyframes 同一口径）。
+ * 生成中那一行：只摆**最新**那条事件摘要（同事件链卡片口径）。新事件一到就换
+ * 一条——`key` 变即重挂，新的从下面滚进来（keyframes 见 index.css 的
+ * `weave-ticker-in`），于是一轮里这行一直在往上滚。
  */
-function EventTicker({ items }: { items: readonly string[] }) {
-  const boxRef = useRef<HTMLSpanElement>(null);
-  /** 量原文自然宽用的隐身副本（不进布局）：两种排版下的正文都不是它。 */
-  const probeRef = useRef<HTMLSpanElement>(null);
-  const [loop, setLoop] = useState<number | null>(null);
-  const text = items.join(' · ');
-
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box) return;
-    const measure = (): void => {
-      const w = probeRef.current?.scrollWidth ?? 0;
-      setLoop(w > box.clientWidth ? Math.max(8, Math.round((w + TICKER_GAP) / TICKER_SPEED)) : null);
-    };
-    measure();
-    // 弹窗能拖角改宽：变宽后装得下就该停下，不能只剩「过时地一直滚」
-    const ro = new ResizeObserver(measure);
-    ro.observe(box);
-    return () => ro.disconnect();
-  }, [text]);
-
+function EventTicker({ text }: { text: string }) {
   return (
-    <span ref={boxRef} className="relative min-w-0 flex-1 overflow-hidden">
-      <span
-        ref={probeRef}
-        aria-hidden
-        className="invisible absolute left-0 top-0 whitespace-nowrap"
-      >
+    <span className="relative min-w-0 flex-1 overflow-hidden">
+      <span key={text} className="weave-ticker-in block truncate whitespace-nowrap">
         {text}
       </span>
-      {loop === null ? (
-        <span className="block truncate whitespace-nowrap">{text}</span>
-      ) : (
-        <span
-          className="inline-flex w-max"
-          style={{ animation: `weave-ticker ${loop}s linear infinite` }}
-        >
-          <span className="whitespace-nowrap pr-6">{text}</span>
-          <span className="whitespace-nowrap pr-6" aria-hidden>
-            {text}
-          </span>
-        </span>
-      )}
     </span>
   );
 }
@@ -789,14 +746,17 @@ export function SessionMessages({
   const interrupted = status === 'interrupted';
   const generating = isGenerating(status, thread[thread.length - 1]?.role);
   /** 滚动带只认**本轮**的事（晚到事件里混着上一轮的尾巴，同一份素材还要跨轮）：
-   *  锚 = 最后一条用户条目的那个开轮事件，只取它之后的。 */
-  const liveItems = useMemo(() => {
+   *  锚 = 最后一条用户条目的那个开轮事件，只取它之后；从新往旧找第一条有正文的
+   *  （SessionStart 这类没有正文，不能让它把上一句顶成空白）。 */
+  const liveText = useMemo(() => {
     const from = [...thread].reverse().find((e) => e.role === 'user')?.eventId ?? 0;
-    return liveEvents
-      .filter((e) => e.id > from)
-      .map((e) => summarizeEvent(e).slice(0, LIVE_CHARS))
-      .filter((s) => s.length > 0)
-      .slice(-LIVE_ITEMS);
+    for (let i = liveEvents.length - 1; i >= 0; i--) {
+      const e = liveEvents[i]!;
+      if (e.id <= from) break;
+      const text = summarizeEvent(e).trim();
+      if (text) return text;
+    }
+    return null;
   }, [liveEvents, thread]);
   /** 尾部签名 = 尾条 + 在途尾行：「生成中…」那行一出现也是尾部进了新内容，只认
    *  尾条键会让刚发送时气泡滚到了底、提示行却留在视口外（下次打开才对）。 */
@@ -1524,8 +1484,8 @@ export function SessionMessages({
                         t('tasks.msgInterrupted')
                       ) : compacting ? (
                         t('tasks.msgCompacting')
-                      ) : liveItems.length > 0 ? (
-                        <EventTicker items={liveItems} />
+                      ) : liveText ? (
+                        <EventTicker text={liveText} />
                       ) : (
                         t('tasks.msgGenerating')
                       )}
