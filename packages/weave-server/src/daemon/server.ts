@@ -1768,6 +1768,20 @@ function isPublicRequest(
   );
 }
 
+/**
+ * 静态件的缓存口径：`/assets/` 下是 vite 的内容哈希文件名（内容不变则名不变），
+ * 可长缓存；其余（index.html、sw.js、图标）名字恒定而内容会变——尤其是 sw.js
+ * 被长缓存会让 Web Push 的更新卡死在旧版，一律 no-cache（走 ETag 协商）。
+ */
+function setStaticCache(res: ServerResponse, pathname: string): void {
+  res.setHeader(
+    'cache-control',
+    pathname.startsWith('/assets/')
+      ? 'public, max-age=31536000, immutable'
+      : 'no-cache',
+  );
+}
+
 /** Serve a static file from `staticDir`, falling back to index.html (SPA). */
 function serveStatic(res: ServerResponse, pathname: string, staticDir: string): void {
   const safe = path.normalize(pathname).replace(/^([/\\]\.\.[/\\])+/, '');
@@ -1781,6 +1795,8 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string): 
   fs.stat(filePath, (err, stat) => {
     if (!err && stat.isFile()) {
       res.setHeader('content-type', mime(filePath));
+      setStaticCache(res, pathname);
+      res.setHeader('content-length', String(stat.size));
       fs.createReadStream(filePath).pipe(res);
       return;
     }
@@ -1793,6 +1809,7 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string): 
         return;
       }
       res.setHeader('content-type', 'text/html');
+      res.setHeader('cache-control', 'no-cache');
       res.end(data);
     });
   });
