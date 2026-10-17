@@ -105,4 +105,32 @@ describe('SessionProbe', () => {
     expect(probe.currentModel('s1')).toBe('ftm');
     expect(probe.currentMode('s1')).toBe('plan');
   });
+
+  it('尾窗读空不擦掉最后已知——会话完成后文件不再增长，那口 null 会钉死成「未知」', () => {
+    const file = tmpFile();
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({ type: 'assistant', permissionMode: 'plan', message: { model: 'opus' } }),
+        JSON.stringify({ type: 'user', permissionMode: 'bypassPermissions' }),
+      ].join('\n') + '\n',
+    );
+    const probe = new SessionProbe();
+    probe.noteTranscript('s1', file);
+    expect(probe.currentModel('s1')).toBe('opus');
+    expect(probe.currentMode('s1')).toBe('bypassPermissions');
+
+    // 一轮的大记录（> 64KB 单行）把上面两条挤出尾窗：读空，但不能掉回未知
+    appendFileSync(
+      file,
+      JSON.stringify({ type: 'user', toolUseResult: 'x'.repeat(70 * 1024) }) + '\n',
+    );
+    expect(probe.currentModel('s1')).toBe('opus');
+    expect(probe.currentMode('s1')).toBe('bypassPermissions');
+
+    // 闩随会话走：forget 之后照旧 null（不猜）
+    probe.forget('s1');
+    expect(probe.currentModel('s1')).toBeNull();
+    expect(probe.currentMode('s1')).toBeNull();
+  });
 });

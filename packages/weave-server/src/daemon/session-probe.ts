@@ -14,6 +14,9 @@ import { currentModelAt, currentModeAt, interruptMarkerAt } from '@weavecode/har
 /** 尾读字节数：中断标记落在这一轮末尾（其后最多几条收尾/附属记录），64KB 足够。 */
 const TAIL_BYTES = 64 * 1024;
 
+/** 没有可答的事实（未登记路径）。 */
+const NO_FACTS = { model: null, mode: null } as const;
+
 /** 读文件尾部（读不到 → null，不猜）。 */
 export function readTail(path: string, bytes = TAIL_BYTES): string | null {
   try {
@@ -45,6 +48,8 @@ export class SessionProbe {
   private readonly paths = new Map<string, string>();
   /** 路径 → 上次读到的事实（按文件大小缓存：没长过就不重读）。 */
   private readonly marks = new Map<string, TailFacts>();
+  /** sessionId → 最后已知的模型/模式（读到就记；见 `latched`）。 */
+  private readonly known = new Map<string, { model: string | null; mode: string | null }>();
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
@@ -52,6 +57,7 @@ export class SessionProbe {
 
   forget(sessionId: string): void {
     this.paths.delete(sessionId);
+    this.known.delete(sessionId);
   }
 
   /**
@@ -70,16 +76,30 @@ export class SessionProbe {
 
   /** 最近一轮真跑过的模型（转录 `message.model`）；未知/读不到一律 null（不猜）。 */
   currentModel(sessionId: string): string | null {
-    const path = this.paths.get(sessionId);
-    if (!path) return null;
-    return this.factsOf(path).model;
+    return this.latched(sessionId).model;
   }
 
   /** 最后一次活动时的执行模式（转录 `permissionMode`）；Shift+Tab 不留痕，故是「最后已知」。 */
   currentMode(sessionId: string): string | null {
+    return this.latched(sessionId).mode;
+  }
+
+  /**
+   * 模型/模式在 UI 上承诺的是**最后已知**，不是「此刻尾窗里有没有」：尾窗只有 64KB，
+   * 一轮的尾巴若被一条大记录占满、或刚压缩完还没有 assistant 条目，这一拍就什么
+   * 都读不到。更要命的是读空的那一拍会按文件大小被缓存住——会话一完成文件不再
+   * 增长，那口 null 就钉死了，界面上直接掉回「未知」。故读到就记住，读空沿用：
+   * 值只会被**更新的值**替换，不会被读空擦掉。中断标记不参与闩（它按「晚于最后
+   * 一条事件」判，陈旧标记必须能被新事件盖过）。
+   */
+  private latched(sessionId: string): { model: string | null; mode: string | null } {
     const path = this.paths.get(sessionId);
-    if (!path) return null;
-    return this.factsOf(path).mode;
+    if (!path) return NO_FACTS;
+    const facts = this.factsOf(path);
+    const prev = this.known.get(sessionId);
+    const next = { model: facts.model ?? prev?.model ?? null, mode: facts.mode ?? prev?.mode ?? null };
+    if (!prev || prev.model !== next.model || prev.mode !== next.mode) this.known.set(sessionId, next);
+    return next;
   }
 
   private factsOf(path: string): TailFacts {
