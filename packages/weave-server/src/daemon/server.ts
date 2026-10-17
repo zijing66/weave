@@ -101,6 +101,7 @@ import { detectUpdates } from '../install/updates.js';
 import { detectPluginTemplateUpdates } from '../install/plugin-templates.js';
 import { detectInitFileUpdates, needsInit } from '../install/init-files.js';
 import { readBody, sendJson } from './http.js';
+import { ApiLogger } from './api-log.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import { handleCaptureRoutes } from './capture-routes.js';
@@ -155,6 +156,8 @@ export interface WeaveServerDeps {
   libraries?: LibraryRepository;
   /** Content-fingerprint cache for update detection; created if absent. */
   fingerprintCache?: FingerprintCache;
+  /** 接口日志（出入参 + 耗时按小时 JSONL；GET /api-logs 查询）；缺省 <dataDir>/logs/api。 */
+  apiLog?: ApiLogger;
   /** Directory of the built SPA to statically host; optional. */
   staticDir?: string;
   /** Directory-opening backend for the project context menu; spied in tests. */
@@ -231,8 +234,10 @@ export function weaveRequestHandler(
 ): (req: IncomingMessage, res: ServerResponse) => void {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
-  const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache };
+  const apiLog = deps.apiLog ?? new ApiLogger();
+  const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache, apiLog };
   return (req, res) => {
+    apiLog.begin(req, res);
     void handleRequest(req, res, serverDeps);
   };
 }
@@ -282,6 +287,26 @@ async function handleRequest(
       sendJson(res, 401, { error: 'Unauthorized' });
       return;
     }
+  }
+
+  // GET /api-logs —— 接口日志查询（只读面；写入侧见 daemon/api-log.ts）。
+  if (pathname === '/api-logs' && req.method === 'GET') {
+    if (!deps.apiLog) {
+      sendJson(res, 503, { error: 'API log unavailable' });
+      return;
+    }
+    const statusRaw = url.searchParams.get('status');
+    const limitRaw = url.searchParams.get('limit');
+    const result = await deps.apiLog.query({
+      from: url.searchParams.get('from') ?? undefined,
+      to: url.searchParams.get('to') ?? undefined,
+      path: url.searchParams.get('path') ?? undefined,
+      method: url.searchParams.get('method') ?? undefined,
+      status: statusRaw == null ? undefined : Number(statusRaw),
+      limit: limitRaw == null ? undefined : Number(limitRaw),
+    });
+    sendJson(res, 200, result);
+    return;
   }
 
   // D3 hooks 子路由（规则/派发/会话）——未命中返回 false，主链继续。

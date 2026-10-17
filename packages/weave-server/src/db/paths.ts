@@ -40,3 +40,8 @@ export function getPushKeysPath(): string {
 export function getUploadsDir(): string {
   return path.join(getDataDir(), 'uploads');
 }
+
+/** 接口日志根（按小时 JSONL：`api-YYYY-MM-DDTHH.jsonl`，见 daemon/api-log.ts）。 */
+export function getApiLogsDir(): string {
+  return path.join(getDataDir(), 'logs', 'api');
+}

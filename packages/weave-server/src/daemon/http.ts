@@ -1,11 +1,16 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { noteRequestBody } from './api-log.js';
 
 /** Collect the request body into a string. */
 export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      noteRequestBody(req, text);
+      resolve(text);
+    });
     req.on('error', reject);
   });
 }
