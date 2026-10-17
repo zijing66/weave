@@ -23,6 +23,7 @@ import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
+import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
@@ -185,6 +186,7 @@ export function startDaemon(): void {
   // Web Push 发送器（提醒第三条腿）：dashboard 订阅 fire 时向全部浏览器订阅
   // 推送——页面关着本地通知路径全死，只有厂商推送服务能唤起 SW。
   const pushSubscriptions = new PushSubscriptionRepository(db);
+  const uploads = new UploadRepository(db);
   const pushNotifier = new PushNotifier({
     subscriptions: pushSubscriptions,
     sessions: hookSessions,
@@ -320,6 +322,7 @@ export function startDaemon(): void {
     messagePipe: messageDeliverer,
     questionTracker,
     sessionProbe,
+    uploads,
   });
   const staticDir = resolveStaticDir();
 
@@ -348,6 +351,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    uploads,
     questionTracker,
     sessionWatches,
     watchEngine,

@@ -2099,7 +2099,7 @@ describe('MessageDeliverer 裁决表', () => {
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
         ok: false,
         status: 409,
-        error: '找不到会话所在的终端窗口（只有 wezterm 里的会话能被远程击键）',
+        error: '找不到会话所在的终端窗口——这个会话所在终端没有可用的远程击键通道',
       });
       await expect(new MessageDeliverer(makeDeps()).interrupt(SESSION_ID)).resolves.toMatchObject({
         ok: false,
@@ -2186,5 +2186,150 @@ describe('MessageDeliverer 裁决表', () => {
         status: 409,
       });
     });
+  });
+
+  // ---- 图片随 prompt（harness `imageAttach` 对齐面）：投递文本现合成、回执放宽 ----
+
+  /** 与 claude 同形态：图引用 = 裸绝对路径，每张一行，落在用户原文之后。 */
+  const CLAUDE_ATTACH = {
+    composePrompt: (text: string, images: readonly { path: string }[]) =>
+      text ? `${text}\n\n${images.map((i) => i.path).join('\n')}` : images.map((i) => i.path).join('\n'),
+  };
+
+  const oneImage = (path = 'D:/up/aa.png') => [
+    { id: 'a'.repeat(64), name: 'aa.png', mediaType: 'image/png', path },
+  ];
+
+  const surfaceWithImages = (resolve: (sessionId: string) => { name: string } | null = () => ({ name: PEER_NAME })) => {
+    const base = relaySurface(resolve);
+    return { ...base, surface: { ...base.surface, imageAttach: CLAUDE_ATTACH } };
+  };
+
+  it('带图投递：harness 的 imageAttach 为 null → 409，不发号不投递', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(); // 没有 imageAttach
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hi',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it('带图投递：投递文本 = 原文 + 路径引用，msg.text 仍是用户原文', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '看看这个',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    expect(sendText).toHaveBeenCalledWith('pane-1', '看看这个\n\nD:/up/aa.png');
+    const id = (result as { messageId: string }).messageId;
+    expect(deliverer.getMessage(id)).toMatchObject({ text: '看看这个' });
+    expect(deliverer.getMessage(id)?.images?.[0]?.path).toBe('D:/up/aa.png');
+  });
+
+  it('队列行随附图落盘：重启后冲洗仍按现 harness 面重合成', async () => {
+    const { surface } = surfaceWithImages(() => null); // 无终端、无 peer → 只能入队
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
+    pushEvent(SESSION_ID, 'Stop');
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '排队这条',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    const queued = readPromptbox(hooksDir, TOKEN).filter((e) => e.sessionId === SESSION_ID);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.images?.[0]).toMatchObject({ path: 'D:/up/aa.png', name: 'aa.png' });
+    expect(queued[0]?.text).toBe('排队这条');
+  });
+
+  it('纯图发送：UPS 的 prompt 是空的也算回执，且把图 id 交出来挂事件', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(deliverer.onSessionPrompt(SESSION_ID, '')).toEqual(['a'.repeat(64)]);
+    expect(deliverer.getMessage(id)?.acked).toBe(true);
+  });
+
+  it('带图的消息比对放宽一档：粘贴处理把多行 chunk 连成一行也能认领', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '第一行正文\n第二行正文（够长）',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    const id = (result as { messageId: string }).messageId;
+    // claude 粘贴处理会把多行 chunk 用空串连起来——回执原文与 msg.text 差在空白上
+    deliverer.onSessionPrompt(SESSION_ID, '第一行正文第二行正文（够长）');
+    expect(deliverer.getMessage(id)?.acked).toBe(true);
+  });
+
+  it('纯图发送不会被无关的非空 UPS 认领（认领条件 = 空 prompt）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(deliverer.onSessionPrompt(SESSION_ID, '我自己另敲的一句话')).toEqual([]);
+    expect(deliverer.getMessage(id)?.acked).toBeUndefined();
   });
 });

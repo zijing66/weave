@@ -65,11 +65,23 @@ export type PipeStatus =
   | 'failed'
   | 'timeout'; // headless 终态（内存驻留）
 
+/** 随 prompt 投递的图（上传件引用；路径 = 落盘件的绝对路径，harness 合成引用形态）。 */
+export interface MessageImage {
+  id: string;
+  name: string;
+  mediaType: string;
+  path: string;
+}
+
 /** 管道消息（内存态；发号 = uuid，全生命周期稳定）。 */
 export interface PipeMessage {
   id: string;
   sessionId: string;
+  /** **用户原文**（回执比对、气泡文案都用它）；投递出去的文本是它经 harness
+   *  `imageAttach.composePrompt` 合成的形态（带图时追加图引用），见 `wireTextOf`。 */
   text: string;
+  /** 随附图（空/缺省 = 纯文本消息）。 */
+  images?: MessageImage[];
   mode: MessageMode;
   /** 单向注入（手动面：无接收方会话，中继载荷带「无需回复」注记）；编排域不置。 */
   oneWay?: boolean;
@@ -163,6 +175,8 @@ export interface SendInput {
   fromSessionId?: string | null;
   /** 单向注入（手动面置 true：无接收方会话）；编排域省略 = 双向对话保留。 */
   oneWay?: boolean;
+  /** 随附图（已落盘的上传件）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
+  images?: readonly MessageImage[];
 }
 
 /** send() 返回：ok 由路由映射 200，否则 status 即 HTTP 码。 */
@@ -282,6 +296,11 @@ function normalizePromptText(text: string): string {
     .trim();
 }
 
+/** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
+function stripSpace(text: string): string {
+  return text.replace(/\s+/g, '');
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MessageDeliverer {
@@ -332,6 +351,12 @@ export class MessageDeliverer {
       return { ok: false, status: 400, error: 'Session has no hook events to determine its harness' };
     }
 
+    // 图片随 prompt 的对齐面归 harness（`imageAttach`）；null = 该 harness 不收图。
+    const images: MessageImage[] = input.images ? [...input.images] : [];
+    if (images.length > 0 && !surface.imageAttach) {
+      return { ok: false, status: 409, error: 'This harness cannot receive images' };
+    }
+
     const channel = this.resolveChannel(input.mode, input.toSessionId, surface);
     if (typeof channel !== 'string') return { ok: false, status: 409, error: channel.reason };
 
@@ -356,6 +381,7 @@ export class MessageDeliverer {
       id: randomUUID(),
       sessionId: input.toSessionId,
       text: input.text,
+      ...(images.length > 0 ? { images } : {}),
       mode: input.mode,
       oneWay: input.oneWay === true,
       channel,
@@ -405,6 +431,7 @@ export class MessageDeliverer {
             id: entry.id,
             sessionId,
             text: entry.text,
+            ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
             mode: 'prompt',
             oneWay: entry.oneWay === true,
             channel: 'prompt',
@@ -570,15 +597,24 @@ export class MessageDeliverer {
   /**
    * 投递回执：会话自己的 UserPromptSubmit 到了 —— 其 prompt 原文与在途条目匹配
    * 即成真（`acked`）。中继/终端/socket 三路通用（中继的原文外面裹着 Claude Code
-   * 自己的 `<cross-session-message …>` 壳，比对时归一掉）。
+   * 自己的 `<cross-session-message …>` 壳，比对时归一掉）。返回命中消息的随附图
+   * id（调用方挂到开轮事件上做气泡缩略图；空表 = 命中但没图 / 没命中）。
+   *
+   * 带图的消息比对放宽：claude 的粘贴处理器把图路径从 prompt 剥掉、还会把多行
+   * 文本 chunk 用空串连起来，`msg.text` 与 UPS 原文可能对不上——对不上不代表
+   * 没送达，按「去空白后相同」再认一次；纯图发送（无用户文本）的 UPS prompt 是
+   * 空的 / 只剩 `[Image #N]`，无文本可比，这样一条 UPS 认领最新那条纯图在途。
    */
-  onSessionPrompt(sessionId: string, prompt: string): void {
-    const seen = normalizePromptText(prompt);
-    if (!seen) return;
+  onSessionPrompt(sessionId: string, prompt: string): string[] {
+    const seenRaw = normalizePromptText(prompt);
+    const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
     for (const msg of [...this.memory.values()].reverse()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
-      if (!want || want.length < ACK_MIN_TEXT || !seen.includes(want)) continue;
+      const textHit = !!want && want.length >= ACK_MIN_TEXT && seenRaw.includes(want);
+      const imageHit =
+        (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
+      if (!textHit && !imageHit) continue;
       this.memory.set(msg.id, { ...msg, acked: true, stalled: false });
       // 回执命中暂停闸成因 → 闸解除：若还有积压，继续排空（不必等下一次事件）
       if (this.stalled.get(sessionId)?.messageId === msg.id) {
@@ -591,8 +627,9 @@ export class MessageDeliverer {
         sessionId,
         at: new Date().toISOString(),
       });
-      return; // 一条 UPS 只核销一条在途（新→旧找第一条匹配）
+      return msg.images?.map((i) => i.id) ?? []; // 一条 UPS 只核销一条在途（新→旧找第一条匹配）
     }
+    return [];
   }
 
   /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */
@@ -727,7 +764,7 @@ export class MessageDeliverer {
       return {
         ok: false,
         status: 409,
-        error: '找不到会话所在的终端窗口（只有 wezterm 里的会话能被远程击键）',
+        error: '找不到会话所在的终端窗口——这个会话所在终端没有可用的远程击键通道',
       };
     }
     return { ok: true, terminal, paneId: pane.id };
@@ -876,6 +913,7 @@ export class MessageDeliverer {
         id: entry.id,
         sessionId,
         text: entry.text,
+        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
         mode: 'prompt',
         oneWay: entry.oneWay === true,
         via: 'socket',
@@ -912,7 +950,7 @@ export class MessageDeliverer {
           if (pane) {
             removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
             this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
-            await this.runTerminalPrompt(msg.id, pane.id, msg.text);
+            await this.runTerminalPrompt(msg.id, pane.id, this.wireTextOf(msg));
             delivered++;
             handled = true;
             break;
@@ -1108,7 +1146,7 @@ export class MessageDeliverer {
         const pane = await this.terminalPaneFor(session, project);
         if (pane) {
           this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
-          void this.runTerminalPrompt(entry.id, pane.id, entry.text);
+          void this.runTerminalPrompt(entry.id, pane.id, this.wireTextOf(entry));
           return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
         }
       }
@@ -1134,7 +1172,7 @@ export class MessageDeliverer {
     if (!spec || entry.oneWay !== true || !target) return null;
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
     try {
-      await deliverViaInboxSocket(spec, target, `${INBOX_SOURCE_PREFIX}${entry.text}`);
+      await deliverViaInboxSocket(spec, target, `${INBOX_SOURCE_PREFIX}${this.wireTextOf(entry)}`);
     } catch {
       // 凭据失效（resume 后 socket 名重生成等）：回落，不留痕
       this.memory.delete(entry.id);
@@ -1155,7 +1193,13 @@ export class MessageDeliverer {
   /** 入队（promptbox 追加 + 会话索引登记）。 */
   private queueEntry(entry: PipeMessage, token: string): void {
     appendPromptbox(this.hooksDir, token, [
-      { id: entry.id, sessionId: entry.sessionId, text: entry.text, oneWay: entry.oneWay === true },
+      {
+        id: entry.id,
+        sessionId: entry.sessionId,
+        text: entry.text,
+        oneWay: entry.oneWay === true,
+        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
+      },
     ]);
     this.queuedSessions.add(entry.sessionId);
   }
@@ -1209,6 +1253,7 @@ export class MessageDeliverer {
         id: entry.id,
         sessionId,
         text: entry.text,
+        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
         mode: 'prompt',
         oneWay: entry.oneWay === true,
         channel: 'prompt',
@@ -1229,7 +1274,7 @@ export class MessageDeliverer {
       return this.headless.run({
         sessionId: `prompt-relay:${entry.sessionId}`,
         cwd: relayCwd(),
-        prompt: relay.instruction(peerName, entry.text, { oneWay: entry.oneWay === true }),
+        prompt: relay.instruction(peerName, this.wireTextOf(entry), { oneWay: entry.oneWay === true }),
         spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
         timeoutMs: this.deps.relayTimeoutMs ?? 0,
@@ -1327,6 +1372,17 @@ export class MessageDeliverer {
     }
   }
 
+  /**
+   * 投递文本 = 用户原文经 harness `imageAttach.composePrompt` 现合成（带图时在
+   * 原文后追加图引用形态）。**只在投递那一刻合成**——`msg.text` 恒为用户原文
+   * （回执比对与气泡文案都要它），队列行也不存合成结果（换 harness 后仍按现面合成）。
+   */
+  private wireTextOf(entry: PipeMessage): string {
+    const imgs = entry.images;
+    if (!imgs || imgs.length === 0) return entry.text;
+    return this.surfaceOfSession(entry.sessionId)?.imageAttach?.composePrompt(entry.text, imgs) ?? entry.text;
+  }
+
   /** inject 通道：信封写 outbox → injected（fire-and-forget 语义）。 */
   private deliverInject(
     entry: PipeMessage,
@@ -1334,7 +1390,7 @@ export class MessageDeliverer {
     meta: MessageMeta,
     surface: MessagingSurface,
   ): SendResult {
-    const envelope = this.renderEnvelope(entry.text, meta, surface);
+    const envelope = this.renderEnvelope(this.wireTextOf(entry), meta, surface);
     appendOutbox(this.hooksDir, token, [{ sessionId: entry.sessionId, text: envelope }]);
     const msg: PipeMessage = { ...entry, status: 'injected', settledAt: new Date().toISOString() };
     this.memory.set(msg.id, msg);
@@ -1362,7 +1418,7 @@ export class MessageDeliverer {
       const started = this.headless.run({
         sessionId: msg.sessionId,
         cwd,
-        prompt: this.renderEnvelope(msg.text, meta, surface),
+        prompt: this.renderEnvelope(this.wireTextOf(msg), meta, surface),
         spec,
         bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? spec.bin,
         timeoutMs: this.deps.timeoutMs,

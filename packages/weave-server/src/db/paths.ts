@@ -35,3 +35,8 @@ export function getAiKeyPath(): string {
 export function getPushKeysPath(): string {
   return path.join(getDataDir(), 'push.json');
 }
+
+/** 会话图片上传的落盘根（内容寻址 `<sha256>.<ext>`；绝对路径由 harness 引用）。 */
+export function getUploadsDir(): string {
+  return path.join(getDataDir(), 'uploads');
+}

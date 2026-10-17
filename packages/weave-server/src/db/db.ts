@@ -146,6 +146,24 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   user_agent TEXT,
   created_at TEXT NOT NULL
 );
+
+-- 会话图片上传：内容寻址 id = sha256（天然去重），文件落 <dataDir>/uploads/。
+-- 上传 ≠ 投递（资源三层里的「装到目标位」）；与会话的关系经 event_images。
+CREATE TABLE IF NOT EXISTS uploads (
+  id         TEXT PRIMARY KEY,
+  media_type TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- 消息随附的图（对话气泡的缩略图）：挂在**开轮事件**上——消息域不落库，
+-- 图的归宿是会话自己的转录事件，这里只存指针。随 hook_events 级联删。
+CREATE TABLE IF NOT EXISTS event_images (
+  event_id  INTEGER NOT NULL REFERENCES hook_events(id) ON DELETE CASCADE,
+  upload_id TEXT NOT NULL,
+  PRIMARY KEY (event_id, upload_id)
+);
 `;
 
 /** Open (creating + migrating if needed) the weave database. */

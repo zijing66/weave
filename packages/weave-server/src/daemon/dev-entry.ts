@@ -28,6 +28,7 @@ import { QuestionTracker } from '../hooks/question-tracker.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
+import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
@@ -180,6 +181,7 @@ async function main(): Promise<void> {
   });
   // Web Push 发送器（与生产入口同一装配）：fire 时向浏览器推送订阅投递。
   const pushSubscriptions = new PushSubscriptionRepository(db);
+  const uploads = new UploadRepository(db);
   const pushNotifier = new PushNotifier({
     subscriptions: pushSubscriptions,
     sessions: hookSessions,
@@ -302,6 +304,7 @@ async function main(): Promise<void> {
     messagePipe: messageDeliverer,
     questionTracker,
     sessionProbe,
+    uploads,
   });
   const staticDir = resolveStaticDir();
 
@@ -329,6 +332,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    uploads,
     questionTracker,
     sessionWatches,
     watchEngine,

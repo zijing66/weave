@@ -318,8 +318,8 @@ export interface IngestedHandlerDeps {
     noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
     /** hook 旁路上报的会话 pane 定位 env（内存态；层② 精确定位用）。 */
     notePaneEnv?(sessionId: string, env: Record<string, string>): void;
-    /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）。 */
-    onSessionPrompt?(sessionId: string, prompt: string): void;
+    /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。 */
+    onSessionPrompt?(sessionId: string, prompt: string): string[];
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
@@ -327,6 +327,8 @@ export interface IngestedHandlerDeps {
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）。 */
   sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
+  /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
+  uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
 }
 
 /**
@@ -375,10 +377,11 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // 转录路径（中断态探测）：与 pane env 同口径——每次事件覆盖刷新、只留内存。
       deps.sessionProbe?.noteTranscript(record.input.sessionId, payload?.transcriptPath ?? null);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
-      // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）
+      // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
+      // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。
       if (record.input.eventType === 'UserPromptSubmit') {
-        const prompt = promptTextOf(payload);
-        if (prompt) deps.messagePipe?.onSessionPrompt?.(record.input.sessionId, prompt);
+        const ids = deps.messagePipe?.onSessionPrompt?.(record.input.sessionId, promptTextOf(payload) ?? '') ?? [];
+        if (ids.length > 0) deps.uploads?.linkToEvent(record.eventId, ids);
       }
       // 会话退出（谁是退出事件归 harness 生命周期表）：旁路事实随进程作废——
       // inbox 凭据出盘、pane 定位清，压队的行也已成死信（sessionExited 内一并落定）。

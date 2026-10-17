@@ -32,6 +32,7 @@ import type { SessionSequenceRepository } from '../repositories/session-sequence
 import type { SequenceEngine } from '../hooks/sequence-engine.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
+import type { UploadRepository } from '../repositories/uploads.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { getLibraryScan, invalidateScan } from '../install/scan-cache.js';
@@ -187,6 +188,8 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
+  /** 会话图片上传件（内容寻址落盘 + event_images 指针）；/uploads 与 /images/:id 依赖它。 */
+  uploads?: UploadRepository;
   /** 阻塞问答跟踪器（AskUserQuestion / 计划与权限确认）；/messaging/questions 与 /sessions/:id/answer 依赖它。 */
   questionTracker?: QuestionTracker;
   /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
@@ -309,8 +312,14 @@ async function handleRequest(
     // sessionId 过滤语义（任务视图按会话画事件链）：projectId 仅作鉴权锚点——
     // 会话可能采集到跨项目事件，双条件过滤会丢事件。
     if (sessionId) {
+      const events = deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId, types);
+      // 消息随附图（对话气泡缩略图）：挂在开轮事件上，逐行带回。
+      const images = deps.uploads?.imagesBySession(sessionId);
       sendJson(res, 200, {
-        events: deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId, types),
+        events: events.map((e) => {
+          const rows = images?.get(e.id);
+          return rows?.length ? { ...e, images: rows.map((r) => ({ id: r.id, name: r.name, mediaType: r.mediaType })) } : e;
+        }),
       });
       return;
     }

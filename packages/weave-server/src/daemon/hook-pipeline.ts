@@ -37,6 +37,8 @@ export interface HookPipelineDeps {
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 会话转录路径上报（中断态探测；同 pane env 口径）。 */
   sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
+  /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */
+  uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -156,6 +158,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
         sessionProbe: deps.sessionProbe,
+        uploads: deps.uploads,
       },
       records,
     );

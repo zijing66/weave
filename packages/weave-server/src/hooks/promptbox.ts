@@ -11,6 +11,14 @@ import { hookShardId } from './mirror.js';
 
 export const PROMPTBOX_MAX_LINES = 200;
 
+/** 队列行的随附图（引用上传件；路径也落盘，重启后冲洗才能重合成投递文本）。 */
+export interface PromptboxImage {
+  id: string;
+  name: string;
+  mediaType: string;
+  path: string;
+}
+
 /** 队列行：id = 管道发号（MessageDeliverer 的 uuid），daemon 重启后仍可追溯。 */
 export interface PromptboxEntry {
   id: string;
@@ -18,6 +26,8 @@ export interface PromptboxEntry {
   text: string;
   /** 单向注入（手动面）——随行落盘，重启后冲洗仍带「无需回复」注记。 */
   oneWay?: boolean;
+  /** 随附图：`text` 恒为用户原文，投递文本由 harness `imageAttach` 现合成。 */
+  images?: PromptboxImage[];
   at: string;
 }
 
@@ -32,11 +42,18 @@ function parseLines(text: string): PromptboxEntry[] {
     try {
       const raw = JSON.parse(line) as Partial<PromptboxEntry>;
       if (typeof raw.id === 'string' && typeof raw.sessionId === 'string' && typeof raw.text === 'string') {
+        const images = Array.isArray(raw.images)
+          ? raw.images.filter(
+              (i): i is PromptboxImage =>
+                typeof i?.id === 'string' && typeof i?.name === 'string' && typeof i?.mediaType === 'string' && typeof i?.path === 'string',
+            )
+          : [];
         out.push({
           id: raw.id,
           sessionId: raw.sessionId,
           text: raw.text,
           oneWay: raw.oneWay === true,
+          ...(images.length > 0 ? { images } : {}),
           at: typeof raw.at === 'string' ? raw.at : '',
         });
       }
@@ -51,7 +68,7 @@ function parseLines(text: string): PromptboxEntry[] {
 export function appendPromptbox(
   hooksDir: string,
   token: string,
-  entries: Array<{ id: string; sessionId: string; text: string; oneWay?: boolean }>,
+  entries: Array<{ id: string; sessionId: string; text: string; oneWay?: boolean; images?: PromptboxImage[] }>,
 ): void {
   if (entries.length === 0) return;
   try {
