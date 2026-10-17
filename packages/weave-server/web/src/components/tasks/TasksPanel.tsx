@@ -556,6 +556,18 @@ export function TasksPanel({
     [fb],
   );
 
+  /** 关 pane（退出会话）：先弹应用内确认（closePaneTarget）——一键杀宿主的键，
+      误触代价太大，红按钮 + 二次确认都为它设。确认后走 runClosePane。 */
+  const [closePaneTarget, setClosePaneTarget] = useState<{ sessionId: string; label: string } | null>(null);
+  const handleClosePane = useCallback(
+    (sessionId: string) => {
+      const row = sessions?.find((s) => s.sessionId === sessionId);
+      const label = row ? sessionLabel(row.title, row.sessionId) : sessionId.slice(0, 8);
+      setClosePaneTarget({ sessionId, label });
+    },
+    [sessions],
+  );
+
   /** 关掉会话所在的 pane（退出会话）：宿主随 pane 一起退出，会话行与它的对话
       照常保留（那是历史），之后仍可 --resume 接回。fb 键按会话隔离，loading 挂到
       图标熄灭为止（同开终端口径——「已关、绿还没暗」的空窗里按钮转圈点不动）。
@@ -1213,7 +1225,7 @@ export function TasksPanel({
             onDropDispatch={onDropDispatch}
             onOpenTerminal={onOpenTerminal}
             openTerminalStateOf={openTerminalStateOf}
-            onClosePane={runClosePane}
+            onClosePane={handleClosePane}
             closePaneStateOf={closePaneStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
@@ -1301,6 +1313,18 @@ export function TasksPanel({
         confirmLabel={t('common.confirm')}
         onConfirm={confirmDeleteSession}
         onClose={() => setDeleteTarget(null)}
+      />
+
+      {/* 关 pane 确认弹窗：杀掉宿主进程，必须二次确认 */}
+      <ConfirmDialog
+        open={closePaneTarget !== null}
+        title={t('tasks.closePaneTitle')}
+        message={closePaneTarget ? t('tasks.closePaneConfirm', { id: closePaneTarget.label }) : ''}
+        confirmLabel={t('common.confirm')}
+        onConfirm={() => {
+          if (closePaneTarget) runClosePane(closePaneTarget.sessionId);
+        }}
+        onClose={() => setClosePaneTarget(null)}
       />
 
       {/* 会话终端附加：项目开着多个终端时才弹窗选（列表按最近活跃排序） */}

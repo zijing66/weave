@@ -33,6 +33,9 @@ export const appZh = {
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
   'project.closeTerminal': '关闭该项目的 {n} 个终端（只关 cwd 在项目里的 pane）',
+  'project.closeTerminalTitle': '关闭终端',
+  'project.closeTerminalConfirm':
+    '关闭项目「{name}」的 {n} 个终端？其中的会话宿主会随 pane 一起退出；只关 cwd 在项目里的 pane，窗口里别的不动。',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
@@ -132,6 +135,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.dragToReorder': 'Drag to reorder',
   'project.terminalsOpen': '{n} terminal(s) open',
   'project.closeTerminal': "Close this project's {n} terminal(s) (only panes whose cwd is the project)",
+  'project.closeTerminalTitle': 'Close terminal',
+  'project.closeTerminalConfirm':
+    'Close {n} terminal(s) for project “{name}”? Their session hosts exit with the panes — only panes whose cwd is the project are touched, anything else in the window stays.',
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   'project.needsInit': 'needs init',

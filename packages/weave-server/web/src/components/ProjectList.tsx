@@ -128,6 +128,8 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
+  // 待确认关终端的项目：行内按钮设入（n 记下手柄那一刻的窗口数，弹窗文案不重查）
+  const [closeTermTarget, setCloseTermTarget] = useState<{ project: ProjectRow; n: number } | null>(null);
   // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
@@ -405,11 +407,13 @@ export function ProjectList({
                   )}
                 </span>
                 {/* 关闭终端：有终端开着才出现（0 个没得关，不占位）——关的是 cwd
-                    恰为本项目目录的那些 pane，窗口里顺手开着的别的目录不动。 */}
+                    恰为本项目目录的那些 pane，窗口里顺手开着的别的目录不动。
+                    红色 + 二次确认：一键杀掉整批会话宿主，误触代价太大。 */}
                 {terminals > 0 && onCloseTerminal && (
                   <QuickButton
+                    danger
                     title={t('project.closeTerminal', { n: terminals })}
-                    onClick={() => onCloseTerminal(p)}
+                    onClick={() => setCloseTermTarget({ project: p, n: terminals })}
                   >
                     <FeedbackIcon
                       state={closeTerminalStateOf?.(p.id) ?? 'idle'}
@@ -504,6 +508,25 @@ export function ProjectList({
         onClose={() => setConfirmTarget(null)}
       />
 
+      {/* 关终端确认弹窗：一次杀掉整批会话宿主，必须二次确认 */}
+      <ConfirmDialog
+        open={closeTermTarget !== null}
+        title={t('project.closeTerminalTitle')}
+        message={
+          closeTermTarget
+            ? t('project.closeTerminalConfirm', {
+                name: closeTermTarget.project.name,
+                n: closeTermTarget.n,
+              })
+            : ''
+        }
+        confirmLabel={t('common.confirm')}
+        onConfirm={() => {
+          if (closeTermTarget) onCloseTerminal?.(closeTermTarget.project);
+        }}
+        onClose={() => setCloseTermTarget(null)}
+      />
+
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
           fixed 后代的 containing block，留在组件树里会被裁剪在侧栏内。 */}
       {menu &&
@@ -590,11 +613,14 @@ function QuickButton({
   title,
   pressed,
   onClick,
+  danger,
   children,
 }: {
   title: string;
   pressed?: boolean;
   onClick: () => void;
+  /** 破坏性动作（关终端）：常显红色，不是 hover 才红。 */
+  danger?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -607,7 +633,12 @@ function QuickButton({
         e.stopPropagation();
         onClick();
       }}
-      className="pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-400 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
+      className={cn(
+        'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] transition-colors hover:border-white/[0.16] hover:bg-white/[0.08]',
+        danger
+          ? 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
+          : 'text-neutral-400 hover:text-neutral-100',
+      )}
     >
       {children}
     </button>

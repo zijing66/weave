@@ -491,7 +491,8 @@ export function SessionList({
               {/* 关 pane / 退出会话：会话进程活着才出现（没得关就不占位）——
                   关掉 = 宿主随 pane 一起退出，会话行与它的对话照常保留，之后仍
                   可 --resume 接回。判活判不动的（codex / 新鲜会话 pidAlive=null）
-                  一律不露，宁可少一个按钮也不给一条恒 409 的路。 */}
+                  一律不露，宁可少一个按钮也不给一条恒 409 的路。红色常显 +
+                  二次确认（见 TasksPanel 的 closePaneTarget）：杀宿主的键。 */}
               {!!s.pidAlive && (
                 <button
                   type="button"
@@ -500,7 +501,7 @@ export function SessionList({
                     e.stopPropagation();
                     onClosePane(s.sessionId);
                   }}
-                  className={cn(ACTION_BTN, 'hover:text-red-400')}
+                  className={cn(ACTION_BTN, 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300')}
                 >
                   <FeedbackIcon
                     state={closePaneState}
