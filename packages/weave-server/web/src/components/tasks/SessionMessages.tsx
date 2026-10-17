@@ -1477,126 +1477,128 @@ export function SessionMessages({
              两者切换都不留 hook 痕迹（Shift+Tab 一个事件都不发、/model 不落盘），
              故标注是「最后已知」而非此刻。宿主只有「切一档」没有定点设模式，故
              模式做成按钮（点 = Shift+Tab 一档）；模型有 `/model <名>`，做成下拉。
-             **图片上传对齐位**：附件按钮落本行最右（`ml-auto` 空位），预览缩略图
-             条落本行与输入框之间——别占到输入行与发送键那两格去。 */
+             **图片上传对齐位**：附件钮 + 预览缩略图居左，模式/模型居右（`ml-auto`），
+             放不下即折行；别占到输入行与发送键那两格去。 */
           <div className="mt-2 flex shrink-0 flex-col gap-1.5">
-            {(modeNames.length > 0 || modelNames.length > 0) && (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                {modeNames.length > 0 && (
-                  <button
-                    type="button"
-                    title={t('tasks.modeCycle')}
-                    aria-label={t('tasks.modeCycle')}
-                    onClick={cycleMode}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
-                  >
-                    <FeedbackIcon
-                      state={fb.stateOf(`cycleMode:${sessionId}`)}
-                      className="h-3 w-3 text-neutral-500"
-                      icon={<RotateCcw className="h-3 w-3" />}
-                    />
-                    <span className="text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
-                    <span
-                      title={t('tasks.modeLastKnown')}
-                      style={{ color: modeTint ?? undefined }}
-                      className={cn('font-mono text-[11px]', !modeTint && 'text-neutral-400')}
+            {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行。 */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {/* 附件钮 + 已选缩略图（× 移除、点开大图）。粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept={IMAGE_TYPES.join(',')}
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) stageFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!capability.imageAttach || uploading > 0}
+                  title={
+                    capability.imageAttach
+                      ? t('tasks.msgImageAttach')
+                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgImageUnsupported'))
+                  }
+                  aria-label={t('tasks.msgImageAttach')}
+                  onClick={() => fileRef.current?.click()}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                >
+                  {uploading > 0 ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ImageIcon className="h-3 w-3" />
+                  )}
+                  {t('tasks.msgImageAttach')}
+                </button>
+                {staged.map((img) => (
+                  <span key={img.id} className="relative inline-flex shrink-0">
+                    <button
+                      type="button"
+                      title={img.name}
+                      onClick={() => setLightbox(img)}
+                      className="block h-10 w-10 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
                     >
-                      {currentMode ?? t('tasks.modeUnknown')}
-                    </span>
-                  </button>
-                )}
-                {modelNames.length > 0 && (
-                  <div className="flex min-w-0 items-center gap-1">
-                    <span className="shrink-0 text-[10px] text-neutral-500">
-                      {t('tasks.modelLabel')}
-                    </span>
-                    <div className="relative">
-                      <select
-                        value={modelValue}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v) applyModel(v);
-                        }}
-                        title={t('tasks.modelLastKnown')}
-                        aria-label={t('tasks.modelLabel')}
-                        className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
-                      >
-                        {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
-                        {modelOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                        {/* 认不出别名的真名（别名表缺配）也得能显示成选中 */}
-                        {modelValue && !modelOptions.some((o) => o.value === modelValue) && (
-                          <option value={modelValue}>{modelValue}</option>
-                        )}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
-                    </div>
-                  </div>
-                )}
+                      <img
+                        src={`/images/${img.id}`}
+                        alt={img.name}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      title={t('tasks.msgImageRemove')}
+                      aria-label={t('tasks.msgImageRemove')}
+                      onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
+                      className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ))}
               </div>
-            )}
-            {/* 图片输入行（输入框正上方）：附件钮 + 已选缩略图（× 移除、点开大图）。
-                粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <input
-                ref={fileRef}
-                type="file"
-                accept={IMAGE_TYPES.join(',')}
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) stageFiles(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <button
-                type="button"
-                disabled={!capability.imageAttach || uploading > 0}
-                title={
-                  capability.imageAttach
-                    ? t('tasks.msgImageAttach')
-                    : (capability.unsupportedReasons?.prompt ?? t('tasks.msgImageUnsupported'))
-                }
-                aria-label={t('tasks.msgImageAttach')}
-                onClick={() => fileRef.current?.click()}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
-              >
-                {uploading > 0 ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <ImageIcon className="h-3 w-3" />
-                )}
-                {t('tasks.msgImageAttach')}
-              </button>
-              {staged.map((img) => (
-                <span key={img.id} className="relative inline-flex shrink-0">
-                  <button
-                    type="button"
-                    title={img.name}
-                    onClick={() => setLightbox(img)}
-                    className="block h-10 w-10 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
-                  >
-                    <img
-                      src={`/images/${img.id}`}
-                      alt={img.name}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    title={t('tasks.msgImageRemove')}
-                    aria-label={t('tasks.msgImageRemove')}
-                    onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
-                    className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </span>
-              ))}
+              {(modeNames.length > 0 || modelNames.length > 0) && (
+                <div className="ml-auto flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  {modeNames.length > 0 && (
+                    <button
+                      type="button"
+                      title={t('tasks.modeCycle')}
+                      aria-label={t('tasks.modeCycle')}
+                      onClick={cycleMode}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf(`cycleMode:${sessionId}`)}
+                        className="h-3 w-3 text-neutral-500"
+                        icon={<RotateCcw className="h-3 w-3" />}
+                      />
+                      <span className="text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
+                      <span
+                        title={t('tasks.modeLastKnown')}
+                        style={{ color: modeTint ?? undefined }}
+                        className={cn('font-mono text-[11px]', !modeTint && 'text-neutral-400')}
+                      >
+                        {currentMode ?? t('tasks.modeUnknown')}
+                      </span>
+                    </button>
+                  )}
+                  {modelNames.length > 0 && (
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="shrink-0 text-[10px] text-neutral-500">
+                        {t('tasks.modelLabel')}
+                      </span>
+                      <div className="relative">
+                        <select
+                          value={modelValue}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v) applyModel(v);
+                          }}
+                          title={t('tasks.modelLastKnown')}
+                          aria-label={t('tasks.modelLabel')}
+                          className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
+                        >
+                          {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
+                          {modelOptions.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                          {/* 认不出别名的真名（别名表缺配）也得能显示成选中 */}
+                          {modelValue && !modelOptions.some((o) => o.value === modelValue) && (
+                            <option value={modelValue}>{modelValue}</option>
+                          )}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-end gap-1.5">
               <textarea
