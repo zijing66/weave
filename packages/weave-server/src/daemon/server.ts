@@ -435,8 +435,9 @@ async function handleRequest(
   }
 
   // --- close this project's open terminals (project card "关闭终端") ---
-  // 命中判据 = pane 的 cwd **恰为**项目目录（与「终端」角标同一条，不含子目录）：
-  // 逐个关掉这些 pane，窗口里别的 cwd 的 pane 不动（不替用户关掉顺手开着的别的活）。
+  // 只关 body.paneIds 清单里的 pane（用户在多选弹窗里勾的那些）——**不提供一口气
+  // 全关**。命中判据仍是 pane 的 cwd **恰为**项目目录（与「终端」角标同一条，不含
+  // 子目录）：窗口里别的 cwd 的 pane 不动（不替用户关掉顺手开着的别的活）。
   // 关完角标自己掉——与 /open 同口径，600ms 后对一次账。
   const closeTermMatch = pathname.match(/^\/projects\/(\d+)\/close-terminal$/);
   if (closeTermMatch && req.method === 'POST') {
@@ -445,11 +446,26 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Project not found' });
       return;
     }
+    let body: { paneIds?: unknown };
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') as { paneIds?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (
+      !Array.isArray(body.paneIds) ||
+      body.paneIds.length === 0 ||
+      body.paneIds.some((id) => typeof id !== 'string')
+    ) {
+      sendJson(res, 400, { error: 'paneIds must be a non-empty array of strings' });
+      return;
+    }
     const opener = deps.opener ?? defaultProjectOpener;
     const settings = await readDaemonSettings();
     try {
       const close = opener.closeTerminals ?? closeTerminalsIn;
-      const closed = await close(project.path, settings.terminal);
+      const closed = await close(project.path, settings.terminal, body.paneIds as string[]);
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
       sendJson(res, 200, { ok: true, closed });
     } catch (e) {
@@ -1601,6 +1617,26 @@ async function handleRequest(
     deps.projects.setOrder(body.ids as number[]);
     deps.dataBus?.emit({ key: 'projects' });
     sendJson(res, 200, { projects: deps.projects.list() });
+    return;
+  }
+
+  // GET /projects/:id/panes — 项目关终端多选弹窗的数据面：本项目名下可关的 pane
+  // （cwd 恰为项目目录；窗口里别的目录的 pane 不进来）。枚举不到却计数说有 = 这个
+  // preset 关不了远程 pane（wt 只数不关）→ 如实 409，不给空表装作「没有终端」。
+  const panesMatch = pathname.match(/^\/projects\/(\d+)\/panes$/);
+  if (panesMatch && req.method === 'GET') {
+    const project = deps.projects.getById(Number(panesMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const settings = await readDaemonSettings();
+    const list = deps.opener?.listPanes ?? defaultProjectOpener.listPanes!;
+    try {
+      sendJson(res, 200, { projectId: project.id, panes: await list(project.path, settings.terminal) });
+    } catch (e) {
+      sendJson(res, 409, { error: e instanceof Error ? e.message : 'Cannot list panes' });
+    }
     return;
   }
 

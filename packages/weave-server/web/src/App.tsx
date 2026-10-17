@@ -829,21 +829,21 @@ function Dashboard() {
     [fb],
   );
 
-  /** 关闭终端条按钮：关掉 cwd 恰为本项目目录的 pane（窗口里别的目录的 pane 不动）。
-      loading 挂到角标掉下来为止（同开终端口径——窗口真没了才收圈）；有 pane 关不掉
-      （wt 只数不关）服务端如实报，toast 带修法，不静默。 */
+  /** 关闭终端条按钮：关掉多选弹窗勾中的那些 pane（cwd 恰为本项目目录，窗口里别
+      的目录的 pane 不动）。loading 挂到角标掉下来为止（同开终端口径——窗口真没了
+      才收圈）；有 pane 关不掉（wt 只数不关）服务端如实报，toast 带修法，不静默。 */
   const closeProjectTerminal = useCallback(
-    (p: ProjectRow) =>
+    (p: ProjectRow, paneIds: string[]) =>
       void fb.run(
         `close-terminal:${p.id}`,
         async () => {
           const before = countsRef.current[p.id] ?? 0;
-          await api.closeProjectTerminal(p.id);
+          const res = await api.closeProjectTerminal(p.id, paneIds);
           await terminalGate.current.wait(
             `close:${p.id}`,
             () => (countsRef.current[p.id] ?? 0) < before,
           );
-          show('success', t('toast.terminalsClosed', { n: before }));
+          show('success', t('toast.terminalsClosed', { n: res.closed }));
         },
         { fail: (e) => t('errors.closeTerminalFailed', { error: errorText(e) }) },
       ),

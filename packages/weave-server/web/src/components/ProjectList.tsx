@@ -14,7 +14,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { api, type HarnessCheck, type ProjectRow } from '@/lib/api';
+import { api, type HarnessCheck, type ProjectRow, type TerminalPane } from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
@@ -23,7 +23,9 @@ import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import type { ActionState } from '@/lib/action-feedback';
+import { TerminalClosePicker } from '@/components/tasks/TerminalPicker';
+import { useToast } from '@/components/Toast';
+import { errorText, type ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
   Archive,
@@ -62,8 +64,8 @@ interface ProjectListProps {
   /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
   openExplorerStateOf?: (projectId: number) => ActionState;
   openTerminalStateOf?: (projectId: number) => ActionState;
-  /** 关掉该项目的已开终端（cwd 恰为项目目录的 pane 逐个关；窗口里别的不动）。 */
-  onCloseTerminal?: (p: ProjectRow) => void;
+  /** 关掉该项目的已开终端：只关勾选清单里的 pane（多选弹窗的确认结果）。 */
+  onCloseTerminal?: (p: ProjectRow, paneIds: string[]) => void;
   closeTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
@@ -118,6 +120,7 @@ export function ProjectList({
   restoreStateOf,
 }: ProjectListProps) {
   const t = useT();
+  const { show } = useToast();
   // 传感器按指针能力分流（同 App）：鼠标 5px 位移激活；触屏 200ms 长按激活
   // （容差 8px——长按期间手指微动不误触、不吞列表滚动）。
   const finePointer = useMediaQuery('(pointer: fine)');
@@ -128,8 +131,12 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
-  // 待确认关终端的项目：行内按钮设入（n 记下手柄那一刻的窗口数，弹窗文案不重查）
-  const [closeTermTarget, setCloseTermTarget] = useState<{ project: ProjectRow; n: number } | null>(null);
+  // 关终端多选弹窗：行内按钮现拉本项目名下的 pane 打开（实时枚举，不复用角标
+  // 计数）；勾选后交 App 关掉勾中的那些——**没有「全关」这条路**。
+  const [closePicker, setClosePicker] = useState<{
+    project: ProjectRow;
+    panes: TerminalPane[];
+  } | null>(null);
   // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
@@ -406,14 +413,20 @@ export function ProjectList({
                     </span>
                   )}
                 </span>
-                {/* 关闭终端：有终端开着才出现（0 个没得关，不占位）——关的是 cwd
-                    恰为本项目目录的那些 pane，窗口里顺手开着的别的目录不动。
-                    红色 + 二次确认：一键杀掉整批会话宿主，误触代价太大。 */}
+                {/* 关闭终端：有终端开着才出现（0 个没得关，不占位）——弹多选窗挑
+                    要关哪几个（关的是 cwd 恰为本项目目录的 pane，窗口里顺手开着的
+                    别的目录不动）。红色 + 二次确认：一键杀掉整批会话宿主，误触代价
+                    太大；而「一口气全关」这条路整个拿掉，只能一个一个勾。 */}
                 {terminals > 0 && onCloseTerminal && (
                   <QuickButton
                     danger
                     title={t('project.closeTerminal', { n: terminals })}
-                    onClick={() => setCloseTermTarget({ project: p, n: terminals })}
+                    onClick={() => {
+                      api
+                        .listProjectPanes(p.id)
+                        .then((panes) => setClosePicker({ project: p, panes }))
+                        .catch((e) => show('error', t('errors.closeTerminalFailed', { error: errorText(e) })));
+                    }}
                   >
                     <FeedbackIcon
                       state={closeTerminalStateOf?.(p.id) ?? 'idle'}
@@ -508,24 +521,19 @@ export function ProjectList({
         onClose={() => setConfirmTarget(null)}
       />
 
-      {/* 关终端确认弹窗：一次杀掉整批会话宿主，必须二次确认 */}
-      <ConfirmDialog
-        open={closeTermTarget !== null}
-        title={t('project.closeTerminalTitle')}
-        message={
-          closeTermTarget
-            ? t('project.closeTerminalConfirm', {
-                name: closeTermTarget.project.name,
-                n: closeTermTarget.n,
-              })
-            : ''
-        }
-        confirmLabel={t('common.confirm')}
-        onConfirm={() => {
-          if (closeTermTarget) onCloseTerminal?.(closeTermTarget.project);
-        }}
-        onClose={() => setCloseTermTarget(null)}
-      />
+      {/* 关终端多选弹窗：挑要关哪几个 pane（蓝框勾选）→「关闭 n 个」才动手。
+          勾选本身就是那道二次确认——单击行内按钮关不掉任何东西。 */}
+      {closePicker && (
+        <TerminalClosePicker
+          panes={closePicker.panes}
+          onConfirm={(paneIds) => {
+            const { project } = closePicker;
+            setClosePicker(null);
+            onCloseTerminal?.(project, paneIds);
+          }}
+          onClose={() => setClosePicker(null)}
+        />
+      )}
 
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
           fixed 后代的 containing block，留在组件树里会被裁剪在侧栏内。 */}

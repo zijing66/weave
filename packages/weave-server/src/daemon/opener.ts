@@ -2171,29 +2171,42 @@ export function panesAtDir(
 }
 
 /**
- * 关掉 `dir` 的已开终端（项目卡「关闭终端」）：逐个关掉 `panesAtDir` 命中的 pane。
- * 窗口里别的 cwd 的 pane 不动（不替用户关掉顺手开着的别的活），只剩它一个时整窗
- * 随 pane 一起没。返回关掉的 pane 数。
+ * `dir` 名下可关的 pane（项目关终端多选弹窗的数据面）：`panesAtDir` 命中的那些。
  *
  * 枚举不到 pane 而计数说有 = 这个后端有窗口却关不了（wt 只数不关）——如实抛，
- * 不返回 0 骗人「已经没有了」。
+ * 不返回空表让弹窗装作「没有终端」。
+ */
+export async function listProjectPanes(
+  dir: string,
+  terminal: TerminalSettings,
+  platform: NodeJS.Platform = process.platform,
+): Promise<PromptPaneTarget[]> {
+  const backend = terminalBackendFor(terminal, platform);
+  const panes = panesAtDir(await backend.listPromptPanes(), dir, platform);
+  if (panes.length === 0 && ((await backend.countWindows([dir])).get(dir) ?? 0) > 0) {
+    throw new Error(
+      `Terminal preset "${backend.preset}" cannot close open panes remotely — pick wezterm in settings`,
+    );
+  }
+  return panes;
+}
+
+/**
+ * 关掉 `dir` 的已开终端（项目卡「关闭终端」）：只关清单里的那些 pane——清单来自
+ * 用户在弹窗里的多选，**不提供「一口气全关」**（那是这次要去掉的误触面）。
+ * 窗口里别的 cwd 的 pane 不动（不替用户关掉顺手开着的别的活），只剩它一个时整窗
+ * 随 pane 一起没。返回关掉的 pane 数；清单里的 pane 一个都没命中 = 目标已经没了，
+ * 如实返回 0。
  */
 export async function closeTerminalsIn(
   dir: string,
   terminal: TerminalSettings,
+  paneIds: readonly string[],
   platform: NodeJS.Platform = process.platform,
 ): Promise<number> {
   const backend = terminalBackendFor(terminal, platform);
-  const panes = panesAtDir(await backend.listPromptPanes(), dir, platform);
-  if (panes.length === 0) {
-    const open = (await backend.countWindows([dir])).get(dir) ?? 0;
-    if (open > 0) {
-      throw new Error(
-        `Terminal preset "${backend.preset}" cannot close open panes remotely — pick wezterm in settings`,
-      );
-    }
-    return 0;
-  }
+  const wanted = new Set(paneIds);
+  const panes = (await listProjectPanes(dir, terminal, platform)).filter((p) => wanted.has(p.id));
   for (const pane of panes) await backend.closePane(pane.id);
   return panes.length;
 }
@@ -2644,8 +2657,14 @@ export interface ProjectOpener {
   runInTerminal(dir: string, argv: string[], terminal: TerminalSettings): Promise<void>;
   /** 已打开终端窗口计数（可选：不实现的 spy 由路由回落到默认实现）。 */
   countTerminals?(dirs: string[], terminal: TerminalSettings): Promise<Map<string, number>>;
-  /** 关掉本目录的已开终端（可选）：cwd 恰为 dir 的 pane 逐个关，回关掉几个。 */
-  closeTerminals?(dir: string, terminal: TerminalSettings): Promise<number>;
+  /** 关掉本目录的已开终端（可选）：只关清单里的 pane，回关掉几个。 */
+  closeTerminals?(
+    dir: string,
+    terminal: TerminalSettings,
+    paneIds: readonly string[],
+  ): Promise<number>;
+  /** 本目录名下可关的 pane（可选）：关终端多选弹窗的数据面。 */
+  listPanes?(dir: string, terminal: TerminalSettings): Promise<PromptPaneTarget[]>;
   /** 可附加终端目标列表（可选）：多终端选择弹窗的数据面。 */
   listTerminals?(dir: string, terminal: TerminalSettings): Promise<AttachTarget[]>;
   /** 定点附加到指定目标 tab（可选）：会话终端选择后的落点。 */
@@ -2662,7 +2681,8 @@ export const defaultProjectOpener: ProjectOpener = {
   openTerminal: openInTerminal,
   runInTerminal,
   countTerminals: countOpenTerminals,
-  closeTerminals: (dir, terminal) => closeTerminalsIn(dir, terminal),
+  closeTerminals: (dir, terminal, paneIds) => closeTerminalsIn(dir, terminal, paneIds),
+  listPanes: (dir, terminal) => listProjectPanes(dir, terminal),
   // 目标列表/定点附加经 settings → 后端分发（wezterm mux / Terminal.app osascript），
   // 不再硬连 wezterm——调用方只传语义参数。
   listTerminals: (dir, terminal) => terminalBackendFor(terminal).listTargets(dir),

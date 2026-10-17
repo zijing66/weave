@@ -248,3 +248,108 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
     ).toBe(404);
   });
 });
+
+describe('daemon server 项目关终端（多选：/panes 列表 + /close-terminal 只关清单）', () => {
+  let db: DatabaseSync;
+  let server: Server;
+  let port: number;
+  let ids: number[];
+  /** spy opener：测试机可能真跑着 wezterm，枚举/关闭必须走注入缝、不进真探测。 */
+  let closedByPath: Array<{ dir: string; paneIds: readonly string[] }> = [];
+  let listPanesError: string | null = null;
+
+  beforeAll(async () => {
+    db = openDatabase(':memory:');
+    setDaemonSettingsDb(db);
+    await writeDaemonSettings({
+      terminal: { preset: 'wezterm', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
+    const projects = new ProjectRepository(db);
+    ids = [
+      projects.register({ path: '/close-a', name: 'a', token: 'ca', source: 'init' }).id,
+      projects.register({ path: '/close-b', name: 'b', token: 'cb', source: 'init' }).id,
+    ];
+    const opener: ProjectOpener = {
+      openExplorer: async () => {},
+      openTerminal: async () => {},
+      runInTerminal: async () => {},
+      listPanes: async (dir) => {
+        if (listPanesError) throw new Error(listPanesError);
+        return [
+          { id: 'm:11', title: 'pane one', cwd: dir },
+          { id: 'm:12', title: null, cwd: '/elsewhere' },
+        ];
+      },
+      closeTerminals: async (dir, _terminal, paneIds) => {
+        closedByPath.push({ dir, paneIds });
+        return paneIds.length;
+      },
+    };
+    server = createWeaveServer({ projects, port: 0, opener });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    server.close();
+    setDaemonSettingsDb(null);
+    db.close();
+  });
+
+  it('GET /projects/:id/panes 回本项目名下的 pane；未知项目 404', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/panes`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      projectId: number;
+      panes: Array<{ id: string; title: string | null; cwd: string | null }>;
+    };
+    expect(body.projectId).toBe(ids[0]);
+    expect(body.panes.map((p) => p.id)).toEqual(['m:11', 'm:12']);
+    expect((await fetch(`http://127.0.0.1:${port}/projects/9999/panes`)).status).toBe(404);
+  });
+
+  it('枚举抛（该 preset 关不了远程 pane）→ 409 带原文，不给空表装作没终端', async () => {
+    listPanesError = 'Terminal preset "wt" cannot close open panes remotely — pick wezterm in settings';
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/panes`);
+      expect(res.status).toBe(409);
+      expect((await res.json()) as { error: string }).toEqual({ error: listPanesError });
+    } finally {
+      listPanesError = null;
+    }
+  });
+
+  it('POST /close-terminal 只关 body.paneIds 清单里的（不提供一口气全关）', async () => {
+    closedByPath = [];
+    const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/close-terminal`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paneIds: ['m:11', 'm:99'] }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { ok: boolean; closed: number }).toMatchObject({ ok: true });
+    expect(closedByPath).toEqual([{ dir: path.resolve('/close-a'), paneIds: ['m:11', 'm:99'] }]);
+  });
+
+  it('paneIds 缺失 / 空 / 非字符串一律 400（「全关」这条路整个没有）', async () => {
+    closedByPath = [];
+    for (const body of [{}, { paneIds: [] }, { paneIds: ['ok', 7] }, { paneIds: 'm:11' }]) {
+      const res = await fetch(`http://127.0.0.1:${port}/projects/${ids[0]!}/close-terminal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(closedByPath).toEqual([]);
+    expect(
+      (await fetch(`http://127.0.0.1:${port}/projects/9999/close-terminal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ paneIds: ['m:11'] }),
+      })).status,
+    ).toBe(404);
+  });
+});

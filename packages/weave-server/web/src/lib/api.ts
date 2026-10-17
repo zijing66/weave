@@ -85,6 +85,16 @@ export interface TerminalTarget {
   full: boolean;
 }
 
+/** 项目名下可关的一个终端 pane（关终端多选弹窗的一张卡）；id 不透明，回传给
+ *  `closeProjectTerminal`。 */
+export interface TerminalPane {
+  id: string;
+  /** pane 标题（claude 的 OSC 标题 ≈ 会话名）；null → 前端回落「未命名 pane」。 */
+  title: string | null;
+  /** pane 工作目录；null = 取不到（理论上不该进列表——命中判据就是 cwd）。 */
+  cwd: string | null;
+}
+
 /** 会话所在的**可见屏幕**（终端里的一块屏 = wezterm 一个 tab）：会话列表按它分块。
  *  id 不透明（只作分组键），窗口/Tab 号供块头文案。mirror of server 的 SessionTerminal。 */
 export interface SessionTerminal {
@@ -1191,11 +1201,20 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/close-pane`,
       { method: 'POST' },
     ),
-  /** 关掉该项目的已开终端（cwd 恰为项目目录的 pane 逐个关，窗口里别的 pane 不动）。 */
-  closeProjectTerminal: (projectId: number): Promise<{ ok: boolean; closed: number }> =>
+  /** 关掉该项目的已开终端（cwd 恰为项目目录的 pane 逐个关，窗口里别的 pane 不动）。
+   *  只关 `paneIds` 清单里的（关终端多选弹窗的勾选结果）——不提供一口气全关。 */
+  closeProjectTerminal: (
+    projectId: number,
+    paneIds: readonly string[],
+  ): Promise<{ ok: boolean; closed: number }> =>
     apiFetch<{ ok: boolean; closed: number }>(`/projects/${projectId}/close-terminal`, {
       method: 'POST',
+      body: JSON.stringify({ paneIds }),
     }),
+  /** 本项目名下可关的 pane（关终端多选弹窗的数据面）：cwd 恰为项目目录的那些。
+   *  终端预设关不了远程 pane（wt 只数不关）→ 409 中文修法，不给空表装作没终端。 */
+  listProjectPanes: (projectId: number): Promise<TerminalPane[]> =>
+    apiFetch<{ panes: TerminalPane[] }>(`/projects/${projectId}/panes`).then((r) => r.panes),
   /** 在项目**已打开的终端**里起一个新会话（服务端复用该项目目录的既有 pane；
    *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。
    *  `harness` = 起哪个（须为该项目的已接入 harness）；缺省取已接入里第一个能起的。 */
