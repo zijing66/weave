@@ -507,6 +507,8 @@ export function SessionMessages({
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
   const [selecting, setSelecting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  /** 切模式前先问一句：一记 Shift+Tab 就拨一格、没有反向入口，误触可能越过 plan。 */
+  const [confirmMode, setConfirmMode] = useState(false);
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
@@ -615,12 +617,13 @@ export function SessionMessages({
       else if (selecting) {
         setSelecting(false);
         setPicked(new Set());
-      } else if (confirming) setConfirming(false);
+      } else if (confirmMode) setConfirmMode(false);
+      else if (confirming) setConfirming(false);
       else onMinimize();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, selecting, confirming, minimized, onMinimize]);
+  }, [menu, selecting, confirmMode, confirming, minimized, onMinimize]);
 
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
   useEffect(() => {
@@ -1589,7 +1592,7 @@ export function SessionMessages({
                       type="button"
                       title={t('tasks.modeCycle')}
                       aria-label={t('tasks.modeCycle')}
-                      onClick={cycleMode}
+                      onClick={() => setConfirmMode(true)}
                       className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
                     >
                       <FeedbackIcon
@@ -1819,6 +1822,16 @@ export function SessionMessages({
           confirmLabel={t('tasks.messagesClose')}
           onConfirm={onClose}
           onClose={() => setConfirming(false)}
+        />
+
+        {/* 切模式确认：同上一份弹窗范式（z-50 同层，后渲染的那扇在上）。 */}
+        <ConfirmDialog
+          open={confirmMode}
+          title={t('tasks.modeConfirmTitle')}
+          message={t('tasks.modeConfirm')}
+          confirmLabel={t('tasks.modeConfirmAction')}
+          onConfirm={cycleMode}
+          onClose={() => setConfirmMode(false)}
         />
       </div>
     </div>,

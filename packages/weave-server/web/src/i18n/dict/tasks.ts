@@ -104,6 +104,10 @@ export const tasksZh = {
   'tasks.modeCycle': '切换执行模式（等价 Shift+Tab）',
   'tasks.modeCycled': '已送出 Shift+Tab',
   'tasks.modeCycleFailed': '切换模式失败：{error}',
+  'tasks.modeConfirmTitle': '切换执行模式',
+  'tasks.modeConfirm':
+    '确认后向会话送一记 Shift+Tab，执行模式往前拨一格——顺序由宿主定，可能落到 plan 或 bypass 权限模式，且没有反向入口。',
+  'tasks.modeConfirmAction': '切换',
   'tasks.modelLabel': '模型',
   'tasks.modelUnknown': '未知',
   'tasks.modelLastKnown': '最近一轮用过的模型（切换不留痕，要等会话下次活动才跟上）',
@@ -375,6 +379,10 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.modeCycle': 'Switch execution mode (same as Shift+Tab)',
   'tasks.modeCycled': 'Shift+Tab sent',
   'tasks.modeCycleFailed': 'Mode switch failed: {error}',
+  'tasks.modeConfirmTitle': 'Switch execution mode',
+  'tasks.modeConfirm':
+    'Sends one Shift+Tab to the session, advancing the execution mode by one step. The host decides the order — it may land on plan or bypass permissions, and there is no undo.',
+  'tasks.modeConfirmAction': 'Switch',
   'tasks.modelLabel': 'Model',
   'tasks.modelUnknown': 'unknown',
   'tasks.modelLastKnown': 'Model used in the last turn (switching leaves no trace; catches up on the session’s next activity)',
