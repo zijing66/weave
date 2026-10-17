@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, Minus, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import { copyImage, copyText } from '@/lib/clipboard';
 import {
@@ -439,6 +440,8 @@ export function SessionMessages({
   onOpenAnswer,
   onInterrupt,
   interruptStateOf,
+  minimized,
+  onMinimize,
   onClose,
 }: {
   sessionId: string;
@@ -458,6 +461,9 @@ export function SessionMessages({
    *  两处按钮同转同灭。 */
   onInterrupt: (sessionId: string) => void;
   interruptStateOf: (sessionId: string) => ActionState;
+  /** 挂起中（只藏不卸）：草稿与已选图片都还在，几扇对话各自独立互不影响。 */
+  minimized: boolean;
+  onMinimize: () => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -493,6 +499,7 @@ export function SessionMessages({
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
   const [selecting, setSelecting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
@@ -591,19 +598,22 @@ export function SessionMessages({
     };
   }, [lifecycle, loadNewest, refreshMessages, sessionId]);
 
-  // Esc 逐层退：右键菜单 → 多选态 → 关弹窗（一层层退出，不一把关掉）
+  // Esc 逐层退：右键菜单 → 多选态 → 关闭确认 → 最小化（一层层退出，不一把关掉）。
+  // 挂起中不挂这个监听：几扇对话同时存活时，只有露着的那扇该吃 ESC。
   useEffect(() => {
+    if (minimized) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return;
       if (menu) setMenu(null);
       else if (selecting) {
         setSelecting(false);
         setPicked(new Set());
-      } else onClose();
+      } else if (confirming) setConfirming(false);
+      else onMinimize();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, onClose, selecting]);
+  }, [menu, selecting, confirming, minimized, onMinimize]);
 
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
   useEffect(() => {
@@ -699,12 +709,12 @@ export function SessionMessages({
   }`;
   const lastTail = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (entries === null || tailSig === lastTail.current) return;
+    if (minimized || entries === null || tailSig === lastTail.current) return;
     lastTail.current = tailSig;
     if (!stick.current) return;
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [entries, tailSig]);
+  }, [entries, tailSig, minimized]);
 
   const visible = useMemo(() => filterThread(thread, filter), [thread, filter]);
   /** 拉动加载（向上那头）：贴顶后继续滚/拖才取更早，且一拉只取一页。 */
@@ -1025,10 +1035,21 @@ export function SessionMessages({
   /** 选中值取**别名**：转录里照会的是网关真名（`ftm`），那是别名 opus 的真身。 */
   const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
 
+  /** 真销毁（关）：输入框里还有未提交内容时先问一句，别让点外面那一下悄悄把
+   *  草稿带走。ESC 与最小化钮走挂起，不销毁。 */
+  const requestClose = (): void => {
+    if (draft.trim() || staged.length > 0) setConfirming(true);
+    else onClose();
+  };
+
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+      className={cn(
+        'fixed inset-0 z-50 items-center justify-center bg-black/50 p-4',
+        // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
+        minimized ? 'hidden' : 'flex',
+      )}
+      onClick={requestClose}
       // 拖放面 = 整个弹窗（拖进窗口任何一处都算，别让浏览器接管去打开那个文件）
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
@@ -1071,9 +1092,18 @@ export function SessionMessages({
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
+              title={t('tasks.messagesMinimize')}
+              aria-label={t('tasks.messagesMinimize')}
+              onClick={onMinimize}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
               title={t('tasks.messagesClose')}
               aria-label={t('tasks.messagesClose')}
-              onClick={onClose}
+              onClick={requestClose}
               className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
             >
               <X className="h-3.5 w-3.5" />
@@ -1762,6 +1792,17 @@ export function SessionMessages({
             </div>,
             document.body,
           )}
+
+        {/* 关闭确认（非原生）：挂在面板内——面板自己 stopPropagation，
+            点确认框的任何一处都不会被背后的遮罩当成「点外面即关」。 */}
+        <ConfirmDialog
+          open={confirming}
+          title={t('tasks.msgCloseConfirmTitle')}
+          message={t('tasks.msgCloseConfirm')}
+          confirmLabel={t('tasks.messagesClose')}
+          onConfirm={onClose}
+          onClose={() => setConfirming(false)}
+        />
       </div>
     </div>,
     document.body,

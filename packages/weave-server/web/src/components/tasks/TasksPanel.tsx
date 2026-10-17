@@ -58,6 +58,15 @@ const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey>
  *  时限还没登记（进程当场退出之类）就放行——按钮不能永久卡在 loading 里点不动。 */
 const OPEN_TERMINAL_ALIVE_MS = 30_000;
 
+/** 一扇存活对话框（含挂起）：挂起只藏不卸，草稿与已选图片都还在。 */
+type ConvTarget = {
+  sessionId: string;
+  projectId: number;
+  label: string;
+  capability: MessagingCapability;
+  minimized: boolean;
+};
+
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
  * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
@@ -536,26 +545,51 @@ export function TasksPanel({
     [fb],
   );
 
-  /** 对话弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
-  const [messagesTarget, setMessagesTarget] = useState<{
-    sessionId: string;
-    projectId: number;
-    label: string;
-    capability: MessagingCapability;
-  } | null>(null);
+  /** 存活对话框（含挂起）：能力矩阵按 harness 已解出该行的能力。最小化只挂起
+   *  不卸载——草稿与已选图片都还在，几扇各自独立互不影响；同时只露一扇，露
+   *  这扇时其余自动挂起。 */
+  const [convs, setConvs] = useState<ReadonlyMap<string, ConvTarget>>(new Map());
   const onOpenMessages = useCallback(
     (sessionId: string): void => {
       const row = sessions?.find((s) => s.sessionId === sessionId);
       const capability = row?.harness ? capabilityMap.get(row.harness) : undefined;
       if (!capability) return;
-      setMessagesTarget({
-        sessionId,
-        projectId: row?.projectId ?? projectId,
-        label: sessionLabel(row?.title ?? null, sessionId),
-        capability,
+      setConvs((prev) => {
+        const next = new Map(prev);
+        for (const [id, c] of prev) next.set(id, { ...c, minimized: true });
+        next.set(sessionId, {
+          sessionId,
+          projectId: row?.projectId ?? projectId,
+          label: sessionLabel(row?.title ?? null, sessionId),
+          capability,
+          minimized: false,
+        });
+        return next;
       });
     },
     [sessions, capabilityMap, projectId],
+  );
+  const onMinimizeMessages = useCallback((sessionId: string): void => {
+    setConvs((prev) => {
+      const cur = prev.get(sessionId);
+      if (!cur || cur.minimized) return prev;
+      const next = new Map(prev);
+      next.set(sessionId, { ...cur, minimized: true });
+      return next;
+    });
+  }, []);
+  const onCloseMessages = useCallback((sessionId: string): void => {
+    setConvs((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Map(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+  /** 会话行对话图标转蓝 = 这扇挂起着（草稿还在），别当成没开过。 */
+  const minimizedConvs = useMemo(
+    () => new Set([...convs.values()].filter((c) => c.minimized).map((c) => c.sessionId)),
+    [convs],
   );
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
@@ -1146,6 +1180,7 @@ export function TasksPanel({
             openTerminalStateOf={openTerminalStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
+            minimizedConvs={minimizedConvs}
             inflightOf={inflightOf}
             questionOf={questionOf}
             onAnswer={onAnswerQuestion}
@@ -1258,22 +1293,25 @@ export function TasksPanel({
       )}
 
       {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（投递按能力矩阵门控）；
-          被阻塞问答挂起时尾部多一枚「回答」，开的是同一个待答弹窗（answerFor） */}
-      {messagesTarget && (
+          被阻塞问答挂起时尾部多一枚「回答」，开的是同一个待答弹窗（answerFor）。
+          几扇同时存活（挂起的只藏不卸），各自独立互不影响 */}
+      {[...convs.values()].map((c) => (
         <SessionMessages
-          key={messagesTarget.sessionId}
-          sessionId={messagesTarget.sessionId}
-          projectId={messagesTarget.projectId}
-          label={messagesTarget.label}
+          key={c.sessionId}
+          sessionId={c.sessionId}
+          projectId={c.projectId}
+          label={c.label}
           projectLabel={projectLabel}
-          capability={messagesTarget.capability}
-          answerPending={!!questionOf(messagesTarget.sessionId)}
-          onOpenAnswer={() => setAnswerFor(messagesTarget.sessionId)}
+          capability={c.capability}
+          minimized={c.minimized}
+          answerPending={!!questionOf(c.sessionId)}
+          onOpenAnswer={() => setAnswerFor(c.sessionId)}
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
-          onClose={() => setMessagesTarget(null)}
+          onMinimize={() => onMinimizeMessages(c.sessionId)}
+          onClose={() => onCloseMessages(c.sessionId)}
         />
-      )}
+      ))}
     </div>
   );
 }

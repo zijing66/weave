@@ -230,6 +230,7 @@ export function SessionList({
   openTerminalStateOf,
   capabilities,
   onOpenMessages,
+  minimizedConvs,
   inflightOf,
   questionOf,
   onAnswer,
@@ -258,6 +259,8 @@ export function SessionList({
   capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
   /** 打开该会话的消息线程（弹窗内投递/查看）。 */
   onOpenMessages: (sessionId: string) => void;
+  /** 对话框挂起中的会话（只藏不卸、草稿还在）——图标转蓝，别当成没开过。 */
+  minimizedConvs?: ReadonlySet<string>;
   /** 该会话在途消息条数（服务端 SSE push 快照）——有则消息图标转 amber + 角标。 */
   inflightOf: (sessionId: string) => number;
   /** 该会话的待答阻塞问题（无 = 不挂起）。 */
@@ -507,8 +510,8 @@ export function SessionList({
               {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
                   （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
                   harness 未知（无事件）的会话不现按钮。
-                  有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标，
-                  常态（0 条）保持原样。 */}
+                  有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标；
+                  对话框挂起中 → 转蓝（草稿还在，只是收起来了）；两者都占时 amber 优先。 */}
               {cap?.prompt && (
                 <button
                   type="button"
@@ -526,10 +529,17 @@ export function SessionList({
                     'relative',
                     inflight > 0 &&
                       'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                    inflight === 0 &&
+                      minimizedConvs?.has(s.sessionId) &&
+                      'border-blue-400/40 bg-blue-500/10 text-blue-300 hover:border-blue-400/60 hover:text-blue-200',
                   )}
                 >
                   <MessageSquareText
-                    className={cn('h-3 w-3', inflight > 0 && 'text-amber-300')}
+                    className={cn(
+                      'h-3 w-3',
+                      inflight > 0 && 'text-amber-300',
+                      inflight === 0 && minimizedConvs?.has(s.sessionId) && 'text-blue-300',
+                    )}
                   />
                   {inflight > 0 && (
                     <span

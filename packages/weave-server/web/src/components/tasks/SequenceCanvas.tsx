@@ -319,6 +319,7 @@ export function SequenceCanvas({
         projectId: row.projectId ?? projectId,
         label: sessionLabel(row.title, sessionId),
         capability,
+        minimized: false,
       });
     },
     [capabilityMap, projectId],
@@ -434,12 +435,14 @@ export function SequenceCanvas({
   // ---- 序列列表 ----
   const [expandedSeqId, setExpandedSeqId] = useState<number | null>(null);
 
-  /** 对话弹窗目标（能力矩阵按 harness 已解出该行的能力）。 */
+  /** 对话弹窗目标（能力矩阵按 harness 已解出该行的能力）。挂起只藏不卸，
+   *  再点同一会话的入口即还原。 */
   const [messagesTarget, setMessagesTarget] = useState<{
     sessionId: string;
     projectId: number;
     label: string;
     capability: MessagingCapability;
+    minimized: boolean;
   } | null>(null);
 
   const stepLabel = (to: string): string => {
@@ -722,7 +725,8 @@ export function SequenceCanvas({
         )}
       </div>
 
-      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（复用任务视图弹窗）。 */}
+      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（复用任务视图弹窗）；挂起只藏
+          不卸，再点同一会话的入口即还原。 */}
       {messagesTarget && (
         <SessionMessages
           key={messagesTarget.sessionId}
@@ -731,8 +735,12 @@ export function SequenceCanvas({
           label={messagesTarget.label}
           projectLabel={projectLabel}
           capability={messagesTarget.capability}
+          minimized={messagesTarget.minimized}
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
+          onMinimize={() =>
+            setMessagesTarget((t) => (t ? { ...t, minimized: true } : t))
+          }
           onClose={() => setMessagesTarget(null)}
         />
       )}
