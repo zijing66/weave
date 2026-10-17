@@ -7,6 +7,7 @@ import {
   exportStamp,
   filterThread,
   isGenerating,
+  spliceNewline,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -296,6 +297,24 @@ describe('isGenerating（尾上「回复还在路上」）', () => {
     expect(isGenerating('interrupted', 'user')).toBe(false);
     expect(isGenerating(undefined, 'user')).toBe(false);
     expect(isGenerating('running', undefined)).toBe(false);
+  });
+});
+
+describe('spliceNewline（移动端换行钮）', () => {
+  it('① 尾部追加，光标跟到新行后', () => {
+    expect(spliceNewline('abc', 3, 3)).toEqual({ text: 'abc\n', caret: 4 });
+  });
+
+  it('② 插在中间，后半截原样接上', () => {
+    expect(spliceNewline('abcd', 2, 2)).toEqual({ text: 'ab\ncd', caret: 3 });
+  });
+
+  it('③ 选中一段 = 覆盖掉选区', () => {
+    expect(spliceNewline('abcdef', 1, 4)).toEqual({ text: 'a\nef', caret: 2 });
+  });
+
+  it('④ 空输入框就一个换行', () => {
+    expect(spliceNewline('', 0, 0)).toEqual({ text: '\n', caret: 1 });
   });
 });
 

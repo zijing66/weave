@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Check, CheckCheck, ChevronDown, Copy, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -309,6 +309,15 @@ export function isGenerating(
   );
 }
 
+/** 在光标处插一个换行（移动端没有 Shift+Enter 这个手势）。 */
+export function spliceNewline(
+  text: string,
+  start: number,
+  end: number,
+): { text: string; caret: number } {
+  return { text: text.slice(0, start) + '\n' + text.slice(end), caret: start + 1 };
+}
+
 export function filterThread(
   thread: readonly ConvEntry[],
   filter: ConvFilter,
@@ -479,6 +488,7 @@ export function SessionMessages({
   /** 点开的大图（缩略图点击）；null = 没开。 */
   const [lightbox, setLightbox] = useState<UploadImage | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
@@ -932,6 +942,18 @@ export function SessionMessages({
         }
       }
     })();
+  };
+
+  /** 换行（移动端那枚按钮）：插在光标处，光标跟到新行后。 */
+  const insertNewline = (): void => {
+    const el = draftRef.current;
+    const at = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? at;
+    const next = spliceNewline(draft, at, end);
+    setDraft(next.text);
+    requestAnimationFrame(() => {
+      if (el) el.selectionStart = el.selectionEnd = next.caret;
+    });
   };
 
   const send = (): void => {
@@ -1578,6 +1600,7 @@ export function SessionMessages({
             </div>
             <div className="flex items-end gap-1.5">
               <textarea
+                ref={draftRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -1614,6 +1637,16 @@ export function SessionMessages({
                   {t('tasks.stop')}
                 </button>
               )}
+              {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说 */}
+              <button
+                type="button"
+                title={t('tasks.msgNewline')}
+                aria-label={t('tasks.msgNewline')}
+                onClick={insertNewline}
+                className="hidden max-lg:inline-flex shrink-0 items-center justify-center rounded border border-white/[0.1] px-2.5 py-1 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+              >
+                <CornerDownLeft className="h-3.5 w-3.5" />
+              </button>
               <button
                 type="button"
                 disabled={
