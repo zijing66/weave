@@ -58,6 +58,19 @@ export function modelNamesFor(harness: string | null | undefined): readonly stri
 }
 
 /**
+ * 模式按钮的文字色：按词表**位次**取色，不硬编码 harness 的模式名——加模式自动
+ * 落进下一位。词表末位（bypassPermissions）天然落在警示红，关掉权限闸得一眼认出。
+ * 词表外的模式名（宿主将来加的）认不出 → null，调用方回落中性灰。
+ */
+const MODE_TINTS = ['#cbd5e1', '#38bdf8', '#a78bfa', '#2dd4bf', '#fbbf24', '#f87171'];
+
+export function modeTintFor(harness: string | null | undefined, mode: string | null): string | null {
+  if (!mode) return null;
+  const i = modeNamesFor(harness).indexOf(mode);
+  return i >= 0 ? MODE_TINTS[i % MODE_TINTS.length] : null;
+}
+
+/**
  * 该事件是不是「压缩会话」那一笔（收尾笔）：压缩信号表的 `end` 与 `endSource`
  * 双双对上才算——谁在压缩是 harness 知识，调用方不写事件名。
  */

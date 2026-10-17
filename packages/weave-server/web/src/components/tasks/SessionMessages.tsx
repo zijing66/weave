@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Check, CheckCheck, Copy, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Ban, Check, CheckCheck, ChevronDown, Copy, Download, HelpCircle, Image as ImageIcon, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   api,
@@ -37,6 +37,7 @@ import {
   HARNESS_LIFECYCLE,
   isCompactionEnd,
   modeNamesFor,
+  modeTintFor,
   modelNamesFor,
 } from './lifecycle';
 import { canInterrupt, hasTurnSignal } from './session-status';
@@ -48,6 +49,10 @@ const CONV_PAGE = 10;
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
+
+/** 模型下拉里「自定义…」那项的哨兵值：模型名不允许空白（服务端形态校验），故带空格
+ *  的串永远不会和真模型名撞上。网关具体 ID（`ftm` 这类）不在稳定别名表里，走自填。 */
+const MODEL_CUSTOM = ' custom';
 
 /**
  * 对话缓存（sessionStorage）：重开弹窗先拿缓存即时出画，再被服务端那一页对账
@@ -408,6 +413,8 @@ export function SessionMessages({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
+  /** 模型下拉里的「自定义…」：网关具体 ID（`ftm` 这类）不在稳定别名表里，展开同行自填。 */
+  const [modelCustom, setModelCustom] = useState(false);
   const [modelDraft, setModelDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConvFilter>('all');
@@ -834,6 +841,9 @@ export function SessionMessages({
   const sessionRow = sessions?.find((s) => s.sessionId === sessionId);
   const modeNames = modeNamesFor(capability.harness);
   const modelNames = modelNamesFor(capability.harness);
+  const currentMode = sessionRow?.mode ?? null;
+  const currentModel = sessionRow?.model ?? null;
+  const modeTint = modeTintFor(capability.harness, currentMode);
 
   const cycleMode = (): void => {
     void fb.run(
@@ -855,6 +865,7 @@ export function SessionMessages({
       `setModel:${sessionId}`,
       async () => {
         await api.setSessionModel(sessionId, trimmed);
+        setModelCustom(false);
         setModelDraft('');
         await refresh();
         show('success', t('tasks.modelSet'));
@@ -862,6 +873,13 @@ export function SessionMessages({
       { fail: (e) => t('tasks.modelSetFailed', { error: errorText(e) }) },
     );
   };
+
+  /** 下拉选项 = 稳定别名 + 当前那个（别名表外的具体 ID 也得能显示成选中）。 */
+  const modelOptions = useMemo(() => {
+    const list = [...modelNames];
+    if (currentModel && !list.includes(currentModel)) list.unshift(currentModel);
+    return list;
+  }, [modelNames, currentModel]);
 
   return createPortal(
     <div
@@ -933,86 +951,6 @@ export function SessionMessages({
             {t('tasks.convCount', { n: thread.length })}
           </span>
         </div>
-
-        {/* 会话控制面（执行模式 / 模型）：两者切换都不留 hook 痕迹（Shift+Tab 一个事件
-            都不发、/model 不落盘），故标签是「最后已知」而非此刻。切换走固定键序 /
-            宿主 `/model`（词表归 harness，见 HARNESS_SESSION_CONTROL）；窄屏整组
-            折行，不做横向滚动 */}
-        {(modeNames.length > 0 || modelNames.length > 0) && (
-          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 pb-2">
-            {modeNames.length > 0 && (
-              <div className="flex min-w-0 items-center gap-1">
-                <span className="shrink-0 text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
-                <span
-                  title={t('tasks.modeLastKnown')}
-                  className="max-w-[8rem] truncate rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-200"
-                >
-                  {sessionRow?.mode ?? t('tasks.modeUnknown')}
-                </span>
-                <button
-                  type="button"
-                  title={t('tasks.modeCycle')}
-                  aria-label={t('tasks.modeCycle')}
-                  onClick={cycleMode}
-                  className="rounded border border-white/[0.1] p-0.5 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf(`cycleMode:${sessionId}`)}
-                    className="h-3 w-3"
-                    icon={<RotateCcw className="h-3 w-3" />}
-                  />
-                </button>
-              </div>
-            )}
-            {modelNames.length > 0 && (
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <span className="shrink-0 text-[10px] text-neutral-500">{t('tasks.modelLabel')}</span>
-                <span
-                  title={t('tasks.modelLastKnown')}
-                  className="max-w-[8rem] truncate rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-200"
-                >
-                  {sessionRow?.model ?? t('tasks.modelUnknown')}
-                </span>
-                {modelNames.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => applyModel(n)}
-                    title={t('tasks.modelApply')}
-                    className="rounded border border-white/[0.08] px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
-                  >
-                    {n}
-                  </button>
-                ))}
-                <input
-                  value={modelDraft}
-                  onChange={(e) => setModelDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      applyModel(modelDraft);
-                    }
-                  }}
-                  placeholder={t('tasks.modelPlaceholder')}
-                  className="w-28 min-w-0 rounded border border-white/[0.1] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={!modelDraft.trim()}
-                  onClick={() => applyModel(modelDraft)}
-                  className="rounded border border-white/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf(`setModel:${sessionId}`)}
-                    className="h-3 w-3"
-                    icon={<Check className="h-3 w-3" />}
-                  />
-                  {t('tasks.modelApply')}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
             尾巴上常驻还没落进事件流的投递行（Held/失败/暂停闸成因 + 重发） */}
@@ -1358,60 +1296,162 @@ export function SessionMessages({
           </div>
         ) : (
           /* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
-             harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。 */
-          <div className="mt-2 flex shrink-0 items-end gap-1.5">
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              placeholder={t('tasks.messagesPlaceholder')}
-              rows={2}
-              className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
-            />
-            {/* 停止：贴在发送按钮边上（回合开着才露、与事件链组头同一判据与 fb 键） */}
-            {stoppable && (
+             harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。
+             会话控制面（执行模式 / 模型）收在输入框正上方的**一条控制行**里——
+             两者切换都不留 hook 痕迹（Shift+Tab 一个事件都不发、/model 不落盘），
+             故标注是「最后已知」而非此刻。宿主只有「切一档」没有定点设模式，故
+             模式做成按钮（点 = Shift+Tab 一档）；模型有 `/model <名>`，做成下拉。
+             **图片上传对齐位**：附件按钮落本行最右（`ml-auto` 空位），预览缩略图
+             条落本行与输入框之间——别占到输入行与发送键那两格去。 */
+          <div className="mt-2 flex shrink-0 flex-col gap-1.5">
+            {(modeNames.length > 0 || modelNames.length > 0) && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {modeNames.length > 0 && (
+                  <button
+                    type="button"
+                    title={t('tasks.modeCycle')}
+                    aria-label={t('tasks.modeCycle')}
+                    onClick={cycleMode}
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
+                  >
+                    <FeedbackIcon
+                      state={fb.stateOf(`cycleMode:${sessionId}`)}
+                      className="h-3 w-3 text-neutral-500"
+                      icon={<RotateCcw className="h-3 w-3" />}
+                    />
+                    <span className="text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
+                    <span
+                      title={t('tasks.modeLastKnown')}
+                      style={{ color: modeTint ?? undefined }}
+                      className={cn('font-mono text-[11px]', !modeTint && 'text-neutral-400')}
+                    >
+                      {currentMode ?? t('tasks.modeUnknown')}
+                    </span>
+                  </button>
+                )}
+                {modelNames.length > 0 && (
+                  <div className="flex min-w-0 items-center gap-1">
+                    <span className="shrink-0 text-[10px] text-neutral-500">
+                      {t('tasks.modelLabel')}
+                    </span>
+                    <div className="relative">
+                      <select
+                        value={modelCustom ? MODEL_CUSTOM : (currentModel ?? '')}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === MODEL_CUSTOM) {
+                            setModelCustom(true);
+                            return;
+                          }
+                          if (v) applyModel(v);
+                        }}
+                        title={t('tasks.modelLastKnown')}
+                        aria-label={t('tasks.modelLabel')}
+                        className="max-w-[9rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
+                      >
+                        {!currentModel && <option value="">{t('tasks.modelUnknown')}</option>}
+                        {modelOptions.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                        <option value={MODEL_CUSTOM}>{t('tasks.modelCustom')}</option>
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
+                    </div>
+                    {modelCustom && (
+                      <div className="flex min-w-0 items-center gap-1">
+                        <input
+                          autoFocus
+                          value={modelDraft}
+                          onChange={(e) => setModelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              applyModel(modelDraft);
+                            }
+                            if (e.key === 'Escape') {
+                              setModelCustom(false);
+                              setModelDraft('');
+                            }
+                          }}
+                          placeholder={t('tasks.modelPlaceholder')}
+                          className="w-28 min-w-0 rounded border border-white/[0.1] bg-neutral-950 px-1.5 py-0.5 font-mono text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={!modelDraft.trim()}
+                          title={t('tasks.modelApply')}
+                          aria-label={t('tasks.modelApply')}
+                          onClick={() => applyModel(modelDraft)}
+                          className="rounded border border-white/[0.1] p-0.5 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
+                        >
+                          <FeedbackIcon
+                            state={fb.stateOf(`setModel:${sessionId}`)}
+                            className="h-3 w-3"
+                            icon={<Check className="h-3 w-3" />}
+                          />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex items-end gap-1.5">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                placeholder={t('tasks.messagesPlaceholder')}
+                rows={2}
+                className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
+              />
+              {/* 停止：贴在发送按钮边上（回合开着才露、与事件链组头同一判据与 fb 键） */}
+              {stoppable && (
+                <button
+                  type="button"
+                  title={t('tasks.stopTooltip')}
+                  aria-label={t('tasks.stopTooltip')}
+                  onClick={() => onInterrupt(sessionId)}
+                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300"
+                >
+                  <FeedbackIcon
+                    state={interruptStateOf(sessionId)}
+                    className="h-3 w-3"
+                    icon={<Square className="h-3 w-3" />}
+                  />
+                  {t('tasks.stop')}
+                </button>
+              )}
               <button
                 type="button"
-                title={t('tasks.stopTooltip')}
-                aria-label={t('tasks.stopTooltip')}
-                onClick={() => onInterrupt(sessionId)}
-                className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300"
+                disabled={
+                  !capability.prompt ||
+                  !draft.trim() ||
+                  fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                }
+                title={
+                  capability.prompt
+                    ? undefined
+                    : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                }
+                onClick={send}
+                className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
               >
                 <FeedbackIcon
-                  state={interruptStateOf(sessionId)}
+                  state={fb.stateOf(`sendMsg:${sessionId}`)}
                   className="h-3 w-3"
-                  icon={<Square className="h-3 w-3" />}
+                  icon={<Send className="h-3 w-3" />}
                 />
-                {t('tasks.stop')}
+                {t('tasks.messagesSend')}
               </button>
-            )}
-            <button
-              type="button"
-              disabled={
-                !capability.prompt ||
-                !draft.trim() ||
-                fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-              }
-              title={
-                capability.prompt
-                  ? undefined
-                  : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-              }
-              onClick={send}
-              className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
-            >
-              <FeedbackIcon
-                state={fb.stateOf(`sendMsg:${sessionId}`)}
-                className="h-3 w-3"
-                icon={<Send className="h-3 w-3" />}
-              />
-              {t('tasks.messagesSend')}
-            </button>
+            </div>
           </div>
         )}
 
