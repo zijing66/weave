@@ -10,7 +10,7 @@ import {
 } from '@weavecode/core';
 import type { CaptureScriptHealth, MessagingSurface } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
-import type { SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
+import type { MessageImage, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
 import { readJson, sendJson } from './http.js';
 import { installPlugin, uninstallPlugin } from '../hooks/plugin-installer.js';
 import { purgeSession } from '../hooks/session-purge.js';
@@ -21,6 +21,7 @@ import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { captureSurfaces, messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
 import { getDataDir } from '../db/paths.js';
+import { UPLOAD_MAX_BYTES, UPLOAD_MEDIA_TYPES, type UploadRow } from '../repositories/uploads.js';
 import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
@@ -57,10 +58,25 @@ const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
  * （默认 = 原生 SendMessage 中继 + 未开会话积压队列；降级 = 终端 send-text，
  * 全自动）。inject/headless/auto 只活在编排域（序列步显式选项）。 */
 const SendMessageBody = z.object({
-  text: z.string().min(1).max(20_000),
+  text: z.string().max(20_000),
   fromKind: z.enum(['dashboard', 'session']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
+  /** 随附图（上传件 id）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
+  images: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
 });
+
+/** 图片上传（base64 JSON；内容寻址落 `<dataDir>/uploads/<sha256>.<ext>`）。 */
+const UploadBody = z.object({
+  name: z.string().min(1).max(200),
+  mediaType: z.enum(UPLOAD_MEDIA_TYPES),
+  /** base64（无 data: 前缀）；字节数以解码后计。 */
+  data: z.string().min(1),
+});
+
+/** 上传件出参（不带落盘路径——路径是服务端的事，前端用 `/images/<id>` 取图）。 */
+function toUploadDto(row: UploadRow): { id: string; name: string; mediaType: string; size: number } {
+  return { id: row.id, name: row.name, mediaType: row.mediaType, size: row.size };
+}
 
 /** 阻塞问答作答：整 call 一次提交（含收尾屏的 Submit/Cancel 选项）——每问送选项
  *  下标（多选 = 勾选集，空 = 未作答）、输入行另带文本；键序由 harness 规格拼装，
@@ -570,6 +586,54 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 会话图片上传 / 回显（内容寻址 `<dataDir>/uploads/`；上传 ≠ 投递） ----
+  if (pathname === '/uploads' && req.method === 'POST') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    let body: z.infer<typeof UploadBody>;
+    try {
+      body = UploadBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const bytes = Buffer.from(body.data, 'base64');
+    if (bytes.length === 0) {
+      sendJson(res, 400, { error: 'Empty image' });
+      return true;
+    }
+    if (bytes.length > UPLOAD_MAX_BYTES) {
+      sendJson(res, 413, { error: 'Image too large' });
+      return true;
+    }
+    const row = deps.uploads.save({ name: body.name, mediaType: body.mediaType, bytes });
+    sendJson(res, 201, { upload: toUploadDto(row) });
+    return true;
+  }
+
+  const imageMatch = pathname.match(/^\/images\/([a-f0-9]{64})$/);
+  if (imageMatch && req.method === 'GET') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    const file = deps.uploads.fileOf(imageMatch[1]!);
+    if (!file) {
+      sendJson(res, 404, { error: 'Image not found' });
+      return true;
+    }
+    // 内容寻址（id = sha256）→ 永不改写，可长缓存
+    res.writeHead(200, {
+      'content-type': file.row.mediaType,
+      'content-length': String(file.bytes.length),
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+    res.end(file.bytes);
+    return true;
+  }
+
   // ---- 消息域（消息域重塑：纯递送管道）：在途视图读 + 投递 ----
   const messagesMatch = pathname.match(/^\/sessions\/([^/]+)\/messages$/);
   if (messagesMatch) {
@@ -598,9 +662,24 @@ export async function handleHooksRoutes(
         sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
         return true;
       }
+      const imageIds = body.images ?? [];
+      if (!body.text.trim() && imageIds.length === 0) {
+        sendJson(res, 400, { error: 'Message is empty' });
+        return true;
+      }
+      let images: MessageImage[] = [];
+      if (imageIds.length > 0) {
+        const refs = deps.uploads?.refsOf(imageIds) ?? null;
+        if (!refs) {
+          sendJson(res, 404, { error: 'Image not found' });
+          return true;
+        }
+        images = refs;
+      }
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,
         text: body.text,
+        ...(images.length > 0 ? { images } : {}),
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,
@@ -1052,6 +1131,8 @@ export async function handleHooksRoutes(
         inject: surface.inject !== null,
         headless: surface.headless !== null,
         watch: surface.idleSignals.length > 0,
+        /** 图片随 prompt 的对齐面（null = 该 harness 不收图，附件钮置灰）。 */
+        imageAttach: surface.imageAttach !== null,
         unsupportedReasons: surface.unsupportedReasons ?? null,
       })),
     });
