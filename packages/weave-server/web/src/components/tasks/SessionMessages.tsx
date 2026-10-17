@@ -896,9 +896,10 @@ export function SessionMessages({
   const rowProps = (key: string): React.HTMLAttributes<HTMLDivElement> => ({
     onContextMenu: (e) => {
       if (selecting) return;
-      // 触屏长按也会弹原生 contextmenu：压掉，触屏那条路走双击（见 onPressUp）
-      e.preventDefault();
+      // 触屏不压原生长按：那条路是「选中文字 + 系统复制」，压掉就再也复制不了；
+      // 自家菜单在触屏走双击（见 onPressUp），桌面才用右键接管
       if (coarse) return;
+      e.preventDefault();
       setMenu({ kind: 'bubble', x: e.clientX, y: e.clientY, key });
     },
     onPointerDown: onPressDown(key),
