@@ -29,6 +29,8 @@ export const tasksZh = {
   'tasks.copied': '已复制',
   'tasks.openSessionTerminal': '在默认终端打开会话（claude --resume）',
   'tasks.sessionTerminalRunning': '该会话已在终端运行（claude --resume）——不可重复打开',
+  'tasks.closePaneTooltip': '关闭该会话所在的终端 pane（退出会话；历史保留，可 --resume 接回）',
+  'tasks.closePaneFailed': '关闭会话失败：{error}',
   'tasks.terminalPickTitle': '选择要附加到的终端',
   'tasks.terminalPickCancel': '取消',
   'tasks.harnessPickTitle': '在哪个 harness 里新建会话',
@@ -290,6 +292,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.openSessionTerminal': 'Open in default terminal (claude --resume)',
   'tasks.sessionTerminalRunning':
     'A terminal is already running this session (claude --resume) — cannot open again',
+  'tasks.closePaneTooltip':
+    'Close the pane this session lives in (exits the session; history kept — --resume to continue)',
+  'tasks.closePaneFailed': 'Close session failed: {error}',
   'tasks.terminalPickTitle': 'Choose a terminal to attach to',
   'tasks.terminalPickCancel': 'Cancel',
   'tasks.harnessPickTitle': 'New session in which harness?',

@@ -31,6 +31,7 @@ import {
   FolderOpen,
   Globe,
   GripVertical,
+  Power,
   RefreshCw,
   Terminal,
   TriangleAlert,
@@ -61,6 +62,9 @@ interface ProjectListProps {
   /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
   openExplorerStateOf?: (projectId: number) => ActionState;
   openTerminalStateOf?: (projectId: number) => ActionState;
+  /** 关掉该项目的已开终端（cwd 恰为项目目录的 pane 逐个关；窗口里别的不动）。 */
+  onCloseTerminal?: (p: ProjectRow) => void;
+  closeTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
   /** Row 快速操作：该项目已打开的终端窗口数（0 = 无角标）。 */
@@ -103,6 +107,8 @@ export function ProjectList({
   syncStateOf,
   openExplorerStateOf,
   openTerminalStateOf,
+  onCloseTerminal,
+  closeTerminalStateOf,
   sessionStatsOf,
   terminalsOf,
   onReorder,
@@ -398,6 +404,20 @@ export function ProjectList({
                     </span>
                   )}
                 </span>
+                {/* 关闭终端：有终端开着才出现（0 个没得关，不占位）——关的是 cwd
+                    恰为本项目目录的那些 pane，窗口里顺手开着的别的目录不动。 */}
+                {terminals > 0 && onCloseTerminal && (
+                  <QuickButton
+                    title={t('project.closeTerminal', { n: terminals })}
+                    onClick={() => onCloseTerminal(p)}
+                  >
+                    <FeedbackIcon
+                      state={closeTerminalStateOf?.(p.id) ?? 'idle'}
+                      className="h-3.5 w-3.5"
+                      icon={<Power className="h-3.5 w-3.5" />}
+                    />
+                  </QuickButton>
+                )}
               </div>
             </li>
               )}

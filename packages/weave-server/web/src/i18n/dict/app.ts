@@ -32,6 +32,7 @@ export const appZh = {
   'project.openInTerminal': '在终端中打开',
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
+  'project.closeTerminal': '关闭该项目的 {n} 个终端（只关 cwd 在项目里的 pane）',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
@@ -86,11 +87,14 @@ export const appZh = {
   'toast.synced': '已同步 {n} 项',
   'toast.nothingToSync': '没有需要同步的项',
   'toast.sessionDeleted': '已删除会话（{n} 条事件）',
+  'toast.sessionPaneClosed': '已关闭该会话（历史保留，可 resume 接回）',
+  'toast.terminalsClosed': '已关闭 {n} 个终端',
 
   'errors.syncFailed': '同步失败：{error}',
   'errors.updateFailed': '更新失败：{error}',
   'errors.pluginToggleFailed': '插件启用状态更新失败：{error}',
   'errors.openFailed': '打开失败：{error}',
+  'errors.closeTerminalFailed': '关闭终端失败：{error}',
 };
 
 export const appEn: Record<keyof typeof appZh, string> = {
@@ -127,6 +131,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInTerminal': 'Open in terminal',
   'project.dragToReorder': 'Drag to reorder',
   'project.terminalsOpen': '{n} terminal(s) open',
+  'project.closeTerminal': "Close this project's {n} terminal(s) (only panes whose cwd is the project)",
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   'project.needsInit': 'needs init',
@@ -180,9 +185,12 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.synced': 'Synced {n} item(s)',
   'toast.nothingToSync': 'Nothing needs syncing',
   'toast.sessionDeleted': 'Session deleted ({n} events)',
+  'toast.sessionPaneClosed': 'Session closed (history kept — resume to continue)',
+  'toast.terminalsClosed': 'Closed {n} terminal(s)',
 
   'errors.syncFailed': 'Sync failed: {error}',
   'errors.updateFailed': 'Update failed: {error}',
   'errors.pluginToggleFailed': 'Plugin toggle failed: {error}',
   'errors.openFailed': 'Open failed: {error}',
+  'errors.closeTerminalFailed': 'Close terminal failed: {error}',
 };

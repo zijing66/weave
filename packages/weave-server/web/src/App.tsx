@@ -829,6 +829,31 @@ function Dashboard() {
     [fb],
   );
 
+  /** 关闭终端条按钮：关掉 cwd 恰为本项目目录的 pane（窗口里别的目录的 pane 不动）。
+      loading 挂到角标掉下来为止（同开终端口径——窗口真没了才收圈）；有 pane 关不掉
+      （wt 只数不关）服务端如实报，toast 带修法，不静默。 */
+  const closeProjectTerminal = useCallback(
+    (p: ProjectRow) =>
+      void fb.run(
+        `close-terminal:${p.id}`,
+        async () => {
+          const before = countsRef.current[p.id] ?? 0;
+          await api.closeProjectTerminal(p.id);
+          await terminalGate.current.wait(
+            `close:${p.id}`,
+            () => (countsRef.current[p.id] ?? 0) < before,
+          );
+          show('success', t('toast.terminalsClosed', { n: before }));
+        },
+        { fail: (e) => t('errors.closeTerminalFailed', { error: errorText(e) }) },
+      ),
+    [fb, show, t],
+  );
+  const closeTerminalStateOf = useCallback(
+    (id: number) => fb.stateOf(`close-terminal:${id}`),
+    [fb],
+  );
+
   /** 归档：确认在 ProjectList（右键菜单）；此处只跑动作 + 汇报清空规模。
    *  被归档的是当前选中项目时切到下一个活跃项目——不留幽灵详情。 */
   const handleArchiveProject = useCallback(
@@ -1047,6 +1072,8 @@ function Dashboard() {
       onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
+      onCloseTerminal={closeProjectTerminal}
+      closeTerminalStateOf={closeTerminalStateOf}
       onHoverProject={ensureUpdates}
       updatesOf={(id) => updatesMap[id]?.available}
       needsInitOf={(id) => updatesMap[id]?.needsInit}

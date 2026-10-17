@@ -1184,6 +1184,18 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
       { method: 'POST', body: JSON.stringify(target ? { target } : {}) },
     ),
+  /** 关掉会话所在的 pane（退出会话：宿主随 pane 一起退出，会话行与对话照常保留，
+   *  之后仍可用 --resume 接回）。找不到 pane / 终端没这个通道 → 409 中文修法。 */
+  closeSessionPane: (sessionId: string): Promise<{ ok: boolean; sessionId: string }> =>
+    apiFetch<{ ok: boolean; sessionId: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}/close-pane`,
+      { method: 'POST' },
+    ),
+  /** 关掉该项目的已开终端（cwd 恰为项目目录的 pane 逐个关，窗口里别的 pane 不动）。 */
+  closeProjectTerminal: (projectId: number): Promise<{ ok: boolean; closed: number }> =>
+    apiFetch<{ ok: boolean; closed: number }>(`/projects/${projectId}/close-terminal`, {
+      method: 'POST',
+    }),
   /** 在项目**已打开的终端**里起一个新会话（服务端复用该项目目录的既有 pane；
    *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。
    *  `harness` = 起哪个（须为该项目的已接入 harness）；缺省取已接入里第一个能起的。 */

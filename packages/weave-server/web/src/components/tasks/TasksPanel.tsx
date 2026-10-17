@@ -158,6 +158,17 @@ export function TasksPanel({
     [],
   );
 
+  /** 等该会话的进程熄灭（或超时）：关 pane 按钮的 loading 挂到这时为止——
+   *  「已关、图标还没暗」的空窗里按钮还在转圈，点不动也不会重复关。 */
+  const waitTerminalClosed = useCallback(
+    (sessionId: string): Promise<void> =>
+      gate.current.wait(
+        `closed:${sessionId}`,
+        () => sessionsRef.current?.some((s) => s.sessionId === sessionId && !s.pidAlive) === true,
+      ),
+    [],
+  );
+
   /** 等新会话行落进列表（或超时）：新建会话的 loading 挂到这时为止——spawn 是异步的
    *  （新窗 pane 起来、claude 再发 SessionStart 才落行），POST 一返回就收圈等于
    *  「点完看不出有没有生效」，用户会再点一次起出第二个。 */
@@ -542,6 +553,30 @@ export function TasksPanel({
   );
   const openTerminalStateOf = useCallback(
     (sessionId: string) => fb.stateOf(`openTerm:${sessionId}`),
+    [fb],
+  );
+
+  /** 关掉会话所在的 pane（退出会话）：宿主随 pane 一起退出，会话行与它的对话
+      照常保留（那是历史），之后仍可 --resume 接回。fb 键按会话隔离，loading 挂到
+      图标熄灭为止（同开终端口径——「已关、绿还没暗」的空窗里按钮转圈点不动）。
+      失败 toast 带服务端中文修法（找不到 pane / 该终端没这个通道都不静默）。 */
+  const runClosePane = useCallback(
+    (sessionId: string): void => {
+      void fb.run(
+        `closePane:${sessionId}`,
+        async () => {
+          await api.closeSessionPane(sessionId);
+          await refreshStatus();
+          await waitTerminalClosed(sessionId);
+          show('success', t('toast.sessionPaneClosed'));
+        },
+        { fail: (e) => t('tasks.closePaneFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, refreshStatus, waitTerminalClosed],
+  );
+  const closePaneStateOf = useCallback(
+    (sessionId: string) => fb.stateOf(`closePane:${sessionId}`),
     [fb],
   );
 
@@ -1178,6 +1213,8 @@ export function TasksPanel({
             onDropDispatch={onDropDispatch}
             onOpenTerminal={onOpenTerminal}
             openTerminalStateOf={openTerminalStateOf}
+            onClosePane={runClosePane}
+            closePaneStateOf={closePaneStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
             onOpenMessages={onOpenMessages}
             minimizedConvs={minimizedConvs}

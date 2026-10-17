@@ -7,7 +7,7 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, SquareTerminal, Trash2 } from 'lucide-react';
+import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { copyText } from '@/lib/clipboard';
@@ -228,6 +228,8 @@ export function SessionList({
   onDropDispatch,
   onOpenTerminal,
   openTerminalStateOf,
+  onClosePane,
+  closePaneStateOf,
   capabilities,
   onOpenMessages,
   minimizedConvs,
@@ -255,6 +257,10 @@ export function SessionList({
   onOpenTerminal: (sessionId: string) => void;
   /** 打开会话终端按钮的反馈态（loading → ✅ → 还原，防连点重复 spawn）。 */
   openTerminalStateOf?: (sessionId: string) => ActionState;
+  /** 关掉会话所在的 pane（退出会话）——宿主随 pane 一起退出，会话行与对话保留。 */
+  onClosePane: (sessionId: string) => void;
+  /** 关 pane 按钮的反馈态（loading → ✅ → 还原）。 */
+  closePaneStateOf?: (sessionId: string) => ActionState;
   /** 消息能力矩阵（服务端 MessagingSurface 派生，完整表不过滤；null = 未载）。 */
   capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
   /** 打开该会话的消息线程（弹窗内投递/查看）。 */
@@ -378,6 +384,7 @@ export function SessionList({
     const watch = watchOf?.(s.sessionId);
     const inflight = inflightOf(s.sessionId);
     const openTermState = openTerminalStateOf?.(s.sessionId) ?? 'idle';
+    const closePaneState = closePaneStateOf?.(s.sessionId) ?? 'idle';
     // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
     const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
       (q) => !q.submit,
@@ -478,6 +485,27 @@ export function SessionList({
                         className={cn('h-3 w-3', s.pidAlive && 'text-emerald-400')}
                       />
                     }
+                  />
+                </button>
+              )}
+              {/* 关 pane / 退出会话：会话进程活着才出现（没得关就不占位）——
+                  关掉 = 宿主随 pane 一起退出，会话行与它的对话照常保留，之后仍
+                  可 --resume 接回。判活判不动的（codex / 新鲜会话 pidAlive=null）
+                  一律不露，宁可少一个按钮也不给一条恒 409 的路。 */}
+              {!!s.pidAlive && (
+                <button
+                  type="button"
+                  title={t('tasks.closePaneTooltip')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClosePane(s.sessionId);
+                  }}
+                  className={cn(ACTION_BTN, 'hover:text-red-400')}
+                >
+                  <FeedbackIcon
+                    state={closePaneState}
+                    className="h-3 w-3"
+                    icon={<Power className="h-3 w-3" />}
                   />
                 </button>
               )}
