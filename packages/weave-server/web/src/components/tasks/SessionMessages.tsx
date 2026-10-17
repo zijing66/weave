@@ -41,7 +41,7 @@ import {
   modeTintFor,
   modelNamesFor,
 } from './lifecycle';
-import { canInterrupt, hasTurnSignal } from './session-status';
+import { canInterrupt, hasTurnSignal, type SessionStatus } from './session-status';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 
@@ -295,6 +295,19 @@ const CONV_FILTER_KEY: Record<
   user: 'tasks.convFilterSent',
   assistant: 'tasks.convFilterRecv',
 };
+
+/** 尾上的「回复还在路上」= 压缩中（与尾条是谁无关），或这一轮开着而尾条还是
+ *  「我刚说的那句」/ 压缩收尾分隔——自动压缩常打断在一轮中间，收尾笔一落尾条
+ *  就从 user 变成 compaction，不认它这一轮会一直不显「生成中…」。 */
+export function isGenerating(
+  status: SessionStatus | undefined,
+  tailRole: ConvEntry['role'] | undefined,
+): boolean {
+  return (
+    status === 'compacting' ||
+    (status === 'running' && (tailRole === 'user' || tailRole === 'compaction'))
+  );
+}
 
 export function filterThread(
   thread: readonly ConvEntry[],
@@ -663,19 +676,25 @@ export function SessionMessages({
   /** 尾上的在途提示：压缩中（状态总线同一判据；压缩与尾条是谁无关，照挂）显
    *  「压缩会话中…」，否则会话正在跑这一轮（含 5min 静默兜底）而尾条仍是用户
    *  那条 → 回复还在路上，显「生成中…」；中断态压在这两者之上（ESC 打断后宿主
-   *  多不发 Stop，回合口子还开着，不先判它就会一直卡在「生成中…」）。 */
+   *  多不发 Stop，回合口子还开着，不先判它就会一直卡在「生成中…」）。
+   *  压缩收尾那枚分隔也算「还没回话」：自动压缩常发生在一轮中间，收尾笔一落
+   *  尾条就从 user 变成 compaction，不认它这一轮会一直不显「生成中…」。 */
   const compacting = status === 'compacting';
   const interrupted = status === 'interrupted';
-  const generating =
-    compacting || (status === 'running' && thread[thread.length - 1]?.role === 'user');
+  const generating = isGenerating(status, thread[thread.length - 1]?.role);
+  /** 尾部签名 = 尾条 + 在途尾行：「生成中…」那行一出现也是尾部进了新内容，只认
+   *  尾条键会让刚发送时气泡滚到了底、提示行却留在视口外（下次打开才对）。 */
+  const tailSig = `${tailKey ?? ''}|${generating ? 'g' : ''}${interrupted ? 'i' : ''}${
+    answerPending ? 'a' : ''
+  }`;
   const lastTail = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (entries === null || tailKey === lastTail.current) return;
-    lastTail.current = tailKey;
+    if (entries === null || tailSig === lastTail.current) return;
+    lastTail.current = tailSig;
     if (!stick.current) return;
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [entries, tailKey]);
+  }, [entries, tailSig]);
 
   const visible = useMemo(() => filterThread(thread, filter), [thread, filter]);
   /** 拉动加载（向上那头）：贴顶后继续滚/拖才取更早，且一拉只取一页。 */

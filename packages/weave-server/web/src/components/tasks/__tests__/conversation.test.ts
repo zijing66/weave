@@ -6,6 +6,7 @@ import {
   exportConversationText,
   exportStamp,
   filterThread,
+  isGenerating,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -272,6 +273,29 @@ describe('filterThread', () => {
     ]);
     expect(filterThread(withDivider, 'user').map((e) => e.key)).toEqual(['e1', 'e3']);
     expect(filterThread(withDivider, 'assistant').map((e) => e.key)).toEqual(['e2']);
+  });
+});
+
+describe('isGenerating（尾上「回复还在路上」）', () => {
+  it('① 回合开着 + 尾条是我说的那句 → 生成中', () => {
+    expect(isGenerating('running', 'user')).toBe(true);
+  });
+
+  it('② 自动压缩后尾条换成压缩分隔，仍算回复在路上（不然这一轮永远不显）', () => {
+    expect(isGenerating('running', 'compaction')).toBe(true);
+  });
+
+  it('③ 压缩中与尾条是谁无关', () => {
+    expect(isGenerating('compacting', 'assistant')).toBe(true);
+    expect(isGenerating('compacting', undefined)).toBe(true);
+  });
+
+  it('④ 尾条已是回复 / 回合没开 → 不算', () => {
+    expect(isGenerating('running', 'assistant')).toBe(false);
+    expect(isGenerating('open', 'user')).toBe(false);
+    expect(isGenerating('interrupted', 'user')).toBe(false);
+    expect(isGenerating(undefined, 'user')).toBe(false);
+    expect(isGenerating('running', undefined)).toBe(false);
   });
 });
 
