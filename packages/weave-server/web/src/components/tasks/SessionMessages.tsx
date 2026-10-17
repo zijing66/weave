@@ -230,13 +230,20 @@ function normalizeText(text: string): string {
   return stripPromptDecor(text).text.replace(/\s+/g, ' ').trim();
 }
 
+/** 会话那侧把随图的路径换成这个占位（与服务端回执比对剥的是同一个记号）。 */
+const IMAGE_MARKER = /\[Image #\d+\]/gi;
+
 /** 投递行与事件条目是不是同一条消息（归一后全等）。带图的放宽一档：claude 的
- *  粘贴处理会把多行文本的 chunk 用空串连起来，原文与回执可能差在空白上。 */
+ *  粘贴处理会把多行文本的 chunk 用空串连起来，且正文里的图会变成 `[Image #N]`
+ *  占位——不剥占位就永远认领不到，同一条消息会显示两遍（一遍真气泡、一遍停在
+ *  投递样式上）。 */
 function claims(entryText: string, rowText: string, hasImages = false): boolean {
   const a = normalizeText(entryText);
   const b = normalizeText(rowText);
   if (a === b) return true;
-  return hasImages && a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
+  if (!hasImages) return false;
+  const drop = (s: string): string => s.replace(IMAGE_MARKER, '').replace(/\s+/g, '');
+  return drop(a) === drop(b);
 }
 
 /**

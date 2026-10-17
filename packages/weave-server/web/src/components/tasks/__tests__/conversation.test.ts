@@ -401,6 +401,50 @@ describe('随附图', () => {
     expect(thread[0]?.images).toHaveLength(1);
   });
 
+  it('带图正文在会话那侧变成 `[Image #N]` 占位 → 认领得到（不然同一条显示两遍）', () => {
+    const thread = attachDeliveries(
+      [
+        {
+          key: 'e3',
+          eventId: 3,
+          role: 'user',
+          at: at(3),
+          text: '看看这个[Image #1]',
+          images: [img('a'.repeat(64))],
+        },
+      ],
+      [delivery({ id: 'm1', text: '看看这个', at: at(3), images: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.pipe?.id).toBe('m1');
+  });
+
+  it('纯图发送：会话那侧只剩占位（正文空）时也认领得到', () => {
+    const thread = attachDeliveries(
+      [
+        {
+          key: 'e3',
+          eventId: 3,
+          role: 'user',
+          at: at(3),
+          text: '[Image #1]',
+          images: [img('a'.repeat(64))],
+        },
+      ],
+      [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.pipe?.id).toBe('m1');
+  });
+
+  it('占位放宽只对有图的投递行生效：没图就是对不上，仍是两条', () => {
+    const thread = attachDeliveries(
+      [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '看看这个[Image #1]' }],
+      [delivery({ id: 'm1', text: '看看这个', at: at(3) })],
+    );
+    expect(thread).toHaveLength(2);
+  });
+
   it('导出按 claude 占位列图（`[Image #N] 文件名`），跟在正文后', () => {
     const text = exportConversationText(
       [
