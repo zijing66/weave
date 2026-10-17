@@ -1035,8 +1035,8 @@ export function SessionMessages({
   /** 选中值取**别名**：转录里照会的是网关真名（`ftm`），那是别名 opus 的真身。 */
   const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
 
-  /** 真销毁（关）：输入框里还有未提交内容时先问一句，别让点外面那一下悄悄把
-   *  草稿带走。ESC 与最小化钮走挂起，不销毁。 */
+  /** 真销毁（关）：输入框里还有未提交内容时先问一句。只有关闭钮走这条路——
+   *  ESC、最小化钮、点蒙版都走挂起，不销毁。 */
   const requestClose = (): void => {
     if (draft.trim() || staged.length > 0) setConfirming(true);
     else onClose();
@@ -1049,7 +1049,7 @@ export function SessionMessages({
         // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
         minimized ? 'hidden' : 'flex',
       )}
-      onClick={requestClose}
+      onClick={onMinimize}
       // 拖放面 = 整个弹窗（拖进窗口任何一处都算，别让浏览器接管去打开那个文件）
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
@@ -1652,24 +1652,8 @@ export function SessionMessages({
                 rows={2}
                 className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
               />
-              {/* 停止：贴在发送按钮边上（回合开着才露、与事件链组头同一判据与 fb 键） */}
-              {stoppable && (
-                <button
-                  type="button"
-                  title={t('tasks.stopTooltip')}
-                  aria-label={t('tasks.stopTooltip')}
-                  onClick={() => onInterrupt(sessionId)}
-                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300"
-                >
-                  <FeedbackIcon
-                    state={interruptStateOf(sessionId)}
-                    className="h-3 w-3"
-                    icon={<Square className="h-3 w-3" />}
-                  />
-                  {t('tasks.stop')}
-                </button>
-              )}
-              {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说 */}
+              {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
+                  紧贴输入框——手从打字挪到换行不跨别的钮。 */}
               <button
                 type="button"
                 title={t('tasks.msgNewline')}
@@ -1679,28 +1663,50 @@ export function SessionMessages({
               >
                 <CornerDownLeft className="h-3.5 w-3.5" />
               </button>
-              <button
-                type="button"
-                disabled={
-                  !capability.prompt ||
-                  (!draft.trim() && staged.length === 0) ||
-                  fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-                }
-                title={
-                  capability.prompt
-                    ? undefined
-                    : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-                }
-                onClick={send}
-                className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
-              >
-                <FeedbackIcon
-                  state={fb.stateOf(`sendMsg:${sessionId}`)}
-                  className="h-3 w-3"
-                  icon={<Send className="h-3 w-3" />}
-                />
-                {t('tasks.messagesSend')}
-              </button>
+              {/* 停止 / 发送：靠右。窄屏竖排（拇指区两块方块，横排放不下四个钮），
+                  字标随窄屏收起（竖排要的是窄，留着字标等于没省位）；桌面并排一行。
+                  停止与事件链组头同一判据与 fb 键。 */}
+              <div className="flex shrink-0 items-center gap-1 max-lg:flex-col max-lg:items-stretch">
+                {stoppable && (
+                  <button
+                    type="button"
+                    title={t('tasks.stopTooltip')}
+                    aria-label={t('tasks.stopTooltip')}
+                    onClick={() => onInterrupt(sessionId)}
+                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 max-lg:px-3 max-lg:py-2"
+                  >
+                    <FeedbackIcon
+                      state={interruptStateOf(sessionId)}
+                      className="h-3 w-3"
+                      icon={<Square className="h-3 w-3" />}
+                    />
+                    <span className="max-lg:hidden">{t('tasks.stop')}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={
+                    !capability.prompt ||
+                    (!draft.trim() && staged.length === 0) ||
+                    fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                  }
+                  title={
+                    capability.prompt
+                      ? undefined
+                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                  }
+                  aria-label={t('tasks.messagesSend')}
+                  onClick={send}
+                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`sendMsg:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={<Send className="h-3 w-3" />}
+                  />
+                  <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
