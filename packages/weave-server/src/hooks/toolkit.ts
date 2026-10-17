@@ -403,8 +403,8 @@ export class ToolkitService {
   async list(projectId: number): Promise<ToolkitListResult> {
     const project = this.requireProject(projectId);
     const packs = await this.allPacks();
-    const infos: ToolkitPackInfo[] = [];
-    for (const pack of packs) infos.push(await this.packInfo(project, pack));
+    // 各包的读侧判定互不依赖（各自读盘/读表），并行取、按包序收集。
+    const infos = await Promise.all(packs.map((pack) => this.packInfo(project, pack)));
     await this.healMeta(project, infos);
     return { packs: infos, legacyCopies: await this.scanLegacyCopies(project) };
   }

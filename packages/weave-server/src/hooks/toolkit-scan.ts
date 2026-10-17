@@ -231,34 +231,36 @@ function skipEntry(name: string): boolean {
  * 例外：market 源根层仅裸表面命中 → 视为容器继续下钻（见 isStrictPackDir）。
  */
 export async function discoverToolkitPacks(source: ToolkitSource): Promise<ToolkitPack[]> {
-  const out: ToolkitPack[] = [];
   const market = source.provenance === 'market';
   const maxLevel = market ? MARKET_MAX_SCAN_LEVEL : MAX_SCAN_LEVEL;
-  const walk = async (dir: string, level: number, scope: string): Promise<void> => {
+  // 同层子树并行下钻：一次 `fs` 往返只占几微秒，串行 DFS 在 10 层深的市场源上
+  // 是把成百次往返排队（实测单个市场根 ~400ms）。Promise.all 按 entry 序收集，
+  // 包序与串行版一致。
+  const walk = async (dir: string, level: number, scope: string): Promise<ToolkitPack[]> => {
     if (await isToolkitPackDir(dir)) {
       // market 根层裸表面（如 skill 仓库根的 skills/）= 容器而非包：
       // 当包会 return 吞掉整棵树，嵌套 mods/manifest 包永远不被发现。
       const bareSurfaceContainer = level === 0 && market && !(await isStrictPackDir(dir));
       if (!bareSurfaceContainer) {
         const pack = await parseToolkitPack(dir, source, scope);
-        if (pack) out.push(pack);
-        return;
+        return pack ? [pack] : [];
       }
     }
-    if (level >= maxLevel) return;
+    if (level >= maxLevel) return [];
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
-      return; // 目录不存在 = 无包
+      return []; // 目录不存在 = 无包
     }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || skipEntry(entry.name)) continue;
-      await walk(path.join(dir, entry.name), level + 1, level === 0 ? entry.name : scope);
-    }
+    const per = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && !skipEntry(entry.name))
+        .map((entry) => walk(path.join(dir, entry.name), level + 1, level === 0 ? entry.name : scope)),
+    );
+    return per.flat();
   };
-  await walk(source.root, 0, '');
-  return out;
+  return walk(source.root, 0, '');
 }
 
 /** 内置扫描根；managed 市场资源根由调用方按 libraries 补入（同一管线，仅 provenance 不同）。 */
