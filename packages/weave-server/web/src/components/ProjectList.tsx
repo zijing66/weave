@@ -70,7 +70,7 @@ interface ProjectListProps {
   closeTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
-  /** Row 快速操作：该项目已打开的终端窗口数（0 = 无角标）。 */
+  /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
   /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
   onReorder?: (ids: number[]) => void;

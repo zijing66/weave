@@ -787,7 +787,7 @@ describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹�
   });
 });
 
-describe('countWindowsByDir（终端角标：窗口级计数）', () => {
+describe('countWindowsByDir（终端角标：按可见屏幕计数）', () => {
   it('同窗多 pane 只计 1；跨 mux 同号窗口各计 1；cwd 不匹配/null 不计', () => {
     const panes: WeztermMuxPane[] = [
       { muxKey: 'sockA', windowId: 1, cwd: 'file:///p/proj' },
@@ -803,6 +803,17 @@ describe('countWindowsByDir（终端角标：窗口级计数）', () => {
         ['/p/none', 0],
       ]),
     );
+  });
+
+  it('带 tabId（wezterm / Terminal.app）时一窗多 tab 各计 1，同 tab 多 pane 仍计 1', () => {
+    const panes: WeztermMuxPane[] = [
+      { muxKey: 'sockA', windowId: 0, tabId: 1, cwd: 'file:///p/proj' },
+      { muxKey: 'sockA', windowId: 0, tabId: 1, cwd: 'file:///p/proj' }, // 同 tab 第二个 pane
+      { muxKey: 'sockA', windowId: 0, tabId: 0, cwd: 'file:///p/proj' }, // 同窗另一 tab
+      { muxKey: 'sockA', windowId: 1, tabId: 0, cwd: 'file:///p/proj' }, // 另一窗口同号 tab
+      { muxKey: 'sockA', windowId: 0, tabId: 2, cwd: 'file:///p/other' },
+    ];
+    expect(countWindowsByDir(['/p/proj'], panes, 'linux')).toEqual(new Map([['/p/proj', 3]]));
   });
 
   it('win32 目录键大小写/斜杠/尾斜杠不敏感', () => {

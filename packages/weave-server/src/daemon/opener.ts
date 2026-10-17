@@ -155,7 +155,7 @@ export abstract class TerminalBackend {
     );
   }
 
-  /** 每目录已开窗口数；不支持的 preset 走这里（空表 = 角标不显示，不谎报）。 */
+  /** 每目录已开终端数（单位 = 本后端的可见屏幕）；不支持的 preset 走这里（空表 = 角标不显示，不谎报）。 */
   async countWindows(_dirs: readonly string[]): Promise<Map<string, number>> {
     return new Map();
   }
@@ -863,7 +863,9 @@ class TerminalAppBackend extends TerminalBackend {
     return countWindowsByDir(
       dirs,
       surfaces.flatMap((s) =>
-        s.cwd ? [{ muxKey: 'terminal.app', windowId: s.windowId, cwd: s.cwd }] : [],
+        s.cwd
+          ? [{ muxKey: 'terminal.app', windowId: s.windowId, tabId: s.tabIndex, cwd: s.cwd }]
+          : [],
       ),
     );
   }
@@ -922,7 +924,12 @@ class WeztermBackend extends TerminalBackend {
     return countWindowsByDir(
       dirs,
       muxes.flatMap((mux) =>
-        mux.panes.map((pane) => ({ muxKey: mux.socket, windowId: pane.windowId, cwd: pane.cwd })),
+        mux.panes.map((pane) => ({
+          muxKey: mux.socket,
+          windowId: pane.windowId,
+          tabId: pane.tabId,
+          cwd: pane.cwd,
+        })),
       ),
     );
   }
@@ -1414,16 +1421,19 @@ export function normalizeDirKey(raw: string | null, platform: NodeJS.Platform): 
   return platform === 'win32' ? s.toLowerCase() : s;
 }
 
-/** 跨 mux 摊平的 pane 行：计数只需 (mux 判别键, windowId, cwd)。 */
+/** 跨 mux 摊平的 pane 行：计数只需 (mux 判别键, windowId, tabId, cwd)。 */
 export interface WeztermMuxPane {
   muxKey: string;
   windowId: number;
+  /** tab 号（可见屏幕）；不给 = 该后端没有 tab 概念，按窗口计。 */
+  tabId?: number;
   cwd: string | null;
 }
 
 /**
- * 已打开终端窗口计数（窗口级口径：distinct (mux, windowId)、任一 pane cwd 命中
- * 即计——不是分屏 pane 数、也不是会话数）。同一窗口多个 pane 同属一目录只计 1。
+ * 已打开终端计数，单位 = 各后端的**可见屏幕**（与会话终端选择弹窗的选项同一
+ * 口径）：distinct (mux, windowId, tabId)、任一 pane cwd 命中即计——不是分屏
+ * pane 数、也不是会话数。同一屏多个 pane 同属一目录只计 1。
  */
 export function countWindowsByDir(
   dirs: readonly string[],
@@ -1431,15 +1441,18 @@ export function countWindowsByDir(
   platform: NodeJS.Platform = process.platform,
 ): Map<string, number> {
   const keys = dirs.map((d) => normalizeDirKey(d, platform));
-  const windows = dirs.map(() => new Set<string>());
+  const screens = dirs.map(() => new Set<string>());
   for (const pane of panes) {
     const cwdKey = normalizeDirKey(pane.cwd, platform);
     if (!cwdKey) continue;
+    const screen = pane.tabId == null
+      ? `${pane.muxKey}#${pane.windowId}`
+      : `${pane.muxKey}#${pane.windowId}#${pane.tabId}`;
     for (let i = 0; i < dirs.length; i++) {
-      if (keys[i] !== null && keys[i] === cwdKey) windows[i]!.add(`${pane.muxKey}#${pane.windowId}`);
+      if (keys[i] !== null && keys[i] === cwdKey) screens[i]!.add(screen);
     }
   }
-  return new Map(dirs.map((d, i) => [d, windows[i]!.size]));
+  return new Map(dirs.map((d, i) => [d, screens[i]!.size]));
 }
 
 /**

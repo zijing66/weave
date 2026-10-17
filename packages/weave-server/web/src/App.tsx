@@ -243,7 +243,7 @@ function Dashboard() {
     [queryClient, setError, t, refreshProjects],
   );
 
-  // 项目卡终端角标（已开终端窗口数）：纯 push 帧驱动——SSE 接入即补上次快照
+  // 项目卡终端角标（已开终端数，单位 = 可见屏幕）：纯 push 帧驱动——SSE 接入即补上次快照
   // 首帧、后台对账后推差量。前端零请求零定时器：探测要 spawn `wezterm cli`，
   // 任何前端主动拉都会把 spawn 带回请求关键路径。
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
@@ -568,7 +568,7 @@ function Dashboard() {
   );
 
   // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
-  // 终端窗口数：隐藏刷新器推的绝对值快照（会话所在屏幕的另一半在会话状态总线）。
+  // 终端数（可见屏幕）：隐藏刷新器推的绝对值快照（会话所在屏幕的另一半在会话状态总线）。
   useEffect(
     () =>
       subscribePush<{ counts: Record<number, number> }>('terminalTopology', (p) =>

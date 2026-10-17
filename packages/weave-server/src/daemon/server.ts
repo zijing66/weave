@@ -1659,8 +1659,9 @@ async function handleRequest(
     return;
   }
 
-  // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端**窗口**数
-  // （窗口级口径，不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals）。
+  // GET /terminals/counts — 项目卡「终端」角标：每项目已打开的终端数，单位 =
+  // 该后端的可见屏幕（wezterm = tab，与「选哪个终端」弹窗的选项同一口径），
+  // 不是分屏 pane、也不是会话数；枚举能力见 countOpenTerminals。
   // 陈旧值先给、后台对账：探测 = 每存活 socket spawn 一次 `wezterm cli`（实测
   // ~200ms），不该让响应等它；增量经 push 帧到达，正常消费方（SSE 客户端）
   // 不需要再打这枪。未接刷新器（测试注入缝）才现探。

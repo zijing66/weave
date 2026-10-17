@@ -224,7 +224,7 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
     db.close();
   });
 
-  it('projectId → 已开终端窗口数', async () => {
+  it('projectId → 已开终端数（单位 = 可见屏幕，后端自定）', async () => {
     openedByPath.set(path.resolve('/term-a'), 3);
     const res = await fetch(`http://127.0.0.1:${port}/terminals/counts`);
     expect(res.status).toBe(200);
