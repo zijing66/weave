@@ -53,6 +53,25 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_MAX_COUNT = 8;
 
+/** 图片判据：MIME 或扩展名（移动浏览器的剪贴板项偶尔不带 type）。 */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+const isImageFile = (f: File): boolean =>
+  f.type.startsWith('image/') || (!f.type && IMAGE_EXT.test(f.name));
+
+/**
+ * 剪贴板/拖放里的图。**移动浏览器只填 `items`**（iOS Safari 的 `files` 恒空），桌面
+ * 才稳定给 `files` ⇒ items 优先、files 兜底；只取 file 项，文字项留着走默认粘贴。
+ */
+export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return [];
+  const fromItems = Array.from(dt.items ?? [])
+    .filter((i) => i.kind === 'file')
+    .map((i) => i.getAsFile())
+    .filter((f): f is File => !!f);
+  const list = fromItems.length > 0 ? fromItems : Array.from(dt.files ?? []);
+  return list.filter(isImageFile);
+}
+
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
 
@@ -878,7 +897,7 @@ export function SessionMessages({
 
   /** 选图（文件选择器 / 粘贴 / 拖放三个入口共用）：类型与大小就地挡，失败可见告知。 */
   const stageFiles = (files: FileList | File[]): void => {
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const list = Array.from(files).filter(isImageFile);
     if (list.length === 0) return;
     setUploading((n) => n + list.length);
     void (async () => {
@@ -974,6 +993,13 @@ export function SessionMessages({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
+      // 拖放面 = 整个弹窗（拖进窗口任何一处都算，别让浏览器接管去打开那个文件）
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const imgs = imagesFrom(e.dataTransfer);
+        if (imgs.length > 0) stageFiles(imgs);
+      }}
     >
       <div
         ref={panelRef}
@@ -1514,14 +1540,7 @@ export function SessionMessages({
             )}
             {/* 图片输入行（输入框正上方）：附件钮 + 已选缩略图（× 移除、点开大图）。
                 粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
-            <div
-              className="flex flex-wrap items-center gap-1.5"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (e.dataTransfer?.files?.length) stageFiles(e.dataTransfer.files);
-              }}
-            >
+            <div className="flex flex-wrap items-center gap-1.5">
               <input
                 ref={fileRef}
                 type="file"
@@ -1543,7 +1562,7 @@ export function SessionMessages({
                 }
                 aria-label={t('tasks.msgImageAttach')}
                 onClick={() => fileRef.current?.click()}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
               >
                 {uploading > 0 ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1572,7 +1591,7 @@ export function SessionMessages({
                     title={t('tasks.msgImageRemove')}
                     aria-label={t('tasks.msgImageRemove')}
                     onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
-                    className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300"
+                    className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
@@ -1590,11 +1609,11 @@ export function SessionMessages({
                   }
                 }}
                 onPaste={(e) => {
-                  const files = e.clipboardData?.files;
-                  if (files?.length) {
-                    e.preventDefault();
-                    stageFiles(files);
-                  }
+                  // 只在真取到图时才压默认：粘贴文字（或 PDF 之类非图）照旧进输入框
+                  const imgs = imagesFrom(e.clipboardData);
+                  if (imgs.length === 0) return;
+                  e.preventDefault();
+                  stageFiles(imgs);
                 }}
                 placeholder={t('tasks.messagesPlaceholder')}
                 rows={2}

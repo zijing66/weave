@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
   conversationOf,
+  imagesFrom,
   exportConversationText,
   exportStamp,
   filterThread,
@@ -373,6 +374,54 @@ describe('随附图', () => {
     expect(text).toBe(
       '[2026-10-16 09:00:00] 我\n' + '看看这个\n' + '[Image #1] shot.png\n' + '[Image #2] two.png',
     );
+  });
+});
+
+describe('imagesFrom（剪贴板 / 拖放取图）', () => {
+  const f = (name: string, type: string): File => new File(['x'], name, { type });
+  const dt = (spec: { items?: { kind: string; type: string; file: File | null }[]; files?: File[] }): DataTransfer =>
+    ({
+      items: (spec.items ?? []).map((i) => ({
+        kind: i.kind,
+        type: i.type,
+        getAsFile: () => i.file,
+      })),
+      files: spec.files ?? [],
+    }) as unknown as DataTransfer;
+
+  it('移动浏览器只填 items（iOS Safari 的 files 恒空）→ 仍取到图', () => {
+    const shot = f('shot.png', 'image/png');
+    const got = imagesFrom(dt({ items: [{ kind: 'file', type: 'image/png', file: shot }] }));
+    expect(got.map((x) => x.name)).toEqual(['shot.png']);
+  });
+
+  it('桌面 files 兜底（items 空）', () => {
+    const got = imagesFrom(dt({ files: [f('a.jpg', 'image/jpeg'), f('b.gif', 'image/gif')] }));
+    expect(got.map((x) => x.name)).toEqual(['a.jpg', 'b.gif']);
+  });
+
+  it('文字项不吞：只取 kind=file，非图文件不进', () => {
+    const got = imagesFrom(
+      dt({
+        items: [
+          { kind: 'string', type: 'text/plain', file: null },
+          { kind: 'file', type: 'image/png', file: f('shot.png', 'image/png') },
+          { kind: 'file', type: 'application/pdf', file: f('doc.pdf', 'application/pdf') },
+        ],
+      }),
+    );
+    expect(got.map((x) => x.name)).toEqual(['shot.png']);
+  });
+
+  it('剪贴板项不带 type 时按扩展名认（移动浏览器偶发）', () => {
+    const got = imagesFrom(dt({ items: [{ kind: 'file', type: '', file: f('photo.webp', '') }] }));
+    expect(got.map((x) => x.name)).toEqual(['photo.webp']);
+  });
+
+  it('没有 clipboardData（或全是文字）→ 空表，调用方据此不压默认粘贴', () => {
+    expect(imagesFrom(null)).toEqual([]);
+    expect(imagesFrom(dt({ items: [{ kind: 'string', type: 'text/plain', file: null }] }))).toEqual([]);
+    expect(imagesFrom(dt({ files: [f('doc.pdf', 'application/pdf')] }))).toEqual([]);
   });
 });
 
