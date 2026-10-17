@@ -95,48 +95,51 @@ async function entryFor(
   }
 }
 
+/**
+ * 一次遍历返回该子树下的全部条目。同层各项并行处理——串行版在
+ * `~/.claude/plugins`（深度 10）上是成百次 `lstat`/`readdir` 排队，实测 200ms；
+ * 结果在调用方按 relPath 排序，故并行不影响输出。
+ */
 async function walk(
   absDir: string,
   relDir: string,
   depth: number,
-  out: AssetEntry[],
   maxDepth: number,
   sniffer: PluginModsSniffer,
-): Promise<void> {
-  if (depth > maxDepth || out.length >= MAX_ENTRIES) return;
+): Promise<AssetEntry[]> {
+  if (depth > maxDepth) return [];
   let entries;
   try {
     entries = await readdir(absDir, { withFileTypes: true });
   } catch {
-    return; // absent or unreadable — a whitelist probe, not an error
+    return []; // absent or unreadable — a whitelist probe, not an error
   }
-  for (const e of entries) {
-    if (out.length >= MAX_ENTRIES) return;
-    const abs = path.join(absDir, e.name);
-    const rel = `${relDir}/${e.name}`;
-    if (e.isDirectory()) {
-      if (skipDir(rel, e.name)) continue;
-      await walk(abs, rel, depth + 1, out, maxDepth, sniffer);
-      continue;
-    }
-    if (e.isSymbolicLink()) {
-      // A symlinked directory (e.g. commands/ pointed at a repo) is descended
-      // like the watcher follows links; a symlinked file becomes an entry.
-      try {
-        const st = await stat(abs);
-        if (st.isDirectory()) {
-          if (!skipDir(rel, e.name)) {
-            await walk(abs, rel, depth + 1, out, maxDepth, sniffer);
-          }
-          continue;
-        }
-      } catch {
-        continue; // broken link
+  const per = await Promise.all(
+    entries.map(async (e): Promise<AssetEntry[]> => {
+      const abs = path.join(absDir, e.name);
+      const rel = `${relDir}/${e.name}`;
+      if (e.isDirectory()) {
+        if (skipDir(rel, e.name)) return [];
+        return walk(abs, rel, depth + 1, maxDepth, sniffer);
       }
-    }
-    const entry = await entryFor(abs, rel, sniffer);
-    if (entry) out.push(entry);
-  }
+      if (e.isSymbolicLink()) {
+        // A symlinked directory (e.g. commands/ pointed at a repo) is descended
+        // like the watcher follows links; a symlinked file becomes an entry.
+        try {
+          const st = await stat(abs);
+          if (st.isDirectory()) {
+            if (skipDir(rel, e.name)) return [];
+            return walk(abs, rel, depth + 1, maxDepth, sniffer);
+          }
+        } catch {
+          return []; // broken link
+        }
+      }
+      const entry = await entryFor(abs, rel, sniffer);
+      return entry ? [entry] : [];
+    }),
+  );
+  return per.flat();
 }
 
 /** Global skips (any depth) plus the plugins-subtree data skips. */
@@ -151,24 +154,28 @@ function skipDir(rel: string, name: string): boolean {
  */
 export async function listGlobalFileAssets(home: string = homedir()): Promise<AssetEntry[]> {
   const sniffer = new PluginModsSniffer({ revalidate: false }); // 请求级：同请求内复用结论
-  const out: AssetEntry[] = [];
-  for (const root of ROOTS) {
-    const base = path.join(home, ...root.prefix.split('/'));
-    for (const f of root.files) {
-      const entry = await entryFor(path.join(base, f), `${root.prefix}/${f}`, sniffer);
-      if (entry) out.push(entry);
-    }
-    for (const d of root.dirs) {
-      const relDir = `${root.prefix}/${d}`;
-      const maxDepth = relDir === PLUGIN_SUBTREE_ROOT ? PLUGIN_MAX_DEPTH : MAX_DEPTH;
-      await walk(path.join(base, d), relDir, 1, out, maxDepth, sniffer);
-    }
-  }
+  const per = await Promise.all(
+    ROOTS.map(async (root): Promise<AssetEntry[]> => {
+      const base = path.join(home, ...root.prefix.split('/'));
+      const [files, dirs] = await Promise.all([
+        Promise.all(root.files.map((f) => entryFor(path.join(base, f), `${root.prefix}/${f}`, sniffer))),
+        Promise.all(
+          root.dirs.map((d) => {
+            const relDir = `${root.prefix}/${d}`;
+            const maxDepth = relDir === PLUGIN_SUBTREE_ROOT ? PLUGIN_MAX_DEPTH : MAX_DEPTH;
+            return walk(path.join(base, d), relDir, 1, maxDepth, sniffer);
+          }),
+        ),
+      ]);
+      return [...files.filter((e): e is AssetEntry => e !== null), ...dirs.flat()];
+    }),
+  );
+  const out = per.flat();
   // 仓库标记：插件铺下来的文件按安装记录归属（同一份记录里的目录可能嵌套，取最长
   // 命中的那个）；用户自己写的配置不属于任何仓库，不打标记。
   const plugins = await installedPluginNamespaces(home);
   out.sort((a, b) => a.relPath.localeCompare(b.relPath));
-  return out.map((e) => {
+  return out.slice(0, MAX_ENTRIES).map((e) => {
     const ns = namespaceOf(e.absPath, plugins);
     return ns ? { ...e, namespace: ns } : e;
   });

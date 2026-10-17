@@ -88,6 +88,9 @@ export interface ToolkitToggleResult {
 /** mod 类包的宿主版本下限（Claude Code ≥ 2.1.287 契约，EARLY ACCESS）。 */
 export const MIN_MOD_HOST_VERSION = [2, 1, 287] as const;
 
+/** 包清单缓存时长：面板重复打开/多端同时打开的主要收益都在这段时间内。 */
+const PACKS_TTL_MS = 10_000;
+
 /** 版本字符串（semver）是否 ≥ min。 */
 export function isVersionAtLeast(version: string, min: readonly number[]): boolean {
   const parts = version.split('.').map((n) => Number.parseInt(n, 10));
@@ -368,6 +371,8 @@ export interface ToolkitServiceDeps {
 }
 
 export class ToolkitService {
+  private packsCache: { at: number; key: string; packs: Promise<ToolkitPack[]> } | undefined;
+
   constructor(private readonly deps: ToolkitServiceDeps) {}
 
   /** 扫描源：内置根（测试可覆盖）+ managed 市场资源根。 */
@@ -389,10 +394,27 @@ export class ToolkitService {
     });
   }
 
-  /** 各扫描源并行发现（市场源要下钻 10 层，一个一个来就是把最慢的那个乘上根数）。 */
+  /**
+   * 各扫描源并行发现（市场源要下钻 10 层，一个一个来就是把最慢的那个乘上根数）。
+   *
+   * 盘上清单只在装/卸/导入市场时才变，而 `list` 是面板每次打开都要打的一发
+   * （实测 ~200ms）——10s 内复用上一次的扫描结果，在飞请求共用同一个 Promise
+   * （单飞）。缓存键带扫描根集合：导入/移除市场换了根即重扫，不等 TTL。
+   */
   private async allPacks(): Promise<ToolkitPack[]> {
-    const per = await Promise.all(this.sources().map((s) => discoverToolkitPacks(s)));
-    return per.flat();
+    const sources = this.sources();
+    const key = sources.map((s) => path.resolve(s.root)).join('|');
+    const now = Date.now();
+    const cached = this.packsCache;
+    if (cached && cached.key === key && now - cached.at < PACKS_TTL_MS) return cached.packs;
+    const packs = Promise.all(sources.map((s) => discoverToolkitPacks(s))).then((per) => per.flat());
+    const entry = { at: now, key, packs };
+    this.packsCache = entry;
+    // 扫描失败不留缓存：一次瞬时错误不该把面板钉在空列表上 10s。
+    packs.catch(() => {
+      if (this.packsCache === entry) this.packsCache = undefined;
+    });
+    return packs;
   }
 
   /**
@@ -568,6 +590,9 @@ export class ToolkitService {
   }
 
   private async resolvePack(packId: string, sourceRoot?: string): Promise<ToolkitPack> {
+    // 变更类操作（启用/禁用/卸载）不吃缓存：宁可多扫一遍盘，也不能因为
+    // 「10s 前扫过一次」就把刚落到盘上的包判成不存在。
+    this.packsCache = undefined;
     const packs = (await this.allPacks()).filter((p) => p.id === packId);
     if (sourceRoot) {
       const match = packs.find((p) => path.resolve(p.sourceRoot) === path.resolve(sourceRoot));
