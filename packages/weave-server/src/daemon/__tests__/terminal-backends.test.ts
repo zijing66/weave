@@ -3,6 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  applescriptString,
+  itermPaneFromEnv,
+  konsolePaneFromEnv,
+  parseItermPaneId,
+  parseKonsolePaneId,
   parseLsofCwds,
   parsePromptPaneId,
   parsePsRootPids,
@@ -14,6 +19,7 @@ import {
   pickTerminalAppWindow,
   locatorPresetOf,
   promptTerminalChannel,
+  qtKeyOf,
   resolveTerminalLaunch,
   sessionScreensFromEnvs,
   SocketProbeGate,
@@ -622,6 +628,72 @@ describe('wt 击键通道 — env→pid 定位与 pane id 表示法', () => {
     expect(decoded).toContain('$env:WEAVE_WT_PID');
     // here-string 收尾必须在行首，否则 PowerShell 解析报错
     expect(decoded).toContain(`\n'@\n`);
+  });
+});
+
+describe('konsole / iterm 击键通道 — env→pane 定位与表示法（本机无法实机验证）', () => {
+  it('定位键齐了才认，且 konsole/iterm 排在 wezterm 前面（终端套终端时内层优先）', () => {
+    expect(locatorPresetOf({ KONSOLE_DBUS_SERVICE: ':1.42', KONSOLE_DBUS_SESSION: '/Sessions/3' })).toBe(
+      'konsole',
+    );
+    expect(locatorPresetOf({ KONSOLE_DBUS_SERVICE: ':1.42' })).toBeNull();
+    expect(locatorPresetOf({ ITERM_SESSION_ID: 'w0t1p0:ABCD-1' })).toBe('iterm');
+    // 从 wezterm 里起的 konsole/iterm 会带着外层 WEZTERM_*：内层的先命中
+    const nested = {
+      WEZTERM_PANE: '7',
+      WEZTERM_UNIX_SOCKET: '/tmp/gui-sock-1',
+      KONSOLE_DBUS_SERVICE: 'org.kde.konsole-7',
+      KONSOLE_DBUS_SESSION: '/Sessions/1',
+    };
+    expect(locatorPresetOf(nested)).toBe('konsole');
+  });
+
+  it('pane id 表示法归各后端：konsole 带服务名+会话路径，iterm 带 unique id', () => {
+    expect(parseKonsolePaneId('konsole::1.42|/Sessions/3')).toEqual({
+      service: ':1.42',
+      session: '/Sessions/3',
+    });
+    expect(parseKonsolePaneId('konsole:org.kde.konsole-7|/Sessions/1')).not.toBeNull();
+    expect(parseKonsolePaneId('konsole:|/Sessions/3')).toBeNull();
+    expect(parseKonsolePaneId('konsole::1.42|Sessions/3')).toBeNull();
+    expect(konsolePaneFromEnv({ KONSOLE_DBUS_SERVICE: ':1.42' })).toBeNull();
+    expect(konsolePaneFromEnv({ KONSOLE_DBUS_SERVICE: ':1.42', KONSOLE_DBUS_SESSION: '/Sessions/3' })).toBe(
+      'konsole::1.42|/Sessions/3',
+    );
+
+    expect(parseItermPaneId('iterm:w0t1p0:1A2B-3C')).toBe('w0t1p0:1A2B-3C');
+    expect(parseItermPaneId('iterm:w0')).toBeNull();
+    expect(itermPaneFromEnv({ ITERM_SESSION_ID: 'w0t1p0:1A2B-3C' })).toBe('iterm:w0t1p0:1A2B-3C');
+    expect(itermPaneFromEnv({})).toBeNull();
+  });
+
+  it('平台门控与通道能力：konsole 仅在 linux、iterm 仅有文本（没有裸键序）', async () => {
+    const konsole = (p: NodeJS.Platform) => terminalBackendFor(settings('konsole'), p);
+    expect(konsole('linux').textAddressable).toBe(true);
+    expect(konsole('win32').textAddressable).toBe(false);
+    expect(konsole('linux').ownsPaneId('konsole::1.42|/Sessions/3')).toBe(true);
+    expect(konsole('linux').ownsPaneId('iterm:w0t1p0:1A2B-3C')).toBe(false);
+
+    const iterm = (p: NodeJS.Platform) => terminalBackendFor(settings('iterm'), p);
+    expect(iterm('darwin').textAddressable).toBe(true);
+    expect(iterm('win32').textAddressable).toBe(false);
+    expect(iterm('darwin').ownsPaneId('iterm:w0t1p0:1A2B-3C')).toBe(true);
+    // iTerm2 没有裸键序入口：中断/作答诚实拒绝，不假装能打
+    await expect(iterm('darwin').sendKeys('iterm:w0t1p0:1A2B-3C', '\x1b')).rejects.toThrow(
+      'cannot send keys',
+    );
+    await expect(iterm('darwin').sendPromptText('w0t1p0:1A2B-3C', 'hi')).rejects.toThrow(
+      'Invalid prompt pane',
+    );
+  });
+
+  it('Qt 键值映射：控制键给真值，ASCII 用码位；AppleScript 字面量先转反斜杠', () => {
+    expect(qtKeyOf('\x1b')).toBe(0x01000000);
+    expect(qtKeyOf('\r')).toBe(0x01000004);
+    expect(qtKeyOf('\t')).toBe(0x01000001);
+    expect(qtKeyOf('\b')).toBe(0x01000003);
+    expect(qtKeyOf('2')).toBe(0x32);
+    expect(applescriptString('a\\"b')).toBe('a\\\\\\"b');
   });
 });
 

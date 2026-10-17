@@ -639,6 +639,188 @@ public static class WeaveWtKeys
 }`;
 
 /**
+ * Konsole（KDE，Linux）：每个会话自带一条 D-Bus 路径（`KONSOLE_DBUS_SERVICE` +
+ * `KONSOLE_DBUS_SESSION`，hook 子进程天然继承），会话对象自己就有 `sendText`
+ * 与 `sendKey`——不抢焦点、不依赖窗口在前台，与 wt 那条 console 通道同级别。
+ * pane id = `konsole:<服务名>|<会话路径>`。
+ *
+ * **本机（Windows）无法实机验证**：按 Konsole 公开的 D-Bus 接口写（见
+ * docs/DECISIONS.md），调用失败一律抛真相，不静默降级成「送到了」。
+ */
+class KonsoleBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('konsole', false, platform, platform === 'linux');
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return PRESET_CANDIDATES.konsole(dir, run, this.platform);
+  }
+
+  override async locatePane(env: Record<string, string>): Promise<string | null> {
+    return konsolePaneFromEnv(env);
+  }
+
+  override ownsPaneId(paneId: string): boolean {
+    return parseKonsolePaneId(paneId) !== null;
+  }
+
+  override async sendPromptText(paneId: string, text: string): Promise<void> {
+    const target = parseKonsolePaneId(paneId);
+    if (!target) throw new Error(`Invalid prompt pane "${paneId}"`);
+    if (text) await konsoleCall(target, 'sendText', text);
+    await konsoleCall(target, 'sendKey', String(QT_KEY_RETURN));
+  }
+
+  override async sendKeys(paneId: string, keys: string): Promise<void> {
+    const target = parseKonsolePaneId(paneId);
+    if (!target) throw new Error(`Invalid prompt pane "${paneId}"`);
+    for (const ch of keys) await konsoleCall(target, 'sendKey', String(qtKeyOf(ch)));
+  }
+}
+
+/** Konsole 的 pane id ↔ (D-Bus 服务名, 会话路径)；坏 id → null。 */
+export function parseKonsolePaneId(id: string): { service: string; session: string } | null {
+  const m = /^konsole:([\w.:-]+)\|(\/[\w/]+)$/.exec(id);
+  return m ? { service: m[1]!, session: m[2]! } : null;
+}
+
+/** 上报的 pane env → Konsole 的 pane id；不是 Konsole 会话（缺键）→ null。 */
+export function konsolePaneFromEnv(env: Record<string, string>): string | null {
+  const [serviceKey, sessionKey] = TERMINAL_LOCATOR_ENV.konsole;
+  const service = env[serviceKey];
+  const session = env[sessionKey];
+  if (!service || !session) return null;
+  const id = `konsole:${service}|${session}`;
+  return parseKonsolePaneId(id) ? id : null;
+}
+
+/** Qt::Key_Return（Konsole 的 sendKey 吃 Qt 键值）。 */
+const QT_KEY_RETURN = 0x01000004;
+
+/** 字符 → Qt 键值：控制键给真值，其余用码位（ASCII 与 Qt::Key 一致）。 */
+export function qtKeyOf(ch: string): number {
+  switch (ch) {
+    case '\x1b':
+      return 0x01000000;
+    case '\r':
+    case '\n':
+      return QT_KEY_RETURN;
+    case '\t':
+      return 0x01000001;
+    case '\b':
+      return 0x01000003;
+    default:
+      return ch.codePointAt(0) ?? 0;
+  }
+}
+
+/**
+ * 调 Konsole 会话的 D-Bus 方法：先试 Qt 自带的 `qdbus(6/5)`（参数原样走 argv、
+ * 无需拼引号），再回落到 dbus 本身的 `dbus-send`（`string:` 形参）。
+ */
+async function konsoleCall(
+  target: { service: string; session: string },
+  method: 'sendText' | 'sendKey',
+  arg: string,
+): Promise<void> {
+  const attempts: Array<{ command: string; args: string[] }> = [
+    ...['qdbus6', 'qdbus5', 'qdbus'].map((command) => ({
+      command,
+      args: [target.service, target.session, method, arg],
+    })),
+    {
+      command: 'dbus-send',
+      args: [
+        '--session',
+        '--type=method_call',
+        `--dest=${target.service}`,
+        target.session,
+        `org.kde.konsole.Session.${method}`,
+        `string:${arg}`,
+      ],
+    },
+  ];
+  let last: CaptureResult | null = null;
+  for (const attempt of attempts) {
+    const r = await captureCommand(attempt.command, attempt.args, undefined, 5000);
+    if (r?.ok) return;
+    last = r;
+  }
+  const detail = last ? last.err || last.out || 'unknown error' : 'no qdbus / dbus-send on PATH';
+  throw new Error(`Konsole D-Bus call "${method}" failed: ${detail}`);
+}
+
+/**
+ * iTerm2（macOS）：`ITERM_SESSION_ID`（`w0t0p0:<UUID>`）一条就唯一定位一个会话，
+ * 文本走 AppleScript `write text`。**只有文本通道**——iTerm2 没有裸键序入口，
+ * 中断/作答在这条路上诚实不支持（`sendKeys` 走基类拒绝，不假装能打）。
+ * 同 Konsole：本机无法实机验证。
+ */
+class ItermBackend extends TerminalBackend {
+  constructor(platform: NodeJS.Platform) {
+    super('iterm', false, platform, platform === 'darwin');
+  }
+
+  candidates(dir: string, run?: string[]): TerminalLaunch[] {
+    return PRESET_CANDIDATES.iterm(dir, run, this.platform);
+  }
+
+  override async locatePane(env: Record<string, string>): Promise<string | null> {
+    return itermPaneFromEnv(env);
+  }
+
+  override ownsPaneId(paneId: string): boolean {
+    return parseItermPaneId(paneId) !== null;
+  }
+
+  override async sendPromptText(paneId: string, text: string): Promise<void> {
+    const sessionId = parseItermPaneId(paneId);
+    if (!sessionId) throw new Error(`Invalid prompt pane "${paneId}"`);
+    await itermWriteText(sessionId, text);
+  }
+}
+
+/** iTerm2 的 pane id ↔ 会话 unique id；坏 id → null。 */
+export function parseItermPaneId(paneId: string): string | null {
+  const m = /^iterm:(w\d+t\d+p\d+:[0-9A-Fa-f-]+)$/.exec(paneId);
+  return m ? m[1]! : null;
+}
+
+/** 上报的 pane env → iTerm2 的 pane id；不是 iTerm 会话（缺键）→ null。 */
+export function itermPaneFromEnv(env: Record<string, string>): string | null {
+  const [sessionKey] = TERMINAL_LOCATOR_ENV.iterm;
+  const raw = env[sessionKey];
+  if (!raw) return null;
+  const id = `iterm:${raw}`;
+  return parseItermPaneId(id) ? id : null;
+}
+
+/** AppleScript 字符串字面量转义（反斜杠先转，免把引号转义再转一遍）。 */
+export function applescriptString(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+async function itermWriteText(sessionId: string, text: string): Promise<void> {
+  const script = `tell application "iTerm2"
+repeat with w in windows
+repeat with t in tabs of w
+repeat with s in sessions of t
+if unique id of s is "${sessionId}" then
+tell s to write text "${applescriptString(text)}"
+return "ok"
+end if
+end repeat
+end repeat
+end repeat
+end tell`;
+  const r = await captureCommand('osascript', ['-e', script], undefined, 8000);
+  if (!r) throw new Error('osascript is unavailable — cannot send text into iTerm2');
+  if (!r.ok || !r.out.includes('ok')) {
+    throw new Error(`iTerm2 write text failed: ${r.err || r.out || 'unknown error'}`);
+  }
+}
+
+/**
  * Terminal.app（macOS）：枚举/定点全走 osascript + ps + lsof——tab 的 tty →
  * 该 tty 的进程树根（shell；被 exec 替换成 claude 时就是 claude 本身）→ lsof
  * 取 cwd。无分屏，tab 即整面；「pane 分屏」的等价物是新 tab：run 复用同项目
@@ -928,10 +1110,9 @@ const BACKEND_FACTORIES: Record<
     new CandidatesBackend('powershell', platform, PRESET_CANDIDATES.powershell),
   cmd: (_terminal, platform) => new CandidatesBackend('cmd', platform, PRESET_CANDIDATES.cmd),
   terminal: (_terminal, platform) => new TerminalAppBackend(platform),
-  iterm: (_terminal, platform) => new CandidatesBackend('iterm', platform, PRESET_CANDIDATES.iterm),
+  iterm: (_terminal, platform) => new ItermBackend(platform),
   gnome: (_terminal, platform) => new CandidatesBackend('gnome', platform, PRESET_CANDIDATES.gnome),
-  konsole: (_terminal, platform) =>
-    new CandidatesBackend('konsole', platform, PRESET_CANDIDATES.konsole),
+  konsole: (_terminal, platform) => new KonsoleBackend(platform),
   ghostty: (_terminal, platform) => new GhosttyBackend(platform),
   wezterm: (_terminal, platform) => new WeztermBackend(platform),
   custom: (terminal, platform) => new CustomBackend(terminal, platform),

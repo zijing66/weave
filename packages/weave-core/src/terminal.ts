@@ -28,6 +28,17 @@ export const TERMINAL_LOCATOR_ENV = {
    * 进程自己**，套几层都对——故 pid 通道优先，wezterm 的 env 只在没有 pid 时说话。
    */
   wt: ['WT_PROFILE_ID', 'CLAUDE_PID'],
+  /**
+   * Konsole（KDE）：每个会话一条 D-Bus 路径，env 直接给全（服务名 + 会话路径），
+   * 击键/文本走 `sendText` / `sendKey`——同样与前台焦点无关。也排 wezterm 前面
+   * （从 wezterm 里起 konsole 会带着外层的 `WEZTERM_*`，理由同 wt）。
+   */
+  konsole: ['KONSOLE_DBUS_SERVICE', 'KONSOLE_DBUS_SESSION'],
+  /**
+   * iTerm2：`w<窗口>t<tab>p<pane>:<UUID>`，一条就唯一定位一个会话。只有文本通道
+   * （AppleScript `write text`），没有裸键序——中断/作答在这条路上诚实不支持。
+   */
+  iterm: ['ITERM_SESSION_ID'],
   /** wezterm：pane 号 + 该实例的 mux socket（两者一起才唯一）。 */
   wezterm: ['WEZTERM_PANE', 'WEZTERM_UNIX_SOCKET'],
 } as const satisfies Record<string, readonly string[]>;
