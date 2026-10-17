@@ -725,6 +725,7 @@ describe('sessionScreensFromEnvs — 会话 → 所在可见屏幕（纯函数�
     const screens = sessionScreensFromEnvs(
       { a: envOf('2'), b: envOf('1'), c: envOf('5') },
       MUXES,
+      [SOCK],
       'win32',
     );
     const key = weztermMuxKey(SOCK);
@@ -734,7 +735,7 @@ describe('sessionScreensFromEnvs — 会话 → 所在可见屏幕（纯函数�
     expect(screens.c).toEqual({ id: `${key}:1:2`, windowId: 1, tabId: 2, tabsInWindow: 1 });
   });
 
-  it('键缺、socket 对不上活 mux、pane 已不在 → null（该会话不分组，不猜）', () => {
+  it('键缺、socket 已不在候选里、pane 已不在 → null（确认不分组，不猜）', () => {
     expect(
       sessionScreensFromEnvs(
         {
@@ -743,13 +744,30 @@ describe('sessionScreensFromEnvs — 会话 → 所在可见屏幕（纯函数�
           bare: {},
         },
         MUXES,
+        [SOCK],
         'win32',
       ),
     ).toEqual({ gone: null, other: null, bare: null });
   });
 
+  it('mux 不在枚举表里但实例还活着 = 这轮没探到 → 缺键（web 保留上次分块）', () => {
+    const probes = sessionScreensFromEnvs({ held: envOf('2') }, [], [SOCK], 'win32');
+    expect(probes).toEqual({});
+    // 候选清单两种路径形态都能认（win 注入的是混合分隔符）
+    expect(
+      sessionScreensFromEnvs(
+        { held: envOf('2', 'D:\\Users\\u\\.local/share/wezterm\\gui-sock-28500') },
+        [],
+        [SOCK],
+        'win32',
+      ),
+    ).toEqual({});
+    // 实例没了（不在候选清单里）才摘出行
+    expect(sessionScreensFromEnvs({ held: envOf('2') }, [], [], 'win32')).toEqual({ held: null });
+  });
+
   it('空 env 表 → 空结果（没上报过定位的会话不进快照）', () => {
-    expect(sessionScreensFromEnvs({}, MUXES, 'win32')).toEqual({});
+    expect(sessionScreensFromEnvs({}, MUXES, [SOCK], 'win32')).toEqual({});
   });
 });
 

@@ -18,7 +18,10 @@ import type { DataBus } from './data-bus.js';
 export interface TerminalTopology {
   /** projectId → 本项目已开终端窗口数（项目卡角标）。 */
   counts: Record<number, number>;
-  /** sessionId → 所在可见屏幕；null = 反查不到（pane 已关 / 换了 mux），缺 = 该会话没上报过定位。 */
+  /**
+   * sessionId → 所在可见屏幕；`null` = 确认不在了（pane 已关 / 换了 mux / 整个
+   * GUI 没了），缺 = 这轮没探到或没上报过定位——web 据此保留上次分块，不摘行。
+   */
   terminals: Record<string, SessionTerminal | null>;
 }
 

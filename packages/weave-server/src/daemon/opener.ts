@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import { pidAlive } from './claude-liveness.js';
@@ -910,7 +910,7 @@ class WeztermBackend extends TerminalBackend {
 
   override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
     if (dirs.length === 0) return new Map();
-    const muxes = await weztermLiveMuxesCached();
+    const { muxes } = await weztermLiveMuxesCached();
     if (muxes.length === 0) return new Map(dirs.map((dir) => [dir, 0]));
     return countWindowsByDir(
       dirs,
@@ -971,7 +971,8 @@ class WeztermBackend extends TerminalBackend {
     envs: Record<string, Record<string, string>>,
   ): Promise<Record<string, SessionTerminal | null>> {
     if (Object.keys(envs).length === 0) return {};
-    return sessionScreensFromEnvs(envs, await weztermLiveMuxesCached(), this.platform);
+    const { muxes, candidates } = await weztermLiveMuxesCached();
+    return sessionScreensFromEnvs(envs, muxes, candidates, this.platform);
   }
 
   /**
@@ -1179,8 +1180,11 @@ export function promptTerminalChannel(
     },
     locatePane: async (env) => (await backendForEnv(env)?.locatePane(env)) ?? null,
     locateScreens: async (envs) => {
-      // 同一批 env 可能来自不同终端世界：按世界分组各问各的后端，认不出的落 null
-      // （契约是「每会话一行」，不缺席）。
+      // 同一批 env 可能来自不同终端世界：按世界分组各问各的后端。三态原样透传——
+      // 缺键 = 那个世界这轮没探到（实例还活着），null = 确认不在了（见
+      // `sessionScreensFromEnvs`）；这里不再把「没探到」补成 null，否则探活闸的
+      // 冷却窗会把分块里的行整批摘出去。认不出定位世界 / 该终端没有反查能力的
+      // 确认分不了块，照旧落 null。
       const out: Record<string, SessionTerminal | null> = {};
       const groups = new Map<TerminalPreset, Record<string, Record<string, string>>>();
       for (const [sessionId, env] of Object.entries(envs)) {
@@ -1194,8 +1198,13 @@ export function promptTerminalChannel(
         groups.set(preset, group);
       }
       for (const [preset, group] of groups) {
-        const found = await backendFor(preset).locateScreens(group);
-        for (const sessionId of Object.keys(group)) out[sessionId] = found[sessionId] ?? null;
+        const backend = backendFor(preset);
+        if (!backend.locateScreens) {
+          for (const sessionId of Object.keys(group)) out[sessionId] = null;
+          continue;
+        }
+        const found = await backend.locateScreens(group);
+        for (const [sessionId, screen] of Object.entries(found)) out[sessionId] = screen;
       }
       return out;
     },
@@ -1547,15 +1556,23 @@ export interface SessionTerminal {
 }
 
 /**
- * 会话 → 可见屏幕（纯函数）：hook 上报的 pane env × 活 mux 表。键缺、socket 对
- * 不上活 mux、pane 号已不在 = null（该会话不分组，不猜）。
+ * 会话 → 可见屏幕（纯函数）：hook 上报的 pane env × 活 mux 表 × 这轮的候选清单。
+ * 三态各司其职——屏幕 = 反查到了；`null` = **确认不在了**（pane 已关 / 换了 mux /
+ * 整个 GUI 没了）；**缺键 = 这轮没探到但实例还活着**（探活闸跳过、冷却、超时），
+ * web 据此保留上次分块。探活闸的冷却窗与偶发失败都会让 mux 短暂不在枚举表里，
+ * 把它们写成 null 就是「同一个终端的会话莫名掉出分块」的成因——分不清「没查」
+ * 与「查了没有」。
  */
 export function sessionScreensFromEnvs(
   envs: Record<string, Record<string, string>>,
   muxes: readonly { socket: string; panes: readonly WeztermPaneInfo[] }[],
+  /** 这轮认定还活着的 socket（`weztermSocketCandidates` 口径 = 枚举成功 ∪ 探活
+   *  失败/被闸跳过）：不在枚举表里却在这里面 = 只是这轮没探到。 */
+  candidates: readonly string[],
   platform: NodeJS.Platform = process.platform,
 ): Record<string, SessionTerminal | null> {
   const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+  const aliveKeys = new Set(candidates.map((s) => normalizeDirKey(s, platform)));
   const out: Record<string, SessionTerminal | null> = {};
   for (const [sessionId, env] of Object.entries(envs)) {
     const paneId = env[paneKey];
@@ -1564,18 +1581,21 @@ export function sessionScreensFromEnvs(
       ? muxes.find((m) => normalizeDirKey(m.socket, platform) === normalizeDirKey(socket, platform))
       : undefined;
     const pane = mux?.panes.find((p) => String(p.paneId) === paneId);
-    if (!mux || !pane) {
-      out[sessionId] = null;
+    if (mux) {
+      out[sessionId] = pane
+        ? {
+            id: `${weztermMuxKey(mux.socket)}:${pane.windowId}:${pane.tabId}`,
+            windowId: pane.windowId,
+            tabId: pane.tabId,
+            tabsInWindow: new Set(
+              mux.panes.filter((p) => p.windowId === pane.windowId).map((p) => p.tabId),
+            ).size,
+          }
+        : null;
       continue;
     }
-    out[sessionId] = {
-      id: `${weztermMuxKey(mux.socket)}:${pane.windowId}:${pane.tabId}`,
-      windowId: pane.windowId,
-      tabId: pane.tabId,
-      tabsInWindow: new Set(
-        mux.panes.filter((p) => p.windowId === pane.windowId).map((p) => p.tabId),
-      ).size,
-    };
+    if (socket && aliveKeys.has(normalizeDirKey(socket, platform))) continue;
+    out[sessionId] = null;
   }
   return out;
 }
@@ -1781,6 +1801,15 @@ function weztermPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * socket 路径 → 它绑定的 GUI 进程 pid（`gui-sock-<pid>`）；非该形态返回 null——
+ * 判死无据时宁可只冷却，也不永久拉黑。
+ */
+function weztermGuiPidOf(socket: string): number | null {
+  const m = /gui-sock-(\d+)$/.exec(socket.replace(/\\/g, '/'));
+  return m ? Number(m[1]) : null;
+}
+
 /** 目录下 pid 仍活的 gui-sock 完整路径（pid 大→小 ≈ 新→旧）；io 失败当空目录。
  * 排序不碰 stat：win 下 AF_UNIX socket 文件 statSync 一律 EACCES。 */
 function weztermGuiSocksIn(dir: string): string[] {
@@ -1857,9 +1886,9 @@ const PROBE_TIMEOUT_COOLDOWN_MS = 60_000;
  * 自伤——复盘见 docs/DECISIONS.md）。
  *
  * 判据的分寸：socket 路径与 GUI 的 pid 绑定，**进程死则该路径永久失效**（新 GUI
- * 必然是新 pid → 新路径），所以「干净的非零退出」可以永久记住；而**超时/起不来
- * 只算可疑**（本机 GUI 常年在 4~6 核，5s 内答不上来是可能的），只短期回避，
- * 免得把活着的 GUI 误判死。
+ * 必然是新 pid → 新路径），所以「干净的非零退出 + 这个 GUI 进程真没了」可以永久
+ * 记住；而**超时/起不来/进程还活着却答不上来只算可疑**（本机 GUI 常年在 4~6 核，
+ * 5s 内答不上来是可能的），只短期回避，免得把活着的 GUI 误判死。
  */
 export class SocketProbeGate {
   private readonly dead = new Set<string>();
@@ -1915,11 +1944,15 @@ async function weztermLiveMuxes(
         if (!force && !probeGate.shouldProbe(socket)) return null;
         const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
         if (!listed?.ok) {
-          // 永久判死只认「socket 文件真的没了」（GUI pid 活着的路径被上面滤掉）；
-          // 文件还在却退出非零 = GUI 忙 / 瞬时拒绝 → 只冷却。否则一次偶发就把这条
-          // 路按到 daemon 重启为止，而这正是「停止键突然全班无效」的成因。
-          if (listed && !listed.timedOut && !existsSync(socket)) probeGate.failed(socket);
-          else probeGate.cooledDown(socket);
+          // 永久判死只认「这个 GUI 进程真没了」——路径与 GUI pid 绑定，pid 死则
+          // 该路径永久失效（新 GUI 必然是新 pid → 新路径）。**不能用 existsSync**：
+          // win 下 AF_UNIX socket 文件 statSync 一律 EACCES、existsSync 恒 false，
+          // 一次偶发非零退出就会把活实例按到 daemon 重启为止（分块掉行、停止键
+          // 全班失效的成因）。进程还在却退出非零 = GUI 忙 / 瞬时拒绝 → 只冷却。
+          const guiPid = weztermGuiPidOf(socket);
+          if (listed && !listed.timedOut && guiPid !== null && !weztermPidAlive(guiPid)) {
+            probeGate.failed(socket);
+          } else probeGate.cooledDown(socket);
           return null;
         }
         probeGate.succeeded(socket);
@@ -2113,13 +2146,13 @@ export async function readTerminalCounts(
  * socket 数放大）。**只给计数用**（light 探测，workspace/idle 留空）：
  * runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到刚关掉的 pane）。
  */
-let muxCache: { at: number; muxes: WeztermMux[] } | null = null;
+let muxCache: { at: number; muxes: WeztermMux[]; candidates: string[] } | null = null;
 
-async function weztermLiveMuxesCached(): Promise<WeztermMux[]> {
-  if (muxCache && Date.now() - muxCache.at < 10000) return muxCache.muxes;
-  const { muxes } = await weztermLiveMuxes(true);
-  muxCache = { at: Date.now(), muxes };
-  return muxes;
+async function weztermLiveMuxesCached(): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
+  if (muxCache && Date.now() - muxCache.at < 10000) return muxCache;
+  const { muxes, candidates } = await weztermLiveMuxes(true);
+  muxCache = { at: Date.now(), muxes, candidates };
+  return muxCache;
 }
 
 // ---- Terminal.app 通道（macOS）：osascript 反查 + do script 落子 ----

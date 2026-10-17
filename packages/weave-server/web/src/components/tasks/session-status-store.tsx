@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -48,6 +49,38 @@ interface SessionStatusValue {
 
 const Ctx = createContext<SessionStatusValue | null>(null);
 
+/** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt）。 */
+export interface RowPushPatch {
+  terminal?: Record<string, SessionTerminal | null>;
+  alive?: Record<string, boolean>;
+  interrupted?: Record<string, number>;
+}
+
+/**
+ * 把 push 补丁并上一批行（GET 回来的或已有的）。三字段各自口径，别互相抄：
+ * terminal/pidAlive **缺键 = 不动**（那会话这帧没报），interrupted **缺键 = 已恢复**
+ * （不在快照里即被新事件盖过）。terminal 按 id 比（每次推都是新对象）。
+ */
+export function applyRowPush(rows: SessionRow[], patch: RowPushPatch): SessionRow[] {
+  const { terminal, alive, interrupted } = patch;
+  if (!terminal && !alive && !interrupted) return rows;
+  let changed = false;
+  const next = rows.map((s) => {
+    let row = s;
+    const t = terminal?.[s.sessionId];
+    if (t !== undefined && row.terminal?.id !== t?.id) row = { ...row, terminal: t };
+    const a = alive?.[s.sessionId];
+    if (a !== undefined && row.pidAlive !== a) row = { ...row, pidAlive: a };
+    if (interrupted) {
+      const i = interrupted[s.sessionId] ?? null;
+      if ((row.interruptedAt ?? null) !== i) row = { ...row, interruptedAt: i };
+    }
+    if (row !== s) changed = true;
+    return row;
+  });
+  return changed ? next : rows;
+}
+
 /**
  * 全局会话状态总线（唯一真源）：一处拉 sessions + dispatches、一处经 SSE 总线
  * 订阅 hook 帧（overlay / 子 agent 存活账）、一处推导 deriveSessionStatus。
@@ -71,6 +104,13 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
    *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
   const [modelCatalog, setModelCatalog] = useState<Record<string, ModelAliasTarget[]>>({});
+  /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt）。push 只在
+   *  值变时发，**落地前丢掉的那帧不会再来**——首屏列表还没到时先存着，一到立刻并上。 */
+  const rowPush = useRef<{
+    terminal?: Record<string, SessionTerminal | null>;
+    alive?: Record<string, boolean>;
+    interrupted?: Record<string, number>;
+  }>({});
 
   const refresh = useCallback(async (): Promise<string | null> => {
     const [s, d, q] = await Promise.allSettled([
@@ -85,7 +125,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       setQuestions(new Map(q.value.map((entry) => [entry.sessionId, entry])));
     }
     if (s.status === 'fulfilled') {
-      setSessions(s.value.sessions);
+      setSessions(() => applyRowPush(s.value.sessions, rowPush.current));
       setModelCatalog(s.value.modelCatalog ?? {});
       setError(null);
       return null;
@@ -110,70 +150,33 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // 终端按钮图标（pidAlive）：后端隐藏刷新器推判得动的绝对值快照——claude 进程
-  // 被杀（关终端窗）没有 hook 事件，GET 的值会卡死常绿；只补丁命中行，null 态
-  // （codex/新鲜会话）不进快照、不猜。sessions 变 → statuses 派生自愈。
-  useEffect(
-    () =>
+  // 会话行的三路隐藏刷新（全无 hook 事件，只能靠后端反查推）：
+  // - pidAlive = 终端按钮图标——claude 进程被杀（关终端窗）没有 hook 事件，GET
+  //   的值会卡死常绿；只补丁命中行，null 态（codex/新鲜会话）不进快照、不猜。
+  // - interruptedAt = 已中断——ESC 打断后多数连 Stop 都不发，真相在转录里，不在
+  //   快照里即已恢复（被新事件盖过）。
+  // - terminal = 所在可见屏幕（列表分块）——pane 关了/换了屏幕同样没有 hook 事件。
+  //   三路共用一条落地路径：**先存后并**（见 rowPush），首屏列表没到时不丢帧。
+  useEffect(() => {
+    const land = (): void => setSessions((prev) => (prev ? applyRowPush(prev, rowPush.current) : prev));
+    const offs = [
       subscribePush<{ alive?: Record<string, boolean> }>('sessionLiveness', (p) => {
-        const alive = p.alive ?? {};
-        setSessions((prev) => {
-          if (!prev) return prev;
-          let changed = false;
-          const next = prev.map((s) => {
-            const v = alive[s.sessionId];
-            if (v === undefined || s.pidAlive === v) return s;
-            changed = true;
-            return { ...s, pidAlive: v };
-          });
-          return changed ? next : prev;
-        });
+        if (p.alive) rowPush.current.alive = p.alive;
+        land();
       }),
-    [],
-  );
-
-  // 会话中断态（已中断）：ESC 打断后多数连 Stop 都不发，真相在转录里——后端按
-  // 「标记晚于最后一条事件」算成绝对时刻推下来，不在快照里即已恢复（被新事件盖过）。
-  useEffect(
-    () =>
       subscribePush<{ interrupted?: Record<string, number> }>('sessionInterrupt', (p) => {
-        const interrupted = p.interrupted ?? {};
-        setSessions((prev) => {
-          if (!prev) return prev;
-          let changed = false;
-          const next = prev.map((s) => {
-            const v = interrupted[s.sessionId] ?? null;
-            if ((s.interruptedAt ?? null) === v) return s;
-            changed = true;
-            return { ...s, interruptedAt: v };
-          });
-          return changed ? next : prev;
-        });
+        if (p.interrupted) rowPush.current.interrupted = p.interrupted;
+        land();
       }),
-    [],
-  );
-
-  // 会话所在可见屏幕（列表分块）：同一个隐藏刷新器的另一半快照——pane 关了/换了
-  // 屏幕同样没有 hook 事件，靠这一帧自愈。未上报定位的会话不在快照里（不动）；
-  // 反查不到时值是 null，据此把已分块的行摘出块外（不谎报旧屏幕）。
-  useEffect(
-    () =>
       subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
-        const screens = p.terminals ?? {};
-        setSessions((prev) => {
-          if (!prev) return prev;
-          let changed = false;
-          const next = prev.map((s) => {
-            const v = screens[s.sessionId];
-            if (v === undefined || s.terminal?.id === v?.id) return s;
-            changed = true;
-            return { ...s, terminal: v };
-          });
-          return changed ? next : prev;
-        });
+        if (p.terminals) rowPush.current.terminal = p.terminals;
+        land();
       }),
-    [],
-  );
+    ];
+    return () => {
+      for (const off of offs) off();
+    };
+  }, []);
 
   useEffect(() => {
     let timer: number | null = null;
