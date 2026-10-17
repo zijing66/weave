@@ -31,6 +31,7 @@ import {
   promptOf,
   rawOf,
   stripPromptDecor,
+  summarizeEvent,
   taskNotificationOf,
   turnSummaryOf,
 } from '@/lib/hook-payload';
@@ -53,6 +54,15 @@ const CONV_PAGE = 10;
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_MAX_COUNT = 8;
+
+/** 生成中那一行的滚动带：取多少条事件、滚几条、每条裁到多长。
+ *  取得多是为了「只认本轮」筛掉旧轮的之后还剩得下几条。 */
+const LIVE_FETCH = 40;
+const LIVE_ITEMS = 3;
+const LIVE_CHARS = 40;
+/** 滚动速度（px/s）与两份副本之间的空档：慢到能读，一轮不至于拖太久。 */
+const TICKER_SPEED = 40;
+const TICKER_GAP = 24;
 
 /** 图片判据：MIME 或扩展名（移动浏览器的剪贴板项偶尔不带 type）。 */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -428,6 +438,58 @@ function CheckBox({ on, className }: { on: boolean; className?: string }) {
 }
 
 /**
+ * 生成中那一行的滚动带：最近几条事件摘要（同事件链卡片口径）在单行里缓慢左移。
+ * 装得下就静止——三五个字不值得摇一遍；装不下才起滚，两份等长副本错开一个空档
+ * 首尾相接，滚满一份的位移刚好接回原处（`translateX(-50%)` 与 keyframes 同一口径）。
+ */
+function EventTicker({ items }: { items: readonly string[] }) {
+  const boxRef = useRef<HTMLSpanElement>(null);
+  /** 量原文自然宽用的隐身副本（不进布局）：两种排版下的正文都不是它。 */
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const [loop, setLoop] = useState<number | null>(null);
+  const text = items.join(' · ');
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const measure = (): void => {
+      const w = probeRef.current?.scrollWidth ?? 0;
+      setLoop(w > box.clientWidth ? Math.max(8, Math.round((w + TICKER_GAP) / TICKER_SPEED)) : null);
+    };
+    measure();
+    // 弹窗能拖角改宽：变宽后装得下就该停下，不能只剩「过时地一直滚」
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [text]);
+
+  return (
+    <span ref={boxRef} className="relative min-w-0 flex-1 overflow-hidden">
+      <span
+        ref={probeRef}
+        aria-hidden
+        className="invisible absolute left-0 top-0 whitespace-nowrap"
+      >
+        {text}
+      </span>
+      {loop === null ? (
+        <span className="block truncate whitespace-nowrap">{text}</span>
+      ) : (
+        <span
+          className="inline-flex w-max"
+          style={{ animation: `weave-ticker ${loop}s linear infinite` }}
+        >
+          <span className="whitespace-nowrap pr-6">{text}</span>
+          <span className="whitespace-nowrap pr-6" aria-hidden>
+            {text}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * 会话对话弹窗：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
  * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
  * 流本身——**不落库、不复制存储**，前端翻页直接查事件（`types` 只取开/闭
@@ -509,6 +571,8 @@ export function SessionMessages({
   const [confirming, setConfirming] = useState(false);
   /** 切模式前先问一句：一记 Shift+Tab 就拨一格、没有反向入口，误触可能越过 plan。 */
   const [confirmMode, setConfirmMode] = useState(false);
+  /** 生成中滚动带的素材（会话最近几十条事件；展示时只认本轮，见 liveItems）。 */
+  const [liveEvents, setLiveEvents] = useState<HookEventRow[]>([]);
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
@@ -575,6 +639,16 @@ export function SessionMessages({
     }
   }, [fail, sessionId]);
 
+  /** 生成中滚动带的素材：最近几十条事件（不分类型，工具调用才是有内容的那批）。
+   *  纯装饰面——取不到就退回「生成中…」，不报错也不挡发送。 */
+  const loadLive = useCallback(async (): Promise<void> => {
+    try {
+      setLiveEvents(await api.listSessionHooks(projectId, sessionId, LIVE_FETCH));
+    } catch {
+      // 装饰面失败静默：下一帧事件还会再来一次
+    }
+  }, [projectId, sessionId]);
+
   useEffect(() => {
     void loadNewest();
     void refreshMessages();
@@ -584,20 +658,22 @@ export function SessionMessages({
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
   }, [entries, sessionId]);
 
-  // SSE：开/闭轮事件帧补对话尾部，message.* 帧刷在途投递行（各自防抖）
+  // SSE：开/闭轮事件帧补对话尾部，其余事件帧刷生成中的滚动带，message.* 帧刷
+  // 在途投递行（三路共用一次防抖）
   useEffect(() => {
     let timer: number | null = null;
     const onHook = (f: HookFrame): void => {
       if (f.sessionId !== sessionId) return;
+      const ingested = f.kind === 'event.ingested';
       const convEvent =
-        f.kind === 'event.ingested' &&
-        (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? ''));
-      if (!convEvent && !f.kind?.startsWith('message.')) return;
+        ingested && (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? ''));
+      if (!ingested && !f.kind?.startsWith('message.')) return;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
         if (convEvent) void loadNewest();
-        else void refreshMessages();
+        else if (!ingested) void refreshMessages();
+        if (ingested) void loadLive();
       }, 500);
     };
     const off = subscribeHook(onHook);
@@ -605,7 +681,7 @@ export function SessionMessages({
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadNewest, refreshMessages, sessionId]);
+  }, [lifecycle, loadLive, loadNewest, refreshMessages, sessionId]);
 
   // Esc 逐层退：右键菜单 → 多选态 → 关闭确认 → 最小化（一层层退出，不一把关掉）。
   // 挂起中不挂这个监听：几扇对话同时存活时，只有露着的那扇该吃 ESC。
@@ -712,6 +788,16 @@ export function SessionMessages({
   const compacting = status === 'compacting';
   const interrupted = status === 'interrupted';
   const generating = isGenerating(status, thread[thread.length - 1]?.role);
+  /** 滚动带只认**本轮**的事（晚到事件里混着上一轮的尾巴，同一份素材还要跨轮）：
+   *  锚 = 最后一条用户条目的那个开轮事件，只取它之后的。 */
+  const liveItems = useMemo(() => {
+    const from = [...thread].reverse().find((e) => e.role === 'user')?.eventId ?? 0;
+    return liveEvents
+      .filter((e) => e.id > from)
+      .map((e) => summarizeEvent(e).slice(0, LIVE_CHARS))
+      .filter((s) => s.length > 0)
+      .slice(-LIVE_ITEMS);
+  }, [liveEvents, thread]);
   /** 尾部签名 = 尾条 + 在途尾行：「生成中…」那行一出现也是尾部进了新内容，只认
    *  尾条键会让刚发送时气泡滚到了底、提示行却留在视口外（下次打开才对）。 */
   const tailSig = `${tailKey ?? ''}|${generating ? 'g' : ''}${interrupted ? 'i' : ''}${
@@ -1428,17 +1514,21 @@ export function SessionMessages({
                     </button>
                   )}
                   {(generating || interrupted) && (
-                    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
+                    <div className="flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
                       {interrupted ? (
-                        <Ban className="h-3 w-3" />
+                        <Ban className="h-3 w-3 shrink-0" />
                       ) : (
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
                       )}
-                      {interrupted
-                        ? t('tasks.msgInterrupted')
-                        : compacting
-                          ? t('tasks.msgCompacting')
-                          : t('tasks.msgGenerating')}
+                      {interrupted ? (
+                        t('tasks.msgInterrupted')
+                      ) : compacting ? (
+                        t('tasks.msgCompacting')
+                      ) : liveItems.length > 0 ? (
+                        <EventTicker items={liveItems} />
+                      ) : (
+                        t('tasks.msgGenerating')
+                      )}
                     </div>
                   )}
                 </div>

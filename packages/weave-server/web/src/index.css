@@ -165,6 +165,16 @@
   animation: harness-run-codex 1.2s ease-in-out infinite;
 }
 
+/* 生成中滚动带：两份等长副本首尾相接，滚满一份（含那个空档）正好接回原处。 */
+@keyframes weave-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 /* ---- 移动端滑出抽屉动效（<lg 布局，一次滑入） ---- */
 @keyframes drawer-slide-left {
   from {
