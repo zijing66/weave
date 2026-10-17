@@ -109,6 +109,8 @@ export function TerminalPicker({
                   match: target.matchCount,
                   total: target.paneCount,
                 })}
+                {' · '}
+                {t('tasks.terminalTargetFallback', { w: target.windowId, t: target.tabId })}
               </span>
             </button>
           </li>
