@@ -137,6 +137,16 @@ export interface HookEventRow {
   sessionId: string | null;
   payload: string;
   createdAt: string;
+  /** 消息随附图（挂在开轮事件上；对话气泡缩略图）。取图走 `/images/<id>`。 */
+  images?: UploadImage[];
+}
+
+/** 上传件（服务端内容寻址落盘；回显经 `/images/<id>`）。 */
+export interface UploadImage {
+  id: string;
+  name: string;
+  mediaType: string;
+  size?: number;
 }
 
 /**
@@ -366,6 +376,8 @@ export interface SessionMessageRow {
   /** 目标会话（本视图每行都是投给它的）。 */
   sessionId: string;
   text: string;
+  /** 随附图（上传件引用）；气泡缩略图的兜底源（历史在事件行的 `images` 上）。 */
+  images?: UploadImage[];
   mode: 'prompt' | 'inject' | 'headless' | 'auto';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
@@ -395,6 +407,8 @@ export interface MessagingCapability {
   inject: boolean;
   headless: boolean;
   watch: boolean;
+  /** 图片随 prompt 的对齐面（false = 该 harness 不收图，附件钮置灰）。 */
+  imageAttach: boolean;
   unsupportedReasons: Partial<
     Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch', string>
   > | null;
@@ -1191,12 +1205,18 @@ export const api = {
    *  由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
-    body: { text: string },
+    body: { text: string; images?: string[] },
   ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** 上传一张会话图片（内容寻址去重）；超限/类型不符由 apiFetch 抛 Error 原文。 */
+  uploadImage: (input: { name: string; mediaType: string; data: string }): Promise<UploadImage> =>
+    apiFetch<{ upload: UploadImage }>('/uploads', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.upload),
   /** 手动重发（队列暂停闸的解除动作）：只对 prompt 通道 failed / delivered-未回执
    *  开放（其余 409、未知 404 由 apiFetch 抛 Error 原文）。 */
   resendSessionMessage: (

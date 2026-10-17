@@ -40,6 +40,7 @@ const delivery = (over: Partial<SessionMessageRow>): SessionMessageRow => ({
   output: null,
   error: over.error ?? null,
   at: over.at ?? at(10),
+  ...(over.images ? { images: over.images } : {}),
 });
 
 describe('conversationOf', () => {
@@ -319,6 +320,59 @@ describe('导出到剪贴板', () => {
       { user: '我', assistant: '会话' },
     );
     expect(text).toBe('[2026-10-16 01:00:00] 我\nA\n\n[2026-10-16 01:02:00] 会话\nB');
+  });
+});
+
+describe('随附图', () => {
+  const img = (id: string, name = 'a.png') => ({ id, name, mediaType: 'image/png' });
+
+  it('开轮事件带的图挂到对话条目上（气泡缩略图的源）', () => {
+    const entries = conversationOf(
+      [
+        {
+          ...event(3, 'UserPromptSubmit', { prompt: '看看这个' }),
+          images: [img('a'.repeat(64))],
+        },
+      ],
+      claude,
+    );
+    expect(entries[0]?.images?.[0]?.id).toBe('a'.repeat(64));
+  });
+
+  it('认领放宽一档：带图的投递行比空白更宽（粘贴处理连多行 chunk）', () => {
+    const thread = attachDeliveries(
+      [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '第一行\n第二行（够长）' }],
+      [delivery({ id: 'm1', text: '第一行第二行（够长）', at: at(3), images: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.pipe?.id).toBe('m1');
+  });
+
+  it('纯图发送（正文为空）也成一条，投递行认领后不再另起尾巴', () => {
+    const thread = attachDeliveries(
+      [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '', images: [img('a'.repeat(64))] }],
+      [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.images).toHaveLength(1);
+  });
+
+  it('导出按 claude 占位列图（`[Image #N] 文件名`），跟在正文后', () => {
+    const text = exportConversationText(
+      [
+        {
+          key: 'e1',
+          role: 'user',
+          at: new Date(2026, 9, 16, 9, 0, 0).toISOString(),
+          text: '看看这个',
+          images: [img('a'.repeat(64), 'shot.png'), img('b'.repeat(64), 'two.png')],
+        },
+      ],
+      { user: '我', assistant: '会话' },
+    );
+    expect(text).toBe(
+      '[2026-10-16 09:00:00] 我\n' + '看看这个\n' + '[Image #1] shot.png\n' + '[Image #2] two.png',
+    );
   });
 });
 

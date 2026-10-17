@@ -7,6 +7,7 @@ import {
   type HookEventRow,
   type MessagingCapability,
   type SessionMessageRow,
+  type UploadImage,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
@@ -46,6 +47,11 @@ import { subscribeHook, type HookFrame } from '@/lib/sse';
 
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
+
+/** 附件口径（与服务端 UPLOAD_* 同值）：harness 认的就是这四种，超出就地挡。 */
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_MAX_COUNT = 8;
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
@@ -151,6 +157,8 @@ export interface ConvEntry {
   fromName?: string | null;
   /** 认领到的投递行：状态/回执/重发挂在气泡上，不另起一条。 */
   pipe?: SessionMessageRow;
+  /** 随附图（挂在开轮事件上；气泡缩略图，点开看大图）。 */
+  images?: UploadImage[];
 }
 
 /**
@@ -177,7 +185,16 @@ export function conversationOf(
       const raw = promptOf(e);
       if (!raw) continue;
       const { text, fromWeave, fromName } = stripPromptDecor(raw);
-      out.push({ key: `e${e.id}`, eventId: e.id, role: 'user', at: e.createdAt, text, fromWeave, fromName });
+      out.push({
+        key: `e${e.id}`,
+        eventId: e.id,
+        role: 'user',
+        at: e.createdAt,
+        text,
+        fromWeave,
+        fromName,
+        ...(e.images?.length ? { images: e.images } : {}),
+      });
     } else if (lifecycle.close.includes(e.eventType)) {
       const text = turnSummaryOf(e);
       if (text)
@@ -197,9 +214,13 @@ function normalizeText(text: string): string {
   return stripPromptDecor(text).text.replace(/\s+/g, ' ').trim();
 }
 
-/** 投递行与事件条目是不是同一条消息（归一后全等）。 */
-function claims(entryText: string, rowText: string): boolean {
-  return normalizeText(entryText) === normalizeText(rowText);
+/** 投递行与事件条目是不是同一条消息（归一后全等）。带图的放宽一档：claude 的
+ *  粘贴处理会把多行文本的 chunk 用空串连起来，原文与回执可能差在空白上。 */
+function claims(entryText: string, rowText: string, hasImages = false): boolean {
+  const a = normalizeText(entryText);
+  const b = normalizeText(rowText);
+  if (a === b) return true;
+  return hasImages && a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
 }
 
 /**
@@ -217,7 +238,7 @@ export function attachDeliveries(
     let best: SessionMessageRow | undefined;
     let bestGap = CLAIM_MS;
     for (const m of deliveries) {
-      if (taken.has(m.id) || !claims(entry.text, m.text)) continue;
+      if (taken.has(m.id) || !claims(entry.text, m.text, (m.images?.length ?? 0) > 0)) continue;
       const gap = Math.abs(Date.parse(m.at) - Date.parse(entry.at));
       if (gap < bestGap) {
         best = m;
@@ -234,7 +255,14 @@ export function attachDeliveries(
   });
   const orphan = deliveries
     .filter((m) => !taken.has(m.id))
-    .map((m) => ({ key: `m${m.id}`, role: 'user' as const, at: m.at, text: m.text, pipe: m }))
+    .map((m) => ({
+      key: `m${m.id}`,
+      role: 'user' as const,
+      at: m.at,
+      text: m.text,
+      pipe: m,
+      ...(m.images?.length ? { images: m.images } : {}),
+    }))
     .sort((a, b) => a.at.localeCompare(b.at));
   return [...out, ...orphan];
 }
@@ -272,17 +300,20 @@ export function exportStamp(iso: string): string {
 }
 
 /** 角色文案由调用方给（i18n 不写进纯函数），条目间空行分隔。压缩分隔不是对话
- *  内容，导出时略过（复制/导出的是「说了什么」，不是时间线排版）。 */
+ *  内容，导出时略过（复制/导出的是「说了什么」，不是时间线排版）。随附图没法进
+ *  纯文本，按 claude 自己的占位形态列在正文后（`[Image #N] 文件名`）。 */
 export function exportConversationText(
   entries: readonly ConvEntry[],
   labels: { user: string; assistant: string },
 ): string {
   return entries
     .filter((e) => e.role !== 'compaction')
-    .map(
-      (e) =>
-        `[${exportStamp(e.at)}] ${e.role === 'user' ? labels.user : labels.assistant}\n${e.text}`,
-    )
+    .map((e) => {
+      const imgs =
+        e.images?.map((img, i) => `[Image #${i + 1}] ${img.name}`).join('\n') ?? '';
+      const body = [e.text, imgs].filter(Boolean).join('\n');
+      return `[${exportStamp(e.at)}] ${e.role === 'user' ? labels.user : labels.assistant}\n${body}`;
+    })
     .join('\n\n');
 }
 
@@ -416,6 +447,13 @@ export function SessionMessages({
   /** 模型下拉里的「自定义…」：网关具体 ID（`ftm` 这类）不在稳定别名表里，展开同行自填。 */
   const [modelCustom, setModelCustom] = useState(false);
   const [modelDraft, setModelDraft] = useState('');
+  /** 本条待发的图（已落盘、还没投出去）；发走或关弹窗即清。 */
+  const [staged, setStaged] = useState<UploadImage[]>([]);
+  /** 在飞的上传张数（附件钮转圈；也是防连点的闸）。 */
+  const [uploading, setUploading] = useState(0);
+  /** 点开的大图（缩略图点击）；null = 没开。 */
+  const [lightbox, setLightbox] = useState<UploadImage | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
@@ -819,15 +857,66 @@ export function SessionMessages({
     onClick: selecting ? () => togglePick(key) : undefined,
   });
 
+  /** 一张图从 File 到落盘：base64 走 `/uploads`（内容寻址去重），拿回引用。 */
+  const uploadOne = (file: File): Promise<UploadImage> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error(file.name));
+      reader.onload = () => {
+        const data = String(reader.result ?? '');
+        const comma = data.indexOf(',');
+        api
+          .uploadImage({
+            name: file.name || 'image',
+            mediaType: file.type,
+            data: comma >= 0 ? data.slice(comma + 1) : data,
+          })
+          .then(resolve, reject);
+      };
+      reader.readAsDataURL(file);
+    });
+
+  /** 选图（文件选择器 / 粘贴 / 拖放三个入口共用）：类型与大小就地挡，失败可见告知。 */
+  const stageFiles = (files: FileList | File[]): void => {
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (list.length === 0) return;
+    setUploading((n) => n + list.length);
+    void (async () => {
+      for (const f of list) {
+        try {
+          if (!IMAGE_TYPES.includes(f.type)) {
+            show('error', t('tasks.msgImageBadType'));
+            continue;
+          }
+          if (f.size > IMAGE_MAX_BYTES) {
+            show('error', t('tasks.msgImageTooLarge'));
+            continue;
+          }
+          const up = await uploadOne(f);
+          setStaged((s) => (s.length >= IMAGE_MAX_COUNT ? (show('error', t('tasks.msgImageTooMany')), s) : [...s, up]));
+        } catch (e) {
+          show('error', t('tasks.msgImageUploadFailed', { error: errorText(e) }));
+        } finally {
+          setUploading((n) => n - 1);
+        }
+      }
+    })();
+  };
+
   const send = (): void => {
     const text = draft.trim();
-    if (!text) return;
+    const images = staged;
+    if (!text && images.length === 0) return;
     setDraft('');
+    setStaged([]);
     stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
       `sendMsg:${sessionId}`,
       async () => {
-        const res = await api.sendSessionMessage(sessionId, { text });
+        const res = await api.sendSessionMessage(sessionId, {
+          text,
+          ...(images.length > 0 ? { images: images.map((i) => i.id) } : {}),
+        });
         // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
         // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
         if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
@@ -1115,6 +1204,31 @@ export function SessionMessages({
                           {formatStamp(m.at)}
                         </span>
                       </div>
+                      {/* 随附图缩略图（点开大图）：多选态让位给「点气泡即勾选」 */}
+                      {m.images?.length ? (
+                        <div className="mb-1 flex flex-wrap gap-1.5">
+                          {m.images.map((img) => (
+                            <button
+                              key={img.id}
+                              type="button"
+                              title={img.name}
+                              onClick={(e) => {
+                                if (selecting) return;
+                                e.stopPropagation();
+                                setLightbox(img);
+                              }}
+                              className="block h-14 w-14 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
+                            >
+                              <img
+                                src={`/images/${img.id}`}
+                                alt={img.name}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                       {/* 投递原文同样走 markdown 预览（与左侧回复气泡同渲染器）；
                           `pre-wrap` 保住段落里的软换行——markdown 默认把单换行并成
                           一行，而用户常整段粘贴多行文本 */}
@@ -1398,6 +1512,73 @@ export function SessionMessages({
                 )}
               </div>
             )}
+            {/* 图片输入行（输入框正上方）：附件钮 + 已选缩略图（× 移除、点开大图）。
+                粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (e.dataTransfer?.files?.length) stageFiles(e.dataTransfer.files);
+              }}
+            >
+              <input
+                ref={fileRef}
+                type="file"
+                accept={IMAGE_TYPES.join(',')}
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) stageFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                disabled={!capability.imageAttach || uploading > 0}
+                title={
+                  capability.imageAttach
+                    ? t('tasks.msgImageAttach')
+                    : (capability.unsupportedReasons?.prompt ?? t('tasks.msgImageUnsupported'))
+                }
+                aria-label={t('tasks.msgImageAttach')}
+                onClick={() => fileRef.current?.click()}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
+              >
+                {uploading > 0 ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <ImageIcon className="h-3 w-3" />
+                )}
+                {t('tasks.msgImageAttach')}
+              </button>
+              {staged.map((img) => (
+                <span key={img.id} className="relative inline-flex shrink-0">
+                  <button
+                    type="button"
+                    title={img.name}
+                    onClick={() => setLightbox(img)}
+                    className="block h-10 w-10 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
+                  >
+                    <img
+                      src={`/images/${img.id}`}
+                      alt={img.name}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    title={t('tasks.msgImageRemove')}
+                    aria-label={t('tasks.msgImageRemove')}
+                    onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
+                    className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
             <div className="flex items-end gap-1.5">
               <textarea
                 value={draft}
@@ -1406,6 +1587,13 @@ export function SessionMessages({
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     send();
+                  }
+                }}
+                onPaste={(e) => {
+                  const files = e.clipboardData?.files;
+                  if (files?.length) {
+                    e.preventDefault();
+                    stageFiles(files);
                   }
                 }}
                 placeholder={t('tasks.messagesPlaceholder')}
@@ -1433,7 +1621,7 @@ export function SessionMessages({
                 type="button"
                 disabled={
                   !capability.prompt ||
-                  !draft.trim() ||
+                  (!draft.trim() && staged.length === 0) ||
                   fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
                 }
                 title={
@@ -1513,6 +1701,32 @@ export function SessionMessages({
                   </button>
                 </>
               )}
+            </div>,
+            document.body,
+          )}
+
+        {/* 大图（缩略图点击）：点空白/关钮即收；拖角/菜单同在 z-60 之上，别被压住 */}
+        {lightbox &&
+          createPortal(
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-6"
+              onClick={() => setLightbox(null)}
+            >
+              <button
+                type="button"
+                title={t('tasks.msgImagePreview')}
+                aria-label={t('tasks.msgImagePreview')}
+                onClick={() => setLightbox(null)}
+                className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-900 text-neutral-300 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <img
+                src={`/images/${lightbox.id}`}
+                alt={lightbox.name}
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-full max-w-full rounded-lg border border-white/[0.12] object-contain"
+              />
             </div>,
             document.body,
           )}
