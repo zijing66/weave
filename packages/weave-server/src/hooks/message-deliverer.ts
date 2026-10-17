@@ -921,6 +921,17 @@ export class MessageDeliverer {
         status: 'pending',
         at: entry.at,
       };
+      // 带图同即时路径：层② 优先（只有 bracketed paste 能真贴图）。
+      if (this.hasImages(msg) && this.terminalChannel()) {
+        const imgPane = await this.terminalPaneFor(session, project);
+        if (imgPane) {
+          removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
+          this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
+          await this.runTerminalPrompt(msg.id, imgPane.id, this.wireTextOf(msg));
+          delivered++;
+          continue;
+        }
+      }
       // 层①-a 直投优先：冲洗正是被「刚上报凭据的那条 hook 事件」触发的（本机毫秒级、
       // 零进程零 LLM），队列里的手动面行不该绕过它直奔中继。
       if (surface && (await this.tryInboxDeliver(msg, surface))) {
@@ -1122,6 +1133,16 @@ export class MessageDeliverer {
     // 目标地址由 hook 旁路上报。**手动面（oneWay）优先**——它把消息当用户 prompt
     // 注入（无回复面）；编排域先走中继（那里才带 @weave 身份）。
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
+    // 带图消息层② 优先：只有 bracketed paste 能把绝对路径转成 `[Image #N]` + 真 image
+    // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
+    if (this.hasImages(entry) && this.terminalChannel()) {
+      const imgPane = await this.terminalPaneFor(session, project);
+      if (imgPane) {
+        this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
+        void this.runTerminalPrompt(entry.id, imgPane.id, this.wireTextOf(entry));
+        return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
+      }
+    }
     const socketDelivered = await this.tryInboxDeliver(entry, surface);
     if (socketDelivered) {
       return { ok: true, messageId: entry.id, status: 'delivered', message: socketDelivered };
@@ -1381,6 +1402,10 @@ export class MessageDeliverer {
     const imgs = entry.images;
     if (!imgs || imgs.length === 0) return entry.text;
     return this.surfaceOfSession(entry.sessionId)?.imageAttach?.composePrompt(entry.text, imgs) ?? entry.text;
+  }
+
+  private hasImages(entry: PipeMessage): boolean {
+    return (entry.images?.length ?? 0) > 0;
   }
 
   /** inject 通道：信封写 outbox → injected（fire-and-forget 语义）。 */

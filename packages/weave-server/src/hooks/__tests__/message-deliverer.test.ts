@@ -2254,6 +2254,54 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(id)?.images?.[0]?.path).toBe('D:/up/aa.png');
   });
 
+  it('带图层② 优先：socket 在场也走终端粘贴（只有它能把路径转成 image block）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+
+    const withImage = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '看图',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      images: oneImage(),
+    });
+    expect(sendText).toHaveBeenCalledWith('pane-1', '看图\n\nD:/up/aa.png');
+    expect(deliverer.getMessage((withImage as { messageId: string }).messageId)).toMatchObject({ via: 'terminal' });
+
+    const textOnly = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '纯文本仍走 socket',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(deliverer.getMessage((textOnly as { messageId: string }).messageId)).toMatchObject({ via: 'socket' });
+    expect(got).toContain('纯文本仍走 socket');
+    expect(got).not.toContain('D:/up/aa.png');
+    inbox.close();
+  });
+
   it('队列行随附图落盘：重启后冲洗仍按现 harness 面重合成', async () => {
     const { surface } = surfaceWithImages(() => null); // 无终端、无 peer → 只能入队
     const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
