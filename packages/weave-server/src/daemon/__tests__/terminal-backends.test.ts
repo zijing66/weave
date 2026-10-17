@@ -239,6 +239,14 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     expect(wt.ownsPaneId('deadbeef:7')).toBe(false);
   });
 
+  it('mux 短标识按比较键取哈希：同一 socket 的两种分隔符形态给出同一个 id', () => {
+    // wezterm 注进 pane env 的是混合分隔符，目录拼出来的是全反斜杠——裸串哈希会
+    // 同一实例发两个 id，投递时按 id 反查就落空。
+    const mixed = 'D:\\Users\\x\\.local/share/wezterm/gui-sock-1';
+    const slashed = 'D:\\Users\\x\\.local\\share\\wezterm\\gui-sock-1';
+    expect(weztermMuxKey(mixed)).toBe(weztermMuxKey(slashed));
+  });
+
   it('无通道的 preset 定点附加明确拒绝，文案带 preset 名', async () => {
     // wt 在 win32 已有定点通道（split-pane），不在此列
     for (const preset of ['ghostty', 'iterm', 'powershell'] as const) {

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import { readDaemonSettings, type TerminalPreset, type TerminalSettings } from './settings.js';
@@ -587,8 +587,11 @@ class WeztermBackend extends TerminalBackend {
     // 两个定位键缺任一即判「不是 wezterm 会话」：先判再枚举，省一轮 spawn
     // （判据与 weztermPaneFromEnv 同一条件，只是挪到枚举之前）。
     const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
-    if (!env[paneKey] || !env[socketKey]) return null;
-    const { muxes } = await weztermLiveMuxes();
+    const socket = env[socketKey];
+    if (!env[paneKey] || !socket) return null;
+    // 只探会话自己上报的那个 socket（绕过探活闸）：投递路径已知目标，全量扫一遍
+    // 既慢又会被冷却期误伤成「找不到 pane」。
+    const { muxes } = await weztermLiveMuxes(true, socket);
     return weztermPaneFromEnv(env, muxes, this.platform);
   }
 
@@ -617,8 +620,7 @@ class WeztermBackend extends TerminalBackend {
   override async sendPromptText(paneId: string, text: string): Promise<void> {
     const parsed = parsePromptPaneId(paneId);
     if (!parsed) throw new Error(`Invalid prompt pane "${paneId}"`);
-    const { muxes } = await weztermLiveMuxes();
-    const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
+    const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot deliver prompt');
     const pane = String(parsed.paneId);
     if (text) {
@@ -645,8 +647,7 @@ class WeztermBackend extends TerminalBackend {
   override async sendKeys(paneId: string, keys: string): Promise<void> {
     const parsed = parsePromptPaneId(paneId);
     if (!parsed) throw new Error(`Invalid prompt pane "${paneId}"`);
-    const { muxes } = await weztermLiveMuxes();
-    const mux = muxes.find((m) => weztermMuxKey(m.socket) === parsed.muxKey);
+    const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot send keys to the pane');
     const pane = String(parsed.paneId);
     const sent = await weztermCli(
@@ -1141,9 +1142,16 @@ export interface AttachTarget {
   full: boolean;
 }
 
-/** mux socket → 不透明短标识（不回传本机路径）。 */
+/**
+ * mux socket → 不透明短标识（不回传本机路径）。**按比较键取哈希**：同一 socket
+ * 有两种形态（wezterm 注进 pane env 的是混合分隔符，目录拼出来的是全反斜杠），
+ * 裸串哈希会给同一实例发两个 id，投递时按 id 反查就落空。
+ */
 export function weztermMuxKey(socket: string): string {
-  return createHash('sha256').update(socket).digest('hex').slice(0, 8);
+  return createHash('sha256')
+    .update(normalizeDirKey(socket, process.platform) ?? socket)
+    .digest('hex')
+    .slice(0, 8);
 }
 
 /**
@@ -1533,17 +1541,23 @@ const probeGate = new SocketProbeGate();
  */
 async function weztermLiveMuxes(
   light = false,
+  force: string | null = null,
 ): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
-  const candidates = weztermSocketCandidates(process.platform);
+  const candidates = force ? [force] : weztermSocketCandidates(process.platform);
   const muxes = (
     await Promise.all(
       candidates.map(async (socket) => {
         // 已知坏的 socket 不再重探：省 spawn，半死的 GUI 也不必反复挂满 5s 超时。
-        if (!probeGate.shouldProbe(socket)) return null;
+        // force（投递路径已确定的那个 socket）不受闸约束：冷却期只为「扫全部候选」
+        // 省 spawn，而投递一次只炸一发、且目标已知——让冷却挡住它 = 冷却窗口里
+        // 所有会话的停止/作答全都 409（点了没反应）。
+        if (!force && !probeGate.shouldProbe(socket)) return null;
         const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
         if (!listed?.ok) {
-          // 干净的非零退出 = 该 socket 路径永久失效；超时/起不来只回避。
-          if (listed && !listed.timedOut) probeGate.failed(socket);
+          // 永久判死只认「socket 文件真的没了」（GUI pid 活着的路径被上面滤掉）；
+          // 文件还在却退出非零 = GUI 忙 / 瞬时拒绝 → 只冷却。否则一次偶发就把这条
+          // 路按到 daemon 重启为止，而这正是「停止键突然全班无效」的成因。
+          if (listed && !listed.timedOut && !existsSync(socket)) probeGate.failed(socket);
           else probeGate.cooledDown(socket);
           return null;
         }
@@ -1562,6 +1576,20 @@ async function weztermLiveMuxes(
     )
   ).filter((m): m is WeztermMux => m !== null);
   return { muxes, candidates };
+}
+
+/**
+ * pane id 里的 mux 短标识 → 那个 mux。**只探它那一个 socket**（绕过探活闸）：
+ * 击键/投递已知目标，全量扫是白花 spawn，且冷却期会把「实例还在」误判成
+ * 「实例没了」→ 停止键静默失败。
+ */
+async function weztermMuxForId(muxKey: string): Promise<WeztermMux | null> {
+  const socket = weztermSocketCandidates(process.platform).find(
+    (s) => weztermMuxKey(s) === muxKey,
+  );
+  if (!socket) return null;
+  const { muxes } = await weztermLiveMuxes(true, socket);
+  return muxes.find((m) => weztermMuxKey(m.socket) === muxKey) ?? null;
 }
 
 /**
