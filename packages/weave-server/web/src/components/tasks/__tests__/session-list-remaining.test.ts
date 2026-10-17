@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '@/lib/api';
 import { zh } from '@/i18n/dict';
 import { makeT } from '@/i18n/t';
-import { remainingLabel, remainingMsOf } from '../SessionList';
+import { lastSeenLabel, remainingLabel, remainingMsOf } from '../SessionList';
 
 const t = makeT(zh, zh);
 
@@ -69,5 +69,30 @@ describe('remainingLabel（倒计时文案）', () => {
     expect(remainingLabel(t, 59_000)).toBe('即将自动移除');
     expect(remainingLabel(t, 30_000)).toBe('即将自动移除');
     expect(remainingLabel(t, -1)).toBe('即将自动移除');
+  });
+});
+
+describe('lastSeenLabel', () => {
+  // 固定「现在」= 本地 2026-10-15 14:30，跨天档才可断言。
+  const NOW = new Date(2026, 9, 15, 14, 30).getTime();
+  const iso = (...args: [number, number, number, number?, number?]): string =>
+    new Date(...args).toISOString();
+
+  it('当天只给时刻', () => {
+    expect(lastSeenLabel(t, iso(2026, 9, 15, 9, 5), NOW)).toBe(
+      new Date(2026, 9, 15, 9, 5).toLocaleTimeString(),
+    );
+  });
+
+  it('昨天标「昨天」', () => {
+    expect(lastSeenLabel(t, iso(2026, 9, 14, 23, 50), NOW)).toBe('昨天');
+  });
+
+  it('更早补日期（同年不带年份）', () => {
+    expect(lastSeenLabel(t, iso(2026, 9, 10), NOW)).toBe('10/10');
+  });
+
+  it('往年带年份', () => {
+    expect(lastSeenLabel(t, iso(2025, 11, 30), NOW)).toBe('2025/12/30');
   });
 });

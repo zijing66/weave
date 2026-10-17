@@ -4,8 +4,8 @@ import { useToast } from '@/components/Toast';
 import type { MessageKey } from '@/i18n/dict';
 import type { SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { formatTime, sessionLabel } from '@/lib/hook-payload';
-import { byActivity, useActivityOrder, useFlipRows } from './SessionList';
+import { sessionLabel } from '@/lib/hook-payload';
+import { byActivity, lastSeenLabel, useActivityOrder, useFlipRows } from './SessionList';
 import { STATUS_BADGE, STATUS_KEY } from './session-status';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
@@ -292,12 +292,12 @@ export function GlobalTasksOverview({
                       {t('tasks.events', { n: s.eventCount ?? 0 })}
                     </span>
                     <span className="hidden lg:block w-16 shrink-0 text-right text-[10px] text-neutral-500">
-                      {formatTime(s.lastSeenAt)}
+                      {lastSeenLabel(t, s.lastSeenAt, Date.now())}
                     </span>
                     {/* <lg：事件/时间折到第二行（basis-full 强制换行），数据不丢 */}
                     <span className="lg:hidden flex basis-full gap-3 text-[10px] text-neutral-500">
                       <span>{t('tasks.events', { n: s.eventCount ?? 0 })}</span>
-                      <span>{formatTime(s.lastSeenAt)}</span>
+                      <span>{lastSeenLabel(t, s.lastSeenAt, Date.now())}</span>
                     </span>
                   </div>
                 </li>

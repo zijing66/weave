@@ -3,7 +3,7 @@ import { type SessionRow, type SessionTerminal, type SessionWatchRow, type Messa
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { getDispatchDrag } from '@/lib/dnd';
-import { formatTime, sessionLabel } from '@/lib/hook-payload';
+import { sessionLabel } from '@/lib/hook-payload';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
@@ -35,6 +35,20 @@ export function remainingMsOf(
 ): number {
   if (row.autoDeleteAt == null) return 0;
   return Date.parse(row.autoDeleteAt) - Math.max(now, Date.parse(row.lastSeenAt));
+}
+
+/** 会话行的最后更新时刻：跨天要认得出是哪天——当天只给时刻、昨天标「昨天」、更早
+ *  补日期（往年带年份）。 */
+export function lastSeenLabel(t: TFunc, iso: string, now: number): string {
+  const d = new Date(iso);
+  const today = new Date(now);
+  if (d.toDateString() === today.toDateString()) return d.toLocaleTimeString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return t('tasks.yesterday');
+  return d.getFullYear() === today.getFullYear()
+    ? `${d.getMonth() + 1}/${d.getDate()}`
+    : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 /** 剩余存活倒计时文案：天/时/分三档（ceil）。档位看**取整后**的量（小时不超 23、
@@ -626,7 +640,7 @@ export function SessionList({
               </span>
               {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
               <span className="shrink-0 text-[10px] text-neutral-500">
-                {formatTime(s.lastSeenAt)}
+                {lastSeenLabel(t, s.lastSeenAt, now)}
               </span>
               {s.harness && (
                 <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
