@@ -21,11 +21,15 @@ export interface SessionRow {
   /** 最新一条 hook 事件类型（listWithCounts 查询填充）——web 状态总线判「关闭」
    *  （SessionEnd）不必再为每个会话拉事件。 */
   lastEventType?: string | null;
-  /** 自动移除时刻（= lastSeenAt + 无操作保留窗；listWithCounts 派生，**全会话
-   *  统一**——设置页那条「无操作会话 n 天后自动移除」的期限，会话行剩余存活
-   *  倒计时即读它）。 */
+  /** 自动移除时刻（= lastSeenAt + 该档保留窗；listWithCounts 派生，两档——没等到
+   *  用户 prompt 的新会话快过期，收到过 prompt 的走设置页「无操作会话 n 天后自动
+   *  移除」那条线；会话行剩余存活倒计时即读它）。 */
   autoDeleteAt?: string | null;
 }
+
+/** 没等到用户 prompt 的新会话快过期窗（ms）= 1 小时：新建会话要看得见，但无 prompt
+ *  的会话不配占 90 天窗口。 */
+export const PROMPTLESS_GRACE_MS = 60 * 60_000;
 
 /** 无操作保留窗（ms）= settings `sessions.idleDays`（缺省/坏值回落默认）。 */
 function sessionIdleRetentionMs(): number {
@@ -112,11 +116,12 @@ export class SessionRepository {
         harness: isHarness(raw) ? raw : null,
         turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
         lastEventType: lastEventType ?? null,
-        // 自动移除时刻（唯一判据/期限实现）= lastSeenAt + 无操作保留窗（settings
-        // `sessions.idleDays`），**全会话统一**：期限随行下发，web 渲染剩余存活
-        // 倒计时；SessionSweeper 过期即清（收到过 prompt 的长会话同一条线）。
+        // 自动移除时刻（唯一判据/期限实现）两档：没等到用户 prompt（无 ups）的
+        // 新会话 1 小时快过期；收到过 prompt 的走 settings `sessions.idleDays`。
+        // 期限随行下发，web 渲染剩余存活倒计时；SessionSweeper 过期即清。
         autoDeleteAt: new Date(
-          Date.parse(String(row.last_seen_at)) + sessionIdleRetentionMs(),
+          Date.parse(String(row.last_seen_at)) +
+            (lastUps == null ? PROMPTLESS_GRACE_MS : sessionIdleRetentionMs()),
         ).toISOString(),
       };
     });

@@ -620,9 +620,9 @@ export function SessionList({
               <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
                 {t(STATUS_KEY[status])}
               </Badge>
-              {/* 剩余存活倒计时（全会话统一）：服务端 autoDeleteAt 派生 =
-                  lastSeenAt + 无操作保留窗，SessionSweeper 过期即清——按剩余量级
-                  走天/时/分三档，到点前给用户留个明白账。 */}
+              {/* 剩余存活倒计时：服务端 autoDeleteAt 派生（两档——无 prompt 的
+                  新会话 1 小时、收到过 prompt 的 n 天），SessionSweeper 过期即清
+                  ——按剩余量级走天/时/分三档，到点前给用户留个明白账。 */}
               {s.autoDeleteAt && (
                 <Badge className="shrink-0 bg-neutral-800/80 text-neutral-400">
                   {remainingLabel(t, Date.parse(s.autoDeleteAt) - now)}

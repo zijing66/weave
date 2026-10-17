@@ -5,13 +5,12 @@ import type { SequenceEngine } from './sequence-engine.js';
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
 /**
- * 定时清「无操作」过期会话：判据与期限的单一事实源 = sessions 仓储的
- * `listWithCounts`（`autoDeleteAt` 计算列 = lastSeenAt + settings `sessions.idleDays`
- * 闲置窗），**全会话统一**——本清扫器只做「过期即清」。
+ * 定时清过期会话：判据与期限的单一事实源 = sessions 仓储的 `listWithCounts`
+ * （`autoDeleteAt` 计算列，两档——没等到用户 prompt 的新会话 1 小时快过期、
+ * 收到过 prompt 的走 settings `sessions.idleDays` 闲置窗），本清扫器只做「过期即清」。
  *
  * 注：入库路径对**每个**首现 sessionId 都建档（含仅一条 SessionStart 的新会话
- * ——新建会话要马上出现在列表），新会话与长会话同一条闲置移除线：列表里挂够
- * n 天无操作才自动移除，期限倒计时随行展示。
+ * ——新建会话要马上出现在列表），期限倒计时随行展示，看得见它还剩多久。
  */
 export class SessionSweeper {
   constructor(
@@ -43,7 +42,7 @@ export class SessionSweeper {
   start(): NodeJS.Timeout {
     // 启动即扫一轮：首个 tick 要等完整间隔，而 dev 下 tsx watch 随文件改动
     // 频繁重启（重启周期常短于间隔）→ 只靠间隔的清扫器永远赶不上第一拍，
-    // 存量过期行一直挂在会话列表。清理判据按闲置窗算（缺省 90 天），起手扫安全。
+    // 存量过期行一直挂在会话列表。清理判据按 autoDeleteAt 算，起手扫安全。
     this.sweep();
     const timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     timer.unref();

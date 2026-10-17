@@ -11,11 +11,12 @@ import { SessionRepository } from '../../repositories/sessions.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
 import { SessionSweeper } from '../session-sweeper.js';
+import { PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
 
 /**
- * 无操作会话闲置移除回归：期限 = lastSeenAt + settings `sessions.idleDays`，
- * **全会话统一**（含收到过 prompt 的长会话）——新会话（只有一条 SessionStart）
- * 随首个事件即出现，闲置够 n 天才自动移除，行内倒计时读的就是这个期限。
+ * 会话自动移除回归：期限两档——没等到用户 prompt 的新会话 1 小时快过期（PROMPTLESS_GRACE_MS），
+ * 收到过 prompt 的走 settings `sessions.idleDays` 闲置窗。两档都锚 lastSeenAt，
+ * 行内倒计时读的就是这个期限。
  */
 
 let db: DatabaseSync;
@@ -60,60 +61,68 @@ const age = (sessionId: string, msAgo: number): void => {
   );
 };
 
-describe('闲置移除期限（listWithCounts 的 autoDeleteAt）', () => {
-  it('全会话统一：期限 = lastSeenAt + 无操作保留窗（判据唯一实现）', () => {
+describe('自动移除期限（listWithCounts 的 autoDeleteAt，两档）', () => {
+  it('无 prompt 的新会话 1 小时快过期；收到过 prompt 的走闲置窗', () => {
     seed('g-single', ['SessionStart']);
-    // 只等来一条闲置 Notification、从未提交 prompt——与长会话同一条线
+    // 只等来一条闲置 Notification、从未提交 prompt——仍是快过期档
     seed('g-notify', ['SessionStart', 'Notification']);
-    seed('real-full', ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']);
-    for (const id of ['g-single', 'g-notify', 'real-full']) {
+    for (const id of ['g-single', 'g-notify']) {
       const row = sessions.listWithCounts().find((s) => s.sessionId === id)!;
-      expect(row.autoDeleteAt).toBeTruthy();
-      expect(Date.parse(row.autoDeleteAt!) - Date.parse(row.lastSeenAt)).toBe(IDLE_MS);
+      expect(Date.parse(row.autoDeleteAt!) - Date.parse(row.lastSeenAt)).toBe(PROMPTLESS_GRACE_MS);
     }
+    seed('real-full', ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']);
+    const prompted = sessions.listWithCounts().find((s) => s.sessionId === 'real-full')!;
+    expect(Date.parse(prompted.autoDeleteAt!) - Date.parse(prompted.lastSeenAt)).toBe(IDLE_MS);
   });
 
-  it('sessions.idleDays 可调：期限随设置缩放', async () => {
+  it('sessions.idleDays 可调：收到过 prompt 的期限随设置缩放（无 prompt 档不受影响）', async () => {
     await writeDaemonSettings({
       terminal: { preset: 'auto', customCommand: '' },
       locale: 'zh-CN',
       hooks: { enabled: true },
       sessions: { idleDays: 7 },
     });
-    seed('t-week', ['SessionStart']);
+    seed('t-week', ['SessionStart', 'UserPromptSubmit']);
+    seed('t-ghost', ['SessionStart']);
     const row = sessions.listWithCounts().find((s) => s.sessionId === 't-week')!;
     expect(Date.parse(row.autoDeleteAt!) - Date.parse(row.lastSeenAt)).toBe(7 * 86_400_000);
+    const ghost = sessions.listWithCounts().find((s) => s.sessionId === 't-ghost')!;
+    expect(Date.parse(ghost.autoDeleteAt!) - Date.parse(ghost.lastSeenAt)).toBe(PROMPTLESS_GRACE_MS);
   });
 });
 
 describe('SessionSweeper.sweep', () => {
-  it('闲置窗内的不清；窗过即清（长会话同样移除）；幂等', () => {
+  it('各自窗口内的不清；过窗即清（无 prompt 走 1 小时、长会话走闲置窗）；幂等', () => {
     seed('a-idle', ['SessionStart']);
     seed('b-idle', ['SessionStart', 'Notification']);
     seed('c-real', ['SessionStart', 'UserPromptSubmit']);
 
-    // 都在闲置窗内 → 一个都不清
+    // 都在各自窗内 → 一个都不清
     expect(new SessionSweeper({ sessions, events, dispatches }).sweep()).toBe(0);
     expect(sessions.getBySessionId('a-idle')).toBeDefined();
 
-    // 静默推过窗口 → 三个全清（有无 prompt 不再分家）
-    age('a-idle', IDLE_MS + 60_000);
-    age('b-idle', IDLE_MS + 60_000);
-    age('c-real', IDLE_MS + 60_000);
-    const later = new SessionSweeper(
+    // 无 prompt 的静默推过 1 小时 → 清；长会话 1 小时还远没到闲置窗 → 留下
+    age('a-idle', PROMPTLESS_GRACE_MS + 60_000);
+    age('b-idle', PROMPTLESS_GRACE_MS + 60_000);
+    const hourLater = new SessionSweeper(
       { sessions, events, dispatches },
       () => Date.now() + 1_000,
     );
-    expect(later.sweep()).toBe(3);
+    expect(hourLater.sweep()).toBe(2);
     expect(sessions.getBySessionId('a-idle')).toBeUndefined();
     expect(events.listBySession('b-idle')).toHaveLength(0);
+    expect(sessions.getBySessionId('c-real')).toBeDefined();
+
+    // 长会话静默推过闲置窗 → 同样清
+    age('c-real', IDLE_MS + 60_000);
+    expect(hourLater.sweep()).toBe(1);
     expect(sessions.getBySessionId('c-real')).toBeUndefined();
-    expect(later.sweep()).toBe(0);
+    expect(hourLater.sweep()).toBe(0);
   });
 
   it('start() 启动即扫一轮（不等首个 5 分钟间隔——dev 重启周期常短于间隔）', () => {
     seed('a-boot', ['SessionStart', 'Notification']);
-    age('a-boot', IDLE_MS + 60_000);
+    age('a-boot', PROMPTLESS_GRACE_MS + 60_000);
     const sweeper = new SessionSweeper(
       { sessions, events, dispatches },
       () => Date.now() + 1_000,

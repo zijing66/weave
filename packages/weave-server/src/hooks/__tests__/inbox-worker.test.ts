@@ -9,12 +9,16 @@ import { ProjectRepository } from '../../repositories/projects.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
-import { SessionRepository } from '../../repositories/sessions.js';
+import { SessionRepository, PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
 import { ClaudeEventSource } from '@weavecode/harness';
 import { HookRuleRegistry } from '../registry.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { HookDispatcher } from '../dispatcher.js';
-import { setDaemonSettingsDb, writeDaemonSettings } from '../../daemon/settings.js';
+import {
+  setDaemonSettingsDb,
+  writeDaemonSettings,
+  DEFAULT_SESSION_IDLE_DAYS,
+} from '../../daemon/settings.js';
 import {
   INBOX_CLAIM_SUFFIX,
   INBOX_FAILED_SUFFIX,
@@ -224,7 +228,7 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(existsSync(file)).toBe(false);
   });
 
-  it('仅 SessionStart 的新会话：照建档（新建会话要马上出现在列表），并带闲置移除期限', () => {
+  it('仅 SessionStart 的新会话：照建档（新建会话要马上出现在列表），并带 1 小时快过期期限', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
     writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-new'));
 
@@ -235,12 +239,15 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     const rows = hookSessions.listWithCounts(projectId);
     expect(rows.map((s) => s.sessionId)).toEqual(['s-new']);
     expect(rows[0]?.eventCount).toBe(1);
-    // 有期限（SessionSweeper 闲置够 n 天即清），不是永久行
+    // 有期限且是快过期档（没等到 prompt 的新会话不占 n 天窗口），不是永久行
     expect(rows[0]?.autoDeleteAt).toBeTruthy();
+    expect(
+      Date.parse(rows[0]!.autoDeleteAt!) - Date.parse(rows[0]!.lastSeenAt),
+    ).toBe(PROMPTLESS_GRACE_MS);
     expect(existsSync(file)).toBe(false);
   });
 
-  it('SessionStart 先建档，后续事件进同一行；收到 prompt 期限照旧（全会话统一）', () => {
+  it('SessionStart 先建档，后续事件进同一行；收到 prompt 换到 n 天闲置档', () => {
     const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
     writeFileSync(file, inboxLine(TOKEN, 'SessionStart', 's-late'));
     drainInboxOnce(deps());
@@ -255,8 +262,11 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     const row = hookSessions.listWithCounts(projectId).find((s) => s.sessionId === 's-late');
     expect(row?.eventCount).toBe(2);
     expect(row?.lastEventType).toBe('UserPromptSubmit');
-    // 收到 prompt 不清期限——它只是把 last_seen_at 往后推（期限随之顺延）
+    // 收到 prompt 即换档：快过期（1 小时）→ 无操作 n 天闲置窗
     expect(row?.autoDeleteAt).toBeTruthy();
+    expect(Date.parse(row!.autoDeleteAt!) - Date.parse(row!.lastSeenAt)).toBe(
+      DEFAULT_SESSION_IDLE_DAYS * 86_400_000,
+    );
   });
 
   it('已有会话行照常 touch（resume 的 SessionStart 放行）', () => {
