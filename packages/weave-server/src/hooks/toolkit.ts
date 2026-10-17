@@ -389,12 +389,10 @@ export class ToolkitService {
     });
   }
 
+  /** 各扫描源并行发现（市场源要下钻 10 层，一个一个来就是把最慢的那个乘上根数）。 */
   private async allPacks(): Promise<ToolkitPack[]> {
-    const packs: ToolkitPack[] = [];
-    for (const source of this.sources()) {
-      packs.push(...(await discoverToolkitPacks(source)));
-    }
-    return packs;
+    const per = await Promise.all(this.sources().map((s) => discoverToolkitPacks(s)));
+    return per.flat();
   }
 
   /**
