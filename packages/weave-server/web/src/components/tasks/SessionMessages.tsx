@@ -1521,7 +1521,10 @@ export function SessionMessages({
             {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行。 */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* 附件钮 + 已选缩略图（× 移除、点开大图）。粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              {/* 不挂 flex-1：`flex: 1 1 0%` 的基准是 0，换行判定时它永远「放得下」→
+                  右组从不折行，左组被压到 0 宽、里面的附件钮溢出去盖在模式/模型上。
+                  让左组按内容占位，放不下时父级的 flex-wrap 才会把右组挪到下一行。 */}
+              <div className="flex flex-wrap items-center gap-1.5">
                 <input
                   ref={fileRef}
                   type="file"
@@ -1580,7 +1583,7 @@ export function SessionMessages({
                 ))}
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
-                <div className="ml-auto flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
                   {modeNames.length > 0 && (
                     <button
                       type="button"
