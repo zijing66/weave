@@ -69,6 +69,22 @@ describe('ClaudeEventSource 重复字段折叠', () => {
     expect(expandPayloadRefs(payload).raw).toEqual(camel);
   });
 
+  it('超大工具结果按叶子截断，标量键与对象结构保留', () => {
+    const payload = normalize({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      tool_name: 'Agent',
+      tool_input: { file_path: '/a.ts', edits: new Array(500).fill({ t: 'x' }) },
+      tool_response: { isAsync: true, agentId: 'a1', content: 'x'.repeat(500_000) },
+    });
+    expect(payload.toolResponse.isAsync).toBe(true);
+    expect(payload.toolResponse.agentId).toBe('a1');
+    expect(payload.toolResponse.content.length).toBe(4001);
+    expect(payload.toolInput.file_path).toBe('/a.ts');
+    expect(payload.toolInput.edits.length).toBe(200);
+    expect(JSON.stringify(payload).length).toBeLessThan(10_000);
+  });
+
   it('没有 raw 对象（畸形 payload）时原样返回', () => {
     expect(expandPayloadRefs({ raw: null })).toEqual({ raw: null });
     expect(expandPayloadRefs({ raw: 'x' })).toEqual({ raw: 'x' });

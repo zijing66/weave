@@ -65,6 +65,31 @@ const REF_FIELDS: ReadonlyArray<readonly [outer: string, keys: readonly string[]
 /** 引用值形：`<$.toolResponse>`（尖括号标记，不会与真实路径串混淆）。 */
 const REF_RE = /^<\$\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)>$/;
 
+/**
+ * tool_input / tool_response 里单个字符串叶子与数组长度的上限。
+ *
+ * 工具结果正文动辄整份文件（实测库里 64k 行占 557MB，PostToolUse 一条平均 14KB、
+ * 最大 7MB），而消费方只读开头一截（事件链摘要取 90 字符）+ 几个标量键
+ * （agentId / isAsync / status / type）。4KB 高于问答预览面的 2000 字符阈值，
+ * 故不会动到需要保真的字段。
+ */
+const MAX_FIELD_CHARS = 4000;
+const MAX_ARRAY_ITEMS = 200;
+
+/** 逐层裁掉超限的字符串叶子与数组尾巴（对象结构原样保留，键不丢）。 */
+function capFields(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.length > MAX_FIELD_CHARS ? `${value.slice(0, MAX_FIELD_CHARS)}…` : value;
+  }
+  if (Array.isArray(value)) return value.slice(0, MAX_ARRAY_ITEMS).map(capFields);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = capFields(v);
+    return out;
+  }
+  return value;
+}
+
 /** raw 的浅拷贝：命中的重复键 → 指向顶层同名字段的引用，其余键原样。 */
 function compactRaw(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
@@ -120,8 +145,8 @@ export class ClaudeEventSource implements EventSource {
     const normalized = {
       eventType,
       toolName: pick(raw, 'tool_name', 'toolName'),
-      toolInput: pick(raw, 'tool_input', 'toolInput'),
-      toolResponse: pick(raw, 'tool_response', 'toolResponse'),
+      toolInput: capFields(pick(raw, 'tool_input', 'toolInput')),
+      toolResponse: capFields(pick(raw, 'tool_response', 'toolResponse')),
       cwd: report.cwd ?? pick(raw, 'cwd'),
       transcriptPath: pick(raw, 'transcript_path', 'transcriptPath'),
       raw: compactRaw(raw),
