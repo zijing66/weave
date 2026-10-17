@@ -261,7 +261,7 @@ export function GlobalTasksOverview({
                           }
                         : undefined
                     }
-                    title={clickable ? s.sessionId : undefined}
+                    title={clickable ? sessionLabel(s.title, s.sessionId) : undefined}
                     className={cn(
                       'flex flex-wrap lg:flex-nowrap items-center gap-3 rounded-md border px-2 py-1.5',
                       clickable

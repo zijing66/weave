@@ -416,7 +416,7 @@ export function SessionList({
           const id = getDispatchDrag(e.dataTransfer);
           if (id !== null) onDropDispatch(id, s.sessionId);
         }}
-        title={droppingId === s.sessionId ? t('tasks.dropTip') : s.sessionId}
+        title={droppingId === s.sessionId ? t('tasks.dropTip') : sessionLabel(s.title, s.sessionId)}
         className={cn(
           'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
           selected
