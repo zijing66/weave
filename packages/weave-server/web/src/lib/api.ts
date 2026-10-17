@@ -323,6 +323,11 @@ export interface SessionRow {
   /** 已中断时刻（ms）：转录最后一条「请求被用户中断」标记晚于最后一条 hook 事件
    *  ——ESC 打断后多数连 Stop 都不发，这是该状态的唯一来源；null = 没中断。 */
   interruptedAt?: number | null;
+  /** 当前模型（转录最后一条真跑过的 `message.model`）：换模型不发 hook 事件，只有
+   *  转录照会；null = 不知道（不猜）。 */
+  model?: string | null;
+  /** 执行模式（转录最后一条 `permissionMode`）：Shift+Tab 不留痕，故是「最后已知」。 */
+  mode?: string | null;
   /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
    *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;
@@ -1231,6 +1236,15 @@ export const api = {
   /** 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）。 */
   interruptSession: (sessionId: string): Promise<{ ok: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: 'POST' }),
+  /** 执行模式切换：一记 Shift+Tab，宿主自己算下一个模式（键序固定死在服务端）。 */
+  cycleSessionMode: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/mode`, { method: 'POST' }),
+  /** 模型切换：宿主自己的 `/model <名>`（会话级、不落盘）。名字用户自填，服务端只验形态。 */
+  setSessionModel: (sessionId: string, model: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/model`, {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    }),
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>
     apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),

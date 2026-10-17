@@ -32,7 +32,13 @@ import {
   taskNotificationOf,
   turnSummaryOf,
 } from '@/lib/hook-payload';
-import { HARNESS_COMPACTION, HARNESS_LIFECYCLE, isCompactionEnd } from './lifecycle';
+import {
+  HARNESS_COMPACTION,
+  HARNESS_LIFECYCLE,
+  isCompactionEnd,
+  modeNamesFor,
+  modelNamesFor,
+} from './lifecycle';
 import { canInterrupt, hasTurnSignal } from './session-status';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
@@ -384,7 +390,7 @@ export function SessionMessages({
   const t = useT();
   const { show } = useToast();
   const fb = useActionFeedback();
-  const { statuses, sessions } = useSessionStatus();
+  const { statuses, sessions, refresh } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   /** 对话事件类型（开轮 + 闭轮 + 压缩收尾笔）：闭轮表为空的 harness 没有对话面可取。 */
   const convTypes = useMemo(
@@ -402,6 +408,7 @@ export function SessionMessages({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
+  const [modelDraft, setModelDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
@@ -823,6 +830,39 @@ export function SessionMessages({
     );
   };
 
+  // ---- 会话控制面（执行模式 / 模型）：两者都只在转录里照会，故显示的是「最后已知」 ----
+  const sessionRow = sessions?.find((s) => s.sessionId === sessionId);
+  const modeNames = modeNamesFor(capability.harness);
+  const modelNames = modelNamesFor(capability.harness);
+
+  const cycleMode = (): void => {
+    void fb.run(
+      `cycleMode:${sessionId}`,
+      async () => {
+        await api.cycleSessionMode(sessionId);
+        // 切换不留痕，标签多数时候不会变；仍刷一次——变了就即时跟上。
+        await refresh();
+        show('success', t('tasks.modeCycled'));
+      },
+      { fail: (e) => t('tasks.modeCycleFailed', { error: errorText(e) }) },
+    );
+  };
+
+  const applyModel = (name: string): void => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    void fb.run(
+      `setModel:${sessionId}`,
+      async () => {
+        await api.setSessionModel(sessionId, trimmed);
+        setModelDraft('');
+        await refresh();
+        show('success', t('tasks.modelSet'));
+      },
+      { fail: (e) => t('tasks.modelSetFailed', { error: errorText(e) }) },
+    );
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -893,6 +933,86 @@ export function SessionMessages({
             {t('tasks.convCount', { n: thread.length })}
           </span>
         </div>
+
+        {/* 会话控制面（执行模式 / 模型）：两者切换都不留 hook 痕迹（Shift+Tab 一个事件
+            都不发、/model 不落盘），故标签是「最后已知」而非此刻。切换走固定键序 /
+            宿主 `/model`（词表归 harness，见 HARNESS_SESSION_CONTROL）；窄屏整组
+            折行，不做横向滚动 */}
+        {(modeNames.length > 0 || modelNames.length > 0) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 pb-2">
+            {modeNames.length > 0 && (
+              <div className="flex min-w-0 items-center gap-1">
+                <span className="shrink-0 text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
+                <span
+                  title={t('tasks.modeLastKnown')}
+                  className="max-w-[8rem] truncate rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-200"
+                >
+                  {sessionRow?.mode ?? t('tasks.modeUnknown')}
+                </span>
+                <button
+                  type="button"
+                  title={t('tasks.modeCycle')}
+                  aria-label={t('tasks.modeCycle')}
+                  onClick={cycleMode}
+                  className="rounded border border-white/[0.1] p-0.5 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`cycleMode:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={<RotateCcw className="h-3 w-3" />}
+                  />
+                </button>
+              </div>
+            )}
+            {modelNames.length > 0 && (
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <span className="shrink-0 text-[10px] text-neutral-500">{t('tasks.modelLabel')}</span>
+                <span
+                  title={t('tasks.modelLastKnown')}
+                  className="max-w-[8rem] truncate rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-200"
+                >
+                  {sessionRow?.model ?? t('tasks.modelUnknown')}
+                </span>
+                {modelNames.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => applyModel(n)}
+                    title={t('tasks.modelApply')}
+                    className="rounded border border-white/[0.08] px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                  >
+                    {n}
+                  </button>
+                ))}
+                <input
+                  value={modelDraft}
+                  onChange={(e) => setModelDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      applyModel(modelDraft);
+                    }
+                  }}
+                  placeholder={t('tasks.modelPlaceholder')}
+                  className="w-28 min-w-0 rounded border border-white/[0.1] bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={!modelDraft.trim()}
+                  onClick={() => applyModel(modelDraft)}
+                  className="rounded border border-white/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`setModel:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={<Check className="h-3 w-3" />}
+                  />
+                  {t('tasks.modelApply')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
             尾巴上常驻还没落进事件流的投递行（Held/失败/暂停闸成因 + 重发） */}

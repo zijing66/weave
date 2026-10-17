@@ -1,4 +1,9 @@
-import type { Harness, HarnessCompaction, HarnessLifecycle } from '@weavecode/core/harness';
+import type {
+  Harness,
+  HarnessCompaction,
+  HarnessLifecycle,
+  HarnessSessionControl,
+} from '@weavecode/core/harness';
 
 /**
  * mirror @weavecode/core/harness.ts HARNESS_LIFECYCLE，改那边同步这里
@@ -30,6 +35,27 @@ export const HARNESS_COMPACTION = {
   claude: { start: 'PreCompact', end: 'SessionStart', endSource: 'compact' },
   codex: { start: null, end: null, endSource: null },
 } satisfies Record<Harness, HarnessCompaction>;
+
+/** mirror @weavecode/core/harness.ts HARNESS_SESSION_CONTROL，改那边同步这里。 */
+export const HARNESS_SESSION_CONTROL = {
+  claude: {
+    modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
+    modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
+  },
+  codex: { modeNames: [], modelNames: [] },
+} satisfies Record<Harness, HarnessSessionControl>;
+
+/** 该 harness 的执行模式词表（宿主自己的名字，展示原样）；空 = 无此概念。 */
+export function modeNamesFor(harness: string | null | undefined): readonly string[] {
+  if (harness == null) return [];
+  return HARNESS_SESSION_CONTROL[harness as Harness]?.modeNames ?? [];
+}
+
+/** 该 harness 的模型别名词表（稳定别名，网关具体 ID 走自填）；空 = 无此概念。 */
+export function modelNamesFor(harness: string | null | undefined): readonly string[] {
+  if (harness == null) return [];
+  return HARNESS_SESSION_CONTROL[harness as Harness]?.modelNames ?? [];
+}
 
 /**
  * 该事件是不是「压缩会话」那一笔（收尾笔）：压缩信号表的 `end` 与 `endSource`
