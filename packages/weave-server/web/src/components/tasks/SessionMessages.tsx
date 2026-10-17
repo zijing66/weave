@@ -75,10 +75,6 @@ export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
 
-/** 模型下拉里「自定义…」那项的哨兵值：模型名不允许空白（服务端形态校验），故带空格
- *  的串永远不会和真模型名撞上。网关具体 ID（`ftm` 这类）不在稳定别名表里，走自填。 */
-const MODEL_CUSTOM = ' custom';
-
 /**
  * 对话缓存（sessionStorage）：重开弹窗先拿缓存即时出画，再被服务端那一页对账
  * 续接/替换——省掉每次开弹窗都等服务端那一趟，服务端压力也随之降下来。**时序
@@ -445,7 +441,7 @@ export function SessionMessages({
   const t = useT();
   const { show } = useToast();
   const fb = useActionFeedback();
-  const { statuses, sessions, refresh } = useSessionStatus();
+  const { statuses, sessions, refresh, modelCatalog } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   /** 对话事件类型（开轮 + 闭轮 + 压缩收尾笔）：闭轮表为空的 harness 没有对话面可取。 */
   const convTypes = useMemo(
@@ -463,9 +459,6 @@ export function SessionMessages({
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
   const [draft, setDraft] = useState('');
-  /** 模型下拉里的「自定义…」：网关具体 ID（`ftm` 这类）不在稳定别名表里，展开同行自填。 */
-  const [modelCustom, setModelCustom] = useState(false);
-  const [modelDraft, setModelDraft] = useState('');
   /** 本条待发的图（已落盘、还没投出去）；发走或关弹窗即清。 */
   const [staged, setStaged] = useState<UploadImage[]>([]);
   /** 在飞的上传张数（附件钮转圈；也是防连点的闸）。 */
@@ -949,6 +942,7 @@ export function SessionMessages({
   const sessionRow = sessions?.find((s) => s.sessionId === sessionId);
   const modeNames = modeNamesFor(capability.harness);
   const modelNames = modelNamesFor(capability.harness);
+  const modelTargets = modelCatalog[capability.harness] ?? [];
   const currentMode = sessionRow?.mode ?? null;
   const currentModel = sessionRow?.model ?? null;
   const modeTint = modeTintFor(capability.harness, currentMode);
@@ -967,14 +961,10 @@ export function SessionMessages({
   };
 
   const applyModel = (name: string): void => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
     void fb.run(
       `setModel:${sessionId}`,
       async () => {
-        await api.setSessionModel(sessionId, trimmed);
-        setModelCustom(false);
-        setModelDraft('');
+        await api.setSessionModel(sessionId, name);
         await refresh();
         show('success', t('tasks.modelSet'));
       },
@@ -982,12 +972,17 @@ export function SessionMessages({
     );
   };
 
-  /** 下拉选项 = 稳定别名 + 当前那个（别名表外的具体 ID 也得能显示成选中）。 */
-  const modelOptions = useMemo(() => {
-    const list = [...modelNames];
-    if (currentModel && !list.includes(currentModel)) list.unshift(currentModel);
-    return list;
-  }, [modelNames, currentModel]);
+  /** 下拉选项 = 别名 + 真名（网关把别名换成自家 ID，两个都得看得见）；别名表是
+   *  `/model` 的取值，真名只是标注。老 daemon 不回表就只摆别名。 */
+  const modelOptions =
+    modelTargets.length > 0
+      ? modelTargets.map((t) => ({
+          value: t.alias,
+          label: t.actual === t.alias ? t.alias : `${t.alias} — ${t.actual}`,
+        }))
+      : modelNames.map((n) => ({ value: n, label: n }));
+  /** 选中值取**别名**：转录里照会的是网关真名（`ftm`），那是别名 opus 的真身。 */
+  const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
 
   return createPortal(
     <div
@@ -1476,64 +1471,28 @@ export function SessionMessages({
                     </span>
                     <div className="relative">
                       <select
-                        value={modelCustom ? MODEL_CUSTOM : (currentModel ?? '')}
+                        value={modelValue}
                         onChange={(e) => {
                           const v = e.target.value;
-                          if (v === MODEL_CUSTOM) {
-                            setModelCustom(true);
-                            return;
-                          }
                           if (v) applyModel(v);
                         }}
                         title={t('tasks.modelLastKnown')}
                         aria-label={t('tasks.modelLabel')}
-                        className="max-w-[9rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
+                        className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
                       >
-                        {!currentModel && <option value="">{t('tasks.modelUnknown')}</option>}
-                        {modelOptions.map((n) => (
-                          <option key={n} value={n}>
-                            {n}
+                        {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
+                        {modelOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
                           </option>
                         ))}
-                        <option value={MODEL_CUSTOM}>{t('tasks.modelCustom')}</option>
+                        {/* 认不出别名的真名（别名表缺配）也得能显示成选中 */}
+                        {modelValue && !modelOptions.some((o) => o.value === modelValue) && (
+                          <option value={modelValue}>{modelValue}</option>
+                        )}
                       </select>
                       <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
                     </div>
-                    {modelCustom && (
-                      <div className="flex min-w-0 items-center gap-1">
-                        <input
-                          autoFocus
-                          value={modelDraft}
-                          onChange={(e) => setModelDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              applyModel(modelDraft);
-                            }
-                            if (e.key === 'Escape') {
-                              setModelCustom(false);
-                              setModelDraft('');
-                            }
-                          }}
-                          placeholder={t('tasks.modelPlaceholder')}
-                          className="w-28 min-w-0 rounded border border-white/[0.1] bg-neutral-950 px-1.5 py-0.5 font-mono text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          disabled={!modelDraft.trim()}
-                          title={t('tasks.modelApply')}
-                          aria-label={t('tasks.modelApply')}
-                          onClick={() => applyModel(modelDraft)}
-                          className="rounded border border-white/[0.1] p-0.5 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40"
-                        >
-                          <FeedbackIcon
-                            state={fb.stateOf(`setModel:${sessionId}`)}
-                            className="h-3 w-3"
-                            icon={<Check className="h-3 w-3" />}
-                          />
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

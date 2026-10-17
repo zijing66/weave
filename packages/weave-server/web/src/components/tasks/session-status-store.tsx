@@ -14,6 +14,7 @@ import {
   type SessionRow,
   type SessionTerminal,
 } from '@/lib/api';
+import type { ModelAliasTarget } from '@weavecode/harness';
 import { useAuthState } from '@/lib/auth';
 import { subscribeHook, subscribePush, type HookFrame } from '@/lib/sse';
 import {
@@ -39,6 +40,8 @@ interface SessionStatusValue {
   inflight: Map<string, number>;
   /** sessionId → 待答阻塞问题（AskUserQuestion / 计划与权限确认）。 */
   questions: Map<string, PendingQuestionEntry>;
+  /** harness → 模型别名表（别名 → 真名）：模型下拉两个都摆，真名也认回别名那档。 */
+  modelCatalog: Record<string, ModelAliasTarget[]>;
   /** 手动重拉（刷新按钮；SSE 之外兜底）。resolve = 会话列表拉取失败的原因，成功为 null。 */
   refresh: () => Promise<string | null>;
 }
@@ -67,6 +70,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   /** 待答阻塞问题：随 hook 帧的 500ms 防抖重拉（tracker 是事件驱动的内存态，
    *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
+  const [modelCatalog, setModelCatalog] = useState<Record<string, ModelAliasTarget[]>>({});
 
   const refresh = useCallback(async (): Promise<string | null> => {
     const [s, d, q] = await Promise.allSettled([
@@ -81,7 +85,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       setQuestions(new Map(q.value.map((entry) => [entry.sessionId, entry])));
     }
     if (s.status === 'fulfilled') {
-      setSessions(s.value);
+      setSessions(s.value.sessions);
+      setModelCatalog(s.value.modelCatalog ?? {});
       setError(null);
       return null;
     }
@@ -324,8 +329,18 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   }, [sessions, statuses]);
 
   const value = useMemo<SessionStatusValue>(
-    () => ({ sessions, dispatches, statuses, projectStats, error, inflight, questions, refresh }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, questions, refresh],
+    () => ({
+      sessions,
+      dispatches,
+      statuses,
+      projectStats,
+      error,
+      inflight,
+      questions,
+      modelCatalog,
+      refresh,
+    }),
+    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

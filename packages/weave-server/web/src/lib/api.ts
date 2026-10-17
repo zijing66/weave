@@ -5,6 +5,7 @@
  */
 
 import type { Harness } from '@weavecode/core/harness';
+import type { ModelAliasTarget } from '@weavecode/harness';
 import type { EnableOverride, ToolScope, ToolStateRow } from '@weavecode/core/tool';
 import { HARNESS_ORDER } from './harness-meta';
 import { markUnauthorized } from './auth';
@@ -336,11 +337,20 @@ export interface SessionRow {
   /** 当前模型（转录最后一条真跑过的 `message.model`）：换模型不发 hook 事件，只有
    *  转录照会；null = 不知道（不猜）。 */
   model?: string | null;
+  /** 同一个模型的**别名**（`/model` 收的那个）：网关把别名换成自家 ID，转录里只见
+   *  真名；null = 认不出（回落显示真名）。 */
+  modelAlias?: string | null;
   /** 执行模式（转录最后一条 `permissionMode`）：Shift+Tab 不留痕，故是「最后已知」。 */
   mode?: string | null;
   /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
    *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;
+}
+
+/** GET /sessions 载荷：会话行 + 各 harness 的模型别名表（别名 → 真名）。 */
+export interface SessionListResult {
+  sessions: SessionRow[];
+  modelCatalog: Record<string, ModelAliasTarget[]>;
 }
 
 /** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
@@ -1151,10 +1161,10 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ sessionId }) },
     ),
   /** 不带 projectId 返回全部会话（最近活跃在前，最多 200 条）。 */
-  listSessions: (projectId?: number): Promise<SessionRow[]> =>
-    apiFetch<{ sessions: SessionRow[] }>(
+  listSessions: (projectId?: number): Promise<SessionListResult> =>
+    apiFetch<SessionListResult>(
       `/sessions${projectId === undefined ? '' : `?projectId=${projectId}`}`,
-    ).then((r) => r.sessions),
+    ),
   /** dashboard 改名：写 pendingTitle，下次 hook 下发时生效。 */
   renameSession: (sessionId: string, title: string): Promise<SessionRow> =>
     apiFetch<{ session: SessionRow }>(

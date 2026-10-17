@@ -2,13 +2,21 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { stat } from 'node:fs/promises';
 import { z } from 'zod';
 import {
+  HARNESS_SESSION_CONTROL,
   HookRuleFilterSchema,
   HookRuleSourceSchema,
   HandlerConfigSchema,
   HookDispatchStatusSchema,
   isHarness,
+  type Harness,
 } from '@weavecode/core';
-import type { CaptureScriptHealth, MessagingSurface } from '@weavecode/harness';
+import {
+  aliasOfModel,
+  modelAliasTargets,
+  type CaptureScriptHealth,
+  type MessagingSurface,
+  type ModelAliasTarget,
+} from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
 import type { MessageImage, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
 import { readJson, sendJson } from './http.js';
@@ -431,20 +439,35 @@ export async function handleHooksRoutes(
     // 会话所在可见屏幕（列表分块）：探测要吃子进程，只能回隐藏刷新器的**上次快照**
     // （null = 反查不到，不分组），增量经 push 'terminalTopology' 到达——同角标口径。
     const screens = deps.terminalRefresher?.lastSnapshot?.terminals ?? {};
+    // 模型别名 → 真名（claude 的 `ANTHROPIC_DEFAULT_<别名>_MODEL` 约定）：下拉要两个
+    // 都摆，转录里照会的真名也得认回别名那档。按 harness 分面，各问各的词表。
+    const catalog: Record<string, ModelAliasTarget[]> = {};
+    for (const s of sessions) {
+      const key = s.harness ?? '';
+      if (key in catalog) continue;
+      catalog[key] = modelAliasTargets(HARNESS_SESSION_CONTROL[s.harness as Harness]?.modelNames ?? []);
+    }
     sendJson(res, 200, {
-      sessions: sessions.map((s) => ({
-        ...s,
-        pidAlive: pidAliveOf(s, liveness),
-        terminal: screens[s.sessionId] ?? null,
-        // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
-        interruptedAt:
-          s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
-        // 当前模型（转录最后一条真跑过的 message.model）：换模型不发任何 hook 事件，
-        // 只有转录照会；null = 不知道（不猜）。
-        model: deps.sessionProbe?.currentModel(s.sessionId) ?? null,
-        // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
-        mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
-      })),
+      sessions: sessions.map((s) => {
+        const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
+        return {
+          ...s,
+          pidAlive: pidAliveOf(s, liveness),
+          terminal: screens[s.sessionId] ?? null,
+          // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
+          interruptedAt:
+            s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
+          // 当前模型（转录最后一条真跑过的 message.model）：换模型不发任何 hook 事件，
+          // 只有转录照会；null = 不知道（不猜）。
+          model,
+          // 同一个模型的**别名**（`/model` 收的那个）：网关把别名换成自家 ID，转录里
+          // 只见真名；认不出 = null，前端回落显示真名。
+          modelAlias: aliasOfModel(catalog[s.harness ?? ''] ?? [], model),
+          // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
+          mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
+        };
+      }),
+      modelCatalog: catalog,
     });
     return true;
   }
