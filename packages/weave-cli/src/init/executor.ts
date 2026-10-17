@@ -206,6 +206,7 @@ export async function executeInit(
       hooks.notification,
       hooks.preCompact,
       hooks.sessionEnd,
+      hooks.preModelSwitch,
     ]
       .filter(Boolean).length,
   };

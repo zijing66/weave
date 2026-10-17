@@ -339,4 +339,76 @@ describe('QuestionTracker 状态机', () => {
     settled.seedFromDb();
     expect(settled.get(SESSION)).toBeNull();
   });
+
+  /** 模型切换确认事件（判据字段归 harness 规格读，tracker 只透传 raw）。 */
+  const switchPre = (raw: unknown = {
+    from_model: 'claude-sonnet-4-5',
+    to_model: 'deepseek-flash',
+    prompt_cache_warm: true,
+    source: 'command',
+  }): NormalizedHookPayload => payload({ eventType: 'PreModelSwitch', raw });
+
+  it('PreModelSwitch（缓存已暖 + 换模型）→ 模型切换确认（kind=switch）', () => {
+    feed(SESSION, switchPre());
+    const entry = tracker.get(SESSION)!;
+    expect(entry.kind).toBe('switch');
+    const q = entry.questions[0]!;
+    expect(q.key).toBe('model:switch');
+    expect(q.options.map((o) => o.label)).toEqual(['Yes, switch to deepseek-flash', 'No, go back']);
+    expect(q.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
+    expect(q.submit).toBeUndefined();
+  });
+
+  it('判据不成立（缓存冷 / 同模型）→ 不置位（面板有问、终端无框会打进输入框）', () => {
+    feed(SESSION, switchPre({ from_model: 'a', to_model: 'b', prompt_cache_warm: false }));
+    expect(tracker.get(SESSION)).toBeNull();
+    feed(SESSION, switchPre({ from_model: 'a', to_model: 'a', prompt_cache_warm: true }));
+    expect(tracker.get(SESSION)).toBeNull();
+  });
+
+  it('switch 态落定：PostModelSwitch / UserPromptSubmit / Stop 任意动静即清', () => {
+    feed(SESSION, switchPre());
+    feed(SESSION, payload({ eventType: 'PostModelSwitch' }));
+    expect(tracker.get(SESSION)).toBeNull();
+
+    feed(SESSION, switchPre());
+    feed(SESSION, payload({ eventType: 'UserPromptSubmit' }));
+    expect(tracker.get(SESSION)).toBeNull();
+
+    feed(SESSION, switchPre());
+    feed(SESSION, payload({ eventType: 'Stop' }));
+    expect(tracker.get(SESSION)).toBeNull();
+  });
+
+  it('其他 Notification 不清 switch 态（idle 等与对话框无关）', () => {
+    feed(SESSION, switchPre());
+    feed(SESSION, notification('idle'));
+    expect(tracker.get(SESSION)).not.toBeNull();
+    expect(tracker.get(SESSION)!.kind).toBe('switch');
+  });
+
+  it('switch 的 onPending 同样只播「无→有」；落定后再来才算新的一次', () => {
+    const seen: string[] = [];
+    const t2 = new QuestionTracker({
+      sessions,
+      hookEvents: events,
+      onPending: (e) => seen.push(`${e.sessionId}:${e.kind}`),
+    });
+    const feed2 = (p: NormalizedHookPayload): void =>
+      t2.onEvent({ sessionId: SESSION, source: 'claude', payload: p });
+
+    feed2(switchPre());
+    expect(seen).toEqual([`${SESSION}:switch`]);
+    feed2(switchPre()); // 同一确认框仍挂着 → 不重复打扰
+    expect(seen).toEqual([`${SESSION}:switch`]);
+    feed2(payload({ eventType: 'PostModelSwitch' }));
+    feed2(switchPre());
+    expect(seen).toEqual([`${SESSION}:switch`, `${SESSION}:switch`]);
+  });
+
+  it('markAnswered 对 switch 态同样整条摘除', () => {
+    feed(SESSION, switchPre());
+    tracker.markAnswered(SESSION);
+    expect(tracker.get(SESSION)).toBeNull();
+  });
 });

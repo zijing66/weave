@@ -31,11 +31,13 @@ describe('generateSettingsJson', () => {
     });
     expect(settings.hooks).toBeDefined();
     const hooks = settings.hooks as Record<string, unknown>;
-    // 采集面全集（9 事件）
+    // 采集面全集（preModelSwitch 一对：Pre 置位 / Post 落定）
     expect(Object.keys(hooks).sort()).toEqual([
       'Notification',
+      'PostModelSwitch',
       'PostToolUse',
       'PreCompact',
+      'PreModelSwitch',
       'PreToolUse',
       'SessionEnd',
       'SessionStart',
@@ -66,6 +68,7 @@ describe('generateSettingsJson', () => {
       notification: false,
       preCompact: false,
       sessionEnd: false,
+      preModelSwitch: false,
       timeout: 5000,
       continueOnError: true,
     };
@@ -286,6 +289,7 @@ describe('mergeSettingsJson', () => {
         notification: false,
         preCompact: false,
         sessionEnd: false,
+        preModelSwitch: false,
         timeout: 5000,
         continueOnError: true,
       },

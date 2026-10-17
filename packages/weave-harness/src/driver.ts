@@ -299,6 +299,13 @@ export interface BlockingPromptSpec {
   permissionQuestion(context: { toolName: string | null; toolInput: unknown }): BlockingQuestion;
   /** 阻塞工具的 PreToolUse toolInput → 问题列表（含合成问题：计划确认的 toolInput 恒空）。 */
   parseQuestions(toolName: string, toolInput: unknown): BlockingQuestion[];
+  /**
+   * 事件弹框（不是工具、也非权限提醒的对话框，如 claude 的「Switch model?」）：
+   * 事件到达且**对话框确实要弹**时返回问题面，否则 null。条件（弹不弹）是 harness
+   * 知识——宿主自己有一套触发判据，猜错就成幽灵问题（面板有问、终端无框，键序
+   * 会打进输入框）。落定沿用 permission 态口径（后续任何非 Notification 事件即了结）。
+   */
+  eventQuestion(eventType: string, raw: unknown): BlockingQuestion | null;
 }
 
 /**

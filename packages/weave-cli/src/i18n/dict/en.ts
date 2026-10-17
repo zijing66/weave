@@ -39,7 +39,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.init.force': 'Overwrite existing files',
   'flag.init.noInteractive': 'Disable interactive prompts',
   'flag.init.hooks':
-    'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification,preCompact,sessionEnd); "none" registers none; default: all',
+    'Comma-separated hook events to register (preToolUse,postToolUse,userPromptSubmit,sessionStart,stop,subagentStop,notification,preCompact,sessionEnd,preModelSwitch); "none" registers none; default: all',
   'flag.init.harness': `Comma-separated harness surfaces to initialize (${HARNESS_KEYS.join(', ')}); omitted → interactive multiselect on a TTY, default ${HARNESS_KEYS[0]}`,
   'flag.dir': 'Target directory (default: current directory)',
   'flag.scan.dir': 'Root directory to scan (default: current directory)',

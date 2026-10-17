@@ -166,4 +166,45 @@ describe('claude 阻塞问答面', () => {
       expect(q!.submit).toBeUndefined();
     });
   });
+
+  describe('模型切换确认（eventQuestion）', () => {
+    const face = (eventType: string, raw: unknown) =>
+      CLAUDE_BLOCKING_PROMPT.eventQuestion(eventType, raw);
+    const warm = {
+      from_model: 'claude-sonnet-4-5',
+      to_model: 'deepseek-flash',
+      prompt_cache_warm: true,
+      source: 'command',
+    };
+
+    it('PreModelSwitch + 缓存已暖 + 换模型 → 两键问题面（1 切换 / 2 回退）', () => {
+      const q = face('PreModelSwitch', warm)!;
+      expect(q).not.toBeNull();
+      expect(q.key).toBe('model:switch');
+      expect(q.header).toBe('Switch model?');
+      expect(q.question).toContain('deepseek-flash');
+      expect(q.question).toContain('full history gets re-read');
+      expect(q.multiSelect).toBe(false);
+      expect(q.options.map((o) => o.label)).toEqual([
+        'Yes, switch to deepseek-flash',
+        'No, go back',
+      ]);
+      expect(q.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
+      // 单问单选 → 无收尾屏（数字即提交）
+      expect(q.submit).toBeUndefined();
+    });
+
+    it('判据不成立不给问题面（幽灵问题会把键序打进输入框）', () => {
+      expect(face('PreModelSwitch', { ...warm, prompt_cache_warm: false })).toBeNull();
+      expect(face('PreModelSwitch', { ...warm, to_model: warm.from_model })).toBeNull();
+      expect(face('PreModelSwitch', { prompt_cache_warm: true })).toBeNull();
+      expect(face('PreModelSwitch', null)).toBeNull();
+      expect(face('PreModelSwitch', 'nope')).toBeNull();
+    });
+
+    it('非 PreModelSwitch 不给（PostModelSwitch 是落定笔，不是问）', () => {
+      expect(face('PostModelSwitch', warm)).toBeNull();
+      expect(face('PreToolUse', warm)).toBeNull();
+    });
+  });
 });

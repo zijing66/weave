@@ -45,6 +45,7 @@ const CAPTURE_TAKEN_OVER: HooksConfig = {
   notification: false,
   preCompact: false,
   sessionEnd: false,
+  preModelSwitch: false,
   timeout: 5000,
   continueOnError: true,
 };

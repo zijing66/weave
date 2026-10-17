@@ -35,6 +35,8 @@ export const HooksConfigSchema = z.object({
   preCompact: z.boolean(),
   /** 会话退出事件（旁路凭据/定位随进程作废的信号，web 状态机据此落「关闭」）。 */
   sessionEnd: z.boolean(),
+  /** 模型切换确认（Pre 置位 / Post 落定成对登记——落定笔只服务于这一件事）。 */
+  preModelSwitch: z.boolean(),
   timeout: z.number().default(5000),
   continueOnError: z.boolean().default(true),
 });
@@ -384,6 +386,7 @@ export const DEFAULT_HOOKS: HooksConfig = {
   notification: true,
   preCompact: true,
   sessionEnd: true,
+  preModelSwitch: true,
   timeout: 5000,
   continueOnError: true,
 };

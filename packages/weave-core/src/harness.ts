@@ -42,6 +42,11 @@ export const HARNESS_EVENTS = {
     'PreCompact',
     /** 会话退出（宿主进程收尾时发，只覆盖正常退出：kill / 关窗口不发）——退出即清的信号。 */
     'SessionEnd',
+    /** 模型切换确认（`/model <名>` / 模型选择器 / fast mode 升档前发，带 from/to 与
+     *  prompt_cache_warm）——宿主那句「Switch model?」的信号，问题面由它合成。 */
+    'PreModelSwitch',
+    /** 模型切换落定（切换真发生后发）——确认框了结的信号（答「No, go back」不发）。 */
+    'PostModelSwitch',
   ] as const,
   /** Codex 事件待批 2 B0 调研锁定（BACKLOG §10-6）；一期不注册（B0 闸门）。 */
   codex: [] as const,

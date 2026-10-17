@@ -364,6 +364,9 @@ export const CLAUDE_HOOK_EVENTS = [
   'SubagentStop',
   'Notification',
   'PreCompact',
+  'SessionEnd',
+  'PreModelSwitch',
+  'PostModelSwitch',
 ] as const;
 
 /** mirror of `INJECTABLE_HOOK_EVENTS` — inject 处理器只允许这些事件（服务端 400）。 */
@@ -493,8 +496,8 @@ export interface AnswerPick {
 export interface PendingQuestionEntry {
   sessionId: string;
   harness: Harness;
-  /** question = AskUserQuestion/计划确认；permission = 权限确认。 */
-  kind: 'question' | 'permission';
+  /** question = AskUserQuestion/计划确认；permission = 权限确认；switch = 模型切换确认。 */
+  kind: 'question' | 'permission' | 'switch';
   questions: PendingQuestion[];
   at: string;
 }

@@ -24,6 +24,7 @@ const HOOK_KEYS = [
   'notification',
   'preCompact',
   'sessionEnd',
+  'preModelSwitch',
 ] as const;
 
 /**

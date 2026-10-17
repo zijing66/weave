@@ -11,9 +11,11 @@ import type { NormalizedHookPayload } from './types.js';
  * 作答。为什么不走 hookBus 帧：帧域不带 toolName（frameFacts 只提 agent 事实），
  * 挂点必须在 handleIngestedRecords（解析后的 payload 在手）。
  *
- * 置位：PreToolUse(阻塞工具) / Notification(permission_prompt)；
+ * 置位：PreToolUse(阻塞工具) / Notification(permission_prompt) / 事件弹框
+ * （`spec.eventQuestion` 认出来的，如 claude 的「Switch model?」）；
  * 清除：PostToolUse(同名阻塞工具) 与 UserPromptSubmit/Stop（question 态），
- * permission 态由任意后续非 Notification 事件清（对话框了结必有下文）。
+ * permission 与 switch 态由任意后续非 Notification 事件清（对话框了结必有下文；
+ * switch 的落定笔是 PostModelSwitch——答「No, go back」不发任何事件，留待下文清）。
  * daemon 重启由 seedFromDb 按最近事件窗口重放重建。
  *
  * 例外：卡在阻塞工具里时，该工具自己补发的 permission_prompt 不改写问题面——
@@ -33,8 +35,8 @@ import type { NormalizedHookPayload } from './types.js';
 export interface PendingQuestionEntry {
   sessionId: string;
   harness: Harness;
-  /** question = 阻塞工具（问答/计划确认）；permission = 权限确认对话框。 */
-  kind: 'question' | 'permission';
+  /** question = 阻塞工具（问答/计划确认）；permission = 权限确认；switch = 模型切换确认。 */
+  kind: 'question' | 'permission' | 'switch';
   questions: BlockingQuestion[];
   at: string;
 }
@@ -139,11 +141,28 @@ export class QuestionTracker {
       }
       return; // 其他 Notification（idle 等）不动状态
     }
-    // 其余事件：待答面落定的信号。permission 态任何动静都说明对话框已了结；
+    // 事件弹框（如 claude 的「Switch model?」）：问题面与「弹不弹」的判据都归
+    // harness 规格——它说 null 就是不弹，这里绝不猜（幽灵问题会把键序打进输入框）。
+    const face = spec.eventQuestion(payload.eventType, payload.raw);
+    if (face) {
+      const prev = this.pending.get(sessionId);
+      const entry: PendingQuestionEntry = {
+        sessionId,
+        harness: this.harnessOf(input.source),
+        kind: 'switch',
+        questions: [face],
+        at: new Date().toISOString(),
+      };
+      this.pending.set(sessionId, entry);
+      if (!this.seeding && prev?.kind !== 'switch') this.deps.onPending?.(entry);
+      return;
+    }
+    // 其余事件：待答面落定的信号。permission / switch 态任何动静都说明对话框已了结
+    // （switch 的落定笔 = PostModelSwitch；答「No, go back」宿主不发事件，留待下文清）；
     // question 态只认阻塞工具的 PostToolUse（答完）或用户接管（UPS/Stop）。
     const entry = this.pending.get(sessionId);
     if (!entry) return;
-    if (entry.kind === 'permission') {
+    if (entry.kind !== 'question') {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);
       return;

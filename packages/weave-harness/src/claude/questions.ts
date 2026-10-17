@@ -71,6 +71,35 @@ const OPAQUE_QUESTION: BlockingQuestion = {
   options: [],
 };
 
+/**
+ * 模型切换确认（宿主 `/model <名>` 那句「Switch model?」）：PreModelSwitch 事件的
+ * raw 带 from_model/to_model 与 prompt_cache_warm。对话框**只在缓存要作废时**弹
+ * （宿主自己的判据：有历史响应、目标模型 ≠ 当前、且这次缓存作废还没被确认过），
+ * 故按 prompt_cache_warm && to ≠ from 认——不成立就不给问题面，否则面板有问、
+ * 终端无框，键序会打进输入框。残余缺口（同一批输出里连切两次、第二次宿主不再弹）
+ * 由 PostModelSwitch 落定压掉。
+ */
+function switchQuestion(raw: unknown): BlockingQuestion | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const fields = raw as Record<string, unknown>;
+  const to = str(fields['to_model']);
+  const from = str(fields['from_model']);
+  if (!to || !from || to === from) return null;
+  if (fields['prompt_cache_warm'] !== true) return null;
+  return {
+    key: 'model:switch',
+    header: 'Switch model?',
+    question:
+      'Your next response will be slower and use more tokens. This conversation is cached for ' +
+      `the current model. Switching to ${to} means the full history gets re-read on your next message.`,
+    multiSelect: false,
+    options: [
+      { keys: ['1'], label: `Yes, switch to ${to}` },
+      { keys: ['2'], label: 'No, go back' },
+    ],
+  };
+}
+
 /** 权限上下文的工具输入预览（紧凑 JSON，截 160 字）。 */
 function previewOf(toolInput: unknown): string {
   if (toolInput == null || typeof toolInput !== 'object') return '';
@@ -265,5 +294,9 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
     }
     // ExitPlanMode：toolInput 恒空——合成计划确认问题
     return [PLAN_QUESTION];
+  },
+  eventQuestion(eventType, raw) {
+    if (eventType === 'PreModelSwitch') return switchQuestion(raw);
+    return null;
   },
 };
