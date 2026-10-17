@@ -120,14 +120,19 @@ describe('daemon /capture', () => {
     expect(user.model).toBe('opus'); // 用户其余键不动
     expect(Object.keys(user.hooks).sort()).toEqual([
       'Notification',
+      'PermissionDenied',
+      'PermissionRequest',
       'PostModelSwitch',
       'PostToolUse',
+      'PostToolUseFailure',
       'PreCompact',
       'PreModelSwitch',
       'PreToolUse',
       'SessionEnd',
       'SessionStart',
       'Stop',
+      'StopFailure',
+      'SubagentStart',
       'SubagentStop',
       'UserPromptSubmit',
     ]);
