@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   DndContext,
   PointerSensor,
@@ -701,25 +702,18 @@ const HEALTH_KEYS: Record<string, MessageKey> = {
 /**
  * 健康徽标（批 8）：全 ok → 绿点；有 fail → 警示图标 + tooltip 列出失败项。
  * 请求失败（daemon 未运行 / 端点 500）→ 静默不显示，不打扰。
+ *
+ * 走 TanStack 缓存：行重挂载原先每行重拉一次（实测 966 次），而这道检查探的是
+ * 「文件在不在」——60s 内的变化不值得为它挂帧，一分钟一次绰绰有余。
  */
 function HealthBadge({ projectId }: { projectId: number }) {
   const t = useT();
-  const [fails, setFails] = useState<HarnessCheck[] | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .getHarnessChecks(projectId)
-      .then((r) => {
-        if (alive) setFails(r.checks.filter((c) => !c.ok));
-      })
-      .catch(() => {
-        // daemon 未运行或端点出错 —— 静默，不显示徽标
-      });
-    return () => {
-      alive = false;
-    };
-  }, [projectId]);
+  const { data } = useQuery({
+    queryKey: ['harnessChecks', projectId],
+    queryFn: () => api.getHarnessChecks(projectId),
+    staleTime: 60_000,
+  });
+  const fails: HarnessCheck[] | null = data ? data.checks.filter((c) => !c.ok) : null;
 
   if (fails === null) return null;
 

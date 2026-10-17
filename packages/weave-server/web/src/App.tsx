@@ -265,9 +265,23 @@ function Dashboard() {
     api.listMcp(p.id).then(setMcpRows).catch(() => {});
   }, []);
 
-  const refreshUpdates = useCallback((p: ProjectRow) => {
-    api.listUpdates(p.id).then(setUpdates).catch(() => {});
+  // `listUpdates` 每轮都要在项目里起 git 子进程（Windows 上数百毫秒），而 `asset`
+  // 帧是成批到的——同一项目的在飞请求直接复用，别一帧一次。
+  const updatesFlight = useRef<Map<number, Promise<UpdateReport>>>(new Map());
+  const fetchUpdates = useCallback((projectId: number): Promise<UpdateReport> => {
+    const flying = updatesFlight.current.get(projectId);
+    if (flying) return flying;
+    const p = api.listUpdates(projectId).finally(() => updatesFlight.current.delete(projectId));
+    updatesFlight.current.set(projectId, p);
+    return p;
   }, []);
+
+  const refreshUpdates = useCallback(
+    (p: ProjectRow) => {
+      fetchUpdates(p.id).then(setUpdates).catch(() => {});
+    },
+    [fetchUpdates],
+  );
 
   // 选中项目的既有 updates 刷新结果回填行计数缓存 —— 顶栏/任务页与行内按钮
   // 共用同一份取数，不为行列表单独再拉。
@@ -289,23 +303,19 @@ function Dashboard() {
 
   // 行内 updates 计数：行 hover 懒加载 + 按 id 缓存（listUpdates 要算指纹，
   // 不做全量预拉）；force 供行同步后重拉。
-  const updatesInFlight = useRef<Set<number>>(new Set());
   const ensureUpdates = useCallback(
     (projectId: number, force = false) => {
-      if (updatesInFlight.current.has(projectId)) return;
       if (!force && updatesMap[projectId] !== undefined) return;
-      updatesInFlight.current.add(projectId);
-      api.listUpdates(projectId)
+      fetchUpdates(projectId)
         .then((r) => {
-          updatesInFlight.current.delete(projectId);
           setUpdatesMap((prev) => ({
             ...prev,
             [projectId]: { available: r.available, needsInit: r.needsInit },
           }));
         })
-        .catch(() => updatesInFlight.current.delete(projectId));
+        .catch(() => {});
     },
-    [updatesMap],
+    [updatesMap, fetchUpdates],
   );
 
   /** Refresh the hooks rule set (card count). */
