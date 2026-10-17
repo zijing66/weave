@@ -1,13 +1,17 @@
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../db/db.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { SessionRepository } from '../../repositories/sessions.js';
 import { UploadRepository, UPLOAD_MAX_BYTES } from '../../repositories/uploads.js';
+import { handleHooksRoutes } from '../hooks-routes.js';
+import type { WeaveServerDeps } from '../server.js';
 
 describe('UploadRepository', () => {
   let db: ReturnType<typeof openDatabase>;
@@ -93,5 +97,85 @@ describe('UploadRepository', () => {
     const a = uploads.save({ name: 'x.png', mediaType: 'image/png', bytes: randomBytes(16) });
     const b = uploads.save({ name: 'y.png', mediaType: 'image/png', bytes: randomBytes(16) });
     expect(a.id).not.toBe(b.id);
+  });
+});
+
+/** 路由可达性：分支写进 hooks-routes 还不够，得进它开头那张**路径认领表**——
+ *  表里漏一项，那条路由就永远由主链答 404 Not found。`/uploads` 与 `/images`
+ *  实际这么死过（2026-10-17 前端「图片上传失败：Not found」，服务端分支其实
+ *  一直在），故这里断言的是 `handled`，不是状态码本身。 */
+describe('上传路由可达（handleHooksRoutes 的路径认领表）', () => {
+  let dir: string;
+  let uploads: UploadRepository;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'weave-uploads-route-'));
+    uploads = new UploadRepository(openDatabase(':memory:'), dir);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ handled: boolean; status: number; body: unknown }> => {
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    const req = Readable.from([Buffer.from(payload)]) as unknown as IncomingMessage;
+    req.method = method;
+    let bodyOut: unknown = null;
+    const res = {
+      statusCode: 0,
+      setHeader: () => {},
+      writeHead: (code: number) => {
+        res.statusCode = code;
+      },
+      end: (chunk?: unknown) => {
+        bodyOut = typeof chunk === 'string' ? JSON.parse(chunk) : chunk;
+      },
+    };
+    const handled = await handleHooksRoutes(
+      req,
+      res as unknown as ServerResponse,
+      { uploads } as WeaveServerDeps,
+      path,
+      new URL(path, 'http://x'),
+    );
+    return { handled, status: res.statusCode, body: bodyOut };
+  };
+
+  it('POST /uploads 由本路由认领并落盘（不是主链 404）', async () => {
+    const bytes = Buffer.from('pasted-image');
+    const hit = await call('POST', '/uploads', {
+      name: 'clip.png',
+      mediaType: 'image/png',
+      data: bytes.toString('base64'),
+    });
+    expect(hit.handled).toBe(true);
+    expect(hit.status).toBe(201);
+    const upload = (hit.body as { upload: { id: string; name: string } }).upload;
+    expect(upload.id).toBe(createHash('sha256').update(bytes).digest('hex'));
+    expect(upload.name).toBe('clip.png');
+  });
+
+  it('GET /images/:id 由本路由认领并回字节', async () => {
+    const bytes = Buffer.from('thumb-bytes');
+    const row = uploads.save({
+      name: 't.webp',
+      mediaType: 'image/webp',
+      bytes,
+    });
+    const hit = await call('GET', `/images/${row.id}`);
+    expect(hit.handled).toBe(true);
+    expect(hit.status).toBe(200);
+    expect(hit.body).toEqual(bytes);
+  });
+
+  it('未知 id 也由本路由答 404（handled=true，不是漏到主链）', async () => {
+    const hit = await call('GET', `/images/${'0'.repeat(64)}`);
+    expect(hit.handled).toBe(true);
+    expect(hit.status).toBe(404);
   });
 });

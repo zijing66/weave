@@ -183,12 +183,16 @@ export async function handleHooksRoutes(
   pathname: string,
   url: URL,
 ): Promise<boolean> {
-  const isHooksPath =
+  // 本路由器认领的路径前缀：漏一个就整条路由死在门外（2026-10-17 /uploads 与
+  // /images 就是这么死的——分支写好了却没进这张表，一律 404 Not found）。
+  const isOwnedPath =
     pathname.startsWith('/hooks/') ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||
-    pathname.startsWith('/messaging');
-  if (!isHooksPath) return false;
+    pathname.startsWith('/messaging') ||
+    pathname === '/uploads' ||
+    pathname.startsWith('/images/');
+  if (!isOwnedPath) return false;
 
   // ---- 规则 CRUD ----
   if (pathname === '/hooks/rules') {
