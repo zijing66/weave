@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, Minus, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
+  API_BASE,
   api,
   type HookEventRow,
   type MessagingCapability,
@@ -1369,7 +1370,8 @@ export function SessionMessages({
                               className="block h-14 w-14 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
                             >
                               <img
-                                src={`/images/${img.id}`}
+                                // 走 API_BASE：dev 由 vite 代理剥离 /api，裸 /images 会被 SPA 回退成 index.html
+                                src={`${API_BASE}/images/${img.id}`}
                                 alt={img.name}
                                 className="h-full w-full object-cover"
                                 loading="lazy"
@@ -1617,7 +1619,7 @@ export function SessionMessages({
                       className="block h-10 w-10 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
                     >
                       <img
-                        src={`/images/${img.id}`}
+                        src={`${API_BASE}/images/${img.id}`}
                         alt={img.name}
                         className="h-full w-full object-cover"
                         loading="lazy"
@@ -1854,7 +1856,7 @@ export function SessionMessages({
                 <X className="h-4 w-4" />
               </button>
               <img
-                src={`/images/${lightbox.id}`}
+                src={`${API_BASE}/images/${lightbox.id}`}
                 alt={lightbox.name}
                 onClick={(e) => e.stopPropagation()}
                 className="max-h-full max-w-full rounded-lg border border-white/[0.12] object-contain"

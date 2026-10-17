@@ -148,11 +148,11 @@ export interface HookEventRow {
   sessionId: string | null;
   payload: string;
   createdAt: string;
-  /** 消息随附图（挂在开轮事件上；对话气泡缩略图）。取图走 `/images/<id>`。 */
+  /** 消息随附图（挂在开轮事件上；对话气泡缩略图）。取图走 `API_BASE + /images/<id>`。 */
   images?: UploadImage[];
 }
 
-/** 上传件（服务端内容寻址落盘；回显经 `/images/<id>`）。 */
+/** 上传件（服务端内容寻址落盘；回显经 `API_BASE + /images/<id>`）。 */
 export interface UploadImage {
   id: string;
   name: string;
