@@ -14,6 +14,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   inject: null,
   headless: null,
   idleSignals: [],
+  imageAttach: null,
   unsupportedReasons: {
     discovery: 'Codex event ingestion is pending research (BACKLOG §10-6); sessions are not discoverable',
     prompt: 'Codex has no native peer-messaging channel; prompts can only reach it via terminal text injection where the configured terminal supports it',

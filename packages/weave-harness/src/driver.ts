@@ -214,6 +214,24 @@ export interface PromptRelaySpec {
   resolve(sessionId: string): { name: string } | null;
 }
 
+/**
+ * 图片随 prompt 投递的对齐面：「一张图怎么被这个 harness 认出来」是 harness 表示法
+ * （claude = 裸绝对路径，它自己的粘贴处理器按 `\.(png|jpe?g|gif|webp)$` 把路径转成
+ * `[Image #N]` + 真 image block），server 只传语义参数（原文 + 落盘图的可读路径 /
+ * 媒体类型 / 原文件名），怎么引用归这里。null = 该 harness 不支持收图。
+ */
+export interface ImageAttachSpec {
+  /**
+   * 把「用户原文 + 已落盘图片」合成投递 prompt 文本。images 恒非空；text 可为空
+   * （纯图发送）。返回值走三条层投递，**用户原文不得被改写**（回执比对靠它做包含
+   * 匹配）——只允许追加引用形态。
+   */
+  composePrompt(
+    text: string,
+    images: readonly { path: string; mediaType: string; name: string }[],
+  ): string;
+}
+
 /** 信封渲染入参。 */
 export interface MessageMeta {
   /** 发起方展示名（dashboard / 会话标题 / cli）。 */
@@ -321,6 +339,8 @@ export interface MessagingSurface {
   readonly idleSignals: readonly string[];
   /** 注入信封渲染（缺省 = server 的 weave 统一信封）。 */
   renderEnvelope?(text: string, meta: MessageMeta): string;
+  /** 图片随 prompt 的对齐面；null = 该 harness 不支持收图（web 据此置灰附件钮）。 */
+  readonly imageAttach: ImageAttachSpec | null;
   /** 不支持通道的语义原因（409 文案与 UI tooltip 直用）。 */
   readonly unsupportedReasons?: Partial<Record<MessagingChannel, string>>;
 }
