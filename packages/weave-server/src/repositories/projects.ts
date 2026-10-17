@@ -24,10 +24,12 @@ export interface RegisterProjectInput {
 }
 
 /**
- * 项目注册键。`resolve` 同时归一分隔符与尾斜杠——否则 `D:/a/b` 与 `D:\a\b`
- * 是两行，重复登记还会另发 token 把 hook 事件拐到新行上。
+ * 项目注册键：绝对化 + 归一分隔符/尾斜杠，落**原生**形态。`D:/a/b` 与 `D:\a\b`
+ * 必须同键——否则 `ON CONFLICT(path)` 认不出、重复登记还会另发 token 把 hook 事件
+ * 拐到新行上。刻意保留原生分隔符：项目根要拿去和 payload / 请求里的 file_path 做
+ * 包含判断（asset 越界闸、crossProjectOnly），折成 posix 会让那些闸把合法路径判越界。
  */
-function projectKey(path: string): string {
+export function projectKey(path: string): string {
   return resolve(path);
 }
 

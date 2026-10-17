@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
 import type { HookDispatchStatus } from '@weavecode/core';
 import { openDatabase } from '../../db/db.js';
@@ -10,7 +11,7 @@ import { SessionRepository } from '../../repositories/sessions.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { ResumeRunner, type ResumeRunnerDeps, type SpawnLike } from '../resume-runner.js';
 
-const PROJECT_PATH = '/resume-proj';
+const PROJECT_PATH = resolve('/resume-proj');
 const SESSION_ID = 'sess-resume';
 
 /** 结构上满足 SpawnChild.stdin 的假管道：记录 prompt 写入。 */

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getDbPath } from './paths.js';
+import { projectKey } from '../repositories/projects.js';
 
 /**
  * Idempotent schema.
@@ -166,8 +167,30 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   db.exec('DROP TABLE IF EXISTS session_messages');
   migrateHookRulesColumns(db);
   migrateProjectsColumns(db);
+  migrateProjectPaths(db);
   migrateSessionWatchesColumns(db);
   return db;
+}
+
+/**
+ * 注册键归一：存量 `projects.path` 一律重写成 `projectKey` 形态（幂等）——
+ * 旧库里同一目录的两种分隔符写法不归一就查不中。归一后若与已有行撞键，那两行
+ * 本来就是重复登记——跳过不动，合并留给人工（撞键即抛会把 daemon 开不起来）。
+ */
+function migrateProjectPaths(db: DatabaseSync): void {
+  const rows = db.prepare('SELECT id, path FROM projects ORDER BY id').all() as Array<{
+    id: number;
+    path: string;
+  }>;
+  const taken = new Set(rows.map((r) => r.path));
+  const upd = db.prepare('UPDATE projects SET path = ? WHERE id = ?');
+  for (const r of rows) {
+    const key = projectKey(r.path);
+    if (key === r.path || taken.has(key)) continue;
+    taken.delete(r.path);
+    taken.add(key);
+    upd.run(key, r.id);
+  }
 }
 
 /**

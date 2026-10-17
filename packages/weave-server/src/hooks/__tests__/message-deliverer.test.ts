@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
@@ -28,7 +28,7 @@ import { hookShardId } from '../mirror.js';
 import { INBOX_TARGETS_FILE } from '../inbox-socket.js';
 import { readPromptbox } from '../promptbox.js';
 
-const PROJECT_PATH = '/msg-proj';
+const PROJECT_PATH = resolve('/msg-proj');
 const TOKEN = 'mtoken';
 const SESSION_ID = 'sess-msg';
 const CODEX_SESSION = 'sess-cdx';

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -23,7 +24,8 @@ describe('data layer', () => {
     // Re-register with a different token/source must NOT overwrite the token.
     projects.register({ path: '/a/b', name: 'b', token: 't2', source: 'scan' });
     expect(projects.getByPath('/a/b')?.token).toBe('t1');
-    expect(projects.getByToken('t1')?.path).toBe('/a/b');
+    // 注册键归一到绝对原生形态——`/a/b` 在 win32 上落到当前盘根
+    expect(projects.getByToken('t1')?.path).toBe(resolve('/a/b'));
     expect(projects.list()).toHaveLength(1);
     db.close();
   });

@@ -400,7 +400,7 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
       payload: JSON.stringify({
         eventType: 'PostToolUse',
         toolName: 'Edit',
-        toolInput: { file_path: '/other/README.md' },
+        toolInput: { file_path: path.resolve('/other/README.md') },
         cwd: '/proj',
         raw: {},
       }),

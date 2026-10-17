@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -76,7 +76,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { projects: Array<{ path: string }> };
     expect(data.projects).toHaveLength(1);
-    expect(data.projects[0].path).toBe('/proj');
+    expect(data.projects[0].path).toBe(resolve('/proj'));
   });
 
   it('GET /api/projects/:id/hooks lists hook events for the task view', async () => {

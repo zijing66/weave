@@ -49,7 +49,7 @@ describe('daemon server', () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { projects: Array<{ path: string }> };
-    expect(data.projects.map((p) => p.path)).toContain('/test');
+    expect(data.projects.map((p) => p.path)).toContain(path.resolve('/test'));
   });
 
   it('GET /capabilities 返回安装属性矩阵', async () => {
@@ -225,7 +225,7 @@ describe('daemon server GET /terminals/counts（项目卡终端角标）', () =>
   });
 
   it('projectId → 已开终端窗口数', async () => {
-    openedByPath.set('/term-a', 3);
+    openedByPath.set(path.resolve('/term-a'), 3);
     const res = await fetch(`http://127.0.0.1:${port}/terminals/counts`);
     expect(res.status).toBe(200);
     const { counts } = (await res.json()) as { counts: Record<string, number> };

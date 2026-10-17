@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { registerProject } from '../registry.js';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
@@ -67,6 +67,24 @@ describe('registerProject', () => {
 
     const db = openDatabase(dbPath);
     expect(new ProjectRepository(db).list()).toHaveLength(1);
+    db.close();
+  });
+
+  it('打开存量库即把 path 折叠到注册键——旧写法仍查得中、不产生第二行', () => {
+    const canonical = join(dir, 'legacy', 'proj');
+    // 裸 SQL 写一行「未折叠」的 path，模拟升级前的存量数据
+    let db = openDatabase(dbPath);
+    db.prepare(
+      'INSERT INTO projects (path, name, token, source, registered_at) VALUES (?, ?, ?, ?, ?)',
+    ).run(canonical + sep, 'proj', 'legacy-token', 'init', new Date().toISOString());
+    db.close();
+
+    db = openDatabase(dbPath); // 重开触发 migrateProjectPaths
+    const projects = new ProjectRepository(db);
+    expect(projects.getByPath(canonical)?.token).toBe('legacy-token');
+    expect(projects.getByPath(canonical + sep)?.token).toBe('legacy-token');
+    expect(projects.getByPath(canonical)?.path).toBe(resolve(canonical));
+    expect(projects.list()).toHaveLength(1);
     db.close();
   });
 });
