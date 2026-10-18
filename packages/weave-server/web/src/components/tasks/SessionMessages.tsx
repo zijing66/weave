@@ -1157,11 +1157,12 @@ export function SessionMessages({
             : undefined
         }
         className={cn(
-          'relative min-h-0 w-full flex-col overflow-hidden border bg-neutral-900 p-3',
+          'relative min-h-0 w-full flex-col overflow-hidden p-3',
           embedded
-            ? // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
-              cn('flex-1 rounded-lg border-white/[0.06]', minimized ? 'hidden' : 'flex')
-            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border-white/[0.08] shadow-mac',
+            ? // 嵌入右栏不再套卡片壳：右栏就是这扇对话，再描一圈边框只是多一道线
+              // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
+              cn('flex-1', minimized ? 'hidden' : 'flex')
+            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-white/[0.08] bg-neutral-900 shadow-mac',
         )}
         onClick={(e) => e.stopPropagation()}
         // 拖放面 = 整块面板（拖进任何一处都算，别让浏览器接管去打开那个文件）

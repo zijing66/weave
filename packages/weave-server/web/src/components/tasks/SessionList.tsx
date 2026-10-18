@@ -231,8 +231,6 @@ export function SessionList({
   onClosePane,
   closePaneStateOf,
   capabilities,
-  onOpenMessages,
-  minimizedConvs,
   inflightOf,
   questionOf,
   onAnswer,
@@ -263,11 +261,7 @@ export function SessionList({
   closePaneStateOf?: (sessionId: string) => ActionState;
   /** 消息能力矩阵（服务端 MessagingSurface 派生，完整表不过滤；null = 未载）。 */
   capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
-  /** 打开该会话的消息线程（弹窗内投递/查看）。 */
-  onOpenMessages: (sessionId: string) => void;
-  /** 对话框挂起中的会话（只藏不卸、草稿还在）——图标转蓝，别当成没开过。 */
-  minimizedConvs?: ReadonlySet<string>;
-  /** 该会话在途消息条数（服务端 SSE push 快照）——有则消息图标转 amber + 角标。 */
+  /** 该会话在途消息条数（服务端 SSE push 快照）——有则行首挂 amber 角标。 */
   inflightOf: (sessionId: string) => number;
   /** 该会话的待答阻塞问题（无 = 不挂起）。 */
   questionOf?: (sessionId: string) => PendingQuestionEntry | undefined;
@@ -429,6 +423,16 @@ export function SessionList({
         {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
             codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
         <SessionStatusIcon status={status} harness={s.harness} />
+        {/* 在途消息（服务端计数）——纯指示、不可点：对话入口就是行本身 */}
+        {inflight > 0 && (
+          <span
+            title={t('tasks.messageInflight', { n: inflight })}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-[10px] font-semibold leading-none text-amber-300"
+          >
+            <MessageSquareText className="h-3 w-3" />
+            {inflight > 9 ? '9+' : inflight}
+          </span>
+        )}
 
         {editingId === s.sessionId ? (
           <input
@@ -536,50 +540,8 @@ export function SessionList({
                   </span>
                 </button>
               )}
-              {/* 消息投递入口：能力真源 = 服务端 MessagingSurface 派生矩阵
-                  （表驱动门控，不写死 harness 白名单——prompt 通道在场即入口）；
-                  harness 未知（无事件）的会话不现按钮。
-                  有在途/积压消息（服务端计数）→ 图标转 amber + 右上角计数角标；
-                  对话框挂起中 → 转蓝（草稿还在，只是收起来了）；两者都占时 amber 优先。 */}
-              {cap?.prompt && (
-                <button
-                  type="button"
-                  title={
-                    inflight > 0
-                      ? t('tasks.messageInflight', { n: inflight })
-                      : t('tasks.messageTooltip')
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenMessages(s.sessionId);
-                  }}
-                  className={cn(
-                    ACTION_BTN,
-                    'relative',
-                    inflight > 0 &&
-                      'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
-                    inflight === 0 &&
-                      minimizedConvs?.has(s.sessionId) &&
-                      'border-blue-400/40 bg-blue-500/10 text-blue-300 hover:border-blue-400/60 hover:text-blue-200',
-                  )}
-                >
-                  <MessageSquareText
-                    className={cn(
-                      'h-3 w-3',
-                      inflight > 0 && 'text-amber-300',
-                      inflight === 0 && minimizedConvs?.has(s.sessionId) && 'text-blue-300',
-                    )}
-                  />
-                  {inflight > 0 && (
-                    <span
-                      aria-hidden
-                      className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
-                    >
-                      {inflight > 9 ? '9+' : inflight}
-                    </span>
-                  )}
-                </button>
-              )}
+              {/* 对话入口不在这儿：点行本体就把它摆进右栏（`onSelect` 同一实现），
+                  这枚按钮曾与行点击重复，已移除；只剩在途消息的角标（行首）。 */}
               {/* 会话提醒订阅：点开选触发类型 + 次数 → 订阅下一条命中的消息。
                   已有订阅 = 铃铛亮起（amber）+ 角标显示**剩余次数**（持久化显
                   ∞）——每 fire 一次刷新即减一，不是初始配置的次数；

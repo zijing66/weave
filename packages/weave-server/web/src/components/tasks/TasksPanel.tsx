@@ -38,6 +38,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Resizer } from '@/components/Resizer';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
@@ -47,6 +48,10 @@ import { setConvScreenOpen } from '@/lib/conv-screen';
 import { usePullLoad } from '@/lib/pull-load';
 import { createAwaitGate } from '@/lib/await-gate';
 import type { MessageKey } from '@/i18n/dict';
+
+/** 会话列表宽度上下限（桌面；`<lg` 恒铺满，不参与）。 */
+const LIST_MIN = 200;
+const LIST_MAX = 420;
 
 /** 权限失败态 → toast 文案键：成因不同口径不同（手机 HTTP 访问是 insecure 不是 denied）。 */
 const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
@@ -103,6 +108,12 @@ export function TasksPanel({
   } = useSessionStatus();
   // <lg 两屏走查：列表态 ⇄ 右栏全屏态（点会话进、收起回），桌面恒双栏 inline。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+  // 会话列表宽度：桌面可拖（同 App 左右栏的口径：localStorage 记住 + clamp）
+  const [listW, setListW] = useState<number>(() => {
+    const v = Number(localStorage.getItem('weave:tasks-list'));
+    return Number.isFinite(v) && v > 0 ? Math.min(LIST_MAX, Math.max(LIST_MIN, v)) : 288;
+  });
+  useEffect(() => localStorage.setItem('weave:tasks-list', String(listW)), [listW]);
   const [paneOpen, setPaneOpen] = useState(false);
   /** 事件链弹窗：右栏被对话占着时从对话头部那枚按钮开（右栏没对话面时事件链仍在原位）。 */
   const [chainDialog, setChainDialog] = useState(false);
@@ -1185,9 +1196,12 @@ export function TasksPanel({
   );
 
   return (
-    <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
-      {/* 左栏：会话列表。<lg 独占全高（右栏收进全屏滑出层），桌面恒双栏。 */}
-      <aside className="flex w-full lg:w-72 max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3">
+    <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3 lg:gap-0">
+      {/* 左栏：会话列表。<lg 独占全高（右栏收进全屏滑出层），桌面恒双栏、宽度可拖。 */}
+      <aside
+        style={isDesktop ? { width: listW } : undefined}
+        className="flex w-full max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3"
+      >
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
           <span className="text-[11px] text-neutral-500">
@@ -1255,7 +1269,6 @@ export function TasksPanel({
             onClosePane={handleClosePane}
             closePaneStateOf={closePaneStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
-            onOpenMessages={focusSession}
             inflightOf={inflightOf}
             questionOf={questionOf}
             onAnswer={onAnswerQuestion}
@@ -1273,7 +1286,15 @@ export function TasksPanel({
       </aside>
 
       {/* 桌面：右栏 inline 常驻（对话，或没有对话面时的事件链） */}
-      {isDesktop && paneEl}
+      {isDesktop && (
+        <>
+          <Resizer
+            onResize={(d) => setListW((w) => Math.min(LIST_MAX, Math.max(LIST_MIN, w + d)))}
+            title={t('tasks.resizeList')}
+          />
+          {paneEl}
+        </>
+      )}
 
       {/* <lg：点会话 → 右栏全屏右侧滑出（同 paneEl），收起回列表。收起只藏不卸
           ——挂载态跟着走，再展开时草稿与已选图片都还在。 */}
