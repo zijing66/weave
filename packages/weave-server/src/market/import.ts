@@ -172,7 +172,7 @@ export async function importFromDir(srcPath: string, deps: ImportDeps): Promise<
   // 再当来源拷一遍只会得到「副本的副本」，同一份资源在清单里出现两条。市场根
   // 自身更要挡——目标落在源里，cp 会把它一路拷进自己。
   if (isInsideDir(src, root)) {
-    throw new Error(`资源位置是资源市场的存储目录，其中资源已在列表中，不能再作为来源导入：${src}`);
+    throw new Error('不能把资源市场的存储目录当来源导入：其中的资源已在列表中（内置仓落点 / 已导入的副本）');
   }
   const existing = await findByOrigin(root, src);
   if (existing) {
