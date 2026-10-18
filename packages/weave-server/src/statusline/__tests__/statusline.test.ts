@@ -687,6 +687,31 @@ describe('statusline — data segments', () => {
     expect(second).not.toContain('feature');
   });
 
+  it('serves the diff counts from the cache instead of re-running git', () => {
+    const repo = tmp('weave-sl-changescache-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n');
+    expect(
+      runScript(generateStatuslineScript(changesCfg), { workspace: { current_dir: repo } }),
+    ).toContain('(+1, -0)');
+
+    // A second edit cannot show up before the TTL elapses — proving the render
+    // reused the cached counts rather than spawning git again.
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n');
+    const second = runScript(generateStatuslineScript(changesCfg), { workspace: { current_dir: repo } });
+    expect(second).toContain('(+1, -0)');
+  });
+
   it('a failed git lookup is only remembered briefly, then re-probed', async () => {
     // A failure is cached on the short retry window, not the segment's TTL —
     // otherwise a directory that becomes a repo later (or one where git

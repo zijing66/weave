@@ -88,8 +88,9 @@ const TRANSCRIPT_ID_CAP = 5000;
 /** How long a repo's git identity is reused before it is looked up again. */
 const GIT_IDENTITY_TTL_SEC = 3600;
 
-/** Diff counts move constantly, so they are only reused briefly. */
-const GIT_CHANGES_TTL_SEC = 5;
+/** Diff counts move constantly, but only when something is edited — and the
+ *  line is redrawn on a timer far more often than a worktree changes. */
+const GIT_CHANGES_TTL_SEC = 60;
 
 /** The branch only moves on checkout, so a stale minute is preferable to a probe per render. */
 const GIT_BRANCH_TTL_SEC = 60;
