@@ -1402,6 +1402,67 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listVisible(SESSION_ID).length).toBeGreaterThan(0);
   });
 
+  it('daemon 重启：pane 定位 env 从盘上恢复（长时间没动静的会话不掉出终端分组）', async () => {
+    const terminal = (): PromptTerminal => ({
+      available: () => true,
+      listPanes: async () => [],
+      locateScreens: async (envs) =>
+        Object.fromEntries(
+          Object.keys(envs).map((sid) => [
+            sid,
+            { id: 'w1:0', windowId: 1, tabId: 0, tabsInWindow: 1 },
+          ]),
+        ),
+      sendText: vi.fn(),
+      sendKeys: vi.fn(),
+      closePane: vi.fn(),
+    });
+    const live = () => new Map<string, boolean>();
+    const first = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: live }));
+    first.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '3' });
+
+    // 重启后的新一代实例：会话没再发过任何 hook 事件，仍认得出自己的屏
+    const second = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: live }));
+    expect(await second.sessionTerminals()).toHaveProperty(SESSION_ID);
+
+    // 删会话时清盘：再重启不会把已删的会话拉回分组
+    second.forgetSession(SESSION_ID);
+    const third = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: live }));
+    expect(await third.sessionTerminals()).toEqual({});
+  });
+
+  it('盘上恢复的 env 判死的会话不占块头（顺手清盘）', async () => {
+    const locateScreens = vi.fn(async (envs: Record<string, Record<string, string>>) =>
+      Object.fromEntries(
+        Object.keys(envs).map((sid) => [sid, { id: 'w1:0', windowId: 1, tabId: 0, tabsInWindow: 1 }]),
+      ),
+    );
+    const terminal = (): PromptTerminal => ({
+      available: () => true,
+      listPanes: async () => [],
+      locateScreens,
+      sendText: vi.fn(),
+      sendKeys: vi.fn(),
+      closePane: vi.fn(),
+    });
+    sessions.touch(CODEX_SESSION, projectId);
+    const first = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: () => new Map() }));
+    first.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '3' });
+    first.notePaneEnv(CODEX_SESSION, { CLAUDE_PID: '424242' });
+
+    // 重启 + SESSION_ID 的进程已判死：只把还活着的会话交给后端，判死的从盘上也摘掉
+    const second = new MessageDeliverer(
+      makeDeps({
+        terminal: terminal(),
+        livenessOf: () => new Map([[SESSION_ID, false]]),
+      }),
+    );
+    const screens = await second.sessionTerminals();
+    expect(Object.keys(screens)).toEqual([CODEX_SESSION]);
+    const third = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: () => new Map() }));
+    expect(Object.keys(await third.sessionTerminals())).toEqual([CODEX_SESSION]);
+  });
+
   it('终端通道注入但 available()=false（settings 换了不支持的后端）→ prompt 409、矩阵不亮', async () => {
     const terminal: PromptTerminal = {
       available: () => false,

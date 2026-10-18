@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { WEAVE_INJECTION_MARKER, isHarness, type Harness } from '@weavecode/core';
 import type { MessagingSurface, MessageMeta, PromptRelaySpec } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
@@ -323,6 +324,27 @@ function stripSpace(text: string): string {
   return text.replace(/\s+/g, '');
 }
 
+/** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
+const PANE_ENVS_FILE = 'pane-envs.json';
+
+/** 读盘上的 pane 定位 env：缺失 / 坏文件 / 值不是字符串表一律视同没有（靠 hook 事件补回来）。 */
+function readPaneEnvs(file: string): Record<string, Record<string, string>> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    const out: Record<string, Record<string, string>> = {};
+    for (const [sessionId, value] of Object.entries(parsed)) {
+      if (typeof value !== 'object' || value === null) continue;
+      const env: Record<string, string> = {};
+      for (const [key, v] of Object.entries(value)) if (typeof v === 'string' && v) env[key] = v;
+      if (Object.keys(env).length > 0) out[sessionId] = env;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class MessageDeliverer {
@@ -334,8 +356,15 @@ export class MessageDeliverer {
   private readonly queuedSessions: Set<string>;
   /** 会话 inbox 直投目标（hook 旁路上报，落 `<dataDir>/hooks/inbox-targets.json` 0600）。 */
   private readonly inboxSockets: InboxSocketRegistry;
-  /** 会话所在终端 pane 的定位 env（hook 旁路上报；纯内存，随会话走）。 */
-  private readonly paneEnvs = new Map<string, Record<string, string>>();
+  /**
+   * 会话所在终端 pane 的定位 env（hook 旁路上报）。落
+   * `<dataDir>/hooks/pane-envs.json` 0600——**只解 daemon 自己的重启**：pane 活在
+   * 会话终端里，重启不动它；不落盘的话重启后要等下一次 hook 事件才认回 pane，而
+   * 长时间没动静的会话根本等不到，于是从终端分组里掉出去。
+   */
+  private readonly paneEnvs: Map<string, Record<string, string>>;
+  /** 上次落盘的 pane env（hook 每次事件都上报，值没变就不重写盘）。 */
+  private persistedPaneEnvs: string;
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
   /** 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。 */
@@ -362,6 +391,9 @@ export class MessageDeliverer {
     // 直投凭据落盘：**只解 daemon 自己的重启**（凭据活在会话进程里，重启不动它），
     // 会话自己重启/resume 换了 socket 靠下一次 hook 事件覆盖（连不上即回落）。
     this.inboxSockets = new InboxSocketRegistry(join(this.hooksDir, INBOX_TARGETS_FILE));
+    const loadedPaneEnvs = readPaneEnvs(join(this.hooksDir, PANE_ENVS_FILE));
+    this.paneEnvs = new Map(Object.entries(loadedPaneEnvs));
+    this.persistedPaneEnvs = JSON.stringify(loadedPaneEnvs);
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
   }
 
@@ -566,6 +598,24 @@ export class MessageDeliverer {
    */
   notePaneEnv(sessionId: string, env: Record<string, string>): void {
     this.paneEnvs.set(sessionId, env);
+    this.persistPaneEnvs();
+  }
+
+  /** 原子写（临时文件 + rename）+ 0600；失败静默（内存态照常能定位，下次再落）。 */
+  private persistPaneEnvs(): void {
+    const next = JSON.stringify(Object.fromEntries(this.paneEnvs));
+    if (next === this.persistedPaneEnvs) return;
+    const file = join(this.hooksDir, PANE_ENVS_FILE);
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      const tmp = `${file}.tmp`;
+      writeFileSync(tmp, `${next}\n`, { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, file);
+      chmodSync(file, 0o600);
+      this.persistedPaneEnvs = next;
+    } catch {
+      // 这条路径由 hook 事件驱动：落盘失败绝不能冒泡
+    }
   }
 
   /**
@@ -577,6 +627,7 @@ export class MessageDeliverer {
   sessionExited(sessionId: string): void {
     this.inboxSockets.forget(sessionId);
     this.paneEnvs.delete(sessionId);
+    this.persistPaneEnvs();
     this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
@@ -589,13 +640,25 @@ export class MessageDeliverer {
   }
 
   /**
-   * 会话 → 所在可见屏幕（会话列表分块的数据面，只读）。旁路 env 与投递路径共用
-   * 同一份缓存，不另采一次；后端没有反查能力 = 空表（那些会话不分组）。
+   * 会话 → 所在可见屏幕（会话列表分块的数据面）。旁路 env 与投递路径共用同一份
+   * 缓存，不另采一次；后端没有反查能力 = 空表（那些会话不分组）。顺手摘掉已判死
+   * 会话的 env：那是上一次见到它时的快照，它不会再来报一次，留着只会让死会话常占块头。
    */
   async sessionTerminals(): Promise<Record<string, SessionTerminal | null>> {
     const terminal = this.terminalChannel();
     if (!terminal?.locateScreens || this.paneEnvs.size === 0) return {};
-    return terminal.locateScreens(Object.fromEntries(this.paneEnvs));
+    const envs: Record<string, Record<string, string>> = {};
+    const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
+    for (const [sessionId, env] of this.paneEnvs) {
+      // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头
+      if (this.sessionJudgedDead(sessionId, liveness)) {
+        this.paneEnvs.delete(sessionId);
+        this.persistPaneEnvs();
+        continue;
+      }
+      envs[sessionId] = env;
+    }
+    return terminal.locateScreens(envs);
   }
 
   /**
@@ -1114,6 +1177,7 @@ export class MessageDeliverer {
     this.awaitingAck.delete(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
+    this.persistPaneEnvs();
     return removed;
   }
 
@@ -1135,6 +1199,7 @@ export class MessageDeliverer {
       const session = this.deps.sessions.getBySessionId(sessionId);
       if (session?.projectId === projectId) removed += this.forgetSession(sessionId);
     }
+    this.persistPaneEnvs();
     return removed;
   }
 
@@ -1343,10 +1408,12 @@ export class MessageDeliverer {
    * 态、两条 terminated 补射同源（claude-liveness 的 pidAliveOf）——消息行与
    * 会话行不会各说各话。
    */
-  private sessionJudgedDead(sessionId: string): boolean {
+  private sessionJudgedDead(
+    sessionId: string,
+    liveness: Map<string, boolean> = this.deps.livenessOf?.() ?? claudeLivenessById(),
+  ): boolean {
     const row = this.deps.sessions.livenessRowOf(sessionId);
     if (!row) return false;
-    const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
     return pidAliveOf(row, liveness) === false;
   }
 
