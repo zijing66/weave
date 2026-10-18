@@ -853,6 +853,43 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  it('重发「已贴进框、没回执」的终端投递只补回车——重贴会把正文与图在框里叠一份', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendKeys = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys,
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const sent = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'no ack after paste',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (sent as { messageId: string }).messageId;
+    await vi.waitFor(() => expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered' }));
+
+    await expect(deliverer.resend(id)).resolves.toMatchObject({ ok: true, status: 'delivering' });
+    await vi.waitFor(() => expect(sendKeys).toHaveBeenCalledWith('pane-1', '\r'));
+    expect(sendText).toHaveBeenCalledTimes(1);
+  });
+
   it('层序随面变：编排域（非 oneWay）有终端通道仍先走中继', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const fake = createFakeSpawn();

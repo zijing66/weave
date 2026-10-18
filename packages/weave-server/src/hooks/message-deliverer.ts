@@ -825,6 +825,24 @@ export class MessageDeliverer {
       return { ok: false, status: 400, error: 'Session has no hook events to determine its harness' };
     }
     if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
+    // 层② 已把文本贴进输入框、回执却没到 = 那记回车没生效（本次实机：贴着图的长
+    // 文本连贴两次都没提交，第三次才连前三份一起提交）。此时重发**只补回车**：
+    // 重贴一份会让用户收到两遍正文与两遍图。
+    if (msg.status === 'delivered' && msg.via === 'terminal' && this.terminalChannel()) {
+      const pane = await this.terminalPaneFor(session, project);
+      if (pane) {
+        this.memory.set(messageId, { ...msg, status: 'delivering', stalled: false, settledAt: null });
+        void this.runTerminalSubmit(messageId, pane.id);
+        this.bus({
+          kind: 'message.created',
+          messageId,
+          sessionId: msg.sessionId,
+          mode: msg.mode,
+          at: new Date().toISOString(),
+        });
+        return { ok: true, messageId, status: 'delivering', message: this.memory.get(messageId)! };
+      }
+    }
     // 旧内存态先清：deliverPrompt 的活路径会重建；回落入队时同 id 不能双行
     // （内存 failed/delivered 行 + promptbox pending 行）。
     this.memory.delete(messageId);
@@ -1391,12 +1409,28 @@ export class MessageDeliverer {
 
   /** 层② 终端注入终态（语义同中继：成功 delivered / 失败 failed 可见）。 */
   private async runTerminalPrompt(messageId: string, paneId: string, text: string): Promise<void> {
+    await this.runTerminal(messageId, (terminal) => terminal.sendText(paneId, text));
+  }
+
+  /**
+   * 层② 只补一记回车（重发「已贴进框、没回执」的行）：文本在上一次投递里已经
+   * 落到会话的输入框，缺的只是那记提交键——重贴一次会在框里叠一份，用户收到
+   * 两遍正文与两遍图。
+   */
+  private async runTerminalSubmit(messageId: string, paneId: string): Promise<void> {
+    await this.runTerminal(messageId, (terminal) => terminal.sendKeys(paneId, '\r'));
+  }
+
+  private async runTerminal(
+    messageId: string,
+    write: (terminal: PromptTerminal) => Promise<void>,
+  ): Promise<void> {
     const msg = this.memory.get(messageId);
     if (!msg) return;
     const terminal = this.terminalChannel();
     if (!terminal) return;
     try {
-      await terminal.sendText(paneId, text);
+      await write(terminal);
       const delivered: PipeMessage = { ...msg, status: 'delivered', settledAt: new Date().toISOString() };
       this.memory.set(messageId, delivered);
       this.armAckWatch(delivered);
