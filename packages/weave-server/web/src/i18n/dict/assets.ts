@@ -34,18 +34,18 @@ export const assetsZh = {
   'skillGrid.scopeProject': '项目',
   'skillGrid.scopeLocal': '仅本人',
   'skillGrid.enableTip': '{scope}档启用覆写（当前：{state}）——点击切换',
-  'skillGrid.keyTip': '插件注册键 name@marketplace——@后为所属市场（插件 namespace）',
+  'skillGrid.keyTip': '插件所属市场',
 
   // —— 仓库维度折叠（Skills 与 Plugins 两页同源的一级维度） ——
   'repo.local': '本地',
-  'repo.namespaceTip': '仓库 namespace：该市场下所有插件都归这一块',
+  'repo.namespaceTip': '该市场下的全部插件',
   'repo.packCount': '{n} 个包',
   'repo.enabledCount': '已启 {done} / {total}',
   'repo.formLink': '链接',
   'repo.formCopy': '副本',
   'repo.formLegend': '链接 / 副本',
   'repo.formTip':
-    'weave 装在全局位置时的形态：链接 = 该处不存副本（改源即改生效）；副本 = 建立链接失败已回退复制。Windows 的目录链接用 junction、通常无需开发者模式——若你的环境禁用了链接创建，可在「设置 ▸ 系统 ▸ 开发者选项」启用开发者模式后重装',
+    '「链接」= 生效内容即源文件；「副本」= 建立链接失败后改用的复制。若环境禁用了链接创建，可在「设置 ▸ 系统 ▸ 开发者选项」启用开发者模式后重装',
 
   // —— FileAssetTree ——
   'fileTree.all': '全部',
@@ -70,7 +70,7 @@ export const assetsZh = {
   'assetView.files': 'Files',
   // —— 主视图里的「外部资源」折叠块（不属任何包的技能/MCP） ——
   'category.externalAssets': '外部资源',
-  'category.externalAssetsNote': '不在任何插件包内（外置）',
+  'category.externalAssetsNote': '不在任何插件包内',
   'category.externalAssetsSummary': '技能 {skills} · MCP {mcp}',
 
   // —— McpGrid ——
@@ -143,18 +143,18 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.scopeProject': 'Project',
   'skillGrid.scopeLocal': 'Local only',
   'skillGrid.enableTip': '{scope} enable override (now: {state}) — click to cycle',
-  'skillGrid.keyTip': 'Plugin key name@marketplace — the part after @ is its marketplace (plugin namespace)',
+  'skillGrid.keyTip': 'Plugin marketplace',
 
   // —— Repository-dimension grouping (one L1 dimension shared by Skills & Plugins) ——
   'repo.local': 'Local',
-  'repo.namespaceTip': 'Repository namespace: every plugin from this marketplace groups here',
+  'repo.namespaceTip': 'Every plugin from this marketplace',
   'repo.packCount': '{n} packs',
   'repo.enabledCount': '{done} / {total} enabled',
   'repo.formLink': 'linked',
   'repo.formCopy': 'copied',
   'repo.formLegend': 'linked / copied',
   'repo.formTip':
-    'How weave laid it down at the global location: linked = no copy lives there (edits to the source take effect); copied = creating a link failed and weave fell back to copying. Directory links on Windows use junctions and normally need no Developer Mode — if link creation is disabled in your environment, enable Developer Mode under Settings ▸ System ▸ For developers and reinstall',
+    'Linked = the source files are what takes effect; copied = creating a link failed and weave fell back to copying. If link creation is disabled in your environment, enable Developer Mode under Settings ▸ System ▸ For developers and reinstall',
 
   // —— FileAssetTree ——
   'fileTree.all': 'All',

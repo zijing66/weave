@@ -81,11 +81,11 @@ export const hooksZh = {
   'hooks.handler.inject': '注入会话',
   'hooks.handler.manual': '手动指令',
   'hooks.handler.plugin': '插件处理器',
-  'hooks.handlerLogTip': '只记录事件并广播 SSE，不生成指令',
+  'hooks.handlerLogTip': '只记录事件，不生成指令',
   'hooks.handlerWebhookTip': '将事件摘要 POST 到外部地址（可选 HMAC 密钥）',
   'hooks.handlerInjectTip': '渲染指令并同步注入当前会话',
   'hooks.handlerManualTip': '渲染为指令节点，等待复制或拖到会话执行',
-  'hooks.handlerPluginTip': '按 pluginId:handlerType 加载插件自带的 handler.mjs 执行',
+  'hooks.handlerPluginTip': '执行插件自带的处理器',
   'hooks.field.toolNames': '工具名过滤',
   'hooks.toolNamesPlaceholder': '逗号分隔，如 Read, Edit, Bash',
   'hooks.field.pathGlobs': '路径 glob 过滤',
@@ -120,20 +120,17 @@ export const hooksZh = {
   'hooks.runConfirmYes': '确认执行',
 
   // —— 插件区段（SPI）——
-  'hooks.plugins.hint': '全局开关 = 各项目默认启用 · 放入约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
+  'hooks.plugins.hint': '放入约定目录即自动识别 · 见 docs/PLUGIN-SPEC.md',
   'hooks.plugins.projectHint': '本项目启用状态（未单独设置则跟随全局）· 安装 / 卸载在全局侧操作',
   'hooks.plugins.followGlobal': '跟随全局',
   'hooks.plugins.projectOverride': '已单独设置',
-  'hooks.plugins.empty':
-    '暂无插件——内置仓与资源市场是唯一安装来源（`<dataDir>/market/` 下的仓库自动加载）。',
+  'hooks.plugins.empty': '暂无插件——从内置仓或资源市场安装',
   'hooks.plugins.rules': '{n} 条规则',
-  'hooks.plugins.toggleTip':
-    '默认启用开关：启停该插件全部规则（各项目可单独覆盖，规则级开关保留）',
+  'hooks.plugins.toggleTip': '启停该插件的全部规则（各项目可单独覆盖）',
   'hooks.plugins.rejectedTip': '插件校验失败，修复后热重载自动恢复',
   'hooks.plugins.hotReload': '插件文件变更后 1 秒内热重载生效',
   'hooks.plugins.rescan': '重新扫描',
-  'hooks.plugins.rescanTip':
-    '重扫全部插件根并重新挂载监听——守护进程启动时还不存在的根（手工建的目录、刚 init 的项目）由此纳管',
+  'hooks.plugins.rescanTip': '重新扫描插件目录（守护进程启动后才出现的目录由此纳入）',
   'hooks.plugins.rescanOk': '插件根已重新扫描（当前 {n} 个插件）',
   'hooks.plugins.rescanFail': '重新扫描失败：{error}',
   'hooks.plugins.expand': '展开该插件的规则',
@@ -147,9 +144,8 @@ export const hooksZh = {
 
   // —— user 档采集（§6-2d） ——
   'hooks.capture.title': '事件采集（user 档）',
-  'hooks.capture.hint': '跨项目采集全部会话事件——dashboard 的地基',
-  'hooks.capture.note':
-    '安装即启用：写入宿主 user 档 hooks（claude = ~/.claude/settings.json）；项目档 init 的采集组会被自动清扫，不会双采集',
+  'hooks.capture.hint': '跨项目采集全部会话事件',
+  'hooks.capture.note': '安装即启用；项目档已有的采集组会被自动清理，不会重复采集',
   'hooks.capture.toggleTip': '安装 / 停用 user 档事件采集',
   'hooks.capture.onOk': 'user 档采集已安装',
   'hooks.capture.offOk': 'user 档采集已停用',
@@ -240,11 +236,11 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.handler.inject': 'Inject into session',
   'hooks.handler.manual': 'Manual prompt',
   'hooks.handler.plugin': 'Plugin handler',
-  'hooks.handlerLogTip': 'Records the event and broadcasts SSE; no prompt generated',
+  'hooks.handlerLogTip': 'Records the event only; no prompt generated',
   'hooks.handlerWebhookTip': 'POSTs an event summary to an external URL (optional HMAC secret)',
   'hooks.handlerInjectTip': 'Renders the prompt and injects it into the current session',
   'hooks.handlerManualTip': 'Renders the prompt as a node to copy or drag onto a session',
-  'hooks.handlerPluginTip': "Loads the plugin's own handler.mjs by pluginId:handlerType and runs it",
+  'hooks.handlerPluginTip': "Runs the plugin's own handler",
   'hooks.field.toolNames': 'Tool name filter',
   'hooks.toolNamesPlaceholder': 'Comma-separated, e.g. Read, Edit, Bash',
   'hooks.field.pathGlobs': 'Path glob filter',
@@ -279,21 +275,19 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.runConfirmYes': 'Run',
 
   // —— Plugins section (SPI) ——
-  'hooks.plugins.hint': 'Global switch = default state for every project · drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
+  'hooks.plugins.hint': 'Drop a directory into a scan root to auto-register · see docs/PLUGIN-SPEC.md',
   'hooks.plugins.projectHint':
     'Enabled state for this project (follows global until overridden) · install / uninstall at global scope',
   'hooks.plugins.followGlobal': 'Follows global',
   'hooks.plugins.projectOverride': 'Set for this project',
-  'hooks.plugins.empty':
-    'No plugins yet — the builtin repository and resource markets are the only install sources (repositories under `<dataDir>/market/` load automatically).',
+  'hooks.plugins.empty': 'No plugins yet — install from the builtin repository or a resource market',
   'hooks.plugins.rules': '{n} rules',
-  'hooks.plugins.toggleTip':
-    'Default switch: enable/disable all rules of this plugin (projects can override; per-rule switches are kept)',
+  'hooks.plugins.toggleTip': 'Enable/disable all rules of this plugin (projects can override)',
   'hooks.plugins.rejectedTip': 'Plugin validation failed; fix it and hot reload recovers automatically',
   'hooks.plugins.hotReload': 'Plugin file changes hot reload within 1 second',
   'hooks.plugins.rescan': 'Rescan',
   'hooks.plugins.rescanTip':
-    'Rescan every plugin root and re-attach watchers — roots that did not exist when the daemon started (hand-made directories, freshly inited projects) get picked up',
+    'Rescan plugin directories (ones created after the daemon started get picked up)',
   'hooks.plugins.rescanOk': 'Plugin roots rescanned ({n} plugins)',
   'hooks.plugins.rescanFail': 'Rescan failed: {error}',
   'hooks.plugins.expand': "Expand this plugin's rules",
@@ -307,9 +301,9 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
 
   // —— User-scope capture (§6-2d) ——
   'hooks.capture.title': 'Event capture (user scope)',
-  'hooks.capture.hint': 'Captures session events across every project — the dashboard foundation',
+  'hooks.capture.hint': 'Captures session events across every project',
   'hooks.capture.note':
-    'Install = enabled: writes harness user-scope hooks (claude = ~/.claude/settings.json); project-scope init groups are swept automatically, so no double capture',
+    'Install = enabled; existing project-scope capture groups are cleaned up so nothing is captured twice',
   'hooks.capture.toggleTip': 'Install / disable user-scope event capture',
   'hooks.capture.onOk': 'User-scope capture installed',
   'hooks.capture.offOk': 'User-scope capture disabled',

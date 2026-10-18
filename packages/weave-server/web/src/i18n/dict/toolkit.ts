@@ -1,6 +1,6 @@
 /** 工具包区段词条（批 10，批 6 改仓库维度：去掉「工具箱」总标题与成分分组）。 */
 export const toolkitZh = {
-  'toolkit.hint': '内置 · 市场导入共用同一条扫描管线；CC 插件与 mod 整包装，其余按包成分启停',
+  'toolkit.hint': 'CC 插件与 mod 整包启停，其余按包成分启停',
   'toolkit.scopeRoot': '未分目录',
   'toolkit.expandAll': '全部展开',
   'toolkit.collapseAll': '全部折叠',
@@ -16,13 +16,13 @@ export const toolkitZh = {
   'toolkit.toggleTip': '启用/停用本项目（CC 插件与 mod 首次启用会先安装到全局）',
   'toolkit.install': '安装',
   'toolkit.installing': '安装中…',
-  'toolkit.installTip': '装到全局（user 档，claude plugin install --scope user）',
+  'toolkit.installTip': '装到全局（user 档）',
   'toolkit.installFailed': '安装失败：{error}',
   'toolkit.userInstalled': '已装到全局：{key}',
   'toolkit.enableDefault': '默认',
   'toolkit.enableOn': '启用',
   'toolkit.enableOff': '禁用',
-  'toolkit.enableTip': '{state}（user 档）— 点击切换',
+  'toolkit.enableTip': '{state} — 点击切换',
   'toolkit.kind.skill': 'skill',
   'toolkit.kind.hook': 'hook',
   'toolkit.kind.mod': 'mod',
@@ -32,20 +32,17 @@ export const toolkitZh = {
   'toolkit.prov.market': '市场',
   'toolkit.targets': '目标：{targets}',
   'toolkit.weaveRules': '规则 {n}',
-  'toolkit.keyTip':
-    'CC 注册键 name@marketplace——@后为所属市场（插件 namespace）；安装 scope：{scopes}',
+  'toolkit.keyTip': '插件所属市场 · 安装：{scopes}',
   'toolkit.scopesNone': '未安装',
   'toolkit.legacyTitle': '发现 {n} 个 Weave 旧插件副本',
-  'toolkit.legacyHint': '旧管线复制进项目插件位的死数据（Claude Code 不加载），可安全清理',
+  'toolkit.legacyHint': '旧版本残留的副本，不会被加载，可安全清理',
   'toolkit.legacyCleanup': '清理',
   'toolkit.uninstall': '卸载',
-  'toolkit.uninstallTip':
-    '从 harness 彻底卸载（CC 插件与 mod 执行 claude plugin uninstall；表面包清扫已复制文件；预置源保留可重装）',
+  'toolkit.uninstallTip': '彻底卸载（预置源保留，可重装）',
 };
 
 export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
-  'toolkit.hint':
-    'Builtin and market imports share one scan pipeline; CC plugins & mods install as a whole, others toggle by component',
+  'toolkit.hint': 'CC plugins & mods toggle as a whole, others by component',
   'toolkit.scopeRoot': 'Ungrouped',
   'toolkit.expandAll': 'Expand all',
   'toolkit.collapseAll': 'Collapse all',
@@ -62,13 +59,13 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
     'Enable/disable in this project (CC plugins & mods install globally on first enable)',
   'toolkit.install': 'Install',
   'toolkit.installing': 'Installing…',
-  'toolkit.installTip': 'Install to user scope (claude plugin install --scope user)',
+  'toolkit.installTip': 'Install to user scope',
   'toolkit.installFailed': 'Install failed: {error}',
   'toolkit.userInstalled': 'Installed to user scope: {key}',
   'toolkit.enableDefault': 'Default',
   'toolkit.enableOn': 'Enabled',
   'toolkit.enableOff': 'Disabled',
-  'toolkit.enableTip': '{state} (user scope) — click to cycle',
+  'toolkit.enableTip': '{state} — click to cycle',
   'toolkit.kind.skill': 'skill',
   'toolkit.kind.hook': 'hook',
   'toolkit.kind.mod': 'mod',
@@ -78,14 +75,11 @@ export const toolkitEn: Record<keyof typeof toolkitZh, string> = {
   'toolkit.prov.market': 'market',
   'toolkit.targets': 'Targets: {targets}',
   'toolkit.weaveRules': 'rules {n}',
-  'toolkit.keyTip':
-    'CC plugin key name@marketplace — the part after @ is its marketplace (plugin namespace); install scope: {scopes}',
+  'toolkit.keyTip': 'Plugin marketplace · install: {scopes}',
   'toolkit.scopesNone': 'not installed',
   'toolkit.legacyTitle': 'Found {n} stale Weave plugin copies',
-  'toolkit.legacyHint':
-    'Dead data the old pipeline copied into the project plugin dir (Claude Code does not load it); safe to clean up',
+  'toolkit.legacyHint': 'Leftovers from an older version; never loaded, safe to clean up',
   'toolkit.legacyCleanup': 'Clean up',
   'toolkit.uninstall': 'Uninstall',
-  'toolkit.uninstallTip':
-    'Uninstall from the harness (CC plugins & mods run claude plugin uninstall; surface packs clean copied files; shipped sources stay and can be reinstalled)',
+  'toolkit.uninstallTip': 'Uninstall completely (the shipped source is kept and can be reinstalled)',
 };

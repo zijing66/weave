@@ -29,7 +29,7 @@ export const statuslineZh = {
   // 对齐 / 刷新 / Powerline / Logo / 分隔符
   'statusline.alignLabel': '对齐',
   'statusline.refresh': '刷新',
-  'statusline.refreshHint': 'Claude Code 空闲时重跑脚本的间隔（秒）；交互驱动的更新不受此限制',
+  'statusline.refreshHint': '空闲时的刷新间隔（秒）',
   'statusline.refreshNote': '空闲时定时刷新；交互后即时更新',
   'statusline.powerlineStyle': 'Powerline 样式',
   'statusline.powerlineHint': '（实心背景块，图标合并）',
@@ -47,7 +47,7 @@ export const statuslineZh = {
   'statusline.emptyChar': '空白',
   'statusline.labelSep': '标签分隔',
   'statusline.labelSepHint': '渲染在段标签与取值之间',
-  'statusline.labelInputHint': '渲染在取值之前的静态前缀，由标签分隔符连接',
+  'statusline.labelInputHint': '取值之前的静态前缀',
 
   // 行（Lines）
   'statusline.lines': '行',
@@ -81,7 +81,7 @@ export const statuslineZh = {
   'statusline.fieldWindow': '窗口',
   'statusline.metric.session': '会话',
   'statusline.metric.context': '上下文',
-  'statusline.metric.sessionTitle': '本会话累计 token（从 transcript 读取）',
+  'statusline.metric.sessionTitle': '本会话累计 token',
   'statusline.metric.contextTitle': '当前上下文窗口中的 token',
   'statusline.fgBg': '前景 / 背景',
   'statusline.fieldLabel': '标签',
@@ -144,11 +144,11 @@ export const statuslineZh = {
 
   // rate 段窗口选项
   'rateWin.fiveHour.label': '5h',
-  'rateWin.fiveHour.title': 'rate_limits.five_hour — 5 小时限额',
+  'rateWin.fiveHour.title': '5 小时限额',
   'rateWin.sevenDay.label': '7d',
-  'rateWin.sevenDay.title': 'rate_limits.seven_day — 7 天限额',
+  'rateWin.sevenDay.title': '7 天限额',
   'rateWin.spend.label': '花费',
-  'rateWin.spend.title': 'rate_limits.spend_limit — 花费限额（gateway）',
+  'rateWin.spend.title': '花费限额',
 };
 
 export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
@@ -183,8 +183,7 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   // Align / refresh / Powerline / Logo / separator
   'statusline.alignLabel': 'Align',
   'statusline.refresh': 'Refresh',
-  'statusline.refreshHint':
-    'Interval (seconds) before the script re-runs while Claude Code is idle; interaction-driven updates are not limited by this',
+  'statusline.refreshHint': 'Refresh interval while idle (seconds)',
   'statusline.refreshNote': 'Refreshes on a timer while idle; updates immediately after interaction',
   'statusline.powerlineStyle': 'Powerline style',
   'statusline.powerlineHint': '(solid background blocks, icons merge)',
@@ -202,7 +201,7 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   'statusline.emptyChar': 'empty',
   'statusline.labelSep': 'Label sep',
   'statusline.labelSepHint': "Rendered between a segment's label and its value",
-  'statusline.labelInputHint': 'Static prefix rendered before the value, joined by the label separator',
+  'statusline.labelInputHint': 'Static prefix before the value',
 
   // Lines
   'statusline.lines': 'Lines',
@@ -236,7 +235,7 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   'statusline.fieldWindow': 'Window',
   'statusline.metric.session': 'session',
   'statusline.metric.context': 'context',
-  'statusline.metric.sessionTitle': 'Cumulative tokens for the session (read from the transcript)',
+  'statusline.metric.sessionTitle': 'Cumulative tokens for the session',
   'statusline.metric.contextTitle': 'Tokens currently in the context window',
   'statusline.fgBg': 'fg / bg',
   'statusline.fieldLabel': 'label',
@@ -299,9 +298,9 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
 
   // Rate segment window options
   'rateWin.fiveHour.label': '5h',
-  'rateWin.fiveHour.title': 'rate_limits.five_hour — 5-hour limit',
+  'rateWin.fiveHour.title': '5-hour limit',
   'rateWin.sevenDay.label': '7d',
-  'rateWin.sevenDay.title': 'rate_limits.seven_day — 7-day limit',
+  'rateWin.sevenDay.title': '7-day limit',
   'rateWin.spend.label': 'spend',
-  'rateWin.spend.title': 'rate_limits.spend_limit — spend limit (gateway)',
+  'rateWin.spend.title': 'Spend limit',
 };

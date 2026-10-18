@@ -11,10 +11,10 @@ export const appZh = {
   'app.globalSubtitle': '机器级 harness 默认模板 · 作用于所有项目',
   'app.updateCountOne': '1 个更新',
   'app.updateCount': '{n} 个更新',
-  'app.syncAllTooltip': '立即同步全部可同步项（{n}）：更新过期资产 + 装回被删除的已安装资产',
+  'app.syncAllTooltip': '同步全部 {n} 项：更新过期、装回缺失',
   'app.syncAll': '全部同步',
   'app.scopeCoverageTooltip':
-    '同步范围 = ① 库资产：Skills、MCP、单文件资产（commands / agents / workflows / rules / output-styles）—— 有新版的更新、被删除的已安装资产装回、本地改过（custom）的跳过；② init 生成物里不进 git 的（helpers / settings 的 weave 组等）自动刷新。会进 git 的（如 CLAUDE.md）只提示不代写，需在终端跑 weave init。不含 statusline（状态栏面板自己管保存/覆盖）。',
+    '同步覆盖 Skills、MCP、单文件资产与 init 生成物；会进 git 的 init 文件（如 CLAUDE.md）只提示不代写，需在终端跑 weave init。不含状态栏。',
   'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理 · init 生成物',
   'app.needProjectAnchor': '需要至少注册一个项目作为全局数据源。',
   'app.selectProject': '请选择一个项目',
@@ -32,14 +32,13 @@ export const appZh = {
   'project.openInTerminal': '在终端中打开',
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
-  'project.closeTerminal': '关闭该项目的 {n} 个终端（只关 cwd 在项目里的 pane）',
+  'project.closeTerminal': '关闭该项目的 {n} 个终端',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
   // 会进 git 的 init 文件漂移了：同步域不代写，只提醒用户去终端跑 init
   'project.needsInit': '待 init',
-  'project.needsInitTip':
-    '有会进 git 的 init 文件漂移了 —— 同步域不代写这部分，请打开终端执行 weave init（生成 + commit 流程不变）',
+  'project.needsInitTip': '有会进 git 的 init 文件变了，同步不会代写——请在终端执行 weave init',
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
   'project.sessionsOpen': '{n} 个会话就绪（等输入）',
@@ -47,7 +46,7 @@ export const appZh = {
   'project.harnessesTip': '本项目 init 时选择接入的 harness',
   // —— 归档（右键归档 + 归档面查看/恢复）——
   'project.archive': '归档项目',
-  'project.archiveConfirm': '归档「{name}」？历史会话将立即清空，server 不再消费该项目；基础信息保留，可随时从归档面恢复。',
+  'project.archiveConfirm': '归档「{name}」？历史会话将立即清空；基础信息保留，可随时恢复。',
   'project.archivedSection': '归档项目',
   'project.archivedCount': '{n} 个归档项目 — 点击查看',
   'project.archivedOn': '归档于 {date}',
@@ -73,7 +72,7 @@ export const appZh = {
   'skillDetail.noFiles': '无文件',
   'skillDetail.emptySkillMd': 'SKILL.md 为空',
   'skillDetail.projectScopeHint': '项目级 skill — 位于 {root}/skills/',
-  'skillDetail.globalReadOnlyHint': '全局技能（只读）— 项目视图不可修改全局配置',
+  'skillDetail.globalReadOnlyHint': '全局技能（只读）',
   'skillDetail.globalPluginHint': '全局插件技能 — {runtime}',
   'skillDetail.globalLocalHint': '全局本地技能 — {runtime}',
 
@@ -87,7 +86,7 @@ export const appZh = {
   'toast.synced': '已同步 {n} 项',
   'toast.nothingToSync': '没有需要同步的项',
   'toast.sessionDeleted': '已删除会话（{n} 条事件）',
-  'toast.sessionPaneClosed': '已关闭该会话（历史保留，可 resume 接回）',
+  'toast.sessionPaneClosed': '已关闭该会话（历史保留）',
   'toast.terminalsClosed': '已关闭 {n} 个终端',
 
   'errors.syncFailed': '同步失败：{error}',
@@ -109,11 +108,10 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.globalSubtitle': 'Machine-level harness default template · applies to all projects',
   'app.updateCountOne': '1 update',
   'app.updateCount': '{n} updates',
-  'app.syncAllTooltip':
-    'Sync everything syncable now ({n}): update outdated assets and reinstall deleted ones',
+  'app.syncAllTooltip': 'Sync all {n}: update outdated, reinstall missing',
   'app.syncAll': 'Sync all',
   'app.scopeCoverageTooltip':
-    'Sync scope = (1) library assets: Skills, MCP, single-file assets (commands / agents / workflows / rules / output-styles) — newer versions are applied, deleted installed assets are reinstalled, locally modified (custom) entries are skipped; (2) init artefacts that do not enter git (helpers / the weave group of settings, etc.) are refreshed automatically. Ones that do enter git (e.g. CLAUDE.md) are only flagged — run `weave init` in a terminal for those. Excludes the statusline (the statusline panel owns save/overwrite).',
+    'Sync covers Skills, MCP, single-file assets and init artefacts; init files that enter git (e.g. CLAUDE.md) are only flagged — run `weave init` in a terminal. Excludes the statusline.',
   'app.scopeCoverageChip': 'Covers Skills · MCP · resources · init artefacts',
   'app.needProjectAnchor': 'Register at least one project to serve as the global data source.',
   'app.selectProject': 'Select a project',
@@ -131,12 +129,12 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInTerminal': 'Open in terminal',
   'project.dragToReorder': 'Drag to reorder',
   'project.terminalsOpen': '{n} terminal(s) open',
-  'project.closeTerminal': "Close this project's {n} terminal(s) (only panes whose cwd is the project)",
+  'project.closeTerminal': "Close this project's {n} terminal(s)",
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   'project.needsInit': 'needs init',
   'project.needsInitTip':
-    'An init file that enters git has drifted — sync will not write those. Open a terminal and run `weave init` (the generate + commit flow is unchanged).',
+    'An init file that enters git changed — sync will not write it. Run `weave init` in a terminal.',
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
   'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
@@ -144,12 +142,12 @@ export const appEn: Record<keyof typeof appZh, string> = {
   // —— Archive (context-menu archive + archived view/restore) ——
   'project.archive': 'Archive project',
   'project.archiveConfirm':
-    'Archive "{name}"? Session history is cleared immediately and the server stops consuming it; basic info is kept — restore anytime from the archived view.',
+    'Archive "{name}"? Session history is cleared immediately; basic info is kept — restore anytime.',
   'project.archivedSection': 'Archived projects',
   'project.archivedCount': '{n} archived — click to view',
   'project.archivedOn': 'Archived {date}',
   'project.restore': 'Restore',
-  'project.restoreTooltip': 'Restore as an active project (session history is gone — archive deletes, not pauses)',
+  'project.restoreTooltip': 'Restore as an active project (session history is gone)',
   'toast.projectArchived': 'Archived "{name}" (purged {sessions} session(s) / {events} event(s))',
   'toast.projectRestored': 'Restored "{name}"',
   'errors.archiveFailed': 'Archive failed: {error}',
@@ -170,8 +168,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'skillDetail.noFiles': 'No files',
   'skillDetail.emptySkillMd': 'Empty SKILL.md',
   'skillDetail.projectScopeHint': 'Project-scope skill — lives in {root}/skills/',
-  'skillDetail.globalReadOnlyHint':
-    'Global skill (read-only) — global config cannot be changed from the project view',
+  'skillDetail.globalReadOnlyHint': 'Global skill (read-only)',
   'skillDetail.globalPluginHint': 'Global plugin skill — {runtime}',
   'skillDetail.globalLocalHint': 'Global skill (local) — {runtime}',
 
@@ -185,7 +182,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.synced': 'Synced {n} item(s)',
   'toast.nothingToSync': 'Nothing needs syncing',
   'toast.sessionDeleted': 'Session deleted ({n} events)',
-  'toast.sessionPaneClosed': 'Session closed (history kept — resume to continue)',
+  'toast.sessionPaneClosed': 'Session closed (history kept)',
   'toast.terminalsClosed': 'Closed {n} terminal(s)',
 
   'errors.syncFailed': 'Sync failed: {error}',
