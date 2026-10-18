@@ -1266,6 +1266,36 @@ describe('MessageDeliverer 裁决表', () => {
     expect(stale).toMatchObject({ ok: true, status: 'failed' });
   });
 
+  it('判死先于三层：残留的 peer 登记不算通路，中继一个都不起', async () => {
+    const fake = createFakeSpawn();
+    // peer 注册表是会话进程写的，进程死了文件不会立刻消失——登记还在 ≠ 送得到
+    const { surface } = relaySurface(() => ({ name: PEER_NAME }));
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        livenessOf: () => new Map([[SESSION_ID, false]]),
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '终端早关了',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    // 原先这里会走层① 中继：exit 0 → 记 delivered → 60s 后从待发送消失、气泡永远
+    // 不来，120s 后才以 stalled 冒头。判死就该当场落 offline。
+    expect(result).toMatchObject({ ok: true, status: 'failed' });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.message.reason).toBe('offline');
+    expect(fake.calls).toHaveLength(0);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
   it('判不动 → 照旧入队 pending，绝不误判死', async () => {
     const { surface } = relaySurface(() => null);
     // ① 存活图里没有该会话，但会话刚活动过（claude 登记文件可能还没落盘）→ 不猜

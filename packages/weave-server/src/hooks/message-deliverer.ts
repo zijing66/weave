@@ -1059,6 +1059,12 @@ export class MessageDeliverer {
       this.queuedSessions.delete(sessionId);
       return;
     }
+    // 目标已判死：队列行全是死信（socket 凭据随进程走、pane 随窗口没了、peer 登记
+    // 是残留），整批落定 + 清队，不再每轮白探 pane 枚举。
+    if (this.sessionJudgedDead(sessionId)) {
+      this.failQueuedOffline(sessionId, entries.filter((e) => !this.dismissedIds.has(e.id)));
+      return;
+    }
     const surface = this.surfaceOfSession(sessionId);
     const relay = surface?.prompt ?? null;
     for (const entry of entries) {
@@ -1130,14 +1136,8 @@ export class MessageDeliverer {
         this.settleQueueIndex(sessionId, project.token);
         return;
       }
-      // 层均不可用（会话没开 / pane 找不到）：已判死的会话里队列行全是死信，
-      // 整批落 offline 并清队（不再每 15s 白探一轮 pane 枚举）；判不动留队列等下轮。
-      if (this.sessionJudgedDead(sessionId)) {
-        this.failQueuedOffline(
-          sessionId,
-          entries.filter((e) => !this.dismissedIds.has(e.id)),
-        );
-      }
+      // 层均不可用（会话没开 / pane 找不到）：判不动的会话留队列等下一次事件或
+      // 刷新器（判死的在本轮开头已整批落定，走不到这里）。
       return;
     }
     this.settleQueueIndex(sessionId, project.token);
@@ -1298,6 +1298,12 @@ export class MessageDeliverer {
     project: { token: string; path: string },
     surface: MessagingSurface,
   ): Promise<SendResult> {
+    // 目标已判死：三层全是假象——socket 凭据活在会话进程里、pane 随窗口没了、
+    // peer 登记是残留，投出去只会换来一条「送进虚空」的假 delivered（60s 后从
+    // 待发送消失、120s 后才以 stalled 冒头）。直接落 offline：当场可见、可重发。
+    if (this.sessionJudgedDead(entry.sessionId)) {
+      return { ok: true, messageId: entry.id, status: 'failed', message: this.failOffline(entry) };
+    }
     // 层①-a 会话本地收件箱直投（毫秒级、零进程零 LLM）：**机制由 harness 声明**
     // （`surface.promptInbox`；claude = inbox socket，其他 harness = null 即完全不尝试），
     // 目标地址由 hook 旁路上报。**手动面（oneWay）优先**——它把消息当用户 prompt
