@@ -507,7 +507,8 @@ export function SessionMessages({
   minimized: boolean;
   /** 挂起（浮窗限定：嵌入形态下切走由调用方置 `minimized`）。 */
   onMinimize?: () => void;
-  onClose: () => void;
+  /** 真销毁（浮窗限定：嵌入形态右栏就是这扇对话，没有关闭这回事）。 */
+  onClose?: () => void;
   /** 嵌进任务视图右栏（不再套门户与蒙版、不可拖拽缩放，填满容器）。 */
   embedded?: boolean;
   /** 右上角「事件链」：把事件链开成弹窗（嵌入形态下才有这一枚）。 */
@@ -1113,11 +1114,11 @@ export function SessionMessages({
   /** 选中值取**别名**：转录里照会的是网关真名（`ftm`），那是别名 opus 的真身。 */
   const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
 
-  /** 真销毁（关）：输入框里还有未提交内容时先问一句。只有关闭钮走这条路——
+  /** 真销毁（关）：输入框里还有未提交内容时先问一句。只有浮窗的关闭钮走这条路——
    *  ESC、最小化钮、点蒙版都走挂起，不销毁。 */
   const requestClose = (): void => {
     if (draft.trim() || staged.length > 0) setConfirming(true);
-    else onClose();
+    else onClose?.();
   };
 
   /** 面板本体：两种形态共用（浮窗与嵌入右栏只差容器类、定位样式与是否套门户）。 */
@@ -1183,26 +1184,29 @@ export function SessionMessages({
                 {t('tasks.chainTitle')}
               </button>
             )}
+            {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
-              <button
-                type="button"
-                title={t('tasks.messagesMinimize')}
-                aria-label={t('tasks.messagesMinimize')}
-                onClick={onMinimize}
-                className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  title={t('tasks.messagesMinimize')}
+                  aria-label={t('tasks.messagesMinimize')}
+                  onClick={onMinimize}
+                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  title={t('tasks.messagesClose')}
+                  aria-label={t('tasks.messagesClose')}
+                  onClick={requestClose}
+                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              title={t('tasks.messagesClose')}
-              aria-label={t('tasks.messagesClose')}
-              onClick={requestClose}
-              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
           </div>
         </div>
 
@@ -1909,7 +1913,7 @@ export function SessionMessages({
           title={t('tasks.msgCloseConfirmTitle')}
           message={t('tasks.msgCloseConfirm')}
           confirmLabel={t('tasks.messagesClose')}
-          onConfirm={onClose}
+          onConfirm={() => onClose?.()}
           onClose={() => setConfirming(false)}
         />
 

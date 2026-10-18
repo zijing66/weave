@@ -631,18 +631,9 @@ export function TasksPanel({
     },
     [openConv, isDesktop],
   );
-  const closeConv = useCallback((sessionId: string): void => {
-    setChainDialog(false);
-    setConvs((prev) => {
-      if (!prev.has(sessionId)) return prev;
-      const next = new Map(prev);
-      next.delete(sessionId);
-      return next;
-    });
-  }, []);
   /** 右栏主体是对话还是事件链：选中会话解不出对话面（无闭轮事件的 harness）→ 事件链。 */
   const hasConv = selectedId !== null && convs.has(selectedId);
-  // 对话面没了（关掉或换到没有对话面的会话）就收掉事件链弹窗，别让它挂在那儿
+  // 对话面没了（换到没有对话面的会话）就收掉事件链弹窗，别让它挂在那儿
   useEffect(() => {
     if (!hasConv) setChainDialog(false);
   }, [hasConv]);
@@ -1181,7 +1172,6 @@ export function TasksPanel({
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
           onOpenChain={() => setChainDialog(true)}
-          onClose={() => closeConv(c.sessionId)}
         />
       ))}
       {!hasConv && chainEl}
