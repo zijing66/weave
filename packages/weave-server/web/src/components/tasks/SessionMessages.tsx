@@ -756,6 +756,26 @@ export function SessionMessages({
     const el = threadRef.current;
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
+  /** 藏起来那一刻读到哪：切走的对话只藏不卸（`display:none` 拆掉布局盒），滚动
+   *  位置跟着丢、切回来恒在 0 = 会话顶部。显形时按这份记录补回——原来贴着尾巴
+   *  就仍贴尾巴（日常进来要看见最新那条）。 */
+  const lastScroll = useRef({ top: 0, atBottom: true });
+  // 判「重新显形」按尺寸 0 → 正，不按 minimized：藏它的既可能是 minimized，也可能是
+  // 外层的抽屉/整屏容器，而这两条路都会让布局盒消失（高度归零）。
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    let shown = el.clientHeight > 0;
+    const ro = new ResizeObserver(() => {
+      const now = el.clientHeight > 0;
+      if (now && !shown) {
+        el.scrollTop = lastScroll.current.atBottom ? el.scrollHeight : lastScroll.current.top;
+      }
+      shown = now;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const tailKey = thread[thread.length - 1]?.key;
   const status = statuses.get(sessionId);
   /** 尾上的在途提示：压缩中（状态总线同一判据；压缩与尾条是谁无关，照挂）显
@@ -786,7 +806,8 @@ export function SessionMessages({
     answerPending ? 'a' : ''
   }`;
   const lastTail = useRef<string | undefined>(undefined);
-  useEffect(() => {
+  // 布局阶段就贴底（不是渲染完再补）：首屏那一页回来时先画在顶部再跳一下很难看
+  useLayoutEffect(() => {
     if (minimized || entries === null || tailSig === lastTail.current) return;
     lastTail.current = tailSig;
     if (!stick.current) return;
@@ -1237,7 +1258,14 @@ export function SessionMessages({
         <div
           ref={threadRef}
           onScroll={() => {
-            stick.current = atBottom();
+            const el = threadRef.current;
+            // 藏起来那一下的 scroll 事件（布局盒已拆、clientHeight 为 0）不算数：
+            // 它会把「读到一半」误记成贴底
+            if (el && el.clientHeight > 0) {
+              const bottom = atBottom();
+              lastScroll.current = { top: el.scrollTop, atBottom: bottom };
+              stick.current = bottom;
+            }
             cancelTap(); // 手指在滑 = 这一击不算轻点
             pull.syncEdge();
           }}
