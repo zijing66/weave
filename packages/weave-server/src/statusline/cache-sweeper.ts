@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { statuslineCacheDir } from './generator.js';
@@ -90,10 +90,14 @@ export class StatuslineCacheSweeper {
         continue;
       }
       if (pruned) {
+        // 与渲染侧同一套 tmp+rename：同一个文件有多个会话进程在读（git 缓存
+        // 更是同项目全共享），原地写会让并发读者拿到半份 JSON。
+        const tmp = `${file}.${process.pid}.tmp`;
         try {
-          writeFileSync(file, JSON.stringify({ ...data, git, tokens }));
+          writeFileSync(tmp, JSON.stringify({ ...data, git, tokens }));
+          renameSync(tmp, file);
         } catch {
-          /* 下次再扫 */
+          /* 下次再扫 —— 留下的 tmp 交给本类的 TMP_STALE_MS 回收 */
         }
       }
     }
