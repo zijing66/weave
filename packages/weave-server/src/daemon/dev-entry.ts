@@ -44,7 +44,7 @@ import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
-import { SessionProbe } from './session-probe.js';
+import { SessionProbe, dbTranscriptPathResolver } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
   // 绑 SSE 客户端数。
   const dataBus = new DataBus();
   // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
-  const sessionProbe = new SessionProbe();
+  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => ({
       counts: await readTerminalCounts(projects.list()),

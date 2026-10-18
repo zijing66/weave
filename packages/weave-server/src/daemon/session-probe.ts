@@ -35,6 +35,25 @@ export function readTail(path: string, bytes = TAIL_BYTES): string | null {
   }
 }
 
+/**
+ * 装配用兜底：路径从库里该会话最近一条事件的旁路字段补回（与入站侧读同一个
+ * `transcriptPath`）。每个会话在 daemon 生命周期里最多查一次——查到即写回内存。
+ */
+export function dbTranscriptPathResolver(events: {
+  listBySession(sessionId: string, limit?: number): Array<{ payload: string }>;
+}): (sessionId: string) => string | null {
+  return (sessionId) => {
+    try {
+      const raw = JSON.parse(events.listBySession(sessionId, 1)[0]?.payload ?? '') as {
+        transcriptPath?: unknown;
+      };
+      return typeof raw.transcriptPath === 'string' && raw.transcriptPath ? raw.transcriptPath : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** 转录尾部抽出的事实（一次尾读、多问共享；按文件大小缓存）。 */
 interface TailFacts {
   size: number;
@@ -44,6 +63,14 @@ interface TailFacts {
 }
 
 export class SessionProbe {
+  constructor(
+    /**
+     * 路径的内存副本没了以后的兜底（daemon 重启后第一拍）：不补的话，重启后**没有
+     * 新事件**的会话（已收尾 / 闲置中的那些）模型与模式会一直显示「未知」。
+     */
+    private readonly fallbackPath?: (sessionId: string) => string | null,
+  ) {}
+
   /** sessionId → 转录路径（内存态；hook 事件每次上报都覆盖刷新）。 */
   private readonly paths = new Map<string, string>();
   /** 路径 → 上次读到的事实（按文件大小缓存：没长过就不重读）。 */
@@ -53,6 +80,14 @@ export class SessionProbe {
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
+  }
+
+  private pathOf(sessionId: string): string | null {
+    const known = this.paths.get(sessionId);
+    if (known) return known;
+    const fromDb = this.fallbackPath?.(sessionId) ?? null;
+    if (fromDb) this.paths.set(sessionId, fromDb);
+    return fromDb;
   }
 
   forget(sessionId: string): void {
@@ -66,7 +101,7 @@ export class SessionProbe {
    * 未知路径/读不到/没标记一律 null（不猜）。
    */
   interruptedAt(sessionId: string, lastSeenAt: string): number | null {
-    const path = this.paths.get(sessionId);
+    const path = this.pathOf(sessionId);
     if (!path) return null;
     const marker = this.factsOf(path).markerAt;
     if (marker === null) return null;
@@ -93,7 +128,7 @@ export class SessionProbe {
    * 一条事件」判，陈旧标记必须能被新事件盖过）。
    */
   private latched(sessionId: string): { model: string | null; mode: string | null } {
-    const path = this.paths.get(sessionId);
+    const path = this.pathOf(sessionId);
     if (!path) return NO_FACTS;
     const facts = this.factsOf(path);
     const prev = this.known.get(sessionId);

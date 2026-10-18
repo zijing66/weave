@@ -39,7 +39,7 @@ import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
-import { SessionProbe } from './session-probe.js';
+import { SessionProbe, dbTranscriptPathResolver } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
@@ -225,7 +225,7 @@ export function startDaemon(): void {
   // 数据变更帧总线：SSE 的载荷推送源（各隐藏刷新器共用一条）。
   const dataBus = new DataBus();
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
-  const sessionProbe = new SessionProbe();
+  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 项目行「有更新待同步」角标：项目插件源（`.weave/plugins` 的模板）变更 →
   // 重算全项目漂移、值变才推绝对值快照（含 0）。
   const updatesRefresher = new ProjectUpdatesRefresher(

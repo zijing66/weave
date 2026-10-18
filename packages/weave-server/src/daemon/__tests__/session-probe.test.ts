@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readTail, SessionProbe } from '../session-probe';
+import { dbTranscriptPathResolver, readTail, SessionProbe } from '../session-probe';
 
 const dirs: string[] = [];
 const tmpFile = (): string => {
@@ -34,6 +34,22 @@ describe('readTail', () => {
 });
 
 describe('SessionProbe', () => {
+  it('重启后内存路径丢了：从库里最近一条事件的旁路字段补回，模型/模式不掉「未知」', () => {
+    const file = tmpFile();
+    writeFileSync(
+      file,
+      JSON.stringify({ type: 'assistant', permissionMode: 'plan', message: { model: 'opus' } }) + '\n',
+    );
+    const probe = new SessionProbe(
+      dbTranscriptPathResolver({
+        listBySession: (_id, limit) => (limit === 1 ? [{ payload: JSON.stringify({ transcriptPath: file }) }] : []),
+      }),
+    );
+    // 没有 noteTranscript（= daemon 刚重启、这个会话还没有新事件）
+    expect(probe.currentModel('s1')).toBe('opus');
+    expect(probe.currentMode('s1')).toBe('plan');
+  });
+
   it('标记晚于最后一条事件才算中断（自愈：之后任何事件都盖过它）', () => {
     const file = tmpFile();
     const at = '2026-01-02T03:00:00.000Z';
