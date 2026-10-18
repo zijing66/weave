@@ -653,6 +653,40 @@ describe('statusline — data segments', () => {
     expect(second).not.toContain('second@example.com');
   });
 
+  it('serves the branch from the cache instead of re-running git', () => {
+    const repo = tmp('weave-sl-branchcache-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    git('branch', '-m', 'trunk');
+
+    const branchCfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git: { ...DEFAULT_STATUSLINE_CONFIG.segments.git, enabled: true, format: '{branch}' },
+      },
+    };
+    expect(
+      runScript(generateStatuslineScript(branchCfg), { workspace: { current_dir: repo } }),
+    ).toContain('trunk');
+
+    // Checked out elsewhere, but the branch's TTL has not elapsed — the cached
+    // name must win, which is exactly what proves the second render skipped git.
+    git('checkout', '-q', '-b', 'feature');
+    const second = runScript(generateStatuslineScript(branchCfg), { workspace: { current_dir: repo } });
+    expect(second).toContain('trunk');
+    expect(second).not.toContain('feature');
+  });
+
   it('a failed git lookup is only remembered briefly, then re-probed', async () => {
     // A failure is cached on the short retry window, not the segment's TTL —
     // otherwise a directory that becomes a repo later (or one where git

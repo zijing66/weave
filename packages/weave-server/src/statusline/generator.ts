@@ -91,6 +91,9 @@ const GIT_IDENTITY_TTL_SEC = 3600;
 /** Diff counts move constantly, so they are only reused briefly. */
 const GIT_CHANGES_TTL_SEC = 5;
 
+/** The branch only moves on checkout, so a stale minute is preferable to a probe per render. */
+const GIT_BRANCH_TTL_SEC = 60;
+
 /** A failed git lookup is re-probed this soon, never cached for a full TTL. */
 const GIT_RETRY_TTL_SEC = 5;
 
@@ -123,6 +126,7 @@ const BAR_EMPTY = '${BAR_EMPTY}';
 const BAR_CELLS = ${BAR_CELLS};
 const GIT_IDENTITY_TTL = ${GIT_IDENTITY_TTL_SEC};
 const GIT_CHANGES_TTL = ${GIT_CHANGES_TTL_SEC};
+const GIT_BRANCH_TTL = ${GIT_BRANCH_TTL_SEC};
 const GIT_RETRY_TTL = ${GIT_RETRY_TTL_SEC};
 const CACHE_DIR = ${embeddedCacheDir};
 // Stamped into the row-0 logo so the running version is always visible.
@@ -471,21 +475,24 @@ function segmentTokens(key, seg) {
       var name = path.basename(cwd);
       return cwd ? { name: name, path: cwd } : null;
     }
-    case 'git':
-      try {
-        var branch = require('child_process').execFileSync(
-          'git', ['rev-parse', '--abbrev-ref', 'HEAD'],
-          { cwd: cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true }
-        ).toString().trim();
-        if (!branch) return null;
-        // workspace.repo is optional (parsed from the git remote) — the token
-        // stays empty when absent so the default {branch} format is unaffected.
-        var repoInfo = input.workspace && input.workspace.repo;
-        return {
-          branch: branch,
-          repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
-        };
-      } catch (e) { return null; }
+    case 'git': {
+      var branch = cachedGit('branch:' + cwd, GIT_BRANCH_TTL, function () {
+        try {
+          return require('child_process').execFileSync(
+            'git', ['rev-parse', '--abbrev-ref', 'HEAD'],
+            { cwd: cwd, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true }
+          ).toString().trim() || null;
+        } catch (e) { return null; }
+      });
+      if (!branch) return null;
+      // workspace.repo is optional (parsed from the git remote) — the token
+      // stays empty when absent so the default {branch} format is unaffected.
+      var repoInfo = input.workspace && input.workspace.repo;
+      return {
+        branch: branch,
+        repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
+      };
+    }
     case 'git_user':
       return cachedGit('git_user:' + cwd, GIT_IDENTITY_TTL, function () {
         // Both fields must be set — a partial identity would render 'name <>'
