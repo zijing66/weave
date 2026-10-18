@@ -20,6 +20,8 @@ export interface SessionPurgeDeps {
   questions?: Pick<QuestionTracker, 'forgetSession'>;
   /** 转录探测：内存里的 transcriptPath 一并清（不计数）。 */
   probe?: { forget(sessionId: string): void };
+  /** 上传件（不计数）：事件清完顺带回收再没有人引用的图（文件 + 行）。 */
+  uploads?: { pruneUnreferenced(): number };
 }
 
 /**
@@ -31,6 +33,8 @@ export function purgeSession(
   sessionId: string,
 ): { events: number; dispatches: number; messages: number } {
   const events = deps.events.deleteBySession(sessionId);
+  // 事件清完（event_images 随 hook_events 级联删）再回收，否则指针还在、图一条都删不掉
+  deps.uploads?.pruneUnreferenced();
   const dispatches = deps.dispatches?.deleteBySession(sessionId) ?? 0;
   const messages = deps.deliverer?.forgetSession(sessionId) ?? 0;
   deps.watches?.deleteBySession(sessionId);

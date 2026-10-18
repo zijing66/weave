@@ -306,6 +306,7 @@ export function startDaemon(): void {
     sequenceEngine,
     questions: questionTracker,
     probe: sessionProbe,
+    uploads,
   });
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。

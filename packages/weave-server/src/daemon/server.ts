@@ -1562,6 +1562,8 @@ async function handleRequest(
     }
     const dispatches = deps.hookDispatches?.deleteByProject(project.id) ?? 0;
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
+    // 事件清完（event_images 级联删）再回收孤儿上传件
+    deps.uploads?.pruneUnreferenced();
     // 消息域先于会话行清（内存态按会话→项目归属圈；队列行按会话清）；订阅/序列同形
     // （序列按项目会话集圈「任一步目标」行，同样必须在会话行删除前执行）
     const messages = deps.messageDeliverer?.forgetProject(project.id) ?? 0;

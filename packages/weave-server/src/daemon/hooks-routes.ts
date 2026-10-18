@@ -520,6 +520,7 @@ export async function handleHooksRoutes(
         watches: deps.sessionWatches,
         questions: deps.questionTracker,
         probe: deps.sessionProbe,
+        uploads: deps.uploads,
       },
       sessionId,
     );

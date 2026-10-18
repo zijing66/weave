@@ -288,6 +288,7 @@ async function main(): Promise<void> {
     sequenceEngine,
     questions: questionTracker,
     probe: sessionProbe,
+    uploads,
   });
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。

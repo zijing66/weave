@@ -33,6 +33,8 @@ export class SessionSweeper {
       purgeSession(this.deps, row.sessionId);
       purged++;
     }
+    // 与过期会话无关的孤儿上传件（选了图没发出去、事件早已清掉的）同轮收走
+    this.deps.uploads?.pruneUnreferenced();
     this.deps.watchEngine?.sweepTerminated();
     this.deps.sequenceEngine?.sweepTerminated();
     return purged;

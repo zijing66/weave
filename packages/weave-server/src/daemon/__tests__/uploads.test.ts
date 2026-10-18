@@ -93,6 +93,35 @@ describe('UploadRepository', () => {
     expect(UPLOAD_MAX_BYTES).toBe(10 * 1024 * 1024);
   });
 
+  it('孤儿回收：没人引用且过了宽限期的上传件（文件 + 行）清掉，被事件引用的留着', () => {
+    const kept = uploads.save({ name: 'kept.png', mediaType: 'image/png', bytes: bytesOf('k') });
+    const orphan = uploads.save({ name: 'orphan.png', mediaType: 'image/png', bytes: bytesOf('o') });
+    uploads.linkToEvent(eventId, [kept.id]);
+    db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
+
+    expect(uploads.pruneUnreferenced()).toBe(1);
+    expect(uploads.getById(orphan.id)).toBeUndefined();
+    expect(existsSync(uploads.filePath(orphan.id, 'image/png'))).toBe(false);
+    expect(uploads.getById(kept.id)).toBeDefined();
+    expect(existsSync(uploads.filePath(kept.id, 'image/png'))).toBe(true);
+  });
+
+  it('宽限期内的无引用上传件不动（编辑器里选了图、还没发）', () => {
+    const fresh = uploads.save({ name: 'staged.png', mediaType: 'image/png', bytes: bytesOf('s') });
+    expect(uploads.pruneUnreferenced()).toBe(0);
+    expect(uploads.getById(fresh.id)).toBeDefined();
+  });
+
+  it('会话事件被清（event_images 级联）后那批图才变孤儿——顺序反过来一条都删不掉', () => {
+    const row = uploads.save({ name: 'gone.png', mediaType: 'image/png', bytes: bytesOf('g') });
+    uploads.linkToEvent(eventId, [row.id]);
+    db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
+    expect(uploads.pruneUnreferenced()).toBe(0); // 指针还在
+    new HookEventRepository(db).deleteBySession(sessionId);
+    expect(uploads.pruneUnreferenced()).toBe(1);
+    expect(uploads.getById(row.id)).toBeUndefined();
+  });
+
   it('不同字节各占一行', () => {
     const a = uploads.save({ name: 'x.png', mediaType: 'image/png', bytes: randomBytes(16) });
     const b = uploads.save({ name: 'y.png', mediaType: 'image/png', bytes: randomBytes(16) });

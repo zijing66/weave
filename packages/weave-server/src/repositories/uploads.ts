@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { getUploadsDir } from '../db/paths.js';
@@ -16,6 +16,12 @@ export type UploadMediaType = (typeof UPLOAD_MEDIA_TYPES)[number];
 
 /** 单张上限：对齐 claude 自己贴图的粘贴缓存上限（~10MB）。 */
 export const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 孤儿回收的宽限期：编辑器里选了图、还没发出去的那份此刻同样「无引用」，
+ * 清理不能把它从用户手上抽走。
+ */
+export const UPLOAD_ORPHAN_GRACE_MS = 60 * 60_000;
 
 const EXT_BY_MEDIA: Record<UploadMediaType, string> = {
   'image/png': '.png',
@@ -92,6 +98,26 @@ export class UploadRepository {
       'INSERT INTO event_images (event_id, upload_id) VALUES (?, ?) ON CONFLICT DO NOTHING',
     );
     for (const id of uploadIds) stmt.run(eventId, id);
+  }
+
+  /**
+   * 孤儿回收：没有任何 `event_images` 引用的上传件（文件 + 行）。图只被会话事件
+   * 引用——事件随会话/项目一起清掉之后就再没有展示面（对话弹窗是事件的投影）。
+   * 返清掉的条数。
+   */
+  pruneUnreferenced(olderThanMs: number = UPLOAD_ORPHAN_GRACE_MS, now: number = Date.now()): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, media_type FROM uploads
+          WHERE created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images)`,
+      )
+      .all(new Date(now - olderThanMs).toISOString()) as Array<{ id: string; media_type: UploadMediaType }>;
+    const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
+    for (const row of rows) {
+      rmSync(this.filePath(row.id, row.media_type), { force: true });
+      del.run(row.id);
+    }
+    return rows.length;
   }
 
   /**
