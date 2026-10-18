@@ -383,11 +383,12 @@ const DOUBLE_TAP_MS = 300;
 const TAP_SLOP = 8;
 
 /** 弹出菜单三副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）/
- *  发送键旁的下拉（选投递通道）。 */
+ *  发送键旁的下拉（选投递通道）。前两副挂在 body 上按视口坐标定位；
+ *  发送下拉贴着发送键内联渲染，不带坐标。 */
 type ConvMenu =
   | { kind: 'bubble'; x: number; y: number; key: string }
   | { kind: 'share'; x: number; y: number }
-  | { kind: 'send'; x: number; y: number };
+  | { kind: 'send' };
 
 /** 投递通道（发送人选的，不是消息模式）：auto = 层序自动（直投优先）；
  *  terminal = 强制层② 终端 send-text（宿主眼里唯一算用户输入的路径）。 */
@@ -945,11 +946,8 @@ export function SessionMessages({
     setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
   };
 
-  /** 发送通道下拉（同一枚箭头位置往上开，理由同上）；选中即记盘。 */
-  const openSendMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ kind: 'send', x: r.right - MENU_W, y: r.top - MENU_H });
-  };
+  /** 发送通道下拉（贴着发送键往上开）；选中即记盘。 */
+  const openSendMenu = (): void => setMenu({ kind: 'send' });
   const pickSendVia = (v: SendVia): void => {
     setSendVia(v);
     try {
@@ -1999,48 +1997,76 @@ export function SessionMessages({
                 {/* 发送键与通道下拉合成一枚（split button）：同一块蓝底、同一圈圆角，
                     中间只隔一道细线——点左半发送、点右半开菜单，不是两枚并排的钮。
                     下拉不随草稿为空而禁用：选通道与「现在有没有话要说」是两回事。 */}
-                <div className="inline-flex shrink-0 items-stretch overflow-hidden rounded bg-blue-600/80 transition-colors hover:bg-blue-500">
-                  <button
-                    type="button"
-                    disabled={
-                      !capability.prompt ||
-                      (!draft.trim() && staged.length === 0) ||
-                      fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-                    }
-                    title={
-                      capability.prompt
-                        ? undefined
-                        : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-                    }
-                    aria-label={t('tasks.messagesSend')}
-                    onClick={send}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 max-lg:px-3 max-lg:py-2"
-                  >
-                    <FeedbackIcon
-                      state={fb.stateOf(`sendMsg:${sessionId}`)}
-                      className="h-3 w-3"
-                      icon={<Send className="h-3 w-3" />}
-                    />
-                    <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
-                  </button>
-                  {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
-                      终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
-                  <button
-                    type="button"
-                    title={t('tasks.msgChannelCurrent', {
-                      via: sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto'),
-                    })}
-                    aria-label={t('tasks.msgChannelTitle')}
-                    onClick={openSendMenu}
-                    className={cn(
-                      'inline-flex items-center justify-center border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
-                      sendVia === 'terminal'
-                        ? 'border-white/40 bg-white/20 text-white'
-                        : 'border-white/20 text-white/70 hover:bg-white/10 hover:text-white',
-                    )}
-                  >
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
+                <div className="relative inline-flex shrink-0">
+                  <div className="inline-flex items-stretch overflow-hidden rounded bg-blue-600/80 transition-colors hover:bg-blue-500">
+                    <button
+                      type="button"
+                      disabled={
+                        !capability.prompt ||
+                        (!draft.trim() && staged.length === 0) ||
+                        fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                      }
+                      title={
+                        capability.prompt
+                          ? undefined
+                          : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                      }
+                      aria-label={t('tasks.messagesSend')}
+                      onClick={send}
+                      className="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 max-lg:px-3 max-lg:py-2"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf(`sendMsg:${sessionId}`)}
+                        className="h-3 w-3"
+                        icon={<Send className="h-3 w-3" />}
+                      />
+                      <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
+                    </button>
+                    {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
+                        终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
+                    <button
+                      type="button"
+                      title={t('tasks.msgChannelCurrent', {
+                        via: sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto'),
+                      })}
+                      aria-label={t('tasks.msgChannelTitle')}
+                      onClick={openSendMenu}
+                      className={cn(
+                        'inline-flex items-center justify-center border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
+                        sendVia === 'terminal'
+                          ? 'border-white/40 bg-white/20 text-white'
+                          : 'border-white/20 text-white/70 hover:bg-white/10 hover:text-white',
+                      )}
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  </div>
+                  {/* 通道菜单内联贴着发送键往上开——位置交给 CSS。按视口坐标算的话，
+                      移动端软键盘一弹、可视视口与布局视口错开，菜单就落到别处去了。 */}
+                  {menu?.kind === 'send' && (
+                    <div
+                      data-conv-menu
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute bottom-full right-0 z-20 mb-1 w-[168px] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
+                    >
+                      {(['auto', 'terminal'] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          title={
+                            v === 'auto' ? t('tasks.msgChannelAutoHint') : t('tasks.msgChannelTerminalHint')
+                          }
+                          onClick={() => pickSendVia(v)}
+                          className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                        >
+                          <Check
+                            className={cn('h-3 w-3', sendVia === v ? 'text-blue-300' : 'text-transparent')}
+                          />
+                          {v === 'auto' ? t('tasks.msgChannelAuto') : t('tasks.msgChannelTerminal')}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2064,8 +2090,10 @@ export function SessionMessages({
           </div>
         )}
 
-        {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载） */}
+        {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载）。
+            发送下拉不在这里——它内联挂在发送键上。 */}
         {menu &&
+          menu.kind !== 'send' &&
           createPortal(
             <div
               data-conv-menu
@@ -2085,23 +2113,6 @@ export function SessionMessages({
                   <Check className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convSelect')}
                 </button>
-              ) : menu.kind === 'send' ? (
-                <>
-                  {(['auto', 'terminal'] as const).map((v) => (
-                    <button
-                      key={v}
-                      type="button"
-                      title={v === 'auto' ? t('tasks.msgChannelAutoHint') : t('tasks.msgChannelTerminalHint')}
-                      onClick={() => pickSendVia(v)}
-                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
-                    >
-                      <Check
-                        className={cn('h-3 w-3', sendVia === v ? 'text-blue-300' : 'text-transparent')}
-                      />
-                      {v === 'auto' ? t('tasks.msgChannelAuto') : t('tasks.msgChannelTerminal')}
-                    </button>
-                  ))}
-                </>
               ) : (
                 <>
                   <button
