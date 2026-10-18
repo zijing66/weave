@@ -227,8 +227,7 @@ type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 /** 中继进程的工作目录：中性 cwd，避开项目 hooks（spike 实测防幽灵事件）。 */
 const relayCwd = () => tmpdir();
 
-/** 冲洗节流（防 Claude Code 发送侧突发拒收）：一轮最多投递几条 + 条间最小间隔。 */
-const FLUSH_PASS_MAX = 5;
+/** 自续冲洗的最小间隔（回执到达后接下一拍不该是同步连发）。 */
 const FLUSH_GAP_MS = 1_000;
 
 /** 终态驻留窗口与未回执闸的缺省时长（见 deps 同名注入位）。 */
@@ -1028,9 +1027,8 @@ export class MessageDeliverer {
   /**
    * 队列冲洗（幂等）：直投命中即走；否则中继 / 终端按面定序（手动面终端优先）；
    * 都不行留队列。
-   * **节流**（Claude Code 对同一会话的快速突发在发送侧拒收）：一轮最多 `FLUSH_PASS_MAX`
-   * 条、条间至少 `flushGapMs`（中继路径本就被同会话中继闸天然间隔，终端路径没有，
-   * 所以节流在这里统一兜）。超出的留队列，下轮触发（ingest / 刷新器）继续。
+   * **严格串行**：一轮只送一条，等它的 UPS 回执到了再自续下一拍——同一队列由各模式共用，
+   * 顺序与「一条一条」是队列本身的语义，不是各通道各自节流的副产品。
    */
   async flushSession(sessionId: string): Promise<void> {
     // 暂停闸：未回执超窗 / 投递失败——继续灌只会堆更多不可确认的消息，等重发或回执。
@@ -1063,18 +1061,11 @@ export class MessageDeliverer {
     }
     const surface = this.surfaceOfSession(sessionId);
     const relay = surface?.prompt ?? null;
-    let delivered = 0;
     for (const entry of entries) {
       // 本轮中途置闸（中继即败 / 终端注入失败都是异步落定）：立即停，余下留队列
       if (this.stalled.has(sessionId)) return;
       // 本轮读到之后被删掉的行（dashboard「删除」是取消发送）：跳过
       if (this.dismissedIds.has(entry.id)) continue;
-      if (delivered >= FLUSH_PASS_MAX) {
-        // 本轮量到：余下留队列，**自续下一拍**（socket 直投是毫秒级，不该等下一次事件）
-        this.scheduleFlushContinuation(sessionId);
-        return;
-      }
-      if (delivered > 0) await sleep(this.deps.flushGapMs ?? FLUSH_GAP_MS);
       const msg: PipeMessage = {
         id: entry.id,
         sessionId,
@@ -1095,8 +1086,8 @@ export class MessageDeliverer {
           this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
           this.awaitingAck.set(sessionId, msg.id);
           await this.runTerminalPrompt(msg.id, imgPane.id, this.wireTextOf(msg));
-          delivered++;
           // 终端层贴进框了：余下留队列，等这条的回执再发（同框叠字 = 两条并一条）
+          this.settleQueueIndex(sessionId, project.token);
           return;
         }
       }
@@ -1104,13 +1095,13 @@ export class MessageDeliverer {
       // 零进程零 LLM），队列里的手动面行不该绕过它直奔中继。
       if (surface && (await this.tryInboxDeliver(msg, surface))) {
         removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
-        delivered++;
-        continue;
+        // 一条在手：余下等这条的回执到了再发（回执命中时自续下一拍）
+        this.settleQueueIndex(sessionId, project.token);
+        return;
       }
       const peer = relay?.resolve(sessionId) ?? null;
       // 层序同即时路径（手动面中继退最后）；本轮中继起不来就停轮，余行留队列。
       const layers: Array<'relay' | 'terminal'> = msg.oneWay === true ? ['terminal', 'relay'] : ['relay', 'terminal'];
-      let handled = false;
       for (const layer of layers) {
         if (layer === 'relay' && relay && peer) {
           this.memory.set(msg.id, { ...msg, status: 'delivering', via: 'relay' });
@@ -1119,9 +1110,8 @@ export class MessageDeliverer {
             this.memory.delete(msg.id);
             return;
           }
+          this.awaitingAck.set(sessionId, msg.id);
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
-          delivered++;
-          handled = true;
           break;
         }
         if (layer === 'terminal' && this.terminalChannel()) {
@@ -1131,28 +1121,33 @@ export class MessageDeliverer {
             this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
             this.awaitingAck.set(sessionId, msg.id);
             await this.runTerminalPrompt(msg.id, pane.id, this.wireTextOf(msg));
-            delivered++;
-            handled = true;
             break;
           }
         }
       }
-      // 这条走的是终端层（已贴进输入框）→ 本轮到此为止，等回执再发自续下一拍。
-      if (this.awaitingAck.get(sessionId) === msg.id) return;
-      // 层均不可用（会话没开 / pane 找不到）：已判死的会话里队列行全是死信，
-      // 整批落 offline 并清队（不再每 15s 白探一轮 pane 枚举）；判不动留队列等下轮。
-      if (!handled) {
-        if (this.sessionJudgedDead(sessionId)) {
-          this.failQueuedOffline(
-            sessionId,
-            entries.filter((e) => !this.dismissedIds.has(e.id)),
-          );
-        }
+      // 这条已经出手（直投 / 中继 / 终端任一）→ 本轮到此为止，等它的回执再自续下一拍。
+      if (this.awaitingAck.get(sessionId) === msg.id) {
+        this.settleQueueIndex(sessionId, project.token);
         return;
       }
+      // 层均不可用（会话没开 / pane 找不到）：已判死的会话里队列行全是死信，
+      // 整批落 offline 并清队（不再每 15s 白探一轮 pane 枚举）；判不动留队列等下轮。
+      if (this.sessionJudgedDead(sessionId)) {
+        this.failQueuedOffline(
+          sessionId,
+          entries.filter((e) => !this.dismissedIds.has(e.id)),
+        );
+      }
+      return;
     }
-    const rest = readPromptbox(this.hooksDir, project.token).filter((e) => e.sessionId === sessionId);
-    if (rest.length === 0) this.queuedSessions.delete(sessionId);
+    this.settleQueueIndex(sessionId, project.token);
+  }
+
+  /** 队列空了就把冲洗索引摘掉（本轮提前返回的路径都得过它，否则刷新器永远白探）。 */
+  private settleQueueIndex(sessionId: string, token: string): void {
+    if (readPromptbox(this.hooksDir, token).every((e) => e.sessionId !== sessionId)) {
+      this.queuedSessions.delete(sessionId);
+    }
   }
 
   /** 刷新器入口：扫全部队列会话（只在队列非空时被调用才有意义）。 */
@@ -1334,6 +1329,7 @@ export class MessageDeliverer {
       if (layer === 'relay' && relay && peer) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'relay' });
         if (this.runRelay(entry, relay, peer.name)) {
+          this.awaitingAck.set(entry.sessionId, entry.id);
           return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
         }
         // 同会话中继在途：落队列，下轮冲洗
@@ -1383,6 +1379,8 @@ export class MessageDeliverer {
       settledAt: new Date().toISOString(),
     };
     this.memory.set(entry.id, delivered);
+    // 一条在手（任何层）：下一条先等它的 UPS 回执——同会话的队列必须是「1 送 1 回」。
+    this.awaitingAck.set(entry.sessionId, entry.id);
     this.armAckWatch(delivered);
     this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
     return delivered;

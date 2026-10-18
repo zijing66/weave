@@ -1869,7 +1869,12 @@ describe('MessageDeliverer 裁决表', () => {
     fake.children[1]!.emit('exit', 0, null);
     expect(deliverer.getMessage(firstId)!.status).toBe('delivered');
 
-    // 解闸后：积压行经自续冲洗投出
+    // 一条在手：积压行要等这条的回执（不是中继退 0 就接着发）
+    await deliverer.flushSession(SESSION_ID);
+    expect(fake.calls).toHaveLength(2);
+
+    // 回执到 → 自续冲洗投出积压行
+    deliverer.onSessionPrompt(SESSION_ID, 'failing relay body');
     await vi.waitFor(() => expect(fake.calls).toHaveLength(3));
     fake.children[2]!.emit('exit', 0, null);
     await vi.waitFor(() => expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0));

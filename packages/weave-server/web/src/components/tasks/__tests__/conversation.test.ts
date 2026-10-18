@@ -241,6 +241,18 @@ describe('attachDeliveries', () => {
     expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['e1']);
     expect(outbox.map((m) => m.id)).toEqual(['m3']);
   });
+
+  it('⑧ 已送达即退出待发送（气泡随 UPS 事件来）：未回执也算送出，被闸住的才留', () => {
+    const { outbox } = attachDeliveries(
+      [userEntry],
+      [
+        delivery({ id: 'm-sent', text: '已进收件箱', at: at(20), status: 'delivered' }),
+        delivery({ id: 'm-pending', text: '还在队里', at: at(21), status: 'pending' }),
+        delivery({ id: 'm-blocked', text: '等回执超时', at: at(22), status: 'delivered', stalled: true }),
+      ],
+    );
+    expect(outbox.map((m) => m.id)).toEqual(['m-pending', 'm-blocked']);
+  });
 });
 
 describe('filterThread', () => {

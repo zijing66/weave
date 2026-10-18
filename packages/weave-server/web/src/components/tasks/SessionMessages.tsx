@@ -297,8 +297,10 @@ export function attachDeliveries(
     const pipe = claim(entry);
     return pipe ? { ...entry, pipe } : entry;
   });
+  // 已送达 = 已进会话自己的收件箱（活着的会话一定会发出 UPS，气泡随之而来）：
+  // 它不再属于「待发送」，队列里只留还没送出去的、送失败的、和被闸住的。
   const outbox = deliveries
-    .filter((m) => !taken.has(m.id))
+    .filter((m) => !taken.has(m.id) && (m.status !== 'delivered' || m.stalled === true))
     .sort((a, b) => a.at.localeCompare(b.at));
   return { thread: out, outbox };
 }
@@ -1829,25 +1831,30 @@ export function SessionMessages({
                 ))}
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
-                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:ml-0 max-lg:basis-full max-lg:justify-between">
                   {modeNames.length > 0 && (
                     <button
                       type="button"
                       title={t('tasks.modeCycle')}
                       aria-label={t('tasks.modeCycle')}
                       onClick={() => setConfirmMode(true)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
+                      className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
                     >
                       <FeedbackIcon
                         state={fb.stateOf(`cycleMode:${sessionId}`)}
                         className="h-3 w-3 text-neutral-500"
                         icon={<RotateCcw className="h-3 w-3" />}
                       />
-                      <span className="text-[10px] text-neutral-500">{t('tasks.modeLabel')}</span>
+                      <span className="shrink-0 text-[10px] text-neutral-500">
+                        {t('tasks.modeLabel')}
+                      </span>
                       <span
-                        title={t('tasks.modeLastKnown')}
+                        title={currentMode ?? t('tasks.modeLastKnown')}
                         style={{ color: modeTint ?? undefined }}
-                        className={cn('font-mono text-[11px]', !modeTint && 'text-neutral-400')}
+                        className={cn(
+                          'truncate font-mono text-[11px] max-lg:max-w-[7rem]',
+                          !modeTint && 'text-neutral-400',
+                        )}
                       >
                         {currentMode ?? t('tasks.modeUnknown')}
                       </span>
@@ -1858,7 +1865,7 @@ export function SessionMessages({
                       <span className="shrink-0 text-[10px] text-neutral-500">
                         {t('tasks.modelLabel')}
                       </span>
-                      <div className="relative">
+                      <div className="relative min-w-0">
                         <select
                           value={modelValue}
                           onChange={(e) => {
@@ -1867,7 +1874,7 @@ export function SessionMessages({
                           }}
                           title={t('tasks.modelLastKnown')}
                           aria-label={t('tasks.modelLabel')}
-                          className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none"
+                          className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none max-lg:max-w-[8rem]"
                         >
                           {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
                           {modelOptions.map((o) => (
