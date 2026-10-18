@@ -745,6 +745,15 @@ describe('statusline — data segments', () => {
     const other = runScript(script, { session_id: 'sess-b', workspace: { current_dir: repo } });
     expect(other).toContain('trunk');
     expect(other).not.toContain('feature');
+
+    // The same directory spelled with forward slashes is still the same project:
+    // the shared file is keyed by a normalised cwd, so this must not re-probe.
+    const slashed = runScript(script, {
+      session_id: 'sess-c',
+      workspace: { current_dir: repo.replace(/\\/g, '/') },
+    });
+    expect(slashed).toContain('trunk');
+    expect(slashed).not.toContain('feature');
   });
 
   it('a failed git lookup is only remembered briefly, then re-probed', async () => {

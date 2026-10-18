@@ -212,7 +212,8 @@ var CACHE_DIRTY = false;
 
 // Git 段描述的是工作区，不是会话：同一项目的每个会话都在问同一个问题。所以
 // 它另存一份按目录分片的文件（git-<cwd 摘要>.json），各会话共享——一个 TTL 内
-// 整个项目只付一次 git 子进程，有多少会话在渲染都一样。并发写用同一套
+// 整个项目只付一次 git 子进程，有多少会话在渲染都一样。条目键因此只是
+// branch / git_user / changes 三样，不带目录（目录已经是文件名了）。并发写用同一套
 // tmp+rename，后写的整份覆盖先写的（丢一条过期条目只会让下次重探一次）。
 var GIT_FILE = null;
 var GIT_CACHE = null;
@@ -237,8 +238,10 @@ function initCache(input) {
   var crypto = require('crypto');
   CACHE_FILE = path.join(CACHE_DIR, cacheKeyOf(input) + '.json');
   var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
-  // Windows 路径不区分大小写——归一化，一个项目只映射到一个文件
-  var dirKey = crypto.createHash('sha1').update(String(cwd).toLowerCase()).digest('hex').slice(0, 16);
+  // 一个目录一个文件：大小写不敏感（Windows），分隔符与尾斜杠的不同写法也算同一个
+  var dirKey = crypto.createHash('sha1')
+    .update(String(cwd).toLowerCase().replace(/\\\\/g, '/').replace(/\\/+$/, ''))
+    .digest('hex').slice(0, 16);
   GIT_FILE = path.join(CACHE_DIR, 'git-' + dirKey + '.json');
 }
 
@@ -510,7 +513,7 @@ function segmentTokens(key, seg) {
       return cwd ? { name: name, path: cwd } : null;
     }
     case 'git': {
-      var branch = cachedGit('branch:' + cwd, GIT_BRANCH_TTL, function () {
+      var branch = cachedGit('branch', GIT_BRANCH_TTL, function () {
         try {
           return require('child_process').execFileSync(
             'git', ['rev-parse', '--abbrev-ref', 'HEAD'],
@@ -528,14 +531,14 @@ function segmentTokens(key, seg) {
       };
     }
     case 'git_user':
-      return cachedGit('git_user:' + cwd, GIT_IDENTITY_TTL, function () {
+      return cachedGit('git_user', GIT_IDENTITY_TTL, function () {
         // Both fields must be set — a partial identity would render 'name <>'
         var gitUser = gitConfigValue(cwd, 'user.name');
         var gitEmail = gitConfigValue(cwd, 'user.email');
         return gitUser && gitEmail ? { user: gitUser, email: gitEmail } : null;
       });
     case 'changes':
-      return cachedGit('changes:' + cwd, GIT_CHANGES_TTL, function () {
+      return cachedGit('changes', GIT_CHANGES_TTL, function () {
         var diff = gitNumstat(cwd);
         return diff ? { added: diff.added, deleted: diff.deleted, files: diff.files } : null;
       });
