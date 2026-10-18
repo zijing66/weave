@@ -17,8 +17,8 @@
 > - 回执：会话自己的 `UserPromptSubmit`（`payload.raw.prompt`）与在途条目匹配
 >   （剥掉 `<cross-session-message …>` 外壳后比对）→ `acked` + `message.acknowledged` 帧。
 >
-> **中继为何保留**：见 CLAUDE.md 同名条目——①来源语义（跨会话限制 vs 用户权威）
-> ②唯一可能的回复面 ③覆盖非 weave 会话/存量未升级 hook 的项目。
+> **中继为何保留**：见 CLAUDE.md 同名条目——①具名来源（两条路径都是跨会话消息，
+> 中继多出 `Message from @weave`）②唯一可能的回复面 ③覆盖非 weave 会话/存量未升级 hook 的项目。
 > **凭据落盘（2026-10-16 改）**：`<dataDir>/hooks/inbox-targets.json`（0600，与
 > auth.json 同口径的非 UI 面）——**只解 daemon 自己的重启**。凭据活在**会话进程**
 > 里（socket 由它托管、token 每进程一份），daemon 重启不动它们，所以盘上捡回来的
@@ -95,8 +95,9 @@ DB 佐证：hook_events id=33333 session=3de0d761 type=UserPromptSubmit
 3. **回执（同一份验证顺手拿到）**：消息到达会触发接收会话的 `UserPromptSubmit`，
    payload 里就是我们注入的原文 → 与在途条目匹配即置 `acknowledged`（真回执），
    并据此核销队列。**中继/终端路径同样受益**（终端的投递此前完全没有回执）。
-4. **来源标注**：socket 消息是**裸 user 文本**（不像 SendMessage 会带
-   `Message from @weave`）→ 载荷由 weave 自己加前缀标注来源，语义与现「单向注记」同源。
+4. **来源标注**：socket 投递不带具名来源（不像 SendMessage 会带 `Message from @weave`，
+   但宿主同样把它渲染成跨会话消息，见 2026-10-18 实测）→ 载荷由 weave 自己加前缀标注来源，
+   语义与现「单向注记」同源。
 
 ## 风险与边界
 
