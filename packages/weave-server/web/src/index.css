@@ -69,7 +69,8 @@
 /* Markdown prose — dashboard tuning。代码块两套主题都保持深底：
    highlight.js 只引了 github-dark 一套，底翻白等于把浅色字铺在浅色底上。 */
 .prose pre {
-  @apply bg-neutral-900 border border-edge/[0.08] rounded-lg;
+  @apply bg-neutral-900 border rounded-lg;
+  border-color: rgb(var(--w-edge) / 0.08);
 }
 .prose code::before,
 .prose code::after {
