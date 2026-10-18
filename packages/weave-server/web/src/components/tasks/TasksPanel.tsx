@@ -84,12 +84,15 @@ type ConvTarget = {
 export function TasksPanel({
   projectId,
   initialSessionId,
+  onSelectSession,
   projectLabel,
   harnesses,
 }: {
   projectId: number;
   /** 初始选中会话（全局总览跳转用）；不传则默认最新会话。 */
   initialSessionId?: string;
+  /** 选中/取消选中会话 → 写 URL（三级位置，App 统一落）。 */
+  onSelectSession?: (sessionId: string | null) => void;
   /** 项目目录名（对话弹窗标题副行；CategoryDetail 按 projectId 解好）。 */
   projectLabel: string;
   /** 本项目已接入的 harness（init 选择结果，与项目卡标签同源）。 */
@@ -120,6 +123,12 @@ export function TasksPanel({
   const [rules, setRules] = useState<HookRule[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** 已落过的三级位置（项目 + 会话）：本面板自己点出来的选中会经 URL 回写成同值 prop，
+   *  按这份账认回声，免得每次点会话都重设一遍并闪高亮。 */
+  const appliedSel = useRef<{ project: number; sessionId: string | null }>({
+    project: projectId,
+    sessionId: initialSessionId ?? null,
+  });
   const [error, setError] = useState<string | null>(null);
   const [pendingRun, setPendingRun] = useState<{
     dispatchId: number;
@@ -219,19 +228,23 @@ export function TasksPanel({
     [projectId],
   );
 
+  // 三级位置从外面变（深链 / 前进后退 / 全局总览跳转）才落：换项目必落，同项目同值 = 回声
   useEffect(() => {
-    setSelectedId(initialSessionId ?? null);
-    // 全局总览跳转带入初始会话：不自动开事件链 drawer（drawer 只由点会话进入），
+    const next = initialSessionId ?? null;
+    const prev = appliedSel.current;
+    if (prev.project === projectId && prev.sessionId === next) return;
+    appliedSel.current = { project: projectId, sessionId: next };
+    setSelectedId(next);
+    // 跳转带入的会话不自动开事件链 drawer（drawer 只由点会话进入），
     // 会话行高亮边框 3s 指位后移除。
-    if (initialSessionId) {
-      setHighlightId(initialSessionId);
-      window.setTimeout(
-        () => setHighlightId((cur) => (cur === initialSessionId ? null : cur)),
-        3000,
-      );
+    if (next) {
+      setHighlightId(next);
+      window.setTimeout(() => setHighlightId((cur) => (cur === next ? null : cur)), 3000);
     }
-    api.listHooksRules(projectId).then(setRules).catch(() => {});
   }, [projectId, initialSessionId]);
+  useEffect(() => {
+    api.listHooksRules(projectId).then(setRules).catch(() => {});
+  }, [projectId]);
 
   // 消息能力矩阵（服务端 MessagingSurface 纯派生）：按钮门控与弹窗模式选项的
   // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
@@ -638,10 +651,12 @@ export function TasksPanel({
   const focusSession = useCallback(
     (sessionId: string): void => {
       setSelectedId(sessionId);
+      appliedSel.current = { project: projectId, sessionId };
+      onSelectSession?.(sessionId);
       openConv(sessionId);
       if (!isDesktop) setPaneOpen(true);
     },
-    [openConv, isDesktop],
+    [openConv, isDesktop, onSelectSession, projectId],
   );
   /** 右栏主体是对话还是事件链：选中会话解不出对话面（无闭轮事件的 harness）→ 事件链。 */
   const hasConv = selectedId !== null && convs.has(selectedId);
@@ -813,7 +828,11 @@ export function TasksPanel({
       `del:${sessionId}`,
       async () => {
         const res = await api.deleteSession(sessionId);
-        if (selectedId === sessionId) setSelectedId(null);
+        if (selectedId === sessionId) {
+          setSelectedId(null);
+          appliedSel.current = { project: projectId, sessionId: null };
+          onSelectSession?.(null);
+        }
         await refreshStatus();
         show('success', t('toast.sessionDeleted', { n: res.events }));
       },

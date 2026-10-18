@@ -49,6 +49,7 @@ import { Resizer } from '@/components/Resizer';
 import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
+import { navigate, parseRoute, useRoutePath } from '@/lib/route';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { Github, Library, LogOut, PanelLeft, Settings, X } from 'lucide-react';
@@ -125,6 +126,8 @@ function Dashboard() {
   }, [queryClient]);
   // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
   const shellReady = !projectsQuery.isPending;
+  /** 位置（`lib/route.ts`）：URL 是唯一真源，手势只写它，状态由下面那条 effect 落。 */
+  const path = useRoutePath();
   // 顶栏 GitHub 链接的 star 数（浏览器直取 + localStorage 缓存；未知 = null）
   const stars = useRepoStars();
   const [selected, setSelected] = useState<ProjectRow | null>(null);
@@ -392,8 +395,34 @@ function Dashboard() {
   // this can't re-fire after the user navigates.
   useEffect(() => {
     if (globalMode || selected || projects.length === 0) return;
+    // 深链还在落（地址已经指明去哪）就别抢，否则刷新 /p/3/tasks 会被拽回全局
+    if (parseRoute(path).kind !== 'none') return;
     selectGlobal();
-  }, [globalMode, selected, projects, selectGlobal]);
+    navigate({ kind: 'global', category: mainCategory }, { replace: true });
+  }, [globalMode, selected, projects, selectGlobal, path, mainCategory]);
+
+  // URL → 状态（唯一落点）：手势与后退/前进都只改地址，再由这里落成 state。
+  // 反过来「状态 → URL」只有手势那几处 navigate，两向不互相触发。
+  useEffect(() => {
+    if (!shellReady) return;
+    const route = parseRoute(path);
+    if (route.kind === 'none') return;
+    if (route.kind === 'global') {
+      if (!globalMode) selectGlobal();
+      setMainCategory(route.category);
+      setInitialSessionId(null);
+      return;
+    }
+    const target = projects.find((p) => p.id === route.projectId);
+    if (!target) {
+      // 项目没了（归档/删除）的旧链接：落到全局，别留一个指不到项目的地址
+      navigate({ kind: 'global', category: 'tasks' }, { replace: true });
+      return;
+    }
+    if (globalMode || selected?.id !== target.id) loadProject(target);
+    setMainCategory(route.category);
+    setInitialSessionId(route.sessionId);
+  }, [path, shellReady, projects, globalMode, selected, loadProject, selectGlobal]);
 
   // Skill names already installed (project assets + machine-global set), for the
   // ✓ mark in the library panel. In global mode the project list is empty, so
@@ -882,14 +911,18 @@ function Dashboard() {
           );
           if (selected?.id === p.id) {
             const next = projects.find((x) => x.id !== p.id);
-            if (next) loadProject(next);
-            else setSelected(null); // 没有活跃项目了 → 主区回落空态
+            navigate(
+              next
+                ? { kind: 'project', projectId: next.id, category: 'tasks', sessionId: null }
+                : { kind: 'global', category: 'tasks' },
+              { replace: true },
+            );
           }
           refreshProjects();
         },
         { fail: (e) => t('errors.archiveFailed', { error: errorText(e) }) },
       ),
-    [fb, selected, projects, loadProject, show, t, refreshProjects],
+    [fb, selected, projects, show, t, refreshProjects],
   );
   const handleRestoreProject = useCallback(
     (p: ProjectRow) =>
@@ -985,25 +1018,38 @@ function Dashboard() {
     [handleUninstallSkill, show, t],
   );
 
-  const selectCategory = useCallback((c: MainCategory) => {
-    setMainCategory(c);
-    // 初始选中会话只在任务视图内有效（回看时回落默认最新组/会话）
-    if (c !== 'tasks') setInitialSessionId(null);
-    if (c === 'personalization') setStatuslineNonce((n) => n + 1);
-    // reopen → pick up rule changes made elsewhere before the card count shows
-    if (c === 'weave') refreshHookRules();
-  }, [refreshHookRules]);
+  const selectCategory = useCallback(
+    (c: MainCategory) => {
+      // 换卡即离开会话级（URL 里不再带 sid），由 route effect 落 state
+      navigate(
+        globalMode || !selected
+          ? { kind: 'global', category: c }
+          : { kind: 'project', projectId: selected.id, category: c, sessionId: null },
+      );
+      if (c === 'personalization') setStatuslineNonce((n) => n + 1);
+      // reopen → pick up rule changes made elsewhere before the card count shows
+      if (c === 'weave') refreshHookRules();
+    },
+    [globalMode, selected, refreshHookRules],
+  );
 
   /** 全局任务总览行点击：退出全局 → 载入对应项目 → 任务视图选中该会话。 */
   const openSessionInProject = useCallback(
     (projectId: number, sessionId: string) => {
-      const target = projects.find((p) => p.id === projectId);
-      if (!target) return;
-      loadProject(target); // 同批内已把 mainCategory 置为 tasks（默认卡），这里仅选中会话
-      setInitialSessionId(sessionId);
-      setMainCategory('tasks');
+      if (!projects.some((p) => p.id === projectId)) return;
+      navigate({ kind: 'project', projectId, category: 'tasks', sessionId });
     },
-    [projects, loadProject],
+    [projects],
+  );
+
+  /** 任务视图里选中/取消选中会话 → 写 URL（三级位置）。 */
+  const selectTaskSession = useCallback(
+    (sessionId: string | null) => {
+      const projectId = selected?.id ?? projects[0]?.id;
+      if (projectId === undefined) return;
+      navigate({ kind: 'project', projectId, category: 'tasks', sessionId });
+    },
+    [selected, projects],
   );
 
   function onDragStart(e: DragStartEvent) {
@@ -1071,11 +1117,11 @@ function Dashboard() {
       selectedId={selected?.id}
       globalActive={globalMode}
       onSelect={(p) => {
-        loadProject(p);
+        navigate({ kind: 'project', projectId: p.id, category: 'tasks', sessionId: null });
         setMobilePanel(null);
       }}
       onSelectGlobal={() => {
-        selectGlobal();
+        navigate({ kind: 'global', category: 'tasks' });
         setMobilePanel(null);
       }}
       onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
@@ -1314,6 +1360,7 @@ function Dashboard() {
                         }}
                         projects={projects}
                         onOpenSession={openSessionInProject}
+                        onSelectSession={selectTaskSession}
                         initialSessionId={initialSessionId ?? undefined}
                         dragPayload={dragPayload}
                       />

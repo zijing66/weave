@@ -153,6 +153,7 @@ export function CategoryDetail({
   onOpenSkillDetail,
   projects,
   onOpenSession,
+  onSelectSession,
   initialSessionId,
   dragPayload,
 }: {
@@ -192,6 +193,8 @@ export function CategoryDetail({
   /** 全局任务总览的项目名映射与跳转入口。 */
   projects: ProjectRow[];
   onOpenSession: (projectId: number, sessionId: string) => void;
+  /** 任务视图里选中会话 → 写 URL（三级位置）。 */
+  onSelectSession: (sessionId: string | null) => void;
   /** 全局总览跳进项目任务视图时的初始选中会话。 */
   initialSessionId?: string;
   /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
@@ -495,6 +498,7 @@ export function CategoryDetail({
           <TasksPanel
             projectId={projectId}
             initialSessionId={initialSessionId}
+            onSelectSession={onSelectSession}
             projectLabel={projects.find((p) => p.id === projectId)?.name ?? ''}
             harnesses={projects.find((p) => p.id === projectId)?.harnesses ?? []}
           />
