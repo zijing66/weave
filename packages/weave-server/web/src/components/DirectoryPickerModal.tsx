@@ -158,6 +158,10 @@ export function DirectoryPickerModal({
       const isExpanded = expanded.has(node.path);
       const isChecked = selected.includes(node.path);
       const isExisting = existing.has(node.path);
+      // 资源位置 = 市场副本所在目录（已登记资源的父目录）：它是导航锚点，
+      // 把它自己当来源再导入一遍等于把已有副本再拷一份，清单里同一资源出现两次。
+      const isAnchor = node.rootKind === 'library-parent';
+      const selectable = !isExisting && !isAnchor;
       const meta = node.rootKind ? ROOT_LABELS[node.rootKind] : null;
       const children = childrenByPath.get(node.path);
       const isLoading = loadingPaths.has(node.path);
@@ -182,7 +186,7 @@ export function DirectoryPickerModal({
             onClick={() => toggleExpand(node.path)}
             className={cn(
               'flex-1 min-w-0 flex items-center gap-1.5 text-left py-1 truncate',
-              isExisting ? 'text-neutral-500' : 'text-neutral-200',
+              selectable ? 'text-neutral-200' : 'text-neutral-500',
             )}
             title={node.path}
           >
@@ -202,15 +206,21 @@ export function DirectoryPickerModal({
           </button>
           <button
             onClick={() => toggleCheck(node.path)}
-            disabled={isExisting}
+            disabled={!selectable}
             className={cn(
               'shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors',
               isChecked
                 ? 'bg-blue-500 border-blue-500 text-white'
                 : 'border-neutral-600 text-transparent group-hover:border-neutral-400',
-              isExisting && 'opacity-30 cursor-not-allowed',
+              !selectable && 'opacity-30 cursor-not-allowed',
             )}
-            title={isChecked ? t('picker.unselect') : t('picker.selectFolder')}
+            title={
+              isAnchor
+                ? t('picker.anchorTip')
+                : isChecked
+                  ? t('picker.unselect')
+                  : t('picker.selectFolder')
+            }
           >
             <Check className="h-3 w-3" />
           </button>

@@ -12,6 +12,7 @@ export const libraryZh = {
   'picker.drive': '磁盘',
   'picker.root': '根目录',
   'picker.alreadyAdded': '已添加',
+  'picker.anchorTip': '资源位置是市场副本所在目录，其中的资源已在列表中，不能再作为来源导入',
   'picker.selectFolder': '选择此文件夹',
   'picker.unselect': '取消选择',
   'picker.noneSelected': '尚未选择任何文件夹',
@@ -174,6 +175,8 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'picker.drive': 'Drive',
   'picker.root': 'Root',
   'picker.alreadyAdded': 'Added',
+  'picker.anchorTip':
+    'Resource location holds the market copies — its resources are already listed and cannot be imported again',
   'picker.selectFolder': 'Select this folder',
   'picker.unselect': 'Deselect',
   'picker.noneSelected': 'No folders selected yet',
