@@ -424,7 +424,7 @@ export class MessageDeliverer {
       this.scheduleFlushContinuation(entry.sessionId);
     }
     const result = queuedAhead
-      ? { ok: true as const, messageId: entry.id, status: 'pending' as const, message: { ...entry, status: 'pending' as const } }
+      ? { ok: true as const, messageId: entry.id, status: 'pending' as const, message: entry }
       : channel === 'inject'
         ? this.deliverInject(entry, project.token, meta, surface)
         : channel === 'headless'
