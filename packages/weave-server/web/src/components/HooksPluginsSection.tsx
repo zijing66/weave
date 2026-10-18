@@ -137,7 +137,7 @@ export function HooksPluginsSection({
         return (
           <div
             key={p.id}
-            className="rounded-md border border-white/[0.06] bg-white/[0.015] overflow-hidden"
+            className="rounded-md border border-edge/[0.06] bg-edge/[0.015] overflow-hidden"
           >
             <div className="flex items-center gap-2 px-2 py-1.5">
               {expandable && (
@@ -226,7 +226,7 @@ export function HooksPluginsSection({
           type="button"
           onClick={rescan}
           title={t('hooks.plugins.rescanTip')}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-white/[0.06] hover:text-neutral-200"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-200"
         >
           <FeedbackIcon state={fb.stateOf('rescan')} className="h-3 w-3" icon={<RotateCw className="h-3 w-3" />} />
           {t('hooks.plugins.rescan')}

@@ -38,7 +38,7 @@ export function AssistantMarkdown({ text }: { text: string }) {
         '[&_strong]:font-semibold [&_strong]:text-neutral-100 [&_em]:italic ' +
         '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 ' +
         '[&_code]:rounded [&_code]:bg-neutral-950/60 [&_code]:px-1 [&_code]:py-px [&_code]:text-[11px] [&_code]:text-neutral-300 ' +
-        '[&_pre]:my-1.5 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-white/[0.06] [&_pre]:bg-neutral-950/60 [&_pre]:p-2 ' +
+        '[&_pre]:my-1.5 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-edge/[0.06] [&_pre]:bg-neutral-950/60 [&_pre]:p-2 ' +
         '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[11px] ' +
         '[&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-[13px] [&_h1]:font-semibold ' +
         '[&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold ' +
@@ -46,9 +46,9 @@ export function AssistantMarkdown({ text }: { text: string }) {
         '[&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-700 [&_blockquote]:pl-2 [&_blockquote]:text-neutral-400 ' +
         '[&_a]:text-blue-400 [&_a]:underline ' +
         '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px] ' +
-        '[&_th]:border [&_th]:border-white/[0.08] [&_th]:bg-neutral-950/40 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium ' +
-        '[&_td]:border [&_td]:border-white/[0.08] [&_td]:px-1.5 [&_td]:py-1 [&_td]:align-top ' +
-        '[&_hr]:my-2 [&_hr]:border-white/[0.08]'
+        '[&_th]:border [&_th]:border-edge/[0.08] [&_th]:bg-neutral-950/40 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium ' +
+        '[&_td]:border [&_td]:border-edge/[0.08] [&_td]:px-1.5 [&_td]:py-1 [&_td]:align-top ' +
+        '[&_hr]:my-2 [&_hr]:border-edge/[0.08]'
       }
     >
       <ReactMarkdown
@@ -149,14 +149,14 @@ export function AiAssistant() {
         type="button"
         onClick={() => setOpen((value) => !value)}
         title={open ? t('ai.close') : t('ai.open')}
-        className="fixed bottom-4 right-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-white/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
+        className="fixed bottom-4 right-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-edge/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
       >
         <Bot className="h-5 w-5" />
       </button>
       {open &&
         createPortal(
-          <div className="fixed bottom-20 right-4 z-[55] flex h-[520px] max-h-[70dvh] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac">
-            <header className="h-11 shrink-0 flex items-center gap-2 border-b border-white/[0.06] px-4 frosted">
+          <div className="fixed bottom-20 right-4 z-[55] flex h-[520px] max-h-[70dvh] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac">
+            <header className="h-11 shrink-0 flex items-center gap-2 border-b border-edge/[0.06] px-4 frosted">
               <Bot className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-neutral-200">{t('ai.title')}</span>
               <button
@@ -220,7 +220,7 @@ export function AiAssistant() {
             </div>
 
             <form
-              className="shrink-0 flex items-end gap-2 border-t border-white/[0.06] p-2"
+              className="shrink-0 flex items-end gap-2 border-t border-edge/[0.06] p-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();

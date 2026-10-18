@@ -19,7 +19,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 
 /** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
 const ACTION_BTN =
-  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200';
+  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200';
 
 /** 活动序重排落地周期：事件流实时刷新行数据与成员增删，但既有行的重排只由
  *  这个定时器统一落地，避免会话更新时列表频繁跳动。 */
@@ -415,7 +415,7 @@ export function SessionList({
           'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
           selected
             ? 'border-blue-500/50 bg-blue-500/10'
-            : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10] hover:bg-white/[0.04]',
+            : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
           highlightId === s.sessionId && 'border-rose-400/70',
           droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
         )}
@@ -478,7 +478,7 @@ export function SessionList({
                     ACTION_BTN,
                     // 已打开 / 开启中：不吃 hover 反馈（否则看着还能点）
                     (s.pidAlive || openTermState === 'loading') &&
-                      'disabled:cursor-not-allowed hover:border-white/[0.08] hover:bg-white/[0.02] hover:text-neutral-500',
+                      'disabled:cursor-not-allowed hover:border-edge/[0.08] hover:bg-edge/[0.02] hover:text-neutral-500',
                   )}
                 >
                   <FeedbackIcon
@@ -534,7 +534,7 @@ export function SessionList({
                   <HelpCircle className="h-3 w-3 text-amber-300" />
                   <span
                     aria-hidden
-                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-black"
                   >
                     {pendingCount}
                   </span>
@@ -576,7 +576,7 @@ export function SessionList({
                   {watch && (
                     <span
                       aria-hidden
-                      className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-neutral-950"
+                      className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-black"
                     >
                       {watch.remaining === null ? '∞' : watch.remaining}
                     </span>
@@ -678,7 +678,7 @@ export function SessionList({
           // 块头：这一块可见屏幕的标识 + 会话数——同屏会话靠它分成一组。
           <li
             key={`terminal:${entry.terminal.id}`}
-            className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-2"
+            className="rounded-xl border border-edge/[0.06] bg-edge/[0.02] p-2"
           >
             <div className="mb-1.5 flex items-center gap-1.5 text-[10px] text-neutral-400">
               <SquareTerminal className="h-3 w-3 shrink-0 text-neutral-500" />

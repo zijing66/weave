@@ -464,7 +464,7 @@ export function LibraryPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-white/[0.06] space-y-2">
+      <div className="p-3 border-b border-edge/[0.06] space-y-2">
         <div className="flex items-center gap-2">
           <h2 className="text-xs font-semibold text-neutral-400 uppercase">{t('library.heading')}</h2>
           {!noTemplates && (
@@ -486,7 +486,7 @@ export function LibraryPanel({
         </div>
 
         {/* Install-to context (follows the active project/global selection) */}
-        <div className="rounded-md border border-white/[0.06] bg-neutral-900/60 p-2 flex items-center gap-2">
+        <div className="rounded-md border border-edge/[0.06] bg-neutral-900/60 p-2 flex items-center gap-2">
           {scope === 'user' ? (
             <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           ) : (
@@ -639,7 +639,7 @@ export function LibraryPanel({
         )}
 
         {noTemplates && (
-          <div className="rounded-md border border-dashed border-white/[0.08] bg-neutral-900/40 p-4 text-center">
+          <div className="rounded-md border border-dashed border-edge/[0.08] bg-neutral-900/40 p-4 text-center">
             <PackageX className="h-5 w-5 mx-auto text-neutral-600 mb-1" />
             <p className="text-xs text-neutral-500">
               {t('library.noTemplates', { name: categoryLabel(category, t) })}
@@ -695,7 +695,7 @@ export function LibraryPanel({
                         toggleGroup(key);
                       }
                     }}
-                    className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none"
+                    className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none"
                     title={group || t('library.rootName')}
                   >
                     {collapsed ? (
@@ -893,7 +893,7 @@ export function LibraryPanel({
               return (
                 <div
                   key={pk}
-                  className="rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5 space-y-1"
+                  className="rounded-md border border-edge/[0.06] bg-edge/[0.015] px-2 py-1.5 space-y-1"
                 >
                   {/* 折叠条头：点击切换展开；Switch/「—」stopPropagation 防误展开 */}
                   <div
@@ -906,7 +906,7 @@ export function LibraryPanel({
                         togglePlugin(pk);
                       }
                     }}
-                    className="flex flex-wrap items-center gap-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+                    className="flex flex-wrap items-center gap-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20"
                   >
                     {expanded ? (
                       <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
@@ -1203,10 +1203,10 @@ function MarketCard({
       }}
       className={cn(
         'rounded-md border px-2 py-1.5 space-y-1 cursor-pointer select-none',
-        'focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none',
+        'focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none',
         selected
           ? 'border-neutral-700 bg-neutral-800/80'
-          : 'border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]',
+          : 'border-edge/[0.06] bg-edge/[0.015] hover:bg-edge/[0.04]',
       )}
       title={item.path}
     >
@@ -1392,7 +1392,7 @@ function TemplateSection({
             onToggle();
           }
         }}
-        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20 [&_svg]:pointer-events-none"
+        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none"
         title={open ? t('common.collapse') : t('common.expand')}
       >
         {open ? (
@@ -1704,7 +1704,7 @@ function McpForm({
   }
 
   return (
-    <div className="border-t border-white/[0.06] p-3 space-y-1.5">
+    <div className="border-t border-edge/[0.06] p-3 space-y-1.5">
       <h3 className="text-xs font-semibold text-neutral-400 uppercase flex items-center gap-1">
         <Server className="h-3 w-3" /> {t('library.addMcpServer')}
       </h3>

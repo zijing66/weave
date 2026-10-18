@@ -50,9 +50,10 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { navigate, parseRoute, useRoutePath } from '@/lib/route';
+import { toggleTheme, useTheme } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { Github, Library, LogOut, PanelLeft, Settings, X } from 'lucide-react';
+import { Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -167,6 +168,7 @@ function Dashboard() {
   /** 按钮反馈（loading → ✅ → 2s 复原），按 key 记状态。 */
   const fb = useActionFeedback();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const themeMode = useTheme();
   // 移动端外壳（<1024px 单栏）：左右栏改滑出抽屉；拖拽 sensor 按指针类型分流。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const finePointer = useMediaQuery('(pointer: fine)');
@@ -1174,8 +1176,8 @@ function Dashboard() {
       onDragCancel={() => setDragPayload(null)}
     >
       <div className="h-dvh p-0 lg:p-4 bg-neutral-950">
-        <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-white/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
-          <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-white/[0.06] frosted">
+        <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-edge/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
+          <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-edge/[0.06] frosted">
             {/* <lg：左右栏收进滑出抽屉，顶栏放两个入口 */}
             <button
               onClick={() => setMobilePanel('projects')}
@@ -1218,6 +1220,15 @@ function Dashboard() {
                 <span className="text-[11px] tabular-nums">{formatStars(stars)}</span>
               )}
             </a>
+            {/* 深色 / 浅色切换：图标画的是「按下去会变成哪个」 */}
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title={themeMode === 'dark' ? t('app.themeToLight') : t('app.themeToDark')}
+              aria-label={themeMode === 'dark' ? t('app.themeToLight') : t('app.themeToDark')}
+            >
+              {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
             <button
               onClick={() => setSettingsOpen(true)}
               className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
@@ -1241,7 +1252,7 @@ function Dashboard() {
               <>
                 <aside
                   style={{ width: leftW }}
-                  className="shrink-0 border-r border-white/[0.06] frosted overflow-y-auto"
+                  className="shrink-0 border-r border-edge/[0.06] frosted overflow-y-auto"
                 >
                   {projectListEl}
                 </aside>
@@ -1253,7 +1264,7 @@ function Dashboard() {
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {activeProject ? (
                 <>
-                  <div className="px-4 py-2 border-b border-white/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <div className="px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-semibold truncate">
                         {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
@@ -1416,7 +1427,7 @@ function Dashboard() {
                 <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title={t('app.resizeRight')} />
                 <aside
                   style={{ width: rightW }}
-                  className="shrink-0 border-l border-white/[0.06] frosted overflow-hidden"
+                  className="shrink-0 border-l border-edge/[0.06] frosted overflow-hidden"
                 >
                   {libraryPanelEl}
                 </aside>
@@ -1436,13 +1447,13 @@ function Dashboard() {
           />
           <aside
             className={cn(
-              'absolute top-0 bottom-0 w-[min(88vw,360px)] bg-neutral-900 border-white/[0.08] shadow-mac flex flex-col',
+              'absolute top-0 bottom-0 w-[min(88vw,360px)] bg-neutral-900 border-edge/[0.08] shadow-mac flex flex-col',
               mobilePanel === 'projects'
                 ? 'left-0 border-r drawer-left'
                 : 'right-0 border-l drawer-right',
             )}
           >
-            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
               <span className="text-sm font-semibold tracking-tight text-neutral-200">
                 {mobilePanel === 'projects' ? t('app.mobileProjects') : t('app.mobileLibrary')}
               </span>

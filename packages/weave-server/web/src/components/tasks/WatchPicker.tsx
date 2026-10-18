@@ -79,7 +79,7 @@ export function WatchPicker({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className="w-full max-w-sm rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">
@@ -111,13 +111,13 @@ export function WatchPicker({
                     'flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors',
                     on
                       ? 'border-amber-400/40 bg-amber-500/10'
-                      : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.16] hover:bg-white/[0.06]',
+                      : 'border-edge/[0.06] bg-edge/[0.02] hover:border-edge/[0.16] hover:bg-edge/[0.06]',
                   )}
                 >
                   <span
                     className={cn(
                       'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
-                      on ? 'border-amber-400 bg-amber-500 text-neutral-950' : 'border-white/20',
+                      on ? 'border-amber-400 bg-amber-500 text-black' : 'border-edge/20',
                     )}
                   >
                     {on && <Check className="h-2.5 w-2.5" />}
@@ -135,7 +135,7 @@ export function WatchPicker({
         </ul>
         {/* 提醒次数：数字 = 命中该次数后失效（所有已选类型共用一个计数）；
             勾了「持久化」= 不自动失效。 */}
-        <div className="mt-3 flex items-center gap-2 border-t border-white/[0.06] pt-2.5">
+        <div className="mt-3 flex items-center gap-2 border-t border-edge/[0.06] pt-2.5">
           <span className="text-[11px] text-neutral-400">
             {t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
           </span>
@@ -176,7 +176,7 @@ export function WatchPicker({
               type="button"
               disabled={busy}
               onClick={onUnwatch}
-              className="rounded border border-white/[0.08] px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:border-red-400/40 hover:text-red-300 disabled:opacity-40"
+              className="rounded border border-edge/[0.08] px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:border-red-400/40 hover:text-red-300 disabled:opacity-40"
             >
               {t('tasks.watchUnwatch')}
             </button>

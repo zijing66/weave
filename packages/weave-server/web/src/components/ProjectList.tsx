@@ -279,8 +279,8 @@ export function ProjectList({
               className={cn(
                 'group relative rounded-xl border transition-colors duration-200',
                 !globalActive && selectedId === p.id
-                  ? 'border-white/[0.14] bg-neutral-800/60'
-                  : 'border-white/[0.06] bg-neutral-900/50 hover:border-white/[0.10]',
+                  ? 'border-edge/[0.14] bg-neutral-800/60'
+                  : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10]',
                 isDragging && 'z-10 opacity-80',
               )}
               onMouseEnter={() => onHoverProject?.(p.id)}
@@ -318,7 +318,7 @@ export function ProjectList({
                 }}
                 className={cn(
                   'min-w-0 flex-1 flex items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors duration-200',
-                  'hover:bg-white/[0.04]',
+                  'hover:bg-edge/[0.04]',
                 )}
               >
                 <span className="min-w-0 flex-1">
@@ -452,8 +452,8 @@ export function ProjectList({
         createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setArchivedOpen(false)} />
-            <div className="relative w-[680px] max-w-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
-              <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+            <div className="relative w-[680px] max-w-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+              <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
                 <Archive className="h-4 w-4 text-neutral-400" />
                 <span className="text-sm font-semibold text-neutral-200">
                   {t('project.archivedSection')}
@@ -472,7 +472,7 @@ export function ProjectList({
                   {archivedProjects.map((p) => (
                     <div
                       key={p.id}
-                      className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-neutral-900/50 p-3"
+                      className="flex flex-col gap-2 rounded-xl border border-edge/[0.06] bg-neutral-900/50 p-3"
                     >
                       <div className="flex items-center gap-2">
                         <Archive className="h-4 w-4 shrink-0 text-neutral-600" />
@@ -492,7 +492,7 @@ export function ProjectList({
                         type="button"
                         onClick={() => onRestore?.(p)}
                         title={t('project.restoreTooltip')}
-                        className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-100"
+                        className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-100"
                       >
                         <FeedbackIcon
                           state={restoreStateOf?.(p.id) ?? 'idle'}
@@ -546,7 +546,7 @@ export function ProjectList({
               left: Math.min(menu.x, window.innerWidth - 200),
               top: Math.min(menu.y, window.innerHeight - 88),
             }}
-            className="fixed z-50 w-48 rounded-lg border border-white/[0.08] bg-neutral-900 shadow-mac py-1"
+            className="fixed z-50 w-48 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
             onContextMenu={(e) => e.preventDefault()}
           >
             <p className="px-3 pb-1 pt-0.5 text-[10px] text-neutral-500 truncate" title={menu.project.path}>
@@ -609,7 +609,7 @@ function MenuButton({
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-white/[0.06]"
+      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-edge/[0.06]"
     >
       <span className="text-neutral-400">{icon}</span>
       {label}
@@ -643,7 +643,7 @@ function QuickButton({
         onClick();
       }}
       className={cn(
-        'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] transition-colors hover:border-white/[0.16] hover:bg-white/[0.08]',
+        'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08]',
         danger
           ? 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
           : 'text-neutral-400 hover:text-neutral-100',

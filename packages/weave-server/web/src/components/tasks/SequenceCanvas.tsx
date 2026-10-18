@@ -118,7 +118,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
   return (
     <div
       className={cn(
-        'flex w-[260px] items-center gap-2 rounded-lg border border-white/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac transition-colors',
+        'flex w-[260px] items-center gap-2 rounded-lg border border-edge/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac transition-colors',
         capable ? 'cursor-pointer hover:border-blue-500/40' : 'cursor-default',
       )}
       onClick={() => capable && onOpenMessages(session.sessionId)}
@@ -148,7 +148,7 @@ function LaneNode({ data }: NodeProps<LaneFlowNode>) {
   const t = useT();
   const { lane } = data;
   return (
-    <div className="flex w-[260px] items-center gap-2 border-b border-dashed border-white/[0.1] pb-1.5">
+    <div className="flex w-[260px] items-center gap-2 border-b border-dashed border-edge/[0.1] pb-1.5">
       <HarnessIcon harness={lane.harness} />
       <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
         {lane.harness == null ? t('orch.unknownLane') : harnessUiOf(lane.harness).label}
@@ -469,7 +469,7 @@ export function SequenceCanvas({
       </div>
 
       {/* 画布：会话泳道 + 消息边（本视图自管高度，外层沿用页面滚动）。 */}
-      <div className="relative h-[420px] rounded-lg border border-white/[0.06] bg-neutral-950/40">
+      <div className="relative h-[420px] rounded-lg border border-edge/[0.06] bg-neutral-950/40">
         {sessions === null ? (
           <p className="flex h-full items-center justify-center text-xs text-neutral-500">
             {t('hooks.loading')}
@@ -494,13 +494,13 @@ export function SequenceCanvas({
             <Controls showInteractive={false} />
           </ReactFlow>
         )}
-        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
+        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-600">
           {t('orch.hint')}
         </p>
       </div>
 
       {/* 触发 builder：步 ≤3（hop 上限）；会话/通道均按能力矩阵门控。 */}
-      <div className="rounded-lg border border-white/[0.06] bg-white/[0.015] p-2">
+      <div className="rounded-lg border border-edge/[0.06] bg-edge/[0.015] p-2">
         <div className="flex flex-wrap items-center gap-2 pb-1.5">
           <span className="text-xs font-medium text-neutral-200">{t('orch.builderTitle')}</span>
           <span className="text-[10px] text-neutral-500">{t('orch.builderHint')}</span>
@@ -513,7 +513,7 @@ export function SequenceCanvas({
               value={builderName}
               onChange={(e) => setBuilderName(e.target.value)}
               placeholder={t('orch.namePlaceholder')}
-              className="w-56 rounded border border-white/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/40"
+              className="w-56 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/40"
             />
             {builderSteps.map((step, i) => {
               const cap = step.to ? capabilityOf(step.to) : undefined;
@@ -526,7 +526,7 @@ export function SequenceCanvas({
                     value={step.to}
                     onChange={(e) => onStepTarget(i, e.target.value)}
                     title={t('orch.stepTarget')}
-                    className="shrink-0 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
+                    className="shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
                   >
                     <option value="">{t('orch.stepTarget')}…</option>
                     {capableSessions.map((s) => (
@@ -539,7 +539,7 @@ export function SequenceCanvas({
                     value={step.mode}
                     onChange={(e) => setStep(i, { mode: e.target.value as BuilderStep['mode'] })}
                     title={t('orch.stepMode')}
-                    className="shrink-0 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
+                    className="shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
                   >
                     <option value="auto">{t('tasks.msgModeAutoHint')}</option>
                     {cap?.prompt && (
@@ -560,7 +560,7 @@ export function SequenceCanvas({
                       }
                     }}
                     placeholder={t('orch.stepText')}
-                    className="min-w-[12rem] flex-1 rounded border border-white/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/40"
+                    className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/40"
                   />
                   {builderSteps.length > 1 && (
                     <button
@@ -569,7 +569,7 @@ export function SequenceCanvas({
                       onClick={() =>
                         setBuilderSteps((prev) => prev.filter((_, j) => j !== i))
                       }
-                      className="shrink-0 rounded p-1 text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+                      className="shrink-0 rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.08] hover:text-neutral-200"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -586,7 +586,7 @@ export function SequenceCanvas({
                     prev.length >= 3 ? prev : [...prev, { to: '', text: '', mode: 'auto' }],
                   )
                 }
-                className="inline-flex items-center gap-1 rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-40"
               >
                 <Plus className="h-3 w-3" />
                 {t('orch.addStep')}
@@ -630,7 +630,7 @@ export function SequenceCanvas({
               return (
                 <li
                   key={seq.id}
-                  className="rounded-lg border border-white/[0.06] bg-white/[0.015]"
+                  className="rounded-lg border border-edge/[0.06] bg-edge/[0.015]"
                 >
                   <div
                     role="button"
@@ -642,7 +642,7 @@ export function SequenceCanvas({
                         setExpandedSeqId(expanded ? null : seq.id);
                       }
                     }}
-                    className="flex w-full cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-white/[0.03]"
+                    className="flex w-full cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-edge/[0.03]"
                   >
                     <Badge className={cn('shrink-0', SEQ_STATUS_BADGE[seq.status])}>
                       {t(SEQ_STATUS_KEY[seq.status])}
@@ -674,12 +674,12 @@ export function SequenceCanvas({
                     )}
                   </div>
                   {seq.error && (
-                    <p className="break-words border-t border-white/[0.04] px-2 py-1 text-[11px] text-red-400/80">
+                    <p className="break-words border-t border-edge/[0.04] px-2 py-1 text-[11px] text-red-400/80">
                       {seq.error}
                     </p>
                   )}
                   {expanded && (
-                    <ul className="space-y-1 border-t border-white/[0.04] px-2 py-1.5">
+                    <ul className="space-y-1 border-t border-edge/[0.04] px-2 py-1.5">
                       {seq.steps.map((step, i) => {
                         const msg = step.messageId != null ? messageById.get(step.messageId) : undefined;
                         return (

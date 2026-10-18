@@ -202,7 +202,7 @@ export function QuestionAnswer({
         ref={panelRef}
         style={isDesktop ? { width: size.w, height: size.h || undefined } : undefined}
         className={cn(
-          'relative flex w-full flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac',
+          'relative flex w-full flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac',
           // <lg 整屏单列（触屏没有拖窗口这回事）；桌面缺省宽 448 / 预览形态 880，高度可拖
           isDesktop ? 'max-h-[calc(100dvh_-_2rem)]' : 'h-[90dvh]',
         )}
@@ -237,7 +237,7 @@ export function QuestionAnswer({
               <div
                 key={q.key}
                 className={cn(
-                  'rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5',
+                  'rounded-lg border border-edge/[0.06] bg-edge/[0.02] p-2.5',
                   soloPreview && 'flex min-h-0 flex-1 flex-col',
                 )}
               >
@@ -277,8 +277,8 @@ export function QuestionAnswer({
                                   chosen
                                     ? 'border-blue-400/50 bg-blue-500/10'
                                     : active
-                                      ? 'border-white/15 bg-white/[0.04]'
-                                      : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]',
+                                      ? 'border-edge/15 bg-edge/[0.04]'
+                                      : 'border-edge/[0.06] bg-edge/[0.02] hover:bg-edge/[0.04]',
                                 )}
                               >
                                 <span className="w-2.5 shrink-0 text-neutral-500">
@@ -304,7 +304,7 @@ export function QuestionAnswer({
                       <div className="flex min-w-0 flex-1 flex-col gap-1.5 lg:min-h-0">
                         <pre
                           className={cn(
-                            'overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.06] bg-neutral-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-neutral-300',
+                            'overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-edge/[0.06] bg-neutral-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-neutral-300',
                             // 单独一问的预览形态：右栏吃掉余下高度（拖高才不白拖）
                             soloPreview ? 'h-40 lg:min-h-0 lg:flex-1' : 'h-40 lg:h-60',
                           )}
@@ -332,7 +332,7 @@ export function QuestionAnswer({
                                 const pick = previewPick(q);
                                 if (!submitStep && pick) answer(q.key, pick, draft);
                               }}
-                              className="min-w-0 flex-1 rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-white/20 focus:outline-none disabled:opacity-50"
+                              className="min-w-0 flex-1 rounded border border-edge/[0.08] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none disabled:opacity-50"
                             />
                           </div>
                         )}
@@ -343,7 +343,7 @@ export function QuestionAnswer({
                         type="button"
                         disabled={busy}
                         onClick={() => answer(q.key, [chatIdx])}
-                        className="mt-2 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-neutral-400 transition-colors hover:bg-white/[0.06] hover:text-neutral-200 disabled:opacity-50"
+                        className="mt-2 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200 disabled:opacity-50"
                       >
                         <span className="w-2.5 shrink-0">·</span>
                         <span>{q.options[chatIdx]!.label}</span>
@@ -352,7 +352,7 @@ export function QuestionAnswer({
                     )}
                     {/* 单击即答形态（整 call 只有这一问）没有收尾屏：提交靠这一键 */}
                     {!submitStep && (
-                      <div className="mt-2 flex items-center justify-end gap-2 border-t border-white/[0.06] pt-2">
+                      <div className="mt-2 flex items-center justify-end gap-2 border-t border-edge/[0.06] pt-2">
                         <button
                           type="button"
                           disabled={busy || previewPick(q) === null}
@@ -380,7 +380,7 @@ export function QuestionAnswer({
                             'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-semibold leading-none',
                             chosen
                               ? 'border-blue-400/40 bg-blue-500/15 text-blue-200'
-                              : 'border-white/15 bg-neutral-950 text-neutral-300',
+                              : 'border-edge/15 bg-neutral-950 text-neutral-300',
                           )}
                         >
                           {i + 1}
@@ -396,7 +396,7 @@ export function QuestionAnswer({
                                 'flex items-center gap-2 rounded-lg border px-2.5 py-1.5',
                                 chosen
                                   ? 'border-blue-400/50 bg-blue-500/10'
-                                  : 'border-white/[0.06] bg-white/[0.02]',
+                                  : 'border-edge/[0.06] bg-edge/[0.02]',
                               )}
                             >
                               {submitStep ? (
@@ -430,7 +430,7 @@ export function QuestionAnswer({
                                   // 单击即答形态：输入行自带发送键（规格给收尾键）
                                   if (!submitStep && draft.trim()) answer(q.key, [i], draft);
                                 }}
-                                className="min-w-0 flex-1 rounded border border-white/[0.08] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-white/20 focus:outline-none disabled:opacity-50"
+                                className="min-w-0 flex-1 rounded border border-edge/[0.08] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none disabled:opacity-50"
                               />
                               {!submitStep && (
                                 <button
@@ -463,7 +463,7 @@ export function QuestionAnswer({
                               'flex w-full items-start gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50',
                               chosen
                                 ? 'border-blue-400/50 bg-blue-500/10'
-                                : 'border-white/[0.06] bg-white/[0.02] hover:border-blue-400/40 hover:bg-blue-500/10',
+                                : 'border-edge/[0.06] bg-edge/[0.02] hover:border-blue-400/40 hover:bg-blue-500/10',
                             )}
                           >
                             {index}
@@ -497,7 +497,7 @@ export function QuestionAnswer({
         </div>
         {/* 收尾屏（宿主原文按钮：提交答案 / 取消）——不是问题 tab，是整 call 的动作。 */}
         {submitStep && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-edge/[0.06] pt-2">
             {unanswered.length > 0 && (
               <span className="min-w-0 flex-1 text-[10px] leading-relaxed text-amber-300/80">
                 {t('tasks.answerIncomplete', { n: unanswered.length })}
@@ -515,7 +515,7 @@ export function QuestionAnswer({
                     'flex items-center gap-1 rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-40',
                     i === 0
                       ? 'bg-blue-700/80 text-white hover:bg-blue-600'
-                      : 'border border-white/[0.08] bg-white/[0.02] text-neutral-300 hover:bg-white/[0.08]',
+                      : 'border border-edge/[0.08] bg-edge/[0.02] text-neutral-300 hover:bg-edge/[0.08]',
                   )}
                 >
                   {opt.label}
@@ -538,7 +538,7 @@ export function QuestionAnswer({
             onClick={(e) => e.stopPropagation()}
             className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
           >
-            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-white/20" />
+            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20" />
           </div>
         )}
       </div>

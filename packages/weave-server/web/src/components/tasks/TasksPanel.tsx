@@ -868,7 +868,7 @@ export function TasksPanel({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('tasks.searchPlaceholder')}
-            className="h-6 w-full rounded border border-white/[0.08] bg-neutral-900 pl-6 pr-5 text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:border-white/20 focus:outline-none"
+            className="h-6 w-full rounded border border-edge/[0.08] bg-neutral-900 pl-6 pr-5 text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none"
           />
           {search && (
             <button
@@ -911,7 +911,7 @@ export function TasksPanel({
                     <select
                       value={target}
                       onChange={(e) => setAssign((prev) => ({ ...prev, [d.id]: e.target.value }))}
-                      className="shrink-0 rounded border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+                      className="shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
                     >
                       {(sessions ?? []).map((s) => (
                         <option key={s.sessionId} value={s.sessionId}>
@@ -997,7 +997,7 @@ export function TasksPanel({
               return (
                 <div
                   key={g.id}
-                  className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.015]"
+                  className="shrink-0 rounded-lg border border-edge/[0.06] bg-edge/[0.015]"
                 >
                   {/* div role=button：内嵌复制按钮（button 嵌套 button 非法）。
                       flex-wrap：窄屏一排徽标放不下（手机上加号角标更多），不折行会把
@@ -1012,7 +1012,7 @@ export function TasksPanel({
                         setExpandedGroupId(expanded ? '' : g.id);
                       }
                     }}
-                    className="flex w-full flex-wrap cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.03]"
+                    className="flex w-full flex-wrap cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-edge/[0.03]"
                   >
                     {expanded ? (
                       <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -1092,7 +1092,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           copyGroupPrompt(g);
                         }}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-neutral-200"
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200"
                       >
                         {copiedGroupId === g.id ? (
                           <Check className="h-3 w-3 text-emerald-400" />
@@ -1117,7 +1117,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           onInterrupt(selectedId);
                         }}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.02] text-neutral-500 transition-colors hover:border-white/[0.16] hover:bg-white/[0.08] hover:text-red-300"
+                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-red-300"
                       >
                         <FeedbackIcon
                           state={fb.stateOf(`interrupt:${selectedId}`)}
@@ -1128,12 +1128,12 @@ export function TasksPanel({
                     )}
                   </div>
                   {expanded && (
-                    <div className="h-[52dvh] min-h-[280px] lg:h-[calc(100dvh-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-white/[0.06] p-1.5">
+                    <div className="h-[52dvh] min-h-[280px] lg:h-[calc(100dvh-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-edge/[0.06] p-1.5">
                       {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；
                           合体形态 = 该 prompt 的思维导图即事件链，逐级点开。
                           <lg 会话列表折到画布上方，330px 桌面预算失真 → 改按视口
                           比例取高，展开后组头仍在首屏内；dvh 随移动端地址栏伸缩。 */}
-                      <div className="relative h-full rounded-md border border-white/[0.04] bg-neutral-950/40">
+                      <div className="relative h-full rounded-md border border-edge/[0.04] bg-neutral-950/40">
                         <LifecycleMindmap
                           key={`${selectedId}:${g.id}`}
                           projectId={projectId}
@@ -1145,7 +1145,7 @@ export function TasksPanel({
                           answerable={isLatestGroup && !!questionOf(selectedId)}
                           onOpenAnswer={() => setAnswerFor(selectedId)}
                         />
-                        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-700">
+                        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-600">
                           {t('tasks.legendNote')}
                         </p>
                       </div>
@@ -1167,7 +1167,7 @@ export function TasksPanel({
                   <button
                     type="button"
                     onClick={() => void loadOlderGroups()}
-                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
+                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
                   >
                     {olderRemaining > 0
                       ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
@@ -1176,7 +1176,7 @@ export function TasksPanel({
                   <button
                     type="button"
                     onClick={() => setGroupWindow((w) => w + groups.length)}
-                    className="rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
                   >
                     {t('tasks.loadAll')}
                   </button>
@@ -1219,7 +1219,7 @@ export function TasksPanel({
       {/* 左栏：会话列表。<lg 独占全高（右栏收进全屏滑出层），桌面恒双栏、宽度可拖。 */}
       <aside
         style={isDesktop ? { width: listW } : undefined}
-        className="flex w-full max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3"
+        className="flex w-full max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-edge/[0.06] pr-0 lg:pr-3"
       >
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
@@ -1241,7 +1241,7 @@ export function TasksPanel({
             }
             onClick={onNewSession}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md border border-white/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
+              'inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
               !canNewSession
                 ? 'cursor-not-allowed text-neutral-600'
                 : 'text-neutral-200 hover:bg-neutral-800',
@@ -1320,7 +1320,7 @@ export function TasksPanel({
       {!isDesktop && selectedId && (
         <div className={paneOpen ? 'fixed inset-0 z-40' : 'hidden'}>
           <div className="absolute inset-0 flex flex-col bg-neutral-950 drawer-right">
-            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+            <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
               <span className="truncate text-sm font-semibold text-neutral-200">
                 {sessionLabel(selectedRow?.title ?? null, selectedId)}
               </span>
@@ -1345,7 +1345,7 @@ export function TasksPanel({
       {/* 拖拽执行确认 */}
       {pendingRun && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-80 rounded-lg border border-white/[0.1] bg-neutral-900 p-4 shadow-xl">
+          <div className="w-80 rounded-lg border border-edge/[0.1] bg-neutral-900 p-4 shadow-xl">
             <p className="text-sm text-neutral-200">
               {t('hooks.runConfirm', {
                 id: pendingRun.dispatchId,
@@ -1356,7 +1356,7 @@ export function TasksPanel({
               <button
                 type="button"
                 onClick={() => setPendingRun(null)}
-                className="rounded-md px-3 py-1.5 text-xs text-neutral-400 hover:bg-white/[0.06]"
+                className="rounded-md px-3 py-1.5 text-xs text-neutral-400 hover:bg-edge/[0.06]"
               >
                 {t('hooks.cancel')}
               </button>
@@ -1428,7 +1428,7 @@ export function TasksPanel({
           onClick={() => setChainDialog(false)}
         >
           <div
-            className="flex h-[86dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-neutral-950 p-3 shadow-mac"
+            className="flex h-[86dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 p-3 shadow-mac"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-center justify-end">

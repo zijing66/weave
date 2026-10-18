@@ -168,7 +168,7 @@ export function DirectoryPickerModal({
       rows.push(
         <div
           key={node.path}
-          className="group flex items-center gap-1 pr-2 rounded hover:bg-white/[0.04]"
+          className="group flex items-center gap-1 pr-2 rounded hover:bg-edge/[0.04]"
           style={{ paddingLeft: depth * 14 + 6 }}
         >
           <button
@@ -270,8 +270,8 @@ export function DirectoryPickerModal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-[720px] max-w-full h-[560px] max-h-full rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
-        <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+      <div className="relative w-[720px] max-w-full h-[560px] max-h-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+        <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <Folder className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('picker.title')}</span>
           <span className="text-[11px] text-neutral-500">{t('picker.subtitle')}</span>
@@ -286,7 +286,7 @@ export function DirectoryPickerModal({
 
         {/* 完整绝对路径行：树里勾选后在这里显示（树内的名字会被截断），也可直接
             粘贴一个路径加入选择，不必逐层展开。 */}
-        <div className="shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-white/[0.06]">
+        <div className="shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-edge/[0.06]">
           <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <input
             value={pathInput}
@@ -309,7 +309,7 @@ export function DirectoryPickerModal({
         </div>
 
         <div className="flex-1 flex overflow-hidden">
-          <aside className="w-44 shrink-0 border-r border-white/[0.06] overflow-y-auto p-2 space-y-0.5 frosted">
+          <aside className="w-44 shrink-0 border-r border-edge/[0.06] overflow-y-auto p-2 space-y-0.5 frosted">
             <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">
               {t('picker.quickAccess')}
             </p>
@@ -319,7 +319,7 @@ export function DirectoryPickerModal({
                 <button
                   key={r.path}
                   onClick={() => toggleExpand(r.path)}
-                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left hover:bg-white/[0.06]"
+                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left hover:bg-edge/[0.06]"
                   title={r.path}
                 >
                   {r.kind === 'drive' || r.kind === 'root' ? (
@@ -352,7 +352,7 @@ export function DirectoryPickerModal({
           </main>
         </div>
 
-        <footer className="shrink-0 border-t border-white/[0.06] px-4 py-2.5 flex items-center gap-3 frosted">
+        <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 flex items-center gap-3 frosted">
           <div className="flex-1 min-w-0 flex flex-wrap gap-1 max-h-12 overflow-y-auto">
             {selected.length === 0 && (
               <span className="text-[11px] text-neutral-500">{t('picker.noneSelected')}</span>

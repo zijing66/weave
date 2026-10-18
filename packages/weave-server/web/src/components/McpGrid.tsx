@@ -65,7 +65,7 @@ export function McpGrid({
 
   if (rows.length === 0) {
     return (
-      <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
+      <p className="text-xs text-neutral-600 border border-dashed border-edge/[0.06] rounded-md p-3">
         {empty}
       </p>
     );

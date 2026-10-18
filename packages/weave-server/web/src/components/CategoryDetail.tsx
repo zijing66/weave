@@ -95,7 +95,7 @@ function ExternalAssetsSection({
   // 默认折叠（与资源管理其余折叠条一致）
   const [open, setOpen] = useState(false);
   return (
-    <section className="rounded-xl border border-white/[0.06] bg-neutral-900/40">
+    <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -331,7 +331,7 @@ export function CategoryDetail({
       )}
     >
       {showRuntimeTabs && (
-        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-edge/[0.06] p-0.5 w-fit">
           {RUNTIME_TABS.map((tab) => (
             <button
               key={tab}
@@ -356,7 +356,7 @@ export function CategoryDetail({
 
       {/* 资源管理页：**视图**切换（插件包为主 / 查看文件只读）——不再是类型 tab 层 */}
       {category === 'files' && (
-        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-white/[0.06] p-0.5 w-fit">
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-edge/[0.06] p-0.5 w-fit">
           {VIEWS.map((view) => (
             <button
               key={view.key}
@@ -392,7 +392,7 @@ export function CategoryDetail({
               }
             />
           ) : (
-            <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+            <div className="rounded-xl border border-dashed border-edge/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
               <PackageX className="h-8 w-8 text-neutral-600" />
               <p className="text-xs text-neutral-500">{t('category.emptyFilesProject')}</p>
             </div>
@@ -410,7 +410,7 @@ export function CategoryDetail({
         resourceView === 'files' &&
         isGlobal &&
         (globalTreeAssets.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+          <div className="rounded-xl border border-dashed border-edge/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
             <PackageX className="h-8 w-8 text-neutral-600" />
             <div>
               <p className="text-sm font-medium text-neutral-300">{t('category.globalFilesTitle')}</p>
@@ -568,7 +568,7 @@ export function CategoryDetail({
 /** Shown for a non-claude harness tab in categories whose data source is Claude-only. */
 function RuntimePlaceholder({ harness, text }: { harness: Harness; text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-white/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
+    <div className="rounded-xl border border-dashed border-edge/[0.1] bg-neutral-900/40 p-8 flex flex-col items-center justify-center text-center gap-3">
       <Code2 className="h-8 w-8 text-neutral-600" />
       <AgentBadge agent={harness} />
       <p className="text-xs text-neutral-500 max-w-xs">{text}</p>

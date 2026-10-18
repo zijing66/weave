@@ -176,7 +176,7 @@ function GlyphPicker({
             // shows tofu here on machines without a system Nerd Font
             'nerd-font w-6 h-6 rounded flex items-center justify-center disabled:opacity-30',
             current === p.char
-              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-white/30'
+              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900',
           )}
         >
@@ -191,7 +191,7 @@ function GlyphPicker({
           className={cn(
             'rounded px-1.5 h-6 text-[10px] disabled:opacity-30',
             value === ''
-              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-white/30'
+              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
               : 'text-neutral-500 hover:text-neutral-300',
           )}
         >
@@ -244,8 +244,8 @@ function ColorPicker({
           disabled={!editable}
           title={t('statusline.noBackground')}
           className={cn(
-            'h-3.5 w-3.5 rounded border border-white/20 disabled:opacity-30',
-            noneSelected ? 'ring-2 ring-white/60 bg-neutral-800' : 'opacity-40',
+            'h-3.5 w-3.5 rounded border border-edge/20 disabled:opacity-30',
+            noneSelected ? 'ring-2 ring-edge/60 bg-neutral-800' : 'opacity-40',
           )}
         >
           <span className="block h-px bg-neutral-500 rotate-45" />
@@ -262,7 +262,7 @@ function ColorPicker({
           style={{ backgroundColor: cssSolid(c) }}
           className={cn(
             'h-3.5 w-3.5 rounded-full disabled:opacity-30',
-            value === c ? 'ring-2 ring-white/60' : 'opacity-50',
+            value === c ? 'ring-2 ring-edge/60' : 'opacity-50',
           )}
         />
       ))}
@@ -278,8 +278,8 @@ function ColorPicker({
         }
         style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
         className={cn(
-          'h-3.5 w-3.5 rounded-full border border-white/25 text-[8px] leading-none disabled:opacity-30',
-          value && !isNamedColor(value) ? 'ring-2 ring-white/60' : 'opacity-50 text-neutral-400',
+          'h-3.5 w-3.5 rounded-full border border-edge/25 text-[8px] leading-none disabled:opacity-30',
+          value && !isNamedColor(value) ? 'ring-2 ring-edge/60' : 'opacity-50 text-neutral-400',
         )}
       >
         {value && !isNamedColor(value) ? '' : '+'}
@@ -287,7 +287,7 @@ function ColorPicker({
 
       {open && editable && (
         <div className="relative">
-          <div className="absolute z-20 left-0 top-5 w-64 rounded border border-white/15 bg-neutral-950 p-2 shadow-xl">
+          <div className="absolute z-20 left-0 top-5 w-64 rounded border border-edge/15 bg-neutral-950 p-2 shadow-xl">
             <div className="grid grid-cols-[repeat(16,minmax(0,1fr))] gap-[2px]">
               {ANSI256_GRID.map((hex, i) => (
                 <button
@@ -299,7 +299,7 @@ function ColorPicker({
                     setOpen(false);
                   }}
                   style={{ backgroundColor: hex }}
-                  className="h-3 w-3 rounded-sm hover:ring-1 hover:ring-white/70"
+                  className="h-3 w-3 rounded-sm hover:ring-1 hover:ring-edge/70"
                 />
               ))}
             </div>
@@ -754,15 +754,15 @@ export function StatuslinePanel({
       <>
         {/* The preview is pinned under the header; everything below it
             scrolls inside the card's fixed height. */}
-        <div className="shrink-0 border-b border-white/[0.06] p-3">
+        <div className="shrink-0 border-b border-edge/[0.06] p-3">
           {/* live preview — one block per row, powerline blocks when enabled */}
-          <div className="nerd-font rounded-md bg-neutral-950 border border-white/[0.06] px-3 py-2 text-xs text-neutral-300 whitespace-pre overflow-x-auto">
+          <div className="nerd-font rounded-md bg-neutral-950 border border-edge/[0.06] px-3 py-2 text-xs text-neutral-300 whitespace-pre overflow-x-auto">
             {config.lines.map((row, i) => {
               const items = buildPreviewItems(config, row);
               if (i === 0 && logo) items.unshift(logo);
               return (
                 <div key={i}>
-                  {i > 0 && <div className="text-neutral-700">────────────────────────────</div>}
+                  {i > 0 && <div className="text-neutral-600">────────────────────────────</div>}
                   {items.length ? (
                     <PowerlineRow items={items} config={config} />
                   ) : (
@@ -779,7 +779,7 @@ export function StatuslinePanel({
 
           {/* source status row (project view only — global view edits the template directly) */}
           {!isGlobal && (
-            <div className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-neutral-900/60 px-2 py-1.5 text-xs">
+            <div className="flex items-center gap-2 rounded-md border border-edge/[0.06] bg-neutral-900/60 px-2 py-1.5 text-xs">
               {config.source === 'global' ? (
                 <>
                   <span className="rounded-full bg-blue-900/50 px-2 py-0.5 text-blue-300">
@@ -1179,7 +1179,7 @@ function Capsule({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn('shrink-0 max-w-[260px]', isDragging && 'opacity-50 ring-1 ring-white/30')}
+      className={cn('shrink-0 max-w-[260px]', isDragging && 'opacity-50 ring-1 ring-edge/30')}
     >
       <button
         {...attributes}
@@ -1242,7 +1242,7 @@ function CapsuleRow({
     <div
       ref={setNodeRef}
       className={cn(
-        'rounded-lg border border-white/[0.08] bg-neutral-900/30 px-2 py-1.5 transition-shadow',
+        'rounded-lg border border-edge/[0.08] bg-neutral-900/30 px-2 py-1.5 transition-shadow',
         isOver && 'ring-2 ring-emerald-400/50',
       )}
     >
@@ -1338,7 +1338,7 @@ function SegmentModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-md space-y-3 rounded-xl border border-white/10 bg-neutral-900 p-4 shadow-mac">
+      <div className="w-full max-w-md space-y-3 rounded-xl border border-edge/10 bg-neutral-900 p-4 shadow-mac">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-neutral-100">
             {key
@@ -1549,7 +1549,7 @@ function SegmentModal({
               />
             </div>
 
-            <div className="flex items-center justify-between border-t border-white/[0.06] pt-2">
+            <div className="flex items-center justify-between border-t border-edge/[0.06] pt-2">
               <button
                 onClick={onUnplace}
                 className="rounded px-2 py-1 text-xs text-red-400/80 hover:bg-red-900/30 hover:text-red-300"

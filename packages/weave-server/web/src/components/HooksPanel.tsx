@@ -155,7 +155,7 @@ function RuleNode({ data }: NodeProps<RuleFlowNode>) {
     <div
       className={cn(
         'w-[220px] rounded-lg border bg-neutral-900/90 px-3 py-2 shadow-mac-sm transition-opacity',
-        rule.enabled ? 'border-blue-500/40' : 'border-white/[0.08] opacity-60',
+        rule.enabled ? 'border-blue-500/40' : 'border-edge/[0.08] opacity-60',
       )}
     >
       <Handle type="target" position={Position.Left} className="!bg-blue-400/80" />
@@ -182,7 +182,7 @@ function HandlerNode({ data }: NodeProps<HandlerFlowNode>) {
   const t = useT();
   const Icon = HANDLER_ICONS[data.handlerType];
   return (
-    <div className="flex w-[170px] items-center gap-2 rounded-lg border border-white/[0.08] bg-neutral-900/90 px-3 py-2 shadow-mac-sm">
+    <div className="flex w-[170px] items-center gap-2 rounded-lg border border-edge/[0.08] bg-neutral-900/90 px-3 py-2 shadow-mac-sm">
       <Handle type="target" position={Position.Left} className="!bg-blue-400/80" />
       <Icon className="h-3.5 w-3.5 shrink-0 text-purple-300" />
       <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-200">
@@ -392,7 +392,7 @@ function CaptureSection() {
         {rows.map((row) => (
           <div
             key={row.harness}
-            className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
+            className="flex items-center gap-2 rounded-md border border-edge/[0.06] bg-edge/[0.015] px-2 py-1.5"
           >
             <Zap className="h-3.5 w-3.5 shrink-0 text-amber-400" />
             <span className="shrink-0 text-xs font-medium text-neutral-200">
@@ -674,8 +674,8 @@ export function HooksPanel({
         className={cn(
           'rounded-lg border px-3 py-2 transition-colors',
           rule.enabled
-            ? 'border-white/[0.08] bg-neutral-900/40'
-            : 'border-white/[0.05] bg-neutral-900/20 opacity-70',
+            ? 'border-edge/[0.08] bg-neutral-900/40'
+            : 'border-edge/[0.05] bg-neutral-900/20 opacity-70',
         )}
       >
         <div className="flex items-center gap-2">
@@ -815,7 +815,7 @@ export function HooksPanel({
         </CardHeader>
         <CardContent className="space-y-3">
           {/* 本地规则：无插件归属的裸规则 */}
-          <div className="rounded-md border border-white/[0.06] bg-white/[0.015]">
+          <div className="rounded-md border border-edge/[0.06] bg-edge/[0.015]">
             <div className="flex items-center gap-2 px-3 py-2">
               <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
               <span className="text-xs font-medium text-neutral-200">{t('hooks.localRules')}</span>
@@ -861,7 +861,7 @@ export function HooksPanel({
           </div>
         </CardHeader>
         <CardContent className="p-2">
-          <div className="h-80 rounded-lg border border-white/[0.06] bg-neutral-950/40">
+          <div className="h-80 rounded-lg border border-edge/[0.06] bg-neutral-950/40">
             {/* 数据到位后才挂 ReactFlow — fitView 首帧就能对上铺满的图。 */}
             {nodes.length > 0 ? (
               <ReactFlow
@@ -899,8 +899,8 @@ export function HooksPanel({
         createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-            <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-white/[0.08] bg-neutral-900 shadow-mac">
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+            <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac">
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge/[0.06] px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <h3 className="truncate text-sm font-semibold text-neutral-200">
                     {form.editingId ? t('hooks.form.editTitle') : t('hooks.form.createTitle')}
@@ -910,7 +910,7 @@ export function HooksPanel({
                       type="button"
                       onClick={applyQuickTemplate}
                       title={t('hooks.quickTemplateTip')}
-                      className="rounded-md border border-white/[0.08] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                      className="rounded-md border border-edge/[0.08] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
                     >
                       {t('hooks.quickTemplate')}
                     </button>
@@ -932,7 +932,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.name')}</span>
                     <input
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.name}
                       onChange={(e) => patchForm({ name: e.target.value })}
                       placeholder={t('hooks.namePlaceholder')}
@@ -942,7 +942,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.project')}</span>
                     <select
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.projectId === null ? '' : String(form.state.projectId)}
                       onChange={(e) =>
                         patchForm({ projectId: e.target.value === '' ? null : Number(e.target.value) })
@@ -960,7 +960,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
                     <select
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.sourceKind}
                       onChange={(e) =>
                         patchForm({ sourceKind: e.target.value as RuleFormState['sourceKind'] })
@@ -980,7 +980,7 @@ export function HooksPanel({
                     <label className="block space-y-1">
                       <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
                       <select
-                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.harness}
                         onChange={(e) =>
                           patchForm({ harness: e.target.value as Harness | 'any' })
@@ -999,7 +999,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
                     <select
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.event}
                       onChange={(e) => patchForm({ event: e.target.value })}
                     >
@@ -1021,7 +1021,7 @@ export function HooksPanel({
 
                   <div className="space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.handler')}</span>
-                    <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-white/[0.06] bg-neutral-900/60 p-0.5">
+                    <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-edge/[0.06] bg-neutral-900/60 p-0.5">
                       {HANDLER_TYPES.map((type) => (
                         <button
                           key={type}
@@ -1047,7 +1047,7 @@ export function HooksPanel({
                     <label className="block space-y-1">
                       <span className="text-[11px] text-neutral-500">{t('hooks.field.url')}</span>
                       <input
-                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.url}
                         onChange={(e) => patchForm({ url: e.target.value })}
                         placeholder={t('hooks.urlPlaceholder')}
@@ -1056,7 +1056,7 @@ export function HooksPanel({
                     <label className="block space-y-1">
                       <span className="text-[11px] text-neutral-500">{t('hooks.field.secret')}</span>
                       <input
-                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.secret}
                         onChange={(e) => patchForm({ secret: e.target.value })}
                       />
@@ -1069,7 +1069,7 @@ export function HooksPanel({
                     <label className="block space-y-1">
                       <span className="text-[11px] text-neutral-500">{t('hooks.field.pluginId')}</span>
                       <input
-                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.pluginId}
                         onChange={(e) => patchForm({ pluginId: e.target.value })}
                         placeholder={t('hooks.pluginIdPlaceholder')}
@@ -1080,7 +1080,7 @@ export function HooksPanel({
                         {t('hooks.field.pluginHandlerType')}
                       </span>
                       <input
-                        className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.pluginHandlerType}
                         onChange={(e) => patchForm({ pluginHandlerType: e.target.value })}
                         placeholder={t('hooks.pluginHandlerPlaceholder')}
@@ -1094,7 +1094,7 @@ export function HooksPanel({
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.template')}</span>
                     <textarea
                       rows={3}
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.template}
                       onChange={(e) => patchForm({ template: e.target.value })}
                       placeholder={t('hooks.templatePlaceholder')}
@@ -1106,7 +1106,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.toolNames')}</span>
                     <input
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.toolNames}
                       onChange={(e) => patchForm({ toolNames: e.target.value })}
                       placeholder={t('hooks.toolNamesPlaceholder')}
@@ -1115,7 +1115,7 @@ export function HooksPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.pathGlobs')}</span>
                     <input
-                      className="w-full rounded-lg border border-white/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.pathGlobs}
                       onChange={(e) => patchForm({ pathGlobs: e.target.value })}
                       placeholder={t('hooks.pathGlobsPlaceholder')}
@@ -1152,7 +1152,7 @@ export function HooksPanel({
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800"
+                    className="rounded-lg border border-edge/[0.08] px-3 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800"
                   >
                     {t('hooks.cancel')}
                   </button>

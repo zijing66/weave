@@ -60,7 +60,7 @@ export function LoginPage() {
         <button
           type="submit"
           disabled={state === 'loading' || password === ''}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-white disabled:opacity-50"
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-neutral-100 disabled:opacity-50"
         >
           <FeedbackIcon state={state} />
           {t('auth.login')}

@@ -33,7 +33,7 @@ function PickerShell({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className="w-full max-w-sm rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">
@@ -86,7 +86,7 @@ export function TerminalPicker({
               disabled={busy || target.full}
               onClick={() => onPick(target.id)}
               title={target.full ? t('tasks.terminalTargetFullTip') : undefined}
-              className="w-full rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.06] disabled:opacity-50"
+              className="w-full rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06] disabled:opacity-50"
             >
               <span className="flex items-center gap-1.5">
                 <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
@@ -182,7 +182,7 @@ export function TerminalClosePicker({
                   'w-full rounded-lg border px-2.5 py-2 text-left transition-colors',
                   on
                     ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.16] hover:bg-white/[0.06]',
+                    : 'border-edge/[0.06] bg-edge/[0.02] hover:border-edge/[0.16] hover:bg-edge/[0.06]',
                 )}
               >
                 <span className="block truncate text-xs text-neutral-200">

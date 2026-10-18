@@ -29,7 +29,7 @@ export function NumberStepper({
       role="group"
       aria-label={title}
       className={cn(
-        'inline-flex select-none items-stretch rounded border border-white/[0.08] bg-neutral-950 focus-within:border-blue-500/40',
+        'inline-flex select-none items-stretch rounded border border-edge/[0.08] bg-neutral-950 focus-within:border-blue-500/40',
         disabled && 'opacity-40',
       )}
     >
@@ -39,7 +39,7 @@ export function NumberStepper({
         title={t('common.decrease')}
         disabled={disabled || value <= min}
         onClick={() => onChange(clamp(value - 1))}
-        className="flex w-6 items-center justify-center rounded-l bg-white/[0.04] text-neutral-400 transition-colors hover:bg-white/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
+        className="flex w-6 items-center justify-center rounded-l bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
       >
         <Minus className="h-3 w-3" />
       </button>
@@ -59,7 +59,7 @@ export function NumberStepper({
         title={t('common.increase')}
         disabled={disabled || (max !== undefined && value >= max)}
         onClick={() => onChange(clamp(value + 1))}
-        className="flex w-6 items-center justify-center rounded-r bg-white/[0.04] text-neutral-400 transition-colors hover:bg-white/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
+        className="flex w-6 items-center justify-center rounded-r bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
       >
         <Plus className="h-3 w-3" />
       </button>

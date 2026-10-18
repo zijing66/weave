@@ -26,7 +26,7 @@ const STYLE: Record<ToastKind, { box: string; icon: React.ReactNode }> = {
     icon: <XCircle className="mt-px h-3.5 w-3.5 shrink-0 text-red-400" />,
   },
   info: {
-    box: 'border-white/[0.08] bg-neutral-900/90 text-neutral-200',
+    box: 'border-edge/[0.08] bg-neutral-900/90 text-neutral-200',
     icon: <Info className="mt-px h-3.5 w-3.5 shrink-0 text-neutral-400" />,
   },
 };

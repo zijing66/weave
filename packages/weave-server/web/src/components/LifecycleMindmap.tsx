@@ -627,7 +627,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
         e.stopPropagation();
         onToggle(node.key);
       }}
-      className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-white/[0.08] hover:text-neutral-200"
+      className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-edge/[0.08] hover:text-neutral-200"
       aria-expanded={node.expanded}
     >
       {node.expanded ? (
@@ -852,7 +852,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
   return (
     <div
       className={cn(
-        'flex w-[280px] cursor-pointer items-start gap-1 rounded-lg border border-white/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac transition-colors hover:border-white/[0.18]',
+        'flex w-[280px] cursor-pointer items-start gap-1 rounded-lg border border-edge/[0.08] bg-neutral-900/95 px-2 py-1.5 shadow-mac transition-colors hover:border-edge/[0.18]',
         node.highlight && 'ring-1 ring-amber-400/70',
         flash && 'weave-node-flash',
       )}
@@ -1366,7 +1366,7 @@ export function LifecycleMindmap({
           <select
             value={sessionId}
             onChange={(e) => onSelect?.(e.target.value)}
-            className="rounded-md border border-white/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+            className="rounded-md border border-edge/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
           >
             {(sessions ?? []).map((s) => (
               <option key={s.sessionId} value={s.sessionId}>
@@ -1384,7 +1384,7 @@ export function LifecycleMindmap({
       <div
         className={cn(
           'relative rounded-lg bg-neutral-950/40',
-          focusGroupId ? 'h-full border-0' : 'h-96 border border-white/[0.06]',
+          focusGroupId ? 'h-full border-0' : 'h-96 border border-edge/[0.06]',
         )}
         onClick={() => setDetailNode(null)}
       >
@@ -1430,10 +1430,10 @@ export function LifecycleMindmap({
         {/* 右上角独立明细区：点节点打开；点面板外（画布空白/其它区域）关闭 */}
         {detailNode && (
           <div
-            className="absolute right-2 top-2 z-20 flex max-h-[78%] w-80 flex-col overflow-hidden rounded-lg border border-white/[0.14] bg-neutral-900/95 shadow-mac"
+            className="absolute right-2 top-2 z-20 flex max-h-[78%] w-80 flex-col overflow-hidden rounded-lg border border-edge/[0.14] bg-neutral-900/95 shadow-mac"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-2 border-b border-white/[0.08] px-3 py-2">
+            <div className="flex items-center gap-2 border-b border-edge/[0.08] px-3 py-2">
               <span className="text-xs font-semibold text-neutral-200">
                 {t('hooks.mindmap.detailTitle')}
               </span>

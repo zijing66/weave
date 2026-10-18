@@ -300,7 +300,7 @@ export function SkillGrid({
   const hasGlobalRO = !!globalGroupsReadOnly && globalGroupsReadOnly.length > 0;
   if (!hasProject && !hasGlobalRO) {
     return (
-      <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
+      <p className="text-xs text-neutral-600 border border-dashed border-edge/[0.06] rounded-md p-3">
         {empty}
       </p>
     );
@@ -424,7 +424,7 @@ function PackBlock({
     );
   };
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden">
+    <div className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 overflow-hidden">
       <div
         role="button"
         tabIndex={0}
@@ -435,7 +435,7 @@ function PackBlock({
             onToggle();
           }
         }}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02] cursor-pointer"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer"
       >
         {collapsed ? (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -657,7 +657,7 @@ function GroupedSkills({
           return (
             <div
               key={repo.key}
-              className="rounded-2xl border border-white/[0.08] bg-neutral-900/60 overflow-hidden"
+              className="rounded-2xl border border-edge/[0.08] bg-neutral-900/60 overflow-hidden"
             >
               <div
                 role="button"
@@ -669,7 +669,7 @@ function GroupedSkills({
                     setExpandedRepos((prev) => toggleIn(prev, repo.key));
                   }
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] cursor-pointer"
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer"
               >
                 {repoCollapsed ? (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />

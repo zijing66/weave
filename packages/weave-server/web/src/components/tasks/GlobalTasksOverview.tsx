@@ -161,7 +161,7 @@ export function GlobalTasksOverview({
         <select
           value={projectFilter === 'all' ? '' : String(projectFilter)}
           onChange={(e) => setProjectFilter(e.target.value === '' ? 'all' : Number(e.target.value))}
-          className="rounded-md border border-white/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
+          className="rounded-md border border-edge/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
         >
           <option value="">{t('tasks.overviewAllProjects')}</option>
           {projects.map((p) => (
@@ -170,7 +170,7 @@ export function GlobalTasksOverview({
             </option>
           ))}
         </select>
-        <span className="flex overflow-hidden rounded-md border border-white/[0.08]">
+        <span className="flex overflow-hidden rounded-md border border-edge/[0.08]">
           {RANGE_KEYS.map((k) => (
             <button
               key={k}
@@ -194,7 +194,7 @@ export function GlobalTasksOverview({
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
               aria-label={t('tasks.rangeFrom')}
-              className="rounded-md border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
             />
             —
             <input
@@ -202,7 +202,7 @@ export function GlobalTasksOverview({
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
               aria-label={t('tasks.rangeTo')}
-              className="rounded-md border border-white/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
             />
           </span>
         )}
@@ -265,8 +265,8 @@ export function GlobalTasksOverview({
                     className={cn(
                       'flex flex-wrap lg:flex-nowrap items-center gap-3 rounded-md border px-2 py-1.5',
                       clickable
-                        ? 'cursor-pointer border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]'
-                        : 'border-white/[0.04] opacity-60',
+                        ? 'cursor-pointer border-edge/[0.06] bg-edge/[0.015] hover:bg-edge/[0.04]'
+                        : 'border-edge/[0.04] opacity-60',
                     )}
                   >
                     <span

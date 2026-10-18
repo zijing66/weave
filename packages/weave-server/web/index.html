@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0a" />
+    <!-- 首屏落主题：规则与 src/lib/theme.ts 同源（存过的优先，否则跟系统），
+         在这里跑是为了样式表生效前就定下 data-theme，避免闪一下白底。 -->
+    <script>
+      (function () {
+        var saved = null;
+        try {
+          saved = localStorage.getItem('weave:theme');
+        } catch (e) {}
+        var light = saved === 'light' || (saved !== 'dark' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+        document.documentElement.dataset.theme = light ? 'light' : 'dark';
+      })();
+    </script>
     <title>Weave Dashboard</title>
     <!-- favicon：public/ 下的 SVG，不经 JS、首屏即生效（?v=1 与字体的 ?v=2 同套缓存口令） -->
     <link rel="icon" type="image/svg+xml" href="/weave-logo.svg?v=1" />

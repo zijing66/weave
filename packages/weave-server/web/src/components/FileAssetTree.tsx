@@ -459,13 +459,13 @@ export function FileAssetTree({
       </div>
 
       {tree.length === 0 ? (
-        <p className="text-xs text-neutral-600 border border-dashed border-white/[0.06] rounded-md p-3">
+        <p className="text-xs text-neutral-600 border border-dashed border-edge/[0.06] rounded-md p-3">
           {t('fileTree.emptyFiltered')}
         </p>
       ) : (
         // Fixed max height: the tree scrolls inside itself instead of
         // stretching the page (chips + panel below stay reachable).
-        <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-white/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
+        <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-edge/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
           {tree.map((node) => (
             <AssetTreeNode
               key={node.type === 'dir' ? node.path : node.asset.relPath}

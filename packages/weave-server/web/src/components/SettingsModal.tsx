@@ -235,8 +235,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       {/* max-h + 内容区 min-h-0/滚动：设置项变多后（AI 段）内容会超过视口，
           面板是 overflow-hidden——不这样收口会把底部输入裁掉、点不到（见 CLAUDE.md
           「纵向 flex 堆叠的下区要 min-h-0」）。 */}
-      <div className="relative w-[440px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-white/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
-        <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
+      <div className="relative w-[440px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+        <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <Settings className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('settings.title')}</span>
           <button
@@ -260,7 +260,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               onChange={(e) =>
                 setSettings((s) => (s ? { ...s, locale: e.target.value as Locale } : s))
               }
-              className="w-full rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               {SUPPORTED_LOCALES.map((l) => (
                 <option key={l} value={l}>
@@ -283,7 +283,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   s ? { ...s, terminal: { ...s.terminal, preset: e.target.value as TerminalPreset } } : s,
                 )
               }
-              className="w-full rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               {presets.map((p) => {
                 // 本地词典优先（中英随 UI 切换），未知 id 回落服务端 label
@@ -317,7 +317,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   )
                 }
                 placeholder="my-terminal --dir {path}"
-                className="w-full rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
           )}
@@ -441,13 +441,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       className={
                         u.protocol === 'https'
                           ? 'rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400'
-                          : 'rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-neutral-400'
+                          : 'rounded bg-edge/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-neutral-400'
                       }
                     >
                       {u.scope === 'lan' ? t('settings.urlLan') : t('settings.urlLocal')} ·{' '}
                       {u.protocol.toUpperCase()}
                     </span>
-                    <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-white/[0.06] px-2 py-1 text-[11px] text-neutral-300">
+                    <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1 text-[11px] text-neutral-300">
                       {u.url}
                     </code>
                     <button
@@ -493,7 +493,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   )
                 }
                 placeholder={t('settings.aiBaseUrlPlaceholder')}
-                className="min-w-0 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <div className="flex items-center gap-1">
                 {/* 拉到候选 → 原生 select（样式可跟暗色，同「终端预设」口径）；
@@ -509,7 +509,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                           : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
                       )
                     }
-                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     {/* 已存模型不在列表里（网关换过/曾手填）也要能显示，别静默丢值 */}
                     {(settings?.ai?.model ?? '') === '' && (
@@ -535,7 +535,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       )
                     }
                     placeholder={t('settings.aiModelPlaceholder')}
-                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 )}
                 <button
@@ -591,7 +591,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     ? t('settings.aiApiKeySet')
                     : t('settings.aiApiKeyUnset')
                 }
-                className="min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-white/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="button"
@@ -620,7 +620,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}
         </div>
 
-        <footer className="shrink-0 border-t border-white/[0.06] px-4 py-2.5 flex items-center gap-2 frosted">
+        <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 flex items-center gap-2 frosted">
           <span className="flex-1 text-[11px] text-neutral-500">
             {settings === null && !error ? t('common.loading') : ''}
           </span>

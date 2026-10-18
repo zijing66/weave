@@ -277,7 +277,7 @@ export function ToolkitSection({
     return (
       <div
         key={`${p.provenance}:${p.sourceRoot}:${p.id}`}
-        className="flex flex-wrap items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.015] px-2 py-1.5"
+        className="flex flex-wrap items-center gap-2 rounded-md border border-edge/[0.06] bg-edge/[0.015] px-2 py-1.5"
       >
         <Package
           className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-emerald-400' : 'text-neutral-600')}
@@ -437,7 +437,7 @@ export function ToolkitSection({
         return (
           <div
             key={repo.key}
-            className="rounded-2xl border border-white/[0.08] bg-neutral-900/60 overflow-hidden"
+            className="rounded-2xl border border-edge/[0.08] bg-neutral-900/60 overflow-hidden"
           >
             <div
               role="button"
@@ -449,7 +449,7 @@ export function ToolkitSection({
                   setCollapsed((prev) => toggleIn(prev, repo.key));
                 }
               }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] cursor-pointer"
+              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer"
             >
               {repoCollapsed ? (
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -490,7 +490,7 @@ export function ToolkitSection({
                     return (
                       <div
                         key={scopeKey}
-                        className="rounded-xl border border-white/[0.06] bg-neutral-900/40 overflow-hidden"
+                        className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 overflow-hidden"
                       >
                         <div
                           role="button"
@@ -502,7 +502,7 @@ export function ToolkitSection({
                               setCollapsed((prev) => toggleIn(prev, scopeKey));
                             }
                           }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.02] cursor-pointer"
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer"
                         >
                           {scopeCollapsed ? (
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />

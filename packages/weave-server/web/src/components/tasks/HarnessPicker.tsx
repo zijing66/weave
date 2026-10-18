@@ -35,7 +35,7 @@ export function HarnessPicker({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xs rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className="w-full max-w-xs rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">
@@ -56,7 +56,7 @@ export function HarnessPicker({
               <button
                 type="button"
                 onClick={() => onPick(harness)}
-                className="flex w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.06]"
+                className="flex w-full items-center gap-2 rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06]"
               >
                 <HarnessIcon harness={harness} />
                 <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">

@@ -10,7 +10,7 @@ export function FrontmatterCard({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data);
   if (!entries.length) return null;
   return (
-    <div className="mb-4 rounded-md border border-white/[0.06] bg-neutral-900/60 p-3">
+    <div className="mb-4 rounded-md border border-edge/[0.06] bg-neutral-900/60 p-3">
       <div className="text-xs font-semibold text-neutral-400 uppercase mb-2">
         {t('fm.title')}
       </div>

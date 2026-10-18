@@ -45,8 +45,8 @@ export function FileViewer({
   const parsed = content != null && isMarkdown ? splitFrontmatter(content) : null;
 
   return (
-    <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-white/[0.08] shadow-mac">
-      <div className="flex items-center gap-2 p-3 border-b border-white/[0.06]">
+    <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-edge/[0.08] shadow-mac">
+      <div className="flex items-center gap-2 p-3 border-b border-edge/[0.06]">
         <FileText className="h-4 w-4 shrink-0 text-neutral-500" />
         <span className="text-xs font-mono text-neutral-300 truncate">{relPath}</span>
         {agent && <AgentBadge agent={agent} className="shrink-0" />}
@@ -68,7 +68,7 @@ export function FileViewer({
           </>
         )}
         {content != null && !isMarkdown && (
-          <pre className="text-xs font-mono text-neutral-300 whitespace-pre-wrap break-all bg-neutral-900 rounded-md p-3 border border-white/[0.06]">
+          <pre className="text-xs font-mono text-neutral-300 whitespace-pre-wrap break-all bg-neutral-900 rounded-md p-3 border border-edge/[0.06]">
             {content}
           </pre>
         )}

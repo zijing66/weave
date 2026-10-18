@@ -320,9 +320,9 @@ export function SkillDetailDrawer({
   const skillRoot = files[0]?.relPath.split('/')[0] ?? '';
 
   return (
-    <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-white/[0.08] shadow-mac">
+    <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-edge/[0.08] shadow-mac">
       {/* Header */}
-      <div className="flex items-center gap-2 p-3 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2 p-3 border-b border-edge/[0.06]">
         <FileCode className="h-4 w-4 shrink-0 text-blue-400" />
         <span className="text-sm font-semibold truncate">{name}</span>
         {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace */}
@@ -374,9 +374,9 @@ export function SkillDetailDrawer({
 
       {/* Body: file list + preview */}
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 shrink-0 border-r border-white/[0.06] overflow-y-auto p-2 space-y-0.5">
+        <aside className="w-56 shrink-0 border-r border-edge/[0.06] overflow-y-auto p-2 space-y-0.5">
           {tree.length > 0 && (
-            <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-white/[0.06]">
+            <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
               <button
                 onClick={toggleAll}
                 className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
@@ -429,7 +429,7 @@ export function SkillDetailDrawer({
             </>
           )}
           {content != null && !isMarkdown && (
-            <pre className="text-xs font-mono text-neutral-300 whitespace-pre-wrap break-all bg-neutral-900 rounded-md p-3 border border-white/[0.06]">
+            <pre className="text-xs font-mono text-neutral-300 whitespace-pre-wrap break-all bg-neutral-900 rounded-md p-3 border border-edge/[0.06]">
               {content}
             </pre>
           )}
@@ -440,7 +440,7 @@ export function SkillDetailDrawer({
       </div>
 
       {/* Footer hint */}
-      <div className="flex items-center gap-2 p-2 border-t border-white/[0.06] text-[11px] text-neutral-500">
+      <div className="flex items-center gap-2 p-2 border-t border-edge/[0.06] text-[11px] text-neutral-500">
         {scope === 'project' ? (
           <>
             <Folder className="h-3 w-3" />

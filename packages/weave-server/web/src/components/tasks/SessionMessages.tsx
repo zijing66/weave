@@ -1191,7 +1191,7 @@ export function SessionMessages({
             ? // 嵌入右栏不再套卡片壳：右栏就是这扇对话，再描一圈边框只是多一道线
               // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
               cn('flex-1', minimized ? 'hidden' : 'flex')
-            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-white/[0.08] bg-neutral-900 shadow-mac',
+            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac',
         )}
         onClick={(e) => e.stopPropagation()}
         // 拖放面 = 整块面板（拖进任何一处都算，别让浏览器接管去打开那个文件）
@@ -1229,7 +1229,7 @@ export function SessionMessages({
                 type="button"
                 title={t('tasks.chainTitle')}
                 onClick={onOpenChain}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-white/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
               >
                 <Activity className="h-3 w-3 text-rose-400" />
                 {t('tasks.chainTitle')}
@@ -1272,7 +1272,7 @@ export function SessionMessages({
                 'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
                 filter === f
                   ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
-                  : 'border-white/[0.08] text-neutral-500 hover:text-neutral-300',
+                  : 'border-edge/[0.08] text-neutral-500 hover:text-neutral-300',
               )}
             >
               {t(CONV_FILTER_KEY[f])}
@@ -1348,11 +1348,11 @@ export function SessionMessages({
                   // 压缩分隔：不是谁说的话，只标上下文在这里断过一次（不参与勾选）
                   return (
                     <div key={m.key} className="flex items-center gap-2 py-1 text-[10px] text-neutral-600">
-                      <span className="h-px flex-1 bg-white/[0.08]" />
+                      <span className="h-px flex-1 bg-edge/[0.08]" />
                       <span className="shrink-0">
                         {t('hooks.mindmap.compactTag')} · {formatStamp(m.at)}
                       </span>
-                      <span className="h-px flex-1 bg-white/[0.08]" />
+                      <span className="h-px flex-1 bg-edge/[0.08]" />
                     </div>
                   );
                 }
@@ -1369,7 +1369,7 @@ export function SessionMessages({
                     >
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
                           不把整块对话撑出横向滚动条 */}
-                      <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5">
+                      <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-edge/[0.08] bg-neutral-800/50 px-2 py-1.5">
                         <span className="mb-0.5 block text-[10px] text-neutral-600">
                           {formatStamp(m.at)}
                         </span>
@@ -1430,7 +1430,7 @@ export function SessionMessages({
                         {/* 不是 weave 发的会话间消息（别的会话用 CC 自己的 SendMessage）：
                             挂发送方会话名，与终端里手敲的 prompt 区分开 */}
                         {m.fromWeave !== true && m.fromName != null && (
-                          <span className="shrink-0 rounded border border-white/[0.12] px-1 py-px text-[10px] text-neutral-400">
+                          <span className="shrink-0 rounded border border-edge/[0.12] px-1 py-px text-[10px] text-neutral-400">
                             {m.fromName}
                           </span>
                         )}
@@ -1466,7 +1466,7 @@ export function SessionMessages({
                                 e.stopPropagation();
                                 setLightbox(img);
                               }}
-                              className="block h-14 w-14 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
+                              className="block h-14 w-14 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
                             >
                               <img
                                 // 走 API_BASE：dev 由 vite 代理剥离 /api，裸 /images 会被 SPA 回退成 index.html
@@ -1546,7 +1546,7 @@ export function SessionMessages({
                                 { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
                               )
                             }
-                            className="inline-flex items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
                           >
                             <FeedbackIcon
                               state={fb.stateOf(`dismiss:${pipe.id}`)}
@@ -1575,7 +1575,7 @@ export function SessionMessages({
                     </button>
                   )}
                   {(generating || interrupted) && (
-                    <div className="flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
+                    <div className="flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border border-edge/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
                       {interrupted ? (
                         <Ban className="h-3 w-3 shrink-0" />
                       ) : (
@@ -1694,7 +1694,7 @@ export function SessionMessages({
                           { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
                         )
                       }
-                      className="inline-flex shrink-0 items-center rounded border border-white/[0.1] p-0.5 text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-40"
+                      className="inline-flex shrink-0 items-center rounded border border-edge/[0.1] p-0.5 text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
                     >
                       <FeedbackIcon
                         state={fb.stateOf(`dismiss:${m.id}`)}
@@ -1730,7 +1730,7 @@ export function SessionMessages({
                   'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40',
                   allPicked
                     ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
-                    : 'border-white/[0.1] text-neutral-200 hover:border-white/20',
+                    : 'border-edge/[0.1] text-neutral-200 hover:border-edge/20',
                 )}
               >
                 <CheckCheck className="h-3 w-3" />
@@ -1740,7 +1740,7 @@ export function SessionMessages({
                 type="button"
                 disabled={picked.size === 0}
                 onClick={copyPicked}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
               >
                 <Copy className="h-3 w-3" />
                 {t('tasks.convCopy')}
@@ -1750,7 +1750,7 @@ export function SessionMessages({
                 disabled={picked.size === 0}
                 onClick={openShareMenu}
                 title={t('tasks.convShare')}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-white/20 disabled:opacity-40"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
               >
                 <FeedbackIcon
                   state={fb.stateOf(`convImg:${sessionId}`)}
@@ -1765,7 +1765,7 @@ export function SessionMessages({
                   setSelecting(false);
                   setPicked(new Set());
                 }}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200"
               >
                 {t('tasks.convCancel')}
               </button>
@@ -1809,7 +1809,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgImageAttach')}
                   onClick={() => fileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
                 >
                   {uploading > 0 ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -1824,7 +1824,7 @@ export function SessionMessages({
                       type="button"
                       title={img.name}
                       onClick={() => setLightbox(img)}
-                      className="block h-10 w-10 overflow-hidden rounded border border-white/[0.12] bg-neutral-950"
+                      className="block h-10 w-10 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
                     >
                       <img
                         src={`${API_BASE}/images/${img.id}`}
@@ -1838,7 +1838,7 @@ export function SessionMessages({
                       title={t('tasks.msgImageRemove')}
                       aria-label={t('tasks.msgImageRemove')}
                       onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
-                      className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
+                      className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
                     >
                       <X className="h-2.5 w-2.5" />
                     </button>
@@ -1853,7 +1853,7 @@ export function SessionMessages({
                       title={t('tasks.modeCycle')}
                       aria-label={t('tasks.modeCycle')}
                       onClick={() => setConfirmMode(true)}
-                      className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded border border-white/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
+                      className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
                     >
                       <FeedbackIcon
                         state={fb.stateOf(`cycleMode:${sessionId}`)}
@@ -1889,7 +1889,7 @@ export function SessionMessages({
                           }}
                           title={t('tasks.modelLastKnown')}
                           aria-label={t('tasks.modelLabel')}
-                          className="max-w-[12rem] appearance-none rounded border border-white/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none max-lg:max-w-[8rem]"
+                          className="max-w-[12rem] appearance-none rounded border border-edge/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none max-lg:max-w-[8rem]"
                         >
                           {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
                           {modelOptions.map((o) => (
@@ -1929,7 +1929,7 @@ export function SessionMessages({
                 }}
                 placeholder={t('tasks.messagesPlaceholder')}
                 rows={2}
-                className="min-w-0 flex-1 resize-none rounded border border-white/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
+                className="min-w-0 flex-1 resize-none rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
               />
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
                   紧贴输入框——手从打字挪到换行不跨别的钮。 */}
@@ -1938,7 +1938,7 @@ export function SessionMessages({
                 title={t('tasks.msgNewline')}
                 aria-label={t('tasks.msgNewline')}
                 onClick={insertNewline}
-                className="hidden max-lg:inline-flex shrink-0 items-center justify-center rounded border border-white/[0.1] px-2.5 py-1 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                className="hidden max-lg:inline-flex shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2.5 py-1 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
               >
                 <CornerDownLeft className="h-3.5 w-3.5" />
               </button>
@@ -1952,7 +1952,7 @@ export function SessionMessages({
                     title={t('tasks.stopTooltip')}
                     aria-label={t('tasks.stopTooltip')}
                     onClick={() => onInterrupt(sessionId)}
-                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-white/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 max-lg:px-3 max-lg:py-2"
+                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-edge/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 max-lg:px-3 max-lg:py-2"
                   >
                     <FeedbackIcon
                       state={interruptStateOf(sessionId)}
@@ -2003,7 +2003,7 @@ export function SessionMessages({
             onClick={(e) => e.stopPropagation()}
             className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
           >
-            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-white/20" />
+            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20" />
           </div>
         )}
 
@@ -2012,7 +2012,7 @@ export function SessionMessages({
           createPortal(
             <div
               data-conv-menu
-              className="fixed z-[60] rounded-lg border border-white/[0.1] bg-neutral-900 py-1 shadow-mac"
+              className="fixed z-[60] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
               style={{
                 left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
                 top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
@@ -2023,7 +2023,7 @@ export function SessionMessages({
                 <button
                   type="button"
                   onClick={() => enterSelect(menu.key)}
-                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
                 >
                   <Check className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convSelect')}
@@ -2033,7 +2033,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={() => shareImage('clipboard')}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <Copy className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareCopy')}
@@ -2041,7 +2041,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={() => shareImage('download')}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-white/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <Download className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareDownload')}
@@ -2064,7 +2064,7 @@ export function SessionMessages({
                 title={t('tasks.msgImagePreview')}
                 aria-label={t('tasks.msgImagePreview')}
                 onClick={() => setLightbox(null)}
-                className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.15] bg-neutral-900 text-neutral-300 hover:text-white"
+                className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-900 text-neutral-300 hover:text-neutral-100"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -2072,7 +2072,7 @@ export function SessionMessages({
                 src={`${API_BASE}/images/${lightbox.id}`}
                 alt={lightbox.name}
                 onClick={(e) => e.stopPropagation()}
-                className="max-h-full max-w-full rounded-lg border border-white/[0.12] object-contain"
+                className="max-h-full max-w-full rounded-lg border border-edge/[0.12] object-contain"
               />
             </div>,
             document.body,

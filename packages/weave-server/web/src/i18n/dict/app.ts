@@ -3,6 +3,8 @@ export const appZh = {
   // —— App 壳 ——
   'app.projectCount': '{n} 个项目',
   'app.settingsTooltip': '设置（默认终端等）',
+  'app.themeToLight': '切换到浅色',
+  'app.themeToDark': '切换到深色',
   'app.resizeLeft': '拖拽调整左侧宽度',
   'app.resizeRight': '拖拽调整右侧宽度',
   'app.resizeTaskHeight': '拖拽调整任务区高度',
@@ -100,6 +102,8 @@ export const appEn: Record<keyof typeof appZh, string> = {
   // —— App shell ——
   'app.projectCount': '{n} projects',
   'app.settingsTooltip': 'Settings (default terminal, etc.)',
+  'app.themeToLight': 'Switch to light',
+  'app.themeToDark': 'Switch to dark',
   'app.resizeLeft': 'Drag to resize the left pane',
   'app.resizeRight': 'Drag to resize the right pane',
   'app.resizeTaskHeight': 'Drag to resize the task area height',

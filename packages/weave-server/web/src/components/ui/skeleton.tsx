@@ -59,7 +59,7 @@ export function SkeletonCards({
       {Array.from({ length: count }, (_, index) => (
         <div
           key={index}
-          className="space-y-2 rounded-xl border border-white/[0.06] bg-neutral-900/40 p-3"
+          className="space-y-2 rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3"
         >
           <Skeleton className="h-3.5 w-1/2" />
           <Skeleton className="h-2.5 w-full" />
