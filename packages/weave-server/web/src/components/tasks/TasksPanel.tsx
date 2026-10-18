@@ -68,8 +68,10 @@ type ConvTarget = {
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
- * 右 = 选中会话的分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
- * + 单组合体事件链画布（默认全折叠，点击展开才按需挂载导图）。
+ * 右 = 选中会话的对话（选中即挂、切走只藏不卸）；没有对话面的 harness 右栏
+ * 仍是事件链本尊 = 分组组头列表（滚动窗口：默认最新 10 条、向上滚动加载更早）
+ * + 单组合体事件链画布（默认全折叠，点击展开才按需挂载导图），对话在场时它
+ * 从对话头部那枚按钮开成弹窗。
  * 会话列表与状态来自全局状态总线（SessionStatusProvider）；本面板只自管事件链
  * 明细：SSE 总线的 hook 订阅驱动选中会话的事件按需刷新。
  */
@@ -1188,7 +1190,7 @@ export function TasksPanel({
 
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
-      {/* 左栏：会话列表。<lg 独占全高（链路收进全屏滑出层），桌面恒双栏。 */}
+      {/* 左栏：会话列表。<lg 独占全高（右栏收进全屏滑出层），桌面恒双栏。 */}
       <aside className="flex w-full lg:w-72 max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-white/[0.06] pr-0 lg:pr-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
