@@ -1550,13 +1550,7 @@ export function SessionMessages({
         {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆）。窄屏放不下
             就整组折到第二行——按钮不等宽也不做横向滚动 */}
         {selecting ? (
-          // 同下面那行输入行：<lg 嵌入时右角让给 AI 浮球
-          <div
-            className={cn(
-              'mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1',
-              embedded && 'max-lg:pr-12',
-            )}
-          >
+          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="min-w-0 truncate text-[11px] text-neutral-400">
               {t('tasks.convSelected', { n: picked.size })}
             </span>
@@ -1743,9 +1737,7 @@ export function SessionMessages({
                 </div>
               )}
             </div>
-            {/* 嵌入右栏时 <lg 底部右角是整屏对话的发送区，而 AI 浮球（fixed
-                bottom-4 right-4，44px）正好压在上面——留一道右侧让位槽给它。 */}
-            <div className={cn('flex items-end gap-1.5', embedded && 'max-lg:pr-12')}>
+            <div className="flex items-end gap-1.5">
               <textarea
                 ref={draftRef}
                 value={draft}

@@ -43,6 +43,7 @@ import { copyText } from '@/lib/clipboard';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { setConvScreenOpen } from '@/lib/conv-screen';
 import { usePullLoad } from '@/lib/pull-load';
 import { createAwaitGate } from '@/lib/await-gate';
 import type { MessageKey } from '@/i18n/dict';
@@ -633,6 +634,11 @@ export function TasksPanel({
   );
   /** 右栏主体是对话还是事件链：选中会话解不出对话面（无闭轮事件的 harness）→ 事件链。 */
   const hasConv = selectedId !== null && convs.has(selectedId);
+  // 整屏对话盖住右下角：AI 浮球（`fixed bottom-4 right-4`）该退场（见 lib/conv-screen）
+  useEffect(() => {
+    setConvScreenOpen(!isDesktop && paneOpen && hasConv);
+  }, [isDesktop, paneOpen, hasConv]);
+  useEffect(() => () => setConvScreenOpen(false), []);
   // 对话面没了（换到没有对话面的会话）就收掉事件链弹窗，别让它挂在那儿
   useEffect(() => {
     if (!hasConv) setChainDialog(false);

@@ -7,6 +7,7 @@ import { aiStatus, streamChat, type AiChatMessage, type AiStatus } from '@/lib/a
 import { errorText } from '@/lib/action-feedback';
 import { useToast } from '@/components/Toast';
 import { registerInvalidator } from '@/lib/sse';
+import { useConvScreenOpen } from '@/lib/conv-screen';
 import { useT } from '@/i18n/I18nProvider';
 
 /**
@@ -70,6 +71,7 @@ export function AssistantMarkdown({ text }: { text: string }) {
 export function AiAssistant() {
   const t = useT();
   const { show } = useToast();
+  const convScreen = useConvScreenOpen();
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
@@ -138,6 +140,8 @@ export function AiAssistant() {
   }, [busy, input, messages, show, t]);
 
   if (status?.configured !== true) return null;
+  // `<lg` 的整屏对话把右下角占满：浮球与它那块弹窗都退场（会话历史留在内存，回来照旧）
+  if (convScreen) return null;
 
   return (
     <>
