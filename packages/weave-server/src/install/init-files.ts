@@ -41,8 +41,8 @@ export interface InitFileUpdate {
   targetPath: string;
   /** 盘上缺失或内容与期望不同。 */
   outdated: boolean;
-  /** `auto` = 可代写自愈；`manual` = 会进 git，只报不写。 */
-  syncClass: SyncClass;
+  /** `auto` = 可代写自愈；`manual` = 会进 git，只报不写；null = 没漂移，未归类。 */
+  syncClass: SyncClass | null;
   /** 期望全文；null = 判不出来（盘上不可合并等）→ 不写。 */
   expectedContent: string | null;
 }
@@ -207,9 +207,6 @@ export async function detectInitFileUpdates(projectPath: string): Promise<InitFi
     entries.push(...(await generateInitFiles(h, ctx)));
   }
 
-  const relPaths = entries.map((e) => e.relPath);
-  const classify = await gitClassify(projectPath, relPaths);
-
   const out: InitFileUpdate[] = [];
   for (const entry of entries) {
     const targetPath = path.join(projectPath, ...entry.relPath.split('/'));
@@ -219,10 +216,18 @@ export async function detectInitFileUpdates(projectPath: string): Promise<InitFi
       relPath: entry.relPath,
       targetPath,
       outdated: expectedContent !== null && expectedContent !== onDisk,
-      syncClass: classify.classOf(entry.relPath),
+      syncClass: null,
       expectedContent,
     });
   }
+
+  // 只对真漂移的条目问 git：syncClass 的下游（available / needsInit / applyInitFile）
+  // 一律先按 outdated 过滤，没漂移的行读到 null 也无从影响判断；而这些行本来每个也
+  // 要一趟 git 子进程（实测每项目 ~150ms）。稳态（全项目无漂移）下这条把 60s 同步
+  // 扫的 git 子进程从「项目数 × 2」降到 0。
+  const drifted = out.filter((u) => u.outdated);
+  const classify = await gitClassify(projectPath, drifted.map((u) => u.relPath));
+  for (const u of drifted) u.syncClass = classify.classOf(u.relPath);
   return out;
 }
 

@@ -83,6 +83,8 @@ describe('detectInitFileUpdates', () => {
     }
     const after = await detectInitFileUpdates(projectDir);
     expect(after.filter((u) => u.outdated)).toEqual([]);
+    // 没漂移就不问 git（syncClass 空白）——稳态下一轮检测零子进程
+    expect(after.every((u) => u.syncClass === null)).toBe(true);
   });
 
   it('旧版 weave 生成物 → outdated，apply 复原到当前版本', async () => {
