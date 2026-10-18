@@ -71,6 +71,8 @@ const SendMessageBody = z.object({
   fromSessionId: z.string().min(1).nullable().optional(),
   /** 随附图（上传件 id）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
   images: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
+  /** 强制层② 终端 send-text（发送人下拉选的通道；缺省 = 直投优先的自动层序）。 */
+  forceTerminal: z.boolean().optional(),
 });
 
 /** 图片上传（base64 JSON；内容寻址落 `<dataDir>/uploads/<sha256>.<ext>`）。 */
@@ -708,6 +710,7 @@ export async function handleHooksRoutes(
         toSessionId: sessionId,
         text: body.text,
         ...(images.length > 0 ? { images } : {}),
+        ...(body.forceTerminal === true ? { forceTerminal: true } : {}),
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
         fromSessionId: body.fromSessionId ?? null,

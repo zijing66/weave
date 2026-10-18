@@ -864,6 +864,101 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  it('强制终端：直投与中继都跳过——发送人要的是宿主认作「用户输入」的那条路', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-forced' });
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'forced terminal',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      forceTerminal: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivering' });
+    expect(sendText).toHaveBeenCalledWith('pane-1', 'forced terminal');
+    expect(fake.calls).toHaveLength(0); // 中继一个都不起（哪怕 peer 已登记）
+    await new Promise((r) => setTimeout(r, 50));
+    expect(got).toBe(''); // 直投也没伸过手（凭据在手）
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'terminal',
+    });
+    inbox.close();
+  });
+
+  it('强制终端随队列行落盘：pane 不在时入队，冲洗仍只打终端（不回落直投/中继）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const fake = createFakeSpawn();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    let paneReady = false;
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        terminal: {
+          available: () => true,
+          listPanes: async () =>
+            paneReady ? [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }] : [],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-forced-q' });
+
+    const queued = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'forced queued',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      forceTerminal: true,
+    });
+    expect(queued).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toContainEqual(expect.objectContaining({ forceTerminal: true }));
+
+    paneReady = true;
+    await deliverer.flushSession(SESSION_ID);
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledWith('pane-1', 'forced queued'));
+    expect(fake.calls).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(got).toBe('');
+    inbox.close();
+  });
+
   it('重发「已贴进框、没回执」的终端投递只补回车——重贴会把正文与图在框里叠一份', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const fake = createFakeSpawn();

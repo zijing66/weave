@@ -406,6 +406,8 @@ export interface SessionMessageRow {
   channel: 'prompt' | 'inject' | 'headless' | null;
   /** prompt 通道的实际落法（socket 直投 / 中继 / 终端 send-text）。 */
   via?: 'socket' | 'relay' | 'terminal' | null;
+  /** 发送人强制走层② 终端（下拉选的通道）；重发沿用。 */
+  forceTerminal?: boolean | null;
   status: 'pending' | 'delivering' | 'running' | 'injected' | 'delivered' | 'succeeded' | 'failed' | 'timeout';
   /** 投递回执：目标会话自己的 UserPromptSubmit 与本文匹配上了（真到达）。 */
   acked?: boolean | null;
@@ -1246,12 +1248,12 @@ export const api = {
     apiFetch<{ messages: SessionMessageRow[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
     ).then((r) => r.messages),
-  /** 投递消息到会话：恒 prompt 通道、全自动无模式入参（原生 SendMessage 中继 →
-   *  终端 send-text 降级 → 未开会话积压队列）；层①② 皆无才 409，
-   *  由 apiFetch 抛 Error（error 字段原文）。 */
+  /** 投递消息到会话：恒 prompt 通道、无模式入参（直投 → 终端 send-text → 中继
+   *  降级 → 未开会话积压队列）；`forceTerminal` = 发送人下拉选的通道，收窄成只剩
+   *  层②。层①② 皆无才 409，由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
-    body: { text: string; images?: string[] },
+    body: { text: string; images?: string[]; forceTerminal?: boolean },
   ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',

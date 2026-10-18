@@ -26,6 +26,8 @@ export interface PromptboxEntry {
   text: string;
   /** 单向注入（手动面）——随行落盘，重启后冲洗仍带「无需回复」注记。 */
   oneWay?: boolean;
+  /** 发送人强制走层② 终端（下拉选的通道）——随行落盘，冲洗时同样不回落直投/中继。 */
+  forceTerminal?: boolean;
   /** 随附图：`text` 恒为用户原文，投递文本由 harness `imageAttach` 现合成。 */
   images?: PromptboxImage[];
   at: string;
@@ -53,6 +55,7 @@ function parseLines(text: string): PromptboxEntry[] {
           sessionId: raw.sessionId,
           text: raw.text,
           oneWay: raw.oneWay === true,
+          ...(raw.forceTerminal === true ? { forceTerminal: true } : {}),
           ...(images.length > 0 ? { images } : {}),
           at: typeof raw.at === 'string' ? raw.at : '',
         });
@@ -68,7 +71,14 @@ function parseLines(text: string): PromptboxEntry[] {
 export function appendPromptbox(
   hooksDir: string,
   token: string,
-  entries: Array<{ id: string; sessionId: string; text: string; oneWay?: boolean; images?: PromptboxImage[] }>,
+  entries: Array<{
+    id: string;
+    sessionId: string;
+    text: string;
+    oneWay?: boolean;
+    forceTerminal?: boolean;
+    images?: PromptboxImage[];
+  }>,
 ): void {
   if (entries.length === 0) return;
   try {

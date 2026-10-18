@@ -382,10 +382,25 @@ export function exportConversationText(
 const DOUBLE_TAP_MS = 300;
 const TAP_SLOP = 8;
 
-/** 弹出菜单两副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）。 */
+/** 弹出菜单三副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）/
+ *  发送键旁的下拉（选投递通道）。 */
 type ConvMenu =
   | { kind: 'bubble'; x: number; y: number; key: string }
-  | { kind: 'share'; x: number; y: number };
+  | { kind: 'share'; x: number; y: number }
+  | { kind: 'send'; x: number; y: number };
+
+/** 投递通道（发送人选的，不是消息模式）：auto = 层序自动（直投优先）；
+ *  terminal = 强制层② 终端 send-text（宿主眼里唯一算用户输入的路径）。 */
+type SendVia = 'auto' | 'terminal';
+const SEND_VIA_KEY = 'weave:send-via';
+
+function loadSendVia(): SendVia {
+  try {
+    return localStorage.getItem(SEND_VIA_KEY) === 'terminal' ? 'terminal' : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
 
 const MENU_W = 168;
 const MENU_H = 72;
@@ -554,6 +569,7 @@ export function SessionMessages({
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
   const [menu, setMenu] = useState<ConvMenu | null>(null);
+  const [sendVia, setSendVia] = useState<SendVia>(loadSendVia);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -929,6 +945,21 @@ export function SessionMessages({
     setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
   };
 
+  /** 发送通道下拉（同一枚箭头位置往上开，理由同上）；选中即记盘。 */
+  const openSendMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ kind: 'send', x: r.right - MENU_W, y: r.top - MENU_H });
+  };
+  const pickSendVia = (v: SendVia): void => {
+    setSendVia(v);
+    try {
+      localStorage.setItem(SEND_VIA_KEY, v);
+    } catch {
+      // 记不住就这次会话有效，不影响投递
+    }
+    setMenu(null);
+  };
+
   /** 触屏双击开菜单（桌面走右键；鼠标不该有双击这回事）。
    *  多选不再是长按直达——它只是菜单里的一项，双击也只开菜单。 */
   const onPressDown = (key: string) => (e: React.PointerEvent): void => {
@@ -1094,6 +1125,7 @@ export function SessionMessages({
         const res = await api.sendSessionMessage(sessionId, {
           text,
           ...(images.length > 0 ? { images: images.map((i) => i.id) } : {}),
+          ...(sendVia === 'terminal' ? { forceTerminal: true } : {}),
         });
         // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
         // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
@@ -1772,8 +1804,9 @@ export function SessionMessages({
             </div>
           </div>
         ) : (
-          /* Composer：无模式选择（服务端恒 prompt 通道全自动）；层①② 皆无的
-             harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。
+          /* Composer：无模式选择（服务端恒 prompt 通道全自动）；发送键旁的箭头
+             只选**投递通道**（自动 / 强制终端），不是 inject/headless 那套模式。
+             层①② 皆无的 harness 才置灰，理由取能力矩阵 unsupportedReasons.prompt。
              会话控制面（执行模式 / 模型）收在输入框正上方的**一条控制行**里——
              两者切换都不留 hook 痕迹（Shift+Tab 一个事件都不发、/model 不落盘），
              故标注是「最后已知」而非此刻。宿主只有「切一档」没有定点设模式，故
@@ -1942,9 +1975,10 @@ export function SessionMessages({
               >
                 <CornerDownLeft className="h-3.5 w-3.5" />
               </button>
-              {/* 停止 / 发送：靠右。窄屏竖排（拇指区两块方块，横排放不下四个钮），
+              {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏竖排（拇指区两块方块，横排放不下），
                   字标随窄屏收起（竖排要的是窄，留着字标等于没省位）；桌面并排一行。
-                  停止与事件链组头同一判据与 fb 键。 */}
+                  停止与事件链组头同一判据与 fb 键。通道下拉贴着发送键——
+                  它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
               <div className="flex shrink-0 items-center gap-1 max-lg:flex-col max-lg:items-stretch">
                 {stoppable && (
                   <button
@@ -1962,29 +1996,49 @@ export function SessionMessages({
                     <span className="max-lg:hidden">{t('tasks.stop')}</span>
                   </button>
                 )}
-                <button
-                  type="button"
-                  disabled={
-                    !capability.prompt ||
-                    (!draft.trim() && staged.length === 0) ||
-                    fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-                  }
-                  title={
-                    capability.prompt
-                      ? undefined
-                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-                  }
-                  aria-label={t('tasks.messagesSend')}
-                  onClick={send}
-                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf(`sendMsg:${sessionId}`)}
-                    className="h-3 w-3"
-                    icon={<Send className="h-3 w-3" />}
-                  />
-                  <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
-                </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={
+                      !capability.prompt ||
+                      (!draft.trim() && staged.length === 0) ||
+                      fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                    }
+                    title={
+                      capability.prompt
+                        ? undefined
+                        : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                    }
+                    aria-label={t('tasks.messagesSend')}
+                    onClick={send}
+                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
+                  >
+                    <FeedbackIcon
+                      state={fb.stateOf(`sendMsg:${sessionId}`)}
+                      className="h-3 w-3"
+                      icon={<Send className="h-3 w-3" />}
+                    />
+                    <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
+                  </button>
+                  {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——
+                      宿主只把终端击键当用户输入。强制态染蓝，免得忘记自己改过。 */}
+                  <button
+                    type="button"
+                    title={t('tasks.msgChannelCurrent', {
+                      via: sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto'),
+                    })}
+                    aria-label={t('tasks.msgChannelTitle')}
+                    onClick={openSendMenu}
+                    className={cn(
+                      'inline-flex shrink-0 items-center justify-center rounded border px-1 py-1 transition-colors max-lg:px-2 max-lg:py-2',
+                      sendVia === 'terminal'
+                        ? 'border-blue-500/40 text-blue-300'
+                        : 'border-edge/[0.1] text-neutral-400 hover:border-blue-500/40 hover:text-blue-300',
+                    )}
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2028,6 +2082,23 @@ export function SessionMessages({
                   <Check className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convSelect')}
                 </button>
+              ) : menu.kind === 'send' ? (
+                <>
+                  {(['auto', 'terminal'] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      title={v === 'auto' ? t('tasks.msgChannelAutoHint') : t('tasks.msgChannelTerminalHint')}
+                      onClick={() => pickSendVia(v)}
+                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    >
+                      <Check
+                        className={cn('h-3 w-3', sendVia === v ? 'text-blue-300' : 'text-transparent')}
+                      />
+                      {v === 'auto' ? t('tasks.msgChannelAuto') : t('tasks.msgChannelTerminal')}
+                    </button>
+                  ))}
+                </>
               ) : (
                 <>
                   <button

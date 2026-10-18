@@ -92,6 +92,8 @@ export interface PipeMessage {
   mode: MessageMode;
   /** 单向注入（手动面：无接收方会话，中继载荷带「无需回复」注记）；编排域不置。 */
   oneWay?: boolean;
+  /** 发送人强制层② 终端（层序收窄成只剩它，且重发沿用）。 */
+  forceTerminal?: boolean;
   /** prompt 通道的实际落法（socket 直投 / 中继 / 终端 send-text）。 */
   via?: 'socket' | 'relay' | 'terminal';
   /** 投递回执：会话自己的 UserPromptSubmit 与本文匹配上了（真到达，非「已交给」）。 */
@@ -188,6 +190,9 @@ export interface SendInput {
   fromSessionId?: string | null;
   /** 单向注入（手动面置 true：无接收方会话）；编排域省略 = 双向对话保留。 */
   oneWay?: boolean;
+  /** 强制层② 终端 send-text（手动面下拉选的通道）：跳过直投与中继——宿主把
+   *  终端击键当用户输入，另外两层都是「另一个会话发的」。 */
+  forceTerminal?: boolean;
   /** 随附图（已落盘的上传件）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
   images?: readonly MessageImage[];
 }
@@ -443,6 +448,7 @@ export class MessageDeliverer {
       ...(images.length > 0 ? { images } : {}),
       mode: input.mode,
       oneWay: input.oneWay === true,
+      ...(input.forceTerminal === true ? { forceTerminal: true } : {}),
       channel,
       status: 'pending',
       at: meta.at,
@@ -501,6 +507,7 @@ export class MessageDeliverer {
             ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
             mode: 'prompt',
             oneWay: entry.oneWay === true,
+            ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
             channel: 'prompt',
             status: 'pending',
             at: entry.at,
@@ -1079,6 +1086,7 @@ export class MessageDeliverer {
         ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
         mode: 'prompt',
         oneWay: entry.oneWay === true,
+        ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
         via: 'socket',
         channel: 'prompt',
         status: 'pending',
@@ -1106,8 +1114,13 @@ export class MessageDeliverer {
         return;
       }
       const peer = relay?.resolve(sessionId) ?? null;
-      // 层序同即时路径（手动面中继退最后）；本轮中继起不来就停轮，余行留队列。
-      const layers: Array<'relay' | 'terminal'> = msg.oneWay === true ? ['terminal', 'relay'] : ['relay', 'terminal'];
+      // 层序同即时路径（手动面中继退最后、强制终端只剩它）；本轮中继起不来就停轮，余行留队列。
+      const layers: Array<'relay' | 'terminal'> =
+        msg.forceTerminal === true
+          ? ['terminal']
+          : msg.oneWay === true
+            ? ['terminal', 'relay']
+            : ['relay', 'terminal'];
       for (const layer of layers) {
         if (layer === 'relay' && relay && peer) {
           this.memory.set(msg.id, { ...msg, status: 'delivering', via: 'relay' });
@@ -1330,7 +1343,13 @@ export class MessageDeliverer {
     // 层序随面变：**手动面（oneWay）中继退到最后**——跨会话包裹与「无需回复」注记
     // 只是同义外壳，却要多起一个 headless 子进程；层② 终端注入才是裸 user 文本的
     // 同形态替代。编排域反之：那里的 @weave 身份正是要投递的东西。
-    const layers: Array<'relay' | 'terminal'> = entry.oneWay === true ? ['terminal', 'relay'] : ['relay', 'terminal'];
+    // 发送人强制终端 = 只剩层②（另两层在宿主眼里都是「另一个会话发的」）。
+    const layers: Array<'relay' | 'terminal'> =
+      entry.forceTerminal === true
+        ? ['terminal']
+        : entry.oneWay === true
+          ? ['terminal', 'relay']
+          : ['relay', 'terminal'];
     for (const layer of layers) {
       if (layer === 'relay' && relay && peer) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'relay' });
@@ -1369,7 +1388,7 @@ export class MessageDeliverer {
   private async tryInboxDeliver(entry: PipeMessage, surface: MessagingSurface): Promise<PipeMessage | null> {
     const spec = surface.promptInbox;
     const target = this.inboxSockets.get(entry.sessionId);
-    if (!spec || entry.oneWay !== true || !target) return null;
+    if (!spec || entry.oneWay !== true || !target || entry.forceTerminal === true) return null;
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
     try {
       await deliverViaInboxSocket(spec, target, `${INBOX_SOURCE_PREFIX}${this.wireTextOf(entry)}`);
@@ -1400,6 +1419,7 @@ export class MessageDeliverer {
         sessionId: entry.sessionId,
         text: entry.text,
         oneWay: entry.oneWay === true,
+        ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
         ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
       },
     ]);
