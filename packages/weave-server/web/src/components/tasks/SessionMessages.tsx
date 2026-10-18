@@ -211,7 +211,9 @@ export function conversationOf(
         eventId: e.id,
         role: 'user',
         at: e.createdAt,
-        text,
+        // `[Image #N]` 是宿主输入框的占位记号、不是正文：图缩略图已经挂在气泡上，
+        // 留着就成一串没人看得懂的标记（剥不掉的话，两条气泡也长得不像同一条）。
+        text: e.images?.length ? text.replace(IMAGE_MARKER, '').trim() : text,
         fromWeave,
         fromName,
         ...(e.images?.length ? { images: e.images } : {}),
@@ -263,6 +265,16 @@ export function attachDeliveries(
 ): ConvEntry[] {
   const taken = new Set<string>();
   const claim = (entry: ConvEntry): SessionMessageRow | undefined => {
+    // 回执记下了它命中的那条开轮事件 = 同一条消息的确定答案，不必比文案：重发只
+    // 补的那记回车提交的是**整个输入框**（用户在终端里又敲了别的字），投递行记的
+    // 原文与真正提交的文本可以差出一大截，比文案就永远认领不到、同一条显示两遍。
+    if (entry.eventId !== undefined) {
+      const exact = deliveries.find((m) => !taken.has(m.id) && m.ackedEventId === entry.eventId);
+      if (exact) {
+        taken.add(exact.id);
+        return exact;
+      }
+    }
     let best: SessionMessageRow | undefined;
     let bestGap = CLAIM_MS;
     for (const m of deliveries) {

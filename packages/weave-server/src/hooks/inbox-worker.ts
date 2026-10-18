@@ -318,8 +318,9 @@ export interface IngestedHandlerDeps {
     noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
     /** hook 旁路上报的会话 pane 定位 env（内存态；层② 精确定位用）。 */
     notePaneEnv?(sessionId: string, env: Record<string, string>): void;
-    /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。 */
-    onSessionPrompt?(sessionId: string, prompt: string): string[];
+    /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。
+     *  `eventId` 随回执记下（对话面按它把投递行挂到这条事件的气泡上）。 */
+    onSessionPrompt?(sessionId: string, prompt: string, eventId?: number): string[];
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
@@ -380,7 +381,12 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。
       if (record.input.eventType === 'UserPromptSubmit') {
-        const ids = deps.messagePipe?.onSessionPrompt?.(record.input.sessionId, promptTextOf(payload) ?? '') ?? [];
+        const ids =
+          deps.messagePipe?.onSessionPrompt?.(
+            record.input.sessionId,
+            promptTextOf(payload) ?? '',
+            record.eventId,
+          ) ?? [];
         if (ids.length > 0) deps.uploads?.linkToEvent(record.eventId, ids);
       }
       // 会话退出（谁是退出事件归 harness 生命周期表）：旁路事实随进程作废——

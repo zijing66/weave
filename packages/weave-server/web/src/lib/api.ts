@@ -409,6 +409,8 @@ export interface SessionMessageRow {
   status: 'pending' | 'delivering' | 'running' | 'injected' | 'delivered' | 'succeeded' | 'failed' | 'timeout';
   /** 投递回执：目标会话自己的 UserPromptSubmit 与本文匹配上了（真到达）。 */
   acked?: boolean | null;
+  /** 回执命中的那条开轮事件：对话面按它把投递行挂到对应气泡上（文案对不上也认得出）。 */
+  ackedEventId?: number | null;
   /** 终态落定时刻（驻留窗口起点；在途态无值）。 */
   settledAt?: string | null;
   /** 本条 = 该会话队列暂停闸的成因（未回执超窗/投递失败）；重发或回执清除。 */

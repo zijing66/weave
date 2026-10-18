@@ -89,6 +89,10 @@ export interface PipeMessage {
   via?: 'socket' | 'relay' | 'terminal';
   /** 投递回执：会话自己的 UserPromptSubmit 与本文匹配上了（真到达，非「已交给」）。 */
   acked?: boolean;
+  /** 回执命中的那条开轮事件 id：对话面据此把投递行精确挂到它的气泡上（比比对
+   *  原文可靠——重发只补的那记回车提交的是整个输入框，投递行记的原文与实际提交
+   *  的文本可以不一样）。 */
+  ackedEventId?: number | null;
   /** 终态落定时刻（在途视图驻留窗口的起点；在途态无值）。 */
   settledAt?: string | null;
   /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
@@ -616,8 +620,11 @@ export class MessageDeliverer {
    * 文本 chunk 用空串连起来，`msg.text` 与 UPS 原文可能对不上——对不上不代表
    * 没送达，按「去空白后相同」再认一次；纯图发送（无用户文本）的 UPS prompt 是
    * 空的 / 只剩 `[Image #N]`，无文本可比，这样一条 UPS 认领最新那条纯图在途。
+   *
+   * `eventId` = 这条 UPS 自己的事件 id：命中即记下来，对话面据此把投递行精确挂到
+   * 对应气泡上（见 `PipeMessage.ackedEventId`）。
    */
-  onSessionPrompt(sessionId: string, prompt: string): string[] {
+  onSessionPrompt(sessionId: string, prompt: string, eventId?: number): string[] {
     const seenRaw = normalizePromptText(stripInboxMarker(prompt));
     const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
     for (const msg of [...this.memory.values()].reverse()) {
@@ -629,7 +636,12 @@ export class MessageDeliverer {
       const imageHit =
         (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
       if (!textHit && !imageHit) continue;
-      this.memory.set(msg.id, { ...msg, acked: true, stalled: false });
+      this.memory.set(msg.id, {
+        ...msg,
+        acked: true,
+        stalled: false,
+        ...(eventId === undefined ? {} : { ackedEventId: eventId }),
+      });
       // 回执命中暂停闸成因 → 闸解除：若还有积压，继续排空（不必等下一次事件）
       if (this.stalled.get(sessionId)?.messageId === msg.id) {
         this.stalled.delete(sessionId);

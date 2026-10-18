@@ -38,6 +38,7 @@ const delivery = (over: Partial<SessionMessageRow>): SessionMessageRow => ({
   via: over.via ?? 'socket',
   status: over.status ?? 'pending',
   acked: over.acked ?? null,
+  ackedEventId: over.ackedEventId ?? null,
   settledAt: over.settledAt ?? null,
   stalled: over.stalled ?? null,
   output: null,
@@ -383,6 +384,17 @@ describe('随附图', () => {
     expect(entries[0]?.images?.[0]?.id).toBe('a'.repeat(64));
   });
 
+  it('`[Image #N]` 是宿主输入框的占位、不是正文：有图就剥掉，没图（图丢了）才留', () => {
+    const prompt = '[Image #6]消息重复了[Image #7]检查并修复';
+    const withImage = conversationOf(
+      [{ ...event(3, 'UserPromptSubmit', { prompt }), images: [img('a'.repeat(64))] }],
+      claude,
+    );
+    expect(withImage[0]?.text).toBe('消息重复了检查并修复');
+    const withoutImage = conversationOf([event(4, 'UserPromptSubmit', { prompt })], claude);
+    expect(withoutImage[0]?.text).toBe(prompt);
+  });
+
   it('认领放宽一档：带图的投递行比空白更宽（粘贴处理连多行 chunk）', () => {
     const thread = attachDeliveries(
       [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '第一行\n第二行（够长）' }],
@@ -432,6 +444,35 @@ describe('随附图', () => {
         },
       ],
       [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.pipe?.id).toBe('m1');
+  });
+
+  it('回执记了事件 id：文案对不上（重发只补的那记回车提交了整个输入框）也只算一条', () => {
+    const thread = attachDeliveries(
+      [
+        {
+          key: 'e3',
+          eventId: 3,
+          role: 'user',
+          at: at(30),
+          text: '消息重复了检查并修复，一条消息出现了2次',
+          images: [img('a'.repeat(64))],
+        },
+      ],
+      [
+        delivery({
+          id: 'm1',
+          text: '检查并修复，一条消息出现了2次',
+          at: at(1),
+          status: 'delivered',
+          settledAt: at(30),
+          acked: true,
+          ackedEventId: 3,
+          images: [img('a'.repeat(64))],
+        }),
+      ],
     );
     expect(thread).toHaveLength(1);
     expect(thread[0]?.pipe?.id).toBe('m1');

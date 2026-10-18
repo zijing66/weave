@@ -1031,8 +1031,11 @@ describe('MessageDeliverer 裁决表', () => {
     deliverer.onSessionPrompt(
       SESSION_ID,
       `<cross-session-message from="uds:\\\\?\\pipe\\LOCAL\\cc-msg-x">回执比对正文（够长）</cross-session-message>`,
+      777,
     );
     expect(deliverer.getMessage(id)?.acked).toBe(true);
+    // 命中的那条事件 id 记在行上：对话面按它把投递行挂到对应气泡（文案对不上也认得出）
+    expect(deliverer.getMessage(id)?.ackedEventId).toBe(777);
     expect(busEvents).toContainEqual(
       expect.objectContaining({ kind: 'message.acknowledged', messageId: id }),
     );
