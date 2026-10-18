@@ -1996,7 +1996,10 @@ export function SessionMessages({
                     <span className="max-lg:hidden">{t('tasks.stop')}</span>
                   </button>
                 )}
-                <div className="flex shrink-0 items-center gap-1">
+                {/* 发送键与通道下拉合成一枚（split button）：同一块蓝底、同一圈圆角，
+                    中间只隔一道细线——点左半发送、点右半开菜单，不是两枚并排的钮。
+                    下拉不随草稿为空而禁用：选通道与「现在有没有话要说」是两回事。 */}
+                <div className="inline-flex shrink-0 items-stretch overflow-hidden rounded bg-blue-600/80 transition-colors hover:bg-blue-500">
                   <button
                     type="button"
                     disabled={
@@ -2011,7 +2014,7 @@ export function SessionMessages({
                     }
                     aria-label={t('tasks.messagesSend')}
                     onClick={send}
-                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 max-lg:px-3 max-lg:py-2"
                   >
                     <FeedbackIcon
                       state={fb.stateOf(`sendMsg:${sessionId}`)}
@@ -2020,8 +2023,8 @@ export function SessionMessages({
                     />
                     <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
                   </button>
-                  {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——
-                      宿主只把终端击键当用户输入。强制态染蓝，免得忘记自己改过。 */}
+                  {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
+                      终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
                   <button
                     type="button"
                     title={t('tasks.msgChannelCurrent', {
@@ -2030,10 +2033,10 @@ export function SessionMessages({
                     aria-label={t('tasks.msgChannelTitle')}
                     onClick={openSendMenu}
                     className={cn(
-                      'inline-flex shrink-0 items-center justify-center rounded border px-1 py-1 transition-colors max-lg:px-2 max-lg:py-2',
+                      'inline-flex items-center justify-center border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
                       sendVia === 'terminal'
-                        ? 'border-blue-500/40 text-blue-300'
-                        : 'border-edge/[0.1] text-neutral-400 hover:border-blue-500/40 hover:text-blue-300',
+                        ? 'border-white/40 bg-white/20 text-white'
+                        : 'border-white/20 text-white/70 hover:bg-white/10 hover:text-white',
                     )}
                   >
                     <ChevronDown className="h-3 w-3" />
