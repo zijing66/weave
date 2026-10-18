@@ -33,7 +33,7 @@ export const assetsZh = {
   'skillGrid.scopeUser': '全局',
   'skillGrid.scopeProject': '项目',
   'skillGrid.scopeLocal': '仅本人',
-  'skillGrid.enableTip': '{scope}档启用覆写（当前：{state}）——点击切换',
+  'skillGrid.enableTip': '{scope}：{state}——点击切换',
   'skillGrid.keyTip': '插件所属市场',
 
   // —— 仓库维度折叠（Skills 与 Plugins 两页同源的一级维度） ——
@@ -142,7 +142,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'skillGrid.scopeUser': 'Global',
   'skillGrid.scopeProject': 'Project',
   'skillGrid.scopeLocal': 'Local only',
-  'skillGrid.enableTip': '{scope} enable override (now: {state}) — click to cycle',
+  'skillGrid.enableTip': '{scope}: {state} — click to cycle',
   'skillGrid.keyTip': 'Plugin marketplace',
 
   // —— Repository-dimension grouping (one L1 dimension shared by Skills & Plugins) ——

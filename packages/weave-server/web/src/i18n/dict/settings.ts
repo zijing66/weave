@@ -24,7 +24,7 @@ export const settingsZh = {
   'settings.urlLocal': '本机',
   'settings.push': '推送提醒',
   'settings.pushHint': '页面关闭后仍能收到提醒（逐设备开关）。',
-  'settings.pushInsecure': '推送需 HTTPS 访问（当前页面是非安全上下文，浏览器禁用推送）。',
+  'settings.pushInsecure': '推送需 HTTPS 访问（当前是 HTTP，浏览器不支持）。',
   'settings.pushUnsupported': '此浏览器不支持 Web Push（iOS 需将本站加到主屏幕后可用）。',
   'settings.pushFailed': '推送订阅未成功——提醒保持「页面开着才通知」。',
 };
@@ -57,7 +57,7 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.urlLocal': 'Local',
   'settings.push': 'Push alerts',
   'settings.pushHint': 'Alerts arrive even with the page closed (per-device toggle).',
-  'settings.pushInsecure': 'Push requires HTTPS access (this page is an insecure context; the browser blocks push).',
+  'settings.pushInsecure': 'Push requires HTTPS (this page is HTTP, so the browser blocks it).',
   'settings.pushUnsupported': 'This browser has no Web Push support (on iOS, add the site to the Home Screen first).',
   'settings.pushFailed': 'Push subscription failed — alerts stay page-open-only.',
 };
