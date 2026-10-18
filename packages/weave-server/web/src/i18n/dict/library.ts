@@ -86,7 +86,7 @@ export const libraryZh = {
   'library.removeLegacyTip': '从清单移除（外部目录保留）',
   'library.removedOk': '已移除：{name}',
   'library.removeFailed': '移除失败：{error}',
-  'library.removeDeregWarn': '市场副本已删，但从宿主注销市场未成功：{error}',
+  'library.removeDeregWarn': '市场副本已删，但注销市场未成功：{error}',
   'library.noTemplates': '「{name}」分类暂无外部可安装模板。',
   'library.noTemplatesHint': '切换到 Skills / MCP tab 查看可安装内容。',
   'library.catPersonalization': '个性化配置',
@@ -248,8 +248,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'library.removeLegacyTip': 'Remove from the registry (external folder kept)',
   'library.removedOk': 'Removed: {name}',
   'library.removeFailed': 'Remove failed: {error}',
-  'library.removeDeregWarn':
-    'Market copy removed, but deregistering it from the host failed: {error}',
+  'library.removeDeregWarn': 'Market copy removed, but deregistering it failed: {error}',
   'library.noTemplates': 'The "{name}" category has no externally installable templates.',
   'library.noTemplatesHint': 'Switch to the Skills / MCP tab to view installable content.',
   'library.catPersonalization': 'Personalization',
