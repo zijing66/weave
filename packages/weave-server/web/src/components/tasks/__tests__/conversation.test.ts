@@ -157,7 +157,7 @@ describe('attachDeliveries', () => {
   const userEntry = { key: 'e1', eventId: 1, role: 'user' as const, at: at(10), text: 'hi' };
 
   it('① 同文案且时刻相近的投递行挂到该气泡上（不重复渲染）', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [userEntry],
       [delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivered', settledAt: at(10) })],
     );
@@ -165,8 +165,8 @@ describe('attachDeliveries', () => {
     expect(thread[0]!.pipe?.id).toBe('m1');
   });
 
-  it('② 认领不到的（失败/暂停闸成因等）留在尾巴上，按时刻升序', () => {
-    const thread = attachDeliveries(
+  it('② 认领不到的（失败/暂停闸成因/还没送达）不进对话，归发送端队列面，按时刻升序', () => {
+    const { thread, outbox } = attachDeliveries(
       [userEntry],
       [
         delivery({ id: 'm-late', text: '没送达的', at: at(30), status: 'failed' }),
@@ -174,19 +174,21 @@ describe('attachDeliveries', () => {
         delivery({ id: 'm3', text: 'hi', at: at(9), status: 'delivered' }),
       ],
     );
-    // e1 被最近的 m3 认领；两个没被认领的按时刻升序挂在尾巴上
-    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m3', 'm-early', 'm-late']);
+    // e1 被最近的 m3 认领；气泡只有事件那一条，两个没认领的排进发送端
+    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m3']);
+    expect(outbox.map((m) => m.id)).toEqual(['m-early', 'm-late']);
   });
 
   it('③ 认领取时刻最近的一条（失败的旧行不抢新行的气泡）', () => {
-    const thread = attachDeliveries(
+    const { thread, outbox } = attachDeliveries(
       [userEntry],
       [
         delivery({ id: 'm-old', text: 'hi', at: at(8), status: 'failed' }),
         delivery({ id: 'm-new', text: 'hi', at: at(10), status: 'delivered', settledAt: at(10) }),
       ],
     );
-    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m-new', 'm-old']);
+    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['m-new']);
+    expect(outbox.map((m) => m.id)).toEqual(['m-old']);
   });
 
   it('④ 直投消息只出现一条：摘掉来源标记的条目认领得到它自己的投递行', () => {
@@ -194,7 +196,7 @@ describe('attachDeliveries', () => {
       [event(1, 'UserPromptSubmit', { prompt: '[weave] 帮我看看这个' })],
       claude,
     );
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       entries,
       [delivery({ id: 'm1', text: '帮我看看这个', at: at(1), status: 'delivered', settledAt: at(1) })],
     );
@@ -203,7 +205,7 @@ describe('attachDeliveries', () => {
   });
 
   it('⑤ 中继带壳的原文也认领得到（Claude Code 把会话间消息裹了壳，原文在里面）', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [{ ...userEntry, text: '<cross-session-message from="uds:x">hi</cross-session-message>' }],
       [delivery({ id: 'm2', text: 'hi', at: at(10), status: 'delivered', settledAt: at(10) })],
     );
@@ -223,7 +225,7 @@ describe('attachDeliveries', () => {
       ],
       claude,
     );
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       entries,
       [delivery({ id: 'm1', text: '帮我看看这个', at: at(1), status: 'delivered', settledAt: at(1) })],
     );
@@ -232,11 +234,12 @@ describe('attachDeliveries', () => {
   });
 
   it('⑦ 短文案只认全等：「ok」不会被含着它的别的条目认走', () => {
-    const thread = attachDeliveries(
+    const { thread, outbox } = attachDeliveries(
       [{ ...userEntry, text: '好，ok，我看看' }],
       [delivery({ id: 'm3', text: 'ok', at: at(10), status: 'failed' })],
     );
-    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['e1', 'm3']);
+    expect(thread.map((e) => e.pipe?.id ?? e.key)).toEqual(['e1']);
+    expect(outbox.map((m) => m.id)).toEqual(['m3']);
   });
 });
 
@@ -396,7 +399,7 @@ describe('随附图', () => {
   });
 
   it('认领放宽一档：带图的投递行比空白更宽（粘贴处理连多行 chunk）', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '第一行\n第二行（够长）' }],
       [delivery({ id: 'm1', text: '第一行第二行（够长）', at: at(3), images: [img('a'.repeat(64))] })],
     );
@@ -405,7 +408,7 @@ describe('随附图', () => {
   });
 
   it('纯图发送（正文为空）也成一条，投递行认领后不再另起尾巴', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '', images: [img('a'.repeat(64))] }],
       [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
     );
@@ -414,7 +417,7 @@ describe('随附图', () => {
   });
 
   it('带图正文在会话那侧变成 `[Image #N]` 占位 → 认领得到（不然同一条显示两遍）', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [
         {
           key: 'e3',
@@ -432,7 +435,7 @@ describe('随附图', () => {
   });
 
   it('纯图发送：会话那侧只剩占位（正文空）时也认领得到', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [
         {
           key: 'e3',
@@ -450,7 +453,7 @@ describe('随附图', () => {
   });
 
   it('回执记了事件 id：文案对不上（重发只补的那记回车提交了整个输入框）也只算一条', () => {
-    const thread = attachDeliveries(
+    const { thread } = attachDeliveries(
       [
         {
           key: 'e3',
@@ -478,12 +481,13 @@ describe('随附图', () => {
     expect(thread[0]?.pipe?.id).toBe('m1');
   });
 
-  it('占位放宽只对有图的投递行生效：没图就是对不上，仍是两条', () => {
-    const thread = attachDeliveries(
+  it('占位放宽只对有图的投递行生效：没图就是对不上，投递行只留在发送端', () => {
+    const { thread, outbox } = attachDeliveries(
       [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '看看这个[Image #1]' }],
       [delivery({ id: 'm1', text: '看看这个', at: at(3) })],
     );
-    expect(thread).toHaveLength(2);
+    expect(thread).toHaveLength(1);
+    expect(outbox.map((m) => m.id)).toEqual(['m1']);
   });
 
   it('导出按 claude 占位列图（`[Image #N] 文件名`），跟在正文后', () => {
