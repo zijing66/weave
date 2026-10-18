@@ -43,6 +43,12 @@ import {
  * 说明）——死会话的队列行永远不会被取走，排在那里只是骗人。判不动（null）不猜，
  * 照旧入队。
  *
+ * **同一会话严格按发送顺序投递**（顺序即真相：到达顺序错乱比慢一拍更糟）：
+ * 队头还压着（上一条终端投递没回执 / 队列有积压 / 泵在推进）时新消息只入队尾，
+ * 由冲洗泵一条条推进；终端层把一条贴进输入框后必须等它的 UPS 回执才发下一条
+ * ——再贴一份会在同一个框里叠成一段，两条消息并成一条提交（直投/中继不压：
+ * 交出去即进入会话自己的队列，会话按序处理）。
+ *
  * send() 校验失败同步返回错误码；成功立即返回（inject 已落 outbox，headless
  * 「已启动」，prompt 视层可用性返回 delivering/pending），终态经回调后台落定，
  * 绝不 throw 出 send()。
@@ -337,6 +343,12 @@ export class MessageDeliverer {
   /** 队列暂停闸（sessionId → 成因消息）：未回执超窗 / 投递失败即置；重发或回执解除。 */
   private readonly stalled = new Map<string, { messageId: string; reason: 'unacked' | 'failed' }>();
   /**
+   * 队头在等回执（sessionId → 消息 id）：层② 终端把一条贴进输入框后，下一条必须
+   * 等它的 UPS 才发——再贴一份会在同一个框里叠成一段，两条消息并成一条提交。
+   * 直投/中投不压（交出去即入会话自己的队列，会话按序处理）。
+   */
+  private readonly awaitingAck = new Map<string, string>();
+  /**
    * 刚删掉的队列行 id：冲洗「先把队列读进内存、再逐条投递」——这中间被删的行
    * 仍在手里那一批里，靠它跳过（否则删掉的消息照样发出去）。只兜这一个窗口，
    * 故只留最近 `DISMISS_GUARD_MAX` 条。
@@ -404,8 +416,16 @@ export class MessageDeliverer {
       status: 'pending',
       at: meta.at,
     };
-    const result =
-      channel === 'inject'
+    // 队头还压着（等回执 / 有积压 / 泵在推进）→ 只能排到队尾：越过前面那条先投，
+    // 到达顺序就和发送顺序不一致了（带图走终端、纯文本走直投在同一秒里就撞上）。
+    const queuedAhead = channel === 'prompt' && this.blockedAhead(entry.sessionId);
+    if (queuedAhead) {
+      this.queueEntry(entry, project.token);
+      this.scheduleFlushContinuation(entry.sessionId);
+    }
+    const result = queuedAhead
+      ? { ok: true as const, messageId: entry.id, status: 'pending' as const, message: { ...entry, status: 'pending' as const } }
+      : channel === 'inject'
         ? this.deliverInject(entry, project.token, meta, surface)
         : channel === 'headless'
           ? this.deliverHeadless(entry, project.path, meta, surface)
@@ -513,6 +533,25 @@ export class MessageDeliverer {
     timer.unref?.();
   }
 
+  /** 等回执的那条已经落地（回执到 / 失败 / 行没了）→ 撤防，返回 true。 */
+  private ackGateOpen(sessionId: string): boolean {
+    const id = this.awaitingAck.get(sessionId);
+    if (id === undefined) return true;
+    const msg = this.memory.get(id);
+    if (msg && msg.acked !== true && msg.status !== 'failed' && msg.status !== 'timeout') return false;
+    this.awaitingAck.delete(sessionId);
+    return true;
+  }
+
+  /**
+   * 队头是否还压着：上一条终端投递没回执 / 队列有积压 / 泵正在推进。
+   * 是 → 新消息只能排到队尾；不是 → 立刻投（低延迟路径）。
+   */
+  private blockedAhead(sessionId: string): boolean {
+    if (!this.ackGateOpen(sessionId)) return true;
+    return this.queuedSessions.has(sessionId) || this.flushing.has(sessionId);
+  }
+
   /**
    * hook 旁路上报的会话 inbox 目标（内存态；socket 空 = 该会话此刻不可直投）。
    * token 只在此存活，不落库、不进 UI、不写日志。
@@ -538,6 +577,7 @@ export class MessageDeliverer {
   sessionExited(sessionId: string): void {
     this.inboxSockets.forget(sessionId);
     this.paneEnvs.delete(sessionId);
+    this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
     if (!project) return;
@@ -642,11 +682,11 @@ export class MessageDeliverer {
         stalled: false,
         ...(eventId === undefined ? {} : { ackedEventId: eventId }),
       });
-      // 回执命中暂停闸成因 → 闸解除：若还有积压，继续排空（不必等下一次事件）
-      if (this.stalled.get(sessionId)?.messageId === msg.id) {
-        this.stalled.delete(sessionId);
-        if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
-      }
+      // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
+      if (this.stalled.get(sessionId)?.messageId === msg.id) this.stalled.delete(sessionId);
+      if (this.awaitingAck.get(sessionId) === msg.id) this.awaitingAck.delete(sessionId);
+      // 还有积压就继续排空（不必等下一次事件）
+      if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
       this.bus({
         kind: 'message.acknowledged',
         messageId: msg.id,
@@ -886,10 +926,9 @@ export class MessageDeliverer {
         return { ok: false, status: 409, error: 'Message is still in flight' };
       }
       this.memory.delete(messageId);
-      if (this.stalled.get(msg.sessionId)?.messageId === messageId) {
-        this.stalled.delete(msg.sessionId);
-        if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
-      }
+      if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
+      if (this.awaitingAck.get(msg.sessionId) === messageId) this.awaitingAck.delete(msg.sessionId);
+      if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
     } else if (!this.dropQueued(sessionId, messageId)) {
       return { ok: false, status: 404, error: 'Message not found' };
     }
@@ -948,6 +987,8 @@ export class MessageDeliverer {
   }
 
   private async flushSessionInner(sessionId: string): Promise<void> {
+    // 队头等回执：下一条必须等它的 UPS（回执到达时才自续下一拍）。
+    if (!this.ackGateOpen(sessionId)) return;
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (session?.projectId == null) return;
     const project = this.deps.projects.getById(session.projectId);
@@ -989,9 +1030,11 @@ export class MessageDeliverer {
         if (imgPane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
           this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
+          this.awaitingAck.set(sessionId, msg.id);
           await this.runTerminalPrompt(msg.id, imgPane.id, this.wireTextOf(msg));
           delivered++;
-          continue;
+          // 终端层贴进框了：余下留队列，等这条的回执再发（同框叠字 = 两条并一条）
+          return;
         }
       }
       // 层①-a 直投优先：冲洗正是被「刚上报凭据的那条 hook 事件」触发的（本机毫秒级、
@@ -1023,6 +1066,7 @@ export class MessageDeliverer {
           if (pane) {
             removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
             this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
+            this.awaitingAck.set(sessionId, msg.id);
             await this.runTerminalPrompt(msg.id, pane.id, this.wireTextOf(msg));
             delivered++;
             handled = true;
@@ -1030,6 +1074,8 @@ export class MessageDeliverer {
           }
         }
       }
+      // 这条走的是终端层（已贴进输入框）→ 本轮到此为止，等回执再发自续下一拍。
+      if (this.awaitingAck.get(sessionId) === msg.id) return;
       // 层均不可用（会话没开 / pane 找不到）：已判死的会话里队列行全是死信，
       // 整批落 offline 并清队（不再每 15s 白探一轮 pane 枚举）；判不动留队列等下轮。
       if (!handled) {
@@ -1065,6 +1111,7 @@ export class MessageDeliverer {
     removed += removePromptboxBySession(this.hooksDir, sessionId);
     this.queuedSessions.delete(sessionId);
     this.stalled.delete(sessionId);
+    this.awaitingAck.delete(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     return removed;
@@ -1080,6 +1127,7 @@ export class MessageDeliverer {
         this.inboxSockets.forget(msg.sessionId);
         this.paneEnvs.delete(msg.sessionId);
         this.stalled.delete(msg.sessionId);
+        this.awaitingAck.delete(msg.sessionId);
         removed++;
       }
     }
@@ -1201,6 +1249,7 @@ export class MessageDeliverer {
       const imgPane = await this.terminalPaneFor(session, project);
       if (imgPane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
+        this.awaitingAck.set(entry.sessionId, entry.id);
         void this.runTerminalPrompt(entry.id, imgPane.id, this.wireTextOf(entry));
         return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
       }
@@ -1229,6 +1278,7 @@ export class MessageDeliverer {
         const pane = await this.terminalPaneFor(session, project);
         if (pane) {
           this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
+          this.awaitingAck.set(entry.sessionId, entry.id);
           void this.runTerminalPrompt(entry.id, pane.id, this.wireTextOf(entry));
           return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
         }

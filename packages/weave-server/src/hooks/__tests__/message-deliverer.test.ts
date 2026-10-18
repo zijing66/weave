@@ -552,7 +552,7 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listInflightCounts().size).toBe(0);
   });
 
-  it('冲洗节流：一轮最多 5 条（防发送侧突发拒收），余下留队列', async () => {
+  it('冲洗：层② 终端一条一条发，回执到了才发下一条（同框叠字会并成一条提交）', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const sent: string[] = [];
     const sendText = vi.fn().mockImplementation(async (paneId: string, text: string) => {
@@ -596,12 +596,17 @@ describe('MessageDeliverer 裁决表', () => {
 
     panes = [{ id: 'p1', title: 'msg-target', cwd: PROJECT_PATH }];
     await deliverer.flushSession(SESSION_ID);
-    expect(sent).toHaveLength(5); // 一轮上限
-    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2); // 余下留队列
+    // 层② 一轮只发一条：贴进输入框的那条要等回执（再贴一份会在同框叠成一段）
+    expect(sent).toEqual(['p1:m1']);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(6);
 
-    await deliverer.flushSession(SESSION_ID); // 下一轮继续
-    expect(sent).toHaveLength(7);
-    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    await deliverer.flushSession(SESSION_ID); // 没回执：再冲也不动
+    expect(sent).toEqual(['p1:m1']);
+
+    deliverer.onSessionPrompt(SESSION_ID, 'm1'); // 回执到 → 撤防
+    await deliverer.flushSession(SESSION_ID);
+    expect(sent).toEqual(['p1:m1', 'p1:m2']);
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(5);
   });
 
   it('中继作为子进程启动（非 detached）——三平台同一语义，并随 daemon 退出被回收', async () => {
@@ -723,7 +728,13 @@ describe('MessageDeliverer 裁决表', () => {
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(7);
 
     panes = [{ id: 'p1', title: 'msg-target', cwd: PROJECT_PATH }];
-    await deliverer.flushSession(SESSION_ID); // 只调一次：自续把剩下 2 条也发完
+    await deliverer.flushSession(SESSION_ID); // 第一条进终端
+    expect(sent).toEqual(['auto1']);
+    // 回执逐条到 → 自续（不必再手动 flush）把剩下 6 条一条条发完
+    for (let i = 1; i <= 7; i++) {
+      deliverer.onSessionPrompt(SESSION_ID, `auto${i}`);
+      await vi.waitFor(() => expect(sent).toHaveLength(Math.min(i + 1, 7)));
+    }
     await vi.waitFor(() => expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0));
     expect(sent).toHaveLength(7);
   });
@@ -1179,12 +1190,14 @@ describe('MessageDeliverer 裁决表', () => {
     expect(fake.calls).toHaveLength(0);
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1); // 行留队列
 
+    // 队列里那条撤掉（用户取消发送）：否则新投递器一启动就看见积压，新消息只能排队尾
+    deliverer.dismiss(SESSION_ID, readPromptbox(hooksDir, TOKEN)[0]!.id);
+
     // 层① 闪现（登记了一瞬）→ 中继非 0 退出 → failed 留内存可见、不回队
     const flaky = relaySurface((sessionId) => ({ name: PEER_NAME }));
     const flakyDeliverer = new MessageDeliverer(
       makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => flaky.surface, bin: 'fake-relay' }),
     );
-    const queued = readPromptbox(hooksDir, TOKEN);
     // 直接对 flaky 面发一条即时中继，然后让它失败
     const flakyResult = await flakyDeliverer.send({
       toSessionId: SESSION_ID,
@@ -1199,7 +1212,6 @@ describe('MessageDeliverer 裁决表', () => {
       expect.objectContaining({ kind: 'message.finished', messageId: failedMsg.id, status: 'failed' }),
     );
     expect(readPromptbox(hooksDir, TOKEN).some((e) => e.id === failedMsg.id)).toBe(false);
-    void queued;
   });
 
   it('判死：三层全无通路 + 目标进程不在 → 不假装排队，落 failed + offline（不置暂停闸）', async () => {
@@ -2432,8 +2444,18 @@ describe('MessageDeliverer 裁决表', () => {
       fromKind: 'dashboard',
       oneWay: true,
     });
+    // 带图那条还压着队头（终端层要等它的回执）：纯文本这条排到队尾，
+    // 不许越过它先直投——到达顺序必须与发送顺序一致
+    expect(textOnly).toMatchObject({ ok: true, status: 'pending' });
+    const textId = (textOnly as { messageId: string }).messageId;
     await new Promise((r) => setTimeout(r, 50));
-    expect(deliverer.getMessage((textOnly as { messageId: string }).messageId)).toMatchObject({ via: 'socket' });
+    expect(got).toBe('');
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 回执到 → 撤防 → 队尾这条按原层序投（有 socket 就走 socket）
+    deliverer.onSessionPrompt(SESSION_ID, '看图');
+    await deliverer.flushSession(SESSION_ID);
+    expect(deliverer.getMessage(textId)).toMatchObject({ via: 'socket' });
     expect(got).toContain('纯文本仍走 socket');
     expect(got).not.toContain('D:/up/aa.png');
     inbox.close();
