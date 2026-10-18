@@ -636,21 +636,36 @@ export function SessionMessages({
   }, [entries, sessionId]);
 
   // SSE：开/闭轮事件帧补对话尾部，其余事件帧刷生成中的滚动带，message.* 帧刷
-  // 在途投递行（三路共用一次防抖）
+  // 在途投递行（三路共用一次防抖）。**防抖窗内的事件只累加、不互相覆盖**：
+  // 开轮帧后面紧跟着一票工具事件（500ms 内），按「最后一个帧说了算」排拍会把
+  // 开轮那一拍顶掉——气泡要刷新页面才出来，正是这么来的。
   useEffect(() => {
     let timer: number | null = null;
+    let wantConv = false;
+    let wantMessages = false;
+    let wantLive = false;
     const onHook = (f: HookFrame): void => {
       if (f.sessionId !== sessionId) return;
       const ingested = f.kind === 'event.ingested';
-      const convEvent =
-        ingested && (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? ''));
       if (!ingested && !f.kind?.startsWith('message.')) return;
+      if (ingested) {
+        wantLive = true;
+        if (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? '')) {
+          wantConv = true;
+        }
+      } else {
+        wantMessages = true;
+      }
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
-        if (convEvent) void loadNewest();
-        else if (!ingested) void refreshMessages();
-        if (ingested) void loadLive();
+        const conv = wantConv;
+        const messages = wantMessages;
+        const live = wantLive;
+        wantConv = wantMessages = wantLive = false;
+        if (conv) void loadNewest();
+        if (messages) void refreshMessages();
+        if (live) void loadLive();
       }, 500);
     };
     const off = subscribeHook(onHook);
