@@ -913,8 +913,15 @@ class WeztermBackend extends TerminalBackend {
     await super.open(dir);
   }
 
+  /**
+   * 带命令开终端：有活实例 → mux 落子；**一个活实例都没有 → 回落 legacy `start`**
+   * （与 `open` 同一条回落）——那是「用户此刻还没开 wezterm」的常态，不是错误：
+   * `start --cwd dir <cmd>` 起新 GUI 并把命令跑在里面。原先这里一律 400
+   * 「wezterm mux undiscoverable — is wezterm running?」，用户点「打开终端」得到的
+   * 却是一条报错；「`start` 在 mux 在时会挂死出无窗僵尸」那条只对活实例成立。
+   */
   override async run(dir: string, argv: string[]): Promise<void> {
-    await runInWezterm(dir, argv);
+    if (!(await runInWezterm(dir, argv))) await super.run(dir, argv);
   }
 
   override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
@@ -1337,9 +1344,10 @@ export async function runInTerminal(
   argv: string[],
   terminal: TerminalSettings,
 ): Promise<void> {
-  // wezterm 只走 mux：legacy `start -- PROG` 绕过 default_prog 不说，mux 在时
-  // `start` 只会挂死出一个无窗僵尸 + trySpawn 假成功。失败一律抛真相。
-  // 这条分流在 WeztermBackend 覆写的 run 里，不在这里 if preset。
+  // wezterm 分流在 WeztermBackend 覆写的 run 里，不在这里 if preset：有活 mux
+  // 走 mux（legacy `start -- PROG` 绕过 default_prog，且 mux 在时 `start` 只会
+  // 挂死出一个无窗僵尸 + trySpawn 假成功）；一个活 mux 都没有 → 回落 `start`
+  // 起新 GUI（用户此刻还没开 wezterm 的常态），回落里起不来才抛。
   await terminalBackendFor(terminal).run(dir, argv);
 }
 
@@ -2048,20 +2056,15 @@ async function openInWezterm(dir: string): Promise<boolean> {
 
 /**
  * wezterm run 主通道：同项目 → 分屏复用（复用目标长满 = 没有可复用落点）；
- * 否则 → 最活跃 mux 开新窗口；命令一律 send-text。任何失败（无活 mux / 某步
- * rc≠0 / 超时）一律 throw——错误经路由 400 → 前端 toast，绝不静默落到假成功的
- * legacy start。
+ * 否则 → 最活跃 mux 开新窗口；命令一律 send-text。**一个活 mux 都没有 → 返回
+ * false**（调用方回落 legacy `start` 起新 GUI——那是另一套流程，不在这条里猜）。
+ * 有 mux 之后的任何失败（某步 rc≠0 / 超时）一律 throw：错误经路由 400 转 toast，
+ * 绝不静默落到假成功的 legacy start。
  */
-async function runInWezterm(dir: string, argv: string[]): Promise<void> {
+async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
   const platform = process.platform;
-  const { muxes, candidates } = await weztermLiveMuxes();
-  if (muxes.length === 0) {
-    throw new Error(
-      candidates.length === 0
-        ? `wezterm mux undiscoverable: ${process.env.WEZTERM_UNIX_SOCKET ? 'WEZTERM_UNIX_SOCKET set but dead' : 'WEZTERM_UNIX_SOCKET unset'} and no living gui-sock under socket dirs (USERPROFILE=${process.env.USERPROFILE ?? '?'} HOME=${process.env.HOME ?? '?'}) — is wezterm running?`
-        : `wezterm mux sockets all unreachable: ${candidates.map((s) => basename(s)).join(', ')} — wezterm may be wedged, restart it`,
-    );
-  }
+  const { muxes } = await weztermLiveMuxes();
+  if (muxes.length === 0) return false;
   // 同项目分屏：任一 mux 里 cwd 对上就在那里切；多 mux 命中取更活跃的那个
   let chosen: WeztermMux | null = null;
   let split: WeztermSplitTarget | null = null;
@@ -2075,6 +2078,7 @@ async function runInWezterm(dir: string, argv: string[]): Promise<void> {
   // 无命中 → 在最近活跃（idle 最小）的 mux 开新窗
   chosen ??= muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
   await weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
+  return true;
 }
 
 /**
