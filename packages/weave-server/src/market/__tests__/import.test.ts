@@ -109,6 +109,19 @@ describe('importFromDir（本地目录 → 市场）', () => {
       importFromDir(path.join(srcRoot, 'nope'), { libraries: libs, dataDir }),
     ).rejects.toThrow(/Not a directory/);
   });
+
+  it('源落在市场存储内（内置仓落点 / 市场根）→ 拒绝：那是列表里已有的副本', async () => {
+    mkdirSync(builtinMarketDir(dataDir), { recursive: true });
+    await expect(
+      importFromDir(builtinMarketDir(dataDir), { libraries: libs, dataDir }),
+    ).rejects.toThrow(/存储目录/);
+    // 市场根自身：目标会落在源里，cp 会把它拷进自己
+    await expect(importFromDir(marketDir(dataDir), { libraries: libs, dataDir })).rejects.toThrow(
+      /存储目录/,
+    );
+    expect(libs.list()).toHaveLength(0);
+    expect(existsSync(path.join(marketDir(dataDir), 'market'))).toBe(false);
+  });
 });
 
 describe('slug 白名单（防穿越）', () => {
