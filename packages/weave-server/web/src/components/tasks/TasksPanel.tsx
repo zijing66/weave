@@ -58,13 +58,12 @@ const NOTIFY_TOAST_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey>
  *  时限还没登记（进程当场退出之类）就放行——按钮不能永久卡在 loading 里点不动。 */
 const OPEN_TERMINAL_ALIVE_MS = 30_000;
 
-/** 一扇存活对话框（含挂起）：挂起只藏不卸，草稿与已选图片都还在。 */
+/** 一扇已挂载的对话：切走只藏不卸，草稿与已选图片都还在。 */
 type ConvTarget = {
   sessionId: string;
   projectId: number;
   label: string;
   capability: MessagingCapability;
-  minimized: boolean;
 };
 
 /**
@@ -99,9 +98,11 @@ export function TasksPanel({
     questions,
     refresh: refreshStatus,
   } = useSessionStatus();
-  // <lg 两屏走查：列表态 ⇄ 事件链全屏态（点会话进、收起回），桌面恒双栏 inline。
+  // <lg 两屏走查：列表态 ⇄ 右栏全屏态（点会话进、收起回），桌面恒双栏 inline。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
-  const [chainOpen, setChainOpen] = useState(false);
+  const [paneOpen, setPaneOpen] = useState(false);
+  /** 事件链弹窗：右栏被对话占着时从对话头部那枚按钮开（右栏没对话面时事件链仍在原位）。 */
+  const [chainDialog, setChainDialog] = useState(false);
   const [rules, setRules] = useState<HookRule[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -592,40 +593,44 @@ export function TasksPanel({
     [fb],
   );
 
-  /** 存活对话框（含挂起）：能力矩阵按 harness 已解出该行的能力。最小化只挂起
-   *  不卸载——草稿与已选图片都还在，几扇各自独立互不影响；同时只露一扇，露
-   *  这扇时其余自动挂起。 */
+  /** 已挂载的对话：选中哪个会话就挂哪个（能力矩阵按 harness 解不出能力的不挂，
+   *  右栏留在事件链）。挂上就不再卸——切走只是藏起来，草稿与已选图片都还在。 */
   const [convs, setConvs] = useState<ReadonlyMap<string, ConvTarget>>(new Map());
-  const onOpenMessages = useCallback(
+  const openConv = useCallback(
     (sessionId: string): void => {
-      const row = sessions?.find((s) => s.sessionId === sessionId);
+      // 现读影子，不把 sessions 放进依赖：否则每条 SSE 事件都换一次身份，
+      // 关掉的对话会被下一次列表刷新自动重挂回来。
+      const row = sessionsRef.current?.find((s) => s.sessionId === sessionId);
       const capability = row?.harness ? capabilityMap.get(row.harness) : undefined;
       if (!capability) return;
       setConvs((prev) => {
+        if (prev.has(sessionId)) return prev;
         const next = new Map(prev);
-        for (const [id, c] of prev) next.set(id, { ...c, minimized: true });
         next.set(sessionId, {
           sessionId,
           projectId: row?.projectId ?? projectId,
           label: sessionLabel(row?.title ?? null, sessionId),
           capability,
-          minimized: false,
         });
         return next;
       });
     },
-    [sessions, capabilityMap, projectId],
+    [capabilityMap, projectId],
   );
-  const onMinimizeMessages = useCallback((sessionId: string): void => {
-    setConvs((prev) => {
-      const cur = prev.get(sessionId);
-      if (!cur || cur.minimized) return prev;
-      const next = new Map(prev);
-      next.set(sessionId, { ...cur, minimized: true });
-      return next;
-    });
-  }, []);
-  const onCloseMessages = useCallback((sessionId: string): void => {
+  useEffect(() => {
+    if (selectedId) openConv(selectedId);
+  }, [selectedId, openConv]);
+  /** 点会话（行本体或对话图标）= 选中它并挂上它的对话；<lg 进全屏态。 */
+  const focusSession = useCallback(
+    (sessionId: string): void => {
+      setSelectedId(sessionId);
+      openConv(sessionId);
+      if (!isDesktop) setPaneOpen(true);
+    },
+    [openConv, isDesktop],
+  );
+  const closeConv = useCallback((sessionId: string): void => {
+    setChainDialog(false);
     setConvs((prev) => {
       if (!prev.has(sessionId)) return prev;
       const next = new Map(prev);
@@ -633,11 +638,12 @@ export function TasksPanel({
       return next;
     });
   }, []);
-  /** 会话行对话图标转蓝 = 这扇挂起着（草稿还在），别当成没开过。 */
-  const minimizedConvs = useMemo(
-    () => new Set([...convs.values()].filter((c) => c.minimized).map((c) => c.sessionId)),
-    [convs],
-  );
+  /** 右栏主体是对话还是事件链：选中会话解不出对话面（无闭轮事件的 harness）→ 事件链。 */
+  const hasConv = selectedId !== null && convs.has(selectedId);
+  // 对话面没了（关掉或换到没有对话面的会话）就收掉事件链弹窗，别让它挂在那儿
+  useEffect(() => {
+    if (!hasConv) setChainDialog(false);
+  }, [hasConv]);
 
   /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
   const [assign, setAssign] = useState<Record<number, string>>({});
@@ -1153,6 +1159,33 @@ export function TasksPanel({
     </section>
   );
 
+  /** 右栏主体：选中会话有对话面 → 对话（事件链改从头部按钮开弹窗）；
+   *  解不出能力（无闭轮事件的 harness）→ 仍是事件链本尊。 */
+  const paneEl = (
+    <div className="flex min-w-0 min-h-0 flex-1 flex-col">
+      {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
+      {[...convs.values()].map((c) => (
+        <SessionMessages
+          key={c.sessionId}
+          embedded
+          sessionId={c.sessionId}
+          projectId={c.projectId}
+          label={c.label}
+          projectLabel={projectLabel}
+          capability={c.capability}
+          minimized={c.sessionId !== selectedId}
+          answerPending={!!questionOf(c.sessionId)}
+          onOpenAnswer={() => setAnswerFor(c.sessionId)}
+          onInterrupt={onInterrupt}
+          interruptStateOf={interruptStateOf}
+          onOpenChain={() => setChainDialog(true)}
+          onClose={() => closeConv(c.sessionId)}
+        />
+      ))}
+      {!hasConv && chainEl}
+    </div>
+  );
+
   return (
     <div className="flex flex-col lg:flex-row h-full min-h-0 gap-3">
       {/* 左栏：会话列表。<lg 独占全高（链路收进全屏滑出层），桌面恒双栏。 */}
@@ -1216,11 +1249,7 @@ export function TasksPanel({
             statuses={statuses}
             selectedId={selectedId}
             highlightId={highlightId}
-            onSelect={(id) => {
-              setSelectedId(id);
-              // <lg 点会话 = 进事件链全屏（桌面仅切换选中，链路恒可见）
-              if (!isDesktop) setChainOpen(true);
-            }}
+            onSelect={focusSession}
             onRename={(id, title) => void onRename(id, title)}
             onDropDispatch={onDropDispatch}
             onOpenTerminal={onOpenTerminal}
@@ -1228,8 +1257,7 @@ export function TasksPanel({
             onClosePane={handleClosePane}
             closePaneStateOf={closePaneStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
-            onOpenMessages={onOpenMessages}
-            minimizedConvs={minimizedConvs}
+            onOpenMessages={focusSession}
             inflightOf={inflightOf}
             questionOf={questionOf}
             onAnswer={onAnswerQuestion}
@@ -1246,12 +1274,13 @@ export function TasksPanel({
         )}
       </aside>
 
-      {/* 桌面：链路 inline 常驻右栏 */}
-      {isDesktop && chainEl}
+      {/* 桌面：右栏 inline 常驻（对话，或没有对话面时的事件链） */}
+      {isDesktop && paneEl}
 
-      {/* <lg：点会话 → 事件链全屏右侧滑出（同 chainEl），收起回列表。 */}
-      {!isDesktop && chainOpen && selectedId && (
-        <div className="fixed inset-0 z-40">
+      {/* <lg：点会话 → 右栏全屏右侧滑出（同 paneEl），收起回列表。收起只藏不卸
+          ——挂载态跟着走，再展开时草稿与已选图片都还在。 */}
+      {!isDesktop && selectedId && (
+        <div className={paneOpen ? 'fixed inset-0 z-40' : 'hidden'}>
           <div className="absolute inset-0 flex flex-col bg-neutral-950 drawer-right">
             <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-white/[0.06] frosted">
               <span className="truncate text-sm font-semibold text-neutral-200">
@@ -1263,14 +1292,14 @@ export function TasksPanel({
                 </span>
               )}
               <button
-                onClick={() => setChainOpen(false)}
+                onClick={() => setPaneOpen(false)}
                 className="ml-auto rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
                 title={t('app.mobileDrawerClose')}
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col p-3">{chainEl}</div>
+            <div className="flex min-h-0 flex-1 flex-col p-3">{paneEl}</div>
           </div>
         </div>
       )}
@@ -1353,26 +1382,32 @@ export function TasksPanel({
         />
       )}
 
-      {/* 会话对话：用户投递 + 每轮 Stop 的最终总结（投递按能力矩阵门控）；
-          被阻塞问答挂起时尾部多一枚「回答」，开的是同一个待答弹窗（answerFor）。
-          几扇同时存活（挂起的只藏不卸），各自独立互不影响 */}
-      {[...convs.values()].map((c) => (
-        <SessionMessages
-          key={c.sessionId}
-          sessionId={c.sessionId}
-          projectId={c.projectId}
-          label={c.label}
-          projectLabel={projectLabel}
-          capability={c.capability}
-          minimized={c.minimized}
-          answerPending={!!questionOf(c.sessionId)}
-          onOpenAnswer={() => setAnswerFor(c.sessionId)}
-          onInterrupt={onInterrupt}
-          interruptStateOf={interruptStateOf}
-          onMinimize={() => onMinimizeMessages(c.sessionId)}
-          onClose={() => onCloseMessages(c.sessionId)}
-        />
-      ))}
+      {/* 事件链弹窗：右栏被对话占着时从这里看（右栏没有对话面时事件链仍在原位）。
+          z-50 压在 <lg 的全屏右栏（z-40）之上；作答弹窗 z-60 又在它之上。 */}
+      {chainDialog && hasConv && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setChainDialog(false)}
+        >
+          <div
+            className="flex h-[86dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-neutral-950 p-3 shadow-mac"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-end">
+              <button
+                type="button"
+                title={t('app.mobileDrawerClose')}
+                aria-label={t('app.mobileDrawerClose')}
+                onClick={() => setChainDialog(false)}
+                className="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800/60 hover:text-neutral-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col">{chainEl}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

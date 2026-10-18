@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, Minus, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, Minus, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -460,14 +460,15 @@ function EventTicker({ text }: { text: string }) {
 }
 
 /**
- * 会话对话弹窗：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
+ * 会话对话：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
  * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
  * 流本身——**不落库、不复制存储**，前端翻页直接查事件（`types` 只取开/闭
  * 轮两类，不拉整条事件链），翻过的页留在组件状态里，向上滚到顶再取更早。
  * 投递无模式选择——服务端恒走 prompt 通道全自动（原生 SendMessage 中继 →
  * 终端 send-text 降级 → 未开会话积压队列），故 web 不展示也不传 mode。
  * 刷新挂 SSE 总线的 hook 订阅（开/闭轮事件 + message.*，sessionId 定向），
- * 不新开轮询。
+ * 不新开轮询。两种形态共用同一份面板：任务视图右栏嵌入（`embedded`，事件链
+ * 改从头部那枚按钮开弹窗），编排画布仍是浮窗。
  */
 export function SessionMessages({
   sessionId,
@@ -482,6 +483,8 @@ export function SessionMessages({
   minimized,
   onMinimize,
   onClose,
+  embedded,
+  onOpenChain,
 }: {
   sessionId: string;
   /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
@@ -502,8 +505,13 @@ export function SessionMessages({
   interruptStateOf: (sessionId: string) => ActionState;
   /** 挂起中（只藏不卸）：草稿与已选图片都还在，几扇对话各自独立互不影响。 */
   minimized: boolean;
-  onMinimize: () => void;
+  /** 挂起（浮窗限定：嵌入形态下切走由调用方置 `minimized`）。 */
+  onMinimize?: () => void;
   onClose: () => void;
+  /** 嵌进任务视图右栏（不再套门户与蒙版、不可拖拽缩放，填满容器）。 */
+  embedded?: boolean;
+  /** 右上角「事件链」：把事件链开成弹窗（嵌入形态下才有这一枚）。 */
+  onOpenChain?: () => void;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -665,7 +673,7 @@ export function SessionMessages({
         setPicked(new Set());
       } else if (confirmMode) setConfirmMode(false);
       else if (confirming) setConfirming(false);
-      else onMinimize();
+      else onMinimize?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1112,27 +1120,13 @@ export function SessionMessages({
     else onClose();
   };
 
-  return createPortal(
-    <div
-      className={cn(
-        'fixed inset-0 z-50 items-center justify-center bg-black/50 p-4',
-        // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
-        minimized ? 'hidden' : 'flex',
-      )}
-      onClick={onMinimize}
-      // 拖放面 = 整个弹窗（拖进窗口任何一处都算，别让浏览器接管去打开那个文件）
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        const imgs = imagesFrom(e.dataTransfer);
-        if (imgs.length > 0) stageFiles(imgs);
-      }}
-    >
+  /** 面板本体：两种形态共用（浮窗与嵌入右栏只差容器类、定位样式与是否套门户）。 */
+  const body = (
       <div
         ref={panelRef}
-        // 桌面：宽度跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽
+        // 浮窗：桌面宽高跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽
         style={
-          isDesktop
+          !embedded && isDesktop
             ? {
                 width: size.w,
                 height: size.h || undefined,
@@ -1140,17 +1134,34 @@ export function SessionMessages({
               }
             : undefined
         }
-        className="relative flex h-[70dvh] max-lg:h-[88dvh] w-full flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className={cn(
+          'relative min-h-0 w-full flex-col overflow-hidden border bg-neutral-900 p-3',
+          embedded
+            ? // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
+              cn('flex-1 rounded-lg border-white/[0.06]', minimized ? 'hidden' : 'flex')
+            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border-white/[0.08] shadow-mac',
+        )}
         onClick={(e) => e.stopPropagation()}
+        // 拖放面 = 整块面板（拖进任何一处都算，别让浏览器接管去打开那个文件）
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const imgs = imagesFrom(e.dataTransfer);
+          if (imgs.length > 0) stageFiles(imgs);
+        }}
       >
         <div
-          onPointerDown={onDragDown}
-          onPointerMove={onDragMove}
-          onPointerUp={onDragUp}
-          onPointerCancel={onDragUp}
+          {...(embedded
+            ? {}
+            : {
+                onPointerDown: onDragDown,
+                onPointerMove: onDragMove,
+                onPointerUp: onDragUp,
+                onPointerCancel: onDragUp,
+              })}
           className={cn(
             'flex items-center justify-between gap-2 pb-2',
-            isDesktop && 'cursor-grab active:cursor-grabbing',
+            !embedded && isDesktop && 'cursor-grab active:cursor-grabbing',
           )}
         >
           <div className="min-w-0">
@@ -1160,15 +1171,29 @@ export function SessionMessages({
             <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              title={t('tasks.messagesMinimize')}
-              aria-label={t('tasks.messagesMinimize')}
-              onClick={onMinimize}
-              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-            >
-              <Minus className="h-3.5 w-3.5" />
-            </button>
+            {/* 嵌入形态：事件链不再占右栏，从这枚按钮开成弹窗 */}
+            {embedded && (
+              <button
+                type="button"
+                title={t('tasks.chainTitle')}
+                onClick={onOpenChain}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-white/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-white/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+              >
+                <Activity className="h-3 w-3 text-rose-400" />
+                {t('tasks.chainTitle')}
+              </button>
+            )}
+            {!embedded && (
+              <button
+                type="button"
+                title={t('tasks.messagesMinimize')}
+                aria-label={t('tasks.messagesMinimize')}
+                onClick={onMinimize}
+                className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+            )}
             <button
               type="button"
               title={t('tasks.messagesClose')}
@@ -1789,8 +1814,8 @@ export function SessionMessages({
           </div>
         )}
 
-        {/* 拖角改大小（桌面专属：触屏没有拖窗口这回事） */}
-        {isDesktop && (
+        {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局） */}
+        {!embedded && isDesktop && (
           <div
             role="separator"
             title={t('app.resizeDialog')}
@@ -1898,6 +1923,19 @@ export function SessionMessages({
           onClose={() => setConfirmMode(false)}
         />
       </div>
+  );
+
+  if (embedded) return body;
+
+  return createPortal(
+    <div
+      className={cn(
+        'fixed inset-0 z-50 items-center justify-center bg-black/50 p-4',
+        minimized ? 'hidden' : 'flex',
+      )}
+      onClick={onMinimize}
+    >
+      {body}
     </div>,
     document.body,
   );
