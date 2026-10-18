@@ -198,11 +198,10 @@ function dim(text) {
 
 // --- render cache -----------------------------------------------------------
 // Every render is a fresh process, so the file — not the process — is what
-// carries the git segment values and the transcript scan across renders. One
-// file per session under CACHE_DIR; the layers inside it are keyed by directory
-// (git) and transcript (tokens), so a session that moves between directories
-// adds an entry instead of a file. The daemon's sweeper drops expired entries
-// and files of sessions that stopped rendering.
+// carries the transcript scan across renders. One file per session under
+// CACHE_DIR; the git segments do NOT live here (see GIT_FILE below) because
+// they describe the worktree rather than the session. The daemon's sweeper
+// drops expired entries and files of sessions that stopped rendering.
 //
 // Top level on purpose: flush() below writes it after main() returns, so a
 // render that throws half-way still keeps what it had already scanned.
@@ -210,6 +209,14 @@ var CACHE_FILE = null;
 var CACHE = null;
 // 只在真有条目落定时才回写：纯命中的渲染零写盘（旧实现同样只在未命中时写）。
 var CACHE_DIRTY = false;
+
+// Git 段描述的是工作区，不是会话：同一项目的每个会话都在问同一个问题。所以
+// 它另存一份按目录分片的文件（git-<cwd 摘要>.json），各会话共享——一个 TTL 内
+// 整个项目只付一次 git 子进程，有多少会话在渲染都一样。并发写用同一套
+// tmp+rename，后写的整份覆盖先写的（丢一条过期条目只会让下次重探一次）。
+var GIT_FILE = null;
+var GIT_CACHE = null;
+var GIT_DIRTY = false;
 
 // Session key: Claude Code's session id, then the transcript basename, then a
 // cwd digest for hosts that send neither.
@@ -227,7 +234,12 @@ function cacheKeyOf(input) {
 
 function initCache(input) {
   var path = require('path');
+  var crypto = require('crypto');
   CACHE_FILE = path.join(CACHE_DIR, cacheKeyOf(input) + '.json');
+  var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
+  // Windows 路径不区分大小写——归一化，一个项目只映射到一个文件
+  var dirKey = crypto.createHash('sha1').update(String(cwd).toLowerCase()).digest('hex').slice(0, 16);
+  GIT_FILE = path.join(CACHE_DIR, 'git-' + dirKey + '.json');
 }
 
 // Lazily read once per render: a render that touches no cached segment must not
@@ -239,26 +251,47 @@ function cache() {
   try { loaded = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch (e) {}
   CACHE = loaded && typeof loaded === 'object' ? loaded : {};
   CACHE.v = 1;
-  if (!CACHE.git || typeof CACHE.git !== 'object') CACHE.git = {};
   if (!CACHE.tokens || typeof CACHE.tokens !== 'object') CACHE.tokens = {};
   return CACHE;
 }
 
-function flushCache() {
-  if (!CACHE || !CACHE_FILE || !CACHE_DIRTY) return;
+// 形状与 sweeper 的判据一致（git 条目 + tokens），共享文件因此不必另立回收规则：
+// 条目全部过期时它按「两栏都空」把文件删掉。
+function gitCache() {
+  if (GIT_CACHE) return GIT_CACHE;
+  var fs = require('fs');
+  var loaded = null;
+  try { loaded = JSON.parse(fs.readFileSync(GIT_FILE, 'utf8')); } catch (e) {}
+  GIT_CACHE = loaded && typeof loaded === 'object' ? loaded : {};
+  GIT_CACHE.v = 1;
+  if (!GIT_CACHE.git || typeof GIT_CACHE.git !== 'object') GIT_CACHE.git = {};
+  return GIT_CACHE;
+}
+
+function writeCacheFile(file, data) {
   var fs = require('fs');
   var path = require('path');
-  CACHE.updatedAt = Date.now();
-  var tmp = CACHE_FILE + '.' + process.pid + '.tmp';
-  var payload = JSON.stringify(CACHE);
+  data.updatedAt = Date.now();
+  var tmp = file + '.' + process.pid + '.tmp';
+  var payload = JSON.stringify(data);
   // atomic replace: renders overlap while Claude Code re-runs on a debounce
-  function put() { fs.writeFileSync(tmp, payload); fs.renameSync(tmp, CACHE_FILE); }
+  function put() { fs.writeFileSync(tmp, payload); fs.renameSync(tmp, file); }
   try {
     put();
   } catch (e) {
     // steady state the directory is already there — pay mkdir only when it is not
-    try { fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true }); put(); } catch (e2) {}
+    try { fs.mkdirSync(path.dirname(file), { recursive: true }); put(); } catch (e2) {}
   }
+}
+
+function flushCache() {
+  if (!CACHE || !CACHE_FILE || !CACHE_DIRTY) return;
+  writeCacheFile(CACHE_FILE, CACHE);
+}
+
+function flushGitCache() {
+  if (!GIT_CACHE || !GIT_FILE || !GIT_DIRTY) return;
+  writeCacheFile(GIT_FILE, GIT_CACHE);
 }
 
 // Git-derived segments cost a subprocess each, and Claude Code re-invokes us far
@@ -268,13 +301,13 @@ function flushCache() {
 // a failure for an identity's full TTL would hide the segment for an hour.
 function cachedGit(key, ttlSec, produce) {
   var now = Date.now();
-  var store = cache();
+  var store = gitCache();
   var hit = store.git[key];
   if (hit && hit.expires > now) return hit.value;
   var value = produce();
   var ttl = value == null ? Math.min(ttlSec, GIT_RETRY_TTL) : ttlSec;
   store.git[key] = { expires: now + ttl * 1000, value: value };
-  CACHE_DIRTY = true;
+  GIT_DIRTY = true;
   return value;
 }
 
@@ -779,6 +812,7 @@ function flush() {
   try { main(raw); } catch (e) {}
   // 缓存回写在渲染之后：主流程中途抛错也保住这一轮扫到的增量
   try { flushCache(); } catch (e) {}
+  try { flushGitCache(); } catch (e) {}
   process.exit(0);
 }
 process.stdin.setEncoding('utf8');

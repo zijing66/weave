@@ -712,6 +712,41 @@ describe('statusline — data segments', () => {
     expect(second).toContain('(+1, -0)');
   });
 
+  it('shares the git answers across sessions of one project', () => {
+    const repo = tmp('weave-sl-gitshare-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    git('branch', '-m', 'trunk');
+
+    const cfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git: { ...DEFAULT_STATUSLINE_CONFIG.segments.git, enabled: true, format: '{branch}' },
+      },
+    };
+    const script = generateStatuslineScript(cfg);
+    expect(
+      runScript(script, { session_id: 'sess-a', workspace: { current_dir: repo } }),
+    ).toContain('trunk');
+
+    // A different session of the same project, still inside the TTL: the answer
+    // is the project's, not the session's — so git is not asked again.
+    git('checkout', '-q', '-b', 'feature');
+    const other = runScript(script, { session_id: 'sess-b', workspace: { current_dir: repo } });
+    expect(other).toContain('trunk');
+    expect(other).not.toContain('feature');
+  });
+
   it('a failed git lookup is only remembered briefly, then re-probed', async () => {
     // A failure is cached on the short retry window, not the segment's TTL —
     // otherwise a directory that becomes a repo later (or one where git
