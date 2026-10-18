@@ -461,8 +461,8 @@ export async function handleHooksRoutes(
           // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
           interruptedAt:
             s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
-          // 当前模型（转录最后一条真跑过的 message.model）：换模型不发任何 hook 事件，
-          // 只有转录照会；null = 不知道（不猜）。
+          // 当前模型：换模型落定由 `PostModelSwitch` 先说（标签立刻跟得上），转录
+          // 只在 assistant 消息上照会——两边取更晚的那个；null = 不知道（不猜）。
           model,
           // 同一个模型的**别名**（`/model` 收的那个）：网关把别名换成自家 ID，转录里
           // 只见真名；认不出 = null，前端回落显示真名。

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import { createRuntimeRegistry, frameFacts, type EventSource } from '@weavecode/harness';
+import { createRuntimeRegistry, frameFacts, switchedModelOf, type EventSource } from '@weavecode/harness';
 import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
 import { openDatabase } from '../db/db.js';
 import { HookEventRepository, type HookEventInput } from '../repositories/hook-events.js';
@@ -326,8 +326,11 @@ export interface IngestedHandlerDeps {
   };
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
-  /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）。 */
-  sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
+  /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定。 */
+  sessionProbe?: {
+    noteTranscript(sessionId: string, path: string | null): void;
+    noteModel(sessionId: string, model: string): void;
+  };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
 }
@@ -377,6 +380,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       if (record.messaging) deps.messagePipe?.noteInboxSocket?.(record.input.sessionId, record.messaging);
       // 转录路径（中断态探测）：与 pane env 同口径——每次事件覆盖刷新、只留内存。
       deps.sessionProbe?.noteTranscript(record.input.sessionId, payload?.transcriptPath ?? null);
+      // 换模型落定（`PostModelSwitch` 的 to_model）：转录只在 assistant 消息上照会
+      // 模型，切完不跑一轮就读不到——由事件先说，标签才跟着立刻变。
+      const switchedModel = switchedModelOf(record.input.eventType, payload?.raw);
+      if (switchedModel) deps.sessionProbe?.noteModel?.(record.input.sessionId, switchedModel);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。

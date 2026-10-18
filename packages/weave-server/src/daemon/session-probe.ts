@@ -77,6 +77,12 @@ export class SessionProbe {
   private readonly marks = new Map<string, TailFacts>();
   /** sessionId → 最后已知的模型/模式（读到就记；见 `latched`）。 */
   private readonly known = new Map<string, { model: string | null; mode: string | null }>();
+  /**
+   * sessionId → 宿主落定的换模型（`PostModelSwitch`）+ 记下的那一刻转录里还是哪个
+   * 模型。转录只在 assistant 消息上照会模型，切完不跑一轮就永远读不到新值——故
+   * 换模型这件事得由事件先说，等转录自己跟上（照会的值不再是 `stale`）才交还给它。
+   */
+  private readonly switched = new Map<string, { stale: string | null; model: string }>();
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
@@ -93,6 +99,13 @@ export class SessionProbe {
   forget(sessionId: string): void {
     this.paths.delete(sessionId);
     this.known.delete(sessionId);
+    this.switched.delete(sessionId);
+  }
+
+  /** 宿主落定的换模型（`PostModelSwitch` 的 `to_model`）：立刻生效，见 `switched`。 */
+  noteModel(sessionId: string, model: string): void {
+    const path = this.pathOf(sessionId);
+    this.switched.set(sessionId, { stale: path ? this.factsOf(path).model : null, model });
   }
 
   /**
@@ -129,12 +142,23 @@ export class SessionProbe {
    */
   private latched(sessionId: string): { model: string | null; mode: string | null } {
     const path = this.pathOf(sessionId);
-    if (!path) return NO_FACTS;
-    const facts = this.factsOf(path);
+    const facts = path ? this.factsOf(path) : NO_FACTS;
     const prev = this.known.get(sessionId);
-    const next = { model: facts.model ?? prev?.model ?? null, mode: facts.mode ?? prev?.mode ?? null };
+    const next = {
+      model: this.switchedModel(sessionId, facts.model) ?? prev?.model ?? null,
+      mode: facts.mode ?? prev?.mode ?? null,
+    };
     if (!prev || prev.model !== next.model || prev.mode !== next.mode) this.known.set(sessionId, next);
     return next;
+  }
+
+  /**
+   * 换模型事件压过转录：只要转录照会的还是切换前那个模型（切完还没真跑一轮），
+   * 就答事件说的新值；转录自己跟上（照会别的值）即交还给它。
+   */
+  private switchedModel(sessionId: string, fromTranscript: string | null): string | null {
+    const switched = this.switched.get(sessionId);
+    return switched && fromTranscript === switched.stale ? switched.model : fromTranscript;
   }
 
   private factsOf(path: string): TailFacts {

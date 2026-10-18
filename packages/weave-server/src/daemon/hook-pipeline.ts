@@ -35,8 +35,11 @@ export interface HookPipelineDeps {
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
   /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
-  /** 会话转录路径上报（中断态探测；同 pane env 口径）。 */
-  sessionProbe?: { noteTranscript(sessionId: string, path: string | null): void };
+  /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）。 */
+  sessionProbe?: {
+    noteTranscript(sessionId: string, path: string | null): void;
+    noteModel(sessionId: string, model: string): void;
+  };
   /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
 }

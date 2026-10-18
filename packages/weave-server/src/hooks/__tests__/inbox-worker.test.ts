@@ -372,6 +372,37 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(exited).toEqual(['s-exit']);
   });
 
+  it('PostModelSwitch 的 to_model 交给会话探测（切完标签立刻变，不等下一轮）', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const noted: Array<[string, string]> = [];
+    const deps = {
+      projects,
+      hooksDir,
+      bus,
+      sessionProbe: {
+        noteTranscript: () => {},
+        noteModel: (sessionId: string, model: string) => noted.push([sessionId, model]),
+      },
+    };
+
+    const record = (eventType: string, raw: Record<string, unknown>) => {
+      const payload = JSON.stringify({ eventType, raw });
+      return {
+        eventId: hookEvents.insert({ projectId: project.id, source: 'claude', eventType, sessionId: 's1', payload }),
+        projectId: project.id,
+        input: { projectId: project.id, source: 'claude', eventType, sessionId: 's1', payload },
+      };
+    };
+
+    handleIngestedRecords(deps, [record('PreModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })]);
+    // Pre 只是「对话框要弹」，此时还没换——不是落定笔
+    expect(noted).toEqual([]);
+    handleIngestedRecords(deps, [record('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })]);
+    expect(noted).toEqual([['s1', 'deepseek-flash']]);
+  });
+
   it('dispatcher 的 deferred（未镜像规则/插件产出）写进 outbox 顺延给下一次事件', async () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

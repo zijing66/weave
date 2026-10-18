@@ -122,6 +122,34 @@ describe('SessionProbe', () => {
     expect(probe.currentMode('s1')).toBe('plan');
   });
 
+  it('换模型落定即生效：转录还没照会新值时标签也跟着变，转录跟上后交还给它', () => {
+    const file = tmpFile();
+    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { model: 'ftm' } }) + '\n');
+    const probe = new SessionProbe();
+    probe.noteTranscript('s1', file);
+    expect(probe.currentModel('s1')).toBe('ftm');
+
+    // 宿主说换到 deepseek-flash 了，但这一轮还没跑出 assistant 条目
+    probe.noteModel('s1', 'deepseek-flash');
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+
+    // 真跑了一轮：转录照会新值，两边一致
+    appendFileSync(file, JSON.stringify({ type: 'assistant', message: { model: 'deepseek-flash' } }) + '\n');
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+
+    // 又切回 ftm 且还没跑：事件说的算（转录照会的仍是切换前那个）
+    probe.noteModel('s1', 'ftm');
+    expect(probe.currentModel('s1')).toBe('ftm');
+  });
+
+  it('没有转录路径时换模型也答得出来；forget 之后照旧 null', () => {
+    const probe = new SessionProbe();
+    probe.noteModel('s1', 'deepseek-flash');
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+    probe.forget('s1');
+    expect(probe.currentModel('s1')).toBeNull();
+  });
+
   it('尾窗读空不擦掉最后已知——会话完成后文件不再增长，那口 null 会钉死成「未知」', () => {
     const file = tmpFile();
     writeFileSync(

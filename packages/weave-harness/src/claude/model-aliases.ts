@@ -31,6 +31,17 @@ export function modelAliasTargets(
 }
 
 /**
+ * 换模型**落定**的那条事件里的真名（`PostModelSwitch.to_model`）。宿主答
+ * 「No, go back」不发事件，故收到这条 = 已经换了；比转录条目早一步——转录只在
+ * assistant 消息上照会模型，切完不跑一轮就什么都读不到。
+ */
+export function switchedModelOf(eventType: string, raw: unknown): string | null {
+  if (eventType !== 'PostModelSwitch') return null;
+  const to = (raw as { to_model?: unknown } | null)?.to_model;
+  return typeof to === 'string' && to ? to : null;
+}
+
+/**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
  * 认不出返回 null，调用方回落显示真名——不猜。
  */

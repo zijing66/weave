@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { aliasOfModel, modelAliasTargets, type ModelAliasTarget } from '../model-aliases.js';
+import { aliasOfModel, modelAliasTargets, switchedModelOf, type ModelAliasTarget } from '../model-aliases.js';
 
 const aliases = ['default', 'opus', 'sonnet'] as const;
 
@@ -40,6 +40,21 @@ describe('modelAliasTargets', () => {
   it('两处都没有就原样回落别名（`/model opus` 仍然认）', () => {
     const t = modelAliasTargets(['opus'], {}, '/nope');
     expect(t).toEqual([{ alias: 'opus', actual: 'opus' }]);
+  });
+});
+
+describe('switchedModelOf', () => {
+  it('PostModelSwitch 的 to_model 就是此刻真跑的模型', () => {
+    expect(switchedModelOf('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })).toBe(
+      'deepseek-flash',
+    );
+  });
+
+  it('别的动静 / 没带真名一律 null（不猜）', () => {
+    expect(switchedModelOf('PreModelSwitch', { to_model: 'deepseek-flash' })).toBeNull();
+    expect(switchedModelOf('Stop', { to_model: 'deepseek-flash' })).toBeNull();
+    expect(switchedModelOf('PostModelSwitch', { to_model: '' })).toBeNull();
+    expect(switchedModelOf('PostModelSwitch', null)).toBeNull();
   });
 });
 
