@@ -1365,7 +1365,12 @@ export function SessionMessages({
     const next = spliceNewline(draft, at, end);
     setDraft(next.text);
     requestAnimationFrame(() => {
-      if (el) el.selectionStart = el.selectionEnd = next.caret;
+      if (!el) return;
+      // 插进来的那一行可能落在框外：定住焦点再落光标，浏览器会把光标滚进视野
+      el.focus({ preventScroll: true });
+      el.selectionStart = el.selectionEnd = next.caret;
+      // 落在文末时直接贴底（光标恰在可见边界上的那一档，浏览器未必挪）
+      if (next.caret === next.text.length) el.scrollTop = el.scrollHeight;
     });
   };
 
@@ -2353,7 +2358,7 @@ export function SessionMessages({
                 <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
               </div>
             )}
-            <div className="flex items-end gap-1.5">
+            <div className="flex flex-wrap items-end gap-1.5">
               <textarea
                 ref={draftRef}
                 value={draft}
@@ -2373,27 +2378,29 @@ export function SessionMessages({
                 }}
                 placeholder={t('tasks.messagesPlaceholder')}
                 rows={inputRows}
-                className="min-w-0 flex-1 resize-none rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
+                className="min-w-0 flex-1 resize-none rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40 max-lg:basis-full"
               />
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
-                  紧贴输入框——手从打字挪到换行不跨别的钮。 */}
+                  尺寸与 ESC 键帽同一格（正方形），窄屏那排三枚钮因此一条线对齐。
+                  `pointerdown` 压掉默认 = 不把焦点从输入框抢走（抢了软键盘会收）。 */}
               <button
                 type="button"
                 title={t('tasks.msgNewline')}
                 aria-label={t('tasks.msgNewline')}
+                onPointerDown={(e) => e.preventDefault()}
                 onClick={insertNewline}
-                className="hidden max-lg:inline-flex shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2.5 py-1 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-8 max-lg:w-8"
               >
                 <CornerDownLeft className="h-3.5 w-3.5" />
               </button>
-              {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏竖排（拇指区两块方块，横排放不下），
-                  字标随窄屏收起（竖排要的是窄，留着字标等于没省位）；桌面并排一行。
-                  停止与事件链组头同一判据与 fb 键。通道下拉贴着发送键——
-                  它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
-              <div className="flex shrink-0 items-center gap-1 max-lg:flex-col max-lg:items-stretch">
+              {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏输入框独占一行、这三枚钮折到
+                  第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
+                  桌面并排一行。停止与事件链组头同一判据与 fb 键。通道下拉贴着
+                  发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
+              <div className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
-                    （窄屏竖排的 `items-stretch` 也不许把它拉成长条）；只有回合开着才
-                    可点，判据仍是 canInterrupt。 */}
+                    （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；只有回合开着
+                    才可点，判据仍是 canInterrupt。 */}
                 <button
                   type="button"
                   title={t('tasks.stopTooltip')}
@@ -2415,7 +2422,7 @@ export function SessionMessages({
                 {/* 发送键与通道下拉合成一枚（split button）：同一块蓝底、同一圈圆角，
                     中间只隔一道细线——点左半发送、点右半开菜单，不是两枚并排的钮。
                     下拉不随草稿为空而禁用：选通道与「现在有没有话要说」是两回事。 */}
-                <div className="relative inline-flex shrink-0">
+                <div className="relative inline-flex shrink-0 max-lg:h-8">
                   <div className="inline-flex items-stretch overflow-hidden rounded bg-blue-600/80 transition-colors hover:bg-blue-500">
                     <button
                       type="button"
