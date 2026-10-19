@@ -1211,6 +1211,98 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(secondId)?.ackedEventId).toBe(901);
   });
 
+  it('中继失败但回执已到：按已送达收、不置闸（已送达的会话队列不能被无限期停住）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        flushGapMs: 0,
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '回执先到的中继正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const firstId = (first as { messageId: string }).messageId;
+
+    // 消息确实进去了（宿主先发了回执），中继进程随后非 0 退出——exit 只管进程，不管送达
+    deliverer.onSessionPrompt(SESSION_ID, '回执先到的中继正文');
+    fake.children[0]!.emit('exit', 1, null);
+
+    expect(deliverer.getMessage(firstId)).toMatchObject({ status: 'delivered', acked: true });
+    expect(deliverer.getMessage(firstId)?.stalled).not.toBe(true);
+    expect(busEvents).not.toContainEqual(
+      expect.objectContaining({ kind: 'message.stalled', messageId: firstId }),
+    );
+
+    // 闸没落下 → 队列照常推进（会话级暂停会让后续消息永远排着）
+    const second = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '闸后那条正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(second).toMatchObject({ ok: true, status: 'delivering' });
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it('终端投递的回执落在 write 期间：已送达按当前行收尾，不被快照抹掉、也不置闸', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const gate: { resolve: () => void; reject: (err: Error) => void } = {
+      resolve: () => {},
+      reject: () => {},
+    };
+    let armed = false;
+    const terminalOf = () => ({
+      available: () => true,
+      listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+      sendText: vi.fn().mockImplementation(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            gate.resolve = resolve;
+            gate.reject = reject;
+            armed = true;
+          }),
+      ),
+      sendKeys: vi.fn(),
+      closePane: vi.fn(),
+    });
+
+    for (const outcome of ['ok', 'fail'] as const) {
+      const deliverer = new MessageDeliverer(makeDeps({ terminal: terminalOf() }));
+      pushEvent(SESSION_ID, 'Stop');
+      const text = `write 期间回执（${outcome}）`;
+      const sending = deliverer.send({
+        toSessionId: SESSION_ID,
+        text,
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      await vi.waitFor(() => expect(armed).toBe(true));
+      armed = false;
+      // 文本已经进了框、宿主先发了回执，write 这一刻才落定（正常返回 / 抛错都可能）
+      deliverer.onSessionPrompt(SESSION_ID, text);
+      if (outcome === 'ok') gate.resolve();
+      else gate.reject(new Error('pane write failed'));
+      const result = await sending;
+      const id = (result as { messageId: string }).messageId;
+      expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered', acked: true });
+      expect(deliverer.getMessage(id)?.stalled).not.toBe(true);
+      expect(busEvents).not.toContainEqual(
+        expect.objectContaining({ kind: 'message.stalled', messageId: id }),
+      );
+    }
+  });
+
   it('中继不设超时：等多久都留在途中（等待发生在目标会话内，不得误判 timeout）', async () => {
     vi.useFakeTimers();
     try {

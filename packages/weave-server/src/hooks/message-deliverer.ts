@@ -1555,6 +1555,14 @@ export class MessageDeliverer {
       });
       return;
     }
+    // 回执先到 = 消息确实送进去了（中继 exit 状态只管进程、不管送达）：这时翻成
+    // failed 并置闸，会把一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍。
+    if (msg.acked === true) {
+      const at = new Date().toISOString();
+      this.memory.set(messageId, { ...msg, status: 'delivered', settledAt: at });
+      this.bus({ kind: 'message.delivered', messageId, sessionId: msg.sessionId, at });
+      return;
+    }
     const failed: PipeMessage = {
       ...msg,
       status: 'failed',
@@ -1596,7 +1604,9 @@ export class MessageDeliverer {
     if (!terminal) return;
     try {
       await write(terminal);
-      const delivered: PipeMessage = { ...msg, status: 'delivered', settledAt: new Date().toISOString() };
+      // write 期间回执可能已到：按**当前行**收尾，别用写之前的快照把 acked 抹回去
+      const current = this.memory.get(messageId) ?? msg;
+      const delivered: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
       this.memory.set(messageId, delivered);
       this.armAckWatch(delivered);
       this.bus({
@@ -1606,8 +1616,16 @@ export class MessageDeliverer {
         at: new Date().toISOString(),
       });
     } catch (err) {
+      const current = this.memory.get(messageId) ?? msg;
+      // 回执到了 = 文本确实进了会话（这次 write 报错也改不了这个事实）：按已送达收，不置闸
+      if (current.acked === true) {
+        const at = new Date().toISOString();
+        this.memory.set(messageId, { ...current, status: 'delivered', settledAt: at });
+        this.bus({ kind: 'message.delivered', messageId, sessionId: current.sessionId, at });
+        return;
+      }
       const failed: PipeMessage = {
-        ...msg,
+        ...current,
         status: 'failed',
         error: err instanceof Error ? err.message : String(err),
         settledAt: new Date().toISOString(),
