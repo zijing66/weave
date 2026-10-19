@@ -459,7 +459,7 @@ describe('导出到剪贴板', () => {
         { key: 'e1', role: 'user', at: ts(9, 38, 52), text: '帮我把这个功能对齐一下' },
         { key: 'e2', role: 'assistant', at: ts(9, 41, 3), text: '已对齐，改了三个文件。' },
       ],
-      { user: '我', assistant: '会话' },
+      { user: '我', assistant: '会话', plan: '计划' },
     );
     expect(text).toBe(
       '[2026-10-16 09:38:52] 我\n' +
@@ -473,20 +473,39 @@ describe('导出到剪贴板', () => {
   it('③ 正文原样（多行/装饰已剥的原文不再加工），空选集给空串', () => {
     const text = exportConversationText(
       [{ key: 'e9', role: 'user', at: ts(1, 2, 3), text: '第一行\n第二行' }],
-      { user: 'Me', assistant: 'Session' },
+      { user: 'Me', assistant: 'Session', plan: 'Plan' },
     );
     expect(text).toBe('[2026-10-16 01:02:03] Me\n第一行\n第二行');
-    expect(exportConversationText([], { user: '我', assistant: '会话' })).toBe('');
+    expect(exportConversationText([], { user: '我', assistant: '会话', plan: '计划' })).toBe('');
   });
 
-  it('④ 压缩分隔不进导出（导出的是说了什么，不是时间线排版）', () => {
+  it('④ 计划条目在角色行带上计划 tag（收着的气泡也照全文导出）', () => {
+    const text = exportConversationText(
+      [
+        {
+          key: 'p5',
+          role: 'assistant',
+          plan: true,
+          at: ts(2, 0, 0),
+          text: '# 计划\n第 1 步\n第 2 步\n第 3 步\n第 4 步\n第 5 步\n第 6 步\n第 7 步',
+        },
+      ],
+      { user: '我', assistant: '会话', plan: '计划' },
+    );
+    expect(text).toBe(
+      '[2026-10-16 02:00:00] 会话 · 计划\n' +
+        '# 计划\n第 1 步\n第 2 步\n第 3 步\n第 4 步\n第 5 步\n第 6 步\n第 7 步',
+    );
+  });
+
+  it('⑤ 压缩分隔不进导出（导出的是说了什么，不是时间线排版）', () => {
     const text = exportConversationText(
       [
         { key: 'e1', role: 'user', at: ts(1, 0, 0), text: 'A' },
         { key: 'e2', role: 'compaction', at: ts(1, 1, 0), text: '' },
         { key: 'e3', role: 'assistant', at: ts(1, 2, 0), text: 'B' },
       ],
-      { user: '我', assistant: '会话' },
+      { user: '我', assistant: '会话', plan: '计划' },
     );
     expect(text).toBe('[2026-10-16 01:00:00] 我\nA\n\n[2026-10-16 01:02:00] 会话\nB');
   });
@@ -622,7 +641,7 @@ describe('随附图', () => {
           images: [img('a'.repeat(64), 'shot.png'), img('b'.repeat(64), 'two.png')],
         },
       ],
-      { user: '我', assistant: '会话' },
+      { user: '我', assistant: '会话', plan: '计划' },
     );
     expect(text).toBe(
       '[2026-10-16 09:00:00] 我\n' + '看看这个\n' + '[Image #1] shot.png\n' + '[Image #2] two.png',

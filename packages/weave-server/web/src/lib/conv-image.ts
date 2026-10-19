@@ -15,6 +15,8 @@ export interface ConvImageEntry {
   role: ConvRole;
   at: string;
   text: string;
+  /** 计划模式交出的计划：meta 行带上计划 tag，与窗口里那枚一致。 */
+  plan?: boolean;
 }
 
 /** 逻辑像素（画布按 scale 倍率放大）。 */
@@ -77,7 +79,7 @@ export type Measure = (font: ConvFont, text: string) => number;
 export interface ConvImageOpts {
   title: string;
   subtitle: string;
-  labels: { user: string; assistant: string };
+  labels: { user: string; assistant: string; plan: string };
   stamp: (iso: string) => string;
   /** 导出图跟随窗口当下的深浅模式（色值与 `tailwind.config.js` 的令牌表同源）。 */
   theme: Theme;
@@ -533,7 +535,9 @@ export function layoutConversation(
     const h = contentH + BUBBLE_PAD * 2;
     bubbles.push({
       role: e.role,
-      meta: `${opts.stamp(e.at)} · ${e.role === 'user' ? opts.labels.user : opts.labels.assistant}`,
+      meta:
+        `${opts.stamp(e.at)} · ${e.role === 'user' ? opts.labels.user : opts.labels.assistant}` +
+        (e.plan === true ? ` · ${opts.labels.plan}` : ''),
       metaY: y,
       x: e.role === 'user' ? IMG_WIDTH - PAD - w : PAD,
       y: y + META_H,

@@ -346,6 +346,7 @@ export function SideQuestionDialog({
             labels: {
               user: t('tasks.sideRoleAsk'),
               assistant: t('tasks.sideRoleAnswer'),
+              plan: t('tasks.convPlan'),
             },
             stamp: fullStamp,
             theme,

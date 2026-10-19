@@ -23,7 +23,7 @@ const measure: Measure = (_font, text) => width(text);
 const opts = {
   title: '会话 A',
   subtitle: 'proj · 导出',
-  labels: { user: '我', assistant: '会话' },
+  labels: { user: '我', assistant: '会话', plan: '计划' },
   stamp: (iso: string) => `T(${iso})`,
   theme: 'dark' as const,
 };
@@ -110,6 +110,8 @@ describe('layoutConversation', () => {
     expect(two.bubbles[0]!.meta).toContain('我');
     expect(two.bubbles[1]!.meta).toContain('会话');
     expect(two.bubbles[1]!.meta).toContain('2026-10-16T09:00:05.000Z');
+    const plan = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '计划正文', plan: true }], opts);
+    expect(plan.bubbles[0]!.meta).toContain('计划');
     const taller = layoutConversation(measure, [{ ...entries[0]!, text: entries[0]!.text.repeat(20) }], opts);
     expect(taller.height).toBeGreaterThan(one.height);
     expect(taller.bubbles[0]!.w).toBeLessThanOrEqual(IMG_WIDTH - 48);
