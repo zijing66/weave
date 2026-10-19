@@ -18,6 +18,8 @@ import type { ProjectOpener } from '../daemon/opener.js';
 const SESSION = 'sess-open-1';
 /** 转录已从磁盘上消失的会话（会话行还在，`--resume` 接不回来）。 */
 const SESSION_GONE = 'sess-gone';
+/** 刚建、还没跑过的会话：宿主已建出空转录文件，首条消息才写内容。 */
+const SESSION_NEW = 'sess-new';
 
 describe('POST /sessions/:id/open-terminal', () => {
   let db: DatabaseSync;
@@ -52,6 +54,9 @@ describe('POST /sessions/:id/open-terminal', () => {
     // 同上，但转录文件已经没了（被清理/删掉）→ 打开前就该 409
     sessions.touch(SESSION_GONE, row.id);
     hookEvents.insert({ projectId: row.id, source: 'claude', eventType: 'Stop', sessionId: SESSION_GONE, payload: '{}' });
+    // 刚建的会话：只有 SessionStart，还没发过 prompt（转录是空文件）
+    sessions.touch(SESSION_NEW, row.id);
+    hookEvents.insert({ projectId: row.id, source: 'claude', eventType: 'SessionStart', sessionId: SESSION_NEW, payload: '{}' });
     // codex 会话（resume 能力未注册 → 501）
     sessions.touch('sess-codex', row.id);
     hookEvents.insert({ projectId: row.id, source: 'codex', eventType: 'Stop', sessionId: 'sess-codex', payload: '{}' });
@@ -79,6 +84,9 @@ describe('POST /sessions/:id/open-terminal', () => {
     const sessionProbe = new SessionProbe();
     sessionProbe.noteTranscript(SESSION, transcript);
     sessionProbe.noteTranscript(SESSION_GONE, path.join(projectPath, 'gone.jsonl'));
+    const empty = path.join(projectPath, 'new.jsonl');
+    writeFileSync(empty, '');
+    sessionProbe.noteTranscript(SESSION_NEW, empty);
     setDaemonSettingsDb(db);
     server = createWeaveServer({
       projects,
@@ -166,6 +174,13 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(opener.runCalls).toHaveLength(before);
   });
 
+  it('刚建的会话（空转录、还没跑过）不判丢失：打开照常', async () => {
+    const before = opener.runCalls.length;
+    const res = await post(`/sessions/${SESSION_NEW}/open-terminal`);
+    expect(res.status).toBe(200);
+    expect(opener.runCalls).toHaveLength(before + 1);
+  });
+
   it('GET /sessions 逐行带 transcriptPresent：列表与 --resume 对齐同一份文件', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/sessions`);
     const { sessions: rows } = (await res.json()) as {
@@ -174,6 +189,8 @@ describe('POST /sessions/:id/open-terminal', () => {
     const byId = new Map(rows.map((r) => [r.sessionId, r.transcriptPresent]));
     expect(byId.get(SESSION)).toBe(true);
     expect(byId.get(SESSION_GONE)).toBe(false);
+    // 没跑过的会话没内容不是丢失（空文件是宿主的正常初态）→ null，不挂提示
+    expect(byId.get(SESSION_NEW)).toBeNull();
     // 不报转录路径的会话（codex）判不动 → null，前端也就不挂提示
     expect(byId.get('sess-codex')).toBeNull();
   });

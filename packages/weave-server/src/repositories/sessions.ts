@@ -21,6 +21,9 @@ export interface SessionRow {
   /** 最新一条 hook 事件类型（listWithCounts 查询填充）——web 状态总线判「关闭」
    *  （SessionEnd）不必再为每个会话拉事件。 */
   lastEventType?: string | null;
+  /** 这个会话真跑过（有过 UserPromptSubmit 或收尾事件；listWithCounts 查询填充）。
+   *  「有没有转录」的判据要用它：没跑过的会话本来就还没写过转录，没内容不是丢失。 */
+  hasRun?: boolean;
   /** 自动移除时刻（= lastSeenAt + 该档保留窗；listWithCounts 派生，两档——没等到
    *  用户 prompt 的新会话快过期，收到过 prompt 的走设置页「无操作会话 n 天后自动
    *  移除」那条线；会话行剩余存活倒计时即读它）。 */
@@ -116,6 +119,7 @@ export class SessionRepository {
         harness: isHarness(raw) ? raw : null,
         turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
         lastEventType: lastEventType ?? null,
+        hasRun: lastUps != null || lastStop != null,
         // 自动移除时刻（唯一判据/期限实现）两档：没等到用户 prompt（无 ups）的
         // 新会话 1 小时快过期；收到过 prompt 的走 settings `sessions.idleDays`。
         // 期限随行下发，web 渲染剩余存活倒计时；SessionSweeper 过期即清。
@@ -144,6 +148,20 @@ export class SessionRepository {
     const lastUps = row?.last_ups ?? null;
     const lastStop = row?.last_stop ?? null;
     return lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop));
+  }
+
+  /**
+   * 单会话「真跑过吗」（有过 UPS 或收尾事件），与 listWithCounts 的 `hasRun` 同一
+   * 判据。打开终端前判转录是否**丢过**要用它：刚建、还没发第一条 prompt 的会话
+   * 本来就还没有转录文件，那不算丢失。
+   */
+  hasRunOf(sessionId: string): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT EXISTS(SELECT 1 FROM hook_events e WHERE e.session_id = ? AND e.event_type IN ('UserPromptSubmit','Stop','StopFailure','SessionEnd')) AS hit",
+      )
+      .get(sessionId) as { hit?: number } | undefined;
+    return Number(row?.hit ?? 0) > 0;
   }
 
   /**

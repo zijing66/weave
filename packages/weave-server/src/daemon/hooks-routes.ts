@@ -39,6 +39,18 @@ import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
  * 从 server.ts 主路由链中调用；返回 false 表示未命中，主链继续分发。
  */
 
+/**
+ * 转录状态的判定（列表与打开门禁共用）：探测只答「那文件里有没有内容」，而没内容
+ * 有两种成因：①刚建的会话宿主先建空文件（或缺席），首条消息写进去才有内容；②曾经
+ * 写过又被清理/删掉。只有 ② 接不回来。判据 = 这个会话确实跑过（有 prompt 或收尾
+ * 事件）——没跑过的会话没有可失去的转录，判不动（null），免得刚建出来就挂「转录已
+ * 丢失」。false 因此只有一种含义：真丢了。
+ */
+function transcriptState(present: boolean | null, hasRun: boolean | undefined): boolean | null {
+  if (present !== false) return present;
+  return hasRun === true ? false : null;
+}
+
 const CreateRuleBody = z.object({
   name: z.string().min(1),
   enabled: z.boolean().optional(),
@@ -456,6 +468,7 @@ export async function handleHooksRoutes(
     sendJson(res, 200, {
       sessions: sessions.map((s) => {
         const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
+        const present = deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null;
         return {
           ...s,
           pidAlive: pidAliveOf(s, liveness),
@@ -472,8 +485,9 @@ export async function handleHooksRoutes(
           // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
           mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
           // 转录还在不在（与 `claude --resume` 认的那份文件对齐）：false = 接不回来了，
-          // 行内给提示、「打开」禁用；null = 判不动（该 harness 没有转录概念）。
-          transcriptPresent: deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null,
+          // 行内给提示、「打开」禁用；null = 判不动（该 harness 没有转录概念，或这个
+          // 会话还没跑过——刚建的会话转录文件尚未写入，没内容不等于丢过）。
+          transcriptPresent: transcriptState(present, s.hasRun),
         };
       }),
       modelCatalog: catalog,
@@ -576,7 +590,8 @@ export async function handleHooksRoutes(
     }
     // 转录没了就别 spawn：--resume 认的是那份文件，开出去只会在 pane 里报
     // 「No conversation found」。判不动（null）照旧放行，不猜。
-    if (deps.sessionProbe?.transcriptPresent(sessionId) === false) {
+    const transcriptPresent = deps.sessionProbe?.transcriptPresent(sessionId) ?? null;
+    if (transcriptState(transcriptPresent, deps.hookSessions.hasRunOf(sessionId)) === false) {
       sendJson(res, 409, { error: 'Session transcript is missing — nothing to resume' });
       return true;
     }
