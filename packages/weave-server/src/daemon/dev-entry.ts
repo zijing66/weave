@@ -310,7 +310,14 @@ async function main(): Promise<void> {
     sequenceEngine,
     messagePipe: messageDeliverer,
     questionTracker,
-    sideQuestions: { onEvent: (input) => void claimSideAnswer(sideQuestionDeps, input) },
+    sideQuestions: {
+      onEvent: (input) => {
+        const row = claimSideAnswer(sideQuestionDeps, input);
+        // 回答到账即收起宿主的 btw 面板：面板是 local JSX UI，开着会一直吃键盘——
+        // 后续打到这个 pane 的投递会落进面板里白丢。ESC 正是它的关闭键。
+        if (row) void messageDeliverer.interrupt(row.sessionId);
+      },
+    },
     sessionProbe,
     uploads,
   });

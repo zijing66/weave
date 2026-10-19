@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, MessageCircleQuestion, X } from 'lucide-react';
+import { AssistantMarkdown } from '@/components/AiAssistant';
 import { api, type SideQuestionRow } from '@/lib/api';
 import { subscribeHook } from '@/lib/sse';
 import { usePullLoad } from '@/lib/pull-load';
@@ -203,14 +204,16 @@ export function SideQuestionDialog({
                     <span className="mt-1 shrink-0 text-[10px] text-neutral-600">
                       {stamp(row.askedAt)}
                     </span>
-                    <p className="min-w-0 flex-1 whitespace-pre-wrap break-words rounded-lg bg-edge/[0.04] px-2 py-1 text-xs text-neutral-200">
-                      {row.question}
-                    </p>
+                    {/* 问与答都走对话里那套 markdown 预览（同一个渲染器），
+                        `pre-wrap` 保住段落里的软换行——回答常是多段 markdown */}
+                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words rounded-lg bg-edge/[0.04] px-2 py-1 text-xs text-neutral-200 [&_p]:whitespace-pre-wrap">
+                      <AssistantMarkdown text={row.question} />
+                    </div>
                   </div>
                   {row.status === 'answered' ? (
-                    <p className="whitespace-pre-wrap break-words rounded-lg border border-violet-400/20 bg-violet-500/[0.06] px-2 py-1 text-xs leading-relaxed text-neutral-300">
-                      {row.answer}
-                    </p>
+                    <div className="whitespace-pre-wrap break-words rounded-lg border border-violet-400/20 bg-violet-500/[0.06] px-2 py-1 text-xs leading-relaxed text-neutral-300 [&_p]:whitespace-pre-wrap">
+                      <AssistantMarkdown text={row.answer ?? ''} />
+                    </div>
                   ) : (
                     <p
                       className={cn(
