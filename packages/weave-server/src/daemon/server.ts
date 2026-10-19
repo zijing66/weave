@@ -1575,6 +1575,7 @@ async function handleRequest(
     const messages = deps.messageDeliverer?.forgetProject(project.id) ?? 0;
     deps.sessionWatches?.deleteByProject(project.id);
     deps.sessionSequences?.deleteByProject(project.id);
+    deps.sideQuestions?.repo.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);
     purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);

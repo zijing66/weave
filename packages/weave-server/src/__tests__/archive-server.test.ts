@@ -11,6 +11,7 @@ import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { SessionRepository } from '../repositories/sessions.js';
+import { SideQuestionRepository } from '../repositories/side-questions.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb } from '../daemon/settings.js';
 import { drainInboxOnce, type InboxDrainDeps } from '../hooks/inbox-worker.js';
@@ -48,6 +49,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
   let sessions: SessionRepository;
   let dispatches: HookDispatchRepository;
   let deliverer: MessageDeliverer;
+  let sideQuestions: SideQuestionRepository;
   let idA: number;
   let idB: number;
 
@@ -94,6 +96,10 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
       fromKind: 'dashboard',
     });
     if (!queued.ok) throw new Error(`seed prompt message failed: ${queued.error}`);
+    // 旁路会话（/btw）：B 的一条与 A 的一条——归档只清 B 的
+    sideQuestions = new SideQuestionRepository(db);
+    sideQuestions.insert({ sessionId: 'sess-b1', projectId: idB, question: 'btw b' });
+    sideQuestions.insert({ sessionId: 'sess-a1', projectId: idA, question: 'btw a' });
     // B 的管道文件（inbox 活文件 + mirror + outbox）——归档即焚的对象
     writeFileSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_B)}.jsonl`), inboxLine(TOK_B, 'Stop', 'sess-b1'));
     writeFileSync(mirrorPathOf(hooksDir, hookShardId(TOK_B)), '{}');
@@ -108,6 +114,7 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
       hookSessions: sessions,
       hookDispatches: dispatches,
       messageDeliverer: deliverer,
+      sideQuestions: { repo: sideQuestions },
       hooksDir,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -136,6 +143,9 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     expect(dispatches.list({ sessionId: 'sess-b1' })).toHaveLength(0);
     expect(hookEvents.listByProject(idA)).toHaveLength(1);
     expect(deliverer.hasQueued('sess-b1')).toBe(false);
+    // 旁路会话历史随项目会话一起走（A 的那条原样留着）
+    expect(sideQuestions.list('sess-b1', { limit: 10 })).toHaveLength(0);
+    expect(sideQuestions.list('sess-a1', { limit: 10 })).toHaveLength(1);
 
     // 管道文件：B 的四处焚毁（含 promptbox），A 的原样
     expect(existsSync(path.join(hooksDir, 'inbox', `${hookShardId(TOK_B)}.jsonl`))).toBe(false);

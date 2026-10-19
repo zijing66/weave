@@ -2,9 +2,52 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { registerProject } from '../registry.js';
+import { registerProject, unregisterProject } from '../registry.js';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
+import { SessionRepository } from '../repositories/sessions.js';
+import { SessionWatchRepository } from '../repositories/session-watches.js';
+import { SideQuestionRepository } from '../repositories/side-questions.js';
+
+describe('unregisterProject', () => {
+  let dir: string;
+  let dbPath: string;
+  let target: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'weave-registry-'));
+    dbPath = join(dir, 'test.db');
+    target = join(dir, 'project');
+    mkdirSync(target, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('注销把会话的附属行一并带走（订阅 / 旁路会话）', () => {
+    const { id } = registerProject(target, 'init', dbPath);
+    const db = openDatabase(dbPath);
+    new SessionRepository(db).touch('sess-1', id);
+    new SessionWatchRepository(db).insert({
+      watcherSessionId: null,
+      targetSessionId: 'sess-1',
+      notify: null,
+      onEvents: ['idle'],
+      times: null,
+    });
+    new SideQuestionRepository(db).insert({ sessionId: 'sess-1', projectId: id, question: 'btw' });
+    db.close();
+
+    expect(unregisterProject(target, dbPath)).not.toBeNull();
+
+    const after = openDatabase(dbPath);
+    expect(new SessionRepository(after).list(id)).toHaveLength(0);
+    expect(new SessionWatchRepository(after).listPending()).toHaveLength(0);
+    expect(new SideQuestionRepository(after).list('sess-1', { limit: 10 })).toHaveLength(0);
+    after.close();
+  });
+});
 
 describe('registerProject', () => {
   let dir: string;

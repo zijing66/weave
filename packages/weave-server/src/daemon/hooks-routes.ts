@@ -541,6 +541,7 @@ export async function handleHooksRoutes(
         dispatches: deps.hookDispatches,
         deliverer: deps.messageDeliverer,
         watches: deps.sessionWatches,
+        sequences: deps.sessionSequences,
         questions: deps.questionTracker,
         sideQuestions: deps.sideQuestions?.repo,
         probe: deps.sessionProbe,

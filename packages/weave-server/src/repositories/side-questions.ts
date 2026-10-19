@@ -96,6 +96,11 @@ export class SideQuestionRepository {
   deleteBySession(sessionId: string): number {
     return Number(this.db.prepare('DELETE FROM side_questions WHERE session_id = ?').run(sessionId).changes);
   }
+
+  /** 归档/注销项目连带清（行上自带 project_id，不必赶在会话行删除之前）。 */
+  deleteByProject(projectId: number): number {
+    return Number(this.db.prepare('DELETE FROM side_questions WHERE project_id = ?').run(projectId).changes);
+  }
 }
 
 function toRow(row: Record<string, unknown>): SideQuestionRow {
