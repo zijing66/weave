@@ -1,5 +1,6 @@
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } from '../driver.js';
+import { CLAUDE_PLAN } from './plan.js';
 
 /**
  * 阻塞式交互问答（AskUserQuestion / 计划确认 / 权限确认）的 claude 规格：
@@ -251,6 +252,7 @@ function previewTail(count: number): BlockingQuestionOption[] {
 }
 
 export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
+  plan: CLAUDE_PLAN,
   blockingTools: HARNESS_LIFECYCLE.claude.questionTools,
   permissionNotificationType: 'permission_prompt',
   // 宿主自身模式表（`claude --help` 的 permission mode 说明）里只有这两个

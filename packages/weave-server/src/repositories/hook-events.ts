@@ -130,6 +130,35 @@ export class HookEventRepository {
     );
   }
 
+  /**
+   * 按工具名择行（最近的 limit 条，倒序）：计划正文只藏在 ExitPlanMode 与「写计划
+   * 文件」两类调用里，`needle` 再按路径特征收一道——不筛就得把整轮工具调用连同
+   * 几 MB 的 tool_input 一起捞回来。`payload` 是归一化 JSON（toolName 顶格），故
+   * 直接按 `"toolName":"<名>"` 匹配，不必解 JSON。
+   */
+  listByTools(
+    sessionId: string,
+    tools: readonly string[],
+    needle: string | null,
+    limit: number,
+  ): HookEventRow[] {
+    if (tools.length === 0) return [];
+    const conds = [
+      'session_id = ?',
+      "event_type IN ('PreToolUse','PostToolUse')",
+      `(${tools.map(() => 'payload LIKE ?').join(' OR ')})`,
+    ];
+    const params: (string | number)[] = [sessionId, ...tools.map((t) => `%"toolName":"${t}"%`)];
+    if (needle) {
+      conds.push('payload LIKE ?');
+      params.push(`%${needle}%`);
+    }
+    const rows = this.db
+      .prepare(`SELECT * FROM hook_events WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ?`)
+      .all(...params, limit);
+    return rows.map((row) => toHookEvent(row));
+  }
+
   /** `types` 非空只取这些事件类型（对话视图按开/闭轮类型翻页，不拉整条事件链）。 */
   listBySession(
     sessionId: string,

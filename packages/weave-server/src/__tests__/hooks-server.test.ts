@@ -63,6 +63,19 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     return { eventId, projectId, input };
   };
 
+  /** 带工具三元组的事件（计划正文的载体）：归一化 payload，toolName 顶格。 */
+  const seedTool = (sessionId: string, eventType: string, payload: object): number => {
+    const eventId = hookEvents.insert({
+      projectId,
+      source: 'claude' as const,
+      eventType,
+      sessionId,
+      payload: JSON.stringify({ eventType, ...payload, raw: {} }),
+    });
+    sessions.touch(sessionId, projectId);
+    return eventId;
+  };
+
   beforeAll(async () => {
     setDaemonSettingsDb(openDatabase(':memory:'));
     await writeDaemonSettings({
@@ -286,6 +299,38 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
 
     expect((await post('/sessions/nope', { title: 'x' }, 'PATCH')).status).toBe(404);
     expect((await post('/sessions/sess-rename', { title: '' }, 'PATCH')).status).toBe(400);
+  });
+
+  it('GET /sessions/:id/plan 摆出最近一次计划模式的正文（老模型带在 events 里，新模型取写盘那次）', async () => {
+    // 老模型：正文就在 ExitPlanMode 的 tool_input.plan 上，气泡按这条事件定位
+    const commit = seedTool('sess-plan', 'PreToolUse', {
+      toolName: 'ExitPlanMode',
+      toolInput: { plan: '# 计划\n先改 A', planFilePath: '/nowhere/plans/x.md' },
+    });
+    seed('sess-plan', 'Stop');
+    const got = (await (await get('/sessions/sess-plan/plan')).json()) as {
+      plan: { eventId: number; at: string; text: string } | null;
+    };
+    expect(got.plan).toMatchObject({ eventId: commit, text: '# 计划\n先改 A' });
+
+    // 2.1.296：tool_input 恒空 → 正文取它前一步写计划文件那次调用（文件早已不在）
+    seedTool('sess-plan2', 'PreToolUse', {
+      toolName: 'Write',
+      toolInput: { file_path: '/home/u/.claude/plans/y.md', content: '# 计划二\n再改 B' },
+    });
+    const commit2 = seedTool('sess-plan2', 'PostToolUse', {
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+      toolResponse: { plan: null, isAgent: false, filePath: '/home/u/.claude/plans/y.md' },
+    });
+    const got2 = (await (await get('/sessions/sess-plan2/plan')).json()) as {
+      plan: { eventId: number; text: string } | null;
+    };
+    expect(got2.plan).toMatchObject({ eventId: commit2, text: '# 计划二\n再改 B' });
+
+    // 没进过计划模式的会话 = 常态，返回 null（前端不摆气泡）
+    seed('sess-noplan', 'Stop');
+    expect(await (await get('/sessions/sess-noplan/plan')).json()).toEqual({ plan: null });
   });
 
   it('DELETE /sessions/:id 清会话行 + 事件 + 派发；重复删 404', async () => {

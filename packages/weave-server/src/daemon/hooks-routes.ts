@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { z } from 'zod';
 import {
@@ -27,9 +28,15 @@ import { effective, setProjectEnabled } from '../hooks/plugin-project-state.js';
 import { readDaemonSettings, readDaemonSettingsSync, readHooksEnabled } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
-import { captureSurfaces, messagingSurfaceFor, messagingSurfaces } from '../surfaces.js';
+import {
+  blockingPromptFor,
+  captureSurfaces,
+  messagingSurfaceFor,
+  messagingSurfaces,
+} from '../surfaces.js';
 import { getDataDir } from '../db/paths.js';
 import { UPLOAD_MAX_BYTES, UPLOAD_MEDIA_TYPES, type UploadRow } from '../repositories/uploads.js';
+import type { HookEventRow } from '../repositories/hook-events.js';
 import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
@@ -50,6 +57,32 @@ import { readSideQuestions } from '../hooks/side-questions.js';
 function transcriptState(present: boolean | null, hasRun: boolean | undefined): boolean | null {
   if (present !== false) return present;
   return hasRun === true ? false : null;
+}
+
+/** 计划扫描窗口（最近的提交/写盘调用条数；一次计划模式只留最近的一两份）。 */
+const PLAN_SCAN = 20;
+/** 计划正文上限：超了截断（气泡要能渲染，别把几 MB 的文档塞进响应）。 */
+const PLAN_MAX_CHARS = 200_000;
+
+/** 事件 payload 里的工具三元组（坏 JSON → 全 null，交给 spec 判「不是计划」）。 */
+function payloadTools(payload: string): [string | null, unknown, unknown] {
+  try {
+    const p = JSON.parse(payload) as { toolName?: unknown; toolInput?: unknown; toolResponse?: unknown };
+    return [typeof p.toolName === 'string' ? p.toolName : null, p.toolInput ?? null, p.toolResponse ?? null];
+  } catch {
+    return [null, null, null];
+  }
+}
+
+/** 现读计划文件（批准后宿主已删 = null；读不到不该让整条路由失败）。 */
+function readPlanFile(path: string | null): string | null {
+  if (!path) return null;
+  try {
+    const text = readFileSync(path, 'utf8');
+    return text.trim() ? text : null;
+  } catch {
+    return null;
+  }
 }
 
 const CreateRuleBody = z.object({
@@ -767,6 +800,53 @@ export async function handleHooksRoutes(
       }
       return true;
     }
+  }
+
+  // ---- 计划模式：最近一次 ExitPlanMode 交出的计划正文（对话面板当气泡摆出来批阅）----
+  const planMatch = pathname.match(/^\/sessions\/([^/]+)\/plan$/);
+  if (planMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(planMatch[1]!);
+    if (!deps.hookEvents) {
+      sendJson(res, 503, { error: 'Hook ingestion unavailable' });
+      return true;
+    }
+    // harness 归属 = 最新事件 source（同 open-terminal 口径）；没事件的会话没有计划
+    const latest = deps.hookEvents.listBySession(sessionId, 1);
+    const src = latest[latest.length - 1]?.source;
+    const spec = isHarness(src) ? (blockingPromptFor(src)?.plan ?? null) : null;
+    if (!spec) {
+      sendJson(res, 200, { plan: null });
+      return true;
+    }
+    // 正文两条来源：提交那次调用自己带的（老模型）/ 写计划文件那次调用带的
+    // （2.1.296 起 tool_input 恒空，正文只在 Write 的 content 里）。事件里都没有
+    // 就现读计划文件——它只在计划待批阅期间存在，批准后宿主会删。
+    const scan = (rows: ReadonlyArray<Pick<HookEventRow, 'id' | 'createdAt' | 'payload'>>) =>
+      rows.flatMap((row) => {
+        const draft = spec.draftOf(...payloadTools(row.payload));
+        return draft ? [{ row, draft }] : [];
+      });
+    const [commit] = scan(deps.hookEvents.listByTools(sessionId, [spec.tool], null, PLAN_SCAN));
+    const [write] = scan(
+      deps.hookEvents.listByTools(sessionId, spec.writeTools, spec.fileHint, PLAN_SCAN),
+    );
+    if (!commit) {
+      sendJson(res, 200, { plan: null });
+      return true;
+    }
+    const text =
+      commit.draft.text ??
+      write?.draft.text ??
+      readPlanFile(commit.draft.filePath) ??
+      readPlanFile(write?.draft.filePath ?? null);
+    if (!text) {
+      sendJson(res, 200, { plan: null });
+      return true;
+    }
+    sendJson(res, 200, {
+      plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
+    });
+    return true;
   }
 
   // ---- 手动重发（暂停闸解除动作）：prompt 通道 failed / delivered-未回执 才可重发 ----

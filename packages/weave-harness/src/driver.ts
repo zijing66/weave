@@ -345,12 +345,39 @@ export interface BlockingQuestion {
   previewMode?: boolean;
 }
 
+/** 一次工具调用带的计划内容（正文 / 计划文件路径，两样都可能缺）。 */
+export interface PlanDraft {
+  /** 正文（模型直接给的，或写计划文件那次调用带的 content）。 */
+  text: string | null;
+  /** 计划文件路径：正文不在事件里时由 server 现读（批准后宿主可能已删）。 */
+  filePath: string | null;
+}
+
+/**
+ * 计划模式面：ExitPlanMode 交出的「待批阅的计划」。正文两条来源——老模型塞在
+ * `tool_input.plan` 里；2.1.296 起 tool_input 恒空，宿主改成让模型先把计划写进
+ * 计划文件（路径随计划模式提醒下发，宿主自己不留副本），故正文也可能只在那次
+ * Write/Edit 的 content 里。dashboard 拿它当一条对话气泡摆出来给人批阅。
+ */
+export interface PlanSpec {
+  /** 提交计划待批阅的工具名。 */
+  readonly tool: string;
+  /** 写计划文件用的工具名（正文在这类调用的 content 里）。 */
+  readonly writeTools: readonly string[];
+  /** 计划文件路径里必有的一段：择行用（把整轮 Write 都捞回来太重）。 */
+  readonly fileHint: string;
+  /** 这次工具调用带的计划内容；与计划无关返回 null。 */
+  draftOf(toolName: string | null, toolInput: unknown, toolResponse: unknown): PlanDraft | null;
+}
+
 /**
  * 阻塞式交互面（会话卡住等输入：AskUserQuestion / 计划确认 / 权限确认）：
  * 哪些工具会挂起、权限通知类型、问题面归一化与作答键序全归 harness——
  * server 只做状态机与终端传输，web 只渲染不拼键序。
  */
 export interface BlockingPromptSpec {
+  /** 计划模式规格；null = 该 harness 没有计划概念（不摆计划气泡）。 */
+  readonly plan: PlanSpec | null;
   /** 阻塞工具名：PreToolUse 置位、PostToolUse 同名清除。 */
   readonly blockingTools: readonly string[];
   /** 权限确认的 Notification 类型（raw.notification_type）；null = 无此机制。 */
