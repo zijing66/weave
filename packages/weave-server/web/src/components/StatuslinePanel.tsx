@@ -974,7 +974,7 @@ export function PowerlineRow({
 }) {
   if (!config.powerline.enabled) {
     return (
-      <span>
+      <span className="nerd-font">
         {items
           .map((it) => (
             <span
@@ -1000,7 +1000,7 @@ export function PowerlineRow({
   const first = items[0];
   const last = items[items.length - 1];
   return (
-    <span className="inline-flex items-stretch">
+    <span className="nerd-font inline-flex items-stretch">
       {/* caps/joins paint a block's BACKGROUND colour as text — cssSolid, not
           cssFg: the two palettes diverge for named colours, which showed up
           as a visible shade gap against the block fill (mirrors the
