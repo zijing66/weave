@@ -14,7 +14,8 @@
  * 无参数 + 非终端 = 用法帮助 + 校验（CI 不挂起等输入）。
  *
  * 自动提交只提交版本文件本身（git commit -- <paths>），其他暂存内容不牵连；
- * 工作区无该七文件外的关联改动，共享工作区安全。零第三方依赖。
+ * 判据是这七个文件**当前有没有未提交改动**，不是「本次写了几个」——外部（如
+ * release.mjs）先把版本号写成目标值、本脚本再补跑时也照样落库。共享工作区安全。零第三方依赖。
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -156,15 +157,31 @@ function isUnder(parent, child) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-/** 只提交版本文件（pathspec commit，其他暂存内容不牵连）；无变化跳过 */
-function commitVersionFiles(version, changed) {
-  if (changed.length === 0) {
-    log('版本文件无变化，无需提交');
+/** 目标文件里当前有未提交改动的那些（本次写的、以及外部先写成目标版本的一并算） */
+function dirtyTargets() {
+  const out = execFileSync('git', ['status', '--porcelain', '--', ...TARGETS], { cwd: root, encoding: 'utf8' });
+  return out
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((l) => l.slice(3).trim());
+}
+
+/** 只提交版本文件（pathspec commit，其他暂存内容不牵连）；无未提交改动才跳过 */
+function commitVersionFiles(version) {
+  let paths;
+  try {
+    paths = dirtyTargets();
+  } catch (err) {
+    log(`未提交 —— git 不可用或非仓库（${err.message.split('\n')[0]}）；文件已写齐`);
+    return;
+  }
+  if (paths.length === 0) {
+    log('版本文件无改动，无需提交');
     return;
   }
   const message = `chore(release): 全仓版本升至 v${version}`;
   try {
-    execFileSync('git', ['commit', '-m', message, '--', ...changed.map((p) => path.relative(root, p))], { cwd: root, stdio: 'pipe', encoding: 'utf8' });
+    execFileSync('git', ['commit', '-m', message, '--', ...paths], { cwd: root, stdio: 'pipe', encoding: 'utf8' });
     const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     log(`已提交 ${sha}（${message}）`);
   } catch (err) {
@@ -314,8 +331,8 @@ export async function main() {
     const bad = checkForward(version, entries[0].current);
     if (bad && !args.force) die(`${bad} —— 确需覆盖请加 --force`);
     if (bad) log(`注意: 强制放行（${bad}）`);
-    const changed = applyVersion(entries, version);
-    if (args.commit) commitVersionFiles(version, changed);
+    applyVersion(entries, version);
+    if (args.commit) commitVersionFiles(version);
     return;
   }
 
@@ -346,8 +363,8 @@ export async function main() {
     return;
   }
   const version = typeof picked === 'object' ? picked.version : picked;
-  const changed = applyVersion(entries, version);
-  if (args.commit) commitVersionFiles(version, changed);
+  applyVersion(entries, version);
+  if (args.commit) commitVersionFiles(version);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

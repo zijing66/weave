@@ -129,6 +129,25 @@ test('--version：写齐七处 + 自动提交；重复执行幂等不提交', ()
   }
 });
 
+test('版本文件已是目标值但未提交时补跑也落库', () => {
+  const sb = makeSandbox();
+  try {
+    // 外部（如 release.mjs 的内联 bump）先写成 0.2.0 却没提交
+    for (const rel of sb.targets) {
+      const pkg = JSON.parse(readFileSync(path.join(sb.dir, rel), 'utf8'));
+      pkg.version = '0.2.0';
+      writeFileSync(path.join(sb.dir, rel), JSON.stringify(pkg, null, 2) + '\n');
+    }
+    assert.match(sb.git('status', '--porcelain'), /package\.json/, '前置：确有未提交改动');
+    const out = execFileSync('node', ['scripts/bump-version.mjs', '--version', '0.2.0', '--force'], { cwd: sb.dir, encoding: 'utf8' });
+    assert.match(out, /无改动/, '文件值无需再写');
+    assert.equal(sb.git('status', '--porcelain').trim(), '', '未提交改动已落库');
+    assert.equal(sb.git('log', '-1', '--format=%s').trim(), 'chore(release): 全仓版本升至 v0.2.0');
+  } finally {
+    rmSync(sb.dir, { recursive: true, force: true });
+  }
+});
+
 test('--version 后退被拦；--force 豁免；--no-commit 只写不提交', () => {
   const sb = makeSandbox();
   try {
