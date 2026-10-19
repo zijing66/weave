@@ -452,26 +452,11 @@ export function exportConversationText(
 const DOUBLE_TAP_MS = 300;
 const TAP_SLOP = 8;
 
-/** 弹出菜单三副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载）/
- *  发送键旁的下拉（选投递通道）。前两副挂在 body 上按视口坐标定位；
- *  发送下拉贴着发送键内联渲染，不带坐标。 */
+/** 弹出菜单两副面孔：气泡右键（进多选）/ 底栏分享图片（复制 | 下载），都挂在
+ *  body 上按视口坐标定位。 */
 type ConvMenu =
   | { kind: 'bubble'; x: number; y: number; key: string }
-  | { kind: 'share'; x: number; y: number }
-  | { kind: 'send' };
-
-/** 投递通道（发送人选的，不是消息模式）：auto = 层序自动（直投优先）；
- *  terminal = 强制层② 终端 send-text（宿主眼里唯一算用户输入的路径）。 */
-type SendVia = 'auto' | 'terminal';
-const SEND_VIA_KEY = 'weave:send-via';
-
-function loadSendVia(): SendVia {
-  try {
-    return localStorage.getItem(SEND_VIA_KEY) === 'terminal' ? 'terminal' : 'auto';
-  } catch {
-    return 'auto';
-  }
-}
+  | { kind: 'share'; x: number; y: number };
 
 const MENU_W = 168;
 const MENU_H = 72;
@@ -762,7 +747,6 @@ export function SessionMessages({
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
   const [menu, setMenu] = useState<ConvMenu | null>(null);
-  const [sendVia, setSendVia] = useState<SendVia>(loadSendVia);
   /** 队列气泡里展开看全文的那一行（多条时每行一句，点开才完整）。 */
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
@@ -1189,18 +1173,6 @@ export function SessionMessages({
     setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
   };
 
-  /** 发送通道下拉（贴着发送键往上开）；选中即记盘。 */
-  const openSendMenu = (): void => setMenu({ kind: 'send' });
-  const pickSendVia = (v: SendVia): void => {
-    setSendVia(v);
-    try {
-      localStorage.setItem(SEND_VIA_KEY, v);
-    } catch {
-      // 记不住就这次会话有效，不影响投递
-    }
-    setMenu(null);
-  };
-
   /** 触屏双击开菜单（桌面走右键；鼠标不该有双击这回事）。
    *  多选不再是长按直达——它只是菜单里的一项，双击也只开菜单。 */
   const onPressDown = (key: string) => (e: React.PointerEvent): void => {
@@ -1403,7 +1375,9 @@ export function SessionMessages({
         const res = await api.sendSessionMessage(sessionId, {
           text,
           ...(images.length > 0 ? { images: images.map((i) => i.id) } : {}),
-          ...(sendVia === 'terminal' ? { forceTerminal: true } : {}),
+          // 手动面恒走层② 终端击键：直投/中继在宿主眼里都是「另一个会话发的」、
+          // 且不带发送方，对方会话可能答给一个随机同伴——人工对话要的是用户权威
+          forceTerminal: true,
         });
         // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
         // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
@@ -2419,84 +2393,31 @@ export function SessionMessages({
                     }
                   />
                 </button>
-                {/* 发送键与通道下拉合成一枚（split button）：同一块蓝底、同一圈圆角，
-                    中间只隔一道细线——点左半发送、点右半开菜单，不是两枚并排的钮。
-                    下拉不随草稿为空而禁用：选通道与「现在有没有话要说」是两回事。 */}
-                <div className="relative inline-flex shrink-0 max-lg:h-8">
-                  <div className="inline-flex items-stretch overflow-hidden rounded bg-blue-600/80 transition-colors hover:bg-blue-500">
-                    <button
-                      type="button"
-                      disabled={
-                        !capability.prompt ||
-                        (!draft.trim() && staged.length === 0) ||
-                        fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-                      }
-                      title={
-                        capability.prompt
-                          ? undefined
-                          : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-                      }
-                      aria-label={t('tasks.messagesSend')}
-                      onClick={send}
-                      className="inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40 max-lg:px-3 max-lg:py-2"
-                    >
-                      <FeedbackIcon
-                        state={fb.stateOf(`sendMsg:${sessionId}`)}
-                        className="h-3 w-3"
-                        icon={<Send className="h-3 w-3" />}
-                      />
-                      <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
-                    </button>
-                    {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
-                        终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
-                    <button
-                      type="button"
-                      title={t('tasks.msgChannelCurrent', {
-                        via: sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto'),
-                      })}
-                      aria-label={t('tasks.msgChannelTitle')}
-                      onClick={openSendMenu}
-                      className={cn(
-                        'inline-flex items-center justify-center gap-1 border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
-                        sendVia === 'terminal'
-                          ? 'border-white/40 bg-white/20 text-white'
-                          : 'border-white/20 text-white/70 hover:bg-white/10 hover:text-white',
-                      )}
-                    >
-                      {/* 通道的当前值跟着选它的那半走：与强制态的提亮同处一块，字不另染银色好让提亮带上它 */}
-                      <span className="text-[9px] font-normal leading-none">
-                        {sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto')}
-                      </span>
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                  </div>
-                  {/* 通道菜单内联贴着发送键往上开——位置交给 CSS。按视口坐标算的话，
-                      移动端软键盘一弹、可视视口与布局视口错开，菜单就落到别处去了。 */}
-                  {menu?.kind === 'send' && (
-                    <div
-                      data-conv-menu
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute bottom-full right-0 z-20 mb-1 w-[168px] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
-                    >
-                      {(['auto', 'terminal'] as const).map((v) => (
-                        <button
-                          key={v}
-                          type="button"
-                          title={
-                            v === 'auto' ? t('tasks.msgChannelAutoHint') : t('tasks.msgChannelTerminalHint')
-                          }
-                          onClick={() => pickSendVia(v)}
-                          className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
-                        >
-                          <Check
-                            className={cn('h-3 w-3', sendVia === v ? 'text-blue-300' : 'text-transparent')}
-                          />
-                          {v === 'auto' ? t('tasks.msgChannelAuto') : t('tasks.msgChannelTerminal')}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {/* 发送键只有一枚：手动面恒走层② 终端击键，没有通道可选（直投/中继
+                    留给后续的会话协作与编排域）。窄屏是一枚与 ESC、换行同高的方块。 */}
+                <button
+                  type="button"
+                  disabled={
+                    !capability.prompt ||
+                    (!draft.trim() && staged.length === 0) ||
+                    fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                  }
+                  title={
+                    capability.prompt
+                      ? undefined
+                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                  }
+                  aria-label={t('tasks.messagesSend')}
+                  onClick={send}
+                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8 max-lg:px-0"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`sendMsg:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={<Send className="h-3 w-3" />}
+                  />
+                  <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -2528,10 +2449,8 @@ export function SessionMessages({
           </div>
         )}
 
-        {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载）。
-            发送下拉不在这里——它内联挂在发送键上。 */}
+        {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载）。 */}
         {menu &&
-          menu.kind !== 'send' &&
           createPortal(
             <div
               data-conv-menu

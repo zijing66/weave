@@ -1310,8 +1310,9 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/plan`,
     ).then((r) => r.plan),
   /** 投递消息到会话：恒 prompt 通道、无模式入参（直投 → 终端 send-text → 中继
-   *  降级 → 未开会话积压队列）；`forceTerminal` = 发送人下拉选的通道，收窄成只剩
-   *  层②。层①② 皆无才 409，由 apiFetch 抛 Error（error 字段原文）。 */
+   *  降级 → 未开会话积压队列）；`forceTerminal` 收窄成只剩层② 终端击键——dashboard
+   *  的手动对话恒带它（直投/中继不带发送方，宿主也不当用户输入）。层①② 皆无才
+   *  409，由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
     body: { text: string; images?: string[]; forceTerminal?: boolean },
