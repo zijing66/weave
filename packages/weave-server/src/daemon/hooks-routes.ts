@@ -488,6 +488,9 @@ export async function handleHooksRoutes(
           modelAlias: aliasOfModel(catalog[s.harness ?? ''] ?? [], model),
           // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
           mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
+          // 推理档位（hook 事件自带的 `effort.level`）：状态栏 `thinking` 块的事实，
+          // 与模型/模式同口径（只放内存、最后已知、没上报过即 null）。
+          effort: deps.sessionProbe?.currentEffort(s.sessionId) ?? null,
           // 转录还在不在（与 `claude --resume` 认的那份文件对齐）：false = 接不回来了，
           // 行内给提示、「打开」禁用；null = 判不动（该 harness 没有转录概念，或这个
           // 会话还没跑过——刚建的会话转录文件尚未写入，没内容不等于丢过）。

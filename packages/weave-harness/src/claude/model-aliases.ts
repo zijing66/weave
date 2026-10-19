@@ -57,6 +57,15 @@ export function startedModelOf(
 }
 
 /**
+ * 推理档位（`effort.level`）：工具/回合类 hook 事件都带，与生成脚本填 `thinking`
+ * 块读的 stdin `effort.level` 是同一个事实、同一个键形。
+ */
+export function effortLevelOf(raw: unknown): string | null {
+  const level = (raw as { effort?: { level?: unknown } } | null)?.effort?.level;
+  return typeof level === 'string' && level ? level : null;
+}
+
+/**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
  * 认不出返回 null，调用方回落显示真名——不猜。
  */

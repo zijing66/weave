@@ -83,6 +83,8 @@ export class SessionProbe {
    * 换模型这件事得由事件先说，等转录自己跟上（照会的值不再是 `stale`）才交还给它。
    */
   private readonly switched = new Map<string, { stale: string | null; model: string }>();
+  /** sessionId → 推理档位（每次带 `effort` 的事件覆盖）：状态栏 `thinking` 块的事实在 hook 里。 */
+  private readonly efforts = new Map<string, string>();
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
@@ -100,6 +102,17 @@ export class SessionProbe {
     this.paths.delete(sessionId);
     this.known.delete(sessionId);
     this.switched.delete(sessionId);
+    this.efforts.delete(sessionId);
+  }
+
+  /** 推理档位（`effort.level`，事件自带）：逐条覆盖，与模型/模式同口径只放内存。 */
+  noteEffort(sessionId: string, level: string): void {
+    this.efforts.set(sessionId, level);
+  }
+
+  /** 最后已知的推理档位；没上报过即 null（不猜）。 */
+  currentEffort(sessionId: string): string | null {
+    return this.efforts.get(sessionId) ?? null;
   }
 
   /** 宿主落定的换模型（`PostModelSwitch` 的 `to_model`）：立刻生效，见 `switched`。 */

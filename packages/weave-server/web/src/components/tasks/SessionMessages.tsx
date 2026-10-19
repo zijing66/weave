@@ -2324,6 +2324,7 @@ export function SessionMessages({
           projectId={projectId}
           sessionName={sessionRow?.title ?? label}
           model={modelValue || null}
+          effort={sessionRow?.effort ?? null}
         />
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局） */}

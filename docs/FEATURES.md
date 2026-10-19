@@ -44,7 +44,7 @@ init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文�
 
 **资源管理三层**（互不越级）：①市场副本层——资源市场侧栏导入 / 移除（`market/<id>/` 副本，移除插件装面副本有破坏性确认；本地目录导入走跨平台目录树选择器，顶部一行完整绝对路径——树里勾选即在其中显示，也可直接粘贴路径加入选择）；②安装/卸载层——装到项目 skills / 文件资产 / MCP / 工具箱包 / 全局个人 skills / harness 插件注册表；③启用/停用层——包开关 / settings 落盘。**工具箱**五形态包：`skill` / `rule` / `mod`（hooks 规则 + 处理器）/ `hook` / `surface`（裸 agents/commands 解包进项目 `.claude/`）。**全局文件资产**：`~/.claude`、`~/.codex` 下受控白名单文件树管理。市场更新检查（`check-updates`）与刷新（`refresh`）。
 
-**statusline**：默认 / 全局两档状态栏配置预览与编辑（块的增删、拖拽排序、模板与配色、电源线合并）。配置同时驱动 claude 的 TUI 状态栏（生成 `.claude/helpers/statusline.cjs` 并接到 `settings.json`），**对话页底部也有一条**：按同一份配置忠实渲染，但只摆 weave 当下有数据的块（项目 / 会话 / 模型 / 时刻），宿主 stdin 才有的字段（context / tokens / cost / rate）不摆，一块都摆不出就整条不出现；git 三块（分支 / 身份 / 改动行数）取宿主渲染脚本落在缓存里的那份（同 TTL 口径，过期不认，不自己跑 git）；这条**只读**，配置的唯一入口是个性化配置里那个面板（面板头部标「TUI 注入」），「哪些 harness 会注入 TUI」由能力表答（今天只有 claude）。对话页输入框**顶边可拖高**（2~20 行，记住），会话浮窗的**尺寸与位置**也都记住（localStorage）。
+**statusline**：默认 / 全局两档状态栏配置预览与编辑（块的增删、拖拽排序、模板与配色、电源线合并）。配置同时驱动 claude 的 TUI 状态栏（生成 `.claude/helpers/statusline.cjs` 并接到 `settings.json`），**对话页底部也有一条**：按同一份配置忠实渲染，但只摆 weave 当下有数据的块（项目 / 会话 / 模型 / 时刻），宿主 stdin 才有的字段（context / tokens / cost / rate）不摆，一块都摆不出就整条不出现；git 三块（分支 / 身份 / 改动行数）取宿主渲染脚本落在缓存里的那份（同 TTL 口径，过期不认，不自己跑 git）；`thinking` 取 hook 事件自带的 `effort.level`；每行各自**横向滚动**（块多了不折行、不被裁）；这条**只读**，配置的唯一入口是个性化配置里那个面板（面板头部标「TUI 注入」），「哪些 harness 会注入 TUI」由能力表答（今天只有 claude）。对话页输入框**顶边可拖高**（2~20 行，记住），会话浮窗的**尺寸与位置**也都记住（localStorage）。
 
 **fs 浏览**：服务端受控的文件树浏览（`/fs/roots`、`/fs/children`），供资产选择器等消费。
 

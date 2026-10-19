@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   aliasOfModel,
+  effortLevelOf,
   modelAliasTargets,
   startedModelOf,
   switchedModelOf,
@@ -101,5 +102,18 @@ describe('aliasOfModel', () => {
     expect(aliasOfModel(targets, 'gpt-unknown')).toBeNull();
     expect(aliasOfModel(targets, null)).toBeNull();
     expect(aliasOfModel([], 'ftm')).toBeNull();
+  });
+});
+
+describe('effortLevelOf', () => {
+  it('取 hook 里的 effort.level（statusline thinking 块同一个事实）', () => {
+    expect(effortLevelOf({ effort: { level: 'high' } })).toBe('high');
+  });
+
+  it('没有 / 空串 / 形状不对都回 null', () => {
+    expect(effortLevelOf({})).toBeNull();
+    expect(effortLevelOf({ effort: {} })).toBeNull();
+    expect(effortLevelOf({ effort: { level: '' } })).toBeNull();
+    expect(effortLevelOf(null)).toBeNull();
   });
 });

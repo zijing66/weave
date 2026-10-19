@@ -23,7 +23,7 @@ export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { CLAUDE_SIDE_QUESTION } from './side-question.js';
 export { interruptMarkerAt, currentModelAt, currentModeAt } from './transcript.js';
-export { modelAliasTargets, aliasOfModel, startedModelOf, switchedModelOf, type ModelAliasTarget } from './model-aliases.js';
+export { modelAliasTargets, aliasOfModel, startedModelOf, switchedModelOf, effortLevelOf, type ModelAliasTarget } from './model-aliases.js';
 export { resolveClaudePeer } from './peers.js';
 export {
   CLAUDE_CAPTURE,

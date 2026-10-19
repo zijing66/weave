@@ -23,12 +23,15 @@ export function StatuslineBar({
   projectId,
   sessionName,
   model,
+  effort,
 }: {
   projectId: number;
   /** 会话显示名（title 回退）。 */
   sessionName: string | null;
   /** 当前模型：别名优先（`/model` 收的那个），认不出就用真名。 */
   model: string | null;
+  /** 推理档位（hook 事件自带的 `effort.level`）：`thinking` 块的事实。 */
+  effort: string | null;
 }) {
   const t = useT();
   const [config, setConfig] = useState<StatuslineConfig | null>(null);
@@ -72,6 +75,7 @@ export function StatuslineBar({
   if (project?.name) tokens.project = { name: project.name, path: project.path ?? project.name };
   if (sessionName) tokens.session = { name: sessionName };
   if (model) tokens.model = { model };
+  if (effort) tokens.thinking = { level: effort };
 
   // 先丢空行再封顶：配置的行序是「model / 会话指标 / git+目录」，指标那行今天
   // 全靠宿主 stdin（weave 拿不到）——先切后滤会把第三行的 project 白白砍掉。
@@ -88,8 +92,10 @@ export function StatuslineBar({
       title={t('statusline.barTitle')}
       className="-mx-3 -mb-3 mt-1.5 flex shrink-0 flex-col gap-0.5 overflow-hidden border-t border-edge/[0.06] bg-neutral-950/50 px-3 py-1"
     >
+      {/* 每行各自横向滚动：块多/路径长时不能折行（折了 powerline 的块就断了），
+          也不许被裁——右手一划/滚轮横移看全 */}
       {lines.map((items, i) => (
-        <div key={i} className="overflow-hidden text-[10px] leading-4">
+        <div key={i} className="overflow-x-auto overflow-y-hidden text-[10px] leading-4">
           <PowerlineRow items={items} config={config} />
         </div>
       ))}

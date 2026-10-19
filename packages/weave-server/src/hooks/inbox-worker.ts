@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
 import {
   createRuntimeRegistry,
+  effortLevelOf,
   frameFacts,
   startedModelOf,
   switchedModelOf,
@@ -335,11 +336,12 @@ export interface IngestedHandlerDeps {
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
-  /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定。 */
+  /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定 + 推理档位。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
     sessionStarted(sessionId: string, model: string | null): void;
+    noteEffort(sessionId: string, level: string): void;
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
@@ -408,6 +410,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // 重读；startup / compact 带了真名就直接用它。
       const started = startedModelOf(record.input.eventType, payload?.raw);
       if (started) deps.sessionProbe?.sessionStarted?.(record.input.sessionId, started.model);
+      // 推理档位（`effort.level`）：工具/回合类事件每条都带，逐条覆盖——状态栏
+      // `thinking` 块的事实在 hook 里，不必去读宿主 stdin 或转录。
+      const effort = effortLevelOf(payload?.raw);
+      if (effort) deps.sessionProbe?.noteEffort?.(record.input.sessionId, effort);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。

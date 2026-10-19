@@ -38,11 +38,12 @@ export interface HookPipelineDeps {
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = /btw）：同透传（判据归 harness 能力面）。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
-  /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）。 */
+  /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）+ 推理档位。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
     sessionStarted(sessionId: string, model: string | null): void;
+    noteEffort(sessionId: string, level: string): void;
   };
   /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };

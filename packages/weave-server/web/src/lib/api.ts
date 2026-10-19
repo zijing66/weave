@@ -352,6 +352,8 @@ export interface SessionRow {
   modelAlias?: string | null;
   /** 执行模式（转录最后一条 `permissionMode`）：Shift+Tab 不留痕，故是「最后已知」。 */
   mode?: string | null;
+  /** 推理档位（hook 事件自带的 `effort.level`）：状态栏 `thinking` 块，最后已知。 */
+  effort?: string | null;
   /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
    *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;
