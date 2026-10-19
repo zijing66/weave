@@ -109,6 +109,18 @@ export class SessionProbe {
   }
 
   /**
+   * 转录还在不在：true/false；路径都不知道 → null（不猜）。
+   *
+   * 会话行是采集出来的、与转录那份文件同生不同死——转录被清理/删掉后列表照旧
+   * 有行，`claude --resume <id>` 却在 pane 里当场报 "No conversation found"。
+   * 故「打开」前与列表渲染前都得先问这一句。空文件也算没有（没有可接的对话）。
+   */
+  transcriptPresent(sessionId: string): boolean | null {
+    const path = this.pathOf(sessionId);
+    return path ? this.factsOf(path).size > 0 : null;
+  }
+
+  /**
    * 单会话的中断时刻（ms）：转录最后一条中断标记**晚于**最后一条 hook 事件才算
    * ——之后任何事件（用户又发了一条、工具收尾）都会把它盖过去，故是自愈的；
    * 未知路径/读不到/没标记一律 null（不猜）。

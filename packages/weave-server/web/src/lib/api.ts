@@ -355,6 +355,9 @@ export interface SessionRow {
   /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
    *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;
+  /** 转录还在不在（服务端 SessionProbe 判，与 `--resume` 认的那份文件对齐）：
+   *  false = 接不回来了（行内提示、「打开」禁用），null/undefined = 判不动。 */
+  transcriptPresent?: boolean | null;
 }
 
 /** GET /sessions 载荷：会话行 + 各 harness 的模型别名表（别名 → 真名）。 */

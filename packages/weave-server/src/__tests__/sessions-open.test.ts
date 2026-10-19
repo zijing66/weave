@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,9 +12,12 @@ import { HookEventRepository } from '../repositories/hook-events.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from '../daemon/settings.js';
+import { SessionProbe } from '../daemon/session-probe.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 const SESSION = 'sess-open-1';
+/** 转录已从磁盘上消失的会话（会话行还在，`--resume` 接不回来）。 */
+const SESSION_GONE = 'sess-gone';
 
 describe('POST /sessions/:id/open-terminal', () => {
   let db: DatabaseSync;
@@ -45,6 +49,9 @@ describe('POST /sessions/:id/open-terminal', () => {
     // claude 会话（有事件 + 有项目）
     sessions.touch(SESSION, row.id);
     hookEvents.insert({ projectId: row.id, source: 'claude', eventType: 'Stop', sessionId: SESSION, payload: '{}' });
+    // 同上，但转录文件已经没了（被清理/删掉）→ 打开前就该 409
+    sessions.touch(SESSION_GONE, row.id);
+    hookEvents.insert({ projectId: row.id, source: 'claude', eventType: 'Stop', sessionId: SESSION_GONE, payload: '{}' });
     // codex 会话（resume 能力未注册 → 501）
     sessions.touch('sess-codex', row.id);
     hookEvents.insert({ projectId: row.id, source: 'codex', eventType: 'Stop', sessionId: 'sess-codex', payload: '{}' });
@@ -66,6 +73,12 @@ describe('POST /sessions/:id/open-terminal', () => {
         opener.atCalls.push({ dir, argv, target });
       },
     };
+    // 转录探测：SESSION 有一份在，SESSION_GONE 那份不存在（真机上的清理/手删）
+    const transcript = path.join(projectPath, 'session.jsonl');
+    writeFileSync(transcript, '{"type":"user","message":{"content":"hi"}}\n');
+    const sessionProbe = new SessionProbe();
+    sessionProbe.noteTranscript(SESSION, transcript);
+    sessionProbe.noteTranscript(SESSION_GONE, path.join(projectPath, 'gone.jsonl'));
     setDaemonSettingsDb(db);
     server = createWeaveServer({
       projects,
@@ -74,6 +87,7 @@ describe('POST /sessions/:id/open-terminal', () => {
       hookSessions: sessions,
       harnesses: createRuntimeRegistry(),
       opener,
+      sessionProbe,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -142,6 +156,26 @@ describe('POST /sessions/:id/open-terminal', () => {
     const res = await post('/sessions/sess-codex/open-terminal');
     expect(res.status).toBe(501);
     expect(opener.runCalls).toHaveLength(1); // 未新增调用
+  });
+
+  it('转录已丢失 → 409（不 spawn 一个注定报 "No conversation found" 的进程）', async () => {
+    const before = opener.runCalls.length;
+    const res = await post(`/sessions/${SESSION_GONE}/open-terminal`);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain('transcript');
+    expect(opener.runCalls).toHaveLength(before);
+  });
+
+  it('GET /sessions 逐行带 transcriptPresent：列表与 --resume 对齐同一份文件', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions`);
+    const { sessions: rows } = (await res.json()) as {
+      sessions: Array<{ sessionId: string; transcriptPresent: boolean | null }>;
+    };
+    const byId = new Map(rows.map((r) => [r.sessionId, r.transcriptPresent]));
+    expect(byId.get(SESSION)).toBe(true);
+    expect(byId.get(SESSION_GONE)).toBe(false);
+    // 不报转录路径的会话（codex）判不动 → null，前端也就不挂提示
+    expect(byId.get('sess-codex')).toBeNull();
   });
 
   it('returns 404 for an unknown session', async () => {

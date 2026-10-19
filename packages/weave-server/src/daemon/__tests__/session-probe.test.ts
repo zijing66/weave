@@ -78,6 +78,29 @@ describe('SessionProbe', () => {
     expect(probe.interruptedAt('s1', '2020-01-01T00:00:00.000Z')).toBeNull();
   });
 
+  it('转录还在不在：内存/库兜底都认路，有内容 true、删掉或空文件 false、不知路径 null', () => {
+    const file = tmpFile();
+    const probe = new SessionProbe(
+      dbTranscriptPathResolver({
+        listBySession: (id, limit) =>
+          id === 's1' && limit === 1 ? [{ payload: JSON.stringify({ transcriptPath: file }) }] : [],
+      }),
+    );
+    expect(probe.transcriptPresent('nope')).toBeNull();
+
+    writeFileSync(file, '{"type":"user","message":{"content":"hi"}}\n');
+    // 内存里没登记过（= daemon 刚重启）：路径从库里补回，同 currentModel 的口径
+    expect(probe.transcriptPresent('s1')).toBe(true);
+
+    // 转录被清理/删掉：会话行还在，但接不回来了
+    rmSync(file);
+    expect(probe.transcriptPresent('s1')).toBe(false);
+
+    // 空文件同样没有可接的对话
+    writeFileSync(file, '');
+    expect(probe.transcriptPresent('s1')).toBe(false);
+  });
+
   it('forget 后不再认；文件长过之后按新内容重读（大小缓存不是墓碑）', () => {
     const file = tmpFile();
     writeFileSync(file, '{"type":"user","message":{"content":"hi"}}\n');

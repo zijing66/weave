@@ -471,6 +471,9 @@ export async function handleHooksRoutes(
           modelAlias: aliasOfModel(catalog[s.harness ?? ''] ?? [], model),
           // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
           mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
+          // 转录还在不在（与 `claude --resume` 认的那份文件对齐）：false = 接不回来了，
+          // 行内给提示、「打开」禁用；null = 判不动（该 harness 没有转录概念）。
+          transcriptPresent: deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null,
         };
       }),
       modelCatalog: catalog,
@@ -569,6 +572,12 @@ export async function handleHooksRoutes(
     const project = deps.projects.getById(session.projectId);
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    // 转录没了就别 spawn：--resume 认的是那份文件，开出去只会在 pane 里报
+    // 「No conversation found」。判不动（null）照旧放行，不猜。
+    if (deps.sessionProbe?.transcriptPresent(sessionId) === false) {
+      sendJson(res, 409, { error: 'Session transcript is missing — nothing to resume' });
       return true;
     }
     const opener = deps.opener ?? defaultProjectOpener;

@@ -7,7 +7,7 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Bell, BellRing, Check, Copy, HelpCircle, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { Bell, BellRing, Check, Copy, FileWarning, HelpCircle, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { copyText } from '@/lib/clipboard';
@@ -383,6 +383,8 @@ export function SessionList({
     const pendingCount = (questionOf?.(s.sessionId)?.questions ?? []).filter(
       (q) => !q.submit,
     ).length;
+    // 转录没了 = `--resume` 接不回来（服务端判；行内提示 + 打开禁用）
+    const noTranscript = s.transcriptPresent === false;
     return (
       <div
         role="button"
@@ -464,11 +466,13 @@ export function SessionList({
               {s.harness === 'claude' && (
                 <button
                   type="button"
-                  disabled={!!s.pidAlive || openTermState === 'loading'}
+                  disabled={noTranscript || !!s.pidAlive || openTermState === 'loading'}
                   title={
-                    s.pidAlive
-                      ? t('tasks.sessionTerminalRunning')
-                      : t('tasks.openSessionTerminal')
+                    noTranscript
+                      ? t('tasks.transcriptMissingTip')
+                      : s.pidAlive
+                        ? t('tasks.sessionTerminalRunning')
+                        : t('tasks.openSessionTerminal')
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -476,8 +480,8 @@ export function SessionList({
                   }}
                   className={cn(
                     ACTION_BTN,
-                    // 已打开 / 开启中：不吃 hover 反馈（否则看着还能点）
-                    (s.pidAlive || openTermState === 'loading') &&
+                    // 已打开 / 开启中 / 转录已丢：不吃 hover 反馈（否则看着还能点）
+                    (noTranscript || s.pidAlive || openTermState === 'loading') &&
                       'disabled:cursor-not-allowed hover:border-edge/[0.08] hover:bg-edge/[0.02] hover:text-neutral-500',
                   )}
                 >
@@ -634,6 +638,17 @@ export function SessionList({
                   className="shrink-0 bg-amber-900/40 text-amber-300"
                 >
                   {t('tasks.pendingTitle')}
+                </Badge>
+              )}
+              {/* 转录没了：会话行还在（采集出来的），但 `--resume` 接不回来——
+                  说在行上，别让人点了才知道（悬停给「怎么补救」）。 */}
+              {noTranscript && (
+                <Badge
+                  title={t('tasks.transcriptMissingTip')}
+                  className="shrink-0 gap-1 bg-rose-900/40 text-rose-300"
+                >
+                  <FileWarning className="h-3 w-3" />
+                  {t('tasks.transcriptMissing')}
                 </Badge>
               )}
               <span className="shrink-0 text-[10px] text-neutral-500">

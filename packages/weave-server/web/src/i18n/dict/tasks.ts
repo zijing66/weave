@@ -29,6 +29,9 @@ export const tasksZh = {
   'tasks.copied': '已复制',
   'tasks.openSessionTerminal': '在默认终端打开会话',
   'tasks.sessionTerminalRunning': '该会话已在终端运行——不可重复打开',
+  'tasks.transcriptMissing': '转录已丢失',
+  'tasks.transcriptMissingTip':
+    '该会话的转录文件已不在磁盘上（被清理或删除），接不回来了；会话行与已采集的事件照常保留，可以删掉这一行',
   'tasks.closePaneTooltip': '关闭该会话的终端（退出会话；历史保留）',
   'tasks.closePaneTitle': '关闭会话',
   'tasks.closePaneConfirm': '关闭会话「{id}」的终端？会话会一起退出；历史保留。',
@@ -313,6 +316,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.copied': 'Copied',
   'tasks.openSessionTerminal': 'Open in default terminal',
   'tasks.sessionTerminalRunning': 'A terminal is already running this session — cannot open again',
+  'tasks.transcriptMissing': 'Transcript missing',
+  'tasks.transcriptMissingTip':
+    'This session’s transcript file is gone from disk (cleaned up or deleted), so it can no longer be resumed; the row and its collected events remain — you can delete the row',
   'tasks.closePaneTooltip': 'Close this session’s terminal (exits the session; history is kept)',
   'tasks.closePaneTitle': 'Close session',
   'tasks.closePaneConfirm':
