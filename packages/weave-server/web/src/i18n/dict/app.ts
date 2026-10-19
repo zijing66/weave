@@ -18,7 +18,6 @@ export const appZh = {
   'app.scopeCoverageTooltip':
     '同步覆盖 Skills、MCP、单文件资产与 init 生成物；会进 git 的 init 文件（如 CLAUDE.md）只提示不代写，需在终端跑 weave init。不含状态栏。',
   'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理 · init 生成物',
-  'app.needProjectAnchor': '需要至少注册一个项目作为全局数据源。',
   'app.selectProject': '请选择一个项目',
   'app.selectProjectForAssets': '请选择一个项目，资产将安装到该项目。',
   'app.mobileProjects': '项目列表',
@@ -117,7 +116,6 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.scopeCoverageTooltip':
     'Sync covers Skills, MCP, single-file assets and init artefacts; init files that enter git (e.g. CLAUDE.md) are only flagged — run `weave init` in a terminal. Excludes the statusline.',
   'app.scopeCoverageChip': 'Covers Skills · MCP · resources · init artefacts',
-  'app.needProjectAnchor': 'Register at least one project to serve as the global data source.',
   'app.selectProject': 'Select a project',
   'app.selectProjectForAssets': 'Select a project to install assets into.',
   'app.mobileProjects': 'Projects',

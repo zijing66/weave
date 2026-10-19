@@ -266,8 +266,8 @@ function Dashboard() {
     api.listAssets(p.path).then(setAssets).catch(() => {});
   }, []);
 
-  const refreshMcp = useCallback((p: ProjectRow) => {
-    api.listMcp(p.id).then(setMcpRows).catch(() => {});
+  const refreshMcp = useCallback((projectId: number) => {
+    api.listMcp(projectId).then(setMcpRows).catch(() => {});
   }, []);
 
   // `listUpdates` 每轮都要在项目里起 git 子进程（Windows 上数百毫秒），而 `asset`
@@ -282,8 +282,8 @@ function Dashboard() {
   }, []);
 
   const refreshUpdates = useCallback(
-    (p: ProjectRow) => {
-      fetchUpdates(p.id).then(setUpdates).catch(() => {});
+    (projectId: number) => {
+      fetchUpdates(projectId).then(setUpdates).catch(() => {});
     },
     [fetchUpdates],
   );
@@ -299,11 +299,11 @@ function Dashboard() {
     }
   }, [updates, selected]);
 
-  const refreshGlobalSkills = useCallback((p: ProjectRow) => {
-    api.listGlobalSkills(p.id).then(setGlobalSkillGroups).catch(() => {});
+  const refreshGlobalSkills = useCallback((projectId: number) => {
+    api.listGlobalSkills(projectId).then(setGlobalSkillGroups).catch(() => {});
   }, []);
-  const refreshPluginRows = useCallback((p: ProjectRow) => {
-    api.listPluginState(p.id).then(setPluginRows).catch(() => {});
+  const refreshPluginRows = useCallback((projectId: number) => {
+    api.listPluginState(projectId).then(setPluginRows).catch(() => {});
   }, []);
 
   // 行内 updates 计数：行 hover 懒加载 + 按 id 缓存（listUpdates 要算指纹，
@@ -355,10 +355,10 @@ function Dashboard() {
       setStatuslineSource(null);
       setError(null);
       api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
-      refreshMcp(p);
-      refreshUpdates(p);
-      refreshGlobalSkills(p);
-      refreshPluginRows(p);
+      refreshMcp(p.id);
+      refreshUpdates(p.id);
+      refreshGlobalSkills(p.id);
+      refreshPluginRows(p.id);
       api
         .getStatusline(p.id)
         .then((r) => setStatuslineSource(r.config.source))
@@ -367,11 +367,11 @@ function Dashboard() {
     [refreshMcp, refreshUpdates, refreshGlobalSkills, refreshPluginRows],
   );
 
-  /** Enter the global pseudo-project. Global data is machine-wide, so any
-   * registered project can serve as the read anchor. */
+  /** 进入全局伪项目。全局数据是机器级的，任何一个已注册项目都能当读锚点；
+   *  一个项目都没有时也要进得去——机器级的那几面（任务 / 资源市场 / 全局技能）
+   *  本就不认锚点，认锚点的那几面由各自面板落空态。 */
   const selectGlobal = useCallback(() => {
     const anchor = selected ?? projects[0];
-    if (!anchor) return;
     setGlobalMode(true);
     setSelectedFile(null);
     setDrawerSkill(null);
@@ -385,18 +385,20 @@ function Dashboard() {
       .listGlobalFileAssets()
       .then(setGlobalAssets)
       .catch((e) => setError(String(e)));
-    refreshGlobalSkills(anchor);
-    refreshPluginRows(anchor);
-    refreshMcp(anchor);
-    refreshUpdates(anchor);
+    // 全局装面也走项目路由，但服务端对这几个 id 只当占位：技能面板不认它
+    // （无项目时 0 号照取），插件/MCP/更新认（404 → 空态），无锚点时用 0。
+    const projectId = anchor?.id ?? 0;
+    refreshGlobalSkills(projectId);
+    refreshPluginRows(projectId);
+    refreshMcp(projectId);
+    refreshUpdates(projectId);
   }, [selected, projects, refreshGlobalSkills, refreshPluginRows, refreshMcp, refreshUpdates]);
 
-  // Land in the global pseudo-project once the project list arrives. The
-  // "nothing selected yet" state (no project + not in global mode) is only
-  // ever the boot state — every navigation path sets one or the other — so
-  // this can't re-fire after the user navigates.
+  // 开机落在全局伪项目——项目列表空着也照落（全局面不认锚点，一个项目都没有时
+  // 它就是唯一站得住的地方）。「还没选中任何东西」（无项目且非全局）只可能是开机
+  // 这一瞬——其余每条导航路径都会把两者之一置上——所以导航之后这里不会复发。
   useEffect(() => {
-    if (globalMode || selected || projects.length === 0) return;
+    if (globalMode || selected) return;
     // 深链还在落（地址已经指明去哪）就别抢，否则刷新 /p/3/tasks 会被拽回全局
     if (parseRoute(path).kind !== 'none') return;
     selectGlobal();
@@ -549,7 +551,7 @@ function Dashboard() {
     () =>
       registerInvalidator('toolkit', () => {
         const target = selected ?? projects[0];
-        if (target) refreshPluginRows(target);
+        if (target) refreshPluginRows(target.id);
       }),
     [selected, projects, refreshPluginRows],
   );
@@ -642,10 +644,10 @@ function Dashboard() {
           }
           return [...prev, entry];
         });
-        if (change.category === 'mcp') refreshMcp(sel);
-        if (change.category === 'skill') refreshGlobalSkills(sel);
+        if (change.category === 'mcp') refreshMcp(sel.id);
+        if (change.category === 'skill') refreshGlobalSkills(sel.id);
         // any asset change may affect update availability
-        refreshUpdates(sel);
+        refreshUpdates(sel.id);
       }),
     [refreshMcp, refreshUpdates, refreshGlobalSkills],
   );
@@ -670,8 +672,8 @@ function Dashboard() {
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
-      refreshGlobalSkills(target);
-      refreshUpdates(target);
+      refreshGlobalSkills(target.id);
+      refreshUpdates(target.id);
     },
     [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
@@ -690,7 +692,7 @@ function Dashboard() {
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
-      refreshUpdates(target);
+      refreshUpdates(target.id);
     },
     [selected, projects, globalMode, refreshAssets, refreshUpdates],
   );
@@ -720,8 +722,8 @@ function Dashboard() {
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
-      refreshMcp(target);
-      refreshUpdates(target);
+      refreshMcp(target.id);
+      refreshUpdates(target.id);
     },
     [selected, projects, globalMode, installCaps, refreshAssets, refreshMcp, refreshUpdates],
   );
@@ -738,8 +740,8 @@ function Dashboard() {
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
-      refreshGlobalSkills(target);
-      refreshUpdates(target);
+      refreshGlobalSkills(target.id);
+      refreshUpdates(target.id);
     },
     [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
@@ -760,8 +762,8 @@ function Dashboard() {
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
       refreshAssets(target);
-      refreshMcp(target);
-      refreshUpdates(target);
+      refreshMcp(target.id);
+      refreshUpdates(target.id);
     },
     [selected, projects, refreshAssets, refreshMcp, refreshUpdates],
   );
@@ -773,7 +775,7 @@ function Dashboard() {
       const target = selected ?? projects[0];
       if (!target) return;
       await api.putMcpEnable(target.id, name, next);
-      refreshMcp(target);
+      refreshMcp(target.id);
     },
     [selected, projects, refreshMcp],
   );
@@ -791,7 +793,7 @@ function Dashboard() {
       // 只有当前视图项目才刷新共享的 updates/assets 状态；其他行只回填自己的
       // 计数缓存（assets 是选中项目的镜像，别行同步不得覆盖）。
       if (!globalMode && selected && p.id === selected.id) {
-        refreshUpdates(p);
+        refreshUpdates(p.id);
         refreshAssets(p);
       } else {
         ensureUpdates(p.id, true);
@@ -817,10 +819,10 @@ function Dashboard() {
         ...((category === 'skill' || category === 'mcp') && agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshUpdates(target);
+      refreshUpdates(target.id);
       refreshAssets(target);
-      if (category === 'mcp') refreshMcp(target);
-      if (category === 'skill') refreshGlobalSkills(target);
+      if (category === 'mcp') refreshMcp(target.id);
+      if (category === 'skill') refreshGlobalSkills(target.id);
     },
     [selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
   );
@@ -953,8 +955,8 @@ function Dashboard() {
       const target = selected ?? projects[0];
       if (!target) return;
       await api.putPluginState(target.id, runtime, key, scope, state);
-      refreshPluginRows(target);
-      refreshGlobalSkills(target);
+      refreshPluginRows(target.id);
+      refreshGlobalSkills(target.id);
     },
     [selected, projects, refreshPluginRows, refreshGlobalSkills],
   );
@@ -965,8 +967,8 @@ function Dashboard() {
       const target = selected ?? projects[0];
       if (!target) return;
       await api.uninstallPluginPack(target.id, { runtime, key });
-      refreshGlobalSkills(target);
-      refreshPluginRows(target);
+      refreshGlobalSkills(target.id);
+      refreshPluginRows(target.id);
     },
     [selected, projects, refreshGlobalSkills, refreshPluginRows],
   );
@@ -1108,7 +1110,10 @@ function Dashboard() {
 
   const mode: Mode = globalMode ? 'global' : 'project';
   const activeProject = selected ?? projects[0];
-  const noAnchor = globalMode && !activeProject;
+  // 全局模式没有锚定项目时内容照渲染：机器级的面认参数语义不认这个 id，认 id 的
+  // 那几面（插件 / MCP / 更新）路由会 404、面板落空态。0 = 无项目的占位。
+  const anchorId = activeProject?.id ?? 0;
+  const showMain = !!activeProject || globalMode;
 
   // 左右两栏各只挂载一份：桌面 inline 栏与移动滑出抽屉复用同一 JSX（isDesktop
   // 互斥渲染，不会双挂载）。移动端选中项目顺手收抽屉（setMobilePanel(null)
@@ -1148,7 +1153,7 @@ function Dashboard() {
   ) : (
     <SkeletonRows rows={7} />
   );
-  const libraryPanelEl = activeProject ? (
+  const libraryPanelEl = showMain ? (
     <LibraryPanel
       installedSkillNames={installedSkillNames}
       onInstallSkill={installSkillSafely}
@@ -1159,8 +1164,9 @@ function Dashboard() {
       category={mainCategory}
       scope={globalMode ? 'user' : 'project'}
       capabilities={installCaps}
-      projectId={activeProject.id}
-      onSyncAll={() => void syncNowWithFeedback(activeProject)}
+      projectId={anchorId}
+      // 没有锚定项目就没什么可同步的（一键更新此时只是刷市场缓存，那步自己做完了）
+      onSyncAll={activeProject ? () => void syncNowWithFeedback(activeProject) : () => {}}
     />
   ) : (
     <div className="p-3 text-xs text-neutral-500">
@@ -1200,7 +1206,7 @@ function Dashboard() {
               onClick={() => setMobilePanel('library')}
               className={cn(
                 'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
-                (isDesktop || !activeProject) && 'hidden',
+                (isDesktop || !showMain) && 'hidden',
               )}
               title={t('app.mobileLibrary')}
             >
@@ -1262,7 +1268,7 @@ function Dashboard() {
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
-              {activeProject ? (
+              {showMain ? (
                 <>
                   <div className="px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">
@@ -1334,16 +1340,12 @@ function Dashboard() {
                         : 'overflow-y-auto p-3',
                     )}
                   >
-                    {noAnchor ? (
-                      <p className="text-xs text-neutral-500">
-                        {t('app.needProjectAnchor')}
-                      </p>
-                    ) : !shellReady ? (
+                    {!shellReady ? (
                       // 首次访问：主区（分类栏 + 技能/资产列表）用骨架顶住
                       <SkeletonMain />
                     ) : (
                       <CategoryDetail
-                        projectId={activeProject!.id}
+                        projectId={anchorId}
                         mode={mode}
                         category={mainCategory}
                         resourceView={resourceView}
