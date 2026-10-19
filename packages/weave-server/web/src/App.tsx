@@ -398,12 +398,13 @@ function Dashboard() {
   // 它就是唯一站得住的地方）。「还没选中任何东西」（无项目且非全局）只可能是开机
   // 这一瞬——其余每条导航路径都会把两者之一置上——所以导航之后这里不会复发。
   useEffect(() => {
-    if (globalMode || selected) return;
+    // 等列表落了定再落点：有项目时锚点要用它（0 号占位取不到插件/MCP/更新）
+    if (globalMode || selected || !shellReady) return;
     // 深链还在落（地址已经指明去哪）就别抢，否则刷新 /p/3/tasks 会被拽回全局
     if (parseRoute(path).kind !== 'none') return;
     selectGlobal();
     navigate({ kind: 'global', category: mainCategory }, { replace: true });
-  }, [globalMode, selected, projects, selectGlobal, path, mainCategory]);
+  }, [globalMode, selected, shellReady, selectGlobal, path, mainCategory]);
 
   // URL → 状态（唯一落点）：手势与后退/前进都只改地址，再由这里落成 state。
   // 反过来「状态 → URL」只有手势那几处 navigate，两向不互相触发。
