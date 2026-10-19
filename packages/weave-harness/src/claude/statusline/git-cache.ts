@@ -47,7 +47,15 @@ export function statuslineFactsFromCache(
 
   const facts: StatuslineFacts = {};
   const branch = fresh('branch');
-  if (typeof branch === 'string' && branch) facts.git = { branch };
+  if (typeof branch === 'string' && branch) {
+    facts.git = { branch };
+    const sync = fresh('sync') as { ahead?: string; behind?: string; sync?: string } | null;
+    if (sync && typeof sync === 'object' && sync.sync) {
+      facts.git.ahead = sync.ahead ?? '';
+      facts.git.behind = sync.behind ?? '';
+      facts.git.sync = sync.sync;
+    }
+  }
   const user = fresh('git_user') as { user?: string; email?: string } | null;
   if (user && typeof user === 'object' && user.user) {
     facts.git_user = { user: user.user, email: user.email ?? '' };

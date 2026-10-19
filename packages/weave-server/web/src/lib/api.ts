@@ -1032,7 +1032,7 @@ export interface StatuslineConfig {
 /** Mirror of `SEGMENT_TOKENS` in the server's statusline/config.ts. */
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
-  git: ['branch', 'repo'],
+  git: ['branch', 'repo', 'ahead', 'behind', 'sync'],
   git_user: ['user', 'email'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
@@ -1056,7 +1056,7 @@ export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
 /** Mirror of `SEGMENT_DEFAULT_FORMAT` in the server's statusline/config.ts. */
 export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   project: '{name}',
-  git: '{branch}',
+  git: '{branch} {sync}',
   git_user: '{user} <{email}>',
   changes: '{files}',
   model: '{model}',

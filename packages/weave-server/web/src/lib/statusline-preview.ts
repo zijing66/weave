@@ -27,7 +27,7 @@ export interface PreviewItem {
 export const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
   // Both keys: the default layout renders {path}, older configs use {name}.
   project: { name: 'my-project', path: '/workspace/my-project' },
-  git: { branch: 'main', repo: 'acme/weave' },
+  git: { branch: 'main', repo: 'acme/weave', ahead: '1', behind: '2', sync: '(2↓/1↑)' },
   git_user: { user: 'yao', email: 'yao@weave.dev' },
   changes: { added: '1', deleted: '1', files: '3' },
   model: { model: 'claude-sonnet-5' },
@@ -74,7 +74,10 @@ export function segmentText(
     if (pct > 0 && filled === 0) filled = 1;
     values.bar = config.bar.fill.repeat(filled) + config.bar.empty.repeat(config.bar.cells - filled);
   }
-  const value = formatFor(key, seg).replace(/\{(\w+)\}/g, (_m, k: string) => values[k] ?? '');
+  // trim 同生成脚本：可选 token（如 {sync}）没有值时不留下多余的分隔空格
+  const value = formatFor(key, seg)
+    .replace(/\{(\w+)\}/g, (_m, k: string) => values[k] ?? '')
+    .trim();
   const label = seg.label ? `${seg.label}${config.labelSeparator}` : '';
   return (seg.icon ? `${seg.icon} ` : '') + label + value;
 }

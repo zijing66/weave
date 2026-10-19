@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  mkdirSync,
+  writeFileSync,
+  appendFileSync,
+  readdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateStatuslineScript } from '../generator.js';
@@ -686,6 +694,71 @@ describe('statusline — data segments', () => {
     expect(second).toContain('trunk');
     expect(second).not.toContain('feature');
   });
+
+  it('git 段带上游差异：落后 ↓、领先 ↑，两侧都有时一起给', () => {
+    const root = tmp('weave-sl-sync-');
+    const repo = join(root, 'work');
+    const origin = join(root, 'origin.git');
+    const peer = join(root, 'peer');
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    const commitAll = (cwd: string, name: string, msg: string): void => {
+      writeFileSync(join(cwd, name), msg + '\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-qm', msg);
+    };
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 'test@example.com');
+    git(repo, 'config', 'user.name', 'Test');
+    commitAll(repo, 'a.txt', 'init');
+    git(repo, 'branch', '-M', 'main');
+    git(root, 'init', '-q', '--bare', origin);
+    git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/main'); // 否则 clone 出来没有分支可站
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', '-u', 'origin', 'HEAD');
+
+    const syncCfg = {
+      ...DEFAULT_STATUSLINE_CONFIG,
+      lines: [['git']] as SegmentKey[][],
+      segments: {
+        ...DEFAULT_STATUSLINE_CONFIG.segments,
+        git: { ...DEFAULT_STATUSLINE_CONFIG.segments.git, enabled: true },
+      },
+    };
+    // 上游差异的 TTL 是 60s，同一仓库连着渲染会拿到旧值 —— 每次都先清 git 缓存
+    const render = (): string => {
+      try {
+        const dir = join(slCacheHome, 'weave', 'statusline');
+        for (const f of readdirSync(dir)) if (f.startsWith('git-')) rmSync(join(dir, f));
+      } catch {
+        /* 首次渲染前目录还不存在 */
+      }
+      return runScript(generateStatuslineScript(syncCfg), { workspace: { current_dir: repo } });
+    };
+
+    const synced = render();
+    expect(synced).toContain('main');
+    expect(synced).not.toContain('↑'); // 与上游齐平：没有要推的也没有要拉的
+    expect(synced).not.toContain('↓');
+
+    commitAll(repo, 'b.txt', 'local');
+    expect(render()).toContain('(1↑)');
+
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1'); // 丢掉本地那个提交，回到与上游齐平
+    git(root, 'clone', '-q', origin, peer);
+    git(peer, 'config', 'user.email', 'peer@example.com');
+    git(peer, 'config', 'user.name', 'Peer');
+    commitAll(peer, 'c.txt', 'peer');
+    git(peer, 'push', '-q', 'origin', 'HEAD');
+    git(repo, 'fetch', '-q', 'origin');
+    expect(render()).toContain('(1↓)');
+
+    commitAll(repo, 'b.txt', 'local');
+    expect(render()).toContain('(1↓/1↑)'); // 先落后后领先
+  }, 20_000);
 
   it('serves the diff counts from the cache instead of re-running git', () => {
     const repo = tmp('weave-sl-changescache-');

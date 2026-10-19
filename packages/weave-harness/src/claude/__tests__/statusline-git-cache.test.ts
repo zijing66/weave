@@ -27,6 +27,24 @@ describe('statuslineFactsFromCache', () => {
     });
   });
 
+  it('带上游差异条目时 git 块多出 ahead/behind/sync', () => {
+    const { dir, cwd } = cacheDirWith({
+      branch: { expires: NOW + 60_000, value: 'main' },
+      sync: { expires: NOW + 60_000, value: { ahead: '1', behind: '2', sync: '(2↓/1↑)' } },
+    });
+    expect(statuslineFactsFromCache(dir, cwd, NOW)).toEqual({
+      git: { branch: 'main', ahead: '1', behind: '2', sync: '(2↓/1↑)' },
+    });
+  });
+
+  it('同步条目缺席或过期时 git 块只剩 branch', () => {
+    const { dir, cwd } = cacheDirWith({
+      branch: { expires: NOW + 60_000, value: 'main' },
+      sync: { expires: NOW - 1, value: { ahead: '1', behind: '0', sync: '(1↑)' } },
+    });
+    expect(statuslineFactsFromCache(dir, cwd, NOW)).toEqual({ git: { branch: 'main' } });
+  });
+
   it('过期条目、失败条目（value null）、没缓存一律不认', () => {
     const { dir, cwd } = cacheDirWith({
       branch: { expires: NOW - 1, value: 'main' },

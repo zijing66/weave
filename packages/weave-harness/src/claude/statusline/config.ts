@@ -288,7 +288,12 @@ export const DEFAULT_STATUSLINE_CONFIG: StatuslineConfig = {
       icon: '🧠',
       format: '[{bar}] {used}/{total} ({percent}%)',
     }),
-    git: seg({ color: '#1f2335', backgroundColor: '#9ece6a', icon: '🌿', format: '{branch}' }),
+    git: seg({
+      color: '#1f2335',
+      backgroundColor: '#9ece6a',
+      icon: '🌿',
+      format: '{branch} {sync}',
+    }),
     git_user: seg({
       color: '#1f2335',
       backgroundColor: '#7dcfff',
@@ -367,7 +372,7 @@ export const PLAIN_STATUSLINE_CONFIG: StatuslineConfig = {
  */
 export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
   project: ['name', 'path'],
-  git: ['branch', 'repo'],
+  git: ['branch', 'repo', 'ahead', 'behind', 'sync'],
   git_user: ['user', 'email'],
   changes: ['added', 'deleted', 'files'],
   model: ['model'],
@@ -398,7 +403,7 @@ export const SEGMENT_TOKENS: Record<SegmentKey, readonly string[]> = {
  */
 export const SEGMENT_DEFAULT_FORMAT: Record<SegmentKey, string> = {
   project: '{name}',
-  git: '{branch}',
+  git: '{branch} {sync}',
   git_user: '{user} <{email}>',
   changes: '{files}',
   model: '{model}',

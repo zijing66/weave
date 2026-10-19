@@ -51,7 +51,7 @@ import type { MessageKey } from '@/i18n/dict';
 
 const SEGMENTS: { key: SegmentKey; labelKey: MessageKey; sample: string }[] = [
   { key: 'project', labelKey: 'seg.project', sample: 'my-project' },
-  { key: 'git', labelKey: 'seg.git', sample: 'main' },
+  { key: 'git', labelKey: 'seg.git', sample: 'main (2↓/1↑)' },
   { key: 'git_user', labelKey: 'seg.gitUser', sample: 'yao <yao@weave.dev>' },
   { key: 'changes', labelKey: 'seg.changes', sample: '3' },
   { key: 'model', labelKey: 'seg.model', sample: 'claude-sonnet-5' },

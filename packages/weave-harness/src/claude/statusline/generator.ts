@@ -91,6 +91,9 @@ const GIT_CHANGES_TTL_SEC = 60;
 /** The branch only moves on checkout, so a stale minute is preferable to a probe per render. */
 const GIT_BRANCH_TTL_SEC = 60;
 
+/** Ahead/behind move on every commit, but the same one-probe-a-minute tradeoff applies. */
+const GIT_SYNC_TTL_SEC = 60;
+
 /** A failed git lookup is re-probed this soon, never cached for a full TTL. */
 const GIT_RETRY_TTL_SEC = 5;
 
@@ -124,6 +127,7 @@ const BAR_CELLS = ${BAR_CELLS};
 const GIT_IDENTITY_TTL = ${GIT_IDENTITY_TTL_SEC};
 const GIT_CHANGES_TTL = ${GIT_CHANGES_TTL_SEC};
 const GIT_BRANCH_TTL = ${GIT_BRANCH_TTL_SEC};
+const GIT_SYNC_TTL = ${GIT_SYNC_TTL_SEC};
 const GIT_RETRY_TTL = ${GIT_RETRY_TTL_SEC};
 const CACHE_DIR = ${embeddedCacheDir};
 // Stamped into the row-0 logo so the running version is always visible.
@@ -404,6 +408,27 @@ function gitNumstat(dir) {
   return null;
 }
 
+// Commits the branch is ahead of / behind its upstream. A branch without an
+// upstream (or a plain directory) just has no sync hint — not an error, so it
+// caches as null and the token renders empty.
+function gitAheadBehind(dir) {
+  try {
+    var out = require('child_process').execFileSync(
+      'git', ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+      { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true }
+    ).toString().trim();
+    var p = out.split(/\\s+/);
+    var ahead = parseInt(p[0], 10) || 0;
+    var behind = parseInt(p[1], 10) || 0;
+    if (!ahead && !behind) return null;
+    // behind first: the down arrow is "to pull", the up arrow is "to push"
+    var parts = [];
+    if (behind) parts.push(behind + '↓');
+    if (ahead) parts.push(ahead + '↑');
+    return { ahead: String(ahead), behind: String(behind), sync: '(' + parts.join('/') + ')' };
+  } catch (e) { return null; }
+}
+
 // One git config value. 'git config <key>' resolves precedence itself (repo
 // config overrides the global one), so this always yields the EFFECTIVE value.
 function gitConfigValue(dir, key) {
@@ -521,9 +546,13 @@ function segmentTokens(key, seg) {
       // workspace.repo is optional (parsed from the git remote) — the token
       // stays empty when absent so the default {branch} format is unaffected.
       var repoInfo = input.workspace && input.workspace.repo;
+      var sync = cachedGit('sync', GIT_SYNC_TTL, function () { return gitAheadBehind(cwd); });
       return {
         branch: branch,
-        repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : ''
+        repo: repoInfo && repoInfo.owner ? repoInfo.owner + '/' + repoInfo.name : '',
+        ahead: sync ? sync.ahead : '',
+        behind: sync ? sync.behind : '',
+        sync: sync ? sync.sync : ''
       };
     }
     case 'git_user':
@@ -661,7 +690,9 @@ function renderParts(keys) {
     if (!seg || !seg.enabled) continue;
     var tokens = segmentTokens(keys[i], seg);
     if (!tokens) continue;
-    var value = applyFormat(tokens, formatFor(keys[i], seg));
+    // trim: an optional token left empty ('{branch} {sync}' with nothing to
+    // sync) must not leave a dangling separator around an otherwise good block
+    var value = applyFormat(tokens, formatFor(keys[i], seg)).trim();
     if (value === '') continue;
     var label = seg.label
       ? seg.label + (CONFIG.labelSeparator == null ? ': ' : CONFIG.labelSeparator)
