@@ -615,6 +615,12 @@ export function StatuslinePanel({
           )}
           <CardTitle>{t('statusline.title')}</CardTitle>
           <AgentBadge agent="claude" />
+          <span
+            className="rounded-full bg-emerald-900/40 px-1.5 py-0.5 text-[10px] text-emerald-300"
+            title={t('statusline.tuiHint')}
+          >
+            {t('statusline.tuiBadge')}
+          </span>
         </button>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400">

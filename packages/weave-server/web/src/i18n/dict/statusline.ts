@@ -12,9 +12,10 @@ export const statuslineZh = {
   'statusline.saveFailed': '保存失败：{error}',
   'statusline.emptyRow': '（空行）',
   'statusline.preview': ' ← 预览',
-  // 对话页底条（点开即上面这份配置）
+  // TUI 标记（面板头部）与对话页底条
   'statusline.barTitle': '状态栏',
-  'statusline.tuiHint': '会注入 TUI 状态栏的 harness：{agents}；其余 harness 只在对话页显示。',
+  'statusline.tuiBadge': 'TUI 注入',
+  'statusline.tuiHint': '这份配置会注入上面那个 harness 的 TUI 状态栏；没这条通道的 harness 只在对话页底条显示（且只摆当前有数据的块）。',
 
   // 源状态行（项目视图）
   'statusline.followingGlobal': '跟随全局模板',
@@ -167,9 +168,10 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   'statusline.saveFailed': 'Save failed: {error}',
   'statusline.emptyRow': '(empty row)',
   'statusline.preview': ' ← preview',
-  // Conversation footer bar (opens the same config above)
+  // TUI marker (panel header) and the conversation footer bar
   'statusline.barTitle': 'Statusline',
-  'statusline.tuiHint': 'Injected into the TUI statusline by: {agents}; other harnesses only show it here.',
+  'statusline.tuiBadge': 'TUI',
+  'statusline.tuiHint': 'This config is injected into the TUI statusline of the harness above; harnesses without that channel only show it in the conversation footer (and only the blocks weave has data for).',
 
   // Source status row (project view)
   'statusline.followingGlobal': 'following global template',

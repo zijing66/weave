@@ -2318,8 +2318,8 @@ export function SessionMessages({
           </div>
         )}
 
-        {/* 状态栏条（输入框下方、贴底边）：整条可点开配置弹窗；桌面才摆，
-            配置里的块都要宿主 stdin 字段时也不摆（见 StatuslineBar 的口径）。 */}
+        {/* 状态栏条（输入框下方、贴底边）：只读，配置入口在个性化配置里；
+            一块都渲染不出（配置里的块都要宿主 stdin 字段）就不摆（见 StatuslineBar）。 */}
         <StatuslineBar
           projectId={projectId}
           sessionName={sessionRow?.title ?? label}
