@@ -10,6 +10,7 @@ import {
   isGenerating,
   removableOf,
   spliceNewline,
+  withPlan,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -366,6 +367,38 @@ describe('filterThread', () => {
     ]);
     expect(filterThread(withDivider, 'user').map((e) => e.key)).toEqual(['e1', 'e3']);
     expect(filterThread(withDivider, 'assistant').map((e) => e.key)).toEqual(['e2']);
+  });
+});
+
+describe('withPlan（计划正文当一条对话气泡）', () => {
+  const thread: ConvEntry[] = [
+    { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+    { key: 'e9', eventId: 9, role: 'assistant', at: at(9), text: '答' },
+  ];
+
+  it('① 没有计划 = 原样返回（不凭空多一条）', () => {
+    expect(withPlan(thread, null).map((e) => e.key)).toEqual(['e1', 'e9']);
+  });
+
+  it('② 按提交那条事件的位置插进事件流（不是甩在尾巴上）', () => {
+    const out = withPlan(thread, { eventId: 5, at: at(5), text: '# 计划' });
+    expect(out.map((e) => [e.key, e.role, e.plan])).toEqual([
+      ['e1', 'user', undefined],
+      ['p5', 'assistant', true],
+      ['e9', 'assistant', undefined],
+    ]);
+  });
+
+  it('③ 计划是最新的（提交后还没有收尾总结）→ 排在尾上', () => {
+    const out = withPlan(thread, { eventId: 20, at: at(20), text: '# 计划' });
+    expect(out.map((e) => e.key)).toEqual(['e1', 'e9', 'p20']);
+  });
+
+  it('④ 正文为空不摆（计划文件没写到 / 取不到）', () => {
+    expect(withPlan(thread, { eventId: 5, at: at(5), text: '   ' }).map((e) => e.key)).toEqual([
+      'e1',
+      'e9',
+    ]);
   });
 });
 

@@ -431,6 +431,14 @@ export interface SessionMessageRow {
   at: string;
 }
 
+/** 计划模式交出的计划正文（最近一次 ExitPlanMode）：对话面当一条气泡摆出来批阅。 */
+export interface SessionPlan {
+  /** 提交那次工具调用的事件 id（气泡按它插进对话流）。 */
+  eventId: number;
+  at: string;
+  text: string;
+}
+
 /** mirror of MessagingSurface 派生能力矩阵（GET /messaging/capabilities 行）——
  *  web 只渲染不判定：按钮门控、编排域模式选项都从这张表来。 */
 export interface MessagingCapability {
@@ -1296,6 +1304,11 @@ export const api = {
     apiFetch<{ messages: SessionMessageRow[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
     ).then((r) => r.messages),
+  /** 最近一次计划模式交出的计划正文（无计划 / 正文已不可得 = null）。 */
+  sessionPlan: (sessionId: string): Promise<SessionPlan | null> =>
+    apiFetch<{ plan: SessionPlan | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/plan`,
+    ).then((r) => r.plan),
   /** 投递消息到会话：恒 prompt 通道、无模式入参（直投 → 终端 send-text → 中继
    *  降级 → 未开会话积压队列）；`forceTerminal` = 发送人下拉选的通道，收窄成只剩
    *  层②。层①② 皆无才 409，由 apiFetch 抛 Error（error 字段原文）。 */

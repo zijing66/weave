@@ -8,6 +8,7 @@ import {
   type HookEventRow,
   type MessagingCapability,
   type SessionMessageRow,
+  type SessionPlan,
   type UploadImage,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -198,6 +199,8 @@ export interface ConvEntry {
   images?: UploadImage[];
   /** 这一轮以失败收尾（`lifecycle.closeFailed`）：正文是宿主报的错，不是回答。 */
   failed?: boolean;
+  /** 计划模式交出的计划正文（不是某轮的收尾总结，单独标出来给人批阅）。 */
+  plan?: boolean;
 }
 
 /**
@@ -394,6 +397,22 @@ export function filterThread(
   return filter === 'all' ? [...thread] : thread.filter((e) => e.role === filter);
 }
 
+/** 计划本体插进对话流（位置 = 提交那次工具调用的事件 id）：它不是某一轮的收尾
+ *  总结、也永远不是用户说的，但正是这一轮要人拍板的东西，摆在尾巴上就错位了。 */
+export function withPlan(entries: readonly ConvEntry[], plan: SessionPlan | null): ConvEntry[] {
+  if (!plan || !plan.text.trim()) return [...entries];
+  const entry: ConvEntry = {
+    key: `p${plan.eventId}`,
+    eventId: plan.eventId,
+    role: 'assistant',
+    at: plan.at,
+    text: plan.text,
+    plan: true,
+  };
+  const at = entries.findIndex((e) => (e.eventId ?? 0) > plan.eventId);
+  return at < 0 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)];
+}
+
 /** 导出用的时刻戳：本地 `YYYY-MM-DD HH:mm:ss`。展示用的 `formatStamp` 是给人扫的
  *  短形（当天只给时分秒），粘到别处会失去日期，导出单独一份。 */
 export function exportStamp(iso: string): string {
@@ -535,6 +554,68 @@ function EventTicker({ text }: { text: string }) {
   );
 }
 
+/** 折叠态的高度 ≈ 三行正文（`text-xs leading-relaxed` 19.5px/行）。 */
+const CLAMP_Y = '3.75rem';
+/** 收起时的底部渐隐：用遮罩而不是盖一层底色——气泡底色半透明，叠色在亮/暗两
+ *  套主题下都露馅。 */
+const CLAMP_FADE = {
+  WebkitMaskImage: `linear-gradient(to bottom, #000 55%, transparent 100%)`,
+  maskImage: `linear-gradient(to bottom, #000 55%, transparent 100%)`,
+};
+
+/**
+ * 可折叠的回复正文：收起时只留三行、底部渐隐，点一下展开。**量过才算超长**——
+ * 短回复不该出现渐变或可点手感，故收起时先测一次 `scrollHeight`（展开期间不测：
+ * 那时高度就是内容高度，测出来恒「不超」）。展开过再收起仍认旧账（`tall` 只涨
+ * 不落），否则一点开就丢掉「这条能收」的记忆、收不回去了。
+ */
+function Collapsible({
+  text,
+  open,
+  onToggle,
+  disabled,
+  children,
+}: {
+  text: string;
+  open: boolean;
+  onToggle: () => void;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [tall, setTall] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || open) return;
+    const check = (): void => {
+      if (el.scrollHeight > el.clientHeight + 1) setTall(true);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, open]);
+  const clickable = tall && !disabled;
+  return (
+    <div
+      ref={ref}
+      onClick={
+        clickable
+          ? (e) => {
+              // 正文里的链接照旧点得动（那一击不该顺手把气泡收起来/展开）
+              if ((e.target as HTMLElement).closest('a')) return;
+              onToggle();
+            }
+          : undefined
+      }
+      className={clickable ? 'cursor-pointer' : undefined}
+      style={!open && tall ? { maxHeight: CLAMP_Y, overflow: 'hidden', ...CLAMP_FADE } : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
  * 会话对话：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
  * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
@@ -631,6 +712,10 @@ export function SessionMessages({
   const [confirmMode, setConfirmMode] = useState(false);
   /** 生成中滚动带的素材（会话最近几十条事件；展示时只认本轮，见 liveItems）。 */
   const [liveEvents, setLiveEvents] = useState<HookEventRow[]>([]);
+  /** 计划模式最近交出的那一份计划（没进计划模式 / 正文取不到 = null，不摆气泡）。 */
+  const [plan, setPlan] = useState<SessionPlan | null>(null);
+  /** 手动展开/收起的账（键 → 展开）：不记 = 按「最新那条展开、更早的收起」默认。 */
+  const [expanded, setExpanded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
@@ -720,10 +805,21 @@ export function SessionMessages({
     }
   }, [projectId, sessionId]);
 
+  /** 计划正文（只读展示面）：取不到就当没有，不挡对话也不报错——多半是这轮没进
+   *  计划模式，`plan: null` 才是常态。 */
+  const loadPlan = useCallback(async (): Promise<void> => {
+    try {
+      setPlan(await api.sessionPlan(sessionId));
+    } catch {
+      setPlan(null);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     void loadNewest();
     void refreshMessages();
-  }, [loadNewest, refreshMessages]);
+    void loadPlan();
+  }, [loadNewest, loadPlan, refreshMessages]);
 
   useEffect(() => {
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
@@ -738,15 +834,19 @@ export function SessionMessages({
     let wantConv = false;
     let wantMessages = false;
     let wantLive = false;
+    let wantPlan = false;
     const onHook = (f: HookFrame): void => {
       if (f.sessionId !== sessionId) return;
       const ingested = f.kind === 'event.ingested';
-      if (!ingested && !f.kind?.startsWith('message.')) return;
+      if (!ingested && !f.kind?.startsWith('message.') && f.kind !== 'question.pending') return;
       if (ingested) {
         wantLive = true;
         if (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? '')) {
           wantConv = true;
         }
+      } else if (f.kind === 'question.pending') {
+        // 计划待批阅也走问答那条路（问句/选项归 harness，这边不认工具名）
+        wantPlan = true;
       } else {
         wantMessages = true;
       }
@@ -756,10 +856,12 @@ export function SessionMessages({
         const conv = wantConv;
         const messages = wantMessages;
         const live = wantLive;
-        wantConv = wantMessages = wantLive = false;
+        const planWanted = wantPlan;
+        wantConv = wantMessages = wantLive = wantPlan = false;
         if (conv) void loadNewest();
         if (messages) void refreshMessages();
         if (live) void loadLive();
+        if (planWanted) void loadPlan();
       }, 500);
     };
     const off = subscribeHook(onHook);
@@ -767,7 +869,7 @@ export function SessionMessages({
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadLive, loadNewest, refreshMessages, sessionId]);
+  }, [lifecycle, loadLive, loadNewest, loadPlan, refreshMessages, sessionId]);
 
   // Esc 逐层退：右键菜单 → 多选态 → 关闭确认 → 最小化（一层层退出，不一把关掉）。
   // 挂起中不挂这个监听：几扇对话同时存活时，只有露着的那扇该吃 ESC。
@@ -851,9 +953,20 @@ export function SessionMessages({
     [messages],
   );
   const { thread, outbox } = useMemo(
-    () => attachDeliveries(entries ?? [], manualDeliveries),
-    [entries, manualDeliveries],
+    () => attachDeliveries(withPlan(entries ?? [], plan), manualDeliveries),
+    [entries, manualDeliveries, plan],
   );
+  /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
+  const newestAssistantKey = useMemo(() => {
+    for (let i = thread.length - 1; i >= 0; i--) {
+      if (thread[i]!.role === 'assistant') return thread[i]!.key;
+    }
+    return null;
+  }, [thread]);
+  /** 这条此刻展开没有：手动账优先，没记过账就看是不是最新那条。 */
+  const isOpen = (key: string): boolean => expanded.get(key) ?? key === newestAssistantKey;
+  const toggleOpen = (key: string): void =>
+    setExpanded((prev) => new Map(prev).set(key, !isOpen(key)));
   /** 队尾那条**还没送出去的**（排队中 / 失败 / 超时）——只有它能出队回输入框改。
    *  已发出的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送。 */
   const newestQueuedId = [...outbox].reverse().find(removableOf)?.id;
@@ -1610,8 +1723,13 @@ export function SessionMessages({
                             : 'border-edge/[0.08] bg-neutral-800/50',
                         )}
                       >
-                        <span className="mb-0.5 block text-[10px] text-neutral-600">
+                        <span className="mb-0.5 flex items-center gap-1.5 text-[10px] text-neutral-600">
                           {formatStamp(m.at)}
+                          {m.plan === true && (
+                            <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-300">
+                              {t('tasks.convPlan')}
+                            </span>
+                          )}
                         </span>
                         {/* 宿主报的错不是回答：不排 markdown（原文就是一行技术串），
                             一律红字——系统错误得和正文一眼分得开 */}
@@ -1621,7 +1739,14 @@ export function SessionMessages({
                             {m.text}
                           </p>
                         ) : (
-                          <AssistantMarkdown text={m.text} />
+                          <Collapsible
+                            text={m.text}
+                            open={isOpen(m.key)}
+                            onToggle={() => toggleOpen(m.key)}
+                            disabled={selecting}
+                          >
+                            <AssistantMarkdown text={m.text} />
+                          </Collapsible>
                         )}
                       </div>
                       {selecting && <CheckBox on={picked.has(m.key)} className="ml-1.5 mt-1" />}
