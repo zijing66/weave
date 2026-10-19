@@ -2108,10 +2108,6 @@ export function SessionMessages({
                         icon={<Send className="h-3 w-3" />}
                       />
                       <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
-                      {/* 小字标出当前通道：切过之后不必悬停也知道这条会走哪条路 */}
-                      <span className="-ml-0.5 text-[9px] font-normal leading-none text-white/60 max-lg:hidden">
-                        {sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto')}
-                      </span>
                     </button>
                     {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
                         终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
@@ -2123,12 +2119,16 @@ export function SessionMessages({
                       aria-label={t('tasks.msgChannelTitle')}
                       onClick={openSendMenu}
                       className={cn(
-                        'inline-flex items-center justify-center border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
+                        'inline-flex items-center justify-center gap-1 border-l px-1 transition-colors max-lg:px-2 max-lg:py-2',
                         sendVia === 'terminal'
                           ? 'border-white/40 bg-white/20 text-white'
                           : 'border-white/20 text-white/70 hover:bg-white/10 hover:text-white',
                       )}
                     >
+                      {/* 通道的当前值跟着选它的那半走：与强制态的提亮同处一块，字不另染银色好让提亮带上它 */}
+                      <span className="text-[9px] font-normal leading-none">
+                        {sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto')}
+                      </span>
                       <ChevronDown className="h-3 w-3" />
                     </button>
                   </div>
