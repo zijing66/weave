@@ -312,12 +312,12 @@ export function attachDeliveries(
   return { thread: out, outbox };
 }
 
-/** 能不能从队列里移除：在飞（delivering/running）的删不掉——落定回调会把行写回来；
- *  其余都能删，**已送达的也能**（服务端本就允许）：合成 UPS 那类认领不上的行会一直
- *  停在尾巴上，没有这个出口就只能干看着。暂停闸成因同样能删（它不清掉，闸就没有
- *  可操作的成因行）。 */
+/** 能不能从队列里移除：在飞（delivering/running）删不掉——落定回调会把行写回来；
+ *  **已发出（delivered）也删不掉**——会话那边已经收到了，只是 hook 还没到（气泡随后就
+ *  来），删掉等于假装撤回一条已经进了对话的消息；它的退出是重发不走删除。其余都能删，
+ *  暂停闸的成因行也在其中（不清掉就没有可操作的成因行）。 */
 export function removableOf(m: SessionMessageRow): boolean {
-  return m.status !== 'delivering' && m.status !== 'running';
+  return m.status !== 'delivering' && m.status !== 'running' && m.status !== 'delivered';
 }
 
 /** 历史过滤：全部 / 只看自己发的 / 只看收到的回复（角色即过滤键）。 */
@@ -795,10 +795,8 @@ export function SessionMessages({
     [entries, manualDeliveries],
   );
   /** 队尾那条**还没送出去的**（排队中 / 失败 / 超时）——只有它能出队回输入框改。
-   *  已送达的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送。 */
-  const newestQueuedId = [...outbox]
-    .reverse()
-    .find((m) => m.status !== 'delivered' && removableOf(m))?.id;
+   *  已发出的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送。 */
+  const newestQueuedId = [...outbox].reverse().find(removableOf)?.id;
 
   // 贴底意图只在滚动时记：新内容一进 DOM 容器就变高，渲染完再判「是否贴底」必然
   // 判成「用户在上翻」，长回复于是永不跟随。尾条变了 = 尾部真进了新内容 → 跟随；

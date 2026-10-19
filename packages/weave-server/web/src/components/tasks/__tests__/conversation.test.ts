@@ -280,14 +280,15 @@ describe('removableOf（队列里的行能不能删）', () => {
     }
   });
 
-  it('② 在飞的不删（落定回调会把行写回来）；已送达的能删（合成 UPS 认领不上的行得有出口）', () => {
+  it('② 在飞的不删（落定回调会把行写回来）；已发出（delivered）也不删——会话已经收到了，只是 hook 还没到', () => {
     expect(removableOf(delivery({ status: 'delivering' }))).toBe(false);
     expect(removableOf(delivery({ status: 'running' }))).toBe(false);
-    expect(removableOf(delivery({ status: 'delivered' }))).toBe(true);
+    expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
   });
 
-  it('③ 暂停闸成因一律能删——它不清掉，闸就没有可操作的成因行', () => {
-    expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
+  it('③ 暂停闸的成因行里只有还没送出去的那种能删（已发出的退出是重发，不是删）', () => {
+    expect(removableOf(delivery({ status: 'failed', stalled: true }))).toBe(true);
+    expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(false);
   });
 });
 
