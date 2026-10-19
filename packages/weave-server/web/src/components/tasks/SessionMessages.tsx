@@ -131,16 +131,6 @@ export function writeConvCache(sessionId: string, entries: readonly ConvEntry[])
   }
 }
 
-/** prompt 通道实际落法的展示键（socket 直投 / 中继 / 终端 send-text）。 */
-const VIA_KEY: Record<
-  NonNullable<SessionMessageRow['via']>,
-  'tasks.msgViaSocket' | 'tasks.msgViaRelay' | 'tasks.msgViaTerminal'
-> = {
-  socket: 'tasks.msgViaSocket',
-  relay: 'tasks.msgViaRelay',
-  terminal: 'tasks.msgViaTerminal',
-};
-
 /** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */
 const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
   pending: 'bg-amber-900/40 text-amber-300',
@@ -1839,11 +1829,6 @@ export function SessionMessages({
                             {t(STATUS_KEY[pipe.status])}
                           </Badge>
                         )}
-                        {pipe !== undefined && pipe.via != null && (
-                          <span className="shrink-0 text-[10px] text-neutral-500">
-                            {t(VIA_KEY[pipe.via])}
-                          </span>
-                        )}
                         {pipe?.stalled === true && (
                           <span className="shrink-0 text-[10px] text-amber-400">
                             {t('tasks.msgStalled')}
@@ -1994,11 +1979,6 @@ export function SessionMessages({
                                 <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
                                   {t(queueStatusKey(m.status))}
                                 </Badge>
-                                {m.via != null && (
-                                  <span className="shrink-0 text-[10px] text-neutral-500">
-                                    {t(VIA_KEY[m.via])}
-                                  </span>
-                                )}
                                 {m.stalled === true && (
                                   <span className="shrink-0 text-[10px] text-amber-400">
                                     {t('tasks.msgStalled')}
