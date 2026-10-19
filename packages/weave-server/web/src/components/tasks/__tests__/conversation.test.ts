@@ -5,6 +5,7 @@ import {
   imagesFrom,
   exportConversationText,
   exportStamp,
+  failedTail,
   filterThread,
   isGenerating,
   removableOf,
@@ -151,6 +152,44 @@ describe('conversationOf', () => {
     expect(
       conversationOf([event(1, 'PreCompact', { trigger: 'auto' })], claude, 'claude'),
     ).toEqual([]);
+  });
+
+  it('⑧ 失败收尾（StopFailure）仍是一轮的回答位，但要标出来（正文是宿主报的错）', () => {
+    const entries = conversationOf(
+      [
+        event(1, 'UserPromptSubmit', { prompt: '跑一下' }),
+        event(2, 'StopFailure', {
+          error: 'server_error',
+          last_assistant_message: 'API Error: 500 litellm.InternalServerError',
+        }),
+        event(3, 'UserPromptSubmit', { prompt: '再来一次' }),
+        event(4, 'Stop', { last_assistant_message: '这次成了' }),
+      ],
+      claude,
+    );
+    expect(entries.map((e) => [e.role, e.text, e.failed ?? false])).toEqual([
+      ['user', '跑一下', false],
+      ['assistant', 'API Error: 500 litellm.InternalServerError', true],
+      ['user', '再来一次', false],
+      ['assistant', '这次成了', false],
+    ]);
+  });
+});
+
+describe('failedTail', () => {
+  const fail = { key: 'e2', eventId: 2, role: 'assistant' as const, at: at(20), text: 'API Error: 500', failed: true };
+
+  it('尾条是失败收尾 → 尾巴上显那条错（盖过「生成中…」）', () => {
+    expect(failedTail([fail], false)).toBe(fail);
+  });
+
+  it('尾条是正常回答 / 没有尾条 → 不显', () => {
+    expect(failedTail([{ ...fail, failed: false }], false)).toBeNull();
+    expect(failedTail([], false)).toBeNull();
+  });
+
+  it('队列里还有没送出去的行 → 不显（那是上一条的错，会读成它失败了）', () => {
+    expect(failedTail([fail], true)).toBeNull();
   });
 });
 

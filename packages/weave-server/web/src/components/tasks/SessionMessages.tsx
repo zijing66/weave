@@ -187,6 +187,8 @@ export interface ConvEntry {
   pipe?: SessionMessageRow;
   /** 随附图（挂在开轮事件上；气泡缩略图，点开看大图）。 */
   images?: UploadImage[];
+  /** 这一轮以失败收尾（`lifecycle.closeFailed`）：正文是宿主报的错，不是回答。 */
+  failed?: boolean;
 }
 
 /**
@@ -228,7 +230,16 @@ export function conversationOf(
     } else if (lifecycle.close.includes(e.eventType)) {
       const text = turnSummaryOf(e);
       if (text)
-        out.push({ key: `e${e.id}`, eventId: e.id, role: 'assistant', at: e.createdAt, text });
+        out.push({
+          key: `e${e.id}`,
+          eventId: e.id,
+          role: 'assistant',
+          at: e.createdAt,
+          text,
+          // 失败收尾（claude = StopFailure）的正文是宿主报的 API 错误：它长得像
+          // 回答、位置也在回答那儿，不标出来就只能当普通回复读。
+          ...(lifecycle.closeFailed.includes(e.eventType) ? { failed: true } : {}),
+        });
     }
   }
   return out;
@@ -345,6 +356,17 @@ export function isGenerating(
     status === 'compacting' ||
     (status === 'running' && (tailRole === 'user' || tailRole === 'compaction'))
   );
+}
+
+/** 尾条是一次失败收尾（宿主把 API 报错当闭轮事件送来）→ 尾巴上那行要换成它报的
+ *  错：这一轮已经结束了，不是还在生成，也不是什么都没发生。队列里还有没送出去的
+ *  行时不算——那行才是「最新的一件事」，把上一条的错摆在它下面会读成它失败了。 */
+export function failedTail(
+  thread: readonly ConvEntry[],
+  hasQueued: boolean,
+): ConvEntry | null {
+  const tail = thread[thread.length - 1];
+  return !hasQueued && tail?.failed === true ? tail : null;
 }
 
 /** 在光标处插一个换行（移动端没有 Shift+Enter 这个手势）。 */
@@ -837,6 +859,8 @@ export function SessionMessages({
   const compacting = status === 'compacting';
   const interrupted = status === 'interrupted';
   const generating = isGenerating(status, thread[thread.length - 1]?.role);
+  /** 这一轮是失败收尾（API 报错）→ 尾上显那条错，压过「生成中…」与压缩态。 */
+  const failed = interrupted ? null : failedTail(thread, outbox.length > 0);
   /** 滚动带只认**本轮**的事（晚到事件里混着上一轮的尾巴，同一份素材还要跨轮）：
    *  锚 = 最后一条用户条目的那个开轮事件，只取它之后；从新往旧找第一条有正文的
    *  （SessionStart 这类没有正文，不能让它把上一句顶成空白）。 */
@@ -1493,11 +1517,27 @@ export function SessionMessages({
                     >
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
                           不把整块对话撑出横向滚动条 */}
-                      <div className="min-w-0 max-w-[92%] overflow-x-auto rounded-lg border border-edge/[0.08] bg-neutral-800/50 px-2 py-1.5">
+                      <div
+                        className={cn(
+                          'min-w-0 max-w-[92%] overflow-x-auto rounded-lg border px-2 py-1.5',
+                          m.failed
+                            ? 'border-red-500/30 bg-red-950/20'
+                            : 'border-edge/[0.08] bg-neutral-800/50',
+                        )}
+                      >
                         <span className="mb-0.5 block text-[10px] text-neutral-600">
                           {formatStamp(m.at)}
                         </span>
-                        <AssistantMarkdown text={m.text} />
+                        {/* 宿主报的错不是回答：不排 markdown（原文就是一行技术串），
+                            一律红字——系统错误得和正文一眼分得开 */}
+                        {m.failed ? (
+                          <p className="flex items-start gap-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-red-300">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                            {m.text}
+                          </p>
+                        ) : (
+                          <AssistantMarkdown text={m.text} />
+                        )}
                       </div>
                       {selecting && <CheckBox on={picked.has(m.key)} className="ml-1.5 mt-1" />}
                     </div>
@@ -1800,15 +1840,28 @@ export function SessionMessages({
                       {t('tasks.convAnswer')}
                     </button>
                   )}
-                  {(generating || interrupted) && (
-                    <div className="flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border border-edge/[0.08] bg-neutral-800/50 px-2 py-1.5 text-[10px] text-neutral-500">
+                  {(generating || interrupted || failed) && (
+                    <div
+                      className={cn(
+                        'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[10px]',
+                        failed
+                          ? 'border-red-500/30 bg-red-950/30 text-red-300'
+                          : 'border-edge/[0.08] bg-neutral-800/50 text-neutral-500',
+                      )}
+                    >
                       {interrupted ? (
                         <Ban className="h-3 w-3 shrink-0" />
+                      ) : failed ? (
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
                       ) : (
                         <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
                       )}
                       {interrupted ? (
                         t('tasks.msgInterrupted')
+                      ) : failed ? (
+                        <span className="min-w-0 truncate" title={failed.text}>
+                          {failed.text}
+                        </span>
                       ) : compacting ? (
                         t('tasks.msgCompacting')
                       ) : liveText ? (
