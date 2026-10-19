@@ -90,15 +90,15 @@ export function StatuslineBar({
     // 贴边：面板本体是 p-3，这里把内边距吃回去，底条铺满一条
     <div
       title={t('statusline.barTitle')}
-      className="-mx-3 -mb-3 mt-1.5 flex shrink-0 flex-col gap-0.5 overflow-hidden border-t border-edge/[0.06] bg-neutral-950/50 px-3 py-1"
+      className="-mx-3 -mb-3 mt-1.5 shrink-0 overflow-x-auto overflow-y-hidden border-t border-edge/[0.06] bg-neutral-950/50 px-3 py-1"
     >
-      {/* 每行各自横向滚动：块多/路径长时不能折行（折了 powerline 的块就断了），
-          也不许被裁——右手一划/滚轮横移看全 */}
-      {lines.map((items, i) => (
-        <div key={i} className="overflow-x-auto overflow-y-hidden text-[10px] leading-4">
-          <PowerlineRow items={items} config={config} />
-        </div>
-      ))}
+      {/* 整条一起横滚（行不各滚各的）：块多/路径长时不折行——折了 powerline 的块
+          就断了；`w-max` 让这条按最宽那行撑开，各行左侧始终对齐 */}
+      <div className="flex w-max flex-col gap-0.5 text-[10px] leading-4">
+        {lines.map((items, i) => (
+          <PowerlineRow key={i} items={items} config={config} />
+        ))}
+      </div>
     </div>
   );
 }
