@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Pluggable harness drivers — registry, init pipeline template method, and harness integration modules",
   "type": "module",
