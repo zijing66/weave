@@ -12,6 +12,9 @@ export const statuslineZh = {
   'statusline.saveFailed': '保存失败：{error}',
   'statusline.emptyRow': '（空行）',
   'statusline.preview': ' ← 预览',
+  // 对话页底条（点开即上面这份配置）
+  'statusline.barTitle': '状态栏',
+  'statusline.tuiHint': '会注入 TUI 状态栏的 harness：{agents}；其余 harness 只在对话页显示。',
 
   // 源状态行（项目视图）
   'statusline.followingGlobal': '跟随全局模板',
@@ -164,6 +167,9 @@ export const statuslineEn: Record<keyof typeof statuslineZh, string> = {
   'statusline.saveFailed': 'Save failed: {error}',
   'statusline.emptyRow': '(empty row)',
   'statusline.preview': ' ← preview',
+  // Conversation footer bar (opens the same config above)
+  'statusline.barTitle': 'Statusline',
+  'statusline.tuiHint': 'Injected into the TUI statusline by: {agents}; other harnesses only show it here.',
 
   // Source status row (project view)
   'statusline.followingGlobal': 'following global template',

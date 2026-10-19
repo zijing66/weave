@@ -20,7 +20,6 @@ import {
   NAMED_COLORS,
   SEGMENT_TOKENS,
   SEGMENT_DEFAULT_FORMAT,
-  CONTEXT_STYLE_FORMAT,
   WEAVE_VERSION,
   type StatuslineConfig,
   type StatuslineColor,
@@ -35,6 +34,12 @@ import {
   cssSolid,
   parseColorInput,
 } from '@/lib/statusline-color';
+import {
+  SAMPLE_TOKENS,
+  buildPreviewItems,
+  segmentText,
+  type PreviewItem,
+} from '@/lib/statusline-preview';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { AgentBadge } from '@/components/AgentBadge';
@@ -344,105 +349,6 @@ function toHexInput(color: StatuslineColor | null): string {
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-
-interface PreviewItem {
-  text: string;
-  fg: StatuslineColor;
-  bold: boolean;
-  bg: StatuslineColor | null;
-  merge: boolean;
-  /** Merged into the following block — no separator between them. */
-  joinsNext?: boolean;
-}
-
-/**
- * Sample values for each segment's format tokens.
- *
- * Keep in lockstep with `segmentTokens` in
- * packages/weave-server/src/statusline/generator.ts — this is the browser-side
- * mirror that lets the panel preview edits without a server round-trip.
- */
-const SAMPLE_TOKENS: Record<SegmentKey, Record<string, string>> = {
-  // Both keys: the default layout renders {path}, older configs use {name}.
-  project: { name: 'my-project', path: '/workspace/my-project' },
-  git: { branch: 'main', repo: 'acme/weave' },
-  git_user: { user: 'yao', email: 'yao@weave.dev' },
-  changes: { added: '1', deleted: '1', files: '3' },
-  model: { model: 'claude-sonnet-5' },
-  thinking: { level: 'high' },
-  context: { percent: '78', used: '780k', total: '1.0M', remaining: '22' },
-  tokens: { total: '960.9k', percent: '42' },
-  cost: { cost: '$0.42', duration: '12m', api_duration: '3m', lines_added: '42', lines_removed: '7' },
-  rate: { percent: '45', limit: '5h', resets: '' },
-  time: { time: '12:30' },
-  version: { version: '2.1.286' },
-  output_style: { style: 'explanatory' },
-  session: { name: 'feat-statusline' },
-  exceeds200k: { over: '200k' },
-  fast_mode: { mode: 'fast' },
-  vim: { mode: 'INSERT' },
-  pr: { number: '482', state: 'approved', url: 'https://github.com/acme/weave/pull/482' },
-  worktree: { name: 'weave-next', branch: 'feat/x' },
-  agent: { name: 'reviewer' },
-};
-
-/** The value template a segment renders with, matching the generator. */
-function formatFor(key: SegmentKey, seg: StatuslineSegment): string {
-  if (seg.format) return seg.format;
-  if (key === 'context' && seg.style) return CONTEXT_STYLE_FORMAT[seg.style];
-  return SEGMENT_DEFAULT_FORMAT[key];
-}
-
-/** Render a segment's sample text: icon + label + templated value. */
-function sampleText(key: SegmentKey, seg: StatuslineSegment, config: StatuslineConfig): string {
-  const tokens = { ...SAMPLE_TOKENS[key] };
-  if (key === 'context') {
-    const pct = Number(tokens.percent);
-    let filled = Math.round((pct / 100) * config.bar.cells);
-    // A non-zero percentage must light at least one cell — mirrors the
-    // generator's barFor (otherwise low usage rounds down to an empty bar).
-    if (pct > 0 && filled === 0) filled = 1;
-    tokens.bar = config.bar.fill.repeat(filled) + config.bar.empty.repeat(config.bar.cells - filled);
-  }
-  const value = formatFor(key, seg).replace(/\{(\w+)\}/g, (_m, k: string) => tokens[k] ?? '');
-  const label = seg.label ? `${seg.label}${config.labelSeparator}` : '';
-  return (seg.icon ? `${seg.icon} ` : '') + label + value;
-}
-
-/** Mirrors the generator's renderParts: enabled segments for a row. */
-function buildPreviewItems(config: StatuslineConfig, keys: SegmentKey[]): PreviewItem[] {
-  const items: PreviewItem[] = [];
-  for (const key of keys) {
-    const seg = config.segments[key];
-    if (!seg.enabled) continue;
-    const text = sampleText(key, seg, config);
-    if (text === '') continue;
-    items.push({
-      text,
-      fg: seg.color,
-      bold: seg.bold,
-      bg: seg.backgroundColor,
-      merge: seg.merge,
-    });
-  }
-  // resolve merges the way the generated script does
-  const out: PreviewItem[] = [];
-  let pending: PreviewItem[] = [];
-  for (const it of items) {
-    if (it.merge) {
-      pending.push(it);
-      continue;
-    }
-    for (const p of pending) {
-      p.bg = it.bg;
-      p.joinsNext = true;
-    }
-    pending = [];
-    out.push(it);
-  }
-  for (const p of pending) p.bg = null;
-  return out.concat(pending);
-}
 
 /** Move a segment from one row to another at a given index. */
 function moveAcrossLines(
@@ -1053,7 +959,7 @@ export function StatuslinePanel({
 /** Renders a row as joined powerline blocks, or plain text when powerline is off.
  * Mirrors the generator: the join glyph's fg is the previous block's bg (or the
  * previous fg when both blocks share a bg), caps frame the row transparently. */
-function PowerlineRow({
+export function PowerlineRow({
   items,
   config,
 }: {
@@ -1172,7 +1078,7 @@ function Capsule({
   };
   const meta = SEGMENTS.find((s) => s.key === segKey)!;
   const on = segment.enabled;
-  const text = sampleText(segKey, segment, config) || t(meta.labelKey);
+  const text = segmentText(segKey, segment, config, SAMPLE_TOKENS[segKey] ?? {}) || t(meta.labelKey);
   const bg = on && segment.backgroundColor ? cssSolid(segment.backgroundColor) : undefined;
   const fg = on ? cssFg(segment.color) : undefined;
   return (

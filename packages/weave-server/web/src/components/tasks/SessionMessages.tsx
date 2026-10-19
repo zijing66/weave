@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
@@ -28,6 +28,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
 import { useTheme } from '@/lib/theme';
 import { SideQuestionDialog } from './SideQuestionDialog';
+import { StatuslineBar } from './StatuslineBar';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
   formatStamp,
@@ -60,6 +61,12 @@ const IMAGE_MAX_COUNT = 8;
 
 /** 生成中那一行的素材窗口：取最近多少条事件（展示只挑最新那条有内容的）。 */
 const LIVE_FETCH = 40;
+
+/** 输入框高度（行数）：桌面顶边可拖，2~20 行，localStorage 记住。 */
+const INPUT_ROWS_MIN = 2;
+const INPUT_ROWS_MAX = 20;
+/** 一行的高度（px）：拖拽位移换算行数用，与 textarea 的实际行高同量级。 */
+const INPUT_ROW_PX = 16;
 
 /** 图片判据：MIME 或扩展名（移动浏览器的剪贴板项偶尔不带 type）。 */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -456,6 +463,8 @@ const toImageEntries = (entries: readonly ConvEntry[]): ConvImageEntry[] =>
  *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
 type ConvSize = { w: number; h: number };
 const CONV_SIZE_KEY = 'weave:conv-size';
+/** 浮窗位置（相对居中位的位移）：拖标题栏挪过就记住，下次开在同一处。 */
+const CONV_POS_KEY = 'weave:conv-pos';
 const SIZE_MIN = { w: 320, h: 220 };
 
 const clampConvSize = (w: number, h: number): ConvSize => ({
@@ -478,6 +487,20 @@ function loadConvSize(): ConvSize {
   } catch {
     return defaultConvSize();
   }
+}
+
+/** 记住的浮窗位移（相对居中位）；越界由挂载后的 clampPos 再收一次。 */
+function loadConvPos(): { x: number; y: number } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONV_POS_KEY) ?? 'null') as {
+      x?: unknown;
+      y?: unknown;
+    } | null;
+    if (typeof raw?.x === 'number' && typeof raw?.y === 'number') return { x: raw.x, y: raw.y };
+  } catch {
+    // 坏值就当没记过
+  }
+  return { x: 0, y: 0 };
 }
 
 /** 多选态气泡旁的勾选框（点击面是整个气泡，这里只显示状态）。
@@ -616,7 +639,7 @@ export function SessionMessages({
   /** 队列气泡里展开看全文的那一行（多条时每行一句，点开才完整）。 */
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
-  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [pos, setPos] = useState(loadConvPos);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   /** 向上翻页插入新条目后要补的滚动高度（渲染后按差值补，视口不跳）。 */
@@ -630,6 +653,16 @@ export function SessionMessages({
   const lastTap = useRef<{ key: string; at: number } | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const coarse = useMediaQuery('(pointer: coarse)');
+  /** 输入框高度可拖：鼠标才有这回事（触屏的拖拽是滚动）。 */
+  const fine = useMediaQuery('(pointer: fine)');
+  const [inputRows, setInputRows] = useState<number>(() => {
+    const v = Number(localStorage.getItem('weave:conv-input-rows'));
+    return Number.isFinite(v) && v > 0
+      ? Math.min(INPUT_ROWS_MAX, Math.max(INPUT_ROWS_MIN, v))
+      : INPUT_ROWS_MIN;
+  });
+  useEffect(() => localStorage.setItem('weave:conv-input-rows', String(inputRows)), [inputRows]);
+  const rowsGrip = useRef<{ y: number; rows: number } | null>(null);
 
   const fail = useCallback((e: unknown): void => {
     setError(e instanceof Error ? e.message : String(e));
@@ -1044,6 +1077,14 @@ export function SessionMessages({
     return { x: Math.max(-limX, Math.min(limX, x)), y: Math.max(-limY, Math.min(limY, y)) };
   };
 
+  // 记住的位移按面板实测尺寸收一次：换了屏幕/窗口大小之后，旧位移可能出界。
+  // 只在挂载时收（之后每次拖动/拖角自己就在 clamp 里）。
+  useLayoutEffect(() => {
+    if (embedded || !isDesktop) return;
+    setPos((p) => clampPos(p.x, p.y, size));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onGripDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     const box = panelRef.current?.getBoundingClientRect();
     grip.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h || Math.round(box?.height ?? 0) };
@@ -1062,6 +1103,8 @@ export function SessionMessages({
     setSize((s) => {
       try {
         localStorage.setItem(CONV_SIZE_KEY, JSON.stringify(s));
+        // 拖角会连带 clamp 位位移，一起记下来
+        localStorage.setItem(CONV_POS_KEY, JSON.stringify(pos));
       } catch {
         // 隐私模式禁写：尺寸只在本次会话有效
       }
@@ -1081,7 +1124,13 @@ export function SessionMessages({
     setPos(clampPos(d.px + (e.clientX - d.x), d.py + (e.clientY - d.y), size));
   };
   const onDragUp = (): void => {
+    if (!drag.current) return;
     drag.current = null;
+    try {
+      localStorage.setItem(CONV_POS_KEY, JSON.stringify(pos));
+    } catch {
+      // 隐私模式禁写：位置只在本次会话有效
+    }
   };
 
   /** 每条气泡的交互面：桌面右键开菜单（进多选并勾上这条），触屏双击同效；
@@ -1158,6 +1207,22 @@ export function SessionMessages({
     requestAnimationFrame(() => {
       if (el) el.selectionStart = el.selectionEnd = next.caret;
     });
+  };
+
+  /** 顶边拖拽调输入框高度：位移换行数（向上拖变高），期间只改本地态。 */
+  const onRowsDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    rowsGrip.current = { y: e.clientY, rows: inputRows };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onRowsMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    const g = rowsGrip.current;
+    if (!g) return;
+    const rows = g.rows + Math.round((g.y - e.clientY) / INPUT_ROW_PX);
+    setInputRows(Math.min(INPUT_ROWS_MAX, Math.max(INPUT_ROWS_MIN, rows)));
+  };
+  const onRowsUp = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    rowsGrip.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
   const send = (): void => {
@@ -2100,6 +2165,22 @@ export function SessionMessages({
                 </div>
               )}
             </div>
+            {/* 顶边拖拽手柄：鼠标才有（触屏的拖拽是滚动）。贴在两行之间，
+                负边距吃掉 gap，免得常显多出一条空隙。 */}
+            {fine && (
+              <div
+                role="separator"
+                title={t('tasks.msgResizeInput')}
+                aria-label={t('tasks.msgResizeInput')}
+                onPointerDown={onRowsDown}
+                onPointerMove={onRowsMove}
+                onPointerUp={onRowsUp}
+                onPointerCancel={onRowsUp}
+                className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center"
+              >
+                <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
+              </div>
+            )}
             <div className="flex items-end gap-1.5">
               <textarea
                 ref={draftRef}
@@ -2119,7 +2200,7 @@ export function SessionMessages({
                   stageFiles(imgs);
                 }}
                 placeholder={t('tasks.messagesPlaceholder')}
-                rows={2}
+                rows={inputRows}
                 className="min-w-0 flex-1 resize-none rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40"
               />
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
@@ -2236,6 +2317,14 @@ export function SessionMessages({
             </div>
           </div>
         )}
+
+        {/* 状态栏条（输入框下方、贴底边）：整条可点开配置弹窗；桌面才摆，
+            配置里的块都要宿主 stdin 字段时也不摆（见 StatuslineBar 的口径）。 */}
+        <StatuslineBar
+          projectId={projectId}
+          sessionName={sessionRow?.title ?? label}
+          model={modelValue || null}
+        />
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局） */}
         {!embedded && isDesktop && (
