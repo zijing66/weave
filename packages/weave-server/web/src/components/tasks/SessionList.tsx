@@ -457,13 +457,13 @@ export function SessionList({
               {sessionLabel(s.title, s.sessionId)}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
-              {/* 能力真源 = harness ResumeCommandSpec.openArgs（claude 注册，
-                  codex 未注册 resume 槽）——镜像判断，服务端仍做 501 校验。
-                  该会话的 claude 进程活着（pidAlive，claude 注册表判活）→ 终端
-                  图标转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮
-                  一并禁用——再点只会又 spawn 一个 claude --resume 抢同一会话。
-                  loading 的挂法见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
-              {s.harness === 'claude' && (
+              {/* 能力位由服务端派生（canOpenTerminal = harness 的 resume 槽有
+                  openArgs），这里只渲染它——不自带 harness 白名单；路由侧仍做
+                  同样的 501 校验。该会话的宿主进程活着（pidAlive）→ 终端图标
+                  转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮一并
+                  禁用——再点只会又 spawn 一个宿主进程抢同一会话。loading 的挂法
+                  见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
+              {s.canOpenTerminal && (
                 <button
                   type="button"
                   disabled={noTranscript || !!s.pidAlive || openTermState === 'loading'}

@@ -473,9 +473,13 @@ export async function handleHooksRoutes(
       sessions: sessions.map((s) => {
         const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
         const present = deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null;
+        // 「在终端打开」的能力位：harness 的 resume 槽声明了交互式 openArgs 才有。
+        // web 只渲染这个字段，不自带 harness 白名单（路由侧仍做同样的 501 校验）。
+        const resume = isHarness(s.harness) ? deps.harnesses?.get(s.harness)?.resume : undefined;
         return {
           ...s,
           pidAlive: pidAliveOf(s, liveness),
+          canOpenTerminal: !!(resume?.supported && resume.openArgs),
           terminal: screens[s.sessionId] ?? null,
           // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
           interruptedAt:

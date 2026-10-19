@@ -195,6 +195,20 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(byId.get('sess-codex')).toBeNull();
   });
 
+  it('GET /sessions 逐行带 canOpenTerminal：按 harness 的 resume 槽派生', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions`);
+    const { sessions: rows } = (await res.json()) as {
+      sessions: Array<{ sessionId: string; canOpenTerminal: boolean }>;
+    };
+    const byId = new Map(rows.map((r) => [r.sessionId, r.canOpenTerminal]));
+    // claude 注册了 openArgs → 可开（web 只渲染这一位，不再写 s.harness === 'claude'）
+    expect(byId.get(SESSION)).toBe(true);
+    // codex 未注册 resume 槽 → 不可开（与上面那条 501 同一事实）
+    expect(byId.get('sess-codex')).toBe(false);
+    // 判不出 harness 的会话（无事件）→ 不可开，不猜
+    expect(byId.get('sess-no-events')).toBe(false);
+  });
+
   it('returns 404 for an unknown session', async () => {
     expect((await post('/sessions/nope/open-terminal')).status).toBe(404);
   });

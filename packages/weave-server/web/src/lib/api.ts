@@ -360,6 +360,8 @@ export interface SessionRow {
   /** 转录还在不在（服务端 SessionProbe 判，与 `--resume` 认的那份文件对齐）：
    *  false = 接不回来了（行内提示、「打开」禁用），null/undefined = 判不动。 */
   transcriptPresent?: boolean | null;
+  /** 「在终端打开」是否可用（服务端按 harness 的 resume 槽派生，web 不自带白名单）。 */
+  canOpenTerminal?: boolean;
 }
 
 /** GET /sessions 载荷：会话行 + 各 harness 的模型别名表（别名 → 真名）。 */
