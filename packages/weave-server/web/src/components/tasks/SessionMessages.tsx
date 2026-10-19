@@ -2108,6 +2108,10 @@ export function SessionMessages({
                         icon={<Send className="h-3 w-3" />}
                       />
                       <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
+                      {/* 小字标出当前通道：切过之后不必悬停也知道这条会走哪条路 */}
+                      <span className="-ml-0.5 text-[9px] font-normal leading-none text-white/60 max-lg:hidden">
+                        {sendVia === 'terminal' ? t('tasks.msgChannelTerminal') : t('tasks.msgChannelAuto')}
+                      </span>
                     </button>
                     {/* 通道下拉：默认 auto（直投优先），另一档强制层② 终端——宿主只把
                         终端击键当用户输入。强制态把右半打亮，免得忘记自己改过。 */}
