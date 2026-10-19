@@ -3,6 +3,7 @@ import type { ImageAttachSpec, MessagingSurface } from '../driver.js';
 import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 import { CLAUDE_PROMPT_RELAY } from './prompt.js';
 import { CLAUDE_RESUME } from './resume.js';
+import { CLAUDE_SIDE_QUESTION } from './side-question.js';
 
 /**
  * Claude 图片对齐面：**裸绝对路径、不加任何说明**——用户自己往输入框粘贴一条图片
@@ -36,4 +37,5 @@ export const CLAUDE_MESSAGING: MessagingSurface = {
   headless: CLAUDE_RESUME,
   idleSignals: [...HARNESS_LIFECYCLE.claude.close, 'SessionEnd'],
   imageAttach: CLAUDE_IMAGE_ATTACH,
+  sideQuestion: CLAUDE_SIDE_QUESTION,
 };

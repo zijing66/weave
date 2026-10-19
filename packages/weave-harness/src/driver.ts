@@ -185,7 +185,13 @@ export interface ResumeCommandSpec {
 }
 
 /** 消息通道名——支持矩阵与原因文案的键。 */
-export type MessagingChannel = 'discovery' | 'prompt' | 'inject' | 'headless' | 'watch';
+export type MessagingChannel =
+  | 'discovery'
+  | 'prompt'
+  | 'inject'
+  | 'headless'
+  | 'watch'
+  | 'sideQuestion';
 
 /** 非抢占注入通道规格：注入可骑乘的事件（hook-handler 在这些事件上消化 outbox 行）。 */
 export interface InjectChannelSpec {
@@ -230,6 +236,25 @@ export interface ImageAttachSpec {
     text: string,
     images: readonly { path: string; mediaType: string; name: string }[],
   ): string;
+}
+
+/**
+ * 旁路会话（宿主 TUI 里的侧问，claude = `/btw`）规格：问一次不打断主回合的
+ * 轻量提问。**宿主既不留转录也不发 prompt 事件**（claude 侧问查询 `skipTranscript`），
+ * 问题与回答都不落任何文件——所以「谁发的谁记」：weave 打出去的提问自己记，
+ * 回答按这里给的判据从采集事件里认领。null = 该 harness 没有这种机制。
+ */
+export interface SideQuestionSpec {
+  /** 提问命令（命令文法归 harness，server 只传用户原文）。 */
+  command(question: string): string;
+  /** 形态校验：单行、无控制字符（CR 会提前提交）、长度上限。 */
+  validate(question: string): { ok: true; text: string } | { ok: false; error: string };
+  /**
+   * 这条采集事件是不是一次旁路回答；是就返回全文，否则 null。
+   * 判据归 harness（claude：`SubagentStop` 且宿主没给这个 agent 留转录——
+   * 普通子 agent 与 skill 子 agent 都有转录，skipTranscript 的 fork 才没有）。
+   */
+  answerOf(eventType: string, payload: unknown): string | null;
 }
 
 /** 信封渲染入参。 */
@@ -359,6 +384,8 @@ export interface MessagingSurface {
   renderEnvelope?(text: string, meta: MessageMeta): string;
   /** 图片随 prompt 的对齐面；null = 该 harness 不支持收图（web 据此置灰附件钮）。 */
   readonly imageAttach: ImageAttachSpec | null;
+  /** 旁路会话（侧问）；null = 该 harness 没有这种机制（web 据此不渲染入口）。 */
+  readonly sideQuestion: SideQuestionSpec | null;
   /** 不支持通道的语义原因（409 文案与 UI tooltip 直用）。 */
   readonly unsupportedReasons?: Partial<Record<MessagingChannel, string>>;
 }
