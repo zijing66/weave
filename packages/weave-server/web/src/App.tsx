@@ -1317,7 +1317,7 @@ function Dashboard() {
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {showMain ? (
                 <>
-                  <div className="px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <div className="relative px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-semibold truncate">
                         {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
@@ -1327,13 +1327,15 @@ function Dashboard() {
                       </p>
                     </div>
                     {!globalMode && updates && updates.available > 0 && (
-                      <div className="relative shrink-0">
+                      // 窄屏外层 display:contents（无盒子，面板退回按表头定位于整行宽），
+                      // 桌面才成为定位盒让面板挂在这枚标签上。
+                      <span className="contents lg:relative lg:inline-block lg:shrink-0">
                         <button
                           onClick={() => setUpdatesOpen((v) => !v)}
                           aria-expanded={updatesOpen}
                           title={t('app.updateListTip')}
                           className={cn(
-                            'inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
+                            'shrink-0 inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
                             updatesOpen && 'ring-1 ring-orange-500/50',
                           )}
                         >
@@ -1347,23 +1349,17 @@ function Dashboard() {
                         {updatesOpen && (
                           <>
                             <div className="fixed inset-0 z-20" onClick={() => setUpdatesOpen(false)} />
-                            <div className="absolute right-0 top-full z-30 mt-1.5 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac">
+                            <div className="absolute left-4 right-4 top-full z-30 mt-1 overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac lg:left-auto lg:right-0 lg:w-[320px]">
                               <p className="border-b border-edge/[0.06] px-3 py-2 text-[11px] text-neutral-500">
                                 {t('app.updateListTitle', { n: updateRows.length })}
                               </p>
                               <ul className="max-h-[min(45dvh,320px)] overflow-y-auto py-1">
                                 {updateRows.map((row) => (
-                                  <li
-                                    key={`${row.kind}:${row.name}`}
-                                    className="flex items-baseline gap-2 px-3 py-1"
-                                  >
+                                  <li key={`${row.kind}:${row.name}`} className="flex items-baseline gap-2 px-3 py-1">
                                     <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
                                       {t(row.kind)}
                                     </span>
-                                    <span
-                                      className="min-w-0 flex-1 truncate text-xs text-neutral-200"
-                                      title={row.name}
-                                    >
+                                    <span className="min-w-0 flex-1 truncate text-xs text-neutral-200" title={row.name}>
                                       {row.name}
                                     </span>
                                     {row.scope && (
@@ -1380,7 +1376,7 @@ function Dashboard() {
                             </div>
                           </>
                         )}
-                      </div>
+                      </span>
                     )}
                     {!globalMode && updates && updates.available > 0 && (
                       <button
