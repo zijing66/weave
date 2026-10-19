@@ -274,10 +274,6 @@
   background: rgb(var(--w-edge) / 0.08);
   color: rgb(var(--w-neutral-200));
 }
-/* 画布底纹点阵：三处 <Background> 都传的白色，浅色下靠这条盖成墨色 */
-.react-flow__background pattern circle {
-  fill: rgb(var(--w-edge) / 0.06);
-}
 .react-flow__controls .react-flow__controls-button svg {
   fill: currentColor;
 }

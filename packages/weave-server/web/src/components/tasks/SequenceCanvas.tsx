@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Background,
   Controls,
   Handle,
   Position,
@@ -28,6 +27,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { MessageSquareText, Plus, Waypoints, X } from 'lucide-react';
+import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import type { SessionStatus } from './session-status';
@@ -173,6 +173,7 @@ export function SequenceCanvas({
   projectLabel: string;
 }) {
   const t = useT();
+  const tintClass = useCanvasTintClass();
   const fb = useActionFeedback();
   const { show } = useToast();
   const { sessions: allSessions, statuses } = useSessionStatus();
@@ -469,7 +470,7 @@ export function SequenceCanvas({
       </div>
 
       {/* 画布：会话泳道 + 消息边（本视图自管高度，外层沿用页面滚动）。 */}
-      <div className="relative h-[420px] rounded-lg border border-edge/[0.06] bg-neutral-950/40">
+      <div className={cn('relative h-[420px] rounded-lg border border-edge/[0.06]', tintClass)}>
         {sessions === null ? (
           <p className="flex h-full items-center justify-center text-xs text-neutral-500">
             {t('hooks.loading')}
@@ -490,7 +491,7 @@ export function SequenceCanvas({
             nodesConnectable={false}
             deleteKeyCode={null}
           >
-            <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />
+            <CanvasBackground />
             <Controls showInteractive={false} />
           </ReactFlow>
         )}

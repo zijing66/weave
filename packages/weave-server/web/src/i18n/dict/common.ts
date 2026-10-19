@@ -13,6 +13,15 @@ export const commonZh = {
   'common.copyFailed': '复制失败：浏览器未放行剪贴板（手机请用页面上的 HTTPS 地址访问）',
   'common.decrease': '减少',
   'common.increase': '增加',
+  'common.canvas.lines': '网格底纹',
+  'common.canvas.dots': '点阵底纹',
+  'common.canvas.cross': '十字底纹',
+  'common.canvas.none': '无底纹',
+  'common.canvas.tintNone': '默认底色',
+  'common.canvas.tintSky': '蓝色底色',
+  'common.canvas.tintViolet': '紫色底色',
+  'common.canvas.tintEmerald': '绿色底色',
+  'common.canvas.tintAmber': '琥珀底色',
 };
 
 export const commonEn: Record<keyof typeof commonZh, string> = {
@@ -30,4 +39,13 @@ export const commonEn: Record<keyof typeof commonZh, string> = {
 
   'common.decrease': 'Decrease',
   'common.increase': 'Increase',
+  'common.canvas.lines': 'Grid pattern',
+  'common.canvas.dots': 'Dot pattern',
+  'common.canvas.cross': 'Cross pattern',
+  'common.canvas.none': 'No pattern',
+  'common.canvas.tintNone': 'Default background',
+  'common.canvas.tintSky': 'Blue background',
+  'common.canvas.tintViolet': 'Violet background',
+  'common.canvas.tintEmerald': 'Green background',
+  'common.canvas.tintAmber': 'Amber background',
 };

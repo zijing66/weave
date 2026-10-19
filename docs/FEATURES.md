@@ -26,7 +26,7 @@ init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文�
 
 **全局任务总览**：跨项目聚合（项目下拉 + 时间段筛选，客户端过滤）；行序与会话列表同口径（同一份冻结活动序，跨项目混排不分组）；行点击跳进对应项目任务视图。
 
-**事件链（LifecycleMindmap）**：会话事件的树状生命周期图——转场节点、subagent 子树、指令挂点；pending 指令路径 amber 高光沿 event → group 回传。
+**事件链（LifecycleMindmap）**：会话事件的树状生命周期图——转场节点、subagent 子树、指令挂点；pending 指令路径 amber 高光沿 event → group 回传。画布底纹与底色可调（网格 / 点阵 / 十字 / 无 + 默认 / 蓝 / 紫 / 绿 / 琥珀底色，画布右下角一枚小工具条），深浅色自动适配、选择存 localStorage，事件链 / 编排画布 / hooks 链路三处共用同一份偏好。
 
 **指令池（hooks dispatches）**：规则触发的指令走 pending → injected → running → succeeded/failed/timeout 生命周期；`auto`（事件自动派发）/ `manual`（人工补派）两模式；指令链路与事件链联动高光。
 

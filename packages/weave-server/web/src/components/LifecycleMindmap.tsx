@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Background,
   BaseEdge,
   Controls,
   Handle,
@@ -38,6 +37,7 @@ import { HARNESS_LIFECYCLE, isCompactionEnd } from '@/components/tasks/lifecycle
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import type { Harness, HarnessLifecycle } from '@weavecode/core/harness';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 
 /**
  * 生命周期思维导图（Weave 画布第二视图，项目形态）：每个折叠根 = 一次
@@ -999,6 +999,7 @@ export function LifecycleMindmap({
   onOpenAnswer?: () => void;
 }) {
   const t = useT();
+  const tintClass = useCanvasTintClass();
   /** 生命周期表按会话 harness 取（D7——分组差异是 harness 知识，不写死 claude）。 */
   const lifecycle = HARNESS_LIFECYCLE[harness ?? HARNESS_ORDER[0] ?? 'claude'];
   const [events, setEvents] = useState<HookEventRow[] | null>(null);
@@ -1383,7 +1384,8 @@ export function LifecycleMindmap({
 
       <div
         className={cn(
-          'relative rounded-lg bg-neutral-950/40',
+          'relative rounded-lg',
+          tintClass,
           focusGroupId ? 'h-full border-0' : 'h-96 border border-edge/[0.06]',
         )}
         onClick={() => setDetailNode(null)}
@@ -1422,7 +1424,7 @@ export function LifecycleMindmap({
               style: { stroke: 'rgba(96,165,250,0.8)', strokeWidth: 2 },
             }}
           >
-            <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />
+            <CanvasBackground />
             <Controls showInteractive={false} />
           </ReactFlow>
         )}

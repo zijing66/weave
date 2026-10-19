@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Background,
   Controls,
   Handle,
   Position,
@@ -59,6 +58,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 
 /**
  * Weave 分类卡 = 纯配置状态视图：插件区 + 规则表单/列表 + 静态拓扑画布
@@ -432,6 +432,7 @@ export function HooksPanel({
   mode: FlowMode;
 }) {
   const t = useT();
+  const tintClass = useCanvasTintClass();
 
   const [rules, setRules] = useState<HookRule[] | null>(null);
   /** 项目模式：插件 effective 状态（`/hooks/plugins?projectId=` 已按项目级开关裁决）。 */
@@ -861,7 +862,7 @@ export function HooksPanel({
           </div>
         </CardHeader>
         <CardContent className="p-2">
-          <div className="h-80 rounded-lg border border-edge/[0.06] bg-neutral-950/40">
+          <div className={cn('h-80 rounded-lg border border-edge/[0.06]', tintClass)}>
             {/* 数据到位后才挂 ReactFlow — fitView 首帧就能对上铺满的图。 */}
             {nodes.length > 0 ? (
               <ReactFlow
@@ -877,10 +878,10 @@ export function HooksPanel({
                 deleteKeyCode={null}
                 defaultEdgeOptions={{
                   type: 'smoothstep',
-                  style: { stroke: 'rgba(255,255,255,0.25)', strokeWidth: 1.5 },
+                  style: { stroke: 'rgb(var(--w-edge) / 0.25)', strokeWidth: 1.5 },
                 }}
               >
-                <Background gap={14} size={1} color="rgba(255,255,255,0.06)" />
+                <CanvasBackground />
                 <Controls showInteractive={false} />
               </ReactFlow>
             ) : (
