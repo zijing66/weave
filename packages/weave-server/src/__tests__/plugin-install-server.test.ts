@@ -204,14 +204,22 @@ describe('daemon POST /projects/:id/install (category: plugin)', () => {
     expect(await installedKeys()).toContain('pack-b@weave');
   });
 
-  it('缺 name/sourceDir 拒绝；未知项目 404', async () => {
+  it('缺 name/sourceDir 拒绝；未知项目只对要项目锚点的类别 404', async () => {
     const missing = await post(`/projects/${projectId}/install`, {
       category: 'plugin',
       sourceDir: marketPackDir,
     });
     expect(missing.status).toBe(400);
-    const notFound = await post('/projects/9999/install', {
+    // 插件只有 user 档、与项目无关 → 未知项目 id 不挡（路由挂在 /projects/:id 下只是形状）
+    const pluginNoAnchor = await post('/projects/9999/install', {
       category: 'plugin',
+      name: 'x',
+      sourceDir: marketPackDir,
+    });
+    expect(pluginNoAnchor.status).toBe(201);
+    // 要项目锚点的类别（项目档 skill）照旧 404
+    const notFound = await post('/projects/9999/install', {
+      category: 'skill',
       name: 'x',
       sourceDir: marketPackDir,
     });
