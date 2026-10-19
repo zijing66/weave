@@ -2,9 +2,10 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { Harness } from '@weavecode/core';
 import type { PluginScope, PluginSurface } from '@weavecode/harness';
 import { hashFile } from '../install/fingerprint.js';
-import { fileAssetTargetDir } from '../install/file-assets.js';
+import { fileAssetTargetDir, type FileAssetCategory } from '../install/file-assets.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
@@ -191,12 +192,11 @@ const isCcPluginPack = (pack: ToolkitPack): boolean => pack.ccPack || pack.kind 
  * - CC 原生包（含 mods）× claude → **零项目落盘**（全局安装 + 项目 enabledPlugins，
  *   见 enable；宿主不加载项目插件位副本）；
  * - skills × codex → `.codex/skills/`（Codex 无插件机制，只能表面解包）；
- * - 裸表面 × claude → `.claude/skills|commands|agents/`；非 `targets` 内的
- *   harness 表面零条目。
+ * - 裸表面 × `targets` 里每个 harness → 各自的 `skills|commands|agents` 项目面
+ *   （surface 报「无此面」即跳过）；非 `targets` 内的 harness 表面零条目。
  */
 async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<FileCopy[]> {
   const plan: FileCopy[] = [];
-  const claude = pack.targets.includes('claude');
 
   if (pack.skills.length > 0) {
     for (const harness of pack.targets) {
@@ -213,24 +213,43 @@ async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<Fi
     }
   }
 
-  // 裸表面包的单文件资产（claude-only：codex 无对应项目表面）
-  if (claude && !isCcPluginPack(pack)) {
-    for (const [dirName, category] of [
-      ['commands', 'command'],
-      ['agents', 'agent'],
-    ] as const) {
-      const srcBase = path.join(pack.dir, dirName);
-      const files: Array<{ rel: string; abs: string }> = [];
-      await walkFiles(srcBase, '', files);
-      if (files.length === 0) continue;
-      const targetDir = fileAssetTargetDir(category, 'claude', 'project', projectPath, homedir());
-      for (const f of files) {
-        const name = f.rel.split('/').pop()!;
-        plan.push({ src: f.abs, rel: toPosix(path.relative(projectPath, path.join(targetDir, name))) });
+  // 裸表面包的单文件资产：有没有这个项目级表面归 surface 自己说（无面即抛 → 跳过）
+  if (!isCcPluginPack(pack)) {
+    for (const harness of pack.targets) {
+      for (const [dirName, category] of [
+        ['commands', 'command'],
+        ['agents', 'agent'],
+      ] as const) {
+        const srcBase = path.join(pack.dir, dirName);
+        const files: Array<{ rel: string; abs: string }> = [];
+        await walkFiles(srcBase, '', files);
+        if (files.length === 0) continue;
+        const targetDir = projectAssetDir(category, harness, projectPath);
+        if (!targetDir) continue;
+        for (const f of files) {
+          const name = f.rel.split('/').pop()!;
+          plan.push({
+            src: f.abs,
+            rel: toPosix(path.relative(projectPath, path.join(targetDir, name))),
+          });
+        }
       }
     }
   }
   return plan;
+}
+
+/** 该 harness 的项目级单文件资产落点；null = 没有这个面。 */
+function projectAssetDir(
+  category: FileAssetCategory,
+  harness: Harness,
+  projectPath: string,
+): string | null {
+  try {
+    return fileAssetTargetDir(category, harness, 'project', projectPath, homedir());
+  } catch {
+    return null;
+  }
 }
 
 function toPosix(p: string): string {

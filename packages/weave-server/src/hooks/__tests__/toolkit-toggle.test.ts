@@ -10,6 +10,7 @@ import { ProjectRepository, type ProjectRow } from '../../repositories/projects.
 import { PluginStateRepository } from '../../repositories/plugin-states.js';
 import { LibraryRepository } from '../../repositories/libraries.js';
 import { hashFile } from '../../install/fingerprint.js';
+import { assetSurfaceFor } from '../../surfaces.js';
 import {
   ToolkitService,
   ToolkitError,
@@ -466,6 +467,40 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     await service.disable(project.id, 'hook-mod');
     expect(await enabledPluginsOf(projectDir)).toEqual({ 'hook-mod@tk-mkt': false });
     expect(await installedKeys()).toContain('hook-mod@tk-mkt');
+  });
+
+  it('裸表面 × 多 targets：单文件资产按各 harness 的 surface 落点走，无此面的跳过不报错', async () => {
+    // 把 codex 的资产面重造成「有项目级 command 面」——这段循环里若还有 claude
+    // 字面量，'bare-dual' 的 command 就不会落到 codex 侧。
+    const codex = assetSurfaceFor('codex');
+    const origTargetDir = codex.targetDir;
+    codex.targetDir = (category, scope, projectPath) => {
+      if (category === 'command' && scope === 'project') {
+        return path.join(projectPath, '.codex', 'commands');
+      }
+      throw new Error(`no codex ${scope} surface for ${category}`);
+    };
+
+    const bare = path.join(extRoot, 'bare-dual');
+    await mkdir(path.join(bare, 'commands'), { recursive: true });
+    await writeFile(path.join(bare, 'commands', 'hello.md'), '# hello\n');
+    await mkdir(path.join(bare, 'agents'), { recursive: true });
+    await writeFile(path.join(bare, 'agents', 'helper.md'), '# helper\n');
+    await writeFile(path.join(bare, 'weave.json'), JSON.stringify({ targets: ['claude', 'codex'] }));
+
+    try {
+      const { pack } = await service.enable(project.id, 'bare-dual');
+      expect(pack.targets).toEqual(['claude', 'codex']);
+      const landed = await snapshot(projectDir);
+      // claude 照旧
+      expect(landed['.claude/commands/hello.md']).toBeTruthy();
+      expect(landed['.claude/agents/helper.md']).toBeTruthy();
+      // codex：有 command 面就落它自己的落点，agent 面仍无 → 跳过而不抛错
+      expect(landed['.codex/commands/hello.md']).toBeTruthy();
+      expect(landed['.codex/agents/helper.md']).toBeUndefined();
+    } finally {
+      codex.targetDir = origTargetDir;
+    }
   });
 
   it('uninstall：CC/mod 包从 harness 全局卸载 + 关项目启用；幂等（未安装不发 CLI）；表面包清扫等同 disable', async () => {

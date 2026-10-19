@@ -309,11 +309,23 @@ if (!isCcPluginPack(pack)) {
 即无该面 → 跳过），而不是在 server 里列 codex/claude。今天 codex 的
 `targetDir` 对 `command/agent/workflow/rule/output-style` 会抛 → 行为不变。
 
+### 落地偏差（实施时定）
+
+- 分类仍是写死的两行（`commands→command`、`agents→agent`）：包模型
+  （`ToolkitPack.skills`）只认这两个源目录，改成遍历全部 `FILE_ASSET_CATEGORIES`
+  会凭空多落 `workflow/rule/output-style`——那是行为变更，不在 R4 范围内。
+- 「有没有这个面」的判定收成一个小函数 `projectAssetDir`（try/catch 即 surface
+  口径），循环体只做 plan.push。
+- 验收单测没法只靠「codex 抛错」证伪（那样改不改都过），故把 codex 的
+  `targetDir` 在测试里重造成「有项目级 command 面」：`targets: ['claude','codex']`
+  的裸表面包必须落到 codex 自己的落点，agent 面照旧跳过——残留 claude 字面量
+  就会露馅（`toolkit-toggle.test.ts`）。
+
 ### 验收
 
 - 现有 toolkit 测试全绿（codex 目标包不会多落文件、claude 包文件数不变）。
 - 新增单测：manifest `targets: ['claude','codex']` 的裸表面包 → claude 一份、
-  codex 侧因 surface 抛错而跳过且不报错。
+  codex 侧按它自己的面落盘、无面处跳过且不报错。
 
 ### 风险 / 回滚
 
