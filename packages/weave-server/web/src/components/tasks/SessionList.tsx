@@ -21,9 +21,9 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 const ACTION_BTN =
   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200';
 
-/** 活动序重排落地周期：事件流实时刷新行数据与成员增删，但既有行的重排只由
- *  这个定时器统一落地，避免会话更新时列表频繁跳动。 */
-export const RESORT_INTERVAL_MS = 10_000;
+/** 活动序重排落地周期（1 分钟）：事件流实时刷新行数据与成员增删，但既有行的
+ *  重排只由这个定时器统一落地——活跃会话多在动时，更短的周期就是一直在滑。 */
+export const RESORT_INTERVAL_MS = 60_000;
 /** FLIP 位移动画时长：周期重排时卡片从旧位滑到新位。 */
 const FLIP_DURATION_MS = 450;
 
