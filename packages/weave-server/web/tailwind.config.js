@@ -43,7 +43,12 @@ const NEUTRAL_LIGHT = {
  *  文字侧退到 700/800 是为了浅色底上的对比度——600 只有 ~3:1，偏黄的色系 700 也才 ~4:1。 */
 const FLIP = { 50: '950', 100: '950', 200: '900', 300: '800', 400: '700', 500: '500', 600: '600', 700: '700', 800: '200', 900: '100', 950: '50' };
 const WEAK = new Set(['amber', 'cyan', 'emerald', 'lime', 'orange', 'teal']);
-const flipShade = (family, shade) => (shade === '400' && WEAK.has(family) ? '800' : FLIP[shade]);
+/** 400 的浅色落点按色系单独定：WEAK 一律退 800 是为了文字对比度，但 emerald 800
+ *  （#065f46）在白底上与正文灰（#525252）几乎分不出「是绿的」——而「绿 = 终端已开 /
+ *  成功」全靠这点色相，图标上看不出来就等于没有这个信号。emerald 只退到 600。 */
+const LIGHT_400 = { emerald: '600' };
+const flipShade = (family, shade) =>
+  shade === '400' ? (LIGHT_400[family] ?? (WEAK.has(family) ? '800' : FLIP[shade])) : FLIP[shade];
 
 const triple = (hex) => {
   const h = hex.replace('#', '');
