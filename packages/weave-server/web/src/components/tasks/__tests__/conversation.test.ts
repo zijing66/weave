@@ -242,7 +242,7 @@ describe('attachDeliveries', () => {
     expect(outbox.map((m) => m.id)).toEqual(['m3']);
   });
 
-  it('⑧ 已送达即退出待发送（气泡随 UPS 事件来）：未回执也算送出，被闸住的才留', () => {
+  it('⑧ 已送达但气泡还没来的留在队列里（「发出去了、还没落进对话」正是要显示的那段）', () => {
     const { outbox } = attachDeliveries(
       [userEntry],
       [
@@ -251,7 +251,15 @@ describe('attachDeliveries', () => {
         delivery({ id: 'm-blocked', text: '等回执超时', at: at(22), status: 'delivered', stalled: true }),
       ],
     );
-    expect(outbox.map((m) => m.id)).toEqual(['m-pending', 'm-blocked']);
+    expect(outbox.map((m) => m.id)).toEqual(['m-sent', 'm-pending', 'm-blocked']);
+  });
+
+  it('⑨ 气泡一到它就退出队列（同一条消息只在一处露面）', () => {
+    const rows = [
+      delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivered', settledAt: at(10) }),
+    ];
+    expect(attachDeliveries([], rows).outbox.map((m) => m.id)).toEqual(['m1']);
+    expect(attachDeliveries([userEntry], rows).outbox).toEqual([]);
   });
 });
 

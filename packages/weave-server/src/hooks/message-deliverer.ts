@@ -488,7 +488,8 @@ export class MessageDeliverer {
    * 在途视图（GET /sessions/:id/messages）：promptbox 待递送 ∪ 内存态——
    * 在途（delivering/running）与 failed/timeout/暂停闸成因常驻；delivered/
    * injected/succeeded 在驻留窗口（visibleTtlMs）内展示 via/acked，过后消失
-   * （历史在目标会话自己的转录里）。
+   * （历史在目标会话自己的转录里）。例外 = **已送达还没回执**的：过了窗口也留着，
+   * 它就是「还没落进对话」，等回执或未回执闸落定再说。
    */
   listVisible(sessionId: string): PipeMessage[] {
     const ttl = this.deps.visibleTtlMs ?? VISIBLE_TTL_MS;
@@ -526,7 +527,10 @@ export class MessageDeliverer {
         continue;
       }
       const settled = msg.settledAt ? Date.parse(msg.settledAt) : NaN;
-      if (!Number.isNaN(settled) && now - settled < ttl) out.push(msg);
+      // 送达未回执 = 在飞（气泡还没来）：窗口过了也别撤，否则队列里那条先消失、
+      // 等到未回执闸落定时又冒出来，看着像发丢了。
+      const unacked = msg.status === 'delivered' && msg.acked !== true;
+      if (unacked || (!Number.isNaN(settled) && now - settled < ttl)) out.push(msg);
     }
     return out.sort((a, b) => (a.at < b.at ? -1 : 1));
   }

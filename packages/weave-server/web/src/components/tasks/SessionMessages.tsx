@@ -260,8 +260,9 @@ function claims(entryText: string, rowText: string, hasImages = false): boolean 
  * 投递行归位：同文案、时刻相近的事件条目认领它（气泡上挂状态/回执点，不重复渲染）；
  * **认领不到的不进对话**——对话里的气泡只能是会话真说过的话（hook 事件），
  * 还没送出去 / 送失败 / 被暂扣的行混进来就是凭空多一条消息。它们归发送端那条
- * 独立的队列面（`outbox`），可见期沿用服务端驻留窗口（settled 60s、
- * failed/timeout/stalled 常驻），本视图不再另设窗口。
+ * 独立的队列面（`outbox`）——**已送达、气泡还没来的也在里面**：那一段正是
+ * 「发出去了、还没落进对话」的过程，抹掉它新发的消息就凭空消失一下再冒出来。
+ * 可见期由服务端给，本视图不另设窗口。
  */
 export function attachDeliveries(
   entries: readonly ConvEntry[],
@@ -297,10 +298,10 @@ export function attachDeliveries(
     const pipe = claim(entry);
     return pipe ? { ...entry, pipe } : entry;
   });
-  // 已送达 = 已进会话自己的收件箱（活着的会话一定会发出 UPS，气泡随之而来）：
-  // 它不再属于「待发送」，队列里只留还没送出去的、送失败的、和被闸住的。
+  // 没被气泡认领的一律留在队列里：「已送达」只说明交给了会话，不代表它已落进对话
+  // （气泡随会话自己的 UPS 事件来）。认领即退场，同一条消息不会两处都露。
   const outbox = deliveries
-    .filter((m) => !taken.has(m.id) && (m.status !== 'delivered' || m.stalled === true))
+    .filter((m) => !taken.has(m.id))
     .sort((a, b) => a.at.localeCompare(b.at));
   return { thread: out, outbox };
 }

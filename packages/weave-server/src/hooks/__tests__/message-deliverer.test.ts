@@ -1845,9 +1845,9 @@ describe('MessageDeliverer 裁决表', () => {
     expect(visible[0]).toMatchObject({ status: 'pending', channel: 'prompt', text: 'pending one' });
   });
 
-  // ---- 终态驻留（决定①）：delivered 在窗口内展示 via/acked，窗口过后消失 ----
+  // ---- 终态驻留（决定①）：delivered 在窗口内展示 via/acked；未回执的跨窗留着 ----
 
-  it('终态驻留：socket 直投 delivered 带 via/settledAt 短时可见，窗口过后消失', async () => {
+  it('终态驻留：socket 直投 delivered 带 via/settledAt，未回执时跨窗也留着，回执到了才退场', async () => {
     const path = uniqueInboxPath();
     const inbox = await fakeInboxAt(path, () => {});
     const fake = createFakeSpawn();
@@ -1878,6 +1878,10 @@ describe('MessageDeliverer 裁决表', () => {
     });
     expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(id);
     await new Promise((r) => setTimeout(r, 160));
+    // 没回执 = 还在飞：跨过窗口也露着（撤掉它这条先消失、闸落定时又冒出来）
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(id);
+    deliverer.onSessionPrompt(SESSION_ID, 'ttl visibility body');
+    // 回执到了、驻留窗口又早已过：从在途视图退场（历史在转录里，气泡认领它）
     expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(id);
     inbox.close();
   });
