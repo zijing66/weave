@@ -253,6 +253,20 @@
   animation: drawer-backdrop-fade 200ms ease-out;
 }
 
+/* 对话气泡底部那枚折叠箭头：轻轻上下浮动，提示这里点得动（只动 transform）。 */
+@keyframes weave-fold-arrow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(2px);
+  }
+}
+.weave-fold-arrow {
+  animation: weave-fold-arrow 1.6s ease-in-out infinite;
+}
+
 /* ReactFlow 左下角 Controls（zoom±/fitView）暗色主题覆盖：
    xyflow 默认白底浅色按钮，在暗色仪表盘上看不清。
    选择器加 .react-flow__controls 前缀提升特异性，保证覆盖 import 进
