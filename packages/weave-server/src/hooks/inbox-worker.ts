@@ -21,6 +21,7 @@ import type { WatchEngine } from './watch-engine.js';
 import type { SequenceEngine } from './sequence-engine.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
+import type { SideQuestionEvent } from './side-questions.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -332,6 +333,8 @@ export interface IngestedHandlerDeps {
   };
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
+  sideQuestions?: { onEvent(input: SideQuestionEvent): void };
   /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
@@ -373,6 +376,16 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         sessionId: record.input.sessionId,
         source: record.input.source,
         payload,
+      });
+      // 旁路会话（/btw）：宿主不给这类 fork 留转录，判据归 harness 能力面；
+      // 只有 weave 自己发过问、且还在窗口里时才认领（人工在宿主面板里发的侧问
+      // 不该被挂到我们这条历史上）。
+      deps.sideQuestions?.onEvent({
+        sessionId: record.input.sessionId,
+        source: record.input.source,
+        eventType: record.input.eventType,
+        payload,
+        eventId: record.eventId,
       });
       deps.watchEngine?.onEvent({
         sessionId: record.input.sessionId,

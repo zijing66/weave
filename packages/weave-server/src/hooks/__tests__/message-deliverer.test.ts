@@ -86,6 +86,7 @@ function relaySurface(resolve: (sessionId: string) => { name: string } | null = 
     inject: { rideEvents: ['UserPromptSubmit'] },
     headless: null,
     idleSignals: ['Stop'],
+    sideQuestion: null,
   };
   return { relay, surface };
 }

@@ -904,6 +904,44 @@ export class MessageDeliverer {
   }
 
   /**
+   * 旁路会话（claude = `/btw`）：问句经层② 终端打进会话 pane——宿主的侧问只
+   * 活在 TUI 里（`claude -p "/btw …"` 直说不支持这个环境），也不落任何文件，
+   * 故终端击键是唯一通道。不入队、不布防回执：回答不是 UPS 而是之后的一条
+   * 采集事件（认领见 `hooks/side-questions.ts`）。
+   *
+   * 返回归一化后的问句（已过 harness 的形态校验）：调用方据此落历史行。
+   */
+  async askSideQuestion(
+    sessionId: string,
+    question: string,
+  ): Promise<{ ok: true; question: string } | { ok: false; status: 400 | 404 | 409; error: string }> {
+    if (!this.deps.sessions.getBySessionId(sessionId)) {
+      return { ok: false, status: 404, error: 'Session not found' };
+    }
+    const surface = this.surfaceOfSession(sessionId);
+    const spec = surface?.sideQuestion ?? null;
+    if (!spec) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          surface?.unsupportedReasons?.sideQuestion ??
+          '这个 harness 没有旁路会话通道',
+      };
+    }
+    const valid = spec.validate(question);
+    if (!valid.ok) return { ok: false, status: 400, error: valid.error };
+    const target = await this.sessionKeysTarget(sessionId, '发起旁路会话');
+    if (!target.ok) return target;
+    try {
+      await target.terminal.sendText(target.paneId, spec.command(valid.text));
+      return { ok: true, question: valid.text };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * 键序注入路径（作答 / 中断 / 关 pane）共用的落点解析：会话 → 项目 → 终端通道
    * → pane。全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP；
    * 两条 409 是给用户看的（web 直拼在「停止失败：」这类动作名后面），故写成中文

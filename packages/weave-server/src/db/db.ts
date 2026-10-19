@@ -113,6 +113,24 @@ CREATE TABLE IF NOT EXISTS session_watches (
 );
 CREATE INDEX IF NOT EXISTS idx_session_watches_target ON session_watches(target_session_id, fired_at);
 
+-- 旁路会话（claude = /btw）：宿主侧问的问题与回答**都不落任何文件**（侧问查询开着
+-- skipTranscript，面板历史只在宿主内存里），故 weave 自己发出去的问题只能记在这；
+-- 回答由采集事件认领（answer_event_id 指回那条 SubagentStop，answer 存原文——
+-- 事件会按保留策略清掉，而这条问答是用户的历史）。
+-- status: pending（已打出、等回答）| answered（认领到）| timeout（超窗没等到）。
+CREATE TABLE IF NOT EXISTS side_questions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT NOT NULL,
+  project_id      INTEGER,
+  question        TEXT NOT NULL,
+  answer          TEXT,
+  answer_event_id INTEGER,
+  status          TEXT NOT NULL,
+  asked_at        TEXT NOT NULL,
+  answered_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_side_questions_session ON side_questions(session_id, id);
+
 -- 跨会话序列（批 3）：手工编排的多步链。steps JSON = [{to,text,mode,
 -- messageId?}]，messageId 为步触发后回填的管道发号（内存关联）；
 -- cursor = 正在等待完成的步下标。引擎无内存权威态，全部状态在行。

@@ -33,6 +33,7 @@ import { UPLOAD_MAX_BYTES, UPLOAD_MEDIA_TYPES, type UploadRow } from '../reposit
 import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
+import { readSideQuestions } from '../hooks/side-questions.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -71,6 +72,9 @@ const ToggleBody = z.object({ enabled: z.boolean() });
 const PluginToggleBody = z.object({ enabled: z.boolean(), projectId: z.number().int().optional() });
 
 const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
+
+/** 旁路会话（/btw）提问：形态校验（单行/长度）归 harness 的 SideQuestionSpec。 */
+const SideQuestionBody = z.object({ question: z.string().min(1).max(4_000) });
 
 const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
 
@@ -538,6 +542,7 @@ export async function handleHooksRoutes(
         deliverer: deps.messageDeliverer,
         watches: deps.sessionWatches,
         questions: deps.questionTracker,
+        sideQuestions: deps.sideQuestions?.repo,
         probe: deps.sessionProbe,
         uploads: deps.uploads,
       },
@@ -919,6 +924,54 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 旁路会话（claude = /btw）：问句经层② 终端打进 pane ----
+  // 宿主侧问开着 skipTranscript，问与答**都不落盘**（面板历史只在宿主内存里），
+  // 所以问句只有 weave 自己发过才知道——落 side_questions 是这条历史的唯一出处。
+  const sideAskMatch = pathname.match(/^\/sessions\/([^/]+)\/side-question$/);
+  if (sideAskMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer || !deps.sideQuestions) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(sideAskMatch[1]!);
+    let body: z.infer<typeof SideQuestionBody>;
+    try {
+      body = SideQuestionBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const result = await deps.messageDeliverer.askSideQuestion(sessionId, body.question);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    const row = deps.sideQuestions.repo.insert({
+      sessionId,
+      projectId: deps.hookSessions?.getBySessionId(sessionId)?.projectId ?? null,
+      question: result.question,
+    });
+    sendJson(res, 200, { ok: true, sideQuestion: row });
+    return true;
+  }
+
+  const sideListMatch = pathname.match(/^\/sessions\/([^/]+)\/side-questions$/);
+  if (sideListMatch && req.method === 'GET') {
+    if (!deps.sideQuestions) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(sideListMatch[1]!);
+    const limitRaw = Number(url.searchParams.get('limit'));
+    const beforeRaw = Number(url.searchParams.get('beforeId'));
+    const rows = readSideQuestions(deps.sideQuestions, sessionId, {
+      limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 20,
+      beforeId: Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : undefined,
+    });
+    sendJson(res, 200, { sideQuestions: rows });
+    return true;
+  }
+
   // ---- 空闲订阅域（session-orchestration 批 2）：one-shot「空闲时提醒我」 ----
   const watchMatch = pathname.match(/^\/sessions\/([^/]+)\/watch$/);
   if (watchMatch) {
@@ -1211,6 +1264,8 @@ export async function handleHooksRoutes(
         watch: surface.idleSignals.length > 0,
         /** 图片随 prompt 的对齐面（null = 该 harness 不收图，附件钮置灰）。 */
         imageAttach: surface.imageAttach !== null,
+        /** 旁路会话（侧问）通道；false = 该 harness 没有这种机制（入口不渲染）。 */
+        sideQuestion: surface.sideQuestion !== null,
         unsupportedReasons: surface.unsupportedReasons ?? null,
       })),
     });

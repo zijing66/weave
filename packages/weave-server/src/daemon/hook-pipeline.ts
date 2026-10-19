@@ -9,6 +9,7 @@ import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from
 import { promptboxPathOf } from '../hooks/promptbox.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
+import type { SideQuestionEvent } from '../hooks/side-questions.js';
 import {
   startInboxWorker,
   handleIngestedRecords,
@@ -35,6 +36,8 @@ export interface HookPipelineDeps {
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
   /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 旁路会话回答认领（claude = /btw）：同透传（判据归 harness 能力面）。 */
+  sideQuestions?: { onEvent(input: SideQuestionEvent): void };
   /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
@@ -161,6 +164,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         sequenceEngine: deps.sequenceEngine,
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
+        sideQuestions: deps.sideQuestions,
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
       },

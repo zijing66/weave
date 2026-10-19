@@ -20,6 +20,8 @@ import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
+import { SideQuestionRepository } from '../repositories/side-questions.js';
+import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -219,6 +221,10 @@ export function startDaemon(): void {
     },
   });
   questionTracker.seedFromDb();
+  // 旁路会话历史（claude = /btw）：宿主两侧都不落盘，只有 weave 自己发过的问句
+  // 才知道——回答由采集事件认领回来（判据归 harness 能力面）。
+  const sideQuestions = new SideQuestionRepository(db);
+  const sideQuestionDeps: SideQuestionDeps = { repo: sideQuestions, bus: hookBus };
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -305,6 +311,7 @@ export function startDaemon(): void {
     watchEngine,
     sequenceEngine,
     questions: questionTracker,
+    sideQuestions,
     probe: sessionProbe,
     uploads,
   });
@@ -322,6 +329,7 @@ export function startDaemon(): void {
     sequenceEngine,
     messagePipe: messageDeliverer,
     questionTracker,
+    sideQuestions: { onEvent: (input) => void claimSideAnswer(sideQuestionDeps, input) },
     sessionProbe,
     uploads,
   });
@@ -355,6 +363,7 @@ export function startDaemon(): void {
     messageDeliverer,
     uploads,
     questionTracker,
+    sideQuestions: sideQuestionDeps,
     sessionWatches,
     watchEngine,
     sessionSequences,

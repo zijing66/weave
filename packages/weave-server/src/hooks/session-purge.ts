@@ -2,6 +2,7 @@ import type { HookDispatchRepository } from '../repositories/hook-dispatches.js'
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
+import type { SideQuestionRepository } from '../repositories/side-questions.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
@@ -20,6 +21,8 @@ export interface SessionPurgeDeps {
   questions?: Pick<QuestionTracker, 'forgetSession'>;
   /** 转录探测：内存里的 transcriptPath 一并清（不计数）。 */
   probe?: { forget(sessionId: string): void };
+  /** 旁路会话历史：该会话的侧问行一并清（不计数；这是会话的附属品）。 */
+  sideQuestions?: Pick<SideQuestionRepository, 'deleteBySession'>;
   /** 上传件（不计数）：事件清完顺带回收再没有人引用的图（文件 + 行）。 */
   uploads?: { pruneUnreferenced(): number };
 }
@@ -40,6 +43,7 @@ export function purgeSession(
   deps.watches?.deleteBySession(sessionId);
   deps.sequences?.deleteMentioning(new Set([sessionId]));
   deps.questions?.forgetSession(sessionId);
+  deps.sideQuestions?.deleteBySession(sessionId);
   deps.probe?.forget(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };

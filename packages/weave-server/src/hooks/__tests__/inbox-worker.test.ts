@@ -404,6 +404,35 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(noted).toEqual([['s1', 'deepseek-flash']]);
   });
 
+  it('旁路回答认领收到解析后的载荷与事件 id（帧域不带 raw，判据只能挂在 ingest 上）', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const seen: Array<Record<string, unknown>> = [];
+    const deps = { projects, hooksDir, bus, sideQuestions: { onEvent: (e) => seen.push(e) } };
+
+    const raw = { agent_transcript_path: '/nowhere.jsonl', last_assistant_message: '旁路答案' };
+    const payload = JSON.stringify({ eventType: 'SubagentStop', raw });
+    const eventId = hookEvents.insert({
+      projectId: project.id,
+      source: 'claude',
+      eventType: 'SubagentStop',
+      sessionId: 's1',
+      payload,
+    });
+    handleIngestedRecords(deps, [
+      {
+        eventId,
+        projectId: project.id,
+        input: { projectId: project.id, source: 'claude', eventType: 'SubagentStop', sessionId: 's1', payload },
+      },
+    ]);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ sessionId: 's1', source: 'claude', eventType: 'SubagentStop', eventId });
+    expect((seen[0]!.payload as { raw: unknown }).raw).toEqual(raw);
+  });
+
   it('SessionStart 交给会话探测：带 model 就报真名，resume 不带也要说一声（旧答案作废重读）', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

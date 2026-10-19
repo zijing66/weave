@@ -25,6 +25,8 @@ import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
+import { SideQuestionRepository } from '../repositories/side-questions.js';
+import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -212,6 +214,9 @@ async function main(): Promise<void> {
     },
   });
   questionTracker.seedFromDb();
+  // 旁路会话历史（claude = /btw）：与生产入口同一装配——见 start.ts 的说明。
+  const sideQuestions = new SideQuestionRepository(db);
+  const sideQuestionDeps: SideQuestionDeps = { repo: sideQuestions, bus: hookBus };
   const watch = new WatchService(projects);
   watch.start();
   // 数据变更帧总线 + 终端世界隐藏刷新（角标 + 会话分块）：前端不再轮询，改由
@@ -287,6 +292,7 @@ async function main(): Promise<void> {
     watchEngine,
     sequenceEngine,
     questions: questionTracker,
+    sideQuestions,
     probe: sessionProbe,
     uploads,
   });
@@ -304,6 +310,7 @@ async function main(): Promise<void> {
     sequenceEngine,
     messagePipe: messageDeliverer,
     questionTracker,
+    sideQuestions: { onEvent: (input) => void claimSideAnswer(sideQuestionDeps, input) },
     sessionProbe,
     uploads,
   });
@@ -336,6 +343,7 @@ async function main(): Promise<void> {
     messageDeliverer,
     uploads,
     questionTracker,
+    sideQuestions: sideQuestionDeps,
     sessionWatches,
     watchEngine,
     sessionSequences,

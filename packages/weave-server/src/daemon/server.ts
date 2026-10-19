@@ -24,6 +24,7 @@ import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
+import type { SideQuestionDeps } from '../hooks/side-questions.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -198,6 +199,9 @@ export interface WeaveServerDeps {
   uploads?: UploadRepository;
   /** 阻塞问答跟踪器（AskUserQuestion / 计划与权限确认）；/messaging/questions 与 /sessions/:id/answer 依赖它。 */
   questionTracker?: QuestionTracker;
+  /** 旁路会话历史（claude = /btw）：问句只有 weave 自己发过才知道，故得自己记；
+   *  `/sessions/:id/side-question(s)` 与删会话级联依赖它。 */
+  sideQuestions?: SideQuestionDeps;
   /** 空闲订阅存储（批 2）；POST/DELETE /sessions/:id/watch 与 GET /messaging/watches 依赖它。 */
   sessionWatches?: SessionWatchRepository;
   /** Web Push 订阅存储；POST /messaging/push/(un)subscribe 依赖它。 */

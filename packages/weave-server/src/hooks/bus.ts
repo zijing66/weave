@@ -99,6 +99,8 @@ export type HookBusMessage =
       count: number;
       at: string;
     }
+  // ---- 旁路会话域：一条侧问认领到回答（旁路弹窗据此重拉历史） ----
+  | { kind: 'sideQuestion.answered'; sessionId: string; sideQuestionId: number; at: string }
   // ---- 序列域（session-orchestration 批 3）：步触发/终态广播（编排画布实时） ----
   | { kind: 'sequence.step'; sequenceId: number; cursor: number; at: string }
   | {
