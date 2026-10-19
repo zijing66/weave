@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { HookRule } from '@weavecode/core';
+import type { Harness, HookRule } from '@weavecode/core';
 import { hookSourceHarness } from '@weavecode/core';
 import { getDataDir } from '../db/paths.js';
 import type { ProjectRow, ProjectRepository } from '../repositories/projects.js';
@@ -44,6 +44,12 @@ export function outboxPathOf(hooksDir: string, shardId: string): string {
 export interface MirrorRule {
   id: string;
   name: string;
+  /**
+   * 归属 harness（'any' = 各 harness 都该吃）。同一项目的各 harness 共读一份
+   * 镜像，故必须逐条盖章、由生成脚本按自己的 harness 过滤——不能在这一侧按某个
+   * harness 剪枝。
+   */
+  harness: Harness | 'any';
   events: string[];
   tools: string[] | null;
   globs: string[] | null;
@@ -60,9 +66,8 @@ export interface HookMirrorDoc {
 
 /**
  * 项目 → hook 本地注入计划。只投影 inject 规则（manual/webhook/log/plugin 的
- * 动作都在消费侧）：harness 必须是 claude（hook-handler.cjs 只挂在 Claude Code）；
- * crossProjectOnly 需要全项目表参与判定、hook 无法本地裁决 → 不投影，其注入走
- * outbox 顺延。
+ * 动作都在消费侧）；crossProjectOnly 需要全项目表参与判定、hook 无法本地裁决
+ * → 不投影，其注入走 outbox 顺延。
  */
 export function buildMirrorDoc(
   project: ProjectRow,
@@ -72,7 +77,6 @@ export function buildMirrorDoc(
   const mirrored = rules
     .filter((rule) => {
       if (rule.source.kind !== 'hook-event') return false;
-      if (hookSourceHarness(rule.source) !== 'claude') return false;
       if (rule.handler.type !== 'inject') return false;
       if (!rule.enabled) return false;
       if (rule.projectId !== null && rule.projectId !== project.id) return false;
@@ -83,6 +87,7 @@ export function buildMirrorDoc(
     .map((rule) => ({
       id: rule.id,
       name: rule.name,
+      harness: hookSourceHarness(rule.source) ?? 'claude',
       events: [rule.source.kind === 'hook-event' ? rule.source.event : ''],
       tools: rule.filter.toolNames?.length ? [...rule.filter.toolNames] : null,
       globs: rule.filter.pathGlobs?.length ? [...rule.filter.pathGlobs] : null,

@@ -99,24 +99,29 @@ hooks 时：一份文档、两个脚本读——zcode 脚本会看见 claude 的
 
 ### 目标（向后兼容的加法，**不升 `MIRROR_VERSION`**）
 
-1. `MirrorRule` 加 `harness: Harness`。
+1. `MirrorRule` 加 `harness: Harness | 'any'`（`hookSourceHarness` 的返回类型就带
+   `'any'`；`validateHandler` 只在**建规则**那侧拒 `'any'` 挂 inject，读侧不校验，
+   投影函数不能假设盘上的行一定过过那道闸）。
 2. `buildMirrorDoc` 去掉 claude 过滤，改为**逐条盖章**：
    ```ts
    .filter((rule) => {
-     if (rule.source.kind !== 'hook-event') return false;
-     if (hookSourceHarness(rule.source) === null) return false;   // 'any' 已由 validateHandler 拒
+     if (rule.source.kind !== 'hook-event') return false;   // 同时兜掉 webhook / legacy
      …
    })
    .map((rule) => ({ …, harness: hookSourceHarness(rule.source) ?? 'claude' }))
    ```
    一份文档装全项目所有 harness 的规则。
-3. `generateHookHandler(version, harness)` 增参：脚本里
+3. `generateHookHandler(version, harness = 'claude')` 增参：脚本里
    ```js
    const OWN_HARNESS = ${JSON.stringify(harness)};
-   // 老文档没有 harness 字段（存量都是 claude 规则）→ 缺省 claude
-   if ((rule.harness || 'claude') !== OWN_HARNESS) continue;
+   // 老文档没有 harness 字段（存量都是 claude 规则）→ 缺省 claude；'any' 通吃
+   var owner = rule.harness || 'claude';
+   if (owner !== 'any' && owner !== OWN_HARNESS) continue;
    ```
    与脚本里已有的 `INJECTABLE_EVENTS` / `TITLE_EVENTS` 同一种「镜像 server 表」写法。
+4. 顺带（同一处必需）：脚本里 inbox 行的 `source` 由字面量 `'claude'` 改取
+   `OWN_HARNESS`——否则新 harness 的事件会被记到 claude 名下。`INJECTABLE_EVENTS`
+   / `TITLE_EVENTS` 两个字面量仍留 P0（那时才有第二个 harness 的表可抄）。
 
 **不升版本的理由**：字段是增量、老脚本忽略它照旧工作（存量规则全是 claude），
 新脚本对缺字段按 claude 兜底。升版本会让**存量项目的静态注入在下一次

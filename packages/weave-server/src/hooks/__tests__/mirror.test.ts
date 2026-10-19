@@ -91,6 +91,24 @@ describe('buildMirrorDoc：只投影 hook 本地可裁决的 inject 规则', () 
     expect(doc.rules[1]!.globs).toBeNull();
   });
 
+  it('逐条盖章归属 harness：多 harness 的 inject 规则同进一份镜像，不在服务端剪枝', () => {
+    injectRule('claude-rule');
+    // 归属票来自 source.harness；storage 侧只允许具体 harness 挂 inject（'any' 只作
+    // 投影层的兜底），故这里绕过 registry 校验直接喂投影函数。
+    const rules = ['codex', 'any'].map((harness) => ({
+      ...registry.list()[0]!,
+      name: `${harness}-rule`,
+      source: { kind: 'hook-event' as const, harness: harness as 'codex' | 'any', event: 'PostToolUse' },
+    }));
+
+    const doc = buildMirrorDoc(projects.getById(projectId)!, [...registry.list(), ...rules], {});
+    const owner = new Map(doc.rules.map((r) => [r.name, r.harness]));
+    expect([...owner.keys()].sort()).toEqual(['any-rule', 'claude-rule', 'codex-rule']);
+    expect(owner.get('claude-rule')).toBe('claude');
+    expect(owner.get('codex-rule')).toBe('codex');
+    expect(owner.get('any-rule')).toBe('any');
+  });
+
   it('项目范围规则只进本项目的 mirror', () => {
     injectRule('scoped', { projectId });
     const doc = buildMirrorDoc(projects.getById(projectId)!, registry.list(), {});

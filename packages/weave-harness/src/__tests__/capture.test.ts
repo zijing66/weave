@@ -213,6 +213,16 @@ describe('generateHookHandler 版本标记', () => {
   it('脚本头带调用方传入的版本戳', () => {
     expect(generateHookHandler('3.2.1')).toContain('@version weave@3.2.1');
   });
+
+  it('脚本认领自己的 harness：镜像规则按归属票过滤，事件行 source 同源', () => {
+    const script = generateHookHandler('3.2.1', 'codex');
+    expect(script).toContain('const OWN_HARNESS = "codex";');
+    expect(script).toContain('source: OWN_HARNESS,');
+    expect(script).toContain("var owner = rule.harness || 'claude';");
+    expect(script).toContain('if (owner !==');
+    // 缺省 = claude（存量调用点不必逐个改）
+    expect(generateHookHandler('3.2.1')).toContain('const OWN_HARNESS = "claude";');
+  });
 });
 
 describe('scriptHealth 诊断探针（哪一支生效 + 脚本会不会上报）', () => {

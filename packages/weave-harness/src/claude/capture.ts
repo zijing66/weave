@@ -21,9 +21,10 @@ import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 /**
  * hook-handler 脚本（跨端契约正文见脚本头注释）。version 只作脚本内的 weave
  * 版本标记（`@version weave@<version>`，weave 特性文件的覆写判据），由调用方
- * 传入——harness 包不依赖 server（版本常量在那边）。
+ * 传入——harness 包不依赖 server（版本常量在那边）。harness = 这份脚本自己
+ * 归属的 harness：镜像里同时躺着同项目各 harness 的注入规则，脚本按此过滤。
  */
-export function generateHookHandler(version: string): string {
+export function generateHookHandler(version: string, harness: Harness = 'claude'): string {
   return `#!/usr/bin/env node
 /**
  * weave hook-handler — collects Claude Code hook events into the global weave
@@ -69,6 +70,7 @@ const OUTBOX_MAX_LINES = 200;
 const DEDUPE_WINDOW_MS = 60000;
 const DISPATCH_MARKER = '<!--weave-dispatch-->';
 const MIRROR_VERSION = 1;
+const OWN_HARNESS = ${JSON.stringify(harness)};
 
 // Ultimate safety net: never let this process outlive the hook window.
 const GUARD = setTimeout(function () { process.exit(0); }, HOOK_GUARD_MS);
@@ -337,7 +339,7 @@ async function main() {
 
   // 1. Collection first: a kill mid-injection still leaves the event on disk.
   appendInbox(path.join(hooksDir(), 'inbox'), token, {
-    source: 'claude',
+    source: OWN_HARNESS,
     eventType: eventType,
     sessionId: sessionId,
     cwd: parsed.cwd || projectDir,
@@ -360,7 +362,12 @@ async function main() {
     var dirty = false;
     for (var i = 0; i < mirror.rules.length; i++) {
       var rule = mirror.rules[i];
-      if (!rule || !Array.isArray(rule.events) || rule.events.indexOf(eventType) === -1) continue;
+      if (!rule) continue;
+      // 镜像按项目分片、同项目各 harness 共读一份，故规则自带归属票（缺省 = 老
+      // 镜像/老 daemon 写的那种，当年只有 claude 会进镜像）。
+      var owner = rule.harness || 'claude';
+      if (owner !== 'any' && owner !== OWN_HARNESS) continue;
+      if (!Array.isArray(rule.events) || rule.events.indexOf(eventType) === -1) continue;
       if (rule.tools && (!toolName || rule.tools.indexOf(toolName) === -1)) continue;
       if (rule.globs && rule.globs.length > 0) {
         if (!filePath || !matchAnyGlob(filePath, rule.globs)) continue;
