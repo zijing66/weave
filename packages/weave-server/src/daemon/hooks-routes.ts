@@ -827,17 +827,19 @@ export async function handleHooksRoutes(
         return draft ? [{ row, draft }] : [];
       });
     const [commit] = scan(deps.hookEvents.listByTools(sessionId, [spec.tool], null, PLAN_SCAN));
-    const [write] = scan(
-      deps.hookEvents.listByTools(sessionId, spec.writeTools, spec.fileHint, PLAN_SCAN),
-    );
     if (!commit) {
       sendJson(res, 200, { plan: null });
       return true;
     }
+    // 只认**提交之前**的那次写盘：之后的写盘属于下一轮计划，拿它当这一份的正文
+    // 就是张冠李戴（同一个会话可以来回好几轮计划模式）。
+    const [write] = scan(
+      deps.hookEvents.listByTools(sessionId, spec.writeTools, spec.fileHint, PLAN_SCAN),
+    ).filter((w) => w.row.id < commit.row.id);
     const text =
       commit.draft.text ??
-      write?.draft.text ??
       readPlanFile(commit.draft.filePath) ??
+      write?.draft.text ??
       readPlanFile(write?.draft.filePath ?? null);
     if (!text) {
       sendJson(res, 200, { plan: null });

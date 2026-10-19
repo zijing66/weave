@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../db/db.js';
@@ -327,6 +327,35 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
       plan: { eventId: number; text: string } | null;
     };
     expect(got2.plan).toMatchObject({ eventId: commit2, text: '# 计划二\n再改 B' });
+
+    // 只剩提交那次记下的路径（正文不在事件里）→ 现读文件（待批阅期间文件还在）
+    const livePath = path.join(hooksDir, 'plans', 'live.md');
+    await mkdir(path.dirname(livePath), { recursive: true });
+    await writeFile(livePath, '# 计划三\n现读的文件', 'utf8');
+    const commit3 = seedTool('sess-plan3', 'PostToolUse', {
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+      toolResponse: { plan: null, isAgent: false, filePath: livePath },
+    });
+    const got3 = (await (await get('/sessions/sess-plan3/plan')).json()) as {
+      plan: { eventId: number; text: string } | null;
+    };
+    expect(got3.plan).toMatchObject({ eventId: commit3, text: '# 计划三\n现读的文件' });
+
+    // 提交之后还有一次写盘：那是下一轮计划的正文，不许张冠李戴
+    seedTool('sess-plan4', 'PreToolUse', {
+      toolName: 'Write',
+      toolInput: { file_path: '/home/u/.claude/plans/z.md', content: '# 上一份' },
+    });
+    seedTool('sess-plan4', 'PreToolUse', { toolName: 'ExitPlanMode', toolInput: {} });
+    seedTool('sess-plan4', 'PreToolUse', {
+      toolName: 'Write',
+      toolInput: { file_path: '/home/u/.claude/plans/z.md', content: '# 下一份' },
+    });
+    const got4 = (await (await get('/sessions/sess-plan4/plan')).json()) as {
+      plan: { text: string } | null;
+    };
+    expect(got4.plan?.text).toBe('# 上一份');
 
     // 没进过计划模式的会话 = 常态，返回 null（前端不摆气泡）
     seed('sess-noplan', 'Stop');
