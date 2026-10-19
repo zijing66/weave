@@ -740,6 +740,11 @@ export class MessageDeliverer {
   onSessionPrompt(sessionId: string, prompt: string, eventId?: number): string[] {
     const seenRaw = normalizePromptText(stripInboxMarker(prompt));
     const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
+    const imageIds: string[] = [];
+    let hit = false;
+    // 一条 UPS 可以核销多条在途：宿主会把连着发的几条合成一次提交（终端里多行粘贴 /
+    // 队列合并），它们同属这条 UPS 的原文——只核销第一条，其余的会一路挂到未回执闸，
+    // 把该会话的队列误暂停。
     for (const msg of [...this.memory.values()].reverse()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
@@ -749,6 +754,7 @@ export class MessageDeliverer {
       const imageHit =
         (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
       if (!textHit && !imageHit) continue;
+      hit = true;
       this.memory.set(msg.id, {
         ...msg,
         acked: true,
@@ -758,17 +764,19 @@ export class MessageDeliverer {
       // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
       if (this.stalled.get(sessionId)?.messageId === msg.id) this.stalled.delete(sessionId);
       if (this.awaitingAck.get(sessionId) === msg.id) this.awaitingAck.delete(sessionId);
-      // 还有积压就继续排空（不必等下一次事件）
-      if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+      imageIds.push(...(msg.images?.map((i) => i.id) ?? []));
       this.bus({
         kind: 'message.acknowledged',
         messageId: msg.id,
         sessionId,
         at: new Date().toISOString(),
       });
-      return msg.images?.map((i) => i.id) ?? []; // 一条 UPS 只核销一条在途（新→旧找第一条匹配）
     }
-    return [];
+    // 还有积压就继续排空（不必等下一次事件）
+    if (hit && this.queuedSessions.has(sessionId)) {
+      this.scheduleFlushContinuation(sessionId);
+    }
+    return imageIds;
   }
 
   /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */

@@ -1166,6 +1166,51 @@ describe('MessageDeliverer 裁决表', () => {
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBe(true);
   });
 
+  it('一条 UPS 核销多条在途：宿主把连着发的两次合成一次提交，不能只认第一条', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '第一句正文（够长）',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const firstId = (first as { messageId: string }).messageId;
+    // 会话退出清掉了等待位（进程没了回执不会再来了），但它的行还在在途视图里未回执；
+    // 会话起回来再发一条 → 内存里此刻躺着两条未回执的 prompt 行
+    deliverer.sessionExited(SESSION_ID);
+    const second = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '第二句正文（够长）',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const secondId = (second as { messageId: string }).messageId;
+    expect(deliverer.getMessage(firstId)?.acked).toBeUndefined();
+    expect(deliverer.getMessage(secondId)?.acked).toBeUndefined();
+
+    // 宿主把两次粘贴合成一条 UPS 提交：一条回执核销两条（只核销首条的话，剩下那条
+    // 会一路挂到未回执闸，把该会话的队列误暂停）
+    deliverer.onSessionPrompt(SESSION_ID, '第一句正文（够长）\n第二句正文（够长）', 901);
+    expect(deliverer.getMessage(firstId)?.acked).toBe(true);
+    expect(deliverer.getMessage(secondId)?.acked).toBe(true);
+    expect(deliverer.getMessage(secondId)?.ackedEventId).toBe(901);
+  });
+
   it('中继不设超时：等多久都留在途中（等待发生在目标会话内，不得误判 timeout）', async () => {
     vi.useFakeTimers();
     try {
