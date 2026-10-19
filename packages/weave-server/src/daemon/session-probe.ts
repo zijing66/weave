@@ -109,6 +109,18 @@ export class SessionProbe {
   }
 
   /**
+   * 宿主开 / 恢复会话（`SessionStart`）：模型由宿主重新决定，此前的「最后已知」与
+   * 换模型闩一律作废、下一次问重新读——`--resume` 起来会落回默认模型，而转录里还
+   * 只有上一轮的照会，旧答案既可能不是此刻的模型、也会让 `switched` 的 stale 对照
+   * 永远对不上（新照会恰好等于 stale 时标签就再也改不回来）。带了真名就以它为准。
+   */
+  sessionStarted(sessionId: string, model: string | null): void {
+    this.known.delete(sessionId);
+    this.switched.delete(sessionId);
+    if (model) this.noteModel(sessionId, model);
+  }
+
+  /**
    * 转录还在不在：true/false；路径都不知道 → null（不猜）。
    *
    * 会话行是采集出来的、与转录那份文件同生不同死——转录被清理/删掉后列表照旧

@@ -1,7 +1,13 @@
 import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads';
-import { createRuntimeRegistry, frameFacts, switchedModelOf, type EventSource } from '@weavecode/harness';
+import {
+  createRuntimeRegistry,
+  frameFacts,
+  startedModelOf,
+  switchedModelOf,
+  type EventSource,
+} from '@weavecode/harness';
 import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
 import { openDatabase } from '../db/db.js';
 import { HookEventRepository, type HookEventInput } from '../repositories/hook-events.js';
@@ -330,6 +336,7 @@ export interface IngestedHandlerDeps {
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
+    sessionStarted(sessionId: string, model: string | null): void;
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
@@ -384,6 +391,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // 模型，切完不跑一轮就读不到——由事件先说，标签才跟着立刻变。
       const switchedModel = switchedModelOf(record.input.eventType, payload?.raw);
       if (switchedModel) deps.sessionProbe?.noteModel?.(record.input.sessionId, switchedModel);
+      // 开/恢复会话：模型由宿主重新决定（`--resume` 落回默认），旧的「最后已知」作废
+      // 重读；startup / compact 带了真名就直接用它。
+      const started = startedModelOf(record.input.eventType, payload?.raw);
+      if (started) deps.sessionProbe?.sessionStarted?.(record.input.sessionId, started.model);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。

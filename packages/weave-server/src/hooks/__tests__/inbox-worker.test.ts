@@ -384,6 +384,7 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
       sessionProbe: {
         noteTranscript: () => {},
         noteModel: (sessionId: string, model: string) => noted.push([sessionId, model]),
+        sessionStarted: () => {},
       },
     };
 
@@ -401,6 +402,40 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(noted).toEqual([]);
     handleIngestedRecords(deps, [record('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })]);
     expect(noted).toEqual([['s1', 'deepseek-flash']]);
+  });
+
+  it('SessionStart 交给会话探测：带 model 就报真名，resume 不带也要说一声（旧答案作废重读）', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const started: Array<[string, string | null]> = [];
+    const deps = {
+      projects,
+      hooksDir,
+      bus,
+      sessionProbe: {
+        noteTranscript: () => {},
+        noteModel: () => {},
+        sessionStarted: (sessionId: string, model: string | null) => started.push([sessionId, model]),
+      },
+    };
+
+    const record = (raw: Record<string, unknown>) => {
+      const eventType = 'SessionStart';
+      const payload = JSON.stringify({ eventType, raw });
+      return {
+        eventId: hookEvents.insert({ projectId: project.id, source: 'claude', eventType, sessionId: 's1', payload }),
+        projectId: project.id,
+        input: { projectId: project.id, source: 'claude', eventType, sessionId: 's1', payload },
+      };
+    };
+
+    handleIngestedRecords(deps, [record({ source: 'startup', model: 'ftm' })]);
+    handleIngestedRecords(deps, [record({ source: 'resume' })]);
+    expect(started).toEqual([
+      ['s1', 'ftm'],
+      ['s1', null],
+    ]);
   });
 
   it('dispatcher 的 deferred（未镜像规则/插件产出）写进 outbox 顺延给下一次事件', async () => {

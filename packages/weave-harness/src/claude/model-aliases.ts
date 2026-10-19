@@ -42,6 +42,21 @@ export function switchedModelOf(eventType: string, raw: unknown): string | null 
 }
 
 /**
+ * 会话开/恢复（`SessionStart`）上关于模型的话：startup / compact 带 `model` 就报得出
+ * 真名；`source=resume` **不带**（实测：重开时宿主把模型落回默认，且这一拍转录里还
+ * 只有上一轮的照会）——故 model 为 null 不是「不知道」，是「旧答案作废、得重新读」。
+ * 这条事件与模型无关时返回 null。
+ */
+export function startedModelOf(
+  eventType: string,
+  raw: unknown,
+): { model: string | null } | null {
+  if (eventType !== 'SessionStart') return null;
+  const model = (raw as { model?: unknown } | null)?.model;
+  return { model: typeof model === 'string' && model ? model : null };
+}
+
+/**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
  * 认不出返回 null，调用方回落显示真名——不猜。
  */

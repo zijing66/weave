@@ -165,6 +165,25 @@ describe('SessionProbe', () => {
     expect(probe.currentModel('s1')).toBe('ftm');
   });
 
+  it('重开会话（SessionStart）作废旧答案：切换闩不许把标签钉死在关会话之前那个模型', () => {
+    const file = tmpFile();
+    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { model: 'ftm' } }) + '\n');
+    const probe = new SessionProbe();
+    probe.noteTranscript('s1', file);
+    probe.noteModel('s1', 'deepseek-flash');
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+
+    // 重开后宿主落回默认 ftm：新照会恰好等于切换闩的 stale，旧实现会永远答 deepseek-flash
+    appendFileSync(file, JSON.stringify({ type: 'assistant', message: { model: 'ftm' } }) + '\n');
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+    probe.sessionStarted('s1', null);
+    expect(probe.currentModel('s1')).toBe('ftm');
+
+    // 事件带了真名（startup / compact）就以它为准
+    probe.sessionStarted('s1', 'opus');
+    expect(probe.currentModel('s1')).toBe('opus');
+  });
+
   it('没有转录路径时换模型也答得出来；forget 之后照旧 null', () => {
     const probe = new SessionProbe();
     probe.noteModel('s1', 'deepseek-flash');

@@ -21,7 +21,7 @@ export { CLAUDE_BLOCKING_PROMPT } from './questions.js';
 export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { interruptMarkerAt, currentModelAt, currentModeAt } from './transcript.js';
-export { modelAliasTargets, aliasOfModel, switchedModelOf, type ModelAliasTarget } from './model-aliases.js';
+export { modelAliasTargets, aliasOfModel, startedModelOf, switchedModelOf, type ModelAliasTarget } from './model-aliases.js';
 export { resolveClaudePeer } from './peers.js';
 export {
   CLAUDE_CAPTURE,

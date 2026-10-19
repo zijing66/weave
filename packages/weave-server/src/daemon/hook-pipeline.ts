@@ -39,6 +39,7 @@ export interface HookPipelineDeps {
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
+    sessionStarted(sessionId: string, model: string | null): void;
   };
   /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };

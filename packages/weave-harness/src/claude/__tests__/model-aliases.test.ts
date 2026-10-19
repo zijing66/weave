@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { aliasOfModel, modelAliasTargets, switchedModelOf, type ModelAliasTarget } from '../model-aliases.js';
+import {
+  aliasOfModel,
+  modelAliasTargets,
+  startedModelOf,
+  switchedModelOf,
+  type ModelAliasTarget,
+} from '../model-aliases.js';
 
 const aliases = ['default', 'opus', 'sonnet'] as const;
 
@@ -55,6 +61,22 @@ describe('switchedModelOf', () => {
     expect(switchedModelOf('Stop', { to_model: 'deepseek-flash' })).toBeNull();
     expect(switchedModelOf('PostModelSwitch', { to_model: '' })).toBeNull();
     expect(switchedModelOf('PostModelSwitch', null)).toBeNull();
+  });
+});
+
+describe('startedModelOf', () => {
+  it('SessionStart 带 model（startup / compact）就报真名', () => {
+    expect(startedModelOf('SessionStart', { source: 'startup', model: 'ftm' })).toEqual({ model: 'ftm' });
+  });
+
+  it('resume 不带 model 也要报一声：null = 旧答案作废、重读（不是「不知道」）', () => {
+    expect(startedModelOf('SessionStart', { source: 'resume' })).toEqual({ model: null });
+    expect(startedModelOf('SessionStart', null)).toEqual({ model: null });
+  });
+
+  it('别的动静一律 null', () => {
+    expect(startedModelOf('SessionEnd', { model: 'ftm' })).toBeNull();
+    expect(startedModelOf('Stop', null)).toBeNull();
   });
 });
 
