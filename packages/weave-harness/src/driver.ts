@@ -107,6 +107,18 @@ export interface EventSource {
  * server 保留原函数名作薄委托——`fileAssetTargetDir` / `skillsDirFor` /
  * `classifyAgent` / `shouldIgnore` / global-config skills 常量 / codex-toml 路径。
  */
+/**
+ * 一条 MCP 服务器的通用形（各 harness 的落盘表示法不同：claude 是 JSON 的
+ * `mcpServers[name]`，codex 是 TOML 的 `[mcp_servers.<name>]`——表示法归实现方）。
+ * 类型住这里而非 server：它出现在 [[AssetSurface]] 的方法签名上，server 反向
+ * import 会绕回来。
+ */
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
 export interface AssetSurface {
   /** 所属 harness——按序遍历多个 surface 时回指归属（`classifyAgent` 消费）。 */
   readonly harness: Harness;

@@ -2,6 +2,7 @@ import { cp, rm, readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weavecode/core';
+import type { McpServerConfig } from '@weavecode/harness';
 import {
   FILE_ASSET_SPECS,
   fileAssetTargetDir,
@@ -33,11 +34,8 @@ export class AssetNotFoundError extends Error {
   }
 }
 
-export interface McpServerConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
+/** MCP 配置的通用形（定义随 `AssetSurface` 的方法签名住在 harness 包）。 */
+export type { McpServerConfig };
 
 /** Which coding agent an install targets — Claude Code or Codex surfaces. */
 export type InstallAgent = Harness;
