@@ -764,8 +764,9 @@ describe('MessageDeliverer 裁决表', () => {
     expect(result).toMatchObject({ ok: true, status: 'delivered' });
     expect(fake.calls).toHaveLength(0); // 没有起中继进程
     await new Promise((r) => setTimeout(r, 50));
-    // 载荷带来源标注（socket 路径是裸 user 文本，标一句供日后审计）
-    expect(got).toContain('[weave] socket 直投正文');
+    // 载荷就是正文本体：不再加来源前缀
+    expect(got).toContain('socket 直投正文');
+    expect(got).not.toContain('[weave] ');
     expect(got).toContain('"type":"auth"');
     expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
       status: 'delivered',
@@ -802,7 +803,7 @@ describe('MessageDeliverer 裁决表', () => {
     expect(result).toMatchObject({ ok: true, status: 'delivered' });
     expect(fake.calls).toHaveLength(0); // 没有起中继进程
     await new Promise((r) => setTimeout(r, 50));
-    expect(got).toContain('[weave] 重启后直投');
+    expect(got).toContain('重启后直投');
     inbox.close();
   });
 
@@ -1162,8 +1163,8 @@ describe('MessageDeliverer 裁决表', () => {
     const tinyId = (tiny as { messageId: string }).messageId;
     shortDeliverer.onSessionPrompt(SESSION_ID, 'ok 我这边没问题');
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBeUndefined();
-    // 直投带来源标记：剥掉后本体相等 → 回执（否则短正文永远认不出自己，必被未回执闸误杀）
-    shortDeliverer.onSessionPrompt(SESSION_ID, '[weave] ok');
+    // 短正文只认整条相等（包含匹配对短文本会误配）——本体相等即回执
+    shortDeliverer.onSessionPrompt(SESSION_ID, 'ok');
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBe(true);
   });
 

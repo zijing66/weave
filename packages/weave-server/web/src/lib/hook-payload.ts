@@ -64,10 +64,9 @@ export function formatStamp(iso: string): string {
 }
 
 /**
- * weave 直投消息的来源标记（mirror `@weavecode/core` 的 WEAVE_INJECTION_MARKER
- * ——web 运行时不能 import core 值，同 `tasks/lifecycle.ts` 的镜像口径，改那边
- * 同步这里）。socket 直投走这条通道，会话转录里因此带着它：web 拿它认「这条是
- * weave 发的，不是终端里敲的」，并把它从正文里摘掉、改用一枚 tag 呈现。
+ * 直投曾经加在正文前的来源标记（`[weave] `）——**新投递已不再带**，这里只为
+ * 存量转录服务：库里那些事件的 prompt 原文还带着它，剥掉才能正常显示、也才认
+ * 得回自己的投递行。
  */
 export const WEAVE_MARKER = '[weave] ';
 

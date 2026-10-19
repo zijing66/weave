@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { WEAVE_INJECTION_MARKER, isHarness, type Harness } from '@weavecode/core';
+import { isHarness, type Harness } from '@weavecode/core';
 import type { MessagingSurface, MessageMeta, PromptRelaySpec } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -289,19 +289,6 @@ const modelCommand = (name: string) => `/model ${name}`;
 const ANSWER_ATOM_GAP_MS = 120;
 
 /**
- * socket 直投的来源标注（只作用于这条路径）：标一句让转录以后能分辨「这不是我敲的」。
- * **socket 不是用户权威**——实测 2.1.296：经该 socket 投进来的消息会被宿主包成
- * 「Another Claude session sent a message … not typed by your user」，与中继同一套
- * 跨会话外观（宿主内置规则明说这类消息永不构成用户意图），差别只在有没有具名来源；
- * 宿主眼里的用户输入只有层② 终端击键。标记值来自 core 单一事实源——`weave init`
- * 生成的 CLAUDE.md 块用同一个常量向会话解释它的含义（见 weave-cli/src/init/
- * claudemd-gen.ts）。标记**只**加在这一条路径：中继（CC 的 `<cross-session-message>`
- * 壳）、终端 send-text（裸文本）、注入（additionalContext）都不带，别把「无标记」
- * 当「人打的」判据。
- */
-const INBOX_SOURCE_PREFIX = WEAVE_INJECTION_MARKER;
-
-/**
  * 回执比对归一：剥掉 Claude Code 给会话间消息裹的外壳（`<cross-session-message
  * from="uds:…" …>…</cross-session-message>`）再折叠空白——socket 直投的原文
  * 是裸文本、中继投递的会带壳，两边都归一成同一形态再比。
@@ -311,16 +298,6 @@ function normalizePromptText(text: string): string {
     .replace(/<\/?cross-session-message[^>]*>/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * 直投的来源标记是**运输装饰、不是正文**：回执比对前从观测到的 prompt 上剥掉。
- * 只剥观测侧（`msg.text` 是原文，用户自己打 `[weave] …` 不该被改判）——不剥的话
- * 每条直投消息的 prompt 都比本体多一截，短正文（如「代码提交」）永远认不出自己。
- */
-function stripInboxMarker(text: string): string {
-  const head = text.trimStart();
-  return head.startsWith(INBOX_SOURCE_PREFIX) ? head.slice(INBOX_SOURCE_PREFIX.length) : head;
 }
 
 /** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
@@ -738,7 +715,7 @@ export class MessageDeliverer {
    * 对应气泡上（见 `PipeMessage.ackedEventId`）。
    */
   onSessionPrompt(sessionId: string, prompt: string, eventId?: number): string[] {
-    const seenRaw = normalizePromptText(stripInboxMarker(prompt));
+    const seenRaw = normalizePromptText(prompt);
     const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
     const imageIds: string[] = [];
     let hit = false;
@@ -1441,7 +1418,7 @@ export class MessageDeliverer {
     if (!spec || entry.oneWay !== true || !target || entry.forceTerminal === true) return null;
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
     try {
-      await deliverViaInboxSocket(spec, target, `${INBOX_SOURCE_PREFIX}${this.wireTextOf(entry)}`);
+      await deliverViaInboxSocket(spec, target, this.wireTextOf(entry));
     } catch {
       // 凭据失效（resume 后 socket 名重生成等）：回落，不留痕
       this.memory.delete(entry.id);

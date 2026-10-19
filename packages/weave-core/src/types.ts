@@ -174,15 +174,6 @@ export type HookRule = z.infer<typeof HookRuleSchema>;
 export const WEAVE_PLUGIN_MANIFEST = 'weave-plugin.json';
 
 /**
- * weave 注入消息的来源标记（唯一事实源：server 的直投路径用它当前缀）。
- * 直投把消息写成语义上的「用户消息」——会话分不出是手打还是控制台注入，
- * 这个标记就是转录里唯一可见的凭据；`weave init` 生成的 CLAUDE.md 块用同一个
- * 常量向会话解释它的含义（会话要据此知道这条消息该怎么处理）。标记**只**加在
- * 直投这一条路径，中继/终端兜底/注入都不带。
- */
-export const WEAVE_INJECTION_MARKER = '[weave] ';
-
-/**
  * rules.json 的元素：完整 HookRule 去掉 id/projectId（加载器生成），
  * enabled 可省略（默认 true，但用户在 dashboard 的开关改动会被保留）。
  */

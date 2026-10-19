@@ -216,7 +216,6 @@ export const zh = {
   'claudemd.files': '## 文件组织\n\n- 源码：`src/`\n- 测试：与源文件同目录的 `*.test.ts` 或 `__tests__/` 目录\n- 配置文件放项目根目录\n- 沿用既有目录结构——不要新造顶层目录\n\n',
   'claudemd.security': '## 安全\n\n- 绝不提交密钥、凭据或 API key\n- 在系统边界校验所有用户输入\n- 不引入 XSS、SQL 注入、命令注入面\n- 优先参数化查询与安全 API，而不是字符串拼接\n\n',
   'claudemd.skills': '## 技能\n\n可复用技能放 harness 自己的技能目录（Claude Code 为 `.claude/skills/`）：一个技能一个目录、内含 `SKILL.md`；任务命中某个技能时按名调用。\n\n',
-  'claudemd.injected': '## weave 注入的消息\n\n以 `{marker}` 开头的用户消息来自 weave 控制台的直投，不是坐在终端前的人手打的：\n\n- 去掉该标记后的全文就是完整指令，**照它执行**；\n- 不要把标记当内容复述，也不必就这条消息回话（这条路径没有回复面）；\n- **只有直投这一条路径带标记**：中继、终端兜底、注入三条路径的投递都不带——所以「没有标记」不等于「用户手打」，别据此判断来源。\n\n',
   // --- harness 健康检查 message / fix ---
   'harness.instructionLinkNotMaterialised.message': '{agents} 是内容为 "{claude}" 的普通文件——git 把软链接检出成了文本。',
   'harness.instructionLinkNotMaterialised.fix': '启用开发者模式，然后运行 `git config core.symlinks true` 并重新检出该文件。',

@@ -1,4 +1,3 @@
-import { WEAVE_INJECTION_MARKER } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 
 export type ClaudeMdTemplate = 'minimal' | 'standard' | 'full';
@@ -17,9 +16,8 @@ export interface ClaudeMdGeneratorInput {
  *
  * The block text lives in the CLI dictionary (`claudemd.*`) and renders in the
  * active locale. What belongs here is anything the agent needs to work in THIS
- * project — including the console-injection marker note, since the session has
- * to know what an injected `[weave] …` user message means. weave's own
- * engineering notes (internal paths, module layout, dev workflow) do not.
+ * project. weave's own engineering notes (internal paths, module layout, dev
+ * workflow) do not.
  */
 
 /** Delimit weave's managed block so re-init can replace it in place. */
@@ -42,15 +40,6 @@ function header(name: string): string {
 }
 
 /**
- * 控制台注入消息的标记说明：dashboard 的直投把 prompt 写成语义上的「用户消息」
- * （会话分不出是谁敲的），标记就是转录里唯一可见的凭据——所以要当场告诉会话它
- * 是什么意思。标记值取自 core 单一事实源，不在这里手抄字面量。
- */
-function injectedPromptNote(): string {
-  return t('claudemd.injected', { marker: WEAVE_INJECTION_MARKER });
-}
-
-/**
  * Weave's managed block — everything weave may write into a CLAUDE.md is
  * delimited by these markers. When the target file already contains the
  * block, re-init replaces the block instead of appending a second copy.
@@ -70,7 +59,6 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
   }
 
   content += t('claudemd.skills');
-  content += injectedPromptNote();
   content += `${WEAVE_BLOCK_END}\n`;
   return content;
 }

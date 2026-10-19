@@ -233,7 +233,6 @@ export const en: Record<keyof typeof zh, string> = {
   'claudemd.files': '## File Organization\n\n- Source code: `src/`\n- Tests: co-located `*.test.ts` or `__tests__/` directories\n- Config files at project root\n- Use existing directory structure — don\'t invent new top-level folders\n\n',
   'claudemd.security': '## Security\n\n- Never commit secrets, credentials, or API keys\n- Validate all user input at system boundaries\n- Don\'t introduce XSS, SQL injection, or command injection vectors\n- Prefer parameterized queries and safe APIs over string concatenation\n\n',
   'claudemd.skills': '## Skills\n\nReusable skills live in your harness\'s own skills directory (Claude Code: `.claude/skills/`): one directory per skill, each with a `SKILL.md`; invoke a skill by name when the task matches one.\n\n',
-  'claudemd.injected': '## weave-injected messages\n\nA user message starting with `{marker}` was injected by the weave dashboard, not typed by someone at the terminal:\n\n- The text after the marker is the full instruction — **just follow it**;\n- Don\'t echo the marker back as content, and don\'t reply to it (this path has no reply channel);\n- **Only this direct-injection path carries the marker**: relay, terminal fallback and inject deliveries do not — so "no marker" does not mean "typed by the user"; don\'t infer the sender from it.\n\n',
   'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---
   'harness.instructionLinkNotMaterialised.message':
