@@ -25,6 +25,9 @@ const REGISTRY = 'https://registry.npmjs.org/';
 const COMPONENTS = ['weave-core', 'weave-harness', 'weave-templates', 'weave-server', 'weave-cli'];
 const UMBRELLA_DIR = 'weave';
 const ALL_PACKAGES = [...COMPONENTS, UMBRELLA_DIR];
+// 与 scripts/bump-version.mjs 的 TARGETS 同一份清单：根也算一处，漏了它
+// version:check 立刻报漂移。
+const VERSION_FILES = ['package.json', ...ALL_PACKAGES.map((d) => `packages/${d}/package.json`)];
 
 const [version, ...rest] = process.argv.slice(2);
 const dryRun = rest.includes('--dry-run');
@@ -49,8 +52,8 @@ if (!dryRun) {
   console.log(`dry run — registry credentials not checked`);
 }
 
-for (const dir of ALL_PACKAGES) {
-  const file = path.join(root, 'packages', dir, 'package.json');
+for (const rel of VERSION_FILES) {
+  const file = path.join(root, rel);
   const pkg = JSON.parse(readFileSync(file, 'utf8'));
   pkg.version = version;
   writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n');
