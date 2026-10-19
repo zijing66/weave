@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -2391,22 +2391,27 @@ export function SessionMessages({
                   停止与事件链组头同一判据与 fb 键。通道下拉贴着发送键——
                   它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
               <div className="flex shrink-0 items-center gap-1 max-lg:flex-col max-lg:items-stretch">
-                {stoppable && (
-                  <button
-                    type="button"
-                    title={t('tasks.stopTooltip')}
-                    aria-label={t('tasks.stopTooltip')}
-                    onClick={() => onInterrupt(sessionId)}
-                    className="inline-flex shrink-0 items-center justify-center gap-1 rounded border border-edge/[0.1] px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 max-lg:px-3 max-lg:py-2"
-                  >
-                    <FeedbackIcon
-                      state={interruptStateOf(sessionId)}
-                      className="h-3 w-3"
-                      icon={<Square className="h-3 w-3" />}
-                    />
-                    <span className="max-lg:hidden">{t('tasks.stop')}</span>
-                  </button>
-                )}
+                {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
+                    （窄屏竖排的 `items-stretch` 也不许把它拉成长条）；只有回合开着才
+                    可点，判据仍是 canInterrupt。 */}
+                <button
+                  type="button"
+                  title={t('tasks.stopTooltip')}
+                  aria-label={t('tasks.stopTooltip')}
+                  disabled={!stoppable}
+                  onClick={() => onInterrupt(sessionId)}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                >
+                  <FeedbackIcon
+                    state={interruptStateOf(sessionId)}
+                    className="h-3 w-3"
+                    icon={
+                      <span className="text-[9px] font-medium tracking-tight max-lg:text-[10px]">
+                        ESC
+                      </span>
+                    }
+                  />
+                </button>
                 {/* 发送键与通道下拉合成一枚（split button）：同一块蓝底、同一圈圆角，
                     中间只隔一道细线——点左半发送、点右半开菜单，不是两枚并排的钮。
                     下拉不随草稿为空而禁用：选通道与「现在有没有话要说」是两回事。 */}
