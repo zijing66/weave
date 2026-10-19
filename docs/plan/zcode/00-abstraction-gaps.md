@@ -240,6 +240,20 @@ export interface AssetSurface {
    `CategoryDetail.tsx` 那几处 `runtimeTab === 'codex'` 是**页签渲染**、不是能力判断，
    本轮不动（见 P2 的页签一节）。
 
+### 落地偏差（实施时定）
+
+- 验收里的「注册进 registry 的第三个 surface」做不到：`Harness` 是 core 的封闭
+  联合，测试里造不出新 harness。改为**把 codex 面当场改造成第三种形状**（多给一个
+  它本来没有的 project 档 + 内存实现）再打三条路由——见
+  `__tests__/mcp-surface.test.ts`，效果等价且能证明 server 无分支。
+- codex 的 fs 包装下沉后 `file` 变成必填（harness 不认识路径），server 保留
+  `codexConfigFile()` 与四个带默认值的薄包装；`setCodexConfigFileOverride` 这个
+  测试 seam 随之删除（路由已不经 server 解析路径），测试改用 `HOME`/`USERPROFILE`
+  隔离（与 `global-config.test.ts` 同口径）。
+- 两处**有意的语义统一**（原来同一件事在两个档上不一致）：装已存在的 server 一律
+  409（原来 claude user 档静默覆盖）、卸不存在的 server 一律 404（原来 claude user
+  档 200）。未注册的 `agent` 由「静默落到 claude」改成 400。
+
 ### 验收
 
 - 存量 claude project / claude user / codex user 三条装卸路径**行为逐字不变**：

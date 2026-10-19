@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readMcpRows } from '../mcp-rows.js';
-import { setCodexConfigFileOverride } from '../codex-toml.js';
 
 let fakeHome: string;
 let projectDir: string;
@@ -33,11 +32,9 @@ beforeAll(() => {
     join(fakeHome, '.codex', 'config.toml'),
     '# rows\n[mcp_servers.zeta]\ncommand = "uvx"\n',
   );
-  setCodexConfigFileOverride(join(fakeHome, '.codex', 'config.toml'));
 });
 
 afterAll(() => {
-  setCodexConfigFileOverride(null);
   process.env.HOME = origHome;
   process.env.USERPROFILE = origProfile;
   rmSync(fakeHome, { recursive: true, force: true });

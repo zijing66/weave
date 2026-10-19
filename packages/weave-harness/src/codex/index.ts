@@ -7,6 +7,7 @@ import { CODEX_PLUGIN_STATE } from './plugin-state.js';
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
 export { CODEX_MESSAGING } from './messaging.js';
+export * from './mcp.js';
 export * from './toml.js';
 
 /**

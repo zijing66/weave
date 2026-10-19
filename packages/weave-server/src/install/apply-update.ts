@@ -2,9 +2,6 @@ import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weavecode/core';
-import { installMcp, uninstallMcp } from './installer.js';
-import { writeGlobalMcpServer } from './global-config.js';
-import { writeCodexMcpServer } from './codex-toml.js';
 import { applyStatuslineConfig } from '../statusline/manager.js';
 import { readStatuslineConfig } from '../statusline/manager.js';
 import {
@@ -86,22 +83,8 @@ export async function applyUpdate(
   // mcp
   const src = findMcpSource(idx, input.name);
   if (!src) throw new Error(`No library source for MCP "${input.name}"`);
-  if (agent === 'codex') {
-    // Codex MCP servers live in ~/.codex/config.toml — upsert replaces the section
-    await writeCodexMcpServer(input.name, src.config);
-    return;
-  }
-  if (input.scope === 'user') {
-    await writeGlobalMcpServer(input.name, src.config);
-  } else {
-    // remove then re-add to refresh the entry cleanly
-    try {
-      await uninstallMcp(projectPath, input.name);
-    } catch {
-      // not present — fine, we're (re)installing
-    }
-    await installMcp(projectPath, input.name, src.config);
-  }
+  // MCP 的写就是 upsert（表示法归 surface）：刷新 = 用源内容再写一遍，不必先删。
+  await assetSurfaceFor(agent).mcpWrite(input.scope, projectPath, homedir(), input.name, src.config);
 }
 
 /**

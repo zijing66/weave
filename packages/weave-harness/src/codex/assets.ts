@@ -1,6 +1,14 @@
 import path from 'node:path';
 import type { AssetSurface } from '../driver.js';
 import { FILE_ASSET_SPECS } from '../shared/file-specs.js';
+import {
+  readCodexMcpServers,
+  removeCodexMcpServer,
+  writeCodexMcpServer,
+} from './mcp.js';
+
+/** `~/.codex/config.toml`：用户级配置，MCP 恒住这里。 */
+const codexConfigFile = (homedir: string): string => path.join(homedir, '.codex', 'config.toml');
 
 /**
  * Codex 资产表面（批 4a 迁入，能力矩阵 ⚠：仅 skills + 文件资产 user 面）：
@@ -30,14 +38,29 @@ export const CODEX_ASSETS: AssetSurface = {
     path.join(homedir, ...'.codex/skills'.split('/')),
   ],
 
-  userConfigFile: (homedir) => path.join(homedir, '.codex', 'config.toml'),
+  userConfigFile: (homedir) => codexConfigFile(homedir),
 
   // MCP 恒用户级（~/.codex/config.toml），无项目 .mcp.json 面。
   mcpScopes: () => ['user'],
 
-  mcpDest: (scope, homedir) => (scope === 'user' ? path.join(homedir, '.codex', 'config.toml') : undefined),
+  mcpDest: (scope, homedir) => (scope === 'user' ? codexConfigFile(homedir) : undefined),
 
   pluginCacheDir: (homedir) => path.join(homedir, '.codex', 'plugins', 'cache'),
+
+  async mcpRead(scope, _projectPath, homedir) {
+    if (scope !== 'user') throw new Error('Codex MCP servers are user-level only (~/.codex/config.toml)');
+    return readCodexMcpServers(codexConfigFile(homedir));
+  },
+
+  async mcpWrite(scope, _projectPath, homedir, name, config) {
+    if (scope !== 'user') throw new Error('Codex MCP servers are user-level only (~/.codex/config.toml)');
+    await writeCodexMcpServer(name, config, codexConfigFile(homedir));
+  },
+
+  async mcpRemove(scope, _projectPath, homedir, name) {
+    if (scope !== 'user') throw new Error('Codex MCP servers are user-level only (~/.codex/config.toml)');
+    return removeCodexMcpServer(name, codexConfigFile(homedir));
+  },
 
   classify(relPath) {
     if (relPath === '.codex' || relPath.startsWith('.codex/')) return true;

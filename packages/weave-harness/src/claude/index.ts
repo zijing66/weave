@@ -12,6 +12,7 @@ import { CLAUDE_STATUSLINE } from './statusline/surface.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
+export { CLAUDE_ASSETS, ClaudeJsonCorruptError, readClaudeJson } from './assets.js';
 export { CLAUDE_PLUGINS, createClaudePluginSurface, WEAVE_MARKETPLACE } from './plugins.js';
 export type { PluginExecutor, PluginExecResult } from './plugins.js';
 export { CLAUDE_PLUGIN_STATE } from './plugin-state.js';

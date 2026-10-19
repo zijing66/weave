@@ -1,28 +1,17 @@
-import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import path from 'node:path';
-import { parse } from 'smol-toml';
 import type { McpServerConfig } from './installer.js';
 import { assetSurfaceFor } from '../surfaces.js';
 import {
-  CodexTomlCorruptError,
-  parseSectionEntries,
-  removeTomlSection,
-  renderTomlHeader,
-  renderTomlKey,
-  renderTomlString,
-  sameKey,
-  splitTomlSections,
-  type TomlSection,
-  upsertTomlSection,
+  codexMcpExists as codexMcpExistsAt,
+  readCodexMcpServers as readCodexMcpServersAt,
+  removeCodexMcpServer as removeCodexMcpServerAt,
+  writeCodexMcpServer as writeCodexMcpServerAt,
 } from '@weavecode/harness';
 
 /**
- * Codex config.toml 的 **fs 侧**（路径解析 + MCP servers 表示法）。
- *
- * 行级增量编辑器（纯文本层）已下沉 @weavecode/harness 的 `codex/toml.ts`
- * （P2 专属格式下沉）；本模块原位置 re-export 下沉符号，存量 import 零改动。
- * MCP 表示法的下沉留后续批次（其类型 McpServerConfig 仍住 server）。
+ * Codex config.toml 的 server 侧入口：路径解析 + 把 harness 里的表示法绑上默认
+ * 路径。行级编辑与 `[mcp_servers.<name>]` 这一形都住 @weavecode/harness
+ * （`codex/toml.ts` / `codex/mcp.ts`），本模块原位置 re-export，存量 import 零改动。
  */
 export {
   CodexTomlCorruptError,
@@ -36,240 +25,45 @@ export {
   removeTomlSection,
   parseSectionEntries,
   upsertCodexPluginEnabledInText,
+  readCodexMcpFromText,
+  upsertCodexMcpInText,
+  removeCodexMcpFromText,
 } from '@weavecode/harness';
 export type { TomlSection } from '@weavecode/harness';
 
-// ---------------------------------------------------------------------------
-// Codex config.toml — MCP servers ([mcp_servers.<name>])
-// ---------------------------------------------------------------------------
-
-/** Absolute path of the Codex user config (`~/.codex/config.toml`),
- * respecting the test override. 批 4a：路径本体在 AssetSurface（`userConfigFile`）。 */
+/** Absolute path of the Codex user config (`~/.codex/config.toml`).
+ * 批 4a：路径本体在 AssetSurface（`userConfigFile`）。 */
 export function codexConfigFile(home: string = homedir()): string {
-  return codexConfigFileOverride ?? assetSurfaceFor('codex').userConfigFile(home);
-}
-
-/** Read the `mcp_servers` map from config.toml text (empty when absent or
- * unparseable). stdio servers only — entries without a `command` (e.g. remote
- * url servers) are skipped. */
-export function readCodexMcpFromText(text: string): Record<string, McpServerConfig> {
-  let parsed: unknown;
-  try {
-    parsed = parse(text);
-  } catch {
-    return {};
-  }
-  const servers = (parsed as Record<string, unknown>).mcp_servers;
-  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
-  const out: Record<string, McpServerConfig> = {};
-  for (const [name, raw] of Object.entries(servers as Record<string, unknown>)) {
-    const cfg = toMcpServerConfig(raw);
-    if (cfg) out[name] = cfg;
-  }
-  return out;
-}
-
-function toMcpServerConfig(raw: unknown): McpServerConfig | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const r = raw as Record<string, unknown>;
-  if (typeof r.command !== 'string') return null;
-  const cfg: McpServerConfig = { command: r.command };
-  if (Array.isArray(r.args)) {
-    const args = r.args.filter((a): a is string => typeof a === 'string');
-    if (args.length > 0) cfg.args = args;
-  }
-  if (r.env && typeof r.env === 'object' && !Array.isArray(r.env)) {
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(r.env as Record<string, unknown>)) {
-      if (typeof v === 'string') env[k] = v;
-    }
-    if (Object.keys(env).length > 0) cfg.env = env;
-  }
-  return cfg;
-}
-
-/** Build the body lines for `[mcp_servers.<name>]` (+ its `.env` sub-section).
- * When the server section already exists, user-added keys inside it (e.g.
- * `startup_timeout_sec`) and env vars weave does not manage are preserved. */
-function renderMcpServerBody(
-  keyPath: string[],
-  config: McpServerConfig,
-  oldSection: TomlSection | undefined,
-  oldEnvSection: TomlSection | undefined,
-  mergeUnknown: boolean,
-): string[] {
-  const body: string[] = [`command = ${renderTomlString(config.command)}`];
-  if (config.args && config.args.length > 0) {
-    body.push(`args = [${config.args.map(renderTomlString).join(', ')}]`);
-  }
-  if (mergeUnknown && oldSection) {
-    const known = new Set(['command', 'args', 'env']);
-    for (const [key, rawLine] of parseSectionEntries(oldSection.lines.slice(1))) {
-      if (!known.has(key)) body.push(rawLine);
-    }
-  }
-  const envEntries = Object.entries(config.env ?? {});
-  const oldEnvKeys = mergeUnknown && oldEnvSection
-    ? parseSectionEntries(oldEnvSection.lines.slice(1)).filter(([k]) => !(k in (config.env ?? {})))
-    : [];
-  if (envEntries.length > 0 || oldEnvKeys.length > 0) {
-    body.push('');
-    body.push(renderTomlHeader([...keyPath, 'env']));
-    for (const [k, v] of envEntries) {
-      body.push(`${renderTomlKey(k)} = ${renderTomlString(v)}`);
-    }
-    for (const [, rawLine] of oldEnvKeys) body.push(rawLine);
-  }
-  return body;
-}
-
-/** Insert or replace an `[mcp_servers.<name>]` entry in config.toml text,
- * preserving everything else. Merge-validated: if preserving user-added keys
- * produces invalid TOML, the section is written clean instead. */
-export function upsertCodexMcpInText(
-  text: string,
-  name: string,
-  config: McpServerConfig,
-): string {
-  const keyPath = ['mcp_servers', name];
-  const guard = assertNoInlineMcpTable(text);
-  if (guard) throw guard;
-  const sections = splitTomlSections(text);
-  const oldSection = sections.find((s) => sameKey(s.key, keyPath));
-  const oldEnvSection = sections.find((s) => sameKey(s.key, [...keyPath, 'env']));
-  const merged = upsertTomlSection(
-    text,
-    keyPath,
-    renderMcpServerBody(keyPath, config, oldSection, oldEnvSection, true),
-  );
-  try {
-    parse(merged);
-    return merged;
-  } catch {
-    // merged output invalid (e.g. a user key had a multi-line value) — write clean
-    const clean = upsertTomlSection(
-      text,
-      keyPath,
-      renderMcpServerBody(keyPath, config, oldSection, oldEnvSection, false),
-    );
-    try {
-      parse(clean);
-      return clean;
-    } catch (e) {
-      // dropping whole sections of a parseable file cannot break it — if we
-      // ever get here, refuse rather than corrupt config.toml
-      throw new CodexTomlCorruptError(
-        `unable to produce valid TOML for [mcp_servers.${name}]: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-}
-
-/** Remove an `[mcp_servers.<name>]` entry (with its sub-sections) from
- * config.toml text. Returns whether a section was removed. */
-export function removeCodexMcpFromText(
-  text: string,
-  name: string,
-): { text: string; removed: boolean } {
-  return removeTomlSection(text, ['mcp_servers', name]);
-}
-
-/** Reject `mcp_servers = {…}` / `mcp_servers = […]` at root: an inline value
- * would conflict with the `[mcp_servers.<name>]` section we are about to
- * insert (duplicate key). */
-function assertNoInlineMcpTable(text: string): CodexTomlCorruptError | null {
-  const root = splitTomlSections(text)[0]!;
-  const inline = root.lines.find((l) => /^\s*mcp_servers\s*=/.test(l));
-  if (inline) {
-    return new CodexTomlCorruptError(
-      '~/.codex/config.toml defines "mcp_servers" as an inline value — weave only manages the [mcp_servers.<name>] section form',
-    );
-  }
-  return null;
-}
-
-// --- file-level wrappers ----------------------------------------------------
-
-/** Test seam: pin the config.toml path (null → the user's ~/.codex/config.toml). */
-let codexConfigFileOverride: string | null = null;
-
-export function setCodexConfigFileOverride(file: string | null): void {
-  codexConfigFileOverride = file;
-}
-
-async function readTextIfExists(file: string): Promise<string> {
-  try {
-    return await readFile(file, 'utf-8');
-  } catch {
-    return '';
-  }
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
+  return assetSurfaceFor('codex').userConfigFile(home);
 }
 
 /** Read MCP servers from `~/.codex/config.toml` (empty when absent/corrupt). */
-export async function readCodexMcpServers(
+export function readCodexMcpServers(
   file: string = codexConfigFile(),
 ): Promise<Record<string, McpServerConfig>> {
-  if (!(await pathExists(file))) return {};
-  return readCodexMcpFromText(await readFile(file, 'utf-8'));
+  return readCodexMcpServersAt(file);
 }
 
 /** Whether an `[mcp_servers.<name>]` section exists (cheap line-level check). */
-export async function codexMcpExists(name: string, file: string = codexConfigFile()): Promise<boolean> {
-  if (!(await pathExists(file))) return false;
-  return sameKeyInText(await readFile(file, 'utf-8'), ['mcp_servers', name]);
+export function codexMcpExists(name: string, file: string = codexConfigFile()): Promise<boolean> {
+  return codexMcpExistsAt(name, file);
 }
 
-function sameKeyInText(text: string, keyPath: string[]): boolean {
-  return splitTomlSections(text).some((s) => sameKey(s.key, keyPath));
-}
-
-/** Insert or replace an MCP server in `~/.codex/config.toml`. Refuses to
- * write a file that does not parse (protects the user's hand-written config);
- * creates the file when absent. */
-export async function writeCodexMcpServer(
+/** Insert or replace an MCP server in `~/.codex/config.toml` (refuses a
+ * config that does not parse; creates the file when absent). */
+export function writeCodexMcpServer(
   name: string,
   config: McpServerConfig,
   file: string = codexConfigFile(),
 ): Promise<void> {
-  const text = await readTextIfExists(file);
-  if (text.trim() !== '') {
-    try {
-      parse(text);
-    } catch (e) {
-      throw new CodexTomlCorruptError(
-        `${file} is not valid TOML — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, upsertCodexMcpInText(text, name, config), 'utf-8');
+  return writeCodexMcpServerAt(name, config, file);
 }
 
 /** Remove an MCP server section from `~/.codex/config.toml`. Returns whether
  * a section was removed (false = was not configured). */
-export async function removeCodexMcpServer(
+export function removeCodexMcpServer(
   name: string,
   file: string = codexConfigFile(),
 ): Promise<boolean> {
-  if (!(await pathExists(file))) return false;
-  const text = await readFile(file, 'utf-8');
-  try {
-    parse(text);
-  } catch (e) {
-    throw new CodexTomlCorruptError(
-      `${file} is not valid TOML — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  const { text: next, removed } = removeCodexMcpFromText(text, name);
-  if (removed) await writeFile(file, next, 'utf-8');
-  return removed;
+  return removeCodexMcpServerAt(name, file);
 }

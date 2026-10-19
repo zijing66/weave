@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
-import { setCodexConfigFileOverride } from '../install/codex-toml.js';
 
 const PROJECT_TOKEN = 'ptoken';
 
@@ -28,6 +27,8 @@ describe('daemon server — codex MCP (config.toml)', () => {
   let port: number;
   let projectId: number;
   let configFile: string;
+  let origHome: string | undefined;
+  let origProfile: string | undefined;
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
@@ -45,7 +46,11 @@ describe('daemon server — codex MCP (config.toml)', () => {
     configFile = join(home, '.codex', 'config.toml');
     mkdirSync(join(home, '.codex'), { recursive: true });
     writeFileSync(configFile, SEED);
-    setCodexConfigFileOverride(configFile);
+    // 路由按 homedir() 找 config.toml——测试把 home 指到临时目录，绝不碰真 home。
+    origHome = process.env.HOME;
+    origProfile = process.env.USERPROFILE;
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
 
     server = createWeaveServer({
       projects,
@@ -58,7 +63,8 @@ describe('daemon server — codex MCP (config.toml)', () => {
   afterAll(() => {
     server.close();
     db.close();
-    setCodexConfigFileOverride(null);
+    process.env.HOME = origHome;
+    process.env.USERPROFILE = origProfile;
   });
 
   const auth = { 'content-type': 'application/json' };

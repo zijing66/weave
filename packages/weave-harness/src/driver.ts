@@ -157,6 +157,33 @@ export interface AssetSurface {
   mcpDest(scope: 'project' | 'user', homedir: string): string | undefined;
 
   /**
+   * 读某 scope 的 MCP 服务器映射（该 harness 无此 scope / 文件缺失 → 空对象）。
+   * 表示法归实现方：调用方只认名字与 `McpServerConfig`，不碰文件。
+   */
+  mcpRead(
+    scope: 'project' | 'user',
+    projectPath: string,
+    homedir: string,
+  ): Promise<Record<string, McpServerConfig>>;
+
+  /** 写/覆盖一条（scope 必须在 `mcpScopes()` 内，否则抛）。 */
+  mcpWrite(
+    scope: 'project' | 'user',
+    projectPath: string,
+    homedir: string,
+    name: string,
+    config: McpServerConfig,
+  ): Promise<void>;
+
+  /** 删一条；返回是否真删掉了（false → 调用方给 404）。 */
+  mcpRemove(
+    scope: 'project' | 'user',
+    projectPath: string,
+    homedir: string,
+    name: string,
+  ): Promise<boolean>;
+
+  /**
    * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
    * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
    */

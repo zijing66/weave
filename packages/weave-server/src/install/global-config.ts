@@ -1,9 +1,10 @@
-import { readFile, writeFile, readdir, access, stat, realpath } from 'node:fs/promises';
+import { readFile, readdir, access, stat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weavecode/core';
 import type { McpServerConfig } from './installer.js';
 import { AssetNotFoundError } from './installer.js';
+import { readClaudeJson } from '@weavecode/harness';
 import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
 import { assetSurfaceFor, assetSurfaces, pluginStateFor, pluginSurfaceFor } from '../surfaces.js';
@@ -27,13 +28,8 @@ import { installForm, linkOrCopy, removeInstalled, type InstallLinkMode } from '
  * `~/.codex/config.toml` (`[plugins."key"] enabled`) for Codex.
  */
 
-/** `~/.claude.json` could not be parsed; refuse to write to avoid corruption. */
-export class ClaudeJsonCorruptError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ClaudeJsonCorruptError';
-  }
-}
+/** `~/.claude.json` 解析不了就拒写（实现在 harness 的 claude 资产面）。 */
+export { ClaudeJsonCorruptError } from '@weavecode/harness';
 
 // 批 4a：skills 根 / settings.json / config.toml 路径常量已收敛进
 // AssetSurface（`globalSkillsRoots` / `userConfigFile`），此处只留插件枚举路径。
@@ -132,40 +128,15 @@ async function isDirectoryFollow(p: string): Promise<boolean> {
 }
 
 /** Read + parse ~/.claude.json. Missing file → {}. Unparseable → corrupt error. */
-export async function readGlobalClaudeJson(): Promise<Record<string, unknown>> {
-  const file = claudeJsonPath();
-  if (!(await pathExists(file))) return {};
-  let raw: string;
-  try {
-    raw = await readFile(file, 'utf-8');
-  } catch {
-    return {};
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new ClaudeJsonCorruptError(
-      `~/.claude.json is not valid JSON — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ClaudeJsonCorruptError('~/.claude.json is not a JSON object — refusing to write');
-  }
-  return parsed as Record<string, unknown>;
+export function readGlobalClaudeJson(): Promise<Record<string, unknown>> {
+  return readClaudeJson(homedir());
 }
 
 /** Read user-level MCP servers from ~/.claude.json (empty if absent). */
 export async function readGlobalMcpServers(): Promise<Record<string, McpServerConfig>> {
-  const json = await readGlobalClaudeJson();
-  const servers = json.mcpServers;
+  const servers = (await readGlobalClaudeJson()).mcpServers;
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
   return servers as Record<string, McpServerConfig>;
-}
-
-/** Persist the full ~/.claude.json object (preserves all unknown keys). */
-async function writeGlobalClaudeJson(json: Record<string, unknown>): Promise<void> {
-  await writeFile(claudeJsonPath(), `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
 }
 
 /**
@@ -174,21 +145,13 @@ async function writeGlobalClaudeJson(json: Record<string, unknown>): Promise<voi
  * JSON); in that case the caller should surface the error to the user.
  */
 export async function writeGlobalMcpServer(name: string, config: McpServerConfig): Promise<void> {
-  const json = await readGlobalClaudeJson();
-  const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
-  servers[name] = config;
-  json.mcpServers = servers;
-  await writeGlobalClaudeJson(json);
+  // user 档不读 projectPath（字符串只是形参占位）。
+  await assetSurfaceFor('claude').mcpWrite('user', '', homedir(), name, config);
 }
 
 /** Remove a user-level MCP server from ~/.claude.json (no-op if absent). */
 export async function removeGlobalMcpServer(name: string): Promise<void> {
-  const json = await readGlobalClaudeJson();
-  const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
-  if (!(name in servers)) return;
-  delete servers[name];
-  json.mcpServers = servers;
-  await writeGlobalClaudeJson(json);
+  await assetSurfaceFor('claude').mcpRemove('user', '', homedir(), name);
 }
 
 // --- global skills (plain directory ops under ~/.claude/skills/) ---

@@ -102,14 +102,9 @@ export function McpGrid({
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
                 <CardTitle className="truncate">{s.key}</CardTitle>
                 <AgentBadge agent={s.harness} />
-                {/* Codex rows always live in the user-level config.toml, so
-                    they read 全局 even when rendered inside the project view. */}
+                {/* 档位由行自己说（只有 user 档的 harness 恒落 user 行），不看 harness。 */}
                 <Badge variant="settings" className="ml-1">
-                  {t(
-                    s.harness === 'codex' || s.scope === 'user'
-                      ? 'library.scopeGlobal'
-                      : 'library.scopeProject',
-                  )}
+                  {t(s.scope === 'user' ? 'library.scopeGlobal' : 'library.scopeProject')}
                 </Badge>
                 {outdated && (
                   <Badge variant="warning" className="ml-1">

@@ -1,4 +1,4 @@
-import { cp, rm, readFile, writeFile, access, mkdir } from 'node:fs/promises';
+import { cp, rm, readFile, access, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weavecode/core';
@@ -39,8 +39,6 @@ export type { McpServerConfig };
 
 /** Which coding agent an install targets — Claude Code or Codex surfaces. */
 export type InstallAgent = Harness;
-
-const MCP_FILE = '.mcp.json';
 
 /** Reject names that could escape the target directory (path traversal). */
 function assertSafeName(name: string): void {
@@ -161,31 +159,18 @@ export async function installMcp(
   name: string,
   config: McpServerConfig,
 ): Promise<void> {
-  assertSafeName(name);
-  const file = path.join(projectPath, MCP_FILE);
-  const json = await readMcpJson(file);
-  const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
-  if (name in servers) {
+  if (name in (await readMcpServers(projectPath))) {
     throw new InstallConflictError(`MCP server "${name}" is already configured`);
   }
-  servers[name] = config;
-  json.mcpServers = servers;
-  await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+  await assetSurfaceFor('claude').mcpWrite('project', projectPath, homedir(), name, config);
   await recordInstalled(projectPath, { category: 'mcp', name, agent: 'claude' });
 }
 
 /** Remove the `mcpServers[name]` entry from `.mcp.json`. */
 export async function uninstallMcp(projectPath: string, name: string): Promise<void> {
-  assertSafeName(name);
-  const file = path.join(projectPath, MCP_FILE);
-  const json = await readMcpJson(file);
-  const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
-  if (!(name in servers)) {
+  if (!(await assetSurfaceFor('claude').mcpRemove('project', projectPath, homedir(), name))) {
     throw new AssetNotFoundError(`MCP server "${name}" is not configured`);
   }
-  delete servers[name];
-  json.mcpServers = servers;
-  await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
   await forgetInstalled(projectPath, { category: 'mcp', name, agent: 'claude' });
 }
 
@@ -204,6 +189,5 @@ export async function readMcpJson(file: string): Promise<{ mcpServers?: Record<s
 export async function readMcpServers(
   projectPath: string,
 ): Promise<Record<string, McpServerConfig>> {
-  const json = await readMcpJson(path.join(projectPath, MCP_FILE));
-  return (json.mcpServers ?? {}) as Record<string, McpServerConfig>;
+  return assetSurfaceFor('claude').mcpRead('project', projectPath, homedir());
 }

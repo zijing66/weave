@@ -4,6 +4,7 @@ import type { Harness } from '@weavecode/core';
 import { checkHarness, isHarness } from '@weavecode/core';
 import type { EventSource, HarnessRegistry, PluginSurface } from '@weavecode/harness';
 import fs from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -40,8 +41,6 @@ import { getLibraryScan, invalidateScan } from '../install/scan-cache.js';
 import {
   installSkill,
   uninstallSkill,
-  installMcp,
-  uninstallMcp,
   installFileAsset,
   uninstallFileAsset,
   InstallConflictError,
@@ -52,8 +51,6 @@ import { isFileAssetCategory, type FileAssetCategory } from '../install/file-ass
 import { installCapabilities } from '../install/capabilities.js';
 import { readMcpRows } from '../install/mcp-rows.js';
 import {
-  writeGlobalMcpServer,
-  removeGlobalMcpServer,
   installGlobalSkill,
   uninstallGlobalSkill,
   readGlobalSkillGroups,
@@ -63,12 +60,8 @@ import {
   ClaudeJsonCorruptError,
 } from '../install/global-config.js';
 import type { GlobalSkillSource } from '../install/global-config.js';
-import {
-  writeCodexMcpServer,
-  removeCodexMcpServer,
-  codexMcpExists,
-  CodexTomlCorruptError,
-} from '../install/codex-toml.js';
+import { CodexTomlCorruptError } from '../install/codex-toml.js';
+import { forgetInstalled, recordInstalled } from '../install/install-ledger.js';
 import { setMcpEnableOverride } from '../install/settings-mcp.js';
 import { readProjectConfig, writeProjectConfig } from '../install/project-config.js';
 import type { ProjectConfig } from '../install/project-config.js';
@@ -127,7 +120,12 @@ import {
 } from './opener.js';
 import { applyLaunchOnLogin } from './auto-start.js';
 import { DAEMON_HOST } from './port.js';
-import { pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../surfaces.js';
+import {
+  assetSurfaces,
+  pluginStateSurfaces,
+  pluginSurfaces,
+  pluginSurfaceFor,
+} from '../surfaces.js';
 import { readPluginRows } from '../install/plugin-rows.js';
 import { installPluginPack } from '../install/plugin-install.js';
 import { handleAuthRoutes } from './auth-routes.js';
@@ -893,28 +891,31 @@ async function handleRequest(
           sendJson(res, 400, { error: 'Missing "name" or "mcpConfig"' });
           return;
         }
-        if (body.agent === 'codex') {
-          // Codex MCP servers live in ~/.codex/config.toml (user-level only)
-          if (body.scope === 'project') {
-            sendJson(res, 400, { error: 'Codex MCP servers are user-level (~/.codex/config.toml) — use scope "user"' });
-            return;
-          }
-          if (await codexMcpExists(body.name)) {
-            sendInstallError(res, new InstallConflictError(`MCP server "${body.name}" is already configured in ~/.codex/config.toml`));
-            return;
-          }
-          await writeCodexMcpServer(body.name, body.mcpConfig as McpServerConfig);
-        } else if (body.scope === 'user') {
-          await writeGlobalMcpServer(body.name, body.mcpConfig as McpServerConfig);
-        } else {
-          await installMcp(projectPath, body.name, body.mcpConfig as McpServerConfig);
+        const agent = body.agent ?? 'claude';
+        const surface = mcpSurfaceOf(agent);
+        if (!surface) {
+          sendJson(res, 400, { error: `Unsupported agent: ${agent}` });
+          return;
         }
-        sendJson(res, 201, {
-          category: 'mcp',
-          name: body.name,
-          scope: body.agent === 'codex' ? 'user' : (body.scope ?? 'project'),
-          agent: body.agent ?? 'claude',
-        });
+        const scopes = surface.mcpScopes();
+        // 显式给了该 harness 没有的 scope → 400（没给 = 取它唯一的那个）。
+        const scope = body.scope ?? scopes[0];
+        if (!scope || !scopes.includes(scope)) {
+          sendJson(res, 400, {
+            error: `MCP servers for ${agent} are ${scopes.join('/')}-level only — scope "${body.scope}" is not available`,
+          });
+          return;
+        }
+        if (body.name in (await surface.mcpRead(scope, projectPath, homedir()))) {
+          sendInstallError(res, new InstallConflictError(`MCP server "${body.name}" is already configured`));
+          return;
+        }
+        await surface.mcpWrite(scope, projectPath, homedir(), body.name, body.mcpConfig as McpServerConfig);
+        // 安装台账挂在项目上：只有项目档有它（user 档是全局的，无项目可挂）。
+        if (scope === 'project') {
+          await recordInstalled(projectPath, { category: 'mcp', name: body.name, agent });
+        }
+        sendJson(res, 201, { category: 'mcp', name: body.name, scope, agent });
       } else if (body.category === 'plugin') {
         // user 档安装管理面（拍板 7-6 方案 A：先开 user 档安装，project/local 待
         // 可逆实验后开）。市场身份与 CLI 编排收在 installPluginPack 唯一处。
@@ -1005,16 +1006,27 @@ async function handleRequest(
           sendJson(res, 400, { error: 'Missing "name"' });
           return;
         }
-        if (body.agent === 'codex') {
-          if (!(await removeCodexMcpServer(body.name))) {
-            sendInstallError(
-              res,
-              new AssetNotFoundError(`MCP server "${body.name}" is not configured in ~/.codex/config.toml`),
-            );
-            return;
-          }
-        } else if (body.scope === 'user') await removeGlobalMcpServer(body.name);
-        else await uninstallMcp(projectPath, body.name);
+        const agent = body.agent ?? 'claude';
+        const surface = mcpSurfaceOf(agent);
+        if (!surface) {
+          sendJson(res, 400, { error: `Unsupported agent: ${agent}` });
+          return;
+        }
+        const scopes = surface.mcpScopes();
+        const scope = body.scope ?? scopes[0];
+        if (!scope || !scopes.includes(scope)) {
+          sendJson(res, 400, {
+            error: `MCP servers for ${agent} are ${scopes.join('/')}-level only — scope "${body.scope}" is not available`,
+          });
+          return;
+        }
+        if (!(await surface.mcpRemove(scope, projectPath, homedir(), body.name))) {
+          sendInstallError(res, new AssetNotFoundError(`MCP server "${body.name}" is not configured`));
+          return;
+        }
+        if (scope === 'project') {
+          await forgetInstalled(projectPath, { category: 'mcp', name: body.name, agent });
+        }
       } else {
         sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
         return;
@@ -1888,8 +1900,15 @@ interface InstallBody {
 function needsProjectPath(body: { category?: string; scope?: string; agent?: string }): boolean {
   if (body.scope === 'user') return false;
   if (body.category === 'plugin') return false;
-  if (body.category === 'mcp' && body.agent === 'codex') return false;
+  // MCP 有没有项目档由 surface 答（codex 只有 user 档）。
+  if (body.category === 'mcp') return !!mcpSurfaceOf(body.agent)?.mcpScopes().includes('project');
   return true;
+}
+
+/** 本次装卸目标的资产面；未注册的 agent → undefined（路由据此 400，不静默落 claude）。 */
+function mcpSurfaceOf(agent: string | undefined) {
+  const id = agent ?? 'claude';
+  return assetSurfaces().find((s) => s.harness === id);
 }
 
 /** Map installer errors to HTTP statuses (409 conflict / 404 missing / 400 bad). */
