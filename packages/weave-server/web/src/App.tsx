@@ -53,7 +53,8 @@ import { navigate, parseRoute, useRoutePath } from '@/lib/route';
 import { toggleTheme, useTheme } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, X } from 'lucide-react';
+import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, X } from 'lucide-react';
+import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -73,6 +74,15 @@ const RIGHT_MAX = 440;
  *  别把按钮钉在转圈上。 */
 const OPEN_TERMINAL_COUNT_MS = 8_000;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+/** 「n 个更新」展开面的一行。 */
+interface UpdateRow {
+  kind: MessageKey;
+  name: string;
+  scope: AssetScope | null;
+  note: string | null;
+}
+const UPDATE_SCOPE_KEY = { project: 'skillGrid.scopeProject', user: 'skillGrid.scopeUser' } as const;
 
 /** 生效查表（链解析在服务端，前端只读行上的 effective）。 */
 const pluginEffective = (rows: readonly PluginRow[], runtime: PluginRuntime, key: string): boolean =>
@@ -148,6 +158,8 @@ function Dashboard() {
   // MCP 工具行（每行一个 (harness, scope) 面；enable/effective 服务端算好）。
   const [mcpRows, setMcpRows] = useState<McpRow[]>([]);
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
+  /** 「n 个更新」标签的展开态：点开看这批更新到底是谁。 */
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginRows, setPluginRows] = useState<PluginRow[]>([]);
   // Per-project update summary — hover-lazy + cached per project id. Carries
@@ -298,6 +310,31 @@ function Dashboard() {
       }));
     }
   }, [updates, selected]);
+
+  // 「n 个更新」点开的明细：与 available 同一口径（可代写的过期项），逐项一句话。
+  // 换项目/更新清零时收起，免得展开的面指向别处。
+  useEffect(() => setUpdatesOpen(false), [selected?.id, updates?.available]);
+
+  const updateRows = useMemo<UpdateRow[]>(() => {
+    if (!updates) return [];
+    return [
+      ...updates.skills
+        .filter((u) => !u.custom && u.outdated)
+        .map((u): UpdateRow => ({ kind: 'app.updateKindSkill', name: u.name, scope: u.scope, note: null })),
+      ...updates.mcp
+        .filter((u) => !u.custom && u.outdated)
+        .map((u): UpdateRow => ({ kind: 'app.updateKindMcp', name: u.name, scope: u.scope, note: null })),
+      ...updates.files
+        .filter((u) => !u.custom && u.outdated)
+        .map((u): UpdateRow => ({ kind: 'app.updateKindFile', name: u.name, scope: u.scope, note: null })),
+      ...(updates.pluginTemplates ?? [])
+        .filter((u) => u.outdated)
+        .map((u): UpdateRow => ({ kind: 'app.updateKindTemplate', name: u.name, scope: null, note: u.pluginId })),
+      ...(updates.initFiles ?? [])
+        .filter((u) => u.outdated && u.syncClass === 'auto')
+        .map((u): UpdateRow => ({ kind: 'app.updateKindInit', name: u.relPath, scope: null, note: null })),
+    ];
+  }, [updates]);
 
   const refreshGlobalSkills = useCallback((projectId: number) => {
     api.listGlobalSkills(projectId).then(setGlobalSkillGroups).catch(() => {});
@@ -1290,11 +1327,60 @@ function Dashboard() {
                       </p>
                     </div>
                     {!globalMode && updates && updates.available > 0 && (
-                      <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium">
-                        {updates.available === 1
-                          ? t('app.updateCountOne')
-                          : t('app.updateCount', { n: updates.available })}
-                      </span>
+                      <div className="relative shrink-0">
+                        <button
+                          onClick={() => setUpdatesOpen((v) => !v)}
+                          aria-expanded={updatesOpen}
+                          title={t('app.updateListTip')}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
+                            updatesOpen && 'ring-1 ring-orange-500/50',
+                          )}
+                        >
+                          {updates.available === 1
+                            ? t('app.updateCountOne')
+                            : t('app.updateCount', { n: updates.available })}
+                          <ChevronDown
+                            className={cn('h-3 w-3 transition-transform', updatesOpen && 'rotate-180')}
+                          />
+                        </button>
+                        {updatesOpen && (
+                          <>
+                            <div className="fixed inset-0 z-20" onClick={() => setUpdatesOpen(false)} />
+                            <div className="absolute right-0 top-full z-30 mt-1.5 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac">
+                              <p className="border-b border-edge/[0.06] px-3 py-2 text-[11px] text-neutral-500">
+                                {t('app.updateListTitle', { n: updateRows.length })}
+                              </p>
+                              <ul className="max-h-[min(45dvh,320px)] overflow-y-auto py-1">
+                                {updateRows.map((row) => (
+                                  <li
+                                    key={`${row.kind}:${row.name}`}
+                                    className="flex items-baseline gap-2 px-3 py-1"
+                                  >
+                                    <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                                      {t(row.kind)}
+                                    </span>
+                                    <span
+                                      className="min-w-0 flex-1 truncate text-xs text-neutral-200"
+                                      title={row.name}
+                                    >
+                                      {row.name}
+                                    </span>
+                                    {row.scope && (
+                                      <span className="shrink-0 text-[10px] text-neutral-500">
+                                        {t(UPDATE_SCOPE_KEY[row.scope])}
+                                      </span>
+                                    )}
+                                    {row.note && (
+                                      <span className="shrink-0 text-[10px] text-neutral-500">{row.note}</span>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                     {!globalMode && updates && updates.available > 0 && (
                       <button

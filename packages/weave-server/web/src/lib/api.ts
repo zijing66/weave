@@ -761,10 +761,26 @@ export interface McpUpdate {
   agent?: AssetAgent;
 }
 
+/** 项目自有 weave 源（`.weave/plugins` 的 manifest.templates）的物化副本。 */
+export interface PluginTemplateUpdate {
+  pluginId: string;
+  name: string;
+  outdated: boolean;
+}
+
+/** init 生成物：`syncClass` = `auto` 可代写、`manual` 会进 git（只报不写）。 */
+export interface InitFileUpdate {
+  relPath: string;
+  outdated: boolean;
+  syncClass: 'auto' | 'manual' | null;
+}
+
 export interface UpdateReport {
   skills: SkillUpdate[];
   files: FileAssetUpdate[];
   mcp: McpUpdate[];
+  pluginTemplates: PluginTemplateUpdate[];
+  initFiles: InitFileUpdate[];
   available: number;
   /** 会进 git 的 init 文件有漂移 → 提醒用户去终端跑 `weave init`（不代写）。 */
   needsInit: boolean;
