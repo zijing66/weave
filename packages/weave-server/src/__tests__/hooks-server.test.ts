@@ -50,13 +50,13 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     fetch(`http://127.0.0.1:${port}${p}`, { method, headers: auth, body: JSON.stringify(body) });
 
   /** 采集链路的落库端（与 inbox worker 入库同形），供 API 用例造数据。 */
-  const seed = (sessionId: string, eventType: string): InboxRecord => {
+  const seed = (sessionId: string, eventType: string, raw: object = {}): InboxRecord => {
     const input = {
       projectId,
       source: 'claude' as const,
       eventType,
       sessionId,
-      payload: JSON.stringify({ eventType, raw: {} }),
+      payload: JSON.stringify({ eventType, raw }),
     };
     const eventId = hookEvents.insert(input);
     sessions.touch(sessionId, projectId);
@@ -299,6 +299,33 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
 
     expect((await post('/sessions/nope', { title: 'x' }, 'PATCH')).status).toBe(404);
     expect((await post('/sessions/sess-rename', { title: '' }, 'PATCH')).status).toBe(400);
+  });
+
+  it('终端异常退出后 resume 起来即判回合已关；压缩重启那笔 SessionStart 不算收尾', async () => {
+    const turnOf = async (sessionId: string) => {
+      const { sessions: rows } = (await (await get('/sessions')).json()) as {
+        sessions: Array<{ sessionId: string; turnOpen?: boolean }>;
+      };
+      return rows.find((s) => s.sessionId === sessionId)!.turnOpen;
+    };
+
+    // 上一回合没等到 Stop 就断了（终端被杀，宿主不会补发 Stop）→ 基线挂着「回合开着」
+    seed('sess-resume', 'UserPromptSubmit');
+    expect(await turnOf('sess-resume')).toBe(true);
+
+    // resume 起来只留一笔 SessionStart(source=resume)：旧回合到此为止
+    seed('sess-resume', 'SessionStart', { source: 'resume' });
+    expect(await turnOf('sess-resume')).toBe(false);
+
+    // 压缩收尾那笔 SessionStart 发生在回合中途，不能把回合判关
+    seed('sess-compact', 'UserPromptSubmit');
+    seed('sess-compact', 'PreCompact');
+    seed('sess-compact', 'SessionStart', { source: 'compact' });
+    expect(await turnOf('sess-compact')).toBe(true);
+
+    // 单会话版（auto 裁决 / 订阅即时段）与列表同一判据
+    expect(sessions.turnOpenOf('sess-resume')).toBe(false);
+    expect(sessions.turnOpenOf('sess-compact')).toBe(true);
   });
 
   it('GET /sessions/:id/plan 摆出最近一次计划模式的正文（老模型带在 events 里，新模型取写盘那次）', async () => {

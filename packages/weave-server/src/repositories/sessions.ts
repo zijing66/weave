@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { isHarness, type Harness } from '@weavecode/core';
+import { HARNESS_COMPACTION, HARNESS_LIFECYCLE, isHarness, type Harness } from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_SESSION_IDLE_DAYS } from '../daemon/settings.js';
 
 export interface SessionRow {
@@ -15,8 +15,9 @@ export interface SessionRow {
   eventCount?: number;
   /** 会话归属 harness = 最新一条 hook 事件的 source（listWithCounts 查询填充）。 */
   harness?: Harness | null;
-  /** 回合开合的服务端基线：最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd
-   *  （listWithCounts 查询填充）——前端帧态丢失/重挂载时的权威兜底。 */
+  /** 回合开合的服务端基线：最后一条 UserPromptSubmit 晚于最后一条回合收尾事件
+   *  （Stop/StopFailure/SessionEnd，以及非压缩的 SessionStart——终端挂掉后 resume
+   *  起来不会有 Stop；listWithCounts 查询填充）——前端帧态丢失/重挂载时的权威兜底。 */
   turnOpen?: boolean;
   /** 最新一条 hook 事件类型（listWithCounts 查询填充）——web 状态总线判「关闭」
    *  （SessionEnd）不必再为每个会话拉事件。 */
@@ -39,6 +40,31 @@ function sessionIdleRetentionMs(): number {
   return (
     (readDaemonSettingsSync().sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS) * 86_400_000
   );
+}
+
+/**
+ * 「回合收尾」的 SQL 判据（`alias` = hook_events 的别名）：各 harness 的 close
+ * （Stop/StopFailure）∪ 会话起落标记（SessionStart/SessionEnd）。**起落标记算收尾**
+ * 是因为终端异常退出时宿主不会补发 Stop，会话 resume 起来只留一笔 SessionStart——
+ * 不认它，turnOpen 就永远挂着，列表一直显「运行中」。**压缩收尾的那笔 SessionStart
+ * 是回合中途发生的**（HARNESS_COMPACTION），必须排除。事件名一律取表，不散写。
+ */
+function turnCloseSql(alias: string): string {
+  const types = new Set<string>();
+  for (const l of Object.values(HARNESS_LIFECYCLE)) {
+    for (const t of l.close) types.add(t);
+    for (const t of l.sessionMarkers) types.add(t);
+    if (l.sessionExit) types.add(l.sessionExit);
+  }
+  const list = [...types].map((t) => `'${t}'`).join(',');
+  const compactEnd = Object.values(HARNESS_COMPACTION)
+    .filter((c) => c.end && c.endSource)
+    .map(
+      (c) =>
+        `(${alias}.event_type = '${c.end}' AND COALESCE(json_extract(${alias}.payload, '$.raw.source'), '') = '${c.endSource}')`,
+    )
+    .join(' OR ');
+  return `${alias}.event_type IN (${list})${compactEnd ? ` AND NOT (${compactEnd})` : ''}`;
 }
 
 /**
@@ -94,6 +120,7 @@ export class SessionRepository {
       '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, ' +
       '(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type, ' +
       '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
+      `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = s.session_id AND ${turnCloseSql('e6')}) AS last_close, ` +
       '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
     const rows =
@@ -111,13 +138,17 @@ export class SessionRepository {
     return rows.map((row) => {
       const raw = (row as { harness?: unknown }).harness;
       const lastUps = (row as { last_ups?: number | null }).last_ups;
+      const lastClose = (row as { last_close?: number | null }).last_close;
       const lastStop = (row as { last_stop?: number | null }).last_stop;
       const lastEventType = (row as { last_event_type?: string | null }).last_event_type;
       return {
         ...toSession(row),
         eventCount: Number((row as { event_count: number }).event_count ?? 0),
         harness: isHarness(raw) ? raw : null,
-        turnOpen: lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop)),
+        // 收尾判据含起落标记（见 turnCloseSql）；hasRun 仍只认真跑过的那几种事件
+        // ——只来过一笔 SessionStart 的空会话不该被当成「转录丢了」。
+        turnOpen:
+          lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose)),
         lastEventType: lastEventType ?? null,
         hasRun: lastUps != null || lastStop != null,
         // 自动移除时刻（唯一判据/期限实现）两档：没等到用户 prompt（无 ups）的
@@ -133,21 +164,24 @@ export class SessionRepository {
 
   /**
    * 单会话 turnOpen（消息域 auto 裁决的忙/闲基准）：语义与 listWithCounts 的
-   * 计算字段完全一致（最后一条 UserPromptSubmit 晚于最后一条 Stop/SessionEnd）。
-   * 会话不存在 → null；存在但零事件 → false（同列表口径：无 ups 即不判开）。
+   * 计算字段完全一致（最后一条 UserPromptSubmit 晚于最后一条回合收尾事件，
+   * 判据同 turnCloseSql）。会话不存在 → null；存在但零事件 → false（同列表口径：
+   * 无 ups 即不判开）。
    */
   turnOpenOf(sessionId: string): boolean | null {
     const row = this.db
       .prepare(
         'SELECT ' +
         '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
-        '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = ? AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop',
+        `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = ? AND ${turnCloseSql('e6')}) AS last_close`,
       )
-      .get(sessionId, sessionId) as { last_ups?: number | null; last_stop?: number | null } | undefined;
+      .get(sessionId, sessionId) as
+      | { last_ups?: number | null; last_close?: number | null }
+      | undefined;
     if (!this.getBySessionId(sessionId)) return null;
     const lastUps = row?.last_ups ?? null;
-    const lastStop = row?.last_stop ?? null;
-    return lastUps != null && (lastStop == null || Number(lastUps) > Number(lastStop));
+    const lastClose = row?.last_close ?? null;
+    return lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose));
   }
 
   /**
