@@ -33,6 +33,21 @@ export interface DaemonHandle {
 }
 
 /**
+ * 等守护进程真能应答。/health 是它起好的标志：`spawn` 返回的只是子进程，此刻
+ * 它连模块都还没加载完——首启的初始密码标记文件、auth.json 都是启动过程中才写
+ * 出的，早一步问就扑空（`weave dashboard` 因此首次运行默默不打印密码），紧接着
+ * 的 HTTP 请求也会连不上（`weave chpass`）。超时就不再等，让后续请求照常报错。
+ */
+export async function waitForDaemon(port: number, timeoutMs = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await probeDaemon(port))) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return true;
+}
+
+/**
  * Ensure a daemon is running and return how to reach it.
  *
  * Reuses a live daemon (probing the default port, then whatever the state file
@@ -64,6 +79,9 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
     { detached: true, stdio: 'ignore' },
   );
   child.unref();
+
+  // 起好了才算「起了」：调用方紧接着就要读它写出的文件、打它的接口。
+  await waitForDaemon(port);
 
   return { port, started: true };
 }

@@ -1,8 +1,45 @@
 import { describe, it, expect } from 'vitest';
+import { createServer, type Server } from 'node:http';
 import { dashboardCommand, dashboardUrl } from '../commands/dashboard';
-import { daemonCommand } from '../commands/daemon';
+import { daemonCommand, waitForDaemon } from '../commands/daemon';
 import { zh, en, type MessageKey } from '../i18n/dict';
 import { makeT } from '../i18n/t';
+
+/** 拿一个当下空闲的端口（listen 0 → 取号 → 立刻关掉）。 */
+function freePort(server: Server): Promise<number> {
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as { port: number };
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+const healthOnly = (): Server =>
+  createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ service: 'weave-daemon' }));
+  });
+
+describe('waitForDaemon', () => {
+  // `spawn` 返回的是子进程而非就绪的服务器：首启密码文件、auth.json 都在它启动
+  // 过程中才写出，早一步问即扑空（`weave dashboard` 首次运行因此不打印密码）。
+  it('等它真应答才返回（迟到的 /health 也等到）', async () => {
+    const port = await freePort(createServer());
+    const server = healthOnly();
+    setTimeout(() => server.listen(port, '127.0.0.1'), 150);
+    try {
+      expect(await waitForDaemon(port, 5000)).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('没人应答就超时返回 false，不无限等', async () => {
+    const port = await freePort(createServer());
+    expect(await waitForDaemon(port, 300)).toBe(false);
+  });
+});
 
 describe('dashboardUrl', () => {
   it('is the loopback origin on the given port', () => {
