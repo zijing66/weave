@@ -7,6 +7,7 @@ import {
   exportStamp,
   filterThread,
   isGenerating,
+  removableOf,
   spliceNewline,
   readConvCache,
   writeConvCache,
@@ -260,6 +261,24 @@ describe('attachDeliveries', () => {
     ];
     expect(attachDeliveries([], rows).outbox.map((m) => m.id)).toEqual(['m1']);
     expect(attachDeliveries([userEntry], rows).outbox).toEqual([]);
+  });
+});
+
+describe('removableOf（队列里的行能不能删）', () => {
+  it('① 未送达的都能删：排队中 / 失败 / 超时', () => {
+    for (const status of ['pending', 'failed', 'timeout'] as const) {
+      expect(removableOf(delivery({ status })), status).toBe(true);
+    }
+  });
+
+  it('② 在飞的不删（落定回调会把行写回来），已送达的不删（内容已在会话里）', () => {
+    expect(removableOf(delivery({ status: 'delivering' }))).toBe(false);
+    expect(removableOf(delivery({ status: 'running' }))).toBe(false);
+    expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
+  });
+
+  it('③ 暂停闸成因一律能删——它不清掉，闸就没有可操作的成因行', () => {
+    expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
   });
 });
 

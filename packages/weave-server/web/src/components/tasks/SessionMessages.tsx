@@ -51,9 +51,6 @@ import { subscribeHook, type HookFrame } from '@/lib/sse';
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
 
-/** 发送端队列卡最多列几条（积压再多也只占这么点地方，条数在标题上）。 */
-const OUTBOX_SHOW = 4;
-
 /** 附件口径（与服务端 UPLOAD_* 同值）：harness 认的就是这四种，超出就地挡。 */
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
@@ -259,10 +256,10 @@ function claims(entryText: string, rowText: string, hasImages = false): boolean 
 /**
  * 投递行归位：同文案、时刻相近的事件条目认领它（气泡上挂状态/回执点，不重复渲染）；
  * **认领不到的不进对话**——对话里的气泡只能是会话真说过的话（hook 事件），
- * 还没送出去 / 送失败 / 被暂扣的行混进来就是凭空多一条消息。它们归发送端那条
- * 独立的队列面（`outbox`）——**已送达、气泡还没来的也在里面**：那一段正是
- * 「发出去了、还没落进对话」的过程，抹掉它新发的消息就凭空消失一下再冒出来。
- * 可见期由服务端给，本视图不另设窗口。
+ * 还没送出去 / 送失败 / 被暂扣的行混进来就是凭空多一条消息。它们归 `outbox`，
+ * 在对话尾巴上**当最新那几条气泡**摆着（虚线框 = 还没落定）——**已送达、气泡还
+ * 没来的也在里面**：那一段正是「发出去了、还没落进对话」的过程，抹掉它新发的
+ * 消息就凭空消失一下再冒出来。可见期由服务端给，本视图不另设窗口。
  */
 export function attachDeliveries(
   entries: readonly ConvEntry[],
@@ -304,6 +301,16 @@ export function attachDeliveries(
     .filter((m) => !taken.has(m.id))
     .sort((a, b) => a.at.localeCompare(b.at));
   return { thread: out, outbox };
+}
+
+/** 能不能从队列里移除：在飞（delivering/running）的删不掉——落定回调会把行写回来；
+ *  已送达的也不必删——内容已经在会话里了。其余未送达的都能删，暂停闸成因一律能删
+ *  （它不清掉，闸就没有可操作的成因行）。 */
+export function removableOf(m: SessionMessageRow): boolean {
+  return (
+    m.stalled === true ||
+    (m.status !== 'delivered' && m.status !== 'delivering' && m.status !== 'running')
+  );
 }
 
 /** 历史过滤：全部 / 只看自己发的 / 只看收到的回复（角色即过滤键）。 */
@@ -833,9 +840,11 @@ export function SessionMessages({
     }
     return null;
   }, [liveEvents, thread]);
-  /** 尾部签名 = 尾条 + 在途尾行：「生成中…」那行一出现也是尾部进了新内容，只认
-   *  尾条键会让刚发送时气泡滚到了底、提示行却留在视口外（下次打开才对）。 */
-  const tailSig = `${tailKey ?? ''}|${generating ? 'g' : ''}${interrupted ? 'i' : ''}${
+  /** 尾部签名 = 尾条 + 队列尾行 + 在途尾行：「生成中…」那行一出现也是尾部进了新内容，
+   *  只认尾条键会让刚发送时气泡滚到了底、提示行却留在视口外（下次打开才对）；刚发出的
+   *  消息先以队列气泡露面，那一行也是尾部。 */
+  const queueSig = outbox.map((m) => `${m.id}:${m.status}${m.stalled === true ? '!' : ''}`).join(',');
+  const tailSig = `${tailKey ?? ''}|${queueSig}|${generating ? 'g' : ''}${interrupted ? 'i' : ''}${
     answerPending ? 'a' : ''
   }`;
   const lastTail = useRef<string | undefined>(undefined);
@@ -1315,7 +1324,7 @@ export function SessionMessages({
         </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
-            尾巴上常驻还没落进事件流的投递行（Held/失败/暂停闸成因 + 重发） */}
+            尾巴上把还没落进事件流的投递行当最新气泡摆着（Held/失败/暂停闸成因 + 重发） */}
         <div
           ref={threadRef}
           onScroll={() => {
@@ -1357,7 +1366,7 @@ export function SessionMessages({
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t('hooks.loading')}
             </p>
-          ) : thread.length === 0 ? (
+          ) : thread.length === 0 && outbox.length === 0 ? (
             <p className="pt-6 text-center text-xs text-neutral-600">
               {t('tasks.messagesEmpty')}
             </p>
@@ -1527,11 +1536,7 @@ export function SessionMessages({
                         )
                       )}
                       {/* 多选态里重发/删除不渲染——它们会跟「点气泡即勾选」抢点击 */}
-                      {!selecting &&
-                        pipe &&
-                        (pipe.status === 'failed' ||
-                          pipe.status === 'pending' ||
-                          pipe.stalled === true) && (
+                      {!selecting && pipe && removableOf(pipe) && (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           {(pipe.status === 'failed' || pipe.stalled === true) && (
                             <button
@@ -1592,6 +1597,127 @@ export function SessionMessages({
                   </div>
                 );
               })}
+              {/* 发送队列 = 尾巴上的「最新几条」气泡：还没落进事件流的行（排队/在飞/
+                  已送达未回执/失败/被闸住）就摆在它将来会出现的位置上等，气泡里仍是
+                  队列那套样式（状态徽标 + 通道 + 原文 + 操作）。虚线边框标「还没落定」——
+                  认领即退场，真气泡接手时位置不变。 */}
+              {!selecting &&
+                outbox.map((m) => (
+                  <div key={`q:${m.id}`} className="flex justify-end">
+                    <div className="min-w-0 max-w-[85%] overflow-x-auto rounded-lg border border-dashed border-blue-500/30 bg-blue-500/[0.07] px-2 py-1.5">
+                      <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
+                          {t(STATUS_KEY[m.status])}
+                        </Badge>
+                        {m.via != null && (
+                          <span className="shrink-0 text-[10px] text-neutral-500">
+                            {t(VIA_KEY[m.via])}
+                          </span>
+                        )}
+                        {m.stalled === true && (
+                          <span className="shrink-0 text-[10px] text-amber-400">
+                            {t('tasks.msgStalled')}
+                          </span>
+                        )}
+                        {m.images?.length ? (
+                          <ImageIcon className="h-3 w-3 shrink-0 text-neutral-500" />
+                        ) : null}
+                        <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
+                          {formatStamp(m.at)}
+                        </span>
+                      </div>
+                      <div className="whitespace-pre-wrap break-words text-[12px] text-neutral-200">
+                        {m.text || m.images?.[0]?.name}
+                      </div>
+                      {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
+                      {m.reason === 'offline' ? (
+                        <p className="mt-1 break-words text-[11px] text-amber-400">
+                          {t('tasks.msgOffline')}
+                        </p>
+                      ) : m.error ? (
+                        <p className="mt-1 break-words text-[11px] text-red-400">{m.error}</p>
+                      ) : null}
+                      {/* 归零行（已送达未回执、在飞）没有可做的操作，整行不出 */}
+                      {removableOf(m) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {(m.status === 'failed' || m.stalled === true) && (
+                            <button
+                              type="button"
+                              title={t('tasks.msgResend')}
+                              aria-label={t('tasks.msgResend')}
+                              disabled={fb.stateOf(`resend:${m.id}`) === 'loading'}
+                              onClick={() =>
+                                void fb.run(
+                                  `resend:${m.id}`,
+                                  async () => {
+                                    await api.resendSessionMessage(sessionId, m.id);
+                                    await refreshMessages();
+                                  },
+                                  { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
+                                )
+                              }
+                              className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                            >
+                              <FeedbackIcon
+                                state={fb.stateOf(`resend:${m.id}`)}
+                                className="h-3 w-3"
+                                icon={<RotateCcw className="h-3 w-3" />}
+                              />
+                              {t('tasks.msgResend')}
+                            </button>
+                          )}
+                          {/* 队尾那条（最新未发送）取回输入框改完再发——与 claude 自己
+                              的队列一个意思；已送出去的行没有「改」这回事 */}
+                          {m.id === newestQueuedId && (
+                            <button
+                              type="button"
+                              title={t('tasks.outboxDequeueHint')}
+                              aria-label={t('tasks.outboxDequeue')}
+                              disabled={fb.stateOf(`dequeue:${m.id}`) === 'loading'}
+                              onClick={() => dequeue(m)}
+                              className="inline-flex shrink-0 items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-300 transition-colors hover:border-blue-500/50 disabled:opacity-40"
+                            >
+                              <FeedbackIcon
+                                state={fb.stateOf(`dequeue:${m.id}`)}
+                                className="h-3 w-3"
+                                icon={<Pencil className="h-3 w-3" />}
+                              />
+                              {t('tasks.outboxDequeue')}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title={t(
+                              m.status === 'pending'
+                                ? 'tasks.msgDismissQueuedHint'
+                                : 'tasks.msgDismissHint',
+                            )}
+                            aria-label={t('tasks.msgDismiss')}
+                            disabled={fb.stateOf(`dismiss:${m.id}`) === 'loading'}
+                            onClick={() =>
+                              void fb.run(
+                                `dismiss:${m.id}`,
+                                async () => {
+                                  await api.dismissSessionMessage(sessionId, m.id);
+                                  await refreshMessages();
+                                },
+                                { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
+                              )
+                            }
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
+                          >
+                            <FeedbackIcon
+                              state={fb.stateOf(`dismiss:${m.id}`)}
+                              className="h-3 w-3"
+                              icon={<Trash2 className="h-3 w-3" />}
+                            />
+                            {t('tasks.msgDismiss')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               {(answerPending || generating || interrupted) && (
                 <div className="flex flex-wrap items-center justify-start gap-1.5">
                   {answerPending && (
@@ -1634,115 +1760,6 @@ export function SessionMessages({
           <p className="mt-1 shrink-0 rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
             {error}
           </p>
-        )}
-
-        {/* 队列 = 发送端自己的一条面（浮在输入框上方）：对话里的气泡只能是会话真说过
-            的话（hook 事件），还没送出去 / 送失败的行混进去就是凭空多一条消息。队尾
-            那条（最新未发送）可以取回输入框改完再发——与 claude 的队列一个意思。 */}
-        {outbox.length > 0 && !selecting && (
-          <div className="mt-2 shrink-0 rounded-xl border border-blue-500/25 bg-neutral-900/95 px-2 py-1.5 shadow-lg shadow-black/40">
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <Send className="h-3 w-3 shrink-0 text-blue-300" />
-              <span className="font-medium text-neutral-200">{t('tasks.outboxTitle')}</span>
-              <span className="text-neutral-500">{t('tasks.outboxCount', { n: outbox.length })}</span>
-            </div>
-            <ul className="mt-1 space-y-0.5">
-              {outbox.slice(-OUTBOX_SHOW).map((m) => (
-                <li key={m.id} className="flex items-center gap-1.5 text-[11px]">
-                  <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
-                    {t(STATUS_KEY[m.status])}
-                  </Badge>
-                  {m.via != null && (
-                    <span className="shrink-0 text-[10px] text-neutral-500">{t(VIA_KEY[m.via])}</span>
-                  )}
-                  {m.images?.length ? (
-                    <ImageIcon className="h-3 w-3 shrink-0 text-neutral-500" />
-                  ) : null}
-                  <span
-                    className="min-w-0 flex-1 truncate text-neutral-300"
-                    title={m.reason === 'offline' ? t('tasks.msgOffline') : (m.error ?? m.text)}
-                  >
-                    {m.text || m.images?.[0]?.name}
-                  </span>
-                  {m.stalled === true && (
-                    <span className="shrink-0 text-[10px] text-amber-400">{t('tasks.msgStalled')}</span>
-                  )}
-                  {(m.status === 'failed' || m.stalled === true) && (
-                    <button
-                      type="button"
-                      title={t('tasks.msgResend')}
-                      aria-label={t('tasks.msgResend')}
-                      disabled={fb.stateOf(`resend:${m.id}`) === 'loading'}
-                      onClick={() =>
-                        void fb.run(
-                          `resend:${m.id}`,
-                          async () => {
-                            await api.resendSessionMessage(sessionId, m.id);
-                            await refreshMessages();
-                          },
-                          { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
-                        )
-                      }
-                      className="inline-flex shrink-0 items-center rounded border border-amber-500/30 bg-amber-950/30 p-0.5 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
-                    >
-                      <FeedbackIcon
-                        state={fb.stateOf(`resend:${m.id}`)}
-                        className="h-3 w-3"
-                        icon={<RotateCcw className="h-3 w-3" />}
-                      />
-                    </button>
-                  )}
-                  {m.id === newestQueuedId && (
-                    <button
-                      type="button"
-                      title={t('tasks.outboxDequeueHint')}
-                      aria-label={t('tasks.outboxDequeue')}
-                      disabled={fb.stateOf(`dequeue:${m.id}`) === 'loading'}
-                      onClick={() => dequeue(m)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-1 py-0.5 text-[10px] text-blue-300 transition-colors hover:border-blue-500/50 disabled:opacity-40"
-                    >
-                      <FeedbackIcon
-                        state={fb.stateOf(`dequeue:${m.id}`)}
-                        className="h-3 w-3"
-                        icon={<Pencil className="h-3 w-3" />}
-                      />
-                      {t('tasks.outboxDequeue')}
-                    </button>
-                  )}
-                  {(m.status === 'pending' || m.status === 'failed' || m.stalled === true) && (
-                    <button
-                      type="button"
-                      title={t(m.status === 'pending' ? 'tasks.msgDismissQueuedHint' : 'tasks.msgDismissHint')}
-                      aria-label={t('tasks.msgDismiss')}
-                      disabled={fb.stateOf(`dismiss:${m.id}`) === 'loading'}
-                      onClick={() =>
-                        void fb.run(
-                          `dismiss:${m.id}`,
-                          async () => {
-                            await api.dismissSessionMessage(sessionId, m.id);
-                            await refreshMessages();
-                          },
-                          { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
-                        )
-                      }
-                      className="inline-flex shrink-0 items-center rounded border border-edge/[0.1] p-0.5 text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
-                    >
-                      <FeedbackIcon
-                        state={fb.stateOf(`dismiss:${m.id}`)}
-                        className="h-3 w-3"
-                        icon={<X className="h-3 w-3" />}
-                      />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {outbox.length > OUTBOX_SHOW && (
-              <p className="mt-0.5 text-right text-[10px] text-neutral-600">
-                {t('tasks.outboxMore', { n: outbox.length - OUTBOX_SHOW })}
-              </p>
-            )}
-          </div>
         )}
 
         {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆）。窄屏放不下
