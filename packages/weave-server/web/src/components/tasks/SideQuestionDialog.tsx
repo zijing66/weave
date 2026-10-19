@@ -27,6 +27,7 @@ import {
 import { subscribeHook } from '@/lib/sse';
 import { usePullLoad } from '@/lib/pull-load';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useTheme } from '@/lib/theme';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
@@ -131,6 +132,7 @@ export function SideQuestionDialog({
   const t = useT();
   const fb = useActionFeedback();
   const { show } = useToast();
+  const theme = useTheme();
   /** 已加载的行（**倒序**：与接口同序，渲染时反转成对话序）。 */
   const [rows, setRows] = useState<SideQuestionRow[] | null>(null);
   const [headDone, setHeadDone] = useState(false);
@@ -346,6 +348,7 @@ export function SideQuestionDialog({
               assistant: t('tasks.sideRoleAnswer'),
             },
             stamp: fullStamp,
+            theme,
           });
         } catch (e) {
           throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));

@@ -26,6 +26,7 @@ import {
 } from '@/lib/conv-image';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
+import { useTheme } from '@/lib/theme';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
@@ -569,6 +570,7 @@ export function SessionMessages({
   const t = useT();
   const { show } = useToast();
   const fb = useActionFeedback();
+  const theme = useTheme();
   /** 旁路会话弹窗（旁路历史与提问都在这扇里）。 */
   const [sideOpen, setSideOpen] = useState(false);
   const { statuses, sessions, refresh, modelCatalog } = useSessionStatus();
@@ -970,6 +972,7 @@ export function SessionMessages({
             })}`,
             labels: { user: t('tasks.convRoleUser'), assistant: t('tasks.convRoleAssistant') },
             stamp: exportStamp,
+            theme,
           });
         } catch (e) {
           throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));

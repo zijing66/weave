@@ -3,6 +3,7 @@ import {
   IMG_WIDTH,
   imageFileName,
   layoutConversation,
+  paletteFor,
   pickScale,
   wrapSpans,
   type BoxBlock,
@@ -24,6 +25,7 @@ const opts = {
   subtitle: 'proj · 导出',
   labels: { user: '我', assistant: '会话' },
   stamp: (iso: string) => `T(${iso})`,
+  theme: 'dark' as const,
 };
 
 const AT = '2026-10-16T09:00:00.000Z';
@@ -45,15 +47,7 @@ describe('pickScale', () => {
 });
 
 describe('wrapSpans', () => {
-  const pal = {
-    fill: '',
-    stroke: '',
-    fg: '#fff',
-    strong: '#fff',
-    code: '#fff',
-    link: '#fff',
-    quote: '#fff',
-  };
+  const pal = paletteFor('dark', 'assistant');
 
   it('中日韩任意处可折，拉丁词整体不折', () => {
     const cjk = wrapSpans(measure, [{ text: '这是一段中文说明文字', style: 'plain' }], pal, 26, 19);
@@ -230,5 +224,28 @@ describe('imageFileName', () => {
   it('剥掉路径不友好字符', () => {
     const name = imageFileName('a/b:c*d', new Date(2026, 9, 16, 9, 8, 7));
     expect(name).toBe('weave-a-b-c-d-20261016-090807.png');
+  });
+});
+
+describe('深浅主题', () => {
+  const lightBlocks = (text: string): ConvImageBlock[] =>
+    layoutConversation(measure, [{ role: 'assistant', at: AT, text }], { ...opts, theme: 'light' })
+      .bubbles[0]!.blocks;
+
+  it('布局记下主题（绘制按它取底色）', () => {
+    expect(layoutConversation(measure, [], opts).theme).toBe('dark');
+    expect(layoutConversation(measure, [], { ...opts, theme: 'light' }).theme).toBe('light');
+  });
+
+  it('代码块底色/描边跟着主题走', () => {
+    const blk = lightBlocks('```\nx\n```')[0] as BoxBlock;
+    expect(blk.fill).toBe(paletteFor('light', 'assistant').codeBg);
+    expect(blk.border).toBe(paletteFor('light', 'assistant').codeBorder);
+  });
+
+  it('两种角色都有两套配色（缺一边就会画成同色一片）', () => {
+    for (const role of ['user', 'assistant'] as const) {
+      expect(paletteFor('light', role).fg).not.toBe(paletteFor('dark', role).fg);
+    }
   });
 });

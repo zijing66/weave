@@ -7,6 +7,7 @@
  */
 
 import { parseMarkdown, type MdSpan, type MdStyle } from './conv-markdown';
+import type { Theme } from './theme';
 
 export type ConvRole = 'user' | 'assistant';
 
@@ -78,48 +79,99 @@ export interface ConvImageOpts {
   subtitle: string;
   labels: { user: string; assistant: string };
   stamp: (iso: string) => string;
+  /** 导出图跟随窗口当下的深浅模式（色值与 `tailwind.config.js` 的令牌表同源）。 */
+  theme: Theme;
   scale?: number;
 }
 
-interface Palette {
+export interface Palette {
   fill: string;
   stroke: string;
   fg: string;
   strong: string;
   code: string;
+  codeBg: string;
+  codeBorder: string;
   link: string;
   quote: string;
+  quoteBar: string;
+  tableBorder: string;
+  tableHeadBg: string;
 }
 
-const META_FG = '#737373';
-const TITLE_FG = '#f5f5f5';
-const CODE_BG = 'rgba(0,0,0,0.45)';
-const CODE_BORDER = 'rgba(255,255,255,0.06)';
-const TABLE_BORDER = 'rgba(255,255,255,0.08)';
-const TABLE_HEAD_BG = 'rgba(0,0,0,0.35)';
-const QUOTE_BAR_FG = '#404040';
-const RULE_FG = 'rgba(255,255,255,0.08)';
+/** 画布底色/标题/页眉线：只跟主题走，与气泡角色无关。 */
+const PAGE: Record<Theme, { bg: string; title: string; meta: string; rule: string }> = {
+  dark: { bg: '#0a0a0a', title: '#f5f5f5', meta: '#737373', rule: 'rgba(255,255,255,0.08)' },
+  light: { bg: '#fafafa', title: '#0a0a0a', meta: '#525252', rule: 'rgba(0,0,0,0.10)' },
+};
 
-const BUBBLE: Record<ConvRole, Palette> = {
-  user: {
-    fill: 'rgba(59,130,246,0.14)',
-    stroke: 'rgba(59,130,246,0.35)',
-    fg: '#dbeafe',
-    strong: '#eff6ff',
-    code: '#bfdbfe',
-    link: '#93c5fd',
-    quote: 'rgba(219,234,254,0.75)',
+const BUBBLE: Record<Theme, Record<ConvRole, Palette>> = {
+  dark: {
+    user: {
+      fill: 'rgba(59,130,246,0.14)',
+      stroke: 'rgba(59,130,246,0.35)',
+      fg: '#dbeafe',
+      strong: '#eff6ff',
+      code: '#bfdbfe',
+      codeBg: 'rgba(0,0,0,0.45)',
+      codeBorder: 'rgba(255,255,255,0.06)',
+      link: '#93c5fd',
+      quote: 'rgba(219,234,254,0.75)',
+      quoteBar: '#404040',
+      tableBorder: 'rgba(255,255,255,0.08)',
+      tableHeadBg: 'rgba(0,0,0,0.35)',
+    },
+    assistant: {
+      fill: 'rgba(255,255,255,0.06)',
+      stroke: 'rgba(255,255,255,0.10)',
+      fg: '#e5e5e5',
+      strong: '#fafafa',
+      code: '#d4d4d4',
+      codeBg: 'rgba(0,0,0,0.45)',
+      codeBorder: 'rgba(255,255,255,0.06)',
+      link: '#60a5fa',
+      quote: '#a3a3a3',
+      quoteBar: '#404040',
+      tableBorder: 'rgba(255,255,255,0.08)',
+      tableHeadBg: 'rgba(0,0,0,0.35)',
+    },
   },
-  assistant: {
-    fill: 'rgba(255,255,255,0.06)',
-    stroke: 'rgba(255,255,255,0.10)',
-    fg: '#e5e5e5',
-    strong: '#fafafa',
-    code: '#d4d4d4',
-    link: '#60a5fa',
-    quote: '#a3a3a3',
+  light: {
+    user: {
+      fill: 'rgba(59,130,246,0.10)',
+      stroke: 'rgba(59,130,246,0.30)',
+      fg: '#1e3a8a',
+      strong: '#172554',
+      code: '#1d4ed8',
+      codeBg: 'rgba(0,0,0,0.05)',
+      codeBorder: 'rgba(0,0,0,0.08)',
+      link: '#2563eb',
+      quote: 'rgba(30,58,138,0.75)',
+      quoteBar: '#d4d4d4',
+      tableBorder: 'rgba(0,0,0,0.10)',
+      tableHeadBg: 'rgba(0,0,0,0.04)',
+    },
+    assistant: {
+      fill: 'rgba(0,0,0,0.045)',
+      stroke: 'rgba(0,0,0,0.10)',
+      fg: '#171717',
+      strong: '#0a0a0a',
+      code: '#262626',
+      codeBg: 'rgba(0,0,0,0.05)',
+      codeBorder: 'rgba(0,0,0,0.08)',
+      link: '#1d4ed8',
+      quote: '#404040',
+      quoteBar: '#d4d4d4',
+      tableBorder: 'rgba(0,0,0,0.10)',
+      tableHeadBg: 'rgba(0,0,0,0.04)',
+    },
   },
 };
+
+/** 某主题下某角色的配色（排版与绘制都从这里取；测试也用它，免得手抄一份 Palette）。 */
+export function paletteFor(theme: Theme, role: ConvRole): Palette {
+  return BUBBLE[theme][role];
+}
 
 export interface ConvImageSpan {
   text: string;
@@ -197,6 +249,7 @@ export interface ConvImageLayout {
   width: number;
   height: number;
   scale: number;
+  theme: Theme;
   header: { y: number; h: number; title: string; subtitle: string };
   bubbles: ConvImageBubble[];
 }
@@ -211,7 +264,7 @@ function styleOf(style: MdStyle, pal: Palette, base?: ConvFont): Omit<ConvImageS
     case 'strongEm':
       return { font: base ?? 'strongEm', fg: pal.strong };
     case 'code':
-      return { font: 'mono', fg: pal.code, bg: CODE_BG };
+      return { font: 'mono', fg: pal.code, bg: pal.codeBg };
     case 'link':
       return { font: base ?? 'body', fg: pal.link, underline: true };
     case 'del':
@@ -377,7 +430,7 @@ function layoutBlocks(measure: Measure, text: string, pal: Palette): ConvImageBl
           kind: 'box',
           h: linesHeight(lines) + QUOTE_PAD,
           w: Math.max(0, ...lines.map(lineWidth)),
-          leftBar: QUOTE_BAR_FG,
+          leftBar: pal.quoteBar,
           pad: QUOTE_PAD / 2,
           lines,
         });
@@ -404,8 +457,8 @@ function layoutBlocks(measure: Measure, text: string, pal: Palette): ConvImageBl
           kind: 'box',
           h: linesHeight(lines) + CODE_PAD * 2,
           w: Math.max(0, ...lines.map((l) => l.spans.reduce((n, s) => n + s.w, 0))) + CODE_PAD * 2,
-          fill: CODE_BG,
-          border: CODE_BORDER,
+          fill: pal.codeBg,
+          border: pal.codeBorder,
           pad: CODE_PAD,
           lines,
         });
@@ -468,10 +521,11 @@ export function layoutConversation(
 ): ConvImageLayout {
   const headerH = TITLE_H + META_H + 8;
   const header = { y: PAD, h: headerH, title: opts.title, subtitle: opts.subtitle };
+  const pals = BUBBLE[opts.theme];
   let y = PAD + headerH + BUBBLE_GAP;
   const bubbles: ConvImageBubble[] = [];
   for (const e of entries) {
-    const blocks = layoutBlocks(measure, e.text, BUBBLE[e.role]);
+    const blocks = layoutBlocks(measure, e.text, pals[e.role]);
     const contentW = Math.max(0, ...blocks.map((b) => b.w));
     const contentH = blocks.reduce((n, b) => n + b.gap + b.h, 0);
     const w = Math.min(BUBBLE_MAX, contentW + BUBBLE_PAD * 2);
@@ -490,7 +544,14 @@ export function layoutConversation(
     y += META_H + h + BUBBLE_GAP;
   }
   const height = Math.round(entries.length > 0 ? y - BUBBLE_GAP + PAD : y);
-  return { width: IMG_WIDTH, height, scale: pickScale(IMG_WIDTH, height, opts.scale), header, bubbles };
+  return {
+    width: IMG_WIDTH,
+    height,
+    scale: pickScale(IMG_WIDTH, height, opts.scale),
+    theme: opts.theme,
+    header,
+    bubbles,
+  };
 }
 
 function roundRect(
@@ -549,27 +610,29 @@ function drawLines(
 }
 
 export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImageLayout): void {
-  ctx.fillStyle = '#0a0a0a';
+  const page = PAGE[layout.theme];
+  const pals = BUBBLE[layout.theme];
+  ctx.fillStyle = page.bg;
   ctx.fillRect(0, 0, layout.width, layout.height);
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
   ctx.lineWidth = 1;
   const { y, h, title, subtitle } = layout.header;
   ctx.font = FONTS.title;
-  ctx.fillStyle = TITLE_FG;
+  ctx.fillStyle = page.title;
   ctx.fillText(title, PAD, y);
   ctx.font = FONTS.meta;
-  ctx.fillStyle = META_FG;
+  ctx.fillStyle = page.meta;
   ctx.fillText(subtitle, PAD, y + TITLE_H);
-  ctx.strokeStyle = RULE_FG;
+  ctx.strokeStyle = page.rule;
   ctx.beginPath();
   ctx.moveTo(PAD, y + h + 0.5);
   ctx.lineTo(layout.width - PAD, y + h + 0.5);
   ctx.stroke();
   for (const b of layout.bubbles) {
-    const pal = BUBBLE[b.role];
+    const pal = pals[b.role];
     ctx.font = FONTS.meta;
-    ctx.fillStyle = META_FG;
+    ctx.fillStyle = page.meta;
     ctx.textAlign = b.role === 'user' ? 'right' : 'left';
     ctx.fillText(b.meta, b.role === 'user' ? b.x + b.w : b.x, b.metaY);
     ctx.textAlign = 'left';
@@ -583,7 +646,7 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
     for (const blk of b.blocks) {
       const by = y0 + blk.y;
       if (blk.kind === 'rule') {
-        ctx.strokeStyle = RULE_FG;
+        ctx.strokeStyle = page.rule;
         ctx.beginPath();
         ctx.moveTo(x0, by + 0.5);
         ctx.lineTo(x0 + b.w - BUBBLE_PAD * 2, by + 0.5);
@@ -616,7 +679,7 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
       let ry = by;
       for (const row of blk.rows) {
         if (row.head) {
-          ctx.fillStyle = TABLE_HEAD_BG;
+          ctx.fillStyle = pal.tableHeadBg;
           ctx.fillRect(x0, ry, blk.w, row.h);
         }
         let cellX = x0;
@@ -626,7 +689,7 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
           );
           cellX += blk.colW[i] ?? 0;
         });
-        ctx.strokeStyle = TABLE_BORDER;
+        ctx.strokeStyle = pal.tableBorder;
         ctx.beginPath();
         ctx.moveTo(x0, ry + 0.5);
         ctx.lineTo(x0 + blk.w, ry + 0.5);
@@ -636,7 +699,7 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
         ry += row.h;
       }
       let cx = x0;
-      ctx.strokeStyle = TABLE_BORDER;
+      ctx.strokeStyle = pal.tableBorder;
       for (const cw of blk.colW) {
         ctx.beginPath();
         ctx.moveTo(cx + 0.5, by);

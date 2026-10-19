@@ -21,7 +21,7 @@ function stored(): Theme | null {
 }
 
 function systemTheme(): Theme {
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  return globalThis.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 let current: Theme = stored() ?? systemTheme();
@@ -56,4 +56,5 @@ export function useTheme(): Theme {
   return useSyncExternalStore(subscribe, theme);
 }
 
-applyTheme(current);
+/** 单测（node）里没有 document：那里只 import 类型，不落主题。 */
+if (typeof document !== 'undefined') applyTheme(current);
