@@ -112,6 +112,13 @@ export class WatchEngine {
    * terminated 补射：全部 pending 订阅里，目标已判死（claude 注册表 pidAlive
    * false；目标行已消失 = 等待永不可解）的补 fire。判不动（null）不猜——
    * 会话可能只是安静。返回补射数（可反复调用，已 fire 的自然不在 pending）。
+   *
+   * 只补计数订阅：补射是为了找回「离线期间错过的那一次」转场，计数订阅 fire
+   * 即落定（consumeHit 减到 0），tick 反复扫也幂等。持久化订阅（remaining
+   * null）没有「那一次」，且 consumeHit 永不落定——放在这里就是每 5 分钟给
+   * 已终止的会话补一记「已空闲」，toast/浏览器通知/Web Push 三腿齐发刷屏
+   * （实机见三条 pending 齐刷）。已终止的会话不会再有转场；目标被 resume 后
+   * 的真实事件会自己来。
    */
   sweepTerminated(): number {
     try {
@@ -121,6 +128,7 @@ export class WatchEngine {
       );
       let fired = 0;
       for (const watch of this.deps.watches.listPending()) {
+        if (watch.remaining === null) continue;
         if (!watch.onEvents.includes('idle') && !watch.onEvents.includes('turnEnd')) continue;
         const row = rows.get(watch.targetSessionId);
         if (row && pidAliveOf(row, liveness) !== false) continue;

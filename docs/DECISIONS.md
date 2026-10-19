@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-19
+
+- **批量「完成提醒」的成因 = `sweepTerminated` 对持久化订阅每 5 分钟补射一次（用户原话：「当新发一个会话的消息时，会弹出很多个对话的完成提醒」「是所有会话都已完成时的第一次消息，会出现批量提醒」）**：实测取证（本机 SSE 探针 `GET /events`，令牌取 auth.json 的 localToken）——清扫器 tick（01:43:03Z，daemon 起于 01:43:02.652Z 对齐的 5 分钟栅格）在同一毫秒连发 **3 条 `watch.fired`**，watchId 24 / 25 / 27，`reason: "idle"`，对应三条 `remaining: NULL`（持久化）的 dashboard 订阅，其目标会话均已终止（最后事件分别为 SessionEnd / Notification 且已过宽限）。成因链：`SessionSweeper.sweep()` 每轮调 `sweepTerminated()` → `fire()` → `consumeHit()` 对 `remaining IS NULL` 的行**永不落定**（`fired_at` 保持 null）+ `lastHitAt` 去重窗只有 1s ⇒ 同一条持久化订阅在目标判死之后**每 5 分钟命中一次，永不停止**；每次 fire 三腿齐发（toast + 浏览器通知 + Web Push）⇒ 5 分钟 × 3 条 = 每小时 36 条推送到手机，浏览器/推送服务休眠时积压、用户拿起手机发第一条消息时一口气弹出来，这就是「首次消息时批量提醒」的来源。**裁决（实现）**：`sweepTerminated` 只补**计数订阅**——补射的本职是找回「daemon 离线/异常期间错过的那一次」转场，计数订阅 fire 即落定、反复扫幂等；持久化订阅没有「那一次」，且已终止的会话不会再有转场，故跳过（行保留 pending，目标被 resume 后真实事件照常命中）。不采纳「死亡也通知一次」——那需要额外状态（内存态 daemon 重启即失效，dev 下 tsx watch 频繁重启反而继续刷屏）。回归见 `watch-engine.test.ts` 的「持久化订阅（remaining null）不补射」。
+
 ## 2026-10-18
 
 - **发送键旁加投递通道下拉（用户要求：「给发送按钮再多一个下拉切换发送的选项，可以强制走终端 send text，默认还是这个socket」）**：两档 = 自动（缺省，层序不变：直投 → 终端 → 中继）/ 强制层② 终端。动机是本页上一节那条实测——socket 与中继在宿主眼里都是跨会话消息，权限敏感的指令只有终端击键算用户输入，而层序自动时没有让用户指定这一点的入口。实现 = `SendInput.forceTerminal` → 层序收窄成 `['terminal']`（即时与冲洗两处同源）+ `tryInboxDeliver` 内联一档拒绝（三层调用点不必各加判断）；`forceTerminal` 随 promptbox 行落盘、重发沿用（重启后冲洗仍不回落另两层）。**不改自动档的层序**——那条留给项目所有者裁决（上一节末尾）。pane 找不到时照旧入队（与既有 pending 语义一致，不假装送达）。web 选择存 localStorage `weave:send-via`，强制态箭头染蓝免忘记。

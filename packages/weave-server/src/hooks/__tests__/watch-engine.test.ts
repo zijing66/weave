@@ -352,6 +352,23 @@ describe('sweepTerminated：补射', () => {
     expect(engine.sweepTerminated()).toBe(1);
   });
 
+  it('持久化订阅（remaining null）不补射：没有「错过的那一次」，每 tick 编一次就是刷屏', () => {
+    const bus = new HookEventBus();
+    const engine = new WatchEngine({
+      watches,
+      deliverer: deliverer(),
+      sessions,
+      bus,
+      livenessOf: () => new Map([['a', false]]),
+    });
+    const frames = framesOf(bus);
+    watches.insert({ watcherSessionId: null, targetSessionId: 'a', notify: null, times: null });
+    expect(engine.sweepTerminated()).toBe(0);
+    expect(engine.sweepTerminated()).toBe(0); // 反复扫也不动（5 分钟一拍）
+    expect(frames).toHaveLength(0);
+    expect(watches.listPending()).toHaveLength(1); // 留着：目标真被 resume 时照常命中
+  });
+
   it('codex 目标（无登记不猜）→ 不动', () => {
     const bus = new HookEventBus();
     const d = deliverer();
