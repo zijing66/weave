@@ -663,8 +663,10 @@ function Dashboard() {
     ) => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
-      if (!target) return;
-      const res = await api.install(target.id, {
+      // user 档落在 home 下、与项目无关：全局面没有项目也照装（id 只是路由占位）。
+      if (!target && !(globalMode && scope === 'user')) return;
+      const projectId = target?.id ?? 0;
+      const res = await api.install(projectId, {
         category: 'skill',
         name: skill.name,
         sourceDir: skill.dirPath,
@@ -672,9 +674,9 @@ function Dashboard() {
         agent,
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshGlobalSkills(target.id);
-      refreshUpdates(target.id);
+      if (target) refreshAssets(target);
+      refreshGlobalSkills(projectId);
+      refreshUpdates(projectId);
     },
     [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
@@ -684,16 +686,17 @@ function Dashboard() {
     async (file: FileAssetTemplate, scope: AssetScope = 'project') => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
-      if (!target) return;
-      const res = await api.install(target.id, {
+      if (!target && !(globalMode && scope === 'user')) return;
+      const projectId = target?.id ?? 0;
+      const res = await api.install(projectId, {
         category: file.category,
         name: file.name,
         sourceFile: file.filePath,
         scope,
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshUpdates(target.id);
+      if (target) refreshAssets(target);
+      refreshUpdates(projectId);
     },
     [selected, projects, globalMode, refreshAssets, refreshUpdates],
   );
@@ -707,14 +710,15 @@ function Dashboard() {
     ) => {
       if (!selected && !globalMode) return;
       const target = selected ?? projects[0];
-      if (!target) return;
       // 卡面规则与视图同源（CategoryDetail rowsFor）：该 harness 的 MCP 面含
       // 当前 scope → 用之；否则回落首档（codex 无 project 档 → user）。
       // 判据出自安装属性矩阵，不再点名 harness（§4 收编）。
       const mcpScopes =
         capabilitiesOf('mcp', installCaps).surfaces.find((s) => s.harness === agent)?.scopes ?? [];
       const effectiveScope = mcpScopes.includes(scope) ? scope : mcpScopes[0] ?? 'user';
-      const res = await api.install(target.id, {
+      if (!target && !(globalMode && effectiveScope === 'user')) return;
+      const projectId = target?.id ?? 0;
+      const res = await api.install(projectId, {
         category: 'mcp',
         name,
         mcpConfig: config,
@@ -722,9 +726,9 @@ function Dashboard() {
         agent,
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshMcp(target.id);
-      refreshUpdates(target.id);
+      if (target) refreshAssets(target);
+      refreshMcp(projectId);
+      refreshUpdates(projectId);
     },
     [selected, projects, globalMode, installCaps, refreshAssets, refreshMcp, refreshUpdates],
   );
@@ -732,19 +736,21 @@ function Dashboard() {
   const handleUninstallSkill = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
-      if (!target) return;
-      const res = await api.uninstall(target.id, {
+      // user 档落在 home 下、与项目无关：全局面没有项目也照卸（id 只是路由占位）。
+      if (!target && !(globalMode && scope === 'user')) return;
+      const projectId = target?.id ?? 0;
+      const res = await api.uninstall(projectId, {
         category: 'skill',
         name,
         scope,
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshGlobalSkills(target.id);
-      refreshUpdates(target.id);
+      if (target) refreshAssets(target);
+      refreshGlobalSkills(projectId);
+      refreshUpdates(projectId);
     },
-    [selected, projects, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
   // 说明：文件类资产的卸载入口随「文件视图降级为只读」一并撤下（资源管理以插件包为准）；
@@ -753,20 +759,23 @@ function Dashboard() {
   const handleUninstallMcp = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
       const target = selected ?? projects[0];
-      if (!target) return;
       // claude 以外 harness 的 MCP 住用户级文件——卸载恒指用户级（同安装侧判定）。
-      const res = await api.uninstall(target.id, {
+      const effectiveScope: AssetScope = (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user';
+      // 同上：用户级装卸与项目无关，没有项目时 0 号只是形状上的占位。
+      if (!target && !(globalMode && effectiveScope === 'user')) return;
+      const projectId = target?.id ?? 0;
+      const res = await api.uninstall(projectId, {
         category: 'mcp',
         name,
-        scope: (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user',
+        scope: effectiveScope,
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshAssets(target);
-      refreshMcp(target.id);
-      refreshUpdates(target.id);
+      if (target) refreshAssets(target);
+      refreshMcp(projectId);
+      refreshUpdates(projectId);
     },
-    [selected, projects, refreshAssets, refreshMcp, refreshUpdates],
+    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   // MCP 启停三态循环（on/off/inherit）：服务端解析 effective 并随行回传，

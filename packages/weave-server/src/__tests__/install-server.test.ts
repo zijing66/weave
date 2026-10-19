@@ -144,4 +144,15 @@ describe('daemon server — libraries + install/uninstall', () => {
     });
     expect(res.status).toBe(404);
   });
+
+  it('user-scope uninstall needs no project anchor (global page has none)', async () => {
+    // 全局面没有项目时 id 只是路由占位：user 档落在 home 下、读不到项目路径也算数。
+    // 名字故意不存在——卸载对缺席项是幂等的，不会碰 home 里的真东西。
+    const res = await fetch(`http://127.0.0.1:${port}/api/projects/0/uninstall`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ category: 'skill', name: 'weave-no-such-skill', scope: 'user' }),
+    });
+    expect(res.status).toBe(200);
+  });
 });

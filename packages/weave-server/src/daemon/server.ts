@@ -847,10 +847,6 @@ async function handleRequest(
   const installMatch = pathname.match(/^\/projects\/(\d+)\/install$/);
   if (installMatch && req.method === 'POST') {
     const project = deps.projects.getById(Number(installMatch[1]));
-    if (!project) {
-      sendJson(res, 404, { error: 'Project not found' });
-      return;
-    }
     let body: InstallBody;
     try {
       body = JSON.parse(await readBody(req)) as InstallBody;
@@ -858,6 +854,11 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
+    if (!project && needsProjectPath(body)) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const projectPath = project?.path ?? '';
     try {
       if (body.category === 'skill') {
         if (!body.name || !body.sourceDir) {
@@ -868,7 +869,7 @@ async function handleRequest(
         const target =
           body.scope === 'user'
             ? await installGlobalSkill(body.sourceDir, body.name, agent)
-            : await installSkill(project.path, body.sourceDir, body.name, agent);
+            : await installSkill(projectPath, body.sourceDir, body.name, agent);
         sendJson(res, 201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name || !body.sourceFile) {
@@ -878,7 +879,7 @@ async function handleRequest(
         const agent = body.agent ?? 'claude';
         const scope = body.scope ?? 'project';
         const target = await installFileAsset(
-          project.path,
+          projectPath,
           body.category,
           body.name,
           body.sourceFile,
@@ -905,7 +906,7 @@ async function handleRequest(
         } else if (body.scope === 'user') {
           await writeGlobalMcpServer(body.name, body.mcpConfig as McpServerConfig);
         } else {
-          await installMcp(project.path, body.name, body.mcpConfig as McpServerConfig);
+          await installMcp(projectPath, body.name, body.mcpConfig as McpServerConfig);
         }
         sendJson(res, 201, {
           category: 'mcp',
@@ -960,10 +961,6 @@ async function handleRequest(
   const uninstallMatch = pathname.match(/^\/projects\/(\d+)\/uninstall$/);
   if (uninstallMatch && req.method === 'POST') {
     const project = deps.projects.getById(Number(uninstallMatch[1]));
-    if (!project) {
-      sendJson(res, 404, { error: 'Project not found' });
-      return;
-    }
     let body: {
       category?: string;
       name?: string;
@@ -976,6 +973,11 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
+    if (!project && needsProjectPath(body)) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const projectPath = project?.path ?? '';
     try {
       if (body.category === 'skill') {
         if (!body.name) {
@@ -984,14 +986,14 @@ async function handleRequest(
         }
         const agent = body.agent ?? 'claude';
         if (body.scope === 'user') await uninstallGlobalSkill(body.name, agent);
-        else await uninstallSkill(project.path, body.name, agent);
+        else await uninstallSkill(projectPath, body.name, agent);
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name) {
           sendJson(res, 400, { error: 'Missing "name"' });
           return;
         }
         await uninstallFileAsset(
-          project.path,
+          projectPath,
           body.category,
           body.name,
           body.agent ?? 'claude',
@@ -1011,7 +1013,7 @@ async function handleRequest(
             return;
           }
         } else if (body.scope === 'user') await removeGlobalMcpServer(body.name);
-        else await uninstallMcp(project.path, body.name);
+        else await uninstallMcp(projectPath, body.name);
       } else {
         sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|command|agent|workflow|rule|output-style)' });
         return;
@@ -1868,6 +1870,18 @@ interface InstallBody {
   /** plugin 类别：无 manifest 包合成最小 plugin.json 用（版本/描述）。 */
   version?: string;
   description?: string;
+}
+
+/**
+ * 这次装卸要不要项目路径：user 档落在 home 下、与项目无关（codex 的 MCP 也住
+ * 用户级，插件则只有 user 档）——路由挂在 `/projects/:id/` 下只是形状，全局面
+ * 没有项目时不该因为这个 id 先吃一记 404。
+ */
+function needsProjectPath(body: { category?: string; scope?: string; agent?: string }): boolean {
+  if (body.scope === 'user') return false;
+  if (body.category === 'plugin') return false;
+  if (body.category === 'mcp' && body.agent === 'codex') return false;
+  return true;
 }
 
 /** Map installer errors to HTTP statuses (409 conflict / 404 missing / 400 bad). */
