@@ -262,6 +262,15 @@ describe('attachDeliveries', () => {
     expect(attachDeliveries([], rows).outbox.map((m) => m.id)).toEqual(['m1']);
     expect(attachDeliveries([userEntry], rows).outbox).toEqual([]);
   });
+
+  it('⑩ 一条 UPS 核销了几条在途，它们就都归这一条气泡（合成 UPS 不能留下永久尾巴）', () => {
+    const rows = [
+      delivery({ id: 'm1', text: '第一句', at: at(10), status: 'delivered', acked: true, ackedEventId: 7 }),
+      delivery({ id: 'm2', text: '第二句', at: at(11), status: 'delivered', acked: true, ackedEventId: 7 }),
+    ];
+    const entry: ConvEntry = { ...userEntry, eventId: 7, text: '第一句\n第二句' };
+    expect(attachDeliveries([entry], rows).outbox).toEqual([]);
+  });
 });
 
 describe('removableOf（队列里的行能不能删）', () => {
@@ -271,10 +280,10 @@ describe('removableOf（队列里的行能不能删）', () => {
     }
   });
 
-  it('② 在飞的不删（落定回调会把行写回来），已送达的不删（内容已在会话里）', () => {
+  it('② 在飞的不删（落定回调会把行写回来）；已送达的能删（合成 UPS 认领不上的行得有出口）', () => {
     expect(removableOf(delivery({ status: 'delivering' }))).toBe(false);
     expect(removableOf(delivery({ status: 'running' }))).toBe(false);
-    expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
+    expect(removableOf(delivery({ status: 'delivered' }))).toBe(true);
   });
 
   it('③ 暂停闸成因一律能删——它不清掉，闸就没有可操作的成因行', () => {
