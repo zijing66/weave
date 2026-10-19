@@ -1500,6 +1500,39 @@ describe('MessageDeliverer 裁决表', () => {
     expect(stale).toMatchObject({ ok: true, status: 'failed' });
   });
 
+  it('重发判死的行：offline 的成因与说明一并作废，不跟着重投的行继续显示', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = relaySurface(() => null);
+    let alive: boolean | null = false;
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        spawnImpl: fake.spawnImpl,
+        surfaceFor: () => surface,
+        bin: 'fake-relay',
+        livenessOf: () => new Map([[SESSION_ID, alive]]),
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '先判死再重发',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.message).toMatchObject({ status: 'failed', reason: 'offline' });
+
+    // 会话又活过来了（用户先打开会话再点重发）：三层仍无通路 → 入队等冲洗
+    alive = true;
+    const resent = await deliverer.resend(result.messageId);
+    expect(resent).toMatchObject({ ok: true, status: 'pending' });
+    const row = deliverer.listVisible(SESSION_ID).find((m) => m.id === result.messageId);
+    expect(row).toMatchObject({ status: 'pending' });
+    expect(row!.reason).toBeUndefined();
+    expect(row!.error ?? null).toBeNull();
+  });
+
   it('判死先于三层：残留的 peer 登记不算通路，中继一个都不起', async () => {
     const fake = createFakeSpawn();
     // peer 注册表是会话进程写的，进程死了文件不会立刻消失——登记还在 ≠ 送得到

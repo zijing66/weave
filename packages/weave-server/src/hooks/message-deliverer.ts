@@ -994,7 +994,17 @@ export class MessageDeliverer {
     // 旧内存态先清：deliverPrompt 的活路径会重建；回落入队时同 id 不能双行
     // （内存 failed/delivered 行 + promptbox pending 行）。
     this.memory.delete(messageId);
-    const entry: PipeMessage = { ...msg, status: 'pending', stalled: false, acked: false, settledAt: null };
+    // reason/error 是上一轮判死的落定，重发即作废：留着会让「会话未运行」的说明
+    // 跟着一条正在重投的行继续显示。
+    const entry: PipeMessage = {
+      ...msg,
+      status: 'pending',
+      stalled: false,
+      acked: false,
+      settledAt: null,
+      reason: undefined,
+      error: null,
+    };
     const result = await this.deliverPrompt(entry, session, project, surface);
     // created 放在在途状态建立之后（与 send() 同口径：它是在途角标重算的依据）
     this.bus({
