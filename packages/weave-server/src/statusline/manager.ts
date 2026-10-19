@@ -13,8 +13,9 @@ import {
   type StatuslineSegment,
   type SegmentKey,
 } from './config.js';
-import { generateStatuslineScript } from './generator.js';
+import { generateStatuslineScript, statuslineCacheDir } from './generator.js';
 import { statuslineSurfaceFor } from '../surfaces.js';
+import type { StatuslineFacts } from '@weavecode/harness';
 
 /**
  * Statusline manager — persists the config (project-local or global default),
@@ -139,6 +140,14 @@ export async function readStatuslineScript(projectPath: string): Promise<string>
   } catch {
     return '';
   }
+}
+
+/**
+ * 渲染脚本算好留在缓存里的块事实（今天 = git 三块），供对话页底条摆同款块。
+ * 缓存文件名/键形归 harness（surface.facts），这里只递缓存目录与目录路径。
+ */
+export function readStatuslineFacts(projectPath: string): StatuslineFacts | null {
+  return STATUSLINE_SURFACE!.facts?.(statuslineCacheDir(), projectPath) ?? null;
 }
 
 /** settings.json 的 statusLine 键形归 claude（surface.wire），此处只转发。 */

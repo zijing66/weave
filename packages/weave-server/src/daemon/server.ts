@@ -92,6 +92,7 @@ import { listGlobalFileAssets } from '../install/global-file-assets.js';
 import {
   readStatuslineConfig,
   readStatuslineScript,
+  readStatuslineFacts,
   applyStatuslineConfig,
   readGlobalStatuslineConfig,
   writeGlobalStatuslineConfig,
@@ -1475,7 +1476,13 @@ async function handleRequest(
         readStatuslineScript(project.path),
         readGlobalStatuslineConfig(),
       ]);
-      sendJson(res, 200, { config, script, globalConfig });
+      // 渲染脚本已算好的块事实（git 三块）：对话页底条摆同款块，前端不另算
+      sendJson(res, 200, {
+        config,
+        script,
+        globalConfig,
+        facts: readStatuslineFacts(project.path),
+      });
       return;
     }
     if (req.method === 'PUT') {

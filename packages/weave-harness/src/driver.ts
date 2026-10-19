@@ -539,7 +539,15 @@ export interface StatuslineSurface {
   generate(config: unknown, ctx: StatuslineGenerateContext): string;
   /** 把宿主指针接到脚本上（claude = `.claude/settings.json` 的 `statusLine` 键）。 */
   wire(projectPath: string, opts: { scriptPath: string; refreshInterval: number }): Promise<void>;
+  /**
+   * 渲染脚本已经算好、留在缓存里的块事实（key = segment key，值 = token 表）——
+   * dashboard 侧要摆同样的块就从这儿取，不自算第二份。没有缓存即 null。
+   */
+  facts?(cacheDir: string, cwd: string): StatuslineFacts | null;
 }
+
+/** 缓存里的块事实：与 `buildPreviewItems` 吃的 token 表同形。 */
+export type StatuslineFacts = Record<string, Record<string, string>>;
 
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {

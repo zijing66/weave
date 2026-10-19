@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { StatuslineSurface } from '../../driver.js';
 import { SEGMENT_ORDER, type StatuslineConfig } from './config.js';
 import { generateStatuslineScript } from './generator.js';
+import { statuslineFactsFromCache } from './git-cache.js';
 
 const HELPERS_DIR = '.claude/helpers';
 const STATUSLINE_SCRIPT = 'statusline.cjs';
@@ -64,4 +65,5 @@ export const CLAUDE_STATUSLINE: StatuslineSurface = {
   // 配置形状归 claude（StatuslineConfig）；槽位对配置类型不做假设。
   generate: (config, ctx) => generateStatuslineScript(config as StatuslineConfig, ctx),
   wire: ensureSettingsStatusLine,
+  facts: statuslineFactsFromCache,
 };

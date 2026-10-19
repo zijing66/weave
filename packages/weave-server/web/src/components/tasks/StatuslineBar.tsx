@@ -13,10 +13,11 @@ const BAR_LINES = 2;
  * 对话页底部的状态栏条：把项目的 statusline 配置按**当下手里的数据**渲染出来。
  * **只读**——配置的入口在个性化配置里（同一份 StatuslinePanel），对话页不再开第二处。
  *
- * 数据只有 weave 自己知道的那份（项目/会话/模型/时刻）——context/tokens/cost 这些
- * 是宿主 statusline stdin 里的字段，dashboard 这一侧没有，于是那些块整块不出现
- * （`buildPreviewItems` 只渲染给了 token 的块）。这与生成脚本「format 解析成空即
- * 丢掉」同口径：宁可少一块，也不摆一块空壳。
+ * 数据 = weave 自己知道的那份（项目/会话/模型/时刻）∪ 宿主渲染脚本算好落在缓存里的
+ * 那份（git 三块，`surface.facts`）——context/tokens/cost 只活在宿主 statusline
+ * stdin 里，dashboard 这一侧没有，那些块整块不出现（`buildPreviewItems` 只渲染
+ * 给了 token 的块）。这与生成脚本「format 解析成空即丢掉」同口径：宁可少一块，
+ * 也不摆一块空壳。
  */
 export function StatuslineBar({
   projectId,
@@ -31,12 +32,20 @@ export function StatuslineBar({
 }) {
   const t = useT();
   const [config, setConfig] = useState<StatuslineConfig | null>(null);
+  // 宿主渲染脚本算好落在缓存里的块事实（git 三块）——weave 不自己探测 git
+  const [facts, setFacts] = useState<StatuslineTokens | null>(null);
 
   const load = useCallback(() => {
     api
       .getStatusline(projectId)
-      .then((r) => setConfig(r.config))
-      .catch(() => setConfig(null));
+      .then((r) => {
+        setConfig(r.config);
+        setFacts((r.facts as StatuslineTokens | null) ?? null);
+      })
+      .catch(() => {
+        setConfig(null);
+        setFacts(null);
+      });
   }, [projectId]);
 
   useEffect(load, [load]);
@@ -56,7 +65,10 @@ export function StatuslineBar({
   if (!config) return null;
 
   const now = new Date();
-  const tokens: StatuslineTokens = { time: { time: `${pad(now.getHours())}:${pad(now.getMinutes())}` } };
+  const tokens: StatuslineTokens = {
+    ...(facts ?? {}),
+    time: { time: `${pad(now.getHours())}:${pad(now.getMinutes())}` },
+  };
   if (project?.name) tokens.project = { name: project.name, path: project.path ?? project.name };
   if (sessionName) tokens.session = { name: sessionName };
   if (model) tokens.model = { model };

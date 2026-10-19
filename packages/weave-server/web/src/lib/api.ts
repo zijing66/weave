@@ -1509,10 +1509,19 @@ export const api = {
     apiFetch<{ rows: McpRow[] }>(`/projects/${projectId}/mcp`).then((r) => r.rows),
   getStatusline: (
     projectId: number,
-  ): Promise<{ config: StatuslineConfig; script: string; globalConfig: StatuslineConfig }> =>
-    apiFetch<{ config: StatuslineConfig; script: string; globalConfig: StatuslineConfig }>(
-      `/projects/${projectId}/statusline`,
-    ),
+  ): Promise<{
+    config: StatuslineConfig;
+    script: string;
+    globalConfig: StatuslineConfig;
+    /** 宿主渲染脚本已算好的块事实（今天 = git 三块），没有缓存即 null。 */
+    facts: Record<string, Record<string, string>> | null;
+  }> =>
+    apiFetch<{
+      config: StatuslineConfig;
+      script: string;
+      globalConfig: StatuslineConfig;
+      facts: Record<string, Record<string, string>> | null;
+    }>(`/projects/${projectId}/statusline`),
   putStatusline: (projectId: number, config: StatuslineConfig): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/statusline`, {
       method: 'PUT',
