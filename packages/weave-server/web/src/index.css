@@ -50,6 +50,9 @@
   }
 }
 
+/* 全屏遮罩（弹窗/抽屉的 scrim）不要 backdrop-blur：底下还在动的像素会让整屏模糊
+   每帧重算，实测 60fps → 8fps，原生下拉弹层跟着粘手。只用 bg-black/xx 压暗。 */
+
 /* macOS-style overlay scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

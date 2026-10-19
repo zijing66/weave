@@ -31,7 +31,7 @@ export function ConfirmDialog({
   // containing block，留在组件树里会被裁剪在侧栏内。
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative w-[380px] max-w-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <TriangleAlert className="h-4 w-4 text-amber-400" />

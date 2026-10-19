@@ -231,7 +231,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       {/* max-h + 内容区 min-h-0/滚动：设置项变多后（AI 段）内容会超过视口，
           面板是 overflow-hidden——不这样收口会把底部输入裁掉、点不到（见 CLAUDE.md
           「纵向 flex 堆叠的下区要 min-h-0」）。 */}

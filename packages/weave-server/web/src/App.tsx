@@ -1455,7 +1455,7 @@ function Dashboard() {
           <button
             aria-label={t('app.mobileDrawerClose')}
             onClick={() => setMobilePanel(null)}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm drawer-fade"
+            className="absolute inset-0 bg-black/60 drawer-fade"
           />
           <aside
             className={cn(
