@@ -1,0 +1,5 @@
+#!/bin/sh
+# 提交前隐私体检（暂存区新增行）。判据归 scripts/privacy-scan.mjs。
+root=$(git rev-parse --show-toplevel) || exit 0
+command -v node >/dev/null 2>&1 || { echo "privacy-scan: 没找到 node，跳过（不拦）" >&2; exit 0; }
+exec node "$root/scripts/privacy-scan.mjs" --staged

@@ -1,0 +1,5 @@
+#!/bin/sh
+# 推送前隐私体检（本次要推的那些提交的新增行）：--no-verify 提交过的也在这里拦。
+root=$(git rev-parse --show-toplevel) || exit 0
+command -v node >/dev/null 2>&1 || { echo "privacy-scan: 没找到 node，跳过（不拦）" >&2; exit 0; }
+exec node "$root/scripts/privacy-scan.mjs" --push
