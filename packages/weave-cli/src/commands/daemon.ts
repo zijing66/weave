@@ -48,6 +48,35 @@ export async function waitForDaemon(port: number, timeoutMs = 10_000): Promise<b
 }
 
 /**
+ * Windows 上把 daemon 交给 Job 外面的创建者（WMI）拉起，成功返回 true。
+ *
+ * 直接 `spawn` 的进程会继承调用方所在终端 tab 的 Job（Windows Terminal 给每个
+ * pane 建的是 kill-on-close 的 Job），而 libuv 的 detached 并不能真的逃离不允许
+ * breakaway 的 Job：关掉那个 tab，daemon 和它开出的每个终端一起被带走。WMI 由
+ * WmiPrvSE 创建进程，创建者本身在 Job 外，继承链由此断开。
+ */
+async function spawnOutsideJob(exe: string, args: string[]): Promise<boolean> {
+  if (process.platform !== 'win32') return false;
+  const quote = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
+  const literal = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const script =
+    "$ErrorActionPreference='Stop';" +
+    '$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{' +
+    `CommandLine=${literal([exe, ...args].map(quote).join(' '))};` +
+    `CurrentDirectory=${literal(process.cwd())}};` +
+    'if($r.ReturnValue -ne 0){exit 1}';
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    ps.on('error', () => resolve(false));
+    ps.on('exit', (code) => resolve(code === 0));
+  });
+}
+
+/**
  * Ensure a daemon is running and return how to reach it.
  *
  * Reuses a live daemon (probing the default port, then whatever the state file
@@ -73,12 +102,11 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
 
   // dist 形（entry.js）直接跑——发布包里没有 tsx；源码态（entry.ts）才需要。
   const entry = resolveDaemonEntry();
-  const child = spawn(
-    process.execPath,
-    entry.isTs ? ['--import', 'tsx', entry.path] : [entry.path],
-    { detached: true, stdio: 'ignore' },
-  );
-  child.unref();
+  const args = entry.isTs ? ['--import', 'tsx', entry.path] : [entry.path];
+  if (!(await spawnOutsideJob(process.execPath, args))) {
+    const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+    child.unref();
+  }
 
   // 起好了才算「起了」：调用方紧接着就要读它写出的文件、打它的接口。
   await waitForDaemon(port);
