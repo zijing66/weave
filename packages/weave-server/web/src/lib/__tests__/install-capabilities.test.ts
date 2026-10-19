@@ -23,6 +23,7 @@ const table: InstallCapabilities = {
     workflow: { surfaces: [{ harness: 'claude', scopes: ['project'] }] },
     rule: { surfaces: [{ harness: 'claude', scopes: ['project'] }] },
   },
+  statusline: [{ harness: 'claude', tui: 'injectable', segments: ['project', 'model'] }],
 };
 
 describe('canInstall', () => {

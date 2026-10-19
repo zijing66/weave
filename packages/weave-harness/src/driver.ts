@@ -19,7 +19,8 @@ export type HarnessCapability =
   | 'pluginState'
   | 'messaging'
   | 'questions'
-  | 'capture';
+  | 'capture'
+  | 'statusline';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -512,6 +513,34 @@ export interface PluginSurface {
   ): Promise<void>;
 }
 
+/** 生成状态栏脚本的运行参数——两样都是调用方（server）的事实：缓存落点归
+ *  dataDir 布局，版本号归包身份；harness 不自取。 */
+export interface StatuslineGenerateContext {
+  cacheDir: string;
+  version: string;
+}
+
+/**
+ * 状态栏面：宿主能不能被注入自定义状态栏、能填哪些块、脚本落在哪、怎么接线。
+ *
+ * 「哪几块」是 harness 知识（claude 的块来自它 statusline stdin JSON 的字段），
+ * 故词表与渲染器都归各 harness 的实现；server 只做持久化与装配、web 只渲染
+ * 能力表给出来的块。`tui: 'none'` 的 harness 不是「没做」，而是宿主结构上没有
+ * 这个面（如 codex 的 `tui.status_line` 只能选内置条目、不接受 shell 命令）。
+ */
+export interface StatuslineSurface {
+  /** 该 harness 的状态栏能填哪些块（key 由 harness 定义，web 只认这串）。 */
+  readonly segments: readonly string[];
+  /** TUI 通道：`injectable` = 能注入宿主 TUI；`none` = 宿主没有这个面。 */
+  readonly tui: 'injectable' | 'none';
+  /** 脚本相对项目根的落点（posix，供 init 漂移检测比对面）。 */
+  readonly scriptRelPath: string;
+  /** 生成宿主运行的渲染脚本（配置形状归 harness，槽位不做假设）。 */
+  generate(config: unknown, ctx: StatuslineGenerateContext): string;
+  /** 把宿主指针接到脚本上（claude = `.claude/settings.json` 的 `statusLine` 键）。 */
+  wire(projectPath: string, opts: { scriptPath: string; refreshInterval: number }): Promise<void>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -527,6 +556,7 @@ export interface HarnessDriver {
   messaging?: MessagingSurface;
   questions?: BlockingPromptSpec;
   capture?: CaptureSurface;
+  statusline?: StatuslineSurface;
 }
 
 /**

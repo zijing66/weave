@@ -7,6 +7,7 @@ import {
   type MessagingSurface,
   type PluginStateSurface,
   type PluginSurface,
+  type StatuslineSurface,
 } from '@weavecode/harness';
 
 /**
@@ -113,4 +114,20 @@ export function captureSurfaces(): Array<{ harness: Harness; surface: CaptureSur
  */
 export function blockingPromptFor(harness: Harness): BlockingPromptSpec | null {
   return registry.get(harness)?.questions ?? null;
+}
+
+/**
+ * 按 harness 取 statusline 面；null = 该 harness 没有 statusline 概念。
+ * 「TUI 里能不能注入」由面自己的 `tui` 答，调用方不按 harness 名判。
+ */
+export function statuslineSurfaceFor(harness: Harness): StatuslineSurface | null {
+  return registry.get(harness)?.statusline ?? null;
+}
+
+/** 全部声明了 statusline 槽的 (harness, 面) 列表——能力矩阵按本表枚举。 */
+export function statuslineSurfaces(): Array<{ harness: Harness; surface: StatuslineSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.statusline !== undefined)
+    .map((d) => ({ harness: d.id, surface: d.statusline! }));
 }

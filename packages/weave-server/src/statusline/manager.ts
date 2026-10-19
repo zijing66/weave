@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -14,6 +14,7 @@ import {
   type SegmentKey,
 } from './config.js';
 import { generateStatuslineScript } from './generator.js';
+import { statuslineSurfaceFor } from '../surfaces.js';
 
 /**
  * Statusline manager — persists the config (project-local or global default),
@@ -32,14 +33,14 @@ import { generateStatuslineScript } from './generator.js';
 
 const WEAVE_DIR = '.weave';
 const STATUSLINE_FILE = 'statusline.json';
-const HELPERS_DIR = '.claude/helpers';
-const STATUSLINE_SCRIPT = 'statusline.cjs';
-const SETTINGS_FILE = '.claude/settings.json';
 const GLOBAL_STATUSLINE_FILE = 'statusline.json';
+
+/** 脚本落点是 claude 的 statusline 表示法（`scriptRelPath`），不在此自拼。 */
+const STATUSLINE_SURFACE = statuslineSurfaceFor('claude');
 
 /** 生成脚本的项目根相对落点（posix）——init 文件漂移检测的比对面。 */
 export function statuslineScriptRelPath(): string {
-  return `${HELPERS_DIR}/${STATUSLINE_SCRIPT}`;
+  return STATUSLINE_SURFACE!.scriptRelPath;
 }
 
 /** Directory for the global template; overridable for tests (defaults to ~/.weave). */
@@ -48,15 +49,6 @@ let globalStatuslineDir = path.join(homedir(), '.weave');
 /** Point the global template directory elsewhere (tests use a temp dir). */
 export function setGlobalStatuslineDir(dir: string): void {
   globalStatuslineDir = dir;
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // --- global default template (~/.weave/statusline.json) ---
@@ -134,9 +126,8 @@ export async function writeStatuslineConfig(
 
 /** Write the generated statusline script, creating the helpers dir if needed. */
 export async function writeStatuslineScript(projectPath: string, script: string): Promise<string> {
-  const dir = path.join(projectPath, HELPERS_DIR);
-  await mkdir(dir, { recursive: true });
-  const file = path.join(dir, STATUSLINE_SCRIPT);
+  const file = path.join(projectPath, STATUSLINE_SURFACE!.scriptRelPath);
+  await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, script, 'utf-8');
   return file;
 }
@@ -144,43 +135,21 @@ export async function writeStatuslineScript(projectPath: string, script: string)
 /** Read the generated statusline script (empty string if absent). */
 export async function readStatuslineScript(projectPath: string): Promise<string> {
   try {
-    return await readFile(path.join(projectPath, HELPERS_DIR, STATUSLINE_SCRIPT), 'utf-8');
+    return await readFile(path.join(projectPath, STATUSLINE_SURFACE!.scriptRelPath), 'utf-8');
   } catch {
     return '';
   }
 }
 
-/**
- * Ensure `.claude/settings.json` has a `statusLine` entry pointing at the
- * statusline script, with a `refreshInterval` (seconds) so Claude Code re-runs
- * it on a timer during idle periods — updates after each assistant response
- * are event-driven by Claude Code itself and need no weave-side polling.
- * Preserves all other settings. Idempotent.
- */
+/** settings.json 的 statusLine 键形归 claude（surface.wire），此处只转发。 */
 export async function ensureSettingsStatusLine(
   projectPath: string,
   refreshInterval = 30,
 ): Promise<void> {
-  const file = path.join(projectPath, SETTINGS_FILE);
-  const isWindows = process.platform === 'win32';
-  let settings: Record<string, unknown> = {};
-  if (await pathExists(file)) {
-    try {
-      settings = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
-    } catch {
-      settings = {};
-    }
-  }
-  const scriptPath = path.join(projectPath, HELPERS_DIR, STATUSLINE_SCRIPT);
-  const command = isWindows ? `node "${scriptPath}"` : `node ${scriptPath}`;
-  settings['statusLine'] = {
-    type: 'command',
-    command,
-    padding: 0,
-    refreshInterval: Math.max(1, Math.round(refreshInterval)),
-  };
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
+  await STATUSLINE_SURFACE!.wire(projectPath, {
+    scriptPath: path.join(projectPath, STATUSLINE_SURFACE!.scriptRelPath),
+    refreshInterval,
+  });
 }
 
 /**

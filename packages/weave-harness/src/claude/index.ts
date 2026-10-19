@@ -8,6 +8,7 @@ import { CLAUDE_PLUGIN_STATE } from './plugin-state.js';
 import { CLAUDE_BLOCKING_PROMPT as CLAUDE_QUESTIONS } from './questions.js';
 import { CLAUDE_RESUME } from './resume.js';
 import { CLAUDE_DETECTOR } from './detect.js';
+import { CLAUDE_STATUSLINE } from './statusline/surface.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
@@ -45,6 +46,12 @@ export {
 } from './settings-gen.js';
 export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from './mcp-gen.js';
 export { generateAutoMemoryHook } from './helpers-gen.js';
+export { CLAUDE_STATUSLINE } from './statusline/surface.js';
+export {
+  generateStatuslineScript,
+  type GenerateStatuslineOptions,
+} from './statusline/generator.js';
+export * from './statusline/config.js';
 
 /**
  * Claude 接入模块的驱动：批 4a 补 assets、批 4b 补 events/resume、批 5 补
@@ -65,6 +72,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'messaging',
     'questions',
     'capture',
+    'statusline',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -75,4 +83,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   messaging: CLAUDE_MESSAGING,
   questions: CLAUDE_QUESTIONS,
   capture: CLAUDE_CAPTURE,
+  statusline: CLAUDE_STATUSLINE,
 };

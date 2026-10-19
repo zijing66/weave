@@ -714,8 +714,17 @@ export interface CategoryCapability {
   }>;
 }
 
+/** 某 harness 的 statusline 面；缺席 = 没有 statusline 概念。 */
+export interface StatuslineCapability {
+  harness: AssetAgent;
+  /** `injectable` = 宿主 TUI 能跑 weave 生成的脚本。 */
+  tui: 'injectable' | 'none';
+  segments: string[];
+}
+
 export interface InstallCapabilities {
   categories: Record<InstallCategory, CategoryCapability>;
+  statusline: StatuslineCapability[];
 }
 
 export interface SkillUpdate {
