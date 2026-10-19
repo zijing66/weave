@@ -439,9 +439,25 @@ export interface MessagingCapability {
   watch: boolean;
   /** 图片随 prompt 的对齐面（false = 该 harness 不收图，附件钮置灰）。 */
   imageAttach: boolean;
+  /** 旁路会话（侧问）通道（false = 该 harness 没有这种机制，入口不渲染）。 */
+  sideQuestion: boolean;
   unsupportedReasons: Partial<
-    Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch', string>
+    Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch' | 'sideQuestion', string>
   > | null;
+}
+
+/** 旁路会话（claude = /btw）的一条历史：问句由 weave 发出去时记下，回答由采集
+ *  事件认领。`status` pending = 已打进会话等回答、answered = 认领到、timeout = 超窗。 */
+export interface SideQuestionRow {
+  id: number;
+  sessionId: string;
+  projectId: number | null;
+  question: string;
+  answer: string | null;
+  answerEventId: number | null;
+  status: 'pending' | 'answered' | 'timeout';
+  askedAt: string;
+  answeredAt: string | null;
 }
 
 /** mirror of `WatchOn` in packages/weave-server/src/repositories/session-watches.ts。 */
@@ -1316,6 +1332,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ model }),
     }),
+  /** 旁路会话（claude = /btw）：问句经层② 终端打进会话 pane，服务端落一条历史行。 */
+  askSideQuestion: (
+    sessionId: string,
+    question: string,
+  ): Promise<{ ok: boolean; sideQuestion: SideQuestionRow }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/side-question`, {
+      method: 'POST',
+      body: JSON.stringify({ question }),
+    }),
+  /** 旁路历史（倒序游标翻页；`beforeId` = 上一页最早那条的 id）。 */
+  listSideQuestions: (
+    sessionId: string,
+    opts: { beforeId?: number; limit?: number } = {},
+  ): Promise<SideQuestionRow[]> => {
+    const params = new URLSearchParams();
+    if (opts.beforeId != null) params.set('beforeId', String(opts.beforeId));
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return apiFetch<{ sideQuestions: SideQuestionRow[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/side-questions${qs ? `?${qs}` : ''}`,
+    ).then((r) => r.sideQuestions);
+  },
   /** 空闲订阅面（全部 pending——面板按 watcherSessionId===null 过滤本 dashboard 的）。 */
   listSessionWatches: (): Promise<SessionWatchRow[]> =>
     apiFetch<{ watches: SessionWatchRow[] }>('/messaging/watches').then((r) => r.watches),

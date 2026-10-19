@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, Minus, Pencil, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -26,6 +26,7 @@ import {
 } from '@/lib/conv-image';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
+import { SideQuestionDialog } from './SideQuestionDialog';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
   formatStamp,
@@ -568,6 +569,8 @@ export function SessionMessages({
   const t = useT();
   const { show } = useToast();
   const fb = useActionFeedback();
+  /** 旁路会话弹窗（旁路历史与提问都在这扇里）。 */
+  const [sideOpen, setSideOpen] = useState(false);
   const { statuses, sessions, refresh, modelCatalog } = useSessionStatus();
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   /** 对话事件类型（开轮 + 闭轮 + 压缩收尾笔）：闭轮表为空的 harness 没有对话面可取。 */
@@ -1373,15 +1376,29 @@ export function SessionMessages({
           <div className="flex shrink-0 items-center gap-1">
             {/* 嵌入形态：事件链不再占右栏，从这枚按钮开成弹窗 */}
             {embedded && (
-              <button
-                type="button"
-                title={t('tasks.chainTitle')}
-                onClick={onOpenChain}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
-              >
-                <Activity className="h-3 w-3 text-rose-400" />
-                {t('tasks.chainTitle')}
-              </button>
+              <>
+                {/* 旁路会话（claude 的 /btw）：能力面没有这种机制就不渲染 */}
+                {capability.sideQuestion && (
+                  <button
+                    type="button"
+                    title={t('tasks.sideTitle')}
+                    onClick={() => setSideOpen(true)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                  >
+                    <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
+                    {t('tasks.sideTitle')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title={t('tasks.chainTitle')}
+                  onClick={onOpenChain}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                >
+                  <Activity className="h-3 w-3 text-rose-400" />
+                  {t('tasks.chainTitle')}
+                </button>
+              </>
             )}
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
@@ -2327,6 +2344,15 @@ export function SessionMessages({
           onConfirm={cycleMode}
           onClose={() => setConfirmMode(false)}
         />
+
+        {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来 */}
+        {sideOpen && (
+          <SideQuestionDialog
+            sessionId={sessionId}
+            label={label}
+            onClose={() => setSideOpen(false)}
+          />
+        )}
       </div>
   );
 
