@@ -326,9 +326,9 @@ describe('removableOf（队列里的行能不能删）', () => {
     expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
   });
 
-  it('③ 暂停闸的成因行里只有还没送出去的那种能删（已发出的退出是重发，不是删）', () => {
+  it('③ 暂停闸的成因行都能删：没送出去的、以及已发出却等不来回执的那条（闸没有成因行就开不了）', () => {
     expect(removableOf(delivery({ status: 'failed', stalled: true }))).toBe(true);
-    expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(false);
+    expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
   });
 });
 

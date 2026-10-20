@@ -106,8 +106,9 @@ export interface PipeMessage {
   settledAt?: string | null;
   /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
   stalled?: boolean;
-  /** 判死而没投出去（会话进程不在、三层全无通路）：`failed` 的成因，web 据此出中文说明。 */
-  reason?: 'offline';
+  /** 判死的成因（web 据此出中文说明）：`offline` = 三层全无通路、没投出去；
+   *  `unacked` = 已发出但一直没等到回执，闸自己到点放了。 */
+  reason?: 'offline' | 'unacked';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -176,6 +177,9 @@ export interface MessageDelivererDeps {
   /** 未回执闸窗口（毫秒）；缺省 120s——prompt 送达后没等到 UPS 回执即暂停该会话
    *  的队列冲洗（防继续向 Held/Refused 的会话灌消息），手动重发或回执解除。 */
   ackStallMs?: number;
+  /** 闸自动解除窗口（毫秒）；缺省 10min——闸挂着而回执永远不来（消息其实丢了）时，
+   *  队列不能就此停到天荒地老：到点把成因行落成 failed（`unacked`）并续排。 */
+  ackStallReleaseMs?: number;
   /** 会话存活图（测试注入）；缺省 `claudeLivenessById()`——同两个引擎（watch/sequence）
    *  的取法：没有注册表就空图，会话一律「查不动」，不猜。 */
   livenessOf?: () => Map<string, boolean>;
@@ -238,6 +242,7 @@ const FLUSH_GAP_MS = 1_000;
 /** 终态驻留窗口与未回执闸的缺省时长（见 deps 同名注入位）。 */
 const VISIBLE_TTL_MS = 60_000;
 const ACK_STALL_MS = 120_000;
+const ACK_STALL_RELEASE_MS = 10 * 60_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
@@ -736,6 +741,8 @@ export class MessageDeliverer {
         ...msg,
         acked: true,
         stalled: false,
+        // 迟到的回执推翻「未回执」的判定（闸已到点放掉的那条）：它真到了。
+        ...(msg.reason === 'unacked' ? { status: 'delivered' as const, reason: undefined } : {}),
         ...(eventId === undefined ? {} : { ackedEventId: eventId }),
       });
       // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
@@ -781,6 +788,37 @@ export class MessageDeliverer {
       reason,
       at: new Date().toISOString(),
     });
+    const release = setTimeout(
+      () => this.releaseStall(sessionId, msg.id),
+      this.deps.ackStallReleaseMs ?? ACK_STALL_RELEASE_MS,
+    );
+    release.unref?.();
+  }
+
+  /**
+   * 闸到点自动解除：回执一直不来 = 那条很可能压根没进对话（贴着文本按下去的时候
+   * 会话正在重启，输入框被清掉就是这样），闸不能因此把该会话的队列永久停住。
+   * 成因行落成 failed（`unacked`）——它既开得了回执闸（`ackGateOpen` 只认
+   * acked/failed/timeout），也给了用户重发（重贴一遍正文）与移除两枚操作。
+   */
+  private releaseStall(sessionId: string, messageId: string): void {
+    // 期间已被回执 / 重发 / 删除处理过：闸不在了或换了成因，这一拍作废。
+    if (this.stalled.get(sessionId)?.messageId !== messageId) return;
+    this.stalled.delete(sessionId);
+    if (this.awaitingAck.get(sessionId) === messageId) this.awaitingAck.delete(sessionId);
+    const current = this.memory.get(messageId);
+    if (current && current.status === 'delivered' && current.acked !== true) {
+      const at = new Date().toISOString();
+      this.memory.set(messageId, {
+        ...current,
+        status: 'failed',
+        reason: 'unacked',
+        stalled: false,
+        settledAt: at,
+      });
+      this.bus({ kind: 'message.finished', messageId, sessionId, status: 'failed', at });
+    }
+    if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
   }
 
   /**

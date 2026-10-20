@@ -331,10 +331,12 @@ export function attachDeliveries(
 
 /** 能不能从队列里移除：在飞（delivering/running）删不掉——落定回调会把行写回来；
  *  **已发出（delivered）也删不掉**——会话那边已经收到了，只是 hook 还没到（气泡随后就
- *  来），删掉等于假装撤回一条已经进了对话的消息；它的退出是重发不走删除。其余都能删，
- *  暂停闸的成因行也在其中（不清掉就没有可操作的成因行）。 */
+ *  来），删掉等于假装撤回一条已经进了对话的消息。**例外 = 它正是暂停闸的成因**：
+ *  闸没有可操作的成因行就永远开不了，而这一条又等不来回执（多半压根没进去），
+ *  留着只是化石——用户得能亲手把它清出去。 */
 export function removableOf(m: SessionMessageRow): boolean {
-  return m.status !== 'delivering' && m.status !== 'running' && m.status !== 'delivered';
+  if (m.status === 'delivering' || m.status === 'running') return false;
+  return m.status !== 'delivered' || m.stalled === true;
 }
 
 /** 历史过滤：全部 / 只看自己发的 / 只看收到的回复（角色即过滤键）。 */
@@ -997,8 +999,11 @@ export function SessionMessages({
   const toggleOpen = (key: string): void =>
     setExpanded((prev) => new Map(prev).set(key, !isOpen(key)));
   /** 队尾那条**还没送出去的**（排队中 / 失败 / 超时）——只有它能出队回输入框改。
-   *  已发出的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送。 */
-  const newestQueuedId = [...outbox].reverse().find(removableOf)?.id;
+   *  已发出的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送
+   *  （暂停闸成因行同理——那条能删能重发，但不给「改完再发」）。 */
+  const newestQueuedId = [...outbox]
+    .reverse()
+    .find((m) => m.status !== 'delivered' && removableOf(m))?.id;
 
   // 贴底意图只在滚动时记：新内容一进 DOM 容器就变高，渲染完再判「是否贴底」必然
   // 判成「用户在上翻」，长回复于是永不跟随。尾条变了 = 尾部真进了新内容 → 跟随；
@@ -1875,10 +1880,14 @@ export function SessionMessages({
                       <div className="[&_p]:whitespace-pre-wrap">
                         <AssistantMarkdown text={m.text} />
                       </div>
-                      {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
+                      {/* 判死落定（会话进程不在 / 一直没回执）：说人话，别把英文技术串端上来 */}
                       {pipe?.reason === 'offline' ? (
                         <p className="mt-1 break-words text-[11px] text-amber-400">
                           {t('tasks.msgOffline')}
+                        </p>
+                      ) : pipe?.reason === 'unacked' ? (
+                        <p className="mt-1 break-words text-[11px] text-amber-400">
+                          {t('tasks.msgUnacked')}
                         </p>
                       ) : (
                         pipe?.error && (
@@ -2025,10 +2034,14 @@ export function SessionMessages({
                                 <div className="whitespace-pre-wrap break-words text-[12px] text-neutral-200">
                                   {m.text || m.images?.[0]?.name}
                                 </div>
-                                {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
+                                {/* 判死落定（会话进程不在 / 一直没回执）：说人话，别把英文技术串端上来 */}
                                 {m.reason === 'offline' ? (
                                   <p className="mt-1 break-words text-[11px] text-amber-400">
                                     {t('tasks.msgOffline')}
+                                  </p>
+                                ) : m.reason === 'unacked' ? (
+                                  <p className="mt-1 break-words text-[11px] text-amber-400">
+                                    {t('tasks.msgUnacked')}
                                   </p>
                                 ) : m.error ? (
                                   <p className="mt-1 break-words text-[11px] text-red-400">
