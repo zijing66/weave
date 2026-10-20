@@ -36,7 +36,7 @@ describe('daemon DELETE /market/:id — 宿主市场注销', () => {
     tempDirs.push(src);
     mkdirSync(path.join(src, 'skills', 's1'), { recursive: true });
     writeFileSync(path.join(src, 'skills', 's1', 'SKILL.md'), '# v1');
-    const imported = await importFromDir(src, { libraries, dataDir });
+    const imported = await importFromDir(src, { libraries, dataRoot: dataDir });
     return { id: imported.libraryId, dir: imported.dir };
   };
 

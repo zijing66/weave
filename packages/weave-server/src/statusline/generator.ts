@@ -1,19 +1,18 @@
-import path from 'node:path';
 import { generateStatuslineScript as generate } from '@weavecode/harness';
 import type { StatuslineConfig } from './config.js';
-import { getDataDir } from '../db/paths.js';
+import { getStatuslineDir } from '../db/paths.js';
 import { WEAVE_VERSION } from '../version.js';
 
 /**
- * 渲染缓存的落点：weave dataDir 下（`<dataDir>/statusline/<session>.json`）。
+ * 渲染缓存的落点：`<dataDir>/cache/statusline/<session>.json`（可弃档，不迁移）。
  *
  * 旧版写系统临时目录、且按 cwd 分文件——cwd 会随子目录与测试临时目录无限
- * 增殖，实测两天攒下 1151 个文件且无人回收。统一收进 dataDir 后，按会话
+ * 增殖，实测两天攒下 1151 个文件且无人回收。统一收进数据目录后，按会话
  * 一个文件（分会话自带天然上限），过期条目与陈旧文件由 daemon 的
  * `StatuslineCacheSweeper` 回收。
  */
 export function statuslineCacheDir(): string {
-  return path.join(getDataDir(), 'statusline');
+  return getStatuslineDir();
 }
 
 /**

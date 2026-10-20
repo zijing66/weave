@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot } from '../db/paths.js';
 import { isInsideDir, resolveLibraryPath, toRelPosix } from '../market/resolve.js';
 
 export interface LibraryRow {
@@ -13,14 +13,14 @@ export interface LibraryRow {
 export class LibraryRepository {
   constructor(
     private readonly db: DatabaseSync,
-    /** 该库实例绑定的 dataDir（市场路由的 import/refresh 须与读侧同根）。 */
-    readonly dataDir: string = getDataDir(),
+    /** 该库实例绑定的数据根（`<dataDir>/data`；市场路由的 import/refresh 须与读侧同根）。 */
+    readonly dataRoot: string = getDataRoot(),
   ) {}
 
   /** Add a library path. Idempotent on `path` (INSERT OR IGNORE). */
   add(input: { path: string; kind: 'skill' | 'mcp' | 'both' }): LibraryRow {
-    // 批 9（R11）：dataDir 内的绝对路径以相对 posix 形入库（与读侧惰性改写同向，
-    // 两种写法幂等）；dataDir 外的 legacy 绝对路径原样入库（POST /libraries 原行为）。
+    // 批 9（R11）：数据根内的绝对路径以相对 posix 形入库（与读侧惰性改写同向，
+    // 两种写法幂等）；数据根外的 legacy 绝对路径原样入库（POST /libraries 原行为）。
     const existing = this.getByPath(input.path);
     if (existing) return existing;
     this.db
@@ -58,25 +58,25 @@ export class LibraryRepository {
     this.db.prepare('DELETE FROM libraries WHERE id = ?').run(id);
   }
 
-  /** 绝对且在 dataDir 内 → 相对 posix 形；其余原样（legacy 外部绝对路径不动）。 */
+  /** 绝对且在数据根内 → 相对 posix 形；其余原样（legacy 外部绝对路径不动）。 */
   private writeForm(p: string): string {
     if (!path.isAbsolute(p)) return p;
-    return isInsideDir(p, this.dataDir) ? toRelPosix(p, this.dataDir) : p;
+    return isInsideDir(p, this.dataRoot) ? toRelPosix(p, this.dataRoot) : p;
   }
 
   /**
    * 读侧 resolve 单点（批 9，R11）：返回值一律是可直接使用的绝对路径；
-   * 存储形为 dataDir 内绝对路径的旧行在此惰性 UPDATE 为相对形（仅 dataDir 内）。
+   * 存储形为数据根内绝对路径的旧行在此惰性 UPDATE 为相对形（仅数据根内）。
    */
   private resolveRow(row: LibraryRow): LibraryRow {
     if (!path.isAbsolute(row.path)) {
-      return { ...row, path: resolveLibraryPath(row, this.dataDir) };
+      return { ...row, path: resolveLibraryPath(row, this.dataRoot) };
     }
     const abs = path.resolve(row.path);
-    if (isInsideDir(abs, this.dataDir)) {
+    if (isInsideDir(abs, this.dataRoot)) {
       this.db
         .prepare('UPDATE libraries SET path = ? WHERE id = ?')
-        .run(toRelPosix(abs, this.dataDir), row.id);
+        .run(toRelPosix(abs, this.dataRoot), row.id);
       return { ...row, path: abs };
     }
     return row;

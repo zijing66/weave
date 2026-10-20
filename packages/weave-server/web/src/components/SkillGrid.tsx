@@ -168,7 +168,7 @@ function SkillCard({
           onClick={() =>
             onOpenDetail(row.name, row.scope, row.source, row.pluginKey, row.agent)
           }
-          className="flex items-center gap-2 text-left flex-1 min-w-0"
+          className="flex items-center gap-2 text-left flex-1 min-w-0 max-lg:flex-wrap"
           title={t('skillGrid.openDetail', { name: row.name })}
         >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
@@ -318,7 +318,7 @@ export function SkillGrid({
               {skills!.length}
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-3 items-start">
+          <div className="grid grid-cols-1 gap-3 items-start lg:grid-cols-2">
             {skills!.map((s) => (
               <SkillCard
                 key={`${s.scope}-${s.name}`}
@@ -435,7 +435,7 @@ function PackBlock({
             onToggle();
           }
         }}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer max-lg:flex-wrap"
       >
         {collapsed ? (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -532,7 +532,7 @@ function PackBlock({
           {group.skills.length === 0 ? (
             <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
           ) : (
-            <div className="grid grid-cols-2 gap-3 items-start">
+            <div className="grid grid-cols-1 gap-3 items-start lg:grid-cols-2">
               {group.skills.map((s) => (
                 <SkillCard
                   key={`${s.scope}-${s.agent ?? 'claude'}-${s.name}`}
@@ -617,7 +617,7 @@ function GroupedSkills({
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 max-lg:flex-wrap">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
           {/* Same name in both modes; `只读` marks the project view, where the
               global groups are shown but not editable. */}
@@ -669,7 +669,7 @@ function GroupedSkills({
                     setExpandedRepos((prev) => toggleIn(prev, repo.key));
                   }
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer"
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer max-lg:flex-wrap"
               >
                 {repoCollapsed ? (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -711,7 +711,7 @@ function GroupedSkills({
                     {skillCount === 0 ? (
                       <p className="text-xs text-neutral-600 py-2">{t('common.empty')}</p>
                     ) : (
-                      <div className="grid grid-cols-2 gap-3 items-start">
+                      <div className="grid grid-cols-1 gap-3 items-start lg:grid-cols-2">
                         {repo.groups
                           .flatMap((g) => g.skills)
                           .map((s) => (

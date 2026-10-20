@@ -29,6 +29,9 @@ interface Runtime {
   trigger: OrchestrationTrigger;
   startSessionId: string;
   startText: string;
+  handoffPrompt: string;
+  /** 已在等「交接总结」回合的节点：它这一轮结束就是 fan-out 的时机。 */
+  awaitingHandoff: Set<string>;
   name: string;
   edges: OrchestrationEdge[];
   state: OrchestrationRunState;
@@ -44,6 +47,25 @@ interface Runtime {
  * （冷启动 resume 慢些），等不到照旧回落中继/终端。
  */
 const INBOX_READY_WAIT_MS = 5_000;
+
+/**
+ * 边「带上游输出」时那段正文的上限：宿主上报的最终输出不受 `capFields` 约束
+ * （那管的是工具载荷），整段塞进下游 prompt 没有意义。
+ */
+const CARRY_OUTPUT_MAX_CHARS = 4_000;
+
+/**
+ * 没填「交接总结」指令时用的那一句：原始最终输出对下游常常只有半句结论，故默认
+ * 先让源会话按交接口径复述一遍（用户填了就按用户的）。
+ */
+const DEFAULT_HANDOFF_PROMPT =
+  '把这一轮的目标、已完成的工作、关键结论与下游会话继续所需的上下文，整理成一段可以直接交接的说明；只输出这段说明本身，不要复述全部过程。';
+
+/** 边正文 + 附带的上游输出（正文可空 = 只转发那段输出）。 */
+function joined(text: string, carried: string): string {
+  const head = text.trim();
+  return head ? `${head}\n\n${carried}` : carried;
+}
 
 /**
  * 跨会话编排引擎：有向图 + 消息传递推进。
@@ -66,8 +88,8 @@ export class OrchestrationEngine {
         'insert' | 'listRunning' | 'updateState' | 'finish' | 'prune'
       >;
       deliverer: Pick<MessageDeliverer, 'send'> &
-        Partial<Pick<MessageDeliverer, 'awaitInboxReady'>>;
-      sessions: Pick<SessionRepository, 'listWithCounts'>;
+        Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
+      sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId'>;
       bus: HookEventBus;
       /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等注册表落名）。 */
       ensureOpen?: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -101,6 +123,8 @@ export class OrchestrationEngine {
       trigger,
       startSessionId: orch.startSessionId,
       startText: orch.startText,
+      handoffPrompt: orch.handoffPrompt,
+      awaitingHandoff: new Set(),
       name: orch.name,
       edges: orch.edges,
       state: { pending: {}, events: [] },
@@ -132,11 +156,19 @@ export class OrchestrationEngine {
       const surface = this.deps.surfaceFor?.(input.source) ?? messagingSurfaceFor(input.source);
       if (!surface.idleSignals.includes(input.eventType)) return;
       for (const rt of [...this.runtime.values()]) {
+        if (!rt.running) continue;
+        // 这一轮就是我们要的「交接总结」：消耗掉它自己的那条待回，然后连线往下走。
+        if (rt.awaitingHandoff.delete(input.sessionId)) {
+          rt.state.pending[input.sessionId]?.shift();
+          this.persist(rt);
+          void this.fireEdges(rt, input.sessionId);
+          continue;
+        }
         const pending = rt.state.pending[input.sessionId];
-        if (!rt.running || !pending || pending.length === 0) continue;
+        if (!pending || pending.length === 0) continue;
         pending.shift();
         this.persist(rt);
-        void this.fireEdges(rt, input.sessionId);
+        void this.advance(rt, input.sessionId);
       }
     } catch {
       // 面缺席/库错误都不影响采集
@@ -208,42 +240,84 @@ export class OrchestrationEngine {
     this.maybeDone(rt);
   }
 
+  /**
+   * 一轮跑完、该往下走了：有出边要带上游输出时，先向这个会话要一份「交接总结」，
+   * 拿下一轮的 idle 再 fan-out（那时 `lastTurnOutput` 读到的是这份总结而不是上一轮的
+   * 碎片）。其余情况直接 fan-out。
+   */
+  private async advance(rt: Runtime, sessionId: string): Promise<void> {
+    if (rt.edges.some((edge) => edge.from === sessionId && edge.carryOutput === true)) {
+      const text = rt.handoffPrompt.trim() || DEFAULT_HANDOFF_PROMPT;
+      const started = await this.deliver(rt, { from: sessionId, to: sessionId, edgeId: '', text });
+      if (!rt.running) return;
+      if (started) {
+        rt.awaitingHandoff.add(sessionId);
+        return;
+      }
+    }
+    await this.fireEdges(rt, sessionId);
+  }
+
   private async fireEdges(rt: Runtime, from: string): Promise<void> {
     const edges = rt.edges.filter((edge) => edge.from === from);
     if (edges.length === 0) {
       this.maybeDone(rt);
       return;
     }
+    const carried = edges.some((edge) => edge.carryOutput === true) ? this.upstreamOf(from) : null;
     await Promise.allSettled(
-      edges.map((edge) => this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text: edge.text })),
+      edges.map((edge) => {
+        const text = edge.carryOutput === true && carried ? joined(edge.text, carried) : edge.text;
+        return this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text });
+      }),
     );
     this.maybeDone(rt);
   }
 
-  /** 投一次：判死先拉起会话（并按需等它的 inbox 凭据）；送达（含入队）才计入待回，失败只留日志。 */
+  /** 边要「带上游输出」时拼上的那块：上游最近一条结论 + 出处；读不到就不带（不摆空壳）。 */
+  private upstreamOf(sessionId: string): string | null {
+    const found = this.deps.deliverer.lastTurnOutput?.(sessionId) ?? null;
+    if (!found) return null;
+    const output =
+      found.output.length > CARRY_OUTPUT_MAX_CHARS
+        ? `${found.output.slice(0, CARRY_OUTPUT_MAX_CHARS)}…`
+        : found.output;
+    const title = this.deps.sessions.getBySessionId(sessionId)?.title || sessionId;
+    return `[upstream output] from=${title} at=${found.at}\n\n${output}`;
+  }
+
+  /**
+   * 投一次：判死先拉起会话（并按需等它的 inbox 凭据）；送达（含入队）才计入待回，
+   * 失败只留日志。返回是否真的送到（调用方据此决定要不要等它下一轮）。
+   */
   private async deliver(
     rt: Runtime,
     input: { from: string; to: string; edgeId: string; text: string },
-  ): Promise<void> {
+  ): Promise<boolean> {
     rt.inflight++;
     try {
-      if (!rt.running) return;
+      if (!rt.running) return false;
+      // 正文空 + 上游这一轮没留下输出：没有可送的东西，照样记一笔失败（不投空消息）。
+      if (!input.text.trim()) {
+        this.record(rt, { ...input, ok: false, error: 'edge has no message and no upstream output' });
+        return false;
+      }
       if (this.aliveOf(input.to) === false) {
         const opened = await this.ensureOpen(input.to);
-        if (!rt.running) return;
+        if (!rt.running) return false;
         if (!opened.ok) {
           this.record(rt, {
             ...input,
             ok: false,
             error: `target session is not open: ${opened.error}`,
           });
-          return;
+          return false;
         }
         // 刚从冷启动拉起来的会话：凭据随它的首个 hook 事件才上报，而层①-a 直投
         // 比中继快三个数量级（86ms vs 一个 headless 子进程）——值得等这一小会儿。
         // 等不到只是回落，不挡投递。
         await this.deps.deliverer.awaitInboxReady?.(input.to, INBOX_READY_WAIT_MS);
-        if (!rt.running) return;
+        if (!rt.running) return false;
       }
       const result = await this.deps.deliverer.send({
         toSessionId: input.to,
@@ -251,10 +325,10 @@ export class OrchestrationEngine {
         mode: 'prompt',
         fromKind: 'dashboard',
       });
-      if (!rt.running) return;
+      if (!rt.running) return false;
       if (!result.ok) {
         this.record(rt, { ...input, ok: false, error: result.error });
-        return;
+        return false;
       }
       if (result.status === 'failed') {
         const msg = result.message;
@@ -263,7 +337,7 @@ export class OrchestrationEngine {
           ok: false,
           error: msg.error ?? (msg.reason === 'offline' ? 'target session is offline' : 'delivery failed'),
         });
-        return;
+        return false;
       }
       const pending = rt.state.pending[input.to] ?? [];
       pending.push({ messageId: result.messageId, at: new Date().toISOString() });
@@ -273,8 +347,10 @@ export class OrchestrationEngine {
       if (rt.deliveries >= (this.deps.maxDeliveries ?? ORCH_MAX_DELIVERIES)) {
         this.finish(rt, 'failed', `delivery budget exceeded (${ORCH_MAX_DELIVERIES})`);
       }
+      return true;
     } catch (err) {
       this.record(rt, { ...input, ok: false, error: err instanceof Error ? err.message : String(err) });
+      return false;
     } finally {
       rt.inflight--;
     }

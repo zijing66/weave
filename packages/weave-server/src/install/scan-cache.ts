@@ -83,11 +83,14 @@ async function load(libPath: string): Promise<LibraryScan> {
 async function readScanFile(libPath: string): Promise<LibraryScan | null> {
   try {
     const parsed = JSON.parse(await readFile(path.join(cacheDirOf(libPath), CACHE_FILE), 'utf8')) as
-      | ({ version?: number } & Partial<LibraryScan>)
+      | ({ version?: number; root?: string } & Partial<LibraryScan>)
       | null;
     if (
       !parsed ||
       parsed.version !== CACHE_VERSION ||
+      // 缓存里存的是绝对路径，且跟随市场目录整体搬迁（数据目录三档）；根对不上
+      // 就整份作废重扫，否则搬完还按旧绝对路径去 cp。
+      parsed.root !== libPath ||
       !Array.isArray(parsed.plugins) ||
       !Array.isArray(parsed.packRoots) ||
       !Array.isArray(parsed.skills) ||
@@ -108,7 +111,7 @@ async function writeScanFile(libPath: string, scan: LibraryScan): Promise<void> 
     await mkdir(cacheDirOf(libPath), { recursive: true });
     await writeFile(
       path.join(cacheDirOf(libPath), CACHE_FILE),
-      JSON.stringify({ version: CACHE_VERSION, ...scan }),
+      JSON.stringify({ version: CACHE_VERSION, root: libPath, ...scan }),
       'utf8',
     );
   } catch {

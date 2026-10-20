@@ -47,7 +47,7 @@ beforeEach(() => {
 describe('importFromDir（本地目录 → 市场）', () => {
   it('复制目录 + 写清单 + 登记 libraries 行（相对 posix 形入库）', async () => {
     const src = makeSource('alpha');
-    const res = await importFromDir(src, { libraries: libs, dataDir });
+    const res = await importFromDir(src, { libraries: libs, dataRoot: dataDir });
 
     // 复制（不是移动）：源仍在，市场内有完整副本
     expect(existsSync(path.join(src, 'skills', 'alpha-skill', 'SKILL.md'))).toBe(true);
@@ -80,8 +80,8 @@ describe('importFromDir（本地目录 → 市场）', () => {
     mkdirSync(b, { recursive: true });
     writeFileSync(path.join(b, 'README.md'), 'other');
 
-    const first = await importFromDir(a, { libraries: libs, dataDir });
-    const second = await importFromDir(b, { libraries: libs, dataDir });
+    const first = await importFromDir(a, { libraries: libs, dataRoot: dataDir });
+    const second = await importFromDir(b, { libraries: libs, dataRoot: dataDir });
     expect(first.id).toBe('same');
     expect(second.id).toBe('same-2');
     expect(second.reused).toBe(false);
@@ -89,7 +89,7 @@ describe('importFromDir（本地目录 → 市场）', () => {
     // 同一来源再次导入 = 覆盖刷新（M4 修订组：原断言「复用不重拷」已随
     // 覆盖重导语义改为「复用同一行 + 缓存内容更新」）
     writeFileSync(path.join(a, 'skills', 'same-skill', 'SKILL.md'), '# skill v2');
-    const again = await importFromDir(a, { libraries: libs, dataDir });
+    const again = await importFromDir(a, { libraries: libs, dataRoot: dataDir });
     expect(again.reused).toBe(true);
     expect(again.refreshed).toBe(true);
     expect(again.id).toBe(first.id);
@@ -102,21 +102,21 @@ describe('importFromDir（本地目录 → 市场）', () => {
   it('非目录 / 缺失路径直接拒绝', async () => {
     const file = path.join(srcRoot, 'plain.txt');
     writeFileSync(file, 'x');
-    await expect(importFromDir(file, { libraries: libs, dataDir })).rejects.toThrow(
+    await expect(importFromDir(file, { libraries: libs, dataRoot: dataDir })).rejects.toThrow(
       /Not a directory/,
     );
     await expect(
-      importFromDir(path.join(srcRoot, 'nope'), { libraries: libs, dataDir }),
+      importFromDir(path.join(srcRoot, 'nope'), { libraries: libs, dataRoot: dataDir }),
     ).rejects.toThrow(/Not a directory/);
   });
 
   it('源落在市场存储内（内置仓落点 / 市场根）→ 拒绝：那是列表里已有的副本', async () => {
     mkdirSync(builtinMarketDir(dataDir), { recursive: true });
     await expect(
-      importFromDir(builtinMarketDir(dataDir), { libraries: libs, dataDir }),
+      importFromDir(builtinMarketDir(dataDir), { libraries: libs, dataRoot: dataDir }),
     ).rejects.toThrow(/存储目录/);
     // 市场根自身：目标会落在源里，cp 会把它拷进自己
-    await expect(importFromDir(marketDir(dataDir), { libraries: libs, dataDir })).rejects.toThrow(
+    await expect(importFromDir(marketDir(dataDir), { libraries: libs, dataRoot: dataDir })).rejects.toThrow(
       /存储目录/,
     );
     expect(libs.list()).toHaveLength(0);
@@ -149,7 +149,7 @@ describe('importLibraryIntoMarket（legacy 外部源显式迁入）', () => {
 
     const res = await importLibraryIntoMarket(libs.getById(row.id)!, {
       libraries: libs,
-      dataDir,
+      dataRoot: dataDir,
     });
     expect(res.reused).toBe(false);
     expect(res.libraryId).toBe(row.id); // 不新增行
@@ -167,10 +167,10 @@ describe('importLibraryIntoMarket（legacy 外部源显式迁入）', () => {
 
   it('已在市场内 → 幂等（不复制第二份）', async () => {
     const src = makeSource('idem');
-    const imported = await importFromDir(src, { libraries: libs, dataDir });
+    const imported = await importFromDir(src, { libraries: libs, dataRoot: dataDir });
     const res = await importLibraryIntoMarket(libs.getById(imported.libraryId)!, {
       libraries: libs,
-      dataDir,
+      dataRoot: dataDir,
     });
     expect(res.reused).toBe(true);
     expect(res.dir).toBe(imported.dir);
@@ -180,7 +180,7 @@ describe('importLibraryIntoMarket（legacy 外部源显式迁入）', () => {
   it('源不存在 → 拒绝', async () => {
     const row = libs.add({ path: path.join(srcRoot, 'gone'), kind: 'skill' });
     await expect(
-      importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataDir }),
+      importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataRoot: dataDir }),
     ).rejects.toThrow(/not found/i);
   });
 
@@ -189,7 +189,7 @@ describe('importLibraryIntoMarket（legacy 外部源显式迁入）', () => {
     mkdirSync(dir, { recursive: true });
     const row = libs.add({ path: dir, kind: 'both' });
     await expect(
-      importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataDir }),
+      importLibraryIntoMarket(libs.getById(row.id)!, { libraries: libs, dataRoot: dataDir }),
     ).rejects.toThrow(/内置仓/);
     expect(await readManifest(dir)).toBeNull(); // 一个字节都没往落点写
   });

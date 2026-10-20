@@ -4,6 +4,7 @@ import {
   DAEMON_HOST,
   DEFAULT_PORT,
   getDbPath,
+  ensureDataLayout,
   openDatabase,
   ProjectRepository,
   readDaemonState,
@@ -272,6 +273,9 @@ export const doctorCommand: Command = {
   ],
 
   async action(ctx) {
+    // 旧布局（顶层散放）先搬成三档目录，否则下面按新路径找库会扑空。有活着的
+    // daemon 占着数据目录时本次自动跳过（见 migrateDataLayout）。
+    ensureDataLayout();
     const dir = path.resolve(String(ctx.flags.dir ?? process.cwd()));
     const initialized = existsSync(path.join(dir, '.weave', 'config.yaml'));
 

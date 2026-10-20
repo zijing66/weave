@@ -100,7 +100,7 @@ function ExternalAssetsSection({
         type="button"
         onClick={() => setOpen((value) => !value)}
         title={open ? t('common.collapse') : t('common.expand')}
-        className="flex w-full items-center gap-1.5 px-3 py-2 text-left [&_svg]:pointer-events-none"
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-left [&_svg]:pointer-events-none max-lg:flex-wrap"
       >
         {open ? (
           <ChevronDown className="h-3 w-3 text-neutral-500" />

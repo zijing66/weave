@@ -29,7 +29,7 @@ describe('daemon server — /market/check-updates + /market/refresh', () => {
 
     db = openDatabase(':memory:');
     const libraries = new LibraryRepository(db, dataDir);
-    const imported = await importFromDir(src, { libraries, dataDir });
+    const imported = await importFromDir(src, { libraries, dataRoot: dataDir });
     libId = imported.libraryId;
     cacheDir = imported.dir;
 

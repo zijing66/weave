@@ -107,7 +107,7 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
   };
 
   const shard = (t: string): string => createHash('sha256').update(t).digest('hex').slice(0, 16);
-  const hooksRoot = () => path.join(configDirOf(), 'weave', 'hooks');
+  const hooksRoot = () => path.join(configDirOf(), 'weave', 'cache', 'hooks');
   const mirrorPath = () => path.join(hooksRoot(), 'mirror', `${shard(token)}.json`);
   const inboxPath = () => path.join(hooksRoot(), 'inbox', `${shard(token)}.jsonl`);
   const outboxPath = () => path.join(hooksRoot(), 'outbox', `${shard(token)}.jsonl`);

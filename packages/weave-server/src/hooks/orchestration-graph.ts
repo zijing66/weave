@@ -48,6 +48,8 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     if (pairs.has(pair)) return { ok: false, error: `Duplicate edge ${edge.from}→${edge.to}` };
     pairs.add(pair);
   }
+  const mute = edges.find((edge) => !edge.text.trim() && edge.carryOutput !== true);
+  if (mute) return { ok: false, error: `Edge ${mute.from}→${mute.to} has no message` };
   const cycle = findCycle(nodes, edges);
   if (cycle) return { ok: false, error: `Cycle detected: ${cycle.join(' → ')}` };
   const unreachable = nodes.filter((node) => !reachableFrom(startSessionId, edges).has(node));

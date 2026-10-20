@@ -802,6 +802,32 @@ describe('MessageDeliverer 裁决表', () => {
     await expect(waiting).resolves.toBe(true);
   });
 
+  it('lastTurnOutput：取最近一轮的最终输出，跳过空回合与坏 payload', () => {
+    const deliverer = new MessageDeliverer(makeDeps());
+    expect(deliverer.lastTurnOutput(SESSION_ID)).toBeNull();
+
+    const withOutput = (text: string) =>
+      events.insert({
+        projectId,
+        source: 'claude',
+        eventType: 'Stop',
+        sessionId: SESSION_ID,
+        payload: JSON.stringify({ raw: { last_assistant_message: text } }),
+      });
+    withOutput('第一轮结论');
+    withOutput('');
+    events.insert({
+      projectId,
+      source: 'claude',
+      eventType: 'UserPromptSubmit',
+      sessionId: SESSION_ID,
+      payload: 'not json',
+    });
+
+    expect(deliverer.lastTurnOutput(SESSION_ID)).toMatchObject({ output: '第一轮结论' });
+    expect(deliverer.lastTurnOutput(CODEX_SESSION)).toBeNull();
+  });
+
   it('层①-a 凭据落盘：daemon 重启（新投递器，内存空）后仍直投，不回落中继/终端', async () => {
     const path = uniqueInboxPath();
     let got = '';

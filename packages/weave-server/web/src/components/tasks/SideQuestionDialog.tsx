@@ -554,12 +554,13 @@ export function SideQuestionDialog({
                         {open && (
                           <div className="flex flex-col gap-1 px-2 pb-2">
                             {/* 问与答都走对话里那套 markdown 预览（同一个渲染器），
-                                `pre-wrap` 保住段落里的软换行——回答常是多段 markdown */}
-                            <div className="whitespace-pre-wrap break-words rounded-lg bg-edge/[0.04] px-2 py-1 text-xs text-neutral-200 [&_p]:whitespace-pre-wrap">
+                                `pre-wrap` 只下到 `<p>` 上保段落里的软换行——挂外层会把
+                                react-markdown 在块之间吐的 `\n` 文本节点也当换行，段距多一整空行 */}
+                            <div className="break-words rounded-lg bg-edge/[0.04] px-2 py-1 text-xs text-neutral-200 [&_p]:whitespace-pre-wrap">
                               <AssistantMarkdown text={row.question} />
                             </div>
                             {row.status === 'answered' ? (
-                              <div className="whitespace-pre-wrap break-words rounded-lg border border-violet-400/20 bg-violet-500/[0.06] px-2 py-1 text-xs leading-relaxed text-neutral-300 [&_p]:whitespace-pre-wrap">
+                              <div className="break-words rounded-lg border border-violet-400/20 bg-violet-500/[0.06] px-2 py-1 text-xs leading-relaxed text-neutral-300 [&_p]:whitespace-pre-wrap">
                                 <AssistantMarkdown text={row.answer ?? ''} />
                               </div>
                             ) : (

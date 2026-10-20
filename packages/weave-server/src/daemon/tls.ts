@@ -5,11 +5,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { X509Certificate, createPrivateKey } from 'node:crypto';
 import { generate } from 'selfsigned';
-import { getDataDir } from '../db/paths.js';
+import { getCertsDir } from '../db/paths.js';
 
-/** 自签证书目录（`<dataDir>/certs`）。 */
+/** 自签证书目录（`<dataDir>/local/certs`：本机身份，不随数据迁移）。 */
 export function daemonCertsDir(): string {
-  return path.join(getDataDir(), 'certs');
+  return getCertsDir();
 }
 
 /** 本机对外 IPv4：全部非 internal 地址（局域网访问面），去重排序求稳定序。 */

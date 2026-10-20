@@ -100,7 +100,7 @@ function shardId(token) {
 }
 
 function hooksDir() {
-  return path.join(configDir(), 'weave', 'hooks');
+  return path.join(configDir(), 'weave', 'cache', 'hooks');
 }
 
 // 会话自己的 inbox 直投凭据（Claude Code 在每个启用跨会话消息的会话里导出给

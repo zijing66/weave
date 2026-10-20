@@ -189,9 +189,10 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - 选择器手势（`FilePicker`）：**单击只挪光标**（第三栏跟着走）、**双击 / Enter 才落定**（目录行 = 进入），空格与左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）是桌面加速键；触屏没有 hover 与修饰键 ⇒ 单击仍是「进入」，多选只靠**常显**的勾选框（藏起来的钮在触屏上等于没有，§11）。已选非空时底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序，每枚后面补一个空格）。`pathRefKinds` 不含 `dir` 时目录行不给「引用此文件夹」。
 - 第三栏答「这条选中是什么」：目录列直接子项（**只读**，下钻仍归第二栏，两栏都能进会打架）、文本给只读编辑器、图片给 `<img>`；换选中防抖 150ms + 目录/正文各一份 LRU（箭头连滑不重取）。
 - 预览是**只读**编辑器（`editable.of(false)`）、**没有替换**——查找与跳行用自绘的一条小条，不用 CodeMirror 自带搜索面板（那面板恒带 Replace 一行）。
-- **索引不常驻、不 watch、不落盘**（`daemon/project-files.ts`）：打开选择器第一拍带 `?fresh=1` **无条件重建**（`git ls-files`，非 git 回落枚举），之后每敲一下只走缓存。缓存不是纯 TTL：命中时先核 **git 指纹**（`.git/index` 的 mtime + size；worktree / 子模块按 `.git` 文件里那行 `gitdir:` 找过去），变了立刻重建、没变才复用（一次 lstat + 一次 stat，比一个请求本身还便宜）；**硬窗 30s**（`INDEX_TTL_MS`）兜底，因为新建的未跟踪文件不动 `.git/index`。
+- **索引不常驻、不 watch，但重建结果落盘**（`daemon/project-files.ts`）：打开选择器第一拍带 `?fresh=1` **无条件重建**（`git ls-files`，非 git 回落枚举），之后每敲一下只走缓存。缓存不是纯 TTL：命中时先核 **git 指纹**（`.git/index` 的 mtime + size；worktree / 子模块按 `.git` 文件里那行 `gitdir:` 找过去），变了立刻重建、没变才复用（一次 lstat + 一次 stat，比一个请求本身还便宜）；**硬窗 30s**（`INDEX_TTL_MS`）兜底，因为新建的未跟踪文件不动 `.git/index`。
+- **落盘 = 可弃档 `<cache>/index/<projectId>.json`**，只作 daemon 重启后的 L2（内存空着才接手，`INDEX_MAX_STALE_MS` = 10 分钟、版本/根/git 指纹全对得上才端出去）；`fresh` 永不走盘、内存里判过期的那份也不回盘上捞（否则 30s 硬窗会被悄悄拉成 10 分钟）；写是一次 `tmp + rename`、失败静默（可弃档丢一层就丢一层），启动时 `pruneFileIndexes` 删掉已不在库里的项目。内存 LRU 只留 `MAX_CACHED_PROJECTS` = 3 份。
 - **别拿 `WatchService` 的 chokidar 去刷源文件**：它只挂资源面，源文件上每实体一个 `fs.watch` 的账已经量过（1.3 万文件 → 1.3 万个句柄、一次扫描 20s、24s CPU），而且事件会漏，漏了就永远陈旧；枚举一个项目比它便宜三四个数量级（本仓 650 文件 283ms，大头是两三次 git 进程）。
-- **索引形状分两层（落盘的形状已备好，盘上那份还没写）**：`FileIndexSnapshot`（`v` / `root` / `at` / `stamp` / `files` / `dirs`）= 可序列化那一份；`FileIndex` 在它之上挂**派生态**（`lower` / `dirLower` 小写表、`children` 目录子项映射）。`enumerateIndex` 产快照、`hydrateIndex` 是「快照 → 可查索引」的唯一入口、`buildIndex = hydrate(enumerate)`；将来读盘只需 `hydrateIndex(JSON.parse(...))` 再核 `v` / `root` / `stamp`，形状不用再改。
+- **索引形状分两层（落盘只写快照那七个字段）**：`FileIndexSnapshot`（`v` / `root` / `at` / `stamp` / `files` / `dirs`）= 可序列化那一份；`FileIndex` 在它之上挂**派生态**（`lower` / `dirLower` 小写表、`children` 目录子项映射）。`enumerateIndex` 产快照、`hydrateIndex` 是「快照 → 可查索引」的唯一入口、`buildIndex = hydrate(enumerate)`；将来读盘只需 `hydrateIndex(JSON.parse(...))` 再核 `v` / `root` / `stamp`，形状不用再改。
 - **匹配 = 有界 Top-N + 满档即停 + 分刀让出**：`startMatch` 只留 `limit` 条（新条目顶掉最差那条再冒泡）；最差那条已是最高档（basename 前缀）时直接收工——此时 `total` 只是**下限**、同档内的先后由扫描序定，响应带 `capped` 让前端说「前 N 条命中（还有更多）」。`matchPaths` 每刀 ~8ms 让出事件循环（30 万条全扫一两百毫秒，一口气跑完这段时间里所有请求连 SSE 写帧都得等）。档位与高亮区间口径没变（`rankOf` / `rangesOf`）。
 - **目录浏览 O(子项)**：`listDirOf` 直接取 `children`；排序**等第一次浏览这个目录**才做（30 万条上建索引时全排一遍要半分钟），且共用一具 `Intl.Collator`（`localeCompare(…, {numeric:true})` 每次现造排序器：30 万条 603ms vs 26ms）。
 - **子模块里的文件也在索引里**：git 只给子模块一个 gitlink（mode 160000），得各自进去再列一遍（`--recurse-submodules` 给不了 `--others`，而子模块里刚建还没 add 的正是最想引用的），gitlink 自身只当目录、不当文件；没克隆的子模块不进去问 git（空目录里 `ls-files` 会往上层仓库上溯、把外层文件挂到它名下）。
@@ -236,6 +237,8 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - 某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次。
 - 任务节点每收一条消息被激活一次（`state.pending[to]` 一条对一次 idle），无待处理且在飞清零即 done。
 - 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环。
+- **边可带「上游这一轮的最终输出」**（`OrchestrationEdge.carryOutput`）：投递时把源会话最近一条「说出口的结论」拼在正文后面——读的是既有 `hook_events`（`raw.last_assistant_message`，键形知识归 `weave-harness/src/shared/turn-output.ts` 的 `turnOutputOf`，取值唯一实现 = `MessageDeliverer.lastTurnOutput`，跳过空回合）。正文可空 ⇒ 只转发那段；**上游还没输出就不带**（不摆空壳），正文也空则记一条失败、不投空消息；那段超过 `CARRY_OUTPUT_MAX_CHARS = 4000` 截断。
+- **先要一份「交接总结」再往下传**：一轮结束时若该节点有出边勾了 `carryOutput`，引擎先以 `from = to = 该会话`（`edgeId: ''`）投一条总结指令（`orchestrations.handoff_prompt`，空则用内置 `DEFAULT_HANDOFF_PROMPT`），把该会话记进 `Runtime.awaitingHandoff`；**它下一轮 idle 才真正 fan-out**，此时 `lastTurnOutput` 读到的是这份总结而不是上一轮的碎片。总结投不出去（或该节点没有带输出的出边）就照旧立刻 fan-out，不卡住。这一步**只能由引擎自己排**：hook 的 `inject` 只往当轮塞上下文、plugin handler 只有 5s 且拿不到「本轮完成」信号，都排不出一个新回合。
 
 ### 4.14 两枚非人工触发
 
@@ -631,3 +634,31 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
   2. 再按标题消歧——**比较前先归一**（剥 spinner 字与 `[活动 tab/总数]` 前缀），**唯一命中才抬，歧义如实报错不猜**。
   3. 抬 = `ShowWindow(SW_RESTORE)` + 接前台线程与目标线程的输入队列后 `SetForegroundWindow`（Windows 前台锁会吞掉裸调用）。
 - 这层抬窗只有 Windows 有；其他平台的 wezterm 到 `activate-pane` 为止（那边未实机验证），其余后端诚实不支持。
+
+## §16 数据目录三档与搬迁
+
+`<dataDir>`（Windows = `%APPDATA%\weave`）下按**能不能迁移**分三档，路径全部只从 `db/paths.ts` 取（`dataRoots()` 是唯一分档口径，下面每个 getter 都落定在一档里）：
+
+| 档 | 内容 | 迁移 |
+| --- | --- | --- |
+| `data/` | `weave.db`（含 `-wal`/`-shm`/`weave.db.bak-*`）、`market/`（资源市场副本）、`uploads/`（对话图片）、`plugins/`（已装插件内容） | 带走 |
+| `local/` | `auth.json`（dashboard 口令）、`ai.json`（AI key）、`push.json`（VAPID）、`certs/`、`initial-password`、`weave-autostart.vbs` | 不迁移：换机器 = 重设口令、重填 key、重签证书、重开自启 |
+| `cache/` | `index/`、`logs/`（含 `logs/api`）、`statusline/`、`hooks/`、`tmp/`、`daemon.json` | 不迁移 |
+
+`libraries.path` 的相对基就是 `data/`（`market/<id>` 这类 posix 相对路径），所以市场副本从 `<dataDir>/market` 搬到 `<dataDir>/data/market` **不需要改任何一行库记录**。
+
+### 一次性搬迁（`db/layout.ts`）
+
+旧版顶层散放 → 三档，`ensureDataLayout()` 在 daemon 启动（`startDaemon` 第一句）与 `weave doctor` 开头各跑一次：
+
+- **只 rename、从不删除**：目标已存在就记 `kept` 跳过（旧文件留着供人核对）；rename 失败（被活进程开着 / 权限）同样跳过，下次启动再来一遍。幂等，搬完源就不在。
+- **活 daemon 占着数据目录时整个不动**（`liveDaemonPid` 看 `<cache>/daemon.json` 与 `<root>/daemon.json` 的 pid，`process.kill(pid,0)` 探活）：搬走库与流水文件会把运行中的 daemon 拆散。
+- **`hooks/` 与 `statusline/` 搬完要在旧位置留目录链接**（win32 junction、其余 symlink）：往这两个目录写的是 `weave init` 生成到项目里的脚本（hook 采集脚本、statusline helper），落点写死在生成那一刻——包里改了路径，存量脚本仍往老位置写，事件就进了没人读的目录。留链接后老脚本照旧写进 `cache/`；下次 `weave init` 换成新脚本后链接只是个空壳。**故改布局后存量项目须重跑 `weave init`**（重装包不修）。
+- 两个位置都有同名目录（搬完脚本又写了一次）→ 先**合并**（同名文件不覆盖）再补链接，别干看着丢事。
+
+### 搬迁后自带绝对路径的两类存量
+
+`data/` 整档走 rename，但**里面存着绝对路径的缓存与外部注册不会自己跟着改**：
+
+- **旁挂扫描缓存** `<data>/market/.weave-scans/<库名>/scans.json`：`skills[].dirPath` / `files[].filePath` / `mcp[].sourcePath` 都是扫描当时的绝对路径。搬迁后库路径变了而缓存还在，命中就拿到旧路径，同步时 `cp` 源不存在 → `400 ENOENT ... lstat '<旧路径>'`。故 `scans.json` 记一个 `root`，读侧 `root !== libPath` 整份作废重扫（`install/scan-cache.ts`）——缓存里的绝对路径只有在根没动过时才可信。
+- **宿主侧市场注册**（`~/.claude/plugins/known_marketplaces.json`、`~/.claude/settings.json` 的 `extraKnownMarketplaces`）：装市场包时由 `claude plugin marketplace add <数据目录内市场目录>` 写入，路径是写死的绝对路径。搬迁后这些注册指向已不存在的旧位置（宿主启动时报市场加载失败），**须重新 `marketplace add` 或把路径改到 `<dataDir>/data/market/<id>`**；weave 不再自动改写宿主的配置文件。

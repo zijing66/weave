@@ -2,7 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema, HARNESS_KEYS, type Harness } from '@weavecode/core';
 import { builtinPacksDir } from '../market/builtin.js';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot } from '../db/paths.js';
 import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 
 /**
@@ -70,7 +70,7 @@ const DEFAULT_TARGETS: Harness[] = ['claude'];
 export function builtinToolkitRoot(): string {
   // resolve 掉可能的尾部分隔符——sourceRoot 参与记录与 source 消歧比较，
   // 必须是无尾分隔的规范形。
-  return path.resolve(builtinPacksDir(getDataDir()));
+  return path.resolve(builtinPacksDir(getDataRoot()));
 }
 
 async function isDir(p: string): Promise<boolean> {

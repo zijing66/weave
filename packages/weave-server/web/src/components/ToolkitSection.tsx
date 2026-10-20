@@ -285,7 +285,7 @@ export function ToolkitSection({
         {/* 名称即注册键（name@marketplace，@后 = 所属市场 = 插件 namespace）——
             身份只此一处，不再另排 id / 键徽标造成三重重复。 */}
         <span
-          className="shrink-0 text-xs font-medium text-neutral-200"
+          className="min-w-0 max-w-full truncate text-xs font-medium text-neutral-200"
           title={
             p.key
               ? t('toolkit.keyTip', { scopes: p.scopes?.join('+') || t('toolkit.scopesNone') })
@@ -449,7 +449,7 @@ export function ToolkitSection({
                   setCollapsed((prev) => toggleIn(prev, repo.key));
                 }
               }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer"
+              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.03] cursor-pointer max-lg:flex-wrap"
             >
               {repoCollapsed ? (
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
@@ -502,7 +502,7 @@ export function ToolkitSection({
                               setCollapsed((prev) => toggleIn(prev, scopeKey));
                             }
                           }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer"
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-edge/[0.02] cursor-pointer max-lg:flex-wrap"
                         >
                           {scopeCollapsed ? (
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />

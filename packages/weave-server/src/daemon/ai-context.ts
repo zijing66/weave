@@ -4,7 +4,7 @@ import { builtinMarketDir } from '../market/builtin.js';
 
 /**
  * AI 助手的系统上下文装配——精选三源：`docs/ARCHITECTURE.md` + `docs/FEATURES.md`
- * + 内置技能的 `SKILL.md`（经 `<dataDir>/market/weave` 运行时可达，不硬编码包路径）。
+ * + 内置技能的 `SKILL.md`（经 `<dataRoot>/market/weave` 运行时可达，不硬编码包路径）。
  *
  * 刻意**不做进程内缓存**：装配是几毫秒级的文件读，而一次 LLM 调用是秒级；
  * 不缓存恰好让「改了文档立刻生效」对开发态成立（失效面为零）。
@@ -71,7 +71,7 @@ function readText(file: string): string | null {
 }
 
 /** 装配系统提示词（三源 + 固定前言）。 */
-export function buildSystemPrompt(deps: { dataDir: string; cwd?: string }): AiContextResult {
+export function buildSystemPrompt(deps: { dataRoot: string; cwd?: string }): AiContextResult {
   const sources: Array<{ label: string; text: string }> = [];
 
   const docsDir = findDocsDir(deps.cwd ?? process.cwd());
@@ -84,7 +84,7 @@ export function buildSystemPrompt(deps: { dataDir: string; cwd?: string }): AiCo
     }
   }
 
-  const marketRoot = builtinMarketDir(deps.dataDir);
+  const marketRoot = builtinMarketDir(deps.dataRoot);
   for (const file of collectSkillFiles(marketRoot)) {
     const text = readText(file);
     if (text) {

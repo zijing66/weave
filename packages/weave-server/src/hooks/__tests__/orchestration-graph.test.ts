@@ -10,7 +10,7 @@ import {
 import type { OrchestrationEdge } from '../../repositories/orchestrations.js';
 
 function edge(from: string, to: string, id = `${from}-${to}`): OrchestrationEdge {
-  return { id, from, to, text: '' };
+  return { id, from, to, text: 'go' };
 }
 
 describe('findCycle', () => {
@@ -80,6 +80,16 @@ describe('validateOrchestration', () => {
         edges: [edge('a', 'b', 'e1'), edge('a', 'b', 'e2')],
       }),
     ).toMatchObject({ error: expect.stringContaining('Duplicate edge') });
+  });
+
+  it('空正文只在「带上游输出」时合法（否则等于投一条空消息）', () => {
+    expect(validateOrchestration({ ...base, edges: [edge('a', 'b')] })).toEqual({ ok: true });
+    expect(
+      validateOrchestration({ ...base, edges: [{ ...edge('a', 'b'), text: '  ' }] }),
+    ).toMatchObject({ error: expect.stringContaining('has no message') });
+    expect(
+      validateOrchestration({ ...base, edges: [{ ...edge('a', 'b'), text: '', carryOutput: true }] }),
+    ).toEqual({ ok: true });
   });
 
   it('成环 → 报出环路', () => {

@@ -289,13 +289,17 @@ const OrchestrationBody = z.object({
   name: z.string().min(1).max(200),
   startSessionId: z.string().min(1),
   startText: z.string().max(20_000).optional(),
+  /** 「交接总结」指令（空 = 内置默认那句）；给下游带输出前先向源会话要这一份。 */
+  handoffPrompt: z.string().max(4_000).optional(),
   nodes: z.array(z.string().min(1)).min(1),
   edges: z.array(
     z.object({
       id: z.string().min(1).max(64),
       from: z.string().min(1),
       to: z.string().min(1),
-      text: z.string().min(1).max(20_000),
+      /** 空正文只在带 `carryOutput` 时合法（`validateOrchestration` 判）。 */
+      text: z.string().max(20_000),
+      carryOutput: z.boolean().optional(),
     }),
   ),
   cron: z.string().max(200).nullish(),
@@ -344,6 +348,7 @@ function resolveOrchestration(
     name: string;
     startSessionId: string;
     startText?: string;
+    handoffPrompt?: string;
     nodes: string[];
     edges: OrchestrationEdge[];
     cron?: string | null;
@@ -356,6 +361,7 @@ function resolveOrchestration(
         projectId: number;
         startSessionId: string;
         startText: string;
+        handoffPrompt: string;
         nodes: string[];
         edges: OrchestrationEdge[];
         cron: string | null;
@@ -382,6 +388,7 @@ function resolveOrchestration(
       projectId,
       startSessionId: input.startSessionId,
       startText: (input.startText ?? '').trim(),
+      handoffPrompt: (input.handoffPrompt ?? '').trim(),
       nodes: input.nodes,
       edges: input.edges,
       cron,
@@ -1656,6 +1663,7 @@ export async function handleHooksRoutes(
         name: body.name ?? row.name,
         startSessionId: body.startSessionId ?? row.startSessionId,
         startText: body.startText ?? row.startText,
+        handoffPrompt: body.handoffPrompt ?? row.handoffPrompt,
         nodes: body.nodes ?? row.nodes,
         edges: body.edges ?? row.edges,
         cron: body.cron === undefined ? row.cron : body.cron,

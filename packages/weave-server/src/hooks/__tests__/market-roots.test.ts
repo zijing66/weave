@@ -42,7 +42,7 @@ async function writePack(dir: string): Promise<void> {
 
 describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
   let base: string;
-  let dataDir: string;
+  let dataRoot: string;
   let marketRoot: string;
   let legacyRoot: string;
   let builtinRoot: string;
@@ -62,8 +62,8 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
     savedXdg = process.env.XDG_CONFIG_HOME;
     process.env.APPDATA = base;
     process.env.XDG_CONFIG_HOME = base;
-    dataDir = path.join(base, 'weave');
-    marketRoot = path.join(dataDir, 'market', 'mkt-repo');
+    dataRoot = path.join(base, 'weave', 'data');
+    marketRoot = path.join(dataRoot, 'market', 'mkt-repo');
     legacyRoot = path.join(base, 'legacy-src');
     builtinRoot = path.join(base, 'builtin');
     await writePack(marketRoot);
@@ -72,7 +72,7 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
 
     db = openDatabase(':memory:');
     projects = new ProjectRepository(db);
-    libraries = new LibraryRepository(db); // 默认 dataDir = getDataDir()（已重定向）
+    libraries = new LibraryRepository(db); // 默认 dataRoot = getDataRoot()（已重定向）
     states = new PluginStateRepository(db);
     rules = new HookRuleRepository(db);
     registry = new HookRuleRegistry(rules);
@@ -121,8 +121,8 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
   });
 
   it('内置仓落地后的包 namespace = weave（与市场列表里的仓库行同名）', async () => {
-    // 真实落地态：内置仓落在 `<dataDir>/market/weave/`（ensureBuiltinMarket 的落点）
-    const builtinPacks = path.join(dataDir, 'market', 'weave', 'plugins');
+    // 真实落地态：内置仓落在 `<dataRoot>/market/weave/`（ensureBuiltinMarket 的落点）
+    const builtinPacks = path.join(dataRoot, 'market', 'weave', 'plugins');
     await writePack(path.join(builtinPacks, 'core-skills', 'builtin-sample'));
     const service = new ToolkitService({
       projects,
@@ -159,7 +159,7 @@ describe('市场根进 toolkit/loader 源（M3 装载桥）', () => {
     await writeFile(
       path.join(dir, 'builtin.json'),
       JSON.stringify(
-        record('builtin-sample', path.join(dataDir, 'market', 'weave', 'plugins', 'core-skills'), [
+        record('builtin-sample', path.join(dataRoot, 'market', 'weave', 'plugins', 'core-skills'), [
           '.claude/rules/weave-stop-summary.md',
         ]),
       ),

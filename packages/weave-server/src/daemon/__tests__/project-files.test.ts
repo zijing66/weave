@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,6 +11,8 @@ import {
   listDirOf,
   matchPaths,
   projectFileIndex,
+  pruneFileIndexes,
+  setFileIndexRoot,
   startMatch,
 } from '../project-files.js';
 
@@ -47,14 +49,30 @@ const commit = (cwd: string): void => {
   });
 };
 
+let indexDir: string;
+
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'weave-files-'));
+  // 快照落盘根指向临时目录：跑测试绝不能写进真实的缓存档。
+  indexDir = mkdtempSync(path.join(tmpdir(), 'weave-idx-'));
+  setFileIndexRoot(indexDir);
   clearFileIndexCache();
 });
 
 afterEach(() => {
+  setFileIndexRoot(null);
   rmSync(root, { recursive: true, force: true });
+  rmSync(indexDir, { recursive: true, force: true });
 });
+
+/** 落盘是 fire-and-forget 的（不拖慢请求路径），测试里轮询等它落地。 */
+async function waitForFile(file: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (existsSync(file)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`snapshot not written: ${file}`);
+}
 
 describe('buildIndex', () => {
   it.skipIf(!hasGit)('① 走 git ls-files：gitignore 里的不进来，没跟踪的也进来', async () => {
@@ -284,11 +302,13 @@ describe('matchPaths', () => {
   });
 
   it('⑦ 分刀跑与一口气跑结果相同（刀与刀之间让出事件循环）', () => {
-    const files = Array.from({ length: 5000 }, (_, i) => `d${i % 7}/x${i}.ts`);
+    // 刀点按毫秒判：条目太少时整趟扫完不到 1ms，一次也不会让出（快机器上曾假红）。
+    // limit 大过真正能满档的命中数，扫描不会提前收工，整趟必须跨过若干刀。
+    const files = Array.from({ length: 200_000 }, (_, i) => `d${i % 7}/x${i}.ts`);
     const idx = index(files);
-    const whole = startMatch(idx, 'x499', 40);
+    const whole = startMatch(idx, 'x499', 1000);
     expect(whole.step(60_000)).toBe(true);
-    const cut = startMatch(idx, 'x499', 40);
+    const cut = startMatch(idx, 'x499', 1000);
     let steps = 0;
     while (!cut.step(0)) steps++;
     expect(steps).toBeGreaterThan(1);
@@ -336,5 +356,57 @@ describe('projectFileIndex（缓存）', () => {
     const a = await projectFileIndex(1, root);
     const b = await projectFileIndex(2, root);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('projectFileIndex（落盘）', () => {
+  it('⑥ 重建即落盘：只写快照七字段，派生表不进盘', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    const file = path.join(indexDir, '1.json');
+    await waitForFile(file);
+    const snap = JSON.parse(readFileSync(file, 'utf8'));
+    expect(Object.keys(snap).sort()).toEqual(['at', 'dirs', 'files', 'root', 'stamp', 'truncated', 'v']);
+    expect(snap.v).toBe(INDEX_VERSION);
+    expect(snap.files).toEqual(['a.ts']);
+  });
+
+  it('⑦ 内存空着时直接读盘：源文件删了也还在列（= 没重新枚举）', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    await waitForFile(path.join(indexDir, '1.json'));
+    rmSync(path.join(root, 'a.ts'));
+    clearFileIndexCache(); // 模拟 daemon 重启
+    const seeded = await projectFileIndex(1, root);
+    expect(seeded.files).toEqual(['a.ts']);
+  });
+
+  it('⑧ 格式版本变了 → 盘上那份作废，重建', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    await waitForFile(path.join(indexDir, '1.json'));
+    clearFileIndexCache();
+    writeFileSync(path.join(indexDir, '1.json'), JSON.stringify({ ...JSON.parse(readFileSync(path.join(indexDir, '1.json'), 'utf8')), v: 0 }));
+    const fresh = await projectFileIndex(1, root);
+    expect(fresh.v).toBe(INDEX_VERSION);
+  });
+
+  it('⑨ `fresh` 不走盘（它就是「现在重建」）', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    await waitForFile(path.join(indexDir, '1.json'));
+    rmSync(path.join(root, 'a.ts'));
+    clearFileIndexCache();
+    expect((await projectFileIndex(1, root, { fresh: true })).files).toEqual([]);
+  });
+
+  it('⑩ pruneFileIndexes 只留还在库里的项目', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    await projectFileIndex(2, root);
+    await waitForFile(path.join(indexDir, '2.json'));
+    pruneFileIndexes([2]);
+    expect(existsSync(path.join(indexDir, '1.json'))).toBe(false);
+    expect(existsSync(path.join(indexDir, '2.json'))).toBe(true);
   });
 });

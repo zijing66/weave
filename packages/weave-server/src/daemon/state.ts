@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { getDataDir, getDaemonStatePath } from '../db/paths.js';
+import path from 'node:path';
+import { getDaemonStatePath } from '../db/paths.js';
 
 export interface DaemonState {
   pid: number;
@@ -22,8 +23,9 @@ export function readDaemonState(): DaemonState | null {
 }
 
 export function writeDaemonState(state: DaemonState): void {
-  mkdirSync(getDataDir(), { recursive: true });
-  writeFileSync(getDaemonStatePath(), JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  const p = getDaemonStatePath();
+  mkdirSync(path.dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify(state, null, 2) + '\n', 'utf-8');
 }
 
 export function clearDaemonState(): void {

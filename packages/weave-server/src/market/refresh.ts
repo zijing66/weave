@@ -21,8 +21,8 @@ export interface RefreshResult {
 
 export interface RefreshDeps {
   libraries: LibraryRepository;
-  /** 覆盖 dataDir（测试注入）；默认 getDataDir()。 */
-  dataDir?: string;
+  /** 覆盖数据根（测试注入）；默认 getDataRoot()。 */
+  dataRoot?: string;
   /** 覆盖 git 执行（测试注入假 exec）。 */
   execGit?: GitExec;
 }

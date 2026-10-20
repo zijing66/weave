@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS orchestrations (
   project_id       INTEGER NOT NULL,
   start_session_id TEXT NOT NULL,
   start_text       TEXT NOT NULL DEFAULT '',
+  handoff_prompt   TEXT NOT NULL DEFAULT '',
   nodes            TEXT NOT NULL,
   edges            TEXT NOT NULL,
   cron             TEXT,
@@ -231,6 +232,7 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   migrateProjectsColumns(db);
   migrateProjectPaths(db);
   migrateSessionWatchesColumns(db);
+  migrateOrchestrationsColumns(db);
   return db;
 }
 
@@ -293,6 +295,23 @@ function migrateProjectsColumns(db: DatabaseSync): void {
   }
   if (!cols.has('archived_at')) {
     db.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT');
+  }
+}
+
+/**
+ * 给既有库补 orchestrations.handoff_prompt（编排节点的「交接总结」指令，
+ * 空 = 用内置默认那句）。幂等：列已存在则跳过。
+ */
+function migrateOrchestrationsColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(orchestrations)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
+  if (!cols.has('handoff_prompt')) {
+    db.exec("ALTER TABLE orchestrations ADD COLUMN handoff_prompt TEXT NOT NULL DEFAULT ''");
   }
 }
 

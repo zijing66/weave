@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema } from '@weavecode/core';
-import { getDataDir } from '../db/paths.js';
+import { getPluginsDir, getTmpDir } from '../db/paths.js';
 
 /**
  * 插件分发通道（A3）：install（本地路径 / git URL）/ uninstall / export +
@@ -23,7 +23,7 @@ interface InstalledEntry {
 }
 
 export function globalPluginRoot(): string {
-  return path.join(getDataDir(), 'plugins');
+  return getPluginsDir();
 }
 
 function installedManifestPath(root?: string): string {
@@ -118,7 +118,7 @@ export async function installPlugin(src: string, opts?: { root?: string }): Prom
 
   if (isGitSource(src)) {
     warnings.push(`从 ${src} 安装的插件未经沙箱隔离，请确认来源可信`);
-    const tmp = path.join(getDataDir(), 'tmp', `install-${Date.now()}`);
+    const tmp = path.join(getTmpDir(), `install-${Date.now()}`);
     await mkdir(tmp, { recursive: true });
     await run('git', ['clone', '--depth', '1', src, path.join(tmp, 'repo')]);
     scanRoot = path.join(tmp, 'repo');

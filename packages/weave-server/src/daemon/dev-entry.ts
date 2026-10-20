@@ -58,6 +58,8 @@ import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
+import { ensureDataLayout } from '../db/layout.js';
+import { pruneFileIndexes } from './project-files.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
 import { resolveStaticDir } from './static.js';
@@ -76,6 +78,8 @@ delete process.env.CLAUDE_CODE_CHILD_SESSION;
 for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
 
 async function main(): Promise<void> {
+  // 三档目录搬迁（data/ local/ cache/）必须先于写状态与开库：库文件自己也在搬。
+  ensureDataLayout();
   const port = (await isPortFree(DEFAULT_PORT))
     ? DEFAULT_PORT
     : await findFreePort(DEFAULT_PORT + 1);
@@ -94,6 +98,8 @@ async function main(): Promise<void> {
     console.log(`[dev] initial dashboard password: ${auth.initialPassword}`);
   }
   const projects = new ProjectRepository(db);
+  // 索引快照是 cache 档：已删项目的快照没人再读，启动清一次（大仓库一份按 MB 计）。
+  pruneFileIndexes(projects.list().map((p) => p.id));
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
   // 图② 装配：registry 注册运行时驱动 → adapters 由 events 能力槽派生
@@ -110,7 +116,7 @@ async function main(): Promise<void> {
     if (r.error) console.error(`[dev] builtin market unavailable: ${r.error}`);
     else if (r.changed) {
       console.log(
-        `[dev] builtin market ${r.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataDir)}`,
+        `[dev] builtin market ${r.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataRoot)}`,
       );
     }
   }

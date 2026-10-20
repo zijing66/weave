@@ -164,6 +164,45 @@ describe('orchestration definitions', () => {
     expect((await res.json()).error).toContain('Unknown session: nope');
   });
 
+  it('边可只转发上游输出（正文空 + carryOutput），两者皆无则拒', async () => {
+    const carry = await adminFetch(
+      '/messaging/orchestrations',
+      json('POST', graphBody({ edges: [{ ...edge('sa', 'sb'), text: '', carryOutput: true }] })),
+    );
+    expect(carry.status).toBe(201);
+    const created = (await carry.json()).orchestration;
+    expect(created.edges[0]).toMatchObject({ text: '', carryOutput: true });
+
+    const mute = await adminFetch(
+      '/messaging/orchestrations',
+      json('POST', graphBody({ edges: [{ ...edge('sa', 'sb'), text: ' ' }] })),
+    );
+    expect(mute.status).toBe(400);
+    expect((await mute.json()).error).toContain('has no message');
+
+    await adminFetch(`/messaging/orchestrations/${created.id}`, { method: 'DELETE' });
+  });
+
+  it('交接总结指令随定义存取（PUT 省略即保持原值）', async () => {
+    const res = await adminFetch(
+      '/messaging/orchestrations',
+      json('POST', graphBody({ handoffPrompt: '请按交接格式总结' })),
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()).orchestration;
+    expect(created.handoffPrompt).toBe('请按交接格式总结');
+
+    const put = await adminFetch(
+      `/messaging/orchestrations/${created.id}`,
+      json('PUT', { name: 'renamed' }),
+    );
+    expect((await put.json()).orchestration).toMatchObject({
+      name: 'renamed',
+      handoffPrompt: '请按交接格式总结',
+    });
+    await adminFetch(`/messaging/orchestrations/${created.id}`, { method: 'DELETE' });
+  });
+
   it('创建返回定义 + webhook token，列表可按项目过滤', async () => {
     const res = await adminFetch('/messaging/orchestrations', json('POST', graphBody()));
     expect(res.status).toBe(201);

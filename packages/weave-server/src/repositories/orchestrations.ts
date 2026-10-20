@@ -11,6 +11,8 @@ export interface OrchestrationEdge {
   to: string;
   /** 边上的消息正文（源会话完成一轮时投给目标）。 */
   text: string;
+  /** 投递时把源会话这一轮的最终输出附在正文后面（正文可空 ⇒ 只转发那段输出）。 */
+  carryOutput?: boolean;
 }
 
 export interface OrchestrationRow {
@@ -20,6 +22,8 @@ export interface OrchestrationRow {
   projectId: number;
   startSessionId: string;
   startText: string;
+  /** 每轮结束后向该会话要一份「交接总结」的指令（空 = 用内置默认那句）。 */
+  handoffPrompt: string;
   nodes: string[];
   edges: OrchestrationEdge[];
   cron: string | null;
@@ -102,6 +106,7 @@ export class OrchestrationRepository {
     projectId: number;
     startSessionId: string;
     startText: string;
+    handoffPrompt?: string;
     nodes: string[];
     edges: OrchestrationEdge[];
     cron?: string | null;
@@ -110,14 +115,15 @@ export class OrchestrationRepository {
     const result = this.db
       .prepare(
         `INSERT INTO orchestrations
-           (name, project_id, start_session_id, start_text, nodes, edges, cron, webhook_token, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (name, project_id, start_session_id, start_text, handoff_prompt, nodes, edges, cron, webhook_token, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.name,
         input.projectId,
         input.startSessionId,
         input.startText,
+        input.handoffPrompt ?? '',
         JSON.stringify(input.nodes),
         JSON.stringify(input.edges),
         input.cron ?? null,
@@ -156,6 +162,7 @@ export class OrchestrationRepository {
       projectId?: number;
       startSessionId?: string;
       startText?: string;
+      handoffPrompt?: string;
       nodes?: string[];
       edges?: OrchestrationEdge[];
       cron?: string | null;
@@ -166,7 +173,7 @@ export class OrchestrationRepository {
     this.db
       .prepare(
         `UPDATE orchestrations
-            SET name = ?, project_id = ?, start_session_id = ?, start_text = ?,
+            SET name = ?, project_id = ?, start_session_id = ?, start_text = ?, handoff_prompt = ?,
                 nodes = ?, edges = ?, cron = ?, updated_at = ?
           WHERE id = ?`,
       )
@@ -175,6 +182,7 @@ export class OrchestrationRepository {
         patch.projectId ?? row.projectId,
         patch.startSessionId ?? row.startSessionId,
         patch.startText ?? row.startText,
+        patch.handoffPrompt ?? row.handoffPrompt,
         JSON.stringify(patch.nodes ?? row.nodes),
         JSON.stringify(patch.edges ?? row.edges),
         patch.cron === undefined ? row.cron : patch.cron,
@@ -382,6 +390,7 @@ function toOrchestration(row: Record<string, unknown>): OrchestrationRow {
     projectId: Number(row.project_id),
     startSessionId: String(row.start_session_id),
     startText: String(row.start_text),
+    handoffPrompt: String(row.handoff_prompt ?? ''),
     nodes: parseJson<string[]>(row.nodes, []),
     edges: parseJson<OrchestrationEdge[]>(row.edges, []),
     cron: row.cron == null ? null : String(row.cron),

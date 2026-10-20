@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 export { openDatabase } from './db/db.js';
 export { getDataDir, getDbPath, getDaemonStatePath, getAuthPath, getInitialPasswordPath } from './db/paths.js';
+export { ensureDataLayout, migrateDataLayout } from './db/layout.js';
+export type { LayoutMigration } from './db/layout.js';
 
 export { ProjectRepository } from './repositories/projects.js';
 export type { ProjectRow, RegisterProjectInput } from './repositories/projects.js';

@@ -13,7 +13,7 @@ import {
   type HookRule,
   type WeavePluginManifest,
 } from '@weavecode/core';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot, getPluginsDir } from '../db/paths.js';
 import type { HookRuleRepository } from '../repositories/hook-rules.js';
 import type { LibraryRepository } from '../repositories/libraries.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
@@ -662,10 +662,8 @@ export async function registerPluginRoots(
 
   // 内置规则包随 `@weavecode/templates` 的仓发货，启动时落地到数据目录
   // （见 market/builtin.ts 的 ensureBuiltinMarket）。
-  loaded.push(...(await loader.loadRoot(builtinRulesDir(getDataDir()), 'builtin', null)));
-  loaded.push(
-    ...(await loader.loadRoot(path.join(getDataDir(), 'plugins'), 'user', null)),
-  );
+  loaded.push(...(await loader.loadRoot(builtinRulesDir(getDataRoot()), 'builtin', null)));
+  loaded.push(...(await loader.loadRoot(getPluginsDir(), 'user', null)));
   for (const project of projects) {
     loaded.push(
       ...(await loader.loadRoot(

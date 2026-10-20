@@ -161,7 +161,7 @@ export interface WeaveServerDeps {
   libraries?: LibraryRepository;
   /** Content-fingerprint cache for update detection; created if absent. */
   fingerprintCache?: FingerprintCache;
-  /** 接口日志（出入参 + 耗时按小时 JSONL；GET /api-logs 查询）；缺省 <dataDir>/logs/api。 */
+  /** 接口日志（出入参 + 耗时按小时 JSONL；GET /api-logs 查询）；缺省 `<cache>/logs/api`。 */
   apiLog?: ApiLogger;
   /** Directory of the built SPA to statically host; optional. */
   staticDir?: string;
@@ -235,7 +235,7 @@ export interface WeaveServerDeps {
   pluginSurface?: PluginSurface;
   /** dashboard 平面认证（见 auth.ts）。缺省不装 = 开放（存量测试口径），生产由 start/dev-entry 装配。 */
   auth?: AuthService;
-  /** AI key 文件路径（测试注入）；缺省 `<dataDir>/ai.json`（见 daemon/ai-config.ts）。 */
+  /** AI key 文件路径（测试注入）；缺省 `<local>/ai.json`（见 daemon/ai-config.ts）。 */
   aiKeyPath?: string;
 }
 
@@ -391,7 +391,7 @@ async function handleRequest(
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
-      // `ai.apiKey` 是**只写**字段：拆出来落 <dataDir>/ai.json（0600），不进 settings 表；
+      // `ai.apiKey` 是**只写**字段：拆出来落 <local>/ai.json（0600），不进 settings 表；
       // 响应与 GET 都只回派生布尔 apiKeySet——密钥永不回显。
       const apiKey = body.ai?.apiKey;
       if (apiKey !== undefined) {
@@ -685,7 +685,7 @@ async function handleRequest(
       return;
     }
     const items = await Promise.all(
-      deps.libraries.list().map((row) => marketItem(row, deps.libraries!.dataDir)),
+      deps.libraries.list().map((row) => marketItem(row, deps.libraries!.dataRoot)),
     );
     sendJson(res, 200, { items });
     return;
@@ -702,8 +702,8 @@ async function handleRequest(
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return;
     }
-    // dataDir 跟随库实例（生产 = getDataDir()；测试可注入临时根，读写两侧同根）
-    const importDeps = { libraries: deps.libraries, dataDir: deps.libraries.dataDir };
+    // dataRoot 跟随库实例（生产 = `<dataDir>/data`；测试可注入临时根，读写两侧同根）
+    const importDeps = { libraries: deps.libraries, dataRoot: deps.libraries.dataRoot };
     try {
       if (body.kind === 'dir' && body.path) {
         const imported = await importFromDir(body.path, importDeps);
@@ -711,7 +711,7 @@ async function handleRequest(
         await invalidateScan(imported.dir); // 源目录可能带旧 scans.json，导入后一律作废重扫
         deps.dataBus?.emit({ key: 'market' });
         sendJson(res, 201, {
-          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataRoot),
         });
       } else if (body.kind === 'git' && body.url) {
         const imported = await importFromGit(body.url, importDeps);
@@ -719,7 +719,7 @@ async function handleRequest(
         await invalidateScan(imported.dir);
         deps.dataBus?.emit({ key: 'market' });
         sendJson(res, 201, {
-          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+          item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataRoot),
         });
       } else {
         sendJson(res, 400, { error: 'Invalid body (kind: "dir" + path | "git" + url)' });
@@ -748,7 +748,7 @@ async function handleRequest(
     const rows = deps.libraries
       .list()
       // 内置仓无远程源：不进批量检查（否则只会在 UI 上显示成 unknown 徽标）。
-      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataDir))
+      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataRoot))
       .filter((r) => !body.ids?.length || body.ids.includes(r.id));
     for (const r of rows) await invalidateScan(r.path); // 检查即重扫事件：之后同路径取新结果
     const results = await checkMarketUpdates(rows.map((r) => ({ id: r.id, dir: r.path })));
@@ -778,17 +778,17 @@ async function handleRequest(
     // 内置仓的「刷新」= 重新从包内落地：它不是导入来的，没有可回拷的 origin；
     // 重铺同时会把此前因链接不可用而落成副本的落点改回链接。
     const builtinResults: RefreshResult[] = [];
-    for (const row of selected.filter((r) => isBuiltinMarketDir(r.path, deps.libraries!.dataDir))) {
+    for (const row of selected.filter((r) => isBuiltinMarketDir(r.path, deps.libraries!.dataRoot))) {
       const r = await ensureBuiltinMarket({ libraries: deps.libraries });
       builtinResults.push({ id: row.id, status: r.error ? 'failed' : 'refreshed' });
     }
     const targets = selected
-      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataDir))
+      .filter((r) => !isBuiltinMarketDir(r.path, deps.libraries!.dataRoot))
       .map((r) => ({ id: r.id, dir: r.path }));
     const results = [
       ...(await refreshMarketItems(targets, {
         libraries: deps.libraries,
-        dataDir: deps.libraries.dataDir,
+        dataRoot: deps.libraries.dataRoot,
       })),
       ...builtinResults,
     ];
@@ -817,14 +817,14 @@ async function handleRequest(
       sendJson(res, 404, { error: 'Library not found' });
       return;
     }
-    if (isBuiltinMarketDir(row.path, deps.libraries.dataDir)) {
+    if (isBuiltinMarketDir(row.path, deps.libraries.dataRoot)) {
       sendJson(res, 409, {
         error: 'Built-in market is owned by weave and cannot be deleted',
         note: 'It is re-materialized from @weavecode/templates on every daemon start.',
       });
       return;
     }
-    if (!isInsideDir(row.path, marketDir(deps.libraries.dataDir))) {
+    if (!isInsideDir(row.path, marketDir(deps.libraries.dataRoot))) {
       sendJson(res, 400, { error: 'Not a market resource (legacy row — use DELETE /libraries/:id)' });
       return;
     }
@@ -872,12 +872,12 @@ async function handleRequest(
       const oldPath = row.path;
       const imported = await importLibraryIntoMarket(row, {
         libraries: deps.libraries,
-        dataDir: deps.libraries.dataDir,
+        dataRoot: deps.libraries.dataRoot,
       });
       await invalidateScan(oldPath); // 外部源残留的 scans.json 清掉
       await invalidateScan(imported.dir); // 拷贝可能带进旧 scans.json，不作数
       sendJson(res, 200, {
-        item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataDir),
+        item: await marketItem(deps.libraries.getById(imported.libraryId)!, deps.libraries.dataRoot),
       });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Import failed' });
@@ -1893,7 +1893,7 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string): 
 
 /**
  * /settings 的对外形状：`ai` 段补派生布尔 `apiKeySet`（地址/模型来自 settings 表，
- * key 来自 `<dataDir>/ai.json`——密钥只写，GET/PUT 一律不回显）。
+ * key 来自 `<local>/ai.json`——密钥只写，GET/PUT 一律不回显）。
  */
 function withAiStatus(settings: DaemonSettings, aiKeyPath?: string): Record<string, unknown> {
   const ai = settings.ai ?? DEFAULT_AI_SETTINGS;
@@ -1979,26 +1979,26 @@ function sendInstallError(res: ServerResponse, e: unknown): void {
 /**
  * 资源市场清单行（批 9）：libraries 行 + resolve 后有效路径 + 清单元数据 +
  * legacy 外部源标记。repo 读侧已把 path 解析为绝对路径（R11）。
- * dataDir 由调用方传库实例值（生产 = getDataDir()；测试注入临时根）。
+ * dataRoot 由调用方传库实例值（生产 = `<dataDir>/data`；测试注入临时根）。
  */
-async function marketItem(row: LibraryRow, dataDir: string): Promise<Record<string, unknown>> {
-  const managed = isInsideDir(row.path, marketDir(dataDir));
+async function marketItem(row: LibraryRow, dataRoot: string): Promise<Record<string, unknown>> {
+  const managed = isInsideDir(row.path, marketDir(dataRoot));
   const manifest = managed ? await readManifest(row.path) : null;
   // 内置仓也登记在 libraries 里（落点是链接），但它既不是导入来的、也不能迁入/
   // 删除/查更新——右栏据此不摆那些按钮，别让它显示成「外部源」。
-  const builtin = isBuiltinMarketDir(row.path, dataDir);
+  const builtin = isBuiltinMarketDir(row.path, dataRoot);
   return {
     id: row.id,
     kind: row.kind,
     addedAt: row.addedAt,
     path: row.path,
-    relPath: isInsideDir(row.path, dataDir) ? toRelPosix(row.path, dataDir) : null,
+    relPath: isInsideDir(row.path, dataRoot) ? toRelPosix(row.path, dataRoot) : null,
     resourceId: managed ? path.basename(row.path) : null,
     managed,
     builtin,
     // 仓库 namespace = 资源管理按它分块的那个名字（内置仓 = `weave`）；不在市场
     // 内的 legacy 外部源没有仓库可归。
-    namespace: managed ? marketIdOf(row.path, marketDir(dataDir)) : undefined,
+    namespace: managed ? marketIdOf(row.path, marketDir(dataRoot)) : undefined,
     legacy: !manifest && !builtin,
     source: builtin ? 'builtin' : (manifest?.source ?? 'legacy'),
     origin: manifest?.origin ?? null,

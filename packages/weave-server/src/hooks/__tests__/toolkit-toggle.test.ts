@@ -164,11 +164,11 @@ describe('toolkit 启用/禁用（硬闸）', () => {
     prevXdg = process.env.XDG_CONFIG_HOME;
     process.env.HOME = base;
     process.env.USERPROFILE = base;
-    // dataDir 落 base/weave → 市场根判据（marketIdOf）与库根过滤同源
+    // dataDir 落 base/weave → 市场根 = base/weave/data/market（marketIdOf 与库根过滤同源）
     process.env.APPDATA = base;
     process.env.XDG_CONFIG_HOME = base;
     projectDir = path.join(base, 'proj');
-    extRoot = path.join(base, 'weave', 'market', 'tk-mkt');
+    extRoot = path.join(base, 'weave', 'data', 'market', 'tk-mkt');
     await mkdir(projectDir, { recursive: true });
     // 用户既有文件：settings.json / hooks 形态内容 + 指令文件（须逐字节还原）
     await mkdir(path.join(projectDir, '.claude'), { recursive: true });

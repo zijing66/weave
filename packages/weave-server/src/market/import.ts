@@ -2,7 +2,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot } from '../db/paths.js';
 import type { LibraryRepository, LibraryRow } from '../repositories/libraries.js';
 import { isInsideDir, toRelPosix } from './resolve.js';
 import { isBuiltinMarketDir } from './builtin.js';
@@ -10,8 +10,8 @@ import { marketDir, readManifest, writeManifest, type MarketManifest } from './m
 
 /**
  * 资源市场导入（批 9，R10）：本地目录 / git 仓库一律复制（clone）进
- * `<getDataDir()>/market/<resourceId>/` 成唯一事实源，随后登记 libraries 行
- * （path = 相对 dataDir 的 posix 形）。git 更新检查是 BACKLOG，清单预留 commit。
+ * `<getDataRoot()>/market/<resourceId>/` 成唯一事实源，随后登记 libraries 行
+ * （path = 相对 dataRoot 的 posix 形）。git 更新检查是 BACKLOG，清单预留 commit。
  */
 
 const execFileAsync = promisify(execFileCb);
@@ -35,8 +35,8 @@ export type GitExec = (
 
 export interface ImportDeps {
   libraries: LibraryRepository;
-  /** 覆盖 dataDir（测试注入）；默认 getDataDir()。 */
-  dataDir?: string;
+  /** 覆盖 dataRoot（测试注入）；默认 getDataRoot()。 */
+  dataRoot?: string;
   /** 覆盖 git 执行（测试注入假 exec）。 */
   execGit?: GitExec;
 }
@@ -46,7 +46,7 @@ export interface ImportedResource {
   id: string;
   /** 市场内绝对路径。 */
   dir: string;
-  /** 相对 dataDir 的 posix 形（libraries.path 规范存储形）。 */
+  /** 相对 dataRoot 的 posix 形（libraries.path 规范存储形）。 */
   relPath: string;
   manifest: MarketManifest;
   libraryId: number;
@@ -136,8 +136,8 @@ async function register(
   reused: boolean,
   refreshed = false,
 ): Promise<ImportedResource> {
-  const dataDir = deps.dataDir ?? getDataDir();
-  const relPath = toRelPosix(dir, dataDir);
+  const dataRoot = deps.dataRoot ?? getDataRoot();
+  const relPath = toRelPosix(dir, dataRoot);
   const row = deps.libraries.add({ path: relPath, kind: 'both' });
   return {
     id: path.basename(dir),
@@ -162,12 +162,12 @@ async function replaceWithCopy(src: string, existing: string, root: string): Pro
 
 /** 本地目录 → 复制进市场 + 写清单 + 登记 libraries 行。 */
 export async function importFromDir(srcPath: string, deps: ImportDeps): Promise<ImportedResource> {
-  const dataDir = deps.dataDir ?? getDataDir();
+  const dataRoot = deps.dataRoot ?? getDataRoot();
   const src = path.resolve(srcPath);
   const info = await stat(src).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Not a directory: ${srcPath}`);
 
-  const root = marketDir(dataDir);
+  const root = marketDir(dataRoot);
   // 市场存储内的目录 = 列表里那些副本自身（内置仓落点 / 已导入的市场目录）：
   // 再当来源拷一遍只会得到「副本的副本」，同一份资源在清单里出现两条。市场根
   // 自身更要挡——目标落在源里，cp 会把它一路拷进自己。
@@ -197,10 +197,10 @@ export async function importFromDir(srcPath: string, deps: ImportDeps): Promise<
 
 /** git URL → clone 进市场 + 写清单 + 登记 libraries 行（execFile 数组传参无 shell）。 */
 export async function importFromGit(rawUrl: string, deps: ImportDeps): Promise<ImportedResource> {
-  const dataDir = deps.dataDir ?? getDataDir();
+  const dataRoot = deps.dataRoot ?? getDataRoot();
   const url = assertSafeGitUrl(rawUrl);
 
-  const root = marketDir(dataDir);
+  const root = marketDir(dataRoot);
   const existing = await findByOrigin(root, url);
   if (existing) {
     const prev = (await readManifest(existing))!;
@@ -250,17 +250,17 @@ export async function importLibraryIntoMarket(
   row: LibraryRow,
   deps: ImportDeps,
 ): Promise<ImportedResource> {
-  const dataDir = deps.dataDir ?? getDataDir();
-  const src = path.isAbsolute(row.path) ? row.path : path.join(dataDir, row.path);
+  const dataRoot = deps.dataRoot ?? getDataRoot();
+  const src = path.isAbsolute(row.path) ? row.path : path.join(dataRoot, row.path);
   const abs = path.resolve(src);
-  const root = marketDir(dataDir);
+  const root = marketDir(dataRoot);
   if (!(await exists(abs))) throw new Error(`Source directory not found: ${abs}`);
 
   // 内置仓的落点是**指向包内仓的链接**：在这儿写清单会穿过链接写进随包发布的
-  // 内容（已实测：`<dataDir>/market/weave/.weave-market.json` 落在
+  // 内容（已实测：`<dataRoot>/market/weave/.weave-market.json` 落在
   // `packages/weave-templates/src/resources/weave-market/` 里），而且它本就没有
   // 外部来源可登记。与 DELETE /market/weave → 409 同一条口径。
-  if (isBuiltinMarketDir(abs, dataDir)) {
+  if (isBuiltinMarketDir(abs, dataRoot)) {
     throw new Error('内置仓不可迁入：它随包发布、无外部来源，且落点是链接（写入会改到包内容）');
   }
 
@@ -274,7 +274,7 @@ export async function importLibraryIntoMarket(
     return {
       id: path.basename(abs),
       dir: abs,
-      relPath: toRelPosix(abs, dataDir),
+      relPath: toRelPosix(abs, dataRoot),
       manifest,
       libraryId: row.id,
       reused: true,
@@ -288,11 +288,11 @@ export async function importLibraryIntoMarket(
   await cp(abs, target, { recursive: true });
   const manifest: MarketManifest = { source: 'dir', origin: abs, importedAt: nowIso() };
   await writeManifest(target, manifest);
-  deps.libraries.setPath(row.id, toRelPosix(target, dataDir));
+  deps.libraries.setPath(row.id, toRelPosix(target, dataRoot));
   return {
     id: path.basename(target),
     dir: target,
-    relPath: toRelPosix(target, dataDir),
+    relPath: toRelPosix(target, dataRoot),
     manifest,
     libraryId: row.id,
     reused: false,

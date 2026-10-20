@@ -50,6 +50,8 @@ import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
+import { ensureDataLayout } from '../db/layout.js';
+import { pruneFileIndexes } from './project-files.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
 import { syncLaunchOnLogin } from './auto-start.js';
@@ -68,6 +70,8 @@ for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
  * hook ingestion, and statically hosts the built SPA if present.
  */
 export function startDaemon(): void {
+  // 三档目录搬迁（data/ local/ cache/）必须先于读状态与开库：库文件自己也在搬。
+  ensureDataLayout();
   const state = readDaemonState();
   if (!state) {
     console.error('Daemon state not found. Run `weave daemon start` first.');
@@ -85,6 +89,8 @@ export function startDaemon(): void {
     console.log(`[weave] initial dashboard password: ${auth.initialPassword}`);
   }
   const projects = new ProjectRepository(db);
+  // 索引快照是 cache 档：已删项目的快照没人再读，启动清一次（大仓库一份按 MB 计）。
+  pruneFileIndexes(projects.list().map((p) => p.id));
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
   // 图② 装配：registry 注册运行时驱动 → adapters 由 events 能力槽派生
@@ -135,7 +141,7 @@ export function startDaemon(): void {
         console.error(`[weave] builtin market unavailable: ${result.error}`);
       } else if (result.changed) {
         console.log(
-          `[weave] builtin market ${result.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataDir)}`,
+          `[weave] builtin market ${result.form === 'link' ? 'linked' : 'copied'} -> ${builtinMarketDir(libraries.dataRoot)}`,
         );
       }
       return loadAllPlugins(

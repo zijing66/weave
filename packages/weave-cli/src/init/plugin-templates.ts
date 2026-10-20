@@ -14,7 +14,7 @@ async function* iteratePluginManifests(
   globalRoot?: string,
 ): AsyncGenerator<{ dir: string; manifest: WeavePluginManifest }> {
   const roots = [
-    globalRoot ?? path.join(detectPlatform().configDir, 'weave', 'plugins'),
+    globalRoot ?? path.join(detectPlatform().configDir, 'weave', 'data', 'plugins'),
     path.join(projectDir, '.weave', 'plugins'),
   ];
   for (const root of roots) {

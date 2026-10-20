@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process';
-import { lstat, readFile, readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { PathRefKind } from '@weavecode/harness';
+import { getIndexDir } from '../db/paths.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
- * 项目文件索引：对话页的路径补全面。**不常驻、不 watch、不落盘**——打开选择器即
- * 重建（`?fresh=1`），开着的期间靠 git 指纹（`.git/index`）重验 + 硬窗兜底。
+ * 项目文件索引：对话页的路径补全面。**不常驻、不 watch**——打开选择器即重建
+ * （`?fresh=1`），开着的期间靠 git 指纹（`.git/index`）重验 + 硬窗兜底；**重建
+ * 结果落盘**（`<dataDir>/cache/index/<projectId>.json`，可弃档）当下一次进程启动
+ * 的 L2，省掉冷启动后第一次补全/粘贴认引用的整棵重建。
  * 理由：重建是事实、watch 是猜测（事件会漏，漏了就永远陈旧），而枚举一个项目
  * 比 Everything 那种枚举整个卷便宜三四个数量级，常驻索引不划算。
  */
@@ -16,11 +20,14 @@ const execFileAsync = promisify(execFile);
 /** 索引条目上限：再大就不是「路径补全」该扛的量了，退化成目录浏览。 */
 export const MAX_INDEX_FILES = 300_000;
 
-/** 快照格式版本：将来落盘时用它作废旧文件，改形状必须递增。 */
+/** 快照格式版本：作废盘上的旧文件，改形状必须递增。 */
 export const INDEX_VERSION = 1;
 
 /** 硬窗：到点必重建。**新建的未跟踪文件不动 `.git/index`**（实测），只有这条能兜住。 */
 const INDEX_TTL_MS = 30_000;
+
+/** 盘上那份能直接端出去的年纪上限（先服务、不阻塞；过了就重建）。 */
+const INDEX_MAX_STALE_MS = 10 * 60_000;
 
 /** 最多留几个项目的索引（大仓库索引按 MB 计）。 */
 const MAX_CACHED_PROJECTS = 3;
@@ -39,7 +46,7 @@ const SKIP_DIRS = new Set([
 ]);
 
 /**
- * 索引的可序列化部分 = 将来落盘那一份的形状：枚举结果 + 建它时的根与 git 指纹。
+ * 索引的可序列化部分 = **落盘那一份的形状**：枚举结果 + 建它时的根与 git 指纹。
  * 派生出来的东西（小写表、目录子项映射）**不在这层**，读回来现算。
  */
 export interface FileIndexSnapshot {
@@ -251,7 +258,7 @@ async function enumerateIndex(root: string): Promise<FileIndexSnapshot> {
 
 /**
  * 快照 → 可查的索引：小写表与目录子项映射这些**派生态**在这里算好挂在索引上。
- * 将来的持久化读回来走的也是这一条（不存派生、不算两遍）。
+ * 落盘那份读回来走的也是这一条（只存快照、不存派生）。
  */
 export function hydrateIndex(snap: FileIndexSnapshot): FileIndex {
   const lower = new Array<string>(snap.files.length);
@@ -277,10 +284,91 @@ export async function buildIndex(root: string): Promise<FileIndex> {
 const cache = new Map<number, FileIndex>();
 const inflight = new Map<number, Promise<FileIndex>>();
 
+/** 落盘根（测试注入临时目录；生产 = `<dataDir>/cache/index`）。 */
+let indexRoot: string | null = null;
+
+/** 测试用：把落盘根改到临时目录（null = 回到生产口径）。 */
+export function setFileIndexRoot(dir: string | null): void {
+  indexRoot = dir;
+}
+
+function indexPathOf(projectId: number): string {
+  return path.join(indexRoot ?? getIndexDir(), `${projectId}.json`);
+}
+
+/** 只挑可序列化那七个字段：`FileIndex` 上的派生表（小写 / 子项）绝不进盘。 */
+function snapshotOf(index: FileIndex): FileIndexSnapshot {
+  return {
+    v: index.v,
+    root: index.root,
+    at: index.at,
+    stamp: index.stamp,
+    truncated: index.truncated,
+    files: index.files,
+    dirs: index.dirs,
+  };
+}
+
+/** 落盘（tmp + rename 原子换）。写不进去不影响这次结果——下次重建就是。 */
+async function writeSnapshot(projectId: number, index: FileIndex): Promise<void> {
+  const file = indexPathOf(projectId);
+  const tmp = `${file}.tmp`;
+  try {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(tmp, JSON.stringify(snapshotOf(index)), 'utf8');
+    await rename(tmp, file);
+  } catch {
+    // 可弃档：盘满 / 权限 / 并发写同一个项目都只是少一层缓存
+  }
+}
+
+/** 读盘上的快照：版本与根对不上就作废（项目换了路径、旧格式）。 */
+async function readSnapshot(projectId: number, root: string): Promise<FileIndexSnapshot | null> {
+  try {
+    const snap = JSON.parse(await readFile(indexPathOf(projectId), 'utf8')) as FileIndexSnapshot;
+    if (snap?.v !== INDEX_VERSION || snap.root !== root) return null;
+    if (!Array.isArray(snap.files) || !Array.isArray(snap.dirs)) return null;
+    return snap;
+  } catch {
+    return null;
+  }
+}
+
+function remember(projectId: number, index: FileIndex): void {
+  // 重插到尾部 = 最近使用；超出上限淘汰最旧的
+  cache.delete(projectId);
+  cache.set(projectId, index);
+  while (cache.size > MAX_CACHED_PROJECTS) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
+function rebuild(projectId: number, root: string): Promise<FileIndex> {
+  const flying = inflight.get(projectId);
+  if (flying) return flying;
+  const job = buildIndex(root).then((index) => {
+    remember(projectId, index);
+    void writeSnapshot(projectId, index);
+    return index;
+  });
+  inflight.set(projectId, job);
+  const done = (): void => {
+    inflight.delete(projectId);
+  };
+  job.then(done, done);
+  return job;
+}
+
 /**
  * 取项目索引：`fresh` = 打开选择器那一拍，无条件重建；否则在飞则共用一次构建
  * （同 `/toolkit` 的口径），命中缓存则**先核 git 指纹**——变了立刻重建，没变才复用
  * （一次 lstat + 一次 stat，比一个请求本身还便宜）。
+ *
+ * 内存里没有（daemon 刚起来）先看**盘上那份**：版本、根、git 指纹全对得上、年纪
+ * 在 `INDEX_MAX_STALE_MS` 内就直接端出去，省掉整棵重建（粘贴认引用是每次粘贴都要
+ * 走的路径）。`fresh` 仍然不许走后门——它就是「现在重建」。
  */
 export async function projectFileIndex(
   projectId: number,
@@ -291,32 +379,49 @@ export async function projectFileIndex(
   if (hit && hit.root === root && !opts.fresh) {
     if (Date.now() - hit.at < INDEX_TTL_MS && (await gitStamp(root)) === hit.stamp) return hit;
     cache.delete(projectId);
+  } else if (hit) {
+    cache.delete(projectId); // 换了根 / 要求重建：内存这份不再作数
   }
+
   const flying = inflight.get(projectId);
   if (flying) return flying;
 
-  const job = buildIndex(root).then((index) => {
-    // 重插到尾部 = 最近使用；超出上限淘汰最旧的
-    cache.delete(projectId);
-    cache.set(projectId, index);
-    while (cache.size > MAX_CACHED_PROJECTS) {
-      const oldest = cache.keys().next().value;
-      if (oldest === undefined) break;
-      cache.delete(oldest);
+  // 盘上那份只在**内存空着**（daemon 刚起来）时接手：内存里那份是被硬窗判过期的，
+  // 再从盘上捞回来等于把 30 秒硬窗悄悄延长到十分钟。
+  if (!hit && !opts.fresh) {
+    const snap = await readSnapshot(projectId, root);
+    if (snap && Date.now() - snap.at < INDEX_MAX_STALE_MS && (await gitStamp(root)) === snap.stamp) {
+      const index = hydrateIndex(snap);
+      remember(projectId, index);
+      return index;
     }
-    return index;
-  });
-  inflight.set(projectId, job);
-  try {
-    return await job;
-  } finally {
-    inflight.delete(projectId);
   }
+  return rebuild(projectId, root);
 }
 
 /** 测试用：清空索引缓存。 */
 export function clearFileIndexCache(): void {
   cache.clear();
+}
+
+/** 删掉已不在库里的项目的快照（大仓库一份按 MB 计），daemon 启动时清一次。 */
+export function pruneFileIndexes(projectIds: readonly number[]): void {
+  const dir = indexRoot ?? getIndexDir();
+  const keep = new Set(projectIds.map((id) => `${id}.json`));
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return; // 还没建过索引
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json') || keep.has(name)) continue;
+    try {
+      rmSync(path.join(dir, name));
+    } catch {
+      // 正被别的进程写着：下次启动再清
+    }
+  }
 }
 
 /** 自然序（`file-2` 在 `file-10` 前）。**共用一个 `Intl.Collator`**：`localeCompare`

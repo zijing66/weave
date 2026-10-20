@@ -73,7 +73,7 @@ describe('importFromGit（假 exec，不真联网）', () => {
       mkdirSync(args[4], { recursive: true }); // 模拟 clone 落盘
       return { stdout: '', stderr: '' };
     };
-    const res = await importFromGit(url, { libraries: libs, dataDir, execGit });
+    const res = await importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit });
 
     expect(calls).toHaveLength(1);
     expect(calls[0].file).toBe('git');
@@ -108,7 +108,7 @@ describe('importFromGit（假 exec，不真联网）', () => {
     };
     const res = await importFromGit('git@github.com:acme/my-skills.git', {
       libraries: libs,
-      dataDir,
+      dataRoot: dataDir,
       execGit,
     });
     expect(calls[0][4]).toBe(path.join(dataDir, 'market', 'my-skills'));
@@ -118,7 +118,7 @@ describe('importFromGit（假 exec，不真联网）', () => {
   it('URL 校验先行：非法 URL 不触达 exec', async () => {
     const execGit = vi.fn<GitExec>(async () => ({ stdout: '', stderr: '' }));
     await expect(
-      importFromGit('ext::sh -c evil', { libraries: libs, dataDir, execGit }),
+      importFromGit('ext::sh -c evil', { libraries: libs, dataRoot: dataDir, execGit }),
     ).rejects.toThrow(/Unsupported/);
     expect(execGit).not.toHaveBeenCalled();
     expect(libs.list()).toHaveLength(0);
@@ -131,10 +131,10 @@ describe('importFromGit（假 exec，不真联网）', () => {
         stdout: '',
       });
     };
-    await expect(importFromGit(url, { libraries: libs, dataDir, execGit })).rejects.toThrow(
+    await expect(importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit })).rejects.toThrow(
       /truncated/,
     );
-    await importFromGit(url, { libraries: libs, dataDir, execGit }).catch((e: Error) => {
+    await importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit }).catch((e: Error) => {
       expect(e.message.length).toBeLessThan(2_500);
     });
     expect(libs.list()).toHaveLength(0); // 失败不登记
@@ -147,8 +147,8 @@ describe('importFromGit（假 exec，不真联网）', () => {
       mkdirSync(args[4], { recursive: true });
       return { stdout: '', stderr: '' };
     };
-    const first = await importFromGit(url, { libraries: libs, dataDir, execGit });
-    const second = await importFromGit(url, { libraries: libs, dataDir, execGit });
+    const first = await importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit });
+    const second = await importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit });
     expect(n).toBe(2);
     expect(second.reused).toBe(true);
     expect(second.refreshed).toBe(true);

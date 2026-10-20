@@ -56,7 +56,7 @@ describe('hook-handler.cjs → inbox → 消费线程 end-to-end', () => {
   let savedAppdata: string | undefined;
   let savedXdg: string | undefined;
 
-  const hooksDir = () => path.join(configRoot, 'weave', 'hooks');
+  const hooksDir = () => path.join(configRoot, 'weave', 'cache', 'hooks');
   const drain = () =>
     drainInboxOnce({
       hooksDir: hooksDir(),

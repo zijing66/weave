@@ -13,8 +13,8 @@ function temp(label: string): string {
   return dir;
 }
 
-function writeSkill(dataDir: string, name: string, body: string): void {
-  const dir = path.join(dataDir, 'market', 'weave', 'plugins', 'core-skills', 'skills', name);
+function writeSkill(dataRoot: string, name: string, body: string): void {
+  const dir = path.join(dataRoot, 'market', 'weave', 'plugins', 'core-skills', 'skills', name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, 'SKILL.md'), body, 'utf8');
 }
@@ -29,10 +29,10 @@ describe('ai-context', () => {
     mkdirSync(path.join(root, 'docs'), { recursive: true });
     writeFileSync(path.join(root, 'docs', 'FEATURES.md'), '# 功能\n- 能力槽装配', 'utf8');
     writeFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), '# 架构\n- 运行时拓扑四图', 'utf8');
-    const dataDir = path.join(root, 'data');
-    writeSkill(dataDir, 'testing', '---\nname: testing\n---\n# 测试技能正文');
+    const dataRoot = path.join(root, 'data');
+    writeSkill(dataRoot, 'testing', '---\nname: testing\n---\n# 测试技能正文');
 
-    const ctx = buildSystemPrompt({ dataDir, cwd: root });
+    const ctx = buildSystemPrompt({ dataRoot, cwd: root });
 
     expect(ctx.docsFound).toBe(true);
     expect(ctx.labels).toContain('docs/FEATURES.md');
@@ -48,10 +48,10 @@ describe('ai-context', () => {
 
   it('docs 缺失（安装态 cwd 不落仓库）→ 降级只注入技能，不报错', () => {
     const root = temp('nodocs');
-    const dataDir = path.join(root, 'data');
-    writeSkill(dataDir, 'code-review', '# 代码评审技能');
+    const dataRoot = path.join(root, 'data');
+    writeSkill(dataRoot, 'code-review', '# 代码评审技能');
 
-    const ctx = buildSystemPrompt({ dataDir, cwd: root });
+    const ctx = buildSystemPrompt({ dataRoot, cwd: root });
 
     expect(ctx.docsFound).toBe(false);
     expect(ctx.prompt).toContain('代码评审技能');
@@ -60,10 +60,10 @@ describe('ai-context', () => {
 
   it('预算截断：超限文本按预算裁剪并标注', () => {
     const root = temp('budget');
-    const dataDir = path.join(root, 'data');
-    writeSkill(dataDir, 'huge', 'x'.repeat(70_000));
+    const dataRoot = path.join(root, 'data');
+    writeSkill(dataRoot, 'huge', 'x'.repeat(70_000));
 
-    const ctx = buildSystemPrompt({ dataDir, cwd: root });
+    const ctx = buildSystemPrompt({ dataRoot, cwd: root });
 
     expect(ctx.prompt.length).toBeLessThanOrEqual(60_200);
     expect(ctx.labels.some((label) => label.includes('(截断)'))).toBe(true);
@@ -81,10 +81,10 @@ describe('ai-context', () => {
   });
 
   it('collectSkillFiles：递归收集且排序稳定', () => {
-    const dataDir = temp('skills');
-    writeSkill(dataDir, 'b', '# b');
-    writeSkill(dataDir, 'a', '# a');
-    const files = collectSkillFiles(path.join(dataDir, 'market', 'weave'));
+    const dataRoot = temp('skills');
+    writeSkill(dataRoot, 'b', '# b');
+    writeSkill(dataRoot, 'a', '# a');
+    const files = collectSkillFiles(path.join(dataRoot, 'market', 'weave'));
     expect(files).toHaveLength(2);
     expect(files).toEqual([...files].sort());
   });

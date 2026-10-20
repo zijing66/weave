@@ -126,6 +126,26 @@ describe('getLibraryScan', () => {
     expect(scan.skills.map((s) => s.name)).toEqual(['alpha']);
   });
 
+  it('根对不上（库目录整体搬迁过）= 作废重扫，不沿用旧绝对路径', async () => {
+    const dir = makeLib();
+    mkdirSync(cacheDirOf(dir), { recursive: true });
+    writeFileSync(
+      join(cacheDirOf(dir), 'scans.json'),
+      JSON.stringify({
+        version: 1,
+        root: join(dirname(dir), 'old-root'),
+        plugins: [],
+        packRoots: [],
+        skills: [{ name: 'alpha', dirPath: join(dirname(dir), 'old-root', 'alpha'), relPath: 'alpha', group: 'skills' }],
+        mcp: [],
+        files: {},
+      }),
+    );
+    const scan = await getLibraryScan(dir);
+    expect(scan.skills.map((s) => s.dirPath)).toEqual([join(dir, 'alpha')]);
+    expect(readCacheFile(dir).root).toBe(dir);
+  });
+
   it('并发同路径共享一次加载（同引用）', async () => {
     const dir = makeLib();
     const [a, b] = await Promise.all([getLibraryScan(dir), getLibraryScan(dir)]);

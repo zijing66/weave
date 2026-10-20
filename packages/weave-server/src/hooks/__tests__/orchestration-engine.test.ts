@@ -51,10 +51,22 @@ const edge = (from: string, to: string, id = `${from}-${to}`): OrchestrationEdge
   text: `msg to ${to}`,
 });
 
-const deliverer = (opts: { status?: PipeStatus; reject?: string; offline?: string } = {}) => {
+const deliverer = (
+  opts: {
+    status?: PipeStatus;
+    reject?: string;
+    /** 按正文挑着拒（测「某一步失败、其余照走」）。 */
+    rejectWhen?: (input: SendInput) => string | undefined;
+    offline?: string;
+    lastOutput?: { output: string; at: string };
+  } = {},
+) => {
   let seq = 0;
+  let lastOutput = opts.lastOutput ?? null;
   const send = vi.fn(async (input: SendInput): Promise<SendResult> => {
     if (opts.reject) return { ok: false, status: 400, error: opts.reject };
+    const picked = opts.rejectWhen?.(input);
+    if (picked) return { ok: false, status: 400, error: picked };
     const status = opts.status ?? 'delivered';
     const msg: PipeMessage = {
       id: `m-${++seq}`,
@@ -69,7 +81,11 @@ const deliverer = (opts: { status?: PipeStatus; reject?: string; offline?: strin
     return { ok: true, messageId: msg.id, status, message: msg };
   });
   const awaitInboxReady = vi.fn(async () => true);
-  return { send, awaitInboxReady };
+  const lastTurnOutput = vi.fn(() => lastOutput);
+  const setLastOutput = (value: { output: string; at: string } | null): void => {
+    lastOutput = value;
+  };
+  return { send, awaitInboxReady, lastTurnOutput, setLastOutput };
 };
 
 const setup = (
@@ -222,6 +238,117 @@ describe('推进：idle 消费一条即 fan-out', () => {
     idleOf(engine, 'b');
     await flush();
     expect(runs.getById(run.id)).toMatchObject({ status: 'done' });
+  });
+});
+
+describe('边「带上游输出」', () => {
+  const AT = '2026-10-20T10:00:00.000Z';
+  const carryGraph = (): number =>
+    orchestrations.insert({
+      name: 'carry',
+      projectId,
+      startSessionId: 'a',
+      startText: 'kick off',
+      nodes: ['a', 'b', 'c', 'c2'],
+      edges: [
+        { id: 'a-b', from: 'a', to: 'b', text: '给 b', carryOutput: true },
+        { id: 'a-c', from: 'a', to: 'c', text: '给 c' },
+        { id: 'a-c2', from: 'a', to: 'c2', text: '', carryOutput: true },
+      ],
+    }).id;
+
+  it('勾了输出的边把上游结论拼在正文后（正文空就只发那段），没勾的不受影响', async () => {
+    const { d, engine } = setup({ deliverer: { lastOutput: { output: '上游结论', at: AT } } });
+    for (const id of ['a', 'b', 'c', 'c2']) sessions.touch(id, projectId);
+    await engine.start(carryGraph(), 'manual');
+    idleOf(engine, 'a'); // 这一轮要总结
+    await flush();
+    idleOf(engine, 'a'); // 总结这一轮收尾 → fan-out
+    await flush();
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    const block = `[upstream output] from=a at=${AT}\n\n上游结论`;
+    expect(texts).toContain(`给 b\n\n${block}`);
+    expect(texts).toContain(block);
+    expect(texts).toContain('给 c');
+  });
+
+  it('上游还没有输出 → 只发正文（不摆空壳）', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'b', 'c', 'c2']) sessions.touch(id, projectId);
+    await engine.start(carryGraph(), 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    idleOf(engine, 'a');
+    await flush();
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain('给 b');
+    expect(texts.some((text) => text.includes('upstream output'))).toBe(false);
+    // 正文空、上游又没输出：不发空消息，只记一次失败
+    expect(texts.every((text) => text.trim() !== '')).toBe(true);
+  });
+});
+
+describe('交接总结', () => {
+  const AT = '2026-10-20T10:00:00.000Z';
+  const graph = (handoffPrompt = ''): number =>
+    orchestrations.insert({
+      name: 'handoff',
+      projectId,
+      startSessionId: 'a',
+      startText: 'kick off',
+      handoffPrompt,
+      nodes: ['a', 'b'],
+      edges: [{ id: 'a-b', from: 'a', to: 'b', text: '给 b', carryOutput: true }],
+    }).id;
+
+  it('有边要带上游输出 → 先向该会话要一份总结，收尾后 fan-out 带的是这份总结', async () => {
+    const { d, engine, frames } = setup({ deliverer: { lastOutput: { output: '原始碎片', at: AT } } });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    await engine.start(graph('请按交接格式总结'), 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    // 只多了一条「要总结」：目标还没收到任何东西，run 也没收尾
+    expect(d.send).toHaveBeenCalledTimes(2);
+    expect(d.send.mock.calls[1]![0]).toMatchObject({ toSessionId: 'a', text: '请按交接格式总结' });
+    expect(frames.at(-1)).toMatchObject({ kind: 'orchestration.delivery', from: 'a', to: 'a' });
+    // 宿主这一轮给出的就是总结：连线带下去的该是它
+    d.setLastOutput({ output: '交接说明', at: AT });
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(3);
+    expect(d.send.mock.calls[2]![0]).toMatchObject({ toSessionId: 'b' });
+    expect(d.send.mock.calls[2]![0].text).toBe(`给 b\n\n[upstream output] from=a at=${AT}\n\n交接说明`);
+  });
+
+  it('没填指令 → 用内置那句（不投空消息，也不复用边正文）', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    await engine.start(graph(), 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    const text = d.send.mock.calls[1]![0].text;
+    expect(text.trim()).not.toBe('');
+    expect(text).not.toBe('给 b');
+  });
+
+  it('总结投不出去 → 不卡住，直接照旧 fan-out', async () => {
+    const { d, engine } = setup({ deliverer: { rejectWhen: (i) => (i.text === '请总结' ? 'no' : undefined) } });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    await engine.start(graph('请总结'), 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(3);
+    expect(d.send.mock.calls[2]![0].toSessionId).toBe('b');
+  });
+
+  it('没有边要带上游输出 → 不要总结（原样 fan-out）', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    await engine.start(fanOut(), 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(3);
+    expect(d.send.mock.calls.slice(1).map((c) => c[0].toSessionId).sort()).toEqual(['b', 'c']);
   });
 });
 

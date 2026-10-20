@@ -86,7 +86,7 @@ export function McpGrid({
           {rows.length}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3 items-start">
+      <div className="grid grid-cols-1 gap-3 items-start lg:grid-cols-2">
         {rows.map((s) => {
           const outdated = isOutdated(s.key, s.harness);
           // enable 为 null 的面没有启停语义（user/codex 面），不渲染开关。
@@ -98,7 +98,7 @@ export function McpGrid({
           const uninstallState = fb.stateOf(uninstallKey);
           return (
             <Card key={`${s.harness}-${s.scope}-${s.key}`}>
-              <CardHeader className="items-center gap-2">
+              <CardHeader className="items-center gap-2 max-lg:flex-wrap">
                 <Server className="h-3.5 w-3.5 shrink-0 text-pink-400" />
                 <CardTitle className="truncate">{s.key}</CardTitle>
                 <AgentBadge agent={s.harness} />

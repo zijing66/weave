@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { getDataDir } from '../db/paths.js';
+import { getAutoStartScriptPath, getDataDir } from '../db/paths.js';
 import { readDaemonSettingsSync } from './settings.js';
 
 /**
@@ -78,8 +78,8 @@ function quoteWinArgs(args: string[]): string {
 }
 
 function enableWindows(deps: ResolvedDeps): void {
-  const vbsPath = path.join(deps.dataDir, 'weave-autostart.vbs');
-  mkdirSync(deps.dataDir, { recursive: true });
+  const vbsPath = getAutoStartScriptPath(deps.dataDir);
+  mkdirSync(path.dirname(vbsPath), { recursive: true });
   const cmdLine = quoteWinArgs(relaunchArgs());
   // VBS 字符串字面量里的 `"` 转义成 `""`。
   writeFileSync(
@@ -104,7 +104,7 @@ function disableWindows(deps: ResolvedDeps): void {
   // 值不存在时 reg delete 报非 0——本来就是目标状态，忽略。
   deps.run('reg', ['delete', RUN_KEY, '/v', ENTRY_NAME, '/f']);
   try {
-    unlinkSync(path.join(deps.dataDir, 'weave-autostart.vbs'));
+    unlinkSync(getAutoStartScriptPath(deps.dataDir));
   } catch {}
 }
 

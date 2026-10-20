@@ -531,7 +531,7 @@ export function LibraryPanel({
         </div>
 
         {/* Install-to context (follows the active project/global selection) */}
-        <div className="rounded-md border border-edge/[0.06] bg-neutral-900/60 p-2 flex items-center gap-2">
+        <div className="rounded-md border border-edge/[0.06] bg-neutral-900/60 p-2 flex items-center gap-2 max-lg:flex-wrap">
           {scope === 'user' ? (
             <Globe className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           ) : (
@@ -543,7 +543,9 @@ export function LibraryPanel({
               {scope === 'user' ? t('library.scopeGlobal') : t('library.scopeProject')}
             </span>
           </span>
-          <span className="ml-auto text-[11px] text-neutral-600">{t('library.followsSelection')}</span>
+          <span className="ml-auto text-[11px] text-neutral-600 max-lg:ml-0">
+            {t('library.followsSelection')}
+          </span>
         </div>
 
         {/* 本地目录引入：跨平台目录选择器（复制进市场）。导入动作用选择器按钮
@@ -1299,7 +1301,7 @@ function MarketCard({
       )}
       title={item.path}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 max-lg:flex-wrap">
         {/* 名字即仓库名：资源管理里那一级折叠块用的就是它（服务端给的
             namespace），两处必须同名才认得出是同一个仓库。 */}
         <span className="min-w-0 truncate text-xs font-medium text-neutral-200" title={t('repo.namespaceTip')}>
@@ -1423,7 +1425,7 @@ function AgentToggle({
     (s) => s.harness === agent,
   )?.dest?.[scope];
   return (
-    <div className="flex items-center gap-1 mb-1">
+    <div className="flex items-center gap-1 mb-1 max-lg:flex-wrap">
       <span className="text-[11px] text-neutral-500 shrink-0">{t('library.installTarget')}</span>
       {HARNESS_ORDER.map((a) => (
         <button
@@ -1440,7 +1442,11 @@ function AgentToggle({
           {harnessUiOf(a).label}
         </button>
       ))}
-      {dest && <span className="text-[10px] text-neutral-600">→ {dest}</span>}
+      {dest && (
+        <span className="min-w-0 truncate text-[10px] text-neutral-600" title={dest}>
+          → {dest}
+        </span>
+      )}
     </div>
   );
 }
@@ -1481,7 +1487,7 @@ function TemplateSection({
             onToggle();
           }
         }}
-        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none"
+        className="flex items-center gap-1.5 mb-1.5 cursor-pointer select-none rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none max-lg:flex-wrap"
         title={open ? t('common.collapse') : t('common.expand')}
       >
         {open ? (
@@ -1492,7 +1498,9 @@ function TemplateSection({
         {icon}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
         {tag ?? (count !== undefined && <Badge variant="other">{count}</Badge>)}
-        {hint && <span className="text-[11px] text-neutral-500 ml-auto">{hint}</span>}
+        {hint && (
+          <span className="ml-auto text-[11px] text-neutral-500 max-lg:ml-0">{hint}</span>
+        )}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}
     </section>

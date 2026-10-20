@@ -607,6 +607,8 @@ export interface OrchestrationEdge {
   to: string;
   /** 源会话每完成一轮就投给目标的正文。 */
   text: string;
+  /** 投递时把源会话这一轮的最终输出附在正文后面（正文可空 ⇒ 只转发那段输出）。 */
+  carryOutput?: boolean;
 }
 
 export type OrchestrationTrigger = 'manual' | 'webhook' | 'cron';
@@ -620,6 +622,8 @@ export interface OrchestrationRow {
   projectId: number;
   startSessionId: string;
   startText: string;
+  /** 每轮结束后向该会话要「交接总结」的指令（空 = 用服务端内置那句）。 */
+  handoffPrompt: string;
   nodes: string[];
   edges: OrchestrationEdge[];
   cron: string | null;
@@ -667,6 +671,7 @@ export interface OrchestrationInput {
   name: string;
   startSessionId: string;
   startText?: string;
+  handoffPrompt?: string;
   nodes: string[];
   edges: OrchestrationEdge[];
   cron?: string | null;

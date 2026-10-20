@@ -14,6 +14,7 @@ const draft = (over: Partial<OrchDraft> = {}): OrchDraft => ({
   name: 'chain',
   startSessionId: 'a',
   startText: '',
+  handoffPrompt: '',
   nodes: ['a', 'b'],
   edges: [{ id: 'a->b', from: 'a', to: 'b', text: 'go' }],
   cron: null,
@@ -37,6 +38,12 @@ describe('orchestration draft editing', () => {
     expect(next.nodes).toEqual(['b']);
     expect(next.edges).toEqual([]);
     expect(next.startSessionId).toBe('b');
+  });
+
+  it('加边默认带上游输出', () => {
+    expect(addEdge(draft(), 'b', 'c', '')).toMatchObject({
+      edges: [{ id: 'a->b' }, { from: 'b', to: 'c', carryOutput: true }],
+    });
   });
 
   it('加边生成稳定 id，成环由校验拦住', () => {
@@ -92,5 +99,16 @@ describe('validateDraft', () => {
       ],
     });
     expect(errorOf(dup)).toContain('Duplicate edge');
+  });
+
+  it('空正文要带「上游输出」才放行', () => {
+    expect(errorOf(draft({ edges: [{ id: 'a->b', from: 'a', to: 'b', text: ' ' }] }))).toContain(
+      'has no message',
+    );
+    expect(
+      validateDraft(
+        draft({ edges: [{ id: 'a->b', from: 'a', to: 'b', text: '', carryOutput: true }] }),
+      ),
+    ).toEqual({ ok: true });
   });
 });

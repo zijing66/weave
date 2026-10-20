@@ -13,6 +13,7 @@ export interface OrchDraft {
   name: string;
   startSessionId: string;
   startText: string;
+  handoffPrompt: string;
   nodes: string[];
   edges: OrchestrationEdge[];
   cron: string | null;
@@ -49,11 +50,12 @@ export function removeNode(draft: OrchDraft, sessionId: string): OrchDraft {
   };
 }
 
+/** 新画的边默认带「上游输出」：新边多半只写一句指令，没有上游结论就没有信息量。 */
 export function addEdge(draft: OrchDraft, from: string, to: string, text: string): OrchDraft {
   const taken = new Set(draft.edges.map((e) => e.id));
   return {
     ...draft,
-    edges: [...draft.edges, { id: newEdgeId(from, to, taken), from, to, text }],
+    edges: [...draft.edges, { id: newEdgeId(from, to, taken), from, to, text, carryOutput: true }],
   };
 }
 
@@ -177,6 +179,8 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     if (pairs.has(pair)) return { ok: false, error: `Duplicate edge ${edge.from} → ${edge.to}` };
     pairs.add(pair);
   }
+  const mute = draft.edges.find((edge) => !edge.text.trim() && edge.carryOutput !== true);
+  if (mute) return { ok: false, error: `Edge ${mute.from} → ${mute.to} has no message` };
   const cycle = findCycle(draft.nodes, draft.edges);
   if (cycle) return { ok: false, error: `Cycle detected: ${cycle.join(' → ')}` };
   const reachable = reachableFrom(draft.nodes, draft.edges, draft.startSessionId);

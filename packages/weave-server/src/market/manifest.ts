@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot } from '../db/paths.js';
 
 /** 市场资源目录内的清单文件名（不加表列，元数据随目录走）。 */
 export const MANIFEST_FILE = '.weave-market.json';
@@ -14,9 +14,9 @@ export interface MarketManifest {
   commit?: string;
 }
 
-/** 资源市场收纳根：`<getDataDir()>/market/`。 */
-export function marketDir(dataDir: string = getDataDir()): string {
-  return path.join(dataDir, 'market');
+/** 资源市场收纳根：`<dataDir>/data/market/`（随数据迁移）。 */
+export function marketDir(dataRoot: string = getDataRoot()): string {
+  return path.join(dataRoot, 'market');
 }
 
 export function manifestPath(resourceDir: string): string {

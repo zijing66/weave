@@ -2,7 +2,38 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-21
+
+- **搬迁后首例线上故障：市场扫描缓存把旧绝对路径喂给了同步（另一会话实测报错「同步失败：400 {"error":"ENOENT: no such file or directory, lstat '…\\Roaming\\weave\\market\\wecom-cli\\skills\\wecomcli-doc'"}」）**：库里 `libraries.path` 是相对形、库目录也确实搬到了 `data/market`，但旁挂缓存 `<data>/market/.weave-scans/<库>/scans.json` 是**搬迁前写的**，`skills[].dirPath` 等全是旧绝对路径；`getLibraryScan` 只核 `version` 不核根 ⇒ 命中旧内容，`applyUpdate` 照着旧 `dirPath` 去 `cp`，ENOENT。
+  ① **修法 = 缓存自证根**：`scans.json` 记 `root`，读侧 `root !== libPath` 整份作废重扫（`install/scan-cache.ts`，五处改动）。不动市场代码、不加迁移步骤——缓存本来就可弃，根不对就该重扫，这样以后任何目录级搬迁/拷贝都自愈。
+  ② **实测复现与回归**：修复前对 12 个已注册项目逐个 `POST /projects/:id/sync-all` 全 200 且 `wecom-message` 真正更新了 15 个 `wecomcli-*` skill（此前这份工作被 ENOENT 挡住，界面上表现为「点了同步就报错」）；四份 `scans.json` 重扫后 `root` 都落在 `data/market/...`、全文再无旧路径。新增 `scan-cache.test.ts` 一例（根不符 → 作废重扫、dirPath 换到新根）。
+  ③ **同类第二处：宿主侧市场注册**。`~/.claude/plugins/known_marketplaces.json` 与 `~/.claude/settings.json` 的 `extraKnownMarketplaces['claude-code-playground']` 里是写死的旧绝对路径（装市场包时 `claude plugin marketplace add <数据目录内市场目录>` 记下的），搬迁后成了悬空注册、宿主启动即报市场加载失败。**本次已手工改到 `<dataDir>/data/market/<id>`**；weave 不自动改写宿主配置文件，故这条写进 §16 当作搬迁后的收尾项。
+  ④ 顺带查清一处噪声：`<dataDir>/weave.db`（顶层）是 23:07 那次「用旧 dist 的仓内 CLI 跑 `weave init`」留下的空库（schema 齐全、0 行），与活库无关——仓内 CLI 解析 `@weavecode/server` 走 dist，**dist 未重建前跑 CLI 会写回旧路径**（见「daemon 模块解析」那条）。
+
 ## 2026-10-20
+
+- **交接总结：连线往下传之前先让源会话整理一遍（用户原话「但是上一轮的输出结果其实作用不大。现在应该是需要用 wave 的插件或者 hook 增加一条消息，进行一定的消息总结，整理成需要的信息后，再通过连线传递给下游会话继续」）**：上一版直接转发 `raw.last_assistant_message`，实测问题如用户所说——那是「这一轮最后说出口的那句」，常常只有半句结论，上下文、已完成项、下游要接着干什么都不在里面。用户点名要 hook/plugin 干这件事，**先查过，结构上不行**：hook 的 `inject` handler 只把渲染结果塞进**当轮**的 `additionalContext`（不产生新回合、也不产生新消息）；plugin handler（`handler.mjs`）返回值同形（`prompt` / `additionalContext`），且只有 5s 预算、拿不到「本轮已结束」的信号——两者都排不出「再跑一个回合」。能排回合的只有编排引擎自己（它手里有 `MessageDeliverer` 和 idle 信号），故**这条消息由引擎加**。
+  ① **口径 = 一轮结束后多一跳**：某节点这一轮收尾、且它有出边勾了 `carryOutput` 时，引擎先以 `from = to = 该会话`（`edgeId: ''`，日志里一眼看得出是自发）投一条总结指令，把会话记进 `Runtime.awaitingHandoff`；**它下一轮 idle 才是 fan-out 的时机**，此时 `lastTurnOutput` 读到的是这份总结。`upstreamOf` / `lastTurnOutput` 一行没改（读的仍是「最近一条非空 `last_assistant_message`」），变化只在「什么时候去读」。
+  ② **指令可配、空则内置**：`orchestrations.handoff_prompt`（`PRAGMA table_info` + `ALTER TABLE` 幂等补列，缺省 `''`），空时用 `DEFAULT_HANDOFF_PROMPT`（要求按交接口径复述目标/已完成/关键结论/下游所需上下文，只输出这段）。web 工具栏在「起始消息」旁多一格输入，不走模板文法。
+  ③ **失败不卡住**：总结投不出去（判死、拉不起终端、发送被拒）或该节点根本没有带输出的出边 ⇒ 照旧立刻 fan-out，退回上一版行为；不重试、不等待。`deliver()` 因此改为返回 `boolean`——它是「要不要等下一轮」的唯一判据。
+  ④ **不预抽抽象**：没有 `TriggerSource`、没有 per-edge 总结、没有总结留档（那一轮照常落 `hook_events`，对话面板里看得见）。
+  回归：`orchestration-engine.test.ts` 新增四例（要总结 → 下一轮才 fan-out 且带下去的是总结、没填指令用内置那句、总结投不出去照样 fan-out、没有带输出的边就不要总结）+ 既有 carry 两例改成两拍 idle；`orchestration-server.test.ts` 一例（`handoffPrompt` 存取 + PUT 省略保持原值）。
+
+- **dataDir 分三档 + 索引落盘，为导入导出迁移铺路（用户原话「要落盘，注意区分一下数据文件中需要持久化的和临时性的缓存文件，比如说迁移数据的时候 临时的不需要迁移，比如资源管理的数据文件是需要迁移的，而索引还有日志、临时文件这些都是不需要的，提前把这些都分好目录，方便后面做导入导出迁移数据」；两处问询选定「三档全搬」与「凭据本机专属不迁移」）**：
+  ① **分档口径 = `db/paths.ts` 的 `dataRoots()`**：`data/`（`weave.db*`、`market/`、`uploads/`、`plugins/`）、`local/`（`auth.json` / `ai.json` / `push.json` / `certs/` / `initial-password` / 自启 VBS）、`cache/`（`index/` / `logs/` / `statusline/` / `hooks/` / `tmp/` / `daemon.json`）。所有落盘点改为只从这一处取（server 全量重接线；`weave-harness/src/claude/capture.ts` 的 `hooksDir()` 与 `weave-cli/src/init/plugin-templates.ts` 的插件根同步）。
+  ② **`libraries.path` 的相对基重新定义为 `data/`**（原 `dataDir`）：`market/<id>` 这类 posix 相对路径一字不改，市场副本物理搬进 `data/market` **不需要任何 UPDATE**；`marketIdOf` / 内置仓落地 / `LibraryRepository` 的默认根随之统一成 `getDataRoot()`（`LibraryRepository` / `ImportDeps` / `RefreshDeps` 的字段从 `dataDir` 改名 `dataRoot`，语义变成「实体数据根」）。
+  ③ **搬迁 = `db/layout.ts`，只 rename 从不删、幂等、活 daemon 占着就整个不动**（`liveDaemonPid` 探 `<cache>/daemon.json` 与 `<root>/daemon.json`）。调用点两处：`startDaemon()` 第一句、`weave doctor` 开头。
+  ④ **`hooks/` `statusline/` 搬完在旧位置留目录链接**（win32 junction，其余 symlink）——实测踩到：搬迁当天 `tsx watch` 的 dev daemon 自己先跑了一遍搬迁，随后**存量生成脚本仍往 `<root>/hooks` 写**，inbox 在旧位置长回 76 KB 而 `cache/hooks` 空着，采集静默断掉。链接补上后老脚本照旧写进 `cache/`；**改布局后有存量项目的须重跑 `weave init`**（脚本里的路径写死在生成那一刻），重装包不修。两个位置都有同名目录时先合并（不覆盖同名文件）再补链接。
+  ⑤ **索引落盘**：`<cache>/index/<projectId>.json`，只写 `FileIndexSnapshot` 那七个字段（`lower` / `children` 这些派生态读回来现算），`tmp + rename` 原子换、失败静默；盘上那份**只在内存空着时（daemon 刚起来）接手**，版本 / 根 / git 指纹全对得上且年纪在 `INDEX_MAX_STALE_MS` = 10 分钟内才端出去。**`fresh` 永不走盘**，内存里被判过期的那份也不许回盘上捞——否则 30s 硬窗会被悄悄拉成 10 分钟。内存 LRU 上限 `MAX_CACHED_PROJECTS` = 3；启动时 `pruneFileIndexes` 删掉已不在库里的项目（大仓库一份按 MB 计）。
+  ⑥ **代价与坑**：`weave.db` 一族按前缀认（`-wal` / `-shm` / `weave.db.bak-*`）；搬到一半被活进程挡住只跳过不重试循环（下次启动再来）；测试里凡是断言数据目录落点的都要带 `data` / `local` / `cache` 一段（`market-roots` / `toolkit-*` / `plugin-install-server` / `statusline` / `ai-context` / `auto-start` / `hooks-e2e` / `helpers-gen` 全部改过）。
+  回归：新增 `db/__tests__/layout.test.ts` 七例（各归各档、幂等、目标已存在→kept、活 daemon 跳过、旧位置留链接可读写、合并后再补链接、数据目录没建则空转）+ `project-files.test.ts` 新增五例落盘用例（只写七字段、冷启动读盘续用、版本不符作废、`fresh` 不走盘、`prune` 只留库里的）；顺带修掉 `matchPaths 分刀` 那例在快机器上「一趟扫完不到 1ms、从未让出」的假红（条目提到 20 万、limit 放到真正会命中数之上）。
+
+- **编排消息可以带上游这一轮的最终输出了（用户原话「当前编排消息不能带上一个会话的输出或者上下文信息给下游吗」）**：原状是**不可能**——`OrchestrationEdge.text` 是写死的静态正文，`deliver()` 原样发出、`RunEvent` 只记 `{at, from, to, edgeId, ok, error}`，所以每一跳只知道「上游这一轮结束了」，不知道它说了什么。**原料其实一直在库里**：每轮收尾事件（`Stop`/`SessionEnd`，即 `MessagingSurface.idleSignals`）的 `raw.last_assistant_message` 就是这一轮的最终输出，对话面板读的也是同一份，engine 又正好在这些事件上 fan-out ⇒ 这是「怎么取」的问题，不是「有没有」的问题。
+  ① **不是模板占位符，是边上的一枚开关**：`carryOutput`（缺省 = 老行为）。边正文仍由用户写，勾上就把上游那段拼在正文后面（`[upstream output] from=<会话名> at=<时刻>` 起头）；正文可空 ⇒ 只转发那段（`validateOrchestration` 与 web `validateDraft` 同加一条「正文空且没勾 carryOutput → 拒」，zod 的 `text` 随之放开 `min(1)`）。做占位符文法要引入一整套解析/报错/转义，「三行相似代码好过一处过早抽象」。
+  ② **取值的唯一实现放 `MessageDeliverer.lastTurnOutput`**（它手里已经有 `hookEvents`），engine 侧只拼文本；键形知识（`raw.last_assistant_message`，codex adapter 也已归一成同一键）落在 `weave-harness/src/shared/turn-output.ts` 的 `turnOutputOf`，server 不自拼。读最近 5 条事件取最近一条非空（空回合要能跳过），只读既有 `hook_events`、不新落任何东西。
+  ③ **读不到就不带**：上游还没说过话（首轮、或历史里没有 Stop）时**不附空壳**，只发正文；正文也空则记一条失败 `edge has no message and no upstream output`，**不投空消息**。那段超过 4000 字截断（宿主上报的 `last_assistant_message` 不受 `capFields` 约束，那管的是工具载荷）。
+  ④ 装配零改动（`lastTurnOutput` 落在已注入的投递器上、`SessionRepository.getBySessionId` 只是把 engine deps 的 `Pick` 放宽）——当时 start.ts / dev-entry.ts / inbox-worker.ts 都在另一会话手里改。
+  回归：`orchestration-engine.test.ts`（勾了输出的边拼在上游结论后、正文空就只发那段、上游没输出只发正文且不发空消息）、`message-deliverer.test.ts`（跳过空回合与坏 payload）、`orchestration-graph.test.ts` 与服务端 `orchestration-server.test.ts`（空正文 + `carryOutput` 可存、两者皆无被拒）。**未做**：不带上游被投的那条消息（「它被要求了什么」）——一轮可能由多条在飞投递中的任一条触发，认不准就别猜。
 
 - **文件索引改成「快照 + 派生态」，匹配有界 Top-N + 分刀让出（用户原话「开始动0+1，并为持久化索引做准备」；上条 ⑧ 里「改形状是另一件事」就是这件事）**：三条实测先定方向——①`buildIndex` 本仓 650 文件 283ms，大头是两三次 git 进程（`--cached --others` / `--stage` / `--ignored`），重扫本身省不掉；②`.git/index` 的 mtime+size 在 `git add` / commit / 切分支时变，**新建未跟踪文件不变**（探针实测），所以指纹能立刻反映「agent 提交了」，管不了「agent 刚写了新文件」；③30 万条上 `String.localeCompare(…, {numeric:true})` 排一次 603ms，共用一具 `Intl.Collator` 只要 26ms（结果逐项一致）。
   ① **形状分两层**：`FileIndexSnapshot`（`v` / `root` / `at` / `stamp` / `files` / `dirs`）= 可序列化那份；`FileIndex` 在它之上挂派生态（`lower` / `dirLower` 小写表、`children` 目录子项映射）。`enumerateIndex` 产快照、`hydrateIndex` 是唯一入口、`buildIndex = hydrate(enumerate)`。**「为持久化做准备」就做到这里**：将来落盘是 `hydrateIndex(JSON.parse(...))` 再核 `v` / `root` / `stamp`，形状不用再改；盘上那份**还没写**（没有 dead code 先躺在那儿）。

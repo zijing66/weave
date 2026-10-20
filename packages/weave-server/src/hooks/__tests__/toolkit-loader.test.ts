@@ -161,7 +161,7 @@ describe('WeavePluginLoader 深度扫描根（批 10）', () => {
     try {
       // 库实例的 dataDir 必须与 getDataDir() 同根（生产态即默认值）：
       // 落地写 <dataDir>/market/weave，而装载根由 getDataDir() 推导，不同根就错位。
-      const libraries = new LibraryRepository(db, path.join(base, 'weave'));
+      const libraries = new LibraryRepository(db, path.join(base, 'weave', 'data'));
       const materialized = await ensureBuiltinMarket({ libraries });
       expect(materialized.error).toBeUndefined();
 

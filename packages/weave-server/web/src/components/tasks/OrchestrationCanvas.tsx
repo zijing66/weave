@@ -113,6 +113,7 @@ const emptyDraft = (): OrchDraft => ({
   name: '',
   startSessionId: '',
   startText: '',
+  handoffPrompt: '',
   nodes: [],
   edges: [],
   cron: null,
@@ -122,6 +123,7 @@ const draftOf = (row: OrchestrationRow): OrchDraft => ({
   name: row.name,
   startSessionId: row.startSessionId,
   startText: row.startText,
+  handoffPrompt: row.handoffPrompt,
   nodes: [...row.nodes],
   edges: row.edges.map((e) => ({ ...e })),
   cron: row.cron,
@@ -133,8 +135,9 @@ const serialize = (draft: OrchDraft): string =>
     draft.name,
     draft.startSessionId,
     draft.startText,
+    draft.handoffPrompt,
     draft.nodes,
-    draft.edges.map((e) => [e.id, e.from, e.to, e.text]),
+    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.carryOutput === true]),
     draft.cron,
   ]);
 
@@ -883,6 +886,7 @@ export function OrchestrationCanvas({
       name: editing.draft.name.trim(),
       startSessionId: editing.draft.startSessionId,
       startText: editing.draft.startText,
+      handoffPrompt: editing.draft.handoffPrompt,
       nodes: editing.draft.nodes,
       edges: editing.draft.edges,
       cron: editing.draft.cron,
@@ -1107,6 +1111,13 @@ export function OrchestrationCanvas({
             onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
             placeholder={t('orch.startTextHint')}
             title={t('orch.startTextLabel')}
+            className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+          />
+          <input
+            value={draft.handoffPrompt}
+            onChange={(e) => patch((d) => ({ ...d, handoffPrompt: e.target.value }))}
+            placeholder={t('orch.handoffHint')}
+            title={t('orch.handoffLabel')}
             className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
           <button
@@ -1376,6 +1387,21 @@ export function OrchestrationCanvas({
                   placeholder={t('orch.edgeText')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
+                <label className="flex items-center gap-1 text-[10px] text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={selEdge.carryOutput === true}
+                    onChange={(e) => {
+                      const carryOutput = e.target.checked;
+                      patch((d) => ({
+                        ...d,
+                        edges: d.edges.map((x) => (x.id === selEdge.id ? { ...x, carryOutput } : x)),
+                      }));
+                    }}
+                    className="h-3 w-3 accent-blue-500"
+                  />
+                  {t('orch.edgeCarry')}
+                </label>
                 <button
                   type="button"
                   onClick={() => {

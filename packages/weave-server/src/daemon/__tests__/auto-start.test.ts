@@ -49,7 +49,7 @@ describe('auto-start（开机自启 daemon，默认关）', () => {
 
   it('win32 开：Run 键指向 VBS（隐藏窗口），VBS 里是完整命令行', () => {
     applyLaunchOnLogin(true, deps('win32'));
-    const vbsPath = path.join(dataDir, 'weave-autostart.vbs');
+    const vbsPath = path.join(dataDir, 'local', 'weave-autostart.vbs');
     expect(existsSync(vbsPath)).toBe(true);
     const vbs = readFileSync(vbsPath, 'utf8');
     // VBS 字符串里的引号翻倍转义；窗口风格 0 = 隐藏
@@ -88,7 +88,7 @@ describe('auto-start（开机自启 daemon，默认关）', () => {
         '/f',
       ],
     });
-    expect(existsSync(path.join(dataDir, 'weave-autostart.vbs'))).toBe(false);
+    expect(existsSync(path.join(dataDir, 'local', 'weave-autostart.vbs'))).toBe(false);
   });
 
   it('darwin 开：写 LaunchAgent plist（ProgramArguments 数组）+ unload 后 load', () => {

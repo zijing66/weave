@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { getDataDir } from '../db/paths.js';
+import { getDataRoot } from '../db/paths.js';
 import { DEFAULT_AI_SETTINGS, readDaemonSettings } from './settings.js';
 import { hasAiKey, readAiKey } from './ai-config.js';
 import { buildSystemPrompt, findDocsDir } from './ai-context.js';
@@ -8,7 +8,7 @@ import type { WeaveServerDeps } from './server.js';
 
 /**
  * `/ai/*` 路由——dashboard AI 助手的服务端半程（OpenAI 兼容协议，见 AI 设计拍板）。
- * 走服务端代理：API key 只落本机（`<dataDir>/ai.json` 0600），不经浏览器；
+ * 走服务端代理：API key 只落本机（`<dataRoot>/ai.json` 0600），不经浏览器；
  * 顺带免掉浏览器直连的 CORS/混合内容问题。门内路由（认证用户才能用）。
  */
 
@@ -123,7 +123,7 @@ export async function handleAiRoutes(
     }
 
     const context = buildSystemPrompt({
-      dataDir: deps.libraries?.dataDir ?? getDataDir(),
+      dataRoot: deps.libraries?.dataRoot ?? getDataRoot(),
     });
     await streamChat({ req, res, baseUrl: ai.baseUrl, model: ai.model, apiKey, messages, system: context.prompt });
     return true;

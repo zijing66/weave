@@ -56,9 +56,9 @@ describe('sources.json schema 演进', () => {
     process.env.XDG_CONFIG_HOME = root;
     try {
       // 未知字段里放一个「看似 URL」的条目——解析不得把它当索引源
-      await mkdir(path.join(root, 'weave', 'plugins'), { recursive: true });
+      await mkdir(path.join(root, 'weave', 'data', 'plugins'), { recursive: true });
       await writeFile(
-        path.join(root, 'weave', 'plugins', 'sources.json'),
+        path.join(root, 'weave', 'data', 'plugins', 'sources.json'),
         JSON.stringify({ indexes: [], dirs: ['https://dir-as-url.example/index.json'] }),
         'utf8',
       );
@@ -68,7 +68,7 @@ describe('sources.json schema 演进', () => {
 
       // 旧形：string[] 整体视为 indexes（兼容不断）
       await writeFile(
-        path.join(root, 'weave', 'plugins', 'sources.json'),
+        path.join(root, 'weave', 'data', 'plugins', 'sources.json'),
         JSON.stringify(['https://old.example/index.json']),
         'utf8',
       );

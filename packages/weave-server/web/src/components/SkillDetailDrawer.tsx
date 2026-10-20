@@ -322,7 +322,7 @@ export function SkillDetailDrawer({
   return (
     <div className="absolute right-0 top-0 h-full w-full lg:w-[min(720px,88%)] z-30 flex flex-col frosted-strong border-l border-edge/[0.08] shadow-mac">
       {/* Header */}
-      <div className="flex items-center gap-2 p-3 border-b border-edge/[0.06]">
+      <div className="flex items-center gap-2 p-3 border-b border-edge/[0.06] max-lg:flex-wrap">
         <FileCode className="h-4 w-4 shrink-0 text-blue-400" />
         <span className="text-sm font-semibold truncate">{name}</span>
         {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace */}

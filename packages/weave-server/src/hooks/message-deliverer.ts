@@ -3,7 +3,12 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isHarness, type Harness } from '@weavecode/core';
-import type { MessagingSurface, MessageMeta, PromptRelaySpec } from '@weavecode/harness';
+import {
+  turnOutputOf,
+  type MessagingSurface,
+  type MessageMeta,
+  type PromptRelaySpec,
+} from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
@@ -252,6 +257,9 @@ const ACK_MIN_TEXT = 8;
 
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
+
+/** 取「最近一条最终输出」往前回看几条事件：空回合（没有最终输出）要能跳过。 */
+const TURN_OUTPUT_LOOKBACK = 5;
 
 /** 判死落定时的技术性成因（用户可见的中文说明在 web，经 `reason` 标记译出）。 */
 const OFFLINE_ERROR = 'Session is not running';
@@ -613,6 +621,26 @@ export class MessageDeliverer {
       await new Promise((resolve) => setTimeout(resolve, INBOX_READY_POLL_MS));
     }
     return true;
+  }
+
+  /**
+   * 会话最近一条「说出口的结论」（每轮收尾事件上带的最终输出，跳过空回合）：
+   * 编排边「带上游输出」取用。只读既有 `hook_events`，不新落任何东西；读不到 → null。
+   */
+  lastTurnOutput(sessionId: string): { output: string; at: string } | null {
+    const rows = this.deps.hookEvents.listBySession(sessionId, TURN_OUTPUT_LOOKBACK);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i]!;
+      let payload: { raw?: unknown } | null = null;
+      try {
+        payload = JSON.parse(row.payload) as { raw?: unknown };
+      } catch {
+        continue;
+      }
+      const output = turnOutputOf(payload?.raw);
+      if (output) return { output, at: row.createdAt };
+    }
+    return null;
   }
 
   /**

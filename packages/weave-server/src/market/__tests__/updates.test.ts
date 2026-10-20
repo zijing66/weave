@@ -32,7 +32,7 @@ async function importDir(name: string): Promise<{ id: number; dir: string; src: 
   const src = path.join(srcRoot, name);
   mkdirSync(path.join(src, 'skills', `${name}-skill`), { recursive: true });
   writeFileSync(path.join(src, 'skills', `${name}-skill`, 'SKILL.md'), '# v1');
-  const res = await importFromDir(src, { libraries: libs, dataDir });
+  const res = await importFromDir(src, { libraries: libs, dataRoot: dataDir });
   return { id: res.libraryId, dir: res.dir, src };
 }
 
@@ -85,7 +85,7 @@ describe('checkMarketUpdates — git 源（假 exec，不真联网）', () => {
       mkdirSync(args[4], { recursive: true });
       return { stdout: '', stderr: '' };
     };
-    const r = await importFromGit(url, { libraries: libs, dataDir, execGit });
+    const r = await importFromGit(url, { libraries: libs, dataRoot: dataDir, execGit });
     return { id: r.libraryId, dir: r.dir };
   }
 

@@ -51,14 +51,14 @@ beforeAll(async () => {
     envBak[k] = process.env[k];
   }
   base = mkdtempSync(join(tmpdir(), 'weave-pluginst-home-'));
-  // dataDir 落 base/weave → 市场根 = base/weave/market（marketIdOf 判据同源）
+  // dataDir 落 base/weave → 市场根 = base/weave/data/market（marketIdOf 判据同源）
   process.env.HOME = base;
   process.env.USERPROFILE = base;
   process.env.APPDATA = base;
   process.env.XDG_CONFIG_HOME = base;
 
-  // 外部市场包：<dataDir>/market/ext-mkt/plugins/pack-a（带 CC manifest）
-  marketPackDir = join(base, 'weave', 'market', 'ext-mkt', 'plugins', 'pack-a');
+  // 外部市场包：<dataRoot>/market/ext-mkt/plugins/pack-a（带 CC manifest）
+  marketPackDir = join(base, 'weave', 'data', 'market', 'ext-mkt', 'plugins', 'pack-a');
   mkdirSync(join(marketPackDir, '.claude-plugin'), { recursive: true });
   writeFileSync(
     join(marketPackDir, '.claude-plugin', 'plugin.json'),
@@ -133,7 +133,7 @@ describe('daemon POST /projects/:id/install (category: plugin)', () => {
     ).toBe(true);
     // 市场清单就地 upsert（外部市场：文件留在数据目录，不拷进 weave 自建市场）
     const mkt = JSON.parse(
-      await readFile(join(base, 'weave', 'market', 'ext-mkt', '.claude-plugin', 'marketplace.json'), 'utf8'),
+      await readFile(join(base, 'weave', 'data', 'market', 'ext-mkt', '.claude-plugin', 'marketplace.json'), 'utf8'),
     ) as { name: string; plugins: Array<{ name: string; source: string }> };
     expect(mkt).toMatchObject({ name: 'ext-mkt' });
     expect(mkt.plugins).toContainEqual({ name: 'pack-a', source: './plugins/pack-a' });

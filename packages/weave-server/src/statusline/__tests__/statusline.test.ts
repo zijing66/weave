@@ -42,7 +42,7 @@ function runScript(script: string, stdin: unknown): string {
   return r.stdout;
 }
 
-// 渲染缓存的落点是 dataDir（`<configDir>/weave/statusline`）——重定向到临时目录：
+// 渲染缓存的落点是可弃档（`<configDir>/weave/cache/statusline`）——重定向到临时目录：
 // 既不写脏真实 dataDir，又让同一测试文件内的多次渲染共享同一份缓存
 // （累加 / 重写 / 身份缓存那几个用例靠的就是跨渲染持久化）。
 let slCacheHome = '';
@@ -731,7 +731,7 @@ describe('statusline — data segments', () => {
     // 上游差异的 TTL 是 60s，同一仓库连着渲染会拿到旧值 —— 每次都先清 git 缓存
     const render = (): string => {
       try {
-        const dir = join(slCacheHome, 'weave', 'statusline');
+        const dir = join(slCacheHome, 'weave', 'cache', 'statusline');
         for (const f of readdirSync(dir)) if (f.startsWith('git-')) rmSync(join(dir, f));
       } catch {
         /* 首次渲染前目录还不存在 */

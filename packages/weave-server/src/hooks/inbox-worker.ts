@@ -13,7 +13,7 @@ import {
   type LogSource,
 } from '@weavecode/harness';
 import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
-import { getDataDir } from '../db/paths.js';
+import { getLogsDir } from '../db/paths.js';
 import { projectHarnessIds } from '../daemon/project-harnesses.js';
 import { openDatabase } from '../db/db.js';
 import { HookEventRepository, type HookEventInput } from '../repositories/hook-events.js';
@@ -621,7 +621,7 @@ if (!isMainThread && (workerData as InboxWorkerData | undefined)?.inboxWorker ==
     hookEvents: deps.hookEvents,
     hookSessions: deps.hookSessions,
     adapters: deps.adapters,
-    logsDir: join(getDataDir(), 'logs'),
+    logsDir: getLogsDir(),
     sources: registry.byCapability('logs').flatMap((d) => d.logs ?? []),
   };
   let polling = false;

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Harness, HookRule } from '@weavecode/core';
 import { hookSourceHarness } from '@weavecode/core';
-import { getDataDir } from '../db/paths.js';
+import { getDataDir, getHooksDir } from '../db/paths.js';
 import type { ProjectRow, ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookRuleRegistry } from './registry.js';
@@ -28,8 +28,8 @@ export function hookShardId(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
-export function hooksRoot(dataDir: string = getDataDir()): string {
-  return join(dataDir, 'hooks');
+export function hooksRoot(dataDir?: string): string {
+  return getHooksDir(dataDir);
 }
 
 export function mirrorPathOf(hooksDir: string, shardId: string): string {
