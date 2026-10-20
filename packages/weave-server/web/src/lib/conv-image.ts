@@ -1,9 +1,11 @@
 /**
- * 对话导出成图片：canvas 卡片（零依赖）。正文按窗口里那套 markdown 预览的样子排
- * （解析归 `conv-markdown.ts`，这里只管排版与绘制）——同一种字号/行高/配色：正文无衬线、
- * 代码等宽、标题略大、列表带记号、代码块与引用各自成块、表格画格线。
+ * 对话导出成图片：canvas 卡片（零依赖）。排版与配色**照抄对话面板**——同一套气泡色
+ * （回复中性灰、发送深蓝、终端手敲浅蓝、失败红）、同一套字色（正文/粗体/行内码/
+ * 链接/引用全取 `AssistantMarkdown` 的 class），meta 行也在气泡内（时刻 + 消息 tag）。
+ * 面板上的页面外壳（标题、项目名、分隔线）不是对话内容，不进图。
  *
- * 排版是纯函数：量宽由调用方注入，每个 span 的宽度都算进布局，绘制阶段只按布局落笔。
+ * 正文解析归 `conv-markdown.ts`，这里只管排版与绘制。排版是纯函数：量宽由调用方注入，
+ * 每个 span 的宽度都算进布局，绘制阶段只按布局落笔。
  */
 
 import { parseMarkdown, type MdSpan, type MdStyle } from './conv-markdown';
@@ -11,19 +13,29 @@ import type { Theme } from './theme';
 
 export type ConvRole = 'user' | 'assistant';
 
+/** 消息自身的 tag（与面板 meta 行那几枚一一对应：weave 来源 / 发送方名 / 计划）。 */
+export type ConvImageTagKind = 'weave' | 'name' | 'plan';
+
+export interface ConvImageTag {
+  kind: ConvImageTagKind;
+  text: string;
+}
+
 export interface ConvImageEntry {
   role: ConvRole;
   at: string;
   text: string;
-  /** 计划模式交出的计划：meta 行带上计划 tag，与窗口里那枚一致。 */
-  plan?: boolean;
+  /** 气泡里的 tag（面板上有哪几枚就传哪几枚，顺序即绘制顺序）。 */
+  tags?: ConvImageTag[];
+  /** weave 投递的（深蓝气泡）；终端里手敲的 = 不带（浅蓝气泡）。 */
+  viaWeave?: boolean;
+  /** 这一轮以失败收尾（`lifecycle.closeFailed`）：红气泡红字，与面板同色。 */
+  failed?: boolean;
 }
 
 /** 逻辑像素（画布按 scale 倍率放大）。 */
 export const IMG_WIDTH = 880;
 const PAD = 24;
-const TITLE_H = 26;
-const META_H = 15;
 const BUBBLE_PAD = 10;
 const BUBBLE_GAP = 12;
 const BUBBLE_MAX = Math.round((IMG_WIDTH - PAD * 2) * 0.78);
@@ -43,27 +55,23 @@ const QUOTE_BAR = 2;
 const TABLE_PAD = 6;
 const TABLE_MIN_COL = 44;
 
+/** meta 行在气泡内：10px 文本行 + `mb-0.5`；tag 之间 `gap-x-1.5`。 */
+const META_LH = 14;
+const META_GAP = 2;
+const TAG_GAP = 6;
+/** 气泡内容区从 meta 行之后开始（绘制与断言都要这半个偏移）。 */
+export const META_ROW_H = META_LH + META_GAP;
+
 /** 画布总像素上限（iOS Safari 约 1670 万）：超了降倍率，不缩内容。 */
 const MAX_CANVAS_PIXELS = 16_000_000;
 
-export type ConvFont =
-  | 'title'
-  | 'meta'
-  | 'body'
-  | 'small'
-  | 'strong'
-  | 'em'
-  | 'strongEm'
-  | 'h1'
-  | 'h3'
-  | 'mono';
+export type ConvFont = 'meta' | 'body' | 'small' | 'strong' | 'em' | 'strongEm' | 'h1' | 'h3' | 'mono';
 
 const SANS = 'ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif';
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace';
 
 const FONTS: Record<ConvFont, string> = {
-  title: `600 17px ${SANS}`,
-  meta: `11px ${SANS}`,
+  meta: `10px ${SANS}`,
   body: `12px ${SANS}`,
   small: `11px ${SANS}`,
   strong: `600 12px ${SANS}`,
@@ -77,9 +85,6 @@ const FONTS: Record<ConvFont, string> = {
 export type Measure = (font: ConvFont, text: string) => number;
 
 export interface ConvImageOpts {
-  title: string;
-  subtitle: string;
-  labels: { user: string; assistant: string; plan: string };
   stamp: (iso: string) => string;
   /** 导出图跟随窗口当下的深浅模式（色值与 `tailwind.config.js` 的令牌表同源）。 */
   theme: Theme;
@@ -87,8 +92,6 @@ export interface ConvImageOpts {
 }
 
 export interface Palette {
-  fill: string;
-  stroke: string;
   fg: string;
   strong: string;
   code: string;
@@ -101,78 +104,97 @@ export interface Palette {
   tableHeadBg: string;
 }
 
-/** 画布底色/标题/页眉线：只跟主题走，与气泡角色无关。 */
-const PAGE: Record<Theme, { bg: string; title: string; meta: string; rule: string }> = {
-  dark: { bg: '#0a0a0a', title: '#f5f5f5', meta: '#737373', rule: 'rgba(255,255,255,0.08)' },
-  light: { bg: '#fafafa', title: '#0a0a0a', meta: '#525252', rule: 'rgba(0,0,0,0.10)' },
-};
+export type BubbleVariant = 'assistant' | 'user' | 'userTyped' | 'failed';
 
-const BUBBLE: Record<Theme, Record<ConvRole, Palette>> = {
+const BUBBLE_SKIN: Record<Theme, Record<BubbleVariant, { fill: string; stroke: string }>> = {
   dark: {
-    user: {
-      fill: 'rgba(59,130,246,0.14)',
-      stroke: 'rgba(59,130,246,0.35)',
-      fg: '#dbeafe',
-      strong: '#eff6ff',
-      code: '#bfdbfe',
-      codeBg: 'rgba(0,0,0,0.45)',
-      codeBorder: 'rgba(255,255,255,0.06)',
-      link: '#93c5fd',
-      quote: 'rgba(219,234,254,0.75)',
-      quoteBar: '#404040',
-      tableBorder: 'rgba(255,255,255,0.08)',
-      tableHeadBg: 'rgba(0,0,0,0.35)',
-    },
-    assistant: {
-      fill: 'rgba(255,255,255,0.06)',
-      stroke: 'rgba(255,255,255,0.10)',
-      fg: '#e5e5e5',
-      strong: '#fafafa',
-      code: '#d4d4d4',
-      codeBg: 'rgba(0,0,0,0.45)',
-      codeBorder: 'rgba(255,255,255,0.06)',
-      link: '#60a5fa',
-      quote: '#a3a3a3',
-      quoteBar: '#404040',
-      tableBorder: 'rgba(255,255,255,0.08)',
-      tableHeadBg: 'rgba(0,0,0,0.35)',
-    },
+    // 回复：`bg-neutral-800/50` + `border-edge/[0.08]`
+    assistant: { fill: 'rgba(38,38,38,0.5)', stroke: 'rgba(255,255,255,0.08)' },
+    // weave 投递：`bg-blue-500/[0.12]` + `border-blue-500/30`
+    user: { fill: 'rgba(59,130,246,0.12)', stroke: 'rgba(59,130,246,0.3)' },
+    // 终端里手敲：同色再淡一档（`/[0.05]` + `/15`）
+    userTyped: { fill: 'rgba(59,130,246,0.05)', stroke: 'rgba(59,130,246,0.15)' },
+    // 失败：`bg-red-950/20` + `border-red-500/30`
+    failed: { fill: 'rgba(69,10,10,0.2)', stroke: 'rgba(239,68,68,0.3)' },
   },
   light: {
-    user: {
-      fill: 'rgba(59,130,246,0.10)',
-      stroke: 'rgba(59,130,246,0.30)',
-      fg: '#1e3a8a',
-      strong: '#172554',
-      code: '#1d4ed8',
-      codeBg: 'rgba(0,0,0,0.05)',
-      codeBorder: 'rgba(0,0,0,0.08)',
-      link: '#2563eb',
-      quote: 'rgba(30,58,138,0.75)',
-      quoteBar: '#d4d4d4',
-      tableBorder: 'rgba(0,0,0,0.10)',
-      tableHeadBg: 'rgba(0,0,0,0.04)',
-    },
-    assistant: {
-      fill: 'rgba(0,0,0,0.045)',
-      stroke: 'rgba(0,0,0,0.10)',
-      fg: '#171717',
-      strong: '#0a0a0a',
-      code: '#262626',
-      codeBg: 'rgba(0,0,0,0.05)',
-      codeBorder: 'rgba(0,0,0,0.08)',
-      link: '#1d4ed8',
-      quote: '#404040',
-      quoteBar: '#d4d4d4',
-      tableBorder: 'rgba(0,0,0,0.10)',
-      tableHeadBg: 'rgba(0,0,0,0.04)',
-    },
+    assistant: { fill: 'rgba(229,229,229,0.5)', stroke: 'rgba(0,0,0,0.08)' },
+    user: { fill: 'rgba(59,130,246,0.12)', stroke: 'rgba(59,130,246,0.3)' },
+    userTyped: { fill: 'rgba(59,130,246,0.05)', stroke: 'rgba(59,130,246,0.15)' },
+    failed: { fill: 'rgba(254,242,242,0.2)', stroke: 'rgba(239,68,68,0.3)' },
   },
 };
 
-/** 某主题下某角色的配色（排版与绘制都从这里取；测试也用它，免得手抄一份 Palette）。 */
-export function paletteFor(theme: Theme, role: ConvRole): Palette {
-  return BUBBLE[theme][role];
+/** 画布底色 = 面板所在的内容面（`bg-neutral-950` 上叠 `bg-neutral-900/40`）。 */
+const PAGE: Record<Theme, string> = { dark: '#0f0f0f', light: '#f8f8f8' };
+
+/** 正文配色：与 `AssistantMarkdown` 的 class 逐条对齐（两种角色同一个组件 = 同一套字色）。 */
+const TEXT: Record<Theme, Palette> = {
+  dark: {
+    fg: '#e5e5e5', // neutral-200
+    strong: '#f5f5f5', // neutral-100
+    code: '#d4d4d4', // neutral-300
+    codeBg: 'rgba(10,10,10,0.6)', // neutral-950/60
+    codeBorder: 'rgba(255,255,255,0.06)', // edge/[0.06]
+    link: '#60a5fa', // blue-400
+    quote: '#a3a3a3', // neutral-400
+    quoteBar: '#404040', // neutral-700
+    tableBorder: 'rgba(255,255,255,0.08)',
+    tableHeadBg: 'rgba(10,10,10,0.4)', // neutral-950/40
+  },
+  light: {
+    fg: '#171717',
+    strong: '#0a0a0a',
+    code: '#262626',
+    codeBg: 'rgba(250,250,250,0.6)',
+    codeBorder: 'rgba(0,0,0,0.06)',
+    link: '#1d4ed8',
+    quote: '#404040',
+    quoteBar: '#d4d4d4',
+    tableBorder: 'rgba(0,0,0,0.08)',
+    tableHeadBg: 'rgba(250,250,250,0.4)',
+  },
+};
+
+/** meta 行：时刻（neutral-600）与三类 tag（weave = 蓝底、名字 = 描边、计划 = 琥珀底）。 */
+const META_INK: Record<
+  Theme,
+  {
+    time: string;
+    weaveFg: string;
+    weaveBg: string;
+    nameFg: string;
+    nameBorder: string;
+    planFg: string;
+    planBg: string;
+    failed: string;
+  }
+> = {
+  dark: {
+    time: '#525252',
+    weaveFg: '#93c5fd',
+    weaveBg: 'rgba(59,130,246,0.15)',
+    nameFg: '#a3a3a3',
+    nameBorder: 'rgba(255,255,255,0.12)',
+    planFg: '#fcd34d',
+    planBg: 'rgba(245,158,11,0.15)',
+    failed: '#fca5a5', // red-300
+  },
+  light: {
+    time: '#666666',
+    weaveFg: '#1e40af',
+    weaveBg: 'rgba(59,130,246,0.15)',
+    nameFg: '#404040',
+    nameBorder: 'rgba(0,0,0,0.12)',
+    planFg: '#92400e',
+    planBg: 'rgba(245,158,11,0.15)',
+    failed: '#991b1b',
+  },
+};
+
+/** 某主题下的正文配色（排版与绘制都从这里取；测试也用它，免得手抄一份 Palette）。 */
+export function paletteFor(theme: Theme): Palette {
+  return TEXT[theme];
 }
 
 export interface ConvImageSpan {
@@ -182,6 +204,7 @@ export interface ConvImageSpan {
   /** 已量好的宽度（绘制不再碰 measure）。 */
   w: number;
   bg?: string;
+  border?: string;
   underline?: boolean;
   strike?: boolean;
 }
@@ -236,10 +259,17 @@ type BlockDraft = {
   [K in ConvImageBlock['kind']]: Omit<Extract<ConvImageBlock, { kind: K }>, 'y' | 'gap'>;
 }[ConvImageBlock['kind']];
 
+/** meta 行：发送侧 tag 靠左、时刻贴右（两侧各一组，宽度已量好）。 */
+export interface ConvImageMeta {
+  left: ConvImageSpan[];
+  right: ConvImageSpan[];
+  w: number;
+}
+
 export interface ConvImageBubble {
   role: ConvRole;
-  meta: string;
-  metaY: number;
+  variant: BubbleVariant;
+  meta: ConvImageMeta;
   x: number;
   y: number;
   w: number;
@@ -252,7 +282,6 @@ export interface ConvImageLayout {
   height: number;
   scale: number;
   theme: Theme;
-  header: { y: number; h: number; title: string; subtitle: string };
   bubbles: ConvImageBubble[];
 }
 
@@ -284,6 +313,7 @@ function sameStyle(a: ConvImageSpan, b: Omit<ConvImageSpan, 'text' | 'w'>): bool
     a.font === b.font &&
     a.fg === b.fg &&
     a.bg === b.bg &&
+    a.border === b.border &&
     a.underline === b.underline &&
     a.strike === b.strike
   );
@@ -370,6 +400,47 @@ function linesHeight(lines: readonly ConvImageLine[]): number {
 /** 块与块之间：代码块/引用/表格/标题/分隔线松一档，段落与列表紧一档。 */
 function gapFor(kind: BlockDraft['kind']): number {
   return kind === 'flow' ? PARA_GAP : BLOCK_GAP;
+}
+
+/** meta 行：时刻 + tag（不折行——tag 都是短语，宽度并进气泡的内宽）。 */
+function metaRow(
+  measure: Measure,
+  theme: Theme,
+  at: string,
+  tags: readonly ConvImageTag[],
+  role: ConvRole,
+  opts: ConvImageOpts,
+): ConvImageMeta {
+  const ink = META_INK[theme];
+  const stampSpan: ConvImageSpan = {
+    text: opts.stamp(at),
+    font: 'meta',
+    fg: ink.time,
+    w: measure('meta', opts.stamp(at)),
+  };
+  const tagSpans: ConvImageSpan[] = [];
+  for (const [i, tag] of tags.entries()) {
+    if (i > 0) tagSpans.push({ text: '', font: 'meta', fg: ink.time, w: TAG_GAP });
+    const w = measure('meta', tag.text);
+    tagSpans.push(
+      tag.kind === 'weave'
+        ? { text: tag.text, font: 'meta', fg: ink.weaveFg, bg: ink.weaveBg, w }
+        : tag.kind === 'plan'
+          ? { text: tag.text, font: 'meta', fg: ink.planFg, bg: ink.planBg, w }
+          : { text: tag.text, font: 'meta', fg: ink.nameFg, border: ink.nameBorder, w },
+    );
+  }
+  const gapSpan: ConvImageSpan = { text: '', font: 'meta', fg: ink.time, w: TAG_GAP };
+  // 发送侧（右）：tag 靠左、时刻贴右（`ml-auto`）；回复侧（左）：时刻在前、tag 随后
+  const left =
+    role === 'user'
+      ? tagSpans
+      : [stampSpan, ...(tagSpans.length > 0 ? [gapSpan, ...tagSpans] : [])];
+  const right = role === 'user' ? [stampSpan] : [];
+  const w =
+    left.reduce((n, s) => n + s.w, 0) +
+    (right.length ? TAG_GAP + right.reduce((n, s) => n + s.w, 0) : 0);
+  return { left, right, w };
 }
 
 /** markdown 块 → 带位置的块（y 相对气泡内容区；宽度已按 TEXT_MAX 量过）。 */
@@ -516,36 +587,37 @@ export function pickScale(width: number, height: number, preferred = 2): number 
   return 1;
 }
 
+export function variantOf(e: ConvImageEntry): BubbleVariant {
+  if (e.failed === true) return 'failed';
+  if (e.role === 'assistant') return 'assistant';
+  return e.viaWeave === true ? 'user' : 'userTyped';
+}
+
 export function layoutConversation(
   measure: Measure,
   entries: readonly ConvImageEntry[],
   opts: ConvImageOpts,
 ): ConvImageLayout {
-  const headerH = TITLE_H + META_H + 8;
-  const header = { y: PAD, h: headerH, title: opts.title, subtitle: opts.subtitle };
-  const pals = BUBBLE[opts.theme];
-  let y = PAD + headerH + BUBBLE_GAP;
+  const pal = TEXT[opts.theme];
+  let y = PAD;
   const bubbles: ConvImageBubble[] = [];
   for (const e of entries) {
-    const blocks = layoutBlocks(measure, e.text, pals[e.role]);
-    const contentW = Math.max(0, ...blocks.map((b) => b.w));
+    const blocks = layoutBlocks(measure, e.text, pal);
+    const meta = metaRow(measure, opts.theme, e.at, e.tags ?? [], e.role, opts);
+    const contentW = Math.max(meta.w, 0, ...blocks.map((b) => b.w));
     const contentH = blocks.reduce((n, b) => n + b.gap + b.h, 0);
     const w = Math.min(BUBBLE_MAX, contentW + BUBBLE_PAD * 2);
-    // meta 行画在气泡**上方**（不计入气泡高度，否则每只气泡底部多出一行空）
-    const h = contentH + BUBBLE_PAD * 2;
     bubbles.push({
       role: e.role,
-      meta:
-        `${opts.stamp(e.at)} · ${e.role === 'user' ? opts.labels.user : opts.labels.assistant}` +
-        (e.plan === true ? ` · ${opts.labels.plan}` : ''),
-      metaY: y,
+      variant: variantOf(e),
+      meta,
       x: e.role === 'user' ? IMG_WIDTH - PAD - w : PAD,
-      y: y + META_H,
+      y,
       w,
-      h,
+      h: META_ROW_H + contentH + BUBBLE_PAD * 2,
       blocks,
     });
-    y += META_H + h + BUBBLE_GAP;
+    y += META_ROW_H + contentH + BUBBLE_PAD * 2 + BUBBLE_GAP;
   }
   const height = Math.round(entries.length > 0 ? y - BUBBLE_GAP + PAD : y);
   return {
@@ -553,7 +625,6 @@ export function layoutConversation(
     height,
     scale: pickScale(IMG_WIDTH, height, opts.scale),
     theme: opts.theme,
-    header,
     bubbles,
   };
 }
@@ -571,8 +642,42 @@ function roundRect(
   ctx.arcTo(x + w, y, x + w, y + h, r);
   ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.arcTo(x, y + h, x, y, r);
   ctx.closePath();
+}
+
+function drawSpan(
+  ctx: CanvasRenderingContext2D,
+  s: ConvImageSpan,
+  x: number,
+  y: number,
+  lh: number,
+): void {
+  ctx.font = FONTS[s.font];
+  if (s.bg || s.border) {
+    roundRect(ctx, x - 2, y - 1, s.w + 4, lh - 4, 3);
+    if (s.bg) {
+      ctx.fillStyle = s.bg;
+      ctx.fill();
+    }
+    if (s.border) {
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = s.border;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+  ctx.fillStyle = s.fg;
+  ctx.fillText(s.text, x, y);
+  if (s.underline || s.strike) {
+    ctx.strokeStyle = s.fg;
+    ctx.beginPath();
+    const ly = s.underline ? y + lh - 4 : y + lh / 2 + 1;
+    ctx.moveTo(x, ly);
+    ctx.lineTo(x + s.w, ly);
+    ctx.stroke();
+  }
 }
 
 function drawLines(
@@ -591,22 +696,7 @@ function drawLines(
     }
     let x = x0 + line.indent + (line.marker?.w ?? 0);
     for (const s of line.spans) {
-      ctx.font = FONTS[s.font];
-      if (s.bg) {
-        ctx.fillStyle = s.bg;
-        roundRect(ctx, x - 2, y - 1, s.w + 4, line.lh - 4, 3);
-        ctx.fill();
-      }
-      ctx.fillStyle = s.fg;
-      ctx.fillText(s.text, x, y);
-      if (s.underline || s.strike) {
-        ctx.strokeStyle = s.fg;
-        ctx.beginPath();
-        const ly = s.underline ? y + line.lh - 4 : y + line.lh / 2 + 1;
-        ctx.moveTo(x, ly);
-        ctx.lineTo(x + s.w, ly);
-        ctx.stroke();
-      }
+      drawSpan(ctx, s, x, y, line.lh);
       x += s.w;
     }
     y += line.lh;
@@ -614,46 +704,39 @@ function drawLines(
 }
 
 export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImageLayout): void {
-  const page = PAGE[layout.theme];
-  const pals = BUBBLE[layout.theme];
-  ctx.fillStyle = page.bg;
+  const pal = TEXT[layout.theme];
+  ctx.fillStyle = PAGE[layout.theme];
   ctx.fillRect(0, 0, layout.width, layout.height);
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
   ctx.lineWidth = 1;
-  const { y, h, title, subtitle } = layout.header;
-  ctx.font = FONTS.title;
-  ctx.fillStyle = page.title;
-  ctx.fillText(title, PAD, y);
-  ctx.font = FONTS.meta;
-  ctx.fillStyle = page.meta;
-  ctx.fillText(subtitle, PAD, y + TITLE_H);
-  ctx.strokeStyle = page.rule;
-  ctx.beginPath();
-  ctx.moveTo(PAD, y + h + 0.5);
-  ctx.lineTo(layout.width - PAD, y + h + 0.5);
-  ctx.stroke();
   for (const b of layout.bubbles) {
-    const pal = pals[b.role];
-    ctx.font = FONTS.meta;
-    ctx.fillStyle = page.meta;
-    ctx.textAlign = b.role === 'user' ? 'right' : 'left';
-    ctx.fillText(b.meta, b.role === 'user' ? b.x + b.w : b.x, b.metaY);
-    ctx.textAlign = 'left';
+    const skin = BUBBLE_SKIN[layout.theme][b.variant];
     roundRect(ctx, b.x, b.y, b.w, b.h, 8);
-    ctx.fillStyle = pal.fill;
+    ctx.fillStyle = skin.fill;
     ctx.fill();
-    ctx.strokeStyle = pal.stroke;
+    ctx.strokeStyle = skin.stroke;
     ctx.stroke();
     const x0 = b.x + BUBBLE_PAD;
-    const y0 = b.y + BUBBLE_PAD;
+    const innerW = b.w - BUBBLE_PAD * 2;
+    let mx = x0;
+    for (const s of b.meta.left) {
+      drawSpan(ctx, s, mx, b.y + BUBBLE_PAD, META_LH);
+      mx += s.w;
+    }
+    mx = x0 + innerW - b.meta.right.reduce((n, s) => n + s.w, 0);
+    for (const s of b.meta.right) {
+      drawSpan(ctx, s, mx, b.y + BUBBLE_PAD, META_LH);
+      mx += s.w;
+    }
+    const y0 = b.y + BUBBLE_PAD + META_ROW_H;
     for (const blk of b.blocks) {
       const by = y0 + blk.y;
       if (blk.kind === 'rule') {
-        ctx.strokeStyle = page.rule;
+        ctx.strokeStyle = pal.tableBorder;
         ctx.beginPath();
         ctx.moveTo(x0, by + 0.5);
-        ctx.lineTo(x0 + b.w - BUBBLE_PAD * 2, by + 0.5);
+        ctx.lineTo(x0 + innerW, by + 0.5);
         ctx.stroke();
         continue;
       }

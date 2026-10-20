@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   IMG_WIDTH,
+  META_ROW_H,
+  drawConversation,
   imageFileName,
   layoutConversation,
   paletteFor,
   pickScale,
+  variantOf,
   wrapSpans,
   type BoxBlock,
   type ConvImageBlock,
   type ConvImageEntry,
+  type ConvImageMeta,
   type FlowBlock,
   type Measure,
   type TableBlock,
@@ -21,12 +25,12 @@ const width = (text: string): number =>
 const measure: Measure = (_font, text) => width(text);
 
 const opts = {
-  title: '会话 A',
-  subtitle: 'proj · 导出',
-  labels: { user: '我', assistant: '会话', plan: '计划' },
   stamp: (iso: string) => `T(${iso})`,
   theme: 'dark' as const,
 };
+
+/** meta 行的全部文本（左组 + 右组，按绘制顺序）。 */
+const metaText = (m: ConvImageMeta): string => [...m.left, ...m.right].map((s) => s.text).join('');
 
 const AT = '2026-10-16T09:00:00.000Z';
 
@@ -47,7 +51,7 @@ describe('pickScale', () => {
 });
 
 describe('wrapSpans', () => {
-  const pal = paletteFor('dark', 'assistant');
+  const pal = paletteFor('dark');
 
   it('中日韩任意处可折，拉丁词整体不折', () => {
     const cjk = wrapSpans(measure, [{ text: '这是一段中文说明文字', style: 'plain' }], pal, 26, 19);
@@ -103,18 +107,37 @@ describe('layoutConversation', () => {
     expect(layout.width).toBe(IMG_WIDTH);
   });
 
-  it('时刻戳带角色文案；高度随条目与换行增长', () => {
+  it('meta 行在气泡里：回复「时刻 + tag」靠左、发送「tag + 时刻」贴右', () => {
     const one = layoutConversation(measure, entries.slice(0, 1), opts);
     const two = layoutConversation(measure, entries, opts);
     expect(two.height).toBeGreaterThan(one.height);
-    expect(two.bubbles[0]!.meta).toContain('我');
-    expect(two.bubbles[1]!.meta).toContain('会话');
-    expect(two.bubbles[1]!.meta).toContain('2026-10-16T09:00:05.000Z');
-    const plan = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '计划正文', plan: true }], opts);
-    expect(plan.bubbles[0]!.meta).toContain('计划');
+    const [user, assistant] = two.bubbles;
+    expect(metaText(assistant!.meta)).toBe(`T(2026-10-16T09:00:05.000Z)`);
+    expect(metaText(user!.meta)).toBe(`T(${AT})`);
+    // 发送侧的时刻贴右：右组就是时刻本身
+    expect(user!.meta.right.reduce((n, s) => n + s.w, 0)).toBe(width(`T(${AT})`));
+    const tagged = layoutConversation(
+      measure,
+      [
+        { role: 'user', at: AT, text: '我发的', tags: [{ kind: 'weave', text: 'weave' }] },
+        { role: 'assistant', at: AT, text: '回复', tags: [{ kind: 'plan', text: '计划' }] },
+      ],
+      opts,
+    );
+    expect(metaText(tagged.bubbles[0]!.meta)).toBe(`weaveT(${AT})`);
+    expect(metaText(tagged.bubbles[1]!.meta)).toBe(`T(${AT})计划`);
     const taller = layoutConversation(measure, [{ ...entries[0]!, text: entries[0]!.text.repeat(20) }], opts);
     expect(taller.height).toBeGreaterThan(one.height);
     expect(taller.bubbles[0]!.w).toBeLessThanOrEqual(IMG_WIDTH - 48);
+  });
+
+  it('气泡配色按面板那四种分：weave 投递 / 手敲 / 失败 / 回复', () => {
+    expect(variantOf({ role: 'user', at: AT, text: '', viaWeave: true })).toBe('user');
+    expect(variantOf({ role: 'user', at: AT, text: '' })).toBe('userTyped');
+    expect(variantOf({ role: 'user', at: AT, text: '', failed: true })).toBe('failed');
+    expect(variantOf({ role: 'assistant', at: AT, text: '' })).toBe('assistant');
+    const v = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '', failed: true }], opts);
+    expect(v.bubbles[0]!.variant).toBe('failed');
   });
 
   it('正文按 markdown 排：标题用标题字重、行内代码带底色', () => {
@@ -158,11 +181,11 @@ describe('layoutConversation', () => {
     expect(table.rows.every((r) => r.cells.length === 2)).toBe(true);
   });
 
-  it('气泡下方不留空行（文末换行不算块，meta 行不计入气泡高度）', () => {
+  it('气泡下方不留空行（文末换行不算块；高度 = meta 行 + 正文 + 上下内衬）', () => {
     const b = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '答案一行\n' }], opts).bubbles[0]!;
     expect(b.blocks.length).toBe(1);
     expect((b.blocks[0] as FlowBlock).lines.length).toBe(1);
-    expect(b.h).toBe(19 + 20);
+    expect(b.h).toBe(19 + 20 + META_ROW_H);
   });
 
   it('块不撑破气泡内宽（超长串硬断）', () => {
@@ -215,10 +238,55 @@ describe('layoutConversation', () => {
         expect(w).toBeLessThanOrEqual(inner);
       }
     }
-    // 气泡高度 = 内容 + 上下 padding（meta 行画在气泡上方，不算进去）
-    expect(b.h).toBe(acc + 20);
-    expect(b.y).toBe(b.metaY + 15);
+    // 气泡高度 = meta 行 + 内容 + 上下 padding
+    expect(b.h).toBe(acc + 20 + META_ROW_H);
+    expect(b.y).toBe(24);
     expect(layout.height).toBeGreaterThan(b.h);
+  });
+});
+
+describe('drawConversation', () => {
+  /** 只记落到画布上的填充与文字（几何细节不值得断言，能画完才是这层的下限）。 */
+  const fakeCtx = (): { ctx: CanvasRenderingContext2D; calls: string[] } => {
+    const calls: string[] = [];
+    const ctx = {
+      fillStyle: '',
+      strokeStyle: '',
+      font: '',
+      textBaseline: '',
+      textAlign: '',
+      lineWidth: 1,
+      fillRect: () => calls.push('fill'),
+      fillText: (t: string) => calls.push(`text:${t}`),
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arcTo: () => {},
+      closePath: () => {},
+      fill: () => calls.push('fill'),
+      stroke: () => {},
+      save: () => {},
+      restore: () => {},
+    };
+    return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+  };
+
+  it('整张图画得完：每条气泡一层底色，meta 与正文都落笔', () => {
+    const layout = layoutConversation(
+      measure,
+      [
+        { role: 'user', at: AT, text: '我发的', viaWeave: true, tags: [{ kind: 'weave', text: 'weave' }] },
+        { role: 'assistant', at: AT, text: '回复' },
+      ],
+      opts,
+    );
+    const { ctx, calls } = fakeCtx();
+    expect(() => drawConversation(ctx, layout)).not.toThrow();
+    expect(calls.filter((c) => c === 'fill').length).toBeGreaterThanOrEqual(layout.bubbles.length);
+    expect(calls).toContain(`text:${`T(${AT})`}`);
+    expect(calls).toContain('text:weave');
+    expect(calls).toContain('text:我发的');
+    expect(calls).toContain('text:回复');
   });
 });
 
@@ -241,13 +309,11 @@ describe('深浅主题', () => {
 
   it('代码块底色/描边跟着主题走', () => {
     const blk = lightBlocks('```\nx\n```')[0] as BoxBlock;
-    expect(blk.fill).toBe(paletteFor('light', 'assistant').codeBg);
-    expect(blk.border).toBe(paletteFor('light', 'assistant').codeBorder);
+    expect(blk.fill).toBe(paletteFor('light').codeBg);
+    expect(blk.border).toBe(paletteFor('light').codeBorder);
   });
 
-  it('两种角色都有两套配色（缺一边就会画成同色一片）', () => {
-    for (const role of ['user', 'assistant'] as const) {
-      expect(paletteFor('light', role).fg).not.toBe(paletteFor('dark', role).fg);
-    }
+  it('正文配色两套（两种角色共用同一套：面板里都是同一个 AssistantMarkdown）', () => {
+    expect(paletteFor('light').fg).not.toBe(paletteFor('dark').fg);
   });
 });

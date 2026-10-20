@@ -77,12 +77,30 @@ const rowsText = (
     })
     .join('\n\n');
 
-/** 出图的条目：一问一答两条，角色沿用对话那套 user/assistant 配色。 */
-const rowsImageEntries = (rows: readonly SideQuestionRow[]): ConvImageEntry[] =>
+/** 出图的条目：一问一答两条，角色沿用对话那套 user/assistant 配色；旁路面板里
+ *  「问 / 答」是分节标题，出图没有分节，改挂成 meta 行的 tag（信息不丢）。 */
+const rowsImageEntries = (
+  rows: readonly SideQuestionRow[],
+  askLabel: string,
+  answerLabel: string,
+): ConvImageEntry[] =>
   rows.flatMap((r) => {
-    const ask: ConvImageEntry = { role: 'user', at: r.askedAt, text: r.question };
+    const ask: ConvImageEntry = {
+      role: 'user',
+      at: r.askedAt,
+      text: r.question,
+      tags: [{ kind: 'name', text: askLabel }],
+    };
     if (r.status !== 'answered') return [ask];
-    return [ask, { role: 'assistant', at: r.answeredAt ?? r.askedAt, text: r.answer ?? '' }];
+    return [
+      ask,
+      {
+        role: 'assistant',
+        at: r.answeredAt ?? r.askedAt,
+        text: r.answer ?? '',
+        tags: [{ kind: 'name', text: answerLabel }],
+      },
+    ];
   });
 
 /** 弹出菜单两副面孔：折叠条右键（进多选）/ 底栏分享图片（复制 | 下载）。 */
@@ -337,20 +355,10 @@ export function SideQuestionDialog({
       async () => {
         let blob: Blob;
         try {
-          blob = await renderConversationImage(rowsImageEntries(chosen), {
-            title: `${t('tasks.sideTitle')} · ${label}`,
-            subtitle: t('tasks.convImgSubtitle', {
-              at: fullStamp(new Date().toISOString()),
-              n: chosen.length,
-            }),
-            labels: {
-              user: t('tasks.sideRoleAsk'),
-              assistant: t('tasks.sideRoleAnswer'),
-              plan: t('tasks.convPlan'),
-            },
-            stamp: fullStamp,
-            theme,
-          });
+          blob = await renderConversationImage(
+            rowsImageEntries(chosen, t('tasks.sideRoleAsk'), t('tasks.sideRoleAnswer')),
+            { stamp: fullStamp, theme },
+          );
         } catch (e) {
           throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
         }

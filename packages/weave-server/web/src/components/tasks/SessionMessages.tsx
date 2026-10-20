@@ -24,6 +24,7 @@ import {
   imageFileName,
   renderConversationImage,
   type ConvImageEntry,
+  type ConvImageTag,
 } from '@/lib/conv-image';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
@@ -464,16 +465,26 @@ const MENU_W = 168;
 const MENU_H = 72;
 
 /** 进图片的条目：正文原样全量（气泡里收着的也照全文；剥运输装饰是展示层的事，
- *  这里就是气泡里那串文本）。压缩分隔不是对话内容，不进图。 */
-const toImageEntries = (entries: readonly ConvEntry[]): ConvImageEntry[] =>
+ *  这里就是气泡里那串文本）。压缩分隔不是对话内容，不进图。气泡上的那几枚 tag
+ *  （weave 来源 / 发送方 / 计划）照面板带过去——出图与窗口看到的是同一件事。 */
+const toImageEntries = (entries: readonly ConvEntry[], planLabel: string): ConvImageEntry[] =>
   entries
     .filter((e) => e.role !== 'compaction')
-    .map((e) => ({
-      role: e.role as ConvImageEntry['role'],
-      at: e.at,
-      text: e.text,
-      ...(e.plan === true ? { plan: true } : {}),
-    }));
+    .map((e) => {
+      const tags: ConvImageTag[] = [];
+      if (e.role === 'user' && e.fromWeave === true) tags.push({ kind: 'weave', text: 'weave' });
+      if (e.role === 'user' && e.fromWeave !== true && e.fromName != null)
+        tags.push({ kind: 'name', text: e.fromName });
+      if (e.plan === true) tags.push({ kind: 'plan', text: planLabel });
+      return {
+        role: e.role as ConvImageEntry['role'],
+        at: e.at,
+        text: e.text,
+        ...(tags.length > 0 ? { tags } : {}),
+        ...(e.pipe !== undefined ? { viaWeave: true } : {}),
+        ...(e.failed === true ? { failed: true } : {}),
+      };
+    });
 
 /** 弹窗尺寸：宽度跟屏幕走（宽屏优先，窄屏交给 `w-full` 类），拖角可改并记住；
  *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
@@ -1137,17 +1148,7 @@ export function SessionMessages({
       async () => {
         let blob: Blob;
         try {
-          blob = await renderConversationImage(toImageEntries(chosen), {
-            title: label,
-            subtitle: `${projectLabel} · ${t('tasks.convImgSubtitle', {
-              at: exportStamp(new Date().toISOString()),
-              n: chosen.length,
-            })}`,
-            labels: {
-              user: t('tasks.convRoleUser'),
-              assistant: t('tasks.convRoleAssistant'),
-              plan: t('tasks.convPlan'),
-            },
+          blob = await renderConversationImage(toImageEntries(chosen, t('tasks.convPlan')), {
             stamp: exportStamp,
             theme,
           });
@@ -1791,23 +1792,6 @@ export function SessionMessages({
                     )}
                   >
                     {selecting && <CheckBox on={picked.has(m.key)} className="mr-1.5 mt-1" />}
-                    {/* 投递终态收成气泡左下角一枚小圆点：空心 = 已送达（可能被暂扣/拒收，
-                        不等于已读），灰底白勾 = 已回执（会话真收到）。只有 weave 发出去的
-                        消息才有这一步——终端里自己打的话没有投递可言。 */}
-                    {pipe?.acked === true && (
-                      <span
-                        title={t('tasks.msgAcked')}
-                        className="mb-0.5 inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full bg-neutral-500 text-neutral-900"
-                      >
-                        <Check className="h-2 w-2" strokeWidth={3} />
-                      </span>
-                    )}
-                    {pipe && pipe.acked !== true && pipe.status === 'delivered' && (
-                      <span
-                        title={t('tasks.msgDeliveredHint')}
-                        className="mb-0.5 h-3 w-3 shrink-0 rounded-full border border-neutral-500"
-                      />
-                    )}
                     {/* 气泡色分两侧：**回复（左）走中性灰、发送（右）走蓝**，一眼分得开；
                         同一侧再按投递来源分深浅——weave 投递的深一点，终端里手敲的浅一点
                         （tag/回执点另说，那两样才是「投递成功与否」） */}
@@ -2396,7 +2380,8 @@ export function SessionMessages({
                   />
                 </button>
                 {/* 发送键只有一枚：手动面恒走层② 终端击键，没有通道可选（直投/中继
-                    留给后续的会话协作与编排域）。窄屏是一枚与 ESC、换行同高的方块。 */}
+                    留给后续的会话协作与编排域）。恒为方块（文字会把它撑宽，还让
+                    它与 ESC、换行那两枚不同高）。 */}
                 <button
                   type="button"
                   disabled={
@@ -2411,14 +2396,13 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.messagesSend')}
                   onClick={send}
-                  className="inline-flex shrink-0 items-center justify-center gap-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8 max-lg:px-0"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8"
                 >
                   <FeedbackIcon
                     state={fb.stateOf(`sendMsg:${sessionId}`)}
                     className="h-3 w-3"
                     icon={<Send className="h-3 w-3" />}
                   />
-                  <span className="max-lg:hidden">{t('tasks.messagesSend')}</span>
                 </button>
               </div>
             </div>
