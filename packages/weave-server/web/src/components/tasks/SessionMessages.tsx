@@ -48,7 +48,7 @@ import {
   modeTintFor,
   modelNamesFor,
 } from './lifecycle';
-import { canInterrupt, hasTurnSignal, type SessionStatus } from './session-status';
+import { type SessionStatus } from './session-status';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 
@@ -90,6 +90,10 @@ export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
+
+/** ESC 键帽点完歇几秒：连点会连发好几记（宿主的 ESC 后面接 rewind，连发会把
+ *  刚开的那层菜单也退掉）。冷却只为防连发，与「能不能点」无关。 */
+const ESC_COOLDOWN_S = 3;
 
 /**
  * 对话缓存（sessionStorage）：重开弹窗先拿缓存即时出画，再被服务端那一页对账
@@ -727,6 +731,8 @@ export function SessionMessages({
   const [confirming, setConfirming] = useState(false);
   /** 切模式前先问一句：一记 Shift+Tab 就拨一格、没有反向入口，误触可能越过 plan。 */
   const [confirmMode, setConfirmMode] = useState(false);
+  /** ESC 的冷却剩余秒数（0 = 可点），防连发。 */
+  const [escCooldown, setEscCooldown] = useState(0);
   /** 生成中滚动带的素材（会话最近几十条事件；展示时只认本轮，见 liveItems）。 */
   const [liveEvents, setLiveEvents] = useState<HookEventRow[]>([]);
   /** 计划模式最近交出的那一份计划（没进计划模式 / 正文取不到 = null，不摆气泡）。 */
@@ -905,6 +911,13 @@ export function SessionMessages({
     return () => window.removeEventListener('keydown', onKey);
   }, [menu, selecting, confirmMode, confirming, minimized, onMinimize]);
 
+  // ESC 键帽的冷却：一秒一格倒数，数到 0 才允许下一记。
+  useEffect(() => {
+    if (escCooldown <= 0) return;
+    const id = window.setTimeout(() => setEscCooldown((n) => n - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [escCooldown]);
+
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
   useEffect(() => {
     if (!menu) return;
@@ -1066,14 +1079,6 @@ export function SessionMessages({
     onFire: () => void loadEarlier(),
     enabled: entries !== null && !headDone && !loadingEarlier,
   });
-  /** 停止（与事件链组头同一判据；无回合信号的 harness 传 undefined 回落状态）。 */
-  const stoppable = canInterrupt(
-    status ?? 'open',
-    hasTurnSignal(capability.harness)
-      ? sessions?.find((s) => s.sessionId === sessionId)?.turnOpen
-      : undefined,
-  );
-
   const togglePick = (key: string): void =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -2353,14 +2358,18 @@ export function SessionMessages({
                   发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
               <div className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
-                    （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；只有回合开着
-                    才可点，判据仍是 canInterrupt。 */}
+                    （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
+                    （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后
+                    冷却几秒——连发会把刚开的那层菜单也退掉。 */}
                 <button
                   type="button"
                   title={t('tasks.stopTooltip')}
                   aria-label={t('tasks.stopTooltip')}
-                  disabled={!stoppable}
-                  onClick={() => onInterrupt(sessionId)}
+                  disabled={escCooldown > 0}
+                  onClick={() => {
+                    onInterrupt(sessionId);
+                    setEscCooldown(ESC_COOLDOWN_S);
+                  }}
                   className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
                 >
                   <FeedbackIcon
@@ -2368,7 +2377,7 @@ export function SessionMessages({
                     className="h-3 w-3"
                     icon={
                       <span className="text-[9px] font-medium tracking-tight max-lg:text-[10px]">
-                        ESC
+                        {escCooldown > 0 ? escCooldown : 'ESC'}
                       </span>
                     }
                   />
