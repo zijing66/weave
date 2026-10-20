@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 /** 最小 EventSource 替身：只保留 lib/sse 用到的那几面。 */
 class FakeEventSource {
   static latest: FakeEventSource | null = null;
-  onmessage: ((ev: { data: string }) => void) | null = null;
+  onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
 
@@ -23,9 +23,9 @@ class FakeEventSource {
     this.closed = true;
   }
 
-  /** 推一帧（序列化后走 onmessage，和真实链路一致）。 */
-  emit(payload: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(payload) });
+  /** 推一帧（序列化后走 onmessage，和真实链路一致）；`id` = 服务端的 `id:` 行。 */
+  emit(payload: unknown, id?: string): void {
+    this.onmessage?.({ data: JSON.stringify(payload), lastEventId: id ?? '' });
   }
 }
 
@@ -220,6 +220,65 @@ describe('lib/sse', () => {
       off();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('重建连接带回最后收到的帧 id，服务端据此补发；心跳不带 id 不挪 offset', async () => {
+    vi.useFakeTimers();
+    try {
+      await markAuthenticated();
+      const { subscribeSse } = await import('../sse');
+      const off = subscribeSse(() => {});
+      const first = FakeEventSource.latest!;
+      expect(first.url).not.toContain('since='); // 首连没有 offset 可带
+
+      first.emit({ type: 'hook', kind: 'event.ingested' }, 'abc123-7');
+      first.emit({ type: 'ping' }); // 心跳不挪 offset
+
+      vi.advanceTimersByTime(80_000); // 静默判死 → 重建（阈值 65s，巡检每 15s 一拍）
+      const second = FakeEventSource.latest!;
+      expect(second).not.toBe(first);
+      expect(second.url).toContain('since=abc123-7');
+      off();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resync 帧 = 漏掉的帧补不回来：整页重来，10 秒内不连刷', async () => {
+    // node 环境没有这两个浏览器全局，直接挂上去、用完还原。
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const saved = { location: globals.location, sessionStorage: globals.sessionStorage };
+    const reload = vi.fn();
+    const store = new Map<string, string>();
+    globals.location = { reload };
+    globals.sessionStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    vi.useFakeTimers();
+    try {
+      await markAuthenticated();
+      const { subscribeSse } = await import('../sse');
+      const seen: string[] = [];
+      const off = subscribeSse((f) => seen.push(f.type));
+      const source = FakeEventSource.latest!;
+
+      source.emit({ type: 'resync' });
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([]); // 重载后什么都不缺，不再往下分发
+
+      source.emit({ type: 'resync' }); // 刚刷过还漏：别把页面刷成幻灯片
+      expect(reload).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(11_000);
+      source.emit({ type: 'resync' });
+      expect(reload).toHaveBeenCalledTimes(2);
+      off();
+    } finally {
+      vi.useRealTimers();
+      globals.location = saved.location;
+      globals.sessionStorage = saved.sessionStorage;
     }
   });
 });

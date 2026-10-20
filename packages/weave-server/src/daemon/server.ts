@@ -17,6 +17,7 @@ import { hooksRoot, type MirrorWriter } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
+import { SseHub } from './sse-hub.js';
 import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { SnapshotRefresher } from './snapshot-refresher.js';
@@ -176,6 +177,8 @@ export interface WeaveServerDeps {
   hookBus?: HookEventBus;
   /** 数据变更帧总线（SSE 第三订阅源：载荷推送 / 失效键）。 */
   dataBus?: DataBus;
+  /** 事件流中枢（编号 + 环形缓冲 + 扇出）：weaveRequestHandler 建一份，两监听共享。 */
+  sseHub?: SseHub;
   /** 终端世界（角标计数 + 会话所在屏幕）的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
   terminalRefresher?: TerminalTopologyRefresher;
   /** 会话中断态快照刷新器（ESC 打断后多数连 Stop 都不发）：中断成功后即时补一拍。 */
@@ -241,7 +244,10 @@ export function weaveRequestHandler(
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
   const apiLog = deps.apiLog ?? new ApiLogger();
-  const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache, apiLog };
+  // 中枢与 fingerprint 缓存同口径：一处建、两个监听共用——每个连接各自订阅会让
+  // 序号与缓冲随连接数翻倍（同一帧被记 N 次）。
+  const sseHub = deps.sseHub ?? new SseHub(deps);
+  const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache, apiLog, sseHub };
   return (req, res) => {
     apiLog.begin(req, res);
     void handleRequest(req, res, serverDeps);
@@ -1518,7 +1524,7 @@ async function handleRequest(
 
   // /events — Server-Sent Events stream of asset change events.
   if (pathname === '/events' && req.method === 'GET') {
-    handleSse(req, res, deps);
+    handleSse(req, res, deps, url);
     return;
   }
 
@@ -1717,14 +1723,27 @@ async function handleRequest(
 /** SSE 心跳间隔：比常见代理的 30~60s 空闲超时短一截，且远小于前端判死阈值。 */
 const SSE_HEARTBEAT_MS = 25_000;
 
-/** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
-function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerDeps): void {
-  if (!deps.watch && !deps.hookBus && !deps.dataBus) {
+/** Upgrade a response to an SSE stream fed by the shared hub. */
+function handleSse(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  url: URL,
+): void {
+  const hub = deps.sseHub;
+  if (!hub || (!deps.watch && !deps.hookBus && !deps.dataBus)) {
     res.statusCode = 503;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ error: 'Event stream unavailable' }));
     return;
   }
+  // 断线重连的 offset：自己新建连接时带 `?since=`；浏览器在**同一个** EventSource 上
+  // 自带的重连会带 Last-Event-ID——那条比查询串新（它就记在这条对象身上），优先认它，
+  // 否则重连会从旧 offset 开始重放已经收过的帧（toast 弹两遍）。
+  const header = req.headers['last-event-id'];
+  const since =
+    (Array.isArray(header) ? header[0] : header) ?? url.searchParams.get('since') ?? null;
+  const replay = hub.replay(since);
   res.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
@@ -1735,46 +1754,21 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
   // 心跳：中间的代理与移动网络会**静默**掐断空闲流——浏览器那边既不报错也不重连，
   // dashboard 就停在旧帧上直到刷新页面（实机见过：面板一直挂着「已发出」，刷新才
   // 正常）。定期写一帧让「没数据」与「断了」在客户端可分辨，前端据此判死重建
-  // （见 web/src/lib/sse.ts）。
+  // （见 web/src/lib/sse.ts）。心跳不带 id：它不是数据帧，不该挪客户端的 offset。
   const heartbeat = setInterval(() => {
     if (res.writableEnded) return;
     res.write(`data: ${JSON.stringify({ type: 'ping' })}\n\n`);
   }, SSE_HEARTBEAT_MS);
   heartbeat.unref?.();
 
-  const unsubscribes: Array<() => void> = [];
-  // 帧加 type 判别字段：旧前端忽略未知字段（asset 帧内容不变，向后兼容）。
-  if (deps.watch) {
-    unsubscribes.push(
-      deps.watch.subscribe((e) => {
-        res.write(`data: ${JSON.stringify({ type: 'asset', ...e })}\n\n`);
-      }),
-    );
-    // 项目注册表变更（另一进程 weave init/scan 落库 → reconcile 检出）。
-    // 帧无 projectPath 之外的资产字段，web 收到后整表重拉。
-    unsubscribes.push(
-      deps.watch.subscribeProjects((e) => {
-        res.write(`data: ${JSON.stringify({ type: 'project', ...e })}\n\n`);
-      }),
-    );
-  }
-  if (deps.hookBus) {
-    unsubscribes.push(
-      deps.hookBus.subscribe((message) => {
-        res.write(`data: ${JSON.stringify({ type: 'hook', ...message })}\n\n`);
-      }),
-    );
-  }
-  // 数据变更帧：带 payload = 后端已算好（前端直写状态）；不带 = 失效键
-  // （前端按 key 调既有 fetcher 重拉）。
-  if (deps.dataBus) {
-    unsubscribes.push(
-      deps.dataBus.subscribe((frame) => {
-        const type = frame.payload === undefined ? 'invalidate' : 'push';
-        res.write(`data: ${JSON.stringify({ type, ...frame })}\n\n`);
-      }),
-    );
-  }
+  // 漏掉的帧补不回来（纪元变了 / 缓冲越界 / 中断期间没人在听）：先告诉前端整页重来。
+  if (replay.gap) res.write(`data: ${JSON.stringify({ type: 'resync' })}\n\n`);
+  for (const frame of replay.frames) res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
+
+  // 先接上实时流再补快照：补发与订阅之间不许有空档，否则那一拍的新帧会漏。
+  const unsubscribe = hub.subscribe((frame) => {
+    res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
+  });
 
   // 新客户端补一份在途消息角标快照：推送只在变化时发，首帧不该等到下一次消息事件。
   deps.inflightRefresher?.refreshNow();
@@ -1785,7 +1779,7 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
 
   req.on('close', () => {
     clearInterval(heartbeat);
-    for (const unsubscribe of unsubscribes) unsubscribe();
+    unsubscribe();
   });
 }
 

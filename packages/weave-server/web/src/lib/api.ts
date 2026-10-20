@@ -1708,5 +1708,7 @@ export const api = {
       plugins: MarketPluginAsset[];
     }>(`/libraries/${id}/assets`),
 
-  eventsUrl: (): string => `${API_BASE}/events`,
+  /** 事件流地址；`since` = 上次收到的帧 id，服务端据此补发断流期间漏掉的帧。 */
+  eventsUrl: (since: string | null = null): string =>
+    since === null ? `${API_BASE}/events` : `${API_BASE}/events?since=${encodeURIComponent(since)}`,
 };

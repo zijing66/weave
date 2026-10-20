@@ -113,6 +113,46 @@ describe('daemon server watch endpoints', () => {
     await reader.cancel();
   });
 
+  it('断流重连带 since 回来：只补漏掉的帧；纪元对不上则要求整页重来', async () => {
+    const base = `http://127.0.0.1:${port}/events`;
+    const decoder = new TextDecoder();
+    const readUntil = async (res: Response, marker: string): Promise<string> => {
+      const reader = res.body!.getReader();
+      let buffer = '';
+      while (!buffer.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value);
+      }
+      await reader.cancel();
+      return buffer;
+    };
+
+    const first = await fetch(base);
+    const reader = first.body!.getReader();
+    await reader.read(); // ': connected'（订阅已挂上）
+    dataBus.emit({ key: 'projects' });
+    let head = '';
+    while (!head.includes('"key":"projects"')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      head += decoder.decode(value);
+    }
+    const lastId = /id: (\S+)\ndata: /.exec(head)?.[1];
+    expect(lastId).toBeTruthy();
+    await reader.cancel(); // 断流
+
+    dataBus.emit({ key: 'settings' }); // 断流期间发生的变更
+
+    const resumed = await fetch(`${base}?since=${encodeURIComponent(lastId!)}`);
+    const body = await readUntil(resumed, '"key":"settings"');
+    expect(body).toContain('"key":"settings"');
+    expect(body).not.toContain('"type":"resync"');
+
+    const stale = await fetch(`${base}?since=deadbeef-1`); // 上一次 daemon 的序号
+    expect(await readUntil(stale, '"type":"resync"')).toContain('"type":"resync"');
+  });
+
   it('写操作落定即推 invalidate 帧（写→推的点到点验证）', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/events`);
     const reader = res.body!.getReader();

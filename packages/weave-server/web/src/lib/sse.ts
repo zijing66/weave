@@ -11,9 +11,14 @@ import { authState, recheckAuth, subscribeAuth } from './auth';
  * 按 key（`subscribePush`）、hook 按 kind（`subscribeHook`）、invalidate 按 key
  * （`registerInvalidator`）——组件不再各自过滤整条裸流，也不再经 window 事件
  * 二次转发。
+ *
+ * 断流补发：服务端给每帧编号（`id:`），这里记住最后收到的那个，重建连接时带
+ * `?since=` 回去补齐断流期间漏掉的帧。补不齐时服务端先发 `resync`——那说明漏了
+ * 一些再也拿不回来的东西，整页重来是最省事的正确解。
  */
 
-/** 一条 /events 帧。既有域：asset / project / hook；数据域：push / invalidate。 */
+/** 一条 /events 帧。既有域：asset / project / hook；数据域：push / invalidate；
+ *  流控：ping（心跳）/ resync（漏帧补不齐，整页重来）。 */
 export interface SseFrame {
   type: string;
   [field: string]: unknown;
@@ -64,6 +69,9 @@ const hookByKind = new Map<string, Set<(frame: HookFrame) => void>>();
  */
 const invalidators = new Map<string, Set<() => void>>();
 let source: EventSource | null = null;
+/** 最后收到的帧 id（服务端 `id:` 行）：重建连接时带回去换回漏掉的那些帧。
+ *  我们重建的是**新** EventSource 对象，浏览器不会替它带上 `Last-Event-ID`。 */
+let lastEventId: string | null = null;
 /** 上次收到帧（含心跳）的时刻：判死只看「对方还说没说话」。 */
 let lastFrameAt = Date.now();
 /** 判死阈值 = 服务端心跳周期（`SSE_HEARTBEAT_MS`）的两拍半；巡检本身不拉数据。
@@ -73,22 +81,40 @@ const STREAM_SILENT_MS = 65_000;
 const WATCHDOG_MS = 15_000;
 let watchdog: ReturnType<typeof setInterval> | null = null;
 
+/** `reload()` 的防抖闸：补不齐的病根在别处，反复刷新只会把页面刷成幻灯片。 */
+const RESYNC_AT_KEY = 'weave:sse-resync';
+const RESYNC_LOOP_MS = 10_000;
+
+function reloadForResync(): void {
+  const last = Number(sessionStorage.getItem(RESYNC_AT_KEY) ?? 0);
+  if (Date.now() - last < RESYNC_LOOP_MS) return;
+  sessionStorage.setItem(RESYNC_AT_KEY, String(Date.now()));
+  location.reload();
+}
+
 function ensureSource(): EventSource | null {
   // 未登录不建连（连上也是 401）：登录成功后由认证态订阅者补连，或新订阅者触发。
   if (authState() !== 'authenticated') return null;
   if (source) return source;
-  source = new EventSource(api.eventsUrl());
+  source = new EventSource(api.eventsUrl(lastEventId));
   lastFrameAt = Date.now();
   source.onopen = () => {
     lastFrameAt = Date.now();
   };
   source.onmessage = (ev) => {
     lastFrameAt = Date.now();
+    // 心跳不带 id：它不是数据帧，挪 offset 只会让补发窗口无谓地变窄。
+    if (ev.lastEventId) lastEventId = ev.lastEventId;
     let frame: SseFrame;
     try {
       frame = JSON.parse(ev.data) as SseFrame;
     } catch {
       return; // 坏帧丢掉，不断流
+    }
+    // 补不齐：这条流已经不可信了，整页重来（不往下分发——重载后什么都不缺）。
+    if (frame.type === 'resync') {
+      reloadForResync();
+      return;
     }
     // 按帧域分发到各订阅面（同一面的订阅者互不挤占；裸流订阅者最后整帧广播）。
     for (const handler of byType.get(frame.type) ?? []) handler(frame);
@@ -139,6 +165,7 @@ subscribeAuth(() => {
     return;
   }
   closeSource();
+  lastEventId = null; // 换了身份就别拿旧 offset 去要补发
 });
 
 /** 订阅整条裸流；返回退订函数（组件优先走下面按域拆面的订阅口）。 */
