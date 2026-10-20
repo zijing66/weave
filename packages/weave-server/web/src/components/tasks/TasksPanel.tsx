@@ -515,7 +515,8 @@ export function TasksPanel({
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
       fb 键按项目隔离：loading 在途吞连点，防重复 spawn。
       **loading 挂到新会话行进列表为止**（同开终端口径——「已 spawn、行还没到」的
-      空窗里按钮还在转圈、点不动，不会多起一个 claude）。 */
+      空窗里按钮还在转圈、点不动，不会多起一个 claude）；不落会话行的 harness
+      （生命周期表里没有会话标记事件，如 codex）没有新行可等，POST 回即收圈。 */
   const runNewSession = useCallback(
     (harness?: Harness): void => {
       void fb.run(
@@ -523,6 +524,7 @@ export function TasksPanel({
         async () => {
           const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
           await api.startProjectSession(projectId, harness);
+          if (harness && HARNESS_LIFECYCLE[harness].sessionMarkers.length === 0) return;
           await waitNewSession(known);
         },
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
@@ -531,32 +533,21 @@ export function TasksPanel({
     [fb, projectId, t, waitNewSession],
   );
 
-  /** 能起交互会话的已接入 harness（本项目 init 选择结果 ∩ 有 resume 槽裸 bin）。 */
-  const startableHarnesses = useMemo(
-    () => harnesses.filter((h) => h.canStartSession).map((h) => h.id),
-    [harnesses],
-  );
-  /** 多个能起的才摆弹层选（同项目列表的终端弹层口径）；单个直接起、0 个按钮置灰。 */
+  /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
+   *  harness **全列**，起不了的置灰并在行内说明——只有一个也照样展开，选哪个恒由用户点。 */
   const [harnessPicker, setHarnessPicker] = useState<{
     x: number;
     y: number;
     anchor: HTMLElement;
   } | null>(null);
-  const canNewSession = startableHarnesses.length > 0;
+  const canNewSession = harnesses.length > 0;
   /** 起会话在途（spawn 要几秒）：按钮同置灰——只转圈不禁用的话，看着像没反应又点一次。
       连点的真去重在 `fb.run`（loading 吞重复调用），这里只是把同一事实摆到按钮上。 */
   const newSessionBusy = fb.stateOf(`newSession:${projectId}`) === 'loading';
-  const onNewSession = useCallback(
-    (anchor: HTMLElement): void => {
-      if (startableHarnesses.length > 1) {
-        const rect = anchor.getBoundingClientRect();
-        setHarnessPicker((cur) => (cur ? null : { x: rect.left, y: rect.bottom + 4, anchor }));
-        return;
-      }
-      runNewSession(startableHarnesses[0]);
-    },
-    [startableHarnesses, runNewSession],
-  );
+  const onNewSession = useCallback((anchor: HTMLElement): void => {
+    const rect = anchor.getBoundingClientRect();
+    setHarnessPicker((cur) => (cur ? null : { x: rect.left, y: rect.bottom + 4, anchor }));
+  }, []);
 
   /** 多终端选择弹窗（项目开着多个终端时才现形）。 */
   const [terminalPicker, setTerminalPicker] = useState<{
@@ -1236,14 +1227,15 @@ export function TasksPanel({
           </span>
           {/* 新建会话：不依赖已开终端——落点由终端后端自决（复用本项目的 pane
               分屏，没有就新开一个；连实例都没开时服务端报因，前端 toast 转达）。
-              起哪个 harness = 本项目已接入里能起交互会话的那些（0 个才置灰）。 */}
+              弹层恒列本项目选中的全部 harness（起不了的置灰并在行里说明原因），
+              所以只有「一个 harness 都没接入」才置灰。 */}
           <button
             type="button"
             disabled={!canNewSession || newSessionBusy}
             title={
               newSessionBusy
                 ? t('tasks.newSessionStarting')
-                : startableHarnesses.length === 0
+                : harnesses.length === 0
                   ? t('tasks.newSessionNoHarness')
                   : t('tasks.newSessionTip')
             }
@@ -1416,10 +1408,10 @@ export function TasksPanel({
         />
       )}
 
-      {/* 新建会话的 harness 选择（多个能起的才现形）：贴在按钮下方的卡片弹层 */}
+      {/* 新建会话的 harness 选择（项目选中几个就列几个，起不了的置灰）：按钮下方的卡片弹层 */}
       {harnessPicker && (
         <HarnessPicker
-          harnesses={startableHarnesses}
+          harnesses={harnesses}
           x={harnessPicker.x}
           y={harnessPicker.y}
           anchor={harnessPicker.anchor}

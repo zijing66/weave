@@ -40,6 +40,12 @@ interface Runtime {
 }
 
 /**
+ * 「到达前启动」后等 inbox 凭据的上限：会话起来到首个 hook 事件之间就几百毫秒
+ * （冷启动 resume 慢些），等不到照旧回落中继/终端。
+ */
+const INBOX_READY_WAIT_MS = 5_000;
+
+/**
  * 跨会话编排引擎：有向图 + 消息传递推进。
  *
  * 语义：起点会话收第一条消息 → 它每完成一轮（harness idleSignals）消耗一条待回
@@ -59,7 +65,8 @@ export class OrchestrationEngine {
         OrchestrationRunRepository,
         'insert' | 'listRunning' | 'updateState' | 'finish' | 'prune'
       >;
-      deliverer: Pick<MessageDeliverer, 'send'>;
+      deliverer: Pick<MessageDeliverer, 'send'> &
+        Partial<Pick<MessageDeliverer, 'awaitInboxReady'>>;
       sessions: Pick<SessionRepository, 'listWithCounts'>;
       bus: HookEventBus;
       /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等注册表落名）。 */
@@ -213,7 +220,7 @@ export class OrchestrationEngine {
     this.maybeDone(rt);
   }
 
-  /** 投一次：判死先拉起会话；送达（含入队）才计入待回，失败只留日志。 */
+  /** 投一次：判死先拉起会话（并按需等它的 inbox 凭据）；送达（含入队）才计入待回，失败只留日志。 */
   private async deliver(
     rt: Runtime,
     input: { from: string; to: string; edgeId: string; text: string },
@@ -232,6 +239,11 @@ export class OrchestrationEngine {
           });
           return;
         }
+        // 刚从冷启动拉起来的会话：凭据随它的首个 hook 事件才上报，而层①-a 直投
+        // 比中继快三个数量级（86ms vs 一个 headless 子进程）——值得等这一小会儿。
+        // 等不到只是回落，不挡投递。
+        await this.deps.deliverer.awaitInboxReady?.(input.to, INBOX_READY_WAIT_MS);
+        if (!rt.running) return;
       }
       const result = await this.deps.deliverer.send({
         toSessionId: input.to,

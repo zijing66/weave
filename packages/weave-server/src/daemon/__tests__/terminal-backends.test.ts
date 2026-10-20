@@ -30,6 +30,7 @@ import {
   weztermPaneFromEnv,
   weztermSocketCandidates,
   weztermCliArgs,
+  winRaiseEncodedScript,
   wtInjectEncodedScript,
   wtPanePidFromEnv,
   wtPanes,
@@ -835,5 +836,37 @@ describe('panesAtDir — 关终端的命中判据（关错就是杀掉用户别�
         (p) => p.id,
       ),
     ).toEqual(['p']);
+  });
+});
+
+describe('唤出终端 — 抬窗口脚本', () => {
+  const decoded = Buffer.from(winRaiseEncodedScript(), 'base64').toString('utf16le');
+
+  it('经 -EncodedCommand 传（UTF-16 base64），参数全走 env', () => {
+    expect(decoded).toContain('EnumWindows');
+    expect(decoded).toContain('SetForegroundWindow');
+    expect(decoded).toContain('AttachThreadInput');
+    expect(decoded).toContain('$env:WEAVE_RAISE_PANE_PIDS');
+    expect(decoded).toContain('$env:WEAVE_RAISE_PIDS');
+    expect(decoded).toContain('$env:WEAVE_RAISE_EXE');
+    expect(decoded).toContain('$env:WEAVE_RAISE_TITLES');
+    // wt 那条只给 pane pid + exe，靠进程树往上找窗口宿主
+    expect(decoded).toContain('CreateToolhelp32Snapshot');
+    expect(decoded).toContain(`\n'@\n`);
+  });
+
+  it('不碰 SetConsoleTitle：外部进程改的 pane console 标题不传播给 wezterm', () => {
+    expect(decoded).not.toContain('SetConsoleTitleW');
+  });
+
+  it('标题比较前先归一（spinner 字与 [活动 tab/总数] 前缀都不是身份）', () => {
+    expect(decoded).toContain(String.raw`-replace '^\[\d+/\d+\]\s*'`);
+    expect(decoded).toContain(String.raw`-replace '^[^\p{L}\p{N}]+'`);
+    expect(decoded).not.toContain(`-replace '^[d+/d+]s*'`);
+  });
+
+  it('多窗口时按候选顺序逐条试，唯一命中才抬（不猜）', () => {
+    expect(decoded).toContain('foreach ($c in ($env:WEAVE_RAISE_TITLES');
+    expect(decoded).toContain('if ($hit.Count -eq 1) { $pick = $hit[0]; break }');
   });
 });

@@ -50,8 +50,12 @@ async function errorText(res: Response): Promise<string> {
  */
 export interface ProjectHarness {
   id: Harness;
-  /** true = 能「在既有终端里新建会话」（有 resume 槽裸 bin）；codex 目前为 false。 */
+  /** true = 能新建会话（有 resume 槽裸 bin、且宿主版本过闸）；false 的行仍列出但置灰。 */
   canStartSession: boolean;
+  /** 探到的宿主版本（只有设了版本闸的 harness 才带；探不到 = null）。 */
+  version?: string | null;
+  /** resume 槽的版本下限（置灰行据此说明原因）。 */
+  minVersion?: string;
 }
 
 export interface ProjectRow {

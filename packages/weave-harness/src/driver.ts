@@ -226,6 +226,11 @@ export interface ResumeCommandSpec {
    * 「在默认终端打开会话」消费；缺省 = 该 harness 不支持交互式打开（501）。
    */
   openArgs?(sessionId: string): string[];
+  /**
+   * `bin` 的版本下限（semver）：低于它的宿主，weave 的会话功能不可信 → 起不了
+   * 新会话（UI 置灰并说明）。缺省 = 不设闸。
+   */
+  minVersion?: string;
 }
 
 /** 消息通道名——支持矩阵与原因文案的键。 */

@@ -57,7 +57,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     // 刚建的会话：只有 SessionStart，还没发过 prompt（转录是空文件）
     sessions.touch(SESSION_NEW, row.id);
     hookEvents.insert({ projectId: row.id, source: 'claude', eventType: 'SessionStart', sessionId: SESSION_NEW, payload: '{}' });
-    // codex 会话（resume 能力未注册 → 501）
+    // codex 会话（resume 槽没有 openArgs——weave 手里没有 codex 的 session id → 501）
     sessions.touch('sess-codex', row.id);
     hookEvents.insert({ projectId: row.id, source: 'codex', eventType: 'Stop', sessionId: 'sess-codex', payload: '{}' });
     // 无事件会话（无法判定 harness → 400）
@@ -160,7 +160,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     }
   });
 
-  it('returns 501 for harness without interactive resume (codex)', async () => {
+  it('returns 501 for harness without interactive resume args (codex)', async () => {
     const res = await post('/sessions/sess-codex/open-terminal');
     expect(res.status).toBe(501);
     expect(opener.runCalls).toHaveLength(1); // 未新增调用
@@ -203,7 +203,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     const byId = new Map(rows.map((r) => [r.sessionId, r.canOpenTerminal]));
     // claude 注册了 openArgs → 可开（web 只渲染这一位，不再写 s.harness === 'claude'）
     expect(byId.get(SESSION)).toBe(true);
-    // codex 未注册 resume 槽 → 不可开（与上面那条 501 同一事实）
+    // codex 没有 openArgs（拿不到它的 session id）→ 不可开（与上面那条 501 同一事实）
     expect(byId.get('sess-codex')).toBe(false);
     // 判不出 harness 的会话（无事件）→ 不可开，不猜
     expect(byId.get('sess-no-events')).toBe(false);

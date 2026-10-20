@@ -15,7 +15,13 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { api, type HarnessCheck, type ProjectRow, type TerminalPane } from '@/lib/api';
+import {
+  api,
+  type HarnessCheck,
+  type ProjectRow,
+  type TerminalPane,
+  type TerminalTarget,
+} from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
@@ -34,6 +40,7 @@ import {
   FolderOpen,
   Globe,
   GripVertical,
+  Plus,
   Power,
   RefreshCw,
   Terminal,
@@ -142,6 +149,67 @@ export function ProjectList({
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
   }, [archivedOpen, archivedProjects.length]);
+
+  // 项目行的终端弹层：点终端按钮不再直接开窗，而是先摆出本项目已开的终端卡片
+  // （点一张 = 切到前台），末尾常驻一张「+」开新终端——没有终端时只剩那张「+」。
+  // 卡片数据每次现拉（实时枚举，缓存会把刚关掉的终端列出来）。
+  const [termMenu, setTermMenu] = useState<{
+    project: ProjectRow;
+    anchor: HTMLElement;
+    x: number;
+    y: number;
+    /** null = 还在拉；[] = 拉回来了，一个终端都没有 */
+    targets: TerminalTarget[] | null;
+  } | null>(null);
+  const termMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const openTermMenu = (p: ProjectRow, anchor: HTMLElement): void => {
+    if (termMenu?.project.id === p.id) {
+      setTermMenu(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    setTermMenu({ project: p, anchor, x: rect.left, y: rect.bottom + 4, targets: null });
+    api
+      .listProjectTerminals(p.id)
+      .then((targets) =>
+        setTermMenu((cur) => (cur && cur.project.id === p.id ? { ...cur, targets } : cur)),
+      )
+      .catch((e: unknown) => {
+        setTermMenu(null);
+        show('error', t('errors.listTerminalsFailed', { error: errorText(e) }));
+      });
+  };
+
+  /** 点卡片 = 切到前台；失败（终端已关 / preset 没这条通道）如实报因，不假装唤出了。 */
+  const focusTerminal = (project: ProjectRow, targetId: string): void => {
+    setTermMenu(null);
+    api
+      .focusProjectTerminal(project.id, targetId)
+      .catch((e: unknown) =>
+        show('error', t('errors.focusTerminalFailed', { error: errorText(e) })),
+      );
+  };
+
+  // 点外面 / Esc / 滚动都收——按钮自己那一击不在这里收（留给 onClick 做开合切换，
+  // 否则先关后开等于点了个寂寞）。
+  useEffect(() => {
+    if (!termMenu) return;
+    const close = (e: Event): void => {
+      const target = e.target as Node;
+      if (termMenuRef.current?.contains(target)) return;
+      if (termMenu.anchor.contains(target)) return;
+      setTermMenu(null);
+    };
+    window.addEventListener('pointerdown', close, true);
+    window.addEventListener('scroll', close, { capture: true, passive: true });
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', close);
+    };
+  }, [termMenu]);
 
   // 项目行拖拽排序：内嵌 DndContext 与 App 级资产拖拽完全隔离（draggable
   // 只绑最近 context）；落定只算目标顺序，持久化/失败回滚都归 App。
@@ -387,16 +455,18 @@ export function ProjectList({
                     icon={<FolderOpen className="h-3.5 w-3.5" />}
                   />
                 </QuickButton>
-                {/* 终端：该项目已有终端窗口开着 → 图标转绿 + 角标示数
-                    （窗口级口径；分屏 pane 与会话都不计）。 */}
+                {/* 终端：点开是一张卡片列表（本项目已开的终端 + 末尾一枚「+」），
+                    点卡片 = 把那个终端切到前台，点「+」= 照旧开新终端；没有终端时
+                    列表里只剩那张「+」。图标转绿 + 角标示数仍是窗口级口径（分屏
+                    pane 与会话都不计）。 */}
                 <span className="relative">
                   <QuickButton
                     title={
                       terminals > 0
-                        ? `${t('project.terminalsOpen', { n: terminals })}\n\n${t('project.openInTerminal')}`
+                        ? `${t('project.terminalsOpen', { n: terminals })}\n\n${t('project.terminalMenu')}`
                         : t('project.openInTerminal')
                     }
-                    onClick={() => onOpenTerminal(p)}
+                    onClick={(e) => openTermMenu(p, e.currentTarget)}
                   >
                     <FeedbackIcon
                       state={openTerminalStateOf?.(p.id) ?? 'idle'}
@@ -565,6 +635,83 @@ export function ProjectList({
           </div>,
           document.body,
         )}
+
+      {/* 终端弹层 — 同样 portal 到 body（同上：侧栏的 backdrop-filter 会裁剪）。
+          卡片 = 本项目已开的终端（点 = 切到前台），末尾「+」= 新开一个；列不出来
+          （角标说有、列表空 = 该 preset 不能枚举已开窗口）如实说一句，不装作没有。 */}
+      {termMenu &&
+        createPortal(
+          <div
+            ref={termMenuRef}
+            style={{
+              left: Math.min(termMenu.x, window.innerWidth - 288),
+              top: Math.min(termMenu.y, window.innerHeight - 260),
+            }}
+            className="fixed z-50 w-72 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac p-1"
+          >
+            <p
+              className="px-2 pb-1 pt-0.5 text-[10px] text-neutral-500 truncate"
+              title={termMenu.project.path}
+            >
+              {termMenu.project.name}
+            </p>
+            {termMenu.targets === null ? (
+              <p className="px-2 py-2 text-[11px] text-neutral-500">{t('common.loading')}</p>
+            ) : termMenu.targets.length === 0 ? (
+              (terminalsOf?.(termMenu.project.id) ?? 0) > 0 && (
+                <p className="px-2 pb-1 text-[11px] text-neutral-500">
+                  {t('project.terminalListUnavailable')}
+                </p>
+              )
+            ) : (
+              <ul className="space-y-1 pb-1">
+                {termMenu.targets.map((target) => (
+                  <li key={target.id}>
+                    <button
+                      type="button"
+                      onClick={() => focusTerminal(termMenu.project, target.id)}
+                      className="w-full rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06]"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
+                          {target.title ??
+                            t('tasks.terminalTargetFallback', {
+                              w: target.windowId,
+                              t: target.tabId,
+                            })}
+                        </span>
+                        {target.active && (
+                          <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                            {t('tasks.terminalTargetActive')}
+                          </span>
+                        )}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                        {t('tasks.terminalTargetDetail', {
+                          match: target.matchCount,
+                          total: target.paneCount,
+                        })}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const { project } = termMenu;
+                setTermMenu(null);
+                onOpenTerminal(project);
+              }}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-edge/[0.16] px-2.5 py-2 text-xs text-neutral-300 transition-colors hover:border-edge/[0.3] hover:bg-edge/[0.06] hover:text-neutral-100"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t('project.openInTerminal')}
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -627,7 +774,7 @@ function QuickButton({
 }: {
   title: string;
   pressed?: boolean;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   /** 破坏性动作（关终端）：常显红色，不是 hover 才红。 */
   danger?: boolean;
   children: React.ReactNode;
@@ -640,7 +787,7 @@ function QuickButton({
       aria-pressed={pressed}
       onClick={(e) => {
         e.stopPropagation();
-        onClick();
+        onClick(e);
       }}
       className={cn(
         'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08]',

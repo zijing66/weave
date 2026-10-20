@@ -1,0 +1,613 @@
+# weave 机制细节
+
+> 本文是 `CLAUDE.md` Architecture 节的**细节展开**：那里只留站立规则（一句话判「能不能这么做」），
+> 机制怎么做、键形长什么样、哪一处是唯一实现，全在这里。CLAUDE.md 里的指针写成「细节：§N」，N = 本文节号。
+>
+> 本文不是流水账——带日期的实测、被推翻的设想、事故复盘一律在 `docs/DECISIONS.md`；
+> 当前态架构图与包分层在 `docs/ARCHITECTURE.md`；各改造批次的拍板与实施过程在 `docs/plan/`。
+
+## §1 抽象类、终端后端与 wezterm mux
+
+抽象类全仓**仅两处**、皆为模板方法：
+
+- `InitPipeline`（`weave-harness/src/init/pipeline.ts`，经 `@weavecode/harness` 导出）固定 init 骨架。
+- `TerminalBackend`（`packages/weave-server/src/daemon/opener.ts`）固定终端后端骨架「取候选 → 按序尝试 → 全失败抛真相」，子类只填候选与真正不同的流程。
+
+`TerminalBackend` 的要点：
+
+- wezterm 覆写 `open` / `run` 走 mux：有活实例就在实例里落子，`open` 一个活实例都没有才回落 legacy `start`——Windows 上 `start` 恒起新 GUI 进程、不并进已开实例。
+- `settings → 后端` 的唯一入口 = `terminalBackendFor(terminal, platform)`。调用方不得散写 preset 白名单。
+- 「这个 preset 能不能反查已开窗口」归后端的 `enumerable`；「击键/文本归谁」归 `ownsPaneId`；「能不能把已开窗口抬到前台」归 `focusTarget`。
+- **`weztermCli` 恒带 `--no-auto-start`**：cli 缺省对失联 socket 会拉起永不退出的 `wezterm-mux-server`（复盘见 `docs/DECISIONS.md`）。
+
+新增抽象类按需即可，但扩张前先与项目所有者确认。
+
+## §2 能力槽与 statusline 面
+
+十一能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+
+### statusline 面
+
+`StatuslineSurface` = `segments` / `tui` / `scriptRelPath` / `generate` / `wire`。块词表、脚本文法、`.claude/settings.json` 的 `statusLine` 键形都是 claude 知识，实现落 `weave-harness/src/claude/statusline/`；server 的 `statusline/` 只是持久化与默认值壳（`statuslineCacheDir` 与包版本归 server）。
+
+- 「TUI 里能不能注入」由面自己的 `tui` 答；`GET /capabilities` 的 `statusline` 行是唯一派生面，web 不按 harness 名判。
+- **对话页底条**（输入框下方、贴底边、各尺寸都摆）按同一份项目配置忠实渲染，但**只摆 weave 当下有数据的块**：project / session / model / time / thinking（hook 事件自带的 `effort.level`，`SessionProbe` 只放内存、最后已知）∪ 宿主渲染脚本算好落在缓存里的 `StatuslineSurface.facts`——今天 = `git` / `git_user` / `changes` 三块，读按 cwd 分片的 `git-<cwd 摘要>.json`、过期条目不认、文件缺席即当没有；缓存文件名与键形归 harness，server 只递缓存目录与目录路径。
+- **整条一起横向滚动**（行不各滚各的），块多了不许折行也不许被裁。
+- context / tokens / cost / rate 只活在宿主 statusline stdin 里，dashboard 这一侧没有，就不摆（与生成脚本「解析成空即丢块」同口径，绝不摆图标/标签空壳）；一块都摆不出就整条不出现。
+- 这条**只读**，配置入口恒在个性化配置里那个 `StatuslinePanel`（头部标 TUI 注入），对话页不开第二处。
+
+## §3 消息投递：层①-a 直投、中继、诊断与接口日志
+
+### 层①-a 会话本地收件箱直投
+
+claude 专属机制（inbox socket）；其他 harness 的 `PromptInboxSpec` = null，server 完全不尝试。
+
+- hook 进程（会话自己的 child，继承 claude 导出的 `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`）把凭据**旁路**上报（不进 payload/DB/UI）→ 消息走它直投（实测 86ms、零进程零 LLM）→ 失败即回落终端/中继/队列（层序见 §4「层序随面变」）。
+- **编排域走它**（第一顺位）、**手动面不走**（恒 `forceTerminal`——直投在宿主眼里是「另一个会话发的」，要用户权威只有终端击键）。冲刷路径同样先试直投。
+- **凭据落盘**：`<dataDir>/hooks/inbox-targets.json`（0600，与 auth.json 同口径的非 UI 面；唯一落点 = `InboxSocketRegistry` 的 file 参数，装配侧只传路径）。它**只解 daemon 自己的重启**——凭据活在会话进程里（socket 由它托管、token 每进程一份），daemon 重启不动它们；**会话自己** resume/重启换了 socket（旧值即废）时连不上即回落、下一次 hook 事件覆盖写回（自愈 = 每次 hook 事件覆盖刷新，值没变不重写盘）。
+- **正常退出即出盘**：`SessionEnd` 进采集面后（可裁剪开关 `hooks.sessionEnd`，存量项目须重跑 `weave init`；只覆盖正常退出，kill / 关窗口不发事件）到达即 `MessageDeliverer.sessionExited`：凭据出盘 + pane 定位清 + 压队的行按「会话未运行」落定；**会话行与它的对话照常保留**（那是历史，不走删会话的级联）。
+- 协议/键名归 claude adapter（`weave-harness/src/claude/prompt-inbox.ts`），server 只做通用传输（`hooks/inbox-socket.ts`）。协议出处非逆向：官方 `cross-session-messaging#the-sessions-inbox-socket`（明说该节用途含「让脚本或 hook 投递进会话」）+ CLI 自带配方。
+
+### 中继（SendMessage）为何保留
+
+手动面不再走它（恒终端击键），但它有三个 socket 结构上做不到的作用：
+
+1. **具名来源**：目标看到 `Message from @weave`。注意**两条路径都是跨会话消息**——socket 直投同样被包成「Another Claude session sent a message … not typed by your user」；宿主内置规则明说这类消息永不构成用户意图 ⇒ **socket ≠ 用户权威**，宿主眼里的用户输入只有层② 终端击键。
+2. **回复面**：唯一可能承载「编排保双向」的路径；今天因中继进程瞬时退出而只是理论，要做需改常驻 stream-json 长会话。
+3. **覆盖非 weave 会话 / 存量未升级 hook 的项目**。跨 harness 不是它的理由（codex 无 SendMessage，落层② 终端）。
+
+### 投递语义以官方契约为准
+
+出处 `code.claude.com/docs/en/cross-session-messaging`：
+
+- 中继 exit 0 只说明「已交给对方 Claude Code」——接收侧三态 Delivered / **Held**（暂扣待批）/ **Refused**（静默丢），weave 从发送侧判不了。所以 `delivered` **不是「已读」**，UI 文案别写成已读。
+- 本机消息序列化超 ~100 万字符在**发送侧**拒收（我们 API 限 20k 远低于它）、同一会话快速连发也会被**发送侧**拒收 → `flushSession` **严格 1 送 1 回执**：任何一层出手都登记 `awaitingAck`，一轮只送一条，下一拍由这条的 UPS 回执触发——队列是同一个队列，不分模式/通道。
+- 可达性验证走 `/status` 的 `Peer address` 与 `/list-agents`。
+
+### 中继启动开关
+
+- `--strict-mcp-config --disable-slash-commands` 恒开——中继不用 MCP/skills，别为它拉一遍（仍能正确应答、工具白名单照旧）。
+- **禁用 `--bare`**：它快得多，但当版本下 `--tools` 白名单失效（中继跑去调 WebSearch 不投递）+ 只认 API key（OAuth 认证失败）。查到但不可用，别再试（数据见 `docs/DECISIONS.md`）。
+
+### 投递诊断（只读）
+
+三层「为什么送不到」的唯一诊断面 = `GET /messaging/diagnostics`（`MessageDeliverer.diagnose` + `CaptureSurface.scriptHealth`，`?project=`/`?session=` 可选）＋ `weave doctor` 那一节。四块内容：
+
+1. 采集脚本能力位：是否 weave 生成 / 生成版本 / 能不能上报 inbox 凭据与 pane env。
+2. 逐会话三通道 `ready|unavailable|unknown` 与原因码。
+3. 队列条数与暂停闸。
+4. 存活三态。
+
+原因码 → 中文修法只在 server 一处。**口径恒为被动**：不真连 socket、不枚举 pane、不起中继子进程；**凭据（socket 路径 / token）永不进响应**，只出「有没有」。
+
+查「存量项目发消息排队」先看它：**采集脚本是 init 生成物、服务与前端升级不会跟着刷**，重写判据只是文件里含 `@version weave@` 子串（与版本号无关）⇒ 重跑 `weave init` 即修，重装包不修。
+
+### 接口日志（请求级排障面）
+
+- 每请求一行 JSON：`ts`/`method`/`path`（含查询串）/`status`/`durationMs`/`ip`/`ua`/`req`/`res`/`resBytes`；SSE 标 `stream` 不记正文、客户端中断标 `aborted` 并保留已写出口径。
+- 写入恒异步串行链、失败静默——日志不许拖慢或打断请求路径。
+- 出入参先截断脱敏再落盘、**行保持 JSON 可解析**：单侧捕获 8KB（超了整段换 `[truncated body N bytes]`）、超长字符串/超长数组/过深结构各换占位符、凭据类键（password/apiKey/token/secret/authorization/cookie/x-weave-local）一律 `[redacted]`。
+- **请求头只记 user-agent**——cookie / authorization / 本机令牌的值绝不落盘。
+- 按本地小时切文件 `<dataDir>/logs/api/api-YYYY-MM-DDTHH.jsonl`，只留最近 24 个（写完即清）。
+- 查询 = `GET /api-logs?from&to&path&method&status&limit`（**走认证门**——日志是敏感面；倒序返回、limit 缺省 200 封顶 1000）。
+- 写入侧唯一实现 = `daemon/api-log.ts`，挂点 = `weaveRequestHandler` 单点（http/https 两监听共享）。
+
+**远程排障两面皆只读、可在目标机直接取**：请求有没有到 / 走了哪条 / 耗时多少问它；「消息为什么送不到」问上面的投递诊断。
+
+## §4 消息/编排域
+
+设计全文 `docs/plan/session-orchestration.md`。
+
+### 4.1 消息域 = 纯递送管道，非记录系统
+
+消息唯一归宿是目标会话自己的转录，weave 仅投递前短暂持有（本地文件队列），送达即删、**不落任何 DB 行**。
+
+- `MessagingSurface`（messaging 槽）声明通道能力（发现 / prompt / inject / headless / watch idleSignals / imageAttach 图片对齐）与不支持原因。
+- 投递裁决唯一单点 = server 的 `MessageDeliverer`（404/409 语义拒绝；auto 忙→inject、绝无头抢占忙会话）。
+- `GET /messaging/capabilities` 纯派生矩阵、无第二事实源——web 按钮与模式选项全表驱动，不写死 harness 白名单。
+- 所有触发源（manual / 提醒订阅 / 编排 / webhook / cron）统一收敛到 `MessageDeliverer.send`。
+
+### 4.2 触发源 ⊥ 投递通道
+
+- **manual**：dashboard 唯一人工面。
+- **会话提醒订阅**（`session_watches`）：触发类型集 `on_events` = `idle` / `turnEnd`(`HARNESS_LIFECYCLE[<harness>].close`) / `messageFailed`；`remaining` = 剩余次数、NULL = 持久化、**已选类型共用一个计数**。dashboard 订阅按目标 upsert——`POST /watch` 对同目标已有 pending dashboard 行**改写原行**（类型集/次数，`updateById` 拒改已落定行）而非新插影子行；会话订阅方多行合法仍走 insert。命中走 `consumeHit` CAS、同一次转场的邻接事件 1s 内合并一次；`watch.fired` 帧带 `reason`。
+- **编排**：见 4.12 起。
+- **不预抽 `TriggerSource` 统一接口**（三种以上触发源形态收敛后再议）。
+
+### 4.3 手动发送：无模式选项、无通道选项
+
+发送键就是一枚（旧的那枚箭头下拉与它记的 localStorage 已删）：路由无 `mode` 入参、恒走 prompt 通道，且**手动面恒带 `forceTerminal: true` = 只剩层② 终端击键**——直投与中继不带发送方名字，宿主也不把它们当用户输入（socket 直投被包成「另一个会话发的」、对方会话可能答给一个随机同伴），人工对话要的是用户权威。
+
+### 4.4 层序随面变
+
+唯一实现 = `MessageDeliverer` 的直投先行 + 两处按 `forceTerminal` 定的层序；调用方不自排。
+
+- **手动面**（`forceTerminal` 恒开）= **只剩层② 终端**。
+- **编排域** = 层①-a 直投 → 层① 中继 → 层② 终端（直投最快，没凭据才落中继——那里的 @weave 身份正是要投递的东西）。
+- **队列冲洗同序**，且先试直投——冲洗正是被「刚上报凭据的那条 hook 事件」触发的，命中最优。
+
+`SendInput.forceTerminal` 随 promptbox 行落盘、重发沿用。pane 找不到时照旧入队等下一次冲洗（不假装送达），也不回落另两层。
+
+### 4.5 层① 原生中继
+
+claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,ListAgents -n weave` + stdin；中性 cwd 防幽灵 hook、不入 peer 注册表。
+
+- **中继 = 本轮次的一次性子进程**：`detached: false`（win32 shell 模式本就非 detached）、**不设超时**（等待发生在目标会话内）、daemon 退出经 `HeadlessRunner.killAll()` 回收在飞子进程（win32 taskkill /T /F、POSIX 进程组→单进程回退），三平台同一入口。
+- peer 私有帧协议/命名管**不逆向不直连**。peer 注册表 `~/.claude/sessions/<pid>.json` 经 claude adapter 取 sessionId→name。
+- 目标会话窗口可见 `Message from @weave: <原文>`、idle 立即唤醒、忙则下一 tool round 到达。
+- **单向注入**——中继发完即退、无接收方会话。**手动面**投递载荷头部带「无需回复」注记：`oneWay` 由触发源定（手动路由 true、编排引擎缺省 false = 编排域双向对话保留），注记随 `oneWay` 落 promptbox 行；`PromptRelaySpec.instruction` 归 harness 规格，server 只传 peer 名 + 原文 + `oneWay`。注记是文本内引导非硬闸。
+
+### 4.6 层② 终端
+
+**无原生 peer 消息的 harness** 如 codex；**经 `TerminalBackend` 能力方法泛化**、不散写 wezterm。
+
+- **wezterm**：`cli list` 枚举 + `cli send-text`。
+- **Windows Terminal**：wt 没有 per-pane 写入面，走 conhost 的**输入记录通道**——`AttachConsole(会话进程)` + `WriteConsoleInputW`，不抢焦点、不依赖窗口在前台。会话进程取 hook 子进程自带的 `CLAUDE_PID`，`WT_PROFILE_ID` 认世界，pane id = `wt:<pid>`；经 `powershell -EncodedCommand` 把内联 C# 送进 P/Invoke，写的是 pane 自己的 console 输入缓冲区，故与窗口是否聚焦无关。
+- **Konsole**（KDE）：`KONSOLE_DBUS_SERVICE` + `KONSOLE_DBUS_SESSION` 定位，会话自带的 D-Bus `sendText` / `sendKey`，pane id = `konsole:<服务>|<会话路径>`。
+- **iTerm2**：`ITERM_SESSION_ID` 定位、AppleScript `write text`——**只有文本通道，中断/作答诚实不支持**。
+- Terminal.app / ghostty / gnome 按通道现实实现、没有就诚实不支持（前三者的通道就是「没有」：无 raw key 注入、无文本写入，`keystroke` 要前台故不用）。
+
+投递配方 = bracketed paste 打原文 + no-paste CR 提交。
+
+### 4.7 层③ promptbox 队列与判死
+
+`<dataDir>/hooks/promptbox/<shard>.jsonl`，daemon 只写、与 handler 消费的 outbox 严格分离。
+
+- **判死即不入队**：三层全无通路且目标已判死（`pidAliveOf === false`，与「已终止」态、两条 terminated 补射同一判据）时**不假装排队**，落 `failed` + `reason: 'offline'`（web 出中文说明、发送手势回音 toast；`send` 仍回 201——请求合法、只是这条没送出去）。冲洗时该会话队列整批落定清队（不再每轮白探 pane 枚举）。
+- 判不动（null）照旧入队，**不置暂停闸**（队列已空，闸只会挡住重发这条有意的可逆出口）。
+- 冲洗双触发 = weave 项目会话 ingest 事件即时 + 隐藏刷新器只在队列非空时探（扫 peer 注册表与 pane 枚举，幂等）。
+
+### 4.8 门控、图片随附、上传与孤儿回收
+
+- **prompt 门控** = 层① `MessagingSurface.prompt`（claude 有、codex null）**|| 层② 终端文本通道可用**，能力矩阵两者皆无才置灰。
+- **图片随附**：表示法归 `MessagingSurface.imageAttach`（`ImageAttachSpec.composePrompt`——「一张图怎么被这个 harness 认出来」是 harness 知识，server 只传语义参数：原文 + 落盘图的路径/媒体类型/原名；claude = 裸绝对路径放原文后独立一行，与它自己的粘贴文法同源；codex = null 不收图，附件钮按此位置灰）。
+- **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存 `images` 引用、重启后按现 harness 面重合成）。
+- **带图消息层② 优先**：只有 bracketed paste 能把路径转成 `[Image #N]` + 真 image block，socket/中继拿到的是裸文本路径；打不进照常回落层①-a / 层①（降级为路径文本）。
+- **上传件内容寻址**：`<dataDir>/uploads/<sha256>.<ext>`，`POST /uploads` / `GET /images/:id` 长缓存；**上传 ≠ 投递**。
+- **孤儿回收 = 引用计数式**（`UploadRepository.pruneUnreferenced`：删「没有任何 `event_images` 引用」的文件 + 行，1h 宽限——编辑器里选了图还没发的那份此刻也无引用；三处触发 = 删会话（`purgeSession` 内、**在 `events.deleteBySession` 之后**，指针靠级联先没）/ 项目归档 / `SessionSweeper` 每轮；**被引用即永不删**，历史气泡的图不会因清理破掉；否决按会话分目录——去重失效且上传时本就无归属）。
+- 回执命中把 upload id 挂到那条 UserPromptSubmit 事件上（`event_images` 指针，消息本身仍不落库）供气泡缩略图跨刷新回显；带图回执比对放宽一档（claude 的粘贴处理器会吃掉多行原文的换行）、纯图发送认空 UPS。
+
+### 4.9 路径引用与只读预览
+
+表示法归 `MessagingSurface.pathRefs`（`PathRefSpec` 的 `kinds` / `lines` / `expression`）：答「这个 harness 怎么引用项目内文件」。
+
+- 表达式（`@p`、`@p#L起-止`、目录尾斜杠）**只在服务端产出**（列表 `GET /sessions/:id/files` 带整文件形状、带行区间走 `GET /sessions/:id/ref` 现算）；web 只当不透明字符串贴进输入框、胶囊另存服务端给的 path/kind/lines 原文、从不反解表达式。
+- `lines` 答「选择器摆不摆行号选择」；codex = null + `unsupportedReasons.pathRefs`（文件钮置灰）。
+- 预览是**只读**编辑器（`editable.of(false)`）、**没有替换**——查找与跳行用自绘的一条小条，不用 CodeMirror 自带搜索面板（那面板恒带 Replace 一行）。
+- **索引不常驻、不 watch**——打开即重建（`daemon/project-files.ts`：`git ls-files`，非 git 回落枚举，缓存只吸收连续开关）；watch 是猜测而枚举一个项目便宜三四个数量级。
+- **子模块里的文件也在索引里**：git 只给子模块一个 gitlink（mode 160000），得各自进去再列一遍（`--recurse-submodules` 给不了 `--others`，而子模块里刚建还没 add 的正是最想引用的），gitlink 自身只当目录、不当文件；没克隆的子模块不进去问 git（空目录里 `ls-files` 会往上层仓库上溯、把外层文件挂到它名下）。
+
+### 4.10 pane 定位：locator 优先、标题+cwd 回落
+
+**层② 的定位与击键按会话自己上报的 pane env 走、与开窗 preset 无关**：preset 答「weave 往哪个终端开窗」，pane env 答「这个会话此刻在哪个终端」，两者只在用户从不换 preset 时重合（换成 wt 不该让活在 wezterm pane 里的会话失去停止/作答）。
+
+分派两处各归一个事实源：
+
+- **定位按 env 反查 preset**（`locatorPresetOf`，遍历 core 的定位键表——preset 名不散写）。
+- **击键/文本按 pane id 认领后端**（`TerminalBackend.ownsPaneId`，id 表示法归后端）。
+- `locateScreens` 按世界分组各问各的后端（契约仍是每会话一行）；`available` = 定位键表里有没有能打字的后端。
+- **配置的后端只管开窗与 `listPanes`**（标题+cwd 启发式回落的枚举面仍只在 preset 指向的终端世界里猜，不跨世界乱打键）。
+
+定位链路：
+
+1. hook 子进程与目标会话同 pane、天然继承 `WEZTERM_PANE`/`WEZTERM_UNIX_SOCKET` 或 `CLAUDE_PID`（键表唯一出处 = core 的 `TERMINAL_LOCATOR_ENV`，内联进生成的 hook 脚本、同 `TITLE_EFFECTIVE_EVENTS` 先例）。
+2. **键表按「内到外」排，最内层的先命中**——`wt` 必须排在 `wezterm` 前：从 wezterm shell 里起的 wt pane 会同时带着外层 `WEZTERM_*`，只有 pid 指得住真正在跑的那个会话。键表增改后存量项目须重跑 `weave init` 才有新键，采集脚本是 init 生成物、不随包升级。
+3. 随每次 hook 事件旁路上报（与 inbox 凭据同口径：**逐行**字段、只放内存、不落库——inbox shard 按**项目 token** 分片，同一 claim 里常混着同项目多个会话 ⇒ 会话级事实一律逐行取，按组聚合会把 A 的 socket 记到 B 头上、消息直投进别的会话）。
+4. `MessageDeliverer.notePaneEnv` 存本会话的 env → `TerminalBackend.locatePane` 用「pane 号 + 同实例 socket」反查（`weztermPaneFromEnv` 纯函数，枚举到的活 mux 里比对；`WEZTERM_*` 键缺或实例对不上即 null；wt 走 `wtPanePidFromEnv` 纯函数，pid 须仍存活）→ 命中即用、**不做任何猜测**。
+5. 未上报或定位失效（pane 已关 / 换 mux / 换窗口）才回落标题剥 ✳ spinner 前缀 + cwd 匹配、歧义拒绝不打。
+
+因此**手动调整 pane 位置天然被跟上**：会话下一次 hook 事件就带着新 pane 重报，旧值随 `forgetSession`/`forgetProject` 清；代价是「上报滞后于移动」窗口期内可能落到旧 pane——但 locator 有存在性校验，失效宁可 409 也不误注入。
+
+### 4.11 inject / headless / auto
+
+三模式仍是 `MessageDeliverer` 的能力（会话提醒订阅用它），但**路由与编排都不开模式选项**：`/sessions/:id/messages` 恒 `mode: 'prompt'`，编排引擎也恒投 prompt。
+
+- inject：忙排，下一拍 additionalContext。
+- headless：`promptStdin=true`——stdin 传 prompt、命令行无用户内容，win32 `.cmd` shim 由此可经 shell 安全启动；shell 模式禁 detached（实测该组合丢管道输出）。headless 终态仅内存 + SSE、daemon 重启即丢。
+- auto：忙→inject、闲→headless。
+
+### 4.12 编排 = 多份命名编排
+
+`orchestrations` 表 = 名字 + 起始会话与起始文本 + 节点/边 + `cron` + `webhook_token`，一份全局共享列表。**项目编排 = 起始会话属于该项目的子集**（`project_id` 只记起点归属，节点与投递可跨项目）。
+
+图是**任意有向图**（≤24 节点 / ≤64 边，无自环 / 无重边 / 无环 / 全节点从起点可达），校验唯一实现 = `hooks/orchestration-graph.ts` 的 `validateOrchestration`——服务端写入口直接拒，web 的 `validateDraft` 同判据只做即时提示。
+
+### 4.13 推进 = 消息传递
+
+- 某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次。
+- 任务节点每收一条消息被激活一次（`state.pending[to]` 一条对一次 idle），无待处理且在飞清零即 done。
+- 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环。
+
+### 4.14 两枚非人工触发
+
+- **webhook**：`POST /webhooks/orchestrate/<token>`，载荷作首步消息、空则回落 `start_text`；`webhook_token` 唯一索引、`POST .../rotate-webhook` 换发；路由在认证豁免内，api-log 把 token 段脱敏成 `[redacted]`。
+- **cron**：5 字段表达式，daemon 30s 一探、同分钟只 fire 一次、已有在跑 run 则跳过。
+
+### 4.15 起点判死即拉起终端 + 等 socket 就绪
+
+每一跳（含起点）都先复用 `openSessionTerminal`（与会话列表「打开会话」同一入口）等它上报存活，再经 `MessageDeliverer.awaitInboxReady` 等它随首个 hook 事件上报 inbox 凭据（`INBOX_READY_WAIT_MS`；等不到照旧回落中继/终端，不挡投递）——冷启动拉起的会话若不吃这一等，第一跳就得白起一个几十秒的中继子进程（直投实测 86ms）。拉不起来落一条失败投递、不假装推进。
+
+### 4.16 运行日志 = `orchestration_runs`
+
+一次触发一行：`trigger` = manual/webhook/cron、`status`、`deliveries`、整份 `state`（pending 与逐条投递记录）、`error`。
+
+- `GET /messaging/orchestration-runs` 按 status/orchestrationId/projectId 过滤并向前翻页；`:id` 带 `state.events`；`POST :id/cancel`。
+- 清理 = 自动 `prune`（7 天 + 每编排留 100 条，daemon 启动跑一次）＋ 手动 `DELETE /messaging/orchestration-runs?scope=finished|all`；删编排级联取消在跑 run。
+- **daemon 重启不续跑**：`rearm` 把 running 全标 `interrupted`（编排状态不是消息，宁可重触发也不重放 prompt）。
+
+### 4.17 实时刷新与画布
+
+实时刷新走既有 hook 帧域的 kind 扩展：`message.*` / `watch.fired` / `question.pending` / `sideQuestion.answered` / `orchestration.run` / `orchestration.delivery`——后两条各带全量轻量态（`status`/`trigger`/`deliveries`/`pendingCounts`/`at`），画布就地更新（节点环 + 边动画 1.2s、`pendingCounts` 出待处理角标），不轮询也不扩 `DataKey`。
+
+画布规则：
+
+- **只摆编排内的会话**——全局按项目分组、组默认收起、起点所在项目初始展开，项目视图全展示。
+- 节点从受管会话里挑且**排除 1h 快速过期的 `promptless` 新会话**，选择器逐行标出会话所属项目（节点可跨项目）。
+- **项目视图的起点只能是本项目的会话**（别的项目的会话照常可当中间节点，起点落到别处即清空并由校验拦住），全局视图不限。
+- 项目与起始会话各有检索框；「复制端点」只读地拼 webhook URL。
+- ReactFlow 的背景样式设置条（`CanvasBackground`，编排与事件链共用）**恒从收起开始**。
+
+**图即编辑面**：
+
+- 点节点 / 点边开右上检查器就地改（节点 = 设起点 / 打开对话 / 移除并列它的出边；边 = 改投递正文 / 删），从节点右侧圆点拖到另一节点即连边。
+- 图上每一种改法与工具条**共用同一份 draft 与同一组纯函数**（`addEdge` / `removeNode` / `removeEdge` + `findCycle` 先拒环）。
+- **没有单独的表单卡片**——图外那几项（名称 / 起始消息 / cron / webhook）就在画布上方的三条工具条里，新增节点在画布左上（空画布时在占位块里），节点数/连线数与校验错误在画布内就地显示。
+- 节点正文点击 = 选中（不是开对话，对话是节点上那枚图标与检查器里的按钮）。
+
+### 4.18 消息优先、事件驱动
+
+- 会话行在途角标 = `push 'inflightCounts'` 绝对值快照：`InflightCountsRefresher` 无定时器——`message.*` 帧驱动重算、值变才推，新 SSE 客户端接入补首帧；**不在任何 GET 里带，web 不自算**。会话行首有在途消息即挂 amber「图标 + 条数」角标（**纯指示、不可点**——对话入口就是行本体，会话行上那枚对话按钮已移除，它与行点击重复）。
+- 提醒订阅 fire 的提醒 = 页面内 toast **＋** 浏览器通知（`web/src/lib/browser-notify.ts`，权限申请只在订阅手势处发起，拒绝则 toast 告知不静默）**＋ Web Push 第三条腿**。
+- 订阅弹窗（`web/src/components/tasks/WatchPicker.tsx`）选类型集 + 次数/持久化。
+
+Web Push 细节：
+
+- dashboard 页面关掉后仍能弹：`src/hooks/push-notify.ts` 的 `PushNotifier` 订阅 hookBus，可推帧仅两处、帧 → 载荷映射单点 = `payloadFor`：`watch.fired` 仅 dashboard 订阅（watcher null，与 toast 同口径）、`question.pending` 无订阅面恒推。
+- 向 `push_subscriptions` 全体订阅行群发 VAPID 签名 + aes128gcm 加密载荷（`web-push`），404/410 = 推送服务判订阅已撤销 → 删行自愈、其他错误保留行下轮重试。
+- VAPID 密钥落 `<dataDir>/push.json` 0600（与 auth.json 同口径不进 settings 表）；`GET /messaging/push/key` 分发公钥、subscribe/unsubscribe 落 `push_subscriptions`（endpoint 主键、同 endpoint 覆写）。
+- 浏览器侧 `web/src/lib/push.ts`——订阅动作挂订阅提醒手势静默降级（`ensurePushSubscribed` 三态 ok/unavailable/failed），设置页另有独立开关（`pushChannelState` 四态：insecure = HTTP 访问无安全上下文、unsupported = 无 SW）、失败可见告知。
+- VAPID 钥轮换检测 = 既有订阅的 applicationServerKey ≠ 服务端公钥 → 退订重订（旧订阅配新钥恒 403）。
+- 与页面本地通知同 tag `weave-watch-<sessionId>` 互相替换去重——双通道同达只弹一条。
+
+### 4.19 终态驻留、未回执闸与回执比对
+
+- **终态驻留**：delivered/injected/succeeded 在 `settledAt`+60s 内留在在途视图展示 `via`/`acked`（failed/timeout/`stalled` 常驻；**delivered 未回执的例外**——那条还没落进对话，跨过窗口也留着，回执或未回执闸落定才退场，否则队列里它先消失、闸落定时又冒出来；web 不再另设本地窗口）。
+- **未回执闸**：prompt 送达 `ackStallMs`（缺省 120s）未回执、或中继/终端投递失败 → 该会话**队列冲洗暂停**（`flushSession` 闸，防继续向 Held/Refused 灌），成因消息标 `stalled` + `message.stalled` 帧。
+- **解除三条路**：成因消息回执命中（解闸 + 自续排空）／手动重发（`POST /sessions/:id/messages/:mid/resend`，仅 prompt 通道 failed（含判死的 offline 行，那是有意的可逆出口）/ delivered-未回执 开放，重走三层并重新布防）／闸到点自动清除（`ackStallReleaseMs` 缺省 10min：已发出却等不来回执的那条整个从队列清除——正文只在该行里、窗口期就是给人的，解闸/撤防/续排都在 `dismiss` 里；行头带 `releaseAt` 派生的 mm:ss 倒计时，投递失败的行不清）。
+- **重发 `delivered`-未回执且 `via=terminal` 的行只补一记回车**（`runTerminalSubmit`：正文早已贴进输入框，缺的就是那记提交键；重贴会在框里叠一份，用户收到两遍正文与两遍图）。
+- **回执先到即已送达**：投递进程的失败落定可能晚于回执（中继 exit 状态只管进程、不管送达；终端的 `sendText` 也可能在文本已进框之后才抛），故 `settleRelay` 与 `runTerminal` 的失败分支先看**当前行** `acked`——是就按已送达收、不置闸（翻成 failed 会让一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍）；`runTerminal` 的成功收尾同样用当前行而非 `write` 之前的快照，否则 write 期间到的回执会被抹掉、120s 后又被当未回执置闸。
+- 慢会话误伤暂停是接受过的代价——它处理到该 prompt 时 UPS 自解闸，真卡死人手重发。
+- **回执比对前先剥运输装饰**（直投的 `[weave] ` 标记，唯一实现 `stripInboxMarker`）——装饰不是正文，不剥则观测到的 prompt 恒比本体多一截、短正文（如「代码提交」）永远认不出自己。
+- 长文本按「包含」认，**短文本（< 8 字符）只认整条相等**（是精确不是放宽：整条相等才没有误配空间）。
+- **一条 UPS 可核销多条在途**——宿主会把连着发的几次合成一次提交（终端里多行粘贴 / 队列合并），只认首条的话其余会一路挂到未回执闸、把该会话的队列误暂停，故遍历所有未回执行逐条核销（web 侧同口径：一条事件条目按 `ackedEventId` 认领多条投递行，谁也不再留在队列尾巴上）。
+
+### 4.20 对话面板（`SessionMessages`）
+
+任务视图右栏主区——点行本体就把它摆进右栏，挂过的切走只藏不卸、草稿与已选图片都还在；左栏与它之间的分栏桌面可拖，宽度存 localStorage `weave:tasks-list`、同 App 左右栏口径。
+
+**内容**：
+
+- 用户投递的 prompt ∪ 每轮 Stop 的最终总结（`raw.last_assistant_message`；中间 assistant 输出与工具活动不进——转录在会话自己那边）。
+- **不落库、不复制存储**，直接查既有 `hook_events`（既有会话事件路由加 `types` 只取开/闭轮两类事件，`beforeId` 游标向前翻页），默认最新 10 条、向上**拉动**续翻（见 §11 ⑦）、翻过的页留前端（新页与手上重叠才续接，不重叠整批换新——宁可重翻也不留看不见的空档）、逐条时刻戳（跨天补月日）。
+- `types` 为空（无闭轮事件的 harness）即无对话面。
+
+**回复气泡折叠**：只展开最新那条、更早的收成三行并底部渐隐；**收/展只有底部居中那枚箭头一个入口**——正文一概不接点击，拖选复制不会被顺手收掉气泡，箭头也不做上下浮动之类的常驻动效（慢机上白烧每帧合成）；唯一实现 `SessionMessages` 的 `Collapsible`——量过 `scrollHeight` **超过六行**才给渐隐与箭头（短回复不收，收起来只多一次点击），多选态里箭头不渲染、点击仍归勾选。
+
+**装饰与认领**：
+
+- prompt 原文先剥**运输装饰**（唯一实现 = `web/src/lib/hook-payload.ts` 的 `stripPromptDecor`：直投的来源标记 / CC 的 `<cross-session-message>` 壳 / 壳内 weave 单向注记）——装饰不是正文，留着既在气泡里露馅、也让该条目认领不到自己的投递行（同一条消息显示两遍）。
+- 剥壳后 `from-name` 非 weave 的（别的会话自己用 CC SendMessage 发的）挂发送方名 tag 与手敲 prompt 区分。
+- 投递行只取 `mode='prompt'`（人工面恒 prompt 通道；编排域 inject/headless 不进），且**未被同文案相邻时刻的事件条目认领**——认领到的状态/回执/重发挂在那个气泡上不另起一条；认领不到的（Held/Refused、失败、暂停闸成因、仍在途、**已送达但气泡还没来**）**当作最新那几条气泡排在对话尾巴上**（不横占一条面；虚线框 = 还没落定）：多条时收进**同一个容器气泡**、每行一句（超了截断、点开看全文；只有一条时仍是当前那份单气泡的样子），行内保留队列那套样式（状态徽标 + 通道 + 原文 + 操作）。
+- **队列里的 `delivered` 叫「已发出」不叫「已送达」**（它还没落进对话，气泡随会话自己的 UPS 事件才来；「已送达」是对话气泡上的事），**认领即退场**——真气泡接手时位置不变，同一条消息不会两处都露。
+
+**操作三枚纯图标常显居右**：
+
+- 重发（失败 / 被闸住）。
+- 取回编辑（队尾那条还没送出去的——`pending`/`failed`/`timeout`；**已送达的不取回**，它已经在会话那边了，放回输入框再发一遍就是重复发送）。
+- 移除（**凡未送达的都能移除**：排队中 / 失败 / 超时 / 暂停闸成因——闸成因不清掉，闸就没有可操作的成因行）。
+  - **已发出（`delivered`）不给**：会话那边已经收到了，只是 hook 还没到、气泡随后就来，删掉等于假装撤回一条已经进了对话的消息——它的出口是重发不是删（**唯一例外 = 它正是暂停闸成因**：闸没有可操作的成因行就永远开不了）。
+  - **在飞**的 `delivering` 反而**可以强制移除**——投递卡住时它就是队头、压着后面每一条都发不出去，不给动手就永远解不开：删即解闸、撤防、**就地解除卡住那一拍的泵闸**（`flushing` 挂令牌，旧拍醒来不能顺手删掉新拍的闸），落定回调按「当前行」收尾、行没了即收手（`runTerminal` 不再用 `?? msg` 把行写回来）。
+  - `running` 不给（编排域的一条真实子进程，删行只是把活着的进程藏起来）。
+
+**面板另有**：
+
+- **停止按钮**贴在发送键**左侧**（生成中的会话，停它就该在发话的地方；判据见 §7）。
+- **历史过滤**（全部 / 我发的 / 回复，纯函数 `filterThread`；「生成中…/压缩会话中…/已中断」尾标是会话级状态、两档下照显，过滤后为空给专门提示别用「还没有对话」）。
+- **多选导出**：桌面右键菜单、触屏双击开同一份菜单（菜单里那一项进多选），点气泡即勾选、底栏换成「已选 n 条 · 复制 · 分享图片 · 取消」，多选态里重发/删除不渲染以免抢点击。
+  - **全选**范围 = **已加载的全部条目**，不随过滤变——过滤只管显示，勾选面不跟着收。
+  - 复制走 `lib/clipboard.ts` 的 `copyText`、失败也 toast——HTTP 局域网无安全上下文正是它的用武之地。
+  - 导出格式唯一实现 = `exportConversationText`，本地 `YYYY-MM-DD HH:mm:ss` 时刻行 + 角色行、条目间空行。
+  - **分享图片** = 一枚按钮 + 小菜单「复制到剪贴板 / 下载 PNG」，渲染唯一实现 = `lib/conv-image.ts`（zero-dep canvas 卡片，正文按窗口那套 markdown 预览排——解析归 `lib/conv-markdown.ts`（纯函数、零依赖，只覆盖窗口真会渲染的那套块与行内记号；解析不出的记号原样留在文本里）；DPR 2 起、超 canvas 像素上限自动降 1，剪贴板走 `copyImage`、下载撤 URL 延 1s 兼容 Safari）。
+
+**事件链收进弹窗**：面板头部右上角那枚「事件链」按钮开（右栏没有对话面时事件链仍在原位），弹窗 z-50 压在 `<lg` 全屏右栏 z-40 之上、作答弹窗 z-60 又在它之上。
+
+**两种形态共用面板本体**（`embedded` 嵌入右栏 / 编排画布仍是浮窗）：
+
+- **嵌入形态头部只有那枚「事件链」，没有挂起与关闭**（右栏就是这扇对话，关掉等于空出一块；挂起/关闭只在浮窗）。
+- 嵌入形态也**不套卡片壳**（没有圆角与边框——右栏本身就是这扇对话，再描一圈只是多一道多余的线；卡片壳是浮窗才要的）。
+- 浮窗那套尺寸才是原尺寸行为：宽度跟屏幕走（视口 62%、1100px 封顶，`<lg` 仍铺满）、桌面可拖角改大小（localStorage 记住）与拖标题栏挪位。
+
+### 4.21 会话列表顺序与闲置移除
+
+- **顺序 = 前端活动序**（`SessionList` 的 `byActivity`：lastSeenAt 倒序、createdAt 决胜——活跃上浮/新会话置顶/静默沉底）。行数据随事件流实时刷新，顺序只由 1 分钟周期统一落地 + FLIP 滑动动画（成员增删只做增行/删行、新行即时置顶，既有行不随会话更新重排），不随事件实时抖动。服务端列表恒 created_at 倒序，活动序是前端层的事。
+- **全局总览同口径**——`GlobalTasksOverview` 同一份冻结活动序逐行渲染（**跨项目混排、不按项目分组**），共用同一套门控（`useActivityOrder`）与 FLIP（`useFlipRows`），过滤条件换批则立即采用新序、不做增量合并。
+- **会话行随首个事件即建**——含仅一条 SessionStart 的新会话，建档侧不按事件类型挑拣（「新建会话马上出现在列表」靠它）。
+- **保留策略两档**：没等到用户 prompt 的新会话 1 小时快速过期（`PROMPTLESS_GRACE_MS`）；收到过 prompt 的会话 = 无操作 n 天后自动移除（n = settings `sessions.idleDays`，缺省 90，设置页可调并标出两条策略）——判据与期限唯一实现 = `listWithCounts` 的 `autoDeleteAt`（= lastSeenAt + 该档窗），`SessionSweeper` 过期即 purge（复用手动删会话级联）、web 行内剩余存活倒计时 tag（天/时/分三档）。
+
+## §5 阻塞式问答
+
+规格归 `questions` 槽（`BlockingPromptSpec`，claude 落 `weave-harness/src/claude/questions.ts`）：
+
+- 阻塞工具清单。
+- 权限 Notification 类型。
+- 静默权限模式名单：该模式下宿主结构上不弹对话框，其 permission_prompt 恒为噪声；名单是「宿主是否可能问人」的事实，只放结构上不可能弹框的模式；模式名是 harness 知识，不得散写进 server。
+- 事件弹框判据（`eventQuestion`）：不是工具、也非权限提醒的对话框（claude 的「Switch model?」）——事件到达且**对话框确实要弹**才给问题面；弹不弹是 harness 知识，猜错即幽灵问题。采集面 = 可裁剪开关 `hooks.preModelSwitch`（Pre 置位 / Post 落定成对登记，存量项目须重跑 `weave init`）。
+- 问题面解析：AskUserQuestion 的 toolInput 全量解析；ExitPlanMode toolInput 恒空 → 合成固定三选项；解析不出 → OPAQUE 兜底「看得见阻塞、无远程作答面」。
+- **预览形态** = 单选 && 任一选项带 preview（多选即使带预览也落旧形态）——每选项归一化出 `preview` 文案（超 2000 字符或含不可见/双向字符 → withhold 文案、无可见内容 → 「No preview available」、缺省 → null 且不计入判据）+ `previewMode`。
+
+### 选项键序
+
+**原子序列**：宿主 TUI 把一次写入的连续字符当粘贴——两个数字一起到 = 什么都没选，故 `keys: readonly string[]` 每元素独立成键、deliverer 逐个写并留间隔。
+
+- 单选数字 = 选中即推进、多选数字 = 只勾选不推进、Tab = 下一问（空作答也合法）。
+- **预览形态的键 ≠ 旧形态**：数字只挪高亮、提交另需一记回车（`commit`），且备注只挂在挪动过高亮的选项上 → 选项行 `keys` 恒两键「先挪到目标、再落该问的 1..n」，单词问退化成一键。
+- **整 call 一次提交**：宿主模态框 = 逐问 tab + 收尾屏，`n≥2 || 任一问多选` 时面尾追加合成收尾屏 `submit: true`（Submit answers / Cancel，不是宿主的问题 tab）——键序 = 逐问选项原子 + 未答/多选补 Tab + 收尾屏 `\t`+数字；多选**不许**逐项提交，那会把会话卡在勾选态。
+- **宿主自有尾行**：`n+1` = Other 自定义输入（多选还要走位键（↓×选项数）与收尾键（Tab→内联 Submit），单选只要收尾 CR）；`n+2` = Chat about this（按下即结束整个提问）。旧形态两行都有，随选项面下发，server/web 不自造。
+- **预览形态没有 Other 行**，自定义文本走宿主 `n` 那行（未聚焦时提示按 n）——备注只随高亮选项一起发，「只填备注、没挪高亮」在宿主里答成字面量 `(notes only)`，而空备注 + 没挪高亮在宿主里是死局（什么都不发生、会话继续挂着）→ 单词问**不出备注行**（宿主结构上没有挂载点），「选了输入行必须有文本」那条服务端闸反手挡住空备注。
+
+### 状态机 `QuestionTracker`
+
+内存态，挂 `handleIngestedRecords`——hookBus 帧不带 toolName，挂点必须在解析后的 payload 上。
+
+- 置位：PreToolUse(阻塞工具) / Notification(permission_prompt) / 事件弹框（`spec.eventQuestion` 认出来的，kind = `switch`）。
+- 清除：PostToolUse(同名) / UserPromptSubmit / Stop（question 态）；任意非 Notification 事件（permission 与 switch 态；switch 的落定笔 = PostModelSwitch，答「No, go back」宿主不发事件、留待下文清）。
+- **已中断也是一条清除**：用户手动了结掉那个对话框之后，ESC 打断多半连 Stop 都不发、没有事件可等 ⇒ 摘除在**读路惰性**做，`snapshot` / `get` 顺手删掉，不另起定时器。
+- 权限确认不带工具面，由 tracker 补最近 PreToolUse 上下文。
+- **置位前的噪声闸**：静默权限模式下的 permission_prompt、以及阻塞工具自己 PreToolUse 后 ~6s 补发的那条（claude 对 AskUserQuestion/ExitPlanMode 恒发，归属 = lastPreTool）一律丢；真对话框归属待批的非阻塞工具、照常置位。
+- 重启 `seedFromDb` 每会话重放最近 12 事件重建。
+
+### 作答路由
+
+`GET /messaging/questions` + `POST /sessions/:id/answer`：整份 `answers[]`（questionKey + options 下标 + 可选 text）→ 拼装唯一实现 `hooks/answer-keys.ts` 的 `composeAnswerAtoms` → **服务端白名单**（按原子：首原子必须是键原子、其余可为键原子或无控制字符文本——文本里夹 CR/ESC 就是任意键序注入，作答面不能变成注入通道）→ `MessageDeliverer.answer` 逐个经层② 终端 `sendKeys`（`TerminalBackend.sendKeys`，wezterm = `cli send-text --no-paste` 裸字节、CR 即回车）打进 pane——模态框只吃键盘，inbox/中继投递答不了。
+
+pane 定位复用层② 的 locator 优先 + 标题/cwd 回落（同一条 `terminalPaneFor`；剥离正则字符集含 `◐` 输入等待态）。作答成功即 `markAnswered` 乐观摘问（防键序漏进已关模态框的输入框），PostToolUse 到达照常整条清除。
+
+### 作答面（web）
+
+- 不占新 SSE/DataKey：待答面并进会话状态总线的帧驱动 500ms 防抖重拉（失败静默降级）。
+- 入口：会话行问答图标（amber + 问题数角标）→ `QuestionAnswer` 弹窗。形态由面自己定：
+  - 带收尾屏 = 逐问单选/多选勾选 + 输入行随文本一起发、底部按钮按收尾屏选项下发（宿主原文 Submit answers / Cancel）、未答完禁用提交。
+  - 不带收尾屏 = 单问点行即答。
+  - **预览形态** = 左选项（`›` 高亮 / `N.` / `✓` 选中、**不渲染描述**）| 右预览原文 + `Notes:` 行 + 不编号的「Chat about this」，点行只挪高亮、提交走收尾屏或底部发送键；`chat` 行任一形态按下即结束整 call。
+  - 问题/选项文案保留会话原文、只有 UI chrome 走 i18n。
+- **弹窗尺寸按形态各记一份**（缺省 plain 448 宽/高随内容、preview 880×560；桌面右下角拖角调整存 localStorage、上限同 `max-h` 的 dvh 口径），`<lg` 整屏单列——拖角只桌面有，预览左右分栏在窄屏塌成上下堆叠。
+- **组头「问答 ×n」计数**与 `BlockingPromptSpec.blockingTools` 共用 `HARNESS_LIFECYCLE[<harness>].questionTools`（谁是问答工具只说一处；web 经 `tasks/lifecycle.ts` 常量镜像）。
+- **新挂起待答只提醒、不自动弹框**：QuestionTracker 在「无 → 有」转场广播 `question.pending` 帧（`seedFromDb` 重放不算新发生、不播），web 收到默认开三腿提醒（页面 toast + 浏览器通知 + Web Push，同 watch.fired 口径、tag `weave-question-<sid>`，但无订阅概念——阻塞提醒该是默认的，不进 watch 触发类型集）。
+- **刻意不自动弹作答框**——作答入口恒为手动点：会话行提问图标 / 组头「待答」tag / 事件链画布根节点 tag / **对话窗尾部那枚「回答」**（`SessionMessages` 尾部与「生成中…」同行，门控 = 待答面在场；开的是同一个待答弹窗，关掉不丢入口、答完待答面没了按钮随之消失）——几个入口共用 TasksPanel 的 `answerFor` 一份状态（它在待答面消失时一并归位，否则残留目标会让该会话下次挂起「无点击自动弹脸」）。
+- `QuestionAnswer` 弹层因此抬到 z-60——同为 `fixed` 门户在 z-50 按挂载先后分胜负，先开作答再开对话窗就会把弹窗压在底下。
+- 会话删除级联 = `purgeSession` 的 `questions`（空会话清扫器同口径）。
+
+### 计划正文当对话气泡
+
+`BlockingPromptSpec.plan`，claude 落 `weave-harness/src/claude/plan.ts`；`GET /sessions/:id/plan` 只读取最近一次 ExitPlanMode 交出的那一份，按提交事件的位置插进对话流。
+
+- 正文来源随宿主版本变——老模型塞 `tool_input.plan`，2.1.296 起 `tool_input` **恒空**、正文只在前一步写计划文件那次 Write/Edit 的 content 里（计划文件默认 `~/.claude/plans/<slug>.md`，可被 `plansDirectory` 挪走，故只按「某个 `plans` 目录下的 `.md`」认形状；Post 的 `tool_response.filePath` 指同一份文件，但那是批准之后才到、多半已被宿主删），事件里都没有才现读文件。
+- **正文在事件里整份保真**：采集面的 4KB 叶子裁剪不裁计划形状的 `tool_input`——裁了气泡就只剩前 4000 字符、尾巴挂个「…」。
+- 批阅入口**不新开一处**，仍是那枚「回答」。
+
+## §6 旁路会话
+
+claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 → `SideQuestionDialog`；能力面 false 即不渲染。
+
+宿主侧问查询开着 `skipTranscript`——**问题与回答都不落任何文件**（宿主面板的 btw 历史只在它自己的内存里），`claude -p` 也不支持 `/btw` ⇒ **只有 TUI 通道**（层② 终端击键，与 `/model` 同一条 `MessageDeliverer.askSideQuestion`）。
+
+因此这是消息域里**唯一的记录系统**：
+
+- 问句由 weave 自己记（`side_questions` 表 / `repositories/side-questions.ts`）。
+- 回答由之后那条采集事件认领——判据归 harness 能力面 `MessagingSurface.sideQuestion`（`SideQuestionSpec.command/validate/answerOf`；claude 的 `answerOf` = `SubagentStop` 且宿主**没给这个 agent 留转录**（普通 / skill 子 agent 都有 `subagents/agent-*.jsonl`，skipTranscript 的 fork 才没有）+ 压缩摘要形态排除，server/web 不认识宿主事件名）。
+- 认领 = 该会话**最早一条 pending 且提问在 10 分钟窗口内**的行（条件更新、幂等；窗口外落 `timeout`，读列表前惰性跑一次、不另起定时器）；人工在宿主面板里发的侧问没有 pending 行、天然不认领。
+
+**宿主的 btw 面板是 local JSX UI、开着就一直吃键盘**（字母与方向键都是它自己的快捷键）⇒ 不收起来，weave 后续打到这个 pane 的层② 投递会落进面板里白丢一条：故**认领到回答的那一刻补一记 ESC**（`MessageDeliverer.interrupt`，ESC 就是面板的关闭键；主回合在跑时这一记由面板消费、回合不受影响——代价是用户若已自己关掉面板而回合在跑，这记会打断那一轮，故只打这一次、不延时也不重试）。
+
+界面：
+
+- 问与答都走对话那套 markdown 预览（同一个 `AssistantMarkdown`）。
+- 每条旁路是一根**折叠条**（头部 = 时刻 + 问句摘要 + 状态，点开才是完整问答；**最新那条缺省展开**，新到的也自动展开、翻更早的旧条不重弹）。
+- 复制与「选中分享」照对话面板同口径（右键/触屏双击开菜单进多选、底栏换工具条，出图复用 `renderConversationImage`）。
+- 实时刷新 = 既有 hook 帧域的 kind 扩展 `sideQuestion.answered`（web 收到即重拉一页，不做增量协议）。
+- 删会话级联 = `purgeSession` 的 `sideQuestions`（空会话清扫器同口径）。
+- 命令文法与形态校验归 harness（`/btw <原文>`、单行、≤2000 字符），server 只传用户原文。
+- codex 的「侧边聊天」留位不实现（`sideQuestion: null` + `unsupportedReasons.sideQuestion`）。
+
+## §7 会话中断与 `SessionProbe`
+
+`POST /sessions/:id/interrupt` → `MessageDeliverer.interrupt`：经层② 终端 `TerminalBackend.sendKeys` 向 pane 打**一记** ESC（连打两记是 claude 的历史回退菜单；与开窗 preset 无关，层② 门控见 §4）。pane 定位同 `terminalPaneFor`（locator 优先 + 标题/cwd 回落）。
+
+**locator 覆盖度 = 那条通道的覆盖度**：项目侧 `.claude/helpers/hook-handler.cjs` 若是加 locator 之前生成的（脚本里没有 `terminal` 字段）就永不落 `paneEnvs`，只剩标题等值回落，而 `--resume` 起的会话 TUI 标题回 claude 默认、无题会话（`title` null）直接判无 → 这类会话一律 409「Session pane not found」。跨项目一次性覆盖靠 user 档采集（`PUT /capture`），或对该项目重跑 `weave init`。
+
+### web 入口与判据
+
+两个入口：事件链最新组头**折叠条的停止按钮** + **对话面板发送键左侧同款一枚**（共用 `interrupt:<id>` fb 键，同转同灭），两处**共用判据** `session-status.ts` 的 `canInterrupt`。
+
+- **对话面板那枚是一枚 ESC 键帽**：位置与尺寸恒在恒方（`h-6 w-6`，窄屏 `h-8 w-8`，与发送键、换行键同高同排），只是回合开着才可按。
+- 事件链组头那枚仍是**回合开着才露**（含卡在报错重试时的长静默：hook 事件静默超窗口、状态回落 `open`，那正是最需要这一记的时候）。
+- **回合已关（收到 Stop，正常收尾）/ 失败落定 / 关闭 / 终止 / 已中断一律不露**（正常收尾后不再残留按钮）。
+- `turnOpen` 未知（旧 daemon、以及无回合开合信号的 harness——`hasTurnSignal` 认生命周期表，codex 的 `open` 还是空占位）才按状态兜底（`isSessionBusy`）。
+
+### 「已中断」态
+
+hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发），故打断之后 `turnOpen` 一直开着、会话永远卡「生成中」——真相只在转录里（claude 补一条 user 消息 `[Request interrupted by user]`，工具调用进行中被中断是 `… for tool use`）。
+
+- 解析唯一实现 = `weave-harness/src/claude/transcript.ts` 的 `interruptMarkerAt`（server 只读不解析格式）。
+- `transcriptPath` 由 hook 事件旁路带来、存 `daemon/session-probe.ts` 的 `SessionProbe`（**只放内存**，与 paneEnv / inbox 凭据同口径：不落库、daemon 重启即清零、靠下一次 hook 事件补回；尾读 64KB 并按文件大小缓存；删会话随 `purgeSession` 的 `probe` 清）。
+- 判据 = 标记**晚于** `sessions.last_seen_at`（自愈——之后任何事件都盖过它）。
+- `GET /sessions` 只对 `turnOpen === true` 的行带 `interruptedAt`，另有 5s 的 `interruptRefresher`（同 `SnapshotRefresher`，key `sessionInterrupt`）把新标记推给 web。
+- web 状态机第 7 态 `interrupted`（`deriveSessionStatus`，**压在压缩/回合逻辑之前**，进程内再比一次 `interruptedAt > freshest`——推帧可能落在本地新事件之后），展示口径同「打开」（`countSessionsByHarness` 计进「打开」、状态点取中性石板色），且**不再露停止按钮**（`canInterrupt` 排除它——这一轮已经停下来了，`turnOpen` 还挂着是它没发 Stop，不是还有活）。
+
+### `SessionProbe` 记的其余事实
+
+- **换模型**：`PostModelSwitch` 的 `to_model` 进闩锁、取更晚的那个——换模型不在转录里留条目，标签靠它才跟得上；事件名与键形归 claude adapter 的 `switchedModelOf`，server 不自拼。
+- **开/恢复会话**：`SessionStart` 的 `startedModelOf`——宿主 `--resume` 时把模型落回默认、而这条事件的 raw 里**不带** `model`（startup/compact 有），转录里又只有上一轮的照会，故带真名就以它为准、不带就清掉闩与最后已知让下一次问重读（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
+- **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
+- web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。
+
+### 语义边界
+
+层② 只负责把那一记键送进 pane，宿主怎么收尾不归它管——宿主 abort 杀的是它自己起的 shell，**孙进程可能被孤儿化**（Windows 不级联杀），停止后仍见到残留进程是宿主行为不是键没到。
+
+ESC 只救**在途**（内部重试 / 长工具卡住）的静默窗口；报错已落定（转录里 `isApiErrorMessage` 记录 + `turn_duration`）时 turn 已结束，该做的是**重发**不是 ESC——证据见 `docs/DECISIONS.md`。CLI 不提供停止命令（用户裁决「cli 不需要」）。
+
+## §8 项目 harness 接入与压缩态
+
+### 「已接入 harness」= init 选择结果
+
+存在 `.weave/config.yaml` 的 `harnesses`；server 唯一读点 = `daemon/project-harnesses.ts` 的 `projectHarnesses`。
+
+- **不用 marker 探测**：init 恒建 `AGENTS.md → CLAUDE.md` 链接，codex 探测器对任何 weave 项目都假阳性（探测答「目录结构像不像」，这里问「用户 init 时装了什么」）；老项目 / 未 weave 化无该字段回落注册表首个。
+- `GET /projects`（含 `/archived`）逐行带 `harnesses: {id, canStartSession, version?, minVersion?}[]`，项目卡标签与「新建会话」的 harness 选项同源取数。`canStartSession` = resume 槽有裸 bin **且探到的宿主版本过 `resume.minVersion`**；`version`/`minVersion` 只为让 UI 说明为什么置灰。
+- **版本闸是 resume 槽的字段**（`ResumeCommandSpec.minVersion`，宿主版本要求是 harness 知识、不散写 server）：claude = `2.1.287`（与 `MIN_MOD_HOST_VERSION` 同一档——hook 面 / 问答键序 / 计划正文都按这版起写）。探测 = `<bin> --version` 取首个 semver（win32 上 npm shim 是 `.cmd`，须走 shell），**10 分钟缓存、并发共用一次 spawn**（缓存的正是在飞的那个 promise，`GET /projects` 逐项目取版本不会起一串子进程），**失败不缓存**；**探不到不拦**——与 mod 版本闸同口径（拿不到 ≠ 不兼容，低误报优先）。
+- `POST /projects/:id/new-session` 收 `harness`：非法 400、未接入 409、已接入但起不了（无裸 bin 或版本不够）501，缺省取已接入里第一个能起的。
+- **codex 的 resume 槽有裸 bin**（`codex` 起新会话，`codex exec resume <id> -` 是无头形、prompt 走 stdin）但**没有 `openArgs`**——交互式 resume 要 codex 自己的 session id，而 weave 不收 codex 事件（`CODEX_EVENT_SOURCE = null`）、手里没有这个 id ⇒「在终端打开 codex 会话」仍 501。
+- **web 侧只要项目选中了 harness 就恒弹 `HarnessPicker`**（一枚也展开，不再「1 个直接起」——用户要看见有哪几个、为什么起不了）：起不了的置灰并在行内说明原因（版本偏低带出实际版本与下限，其余为「暂不支持新建交互会话」），行与按钮都挂原生 `title`；只有「一个 harness 都没接入」才把按钮置灰。
+- 不落会话行的 harness（`HARNESS_LIFECYCLE[<harness>].sessionMarkers` 为空，今天 = codex）**不等新行**：新建会话的 loading 挂到「新会话行进列表」为止，但这类 harness 永远不会有行到来，等就是白转满 `OPEN_TERMINAL_ALIVE_MS`（30s）⇒ POST 回即收圈。
+- **不要求本项目已开终端**——没有就自己开一个（落点由终端后端自决：复用同项目 tab，没有就在活实例里新窗口）。
+
+### 压缩态
+
+信号归 core `HARNESS_COMPACTION`，web 经 `tasks/lifecycle.ts` 常量镜像——谁是压缩事件是 harness 知识，server/web 不自拼。
+
+- 表两项：`start` = 压缩开始事件（claude = `PreCompact`，**唯一实时信号**：最新事件是它即压缩中）；`end` + `endSource` = 收尾笔（claude = `SessionStart` 且 `raw.source='compact'`，事件链标记认它）；全 null = 该 harness 无压缩概念（codex 待调研）。
+- **只登记 `PreCompact`**，不采 PostCompact 的 bulk 摘要（`compact_summary`）——实时态不需要它。
+- 实时态 = web `deriveSessionStatus` 的 `compacting`，**压在回合逻辑之前**（压缩期间宿主一个 hook 事件都不发，走 turnOpen/静默窗会判成 `open`；自带更宽的 10min 超窗兜底，防会话被杀在压缩中永久卡「压缩中」）。
+- 会话行状态、对话面板尾标（`生成中…` → `压缩会话中…`）与组头转圈同源；「会话忙」判据单点 = `isSessionBusy`（running ‖ compacting），`countSessionsByHarness` 按它把压缩中计成运行中（项目行不掉成「打开」）。
+- 采集面：`PreCompact` 是**可裁剪采集开关**（`hooks.preCompact`，随 weave init 写进项目 settings）→ **存量项目须重跑 `weave init` 才有实时态**；收尾笔 `SessionStart` 早就在采集面里，故事件链那一笔的「压缩会话」tag 对存量会话即时可见。
+
+## §9 SSE 单通道与数据层
+
+dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-server/src/daemon/server.ts` 的 `handleSse`），帧形 `data: {type: ...}`——`asset`/`project`/`hook` 是既有域；`push`（后端已算好载荷，前端直写状态）与 `invalidate`（只给 `key`，前端按 key 调既有 fetcher 重拉）是数据域，键表见 `daemon/data-bus.ts` 的 `DataKey`。前端唯一客户端 = `web/src/lib/sse.ts`。
+
+**心跳与判死是一对**：服务端每 25s 写一帧 `{type:'ping'}`（`SSE_HEARTBEAT_MS`），客户端 65s 没见任何帧即关掉重建（`STREAM_SILENT_MS`）。中间的代理 / 移动网络会**静默**掐断空闲流（EventSource 既不报错也不重连），dashboard 会停在旧帧上直到刷新页面。这个判活定时器是「不写定时轮询」的唯一例外，只判活、不取数。
+
+**断流补发归中枢一处**（`daemon/sse-hub.ts` 的 `SseHub`，`weaveRequestHandler` 建一份、两监听共享）：
+
+- 三个源只订阅一次 → 每帧编号 `id: <纪元>-<序号>`（纪元 = 进程随机，认得出「这是重启前的序号」）→ 环形缓冲 1000 帧 → 各连接各写一份。
+- 客户端记住最后收到的帧 id，重建连接带 `?since=` 回去补齐（`lib/sse.ts` 的 `lastEventId`——**我们重建的是新 EventSource 对象，浏览器不会替它带 `Last-Event-ID`**；同一个对象上的原生重连才带，服务端两处都认且 **header 优先**——查询串是旧的，认它会把收过的帧重放一遍）。
+- 心跳**不带 id**，不挪 offset。
+- **补不齐就整页重来**：纪元不同 / 缓冲已滚过去 / 断开期间没人听（最后一个连接走后 60s 摘源，那段帧是真丢了）→ 服务端只发 `{type:'resync'}`、不给半截帧，前端 `location.reload()`（`sessionStorage` 记时刻，10s 内不连刷）——宁可重来一遍，也不留一个悄悄缺帧的界面。
+- **中枢不得常驻订阅源**：隐藏刷新器靠 `DataBus.hasSubscribers()` 判有没有人在看，宽限期（`UNWIRE_GRACE_MS`）只为让刷新页面/网络抖动落在同一条流里，一过必须摘。
+- 订阅按帧域拆面——`subscribeFrame` 按帧类型、`subscribePush` 按载荷 key、`subscribeHook` 按 kind（支持 `message.` 尾点前缀）、`registerInvalidator` 失效域（一 key 多注册者）——组件不收裸流、不走 window 事件转发（例外 = 页面专属独立流，如 AI 助手的 fetch-reader 流式）。
+
+**数据层走 TanStack Query**：`['projects']` 域先行（SSE 帧经 `registerInvalidator`/`subscribeFrame` 桥到 `invalidateQueries`），其余域按同一范式逐个并入、不抢跑；全局缺省 `staleTime: Infinity` + `refetchOnWindowFocus: false` + `retry: false`——刷新只走 SSE 信号，个别查询按需覆写。
+
+**无事件源的数据**（项目终端数（单位 = 可见屏幕，wezterm = tab——与「选哪个终端」弹窗同口径）+ 会话所在可见屏幕、会话存活）由后端隐藏刷新器（形状同 `daemon/terminal-topology-refresher.ts`）只在值变化时推、且只在有 SSE 客户端时才探。
+
+## §10 位置即 URL
+
+唯一实现 = `web/src/lib/route.ts`。
+
+- 三级位置 = `/p/<项目 id>/<卡片>[/<会话 id>]`，全局面 = `/g/<卡片>`，根 `/` 只在启动时被 replace 到当下该在的那一处。
+- **URL 是唯一真源**：手势只调 `navigate()`（push，后退/前进走 `popstate`），状态由 App 的一条 effect 从 `parseRoute` 落下，反方向不再回写，卡片内部的视图态（tab/弹窗/滚动）不进 URL。
+- 卡片键白名单派生自 `MAIN_CATEGORIES`，未知键回落 `tasks`；项目已不存在（归档/删除的旧链接）replace 到全局。
+- 深链刷新不需要服务端改路由：daemon 的 `serveStatic` 已把未知路径回落 `index.html`，且 HTML 导航在认证门豁免内。
+- 任务视图的三级选中经 `onSelectSession` 往上报，面板自己点出来的选中会经 URL 回写成同值 prop——按 `appliedSel` 那份账认回声，不重设也不闪高亮。
+
+## §11 web 移动端适配
+
+断点 `lg` 二分——桌面三栏原样保留，`<lg` 单列 + 左右栏滑出抽屉；桌面 inline 栏与移动抽屉复用同一 JSX 常量、`isDesktop` 互斥渲染（不双挂载/双请求），断点与指针查询唯一入口 = `web/src/lib/use-media-query.ts`。
+
+改/新增 web 布局的硬约束：
+
+1. 视口高度用 `dvh` 不用 `vh`；桌面向 `calc(100dvh-常量)` 的减数是桌面横排预算，`<lg` 上方堆叠更多内容必失真 → 窄屏改视口比例（事件链画布 `h-[52dvh]`）。
+2. hover 才可见的操作按钮触屏不可达 → 补 `max-lg:opacity-100` 一类常显。
+3. 拖拽传感器按 `(pointer: fine)` 分流（鼠标 PointerSensor 位移 5px / 触屏 TouchSensor 长按 200ms 容差 8px），不裸用 PointerSensor。
+4. 固定宽列（列头/数据行）必须同构收缩（同一组 width 工具类），放不下的列折进行内第二行（`basis-full`）或 `hidden lg:block`，不做横向滚动。
+5. 纵向 flex 堆叠的下区要 `min-h-0` 才能收缩，否则被外层 `overflow-hidden` 裁掉。
+6. **右键面触屏给等价手势**（触屏没有右键这回事）：默认长按 450ms、位移 >8px 即取消（不夺滚动/拖拽），**只在粗指针下挂**（`useMediaQuery('(pointer: coarse)')`），触屏下 `onContextMenu` 只 `preventDefault`（压掉原生菜单）不开自家菜单，且**长按生效后抬手补的那个 click 要吞掉**（否则会顺手点选/把刚开的菜单关掉；账本见 `ProjectList`）。**对话面板（`SessionMessages` 气泡）例外走双击**——同一条气泡、两击间 ≤300ms、位移 >8px 即取消，开的是桌面右键那一份菜单（多选只是菜单里的一项，长按不再直接进多选），气泡挂 `touch-manipulation` 压掉移动浏览器双击缩放，桌面端仍只有右键。
+7. **滚动加载一律拉动触发**（唯一实现 = `web/src/lib/pull-load.ts`）：贴边本身不加载、贴边后**继续**滚/拖够 120px 才取一页（预设加载与「刚贴边就取」都让用户没得选），一拉一页、离开边沿才重新上膛；位移用 `transform: translateY` 让位——**不进布局**，否则与翻页的 `scrollHeight` 补偿打架，提示条是绝对定位叠层；`overscroll-contain` 管住滚轮/触屏串动。今天两处：对话面板往顶、事件链往底。
+8. **`<lg` 的整屏对话一开，AI 助手（浮球 + 那扇弹窗）整个退场**——它钉在右下角，正是对话发送区的位置，让位也挤（浮球位置归 `AiAssistant` 一处）；置位方在对话侧（`TasksPanel` 依 `!isDesktop && paneOpen && hasConv` 写 `lib/conv-screen` 的模块级 store，卸载即清），`AiAssistant` 用 `useConvScreenOpen` 订阅后返回 null——只是不渲染，会话历史留在内存、抽屉关掉照旧；桌面不触发（三栏并排，对话是右栏、盖不到右下角）。
+
+## §12 dashboard 认证与 HTTPS 双监听
+
+### 认证
+
+`daemon/dashboard-auth.ts` 的 `AuthService`——口令材料（scrypt hash / 会话签名密钥 / 本机令牌）落 `<dataDir>/auth.json`（0600），**不进 settings 表**（那是 UI 可读配置面，`GET /settings` 直出）。
+
+凭据三种：
+
+- 密码。
+- 无状态签名会话 cookie（`weave_session`，30 天，改密轮换密钥即全失效）。
+- 本机令牌 `x-weave-local`（CLI 与 hooks 免密——同机同用户可读 auth.json = 本机即管理员）。
+
+要点：
+
+- 门在 `server.ts` 的 `handleRequest`（`deps.auth` 可注入，**缺省不装 = 开放**，存量测试口径），豁免 `/health`、`/auth/*` 与「HTML 导航 + 真实静态文件」（登录页必须未认证可载）。
+- **改密只认本机令牌**（`PUT /auth/password` ← CLI `weave chpass <新密码>`），dashboard 不提供改密操作。
+- web 侧 401 一律打回登录页、未登录干脆不建 SSE 连接（唯一认证态 store = `web/src/lib/auth.ts`）。
+- 首启随机初始密码写 `<dataDir>/initial-password`，由 CLI 领取一次即刻删除（daemon detached 启动，打印必丢）。
+- 监听绑定 = settings `server.bindHost`（默认 `0.0.0.0`，可改回 `127.0.0.1`）；**`DAEMON_HOST`（客户端连哪）与 bindHost（服务端听哪）是两个概念**，不得混用。
+
+### HTTPS 双监听
+
+settings `server.tlsPort`，默认 6443、0 = 关。
+
+- daemon 自签证书（`<dataDir>/certs/`，selfsigned 纯 JS 无 openssl 依赖；SAN = 全部非 internal IPv4 + localhost + hostname，换 IP/临期 7 天内自动重签）起第二个 https listener。
+- 与 HTTP **同一 handler**（`weaveRequestHandler` 单点建、fingerprint 缓存两监听共享；两个 daemon 入口接线别各建一份）。
+- 端口被占/证书失败一律降级仅警告，HTTP 不受影响。
+- 访问地址枚举唯一实现 = `daemon/tls.ts` 的 `accessUrls`（`weave daemon status` / `weave dashboard` 与 `GET /settings` 的 `urls` 同源派生，CLI/web 不自拼）。
+- 手机浏览器要系统通知就必须走 https origin——浏览器只在安全上下文（HTTPS/localhost）开放 Notifications API；Android Chromium 还只认 SW 的 `registration.showNotification()`（`web/public/sw.js` 无 fetch handler、仅承载 Web Push 的 push 事件弹通知 + 通知点击聚焦，`web/src/lib/browser-notify.ts` SW 优先、构造器兜底）。
+
+## §13 AI 助手
+
+dashboard 右下角浮层，配置齐才显示。走**服务端代理**——web 只发会话历史，`daemon/ai-routes.ts` 按 OpenAI 兼容协议（`POST {baseUrl}/chat/completions`）带 key 转发并把增量转成自家 `{delta}/{done}/{error}` 帧。
+
+- **api key 落 `<dataDir>/ai.json`（0600）**，与 auth.json 同口径——不进 UI 可读的 settings 表，只写不回显（`PUT /settings` 的 `ai.apiKey` 是只写字段，GET/PUT 只回派生布尔 `apiKeySet`）；地址/模型在 settings 表 `ai.baseUrl`/`ai.model`。
+- 系统上下文由 `daemon/ai-context.ts` 装配三源（`docs/ARCHITECTURE.md` + `docs/FEATURES.md` + `<dataDir>/market/weave` 下 `SKILL.md`，经 `builtinMarketDir` 定位不硬编码路径）；**docs 找不到即降级只注入技能**（`/ai/status` 的 `docsFound` 供 UI 提示），刻意不做进程内缓存（文件读取毫秒级，不缓存让改文档即时生效）。
+- 流式解析全站唯一落点 = `web/src/lib/ai.ts`（`EventSource` 只支持 GET，故用 fetch-reader 手工解帧），别处不得再造一套。
+- **流式能力短期记忆**：网关/模型对 `stream:true` 能不能用，试一次就记（键 = 地址#模型，进程内不落库，`STREAM_MEMO_TTL_MS` 24 小时）——记「不行」期间直接走非流式，省掉每次白试的失败往返（LiteLLM 这类网关对 `stream:true` 恒定 500）；**TTL 到期自动忘掉再试一次 = 周期性试探**，试通即转回流式；「流式被拒」与「回 200 但非 SSE（网关无视 stream）」都算「不行」。
+- **三源保鲜归 `ai-prompt-auditor` 子 agent**（本仓库**项目级插件** `.weave/plugins/ai-prompt-auditor/`——开发自用，不进内置市场、不对用户分发；该根 daemon 按项目加载、init 把 `manifest.templates` 物化进 `.claude/`，插件模板不受核心组件开关门控；`.weave/.gitignore` 的窄例外 `!plugins/` 让源入库，`ensureNestedGitignore` 只在文件缺席时写、绝不覆写用户改过的 `.gitignore`；`/audit-ai-prompt` 触发）：按事实源逐条对锚代码、产出差异清单并直接改源文件，改完跑 `builtin-market.test.ts` 回归。
+- `docs/FEATURES.md` 是 `findDocsDir` 的判据文件（存在性 marker）**不可删**。
+
+## §14 资源管理三层模型
+
+1. **市场副本层**（`<dataDir>/market/<id>/` 导入/移除，LibraryPanel 资源市场侧栏）——移除 = 删副本 + 注销宿主市场（`PluginSurface.removeMarketplace` 按落点反查注册名，best-effort；宿主级联卸载该市场的插件含数据，UI 有破坏性确认），非插件装面副本不级联。
+2. **安装/卸载层**（数据目录 → 装到目标位与卸回）——项目 skills/files/MCP、toolkit 包、全局个人 skills 软链、CC 插件包经 `POST /projects/:id/plugins/uninstall`→`PluginSurface.uninstall`，harness 注册表级、与市场源存亡无关。
+3. **启用/停用层**——包开关/Switch/settings 落盘。
+
+各层操作互不越级：删市场副本 ≠ 卸载，停用 ≠ 卸载。
+
+## §15 终端落点、可见屏幕与唤出终端
+
+### 可见屏幕 = 落点单位
+
+会话落进已开终端的单位、上限与分块**同为一个「可见屏幕」**（wezterm = 一个 tab；这个单位的定义归各后端——不支持分屏的后端没有「挤在同一块屏里」这回事，不设限、每会话一个窗口/tab）。
+
+上限唯一常量 = `daemon/opener.ts` 的 `MAX_PANES_PER_SCREEN`，三处执行点：
+
+- 几何规则 `planWeztermGrid`（网格长满即 null）。
+- 复用挑选 `pickWeztermTab`（满的 tab 跳过 → 全满自然落到新窗口）。
+- 定点附加 `runInWeztermAt`（选了满的目标**明确拒绝**，不擅自换地方）。
+
+`AttachTarget.full` 是同一事实下发给前端（选择器照列但置灰，「只有一个直接开」的自动判定只数放得下的）。
+
+### 会话 → 所在屏幕
+
+归后端能力面 `TerminalBackend.locateScreens`（与 `locatePane` 同一份旁路 pane env，纯函数 `sessionScreensFromEnvs`；无枚举能力的后端空表 = 不分组）——`SessionTerminal`（id + 窗口/Tab 号 + 同窗口 tab 数）**id 格式归后端、server/web 不自拼**。
+
+数据面吃既有隐藏刷新（`daemon/terminal-topology-refresher.ts` 快照 = `{counts, terminals}`，帧键 `terminalTopology`）：`GET /sessions` 回上次快照、增量经 push 帧补丁行（web 不自算、不新开探测）；`locateScreens` 走 10s 探活缓存（展示滞后无感），而**投递路径的定位必须实时枚举**（缓存会把消息落进刚关的 pane）。
+
+web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚成一块，块位 = 首成员位置、块内保持活动序；**同屏只有一个会话不立块头**，反查不到的行不分组、原位留在块外）。
+
+### 三处「开终端类」按钮的 loading 同口径
+
+一律挂到「已进入」才收圈（会话行等该会话转绿 / 项目行等该项目终端角标上涨 / 表头「新建会话」等新会话行落进列表），闸唯一实现 = `web/src/lib/await-gate.ts`（数据一变 `poke` 一次、命中或超时放行，**不轮询、不订阅**；`fb.run` 的 loading 在途吞连点靠它撑住），超时兜底不可撤（判据探不到时宁可提前收圈）。不要再写「POST 一返回就收圈」的按钮。
+
+### 项目行「唤出终端」= 卡片弹层
+
+`POST /projects/:id/focus-terminal`。项目行的终端钮不再直接开窗——弹层列本项目已开的终端（`GET /projects/:id/terminals` 的卡片，点一张 = 切到前台）＋末尾常驻一枚「+」照旧开新终端，没有终端时只剩「+」；列表空而角标非零 = 该 preset 不能枚举已开窗口，如实说一句，不装作没有。
+
+- 唤出能力归后端（`TerminalBackend.focusTarget(dir, targetId)`，id 取自同一份卡片数据），无通道的 preset 走基类明确拒绝（409），调用方不判 preset、web 不认终端名。
+- **Windows 上抬窗口的唯一抓手 = HWND**，而终端 CLI 都不给窗口号（`wezterm cli activate-pane` 只切 mux 内部焦点、既不抬窗口也不解最小化；`set-tab-title`/`set-window-title` 不落 OS 标题；wt 只有 stdin 通道）⇒ 按「**OS 窗口标题 = 该窗口某个 pane 的标题**」认窗：
+  1. 先按进程收窄（wezterm = GUI pid，一个进程多个窗口；wt = pane pid 往上的祖先里找 `WindowsTerminal.exe`，一窗一进程）。
+  2. 再按标题消歧——**比较前先归一**（剥 spinner 字与 `[活动 tab/总数]` 前缀），**唯一命中才抬，歧义如实报错不猜**。
+  3. 抬 = `ShowWindow(SW_RESTORE)` + 接前台线程与目标线程的输入队列后 `SetForegroundWindow`（Windows 前台锁会吞掉裸调用）。
+- 这层抬窗只有 Windows 有；其他平台的 wezterm 到 `activate-pane` 为止（那边未实机验证），其余后端诚实不支持。

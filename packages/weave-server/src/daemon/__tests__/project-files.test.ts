@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -134,6 +134,50 @@ describe('buildIndex', () => {
     } finally {
       rmSync(lib, { recursive: true, force: true });
     }
+  });
+
+  it.skipIf(!hasGit)('⑥ 被 ignore 的嵌套仓照样进去列：忽略的是那个仓，不是它的文件', async () => {
+    const notes = mkdtempSync(path.join(tmpdir(), 'weave-notes-'));
+    try {
+      execFileSync('git', ['init'], { cwd: notes, stdio: 'ignore' });
+      write(notes, '00-raw/a.md');
+      commit(notes);
+      write(notes, '00-raw/untracked.md');
+      execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+      write(root, '.gitignore', '/Notes/\nscratch/\n');
+      write(root, 'm.ts');
+      commit(root);
+      cpSync(notes, path.join(root, 'Notes'), { recursive: true });
+      // 同样被忽略、但不是仓库的目录不进来
+      write(root, 'scratch/tmp.txt');
+      const idx = await buildIndex(root);
+      expect(idx.files).toEqual([
+        '.gitignore',
+        'Notes/00-raw/a.md',
+        'Notes/00-raw/untracked.md',
+        'm.ts',
+      ]);
+      expect(idx.dirs).toEqual(['Notes', 'Notes/00-raw']);
+      expect(listDirOf(idx, '').map((e) => `${e.kind}:${e.path}`)).toEqual([
+        'dir:Notes',
+        'file:.gitignore',
+        'file:m.ts',
+      ]);
+    } finally {
+      rmSync(notes, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('⑦ 没被忽略的嵌套仓（git 只给 `dir/`）一样进目录、进去列', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    commit(root);
+    mkdirSync(path.join(root, 'inner'), { recursive: true });
+    execFileSync('git', ['init'], { cwd: path.join(root, 'inner'), stdio: 'ignore' });
+    write(root, 'inner/README.md');
+    const idx = await buildIndex(root);
+    expect(idx.files).toEqual(['inner/README.md', 'm.ts']);
+    expect(idx.dirs).toEqual(['inner']);
   });
 });
 

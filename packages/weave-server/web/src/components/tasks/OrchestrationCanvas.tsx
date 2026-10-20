@@ -80,8 +80,8 @@ import { OrchestrationCronDialog } from './OrchestrationCronDialog';
  * 画布只摆**这份编排里的会话**（项目视图平铺；全局视图按项目分组、默认收起，
  * 点项目头展开）。节点上的待回计数与边上的流动来自 hook 帧域的两条帧
  * （`orchestration.run` / `orchestration.delivery`，都带全量轻量态），不轮询、
- * 不新开 EventSource。下方 = 定义编辑器（节点/连线/起始消息/定时/webhook）与
- * 统一的运行日志（可筛选、可取消、可清理）。
+ * 不新开 EventSource。定义就编辑在图上（节点/边检查器）与画布上方的工具条里；
+ * 下方是统一的运行日志（可筛选、可取消、可清理）。
  */
 
 /** 一次投递的点亮时长（边与节点同口径）。 */
@@ -782,18 +782,21 @@ export function OrchestrationCanvas({
   const [triggerText, setTriggerText] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
-  const [newEdge, setNewEdge] = useState<{ from: string; to: string; text: string }>({
-    from: '',
-    to: '',
-    text: '',
-  });
   const [edgeError, setEdgeError] = useState<string | null>(null);
+
+  /** 项目视图里起点还没落到本项目会话上（先挑了跨项目节点）。 */
+  const startMissing =
+    !!draft && !groupProjects && draft.nodes.length > 0 && !draft.startSessionId;
+  const statusText =
+    edgeError ??
+    (startMissing ? t('orch.startNeeded') : check && !check.ok ? check.error : t('orch.hint'));
+  const statusWarn = !!edgeError || startMissing || (!!check && !check.ok);
 
   /**
    * 加一条连线：自环、重边、成环、条数上限都在本地先拒（服务端同判据才是权威）。
    * 成功回新边的 id——图上拖出来的那条要立刻选中，正文就在检查器里填。
    */
-  const tryAddEdge = (from: string, to: string, text: string): string | null => {
+  const tryAddEdge = (from: string, to: string): string | null => {
     if (!draft) return null;
     if (!from || !to) {
       setEdgeError(t('orch.edgeInvalid'));
@@ -811,7 +814,7 @@ export function OrchestrationCanvas({
       setEdgeError(t('orch.edgeLimit', { max: ORCH_MAX_EDGES }));
       return null;
     }
-    const next = addEdge(draft, from, to, text);
+    const next = addEdge(draft, from, to, '');
     const cycle = findCycle(next.nodes, next.edges);
     if (cycle) {
       setEdgeError(`${t('orch.edgeCycle')}：${cycle.join(' → ')}`);
@@ -820,11 +823,6 @@ export function OrchestrationCanvas({
     setEdgeError(null);
     patch(() => next);
     return next.edges[next.edges.length - 1]?.id ?? null;
-  };
-
-  const addNewEdge = (): void => {
-    if (!tryAddEdge(newEdge.from, newEdge.to, newEdge.text.trim())) return;
-    setNewEdge({ from: '', to: '', text: '' });
   };
 
   /** 画布节点 id = `s:<sessionId>`（分组框 `g:` 不参与连线）。 */
@@ -836,7 +834,7 @@ export function OrchestrationCanvas({
     const from = sessionOfNode(c.source);
     const to = sessionOfNode(c.target);
     if (!from || !to) return;
-    const id = tryAddEdge(from, to, '');
+    const id = tryAddEdge(from, to);
     if (id) setSel({ kind: 'edge', id });
   };
 
@@ -846,15 +844,32 @@ export function OrchestrationCanvas({
     if (real) setSel({ kind: 'edge', id: real });
   };
 
+  /** 候选 = 全部受管会话（节点可跨项目，收窄到起点那一条）。 */
   const candidates = useMemo(
     () =>
       (sessions ?? []).filter((s) => {
         if (s.promptless) return false;
-        if (!groupProjects && s.projectId !== projectId) return false;
         const cap = s.harness != null ? capabilityMap.get(s.harness) : undefined;
         return !!cap?.prompt;
       }),
-    [sessions, capabilityMap, groupProjects, projectId],
+    [sessions, capabilityMap],
+  );
+
+  /** 项目视图的起点只能是本项目的会话（其余节点可跨项目）；全局不限。 */
+  const startAllowed = useCallback(
+    (sessionId: string): boolean => {
+      if (groupProjects) return true;
+      const row = sessionById.get(sessionId);
+      return row == null || row.projectId === projectId;
+    },
+    [groupProjects, sessionById, projectId],
+  );
+
+  /** 起点落到别的项目上就清空——宁可让校验拦住，也不让起点悄悄飘走。 */
+  const guardStart = useCallback(
+    (d: OrchDraft): OrchDraft =>
+      d.startSessionId && !startAllowed(d.startSessionId) ? { ...d, startSessionId: '' } : d,
+    [startAllowed],
   );
 
   const nextRunAt = useMemo(
@@ -1018,7 +1033,7 @@ export function OrchestrationCanvas({
         />
       </div>
 
-      {/* 选择 / 新建 / 触发 / 删除 */}
+      {/* 选择 / 命名 / 保存（图外的定义项都在这几条工具条上，没有单独的表单卡片） */}
       <div className="flex flex-wrap items-center gap-1.5">
         <select
           value={editing?.id != null ? String(editing.id) : '__new'}
@@ -1047,33 +1062,16 @@ export function OrchestrationCanvas({
           <Plus className="h-3 w-3" />
           {t('orch.new')}
         </button>
-        {editing && (
+        {editing && draft && (
           <>
             <input
-              value={triggerText}
-              onChange={(e) => setTriggerText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  trigger();
-                }
-              }}
-              placeholder={t('orch.triggerTextTitle')}
+              value={draft.name}
+              onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
+              placeholder={t('orch.namePlaceholder')}
+              title={t('orch.nameLabel')}
               className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
             />
-            <button
-              type="button"
-              disabled={editing.id == null || fb.stateOf('orch:trigger') === 'loading'}
-              onClick={trigger}
-              className="inline-flex items-center gap-1 rounded bg-teal-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
-            >
-              <FeedbackIcon
-                state={fb.stateOf('orch:trigger')}
-                className="h-3 w-3"
-                icon={<Zap className="h-3 w-3" />}
-              />
-              {t('orch.triggerOnce')}
-            </button>
+            {dirty && <span className="text-[10px] text-amber-400/80">{t('orch.unsaved')}</span>}
             <button
               type="button"
               disabled={!canSave}
@@ -1099,10 +1097,90 @@ export function OrchestrationCanvas({
             </button>
           </>
         )}
-        {dirty && (
-          <span className="text-[10px] text-amber-400/80">{t('orch.unsaved')}</span>
-        )}
       </div>
+
+      {/* 自动触发：起始消息 / 定时 / webhook */}
+      {editing && draft && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            value={draft.startText}
+            onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
+            placeholder={t('orch.startTextHint')}
+            title={t('orch.startTextLabel')}
+            className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => setCronOpen(true)}
+            className={cn(
+              'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
+              draft.cron
+                ? 'border-violet-400/40 bg-violet-500/10 text-violet-200'
+                : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
+            )}
+          >
+            {draft.cron ? t('orch.cronBadge', { expr: draft.cron }) : t('orch.cronSet')}
+          </button>
+          <code
+            title={t('orch.webhookHint')}
+            className="max-w-[16rem] min-w-0 shrink truncate rounded bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-400"
+          >
+            {webhookUrl ?? t('orch.endpointMissing')}
+          </code>
+          <button
+            type="button"
+            disabled={!webhookUrl}
+            onClick={copyEndpoint}
+            title={t('orch.copyEndpoint')}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+          >
+            <Copy className="h-3 w-3" />
+            {t('orch.copyEndpoint')}
+          </button>
+          {editing.id != null && (
+            <button
+              type="button"
+              disabled={fb.stateOf('orch:rotate') === 'loading'}
+              onClick={rotate}
+              title={t('orch.rotate')}
+              className="shrink-0 rounded border border-edge/[0.1] px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+            >
+              {t('orch.rotate')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 手动触发 */}
+      {editing && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            value={triggerText}
+            onChange={(e) => setTriggerText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                trigger();
+              }
+            }}
+            placeholder={t('orch.triggerTextTitle')}
+            className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+          />
+          <button
+            type="button"
+            disabled={editing.id == null || fb.stateOf('orch:trigger') === 'loading'}
+            onClick={trigger}
+            className="inline-flex items-center gap-1 rounded bg-teal-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
+          >
+            <FeedbackIcon
+              state={fb.stateOf('orch:trigger')}
+              className="h-3 w-3"
+              icon={<Zap className="h-3 w-3" />}
+            />
+            {t('orch.triggerOnce')}
+          </button>
+        </div>
+      )}
 
       {/* 画布 */}
       <div className={cn('relative h-[420px] rounded-lg border border-edge/[0.06]', tintClass)}>
@@ -1111,9 +1189,17 @@ export function OrchestrationCanvas({
             {list === null ? t('hooks.loading') : t('orch.empty')}
           </p>
         ) : draft.nodes.length === 0 ? (
-          <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
-            {t('orch.canvasEmpty')}
-          </p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-xs text-neutral-600">{t('orch.canvasEmpty')}</p>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
+            >
+              <Plus className="h-3 w-3" />
+              {t('orch.addNode')}
+            </button>
+          </div>
         ) : (
           <ReactFlow
             key={editing?.id ?? 'new'}
@@ -1133,7 +1219,10 @@ export function OrchestrationCanvas({
               if (sessionId) setSel({ kind: 'node', id: sessionId });
             }}
             onEdgeClick={(_, edge) => selectEdge(edge.id)}
-            onPaneClick={() => setSel(null)}
+            onPaneClick={() => {
+              setSel(null);
+              setEdgeError(null);
+            }}
           >
             <CanvasBackground />
             <Controls showInteractive={false} />
@@ -1156,6 +1245,19 @@ export function OrchestrationCanvas({
                 placeholder={t('orch.filterSession')}
                 className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
+              <button
+                type="button"
+                disabled={draft.nodes.length >= ORCH_MAX_NODES}
+                onClick={() => setPickerOpen(true)}
+                title={t('orch.addNode')}
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              >
+                <Plus className="h-3 w-3" />
+                {t('orch.addNode')}
+              </button>
+              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
+              </span>
               {visible != null && visible.nodes.length === 0 && (
                 <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
                   {t('orch.noMatch')}
@@ -1186,7 +1288,8 @@ export function OrchestrationCanvas({
                 <div className="flex flex-wrap items-center gap-1">
                   <button
                     type="button"
-                    disabled={selNode === draft.startSessionId}
+                    disabled={selNode === draft.startSessionId || !startAllowed(selNode)}
+                    title={startAllowed(selNode) ? undefined : t('orch.startMustBeProject')}
                     onClick={() => patch((d) => ({ ...d, startSessionId: selNode }))}
                     className="inline-flex items-center gap-1 rounded border border-teal-400/30 px-1.5 py-0.5 text-[10px] text-teal-200 transition-colors hover:bg-teal-500/10 disabled:opacity-30"
                   >
@@ -1204,7 +1307,7 @@ export function OrchestrationCanvas({
                   <button
                     type="button"
                     onClick={() => {
-                      patch((d) => removeNode(d, selNode));
+                      patch((d) => guardStart(removeNode(d, selNode)));
                       setSel(null);
                     }}
                     className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
@@ -1286,248 +1389,21 @@ export function OrchestrationCanvas({
                 </button>
               </Panel>
             )}
-            {/* 提示贴底居中：左下是缩放控件、右下是底纹设置条，别互相压。 */}
+            {/* 状态行贴底居中：连线被拒 > 起点未定 / 校验不过 > 操作提示。 */}
             <Panel position="bottom-center" className="pointer-events-none max-w-[70%]">
-              <p title={t('orch.hint')} className="min-w-0 truncate text-[10px] text-neutral-600">
-                {t('orch.hint')}
+              <p
+                title={statusText}
+                className={cn(
+                  'min-w-0 truncate text-[10px]',
+                  statusWarn ? 'text-amber-400/80' : 'text-neutral-600',
+                )}
+              >
+                {statusText}
               </p>
             </Panel>
           </ReactFlow>
         )}
       </div>
-
-      {/* 定义编辑器 */}
-      {editing && draft && (
-        <div className="space-y-2 rounded-lg border border-edge/[0.06] bg-edge/[0.015] p-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-neutral-200">{t('orch.editorTitle')}</span>
-            <span className="text-[10px] text-neutral-500">
-              {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
-            </span>
-            {check && !check.ok && (
-              <span className="text-[10px] text-amber-400/80">{check.error}</span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <input
-              value={draft.name}
-              onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
-              placeholder={t('orch.namePlaceholder')}
-              title={t('orch.nameLabel')}
-              className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-            />
-            <select
-              value={draft.startSessionId}
-              onChange={(e) => patch((d) => ({ ...d, startSessionId: e.target.value }))}
-              disabled={draft.nodes.length === 0}
-              title={t('orch.startLabel')}
-              className="max-w-[14rem] shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200 disabled:opacity-40"
-            >
-              {draft.nodes.length === 0 && <option value="">{t('orch.startPlaceholder')}</option>}
-              {draft.nodes.map((id) => (
-                <option key={id} value={id}>
-                  {sessionLabel(sessionById.get(id)?.title ?? null, id)}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setCronOpen(true)}
-              className={cn(
-                'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
-                draft.cron
-                  ? 'border-violet-400/40 bg-violet-500/10 text-violet-200'
-                  : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
-              )}
-            >
-              {draft.cron ? t('orch.cronBadge', { expr: draft.cron }) : t('orch.cronSet')}
-            </button>
-          </div>
-          <input
-            value={draft.startText}
-            onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
-            placeholder={t('orch.startTextHint')}
-            title={t('orch.startTextLabel')}
-            className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-          />
-
-          {/* webhook 端点 */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-edge/[0.05] pt-1.5">
-            <span className="text-[10px] font-medium text-neutral-400">
-              {t('orch.webhookTitle')}
-            </span>
-            <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400">
-              {webhookUrl ?? t('orch.endpointMissing')}
-            </code>
-            <button
-              type="button"
-              disabled={!webhookUrl}
-              onClick={copyEndpoint}
-              title={t('orch.copyEndpoint')}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
-            >
-              <Copy className="h-3 w-3" />
-              {t('orch.copyEndpoint')}
-            </button>
-            {editing.id != null && (
-              <button
-                type="button"
-                disabled={fb.stateOf('orch:rotate') === 'loading'}
-                onClick={rotate}
-                title={t('orch.rotate')}
-                className="shrink-0 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
-              >
-                {t('orch.rotate')}
-              </button>
-            )}
-            <span className="basis-full text-[10px] text-neutral-600">{t('orch.webhookHint')}</span>
-          </div>
-
-          {/* 节点 */}
-          <div className="flex flex-wrap items-center gap-1 border-t border-edge/[0.05] pt-1.5">
-            <span className="text-[10px] font-medium text-neutral-400">{t('orch.nodesLabel')}</span>
-            {draft.nodes.map((id) => {
-              const row = sessionById.get(id);
-              const isStart = id === draft.startSessionId;
-              return (
-                <span
-                  key={id}
-                  className={cn(
-                    'inline-flex items-center gap-0.5 rounded border px-1 text-[10px]',
-                    isStart
-                      ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
-                      : 'border-edge/[0.1] text-neutral-300',
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => patch((d) => ({ ...d, startSessionId: id }))}
-                    title={t('orch.startLabel')}
-                    className="max-w-[9rem] truncate py-0.5"
-                  >
-                    {sessionLabel(row?.title ?? null, id)}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => patch((d) => removeNode(d, id))}
-                    title={t('orch.removeNode')}
-                    aria-label={t('orch.removeNode')}
-                    className="rounded p-0.5 text-neutral-500 hover:text-red-300"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </span>
-              );
-            })}
-            <button
-              type="button"
-              disabled={draft.nodes.length >= ORCH_MAX_NODES}
-              onClick={() => setPickerOpen(true)}
-              title={t('orch.addNode')}
-              className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
-            >
-              <Plus className="h-3 w-3" />
-              {t('orch.addNode')}
-            </button>
-          </div>
-
-          {/* 连线 */}
-          <div className="space-y-1 border-t border-edge/[0.05] pt-1.5">
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="text-[10px] font-medium text-neutral-400">
-                {t('orch.edgesLabel')}
-              </span>
-              <select
-                value={newEdge.from}
-                onChange={(e) => {
-                  setEdgeError(null);
-                  setNewEdge((prev) => ({ ...prev, from: e.target.value }));
-                }}
-                title={t('orch.edgeFrom')}
-                className="max-w-[9rem] rounded border border-edge/[0.08] bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-200"
-              >
-                <option value="">{t('orch.edgeFrom')}…</option>
-                {draft.nodes.map((id) => (
-                  <option key={id} value={id}>
-                    {sessionLabel(sessionById.get(id)?.title ?? null, id)}
-                  </option>
-                ))}
-              </select>
-              <Link2 className="h-3 w-3 text-neutral-600" />
-              <select
-                value={newEdge.to}
-                onChange={(e) => {
-                  setEdgeError(null);
-                  setNewEdge((prev) => ({ ...prev, to: e.target.value }));
-                }}
-                title={t('orch.edgeTo')}
-                className="max-w-[9rem] rounded border border-edge/[0.08] bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-200"
-              >
-                <option value="">{t('orch.edgeTo')}…</option>
-                {draft.nodes.map((id) => (
-                  <option key={id} value={id}>
-                    {sessionLabel(sessionById.get(id)?.title ?? null, id)}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={newEdge.text}
-                onChange={(e) => setNewEdge((prev) => ({ ...prev, text: e.target.value }))}
-                placeholder={t('orch.edgeText')}
-                className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-              />
-              <button
-                type="button"
-                disabled={draft.edges.length >= ORCH_MAX_EDGES || !newEdge.text.trim()}
-                onClick={addNewEdge}
-                className="shrink-0 rounded bg-teal-700/80 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
-              >
-                {t('orch.addEdge')}
-              </button>
-            </div>
-            {edgeError && <p className="text-[10px] text-amber-400/80">{edgeError}</p>}
-            {draft.edges.length === 0 ? (
-              <p className="text-[10px] text-neutral-600">{t('orch.edgesLabel')} — </p>
-            ) : (
-              <ul className="space-y-1">
-                {draft.edges.map((edge) => (
-                  <li key={edge.id} className="flex flex-wrap items-center gap-1">
-                    <span className="max-w-[9rem] shrink-0 truncate text-[10px] text-neutral-300">
-                      {sessionLabel(sessionById.get(edge.from)?.title ?? null, edge.from)}
-                    </span>
-                    <Link2 className="h-2.5 w-2.5 shrink-0 text-neutral-600" />
-                    <span className="max-w-[9rem] shrink-0 truncate text-[10px] text-neutral-300">
-                      {sessionLabel(sessionById.get(edge.to)?.title ?? null, edge.to)}
-                    </span>
-                    <input
-                      value={edge.text}
-                      onChange={(e) =>
-                        patch((d) => ({
-                          ...d,
-                          edges: d.edges.map((x) =>
-                            x.id === edge.id ? { ...x, text: e.target.value } : x,
-                          ),
-                        }))
-                      }
-                      placeholder={t('orch.edgeText')}
-                      className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => patch((d) => removeEdge(d, edge.id))}
-                      title={t('orch.removeEdge')}
-                      aria-label={t('orch.removeEdge')}
-                      className="shrink-0 rounded p-0.5 text-neutral-500 transition-colors hover:bg-edge/[0.08] hover:text-red-300"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* 运行日志（统一视图：全局看全部，项目视图看该项目起的那些） */}
       <div>
@@ -1749,8 +1625,7 @@ export function OrchestrationCanvas({
           sessions={candidates}
           projects={projects}
           selected={new Set(draft.nodes)}
-          global={groupProjects}
-          onPick={(sessionId) => patch((d) => addNode(d, sessionId))}
+          onPick={(sessionId) => patch((d) => guardStart(addNode(d, sessionId)))}
           onClose={() => setPickerOpen(false)}
         />
       )}

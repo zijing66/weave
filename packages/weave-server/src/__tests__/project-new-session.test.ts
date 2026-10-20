@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createRuntimeRegistry } from '@weavecode/harness';
+import { CLAUDE_DRIVER, HarnessRegistry, createRuntimeRegistry } from '@weavecode/harness';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
@@ -19,6 +19,8 @@ describe('POST /projects/:id/new-session', () => {
   let projectPath: string;
   let projectId: number;
   let runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
+  /** 记录 runInTerminal 调用的假终端（一条 501 用例要另起一个注册表不同的服务）。 */
+  let opener: ProjectOpener;
   /** 临时项目目录清单（afterAll 统一清）。 */
   const tmpDirs: string[] = [];
 
@@ -54,7 +56,7 @@ describe('POST /projects/:id/new-session', () => {
       source: 'init',
     }).id;
     runCalls = [];
-    const opener: ProjectOpener = {
+    opener = {
       openExplorer: async () => {},
       openTerminal: async () => {},
       runInTerminal: async (dir, argv, terminal) => {
@@ -126,11 +128,35 @@ describe('POST /projects/:id/new-session', () => {
     expect(runCalls).toHaveLength(before);
   });
 
-  it('已接入但起不了交互会话（codex 无 resume 槽裸 bin）→ 501，缺省亦然', async () => {
+  it('body 指定 codex：起 codex 裸 bin（交互 resume 用不上 openArgs，起新会话不需要）', async () => {
     const id = await makeProject('codex-pick', ['codex']);
-    const before = runCalls.length;
-    expect((await post(`/projects/${id}/new-session`, { harness: 'codex' })).status).toBe(501);
-    expect((await post(`/projects/${id}/new-session`)).status).toBe(501);
-    expect(runCalls).toHaveLength(before);
+    runCalls = [];
+    const res = await post(`/projects/${id}/new-session`, { harness: 'codex' });
+    expect(res.status).toBe(200);
+    expect(runCalls.map((c) => c.argv)).toEqual([['codex']]);
+  });
+
+  it('已接入但注册表里没有该 harness（无 resume 槽）→ 501，缺省亦然', async () => {
+    const id = await makeProject('no-driver', ['codex']);
+    // 只注册 claude 的注册表：codex 在 init 选择结果里，但 weave 手里没有它的驱动。
+    const claudeOnly = new HarnessRegistry();
+    claudeOnly.register(CLAUDE_DRIVER);
+    const alt = createWeaveServer({ projects, port: 0, harnesses: claudeOnly, opener });
+    await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve));
+    const altPort = (alt.address() as { port: number }).port;
+    const postAlt = (body?: unknown): Promise<Response> =>
+      fetch(`http://127.0.0.1:${altPort}/projects/${id}/new-session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      });
+    try {
+      const before = runCalls.length;
+      expect((await postAlt({ harness: 'codex' })).status).toBe(501);
+      expect((await postAlt()).status).toBe(501);
+      expect(runCalls).toHaveLength(before);
+    } finally {
+      alt.close();
+    }
   });
 });

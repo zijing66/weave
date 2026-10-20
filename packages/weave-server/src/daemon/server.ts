@@ -488,6 +488,39 @@ async function handleRequest(
     return;
   }
 
+  // --- 唤出这个项目的某个已开终端（项目卡终端弹层：点卡片 = 切到前台）---
+  // targetId 取自 GET /projects/:id/terminals（不透明，表示法归后端）；项目不存在
+  // 404、id 缺失 400，唤不醒（pane/tab 已关、preset 无通道）一律 409 带原文。
+  const focusTermMatch = pathname.match(/^\/projects\/(\d+)\/focus-terminal$/);
+  if (focusTermMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(focusTermMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    let body: { targetId?: unknown };
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') as { targetId?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    if (typeof body.targetId !== 'string' || !body.targetId) {
+      sendJson(res, 400, { error: 'targetId must be a non-empty string' });
+      return;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    const settings = await readDaemonSettings();
+    try {
+      const focus = opener.focusTerminal ?? defaultProjectOpener.focusTerminal!;
+      await focus(project.path, body.targetId, settings.terminal);
+      sendJson(res, 200, { ok: true, targetId: body.targetId });
+    } catch (e) {
+      sendJson(res, 409, { error: e instanceof Error ? e.message : 'Cannot focus terminal' });
+    }
+    return;
+  }
+
   // --- start a new session in this project's terminal ---
   // POST /projects/:id/new-session — 落进本项目的终端：命令 = harness 裸 bin（新会话，
   // 不带 resume 参数——`openArgs` 才是 resume），落点由终端后端的复用逻辑决定
@@ -508,7 +541,8 @@ async function handleRequest(
       return;
     }
     // 起哪个 harness = 项目 init 选择结果里的；请求体指定则用它。未接入的不许起
-    // （不替用户跨配置起会话），能起交互会话的 = resume 槽有裸 bin（codex 无 → 501）。
+    // （不替用户跨配置起会话）；能起 = resume 槽有裸 bin 且宿主版本够
+    // （canStartSession，版本闸见 project-harnesses），都不行 → 501。
     const integrated = await projectHarnesses(project.path, deps.harnesses);
     if (body.harness !== undefined && !isHarness(body.harness)) {
       sendJson(res, 400, { error: 'Invalid "harness"' });
@@ -520,16 +554,14 @@ async function handleRequest(
       return;
     }
     const wanted = requested ? [requested] : integrated.map((h) => h.id);
-    const picked = wanted
-      .map((id) => ({ id, spec: deps.harnesses?.get(id)?.resume }))
-      .find((c) => c.spec?.bin);
-    if (!picked) {
+    const picked = integrated.find((h) => wanted.includes(h.id) && h.canStartSession);
+    const spec = picked ? deps.harnesses?.get(picked.id)?.resume : undefined;
+    if (!spec?.bin) {
       sendJson(res, 501, {
         error: `Harness "${wanted[0]}" cannot start an interactive session`,
       });
       return;
     }
-    const spec = picked.spec!;
     const opener = deps.opener ?? defaultProjectOpener;
     try {
       const stat = await fs.promises.stat(project.path);

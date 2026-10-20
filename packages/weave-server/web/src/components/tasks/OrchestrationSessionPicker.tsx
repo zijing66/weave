@@ -9,14 +9,13 @@ import { HarnessIcon } from './HarnessIcon';
 
 /**
  * 编排节点选择器：从受管会话里挑（候选集由调用方先按能力面与「有没有发过
- * prompt」筛过——这里只管搜索与项目定位）。加入后弹窗不关，方便连着挑几个；
- * 已在编排里的行标记为已加入，不再重复加。
+ * prompt」筛过——这里只管搜索与项目定位）。候选跨项目，故逐行标出所属项目；
+ * 加入后弹窗不关，方便连着挑几个；已在编排里的行标记为已加入，不再重复加。
  */
 export function OrchestrationSessionPicker({
   sessions,
   projects,
   selected,
-  global,
   onPick,
   onClose,
 }: {
@@ -24,8 +23,6 @@ export function OrchestrationSessionPicker({
   projects: ProjectRow[];
   /** 已在编排里的会话（不再重复加入）。 */
   selected: ReadonlySet<string>;
-  /** 全局视图：多一个项目筛选与项目名副标。 */
-  global: boolean;
   onPick: (sessionId: string) => void;
   onClose: () => void;
 }) {
@@ -96,23 +93,21 @@ export function OrchestrationSessionPicker({
             autoFocus
             className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
-          {global && (
-            <select
-              value={String(projectId)}
-              onChange={(e) =>
-                setProjectId(e.target.value === 'all' ? 'all' : Number(e.target.value))
-              }
-              title={t('orch.filterProject')}
-              className="max-w-[10rem] shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
-            >
-              <option value="all">{t('orch.pickerAllProjects')}</option>
-              {projectOptions.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <select
+            value={String(projectId)}
+            onChange={(e) =>
+              setProjectId(e.target.value === 'all' ? 'all' : Number(e.target.value))
+            }
+            title={t('orch.filterProject')}
+            className="max-w-[10rem] shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
+          >
+            <option value="all">{t('orch.pickerAllProjects')}</option>
+            {projectOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </div>
         {rows.length === 0 ? (
           <p className="py-3 text-center text-[11px] text-neutral-600">{t('orch.pickerEmpty')}</p>
@@ -142,7 +137,7 @@ export function OrchestrationSessionPicker({
                       <span className="block truncate text-xs text-neutral-200">
                         {sessionLabel(s.title, s.sessionId)}
                       </span>
-                      {global && s.projectId != null && (
+                      {s.projectId != null && (
                         <span className="block truncate text-[10px] text-neutral-500">
                           {projectName.get(s.projectId) ?? `#${s.projectId}`}
                         </span>

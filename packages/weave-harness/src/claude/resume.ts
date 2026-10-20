@@ -15,4 +15,7 @@ export const CLAUDE_RESUME: ResumeCommandSpec = {
   promptStdin: true,
   // 交互式打开：无 -p，进终端后由用户继续对话。
   openArgs: (sessionId) => ['--resume', sessionId],
+  // weave 的 claude 集成（hook 面 / 阻塞问答键序 / 计划正文）都按 2.1.287 起的
+  // 宿主任约写，低于它的不接新会话（UI 置灰并报出实际版本）。
+  minVersion: '2.1.287',
 };

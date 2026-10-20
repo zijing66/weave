@@ -68,7 +68,8 @@ const deliverer = (opts: { status?: PipeStatus; reject?: string; offline?: strin
     };
     return { ok: true, messageId: msg.id, status, message: msg };
   });
-  return { send };
+  const awaitInboxReady = vi.fn(async () => true);
+  return { send, awaitInboxReady };
 };
 
 const setup = (
@@ -254,6 +255,7 @@ describe('失败路径', () => {
     const result = await engine.start(fanOut(), 'manual');
     expect(ensureOpen).toHaveBeenCalledWith('a');
     expect(d.send).not.toHaveBeenCalled();
+    expect(d.awaitInboxReady).not.toHaveBeenCalled();
     expect(runs.getById((result as { runId: number }).runId)!.state.events[0]!.error).toContain(
       'resume unsupported',
     );
@@ -265,6 +267,25 @@ describe('失败路径', () => {
     await engine.start(fanOut(), 'manual');
     expect(ensureOpen).not.toHaveBeenCalled();
     expect(d.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('冷启动拉起的会话：等它的 inbox 凭据就位再投', async () => {
+    const { d, engine } = setup({ liveness: new Map([['a', false]]) });
+    sessions.touch('a', projectId);
+    const result = await engine.start(fanOut(), 'manual');
+    expect(d.awaitInboxReady).toHaveBeenCalledWith('a', expect.any(Number));
+    expect(d.awaitInboxReady.mock.invocationCallOrder[0]!).toBeLessThan(
+      d.send.mock.invocationCallOrder[0]!,
+    );
+    expect(d.send).toHaveBeenCalledTimes(1);
+    expect(runs.getById((result as { runId: number }).runId)!.deliveries).toBe(1);
+  });
+
+  it('活着的会话不白等凭据', async () => {
+    const { d, engine } = setup({ liveness: new Map([['a', true]]) });
+    sessions.touch('a', projectId);
+    await engine.start(fanOut(), 'manual');
+    expect(d.awaitInboxReady).not.toHaveBeenCalled();
   });
 
   it('投递预算：到顶即 failed（环路兜底）', async () => {

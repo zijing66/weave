@@ -12,8 +12,11 @@
 > - 凭据上报：hook 脚本（`capture.ts` 生成，env 名取自同一规格）把
 >   `{socket, token}` 写进 inbox 行**旁路字段** → worker 交给主线程注册表
 >   （**不进 payload、不落库、不进 UI、不写日志**；唯一落盘处见下「凭据落盘」）。
-> - 分派：手动面（`oneWay`）socket 优先 → 失败回落中继 → 终端 → 队列；
->   编排域仍先走中继（保留 `Message from @weave` 来源语义）。
+> - 分派：**两域都 socket 优先** → 失败回落中继 → 终端 → 队列；手动面由
+>   `forceTerminal` 排除在直投之外（它要的是用户权威，见 CLAUDE.md「socket ≠ 用户权威」）。
+> - **编排域接入（2026-10-20）**：编排投递若把目标会话从冷启动拉起来，凭据要等它随
+>   首个 hook 事件上报——引擎在 `ensureOpen` 之后调 `MessageDeliverer.awaitInboxReady`
+>   等这一小会儿（只等自己拉起来的，活着的会话没凭据时等到天荒地老也不会来）。
 > - 回执：会话自己的 `UserPromptSubmit`（`payload.raw.prompt`）与在途条目匹配
 >   （剥掉 `<cross-session-message …>` 外壳后比对）→ `acked` + `message.acknowledged` 帧。
 >

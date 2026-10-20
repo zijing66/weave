@@ -28,7 +28,8 @@ import {
  * 消息域投递器（消息域重塑：纯递送管道，非记录系统）——消息不落任何 DB 行，
  * 唯一归宿是目标会话自己的转录；weave 仅投递前短暂持有：
  *
- *   prompt  → 层① 原生 peer 消息中继（claude SendMessage，经受限 headless 进程）
+ *   prompt  → 层①-a 会话本地 inbox socket 直投（harness 声明才可用；手动面排除）
+ *             层① 原生 peer 消息中继（claude SendMessage，经受限 headless 进程）
  *             层② 终端 send-text 兜底（无原生机制的 harness；TerminalBackend 通道）
  *             层③ promptbox 队列（`<dataDir>/hooks/promptbox/<shard>.jsonl`，送达即删行）
  *   inject  → outbox 顺延注入（fire-and-forget，随目标会话下一拍 hook 事件送达）
@@ -248,6 +249,9 @@ const ACK_STALL_RELEASE_MS = 10 * 60_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
+
+/** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
+const INBOX_READY_POLL_MS = 250;
 
 /** 判死落定时的技术性成因（用户可见的中文说明在 web，经 `reason` 标记译出）。 */
 const OFFLINE_ERROR = 'Session is not running';
@@ -588,6 +592,27 @@ export class MessageDeliverer {
    */
   noteInboxSocket(sessionId: string, target: { socket: string; token: string | null } | null): void {
     this.inboxSockets.set(sessionId, target);
+  }
+
+  /**
+   * 等会话的 inbox 凭据就位（投递方刚把会话拉起来时用）：凭据由会话自己的 hook
+   * 进程随首个事件旁路上报，故按内存态轮询、到点即放弃。**只问有没有、不真连**
+   * ——连不连得上由 `tryInboxDeliver` 现试现回落。机制缺席（无 `promptInbox`）或
+   * 该平台要求 token 而凭据里没有 → 立刻 false，白等没有意义。
+   */
+  async awaitInboxReady(sessionId: string, timeoutMs: number): Promise<boolean> {
+    const spec = this.surfaceOfSession(sessionId)?.promptInbox ?? null;
+    if (!spec) return false;
+    const ready = (): boolean => {
+      const target = this.inboxSockets.get(sessionId);
+      return !!target && (!spec.requiresAuthOn(process.platform) || !!target.token);
+    };
+    const deadline = Date.now() + timeoutMs;
+    while (!ready()) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, INBOX_READY_POLL_MS));
+    }
+    return true;
   }
 
   /**
@@ -1404,8 +1429,8 @@ export class MessageDeliverer {
     }
     // 层①-a 会话本地收件箱直投（毫秒级、零进程零 LLM）：**机制由 harness 声明**
     // （`surface.promptInbox`；claude = inbox socket，其他 harness = null 即完全不尝试），
-    // 目标地址由 hook 旁路上报。**手动面（oneWay）优先**——它把消息当用户 prompt
-    // 注入（无回复面）；编排域先走中继（那里才带 @weave 身份）。
+    // 目标地址由 hook 旁路上报。两域都排第一；手动面由 `forceTerminal` 排除在外
+    // （直投在宿主眼里是「另一个会话发的」，人工对话要的是用户权威）。
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
     // 带图消息层② 优先：只有 bracketed paste 能把绝对路径转成 `[Image #N]` + 真 image
     // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
@@ -1466,14 +1491,14 @@ export class MessageDeliverer {
   }
 
   /**
-   * 层①-a 直投尝试：成功返回落定后的内存行；回落（无面 / 非手动 / 无目标 / 写失败）
+   * 层①-a 直投尝试：成功返回落定后的内存行；回落（无面 / 无目标 / 强制终端 / 写失败）
    * 返回 null。**队列冲洗也走它**——冲洗恰好由「刚上报凭据的那条 hook 事件」触发，
    * 命中率最高；队列绕过它直奔中继，手动面就会凭空多出跨会话包裹与英文注记。
    */
   private async tryInboxDeliver(entry: PipeMessage, surface: MessagingSurface): Promise<PipeMessage | null> {
     const spec = surface.promptInbox;
     const target = this.inboxSockets.get(entry.sessionId);
-    if (!spec || entry.oneWay !== true || !target || entry.forceTerminal === true) return null;
+    if (!spec || !target || entry.forceTerminal === true) return null;
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
     try {
       await deliverViaInboxSocket(spec, target, this.wireTextOf(entry));

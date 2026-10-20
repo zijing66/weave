@@ -775,6 +775,33 @@ describe('MessageDeliverer 裁决表', () => {
     inbox.close();
   });
 
+  it('awaitInboxReady：无凭据到点 false，凭据在手 true，机制缺席立刻 false', async () => {
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
+    pushEvent(SESSION_ID, 'Stop');
+    await expect(deliverer.awaitInboxReady(SESSION_ID, 0)).resolves.toBe(false);
+
+    deliverer.noteInboxSocket(SESSION_ID, { socket: uniqueInboxPath(), token: 'tok' });
+    await expect(deliverer.awaitInboxReady(SESSION_ID, 1_000)).resolves.toBe(true);
+
+    const noInbox = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => ({ ...surface, promptInbox: null }) }),
+    );
+    noInbox.noteInboxSocket(SESSION_ID, { socket: uniqueInboxPath(), token: 'tok' });
+    await expect(noInbox.awaitInboxReady(SESSION_ID, 1_000)).resolves.toBe(false);
+  });
+
+  it('awaitInboxReady：等的那会儿凭据才上报（刚拉起的会话）→ 放行', async () => {
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
+    pushEvent(SESSION_ID, 'Stop');
+    const waiting = deliverer.awaitInboxReady(SESSION_ID, 3_000);
+    setTimeout(() => {
+      deliverer.noteInboxSocket(SESSION_ID, { socket: uniqueInboxPath(), token: 'tok' });
+    }, 20);
+    await expect(waiting).resolves.toBe(true);
+  });
+
   it('层①-a 凭据落盘：daemon 重启（新投递器，内存空）后仍直投，不回落中继/终端', async () => {
     const path = uniqueInboxPath();
     let got = '';
@@ -998,7 +1025,7 @@ describe('MessageDeliverer 裁决表', () => {
     expect(sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('层序随面变：编排域（非 oneWay）有终端通道仍先走中继', async () => {
+  it('层序随面变：编排域（非 oneWay）无 inbox 凭据时，中继先于终端', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const fake = createFakeSpawn();
     const sendText = vi.fn().mockResolvedValue(undefined);
@@ -1089,7 +1116,7 @@ describe('MessageDeliverer 裁决表', () => {
     inbox.close();
   });
 
-  it('编排域（非 oneWay）即使有 inbox 目标也先走中继——保留 @weave 身份', async () => {
+  it('编排域（非 oneWay）有 inbox 目标即直投——层①-a 排在中继之前', async () => {
     const path = uniqueInboxPath();
     let got = '';
     const inbox = await fakeInboxAt(path, (t) => {
@@ -1109,12 +1136,12 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
     });
-    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls).toHaveLength(0);
     expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
-      via: 'relay',
+      status: 'delivered',
+      via: 'socket',
     });
-    await new Promise((r) => setTimeout(r, 30));
-    expect(got).toBe('');
+    await vi.waitFor(() => expect(got).toContain('orchestration step'));
     inbox.close();
   });
 

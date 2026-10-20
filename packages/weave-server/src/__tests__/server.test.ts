@@ -353,3 +353,76 @@ describe('daemon server 项目关终端（多选：/panes 列表 + /close-termin
     ).toBe(404);
   });
 });
+
+describe('daemon server 项目唤出终端（/focus-terminal）', () => {
+  let db: DatabaseSync;
+  let server: Server;
+  let port: number;
+  let ids: number[];
+  /** spy opener：唤出走注入缝，不进真探测。 */
+  let focused: [string, string][] = [];
+  let focusError: string | null = null;
+
+  const post = (url: string, body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${port}${url}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  beforeAll(async () => {
+    db = openDatabase(':memory:');
+    setDaemonSettingsDb(db);
+    await writeDaemonSettings({
+      terminal: { preset: 'wezterm', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
+    const projects = new ProjectRepository(db);
+    ids = [projects.register({ path: '/focus-a', name: 'a', token: 'fa', source: 'init' }).id];
+    const opener: ProjectOpener = {
+      openExplorer: async () => {},
+      openTerminal: async () => {},
+      runInTerminal: async () => {},
+      focusTerminal: async (dir, targetId) => {
+        if (focusError) throw new Error(focusError);
+        focused.push([dir, targetId]);
+      },
+    };
+    server = createWeaveServer({ projects, port: 0, opener });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    server.close();
+    setDaemonSettingsDb(null);
+    db.close();
+  });
+
+  it('把项目 dir 与 targetId 原样交给后端唤出；未知项目 404、targetId 缺失/空/非串 400', async () => {
+    focused = [];
+    const res = await post(`/projects/${ids[0]!}/focus-terminal`, { targetId: 'deadbeef:1:2' });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { ok: boolean }).toMatchObject({ ok: true });
+    // 项目路径注册时被 win32 规整成反斜杠形态：断言按同口径取
+    expect(focused).toEqual([[expect.stringContaining('focus-a'), 'deadbeef:1:2']]);
+
+    for (const body of [{}, { targetId: '' }, { targetId: 7 }]) {
+      expect((await post(`/projects/${ids[0]!}/focus-terminal`, body)).status).toBe(400);
+    }
+    expect((await post('/projects/9999/focus-terminal', { targetId: 'x' })).status).toBe(404);
+    expect(focused).toHaveLength(1);
+  });
+
+  it('唤不醒（终端已关 / preset 没这条通道）→ 409 带原文', async () => {
+    focusError = 'Terminal preset "wt" cannot bring an open terminal to the front';
+    try {
+      const res = await post(`/projects/${ids[0]!}/focus-terminal`, { targetId: 'deadbeef:1:2' });
+      expect(res.status).toBe(409);
+      expect((await res.json()) as { error: string }).toEqual({ error: focusError });
+    } finally {
+      focusError = null;
+    }
+  });
+});

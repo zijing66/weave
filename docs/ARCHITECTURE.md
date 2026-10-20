@@ -1,7 +1,7 @@
 # weave 架构总览
 
 > 本文是**当前态**架构速览，四图走完：包分层 → 能力槽装配 → 运行时拓扑 → 工具对象模型与资源三层。
-> 行为硬约束见仓库 `CLAUDE.md` 的 Architecture 节；各改造批次的拍板与实施记录在 `docs/plan/`（总纲：`template-method-harness-refactor.md`）。
+> 行为硬约束见仓库 `CLAUDE.md` 的 Architecture 节；那里的每条规则对应的机制细节见 `docs/ARCHITECTURE-DETAIL.md`；各改造批次的拍板与实施记录在 `docs/plan/`（总纲：`template-method-harness-refactor.md`）。
 > 图随代码演进：改架构须同步改图。
 
 ## 一、包结构与依赖

@@ -74,11 +74,42 @@ async function gitlinksOf(root: string): Promise<string[]> {
   return staged.filter((l) => l.startsWith('160000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
 }
 
+/** 该目录是不是一个仓库的根（`.git` 目录 = 普通仓，`.git` 文件 = worktree / 子模块）。 */
+function hasGitDir(dir: string): Promise<boolean> {
+  return lstat(path.join(dir, '.git')).then(
+    () => true,
+    () => false,
+  );
+}
+
 /**
- * git 索引 + **子模块里的索引**：git 只给子模块一个 gitlink，里面的文件得各自进去
+ * 被 ignore 的目录里也可能立着独立仓库（Obsidian 库 / 独立笔记仓）：外层 git 只给一条
+ * 折叠后的 `Notes/`，里面的文件同样得各自进去列一遍（同子模块口径）。只认真有 `.git`
+ * 的——`.trash`、`.obsidian/.tmp` 这类被忽略目录照旧不进来；而 `--directory` 折叠到最
+ * 外层忽略目录，`node_modules` 里夹着的杂仓也不会被翻出来。
+ */
+async function ignoredReposOf(root: string): Promise<string[]> {
+  const listed = await gitLsFiles(root, [
+    '--others',
+    '--ignored',
+    '--exclude-standard',
+    '--directory',
+  ]);
+  const out: string[] = [];
+  for (const p of listed ?? []) {
+    if (!p.endsWith('/')) continue;
+    const dir = p.slice(0, -1);
+    if (await hasGitDir(path.join(root, dir))) out.push(dir);
+  }
+  return out;
+}
+
+/**
+ * git 索引 + **仓库边界里的索引**：git 只给仓库边界一个名字，里面的文件得各自进去
  * 列一遍（`--recurse-submodules` 只认 `--cached`/`--stage`，给不了 `--others`，
- * 子模块里刚建还没 add 的文件正是最想引用的那种）。`.gitmodules` 不在列就一次
- * 额外的 git 都不起。
+ * 里面刚建还没 add 的文件正是最想引用的那种）。边界有三种同形的来源——子模块的
+ * gitlink、未跟踪的嵌套仓（`--others` 给 `dir/`）、被 ignore 的嵌套仓。前后两种
+ * 都是「用户的另一个仓」，不是「该被忽略的文件」，故一律进去列。
  */
 async function listViaGit(
   root: string,
@@ -86,15 +117,19 @@ async function listViaGit(
 ): Promise<{ files: string[]; links: string[] } | null> {
   const listed = await gitLsFiles(root, ['--cached', '--others', '--exclude-standard']);
   if (!listed) return null;
-  const sub = listed.includes('.gitmodules') ? await gitlinksOf(root) : [];
-  // gitlink 自身不是文件——它由 links 当目录给出，留在 files 里会让同一行出现两次
-  const files = listed.filter((f) => !sub.includes(f)).map((f) => prefix + f);
-  const links = sub.map((p) => prefix + p);
-  for (const p of sub) {
+  const nested = new Set<string>();
+  // `.gitmodules` 不在列就一次额外的 git 都不起
+  if (listed.includes('.gitmodules')) for (const p of await gitlinksOf(root)) nested.add(p);
+  for (const p of listed) if (p.endsWith('/')) nested.add(p.slice(0, -1));
+  for (const p of await ignoredReposOf(root)) nested.add(p);
+  // 边界自身不是文件——它由 links 当目录给出，留在 files 里会让同一行出现两次
+  const files = listed.filter((f) => !f.endsWith('/') && !nested.has(f)).map((f) => prefix + f);
+  const links = [...nested].map((p) => prefix + p);
+  for (const p of nested) {
     const dir = path.join(root, p);
     // 没克隆的子模块（工作区里没有 `.git`）别去问 git：那样的空目录里 `ls-files`
     // 会一路上溯找到外层仓库，把外层文件挂到子模块名下
-    if (!(await lstat(path.join(dir, '.git')).then(() => true, () => false))) continue;
+    if (!(await hasGitDir(dir))) continue;
     const inner = await listViaGit(dir, `${prefix}${p}/`);
     if (!inner) continue;
     files.push(...inner.files);

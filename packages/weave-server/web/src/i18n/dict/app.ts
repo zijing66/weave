@@ -40,6 +40,8 @@ export const appZh = {
   'project.openInTerminal': '在终端中打开',
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
+  'project.terminalMenu': '唤出或新开终端',
+  'project.terminalListUnavailable': '当前终端不支持列出已开窗口——只能新开一个',
   'project.closeTerminal': '关闭该项目的 {n} 个终端',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
@@ -102,6 +104,8 @@ export const appZh = {
   'errors.pluginToggleFailed': '插件启用状态更新失败：{error}',
   'errors.openFailed': '打开失败：{error}',
   'errors.closeTerminalFailed': '关闭终端失败：{error}',
+  'errors.listTerminalsFailed': '读取已开终端失败：{error}',
+  'errors.focusTerminalFailed': '唤出终端失败：{error}',
 };
 
 export const appEn: Record<keyof typeof appZh, string> = {
@@ -145,6 +149,9 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInTerminal': 'Open in terminal',
   'project.dragToReorder': 'Drag to reorder',
   'project.terminalsOpen': '{n} terminal(s) open',
+  'project.terminalMenu': 'Bring a terminal up or open a new one',
+  'project.terminalListUnavailable':
+    "This terminal preset can't list open windows — open a new one instead",
   'project.closeTerminal': "Close this project's {n} terminal(s)",
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
@@ -206,4 +213,6 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'errors.pluginToggleFailed': 'Plugin toggle failed: {error}',
   'errors.openFailed': 'Open failed: {error}',
   'errors.closeTerminalFailed': 'Close terminal failed: {error}',
+  'errors.listTerminalsFailed': 'Reading open terminals failed: {error}',
+  'errors.focusTerminalFailed': 'Bringing the terminal to the front failed: {error}',
 };
