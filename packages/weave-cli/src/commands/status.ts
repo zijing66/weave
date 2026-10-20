@@ -123,7 +123,7 @@ export const statusCommand: Command = {
     entries.push(await surfaceRow('settings.json', `${baseDir}/settings.json`, targetDir));
     entries.push(await surfaceRow('.mcp.json', '.mcp.json', targetDir));
     entries.push(await surfaceRow('helpers', `${baseDir}/helpers`, targetDir));
-    const baseSkills = baseSurface?.projectSkillsDir() ?? `${baseDir}/skills`;
+    const baseSkills = baseSurface?.projectSkillsRoots()[0] ?? `${baseDir}/skills`;
     entries.push(await surfaceRow(path.posix.basename(baseSkills), baseSkills, targetDir));
     const baseCategories: readonly (readonly [string, FileAssetCategory])[] = [
       ['commands', 'command'],
@@ -135,7 +135,7 @@ export const statusCommand: Command = {
     }
     for (const h of detected) {
       if (h === base) continue;
-      const rel = reg.get(h)?.assets?.projectSkillsDir() ?? `${HARNESS_DIRS[h].projectDir}/skills`;
+      const rel = reg.get(h)?.assets?.projectSkillsRoots()[0] ?? `${HARNESS_DIRS[h].projectDir}/skills`;
       entries.push(await surfaceRow(rel, rel, targetDir));
     }
 

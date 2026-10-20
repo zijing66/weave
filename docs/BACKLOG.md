@@ -145,6 +145,7 @@ ccstatusline 本身不做 powerline 之外的事时的结构也值得知道：�
 ### 已修（本轮）
 - ~~`command.codexUserDir: '.codex/prompts'`~~：Codex 已删除 custom prompts（`custom_prompts.rs` 在 `rust-v0.44.0` 存在、`rust-v0.120.0` 已无），该目录无人读取。
 - ~~Codex 用户级 skills 读写 `~/.codex/skills`~~：Codex 的 `host_roots.rs` 注释其为 "Deprecated user skills location"；现写入改为 `~/.agents/skills`，读取同时兼容旧位置（当前位置优先）。
+- ~~Codex **项目级** skills 只在 `.codex/skills`~~：Codex 0.162.1 实测项目内**两处都读**（`.codex/skills` + `.agents/skills`，后者是生态共用约定——`npx skills` 一类工具铺在那儿，见 vercel-labs/skills 的 `docs/agents.md` 落点表）。现 `AssetSurface.projectSkillsRoots()` 复数化：`[0]` 仍是安装落点，其后只读共用根纳入冲突判定 / 卸载 / 分类 / 观测集。探针 = `codex debug prompt-input`（免登录打印模型可见的 skill roots 表，注意本机 bash 的 `$HOME` 是网络家目录，须显式用 Windows 家目录）。
 
 ### 待做
 

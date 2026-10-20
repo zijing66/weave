@@ -59,6 +59,7 @@ import {
   GitBranch,
   Puzzle,
   Download,
+  Check,
 } from 'lucide-react';
 
 /** 路径归一（反斜杠 → posix）：市场包 dirPath 与 toolkit pack.dir 的匹配键。 */
@@ -72,6 +73,12 @@ interface LibraryPanelProps {
   installedSkillNames: Set<string>;
   /** Click-to-install fallback (drag is the primary interaction). */
   onInstallSkill: (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => void;
+  /** 批量安装：逐条装、返回没装上的那些（失败的留在勾选集里）。 */
+  onInstallSkills: (
+    skills: SkillAsset[],
+    scope: AssetScope,
+    agent: AssetAgent,
+  ) => Promise<SkillAsset[]>;
   onInstallFileAsset: (file: FileAssetTemplate, scope: AssetScope) => void;
   onInstallMcp: (name: string, config: McpServerConfig, scope: AssetScope, agent?: AssetAgent) => void;
   updates: UpdateReport | null;
@@ -98,6 +105,7 @@ interface LibraryPanelProps {
 export function LibraryPanel({
   installedSkillNames,
   onInstallSkill,
+  onInstallSkills,
   onInstallFileAsset,
   onInstallMcp,
   updates,
@@ -152,6 +160,43 @@ export function LibraryPanel({
   const reasonTitle = (v: InstallVerdict): string | undefined =>
     v.ok || !v.reasonKey ? undefined : t(v.reasonKey);
 
+  // --- 批量选择（键 = dirPath：同一库里 skill 名不保证唯一） ---
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** 可勾的行 = 还没装 + 当前目标可装（装过的行只显示「已安装」标）。 */
+  const pickable = (s: SkillAsset): boolean =>
+    skillVerdict.ok && !installedSkillNames.has(s.name);
+  const pickedSkills = skills.filter((s) => picked.has(s.dirPath) && pickable(s));
+  const togglePick = (dirPath: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(dirPath)) next.delete(dirPath);
+      else next.add(dirPath);
+      return next;
+    });
+  const batchInstalling = fb.stateOf('lib-batch-install') === 'loading';
+  const runBatchInstall = () => {
+    const list = pickedSkills;
+    if (list.length === 0) return;
+    void fb.run(
+      'lib-batch-install',
+      async () => {
+        const failed = await onInstallSkills(list, scope, installAgent);
+        // 装上的行会随刷新变成「已安装」自动退出勾选面，只留失败的让人改完再点
+        setPicked(new Set(failed.map((s) => s.dirPath)));
+        const ok = list.length - failed.length;
+        show(
+          failed.length === 0 ? 'success' : 'error',
+          t(failed.length === 0 ? 'library.batchInstalled' : 'library.batchPartial', {
+            ok,
+            failed: failed.length,
+            names: failed.map((s) => s.name).join('、'),
+          }),
+        );
+      },
+      { fail: (e) => t('errors.installFailed', { error: errorText(e) }) },
+    );
+  };
+
   const refreshMarket = useCallback(
     () => api.listMarket().then(setMarket).catch((e) => setError(String(e))),
     [],
@@ -169,6 +214,7 @@ export function LibraryPanel({
   );
 
   useEffect(() => {
+    setPicked(new Set()); // 换库＝换一批 skill，勾选作废
     if (selectedId === null) {
       setSkills([]);
       setFileTemplates([]);
@@ -347,8 +393,7 @@ export function LibraryPanel({
   }
 
   // Per-group (skills/ directory) collapse in the Skill templates list.
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const toggleGroup = (key: string) =>
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());  const toggleGroup = (key: string) =>
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -680,6 +725,47 @@ export function LibraryPanel({
               scope={scope}
               capabilities={capabilities}
             />
+            {/* 批量条：勾了才出现，贴在这块滚动区的底边，选在列表深处也够得着 */}
+            {pickedSkills.length > 0 && (
+              <div className="sticky bottom-0 z-10 flex items-center gap-2 rounded-lg border border-edge/[0.08] bg-neutral-900/95 px-2 py-1.5 backdrop-blur">
+                <span className="text-[11px] text-neutral-300">
+                  {t('library.batchPicked', { n: pickedSkills.length })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPicked(new Set(skills.filter(pickable).map((s) => s.dirPath)))
+                  }
+                  className="text-[11px] text-neutral-500 hover:text-neutral-300"
+                  title={t('library.selectAllTip')}
+                >
+                  {t('library.selectAll')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked(new Set())}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-300"
+                >
+                  {t('library.clearPicked')}
+                </button>
+                <button
+                  type="button"
+                  disabled={batchInstalling || !skillVerdict.ok}
+                  onClick={runBatchInstall}
+                  title={reasonTitle(skillVerdict)}
+                  className="ml-auto inline-flex items-center gap-1 rounded bg-blue-900/40 px-2 py-0.5 text-[11px] text-blue-300 hover:bg-blue-900/60 disabled:opacity-40 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf('lib-batch-install')}
+                    className="h-3 w-3"
+                    icon={<Download className="h-3 w-3" />}
+                  />
+                  {batchInstalling
+                    ? t('library.installing')
+                    : t('library.batchInstall', { n: pickedSkills.length })}
+                </button>
+              </div>
+            )}
             {groupSkills(skills).map(([group, items]) => {
               const key = group || '__root__';
               const collapsed = collapsedGroups.has(key);
@@ -730,6 +816,9 @@ export function LibraryPanel({
                           onInstall={() => onInstallSkill(s, scope, installAgent)}
                           installDisabled={!skillVerdict.ok}
                           installReason={reasonTitle(skillVerdict)}
+                          canPick={pickable(s)}
+                          picked={picked.has(s.dirPath)}
+                          onTogglePick={() => togglePick(s.dirPath)}
                         />
                       ))}
                     </div>
@@ -1466,6 +1555,9 @@ function DraggableSkill({
   onInstall,
   installDisabled,
   installReason,
+  canPick,
+  picked,
+  onTogglePick,
 }: {
   skill: SkillAsset;
   /** Unified drag payload (attrs via capabilitiesOf — built by the caller). */
@@ -1475,6 +1567,10 @@ function DraggableSkill({
   /** 点击安装前置禁用（capabilities 谓词；拖拽判定见 App onDragEnd guard）。 */
   installDisabled?: boolean;
   installReason?: string;
+  /** 可批量勾选（未安装且当前目标可装）；false 时行上不出现勾选框。 */
+  canPick?: boolean;
+  picked?: boolean;
+  onTogglePick?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `lib-skill-${skill.name}`,
@@ -1503,6 +1599,26 @@ function DraggableSkill({
       title={skill.dirPath}
     >
       <GripVertical className="h-3 w-3 shrink-0 text-neutral-600" />
+      {canPick && (
+        <button
+          type="button"
+          aria-pressed={picked}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePick?.();
+          }}
+          title={picked ? t('library.unpick') : t('library.pick')}
+          className={cn(
+            'shrink-0 h-3.5 w-3.5 rounded border flex items-center justify-center [&_svg]:pointer-events-none',
+            picked
+              ? 'border-blue-500 bg-blue-600 text-white'
+              : 'border-neutral-600 text-transparent hover:border-neutral-400',
+          )}
+        >
+          <Check className="h-2.5 w-2.5" />
+        </button>
+      )}
       <span className="truncate">{skill.name}</span>
       {installed ? (
         <Badge variant="skill" className="ml-auto">

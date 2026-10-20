@@ -10,7 +10,13 @@ import { assetSurfaces } from '../surfaces.js';
 export function classifyAsset(relPath: string): AssetCategory {
   const p = normalizeRelPath(relPath);
   if (p === '.mcp.json') return 'mcp';
-  if (p.startsWith('.claude/skills/') || p.startsWith('.codex/skills/')) return 'skill';
+  if (
+    p.startsWith('.claude/skills/') ||
+    p.startsWith('.codex/skills/') ||
+    p.startsWith('.agents/skills/')
+  ) {
+    return 'skill';
+  }
   if (p === '.claude/settings.json' || p === '.claude/settings.local.json') return 'settings';
   if (p === '.codex/config.toml') return 'settings';
   if (p.startsWith('.claude/commands/') || p.startsWith('.codex/prompts/')) return 'command';

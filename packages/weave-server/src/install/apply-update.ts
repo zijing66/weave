@@ -62,7 +62,7 @@ export async function applyUpdate(
           // ~/.codex/skills 是批 4a 欠账）
           assetSurfaceFor(agent).globalSkillsRoots(homedir())[0]
         : // 项目根同经 surface 取（原写死 `.codex`/`.claude` 二分）
-          path.join(projectPath, ...assetSurfaceFor(agent).projectSkillsDir().split('/'));
+          path.join(projectPath, ...assetSurfaceFor(agent).projectSkillsRoots()[0].split('/'));
     const targetDir = path.join(skillsRoot, input.name);
     await rm(targetDir, { recursive: true, force: true });
     await cp(src.dirPath, targetDir, { recursive: true });

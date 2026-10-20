@@ -201,8 +201,8 @@ async function buildFilePlan(projectPath: string, pack: ToolkitPack): Promise<Fi
   if (pack.skills.length > 0) {
     for (const harness of pack.targets) {
       if (harness === 'claude' && isCcPluginPack(pack)) continue; // CC 插件（含 mods）由全局安装覆盖
-      // 批 4a：skills 表面单一事实源 = AssetSurface.projectSkillsDir()
-      const skillsBase = assetSurfaceFor(harness).projectSkillsDir();
+      // 批 4a：skills 表面单一事实源 = AssetSurface.projectSkillsRoots()（[0] = 落点）
+      const skillsBase = assetSurfaceFor(harness).projectSkillsRoots()[0];
       for (const skill of pack.skills) {
         const files: Array<{ rel: string; abs: string }> = [];
         await walkFiles(path.join(pack.dir, 'skills', skill), '', files);

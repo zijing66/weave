@@ -47,9 +47,9 @@ describe('targetDir — Codex 表面', () => {
 });
 
 describe('skills / 配置路径', () => {
-  it('project skills 目录', () => {
-    expect(CLAUDE_ASSETS.projectSkillsDir()).toBe('.claude/skills');
-    expect(CODEX_ASSETS.projectSkillsDir()).toBe('.codex/skills');
+  it('project skills 根：[0] = 安装落点，Codex 多一个生态共用只读根', () => {
+    expect(CLAUDE_ASSETS.projectSkillsRoots()).toEqual(['.claude/skills']);
+    expect(CODEX_ASSETS.projectSkillsRoots()).toEqual(['.codex/skills', '.agents/skills']);
   });
 
   it('global skills 根：Claude 单根；Codex current 在前、legacy 在后', () => {
@@ -79,6 +79,7 @@ describe('classify — 路径归属（同 classifyAgent 逐例）', () => {
     ['docs/AGENTS.md', 'codex'],
     ['.codex/config.toml', 'codex'],
     ['.codex/AGENTS.md', 'codex'],
+    ['.agents/skills/foo/SKILL.md', 'codex'],
     ['.claude/commands/review.md', 'claude'],
     ['README.md', 'claude'], // 无人认领 → server 默认 claude
   ] as const)('%s → %s', (relPath, expected) => {
@@ -102,6 +103,7 @@ describe('ignore — watch 观测集（同 shouldIgnore 逐例）', () => {
     ['.claude', false],
     ['.claude/skills/foo/SKILL.md', false],
     ['.codex/config.toml', false],
+    ['.agents/skills/foo/SKILL.md', false],
     ['AGENTS.md', false],
     ['CLAUDE.md', false],
     ['.weave/token', false],

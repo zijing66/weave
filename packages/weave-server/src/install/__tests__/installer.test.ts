@@ -63,6 +63,21 @@ describe('installer — skill', () => {
   it('rejects path-traversal names', async () => {
     await expect(installSkill(project, source, '../escape')).rejects.toThrow();
   });
+
+  it('codex 共用根 `.agents/skills` 里的同名 skill 也算冲突', async () => {
+    mkdirSync(join(project, '.agents', 'skills', 'shared'), { recursive: true });
+    await expect(installSkill(project, source, 'shared', 'codex')).rejects.toBeInstanceOf(
+      InstallConflictError,
+    );
+  });
+
+  it('卸载 codex skill 会连共用根里的那份一起管（按根序找存在的那个）', async () => {
+    const shared = join(project, '.agents', 'skills', 'theirs');
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(join(shared, 'SKILL.md'), '# theirs');
+    await uninstallSkill(project, 'theirs', 'codex');
+    expect(existsSync(shared)).toBe(false);
+  });
 });
 
 describe('installer — mcp', () => {

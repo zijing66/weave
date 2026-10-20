@@ -29,7 +29,12 @@ export const CODEX_ASSETS: AssetSurface = {
     return path.join(homedir, ...dirs.user.split('/'));
   },
 
-  projectSkillsDir: () => '.codex/skills',
+  projectSkillsRoots: () => [
+    // weave 的安装落点
+    '.codex/skills',
+    // 生态共用根（vercel-labs/skills 等工具的规范落点）：Codex 0.162 实测两处都读
+    '.agents/skills',
+  ],
 
   globalSkillsRoots: (homedir) => [
     // current location — the one installs target（codex-rs host_roots.rs 先读）
@@ -64,12 +69,20 @@ export const CODEX_ASSETS: AssetSurface = {
 
   classify(relPath) {
     if (relPath === '.codex' || relPath.startsWith('.codex/')) return true;
+    // 生态共用 skills 根（Codex 读它）归 Codex 面。
+    if (relPath === '.agents' || relPath.startsWith('.agents/')) return true;
     // AGENTS.md 是 Codex/agents 指令面，任意深度皆归 Codex。
     return relPath.slice(relPath.lastIndexOf('/') + 1) === 'AGENTS.md';
   },
 
   ignore(relPath) {
-    // 观测集 = `.codex/` 子树 + 根级 AGENTS.md（其余皆不在本面观测集）。
-    return !(relPath === '.codex' || relPath.startsWith('.codex/') || relPath === 'AGENTS.md');
+    // 观测集 = `.codex/` 子树 + `.agents/`（共用 skills 根）+ 根级 AGENTS.md。
+    return !(
+      relPath === '.codex' ||
+      relPath.startsWith('.codex/') ||
+      relPath === '.agents' ||
+      relPath.startsWith('.agents/') ||
+      relPath === 'AGENTS.md'
+    );
   },
 };

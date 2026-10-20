@@ -131,8 +131,12 @@ export interface AssetSurface {
     homedir: string,
   ): string;
 
-  /** 项目内 skills 目录（相对项目根，posix 分隔；`skillsDirFor` 消费）。 */
-  projectSkillsDir(): string;
+  /**
+   * 项目内 skills 根（相对项目根，posix 分隔）：[0] 为安装写入目标，其后为
+   * 只读的生态共用根（Codex 的 `.agents/skills`——它自己两处都读；installer/
+   * classifier 消费）。
+   */
+  projectSkillsRoots(): string[];
 
   /**
    * 全局 skills 根（绝对路径）：[0] 为安装写入目标，其后为只读遗留根

@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { AssetNotFoundError } from './installer.js';
+import { assetSurfaces } from '../surfaces.js';
 
 /**
  * Project file reader — serves text content of Claude Code assets for the
@@ -54,14 +55,17 @@ export function resolveProjectFile(projectPath: string, relPath: string): string
     throw new PathEscapeError(`Path traversal is not allowed: "${relPath}"`);
   }
 
+  // harness 顶层目录由各资产面的 skills 根派生（`.claude` / `.codex` / `.agents`），
+  // 不在 server 再列一遍。
+  const harnessTops = assetSurfaces().flatMap((s) =>
+    s.projectSkillsRoots().map((root) => root.split('/')[0]),
+  );
+  const top = posix.split('/')[0] ?? '';
   const allowed =
     posix === '.mcp.json' ||
     posix === 'CLAUDE.md' ||
     posix === 'AGENTS.md' ||
-    posix === '.claude' ||
-    posix.startsWith('.claude/') ||
-    posix === '.codex' ||
-    posix.startsWith('.codex/') ||
+    harnessTops.includes(top) ||
     posix === '.weave' ||
     posix.startsWith('.weave/');
   if (!allowed) {

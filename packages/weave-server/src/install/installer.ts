@@ -10,6 +10,7 @@ import {
 } from './file-assets.js';
 import { assetSurfaceFor } from '../surfaces.js';
 import { forgetInstalled, recordInstalled } from './install-ledger.js';
+import { installForm, removeInstalled } from '../market/install-link.js';
 
 /**
  * Asset install/uninstall — pure filesystem operations, no sqlite writes.
@@ -62,14 +63,14 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-/** Resolve the skills directory for an agent (Codex project skills live under
- * `.codex/skills/`; everything else is Claude's `.claude/skills/`).
- * 批 4a：路径知识在 AssetSurface（`projectSkillsDir`），此处只委托。 */
-function skillsDirFor(agent: InstallAgent): string {
-  return assetSurfaceFor(agent).projectSkillsDir();
+/** 项目内该 harness 的 skills 根（[0] = 安装落点，其后为只读的共用/遗留根）。
+ *  批 4a：路径知识在 AssetSurface（`projectSkillsRoots`），此处只委托。 */
+function skillsRootsFor(agent: InstallAgent): string[] {
+  return assetSurfaceFor(agent).projectSkillsRoots();
 }
 
-/** Copy an entire skill directory into the agent's `<skills>/<name>/`. */
+/** Copy an entire skill directory into the agent's install root `<skills>/<name>/`.
+ *  共用根里已有同名 skill 也算冲突——再铺一份只会被宿主遮住。 */
 export async function installSkill(
   projectPath: string,
   sourceDir: string,
@@ -77,31 +78,44 @@ export async function installSkill(
   agent: InstallAgent = 'claude',
 ): Promise<string> {
   assertSafeName(name);
-  const target = path.join(projectPath, skillsDirFor(agent), name);
-  if (await pathExists(target)) {
-    throw new InstallConflictError(
-      `Skill "${name}" is already installed${agent === 'codex' ? ' (Codex)' : ''}`,
-    );
+  const roots = skillsRootsFor(agent);
+  for (const r of roots) {
+    // lstat 判存在：断链也算已装（access 会穿链报不存在，再 cp 就撞 EEXIST）。
+    if ((await installForm(path.join(projectPath, r, name))) !== 'absent') {
+      throw new InstallConflictError(
+        `Skill "${name}" is already installed${agent === 'codex' ? ' (Codex)' : ''}`,
+      );
+    }
   }
+  const target = path.join(projectPath, roots[0], name);
   await cp(sourceDir, target, { recursive: true });
   await recordInstalled(projectPath, { category: 'skill', name, agent });
   return target;
 }
 
-/** Remove the agent's skill directory `<skills>/<name>/`. */
+/** Remove the agent's skill directory `<skills>/<name>/` — 按根序找第一个存在的
+ *  （共用根里的副本由别的工具铺的，也一并管得动）。 */
 export async function uninstallSkill(
   projectPath: string,
   name: string,
   agent: InstallAgent = 'claude',
 ): Promise<void> {
   assertSafeName(name);
-  const target = path.join(projectPath, skillsDirFor(agent), name);
-  if (!(await pathExists(target))) {
+  let target: string | undefined;
+  for (const root of skillsRootsFor(agent)) {
+    const candidate = path.join(projectPath, root, name);
+    if ((await installForm(candidate)) !== 'absent') {
+      target = candidate;
+      break;
+    }
+  }
+  if (!target) {
     throw new AssetNotFoundError(
       `Skill "${name}" is not installed${agent === 'codex' ? ' (Codex)' : ''}`,
     );
   }
-  await rm(target, { recursive: true, force: true });
+  // 链接只 unlink（共用根/市场源里的真身不删），复制体才递归删。
+  await removeInstalled(target);
   await forgetInstalled(projectPath, { category: 'skill', name, agent });
 }
 

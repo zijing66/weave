@@ -26,9 +26,10 @@ describe('reader — path safety', () => {
     expect(() => resolveProjectFile(dir, 'src/index.ts')).toThrow(PathEscapeError);
   });
 
-  it('allows .claude/, .codex/, .weave/, .mcp.json, CLAUDE.md', () => {
+  it('allows .claude/, .codex/, .agents/, .weave/, .mcp.json, CLAUDE.md', () => {
     expect(() => resolveProjectFile(dir, '.claude/skills/foo/SKILL.md')).not.toThrow();
     expect(() => resolveProjectFile(dir, '.codex/prompts/x.md')).not.toThrow();
+    expect(() => resolveProjectFile(dir, '.agents/skills/foo/SKILL.md')).not.toThrow();
     expect(() => resolveProjectFile(dir, '.weave/.gitignore')).not.toThrow();
     expect(() => resolveProjectFile(dir, '.mcp.json')).not.toThrow();
     expect(() => resolveProjectFile(dir, 'CLAUDE.md')).not.toThrow();

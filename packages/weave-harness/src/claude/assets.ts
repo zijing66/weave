@@ -81,7 +81,7 @@ export const CLAUDE_ASSETS: AssetSurface = {
     return path.join(projectPath, ...dirs.project.split('/'));
   },
 
-  projectSkillsDir: () => '.claude/skills',
+  projectSkillsRoots: () => ['.claude/skills'],
 
   globalSkillsRoots: (homedir) => [path.join(homedir, ...'.claude/skills'.split('/'))],
 

@@ -72,7 +72,7 @@ function resolveTemplates(
   const out: Array<Omit<PluginTemplateUpdate, 'outdated'>> = [];
   if (!manifest.templates) return out;
   const surface = assetSurfaceFor('claude');
-  const skillsDir = path.join(projectPath, ...surface.projectSkillsDir().split('/'));
+  const skillsDir = path.join(projectPath, ...surface.projectSkillsRoots()[0].split('/'));
 
   for (const [key, rels] of Object.entries(manifest.templates)) {
     const category = TEMPLATE_CATEGORIES[key];

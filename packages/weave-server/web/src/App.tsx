@@ -692,16 +692,13 @@ function Dashboard() {
 
   // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /
   // 兜底 catch——handler 内先报错又正常 resolve 的话，调用方会在失败时也弹成功。
-  const handleInstallSkill = useCallback(
-    async (
-      skill: SkillAsset,
-      scope: AssetScope = 'project',
-      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
-    ) => {
-      if (!selected && !globalMode) return;
+  /** 单装与批量共用的裸调用：只发请求不刷新（批量装完统一刷一次，别 N×3 次）。 */
+  const installSkillRaw = useCallback(
+    async (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => {
+      if (!selected && !globalMode) return null;
       const target = selected ?? projects[0];
       // user 档落在 home 下、与项目无关：全局面没有项目也照装（id 只是路由占位）。
-      if (!target && !(globalMode && scope === 'user')) return;
+      if (!target && !(globalMode && scope === 'user')) return null;
       const projectId = target?.id ?? 0;
       const res = await api.install(projectId, {
         category: 'skill',
@@ -711,11 +708,50 @@ function Dashboard() {
         agent,
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      return { target, projectId };
+    },
+    [selected, projects, globalMode],
+  );
+
+  const refreshAfterInstall = useCallback(
+    (target: ProjectRow | undefined, projectId: number) => {
       if (target) refreshAssets(target);
       refreshGlobalSkills(projectId);
       refreshUpdates(projectId);
     },
-    [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
+    [refreshAssets, refreshGlobalSkills, refreshUpdates],
+  );
+
+  const handleInstallSkill = useCallback(
+    async (
+      skill: SkillAsset,
+      scope: AssetScope = 'project',
+      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
+    ) => {
+      const r = await installSkillRaw(skill, scope, agent);
+      if (r) refreshAfterInstall(r.target, r.projectId);
+    },
+    [installSkillRaw, refreshAfterInstall],
+  );
+
+  /** 批量安装：逐条装、单条失败不中断，返回没装上的那些（面板留着勾让人再点）。 */
+  const handleInstallSkillsBatch = useCallback(
+    async (list: SkillAsset[], scope: AssetScope, agent: AssetAgent): Promise<SkillAsset[]> => {
+      const failed: SkillAsset[] = [];
+      let last: { target: ProjectRow | undefined; projectId: number } | null = null;
+      for (const skill of list) {
+        try {
+          const r = await installSkillRaw(skill, scope, agent);
+          if (!r) throw new Error('no install target');
+          last = r;
+        } catch {
+          failed.push(skill);
+        }
+      }
+      if (last) refreshAfterInstall(last.target, last.projectId);
+      return failed;
+    },
+    [installSkillRaw, refreshAfterInstall],
   );
 
   /** Install a single-file asset (command / agent / workflow / rule / output-style). */
@@ -1204,6 +1240,7 @@ function Dashboard() {
     <LibraryPanel
       installedSkillNames={installedSkillNames}
       onInstallSkill={installSkillSafely}
+      onInstallSkills={handleInstallSkillsBatch}
       onInstallFileAsset={installFileAssetSafely}
       onInstallMcp={installMcpSafely}
       updates={updates}

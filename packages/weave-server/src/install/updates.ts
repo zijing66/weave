@@ -249,12 +249,13 @@ export async function detectSkillUpdates(
   idx: LibraryIndex,
 ): Promise<SkillUpdate[]> {
   const home = homedir();
-  // 项目面与 user 面皆由各 harness 的资产面派生（项目根 = projectSkillsDir，
-  // 全局根 = globalSkillsRoots[0]——只扫安装目标根，遗留只读根不入更新面）。
+  // 项目面与 user 面皆由各 harness 的资产面派生（项目根 = projectSkillsRoots[0]，
+  // 全局根 = globalSkillsRoots[0]——只扫安装目标根，其后的只读根不入更新面：更新
+  // 会写回 [0]，把共用根里别人铺的那份再铺一遍只会被宿主遮住）。
   // 顺序与原硬编码一致：先全部项目面、再全部 user 面（按 harness 注册序）。
   const surfaces: { dir: string; scope: 'project' | 'user'; agent: Harness }[] = [
     ...assetSurfaces().map((s) => ({
-      dir: path.join(projectPath, ...s.projectSkillsDir().split('/')),
+      dir: path.join(projectPath, ...s.projectSkillsRoots()[0].split('/')),
       scope: 'project' as const,
       agent: s.harness,
     })),

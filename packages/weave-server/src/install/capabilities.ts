@@ -75,9 +75,10 @@ export function installCapabilities(): InstallCapabilities {
       .map((s) => {
         const scopes: InstallScope[] = [];
         const dest: Partial<Record<InstallScope, string>> = {};
-        if (s.projectSkillsDir()) {
+        const projectRoot = s.projectSkillsRoots()[0];
+        if (projectRoot) {
           scopes.push('project');
-          dest.project = s.projectSkillsDir();
+          dest.project = projectRoot;
         }
         const userRoot = s.globalSkillsRoots(home)[0];
         if (userRoot) {
