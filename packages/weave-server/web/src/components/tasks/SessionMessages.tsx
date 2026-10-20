@@ -564,12 +564,13 @@ const CLAMP_FADE = {
 };
 
 /**
- * 可折叠的回复正文：收起时只留三行、底部渐隐，点一下展开（收起态点正文、展开
- * 态点底部那枚箭头/正文都行）。**超过六行才收**——短回复不该出现渐变或可点手感，
- * 故量一次 `scrollHeight`；这一量在收起态（照报整段高度）与展开态（就是内容高度）
- * 下同样有效，展开中的最新那条因此也能收。展开过再收起仍认旧账（`tall` 只涨不落），
- * 否则一点开就丢掉「这条能收」的记忆、收不回去了。**折叠只是气泡里的排版**：
- * 复制/导出/分享图片一律取条目原文，收着的也照全文给出去。
+ * 可折叠的回复正文：收起时只留三行、底部渐隐。**只有底部那枚箭头能收/展**——正文
+ * 自己一概不接点击（点一下就收会把「拖选复制」变成赌运气：慢机上一个 pointerup
+ * 落偏就把气泡收了）。**超过六行才收**——短回复不该出现渐变或箭头，故量一次
+ * `scrollHeight`；这一量在收起态（照报整段高度）与展开态（就是内容高度）下同样有效，
+ * 展开中的最新那条因此也能收。展开过再收起仍认旧账（`tall` 只涨不落），否则一点开
+ * 就丢掉「这条能收」的记忆、收不回去了。**折叠只是气泡里的排版**：复制/导出/分享
+ * 图片一律取条目原文，收着的也照全文给出去。
  */
 function Collapsible({
   text,
@@ -598,46 +599,30 @@ function Collapsible({
     ro.observe(el);
     return () => ro.disconnect();
   }, [text, open]);
-  const clickable = tall && !disabled;
   return (
     <div className="relative">
       <div
         ref={ref}
-        onClick={
-          clickable
-            ? (e) => {
-                // 正文里的链接照旧点得动（那一击不该顺手把气泡收起来/展开）
-                if ((e.target as HTMLElement).closest('a')) return;
-                // 拖选到松手也会补一次 click：选中的文字不该被这一击收掉气泡
-                if (!window.getSelection()?.isCollapsed) return;
-                onToggle();
-              }
-            : undefined
-        }
-        className={clickable ? 'cursor-pointer' : undefined}
         style={!open && tall ? { maxHeight: CLAMP_Y, overflow: 'hidden', ...CLAMP_FADE } : undefined}
       >
         {children}
       </div>
-      {/* 收起/展开的手感落在这枚贴底居中的箭头上：它压在渐隐上、自己不被遮罩，
-          气泡底部一点即收，且不跟正文的选中态抢点击。 */}
+      {/* 收/展的唯一入口：贴着渐隐居中的这枚箭头（它自己不被遮罩）。正文不接点击，
+          拖选复制因此永远安全。 */}
       {tall && !disabled && (
         <button
           type="button"
           aria-label={t(open ? 'tasks.convFold' : 'tasks.convUnfold')}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
+          onClick={onToggle}
           className={cn(
-            'weave-fold-arrow mx-auto flex w-7 items-center justify-center rounded-full py-0.5',
+            'mx-auto flex w-7 items-center justify-center rounded-full py-0.5',
             'border border-edge/[0.08] bg-neutral-900/80 text-neutral-500 hover:text-neutral-300',
             // 收起时压在渐隐上、贴气泡底边；展开时让它自己占一行，别盖住最后一行正文
             open ? 'mt-1' : 'absolute inset-x-0 bottom-0',
           )}
         >
-          {/* 收起态朝下（点开看全）、展开态朝上（收回去）；转动挂在 svg 上，
-              浮动动效才不会被 rotate 覆盖 */}
+          {/* 收起态朝下（点开看全）、展开态朝上（收回去）。箭头不做任何动效：
+              常驻的上下浮动在慢机上就是白烧的每帧合成，也不安分 */}
           <ChevronDown className={cn('h-3 w-3', open && 'rotate-180')} />
         </button>
       )}
