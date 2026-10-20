@@ -492,8 +492,8 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       deps.sessionProbe?.noteTranscript(record.input.sessionId, payload?.transcriptPath ?? null);
       // 换模型落定（`PostModelSwitch` 的 to_model）：转录只在 assistant 消息上照会
       // 模型，切完不跑一轮就读不到——由事件先说，标签才跟着立刻变。
-      const switchedModel = switchedModelOf(record.input.eventType, payload?.raw);
-      if (switchedModel) deps.sessionProbe?.noteModel?.(record.input.sessionId, switchedModel);
+      const switched = switchedModelOf(record.input.eventType, payload?.raw);
+      if (switched) deps.sessionProbe?.noteModel?.(record.input.sessionId, switched.to);
       // 开/恢复会话：模型由宿主重新决定（`--resume` 落回默认），旧的「最后已知」作废
       // 重读；startup / compact 带了真名就直接用它。
       const started = startedModelOf(record.input.eventType, payload?.raw);

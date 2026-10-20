@@ -153,6 +153,20 @@ function lineOf(raw: string | null): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** 升序数组里二分查一条路径（索引几万到几十万条，Set 化一遍就是白占一份内存）。 */
+function hasPath(sorted: readonly string[], target: string): boolean {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = sorted[mid]!;
+    if (v === target) return true;
+    if (v < target) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return false;
+}
+
 /** 计划扫描窗口（最近的提交/写盘调用条数；一次计划模式只留最近的一两份）。 */
 const PLAN_SCAN = 20;
 /** 计划正文上限：超了截断（气泡要能渲染，别把几 MB 的文档塞进响应）。 */
@@ -984,7 +998,10 @@ export async function handleHooksRoutes(
     const refSpec = pathRefSpecOf(res, deps, sessionId);
     if (!refSpec) return true;
 
-    const index = await projectFileIndex(project.id, project.path);
+    // 打开选择器那一拍带 `fresh=1`：索引立刻重建一次，之后按 git 指纹重验
+    const index = await projectFileIndex(project.id, project.path, {
+      fresh: url.searchParams.get('fresh') === '1',
+    });
     const q = url.searchParams.get('q') ?? '';
     const dir = (url.searchParams.get('dir') ?? '').replace(/^\/+|\/+$/g, '');
     const limit = clampLimit(url.searchParams.get('limit'));
@@ -998,11 +1015,12 @@ export async function handleHooksRoutes(
 
     // 搜索模式：全索引模糊匹配，不带 size/mtime（100 条 stat 每键一次太贵）
     if (q.trim()) {
-      const { hits, total } = matchPaths(index, q, limit);
+      const { hits, total, capped } = await matchPaths(index, q, limit);
       sendJson(res, 200, {
         root: project.path,
         dir: '',
         total,
+        capped,
         truncated: index.truncated,
         entries: hits.map((h) => toEntry(h.path, h.kind, h.ranges)),
       });
@@ -1027,6 +1045,7 @@ export async function handleHooksRoutes(
       root: project.path,
       dir,
       total: children.length,
+      capped: false,
       truncated: index.truncated,
       entries,
     });
@@ -1067,6 +1086,58 @@ export async function handleHooksRoutes(
     sendJson(res, 200, {
       ref: refSpec.expression({ path: relPath, kind, lines: { start, end: end ?? start } }),
     });
+    return true;
+  }
+
+  // ---- 反向认引用：一段现成文本里的表达式还原成「路径 + 类型 + 行区间」 ----
+  // 粘贴 / 取回队列消息时前端要把 `@src/a.ts#L3-5` 摆成胶囊，而语法是 harness 知识：
+  // 文法由 `recognize` 认、存在性由文件索引判（索引里没有的路径不算引用），
+  // web 只拿到「哪一段、换成什么胶囊」。
+  const recognizeMatch = pathname.match(/^\/sessions\/([^/]+)\/refs\/recognize$/);
+  if (recognizeMatch && req.method === 'POST') {
+    const sessionId = decodeURIComponent(recognizeMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const refSpec = pathRefSpecOf(res, deps, sessionId);
+    if (!refSpec) return true;
+    let text = '';
+    try {
+      const body = (await readJson(req)) as { text?: unknown };
+      text = typeof body?.text === 'string' ? body.text : '';
+    } catch {
+      sendJson(res, 400, { error: 'Body must be JSON' });
+      return true;
+    }
+    const index = await projectFileIndex(project.id, project.path);
+    const refs: {
+      start: number;
+      end: number;
+      ref: string;
+      path: string;
+      kind: 'file' | 'dir';
+      lines?: { start: number; end: number };
+    }[] = [];
+    for (const hit of refSpec.recognize(text)) {
+      // 索引里真有这条路径才算引用（否则 `@types/node` 这类字样也会变胶囊）
+      const kind =
+        hit.kind === 'dir' && hasPath(index.dirs, hit.path)
+          ? 'dir'
+          : hasPath(index.files, hit.path)
+            ? 'file'
+            : null;
+      if (!kind || !refSpec.kinds.includes(kind)) continue;
+      const lines = hit.lines && refSpec.lines ? hit.lines : undefined;
+      refs.push({
+        start: hit.start,
+        end: hit.end,
+        // 归一：`@docs` 与 `@docs/` 都摆成文法那种形状
+        ref: refSpec.expression({ path: hit.path, kind, ...(lines ? { lines } : {}) }),
+        path: hit.path,
+        kind,
+        ...(lines ? { lines } : {}),
+      });
+    }
+    sendJson(res, 200, { refs });
     return true;
   }
 
@@ -1771,6 +1842,8 @@ export async function handleHooksRoutes(
         pathRefs: surface.pathRefs !== null,
         /** 该文法认不认行区间（false = 选择器只给整文件引用，不摆行号选择）。 */
         pathRefLines: surface.pathRefs?.lines === true,
+        /** 该文法能引用什么（`dir` 缺席 = 只给文件引用，目录行不摆「引用此文件夹」）。 */
+        pathRefKinds: surface.pathRefs?.kinds ?? [],
         /** 旁路会话（侧问）通道；false = 该 harness 没有这种机制（入口不渲染）。 */
         sideQuestion: surface.sideQuestion !== null,
         unsupportedReasons: surface.unsupportedReasons ?? null,

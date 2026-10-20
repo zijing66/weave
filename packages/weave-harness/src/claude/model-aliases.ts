@@ -30,15 +30,27 @@ export function modelAliasTargets(
   });
 }
 
+/** 换模型落定那一对：切换前跑的、切完跑的（后者才是此刻）。 */
+export interface ModelSwitchFact {
+  from: string | null;
+  to: string;
+}
+
 /**
- * 换模型**落定**的那条事件里的真名（`PostModelSwitch.to_model`）。宿主答
- * 「No, go back」不发事件，故收到这条 = 已经换了；比转录条目早一步——转录只在
- * assistant 消息上照会模型，切完不跑一轮就什么都读不到。
+ * 换模型**落定**的那条事件里的真名（`PostModelSwitch.to_model`，附带切换前的
+ * `from_model`）。宿主答「No, go back」不发事件，故收到这条 = 已经换了；比转录条目
+ * 早一步——转录只在 assistant 消息上照会模型，切完不跑一轮就什么都读不到。
+ *
+ * `from` 是给**重启后回读**用的：内存里那把闩丢了，只能拿它跟转录此刻照会的值
+ * 比对，相同即「宿主还没跑过新一轮」。
  */
-export function switchedModelOf(eventType: string, raw: unknown): string | null {
+export function switchedModelOf(eventType: string, raw: unknown): ModelSwitchFact | null {
   if (eventType !== 'PostModelSwitch') return null;
-  const to = (raw as { to_model?: unknown } | null)?.to_model;
-  return typeof to === 'string' && to ? to : null;
+  const entry = raw as { from_model?: unknown; to_model?: unknown } | null;
+  const to = entry?.to_model;
+  if (typeof to !== 'string' || !to) return null;
+  const from = entry?.from_model;
+  return { from: typeof from === 'string' && from ? from : null, to };
 }
 
 /**
@@ -76,6 +88,14 @@ export function permissionModeOf(raw: unknown): string | null {
 }
 
 /**
+ * 剥掉网关前缀（转录照会的是 `custom_openai/ftm`，事件里是 `ftm`）：两处说同一个
+ * 模型，比对前先归一。
+ */
+export function bareModelName(model: string): string {
+  return model.slice(model.lastIndexOf('/') + 1);
+}
+
+/**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
  * 认不出返回 null，调用方回落显示真名——不猜。
  */
@@ -84,7 +104,7 @@ export function aliasOfModel(
   model: string | null,
 ): string | null {
   if (!model) return null;
-  const bare = model.slice(model.lastIndexOf('/') + 1);
+  const bare = bareModelName(model);
   return targets.find((t) => t.actual === model || t.actual === bare)?.alias ?? null;
 }
 

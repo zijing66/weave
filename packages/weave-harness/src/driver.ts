@@ -363,6 +363,23 @@ export interface PathRefSpec {
   readonly lines: boolean;
   /** 贴进 prompt 的表达式；path 为项目相对路径（会话 cwd = 项目根）。 */
   expression(input: { path: string; kind: PathRefKind; lines?: PathRefLines }): string;
+  /**
+   * `expression` 的逆运算：从一段**现成文本**里认出引用表达式（粘贴回填 /
+   * 取回队列消息时把表达式还原成胶囊）。只认文法、不问存在——「这个路径真在
+   * 项目里吗」是调用方拿文件索引判的，不归文法。
+   */
+  recognize(text: string): RecognizedRef[];
+}
+
+/** `PathRefSpec.recognize` 认出的一处引用：`start`/`end` 是在原文里的下标区间。 */
+export interface RecognizedRef {
+  start: number;
+  end: number;
+  /** 原文那一段（调用方可以拿 `expression` 归一后替换）。 */
+  ref: string;
+  path: string;
+  kind: PathRefKind;
+  lines?: PathRefLines;
 }
 
 /**

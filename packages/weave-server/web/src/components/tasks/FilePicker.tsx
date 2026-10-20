@@ -4,6 +4,7 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, lineNumbers } from '@codemirror/view';
 import { SearchCursor, SearchQuery, search, setSearchQuery } from '@codemirror/search';
 import {
+  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
@@ -15,6 +16,7 @@ import {
   Hash,
   Loader2,
   Search,
+  Square,
   TextSearch,
   X,
 } from 'lucide-react';
@@ -31,6 +33,15 @@ import { useTheme } from '@/lib/theme';
  * 文法）——这里只把它当不透明字符串交给 `onPick`，绝不自拼 `@` 或 `#L`。
  * 索引也在服务端（打开即重建），本组件只负责取一页、防抖输入、把命中的字符区间上色。
  *
+ * **第三栏答「这条选中是什么」**：目录列它的直接子项（只读，下钻仍归第二栏，
+ * 两栏都能进会打架），文本给只读编辑器，图片给 `<img>`。
+ *
+ * 手势：单击只挪光标（第三栏跟着走），**双击 / Enter 才落定**（目录 = 进入），
+ * 空格或左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）
+ * 是桌面加速键。触屏没有 hover 也没有修饰键：单击仍是「进入」（老手感），
+ * 多选只靠勾选框——**勾选框常显**，藏起来的钮在触屏上等于没有。已选非空时
+ * 底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序）。
+ *
  * 预览是一个**只读**的 CodeMirror：行号可点（第一下起、第二下止）。查找与跳行
  * 用自己的一条小条（`SearchQuery` + `SearchCursor`）而不是它自带的搜索面板——
  * 那面板带替换与编辑，而预览只该看。选它是因为行号槽、行号上的鼠标事件、选区
@@ -39,6 +50,58 @@ import { useTheme } from '@/lib/theme';
 
 /** 搜索输入的防抖窗：服务端一次模糊匹配 ~10ms，剩下全是省往返。 */
 const SEARCH_DEBOUNCE_MS = 120;
+
+/** 换一条选中之后的防抖窗：箭头连滑过十行不该打十次预览 / 十次子目录。 */
+const SELECT_DEBOUNCE_MS = 150;
+
+/** 本地缓存条数（目录列表 / 预览正文各一份，纯省往返）：来回看同一批文件不重取。 */
+const DIR_CACHE_MAX = 30;
+const TEXT_CACHE_MAX = 12;
+
+/** 一条被选中的引用：`ref` 是服务端算好的表达式，其余是胶囊自己留的账。 */
+export interface PickItem {
+  ref: string;
+  target: PickTarget;
+}
+
+/** 多选的加入/移出：按路径去重，**保持加入顺序**（落定时胶囊的先后 = 点选先后）。 */
+export function togglePick(
+  picked: readonly SessionFileEntry[],
+  entry: SessionFileEntry,
+): SessionFileEntry[] {
+  return picked.some((p) => p.path === entry.path)
+    ? picked.filter((p) => p.path !== entry.path)
+    : [...picked, entry];
+}
+
+/** Shift 连选：把 `from`…`to` 之间的行并进来（已在的保持原位，新增的按列表序追加）。 */
+export function rangePick(
+  picked: readonly SessionFileEntry[],
+  rows: readonly SessionFileEntry[],
+  from: number,
+  to: number,
+): SessionFileEntry[] {
+  const lo = Math.max(0, Math.min(from, to));
+  const hi = Math.min(rows.length - 1, Math.max(from, to));
+  const out = [...picked];
+  for (let i = lo; i <= hi; i++) {
+    const row = rows[i];
+    if (row && !out.some((p) => p.path === row.path)) out.push(row);
+  }
+  return out;
+}
+
+/** 缓存写一条：超上限就丢最旧（Map 的插入序就是使用序，重插即最近使用）。 */
+function cacheSet<T>(cache: Map<string, T>, key: string, value: T, max: number): T {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > max) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  return value;
+}
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 
@@ -204,6 +267,7 @@ export function FilePicker({
   sessionId,
   rootLabel,
   linesSupported,
+  dirSupported,
   initial,
   onPick,
   onClose,
@@ -213,10 +277,12 @@ export function FilePicker({
   rootLabel: string;
   /** harness 认不认行区间（能力矩阵的 `pathRefLines`）。 */
   linesSupported: boolean;
+  /** harness 认不认目录引用（能力矩阵的 `pathRefKinds`）：false 时目录行只给「进」不给「选」。 */
+  dirSupported: boolean;
   /** 编辑一枚既有胶囊：从它的路径/行区间打开，选中后替换它。 */
   initial?: PickTarget;
-  /** 选中一条：`ref` 原样交给调用方贴进输入框。 */
-  onPick: (ref: string, target: PickTarget) => void;
+  /** 落定一批引用：`ref` 原样交给调用方贴进输入框（一枚 = 一次单击，多枚 = 多选批量）。 */
+  onPick: (items: PickItem[]) => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -232,11 +298,19 @@ export function FilePicker({
   /** 父目录条目：只有桌面三栏的左栏用得上（窄屏不取）。 */
   const [siblings, setSiblings] = useState<SessionFileEntry[]>([]);
   const [total, setTotal] = useState(0);
+  /** 搜索满档即停：命中的先后只是扫描序，条数是下限（文案得如实说「前 N 条」）。 */
+  const [capped, setCapped] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ path: string; text: string | null; truncated: boolean } | null>(null);
+  /** 第三栏的子目录预览（选中一条目录时列它的直接子项；只读，不下钻）。 */
+  const [sub, setSub] = useState<{ dir: string; entries: SessionFileEntry[]; total: number } | null>(null);
+  /** 多选中的一批（顺序 = 加入顺序）。编辑既有胶囊时恒为空。 */
+  const [picked, setPicked] = useState<SessionFileEntry[]>([]);
+  /** Shift 连选的锚点（列表下标）。 */
+  const [pickAnchor, setPickAnchor] = useState<number | null>(null);
   /** 行号选区：`setAnchor` 里存的是「已点了起始行、等第二下」；`lines` 是生效的区间。 */
   const [, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
@@ -254,15 +328,20 @@ export function FilePicker({
   const viewRef = useRef<EditorView | null>(null);
   /** 请求序号守卫：慢响应不许覆盖新结果（服务端在本机，但 LAN 下会有明显乱序）。 */
   const seq = useRef(0);
+  /** 打开选择器后的第一拍：带 `fresh=1` 让服务端重建一次索引（刚建的文件才在）。 */
+  const firstLoad = useRef(true);
   /** 预览单独一份守卫——它和列表是两条并行的取数，共用会把对方顶掉。 */
   const previewSeq = useRef(0);
+  /** 目录列表 / 预览正文的本地缓存（箭头连滑时命中即出，不打请求）。 */
+  const dirCache = useRef(new Map<string, { entries: SessionFileEntry[]; total: number }>());
+  const textCache = useRef(new Map<string, { text: string | null; truncated: boolean }>());
   /** 每一波列表请求一个 controller：新的一波来就掐掉上一波，卸载也掐。 */
   const ctrlRef = useRef<AbortController | null>(null);
   /** 编辑既有引用时要落回那一条：列表一回来就选中它，然后清账。 */
   const focusPath = useRef(initial?.kind === 'file' ? initial.path : null);
 
   const load = useCallback(
-    (q: string, target: string, signal: AbortSignal) => {
+    (q: string, target: string, signal: AbortSignal, fresh = false) => {
       const mine = ++seq.current;
       setLoading(true);
       setError(null);
@@ -270,7 +349,7 @@ export function FilePicker({
       const slash = target.lastIndexOf('/');
       const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
       void Promise.all([
-        api.listSessionFiles(sessionId, { q, dir: target, signal }),
+        api.listSessionFiles(sessionId, { q, dir: target, signal, fresh }),
         // 左栏 = 父目录的条目（根没有父，摆一行 `/` 占位）
         !q && isDesktop && parent !== null
           ? api.listSessionFiles(sessionId, { dir: parent, signal }).catch(() => null)
@@ -280,6 +359,7 @@ export function FilePicker({
           if (mine !== seq.current) return;
           setEntries(listing.entries);
           setTotal(listing.total);
+          setCapped(listing.capped ?? false);
           setTruncated(listing.truncated);
           // 搜索是全项目的、不带父目录；这时留住上一次那份，左栏不闪成空栏
           if (!q) setSiblings(parentListing?.entries ?? []);
@@ -308,7 +388,8 @@ export function FilePicker({
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
-      load(query.trim(), query.trim() ? '' : dir, ctrl.signal);
+      load(query.trim(), query.trim() ? '' : dir, ctrl.signal, firstLoad.current);
+      firstLoad.current = false;
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query, dir, load]);
@@ -324,39 +405,73 @@ export function FilePicker({
     searchRef.current?.focus();
   }, []);
 
-  // 预览：图片走 <img>（不在这儿读字节），文本整份读来回给只读编辑器
+  /** 第三栏要读的东西：目录 → 子项列表，文本文件 → 正文，图片 → 什么也不读（<img> 自己取）。
+   *  防抖 + 缓存：hover 换行与箭头连滑是高频动作，逐行打请求既慢又白烧。 */
   const current = entries[selected];
   useEffect(() => {
-    if (!current || current.kind === 'dir' || IMAGE_EXT.test(current.name)) {
-      setPreview(null);
-      return;
-    }
+    const cur = current;
+    // 一律先清：上一份的东西不能挂在新选中的头上（同一拍里再填，不会闪）
+    setPreview(null);
+    setSub(null);
+    if (!cur) return;
     const mine = ++previewSeq.current;
+    const image = cur.kind === 'file' && IMAGE_EXT.test(cur.name);
+    const cachedDir = cur.kind === 'dir' ? dirCache.current.get(cur.path) : undefined;
+    const cachedText = cur.kind === 'file' && !image ? textCache.current.get(cur.path) : undefined;
+    if (cachedDir) setSub({ dir: cur.path, ...cachedDir });
+    if (cachedText) setPreview({ path: cur.path, ...cachedText });
+    // 图片走 <img> 自己取字节；目录与文本命中缓存就不用再问
+    if (image || cachedDir || cachedText) return;
+
     let alive = true;
-    void api
-      .sessionFileText(sessionId, current.path)
-      .then(({ text, truncated: cut }) => {
-        if (!alive || mine !== previewSeq.current) return;
-        setPreview({ path: current.path, text, truncated: cut });
-      })
-      .catch(() => {
-        if (alive && mine === previewSeq.current) setPreview({ path: current.path, text: null, truncated: false });
-      });
+    const timer = setTimeout(() => {
+      if (cur.kind === 'dir') {
+        void api
+          .listSessionFiles(sessionId, { dir: cur.path, limit: 100 })
+          .then((listing) => {
+            if (!alive || mine !== previewSeq.current) return;
+            const value = cacheSet(
+              dirCache.current,
+              cur.path,
+              { entries: listing.entries, total: listing.total },
+              DIR_CACHE_MAX,
+            );
+            setSub({ dir: cur.path, ...value });
+          })
+          .catch(() => {
+            if (alive && mine === previewSeq.current) setSub({ dir: cur.path, entries: [], total: 0 });
+          });
+        return;
+      }
+      void api
+        .sessionFileText(sessionId, cur.path)
+        .then(({ text, truncated: cut }) => {
+          if (!alive || mine !== previewSeq.current) return;
+          setPreview({ path: cur.path, ...cacheSet(textCache.current, cur.path, { text, truncated: cut }, TEXT_CACHE_MAX) });
+        })
+        .catch(() => {
+          if (!alive || mine !== previewSeq.current) return;
+          setPreview({
+            path: cur.path,
+            ...cacheSet(textCache.current, cur.path, { text: null, truncated: false }, TEXT_CACHE_MAX),
+          });
+        });
+    }, SELECT_DEBOUNCE_MS);
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
   }, [current, sessionId]);
 
-  // 换了一份预览就重来一次选区与查找条；编辑既有引用时按它带来的行区间先选好
+  // 换一条选中：选区与查找条重来；编辑既有引用时按它带来的行区间先选好
   useEffect(() => {
-    if (!preview?.path) return;
     setAnchor(null);
     setBar(null);
     setFind('');
     setJump('');
     setHits(null);
-    setLines(preview.path === initial?.path ? (initial?.lines ?? null) : null);
-  }, [preview?.path, initial]);
+    setLines(current && current.kind === 'file' && current.path === initial?.path ? (initial?.lines ?? null) : null);
+  }, [current?.path, initial]);
 
   /** ESC 关掉选择器（焦点可能落在预览或哪儿都不在，故挂 document 上）。
    *  小工具条开着时先收它——不然一次 ESC 会连面板一起关掉。 */
@@ -467,7 +582,7 @@ export function FilePicker({
   const pick = async (entry: SessionFileEntry, withLines: boolean): Promise<void> => {
     const range = linesSupported && withLines && entry.kind === 'file' ? lines : null;
     if (!range) {
-      onPick(entry.ref, { path: entry.path, kind: entry.kind });
+      onPick([{ ref: entry.ref, target: { path: entry.path, kind: entry.kind } }]);
       return;
     }
     setBusy(true);
@@ -478,12 +593,22 @@ export function FilePicker({
         start: range.start,
         end: range.end,
       });
-      onPick(ref, { path: entry.path, kind: 'file', lines: range });
+      onPick([{ ref, target: { path: entry.path, kind: 'file', lines: range } }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  /** 落定底条那一枚钮：有已选就整批插（顺序 = 点选顺序），否则就当前这条。
+   *  批量的表达式列表里已经算好，不需要任何往返。 */
+  const commit = (): void => {
+    if (picked.length > 0) {
+      onPick(picked.map((e) => ({ ref: e.ref, target: { path: e.path, kind: e.kind } })));
+      return;
+    }
+    if (current) void pick(current, true);
   };
 
   /** 进一条：目录就下钻，文件则（桌面直接落定 / 窄屏先进预览）。 */
@@ -498,7 +623,11 @@ export function FilePicker({
       setScreen('preview');
       return;
     }
-    void pick(entry, false);
+    if (picked.length > 0) {
+      commit();
+      return;
+    }
+    void pick(entry, true);
   };
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
@@ -519,6 +648,14 @@ export function FilePicker({
       e.preventDefault();
       const hit = entries[selected];
       if (hit) enter(hit);
+      return;
+    }
+    // 空格 = 加入/移出已选。搜索框里打字要给空格，那边的 target 是 input
+    if (e.key === ' ' && !(e.target instanceof HTMLInputElement)) {
+      const hit = entries[selected];
+      if (!hit) return;
+      e.preventDefault();
+      setPicked((p) => togglePick(p, hit));
       return;
     }
     if (e.key === 'ArrowRight') {
@@ -559,6 +696,8 @@ export function FilePicker({
         const ranges = entry.ranges
           ?.map(([s, l]) => [s - offset, l] as [number, number])
           .filter(([s, l]) => s >= 0 && s + l <= entry.name.length);
+        const checked = picked.some((p) => p.path === entry.path);
+        const pickable = entry.kind === 'file' || dirSupported;
         return (
           <li key={entry.path}>
             <button
@@ -566,21 +705,48 @@ export function FilePicker({
               role="option"
               aria-selected={i === selected}
               onMouseEnter={() => isDesktop && setSelected(i)}
-              onClick={() => {
-                if (!isDesktop) {
+              onClick={(e) => {
+                // 修饰键 = 直接多选；触屏没有 hover 也没有修饰键，单击仍走「进入」
+                if (pickable && (e.ctrlKey || e.metaKey)) {
                   setSelected(i);
-                  enter(entry);
+                  setPicked((p) => togglePick(p, entry));
                   return;
                 }
-                if (i === selected) enter(entry);
-                else setSelected(i);
+                if (pickable && e.shiftKey) {
+                  setPicked((p) => rangePick(p, entries, pickAnchor ?? selected, i));
+                  setSelected(i);
+                  setPickAnchor(i);
+                  return;
+                }
+                setSelected(i);
+                setPickAnchor(i);
+                if (!isDesktop) enter(entry);
               }}
-              onDoubleClick={() => enter(entry)}
+              onDoubleClick={() => isDesktop && enter(entry)}
               className={cn(
                 'flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors',
                 i === selected ? 'bg-blue-500/15 text-neutral-100' : 'text-neutral-300 hover:bg-edge/[0.04]',
               )}
             >
+              {/* 勾选框常显（触屏没有 hover，藏起来的钮等于没有）：点它只改「已选」，不改变光标 */}
+              <span
+                role="checkbox"
+                aria-checked={checked}
+                aria-label={t('tasks.filePickToggle')}
+                tabIndex={-1}
+                onClick={(e) => {
+                  if (!pickable) return;
+                  e.stopPropagation();
+                  setPicked((p) => togglePick(p, entry));
+                }}
+                className={cn(
+                  'shrink-0 rounded',
+                  pickable ? 'cursor-pointer text-neutral-600 hover:text-neutral-300' : 'text-neutral-800',
+                  checked && 'text-blue-300 hover:text-blue-200',
+                )}
+              >
+                {checked ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+              </span>
               {iconFor(entry)}
               <span className="min-w-0 flex-1 truncate font-mono">
                 {segmentsOf(name, ranges).map((seg, k) =>
@@ -721,7 +887,39 @@ export function FilePicker({
           </button>
         </div>
       )}
-      {current && IMAGE_EXT.test(current.name) ? (
+      {current?.kind === 'dir' ? (
+        // 第三栏选中目录时列它的直接子项：**只读**，进入仍归第二栏（双击 / →），
+        // 两栏都能下钻会打架。列不下就明说还有多少（不假装列全了）。
+        <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+          {sub?.dir === current.path ? (
+            sub.entries.length === 0 ? (
+              <li className="px-2.5 py-3 text-[11px] text-neutral-600">{t('tasks.fileEmpty')}</li>
+            ) : (
+              sub.entries.map((child) => (
+                <li
+                  key={child.path}
+                  className="flex items-center gap-2 px-2.5 py-0.5 text-[11px] text-neutral-400"
+                >
+                  {iconFor(child)}
+                  <span className="min-w-0 flex-1 truncate font-mono">
+                    {child.kind === 'dir' ? `${child.name}/` : child.name}
+                  </span>
+                  {child.size != null && (
+                    <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
+                      {sizeText(child.size)}
+                    </span>
+                  )}
+                </li>
+              ))
+            )
+          ) : (
+            <li className="flex items-center gap-2 px-2.5 py-3 text-[11px] text-neutral-500">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('tasks.fileLoading')}
+            </li>
+          )}
+        </ul>
+      ) : current && IMAGE_EXT.test(current.name) ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">
           <img
             src={api.sessionFileUrl(sessionId, current.path)}
@@ -742,20 +940,32 @@ export function FilePicker({
       )}
       {/* 底条：行选区 + 落定钮。行号在这条里只是一个「选了几行」的读数，
           真正贴进 prompt 的表达式由服务端按 harness 文法算。 */}
-      {current?.kind === 'file' && (
+      {current && (current.kind === 'file' || dirSupported) && (
         <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-2 py-1.5">
           <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
-            {preview?.truncated && <span className="mr-1 text-amber-500/80">{t('tasks.fileTruncatedNote')}</span>}
-            {rangeText ?? (linesSupported ? t('tasks.fileLineHint') : '')}
+            {current.kind === 'dir' ? (
+              t('tasks.fileSubCount', { n: sub?.dir === current.path ? sub.total : 0 })
+            ) : (
+              <>
+                {preview?.truncated && (
+                  <span className="mr-1 text-amber-500/80">{t('tasks.fileTruncatedNote')}</span>
+                )}
+                {rangeText ?? (linesSupported ? t('tasks.fileLineHint') : '')}
+              </>
+            )}
           </span>
           <button
             type="button"
-            disabled={busy || preview?.text == null}
+            disabled={busy || (current.kind === 'file' && preview?.text == null)}
             onClick={() => void pick(current, true)}
             className="flex shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-[11px] text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
-            {rangeText ? t('tasks.fileInsertLines') : t('tasks.fileInsert')}
+            {current.kind === 'dir'
+              ? t('tasks.fileInsertDir')
+              : rangeText
+                ? t('tasks.fileInsertLines')
+                : t('tasks.fileInsert')}
           </button>
         </div>
       )}
@@ -902,9 +1112,38 @@ export function FilePicker({
               previewPane
             )}
           </div>
+          {/* 已选条：有勾选就整批落定（顺序 = 点选顺序）。窄屏也摆——触屏只能靠它 */}
+          {picked.length > 0 && (
+            <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] bg-blue-500/[0.06] px-3 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-[11px] text-blue-200">
+                {t('tasks.filePickedCount', { n: picked.length })}
+                <span className="ml-1.5 truncate font-mono text-[10px] text-neutral-500">
+                  {picked.map((p) => p.name).join('、')}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPicked([])}
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-100"
+              >
+                {t('tasks.fileClearPicked')}
+              </button>
+              <button
+                type="button"
+                onClick={commit}
+                className="flex shrink-0 items-center gap-1 rounded bg-blue-500/25 px-2 py-1 text-[11px] text-blue-100 transition-colors hover:bg-blue-500/40"
+              >
+                {t('tasks.fileInsertPicked', { n: picked.length })}
+              </button>
+            </div>
+          )}
           {/* 底条：条数 / 截断提示 */}
           <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-[10px] text-neutral-600">
-            <span>{query ? t('tasks.fileHits', { n: total }) : t('tasks.fileCount', { n: total })}</span>
+            <span>
+              {query
+                ? t(capped ? 'tasks.fileHitsTop' : 'tasks.fileHits', { n: total })
+                : t('tasks.fileCount', { n: total })}
+            </span>
             {truncated && <span className="text-amber-500/80">{t('tasks.fileTruncated')}</span>}
             <span className="ml-auto hidden lg:block">{t('tasks.fileHint')}</span>
           </div>

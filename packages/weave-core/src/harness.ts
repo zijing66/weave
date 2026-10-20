@@ -226,6 +226,12 @@ export interface HarnessSessionControl {
    * （名字形态由服务端验）。空 = 无模型切换概念。
    */
   modelNames: readonly string[];
+  /**
+   * 宣告「此刻跑的是哪个模型」的事件名：换模型落定、以及把模型交还宿主重定的
+   * 会话重开。只用于 daemon 重启后**回读库**补那个内存闩——取这几类里最新的
+   * 一条，落定事件才答得出新值，最新是重开则旧答案作废（不补）。空 = 无从回读。
+   */
+  modelFactEvents: readonly string[];
 }
 
 /**
@@ -237,9 +243,10 @@ export const HARNESS_SESSION_CONTROL = {
   claude: {
     modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
     modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
+    modelFactEvents: ['PostModelSwitch', 'SessionStart'],
   },
   /** Codex 待调研；空值占位，类型完整。 */
-  codex: { modeNames: [], modelNames: [] },
+  codex: { modeNames: [], modelNames: [], modelFactEvents: [] },
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /**

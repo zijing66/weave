@@ -463,6 +463,8 @@ export interface MessagingCapability {
   pathRefs: boolean;
   /** 该文法认不认行区间（false = 选择器只给整文件引用）。 */
   pathRefLines: boolean;
+  /** 该文法能引用什么（无 `dir` = 目录行不摆「引用此文件夹」）。 */
+  pathRefKinds: ('file' | 'dir')[];
   /** 旁路会话（侧问）通道（false = 该 harness 没有这种机制，入口不渲染）。 */
   sideQuestion: boolean;
   unsupportedReasons: Partial<
@@ -485,6 +487,17 @@ export interface SessionFileEntry {
   mtime?: string;
 }
 
+/** mirror of `RecognizedRef` in packages/weave-harness/src/driver.ts：一段现成文本里
+ *  的一段引用。`start`/`end` 是它在原文里的字符区间，`ref` 是服务端归一后的表达式。 */
+export interface RecognizedRef {
+  start: number;
+  end: number;
+  ref: string;
+  path: string;
+  kind: 'file' | 'dir';
+  lines?: { start: number; end: number };
+}
+
 export interface SessionFileListing {
   /** 项目绝对路径（面包屑头）。 */
   root: string;
@@ -492,6 +505,8 @@ export interface SessionFileListing {
   dir: string;
   entries: SessionFileEntry[];
   total: number;
+  /** 搜索满档即停：`total` 只是「至少这么多」，后面的没扫（浏览模式恒 false）。 */
+  capped?: boolean;
   /** 索引到上限被截断（搜索退化为目录浏览）。 */
   truncated: boolean;
 }
@@ -1419,12 +1434,20 @@ export const api = {
    *  harness 无路径引用文法时 409（入口本就不渲染，兜底而已）。 */
   listSessionFiles: (
     sessionId: string,
-    opts: { q?: string; dir?: string; limit?: number; signal?: AbortSignal } = {},
+    opts: {
+      q?: string;
+      dir?: string;
+      limit?: number;
+      /** 打开选择器那一拍带上：索引立刻重建一次（之后按 git 指纹重验，不再每键重扫）。 */
+      fresh?: boolean;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<SessionFileListing> => {
     const params = new URLSearchParams();
     if (opts.q) params.set('q', opts.q);
     if (opts.dir) params.set('dir', opts.dir);
     if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.fresh) params.set('fresh', '1');
     const qs = params.toString();
     return apiFetch<SessionFileListing>(
       `/sessions/${encodeURIComponent(sessionId)}/files${qs ? `?${qs}` : ''}`,
@@ -1445,6 +1468,13 @@ export const api = {
     if (!res.ok) throw new Error(await errorText(res));
     return { text: await res.text(), truncated: res.headers.get('x-weave-truncated') === '1' };
   },
+  /** 反向认引用：一段现成文本（粘贴 / 取回队列）里哪些片段是引用、换成什么胶囊。
+   *  文法归 harness、存在性归索引，前端拿到的已经是「区间 + 表达式」。 */
+  recognizeRefs: (sessionId: string, text: string): Promise<RecognizedRef[]> =>
+    apiFetch<{ refs: RecognizedRef[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/refs/recognize`,
+      { method: 'POST', body: JSON.stringify({ text }) },
+    ).then((r) => r.refs),
   /** 引用表达式：带行区间时由服务端按 harness 文法现算（`#L` 这类记号前端不拼）。 */
   sessionFileRef: (
     sessionId: string,

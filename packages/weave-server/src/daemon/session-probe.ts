@@ -1,5 +1,13 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
-import { currentModelAt, currentModeAt, interruptMarkerAt } from '@weavecode/harness';
+import {
+  bareModelName,
+  currentModelAt,
+  currentModeAt,
+  interruptMarkerAt,
+  switchedModelOf,
+  type ModelSwitchFact,
+} from '@weavecode/harness';
+import { HARNESS_SESSION_CONTROL, isHarness } from '@weavecode/core';
 
 /**
  * 会话转录探测（「已中断」判据的服务端半边）。
@@ -8,7 +16,10 @@ import { currentModelAt, currentModeAt, interruptMarkerAt } from '@weavecode/har
  * 事件流直接静默，会话于是永远停在「生成中」。真相只在转录里（解析归 harness 的
  * `interruptMarkerAt`），故把 hook 事件旁路带来的转录路径**留在内存**（与 paneEnv /
  * inbox 凭据同口径：不落库、daemon 重启即清零，靠下一次 hook 事件补回），按需读尾部。
- * 换模型同样只有转录照会（`currentModelAt`）——hook 只在 SessionStart 带 model。
+ * 模型与模式同理只在**最后活动时**照会（`currentModelAt` / `currentModeAt`），故都是
+ * 「最后已知」：路径与换模型闩重启即清零，前者靠下一次事件里旁路带回来（见
+ * {@link dbTranscriptPathResolver}），后者回读库里那条落定事件（见
+ * {@link dbModelFactResolver}）——否则「换完就放着」的会话会一直显示切换前的模型。
  */
 
 /** 尾读字节数：中断标记落在这一轮末尾（其后最多几条收尾/附属记录），64KB 足够。 */
@@ -54,6 +65,40 @@ export function dbTranscriptPathResolver(events: {
   };
 }
 
+/**
+ * 装配用兜底：换模型那把闩只在内存，daemon 一重启就没了，而转录**只**在 assistant
+ * 消息上照会模型——换完没再跑一轮的会话（「切了就放着」最常见）会一直显示切换前
+ * 那个模型。于是回读库里这条会话最近一条「模型落定」事件（换模型 / 重开会话）：
+ * 是换模型就答得出新值，是重开则什么都不补（宿主把模型交还重定了，不猜）。
+ * 每个会话在 daemon 生命周期里最多查一次（见 `SessionProbe.switchOf`）。
+ */
+export function dbModelFactResolver(
+  events: {
+    listBySession(
+      sessionId: string,
+      limit?: number,
+      beforeId?: number,
+      types?: readonly string[],
+    ): Array<{ eventType: string; payload: string }>;
+  },
+  harnessOf: (sessionId: string) => string | null,
+): (sessionId: string) => ModelSwitchFact | null {
+  return (sessionId) => {
+    const harness = harnessOf(sessionId);
+    const types = harness && isHarness(harness) ? HARNESS_SESSION_CONTROL[harness].modelFactEvents : [];
+    if (types.length === 0) return null;
+    const rows = events.listBySession(sessionId, 1, undefined, types);
+    const latest = rows[rows.length - 1];
+    if (!latest) return null;
+    try {
+      const raw = (JSON.parse(latest.payload) as { raw?: unknown }).raw;
+      return switchedModelOf(latest.eventType, raw);
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** 转录尾部抽出的事实（一次尾读、多问共享；按文件大小缓存）。 */
 interface TailFacts {
   size: number;
@@ -69,6 +114,8 @@ export class SessionProbe {
      * 新事件**的会话（已收尾 / 闲置中的那些）模型与模式会一直显示「未知」。
      */
     private readonly fallbackPath?: (sessionId: string) => string | null,
+    /** 重启后补换模型闩（见 {@link dbModelFactResolver}）。 */
+    private readonly fallbackSwitch?: (sessionId: string) => ModelSwitchFact | null,
   ) {}
 
   /** sessionId → 转录路径（内存态；hook 事件每次上报都覆盖刷新）。 */
@@ -83,6 +130,8 @@ export class SessionProbe {
    * 换模型这件事得由事件先说，等转录自己跟上（照会的值不再是 `stale`）才交还给它。
    */
   private readonly switched = new Map<string, { stale: string | null; model: string }>();
+  /** sessionId → 已经向库要过换模型闩了（库里那条事件不会变，问一次就够）。 */
+  private readonly probed = new Set<string>();
   /** sessionId → 推理档位（每次带 `effort` 的事件覆盖）：状态栏 `thinking` 块的事实在 hook 里。 */
   private readonly efforts = new Map<string, string>();
   /** sessionId → 事件自带的执行模式（每条事件覆盖）：比转录早一步，见 `noteMode`。 */
@@ -104,6 +153,7 @@ export class SessionProbe {
     this.paths.delete(sessionId);
     this.known.delete(sessionId);
     this.switched.delete(sessionId);
+    this.probed.delete(sessionId);
     this.efforts.delete(sessionId);
     this.modes.delete(sessionId);
   }
@@ -133,6 +183,7 @@ export class SessionProbe {
   sessionStarted(sessionId: string, model: string | null): void {
     this.known.delete(sessionId);
     this.switched.delete(sessionId);
+    this.probed.delete(sessionId);
     if (model) this.noteModel(sessionId, model);
   }
 
@@ -206,8 +257,29 @@ export class SessionProbe {
    * 就答事件说的新值；转录自己跟上（照会别的值）即交还给它。
    */
   private switchedModel(sessionId: string, fromTranscript: string | null): string | null {
-    const switched = this.switched.get(sessionId);
+    const switched = this.switchOf(sessionId, fromTranscript);
     return switched && fromTranscript === switched.stale ? switched.model : fromTranscript;
+  }
+
+  /**
+   * 换模型闩：内存里有就用内存的；没有（daemon 刚重启）就向库要一次——拿事件的
+   * `from_model` 与转录此刻照会的值比（剥网关前缀，`custom_openai/ftm` 对 `ftm`），
+   * 相同即宿主还没跑过新一轮，闩才成立；不同则事件早于转录，交还转录。
+   */
+  private switchOf(
+    sessionId: string,
+    fromTranscript: string | null,
+  ): { stale: string | null; model: string } | undefined {
+    const hit = this.switched.get(sessionId);
+    if (hit || !fromTranscript || this.probed.has(sessionId)) return hit;
+    this.probed.add(sessionId);
+    const fact = this.fallbackSwitch?.(sessionId);
+    if (!fact || fact.from === null || bareModelName(fact.from) !== bareModelName(fromTranscript)) {
+      return undefined;
+    }
+    const switched = { stale: fromTranscript, model: fact.to };
+    this.switched.set(sessionId, switched);
+    return switched;
   }
 
   private factsOf(path: string): TailFacts {

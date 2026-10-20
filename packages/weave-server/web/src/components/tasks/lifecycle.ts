@@ -42,8 +42,9 @@ export const HARNESS_SESSION_CONTROL = {
   claude: {
     modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
     modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
+    modelFactEvents: ['PostModelSwitch', 'SessionStart'],
   },
-  codex: { modeNames: [], modelNames: [] },
+  codex: { modeNames: [], modelNames: [], modelFactEvents: [] },
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /** 该 harness 的执行模式词表（宿主自己的名字，展示原样）；空 = 无此概念。 */

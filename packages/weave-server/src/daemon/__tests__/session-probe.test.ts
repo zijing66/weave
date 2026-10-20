@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { dbTranscriptPathResolver, readTail, SessionProbe } from '../session-probe';
+import { dbModelFactResolver, dbTranscriptPathResolver, readTail, SessionProbe } from '../session-probe';
 
 const dirs: string[] = [];
 const tmpFile = (): string => {
@@ -235,5 +235,92 @@ describe('SessionProbe', () => {
     probe.forget('s1');
     expect(probe.currentModel('s1')).toBeNull();
     expect(probe.currentMode('s1')).toBeNull();
+  });
+
+  it('重启后闩没了：回读库里那条落定事件补回来（换完就放着也跟得上）', () => {
+    const file = tmpFile();
+    writeFileSync(
+      file,
+      JSON.stringify({ type: 'assistant', message: { model: 'custom_openai/ftm' } }) + '\n',
+    );
+    // daemon 刚重启：内存里既没路径也没闩，路径与落定事件都从库里补
+    const probe = new SessionProbe(
+      () => file,
+      () => ({ from: 'ftm', to: 'deepseek-flash' }),
+    );
+    expect(probe.currentModel('s1')).toBe('deepseek-flash');
+
+    // 宿主跑了一轮、转录照会新值（转录原样带网关前缀）：交还给它
+    appendFileSync(
+      file,
+      JSON.stringify({ type: 'assistant', message: { model: 'custom_openai/deepseek-flash' } }) + '\n',
+    );
+    expect(probe.currentModel('s1')).toBe('custom_openai/deepseek-flash');
+  });
+
+  it('转录已照会别的值就不补（事件早于转录），且每个会话只问库一次', () => {
+    const file = tmpFile();
+    writeFileSync(
+      file,
+      JSON.stringify({ type: 'assistant', message: { model: 'custom_openai/deepseek-flash' } }) + '\n',
+    );
+    let asked = 0;
+    const probe = new SessionProbe(undefined, () => {
+      asked += 1;
+      return { from: 'ftm', to: 'opus' };
+    });
+    probe.noteTranscript('s1', file);
+    expect(probe.currentModel('s1')).toBe('custom_openai/deepseek-flash');
+    expect(probe.currentModel('s1')).toBe('custom_openai/deepseek-flash');
+    expect(asked).toBe(1);
+
+    // 重开会话（模型交还宿主重定）后重新问：此后新切换照样补
+    probe.sessionStarted('s1', null);
+    expect(probe.currentModel('s1')).toBe('custom_openai/deepseek-flash');
+    expect(asked).toBe(2);
+  });
+});
+
+describe('dbModelFactResolver', () => {
+  const row = (eventType: string, raw: unknown): { eventType: string; payload: string } => ({
+    eventType,
+    payload: JSON.stringify({ raw }),
+  });
+
+  it('取「模型落定」事件（换模型 / 重开）里最新的一条：换模型答得出新值', () => {
+    const calls: Array<readonly string[] | undefined> = [];
+    const resolve = dbModelFactResolver(
+      {
+        listBySession: (_id, _limit, _before, types) => {
+          calls.push(types);
+          return [row('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })];
+        },
+      },
+      () => 'claude',
+    );
+    expect(resolve('s1')).toEqual({ from: 'ftm', to: 'deepseek-flash' });
+    expect(calls[0]).toEqual(['PostModelSwitch', 'SessionStart']);
+  });
+
+  it('最新是重开会话 → 什么都不补（宿主把模型交还重定了，旧答案作废）', () => {
+    const resolve = dbModelFactResolver(
+      {
+        listBySession: () => [
+          row('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' }),
+          row('SessionStart', { source: 'resume' }),
+        ],
+      },
+      () => 'claude',
+    );
+    expect(resolve('s1')).toBeNull();
+  });
+
+  it('harness 没登记 / 该 harness 没有落定事件 → null，不必查库', () => {
+    let queried = false;
+    const events = { listBySession: () => { queried = true; return []; } };
+    expect(dbModelFactResolver(events, () => null)('s1')).toBeNull();
+    expect(dbModelFactResolver(events, () => 'codex')('s1')).toBeNull();
+    expect(dbModelFactResolver(events, () => 'nope')('s1')).toBeNull();
+    expect(queried).toBe(false);
   });
 });

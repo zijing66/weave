@@ -180,12 +180,20 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 ### 4.9 路径引用与只读预览
 
-表示法归 `MessagingSurface.pathRefs`（`PathRefSpec` 的 `kinds` / `lines` / `expression`）：答「这个 harness 怎么引用项目内文件」。
+表示法归 `MessagingSurface.pathRefs`（`PathRefSpec` 的 `kinds` / `lines` / `expression` / `recognize`）：答「这个 harness 怎么引用项目内文件」。
 
 - 表达式（`@p`、`@p#L起-止`、目录尾斜杠）**只在服务端产出**（列表 `GET /sessions/:id/files` 带整文件形状、带行区间走 `GET /sessions/:id/ref` 现算）；web 只当不透明字符串贴进输入框、胶囊另存服务端给的 path/kind/lines 原文、从不反解表达式。
+- **反向认引用 = `recognize`（`expression` 的逆运算）**：粘贴回填时把一段现成文本还原成胶囊，走 `POST /sessions/:id/refs/recognize`。文法归 harness、**存在性归项目索引**（`hasPath` 二分查排序好的 files/dirs，不为此做一份 Set），索引里没有 / `kinds` 不认的一律不认；`ref` 回的是服务端 `expression` 归一后的形状（`@p` 归一成 `@p/` 这种差别由服务端消化）。
+- **引用前后必须是空白**（行首/行尾也算）：`看@a.ts`、`@a.ts，还有`、行内反引号里包着的都不算引用——前端那条 `@` 判据与服务端同一个规矩（输入框里粘着字敲 `@` 不弹选择器），否则邮箱、中文粘连全是误弹。胶囊不是空白：紧跟胶囊再敲 `@` 也不算。
 - `lines` 答「选择器摆不摆行号选择」；codex = null + `unsupportedReasons.pathRefs`（文件钮置灰）。
+- 选择器手势（`FilePicker`）：**单击只挪光标**（第三栏跟着走）、**双击 / Enter 才落定**（目录行 = 进入），空格与左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）是桌面加速键；触屏没有 hover 与修饰键 ⇒ 单击仍是「进入」，多选只靠**常显**的勾选框（藏起来的钮在触屏上等于没有，§11）。已选非空时底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序，每枚后面补一个空格）。`pathRefKinds` 不含 `dir` 时目录行不给「引用此文件夹」。
+- 第三栏答「这条选中是什么」：目录列直接子项（**只读**，下钻仍归第二栏，两栏都能进会打架）、文本给只读编辑器、图片给 `<img>`；换选中防抖 150ms + 目录/正文各一份 LRU（箭头连滑不重取）。
 - 预览是**只读**编辑器（`editable.of(false)`）、**没有替换**——查找与跳行用自绘的一条小条，不用 CodeMirror 自带搜索面板（那面板恒带 Replace 一行）。
-- **索引不常驻、不 watch**——打开即重建（`daemon/project-files.ts`：`git ls-files`，非 git 回落枚举，缓存只吸收连续开关）；watch 是猜测而枚举一个项目便宜三四个数量级。
+- **索引不常驻、不 watch、不落盘**（`daemon/project-files.ts`）：打开选择器第一拍带 `?fresh=1` **无条件重建**（`git ls-files`，非 git 回落枚举），之后每敲一下只走缓存。缓存不是纯 TTL：命中时先核 **git 指纹**（`.git/index` 的 mtime + size；worktree / 子模块按 `.git` 文件里那行 `gitdir:` 找过去），变了立刻重建、没变才复用（一次 lstat + 一次 stat，比一个请求本身还便宜）；**硬窗 30s**（`INDEX_TTL_MS`）兜底，因为新建的未跟踪文件不动 `.git/index`。
+- **别拿 `WatchService` 的 chokidar 去刷源文件**：它只挂资源面，源文件上每实体一个 `fs.watch` 的账已经量过（1.3 万文件 → 1.3 万个句柄、一次扫描 20s、24s CPU），而且事件会漏，漏了就永远陈旧；枚举一个项目比它便宜三四个数量级（本仓 650 文件 283ms，大头是两三次 git 进程）。
+- **索引形状分两层（落盘的形状已备好，盘上那份还没写）**：`FileIndexSnapshot`（`v` / `root` / `at` / `stamp` / `files` / `dirs`）= 可序列化那一份；`FileIndex` 在它之上挂**派生态**（`lower` / `dirLower` 小写表、`children` 目录子项映射）。`enumerateIndex` 产快照、`hydrateIndex` 是「快照 → 可查索引」的唯一入口、`buildIndex = hydrate(enumerate)`；将来读盘只需 `hydrateIndex(JSON.parse(...))` 再核 `v` / `root` / `stamp`，形状不用再改。
+- **匹配 = 有界 Top-N + 满档即停 + 分刀让出**：`startMatch` 只留 `limit` 条（新条目顶掉最差那条再冒泡）；最差那条已是最高档（basename 前缀）时直接收工——此时 `total` 只是**下限**、同档内的先后由扫描序定，响应带 `capped` 让前端说「前 N 条命中（还有更多）」。`matchPaths` 每刀 ~8ms 让出事件循环（30 万条全扫一两百毫秒，一口气跑完这段时间里所有请求连 SSE 写帧都得等）。档位与高亮区间口径没变（`rankOf` / `rangesOf`）。
+- **目录浏览 O(子项)**：`listDirOf` 直接取 `children`；排序**等第一次浏览这个目录**才做（30 万条上建索引时全排一遍要半分钟），且共用一具 `Intl.Collator`（`localeCompare(…, {numeric:true})` 每次现造排序器：30 万条 603ms vs 26ms）。
 - **子模块里的文件也在索引里**：git 只给子模块一个 gitlink（mode 160000），得各自进去再列一遍（`--recurse-submodules` 给不了 `--others`，而子模块里刚建还没 add 的正是最想引用的），gitlink 自身只当目录、不当文件；没克隆的子模块不进去问 git（空目录里 `ls-files` 会往上层仓库上溯、把外层文件挂到它名下）。
 
 ### 4.10 pane 定位：locator 优先、标题+cwd 回落
@@ -458,6 +466,7 @@ hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发�
 ### `SessionProbe` 记的其余事实
 
 - **换模型**：`PostModelSwitch` 的 `to_model` 进闩锁、取更晚的那个——换模型不在转录里留条目，标签靠它才跟得上；事件名与键形归 claude adapter 的 `switchedModelOf`，server 不自拼。
+- **闩扛不过重启 ⇒ 回读库**：闩在内存，daemon 一重启就没了，而转录只在本轮 assistant 条目上照会模型 ⇒「换完就放着」的会话重启后一直停在切换前那个模型（实测窗口：切换 17:35:23 → dev daemon 重启 17:37:18 → 转录 17:40:39 才照会，见 DECISIONS 同日）。兜底 = `session-probe.ts` 的 `dbModelFactResolver`：取库里这条会话最近一条 `HARNESS_SESSION_CONTROL[<harness>].modelFactEvents` 事件（claude = `PostModelSwitch` + `SessionStart`），**是换模型**才拿 `from_model` 跟转录此刻照会的值比（`bareModelName` 剥网关前缀），相同即宿主还没跑过新一轮 → 用 `to_model` 锁进闩；**最新一条是 `SessionStart`** 就什么都不补（`--resume` 把模型交还宿主重定，旧答案作废）。每个会话 daemon 生命周期内只问一次（`probed`；`sessionStarted` / `forget` 清掉）。
 - **开/恢复会话**：`SessionStart` 的 `startedModelOf`——宿主 `--resume` 时把模型落回默认、而这条事件的 raw 里**不带** `model`（startup/compact 有），转录里又只有上一轮的照会，故带真名就以它为准、不带就清掉闩与最后已知让下一次问重读（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
 - **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
 - web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。

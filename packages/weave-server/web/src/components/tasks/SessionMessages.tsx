@@ -7,6 +7,7 @@ import {
   api,
   type HookEventRow,
   type MessagingCapability,
+  type RecognizedRef,
   type SessionMessageRow,
   type SessionPlan,
   type UploadImage,
@@ -29,7 +30,7 @@ import {
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
 import { useTheme } from '@/lib/theme';
-import { FilePicker, type PickTarget } from './FilePicker';
+import { FilePicker, type PickItem, type PickTarget } from './FilePicker';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { StatuslineBar } from './StatuslineBar';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
@@ -432,6 +433,85 @@ export function serializeDraft(root: Node | null): string {
   root.childNodes.forEach(walk);
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
+}
+
+/** 敲下 `@` 之后该怎么处理（纯函数，DOM 那边只负责把「光标之前那截」喂进来）：
+ *  `escape` = `\@`，吃掉反斜杠留字面 `@`；`ignore` = 前面不是空白；`open` = 唤出选择器。
+ *  **`@` 前面必须是空白（或行首）**——与服务端认引用的文法同一套判据：粘在字里
+ *  （邮箱 `foo@bar`、中文 `看@a.ts`）既不是引用，也就不该弹框。 */
+export type PickerIntent = 'open' | 'escape' | 'ignore';
+
+export function pickerIntent(before: string): PickerIntent {
+  if (!before.endsWith('@')) return 'ignore';
+  if (before.endsWith('\\@')) return 'escape';
+  const prev = before[before.length - 2];
+  if (prev !== undefined && !/\s/.test(prev)) return 'ignore';
+  return 'open';
+}
+
+/** 粘贴回填切成的一小段：一段原文，或一枚认出来的引用（`PickItem` 直接能喂给
+ *  `insertRefs`，与选择器落定走同一条路）。 */
+export type DraftSegment = { kind: 'text'; text: string } | { kind: 'ref'; item: PickItem };
+
+/** 文本 + 服务端认出来的引用区间 → 交替的片段（粘贴时把表达式还原成胶囊）。
+ *  区间按起点排序、重叠或越界的一律跳过（服务端给的是原文坐标，认错也不该吞字）。 */
+export function buildSegments(text: string, refs: readonly RecognizedRef[]): DraftSegment[] {
+  const out: DraftSegment[] = [];
+  let at = 0;
+  for (const r of [...refs].sort((a, b) => a.start - b.start)) {
+    if (r.start < at || r.end > text.length || r.end <= r.start) continue;
+    if (r.start > at) out.push({ kind: 'text', text: text.slice(at, r.start) });
+    out.push({
+      kind: 'ref',
+      item: { ref: r.ref, target: { path: r.path, kind: r.kind, ...(r.lines ? { lines: r.lines } : {}) } },
+    });
+    at = r.end;
+  }
+  if (at < text.length) out.push({ kind: 'text', text: text.slice(at) });
+  return out;
+}
+
+/** 光标之前那截文字。`Range.toString()` 不吐 `<br>` 的换行，而行首那枚 `@` 正靠
+ *  「前面是空白」才成立——所以自己走一遍，`<br>` 折成 `\n`。 */
+export function textBeforeCaret(root: Node, range: Range): string {
+  let out = '';
+  let hit = false;
+  const walk = (node: Node): void => {
+    if (hit) return;
+    if (node === range.startContainer) {
+      if (node.nodeType === TEXT_NODE) {
+        out += (node.nodeValue ?? '').slice(0, range.startOffset);
+      } else {
+        const limit = Math.min(range.startOffset, node.childNodes.length);
+        for (let i = 0; i < limit; i++) walk(node.childNodes[i]!);
+      }
+      hit = true;
+      return;
+    }
+    if (node.nodeType === TEXT_NODE) {
+      out += node.nodeValue ?? '';
+      return;
+    }
+    if (node.nodeType !== ELEMENT_NODE) return;
+    if ((node as HTMLElement).tagName === 'BR') {
+      out += '\n';
+      return;
+    }
+    for (const child of Array.from(node.childNodes)) {
+      if (hit) return;
+      walk(child);
+    }
+  };
+  if (root === range.startContainer) {
+    const limit = Math.min(range.startOffset, root.childNodes.length);
+    for (let i = 0; i < limit; i++) walk(root.childNodes[i]!);
+    return out;
+  }
+  for (const child of Array.from(root.childNodes)) {
+    if (hit) break;
+    walk(child);
+  }
+  return out;
 }
 
 /** 胶囊的样式（动态建元素也想吃 Tailwind：类名写死在源码里才生成得出）。
@@ -1402,8 +1482,10 @@ export function SessionMessages({
     // 选择器开着时焦点不在框里，浏览器那份选区已经没了；`@` 触发的那次要回到
     // 那枚 `@` 的位置，而不是末尾（focus 之后才设，否则会被 focus 抢走）。
     const saved = atRange.current;
-    if (saved) {
-      atRange.current = null;
+    atRange.current = null;
+    // 等落定的这段时间里那截文字可能已经被删掉（粘贴要先问一趟服务端）：
+    // 挂一个游离节点的 Range 会抛，退回末尾追加
+    if (saved && el.contains(saved.startContainer)) {
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(saved);
@@ -1471,19 +1553,42 @@ export function SessionMessages({
     return chip;
   };
 
-  /** 落定一条引用：在改既有胶囊就就地换掉（位置不动），否则插到光标处并补一个
-   *  空格——接着打字才不粘在胶囊上。 */
-  const insertRef = (ref: string, target: PickTarget): void => {
-    const chip = buildChip(ref, target);
+  /** 落定一批引用：在改既有胶囊就就地换掉（位置不动、只换一枚），否则在光标处
+   *  依次插入，每枚后面补一个空格——接着打字才不粘在胶囊上。 */
+  const insertRefs = (items: PickItem[]): void => {
+    const head = items[0];
+    if (!head) return;
     const editing = picker?.chip ?? null;
     atRange.current = null;
     setPicker(null);
     if (editing) {
-      editing.replaceWith(chip);
+      editing.replaceWith(buildChip(head.ref, head.target));
       setDraft(serializeDraft(draftRef.current));
       return;
     }
-    insertNodes([chip, document.createTextNode(' ')]);
+    insertNodes(
+      items.flatMap((it) => [buildChip(it.ref, it.target), document.createTextNode(' ')]),
+    );
+  };
+
+  /** 粘贴回填：先把这段文本交给服务端认引用（文法归 harness、存在性归索引），
+   *  认到的片段落成胶囊、其余照原文插入。认不出或这趟挂了就整段当纯文本——
+   *  粘贴不能因为一个可选的服务而丢字。 */
+  const insertRichText = (text: string): void => {
+    const el = draftRef.current;
+    if (!el) return;
+    const range = caretInDraft(el);
+    atRange.current = range ? range.cloneRange() : null;
+    const plain = (): void => insertNodes([document.createTextNode(text)]);
+    api.recognizeRefs(sessionId, text).then((refs) => {
+      insertNodes(
+        buildSegments(text, refs).flatMap((seg): Node[] =>
+          seg.kind === 'text'
+            ? [document.createTextNode(seg.text)]
+            : [buildChip(seg.item.ref, seg.item.target)],
+        ),
+      );
+    }, plain);
   };
 
   /** 关掉选择器：**不动正文**，只把光标放回唤出它的那枚 `@` 原来的位置（那枚 `@`
@@ -1538,22 +1643,16 @@ export function SessionMessages({
   const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
     // 只认真的敲进来一个半角 `@`：IME 组字、粘贴、替换都不算
     if (native.inputType !== 'insertText' || native.data !== '@') return false;
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return false;
-    const range = sel.getRangeAt(0);
-    if (!el.contains(range.commonAncestorContainer)) return false;
-    // 光标之前那截文字（含刚敲进来的 `@`）
-    const head = range.cloneRange();
-    head.setStart(el, 0);
-    const before = head.toString();
-    if (!before.endsWith('@')) return false;
-    if (before.endsWith('\\@')) {
+    const range = caretInDraft(el);
+    if (!range) return false;
+    // 光标之前那截文字（含刚敲进来的 `@`）。胶囊按词边界算，`@` 紧跟胶囊之后
+    // 照样弹；粘在 `foo` 后面（邮箱）不弹；`\@` 是转义，只吃反斜杠不弹框。
+    const intent = pickerIntent(textBeforeCaret(el, range));
+    if (intent === 'ignore') return false;
+    if (intent === 'escape') {
       escapeAt(el);
       return true;
     }
-    // 粘在词里不弹（`foo@bar` 这种邮箱，或上一次引用之后接着打）
-    const prev = before[before.length - 2];
-    if (prev !== undefined && /[A-Za-z0-9_]/.test(prev)) return false;
 
     document.execCommand('delete'); // 收掉这枚 `@`：胶囊自己带
     const caret = window.getSelection();
@@ -2630,11 +2729,12 @@ export function SessionMessages({
                       return;
                     }
                     // 一律走纯文本：粘进来的 HTML 会把样式和结构一起带进 DOM，
-                    // 序列化就再也吐不回一句干净的话
+                    // 序列化就再也吐不回一句干净的话。文本里的引用表达式认得出
+                    // 就落成胶囊（那本来就是它发出去时的样子）
                     const text = e.clipboardData.getData('text/plain');
                     if (text) {
                       e.preventDefault();
-                      insertText(text);
+                      insertRichText(text);
                     }
                   }}
                   style={{ height: `calc(${inputRows * INPUT_ROW_PX}px + 0.75rem)` }}
@@ -2839,8 +2939,9 @@ export function SessionMessages({
             sessionId={sessionId}
             rootLabel={projectLabel}
             linesSupported={capability.pathRefLines}
+            dirSupported={capability.pathRefKinds.includes('dir')}
             initial={picker.initial}
-            onPick={insertRef}
+            onPick={insertRefs}
             onClose={closePicker}
           />
         )}

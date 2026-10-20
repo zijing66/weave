@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
+  buildSegments,
   conversationOf,
   countdownLabel,
   imagesFrom,
@@ -9,8 +10,10 @@ import {
   failedTail,
   filterThread,
   isGenerating,
+  pickerIntent,
   removableOf,
   serializeDraft,
+  textBeforeCaret,
   withPlan,
   readConvCache,
   writeConvCache,
@@ -476,6 +479,89 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
 
   it('⑤ 没挂载 / 不是元素 = 空串（不抛）', () => {
     expect(serializeDraft(null)).toBe('');
+  });
+
+  it('⑥ 敲完 `@` 该不该弹选择器：前面必须是空白，`\\@` 是转义', () => {
+    const before = (root: Node, container: Fake, off: number): string =>
+      textBeforeCaret(root, { startContainer: container, startOffset: off } as unknown as Range);
+    const alone = text('@');
+    expect(pickerIntent(before(draft([text('看看 '), alone]), alone, 1))).toBe('open');
+    expect(pickerIntent(before(draft([text('行尾换行\n'), alone]), alone, 1))).toBe('open');
+    // 换行是 <br>：行首那枚 `@` 前面同样是空白（Range.toString() 不吐这个换行）
+    expect(pickerIntent(before(draft([text('上一行'), el('BR'), alone]), alone, 1))).toBe('open');
+    // 粘着字的都不弹：邮箱、中文
+    const mail = text('foo@');
+    expect(pickerIntent(before(draft([mail]), mail, 4))).toBe('ignore');
+    const cjk = text('看@');
+    expect(pickerIntent(before(draft([cjk]), cjk, 2))).toBe('ignore');
+    const esc = text('\\@');
+    expect(pickerIntent(before(draft([esc]), esc, 2))).toBe('escape');
+    // 光标落在容器上（不在文本节点里）：只取它前面那些兄弟
+    const root = el('DIV', [text(' '), text('@'), text('后面的字')]);
+    expect(pickerIntent(before(root as unknown as Node, root, 2))).toBe('open');
+    const glued = el('DIV', [text('看'), text('@')]);
+    expect(pickerIntent(before(glued as unknown as Node, glued, 2))).toBe('ignore');
+  });
+
+  it('⑦ 胶囊不是空白：紧跟胶囊的 `@` 不弹，胶囊后面留了空格才弹', () => {
+    const chip = el('SPAN', [text('@src/a.ts')], { 'data-ref': '@src/a.ts' });
+    const tail = text('@');
+    const tight = textBeforeCaret(draft([chip, tail]), {
+      startContainer: tail,
+      startOffset: 1,
+    } as unknown as Range);
+    expect(pickerIntent(tight)).toBe('ignore');
+    const spaced = text('@');
+    const before = textBeforeCaret(draft([chip, text(' '), spaced]), {
+      startContainer: spaced,
+      startOffset: 1,
+    } as unknown as Range);
+    expect(pickerIntent(before)).toBe('open');
+  });
+});
+
+describe('buildSegments（粘贴时把表达式还原成胶囊）', () => {
+  const ref = (start: number, end: number, path: string) => ({
+    start,
+    end,
+    ref: `@${path}`,
+    path,
+    kind: 'file' as const,
+  });
+
+  it('① 一个认不出的都没有 → 整段纯文本', () => {
+    expect(buildSegments('随便说说', [])).toEqual([{ kind: 'text', text: '随便说说' }]);
+  });
+
+  it('② 中间夹着的认出来 → 切成交替的片段', () => {
+    expect(buildSegments('看 @src/a.ts 这里', [ref(2, 11, 'src/a.ts')])).toEqual([
+      { kind: 'text', text: '看 ' },
+      { kind: 'ref', item: { ref: '@src/a.ts', target: { path: 'src/a.ts', kind: 'file' } } },
+      { kind: 'text', text: ' 这里' },
+    ]);
+  });
+
+  it('③ 行区间跟着胶囊走', () => {
+    const segs = buildSegments('@src/a.ts#L3-5', [
+      { ...ref(0, 14, 'src/a.ts'), ref: '@src/a.ts#L3-5', lines: { start: 3, end: 5 } },
+    ]);
+    expect(segs).toEqual([
+      {
+        kind: 'ref',
+        item: {
+          ref: '@src/a.ts#L3-5',
+          target: { path: 'src/a.ts', kind: 'file', lines: { start: 3, end: 5 } },
+        },
+      },
+    ]);
+  });
+
+  it('④ 重叠 / 越界的认领跳过，原文字一个不丢', () => {
+    const segs = buildSegments('@a/b.ts @c/d.ts', [ref(0, 7, 'a/b.ts'), ref(3, 6, 'x'), ref(8, 99, 'y')]);
+    expect(segs).toEqual([
+      { kind: 'ref', item: { ref: '@a/b.ts', target: { path: 'a/b.ts', kind: 'file' } } },
+      { kind: 'text', text: ' @c/d.ts' },
+    ]);
   });
 });
 

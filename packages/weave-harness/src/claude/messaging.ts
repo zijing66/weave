@@ -1,5 +1,5 @@
 import { HARNESS_LIFECYCLE, INJECTABLE_EVENTS } from '@weavecode/core';
-import type { ImageAttachSpec, MessagingSurface, PathRefSpec } from '../driver.js';
+import type { ImageAttachSpec, MessagingSurface, PathRefSpec, RecognizedRef } from '../driver.js';
 import { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 import { CLAUDE_PROMPT_RELAY } from './prompt.js';
 import { CLAUDE_RESUME } from './resume.js';
@@ -42,6 +42,38 @@ const CLAUDE_PATH_REF: PathRefSpec = {
     return lines.start === lines.end
       ? `@${path}#L${lines.start}`
       : `@${path}#L${lines.start}-${lines.end}`;
+  },
+  recognize: (text) => {
+    const out: RecognizedRef[] = [];
+    // 词取到空白 / 另一个 `@` / 全角标点为止：中文句子里的引用后面常直接跟「，还有」，
+    // 而全角标点不可能出现在路径里（CJK 字母可以，`@文档/说明.md` 照样能认）
+    for (const m of text.matchAll(/(?:^|\s)@([^\s@，。；：！？、（）【】「」『』《》“”‘’…]+)/g)) {
+      const token = m[1]!;
+      const start = m.index + m[0].length - token.length - 1; // 那枚 `@` 的下标
+      const end = start + 1 + token.length;
+      // **前后必须都是空白**（或行首/行尾）：`看@src/a.ts`、`@src/a.ts，还有` 都不算——
+      // 只要有一边粘着别的字，宁可当普通文本（误认会把话改成一条引用）
+      const next = text[end];
+      if (next !== undefined && !/\s/.test(next)) continue;
+      const line = /#L(\d+)(?:-(\d+))?$/.exec(token);
+      const rest = line ? token.slice(0, line.index) : token;
+      // 目录惯例带尾斜杠；没有斜杠的交给调用方按索引判类型
+      const dir = rest.endsWith('/');
+      const path = dir ? rest.slice(0, -1) : rest;
+      // 绝对路径、盘符、另一个 `#` 都不是项目内引用
+      if (!path || path.startsWith('/') || path.includes(':') || path.includes('#')) continue;
+      const from = line ? Number(line[1]) : null;
+      const to = line?.[2] ? Number(line[2]) : from;
+      out.push({
+        start,
+        end,
+        ref: text.slice(start, end),
+        path,
+        kind: dir ? 'dir' : 'file',
+        ...(from != null ? { lines: { start: from, end: to! } } : {}),
+      });
+    }
+    return out;
   },
 };
 

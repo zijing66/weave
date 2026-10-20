@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { PathRefKind } from '@weavecode/harness';
@@ -7,8 +7,8 @@ import type { PathRefKind } from '@weavecode/harness';
 const execFileAsync = promisify(execFile);
 
 /**
- * 项目文件索引：对话页的路径补全面。**不常驻、不 watch**——打开选择器即重建
- * （git ls-files 一万文件 ~20ms），缓存只挡「连续开关选择器」这一种情形。
+ * 项目文件索引：对话页的路径补全面。**不常驻、不 watch、不落盘**——打开选择器即
+ * 重建（`?fresh=1`），开着的期间靠 git 指纹（`.git/index`）重验 + 硬窗兜底。
  * 理由：重建是事实、watch 是猜测（事件会漏，漏了就永远陈旧），而枚举一个项目
  * 比 Everything 那种枚举整个卷便宜三四个数量级，常驻索引不划算。
  */
@@ -16,8 +16,11 @@ const execFileAsync = promisify(execFile);
 /** 索引条目上限：再大就不是「路径补全」该扛的量了，退化成目录浏览。 */
 export const MAX_INDEX_FILES = 300_000;
 
-/** 缓存存活窗：只为吸收连续开关，不是刷新周期。 */
-const INDEX_TTL_MS = 1500;
+/** 快照格式版本：将来落盘时用它作废旧文件，改形状必须递增。 */
+export const INDEX_VERSION = 1;
+
+/** 硬窗：到点必重建。**新建的未跟踪文件不动 `.git/index`**（实测），只有这条能兜住。 */
+const INDEX_TTL_MS = 30_000;
 
 /** 最多留几个项目的索引（大仓库索引按 MB 计）。 */
 const MAX_CACHED_PROJECTS = 3;
@@ -35,13 +38,39 @@ const SKIP_DIRS = new Set([
   '.turbo',
 ]);
 
-export interface FileIndex {
+/**
+ * 索引的可序列化部分 = 将来落盘那一份的形状：枚举结果 + 建它时的根与 git 指纹。
+ * 派生出来的东西（小写表、目录子项映射）**不在这层**，读回来现算。
+ */
+export interface FileIndexSnapshot {
+  v: number;
+  /** 建索引时的项目根：路径变了这份就不能再用。 */
+  root: string;
+  /** 建索引的时刻（硬窗从它算）。 */
   at: number;
+  /** 那一拍 `.git/index` 的指纹；null = 非 git / 读不到（重验只能靠硬窗）。 */
+  stamp: string | null;
+  truncated: boolean;
   /** 项目相对路径（正斜杠分隔），升序。 */
   files: string[];
   /** 目录集：由文件路径前缀派生 + 子模块的 gitlink（git 不列目录）。 */
   dirs: string[];
-  truncated: boolean;
+}
+
+/** 一个目录的直接子项（完整相对路径）。排序**等第一次浏览这个目录时再做**：
+ *  30 万条上 `localeCompare({numeric:true})` 是每个比较几微秒，建索引时全排一遍要半分钟。 */
+export interface DirChildren {
+  dirs: string[];
+  files: string[];
+  sorted: boolean;
+}
+
+export interface FileIndex extends FileIndexSnapshot {
+  /** `files` 的小写（同下标）：匹配热路径上半条都要对 30 万条跑，不能现算。 */
+  lower: string[];
+  dirLower: string[];
+  /** 目录 → 直接子项：浏览面 O(子项数)，不再扫全索引。 */
+  children: Map<string, DirChildren>;
 }
 
 export interface PathHit {
@@ -178,7 +207,28 @@ function dirsOf(files: readonly string[]): string[] {
   return [...set].sort();
 }
 
-export async function buildIndex(root: string): Promise<FileIndex> {
+/**
+ * git 指纹：`.git/index` 的 mtime + 大小。**新建未跟踪文件不动它**（实测），所以它管
+ * 「commit / 切分支 / checkout」这类立刻可感的变动，未跟踪的新建仍由硬窗兜。
+ * `.git` 是文件（worktree / 子模块）时按里面那行 `gitdir:` 找过去。
+ */
+async function gitStamp(root: string): Promise<string | null> {
+  try {
+    let gitDir = path.join(root, '.git');
+    if (!(await lstat(gitDir)).isDirectory()) {
+      const line = /^gitdir:\s*(.+)$/m.exec(await readFile(gitDir, 'utf8'));
+      if (!line) return null;
+      gitDir = path.resolve(root, line[1]!.trim());
+    }
+    const s = await stat(path.join(gitDir, 'index'));
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return null; // 没 .git / 刚 init 还没 add 过任何东西
+  }
+}
+
+/** 枚举 → 快照（这一层只落可序列化的东西）。 */
+async function enumerateIndex(root: string): Promise<FileIndexSnapshot> {
   const fromGit = await listViaGit(root);
   const files = fromGit?.files ?? (await listViaWalk(root));
   const truncated = files.length > MAX_INDEX_FILES;
@@ -188,16 +238,60 @@ export async function buildIndex(root: string): Promise<FileIndex> {
   // （连同它的上层目录：`vendor/lib` 空着时 `vendor` 仍然得能进去）
   const links = fromGit?.links ?? [];
   const dirs = [...new Set([...dirsOf(kept), ...links, ...dirsOf(links)])].sort();
-  return { at: Date.now(), files: kept, dirs, truncated };
+  return {
+    v: INDEX_VERSION,
+    root,
+    at: Date.now(),
+    stamp: await gitStamp(root),
+    truncated,
+    files: kept,
+    dirs,
+  };
+}
+
+/**
+ * 快照 → 可查的索引：小写表与目录子项映射这些**派生态**在这里算好挂在索引上。
+ * 将来的持久化读回来走的也是这一条（不存派生、不算两遍）。
+ */
+export function hydrateIndex(snap: FileIndexSnapshot): FileIndex {
+  const lower = new Array<string>(snap.files.length);
+  for (let i = 0; i < snap.files.length; i++) lower[i] = snap.files[i]!.toLowerCase();
+  const dirLower = new Array<string>(snap.dirs.length);
+  for (let i = 0; i < snap.dirs.length; i++) dirLower[i] = snap.dirs[i]!.toLowerCase();
+
+  const children = new Map<string, DirChildren>();
+  const kidsOf = (dir: string): DirChildren => {
+    let kids = children.get(dir);
+    if (!kids) children.set(dir, (kids = { dirs: [], files: [], sorted: false }));
+    return kids;
+  };
+  for (const d of snap.dirs) kidsOf(d.slice(0, Math.max(0, d.lastIndexOf('/')))).dirs.push(d);
+  for (const f of snap.files) kidsOf(f.slice(0, Math.max(0, f.lastIndexOf('/')))).files.push(f);
+  return { ...snap, lower, dirLower, children };
+}
+
+export async function buildIndex(root: string): Promise<FileIndex> {
+  return hydrateIndex(await enumerateIndex(root));
 }
 
 const cache = new Map<number, FileIndex>();
 const inflight = new Map<number, Promise<FileIndex>>();
 
-/** 取项目索引：新鲜则复用，在飞则共用一次构建（同 `/toolkit` 的口径）。 */
-export async function projectFileIndex(projectId: number, root: string): Promise<FileIndex> {
+/**
+ * 取项目索引：`fresh` = 打开选择器那一拍，无条件重建；否则在飞则共用一次构建
+ * （同 `/toolkit` 的口径），命中缓存则**先核 git 指纹**——变了立刻重建，没变才复用
+ * （一次 lstat + 一次 stat，比一个请求本身还便宜）。
+ */
+export async function projectFileIndex(
+  projectId: number,
+  root: string,
+  opts: { fresh?: boolean } = {},
+): Promise<FileIndex> {
   const hit = cache.get(projectId);
-  if (hit && Date.now() - hit.at < INDEX_TTL_MS) return hit;
+  if (hit && hit.root === root && !opts.fresh) {
+    if (Date.now() - hit.at < INDEX_TTL_MS && (await gitStamp(root)) === hit.stamp) return hit;
+    cache.delete(projectId);
+  }
   const flying = inflight.get(projectId);
   if (flying) return flying;
 
@@ -225,23 +319,23 @@ export function clearFileIndexCache(): void {
   cache.clear();
 }
 
-/** 目录浏览：`dir`（相对，'' = 根）的直接子项，目录在前、名字排。 */
+/** 自然序（`file-2` 在 `file-10` 前）。**共用一个 `Intl.Collator`**：`localeCompare`
+ *  每次都现造排序器，30 万条排一遍要六百毫秒，这个只要二十六毫秒。 */
+const BY_NAME = new Intl.Collator(undefined, { numeric: true });
+
+/** 目录浏览：`dir`（相对，'' = 根）的直接子项，目录在前、名字排（自然序）。 */
 export function listDirOf(index: FileIndex, dir: string): { path: string; kind: PathRefKind }[] {
-  const prefix = dir ? `${dir}/` : '';
+  const kids = index.children.get(dir);
+  if (!kids) return [];
+  if (!kids.sorted) {
+    // 同一父目录下比较全长与只比较名字等价（前缀一致），故直接按全长排
+    kids.dirs.sort(BY_NAME.compare);
+    kids.files.sort(BY_NAME.compare);
+    kids.sorted = true;
+  }
   const out: { path: string; kind: PathRefKind }[] = [];
-  const push = (p: string, kind: PathRefKind): void => {
-    const rest = p.slice(prefix.length);
-    if (rest && !rest.includes('/')) out.push({ path: p, kind });
-  };
-  for (const d of index.dirs) if (d.startsWith(prefix)) push(d, 'dir');
-  for (const f of index.files) if (f.startsWith(prefix)) push(f, 'file');
-  out.sort((a, b) =>
-    a.kind === b.kind
-      ? a.path.localeCompare(b.path, undefined, { numeric: true })
-      : a.kind === 'dir'
-        ? -1
-        : 1,
-  );
+  for (const d of kids.dirs) out.push({ path: d, kind: 'dir' });
+  for (const f of kids.files) out.push({ path: f, kind: 'file' });
   return out;
 }
 
@@ -297,31 +391,112 @@ function rangesOf(original: string, rank: number, q: string): [number, number][]
   return out;
 }
 
-/** 全索引模糊匹配 top `limit`（文件与目录同池竞争）。 */
-export function matchPaths(index: FileIndex, query: string, limit: number): {
+interface Candidate {
+  path: string;
+  kind: PathRefKind;
+  rank: number;
+  len: number;
+}
+
+/** 排序口径：档位高的在前，同档短的在前（更可能是要的那个），再按路径升序。 */
+function compareHits(a: Candidate, b: Candidate): number {
+  return b.rank - a.rank || a.len - b.len || a.path.localeCompare(b.path);
+}
+
+export interface MatchResult {
   hits: PathHit[];
+  /** 命中数；`capped` 时是「至少这么多」（提前收工，没再往下数）。 */
   total: number;
-} {
+  /** 满档即停：后面同档的命中用户本来就翻不到，不必扫完。 */
+  capped: boolean;
+}
+
+export interface MatchJob {
+  /** 跑一小刀（约 `budgetMs`）；true = 完事。 */
+  step(budgetMs: number): boolean;
+  result(): MatchResult;
+}
+
+/** 每刀 ~8ms：30 万条全扫是一两百毫秒，一口气跑完这段时间里所有请求（含 SSE 写帧）都得等。 */
+const MATCH_SLICE_MS = 8;
+const MATCH_YIELD_EVERY = 1024;
+
+/**
+ * 全索引模糊匹配 top `limit`（文件与目录同池竞争），分刀形态：调用方在刀与刀之间
+ * 让出事件循环。`limit` 满且最差那条已是最高档时直接收工——再扫也挤不进榜。
+ */
+export function startMatch(index: FileIndex, query: string, limit: number): MatchJob {
   const q = query.trim().toLowerCase();
-  if (!q) return { hits: [], total: 0 };
-  const scored: { path: string; kind: PathRefKind; rank: number; len: number }[] = [];
-  const consider = (p: string, kind: PathRefKind): void => {
-    const lower = p.toLowerCase();
-    const rank = rankOf(lower, lower.slice(lower.lastIndexOf('/') + 1), q);
+  const best: Candidate[] = [];
+  let phase: 'files' | 'dirs' | 'done' = q && limit > 0 ? 'files' : 'done';
+  let at = 0;
+  let seen = 0;
+  let capped = false;
+
+  const offer = (p: string, lowerPath: string, kind: PathRefKind): void => {
+    const rank = rankOf(lowerPath, lowerPath.slice(lowerPath.lastIndexOf('/') + 1), q);
     if (rank < 0) return;
-    scored.push({ path: p, kind, rank, len: p.length });
+    seen++;
+    const c: Candidate = { path: p, kind, rank, len: p.length };
+    if (best.length === limit && compareHits(c, best[limit - 1]!) >= 0) return;
+    const full = best.length === limit;
+    // 满档时新来的顶掉最差那条，再往前冒泡到位
+    let i = full ? limit - 1 : best.length;
+    if (full) best[limit - 1] = c;
+    else best.push(c);
+    while (i > 0 && compareHits(c, best[i - 1]!) < 0) {
+      best[i] = best[i - 1]!;
+      i--;
+    }
+    best[i] = c;
   };
-  for (const f of index.files) consider(f, 'file');
-  for (const d of index.dirs) consider(d, 'dir');
-  scored.sort((a, b) => b.rank - a.rank || a.len - b.len || a.path.localeCompare(b.path));
-  // 命中区间只为真的会下发的那几条算：宽查询（`src`）能命中整个索引，逐条去算
-  // 区间就是白烧——被 limit 切掉的没人看。
+
   return {
-    hits: scored.slice(0, limit).map((s) => ({
-      path: s.path,
-      kind: s.kind,
-      ranges: rangesOf(s.path, s.rank, q),
-    })),
-    total: scored.length,
+    step(budgetMs: number): boolean {
+      const deadline = Date.now() + budgetMs;
+      let ticks = 0;
+      while (phase !== 'done') {
+        const paths = phase === 'files' ? index.files : index.dirs;
+        const lowers = phase === 'files' ? index.lower : index.dirLower;
+        const kind: PathRefKind = phase === 'files' ? 'file' : 'dir';
+        while (at < paths.length) {
+          offer(paths[at]!, lowers[at]!, kind);
+          at++;
+          if (best.length === limit && best[limit - 1]!.rank === 3) {
+            capped = true;
+            phase = 'done';
+            return true;
+          }
+          if ((++ticks & (MATCH_YIELD_EVERY - 1)) === 0 && Date.now() > deadline) return false;
+        }
+        at = 0;
+        phase = phase === 'files' ? 'dirs' : 'done';
+      }
+      return true;
+    },
+    result(): MatchResult {
+      // 命中区间只为真的会下发的那几条算：宽查询（`src`）能命中整个索引，逐条去算
+      // 区间就是白烧——被 limit 切掉的没人看。
+      return {
+        hits: best.map((s) => ({
+          path: s.path,
+          kind: s.kind,
+          ranges: rangesOf(s.path, s.rank, q),
+        })),
+        total: capped ? best.length : seen,
+        capped,
+      };
+    },
   };
+}
+
+/** 全索引模糊匹配 top `limit`：分刀跑完，刀与刀之间让出事件循环。 */
+export async function matchPaths(
+  index: FileIndex,
+  query: string,
+  limit: number,
+): Promise<MatchResult> {
+  const job = startMatch(index, query, limit);
+  while (!job.step(MATCH_SLICE_MS)) await new Promise<void>((resolve) => setImmediate(resolve));
+  return job.result();
 }

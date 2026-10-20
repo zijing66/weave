@@ -26,9 +26,10 @@ describe('路径引用路由', () => {
 
   const call = async (
     path: string,
+    body?: unknown,
   ): Promise<{ handled: boolean; status: number; body: unknown; headers: Record<string, string> }> => {
-    const req = Readable.from([Buffer.from('')]) as unknown as IncomingMessage;
-    req.method = 'GET';
+    const req = Readable.from([Buffer.from(body === undefined ? '' : JSON.stringify(body))]) as unknown as IncomingMessage;
+    req.method = body === undefined ? 'GET' : 'POST';
     let bodyOut: unknown = null;
     const headers: Record<string, string> = {};
     const res = {
@@ -181,15 +182,56 @@ describe('路径引用路由', () => {
     expect(hit.status).toBe(415);
   });
 
-  it('⑫ 能力矩阵带 pathRefLines（选择器据它决定摆不摆行号选择）', async () => {
+  it('⑫ 能力矩阵带 pathRefLines / pathRefKinds（选择器据它决定摆不摆行号与目录引用）', async () => {
     const hit = await call('/messaging/capabilities');
     const body = hit.body as {
-      capabilities: { harness: string; pathRefs: boolean; pathRefLines: boolean }[];
+      capabilities: { harness: string; pathRefs: boolean; pathRefLines: boolean; pathRefKinds: string[] }[];
     };
     const claude = body.capabilities.find((c) => c.harness === 'claude')!;
     expect(claude.pathRefs).toBe(true);
     expect(claude.pathRefLines).toBe(true);
+    expect(claude.pathRefKinds).toEqual(['file', 'dir']);
     const codex = body.capabilities.find((c) => c.harness === 'codex')!;
     expect(codex.pathRefs).toBe(false);
+    expect(codex.pathRefKinds).toEqual([]);
+  });
+
+  it('⑬ 反向认引用：只认文法、存在性由索引判（索引里没有的不变胶囊）', async () => {
+    registerSession('claude');
+    const text = '看 @src/a.ts#L3-5 这处，还有 @src/nope.ts 与 @src/ 都行，别碰 foo@bar.com';
+    const hit = await call('/sessions/sess/refs/recognize', { text });
+    expect(hit.handled).toBe(true);
+    expect(hit.status).toBe(200);
+    const body = hit.body as {
+      refs: { start: number; end: number; ref: string; path: string; kind: string; lines?: object }[];
+    };
+    expect(body.refs.map(({ start, end, ...rest }) => rest)).toEqual([
+      { ref: '@src/a.ts#L3-5', path: 'src/a.ts', kind: 'file', lines: { start: 3, end: 5 } },
+      // 文法是文件形、索引说它是目录 → 归一成目录表达式
+      { ref: '@src/', path: 'src', kind: 'dir' },
+    ]);
+    // 区间覆盖的正是原文那一段（前端按它切文本）
+    for (const r of body.refs) expect(text.slice(r.start, r.end)).toBe(r.ref);
+    // 前后粘着别的字的不算引用（服务端与输入框那条 `@` 判据同一套）
+    expect((await call('/sessions/sess/refs/recognize', { text: '看@src/a.ts' })).body).toEqual({ refs: [] });
+  });
+
+  it('⑭ 反向认引用：坏 body 400、没有文法 409', async () => {
+    registerSession('claude');
+    const bad = Readable.from([Buffer.from('not json')]) as unknown as IncomingMessage;
+    bad.method = 'POST';
+    const res = { statusCode: 0, setHeader: () => {}, writeHead: () => {}, end: () => {} };
+    const handled = await handleHooksRoutes(
+      bad,
+      res as unknown as ServerResponse,
+      deps,
+      '/sessions/sess/refs/recognize',
+      new URL('http://x/sessions/sess/refs/recognize'),
+    );
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(400);
+
+    registerSession('codex');
+    expect((await call('/sessions/sess/refs/recognize', { text: '@src/a.ts' })).status).toBe(409);
   });
 });

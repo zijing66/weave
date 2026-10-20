@@ -43,7 +43,7 @@ import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
-import { SessionProbe, dbTranscriptPathResolver } from './session-probe.js';
+import { SessionProbe, dbModelFactResolver, dbTranscriptPathResolver } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
@@ -200,7 +200,11 @@ export function startDaemon(): void {
   const orchestrations = new OrchestrationRepository(db);
   const orchestrationRuns = new OrchestrationRunRepository(db);
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
-  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
+  const sessionProbe = new SessionProbe(
+    dbTranscriptPathResolver(hookEvents),
+    // 换模型闩只在内存，重启即清零——回读库里这条会话最近一条落定事件补回来。
+    dbModelFactResolver(hookEvents, (sessionId) => hookSessions.getBySessionId(sessionId)?.harness ?? null),
+  );
   // 阻塞问答跟踪（AskUserQuestion / 计划与权限确认）：内存状态机挂 ingest
   // 事件流（inbox-worker 消费线程驱动），重启即 seedFromDb 重放补状态。
   const questionTracker = new QuestionTracker({

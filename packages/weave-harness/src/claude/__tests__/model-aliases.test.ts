@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   aliasOfModel,
+  bareModelName,
   effortLevelOf,
   modelAliasTargets,
   permissionModeOf,
@@ -52,10 +53,13 @@ describe('modelAliasTargets', () => {
 });
 
 describe('switchedModelOf', () => {
-  it('PostModelSwitch 的 to_model 就是此刻真跑的模型', () => {
-    expect(switchedModelOf('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })).toBe(
-      'deepseek-flash',
-    );
+  it('PostModelSwitch 的 to_model 就是此刻真跑的模型（附带切换前的 from_model）', () => {
+    expect(switchedModelOf('PostModelSwitch', { from_model: 'ftm', to_model: 'deepseek-flash' })).toEqual({
+      from: 'ftm',
+      to: 'deepseek-flash',
+    });
+    // 没带 from_model：新值照答，拿什么跟转录比我（重启后回读）不知道就 null
+    expect(switchedModelOf('PostModelSwitch', { to_model: 'ftm' })).toEqual({ from: null, to: 'ftm' });
   });
 
   it('别的动静 / 没带真名一律 null（不猜）', () => {
@@ -97,6 +101,8 @@ describe('aliasOfModel', () => {
 
   it('转录里的网关前缀剥掉再认', () => {
     expect(aliasOfModel(targets, 'custom_openai/ftm')).toBe('opus');
+    expect(bareModelName('custom_openai/deepseek-flash')).toBe('deepseek-flash');
+    expect(bareModelName('ftm')).toBe('ftm');
   });
 
   it('认不出 / 没值都回 null，不猜', () => {

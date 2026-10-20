@@ -103,6 +103,32 @@ describe('MessagingSurface 契约', () => {
     expect(spec.expression({ path: 'src', kind: 'dir' })).toBe('@src/');
   });
 
+  it('claude：recognize 是 expression 的逆运算（粘贴回填：句子里的引用要被原样认出来）', () => {
+    const spec = CLAUDE_MESSAGING.pathRefs!;
+    const text = '看下 @src/a.ts 和 @src/b.ts#L12-34 两处，目录 @docs/plan/ 也看一眼，别碰 foo@bar.com';
+    expect(spec.recognize(text).map((r) => ({ ...r, start: undefined, end: undefined }))).toEqual([
+      { ref: '@src/a.ts', path: 'src/a.ts', kind: 'file', start: undefined, end: undefined },
+      { ref: '@src/b.ts#L12-34', path: 'src/b.ts', kind: 'file', lines: { start: 12, end: 34 }, start: undefined, end: undefined },
+      { ref: '@docs/plan/', path: 'docs/plan', kind: 'dir', start: undefined, end: undefined },
+    ]);
+    // 区间覆盖的正是原文那一段（前端按它切文本）
+    for (const hit of spec.recognize(text)) expect(text.slice(hit.start, hit.end)).toBe(hit.ref);
+  });
+
+  it('claude：recognize 的边界——前后必须是空白，转义 \\@、词中 @、盘符/绝对路径', () => {
+    const spec = CLAUDE_MESSAGING.pathRefs!;
+    expect(spec.recognize('\\@src/a.ts')).toEqual([]);
+    expect(spec.recognize('mail foo@src/a.ts')).toEqual([]);
+    expect(spec.recognize('@/etc/passwd @C:/x.ts @a#b')).toEqual([]);
+    // 前后只要有一边粘着别的字就不算引用（中文、全角标点同样算「粘着」）
+    expect(spec.recognize('参考@src/a.ts')).toEqual([]);
+    expect(spec.recognize('@src/a.ts，还有')).toEqual([]);
+    expect(spec.recognize('看 @src/a.ts 和 @src/b.ts 两处')).toHaveLength(2);
+    // 行首/行尾本身就是边界
+    expect(spec.recognize('@src/a.ts')).toHaveLength(1);
+    expect(spec.recognize('看这个\n@src/a.ts')).toHaveLength(1);
+  });
+
   it('codex：全通道 null/空 + reasons 齐全（可渲染「为什么置灰」）', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);
