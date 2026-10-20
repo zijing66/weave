@@ -174,6 +174,12 @@ const queueStatusKey = (
 ): (typeof STATUS_KEY)[SessionMessageRow['status']] | 'tasks.msgStatusSent' =>
   status === 'delivered' ? 'tasks.msgStatusSent' : STATUS_KEY[status];
 
+/** 自动清除的倒计时读数：mm:ss（窗口以分钟计，看秒才像在走）。 */
+export function countdownLabel(releaseAt: string, now: number): string {
+  const total = Math.ceil(Math.max(0, Date.parse(releaseAt) - now) / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 /** 对话条目：用户投递的 prompt、每轮 Stop 的最终总结，或一枚压缩分隔（不是
  *  对话内容，只标「上下文在这里断过一次」——正文恒空）。 */
 export interface ConvEntry {
@@ -1004,6 +1010,15 @@ export function SessionMessages({
   const newestQueuedId = [...outbox]
     .reverse()
     .find((m) => m.status !== 'delivered' && removableOf(m))?.id;
+  /** 暂停闸成因行的清除倒计时走针：有带时刻的行才起 1s（纯展示，不拉数据）。 */
+  const [now, setNow] = useState(() => Date.now());
+  const clearDeadline = outbox.some((m) => m.stalled === true && m.releaseAt != null);
+  useEffect(() => {
+    if (!clearDeadline) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [clearDeadline]);
 
   // 贴底意图只在滚动时记：新内容一进 DOM 容器就变高，渲染完再判「是否贴底」必然
   // 判成「用户在上翻」，长回复于是永不跟随。尾条变了 = 尾部真进了新内容 → 跟随；
@@ -1880,14 +1895,10 @@ export function SessionMessages({
                       <div className="[&_p]:whitespace-pre-wrap">
                         <AssistantMarkdown text={m.text} />
                       </div>
-                      {/* 判死落定（会话进程不在 / 一直没回执）：说人话，别把英文技术串端上来 */}
+                      {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                       {pipe?.reason === 'offline' ? (
                         <p className="mt-1 break-words text-[11px] text-amber-400">
                           {t('tasks.msgOffline')}
-                        </p>
-                      ) : pipe?.reason === 'unacked' ? (
-                        <p className="mt-1 break-words text-[11px] text-amber-400">
-                          {t('tasks.msgUnacked')}
                         </p>
                       ) : (
                         pipe?.error && (
@@ -1998,6 +2009,14 @@ export function SessionMessages({
                                     {t('tasks.msgStalled')}
                                   </span>
                                 )}
+                                {/* 闸会自己放掉这条（服务端时刻），倒计时是给人看清还剩多久的 */}
+                                {m.stalled === true && m.releaseAt != null && (
+                                  <span className="shrink-0 text-[10px] text-neutral-500">
+                                    {t('tasks.msgClearIn', {
+                                      left: countdownLabel(m.releaseAt, now),
+                                    })}
+                                  </span>
+                                )}
                                 {m.images?.length ? (
                                   <ImageIcon className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
@@ -2034,14 +2053,10 @@ export function SessionMessages({
                                 <div className="whitespace-pre-wrap break-words text-[12px] text-neutral-200">
                                   {m.text || m.images?.[0]?.name}
                                 </div>
-                                {/* 判死落定（会话进程不在 / 一直没回执）：说人话，别把英文技术串端上来 */}
+                                {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                                 {m.reason === 'offline' ? (
                                   <p className="mt-1 break-words text-[11px] text-amber-400">
                                     {t('tasks.msgOffline')}
-                                  </p>
-                                ) : m.reason === 'unacked' ? (
-                                  <p className="mt-1 break-words text-[11px] text-amber-400">
-                                    {t('tasks.msgUnacked')}
                                   </p>
                                 ) : m.error ? (
                                   <p className="mt-1 break-words text-[11px] text-red-400">

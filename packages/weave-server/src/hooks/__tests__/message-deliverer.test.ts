@@ -2120,7 +2120,7 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(firstId)!.acked).toBe(true);
   });
 
-  it('闸到点自解：回执一直不来 → 成因行落成 failed（unacked），队列自己续排', async () => {
+  it('闸到点自解：回执一直不来 → 成因行直接从队列清除（带倒计时），积压自己续排', async () => {
     const fake = createFakeSpawn();
     let registered = true;
     const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
@@ -2154,25 +2154,19 @@ describe('MessageDeliverer 裁决表', () => {
       fromKind: 'dashboard',
       oneWay: true,
     });
+    // 置闸：行上带清除时刻（web 的倒计时读数就是它）
     await vi.waitFor(() => expect(deliverer.getMessage(firstId)!.stalled).toBe(true));
+    expect(Date.parse(deliverer.getMessage(firstId)!.releaseAt!)).toBeGreaterThan(Date.now());
 
-    // 到点：成因行不再是「已发出 · 队列已暂停」的化石，而是可重发可删的失败行
+    // 到点：这一行整个消失（正文随之丢——窗口期就是给人看清与重发），闸解、积压续排
     registered = true;
-    await vi.waitFor(() => expect(deliverer.getMessage(firstId)).toMatchObject({
-      status: 'failed',
-      reason: 'unacked',
-      stalled: false,
-    }));
-    // 闸解了、积压自己续排（否则这一条会把该会话的队列永远停住）
+    await vi.waitFor(() => expect(deliverer.getMessage(firstId)).toBeNull());
+    expect(busEvents).toContainEqual(
+      expect.objectContaining({ kind: 'message.dismissed', messageId: firstId }),
+    );
     await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
-    expect(deliverer.getMessage(firstId)!.error ?? null).toBeNull();
     fake.children[1]!.emit('exit', 0, null);
-
-    // 迟到的回执照常认领：它其实到了，失败标记不该留着
-    deliverer.onSessionPrompt(SESSION_ID, 'lost in the composer body');
-    expect(deliverer.getMessage(firstId)).toMatchObject({ acked: true, status: 'delivered' });
-    expect(deliverer.getMessage(firstId)!.reason).toBeUndefined();
   });
 
   it('投递失败置闸：中继非 0 退出后不再自动续冲洗；手动重发解闸并恢复队列', async () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
   conversationOf,
+  countdownLabel,
   imagesFrom,
   exportConversationText,
   exportStamp,
@@ -329,6 +330,16 @@ describe('removableOf（队列里的行能不能删）', () => {
   it('③ 暂停闸的成因行都能删：没送出去的、以及已发出却等不来回执的那条（闸没有成因行就开不了）', () => {
     expect(removableOf(delivery({ status: 'failed', stalled: true }))).toBe(true);
     expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
+  });
+});
+
+describe('countdownLabel（暂停闸成因行的清除读数）', () => {
+  it('① mm:ss 取整向上、归零不显负数', () => {
+    const at = new Date(10 * 60_000).toISOString();
+    expect(countdownLabel(at, 10 * 60_000 - 572_000)).toBe('9:32');
+    expect(countdownLabel(at, 10 * 60_000 - 9_000)).toBe('0:09');
+    expect(countdownLabel(at, 10 * 60_000)).toBe('0:00');
+    expect(countdownLabel(at, 11 * 60_000)).toBe('0:00');
   });
 });
 

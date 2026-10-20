@@ -424,9 +424,10 @@ export interface SessionMessageRow {
   settledAt?: string | null;
   /** 本条 = 该会话队列暂停闸的成因（未回执超窗/投递失败）；重发或回执清除。 */
   stalled?: boolean | null;
-  /** 判死的成因（web 据此出中文说明）：`offline` = 三层全无通路、没投出去；
-   *  `unacked` = 已发出却一直没等到回执（闸到点放了），这条多半没进去。 */
-  reason?: 'offline' | 'unacked' | null;
+  /** 判死而没投出去（会话进程不在、三层全无通路）= `failed` 的成因；web 据此出中文说明。 */
+  reason?: 'offline' | null;
+  /** 闸自动清除本行的时刻（只给「已发出却没回执」那种成因行）；web 拿它走倒计时。 */
+  releaseAt?: string | null;
   output: string | null;
   error: string | null;
   at: string;

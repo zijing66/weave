@@ -106,9 +106,11 @@ export interface PipeMessage {
   settledAt?: string | null;
   /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
   stalled?: boolean;
-  /** 判死的成因（web 据此出中文说明）：`offline` = 三层全无通路、没投出去；
-   *  `unacked` = 已发出但一直没等到回执，闸自己到点放了。 */
-  reason?: 'offline' | 'unacked';
+  /** 闸自动清除本行的时刻（只给「已发出却没回执」那种成因行）：到点行消失、队列续排。
+   *  web 拿它走倒计时。 */
+  releaseAt?: string | null;
+  /** 判死而没投出去（会话进程不在、三层全无通路）：`failed` 的成因，web 据此出中文说明。 */
+  reason?: 'offline';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决成通道）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
   status: PipeStatus;
@@ -741,8 +743,6 @@ export class MessageDeliverer {
         ...msg,
         acked: true,
         stalled: false,
-        // 迟到的回执推翻「未回执」的判定（闸已到点放掉的那条）：它真到了。
-        ...(msg.reason === 'unacked' ? { status: 'delivered' as const, reason: undefined } : {}),
         ...(eventId === undefined ? {} : { ackedEventId: eventId }),
       });
       // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
@@ -779,8 +779,15 @@ export class MessageDeliverer {
   /** 置闸：成因消息标记 stalled（常驻在途视图）+ message.stalled 帧（web 重拉）。 */
   private stall(sessionId: string, msg: PipeMessage, reason: 'unacked' | 'failed'): void {
     this.stalled.set(sessionId, { messageId: msg.id, reason });
+    const releaseMs = this.deps.ackStallReleaseMs ?? ACK_STALL_RELEASE_MS;
     const current = this.memory.get(msg.id);
-    if (current) this.memory.set(msg.id, { ...current, stalled: true });
+    // 「已发出却没回执」那条闸到点会被清出队列（见 releaseStall）：把时刻一并下发，
+    // web 拿它走倒计时。投递失败的行没有这回事——它本来就是失败态，留在队列里等人重发。
+    const clearAt =
+      current && current.status === 'delivered' && current.acked !== true
+        ? new Date(Date.now() + releaseMs).toISOString()
+        : null;
+    if (current) this.memory.set(msg.id, { ...current, stalled: true, releaseAt: clearAt });
     this.bus({
       kind: 'message.stalled',
       messageId: msg.id,
@@ -788,36 +795,26 @@ export class MessageDeliverer {
       reason,
       at: new Date().toISOString(),
     });
-    const release = setTimeout(
-      () => this.releaseStall(sessionId, msg.id),
-      this.deps.ackStallReleaseMs ?? ACK_STALL_RELEASE_MS,
-    );
+    const release = setTimeout(() => this.releaseStall(sessionId, msg.id), releaseMs);
     release.unref?.();
   }
 
   /**
    * 闸到点自动解除：回执一直不来 = 那条很可能压根没进对话（贴着文本按下去的时候
    * 会话正在重启，输入框被清掉就是这样），闸不能因此把该会话的队列永久停住。
-   * 成因行落成 failed（`unacked`）——它既开得了回执闸（`ackGateOpen` 只认
-   * acked/failed/timeout），也给了用户重发（重贴一遍正文）与移除两枚操作。
+   * 「已发出却没回执」的行到点**直接从队列清除**（用户裁决：正文只在这一行里，
+   * 窗口期就是给人看清与重发的）；投递失败的行留着等人重发，只解闸续排。
    */
   private releaseStall(sessionId: string, messageId: string): void {
     // 期间已被回执 / 重发 / 删除处理过：闸不在了或换了成因，这一拍作废。
     if (this.stalled.get(sessionId)?.messageId !== messageId) return;
-    this.stalled.delete(sessionId);
-    if (this.awaitingAck.get(sessionId) === messageId) this.awaitingAck.delete(sessionId);
     const current = this.memory.get(messageId);
     if (current && current.status === 'delivered' && current.acked !== true) {
-      const at = new Date().toISOString();
-      this.memory.set(messageId, {
-        ...current,
-        status: 'failed',
-        reason: 'unacked',
-        stalled: false,
-        settledAt: at,
-      });
-      this.bus({ kind: 'message.finished', messageId, sessionId, status: 'failed', at });
+      this.dismiss(sessionId, messageId); // 解闸 + 撤防 + 续排都在里面
+      return;
     }
+    this.stalled.delete(sessionId);
+    if (this.awaitingAck.get(sessionId) === messageId) this.awaitingAck.delete(sessionId);
     if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
   }
 
