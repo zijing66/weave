@@ -362,6 +362,8 @@ export interface SessionRow {
   transcriptPresent?: boolean | null;
   /** 「在终端打开」是否可用（服务端按 harness 的 resume 槽派生，web 不自带白名单）。 */
   canOpenTerminal?: boolean;
+  /** 还没等到用户 prompt（1 小时快速过期档）：编排的会话选择器按它排除。 */
+  promptless?: boolean;
 }
 
 /** GET /sessions 载荷：会话行 + 各 harness 的模型别名表（别名 → 真名）。 */
@@ -579,26 +581,76 @@ export interface PendingQuestionEntry {
   at: string;
 }
 
-/** mirror of `SequenceStep` in packages/weave-server/src/repositories/session-sequences.ts。 */
-export interface SequenceStep {
+/** mirror of `OrchestrationEdge` in packages/weave-server/src/repositories/orchestrations.ts。 */
+export interface OrchestrationEdge {
+  id: string;
+  from: string;
   to: string;
+  /** 源会话每完成一轮就投给目标的正文。 */
   text: string;
-  mode: 'prompt' | 'inject' | 'headless' | 'auto';
-  /** 步触发后回填的管道发号（缺省 = 尚未触发）。 */
-  messageId?: string;
 }
 
-/** mirror of `SessionSequenceRow`（session_sequences 表行；steps 已解析为数组）。 */
-export interface SessionSequenceRow {
+export type OrchestrationTrigger = 'manual' | 'webhook' | 'cron';
+export type OrchestrationRunStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
+
+/** mirror of `OrchestrationRow` + 服务端现算的 `nextRunAt`。 */
+export interface OrchestrationRow {
   id: number;
   name: string;
-  steps: SequenceStep[];
-  status: 'running' | 'done' | 'failed' | 'cancelled';
-  /** 正在等待完成的步下标；全落 = steps.length。 */
-  cursor: number;
-  error: string | null;
+  /** 起始会话所属项目（项目编排即按它过滤）。 */
+  projectId: number;
+  startSessionId: string;
+  startText: string;
+  nodes: string[];
+  edges: OrchestrationEdge[];
+  cron: string | null;
+  lastCronAt: string | null;
+  /** 公开 webhook 的凭证段（端点 = `/webhooks/orchestrate/<token>`）。 */
+  webhookToken: string | null;
   createdAt: string;
   updatedAt: string;
+  nextRunAt: string | null;
+}
+
+export interface OrchestrationRunEvent {
+  at: string;
+  from: string;
+  to: string;
+  edgeId: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface OrchestrationRunState {
+  pending: Record<string, Array<{ messageId: string; at: string }>>;
+  events: OrchestrationRunEvent[];
+}
+
+/** 列表行 = summary（无 state）；详情行另带 state。 */
+export interface OrchestrationRunRow {
+  id: number;
+  orchestrationId: number;
+  orchestrationName: string;
+  projectId: number;
+  trigger: OrchestrationTrigger;
+  status: OrchestrationRunStatus;
+  deliveries: number;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  updatedAt: string;
+  pendingCounts: Record<string, number>;
+  state?: OrchestrationRunState;
+}
+
+/** 定义体（POST/PUT 同一个形状；PUT 接受它的部分字段）。 */
+export interface OrchestrationInput {
+  name: string;
+  startSessionId: string;
+  startText?: string;
+  nodes: string[];
+  edges: OrchestrationEdge[];
+  cron?: string | null;
 }
 
 export interface LibraryRow {
@@ -1323,6 +1375,12 @@ export const api = {
     apiFetch<{ terminals: TerminalTarget[] }>(`/projects/${projectId}/terminals`).then(
       (r) => r.terminals,
     ),
+  /** 唤醒（切到前台）该项目的某个已开终端——targetId 取自 listProjectTerminals。 */
+  focusProjectTerminal: (projectId: number, targetId: string): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/focus-terminal`, {
+      method: 'POST',
+      body: JSON.stringify({ targetId }),
+    }),
   /** 删除会话：连带其采集事件与指令池派发（不可撤销）。 */
   deleteSession: (
     sessionId: string,
@@ -1509,23 +1567,75 @@ export const api = {
       body: JSON.stringify({ endpoint }),
     }),
   /** 跨会话序列列表（新在前；编排画布用，全项目共用一张表）。 */
-  listSessionSequences: (): Promise<SessionSequenceRow[]> =>
-    apiFetch<{ sequences: SessionSequenceRow[] }>('/messaging/sequences').then(
-      (r) => r.sequences,
-    ),
-  /** 触发序列（创建即执行步 0）。步数上限 3 = hop 上限、步级前置校验
-   *  （404 会话不在 / 409 无通道）由服务端把关，非 2xx 抛 Error（error 字段原文）。 */
-  createSequence: (body: {
-    name?: string;
-    steps: Array<{ to: string; text: string; mode?: 'prompt' | 'inject' | 'headless' | 'auto' }>;
-  }): Promise<{ ok: boolean; sequence: SessionSequenceRow }> =>
-    apiFetch('/messaging/sequences', {
+  listOrchestrations: (projectId?: number): Promise<OrchestrationRow[]> =>
+    apiFetch<{ orchestrations: OrchestrationRow[] }>(
+      projectId == null
+        ? '/messaging/orchestrations'
+        : `/messaging/orchestrations?projectId=${projectId}`,
+    ).then((r) => r.orchestrations),
+
+  createOrchestration: (
+    body: OrchestrationInput,
+  ): Promise<{ ok: boolean; orchestration: OrchestrationRow }> =>
+    apiFetch('/messaging/orchestrations', {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  /** 取消运行中的序列（非 running → 409 抛 Error）。 */
-  cancelSequence: (id: number): Promise<{ ok: boolean }> =>
-    apiFetch(`/messaging/sequences/${id}`, { method: 'DELETE' }),
+
+  updateOrchestration: (
+    id: number,
+    patch: Partial<OrchestrationInput>,
+  ): Promise<{ ok: boolean; orchestration: OrchestrationRow }> =>
+    apiFetch(`/messaging/orchestrations/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  deleteOrchestration: (id: number): Promise<{ ok: boolean }> =>
+    apiFetch(`/messaging/orchestrations/${id}`, { method: 'DELETE' }),
+
+  triggerOrchestration: (id: number, text?: string): Promise<{ ok: boolean; runId: number }> =>
+    apiFetch(`/messaging/orchestrations/${id}/trigger`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(text ? { text } : {}),
+    }),
+
+  rotateOrchestrationWebhook: (id: number): Promise<{ ok: boolean; webhookToken: string }> =>
+    apiFetch(`/messaging/orchestrations/${id}/rotate-webhook`, { method: 'POST' }),
+
+  listOrchestrationRuns: (q: {
+    orchestrationId?: number;
+    projectId?: number;
+    status?: OrchestrationRunStatus;
+    text?: string;
+    before?: number;
+    limit?: number;
+  }): Promise<{ runs: OrchestrationRunRow[]; nextBefore: number | null }> => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(q)) {
+      if (value != null && value !== '') params.set(key, String(value));
+    }
+    const qs = params.toString();
+    return apiFetch(`/messaging/orchestration-runs${qs ? `?${qs}` : ''}`);
+  },
+
+  getOrchestrationRun: (id: number): Promise<{ run: OrchestrationRunRow }> =>
+    apiFetch(`/messaging/orchestration-runs/${id}`),
+
+  cancelOrchestrationRun: (id: number): Promise<{ ok: boolean }> =>
+    apiFetch(`/messaging/orchestration-runs/${id}/cancel`, { method: 'POST' }),
+
+  clearOrchestrationRuns: (
+    scope: 'finished' | 'all',
+    projectId?: number,
+  ): Promise<{ ok: boolean; deleted: number }> => {
+    const params = new URLSearchParams({ scope });
+    if (projectId != null) params.set('projectId', String(projectId));
+    return apiFetch(`/messaging/orchestration-runs?${params.toString()}`, { method: 'DELETE' });
+  },
 
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>

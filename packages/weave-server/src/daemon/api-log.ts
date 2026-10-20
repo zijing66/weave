@@ -86,6 +86,11 @@ function shapeBody(captured: string, totalBytes: number): unknown {
   }
 }
 
+/** 路径里的凭据段脱敏：webhook token 就是一条可直接重放的凭证，绝不落盘。 */
+export function maskPath(url: string): string {
+  return url.replace(/^(\/webhooks\/orchestrate\/)[^?]+/, '$1[redacted]');
+}
+
 /** 本地小时戳文件名：`api-YYYY-MM-DDTHH.jsonl`。 */
 export function logFileFor(dir: string, at: Date): string {
   const p = (n: number): string => String(n).padStart(2, '0');
@@ -170,7 +175,7 @@ export class ApiLogger {
       const entry: ApiLogEntry = {
         ts: new Date(start).toISOString(),
         method: req.method ?? 'GET',
-        path: req.url ?? '/',
+        path: maskPath(req.url ?? '/'),
         status: res.statusCode,
         durationMs: Date.now() - start,
         ip: (req.socket?.remoteAddress ?? '').replace(/^::ffff:/, ''),

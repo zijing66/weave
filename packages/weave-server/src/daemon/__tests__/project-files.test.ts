@@ -28,6 +28,22 @@ const write = (root: string, rel: string, body = ''): void => {
 
 let root: string;
 
+/** 测试里的提交：身份走 env，免得依赖跑测试那台机器的 git 配置。 */
+const commit = (cwd: string): void => {
+  execFileSync('git', ['add', '-A'], { cwd, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', 'init'], {
+    cwd,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'weave-test',
+      GIT_AUTHOR_EMAIL: 'test@example.invalid',
+      GIT_COMMITTER_NAME: 'weave-test',
+      GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    },
+  });
+};
+
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'weave-files-'));
   clearFileIndexCache();
@@ -64,6 +80,60 @@ describe('buildIndex', () => {
   it('③ 目录由文件路径的前缀派生（不另扫一遍盘）', async () => {
     write(root, 'a/b/c/d.ts');
     expect((await buildIndex(root)).dirs).toEqual(['a', 'a/b', 'a/b/c']);
+  });
+
+  it.skipIf(!hasGit)('④ 子模块里的文件也在索引里（git 只给一个 gitlink）', async () => {
+    const lib = mkdtempSync(path.join(tmpdir(), 'weave-lib-'));
+    try {
+      execFileSync('git', ['init'], { cwd: lib, stdio: 'ignore' });
+      write(lib, 'a.ts');
+      write(lib, 'src/b.ts');
+      commit(lib);
+      execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+      write(root, 'm.ts');
+      commit(root);
+      execFileSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', lib, 'vendor/lib'], {
+        cwd: root,
+        stdio: 'ignore',
+      });
+      // 子模块里刚建、还没 add 的那份也最想能引用
+      write(root, 'vendor/lib/untracked.ts');
+      const idx = await buildIndex(root);
+      expect(idx.files).toEqual([
+        '.gitmodules',
+        'm.ts',
+        'vendor/lib/a.ts',
+        'vendor/lib/src/b.ts',
+        'vendor/lib/untracked.ts',
+      ]);
+      expect(idx.dirs).toEqual(['vendor', 'vendor/lib', 'vendor/lib/src']);
+      // gitlink 不当文件露一遍：子模块那一行只该是目录
+      expect(listDirOf(idx, 'vendor').map((e) => `${e.kind}:${e.path}`)).toEqual(['dir:vendor/lib']);
+    } finally {
+      rmSync(lib, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('⑤ 没克隆的子模块：不冒充它去问 git（否则会列出外层文件），目录仍在', async () => {
+    const lib = mkdtempSync(path.join(tmpdir(), 'weave-lib-'));
+    try {
+      execFileSync('git', ['init'], { cwd: lib, stdio: 'ignore' });
+      write(lib, 'a.ts');
+      commit(lib);
+      execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+      write(root, 'm.ts');
+      commit(root);
+      execFileSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', lib, 'vendor/lib'], {
+        cwd: root,
+        stdio: 'ignore',
+      });
+      rmSync(path.join(root, 'vendor/lib/.git'), { force: true });
+      const idx = await buildIndex(root);
+      expect(idx.files).toEqual(['.gitmodules', 'm.ts']);
+      expect(idx.dirs).toEqual(['vendor', 'vendor/lib']);
+    } finally {
+      rmSync(lib, { recursive: true, force: true });
+    }
   });
 });
 

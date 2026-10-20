@@ -1023,7 +1023,7 @@ describe('MessageDeliverer 裁决表', () => {
       toSessionId: SESSION_ID,
       text: 'orchestration',
       mode: 'prompt',
-      fromKind: 'sequence',
+      fromKind: 'dashboard',
     });
     expect(result).toMatchObject({ ok: true, status: 'delivering' });
     expect(fake.calls).toHaveLength(1);
@@ -1105,7 +1105,7 @@ describe('MessageDeliverer 裁决表', () => {
 
     const result = await deliverer.send({
       toSessionId: SESSION_ID,
-      text: 'sequence step',
+      text: 'orchestration step',
       mode: 'prompt',
       fromKind: 'dashboard',
     });

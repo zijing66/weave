@@ -38,7 +38,7 @@ import { HooksPanel } from '@/components/HooksPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
-import { SequenceCanvas } from '@/components/tasks/SequenceCanvas';
+import { OrchestrationCanvas } from '@/components/tasks/OrchestrationCanvas';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
 import { ChevronDown, ChevronRight, Code2, PackageX } from 'lucide-react';
@@ -504,16 +504,10 @@ export function CategoryDetail({
           />
         ))}
 
-      {/* 编排：项目级 = 跨会话序列画布；全局级 = 占位（序列目标随项目会话走）。 */}
-      {category === 'orchestrate' &&
-        (isGlobal ? (
-          <p className="pt-6 text-center text-xs text-neutral-600">{t('orch.globalHint')}</p>
-        ) : (
-          <SequenceCanvas
-            projectId={projectId}
-            projectLabel={projects.find((p) => p.id === projectId)?.name ?? ''}
-          />
-        ))}
+      {/* 编排：全局 = 全部编排（节点跨项目、按项目分组）；项目 = 该项目起的那些（全局的子集）。 */}
+      {category === 'orchestrate' && (
+        <OrchestrationCanvas projectId={isGlobal ? null : projectId} projects={projects} />
+      )}
 
       {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}
       {category === 'personalization' && (runtimeTab === 'claude' || runtimeTab === 'all') && (

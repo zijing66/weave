@@ -101,13 +101,30 @@ export type HookBusMessage =
     }
   // ---- 旁路会话域：一条侧问认领到回答（旁路弹窗据此重拉历史） ----
   | { kind: 'sideQuestion.answered'; sessionId: string; sideQuestionId: number; at: string }
-  // ---- 序列域（session-orchestration 批 3）：步触发/终态广播（编排画布实时） ----
-  | { kind: 'sequence.step'; sequenceId: number; cursor: number; at: string }
+  // ---- 编排域：run 状态与单次投递（画布实时动效的唯一数据源，不做轮询） ----
+  // 两条都带全量轻量态（deliveries / 每会话待回计数），web 就地更新、不重拉。
   | {
-      kind: 'sequence.finished';
-      sequenceId: number;
-      status: 'done' | 'failed' | 'cancelled';
-      error: string | null;
+      kind: 'orchestration.run';
+      orchestrationId: number;
+      runId: number;
+      status: 'running' | 'done' | 'failed' | 'cancelled' | 'interrupted';
+      trigger: 'manual' | 'webhook' | 'cron';
+      deliveries: number;
+      pendingCounts: Record<string, number>;
+      at: string;
+    }
+  | {
+      kind: 'orchestration.delivery';
+      orchestrationId: number;
+      runId: number;
+      /** 边 id（起点投递为空串）；画布按它点亮那一条边。 */
+      edgeId: string;
+      from: string;
+      to: string;
+      ok: boolean;
+      error?: string;
+      deliveries: number;
+      pendingCounts: Record<string, number>;
       at: string;
     };
 

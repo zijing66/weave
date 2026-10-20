@@ -29,6 +29,9 @@ export interface SessionRow {
    *  用户 prompt 的新会话快过期，收到过 prompt 的走设置页「无操作会话 n 天后自动
    *  移除」那条线；会话行剩余存活倒计时即读它）。 */
   autoDeleteAt?: string | null;
+  /** 还没等到用户 prompt（listWithCounts 派生）——编排的会话选择器按它排除短
+   *  有效期会话，与 autoDeleteAt 的档位同一判据。 */
+  promptless?: boolean;
 }
 
 /** 没等到用户 prompt 的新会话快过期窗（ms）= 1 小时：新建会话要看得见，但无 prompt
@@ -158,6 +161,7 @@ export class SessionRepository {
           Date.parse(String(row.last_seen_at)) +
             (lastUps == null ? PROMPTLESS_GRACE_MS : sessionIdleRetentionMs()),
         ).toISOString(),
+        promptless: lastUps == null,
       };
     });
   }

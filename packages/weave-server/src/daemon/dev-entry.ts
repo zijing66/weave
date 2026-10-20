@@ -32,9 +32,10 @@ import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
-import { SessionSequenceRepository } from '../repositories/session-sequences.js';
+import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
-import { SequenceEngine } from '../hooks/sequence-engine.js';
+import { OrchestrationEngine } from '../hooks/orchestration-engine.js';
+import { openSessionTerminal } from './session-open.js';
 import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -190,15 +191,9 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     bus: hookBus,
   });
-  // session-orchestration 批 3（与 start.ts 同装配）：序列引擎 + 重启恢复。
-  const sessionSequences = new SessionSequenceRepository(db);
-  const sequenceEngine = new SequenceEngine({
-    sequences: sessionSequences,
-    deliverer: messageDeliverer,
-    sessions: hookSessions,
-    bus: hookBus,
-  });
-  sequenceEngine.rearm();
+  // 跨会话编排（与 start.ts 同装配）：定义 + 运行日志 + 引擎。
+  const orchestrations = new OrchestrationRepository(db);
+  const orchestrationRuns = new OrchestrationRunRepository(db);
   // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
   const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
@@ -297,6 +292,29 @@ async function main(): Promise<void> {
     dataBus,
     hookBus,
   );
+  // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。
+  const orchestrationEngine = new OrchestrationEngine({
+    orchestrations,
+    runs: orchestrationRuns,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+    ensureOpen: async (sessionId) => {
+      const opened = await openSessionTerminal(
+        { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
+        sessionId,
+      );
+      if (!opened.ok) return opened;
+      for (let i = 0; i < 32; i++) {
+        if (claudeLivenessById().get(sessionId) === true) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return { ok: true };
+    },
+  });
+  orchestrationEngine.rearm();
+  const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
+  cronTimer.unref();
   // 项目行「有更新待同步」角标：项目插件根变更（plugin.reloaded）重算、值变才推。
   // dev 入口没有 SyncScheduler（自动同步不在此跑），故只有事件与新客户端两个触发源。
   const updatesFingerprints = new FingerprintCache();
@@ -314,9 +332,9 @@ async function main(): Promise<void> {
     dispatches: hookDispatches,
     deliverer: messageDeliverer,
     watches: sessionWatches,
-    sequences: sessionSequences,
+    orchestrations,
     watchEngine,
-    sequenceEngine,
+    orchestrationEngine,
     questions: questionTracker,
     sideQuestions,
     probe: sessionProbe,
@@ -333,7 +351,7 @@ async function main(): Promise<void> {
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,
-    sequenceEngine,
+    orchestrationEngine,
     messagePipe: messageDeliverer,
     questionTracker,
     sideQuestions: {
@@ -379,8 +397,9 @@ async function main(): Promise<void> {
     sideQuestions: sideQuestionDeps,
     sessionWatches,
     watchEngine,
-    sessionSequences,
-    sequenceEngine,
+    orchestrations,
+    orchestrationRuns,
+    orchestrationEngine,
     pushSubscriptions,
     pushNotifier,
     hookPlugins: pluginManager,
@@ -404,6 +423,7 @@ async function main(): Promise<void> {
     interruptRefresher.stop();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
+    clearInterval(cronTimer);
     void hookPipeline.stop();
     server.close();
     tls?.server.close();

@@ -1,6 +1,6 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Background, BackgroundVariant, Panel } from '@xyflow/react';
-import { Ban, Grid3x3, Grip, Plus, type LucideIcon } from 'lucide-react';
+import { Ban, Grid3x3, Grip, Palette, Plus, type LucideIcon } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils';
 /**
  * 画布底纹（事件链 / 编排 / 钩子链路三处 ReactFlow 共用一份偏好）：
  * 网格线帮眼睛对齐节点，底色帮区分「这块是画布、不是页面」。
- * 选择存 localStorage —— 一处调完三处一起变。
+ * 选择存 localStorage —— 一处调完三处一起变。设置条默认收起（画布是内容，
+ * 底纹是偏好），点那枚调色板才展开；收起态每次挂载都从收起开始，不进存储。
  */
 export type CanvasPattern = 'lines' | 'dots' | 'cross' | 'none';
 export type CanvasTint = 'none' | 'sky' | 'violet' | 'emerald' | 'amber';
@@ -109,6 +110,7 @@ export function useCanvasTintClass(): string {
 export function CanvasBackground() {
   const { pattern, tint } = useCanvasBg();
   const t = useT();
+  const [open, setOpen] = useState(false);
   const geometry = pattern === 'none' ? null : GEOMETRY[pattern];
   return (
     <>
@@ -120,41 +122,59 @@ export function CanvasBackground() {
         onClick={(e) => e.stopPropagation()}
         className="nopan flex items-center gap-0.5 rounded-md border border-edge/[0.08] bg-neutral-900/85 p-0.5 opacity-70 shadow-mac-sm backdrop-blur-sm transition-opacity hover:opacity-100 max-lg:opacity-100"
       >
-        {PATTERNS.map(({ id, icon: Icon, label }) => (
-          <button
-            key={id}
-            type="button"
-            title={t(label)}
-            aria-label={t(label)}
-            aria-pressed={pattern === id}
-            onClick={() => setCanvasPattern(id)}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded',
-              pattern === id
-                ? 'bg-edge/[0.14] text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-200',
-            )}
-          >
-            <Icon size={12} />
-          </button>
-        ))}
-        <span className="mx-0.5 h-3 w-px bg-edge/[0.12]" />
-        {TINTS.map(({ id, dot, label }) => (
-          <button
-            key={id}
-            type="button"
-            title={t(label)}
-            aria-label={t(label)}
-            aria-pressed={tint === id}
-            onClick={() => setCanvasTint(id)}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded-full border',
-              tint === id ? 'border-edge/50' : 'border-transparent hover:border-edge/25',
-            )}
-          >
-            <span className={cn('h-2.5 w-2.5 rounded-full', dot)} />
-          </button>
-        ))}
+        <button
+          type="button"
+          title={t('common.canvas.settings')}
+          aria-label={t('common.canvas.settings')}
+          aria-expanded={open}
+          onClick={() => setOpen((prev) => !prev)}
+          className={cn(
+            'flex h-5 w-5 items-center justify-center rounded',
+            open ? 'bg-edge/[0.14] text-neutral-100' : 'text-neutral-500 hover:text-neutral-200',
+          )}
+        >
+          <Palette size={12} />
+        </button>
+        {open && (
+          <>
+            <span className="mx-0.5 h-3 w-px bg-edge/[0.12]" />
+            {PATTERNS.map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                type="button"
+                title={t(label)}
+                aria-label={t(label)}
+                aria-pressed={pattern === id}
+                onClick={() => setCanvasPattern(id)}
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded',
+                  pattern === id
+                    ? 'bg-edge/[0.14] text-neutral-100'
+                    : 'text-neutral-500 hover:text-neutral-200',
+                )}
+              >
+                <Icon size={12} />
+              </button>
+            ))}
+            <span className="mx-0.5 h-3 w-px bg-edge/[0.12]" />
+            {TINTS.map(({ id, dot, label }) => (
+              <button
+                key={id}
+                type="button"
+                title={t(label)}
+                aria-label={t(label)}
+                aria-pressed={tint === id}
+                onClick={() => setCanvasTint(id)}
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-full border',
+                  tint === id ? 'border-edge/50' : 'border-transparent hover:border-edge/25',
+                )}
+              >
+                <span className={cn('h-2.5 w-2.5 rounded-full', dot)} />
+              </button>
+            ))}
+          </>
+        )}
       </Panel>
     </>
   );

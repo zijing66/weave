@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, lineNumbers } from '@codemirror/view';
 import { SearchCursor, SearchQuery, search, setSearchQuery } from '@codemirror/search';
 import {
@@ -22,6 +22,7 @@ import { api, type SessionFileEntry } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useTheme } from '@/lib/theme';
 
 /**
  * 项目文件引用选择器（superfile 式三栏）：父目录 | 当前目录 | 预览。
@@ -83,31 +84,37 @@ function segmentsOf(name: string, ranges: [number, number][] | undefined): { tex
   return out;
 }
 
-/** 只读代码视图的暗色样式：底透明，跟着父容器走。 */
-const CM_THEME = EditorView.theme(
-  {
-    '&': { height: '100%', fontSize: '11px', color: 'rgb(212 212 212)', backgroundColor: 'transparent' },
-    '&.cm-focused': { outline: 'none' },
-    '.cm-scroller': {
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      lineHeight: '1.5',
-      overflow: 'auto',
+/** 只读代码视图的样式：底透明，跟着父容器走。色值全取 CSS 变量（`data-theme`
+ *  一翻就跟着翻）——写死浅色字在浅色主题下就是一片看不清。`dark` 只决定
+ *  CodeMirror 自己的兜底色（光标等），跟着主题走。 */
+const cmTheme = (dark: boolean): Extension =>
+  EditorView.theme(
+    {
+      '&': { height: '100%', fontSize: '11px', color: 'rgb(var(--w-neutral-300))', backgroundColor: 'transparent' },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-scroller': {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        lineHeight: '1.5',
+        overflow: 'auto',
+      },
+      '.cm-content': { padding: '4px 0' },
+      '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'rgb(var(--w-neutral-600))' },
+      // 行号是「点我」的：给个手的指针，不然没人知道它能点
+      '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 6px', cursor: 'pointer' },
+      '.cm-activeLineGutter': { backgroundColor: 'transparent' },
+      '.cm-activeLine': { backgroundColor: 'transparent' },
+      // 失焦也要看得见选中（点行号之后焦点多半在别处）
+      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: 'rgb(var(--w-blue-500) / 0.32)',
+      },
+      '.cm-searchMatch': { backgroundColor: 'rgb(var(--w-amber-400) / 0.35)' },
+      '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgb(var(--w-amber-400) / 0.6)' },
     },
-    '.cm-content': { padding: '4px 0' },
-    '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'rgb(82 82 82)' },
-    // 行号是「点我」的：给个手的指针，不然没人知道它能点
-    '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 6px', cursor: 'pointer' },
-    '.cm-activeLineGutter': { backgroundColor: 'transparent' },
-    '.cm-activeLine': { backgroundColor: 'transparent' },
-    // 失焦也要看得见选中（点行号之后焦点多半在别处）
-    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: 'rgba(59, 130, 246, 0.32)',
-    },
-    '.cm-searchMatch': { backgroundColor: 'rgba(251, 191, 36, 0.35)' },
-    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(251, 191, 36, 0.6)' },
-  },
-  { dark: true },
-);
+    { dark },
+  );
+
+/** 主题翻的时候只重配这一格，不重建视图（重建会丢滚动位置与选区）。 */
+const themeConf = new Compartment();
 
 /** 只读代码视图。`viewRef` 由父组件持有：查找与跳行都要拿它现算。 */
 function CodePreview({
@@ -122,6 +129,7 @@ function CodePreview({
   onGutterClick: (line: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const theme = useTheme();
   /** 回调每次渲染都是新的，扩展只装一次——用 ref 转一手，别让扩展跟着重建。 */
   const clickRef = useRef(onGutterClick);
   clickRef.current = onGutterClick;
@@ -150,7 +158,7 @@ function CodePreview({
           search({ top: true }),
           EditorView.lineWrapping,
           EditorView.editable.of(false),
-          CM_THEME,
+          themeConf.of(cmTheme(theme === 'dark')),
         ],
       }),
     });
@@ -159,7 +167,13 @@ function CodePreview({
       view.destroy();
       viewRef.current = null;
     };
+    // 挂载那一次按当下主题建；之后换主题走下面那格重配，视图不重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewRef]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: themeConf.reconfigure(cmTheme(theme === 'dark')) });
+  }, [theme]);
 
   // 换文件：整篇换掉并回到顶部，上一份的查询随之作废
   useEffect(() => {

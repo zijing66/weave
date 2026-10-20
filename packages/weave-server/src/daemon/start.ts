@@ -28,9 +28,10 @@ import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
-import { SessionSequenceRepository } from '../repositories/session-sequences.js';
+import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
-import { SequenceEngine } from '../hooks/sequence-engine.js';
+import { OrchestrationEngine } from '../hooks/orchestration-engine.js';
+import { openSessionTerminal } from './session-open.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -195,16 +196,9 @@ export function startDaemon(): void {
     sessions: hookSessions,
     bus: hookBus,
   });
-  // session-orchestration 批 3：序列引擎（无状态 bus 监听 + DB 推进），启动
-  // rearm 恢复重启前的 running 序列。
-  const sessionSequences = new SessionSequenceRepository(db);
-  const sequenceEngine = new SequenceEngine({
-    sequences: sessionSequences,
-    deliverer: messageDeliverer,
-    sessions: hookSessions,
-    bus: hookBus,
-  });
-  sequenceEngine.rearm();
+  // 跨会话编排：定义 + 运行日志（统一视图），引擎的权威态在内存、日志落行。
+  const orchestrations = new OrchestrationRepository(db);
+  const orchestrationRuns = new OrchestrationRunRepository(db);
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
   const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 阻塞问答跟踪（AskUserQuestion / 计划与权限确认）：内存状态机挂 ingest
@@ -325,6 +319,32 @@ export function startDaemon(): void {
     dataBus,
     hookBus,
   );
+  // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。
+  // 新起的 resume 进程要先在 claude 注册表落名，投递器才不把它判成离线——
+  // 等它出现（最多 8s）；等不到也放行，交给队列在 SessionStart 后冲洗。
+  const orchestrationEngine = new OrchestrationEngine({
+    orchestrations,
+    runs: orchestrationRuns,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    bus: hookBus,
+    ensureOpen: async (sessionId) => {
+      const opened = await openSessionTerminal(
+        { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
+        sessionId,
+      );
+      if (!opened.ok) return opened;
+      for (let i = 0; i < 32; i++) {
+        if (claudeLivenessById().get(sessionId) === true) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return { ok: true };
+    },
+  });
+  orchestrationEngine.rearm();
+  // 定时触发：30s 一枪（同分钟只 fire 一次、跑着的跳过）。
+  const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
+  cronTimer.unref();
   // 空会话自动清理：只残留一条 SessionStart 的会话（开了就 /resume 走掉的那种）
   // 延迟清掉——真实场景里它们只是噪音，且父会话已经 /resume 到别处。
   startSessionSweeper({
@@ -333,9 +353,9 @@ export function startDaemon(): void {
     dispatches: hookDispatches,
     deliverer: messageDeliverer,
     watches: sessionWatches,
-    sequences: sessionSequences,
+    orchestrations,
     watchEngine,
-    sequenceEngine,
+    orchestrationEngine,
     questions: questionTracker,
     sideQuestions,
     probe: sessionProbe,
@@ -352,7 +372,7 @@ export function startDaemon(): void {
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,
-    sequenceEngine,
+    orchestrationEngine,
     messagePipe: messageDeliverer,
     questionTracker,
     sideQuestions: {
@@ -399,8 +419,9 @@ export function startDaemon(): void {
     sideQuestions: sideQuestionDeps,
     sessionWatches,
     watchEngine,
-    sessionSequences,
-    sequenceEngine,
+    orchestrations,
+    orchestrationRuns,
+    orchestrationEngine,
     pushSubscriptions,
     pushNotifier,
     hookPlugins: pluginManager,
@@ -426,6 +447,7 @@ export function startDaemon(): void {
     watch.stop();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
+    clearInterval(cronTimer);
     void hookPipeline.stop();
     server.close();
     tls?.server.close();

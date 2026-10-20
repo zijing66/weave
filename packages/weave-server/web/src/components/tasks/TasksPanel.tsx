@@ -536,19 +536,27 @@ export function TasksPanel({
     () => harnesses.filter((h) => h.canStartSession).map((h) => h.id),
     [harnesses],
   );
-  /** 多个能起的才弹窗选（同「终端附加目标」口径）；单个直接起、0 个按钮置灰。 */
-  const [harnessPicker, setHarnessPicker] = useState(false);
+  /** 多个能起的才摆弹层选（同项目列表的终端弹层口径）；单个直接起、0 个按钮置灰。 */
+  const [harnessPicker, setHarnessPicker] = useState<{
+    x: number;
+    y: number;
+    anchor: HTMLElement;
+  } | null>(null);
   const canNewSession = startableHarnesses.length > 0;
   /** 起会话在途（spawn 要几秒）：按钮同置灰——只转圈不禁用的话，看着像没反应又点一次。
       连点的真去重在 `fb.run`（loading 吞重复调用），这里只是把同一事实摆到按钮上。 */
   const newSessionBusy = fb.stateOf(`newSession:${projectId}`) === 'loading';
-  const onNewSession = useCallback((): void => {
-    if (startableHarnesses.length > 1) {
-      setHarnessPicker(true);
-      return;
-    }
-    runNewSession(startableHarnesses[0]);
-  }, [startableHarnesses, runNewSession]);
+  const onNewSession = useCallback(
+    (anchor: HTMLElement): void => {
+      if (startableHarnesses.length > 1) {
+        const rect = anchor.getBoundingClientRect();
+        setHarnessPicker((cur) => (cur ? null : { x: rect.left, y: rect.bottom + 4, anchor }));
+        return;
+      }
+      runNewSession(startableHarnesses[0]);
+    },
+    [startableHarnesses, runNewSession],
+  );
 
   /** 多终端选择弹窗（项目开着多个终端时才现形）。 */
   const [terminalPicker, setTerminalPicker] = useState<{
@@ -1239,7 +1247,7 @@ export function TasksPanel({
                   ? t('tasks.newSessionNoHarness')
                   : t('tasks.newSessionTip')
             }
-            onClick={onNewSession}
+            onClick={(e) => onNewSession(e.currentTarget)}
             className={cn(
               'inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
               !canNewSession
@@ -1408,15 +1416,18 @@ export function TasksPanel({
         />
       )}
 
-      {/* 新建会话的 harness 选择（多个能起的才现形） */}
+      {/* 新建会话的 harness 选择（多个能起的才现形）：贴在按钮下方的卡片弹层 */}
       {harnessPicker && (
         <HarnessPicker
           harnesses={startableHarnesses}
+          x={harnessPicker.x}
+          y={harnessPicker.y}
+          anchor={harnessPicker.anchor}
           onPick={(harness) => {
-            setHarnessPicker(false);
+            setHarnessPicker(null);
             runNewSession(harness);
           }}
-          onClose={() => setHarnessPicker(false)}
+          onClose={() => setHarnessPicker(null)}
         />
       )}
 

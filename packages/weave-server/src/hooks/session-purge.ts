@@ -1,6 +1,6 @@
 import type { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import type { HookEventRepository } from '../repositories/hook-events.js';
-import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
+import type { OrchestrationRepository } from '../repositories/orchestrations.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { SideQuestionRepository } from '../repositories/side-questions.js';
 import type { SessionRepository } from '../repositories/sessions.js';
@@ -15,8 +15,8 @@ export interface SessionPurgeDeps {
   deliverer?: Pick<MessageDeliverer, 'forgetSession'>;
   /** 空闲订阅（批 2）：目标或订阅方任一指向该会话的行一并清（不计数）。 */
   watches?: Pick<SessionWatchRepository, 'deleteBySession'>;
-  /** 跨会话序列（批 3）：任一步目标指向该会话的行一并清（不计数）。 */
-  sequences?: Pick<SessionSequenceRepository, 'deleteMentioning'>;
+  /** 跨会话编排：起始会话或任一节点指向该会话的定义一并清（不计数；运行日志仍留）。 */
+  orchestrations?: Pick<OrchestrationRepository, 'deleteMentioningSession'>;
   /** 阻塞问答：待答内存态一并清（不计数）。 */
   questions?: Pick<QuestionTracker, 'forgetSession'>;
   /** 转录探测：内存里的 transcriptPath 一并清（不计数）。 */
@@ -41,7 +41,7 @@ export function purgeSession(
   const dispatches = deps.dispatches?.deleteBySession(sessionId) ?? 0;
   const messages = deps.deliverer?.forgetSession(sessionId) ?? 0;
   deps.watches?.deleteBySession(sessionId);
-  deps.sequences?.deleteMentioning(new Set([sessionId]));
+  deps.orchestrations?.deleteMentioningSession(sessionId);
   deps.questions?.forgetSession(sessionId);
   deps.sideQuestions?.deleteBySession(sessionId);
   deps.probe?.forget(sessionId);

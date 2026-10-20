@@ -39,6 +39,8 @@ export interface CategoryBarData {
   hooksRules: number;
   /** 项目会话数（任务卡计数）。 */
   sessions: number;
+  /** 编排份数（编排卡计数；当前视图范围内，与画布同一口径）。 */
+  orchestrations: number;
   /** Statusline source; null while not loaded (Claude card badge). */
   statuslineSource: 'global' | 'custom' | null;
 }
@@ -63,9 +65,9 @@ export function CategoryBar({
         return data.hooksRules;
       case 'tasks':
         return data.sessions;
-      // 编排画布以会话为节点——计数同任务卡（项目会话数）。
+      // 计数 = 编排的份数，不是画布里的会话节点数（两者不是一回事）。
       case 'orchestrate':
-        return data.sessions;
+        return data.orchestrations;
     }
   };
 

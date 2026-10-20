@@ -1,5 +1,7 @@
 # 跨会话编排：消息面、空闲订阅与可视化编排 设计方案
 
+> **2026-10-20 修订**：文中批 3 的「序列编排器」模型（线性链 + hop ≤ 3 + 泳道画布）已被**命名编排 + 任意有向图 + 消息传递**取代，实现以 `CLAUDE.md` 与 `docs/DECISIONS.md` 的 2026-10-20 条为准；重塑的取舍记录见文末「增补：编排重塑」。本文其余章节是当时的设计记录，保留原样。
+
 ## Context
 
 用户原话（两轮）：
@@ -779,3 +781,89 @@ HTTPS 双监听（Push/Notification API 均要求安全上下文，HTTP局域网
   （`pushChannelState` 四态展示，失败可见告知——失败不静默惯例）。SW
   （`sw.js`）加 `push` 事件（非 JSON 载荷弹占位通知满足 userVisibleOnly
   契约）与 `notificationclick` 聚焦/开窗，仍无 fetch handler。
+
+## 增补：编排重塑——命名编排 + 任意有向图 + 消息传递（2026-10-20 落地）
+
+**为什么重做**：序列编排器是「一条线性链 + hop 上限 3」的模型，而用户要的是「全局编排里显示所有项目、
+项目展开成会话节点、可跨项目编排；项目编排是全局的子集」。线性链表达不了菱形扇出、并行汇合、
+多条起点，hop 上限也只是给线性链的防环补丁。故整条链退役（`session_sequences` / 泳道画布 /
+序列路由），换成图模型。
+
+### 数据模型
+
+| 表 | 一行是什么 | 关键列 |
+|---|---|---|
+| `orchestrations` | 一份**命名编排**（定义） | `name` / `project_id`（**只是起点归属**）/ `start_session_id` + `start_text` / `nodes` / `edges`（JSON）/ `cron` / `webhook_token` |
+| `orchestration_runs` | 一次**触发**（运行日志） | `orchestration_id` + `orchestration_name` 快照 / `trigger` / `status` / `deliveries` / `state`（JSON：`pending` + 逐条投递记录）/ `error` |
+
+- **全仓一份全局列表**；「项目编排」= 该列表里起点属于该项目的子集，不是第二套数据、也不是第二张表。
+- 编排名与起点会话**在 run 行里存快照**：删除/改名编排后历史日志仍读得懂（与「删会话不删日志」同口径）。
+- 定义里存 `nodes`/`edges` 而非派生：画布、引擎、校验读的是同一份图。
+
+### 校验（唯一判据）
+
+`validateOrchestration`（`hooks/orchestration-graph.ts`）：≥1 节点、≤24 节点、≤64 边；节点不重复、
+起点在节点集里；边两端都在节点集里、无自环、无重边；**三色 DFS 查环并回传闭环路径**；所有节点从起点
+可达。服务端 POST/PUT 直接拒（带英文原因），web 的 `validateDraft` 是同判据的即时提示——两处判据
+必须同源，否则会出现「画布上放进去了、保存才报错」。
+
+### 推进语义：消息传递
+
+```
+start(orch, trigger, text?) → 投一条进起点（text || start_text || 名称）
+起点某轮完成（idleSignals）→ 消费一条待回，把它的所有出边各投一次
+任务节点某轮完成        → 同理
+无待回 && 无在飞        → done
+```
+
+- 一条投递 = 一条 `state.pending[to]`；**一次 idle 只消费一条**（同一会话连收三条要三次回合）——
+  这条不变量保证「投递与轮次一一对应」，不会一拍打多轮。
+- 投递走 `MessageDeliverer.send({mode:'prompt', fromKind:'dashboard'})`：编排队列没有模式选项，
+  与手动面「只剩一枚发送键」同源；`oneWay` 缺省 false ⇒ 编排域保留双向对话（中继层带 `@weave` 身份）。
+- 失败（send 拒 / 判死 / offline）只记一条失败投递，**不增待回**；全部边都失败且无待回即 run failed。
+- 无界风险只剩活环：保存时挡死，运行期再以 `ORCH_MAX_DELIVERIES = 200` 兜底（到顶落 failed 并写明）。
+
+### 触发与拉起
+
+- **手动** `POST /messaging/orchestrations/:id/trigger`（可带 `text` 覆盖起始文本）。
+- **webhook** `POST /webhooks/orchestrate/<token>`：认证豁免（外部系统带不了 dashboard 凭据），
+  载荷即首步消息、空则回落 `start_text`；token 唯一索引、可换发（旧 token 立即失效）；
+  **api-log 里 token 段脱敏成 `[redacted]`**——它是可直接重放的凭证。
+- **cron**：5 字段表达式（web 可视化拼装：分/时/日/周/月 + 自定义），daemon 30s 一探，
+  `last_cron_at` 保证同一分钟只 fire 一次，该编排已有在跑 run 则跳过（定时不该踩掉上一轮）。
+- **目标没开就拉起来**：`ensureOpen` 复用 `openSessionTerminal`（会话列表「打开会话」同一入口），
+  拉完等存活上报；拉不起来落失败投递、不假装推进。
+
+### 生命周期
+
+- `rearm`（daemon 启动）：所有 running → `interrupted`，**不续跑**（编排状态不是消息，重放 prompt
+  会重复副作用），顺手 `prune`。
+- `prune`：非 running 且超 7 天、或每编排超过 100 条（窗口函数按 `orchestration_id` 分组）即删。
+- 手动清理：`DELETE /messaging/orchestration-runs?scope=finished|all`（all 连 running 一起，先停手）。
+- `sweepTerminated`（随 `SessionSweeper` 同 tick）：待回会话判死 → 先试拉起，拉不起来丢待回并收尾。
+
+### 实时面
+
+两条帧，都带**全量轻量态**（不做增量协议）：
+
+- `orchestration.run`：`runId` / `status` / `trigger` / `deliveries` / `pendingCounts` / `at`
+- `orchestration.delivery`：`runId` / `edgeId` / `from` / `to` / `ok` / `error?` / `deliveries` / `pendingCounts` / `at`
+
+画布收到就地刷新（边亮 1.2s、节点环、待处理角标、头部「运行中 · 投递 n」）；只有**没见过的 run**
+才去拉日志列表（500ms 防抖），终态时补拉一次详情。不扩 `DataKey`、不开定时器。
+
+### 画布与选择
+
+- 只摆**已进入编排的会话**；全局按项目分组、组默认收起并标节点数、起点所在项目初始展开；
+  项目视图全展示。组展开态用 `groupTouched` 哨兵（null = 还没人点过，此时按起点项目推导）——
+  等 `sessions` 到齐再推导会闪。
+- 节点选择器从受管会话里挑，**排除 1h 快速过期的 `promptless` 会话**；项目与起始会话各有检索框。
+- 运行日志是一个**跨编排的统一列表**（项目视图按 `project_id` 收窄），`usePullLoad` 拉动翻页。
+- ReactFlow 的底纹设置条（`CanvasBackground`）**恒从收起开始**。
+
+### 不做什么
+
+- 不做逐节点模式选择（inject/headless/auto）——编排只走 prompt 通道，避免「同一份图上有三种
+  完成语义」。
+- 不做运行恢复/断点续跑——重启即 interrupted，重触发由人决定。
+- 不做节点级别的重试/超时策略——投递失败即记录，是否需要重来由人看日志决定。

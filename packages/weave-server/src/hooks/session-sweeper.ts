@@ -1,6 +1,6 @@
 import { purgeSession, type SessionPurgeDeps } from './session-purge.js';
 import type { WatchEngine } from './watch-engine.js';
-import type { SequenceEngine } from './sequence-engine.js';
+import type { OrchestrationEngine } from './orchestration-engine.js';
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
@@ -17,8 +17,8 @@ export class SessionSweeper {
     private readonly deps: SessionPurgeDeps & {
       /** 空闲订阅补射（批 2）：挂同一 tick——daemon 重启/目标异常终止后扫 pending。 */
       watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
-      /** 序列补射（批 3）：同 tick——进行中序列的等待目标已死即序列失败。 */
-      sequenceEngine?: Pick<SequenceEngine, 'sweepTerminated'>;
+      /** 编排补射：同 tick——待回目标已死即复活会话或丢弃待回。 */
+      orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
     },
     private readonly now: () => number = Date.now,
   ) {}
@@ -36,7 +36,7 @@ export class SessionSweeper {
     // 与过期会话无关的孤儿上传件（选了图没发出去、事件早已清掉的）同轮收走
     this.deps.uploads?.pruneUnreferenced();
     this.deps.watchEngine?.sweepTerminated();
-    this.deps.sequenceEngine?.sweepTerminated();
+    this.deps.orchestrationEngine?.sweepTerminated();
     return purged;
   }
 
@@ -60,7 +60,7 @@ export class SessionSweeper {
 export function startSessionSweeper(
   deps: SessionPurgeDeps & {
     watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
-    sequenceEngine?: Pick<SequenceEngine, 'sweepTerminated'>;
+    orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
   },
 ): NodeJS.Timeout {
   return new SessionSweeper(deps).start();

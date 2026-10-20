@@ -4,7 +4,7 @@ import { getDbPath } from '../db/paths.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
-import type { SequenceEngine } from '../hooks/sequence-engine.js';
+import type { OrchestrationEngine } from '../hooks/orchestration-engine.js';
 import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
 import { promptboxPathOf } from '../hooks/promptbox.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
@@ -31,7 +31,7 @@ export interface HookPipelineDeps {
   /** 空闲订阅引擎（批 2）：透传给 handleIngestedRecords（与 dispatcher 平行触发）。 */
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
   /** 序列引擎（批 3）：同透传——inject 步完成判据挂在 ingest 消费路径。 */
-  sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
+  orchestrationEngine?: Pick<OrchestrationEngine, 'onEvent'>;
   /** prompt 队列冲洗（消息域重塑）：ingest 事件 = 会话活着，即时试递队列行。 */
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
   /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
@@ -163,7 +163,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         bus: deps.bus,
         dispatcher: deps.dispatcher,
         watchEngine: deps.watchEngine,
-        sequenceEngine: deps.sequenceEngine,
+        orchestrationEngine: deps.orchestrationEngine,
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
         sideQuestions: deps.sideQuestions,

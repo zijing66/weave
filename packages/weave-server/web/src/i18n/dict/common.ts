@@ -13,6 +13,7 @@ export const commonZh = {
   'common.copyFailed': '复制失败：浏览器未放行剪贴板（手机请用页面上的 HTTPS 地址访问）',
   'common.decrease': '减少',
   'common.increase': '增加',
+  'common.canvas.settings': '画布底纹设置',
   'common.canvas.lines': '网格底纹',
   'common.canvas.dots': '点阵底纹',
   'common.canvas.cross': '十字底纹',
@@ -39,6 +40,7 @@ export const commonEn: Record<keyof typeof commonZh, string> = {
 
   'common.decrease': 'Decrease',
   'common.increase': 'Increase',
+  'common.canvas.settings': 'Canvas style',
   'common.canvas.lines': 'Grid pattern',
   'common.canvas.dots': 'Dot pattern',
   'common.canvas.cross': 'Cross pattern',

@@ -20,7 +20,7 @@ import type { HookDispatcher } from './dispatcher.js';
 import { appendOutbox } from './mirror.js';
 import type { HookReport, NormalizedHookPayload } from './types.js';
 import type { WatchEngine } from './watch-engine.js';
-import type { SequenceEngine } from './sequence-engine.js';
+import type { OrchestrationEngine } from './orchestration-engine.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
 import type { SideQuestionEvent } from './side-questions.js';
@@ -320,7 +320,7 @@ export interface IngestedHandlerDeps {
   /** 空闲订阅引擎（session-orchestration 批 2）：见目标会话的 idleSignals 即 fire。 */
   watchEngine?: Pick<WatchEngine, 'onEvent'>;
   /** 序列引擎（批 3）：inject 步的完成判据 = 目标 idleSignals 事件。 */
-  sequenceEngine?: Pick<SequenceEngine, 'onEvent'>;
+  orchestrationEngine?: Pick<OrchestrationEngine, 'onEvent'>;
   /** prompt 队列冲洗 + inbox 直投凭据上报 + 投递回执（消息域重塑）；缺省功能降级。 */
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'> & {
     /** hook 旁路上报的会话 inbox 目标（内存态）。 */
@@ -396,7 +396,7 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         eventType: record.input.eventType,
         source: record.input.source,
       });
-      deps.sequenceEngine?.onEvent({
+      deps.orchestrationEngine?.onEvent({
         sessionId: record.input.sessionId,
         eventType: record.input.eventType,
         source: record.input.source,

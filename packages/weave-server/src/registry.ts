@@ -6,7 +6,7 @@ import { HookDispatchRepository } from './repositories/hook-dispatches.js';
 import { HookEventRepository } from './repositories/hook-events.js';
 import { SessionRepository } from './repositories/sessions.js';
 import { SessionWatchRepository } from './repositories/session-watches.js';
-import { SessionSequenceRepository } from './repositories/session-sequences.js';
+import { OrchestrationRepository, OrchestrationRunRepository } from './repositories/orchestrations.js';
 import { SideQuestionRepository } from './repositories/side-questions.js';
 import { generateToken } from './daemon/auth.js';
 import { purgeProjectPipeline } from './daemon/hook-pipeline.js';
@@ -68,10 +68,12 @@ export function unregisterProject(
     if (!row) return null;
     const dispatches = new HookDispatchRepository(db).deleteByProject(row.id);
     const events = new HookEventRepository(db).deleteByProject(row.id);
-    // 订阅/序列按项目会话集圈行——必须在会话行删除之前（同归档路由的顺序）
+    // 订阅/编排按项目会话集圈行——必须在会话行删除之前（同归档路由的顺序）
     new SessionWatchRepository(db).deleteByProject(row.id);
-    new SessionSequenceRepository(db).deleteByProject(row.id);
+    new OrchestrationRepository(db).deleteByProject(row.id);
     new SideQuestionRepository(db).deleteByProject(row.id);
+    // 项目没了，它的编排运行日志一并清（日志归项目）
+    new OrchestrationRunRepository(db).clear('all', row.id);
     const sessions = new SessionRepository(db).removeByProject(row.id);
     purgeProjectPipeline(hooksDir ?? hooksRoot(), row.token);
     projects.remove(row.id);

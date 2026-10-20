@@ -131,20 +131,46 @@ CREATE TABLE IF NOT EXISTS side_questions (
 );
 CREATE INDEX IF NOT EXISTS idx_side_questions_session ON side_questions(session_id, id);
 
--- 跨会话序列（批 3）：手工编排的多步链。steps JSON = [{to,text,mode,
--- messageId?}]，messageId 为步触发后回填的管道发号（内存关联）；
--- cursor = 正在等待完成的步下标。引擎无内存权威态，全部状态在行。
--- 消息域重塑（消息域退役）：上表 session_messages 随管道化 DROP。
-CREATE TABLE IF NOT EXISTS session_sequences (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  name       TEXT NOT NULL DEFAULT '',
-  steps      TEXT NOT NULL,
-  status     TEXT NOT NULL,
-  cursor     INTEGER NOT NULL DEFAULT 0,
-  error      TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+-- 跨会话编排：一份 = 起始会话 + 节点集 + 有向边集（边带消息正文）。
+-- project_id = 起始会话所属项目（「项目编排」即按它过滤）。
+-- webhook_token 为公开触发端点的凭证；cron 为 5 字段表达式（NULL = 无定时）。
+-- 线性链的 session_sequences 已由本模型取代。
+DROP TABLE IF EXISTS session_sequences;
+CREATE TABLE IF NOT EXISTS orchestrations (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  name             TEXT NOT NULL,
+  project_id       INTEGER NOT NULL,
+  start_session_id TEXT NOT NULL,
+  start_text       TEXT NOT NULL DEFAULT '',
+  nodes            TEXT NOT NULL,
+  edges            TEXT NOT NULL,
+  cron             TEXT,
+  last_cron_at     TEXT,
+  webhook_token    TEXT,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orchestrations_token ON orchestrations(webhook_token);
+
+-- 编排运行日志：一次触发一行，手动 / webhook / cron 同表（统一视图的数据源）。
+-- 编排名与 project_id 去规范化——删编排不删日志（保留「当时跑了什么」）。
+-- 状态机在引擎内存，行随每次转场落盘；重启即 interrupted。
+CREATE TABLE IF NOT EXISTS orchestration_runs (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  orchestration_id   INTEGER NOT NULL,
+  orchestration_name TEXT NOT NULL,
+  project_id         INTEGER NOT NULL,
+  trigger            TEXT NOT NULL,
+  status             TEXT NOT NULL,
+  deliveries         INTEGER NOT NULL DEFAULT 0,
+  state              TEXT NOT NULL,
+  error              TEXT,
+  created_at         TEXT NOT NULL,
+  finished_at        TEXT,
+  updated_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orch_runs_orch ON orchestration_runs(orchestration_id, id);
+CREATE INDEX IF NOT EXISTS idx_orch_runs_project ON orchestration_runs(project_id, id);
 
 -- 全局静态配置（key-value 单表，原 <dataDir>/settings.json 文件——配置
 -- 统一落库）。配置项以约定 key 落行（如 terminal.preset / locale /

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { PathRefKind } from '@weavecode/harness';
@@ -39,7 +39,7 @@ export interface FileIndex {
   at: number;
   /** 项目相对路径（正斜杠分隔），升序。 */
   files: string[];
-  /** 由文件路径前缀派生的目录集（git 不列目录）。 */
+  /** 目录集：由文件路径前缀派生 + 子模块的 gitlink（git 不列目录）。 */
   dirs: string[];
   truncated: boolean;
 }
@@ -51,20 +51,56 @@ export interface PathHit {
   ranges: [number, number][];
 }
 
-async function listViaGit(root: string): Promise<string[] | null> {
+async function gitLsFiles(cwd: string, args: string[]): Promise<string[] | null> {
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-      { cwd: root, timeout: 10_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
-    );
+    const { stdout } = await execFileAsync('git', ['ls-files', '-z', ...args], {
+      cwd,
+      timeout: 10_000,
+      maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
+    });
     // gitignore 语义（嵌套 / 取反 / 全局 excludes）白拿；--others 让刚建还没 add 的也在列
-    const files = stdout.split('\0').filter(Boolean);
-    return files.length > 0 ? files : null;
+    return stdout.split('\0').filter(Boolean);
   } catch {
-    // 非 git 仓库 / 没有 git / 超时 → 回落枚举
+    // 非 git 仓库 / 没有 git / 超时 → 这一层回落枚举
     return null;
   }
+}
+
+/** 子模块（gitlink）：`--stage` 里的 mode 160000，路径读 tab 之后那一截（可能带空格）。 */
+async function gitlinksOf(root: string): Promise<string[]> {
+  const staged = await gitLsFiles(root, ['--stage']);
+  if (!staged) return [];
+  return staged.filter((l) => l.startsWith('160000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
+}
+
+/**
+ * git 索引 + **子模块里的索引**：git 只给子模块一个 gitlink，里面的文件得各自进去
+ * 列一遍（`--recurse-submodules` 只认 `--cached`/`--stage`，给不了 `--others`，
+ * 子模块里刚建还没 add 的文件正是最想引用的那种）。`.gitmodules` 不在列就一次
+ * 额外的 git 都不起。
+ */
+async function listViaGit(
+  root: string,
+  prefix = '',
+): Promise<{ files: string[]; links: string[] } | null> {
+  const listed = await gitLsFiles(root, ['--cached', '--others', '--exclude-standard']);
+  if (!listed) return null;
+  const sub = listed.includes('.gitmodules') ? await gitlinksOf(root) : [];
+  // gitlink 自身不是文件——它由 links 当目录给出，留在 files 里会让同一行出现两次
+  const files = listed.filter((f) => !sub.includes(f)).map((f) => prefix + f);
+  const links = sub.map((p) => prefix + p);
+  for (const p of sub) {
+    const dir = path.join(root, p);
+    // 没克隆的子模块（工作区里没有 `.git`）别去问 git：那样的空目录里 `ls-files`
+    // 会一路上溯找到外层仓库，把外层文件挂到子模块名下
+    if (!(await lstat(path.join(dir, '.git')).then(() => true, () => false))) continue;
+    const inner = await listViaGit(dir, `${prefix}${p}/`);
+    if (!inner) continue;
+    files.push(...inner.files);
+    links.push(...inner.links);
+  }
+  return { files, links };
 }
 
 async function listViaWalk(root: string): Promise<string[]> {
@@ -82,7 +118,8 @@ async function listViaWalk(root: string): Promise<string[]> {
       const child = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name)) await walk(child);
-      } else if (e.isFile()) {
+      } else if (e.isFile() && e.name !== '.git') {
+        // `.git` 文件（worktree / 子模块）不是要看的东西
         out.push(child);
       }
     }
@@ -108,11 +145,15 @@ function dirsOf(files: readonly string[]): string[] {
 
 export async function buildIndex(root: string): Promise<FileIndex> {
   const fromGit = await listViaGit(root);
-  const files = fromGit ?? (await listViaWalk(root));
+  const files = fromGit?.files ?? (await listViaWalk(root));
   const truncated = files.length > MAX_INDEX_FILES;
   const kept = truncated ? files.slice(0, MAX_INDEX_FILES) : files;
   kept.sort();
-  return { at: Date.now(), files: kept, dirs: dirsOf(kept), truncated };
+  // 子模块目录直接由 gitlink 给出——没克隆的子模块没有内容可派生，它自己也还要在
+  // （连同它的上层目录：`vendor/lib` 空着时 `vendor` 仍然得能进去）
+  const links = fromGit?.links ?? [];
+  const dirs = [...new Set([...dirsOf(kept), ...links, ...dirsOf(links)])].sort();
+  return { at: Date.now(), files: kept, dirs, truncated };
 }
 
 const cache = new Map<number, FileIndex>();

@@ -48,6 +48,21 @@ export interface HookFrame {
   count?: number;
   /** watch.fired 帧的命中类型（idle / turnEnd / messageFailed——提醒正文按它措辞）。 */
   reason?: string;
+  // ---- 编排域帧（orchestration.run / orchestration.delivery）：两条都带全量
+  // 轻量态（投递数 + 每会话待回计数），画布就地更新、不重拉。 ----
+  orchestrationId?: number;
+  runId?: number;
+  /** 边 id（起点投递为空串）：画布按它点亮那一条边。 */
+  edgeId?: string;
+  from?: string;
+  to?: string;
+  ok?: boolean;
+  error?: string;
+  deliveries?: number;
+  pendingCounts?: Record<string, number>;
+  trigger?: 'manual' | 'webhook' | 'cron';
+  /** 两条编排帧都带的时刻（终态落定时刻也用它）。 */
+  at?: string;
 }
 
 type FrameHandler = (frame: SseFrame) => void;

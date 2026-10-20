@@ -18,6 +18,7 @@ import {
   type FileAssetCategory,
   type FileAssetTemplate,
   type HookRule,
+  type OrchestrationRow,
   type McpServerConfig,
   type McpRow,
   type ProjectRow,
@@ -155,6 +156,9 @@ function Dashboard() {
   // All hook rules (global + per project) — drives the Weave card count; the
   // panel refetches its own copy after every mutation.
   const [hookRules, setHookRules] = useState<HookRule[]>([]);
+  // 全部编排定义（不分项目）——编排卡计数按当前视图过滤；画布改了定义会
+  // 发 `weave:orchestrations-changed` 让这里重拉。
+  const [orchestrations, setOrchestrations] = useState<OrchestrationRow[]>([]);
   // MCP 工具行（每行一个 (harness, scope) 面；enable/effective 服务端算好）。
   const [mcpRows, setMcpRows] = useState<McpRow[]>([]);
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
@@ -369,6 +373,22 @@ function Dashboard() {
     refreshHookRules();
   }, [refreshHookRules]);
 
+  /** Refresh the orchestration definitions (编排 card count). */
+  const refreshOrchestrations = useCallback(() => {
+    api.listOrchestrations().then(setOrchestrations).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshOrchestrations();
+  }, [refreshOrchestrations]);
+
+  // 编排画布用这个事件回报定义的新增/改名/删除（同 weave:rules-changed）。
+  useEffect(() => {
+    window.addEventListener('weave:orchestrations-changed', refreshOrchestrations);
+    return () =>
+      window.removeEventListener('weave:orchestrations-changed', refreshOrchestrations);
+  }, [refreshOrchestrations]);
+
   // HooksPanel announces rule mutations with this event so the category card
   // count stays honest without threading callbacks through CategoryDetail.
   useEffect(() => {
@@ -538,6 +558,7 @@ function Dashboard() {
         statuslineSource: null,
         hooksRules: hookRules.length,
         sessions: allSessions?.length ?? 0,
+        orchestrations: orchestrations.length,
       };
     }
     const otherCount = assets.filter((a) => a.category !== 'skill' && a.category !== 'mcp').length;
@@ -560,8 +581,10 @@ function Dashboard() {
         (r) => r.projectId === null || r.projectId === selected?.id,
       ).length,
       sessions: (allSessions ?? []).filter((s) => s.projectId === selected?.id).length,
+      // 项目编排 = 起点在该项目的那些（与画布的服务端过滤同口径）。
+      orchestrations: orchestrations.filter((o) => o.projectId === selected?.id).length,
     };
-  }, [globalMode, globalSkillGroups, mcpRows, updates, assets, globalAssets, assetCounts, pluginRows, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions]);
+  }, [globalMode, globalSkillGroups, mcpRows, updates, assets, globalAssets, assetCounts, pluginRows, effectiveGlobalSkills, statuslineSource, hookRules, selected, allSessions, orchestrations]);
 
   // Asset entry backing the open file preview — supplies the agent badge in
   // the drawer header. Missing rows (cache lag) fall back to plain Claude.

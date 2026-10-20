@@ -31,8 +31,11 @@ import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import type { PushNotifier } from '../hooks/push-notify.js';
-import type { SessionSequenceRepository } from '../repositories/session-sequences.js';
-import type { SequenceEngine } from '../hooks/sequence-engine.js';
+import type {
+  OrchestrationRepository,
+  OrchestrationRunRepository,
+} from '../repositories/orchestrations.js';
+import type { OrchestrationEngine } from '../hooks/orchestration-engine.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { UploadRepository } from '../repositories/uploads.js';
@@ -212,10 +215,12 @@ export interface WeaveServerDeps {
   pushNotifier?: Pick<PushNotifier, 'publicKey'>;
   /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */
   watchEngine?: Pick<WatchEngine, 'created'>;
-  /** 跨会话序列存储（批 3）；/messaging/sequences 依赖它。 */
-  sessionSequences?: SessionSequenceRepository;
-  /** 序列引擎（批 3）；POST 触发步 0 与 DELETE 取消依赖它。 */
-  sequenceEngine?: Pick<SequenceEngine, 'trigger' | 'cancel'>;
+  /** 跨会话编排定义存储；/messaging/orchestrations 依赖它。 */
+  orchestrations?: OrchestrationRepository;
+  /** 编排运行日志（统一视图 + 保留清理）；/messaging/orchestration-runs 依赖它。 */
+  orchestrationRuns?: OrchestrationRunRepository;
+  /** 编排引擎；触发 / 取消 / webhook 入口依赖它。 */
+  orchestrationEngine?: Pick<OrchestrationEngine, 'start' | 'cancel'>;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
@@ -1595,11 +1600,12 @@ async function handleRequest(
     const events = deps.hookEvents?.deleteByProject(project.id) ?? 0;
     // 事件清完（event_images 级联删）再回收孤儿上传件
     deps.uploads?.pruneUnreferenced();
-    // 消息域先于会话行清（内存态按会话→项目归属圈；队列行按会话清）；订阅/序列同形
-    // （序列按项目会话集圈「任一步目标」行，同样必须在会话行删除前执行）
+    // 消息域先于会话行清（内存态按会话→项目归属圈；队列行按会话清）；订阅/编排同形
+    // （编排按项目会话集圈「任一步目标」行，同样必须在会话行删除前执行）
     const messages = deps.messageDeliverer?.forgetProject(project.id) ?? 0;
     deps.sessionWatches?.deleteByProject(project.id);
-    deps.sessionSequences?.deleteByProject(project.id);
+    deps.orchestrations?.deleteByProject(project.id);
+    deps.orchestrationRuns?.clear('all', project.id);
     deps.sideQuestions?.repo.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);
@@ -1793,6 +1799,9 @@ function isPublicRequest(
   deps: WeaveServerDeps,
 ): boolean {
   if (pathname === '/health') return true;
+  // 编排的公开触发端点：token 即凭证（外部 webhook 无法带 dashboard 凭据）。
+  // 必须在 GET-only 早退之前——它是 POST。
+  if (pathname.startsWith('/webhooks/orchestrate/')) return true;
   if (req.method !== 'GET') return false;
   if ((req.headers.accept ?? '').includes('text/html')) return true;
   if (!deps.staticDir) return false;
