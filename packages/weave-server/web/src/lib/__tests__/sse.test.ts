@@ -200,4 +200,26 @@ describe('lib/sse', () => {
     offPrefix();
     offSubscribe();
   });
+
+  it('断流自愈：心跳照旧就不动，安静过阈值才重建连接', async () => {
+    vi.useFakeTimers();
+    try {
+      await markAuthenticated();
+      const { subscribeSse } = await import('../sse');
+      const off = subscribeSse(() => {});
+      const first = FakeEventSource.latest!;
+
+      vi.advanceTimersByTime(20_000);
+      first.emit({ type: 'ping' }); // 心跳到场 = 链路还活着
+      vi.advanceTimersByTime(30_000);
+      expect(FakeEventSource.latest).toBe(first);
+
+      vi.advanceTimersByTime(70_000); // 之后一直安静 → 判死重建
+      expect(FakeEventSource.latest).not.toBe(first);
+      expect(first.closed).toBe(true);
+      off();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

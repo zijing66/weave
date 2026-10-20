@@ -1714,6 +1714,9 @@ async function handleRequest(
   sendJson(res, 404, { error: 'Not found' });
 }
 
+/** SSE 心跳间隔：比常见代理的 30~60s 空闲超时短一截，且远小于前端判死阈值。 */
+const SSE_HEARTBEAT_MS = 25_000;
+
 /** Upgrade a response to an SSE stream subscribed to watch + hook event sources. */
 function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerDeps): void {
   if (!deps.watch && !deps.hookBus && !deps.dataBus) {
@@ -1729,6 +1732,15 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
     'x-accel-buffering': 'no',
   });
   res.write(': connected\n\n');
+  // 心跳：中间的代理与移动网络会**静默**掐断空闲流——浏览器那边既不报错也不重连，
+  // dashboard 就停在旧帧上直到刷新页面（实机见过：面板一直挂着「已发出」，刷新才
+  // 正常）。定期写一帧让「没数据」与「断了」在客户端可分辨，前端据此判死重建
+  // （见 web/src/lib/sse.ts）。
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return;
+    res.write(`data: ${JSON.stringify({ type: 'ping' })}\n\n`);
+  }, SSE_HEARTBEAT_MS);
+  heartbeat.unref?.();
 
   const unsubscribes: Array<() => void> = [];
   // 帧加 type 判别字段：旧前端忽略未知字段（asset 帧内容不变，向后兼容）。
@@ -1772,6 +1784,7 @@ function handleSse(req: IncomingMessage, res: ServerResponse, deps: WeaveServerD
   deps.updatesRefresher?.onSubscriberJoin();
 
   req.on('close', () => {
+    clearInterval(heartbeat);
     for (const unsubscribe of unsubscribes) unsubscribe();
   });
 }

@@ -64,13 +64,26 @@ const hookByKind = new Map<string, Set<(frame: HookFrame) => void>>();
  */
 const invalidators = new Map<string, Set<() => void>>();
 let source: EventSource | null = null;
+/** 上次收到帧（含心跳）的时刻：判死只看「对方还说没说话」。 */
+let lastFrameAt = Date.now();
+/** 判死阈值 = 服务端心跳周期（`SSE_HEARTBEAT_MS`）的两拍半；巡检本身不拉数据。
+ *  中间层静默掐断空闲流时 EventSource **既不报错也不重连**（实测：daemon 重启后
+ *  面板停在旧帧上，直到刷新页面才对），所以只能靠心跳缺席自己发现。 */
+const STREAM_SILENT_MS = 65_000;
+const WATCHDOG_MS = 15_000;
+let watchdog: ReturnType<typeof setInterval> | null = null;
 
 function ensureSource(): EventSource | null {
   // 未登录不建连（连上也是 401）：登录成功后由认证态订阅者补连，或新订阅者触发。
   if (authState() !== 'authenticated') return null;
   if (source) return source;
   source = new EventSource(api.eventsUrl());
+  lastFrameAt = Date.now();
+  source.onopen = () => {
+    lastFrameAt = Date.now();
+  };
   source.onmessage = (ev) => {
+    lastFrameAt = Date.now();
     let frame: SseFrame;
     try {
       frame = JSON.parse(ev.data) as SseFrame;
@@ -101,6 +114,15 @@ function ensureSource(): EventSource | null {
   source.onerror = () => {
     recheckAuth();
   };
+  // 断流监护：安静过阈值就重建（关掉旧对象浏览器才会停止对它的静默重试）。
+  // 页面整个生命周期只有这一个定时器，且只判活、不取数。
+  if (watchdog === null) {
+    watchdog = setInterval(() => {
+      if (!source || Date.now() - lastFrameAt < STREAM_SILENT_MS) return;
+      closeSource();
+      ensureSource();
+    }, WATCHDOG_MS);
+  }
   return source;
 }
 
