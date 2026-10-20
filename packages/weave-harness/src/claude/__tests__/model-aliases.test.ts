@@ -6,6 +6,7 @@ import {
   aliasOfModel,
   effortLevelOf,
   modelAliasTargets,
+  permissionModeOf,
   startedModelOf,
   switchedModelOf,
   type ModelAliasTarget,
@@ -115,5 +116,18 @@ describe('effortLevelOf', () => {
     expect(effortLevelOf({ effort: {} })).toBeNull();
     expect(effortLevelOf({ effort: { level: '' } })).toBeNull();
     expect(effortLevelOf(null)).toBeNull();
+  });
+});
+
+describe('permissionModeOf', () => {
+  it('取 hook 里的 permission_mode（每条事件都带，答「此刻」的模式）', () => {
+    expect(permissionModeOf({ permission_mode: 'plan' })).toBe('plan');
+  });
+
+  it('没有 / 空串 / 形状不对都回 null', () => {
+    expect(permissionModeOf({})).toBeNull();
+    expect(permissionModeOf({ permission_mode: '' })).toBeNull();
+    expect(permissionModeOf({ permission_mode: 3 })).toBeNull();
+    expect(permissionModeOf(null)).toBeNull();
   });
 });

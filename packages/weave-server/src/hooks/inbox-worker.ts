@@ -5,6 +5,7 @@ import {
   createRuntimeRegistry,
   effortLevelOf,
   frameFacts,
+  permissionModeOf,
   startedModelOf,
   switchedModelOf,
   type EventSource,
@@ -342,6 +343,7 @@ export interface IngestedHandlerDeps {
     noteModel(sessionId: string, model: string): void;
     sessionStarted(sessionId: string, model: string | null): void;
     noteEffort(sessionId: string, level: string): void;
+    noteMode(sessionId: string, mode: string): void;
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
@@ -414,6 +416,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // `thinking` 块的事实在 hook 里，不必去读宿主 stdin 或转录。
       const effort = effortLevelOf(payload?.raw);
       if (effort) deps.sessionProbe?.noteEffort?.(record.input.sessionId, effort);
+      // 执行模式（`permission_mode`）：每条事件都带、答的是「此刻」——Shift+Tab 切模式
+      // 既不落转录也没有专门事件，只读转录会一直停在切之前那个模式上。
+      const permissionMode = permissionModeOf(payload?.raw);
+      if (permissionMode) deps.sessionProbe?.noteMode?.(record.input.sessionId, permissionMode);
       if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。

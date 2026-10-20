@@ -328,6 +328,24 @@ describe('QuestionTracker 状态机', () => {
     expect(tracker.snapshot()).toHaveLength(1);
   });
 
+  it('已中断 ⇒ 待答面读时摘掉：手动了结掉对话框后宿主不发任何事件（ESC 多半连 Stop 都没有）', () => {
+    let interrupted: number | null = null;
+    tracker = new QuestionTracker({
+      sessions,
+      hookEvents: events,
+      interruptedAt: () => interrupted,
+    });
+    feed(SESSION, preTool('AskUserQuestion', AUA_INPUT));
+    expect(tracker.get(SESSION)).not.toBeNull();
+    interrupted = Date.now();
+    // 读时判、顺手摘：snapshot 与 get 都看不见它，作答路由也就拿不到它去发键序
+    expect(tracker.snapshot()).toHaveLength(0);
+    expect(tracker.get(SESSION)).toBeNull();
+    // 摘掉而非只过滤：中断态被下一条事件盖过去之后，那条问题不许再冒出来
+    interrupted = null;
+    expect(tracker.snapshot()).toHaveLength(0);
+  });
+
   it('seedFromDb：重放最近事件窗口重建待答面（含已答的中间事件）', () => {
     const insert = (p: NormalizedHookPayload): void => {
       events.insert({

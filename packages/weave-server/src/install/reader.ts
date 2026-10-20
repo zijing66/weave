@@ -42,10 +42,11 @@ export interface ProjectFile {
 export const MAX_BYTES = 512 * 1024;
 
 /**
- * Resolve a project-relative path and ensure it stays inside the allowed roots.
- * Rejects absolute paths and any segment equal to `..`.
+ * Resolve a project-relative path and keep it inside the project root. Rejects
+ * absolute paths and any segment equal to `..`. No allowed-root narrowing —
+ * callers that need it (`resolveProjectFile`) apply their own whitelist on top.
  */
-export function resolveProjectFile(projectPath: string, relPath: string): string {
+export function resolveWithinProject(projectPath: string, relPath: string): string {
   const posix = path.normalize(relPath).replace(/\\/g, '/');
 
   if (path.isAbsolute(relPath)) {
@@ -54,6 +55,22 @@ export function resolveProjectFile(projectPath: string, relPath: string): string
   if (posix.split('/').some((seg) => seg === '..')) {
     throw new PathEscapeError(`Path traversal is not allowed: "${relPath}"`);
   }
+
+  const abs = path.join(projectPath, posix);
+  // Final containment guard (defence in depth against platform separator tricks).
+  const root = projectPath.endsWith(path.sep) ? projectPath : projectPath + path.sep;
+  if (abs !== projectPath && !abs.startsWith(root)) {
+    throw new PathEscapeError(`Resolved path escapes the project: "${relPath}"`);
+  }
+  return abs;
+}
+
+/**
+ * Resolve a project-relative path and ensure it stays inside the allowed roots
+ * (`.claude/`, `.codex/`, `.weave/`, the MCP config and the instruction files).
+ */
+export function resolveProjectFile(projectPath: string, relPath: string): string {
+  const posix = path.normalize(relPath).replace(/\\/g, '/');
 
   // harness 顶层目录由各资产面的 skills 根派生（`.claude` / `.codex` / `.agents`），
   // 不在 server 再列一遍。
@@ -71,14 +88,7 @@ export function resolveProjectFile(projectPath: string, relPath: string): string
   if (!allowed) {
     throw new PathEscapeError(`Path is outside the allowed roots: "${relPath}"`);
   }
-
-  const abs = path.join(projectPath, posix);
-  // Final containment guard (defence in depth against platform separator tricks).
-  const root = projectPath.endsWith(path.sep) ? projectPath : projectPath + path.sep;
-  if (abs !== projectPath && !abs.startsWith(root)) {
-    throw new PathEscapeError(`Resolved path escapes the project: "${relPath}"`);
-  }
-  return abs;
+  return resolveWithinProject(projectPath, posix);
 }
 
 /** Read a text file from the project, enforcing the allowed-root + size limits. */

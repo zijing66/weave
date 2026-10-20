@@ -404,6 +404,45 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(noted).toEqual([['s1', 'deepseek-flash']]);
   });
 
+  it('每条事件自带的 permission_mode 交给会话探测（切模式不落转录，笔迹只在事件里）', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const modes: Array<[string, string]> = [];
+    const deps = {
+      projects,
+      hooksDir,
+      bus,
+      sessionProbe: {
+        noteTranscript: () => {},
+        noteModel: () => {},
+        sessionStarted: () => {},
+        noteMode: (sessionId: string, mode: string) => modes.push([sessionId, mode]),
+      },
+    };
+
+    const record = (eventType: string, raw: Record<string, unknown>) => {
+      const payload = JSON.stringify({ eventType, raw });
+      return {
+        eventId: hookEvents.insert({
+          projectId: project.id,
+          source: 'claude',
+          eventType,
+          sessionId: 's1',
+          payload,
+        }),
+        projectId: project.id,
+        input: { projectId: project.id, source: 'claude', eventType, sessionId: 's1', payload },
+      };
+    };
+
+    handleIngestedRecords(deps, [record('PreToolUse', { permission_mode: 'plan' })]);
+    expect(modes).toEqual([['s1', 'plan']]);
+    // 缺键的事件不动「最后已知」（保持上次闩住的值）
+    handleIngestedRecords(deps, [record('PostToolUse', {})]);
+    expect(modes).toEqual([['s1', 'plan']]);
+  });
+
   it('旁路回答认领收到解析后的载荷与事件 id（帧域不带 raw，判据只能挂在 ingest 上）', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

@@ -1,0 +1,902 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { EditorState } from '@codemirror/state';
+import { EditorView, drawSelection, lineNumbers } from '@codemirror/view';
+import { SearchCursor, SearchQuery, search, setSearchQuery } from '@codemirror/search';
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronUp,
+  File as FileIcon,
+  FileCode,
+  FileImage,
+  FileText,
+  Folder,
+  Hash,
+  Loader2,
+  Search,
+  TextSearch,
+  X,
+} from 'lucide-react';
+import { api, type SessionFileEntry } from '@/lib/api';
+import { useT } from '@/i18n/I18nProvider';
+import { cn } from '@/lib/utils';
+import { useMediaQuery } from '@/lib/use-media-query';
+
+/**
+ * 项目文件引用选择器（superfile 式三栏）：父目录 | 当前目录 | 预览。
+ *
+ * 路径的**表达式由服务端给**（`entry.ref` / `sessionFileRef`，harness 自己的引用
+ * 文法）——这里只把它当不透明字符串交给 `onPick`，绝不自拼 `@` 或 `#L`。
+ * 索引也在服务端（打开即重建），本组件只负责取一页、防抖输入、把命中的字符区间上色。
+ *
+ * 预览是一个**只读**的 CodeMirror：行号可点（第一下起、第二下止）。查找与跳行
+ * 用自己的一条小条（`SearchQuery` + `SearchCursor`）而不是它自带的搜索面板——
+ * 那面板带替换与编辑，而预览只该看。选它是因为行号槽、行号上的鼠标事件、选区
+ * 绘制与匹配高亮都是现成的，手写这四件只会四件都做不好。
+ */
+
+/** 搜索输入的防抖窗：服务端一次模糊匹配 ~10ms，剩下全是省往返。 */
+const SEARCH_DEBOUNCE_MS = 120;
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+
+/** 图标按扩展名分组：没必要为图标拉一张语法表。 */
+const CODE_EXT =
+  /\.(ts|tsx|js|jsx|mjs|cjs|json|py|go|rs|java|kt|c|h|cpp|hpp|cs|rb|php|swift|sh|ps1|sql|toml|yaml|yml)$/i;
+const TEXT_EXT = /\.(md|markdown|txt|log|csv|ini|cfg|conf|env)$/i;
+
+/** 选中一条之后要贴进输入框的东西：`ref` 是表达式原文，其余是胶囊自己留的账
+ *  （编辑那枚胶囊时要能回到这个文件与这段行，前端不去解析表达式）。 */
+export interface PickTarget {
+  path: string;
+  kind: 'file' | 'dir';
+  lines?: { start: number; end: number };
+}
+
+function iconFor(entry: SessionFileEntry) {
+  if (entry.kind === 'dir') return <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />;
+  if (IMAGE_EXT.test(entry.name)) return <FileImage className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />;
+  if (CODE_EXT.test(entry.name)) return <FileCode className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />;
+  if (TEXT_EXT.test(entry.name)) return <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-400" />;
+  return <FileIcon className="h-3.5 w-3.5 shrink-0 text-neutral-500" />;
+}
+
+function sizeText(bytes: number | undefined): string | null {
+  if (bytes == null) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 把命中区间切成「亮 / 暗」交替的片段（区间来自服务端，已按路径下标给好）。 */
+function segmentsOf(name: string, ranges: [number, number][] | undefined): { text: string; hit: boolean }[] {
+  if (!ranges || ranges.length === 0) return [{ text: name, hit: false }];
+  const out: { text: string; hit: boolean }[] = [];
+  let at = 0;
+  for (const [start, len] of ranges) {
+    if (start > at) out.push({ text: name.slice(at, start), hit: false });
+    out.push({ text: name.slice(start, start + len), hit: true });
+    at = start + len;
+  }
+  if (at < name.length) out.push({ text: name.slice(at), hit: false });
+  return out;
+}
+
+/** 只读代码视图的暗色样式：底透明，跟着父容器走。 */
+const CM_THEME = EditorView.theme(
+  {
+    '&': { height: '100%', fontSize: '11px', color: 'rgb(212 212 212)', backgroundColor: 'transparent' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-scroller': {
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      lineHeight: '1.5',
+      overflow: 'auto',
+    },
+    '.cm-content': { padding: '4px 0' },
+    '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'rgb(82 82 82)' },
+    // 行号是「点我」的：给个手的指针，不然没人知道它能点
+    '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 6px', cursor: 'pointer' },
+    '.cm-activeLineGutter': { backgroundColor: 'transparent' },
+    '.cm-activeLine': { backgroundColor: 'transparent' },
+    // 失焦也要看得见选中（点行号之后焦点多半在别处）
+    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: 'rgba(59, 130, 246, 0.32)',
+    },
+    '.cm-searchMatch': { backgroundColor: 'rgba(251, 191, 36, 0.35)' },
+    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(251, 191, 36, 0.6)' },
+  },
+  { dark: true },
+);
+
+/** 只读代码视图。`viewRef` 由父组件持有：查找与跳行都要拿它现算。 */
+function CodePreview({
+  text,
+  lines,
+  viewRef,
+  onGutterClick,
+}: {
+  text: string;
+  lines: { start: number; end: number } | null;
+  viewRef: React.MutableRefObject<EditorView | null>;
+  onGutterClick: (line: number) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  /** 回调每次渲染都是新的，扩展只装一次——用 ref 转一手，别让扩展跟着重建。 */
+  const clickRef = useRef(onGutterClick);
+  clickRef.current = onGutterClick;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: '',
+        extensions: [
+          lineNumbers({
+            domEventHandlers: {
+              // 返回 true = 吃掉默认行为：光标位置归我们自己摆（整行选中）。
+              // 这里拿到的是块信息（`from` = 该行起点），行号要自己按文档算。
+              mousedown: (view: EditorView, block: { from: number }) => {
+                clickRef.current(view.state.doc.lineAt(block.from).number);
+                return true;
+              },
+            },
+          }),
+          drawSelection(),
+          // 只留 `search` 的**匹配高亮**（查询由外面那条自绘的小条设）。它自带的
+          // 面板不做：那面板带替换与编辑，而这里只是预览。
+          search({ top: true }),
+          EditorView.lineWrapping,
+          EditorView.editable.of(false),
+          CM_THEME,
+        ],
+      }),
+    });
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, [viewRef]);
+
+  // 换文件：整篇换掉并回到顶部，上一份的查询随之作废
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
+      selection: { anchor: 0 },
+      effects: setSearchQuery.of(new SearchQuery({ search: '' })),
+    });
+    view.scrollDOM.scrollTop = 0;
+  }, [text, viewRef]);
+
+  // 行选区 → 编辑器选区（整行，含行尾），并把视口带过去
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !lines) return;
+    const doc = view.state.doc;
+    const from = doc.line(Math.min(lines.start, doc.lines)).from;
+    const to = doc.line(Math.min(lines.end, doc.lines)).to;
+    view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+  }, [lines, text, viewRef]);
+
+  return <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />;
+}
+
+export function FilePicker({
+  sessionId,
+  rootLabel,
+  linesSupported,
+  initial,
+  onPick,
+  onClose,
+}: {
+  sessionId: string;
+  /** 项目名：面包屑与左栏的根那一格不写 `/`，写它。 */
+  rootLabel: string;
+  /** harness 认不认行区间（能力矩阵的 `pathRefLines`）。 */
+  linesSupported: boolean;
+  /** 编辑一枚既有胶囊：从它的路径/行区间打开，选中后替换它。 */
+  initial?: PickTarget;
+  /** 选中一条：`ref` 原样交给调用方贴进输入框。 */
+  onPick: (ref: string, target: PickTarget) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+
+  const [query, setQuery] = useState('');
+  const [dir, setDir] = useState(() => {
+    if (!initial) return '';
+    if (initial.kind === 'dir') return initial.path;
+    return initial.path.includes('/') ? initial.path.slice(0, initial.path.lastIndexOf('/')) : '';
+  });
+  const [entries, setEntries] = useState<SessionFileEntry[]>([]);
+  /** 父目录条目：只有桌面三栏的左栏用得上（窄屏不取）。 */
+  const [siblings, setSiblings] = useState<SessionFileEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [selected, setSelected] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ path: string; text: string | null; truncated: boolean } | null>(null);
+  /** 行号选区：`setAnchor` 里存的是「已点了起始行、等第二下」；`lines` 是生效的区间。 */
+  const [, setAnchor] = useState<number | null>(null);
+  const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
+  const [screen, setScreen] = useState<'list' | 'preview'>(initial?.kind === 'file' ? 'preview' : 'list');
+  /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
+  const [bar, setBar] = useState<'find' | 'line' | null>(null);
+  const [find, setFind] = useState('');
+  const [jump, setJump] = useState('');
+  const [hits, setHits] = useState<number | null>(null);
+
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  /** 请求序号守卫：慢响应不许覆盖新结果（服务端在本机，但 LAN 下会有明显乱序）。 */
+  const seq = useRef(0);
+  /** 预览单独一份守卫——它和列表是两条并行的取数，共用会把对方顶掉。 */
+  const previewSeq = useRef(0);
+  /** 每一波列表请求一个 controller：新的一波来就掐掉上一波，卸载也掐。 */
+  const ctrlRef = useRef<AbortController | null>(null);
+  /** 编辑既有引用时要落回那一条：列表一回来就选中它，然后清账。 */
+  const focusPath = useRef(initial?.kind === 'file' ? initial.path : null);
+
+  const load = useCallback(
+    (q: string, target: string, signal: AbortSignal) => {
+      const mine = ++seq.current;
+      setLoading(true);
+      setError(null);
+      // 没有斜杠但非空（`src`）= 父目录是项目根 `''`；根自身没有父
+      const slash = target.lastIndexOf('/');
+      const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
+      void Promise.all([
+        api.listSessionFiles(sessionId, { q, dir: target, signal }),
+        // 左栏 = 父目录的条目（根没有父，摆一行 `/` 占位）
+        !q && isDesktop && parent !== null
+          ? api.listSessionFiles(sessionId, { dir: parent, signal }).catch(() => null)
+          : Promise.resolve(null),
+      ])
+        .then(([listing, parentListing]) => {
+          if (mine !== seq.current) return;
+          setEntries(listing.entries);
+          setTotal(listing.total);
+          setTruncated(listing.truncated);
+          // 搜索是全项目的、不带父目录；这时留住上一次那份，左栏不闪成空栏
+          if (!q) setSiblings(parentListing?.entries ?? []);
+          const want = focusPath.current;
+          const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
+          focusPath.current = null;
+          setSelected(at >= 0 ? at : 0);
+          if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+        })
+        .catch((e: unknown) => {
+          if (mine !== seq.current || signal.aborted) return;
+          setError(e instanceof Error ? e.message : String(e));
+          setEntries([]);
+        })
+        .finally(() => {
+          if (mine === seq.current) setLoading(false);
+        });
+    },
+    [sessionId, isDesktop],
+  );
+
+  // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索是**全项目**的
+  // （索引本来就在项目级），故带 q 时 dir 归空——结果不按当前目录收窄。
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      ctrlRef.current?.abort();
+      const ctrl = new AbortController();
+      ctrlRef.current = ctrl;
+      load(query.trim(), query.trim() ? '' : dir, ctrl.signal);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query, dir, load]);
+
+  useEffect(() => () => ctrlRef.current?.abort(), []);
+
+  // 选中项滚进视野：回上一级时那一层可能远在折叠区外
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [selected, entries]);
+
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+
+  // 预览：图片走 <img>（不在这儿读字节），文本整份读来回给只读编辑器
+  const current = entries[selected];
+  useEffect(() => {
+    if (!current || current.kind === 'dir' || IMAGE_EXT.test(current.name)) {
+      setPreview(null);
+      return;
+    }
+    const mine = ++previewSeq.current;
+    let alive = true;
+    void api
+      .sessionFileText(sessionId, current.path)
+      .then(({ text, truncated: cut }) => {
+        if (!alive || mine !== previewSeq.current) return;
+        setPreview({ path: current.path, text, truncated: cut });
+      })
+      .catch(() => {
+        if (alive && mine === previewSeq.current) setPreview({ path: current.path, text: null, truncated: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [current, sessionId]);
+
+  // 换了一份预览就重来一次选区与查找条；编辑既有引用时按它带来的行区间先选好
+  useEffect(() => {
+    if (!preview?.path) return;
+    setAnchor(null);
+    setBar(null);
+    setFind('');
+    setJump('');
+    setHits(null);
+    setLines(preview.path === initial?.path ? (initial?.lines ?? null) : null);
+  }, [preview?.path, initial]);
+
+  /** ESC 关掉选择器（焦点可能落在预览或哪儿都不在，故挂 document 上）。
+   *  小工具条开着时先收它——不然一次 ESC 会连面板一起关掉。 */
+  const barRef = useRef(bar);
+  barRef.current = bar;
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (barRef.current) setBar(null);
+      else closeRef.current();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  /** 回到某一级时把「刚离开的那一层」选中——不然每次都从列表头上再找一遍。
+   *  只认真正的祖先：`target` 为空即项目根。 */
+  const goTo = (target: string): void => {
+    focusPath.current = null;
+    if (dir && dir !== target) {
+      const rest = target ? (dir.startsWith(`${target}/`) ? dir.slice(target.length + 1) : '') : dir;
+      if (rest) {
+        const seg = rest.includes('/') ? rest.slice(0, rest.indexOf('/')) : rest;
+        focusPath.current = target ? `${target}/${seg}` : seg;
+      }
+    }
+    setQuery('');
+    setDir(target);
+  };
+
+  const goUp = (): void => {
+    const slash = dir.lastIndexOf('/');
+    goTo(dir === '' ? '' : slash >= 0 ? dir.slice(0, slash) : '');
+  };
+
+  /** 行号点击：第一下起、第二下止（同一行就是单行引用）。 */
+  const onGutterClick = useCallback((n: number) => {
+    setAnchor((prev) => {
+      if (prev == null) {
+        setLines({ start: n, end: n });
+        return n;
+      }
+      setLines({ start: Math.min(prev, n), end: Math.max(prev, n) });
+      return null;
+    });
+  }, []);
+
+  /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。 */
+  const matchesOf = (view: EditorView, q: string): { from: number; to: number }[] => {
+    const out: { from: number; to: number }[] = [];
+    for (const cur = new SearchCursor(view.state.doc, q, 0); !cur.next().done; ) {
+      out.push({ from: cur.value.from, to: cur.value.to });
+    }
+    return out;
+  };
+
+  const selectAt = (view: EditorView, m: { from: number; to: number }): void => {
+    view.dispatch({
+      selection: { anchor: m.from, head: m.to },
+      effects: EditorView.scrollIntoView(m.from, { y: 'center' }),
+    });
+  };
+
+  /** 打字时只落到「光标之后最近的那处」——跟着每次输入往后跳会跳过前几处。
+   *  高亮由 `search` 扩展按同一个查询画。 */
+  const runFind = (q: string): void => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: q })) });
+    if (!q) {
+      setHits(null);
+      return;
+    }
+    const all = matchesOf(view, q);
+    setHits(all.length);
+    if (all.length === 0) return;
+    const from = view.state.selection.main.from;
+    selectAt(view, all.find((m) => m.from >= from) ?? all[0]!);
+  };
+
+  const stepMatch = (dir: 1 | -1): void => {
+    const view = viewRef.current;
+    if (!view || !find) return;
+    const all = matchesOf(view, find);
+    if (all.length === 0) return;
+    const main = view.state.selection.main;
+    const at = all.findIndex((m) => m.from === main.from && m.to === main.to);
+    selectAt(view, all[at < 0 ? 0 : (at + dir + all.length) % all.length]!);
+  };
+
+  /** 跳到行：选中整行并居中——接着点行号就从这一行起选。 */
+  const jumpTo = (): void => {
+    const view = viewRef.current;
+    const n = Number(jump.trim());
+    if (!view || !Number.isInteger(n) || n < 1) return;
+    const line = view.state.doc.line(Math.min(n, view.state.doc.lines));
+    view.dispatch({
+      selection: { anchor: line.from, head: line.to },
+      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+    });
+  };
+
+  /** 落定一条：带行区间时表达式由服务端现算（前端不拼文法）。 */
+  const pick = async (entry: SessionFileEntry, withLines: boolean): Promise<void> => {
+    const range = linesSupported && withLines && entry.kind === 'file' ? lines : null;
+    if (!range) {
+      onPick(entry.ref, { path: entry.path, kind: entry.kind });
+      return;
+    }
+    setBusy(true);
+    try {
+      const { ref } = await api.sessionFileRef(sessionId, {
+        path: entry.path,
+        kind: 'file',
+        start: range.start,
+        end: range.end,
+      });
+      onPick(ref, { path: entry.path, kind: 'file', lines: range });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 进一条：目录就下钻，文件则（桌面直接落定 / 窄屏先进预览）。 */
+  const enter = (entry: SessionFileEntry): void => {
+    if (entry.kind === 'dir') {
+      setQuery('');
+      setDir(entry.path);
+      setScreen('list');
+      return;
+    }
+    if (!isDesktop) {
+      setScreen('preview');
+      return;
+    }
+    void pick(entry, false);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    // 输入法组字中的方向键/回车是宿主输入法的，不抢
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      setSelected((i) => Math.min(entries.length - 1, Math.max(0, i + step)));
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      goUp();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const hit = entries[selected];
+      if (hit) enter(hit);
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const hit = entries[selected];
+      if (hit?.kind === 'dir') enter(hit);
+    }
+  };
+
+  const crumb = dir ? dir.split('/') : [];
+  const rangeText = lines
+    ? lines.start === lines.end
+      ? t('tasks.fileLineAt', { n: lines.start })
+      : t('tasks.fileLineRange', { from: lines.start, to: lines.end })
+    : null;
+
+  const list = (
+    <ul
+      ref={listRef}
+      role="listbox"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
+    >
+      {loading && entries.length === 0 && (
+        <li className="flex items-center gap-2 px-3 py-6 text-[11px] text-neutral-500">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          {t('tasks.fileLoading')}
+        </li>
+      )}
+      {!loading && entries.length === 0 && (
+        <li className="px-3 py-6 text-[11px] text-neutral-500">
+          {error ? t('tasks.fileLoadFailed', { error }) : t('tasks.fileEmpty')}
+        </li>
+      )}
+      {entries.map((entry, i) => {
+        const name = entry.kind === 'dir' ? `${entry.name}/` : entry.name;
+        // 高亮区间是对整条路径算的，落到名字上要平移
+        const offset = entry.path.length - entry.name.length;
+        const ranges = entry.ranges
+          ?.map(([s, l]) => [s - offset, l] as [number, number])
+          .filter(([s, l]) => s >= 0 && s + l <= entry.name.length);
+        return (
+          <li key={entry.path}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={i === selected}
+              onMouseEnter={() => isDesktop && setSelected(i)}
+              onClick={() => {
+                if (!isDesktop) {
+                  setSelected(i);
+                  enter(entry);
+                  return;
+                }
+                if (i === selected) enter(entry);
+                else setSelected(i);
+              }}
+              onDoubleClick={() => enter(entry)}
+              className={cn(
+                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors',
+                i === selected ? 'bg-blue-500/15 text-neutral-100' : 'text-neutral-300 hover:bg-edge/[0.04]',
+              )}
+            >
+              {iconFor(entry)}
+              <span className="min-w-0 flex-1 truncate font-mono">
+                {segmentsOf(name, ranges).map((seg, k) =>
+                  seg.hit ? (
+                    <span key={k} className="text-amber-300">
+                      {seg.text}
+                    </span>
+                  ) : (
+                    <span key={k}>{seg.text}</span>
+                  ),
+                )}
+              </span>
+              {entry.size != null && (
+                <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
+                  {sizeText(entry.size)}
+                </span>
+              )}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  const previewPane = (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1">
+        {!isDesktop && (
+          <button
+            type="button"
+            title={t('tasks.fileBack')}
+            aria-label={t('tasks.fileBack')}
+            onClick={() => setScreen('list')}
+            className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-300">
+          {current?.name ?? ''}
+        </span>
+        {current?.kind === 'file' && !IMAGE_EXT.test(current.name) && preview?.text != null && (
+          <>
+            <button
+              type="button"
+              title={t('tasks.fileFind')}
+              aria-label={t('tasks.fileFind')}
+              onClick={() => setBar(bar === 'find' ? null : 'find')}
+              className={cn(
+                'rounded p-0.5 hover:text-neutral-100',
+                bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
+              )}
+            >
+              <TextSearch className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              title={t('tasks.fileGoToLine')}
+              aria-label={t('tasks.fileGoToLine')}
+              onClick={() => setBar(bar === 'line' ? null : 'line')}
+              className={cn(
+                'rounded p-0.5 hover:text-neutral-100',
+                bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
+              )}
+            >
+              <Hash className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+      {/* 查找 / 跳到行：自己这一条，不留 CodeMirror 那个带替换的面板。
+          预览是只读的，ESC 先收它、再关整个选择器。 */}
+      {bar && (
+        <div className="flex shrink-0 items-center gap-1 border-b border-edge/[0.06] px-1.5 py-1">
+          <input
+            autoFocus
+            value={bar === 'find' ? find : jump}
+            inputMode={bar === 'line' ? 'numeric' : undefined}
+            onChange={(e) => {
+              if (bar === 'find') {
+                setFind(e.target.value);
+                runFind(e.target.value);
+              } else {
+                setJump(e.target.value);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              if (bar === 'find') stepMatch(e.shiftKey ? -1 : 1);
+              else jumpTo();
+            }}
+            placeholder={bar === 'find' ? t('tasks.fileFindPlaceholder') : t('tasks.fileLinePlaceholder')}
+            className="min-w-0 flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+          />
+          {bar === 'find' ? (
+            <>
+              <span className="shrink-0 text-[10px] tabular-nums text-neutral-500">
+                {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
+              </span>
+              <button
+                type="button"
+                title={t('tasks.filePrevMatch')}
+                aria-label={t('tasks.filePrevMatch')}
+                onClick={() => stepMatch(-1)}
+                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                title={t('tasks.fileNextMatch')}
+                aria-label={t('tasks.fileNextMatch')}
+                onClick={() => stepMatch(1)}
+                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={jumpTo}
+              className="shrink-0 rounded bg-blue-500/20 px-1.5 py-0.5 text-[11px] text-blue-200 hover:bg-blue-500/30"
+            >
+              {t('tasks.fileGo')}
+            </button>
+          )}
+          <button
+            type="button"
+            title={t('tasks.fileClearSearch')}
+            aria-label={t('tasks.fileClearSearch')}
+            onClick={() => setBar(null)}
+            className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+      {current && IMAGE_EXT.test(current.name) ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-3">
+          <img
+            src={api.sessionFileUrl(sessionId, current.path)}
+            alt={current.name}
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
+      ) : current?.kind === 'file' ? (
+        preview?.path === current.path && preview.text != null ? (
+          <CodePreview text={preview.text} lines={lines} viewRef={viewRef} onGutterClick={onGutterClick} />
+        ) : (
+          <div className="flex min-h-0 flex-1 items-center justify-center p-3 text-[11px] text-neutral-500">
+            {preview?.path === current.path ? t('tasks.fileNoPreview') : t('tasks.fileLoading')}
+          </div>
+        )
+      ) : (
+        <div className="min-h-0 flex-1" />
+      )}
+      {/* 底条：行选区 + 落定钮。行号在这条里只是一个「选了几行」的读数，
+          真正贴进 prompt 的表达式由服务端按 harness 文法算。 */}
+      {current?.kind === 'file' && (
+        <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-2 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+            {preview?.truncated && <span className="mr-1 text-amber-500/80">{t('tasks.fileTruncatedNote')}</span>}
+            {rangeText ?? (linesSupported ? t('tasks.fileLineHint') : '')}
+          </span>
+          <button
+            type="button"
+            disabled={busy || preview?.text == null}
+            onClick={() => void pick(current, true)}
+            className="flex shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-[11px] text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
+          >
+            {busy && <Loader2 className="h-3 w-3 animate-spin" />}
+            {rangeText ? t('tasks.fileInsertLines') : t('tasks.fileInsert')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0" onClick={onClose}>
+      <div
+        className="flex h-[70dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 头：面包屑 + 搜索 */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
+          <button
+            type="button"
+            title={t('tasks.fileUp')}
+            aria-label={t('tasks.fileUp')}
+            disabled={crumb.length === 0}
+            onClick={goUp}
+            className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-400">
+            {query.trim() ? (
+              // 搜索是全项目的，这时把目录面包屑换成范围说明，免得看成本目录
+              <span className="text-neutral-500">
+                {t('tasks.fileSearchScope')} · <span className="text-neutral-300">{query.trim()}</span>
+              </span>
+            ) : (
+              <>
+                <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
+                  {rootLabel}
+                </button>
+                {crumb.map((seg, i) => (
+                  <span key={`${seg}-${i}`}>
+                    <button
+                      type="button"
+                      onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
+                      className="text-neutral-300 hover:text-neutral-100"
+                    >
+                      {seg}
+                    </button>
+                    /
+                  </span>
+                ))}
+              </>
+            )}
+          </div>
+          <div className="relative w-56 shrink-0 max-lg:w-40">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={t('tasks.fileSearchPlaceholder')}
+              className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+            />
+            {query && (
+              <button
+                type="button"
+                aria-label={t('tasks.fileClearSearch')}
+                onClick={() => setQuery('')}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-600 hover:text-neutral-300"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            title={t('tasks.messagesClose')}
+            aria-label={t('tasks.messagesClose')}
+            onClick={onClose}
+            className="rounded p-1 text-neutral-500 hover:text-neutral-200"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。
+            键盘处理只挂在列表这一侧——预览里是编辑器，方向键归它。 */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            {isDesktop ? (
+              <>
+                {/* 左栏 = 父目录（superfile 那套）：横向跳同级目录用。文件只是给个
+                    上下文、只有目录可点（点文件没有去处）；站在项目根时父就是自己，
+                    那一格是项目名，三栏恒在、不塌成两栏。 */}
+                <div className="flex w-40 shrink-0 flex-col border-r border-edge/[0.06]">
+                  <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+                    {dir === '' ? (
+                      <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-[11px] text-neutral-100">
+                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+                        <span className="truncate">{rootLabel}</span>
+                      </li>
+                    ) : (
+                      siblings.map((sib) =>
+                        sib.kind === 'dir' ? (
+                          <li key={sib.path}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setQuery('');
+                                setDir(sib.path);
+                              }}
+                              className={cn(
+                                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-[11px]',
+                                sib.path === dir
+                                  ? 'bg-blue-500/15 text-neutral-100'
+                                  : 'text-neutral-400 hover:bg-edge/[0.04] hover:text-neutral-200',
+                              )}
+                            >
+                              {iconFor(sib)}
+                              <span className="truncate font-mono">
+                                {sib.name}
+                                {sib.path === dir ? '/' : ''}
+                              </span>
+                            </button>
+                          </li>
+                        ) : (
+                          <li
+                            key={sib.path}
+                            className="flex items-center gap-2 px-2.5 py-1 text-[11px] text-neutral-600"
+                          >
+                            {iconFor(sib)}
+                            <span className="truncate font-mono">{sib.name}</span>
+                          </li>
+                        ),
+                      )
+                    )}
+                  </ul>
+                </div>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col" onKeyDown={onKeyDown}>
+                  {list}
+                </div>
+                <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.06]">{previewPane}</div>
+              </>
+            ) : screen === 'list' ? (
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+            ) : (
+              previewPane
+            )}
+          </div>
+          {/* 底条：条数 / 截断提示 */}
+          <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-[10px] text-neutral-600">
+            <span>{query ? t('tasks.fileHits', { n: total }) : t('tasks.fileCount', { n: total })}</span>
+            {truncated && <span className="text-amber-500/80">{t('tasks.fileTruncated')}</span>}
+            <span className="ml-auto hidden lg:block">{t('tasks.fileHint')}</span>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}

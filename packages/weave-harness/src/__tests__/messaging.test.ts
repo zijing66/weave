@@ -91,7 +91,19 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_PROMPT_INBOX.frame({ token: null, text: 'hi' }).split('\n').filter(Boolean)).toHaveLength(1);
   });
 
-  it('codex：全通道 null/空 + 五通道 reasons 齐全（可渲染「为什么置灰」）', () => {
+  it('claude：路径文法——整文件 / 单行 / 区间 / 目录尾斜杠（宿主里手敲的四种形状）', () => {
+    const spec = CLAUDE_MESSAGING.pathRefs!;
+    expect(spec.kinds).toEqual(['file', 'dir']);
+    expect(spec.lines).toBe(true);
+    expect(spec.expression({ path: 'src/a.ts', kind: 'file' })).toBe('@src/a.ts');
+    expect(spec.expression({ path: 'src/a.ts', kind: 'file', lines: { start: 7, end: 7 } })).toBe('@src/a.ts#L7');
+    expect(spec.expression({ path: 'src/a.ts', kind: 'file', lines: { start: 12, end: 34 } })).toBe(
+      '@src/a.ts#L12-34',
+    );
+    expect(spec.expression({ path: 'src', kind: 'dir' })).toBe('@src/');
+  });
+
+  it('codex：全通道 null/空 + reasons 齐全（可渲染「为什么置灰」）', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);
     expect(CODEX_MESSAGING.prompt).toBeNull();
@@ -99,7 +111,8 @@ describe('MessagingSurface 契约', () => {
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
     expect(CODEX_MESSAGING.idleSignals).toEqual([]);
-    for (const channel of ['discovery', 'prompt', 'inject', 'headless', 'watch'] as const) {
+    expect(CODEX_MESSAGING.pathRefs).toBeNull();
+    for (const channel of ['discovery', 'prompt', 'inject', 'headless', 'watch', 'pathRefs'] as const) {
       expect(CODEX_MESSAGING.unsupportedReasons?.[channel]).toBeTruthy();
     }
   });

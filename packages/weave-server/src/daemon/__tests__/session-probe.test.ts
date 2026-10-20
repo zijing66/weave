@@ -145,6 +145,23 @@ describe('SessionProbe', () => {
     expect(probe.currentMode('s1')).toBe('plan');
   });
 
+  it('执行模式事件优先：切完还没写转录条目也答得出新值；没事件才回落转录', () => {
+    const probe = new SessionProbe();
+    const file = tmpFile();
+    writeFileSync(file, JSON.stringify({ type: 'user', permissionMode: 'default' }) + '\n');
+    probe.noteTranscript('s1', file);
+    expect(probe.currentMode('s1')).toBe('default');
+
+    // Shift+Tab 切到 plan：笔迹只在事件里，转录还是切之前那条
+    probe.noteMode('s1', 'plan');
+    expect(probe.currentMode('s1')).toBe('plan');
+    // 转录后来照会的仍是旧值，也不许把事件的答案盖回去
+    expect(probe.currentMode('s1')).toBe('plan');
+
+    probe.forget('s1');
+    expect(probe.currentMode('s1')).toBeNull();
+  });
+
   it('换模型落定即生效：转录还没照会新值时标签也跟着变，转录跟上后交还给它', () => {
     const file = tmpFile();
     writeFileSync(file, JSON.stringify({ type: 'assistant', message: { model: 'ftm' } }) + '\n');

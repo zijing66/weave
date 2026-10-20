@@ -355,8 +355,12 @@ export class MessageDeliverer {
   private persistedPaneEnvs: string;
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
-  /** 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。 */
-  private readonly flushing = new Set<string>();
+  /**
+   * 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。值是这一拍
+   * 的令牌——强制移除卡住的那一行要就地解除泵闸，旧拍醒来时不能顺手把新拍的闸也
+   * 删掉（两拍并行 = 同一行被投两次）。
+   */
+  private readonly flushing = new Map<string, symbol>();
   /** 队列暂停闸（sessionId → 成因消息）：未回执超窗 / 投递失败即置；重发或回执解除。 */
   private readonly stalled = new Map<string, { messageId: string; reason: 'unacked' | 'failed' }>();
   /**
@@ -1057,14 +1061,22 @@ export class MessageDeliverer {
    * （pending 只活在 promptbox 文件里）删行——两种都不再出现在这个会话的对话尾巴上。
    * 内存行**不影响已投递的内容**（真到了会话，转录里的记录仍在）；队列行则是
    * **取消发送**（还没出去）。内存行若正是暂停闸的成因 → 一并解闸（否则闸留着却
-   * 没有成因行可看、可操作），并续排空积压（下一条各自重新布防回执闸）。在飞
-   * （delivering/running）的行不删：落定回调会把行写回来，删了也白删。
+   * 没有成因行可看、可操作），并续排空积压（下一条各自重新布防回执闸）。
+   *
+   * **在飞的投递行（delivering）也能强制移除**：投递卡住（后端不回）时它就是队头，
+   * 压着后面每一条都发不出去，闸/行都不给人动手就永远解不开。落定回调按「当前行」
+   * 收尾、行没了即返回（见 `runTerminal`），删了不会被写回来；泵闸也一并就地解除
+   * （那一拍还挂在这次投递上，不解除的话闸看着开了、泵却永远占着）。running
+   * 不在此列：那是编排域的一条真实子进程，删了行只是把活着的进程藏起来。
    */
   dismiss(sessionId: string, messageId: string): AnswerResult {
     const msg = this.memory.get(messageId);
     if (msg) {
-      if (msg.status === 'delivering' || msg.status === 'running') {
+      if (msg.status === 'running') {
         return { ok: false, status: 409, error: 'Message is still in flight' };
+      }
+      if (msg.status === 'delivering' && this.awaitingAck.get(msg.sessionId) === messageId) {
+        this.flushing.delete(msg.sessionId);
       }
       this.memory.delete(messageId);
       if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
@@ -1116,13 +1128,14 @@ export class MessageDeliverer {
     // 并发进来会各自读到同一批队列行 → 同一消息被投两次。
     if (this.flushing.has(sessionId)) return;
     if (!this.queuedSessions.has(sessionId)) return;
-    this.flushing.add(sessionId);
+    const token = Symbol(sessionId);
+    this.flushing.set(sessionId, token);
     try {
       await this.flushSessionInner(sessionId);
     } catch {
       // 冲洗失败永不影响调用方（事件路径是 fire-and-forget；自续拍可能与拆除竞态）
     } finally {
-      this.flushing.delete(sessionId);
+      if (this.flushing.get(sessionId) === token) this.flushing.delete(sessionId);
     }
   }
 
@@ -1664,8 +1677,10 @@ export class MessageDeliverer {
     if (!terminal) return;
     try {
       await write(terminal);
-      // write 期间回执可能已到：按**当前行**收尾，别用写之前的快照把 acked 抹回去
-      const current = this.memory.get(messageId) ?? msg;
+      // write 期间回执可能已到：按**当前行**收尾，别用写之前的快照把 acked 抹回去。
+      // 行没了 = 期间被强制移除（投递卡死时人工清队头）：不写回，删了就是删了。
+      const current = this.memory.get(messageId);
+      if (!current) return;
       const delivered: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
       this.memory.set(messageId, delivered);
       this.armAckWatch(delivered);
@@ -1676,7 +1691,8 @@ export class MessageDeliverer {
         at: new Date().toISOString(),
       });
     } catch (err) {
-      const current = this.memory.get(messageId) ?? msg;
+      const current = this.memory.get(messageId);
+      if (!current) return; // 同上：被强制移除的行不写回、也不再置闸
       // 回执到了 = 文本确实进了会话（这次 write 报错也改不了这个事实）：按已送达收，不置闸
       if (current.acked === true) {
         const at = new Date().toISOString();

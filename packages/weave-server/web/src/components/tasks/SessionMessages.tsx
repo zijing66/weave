@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, FileCode, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -29,6 +29,7 @@ import {
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
 import { useTheme } from '@/lib/theme';
+import { FilePicker, type PickTarget } from './FilePicker';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { StatuslineBar } from './StatuslineBar';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
@@ -91,6 +92,10 @@ export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
+
+/** 「切换中」最多挂这么久：宿主下一拍事件就回报新模式，一直没事件（会话闲着）就
+ *  回落「最后已知」——一个永久的「切换中」比旧值更像卡死。 */
+const MODE_PENDING_MS = 60_000;
 
 /** ESC 键帽点完歇几秒：连点会连发好几记（宿主的 ESC 后面接 rewind，连发会把
  *  刚开的那层菜单也退掉）。冷却只为防连发，与「能不能点」无关。 */
@@ -336,13 +341,15 @@ export function attachDeliveries(
   return { thread: out, outbox };
 }
 
-/** 能不能从队列里移除：在飞（delivering/running）删不掉——落定回调会把行写回来；
- *  **已发出（delivered）也删不掉**——会话那边已经收到了，只是 hook 还没到（气泡随后就
- *  来），删掉等于假装撤回一条已经进了对话的消息。**例外 = 它正是暂停闸的成因**：
- *  闸没有可操作的成因行就永远开不了，而这一条又等不来回执（多半压根没进去），
- *  留着只是化石——用户得能亲手把它清出去。 */
+/** 能不能从队列里移除。**在飞的 delivering 也能删**——投递卡住时它就是队头，压着
+ *  后面每一条都发不出去，不给动手就永远解不开（删除会连泵闸一起解除，服务端那条
+ *  落定回调发现行没了即收手）。running 删不掉：编排域的一条真实子进程，删行只是把
+ *  活着的进程藏起来。**已发出（delivered）删不掉**——会话那边已经收到了，只是 hook
+ *  还没到（气泡随后就来），删掉等于假装撤回一条已经进了对话的消息。**例外 = 它正是
+ *  暂停闸的成因**：闸没有可操作的成因行就永远开不了，而这一条又等不来回执（多半
+ *  压根没进去），留着只是化石——用户得能亲手把它清出去。 */
 export function removableOf(m: SessionMessageRow): boolean {
-  if (m.status === 'delivering' || m.status === 'running') return false;
+  if (m.status === 'running') return false;
   return m.status !== 'delivered' || m.stalled === true;
 }
 
@@ -384,14 +391,53 @@ export function failedTail(
   return !hasQueued && tail?.failed === true ? tail : null;
 }
 
-/** 在光标处插一个换行（移动端没有 Shift+Enter 这个手势）。 */
-export function spliceNewline(
-  text: string,
-  start: number,
-  end: number,
-): { text: string; caret: number } {
-  return { text: text.slice(0, start) + '\n' + text.slice(end), caret: start + 1 };
+/** 输入框里一枚引用胶囊的标记属性：`contenteditable="false"` 让它成原子块——
+ *  退格整枚删、光标进不去；它的值就是 harness 的引用表达式（服务端算好的）。 */
+export const REF_ATTR = 'data-ref';
+/** 胶囊自己留的账（路径 / 类型 / 行区间）：点它要能回到这个文件再改一次。
+ *  这几项是服务端给过的原值，不是对表达式的解析——前端始终不认识 `@` 与 `#L`。 */
+export const REF_PATH_ATTR = 'data-ref-path';
+export const REF_KIND_ATTR = 'data-ref-kind';
+export const REF_LINES_ATTR = 'data-ref-lines';
+
+/** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
+ *  而这些数与 DOM 规范同寿，不会变。 */
+const ELEMENT_NODE = 1;
+const TEXT_NODE = 3;
+
+/** composer DOM → 要发出去的原文：胶囊取 `data-ref`，换行（浏览器插的 `<br>`）还原成 `\n`。
+ *  **表达式绝不在前端拼**——这里只把服务端回给的值吐出来。 */
+export function serializeDraft(root: Node | null): string {
+  if (!root || root.nodeType !== ELEMENT_NODE) return '';
+  let out = '';
+  const walk = (node: Node): void => {
+    if (node.nodeType === TEXT_NODE) {
+      out += node.nodeValue ?? '';
+      return;
+    }
+    if (node.nodeType !== ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const ref = el.getAttribute(REF_ATTR);
+    if (ref != null) {
+      out += ref;
+      return;
+    }
+    // Enter / 插入文本都会落成 <br>，块级元素同理（兜底，正常路径不会走到）
+    if (el.tagName === 'BR') {
+      out += '\n';
+      return;
+    }
+    node.childNodes.forEach(walk);
+  };
+  root.childNodes.forEach(walk);
+  // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
+  return out.endsWith('\n') && out.trim() === '' ? '' : out;
 }
+
+/** 胶囊的样式（动态建元素也想吃 Tailwind：类名写死在源码里才生成得出）。
+ *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。 */
+const REF_CHIP_CLASS =
+  'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-blue-200';
 
 export function filterThread(
   thread: readonly ConvEntry[],
@@ -719,6 +765,8 @@ export function SessionMessages({
   const [headDone, setHeadDone] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [messages, setMessages] = useState<SessionMessageRow[] | null>(null);
+  /** 输入框的**镜像**（真源是 contenteditable 的 DOM）：只给按钮置灰、占位、关闭
+   *  确认这几处读；发出去的内容恒从 DOM 序列化，不信这份。 */
   const [draft, setDraft] = useState('');
   /** 本条待发的图（已落盘、还没投出去）；发走或关弹窗即清。 */
   const [staged, setStaged] = useState<UploadImage[]>([]);
@@ -726,8 +774,14 @@ export function SessionMessages({
   const [uploading, setUploading] = useState(0);
   /** 点开的大图（缩略图点击）；null = 没开。 */
   const [lightbox, setLightbox] = useState<UploadImage | null>(null);
+  /** 文件引用选择器开着（三层：父目录 | 当前目录 | 预览）；`chip` 非空 = 在改那枚胶囊。 */
+  const [picker, setPicker] = useState<{ chip: HTMLElement | null; initial?: PickTarget } | null>(null);
+  /** `@` 触发时那枚 `@` 被删掉了，记下它的位置：取消就补回去，落定就地插胶囊。 */
+  const atRange = useRef<Range | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const draftRef = useRef<HTMLTextAreaElement>(null);
+  /** composer 用 contenteditable 而不是 textarea：内联引用胶囊要成原子块
+   *  （`contenteditable=false` 的 span 里退格整枚删、光标进不去）。 */
+  const draftRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
@@ -1005,7 +1059,7 @@ export function SessionMessages({
    *  （暂停闸成因行同理——那条能删能重发，但不给「改完再发」）。 */
   const newestQueuedId = [...outbox]
     .reverse()
-    .find((m) => m.status !== 'delivered' && removableOf(m))?.id;
+    .find((m) => m.status !== 'delivered' && m.status !== 'delivering' && removableOf(m))?.id;
   /** 暂停闸成因行的清除倒计时走针：有带时刻的行才起 1s（纯展示，不拉数据）。 */
   const [now, setNow] = useState(() => Date.now());
   const clearDeadline = outbox.some((m) => m.stalled === true && m.releaseAt != null);
@@ -1330,21 +1384,191 @@ export function SessionMessages({
     })();
   };
 
-  /** 换行（移动端那枚按钮）：插在光标处，光标跟到新行后。 */
-  const insertNewline = (): void => {
+  /** 当前选区在 composer 里就返回它，否则 null（选择器关掉后焦点已不在框里，
+   *  这时一律追加到末尾——比猜一个旧位置可预期）。 */
+  const caretInDraft = (el: HTMLDivElement): Range | null => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    return el.contains(range.commonAncestorContainer) ? range : null;
+  };
+
+  /** 在光标处插节点；框里没有有效选区就追加到末尾。光标落在插入内容之后，
+   *  并滚进视野（插入的行可能落在框外）。 */
+  const insertNodes = (nodes: Node[]): void => {
     const el = draftRef.current;
-    const at = el?.selectionStart ?? draft.length;
-    const end = el?.selectionEnd ?? at;
-    const next = spliceNewline(draft, at, end);
-    setDraft(next.text);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      // 插进来的那一行可能落在框外：定住焦点再落光标，浏览器会把光标滚进视野
-      el.focus({ preventScroll: true });
-      el.selectionStart = el.selectionEnd = next.caret;
-      // 落在文末时直接贴底（光标恰在可见边界上的那一档，浏览器未必挪）
-      if (next.caret === next.text.length) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    // 选择器开着时焦点不在框里，浏览器那份选区已经没了；`@` 触发的那次要回到
+    // 那枚 `@` 的位置，而不是末尾（focus 之后才设，否则会被 focus 抢走）。
+    const saved = atRange.current;
+    if (saved) {
+      atRange.current = null;
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(saved);
+    }
+    const range = caretInDraft(el);
+    if (range) {
+      range.deleteContents();
+      const frag = document.createDocumentFragment();
+      nodes.forEach((n) => frag.appendChild(n));
+      const tail = nodes[nodes.length - 1] ?? null;
+      range.insertNode(frag);
+      if (tail) {
+        const after = document.createRange();
+        after.setStartAfter(tail);
+        after.collapse(true);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(after);
+      }
+    } else {
+      // 追加到末尾：手上那截若不是空白结尾，先补一个空格——否则胶囊会粘在字上
+      const last = el.lastChild;
+      const tail = last?.nodeType === TEXT_NODE ? (last.nodeValue ?? '') : '';
+      if (tail && !/\s$/.test(tail)) el.appendChild(document.createTextNode(' '));
+      nodes.forEach((n) => el.appendChild(n));
+    }
+    setDraft(serializeDraft(el));
+  };
+
+  /** 插纯文本（换行钮 / 粘贴 / 出队回填）。走 `execCommand` 是为了留在浏览器的
+   *  撤销栈里；不支持就退回手插节点（那条路没有撤销，但不至于插不进去）。 */
+  const insertText = (text: string): void => {
+    const el = draftRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (!caretInDraft(el)) {
+      // 没选区时 execCommand 会落在一个不可预期的位置，直接追加更可控
+      insertNodes([document.createTextNode(text)]);
+      return;
+    }
+    let ok = false;
+    try {
+      ok = document.execCommand('insertText', false, text);
+    } catch {
+      ok = false;
+    }
+    if (!ok) insertNodes([document.createTextNode(text)]);
+    else setDraft(serializeDraft(el));
+  };
+
+  /** 换行（移动端那枚按钮）：移动端没有 Shift+Enter 这个手势。 */
+  const insertNewline = (): void => insertText('\n');
+
+  /** 造一枚胶囊：正文 = 服务端算好的表达式，另存路径/类型/行区间供再次编辑。 */
+  const buildChip = (ref: string, target: PickTarget): HTMLElement => {
+    const chip = document.createElement('span');
+    chip.setAttribute('contenteditable', 'false');
+    chip.setAttribute(REF_ATTR, ref);
+    chip.setAttribute(REF_PATH_ATTR, target.path);
+    chip.setAttribute(REF_KIND_ATTR, target.kind);
+    if (target.lines) chip.setAttribute(REF_LINES_ATTR, `${target.lines.start}-${target.lines.end}`);
+    chip.className = REF_CHIP_CLASS;
+    chip.textContent = ref;
+    chip.title = ref; // 长路径被截断时，悬停还看得见全文
+    return chip;
+  };
+
+  /** 落定一条引用：在改既有胶囊就就地换掉（位置不动），否则插到光标处并补一个
+   *  空格——接着打字才不粘在胶囊上。 */
+  const insertRef = (ref: string, target: PickTarget): void => {
+    const chip = buildChip(ref, target);
+    const editing = picker?.chip ?? null;
+    atRange.current = null;
+    setPicker(null);
+    if (editing) {
+      editing.replaceWith(chip);
+      setDraft(serializeDraft(draftRef.current));
+      return;
+    }
+    insertNodes([chip, document.createTextNode(' ')]);
+  };
+
+  /** 关掉选择器：**不动正文**，只把光标放回唤出它的那枚 `@` 原来的位置（那枚 `@`
+   *  已经是选择器自己的记账，不补回去——「点蒙版收起」不该是一次改写输入框的动作，
+   *  想打字面 `@` 用 `\@`）。 */
+  const closePicker = (): void => {
+    setPicker(null);
+    const saved = atRange.current;
+    atRange.current = null;
+    if (!saved) return;
+    draftRef.current?.focus({ preventScroll: true });
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(saved);
+  };
+
+  /** 点胶囊 = 改这条引用：带上它的路径与行区间重开选择器。 */
+  const openChip = (chip: HTMLElement): void => {
+    const path = chip.getAttribute(REF_PATH_ATTR);
+    const kind = chip.getAttribute(REF_KIND_ATTR);
+    if (!path || (kind !== 'file' && kind !== 'dir')) return;
+    const m = /^(\d+)-(\d+)$/.exec(chip.getAttribute(REF_LINES_ATTR) ?? '');
+    setPicker({
+      chip,
+      initial: m
+        ? { path, kind, lines: { start: Number(m[1]), end: Number(m[2]) } }
+        : { path, kind },
     });
+  };
+
+  /** `\@` 是转义：吃掉反斜杠、留下字面 `@`、不弹选择器。 */
+  const escapeAt = (el: HTMLDivElement): void => {
+    const sel = window.getSelection();
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    const node = range?.startContainer;
+    const off = range?.startOffset ?? 0;
+    if (node && node.nodeType === TEXT_NODE && off >= 2) {
+      const value = node.nodeValue ?? '';
+      if (value[off - 1] === '@' && value[off - 2] === '\\') {
+        node.nodeValue = `${value.slice(0, off - 2)}@${value.slice(off)}`;
+        const after = document.createRange();
+        after.setStart(node, off - 1);
+        after.collapse(true);
+        sel?.removeAllRanges();
+        sel?.addRange(after);
+      }
+    }
+    setDraft(serializeDraft(el));
+  };
+
+  /** 敲 `@` 直接唤出选择器（`\@` 除外）。返回 true = 这次输入已被接管。 */
+  const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
+    // 只认真的敲进来一个半角 `@`：IME 组字、粘贴、替换都不算
+    if (native.inputType !== 'insertText' || native.data !== '@') return false;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) return false;
+    // 光标之前那截文字（含刚敲进来的 `@`）
+    const head = range.cloneRange();
+    head.setStart(el, 0);
+    const before = head.toString();
+    if (!before.endsWith('@')) return false;
+    if (before.endsWith('\\@')) {
+      escapeAt(el);
+      return true;
+    }
+    // 粘在词里不弹（`foo@bar` 这种邮箱，或上一次引用之后接着打）
+    const prev = before[before.length - 2];
+    if (prev !== undefined && /[A-Za-z0-9_]/.test(prev)) return false;
+
+    document.execCommand('delete'); // 收掉这枚 `@`：胶囊自己带
+    const caret = window.getSelection();
+    atRange.current = caret?.rangeCount ? caret.getRangeAt(0).cloneRange() : null;
+    setDraft(serializeDraft(el));
+    setPicker({ chip: null });
+    return true;
+  };
+
+  /** 整段写回（出队编辑 / 发走清空）：DOM 与镜像一起换。胶囊在这里退化回
+   *  表达式原文——那是它本来就等于的东西，再拼回去也不能保证还是同一枚。 */
+  const setDraftText = (text: string): void => {
+    const el = draftRef.current;
+    if (el) el.textContent = text;
+    setDraft(text);
   };
 
   /** 顶边拖拽调输入框高度：位移换行数（向上拖变高），期间只改本地态。 */
@@ -1364,10 +1588,11 @@ export function SessionMessages({
   };
 
   const send = (): void => {
-    const text = draft.trim();
+    // 从 DOM 现序列化：镜像可能落后一拍，而这一份是要真发出去的
+    const text = serializeDraft(draftRef.current).trim();
     const images = staged;
     if (!text && images.length === 0) return;
-    setDraft('');
+    setDraftText('');
     setStaged([]);
     stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
@@ -1395,7 +1620,8 @@ export function SessionMessages({
       `dequeue:${row.id}`,
       async () => {
         await api.dismissSessionMessage(sessionId, row.id);
-        setDraft((d) => (d.trim() ? `${d}\n${row.text}` : row.text));
+        const cur = serializeDraft(draftRef.current);
+        setDraftText(cur.trim() ? `${cur}\n${row.text}` : row.text);
         setStaged((s) => [...s, ...(row.images ?? [])].slice(0, IMAGE_MAX_COUNT));
         await refreshMessages();
       },
@@ -1451,7 +1677,13 @@ export function SessionMessages({
       {removableOf(m) && (
         <button
           type="button"
-          title={t(m.status === 'pending' ? 'tasks.msgDismissQueuedHint' : 'tasks.msgDismissHint')}
+          title={t(
+            m.status === 'pending'
+              ? 'tasks.msgDismissQueuedHint'
+              : m.status === 'delivering'
+                ? 'tasks.msgDismissInflightHint'
+                : 'tasks.msgDismissHint',
+          )}
           aria-label={t('tasks.msgDismiss')}
           disabled={fb.stateOf(`dismiss:${m.id}`) === 'loading'}
           onClick={() =>
@@ -1484,14 +1716,28 @@ export function SessionMessages({
   const modelTargets = modelCatalog[capability.harness] ?? [];
   const currentMode = sessionRow?.mode ?? null;
   const currentModel = sessionRow?.model ?? null;
-  const modeTint = modeTintFor(capability.harness, currentMode);
+  /** 刚打出 Shift+Tab、新模式还没被任何事件回报：记下切换前的值，变了即收。 */
+  const [modePending, setModePending] = useState<string | null>(null);
+  const modeTint = modePending !== null ? null : modeTintFor(capability.harness, currentMode);
+  useEffect(() => {
+    if (modePending === null) return;
+    if (currentMode !== modePending) {
+      setModePending(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setModePending(null), MODE_PENDING_MS);
+    return () => window.clearTimeout(timer);
+  }, [modePending, currentMode]);
 
   const cycleMode = (): void => {
+    const before = currentMode ?? '';
     void fb.run(
       `cycleMode:${sessionId}`,
       async () => {
         await api.cycleSessionMode(sessionId);
-        // 切换不留痕，标签多数时候不会变；仍刷一次——变了就即时跟上。
+        // 新值是宿主自己算的（它的循环列表还会被 settings 过滤），猜不得——只标「切换中」，
+        // 等下一次事件自带的 permission_mode 回报。
+        setModePending(before);
         await refresh();
         show('success', t('tasks.modeCycled'));
       },
@@ -2190,6 +2436,21 @@ export function SessionMessages({
                 />
                 <button
                   type="button"
+                  disabled={!capability.pathRefs}
+                  title={
+                    capability.pathRefs
+                      ? t('tasks.fileAttachHint')
+                      : (capability.unsupportedReasons?.pathRefs ?? t('tasks.fileUnsupported'))
+                  }
+                  aria-label={t('tasks.fileAttach')}
+                  onClick={() => setPicker({ chip: null })}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                >
+                  <FileCode className="h-3 w-3" />
+                  {t('tasks.fileAttach')}
+                </button>
+                <button
+                  type="button"
                   disabled={!capability.imageAttach || uploading > 0}
                   title={
                     capability.imageAttach
@@ -2253,14 +2514,20 @@ export function SessionMessages({
                         {t('tasks.modeLabel')}
                       </span>
                       <span
-                        title={currentMode ?? t('tasks.modeLastKnown')}
+                        title={
+                          modePending !== null
+                            ? t('tasks.modeSwitchingHint')
+                            : (currentMode ?? t('tasks.modeLastKnown'))
+                        }
                         style={{ color: modeTint ?? undefined }}
                         className={cn(
                           'truncate font-mono text-[11px] max-lg:max-w-[7rem]',
                           !modeTint && 'text-neutral-400',
                         )}
                       >
-                        {currentMode ?? t('tasks.modeUnknown')}
+                        {modePending !== null
+                          ? t('tasks.modeSwitching')
+                          : (currentMode ?? t('tasks.modeUnknown'))}
                       </span>
                     </button>
                   )}
@@ -2315,27 +2582,65 @@ export function SessionMessages({
               </div>
             )}
             <div className="flex flex-wrap items-end gap-1.5">
-              <textarea
-                ref={draftRef}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                onPaste={(e) => {
-                  // 只在真取到图时才压默认：粘贴文字（或 PDF 之类非图）照旧进输入框
-                  const imgs = imagesFrom(e.clipboardData);
-                  if (imgs.length === 0) return;
-                  e.preventDefault();
-                  stageFiles(imgs);
-                }}
-                placeholder={t('tasks.messagesPlaceholder')}
-                rows={inputRows}
-                className="min-w-0 flex-1 resize-none rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-blue-500/40 max-lg:basis-full"
-              />
+              {/* 输入框是 contenteditable 而非 textarea：内联引用胶囊必须是
+                  `contenteditable=false` 的原子块（退格整枚删、光标进不去），
+                  textarea 里塞不了元素。高度仍按行数算（顶边可拖），换行靠自己
+                  插——浏览器 Enter 那套会给出 `<div>`，序列化就不干净了。 */}
+              <div className="relative min-w-0 flex-1 max-lg:basis-full">
+                {draft === '' && (
+                  <span className="pointer-events-none absolute left-2 top-1.5 text-xs text-neutral-600">
+                    {t('tasks.messagesPlaceholder')}
+                  </span>
+                )}
+                <div
+                  ref={draftRef}
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label={t('tasks.messagesPlaceholder')}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(e) => {
+                    if (maybeOpenPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
+                    setDraft(serializeDraft(e.currentTarget));
+                  }}
+                  onClick={(e) => {
+                    // 点胶囊 = 改这枚引用（胶囊是原子块，点它不会落光标）
+                    const chip = (e.target as HTMLElement | null)?.closest?.(`[${REF_ATTR}]`);
+                    if (chip instanceof HTMLElement) openChip(chip);
+                  }}
+                  onKeyDown={(e) => {
+                    // 输入法组字中的 Enter 是「确认候选词」，不是发送
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                      return;
+                    }
+                    if (e.key === 'Enter' && e.shiftKey) {
+                      e.preventDefault();
+                      insertText('\n');
+                    }
+                  }}
+                  onPaste={(e) => {
+                    // 只在真取到图时才压默认：粘贴文字（或 PDF 之类非图）走纯文本
+                    const imgs = imagesFrom(e.clipboardData);
+                    if (imgs.length > 0) {
+                      e.preventDefault();
+                      stageFiles(imgs);
+                      return;
+                    }
+                    // 一律走纯文本：粘进来的 HTML 会把样式和结构一起带进 DOM，
+                    // 序列化就再也吐不回一句干净的话
+                    const text = e.clipboardData.getData('text/plain');
+                    if (text) {
+                      e.preventDefault();
+                      insertText(text);
+                    }
+                  }}
+                  style={{ height: `calc(${inputRows * INPUT_ROW_PX}px + 0.75rem)` }}
+                  className="w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs leading-4 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+                />
+              </div>
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
                   尺寸与 ESC 键帽同一格（正方形），窄屏那排三枚钮因此一条线对齐。
                   `pointerdown` 压掉默认 = 不把焦点从输入框抢走（抢了软键盘会收）。 */}
@@ -2526,6 +2831,19 @@ export function SessionMessages({
           onConfirm={cycleMode}
           onClose={() => setConfirmMode(false)}
         />
+
+        {/* 文件引用选择器：选中的表达式由服务端按 harness 文法算好，这里只管贴进输入框；
+            带着 `chip` 来的那次是「改这枚胶囊」，落定就地替换 */}
+        {picker && (
+          <FilePicker
+            sessionId={sessionId}
+            rootLabel={projectLabel}
+            linesSupported={capability.pathRefLines}
+            initial={picker.initial}
+            onPick={insertRef}
+            onClose={closePicker}
+          />
+        )}
 
         {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来 */}
         {sideOpen && (

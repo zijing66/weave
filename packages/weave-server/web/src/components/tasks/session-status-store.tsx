@@ -167,6 +167,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       subscribePush<{ interrupted?: Record<string, number> }>('sessionInterrupt', (p) => {
         if (p.interrupted) rowPush.current.interrupted = p.interrupted;
         land();
+        // 已中断 = 用户在宿主里手动了结了那个对话框（ESC 多半连 Stop 都不发）——
+        // 待答面由服务端在这一拍上判掉，本地不重拉就永远停在那条已经不存在的问题上。
+        void refresh();
       }),
       subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
         if (p.terminals) rowPush.current.terminal = p.terminals;
@@ -176,7 +179,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     return () => {
       for (const off of offs) off();
     };
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     let timer: number | null = null;

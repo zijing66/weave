@@ -199,6 +199,8 @@ async function main(): Promise<void> {
     bus: hookBus,
   });
   sequenceEngine.rearm();
+  // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
+  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
   const questionTracker = new QuestionTracker({
     sessions: hookSessions,
@@ -213,6 +215,11 @@ async function main(): Promise<void> {
         at: entry.at,
       });
     },
+    // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
+    interruptedAt: (sessionId) => {
+      const session = hookSessions.getBySessionId(sessionId);
+      return session ? sessionProbe.interruptedAt(sessionId, session.lastSeenAt) : null;
+    },
   });
   questionTracker.seedFromDb();
   // 旁路会话历史（claude = /btw）：与生产入口同一装配——见 start.ts 的说明。
@@ -224,8 +231,6 @@ async function main(): Promise<void> {
   // 后端「有人看时每 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，
   // 绑 SSE 客户端数。
   const dataBus = new DataBus();
-  // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
-  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => ({
       counts: await readTerminalCounts(projects.list()),

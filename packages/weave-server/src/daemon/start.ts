@@ -205,6 +205,8 @@ export function startDaemon(): void {
     bus: hookBus,
   });
   sequenceEngine.rearm();
+  // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
+  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 阻塞问答跟踪（AskUserQuestion / 计划与权限确认）：内存状态机挂 ingest
   // 事件流（inbox-worker 消费线程驱动），重启即 seedFromDb 重放补状态。
   const questionTracker = new QuestionTracker({
@@ -220,6 +222,11 @@ export function startDaemon(): void {
         at: entry.at,
       });
     },
+    // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
+    interruptedAt: (sessionId) => {
+      const session = hookSessions.getBySessionId(sessionId);
+      return session ? sessionProbe.interruptedAt(sessionId, session.lastSeenAt) : null;
+    },
   });
   questionTracker.seedFromDb();
   // 旁路会话历史（claude = /btw）：宿主两侧都不落盘，只有 weave 自己发过的问句
@@ -231,8 +238,6 @@ export function startDaemon(): void {
   const fingerprintCache = new FingerprintCache();
   // 数据变更帧总线：SSE 的载荷推送源（各隐藏刷新器共用一条）。
   const dataBus = new DataBus();
-  // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
-  const sessionProbe = new SessionProbe(dbTranscriptPathResolver(hookEvents));
   // 项目行「有更新待同步」角标：项目插件源（`.weave/plugins` 的模板）变更 →
   // 重算全项目漂移、值变才推绝对值快照（含 0）。
   const updatesRefresher = new ProjectUpdatesRefresher(

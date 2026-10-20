@@ -66,6 +66,16 @@ export function effortLevelOf(raw: unknown): string | null {
 }
 
 /**
+ * 执行模式（`permission_mode`）：**每条** hook 事件都带，答的是「此刻」。转录里最后
+ * 一条 `permissionMode` 只能追到上一次写条目的那一刻——Shift+Tab 切换模式既不落
+ * 转录、也没有专门的事件（二进制里只有 `Pre/PostModelSwitch`，没有权限模式那对）。
+ */
+export function permissionModeOf(raw: unknown): string | null {
+  const mode = (raw as { permission_mode?: unknown } | null)?.permission_mode;
+  return typeof mode === 'string' && mode ? mode : null;
+}
+
+/**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
  * 认不出返回 null，调用方回落显示真名——不猜。
  */

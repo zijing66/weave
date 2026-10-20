@@ -1,5 +1,5 @@
 import { isHarness, type Harness } from '@weavecode/core';
-import type { BlockingPromptSpec, BlockingQuestion } from '@weavecode/harness';
+import { permissionModeOf, type BlockingPromptSpec, type BlockingQuestion } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { blockingPromptFor } from '../surfaces.js';
@@ -56,6 +56,8 @@ export interface QuestionTrackerDeps {
   surfaceFor?: (harness: Harness) => BlockingPromptSpec | null;
   /** 新挂起待答（无 → 有）时广播（dashboard 提醒）；不传 = 不广播。 */
   onPending?: (entry: PendingQuestionEntry) => void;
+  /** 会话「已中断」时刻（ms；判据归 SessionProbe）。见 {@link QuestionTracker.dropIfInterrupted}。 */
+  interruptedAt?: (sessionId: string) => number | null;
 }
 
 /** seed 重放窗口：最近事件条数（阻塞 Pre→Post 之间事件很少，12 足够覆盖）。 */
@@ -207,12 +209,32 @@ export class QuestionTracker {
 
   /** 待答面快照（新在前；GET /messaging/questions）。 */
   snapshot(): PendingQuestionEntry[] {
-    return [...this.pending.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
+    return [...this.pending.values()]
+      .filter((entry) => !this.dropIfInterrupted(entry))
+      .sort((a, b) => (a.at < b.at ? 1 : -1));
   }
 
   /** 某会话的待答面（作答路由校验用）；无 = null。 */
   get(sessionId: string): PendingQuestionEntry | null {
-    return this.pending.get(sessionId) ?? null;
+    const entry = this.pending.get(sessionId);
+    if (!entry) return null;
+    return this.dropIfInterrupted(entry) ? null : entry;
+  }
+
+  /**
+   * 已中断 ⇒ 待答面失据（**读时惰性判、顺手摘掉**，不另起定时器）。
+   *
+   * 用户在宿主里手动了结那个对话框（ESC / 选掉）之后，宿主既不发 PostToolUse 也不发
+   * Stop（实测 45 次打断里 41 次连 Stop 都没有）——状态机收不到任何清除信号，而问题
+   * 在终端里早已了结；继续摆着它，用户一点作答就是把键序打进已关的模态框、漏进输入框。
+   * 判据只问一句 SessionProbe（标记晚于最后一条事件才算中断，之后任何事件都盖过它，
+   * 故「中断」成立时那条问题一定早于标记）。摘掉而非只过滤：留着会在下一条事件把中断
+   * 态盖掉之后重新冒出来。
+   */
+  private dropIfInterrupted(entry: PendingQuestionEntry): boolean {
+    if (this.deps.interruptedAt?.(entry.sessionId) == null) return false;
+    this.pending.delete(entry.sessionId);
+    return true;
   }
 
   /**
@@ -233,13 +255,6 @@ export class QuestionTracker {
   private harnessOf(source: string): Harness {
     return source as Harness; // specOf 已验 isHarness
   }
-}
-
-/** 会话权限模式（raw.permission_mode）；缺键 = null（保持上次 latch）。 */
-function permissionModeOf(raw: unknown): string | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const mode = (raw as { permission_mode?: unknown }).permission_mode;
-  return typeof mode === 'string' && mode ? mode : null;
 }
 
 /** Notification 的正文字段（raw.message）；缺键 / 空白 = null。 */

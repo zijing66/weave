@@ -235,7 +235,8 @@ export type MessagingChannel =
   | 'inject'
   | 'headless'
   | 'watch'
-  | 'sideQuestion';
+  | 'sideQuestion'
+  | 'pathRefs';
 
 /** 非抢占注入通道规格：注入可骑乘的事件（hook-handler 在这些事件上消化 outbox 行）。 */
 export interface InjectChannelSpec {
@@ -280,6 +281,30 @@ export interface ImageAttachSpec {
     text: string,
     images: readonly { path: string; mediaType: string; name: string }[],
   ): string;
+}
+
+/** 一条项目内路径的类型（`PathRefSpec.kinds` 的取值）。 */
+export type PathRefKind = 'file' | 'dir';
+
+/** 引用的一段行区间：1 基、含两端（`start === end` 即单行）。 */
+export interface PathRefLines {
+  start: number;
+  end: number;
+}
+
+/**
+ * 路径引用面：「一条项目内路径怎么被这个 harness 认出来」是 harness 表示法
+ * （claude = `@<相对路径>` 的 mention 文法），server 只传路径与类型，web 只把
+ * 服务端回给的表达式**当不透明字符串**贴进输入框——两侧都不自拼。null = 该
+ * harness 没有这种引用文法（入口不渲染）。
+ */
+export interface PathRefSpec {
+  /** 该 harness 能引用什么。 */
+  readonly kinds: readonly PathRefKind[];
+  /** 认不认行区间（false = 选择器只给整文件/整目录引用，不摆设行号选择）。 */
+  readonly lines: boolean;
+  /** 贴进 prompt 的表达式；path 为项目相对路径（会话 cwd = 项目根）。 */
+  expression(input: { path: string; kind: PathRefKind; lines?: PathRefLines }): string;
 }
 
 /**
@@ -455,6 +480,8 @@ export interface MessagingSurface {
   renderEnvelope?(text: string, meta: MessageMeta): string;
   /** 图片随 prompt 的对齐面；null = 该 harness 不支持收图（web 据此置灰附件钮）。 */
   readonly imageAttach: ImageAttachSpec | null;
+  /** 项目内路径的引用文法；null = 该 harness 没有这种文法（web 据此不渲染入口）。 */
+  readonly pathRefs: PathRefSpec | null;
   /** 旁路会话（侧问）；null = 该 harness 没有这种机制（web 据此不渲染入口）。 */
   readonly sideQuestion: SideQuestionSpec | null;
   /** 不支持通道的语义原因（409 文案与 UI tooltip 直用）。 */

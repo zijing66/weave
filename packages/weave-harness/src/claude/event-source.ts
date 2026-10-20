@@ -1,5 +1,6 @@
 import { HARNESS_EVENTS, type Harness } from '@weavecode/core';
 import type { EventSource } from '../driver.js';
+import { CLAUDE_PLAN } from './plan.js';
 
 /**
  * 批 4b 迁入：Claude 事件接入——原 server `hooks/adapter.ts` 的 ClaudeCodeAdapter
@@ -90,6 +91,19 @@ function capFields(value: unknown): unknown {
   return value;
 }
 
+/**
+ * 计划正文整份保真：命中计划形状就原样返回 `tool_input`，一个叶子都不裁。
+ *
+ * 2.1.296 起 `ExitPlanMode` 的 `tool_input` 恒空，正文只在上一拍写计划文件那次
+ * `Write` 的 `content` 里，而对话面板摆出来给人批阅的正是这一份——按
+ * {@link capFields} 裁到 4KB 就是把计划砍掉大半、气泡尾巴上挂一个「…」。
+ * 计划文件每次计划模式只写一两回，体积可忽略。
+ */
+function planBodyOf(toolName: unknown, input: unknown): unknown | null {
+  if (typeof toolName !== 'string') return null;
+  return CLAUDE_PLAN.draftOf(toolName, input, null)?.text ? input : null;
+}
+
 /** raw 的浅拷贝：命中的重复键 → 指向顶层同名字段的引用，其余键原样。 */
 function compactRaw(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
@@ -141,11 +155,13 @@ export class ClaudeEventSource implements EventSource {
     const raw = parseRaw(report.payload);
     const eventType = report.eventType || String(raw.hook_event_name ?? 'unknown');
     const sessionId = report.sessionId ?? pick(raw, 'session_id', 'sessionId');
+    const toolName = pick(raw, 'tool_name', 'toolName');
+    const input = pick(raw, 'tool_input', 'toolInput');
 
     const normalized = {
       eventType,
-      toolName: pick(raw, 'tool_name', 'toolName'),
-      toolInput: capFields(pick(raw, 'tool_input', 'toolInput')),
+      toolName,
+      toolInput: planBodyOf(toolName, input) ?? capFields(input),
       toolResponse: capFields(pick(raw, 'tool_response', 'toolResponse')),
       cwd: report.cwd ?? pick(raw, 'cwd'),
       transcriptPath: pick(raw, 'transcript_path', 'transcriptPath'),

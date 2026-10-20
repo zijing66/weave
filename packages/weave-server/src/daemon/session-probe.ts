@@ -85,6 +85,8 @@ export class SessionProbe {
   private readonly switched = new Map<string, { stale: string | null; model: string }>();
   /** sessionId → 推理档位（每次带 `effort` 的事件覆盖）：状态栏 `thinking` 块的事实在 hook 里。 */
   private readonly efforts = new Map<string, string>();
+  /** sessionId → 事件自带的执行模式（每条事件覆盖）：比转录早一步，见 `noteMode`。 */
+  private readonly modes = new Map<string, string>();
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
@@ -103,6 +105,7 @@ export class SessionProbe {
     this.known.delete(sessionId);
     this.switched.delete(sessionId);
     this.efforts.delete(sessionId);
+    this.modes.delete(sessionId);
   }
 
   /** 推理档位（`effort.level`，事件自带）：逐条覆盖，与模型/模式同口径只放内存。 */
@@ -164,9 +167,18 @@ export class SessionProbe {
     return this.latched(sessionId).model;
   }
 
-  /** 最后一次活动时的执行模式（转录 `permissionMode`）；Shift+Tab 不留痕，故是「最后已知」。 */
+  /**
+   * 事件自带的执行模式（`raw.permission_mode`）：每条事件都带、答的是「此刻」，故压过
+   * 转录——宿主切模式（Shift+Tab）既不落转录也没有专门事件，转录那条只能追到上一次
+   * 写条目的那一刻。没有事件（daemon 重启后的第一拍）才回落转录。
+   */
+  noteMode(sessionId: string, mode: string): void {
+    this.modes.set(sessionId, mode);
+  }
+
+  /** 最后一次活动时的执行模式：事件优先、转录兜底；两者都没有即 null（不猜）。 */
   currentMode(sessionId: string): string | null {
-    return this.latched(sessionId).mode;
+    return this.modes.get(sessionId) ?? this.latched(sessionId).mode;
   }
 
   /**

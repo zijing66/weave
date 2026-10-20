@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import {
   HARNESS_SESSION_CONTROL,
@@ -17,6 +18,7 @@ import {
   type CaptureScriptHealth,
   type MessagingSurface,
   type ModelAliasTarget,
+  type PathRefSpec,
 } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
 import type { MessageImage, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
@@ -41,6 +43,9 @@ import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
 import { SEQUENCE_HOP_LIMIT } from '../hooks/sequence-engine.js';
 import { readSideQuestions } from '../hooks/side-questions.js';
+import { listDirOf, matchPaths, projectFileIndex } from './project-files.js';
+import { resolveWithinProject } from '../install/reader.js';
+import type { ProjectRow } from '../repositories/projects.js';
 
 /**
  * D3 hooks 系统的全部 HTTP 路由（规则 CRUD/toggle、派发查询、会话列表/改名）。
@@ -57,6 +62,100 @@ import { readSideQuestions } from '../hooks/side-questions.js';
 function transcriptState(present: boolean | null, hasRun: boolean | undefined): boolean | null {
   if (present !== false) return present;
   return hasRun === true ? false : null;
+}
+
+/** 预览栏的字节上限（比资产读取小：预览只要头几十行，不需要整份大文件）。 */
+const PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 文本预览上限：编辑器扛得动更大的，但一次预览不需要整份大文件。 */
+const PREVIEW_MAX_TEXT_BYTES = 1024 * 1024;
+
+/** 二进制嗅探窗：前这么多字节里出现 NUL 就当二进制（编辑器渲不出它，别塞乱码）。 */
+const BINARY_SNIFF_BYTES = 8192;
+
+/** 列表条数：缺省 100，封顶 200。 */
+function clampLimit(raw: string | null): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 100;
+  return Math.min(200, Math.floor(n));
+}
+
+/** 预览的图片类型；非图返回 null（调用方回落 text/plain）。 */
+function imageTypeOf(relPath: string): string | null {
+  const ext = relPath.slice(relPath.lastIndexOf('.') + 1).toLowerCase();
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    default:
+      return null;
+  }
+}
+
+/** 会话 → 项目（路径引用的两条路由共用）：判定不过就写好响应并返回 null。 */
+function projectOfSession(
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  sessionId: string,
+): ProjectRow | null {
+  if (!deps.hookSessions || !deps.hookEvents) {
+    sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+    return null;
+  }
+  const session = deps.hookSessions.getBySessionId(sessionId);
+  if (!session) {
+    sendJson(res, 404, { error: 'Session not found' });
+    return null;
+  }
+  if (session.projectId == null) {
+    sendJson(res, 400, { error: 'Session is not bound to a project' });
+    return null;
+  }
+  const project = deps.projects.getById(session.projectId);
+  if (!project) {
+    sendJson(res, 404, { error: 'Project not found' });
+    return null;
+  }
+  return project;
+}
+
+/** harness 归属 = 最新事件的 source（与 open-terminal / 投递器同口径）。 */
+function latestHarnessOf(deps: WeaveServerDeps, sessionId: string): Harness | null {
+  if (!deps.hookEvents) return null;
+  const latest = deps.hookEvents.listBySession(sessionId, 1);
+  const src = latest[latest.length - 1]?.source;
+  return isHarness(src) ? src : null;
+}
+
+/** 会话所属 harness 的路径引用面；没有文法时写好 409 并返回 null。 */
+function pathRefSpecOf(
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  sessionId: string,
+): PathRefSpec | null {
+  const src = latestHarnessOf(deps, sessionId);
+  const surface = src ? messagingSurfaceFor(src) : null;
+  const spec = surface?.pathRefs ?? null;
+  if (spec) return spec;
+  sendJson(res, 409, {
+    error: src
+      ? (surface?.unsupportedReasons?.pathRefs ?? `Harness "${src}" has no path reference syntax`)
+      : 'Session has no hook events to determine its harness',
+  });
+  return null;
+}
+
+/** 正整数行号（`Number('')` 是 0，故先挡空串——缺省与非法要分开）。 */
+function lineOf(raw: string | null): number | null {
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 /** 计划扫描窗口（最近的提交/写盘调用条数；一次计划模式只留最近的一两份）。 */
@@ -523,7 +622,8 @@ export async function handleHooksRoutes(
           // 同一个模型的**别名**（`/model` 收的那个）：网关把别名换成自家 ID，转录里
           // 只见真名；认不出 = null，前端回落显示真名。
           modelAlias: aliasOfModel(catalog[s.harness ?? ''] ?? [], model),
-          // 执行模式（转录最后一条 permissionMode）：Shift+Tab 不留痕，故是「最后已知」。
+          // 执行模式（事件自带的 permission_mode 优先、转录兜底）：切模式既不落转录、
+          // 也没有专门事件，故是「最后已知」。
           mode: deps.sessionProbe?.currentMode(s.sessionId) ?? null,
           // 推理档位（hook 事件自带的 `effort.level`）：状态栏 `thinking` 块的事实，
           // 与模型/模式同口径（只放内存、最后已知、没上报过即 null）。
@@ -848,6 +948,163 @@ export async function handleHooksRoutes(
     sendJson(res, 200, {
       plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
     });
+    return true;
+  }
+
+  // ---- 路径引用：项目文件索引（打开即重建的面，不常驻、不进 DataKey） ----
+  // 表达式归 harness：`ref` 由能力面现算，web 只把它当不透明字符串贴进输入框。
+  const filesMatch = pathname.match(/^\/sessions\/([^/]+)\/files$/);
+  if (filesMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(filesMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const refSpec = pathRefSpecOf(res, deps, sessionId);
+    if (!refSpec) return true;
+
+    const index = await projectFileIndex(project.id, project.path);
+    const q = url.searchParams.get('q') ?? '';
+    const dir = (url.searchParams.get('dir') ?? '').replace(/^\/+|\/+$/g, '');
+    const limit = clampLimit(url.searchParams.get('limit'));
+    const toEntry = (p: string, kind: 'file' | 'dir', ranges?: [number, number][]) => ({
+      path: p,
+      name: p.slice(p.lastIndexOf('/') + 1),
+      kind,
+      ref: refSpec.expression({ path: p, kind }),
+      ...(ranges ? { ranges } : {}),
+    });
+
+    // 搜索模式：全索引模糊匹配，不带 size/mtime（100 条 stat 每键一次太贵）
+    if (q.trim()) {
+      const { hits, total } = matchPaths(index, q, limit);
+      sendJson(res, 200, {
+        root: project.path,
+        dir: '',
+        total,
+        truncated: index.truncated,
+        entries: hits.map((h) => toEntry(h.path, h.kind, h.ranges)),
+      });
+      return true;
+    }
+
+    // 目录浏览模式：直接子项，文件补 size/mtime（≤200 条，一次并行 stat）
+    const children = listDirOf(index, dir);
+    const entries = await Promise.all(
+      children.slice(0, limit).map(async (c) => {
+        const base = toEntry(c.path, c.kind);
+        if (c.kind !== 'file') return base;
+        try {
+          const s = await stat(path.join(project.path, c.path));
+          return { ...base, size: s.size, mtime: s.mtime.toISOString() };
+        } catch {
+          return base;
+        }
+      }),
+    );
+    sendJson(res, 200, {
+      root: project.path,
+      dir,
+      total: children.length,
+      truncated: index.truncated,
+      entries,
+    });
+    return true;
+  }
+
+  // ---- 路径引用的表达式：带行区间时由这里现算（前端不拼 `#L` 这类文法） ----
+  const refMatch = pathname.match(/^\/sessions\/([^/]+)\/ref$/);
+  if (refMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(refMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const refSpec = pathRefSpecOf(res, deps, sessionId);
+    if (!refSpec) return true;
+    const relPath = (url.searchParams.get('path') ?? '').replace(/^\/+|\/+$/g, '');
+    if (!relPath) {
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
+      return true;
+    }
+    const kind = url.searchParams.get('kind') === 'dir' ? 'dir' : 'file';
+    if (!refSpec.kinds.includes(kind)) {
+      sendJson(res, 409, { error: `Harness does not accept "${kind}" references` });
+      return true;
+    }
+    const start = lineOf(url.searchParams.get('start'));
+    const end = lineOf(url.searchParams.get('end'));
+    if (!refSpec.lines) {
+      sendJson(res, 200, { ref: refSpec.expression({ path: relPath, kind }) });
+      return true;
+    }
+    if (start == null) {
+      sendJson(res, 200, { ref: refSpec.expression({ path: relPath, kind }) });
+      return true;
+    }
+    if (end != null && end < start) {
+      sendJson(res, 400, { error: '"end" must not precede "start"' });
+      return true;
+    }
+    sendJson(res, 200, {
+      ref: refSpec.expression({ path: relPath, kind, lines: { start, end: end ?? start } }),
+    });
+    return true;
+  }
+
+  // ---- 路径引用的预览：项目根内的只读字节流 ----
+  // 与 `/projects/:id/file` 分开：那条只认资产白名单（`.claude/` 等），预览要读源码。
+  // 这里的收窄 = 项目根 containment + 大小上限 + Content-Type 白名单（非图一律
+  // text/plain——绝不下发 text/html，否则等于把 dashboard origin 交给任意项目文件）。
+  const fileMatch = pathname.match(/^\/sessions\/([^/]+)\/file$/);
+  if (fileMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(fileMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const relPath = url.searchParams.get('path');
+    if (!relPath) {
+      sendJson(res, 400, { error: 'Missing "path" query parameter' });
+      return true;
+    }
+    let abs: string;
+    try {
+      abs = resolveWithinProject(project.path, relPath);
+    } catch {
+      sendJson(res, 403, { error: 'Path escapes the project' });
+      return true;
+    }
+    let info;
+    try {
+      info = await stat(abs);
+    } catch {
+      sendJson(res, 404, { error: 'File not found' });
+      return true;
+    }
+    if (!info.isFile()) {
+      sendJson(res, 404, { error: 'Not a file' });
+      return true;
+    }
+    if (info.size > PREVIEW_MAX_BYTES) {
+      sendJson(res, 413, { error: 'File too large to preview' });
+      return true;
+    }
+    const image = imageTypeOf(relPath);
+    let bytes = await readFile(abs);
+    if (!image) {
+      // 二进制（NUL 打头那种）不给编辑器：CM 渲出来是一片乱码占位符，不如明说没有预览
+      if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
+        sendJson(res, 415, { error: 'Binary file' });
+        return true;
+      }
+      // 文本按上限截断，且切在行边界上——切在半个字符里会让整段变成替换符
+      if (bytes.length > PREVIEW_MAX_TEXT_BYTES) {
+        const cut = bytes.subarray(0, PREVIEW_MAX_TEXT_BYTES);
+        const nl = cut.lastIndexOf(10);
+        bytes = nl > 0 ? cut.subarray(0, nl) : cut;
+        res.setHeader('x-weave-truncated', '1');
+      }
+    }
+    res.writeHead(200, {
+      'content-type': image ?? 'text/plain; charset=utf-8',
+      'content-length': String(bytes.length),
+      'cache-control': 'private, max-age=60',
+    });
+    res.end(bytes);
     return true;
   }
 
@@ -1354,6 +1611,10 @@ export async function handleHooksRoutes(
         watch: surface.idleSignals.length > 0,
         /** 图片随 prompt 的对齐面（null = 该 harness 不收图，附件钮置灰）。 */
         imageAttach: surface.imageAttach !== null,
+        /** 项目内路径的引用文法（false = 该 harness 没有这种文法，文件钮置灰）。 */
+        pathRefs: surface.pathRefs !== null,
+        /** 该文法认不认行区间（false = 选择器只给整文件引用，不摆行号选择）。 */
+        pathRefLines: surface.pathRefs?.lines === true,
         /** 旁路会话（侧问）通道；false = 该 harness 没有这种机制（入口不渲染）。 */
         sideQuestion: surface.sideQuestion !== null,
         unsupportedReasons: surface.unsupportedReasons ?? null,

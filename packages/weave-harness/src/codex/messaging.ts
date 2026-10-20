@@ -15,6 +15,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   headless: null,
   idleSignals: [],
   imageAttach: null,
+  pathRefs: null,
   sideQuestion: null,
   unsupportedReasons: {
     discovery: 'Codex event ingestion is pending research (BACKLOG §10-6); sessions are not discoverable',
@@ -22,6 +23,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
     inject: 'Codex has no synchronous injection channel yet (pending research)',
     headless: 'Codex resume is pending research',
     watch: 'Codex idle signals are pending research; watch is unavailable',
+    pathRefs: 'Codex path references are pending research (BACKLOG §10-6); only plain paths can be typed',
     sideQuestion: 'Codex side chat is pending research (BACKLOG §10-6)',
   },
 };

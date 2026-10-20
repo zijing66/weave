@@ -85,6 +85,27 @@ describe('ClaudeEventSource 重复字段折叠', () => {
     expect(JSON.stringify(payload).length).toBeLessThan(10_000);
   });
 
+  it('计划正文整份保真：写 plans/*.md 的 content 一个叶子都不裁', () => {
+    const plan = '# 计划\n' + 'x'.repeat(9000);
+    const payload = normalize({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Write',
+      tool_input: { file_path: 'C:\\Users\\u\\.claude\\plans\\p.md', content: plan },
+    });
+    expect(payload.toolInput.content).toBe(plan);
+  });
+
+  it('计划之外照旧裁到 4KB（口子只开给计划正文）', () => {
+    const payload = normalize({
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      tool_name: 'Write',
+      tool_input: { file_path: '/p/src/a.ts', content: 'x'.repeat(9000) },
+    });
+    expect(payload.toolInput.content.length).toBe(4001);
+  });
+
   it('没有 raw 对象（畸形 payload）时原样返回', () => {
     expect(expandPayloadRefs({ raw: null })).toEqual({ raw: null });
     expect(expandPayloadRefs({ raw: 'x' })).toEqual({ raw: 'x' });

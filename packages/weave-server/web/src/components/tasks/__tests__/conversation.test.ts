@@ -10,7 +10,7 @@ import {
   filterThread,
   isGenerating,
   removableOf,
-  spliceNewline,
+  serializeDraft,
   withPlan,
   readConvCache,
   writeConvCache,
@@ -321,13 +321,16 @@ describe('removableOf（队列里的行能不能删）', () => {
     }
   });
 
-  it('② 在飞的不删（落定回调会把行写回来）；已发出（delivered）也不删——会话已经收到了，只是 hook 还没到', () => {
-    expect(removableOf(delivery({ status: 'delivering' }))).toBe(false);
+  it('② 投递卡住的行（delivering）能强制移除——它就是压着后面的队头；running 是编排域的真实子进程，不删', () => {
+    expect(removableOf(delivery({ status: 'delivering' }))).toBe(true);
     expect(removableOf(delivery({ status: 'running' }))).toBe(false);
+  });
+
+  it('③ 已发出（delivered）不删——会话已经收到了，只是 hook 还没到', () => {
     expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
   });
 
-  it('③ 暂停闸的成因行都能删：没送出去的、以及已发出却等不来回执的那条（闸没有成因行就开不了）', () => {
+  it('④ 暂停闸的成因行都能删：没送出去的、以及已发出却等不来回执的那条（闸没有成因行就开不了）', () => {
     expect(removableOf(delivery({ status: 'failed', stalled: true }))).toBe(true);
     expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
   });
@@ -436,21 +439,43 @@ describe('isGenerating（尾上「回复还在路上」）', () => {
   });
 });
 
-describe('spliceNewline（移动端换行钮）', () => {
-  it('① 尾部追加，光标跟到新行后', () => {
-    expect(spliceNewline('abc', 3, 3)).toEqual({ text: 'abc\n', caret: 4 });
+describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
+  interface Fake {
+    nodeType: number;
+    nodeValue?: string | null;
+    tagName?: string;
+    childNodes: Fake[];
+    getAttribute(name: string): string | null;
+  }
+  const el = (tagName: string, childNodes: Fake[] = [], attrs?: Record<string, string>): Fake => ({
+    nodeType: 1,
+    tagName,
+    childNodes,
+    getAttribute: (name) => attrs?.[name] ?? null,
+  });
+  const text = (s: string): Fake => ({ nodeType: 3, nodeValue: s, childNodes: [], getAttribute: () => null });
+  const draft = (childNodes: Fake[]): Node => el('DIV', childNodes) as unknown as Node;
+
+  it('① 纯文本原样吐出', () => {
+    expect(serializeDraft(draft([text('你好'), text('世界')]))).toBe('你好世界');
   });
 
-  it('② 插在中间，后半截原样接上', () => {
-    expect(spliceNewline('abcd', 2, 2)).toEqual({ text: 'ab\ncd', caret: 3 });
+  it('② 胶囊取 data-ref（harness 表达式），不是它显示的那截', () => {
+    const chip = el('SPAN', [text('@src/a.ts')], { 'data-ref': '@src/a.ts' });
+    expect(serializeDraft(draft([text('看下 '), chip, text(' 这里')]))).toBe('看下 @src/a.ts 这里');
   });
 
-  it('③ 选中一段 = 覆盖掉选区', () => {
-    expect(spliceNewline('abcdef', 1, 4)).toEqual({ text: 'a\nef', caret: 2 });
+  it('③ 换行：浏览器插的 <br> 还原成 \\n', () => {
+    expect(serializeDraft(draft([text('a'), el('BR'), text('b')]))).toBe('a\nb');
   });
 
-  it('④ 空输入框就一个换行', () => {
-    expect(spliceNewline('', 0, 0)).toEqual({ text: '\n', caret: 1 });
+  it('④ 空行占位的裸 <br> 不算一条换行（空框序列化应为空）', () => {
+    expect(serializeDraft(draft([el('BR')]))).toBe('');
+    expect(serializeDraft(draft([]))).toBe('');
+  });
+
+  it('⑤ 没挂载 / 不是元素 = 空串（不抛）', () => {
+    expect(serializeDraft(null)).toBe('');
   });
 });
 

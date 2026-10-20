@@ -453,11 +453,41 @@ export interface MessagingCapability {
   watch: boolean;
   /** 图片随 prompt 的对齐面（false = 该 harness 不收图，附件钮置灰）。 */
   imageAttach: boolean;
+  /** 项目内路径的引用文法（false = 该 harness 没有这种文法，文件钮置灰）。 */
+  pathRefs: boolean;
+  /** 该文法认不认行区间（false = 选择器只给整文件引用）。 */
+  pathRefLines: boolean;
   /** 旁路会话（侧问）通道（false = 该 harness 没有这种机制，入口不渲染）。 */
   sideQuestion: boolean;
   unsupportedReasons: Partial<
-    Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch' | 'sideQuestion', string>
+    Record<'discovery' | 'prompt' | 'inject' | 'headless' | 'watch' | 'sideQuestion' | 'pathRefs', string>
   > | null;
+}
+
+/** 文件选择器的一行：`ref` 是**服务端按 harness 引用文法算好的表达式**，web 只把它
+ *  当不透明字符串贴进输入框（路径怎么被宿主认出来是 harness 知识，前端不拼）。 */
+export interface SessionFileEntry {
+  /** 项目相对路径（正斜杠分隔）。 */
+  path: string;
+  name: string;
+  kind: 'file' | 'dir';
+  ref: string;
+  /** 搜索命中的字符区间 `[起点, 长度]`，供高亮。 */
+  ranges?: [number, number][];
+  /** 仅目录浏览模式（搜索模式不带，免得每键一堆 stat）。 */
+  size?: number;
+  mtime?: string;
+}
+
+export interface SessionFileListing {
+  /** 项目绝对路径（面包屑头）。 */
+  root: string;
+  /** 当前目录（相对，'' = 根）。 */
+  dir: string;
+  entries: SessionFileEntry[];
+  total: number;
+  /** 索引到上限被截断（搜索退化为目录浏览）。 */
+  truncated: boolean;
 }
 
 /** 旁路会话（claude = /btw）的一条历史：问句由 weave 发出去时记下，回答由采集
@@ -1323,6 +1353,47 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** 项目文件索引的一页：`q` 非空 = 全索引模糊匹配，空 = 列 `dir` 的直接子项。
+   *  harness 无路径引用文法时 409（入口本就不渲染，兜底而已）。 */
+  listSessionFiles: (
+    sessionId: string,
+    opts: { q?: string; dir?: string; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<SessionFileListing> => {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.dir) params.set('dir', opts.dir);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return apiFetch<SessionFileListing>(
+      `/sessions/${encodeURIComponent(sessionId)}/files${qs ? `?${qs}` : ''}`,
+      opts.signal ? { signal: opts.signal } : {},
+    );
+  },
+  /** 预览栏的字节源（`<img src>` 与文本 fetch 共用；Content-Type 由服务端定）。 */
+  sessionFileUrl: (sessionId: string, relPath: string): string =>
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(relPath)}`,
+  /** 预览正文：行号/选区都在前端按文本算，截断由服务端标在响应头上。 */
+  sessionFileText: async (
+    sessionId: string,
+    relPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; truncated: boolean }> => {
+    const res = await fetch(api.sessionFileUrl(sessionId, relPath), signal ? { signal } : {});
+    if (res.status === 401) markUnauthorized();
+    if (!res.ok) throw new Error(await errorText(res));
+    return { text: await res.text(), truncated: res.headers.get('x-weave-truncated') === '1' };
+  },
+  /** 引用表达式：带行区间时由服务端按 harness 文法现算（`#L` 这类记号前端不拼）。 */
+  sessionFileRef: (
+    sessionId: string,
+    opts: { path: string; kind?: 'file' | 'dir'; start?: number; end?: number },
+  ): Promise<{ ref: string }> => {
+    const params = new URLSearchParams({ path: opts.path });
+    if (opts.kind) params.set('kind', opts.kind);
+    if (opts.start != null) params.set('start', String(opts.start));
+    if (opts.end != null) params.set('end', String(opts.end));
+    return apiFetch<{ ref: string }>(`/sessions/${encodeURIComponent(sessionId)}/ref?${params.toString()}`);
+  },
   /** 上传一张会话图片（内容寻址去重）；超限/类型不符由 apiFetch 抛 Error 原文。 */
   uploadImage: (input: { name: string; mediaType: string; data: string }): Promise<UploadImage> =>
     apiFetch<{ upload: UploadImage }>('/uploads', {

@@ -2349,26 +2349,105 @@ describe('MessageDeliverer 裁决表', () => {
       fake.children[1]!.emit('exit', 0, null);
     });
 
-    it('在飞的行不删：delivering 期间 409（落定回调会把行写回来）', async () => {
+    it('在飞的投递行也能强制移除：行当场消失、迟到的落定不写回，积压续排', async () => {
       const fake = createFakeSpawn();
-      const { surface } = relaySurface();
+      let registered = true;
+      const { surface } = relaySurface(() => (registered ? { name: PEER_NAME } : null));
       const deliverer = new MessageDeliverer(
-        makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+        makeDeps({
+          spawnImpl: fake.spawnImpl,
+          surfaceFor: () => surface,
+          bin: 'fake-relay',
+          flushGapMs: 0,
+        }),
       );
       pushEvent(SESSION_ID, 'Stop');
 
       const sent = await deliverer.send({
         toSessionId: SESSION_ID,
-        text: 'in-flight dismiss rejected',
+        text: 'in-flight force removal',
         mode: 'prompt',
         fromKind: 'dashboard',
         oneWay: true,
       });
       const id = (sent as { messageId: string }).messageId;
       expect(deliverer.getMessage(id)!.status).toBe('delivering');
-      expect(deliverer.dismiss(SESSION_ID, id)).toMatchObject({ ok: false, status: 409 });
+
+      // 投递还悬着（子进程没退）+ 后面压着一条：队头就是它，闸也在它身上
+      registered = false;
+      await deliverer.send({
+        toSessionId: SESSION_ID,
+        text: 'queued behind stuck head',
+        mode: 'prompt',
+        fromKind: 'dashboard',
+        oneWay: true,
+      });
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+      expect(deliverer.dismiss(SESSION_ID, id)).toMatchObject({ ok: true });
+      expect(deliverer.getMessage(id)).toBeNull();
+      expect(busEvents).toContainEqual(
+        expect.objectContaining({ kind: 'message.dismissed', messageId: id }),
+      );
+
+      // 迟到的落定：行不被写回来、也不再置闸
       fake.children[0]!.emit('exit', 0, null);
-      expect(deliverer.getMessage(id)!.status).toBe('delivered');
+      expect(deliverer.getMessage(id)).toBeNull();
+      expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(id);
+
+      // 积压续排（下一条各自重新布防回执闸）
+      registered = true;
+      await vi.waitFor(() => expect(fake.calls).toHaveLength(2));
+      fake.children[1]!.emit('exit', 0, null);
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    });
+
+    it('投递卡死时强制移除队头：泵闸一并解除，后面那条接着发', async () => {
+      const fake = createFakeSpawn();
+      const { surface } = relaySurface(() => null); // 无 peer → 走层② 终端
+      let available = false;
+      const sendText = vi.fn().mockImplementation((_pane: string, text: string) =>
+        text.includes('stuck head') ? new Promise<void>(() => {}) : Promise.resolve(),
+      );
+      const terminal: PromptTerminal = {
+        available: () => available,
+        listPanes: vi.fn().mockResolvedValue([{ id: '7', title: null, cwd: null }]),
+        locatePane: vi.fn(async () => '7'),
+        sendText,
+        sendKeys: vi.fn(),
+        closePane: vi.fn(),
+      };
+      const deliverer = new MessageDeliverer(
+        makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, terminal, flushGapMs: 0 }),
+      );
+      pushEvent(SESSION_ID, 'Stop');
+
+      const ids: string[] = [];
+      for (const text of ['stuck head body', 'tail body']) {
+        const sent = await deliverer.send({
+          toSessionId: SESSION_ID,
+          text,
+          mode: 'prompt',
+          fromKind: 'dashboard',
+          oneWay: true,
+        });
+        ids.push((sent as { messageId: string }).messageId);
+      }
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(2);
+
+      // 通道恢复 → 冲洗：首行贴进框后后端不回，这一拍就挂在 await 上
+      available = true;
+      deliverer.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '7' });
+      void deliverer.flushSession(SESSION_ID);
+      await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(1));
+      expect(deliverer.getMessage(ids[0]!)!.status).toBe('delivering');
+
+      // 强制移除卡住的队头：行没了、泵闸解除，余下的续排
+      expect(deliverer.dismiss(SESSION_ID, ids[0]!)).toMatchObject({ ok: true });
+      await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(2));
+      expect(sendText.mock.calls[1]![1]).toContain('tail body');
+      expect(deliverer.getMessage(ids[0]!)).toBeNull();
+      expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
     });
 
     it('删队列待递送行 = 取消发送：行从队列与视图消失、索引清干净（再冲洗也不投）', async () => {
