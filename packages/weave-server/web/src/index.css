@@ -170,8 +170,8 @@
   animation-delay: 150ms;
 }
 
-/* 会话执行中：harness 自身的跑马灯动效——claude 星芒匀速旋转带辉光，
-   codex 六边形脉动缩放旋转（各 harness 一套，静态时由状态点接管）。
+/* 会话执行中：harness 自身的跑马灯动效——claude 星芒、codex 六角线圈各自匀速
+   旋转带辉光（各 harness 一套，静态时由状态点接管）。
    只动 transform：filter 不可合成，写进 keyframes 会让每个跑着的会话每帧都
    重绘一次（实测 3 个 = 主线程空转 20%、样式重算 55 次/秒），而它多半躺在
    .frosted 里，连带每帧重算背景模糊。辉光移出动画、常量化。 */
@@ -189,16 +189,16 @@
 }
 
 @keyframes harness-run-codex {
-  0%,
-  100% {
-    transform: scale(1) rotate(0deg);
+  from {
+    transform: rotate(0deg);
   }
-  50% {
-    transform: scale(1.25) rotate(90deg);
+  to {
+    transform: rotate(360deg);
   }
 }
 .harness-run-codex {
-  animation: harness-run-codex 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.8));
+  animation: harness-run-codex 3s linear infinite;
 }
 
 /* 生成中滚动带：新事件一到，新的那条从下面滚进来顶掉旧的。 */
@@ -251,6 +251,165 @@
 }
 .drawer-fade {
   animation: drawer-backdrop-fade 200ms ease-out;
+}
+
+/* ---- 首屏启动页（BootSplash）：按品牌稿的四段动效走一遍，再整页淡出 ----
+   连接（光从两侧汇入）→ 交织（两条光带对扫相交）→ 形成（W 就位、交叉点爆闪）
+   → 展现（字标逐字浮起、底下一道浅光）。
+   全走 CSS keyframes、无 JS 计时；`pathLength="1"` 让各段共用同一条 dasharray，
+   生长速度与路径长短无关。逐元素的延迟由 React 以 style 下发，故这里只管形状。 */
+@keyframes boot-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes boot-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+.boot-splash {
+  background:
+    radial-gradient(56% 44% at 50% 44%, rgb(var(--w-blue-500) / 0.1), transparent 70%),
+    radial-gradient(40% 32% at 50% 46%, rgb(var(--w-emerald-500) / 0.06), transparent 72%),
+    rgb(var(--w-neutral-950));
+}
+.boot-splash-enter {
+  animation: boot-fade-in 240ms ease-out;
+}
+.boot-splash-exit {
+  animation: boot-fade-out 320ms ease-in forwards;
+}
+
+/* 品牌标记的常驻辉光。静态 filter（不进 keyframes），只为让光带有「发光」质感。 */
+.wv-mark {
+  filter: drop-shadow(0 0 2px rgb(59 130 246 / 0.55));
+}
+
+/* 全部动效由 `.wv-anim` 挂上——静态 logo（顶栏、登录页）不带这个类，
+   直接以最终形态出现。笔画 `pathLength="1"`，故 dasharray 与路径长短无关。 */
+@keyframes wv-flow {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.9;
+  }
+  70% {
+    stroke-dashoffset: 0;
+    opacity: 0.9;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+@keyframes wv-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes wv-flare {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes wv-rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes wv-beam-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+/* 停顿后沿字标底缘往返的一道流光 = 连后端时的不确定进度 */
+@keyframes wv-beam-run {
+  from {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.9;
+  }
+  80% {
+    opacity: 0.9;
+  }
+  to {
+    transform: translateX(88px);
+    opacity: 0;
+  }
+}
+.wv-anim .wv-flow {
+  stroke: #7dd3fc;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  fill: none;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  animation: wv-flow 380ms ease-out forwards;
+}
+.wv-anim [data-draw] {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: wv-draw 520ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.wv-anim .wv-flare {
+  opacity: 0;
+  animation: wv-flare 360ms ease-out 600ms both;
+}
+.wv-anim [data-glyph] {
+  opacity: 0;
+  animation: wv-rise 360ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.wv-anim .wv-beam {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: wv-beam-in 420ms ease-out 900ms both;
+}
+.wv-anim .wv-beam-run {
+  animation: wv-beam-run 1.8s ease-in-out 1.3s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wv-anim .wv-flow,
+  .wv-anim .wv-flare,
+  .wv-anim .wv-beam-run {
+    animation: none;
+    opacity: 0;
+  }
+  .wv-anim [data-draw],
+  .wv-anim [data-glyph],
+  .wv-anim .wv-beam {
+    animation: none;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
 }
 
 /* ReactFlow 左下角 Controls（zoom±/fitView）暗色主题覆盖：

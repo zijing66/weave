@@ -522,6 +522,29 @@ describe('weztermSocketCandidates — 同一 socket 的两种字符串形态只�
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('env 里是死掉的 gui-sock 时整段丢弃（daemon 从旧 pane 继承来的死 socket）', () => {
+    const home = mkdtempSync(join(tmpdir(), 'weave-wezterm-'));
+    const prevHome = process.env.USERPROFILE;
+    const prevSocket = process.env.WEZTERM_UNIX_SOCKET;
+    try {
+      const sockDir = join(home, '.local', 'share', 'wezterm');
+      mkdirSync(sockDir, { recursive: true });
+      writeFileSync(join(sockDir, `gui-sock-${process.pid}`), '');
+      process.env.USERPROFILE = home;
+      // GUI 已退出的 socket：探活闸挡不住 force 点名，只能在这里就不放进候选
+      process.env.WEZTERM_UNIX_SOCKET = join(sockDir, 'gui-sock-999999999');
+
+      expect(weztermSocketCandidates('win32')).toEqual([
+        join(sockDir, `gui-sock-${process.pid}`),
+      ]);
+    } finally {
+      process.env.USERPROFILE = prevHome;
+      if (prevSocket === undefined) delete process.env.WEZTERM_UNIX_SOCKET;
+      else process.env.WEZTERM_UNIX_SOCKET = prevSocket;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('weztermCliArgs — 恒带 --no-auto-start（cli 对失联 socket 会拉起永不退出的 mux-server）', () => {

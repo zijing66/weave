@@ -30,6 +30,7 @@ export const appZh = {
   'app.mobileProjects': '项目列表',
   'app.mobileLibrary': '资源市场',
   'app.mobileDrawerClose': '收起',
+  'app.booting': '正在载入工作台',
 
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局配置',
@@ -139,6 +140,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.mobileProjects': 'Projects',
   'app.mobileLibrary': 'Resource market',
   'app.mobileDrawerClose': 'Dismiss',
+  'app.booting': 'Loading workspace',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',

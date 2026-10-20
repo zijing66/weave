@@ -297,10 +297,11 @@ Web Push 细节：
 - **未回执闸**：prompt 送达 `ackStallMs`（缺省 120s）未回执、或中继/终端投递失败 → 该会话**队列冲洗暂停**（`flushSession` 闸，防继续向 Held/Refused 灌），成因消息标 `stalled` + `message.stalled` 帧。
 - **解除三条路**：成因消息回执命中（解闸 + 自续排空）／手动重发（`POST /sessions/:id/messages/:mid/resend`，仅 prompt 通道 failed（含判死的 offline 行，那是有意的可逆出口）/ delivered-未回执 开放，重走三层并重新布防）／闸到点自动清除（`ackStallReleaseMs` 缺省 10min：已发出却等不来回执的那条整个从队列清除——正文只在该行里、窗口期就是给人的，解闸/撤防/续排都在 `dismiss` 里；行头带 `releaseAt` 派生的 mm:ss 倒计时，投递失败的行不清）。
 - **重发 `delivered`-未回执且 `via=terminal` 的行只补一记回车**（`runTerminalSubmit`：正文早已贴进输入框，缺的就是那记提交键；重贴会在框里叠一份，用户收到两遍正文与两遍图）。
+- **回合判死（`HARNESS_LIFECYCLE[<harness>].closeFailed`，claude = `StopFailure`）= 输入框恢复响应的信号**（`onSessionStopFailure`，挂点 = inbox worker 的事件判定）：API 重试态对 hook 静默（重试期间一个事件都不发，宿主只在回合放弃时冒头），那记被吞掉的回车要等到这一刻才有意义——层② 已贴进框、没回执的队头行此刻**立即补一记回车**（同上只补回车的语义），把残框提交掉，UPS 按下面的比对核销在途、闸自然解除；补不动（pane 没了 / 等的不是终端行）则回落 120s 布防与 10 分钟自动清除的老节拍。
 - **回执先到即已送达**：投递进程的失败落定可能晚于回执（中继 exit 状态只管进程、不管送达；终端的 `sendText` 也可能在文本已进框之后才抛），故 `settleRelay` 与 `runTerminal` 的失败分支先看**当前行** `acked`——是就按已送达收、不置闸（翻成 failed 会让一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍）；`runTerminal` 的成功收尾同样用当前行而非 `write` 之前的快照，否则 write 期间到的回执会被抹掉、120s 后又被当未回执置闸。
 - 慢会话误伤暂停是接受过的代价——它处理到该 prompt 时 UPS 自解闸，真卡死人手重发。
 - **回执比对前先剥运输装饰**（直投的 `[weave] ` 标记，唯一实现 `stripInboxMarker`）——装饰不是正文，不剥则观测到的 prompt 恒比本体多一截、短正文（如「代码提交」）永远认不出自己。
-- 长文本按「包含」认，**短文本（< 8 字符）只认整条相等**（是精确不是放宽：整条相等才没有误配空间）。
+- 长文本按「包含」认，**短文本（< 8 字符）认尾部相等**——层② 是往输入框追加，框里先在的内容只会垫在提交原文前面（实测「1」+「继续」→ 提交出来是「1继续」、两条队列行并一 →「继续继续」），整条相等在这些形态面前永不命中、「已发出」行只能一路挂到未回执闸；尾部相等仍比包含紧：宿主自己接的后文（「继续……不要」）不认，整条相等是它的特例。
 - **一条 UPS 可核销多条在途**——宿主会把连着发的几次合成一次提交（终端里多行粘贴 / 队列合并），只认首条的话其余会一路挂到未回执闸、把该会话的队列误暂停，故遍历所有未回执行逐条核销（web 侧同口径：一条事件条目按 `ackedEventId` 认领多条投递行，谁也不再留在队列尾巴上）。
 
 ### 4.20 对话面板（`SessionMessages`）
@@ -577,7 +578,8 @@ settings `server.tlsPort`，默认 6443、0 = 关。
 - 与 HTTP **同一 handler**（`weaveRequestHandler` 单点建、fingerprint 缓存两监听共享；两个 daemon 入口接线别各建一份）。
 - 端口被占/证书失败一律降级仅警告，HTTP 不受影响。
 - 访问地址枚举唯一实现 = `daemon/tls.ts` 的 `accessUrls`（`weave daemon status` / `weave dashboard` 与 `GET /settings` 的 `urls` 同源派生，CLI/web 不自拼）。
-- 手机浏览器要系统通知就必须走 https origin——浏览器只在安全上下文（HTTPS/localhost）开放 Notifications API；Android Chromium 还只认 SW 的 `registration.showNotification()`（`web/public/sw.js` 无 fetch handler、仅承载 Web Push 的 push 事件弹通知 + 通知点击聚焦，`web/src/lib/browser-notify.ts` SW 优先、构造器兜底）。
+- 手机浏览器要系统通知就必须走 https origin——浏览器只在安全上下文（HTTPS/localhost）开放 Notifications API；Android Chromium 还只认 SW 的 `registration.showNotification()`（`web/src/lib/browser-notify.ts` SW 优先、构造器兜底）。
+- 全站**唯一** Service Worker = `web/public/sw.js`，三件事：push 弹通知、通知点击聚焦、**预载壳**。预载壳只缓存构建产物（`/assets/` 内容哈希、`/fonts/`、logo）与 shell HTML 一条；`/api/` 与非 GET 一律不拦。HTML 走「网络优先 + 1.8s 超时回落缓存」，dev（`/@vite/client`）与无 `/assets/` 引用的页面不入缓存，故本地开发零影响。旧产物条目不清（升级瞬间老页面还会懒加载老 hash），整档淘汰靠 `SHELL` 常量改名。
 
 ## §13 AI 助手
 

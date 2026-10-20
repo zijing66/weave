@@ -3,6 +3,7 @@ import { AuthError, login } from '@/lib/auth';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { WeaveMark } from '@/components/WeaveLogo';
 
 /**
  * 仅密码登录页（无用户名、**无改密入口**——改密只走 CLI `weave chpass <新密码>`）。
@@ -38,8 +39,8 @@ export function LoginPage() {
         }}
       >
         <div className="mb-5 flex items-center gap-2 text-neutral-200">
-          {/* 品牌标记：与顶栏 / favicon 同一份 public/weave-logo.svg（单一来源） */}
-          <img src="/weave-logo.svg" alt="" className="h-[18px] w-[18px] shrink-0" />
+          {/* 品牌标记：与顶栏 / favicon 同一份图形（WeaveMark），单一来源 */}
+          <WeaveMark className="h-[15px] w-auto" />
           <span className="text-sm font-medium">{t('auth.title')}</span>
         </div>
         {/* 登录凭据的**唯一**归属框：current-password 让浏览器把保存的密码稳定填这里；

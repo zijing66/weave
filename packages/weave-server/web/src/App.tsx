@@ -62,6 +62,8 @@ import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
 import { WEAVE_REPO_URL, formatStars, useRepoStars } from '@/lib/github';
 import { LoginPage } from '@/components/LoginPage';
+import { BootSplash } from '@/components/BootSplash';
+import { WeaveLogo } from '@/components/WeaveLogo';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
 import { createAwaitGate } from '@/lib/await-gate';
@@ -90,7 +92,7 @@ const pluginEffective = (rows: readonly PluginRow[], runtime: PluginRuntime, key
   rows.some((r) => r.harness === runtime && r.key === key && r.effective);
 
 /**
- * 认证门：未探测 → 极简骨架（不闪内容）；未登录 → **默认落登录页**（仅密码，
+ * 认证门：未探测 → 启动页（不闪内容）；未登录 → **默认落登录页**（仅密码，
  * 无改密入口——改密只走 CLI）；已登录 → 原 dashboard 本体。
  * 任一 API 401 / SSE 被拒也会把状态打回 anonymous（见 lib/api.ts、lib/sse.ts）。
  */
@@ -99,18 +101,20 @@ export default function App() {
   useEffect(() => {
     void refreshAuth();
   }, []);
-  if (auth === 'unknown') {
-    return (
-      <div className="grid min-h-dvh place-items-center bg-neutral-950 text-xs text-neutral-600">
-        weave
-      </div>
-    );
-  }
-  if (auth === 'anonymous') return <LoginPage />;
-  return <Dashboard />;
+  // 启动页在认证探测期间就挂上（此时下面什么都还没渲染），一路活到「登录页出现」
+  // 或「dashboard 首份数据就位」——换挂载点会让那段生长动画重头再来一遍。
+  const [bootReady, setBootReady] = useState(false);
+  const handleBootReady = useCallback(() => setBootReady(true), []);
+  return (
+    <>
+      {auth === 'anonymous' && <LoginPage />}
+      {auth === 'authenticated' && <Dashboard onBootReady={handleBootReady} />}
+      <BootSplash ready={auth === 'anonymous' || (auth === 'authenticated' && bootReady)} />
+    </>
+  );
 }
 
-function Dashboard() {
+function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const t = useT();
   // 项目列表 + 归档面（TanStack Query 缓存域·试点，后续域逐个并入）：fetch/缓存/
   // 失效归 useQuery，重拉统一走 refreshProjects()（= invalidateQueries——SSE 帧
@@ -137,7 +141,11 @@ function Dashboard() {
     void queryClient.invalidateQueries({ queryKey: ['projects'] });
   }, [queryClient]);
   // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
+  // 同一个门也给启动页（App 的 BootSplash）放行；查询失败同样算就位，别把启动页焊在屏幕上。
   const shellReady = !projectsQuery.isPending;
+  useEffect(() => {
+    if (shellReady) onBootReady();
+  }, [shellReady, onBootReady]);
   /** 位置（`lib/route.ts`）：URL 是唯一真源，手势只写它，状态由下面那条 effect 落。 */
   const path = useRoutePath();
   // 顶栏 GitHub 链接的 star 数（浏览器直取 + localStorage 缓存；未知 = null）
@@ -1275,6 +1283,9 @@ function Dashboard() {
       // 没有锚定项目就没什么可同步的（一键更新此时只是刷市场缓存，那步自己做完了）
       onSyncAll={activeProject ? () => void syncNowWithFeedback(activeProject) : () => {}}
     />
+  ) : !shellReady ? (
+    // 首拉未回：还没「选中」，此时给空态文案会闪一下「请选择一个项目」
+    <SkeletonRows rows={4} />
   ) : (
     <div className="p-3 text-xs text-neutral-500">
       {t('app.selectProjectForAssets')}
@@ -1303,9 +1314,8 @@ function Dashboard() {
               <PanelLeft className="h-4 w-4" />
             </button>
             <TrafficLight />
-            {/* 品牌标记：public/weave-logo.svg（与 favicon 同一份文件，单一来源） */}
-            <img src="/weave-logo.svg" alt="" className="h-[18px] w-[18px] shrink-0" />
-            <span className="text-sm font-semibold tracking-tight text-neutral-200">Weave</span>
+            {/* 组合标（图形 + 手写 WEAVE 单词）：图形部分固定品牌色，单词吃 currentColor。 */}
+            <WeaveLogo className="h-[18px] w-auto text-neutral-200" />
             <span className="text-xs text-neutral-500">
               {t('app.projectCount', { n: projects.length })}
             </span>
@@ -1532,10 +1542,14 @@ function Dashboard() {
                     )}
                   </div>
                 </>
-              ) : (
+              ) : shellReady ? (
+                // 真·没有项目（列表已回、确实为空）才落这句；首拉未回时用骨架顶着，
+                // 免得启动页刚退就闪一下「请选择一个项目」。
                 <div className="flex-1 flex items-center justify-center text-neutral-500 text-sm">
                   {t('app.selectProject')}
                 </div>
+              ) : (
+                <SkeletonMain />
               )}
 
               {/* File preview drawer — same right-side slot as the skill drawer */}

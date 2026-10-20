@@ -4,6 +4,12 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-10-21
 
+- **网关 InternalServerError 窗口里的投递合并与两条修法（实测取证自会话 b3c8a15e「文件引用功能适配」与 8c85b9c7）**：症状 = 手机发的「继续」在对话里以「已发出」虚线行永久挂尾（截图定位），宿主实际提交出来的 UPS 却是「1继续」「1继续继续」「继续继续/model opus/model haiku」这类**拼接原文**。因果链分两段——① 层② 的 CR 每条都发了（`sendPromptText` = paste 后紧跟 `--no-paste` 的 CR，opener.ts 的既定配方），但那段时间宿主处于 API 报错重试 + 压缩循环（15:58–16:17 三次 PreCompact 才成），输入框不把这记 CR 当提交：正文落框、框不清、不换行（weave 自己的实机记录早有同形态：「贴着图的长文本连贴两次都没提交，第三次才连前三份一起提交」）；② 防叠字闸 `awaitingAck` 等不到回执 → 120s 置闸 → 10 分钟到点自动解除续排，下一条贴进**还没清空的框**，某次终于生效的 CR 把积压整体提交 = 多笔合一笔。16:05:10 发出 → 16:07:10 置闸 → 16:17:10 解除 → 16:17:13「1继续继续」，节拍严丝合缝。
+  ① **修法一 = 短文本回执从整条相等放宽为尾部相等**（`onSessionPrompt`）：**推翻 10-17「短文本只认整条相等——不是放宽而是精确」的裁决**——那份精确性在残框面前成了永不命中，每条都吃一次 120s 闸 + 10 分钟解除。尾部相等覆盖两种实测形态（残留垫前「1继续」、N 条并一「继续继续」），仍比包含紧（宿主接的后文「继续……不要」不认）；合并 UPS 一发生即核销全部在途行，闸当下解除、下一条贴进被提交清空的框——叠字整条链断源。
+  ② **修法二 = StopFailure 触发补回车**（`onSessionStopFailure`）：「正在重试」对 hook 静默（重试期间一个事件都不发，42 分钟静默实测），宿主只在回合放弃时冒头——这个事件本身就是「输入框恢复响应」的信号，层② 在飞队头行此刻只补一记回车（同重发只补回车的语义），残框当场提交、不等 120s/10min 节拍；补不动（pane 没了 / 等的不是终端行）回落老节拍。压缩窗口结束（SessionStart[compact]）不触发是本次裁决边界：正常长 turn 里往框里贴 + TUI 排队是合法路径，不能按 busy 一刀切压队列；压缩结束的续排仍走既有闸节拍。
+
+- **启动页（预载壳）改由 Service Worker 承载**（用户原话「预加载页面，通过 serviceworker 机制加载」）：原先 `sw.js` 刻意不注册 fetch handler（只做通知/推送，页面资源永远走网络），代价是每次打开都要等 daemon 回一趟 `index.html`（该文件是 `no-cache`，必然往返）才见到第一帧。改为：**同一个 SW 兼做预载壳**——`/assets/`（内容哈希）、`/fonts/`、logo 走 cache-first，HTML 走「网络优先 + 1.8s 超时回落缓存」，`/api/` 与非 GET 一律不拦。三条边界：① 只缓存**构建产物形态**的 HTML（必须有 `/assets/` 引用、且不含 dev 的 `/@vite/client`）⇒ 本地 vite 开发零影响，不用加环境开关；② **旧产物条目不随升级清理**（升级瞬间还开着的页面可能懒加载老 hash，清掉即 404），整档淘汰靠 `SHELL` 常量改名；③ 预载壳只是让启动页早出现，**不缓存任何 API 响应**，认证与数据新鲜度语义不变。首装时顺带 `cache.put('/')`，断网也能出启动页。
+
 - **搬迁后首例线上故障：市场扫描缓存把旧绝对路径喂给了同步（另一会话实测报错「同步失败：400 {"error":"ENOENT: no such file or directory, lstat '…\\Roaming\\weave\\market\\wecom-cli\\skills\\wecomcli-doc'"}」）**：库里 `libraries.path` 是相对形、库目录也确实搬到了 `data/market`，但旁挂缓存 `<data>/market/.weave-scans/<库>/scans.json` 是**搬迁前写的**，`skills[].dirPath` 等全是旧绝对路径；`getLibraryScan` 只核 `version` 不核根 ⇒ 命中旧内容，`applyUpdate` 照着旧 `dirPath` 去 `cp`，ENOENT。
   ① **修法 = 缓存自证根**：`scans.json` 记 `root`，读侧 `root !== libPath` 整份作废重扫（`install/scan-cache.ts`，五处改动）。不动市场代码、不加迁移步骤——缓存本来就可弃，根不对就该重扫，这样以后任何目录级搬迁/拷贝都自愈。
   ② **实测复现与回归**：修复前对 12 个已注册项目逐个 `POST /projects/:id/sync-all` 全 200 且 `wecom-message` 真正更新了 15 个 `wecomcli-*` skill（此前这份工作被 ENOENT 挡住，界面上表现为「点了同步就报错」）；四份 `scans.json` 重扫后 `root` 都落在 `data/market/...`、全文再无旧路径。新增 `scan-cache.test.ts` 一例（根不符 → 作废重扫、dirPath 换到新根）。

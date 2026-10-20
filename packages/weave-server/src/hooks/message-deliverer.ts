@@ -789,9 +789,12 @@ export class MessageDeliverer {
     for (const msg of [...this.memory.values()].reverse()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
-      // 长文本按「包含」认（宿主可能给 prompt 加前缀/拼多段）；短文本只认**整条相等**
-      // ——不是放宽而是精确：短消息整条相等才没有误配空间，也就轮不到「太短不能比」。
-      const textHit = !!want && (want.length >= ACK_MIN_TEXT ? seenRaw.includes(want) : seenRaw === want);
+      // 长文本按「包含」认（宿主可能给 prompt 加前缀/拼多段）；短文本认**尾部相等**：
+      // 层② 是往输入框追加，框里先在的内容只会垫在提交原文前面（「1」+「继续」→
+      // 「1继续」、两条队列行并一条 →「继续继续」），整条相等在这些实测形态面前永不
+      // 命中，「已发出」行只能一路挂到未回执闸。尾部相等仍比包含紧：宿主自己接的
+      // 后文（「继续……不要」）不认。
+      const textHit = !!want && (want.length >= ACK_MIN_TEXT ? seenRaw.includes(want) : seenRaw.endsWith(want));
       const imageHit =
         (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
       if (!textHit && !imageHit) continue;
@@ -818,6 +821,27 @@ export class MessageDeliverer {
       this.scheduleFlushContinuation(sessionId);
     }
     return imageIds;
+  }
+
+  /**
+   * 回合判死（`StopFailure`）= 输入框恢复响应的信号：重试态对 hook 静默（宿主只在
+   * 回合放弃时才冒头），层② 贴进框的那记回车被吞掉的正文还积在框里——此刻补一记
+   * 回车（同重发「只补回车」的语义）把残框提交掉，提交出来的 UPS 按放宽比对核销
+   * 在途、闸随之自然解除。补不动（pane 没了 / 等的不是终端行）就什么也不做，回落
+   * 120s 布防与 10 分钟自动清除的老节拍。
+   */
+  async onSessionStopFailure(sessionId: string): Promise<void> {
+    const messageId = this.awaitingAck.get(sessionId);
+    if (messageId === undefined) return;
+    const msg = this.memory.get(messageId);
+    // 只补层② 终端行：socket/中继交出去就进了会话自己的队列，没有「贴进框没提交」这回事。
+    if (!msg || msg.via !== 'terminal' || msg.status !== 'delivered') return;
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    if (!session?.projectId) return;
+    const project = this.deps.projects.getById(session.projectId);
+    if (!project) return;
+    const pane = await this.terminalPaneFor(session, project);
+    if (pane) void this.runTerminalSubmit(messageId, pane.id);
   }
 
   /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */

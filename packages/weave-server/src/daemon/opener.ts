@@ -2176,6 +2176,24 @@ function weztermPidAlive(pid: number): boolean {
 }
 
 /**
+ * `gui-sock-<pid>` 那个 pid 是否**真是它的 GUI**。pid 会被复用，`weztermPidAlive`
+ * 只答「有进程占着这个号」——死 socket 因此能一直冒充活实例（实测 GUI 50172 死后，
+ * daemon 仍每隔一分钟对着它的 socket spawn 一次 `wezterm cli`）。
+ * 只在该 socket 探活已经失败后调用：这时多花一枪 tasklist 不算什么。
+ */
+async function weztermGuiAlive(pid: number): Promise<boolean> {
+  if (!weztermPidAlive(pid)) return false;
+  if (process.platform !== 'win32') return true;
+  const listed = await captureCommand(
+    'tasklist',
+    ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+    undefined,
+    2000,
+  );
+  return listed?.ok === true && /wezterm-gui\.exe/i.test(listed.out);
+}
+
+/**
  * socket 路径 → 它绑定的 GUI 进程 pid（`gui-sock-<pid>`）；非该形态返回 null——
  * 判死无据时宁可只冷却，也不永久拉黑。
  */
@@ -2231,7 +2249,15 @@ export function weztermSocketCandidates(platform: NodeJS.Platform): string[] {
     seen.add(key);
     out.push(path);
   };
-  if (process.env.WEZTERM_UNIX_SOCKET) push(process.env.WEZTERM_UNIX_SOCKET);
+  // env 那支与目录扫描同一条判据：`gui-sock-<pid>` 的 GUI 进程已死 = 这段路径永久
+  // 失效。不过这一关，daemon 从旧 pane 继承来的死 socket 会一直留在候选里——探活闸
+  // 挡不住 force（投递/作答按 mux 键点名时恒探它），实测每隔一分钟白 spawn 一次
+  // `wezterm cli`。非 gui-sock 形态（自定义 socket）判死无据，照旧交给探活。
+  const envSocket = process.env.WEZTERM_UNIX_SOCKET;
+  if (envSocket) {
+    const pid = weztermGuiPidOf(envSocket);
+    if (pid === null || weztermPidAlive(pid)) push(envSocket);
+  }
   const home = platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
   if (home) weztermGuiSocksIn(join(home, '.local', 'share', 'wezterm')).forEach(push);
   if (platform !== 'win32' && process.env.XDG_RUNTIME_DIR) {
@@ -2324,7 +2350,7 @@ async function weztermLiveMuxes(
           // 一次偶发非零退出就会把活实例按到 daemon 重启为止（分块掉行、停止键
           // 全班失效的成因）。进程还在却退出非零 = GUI 忙 / 瞬时拒绝 → 只冷却。
           const guiPid = weztermGuiPidOf(socket);
-          if (listed && !listed.timedOut && guiPid !== null && !weztermPidAlive(guiPid)) {
+          if (listed && !listed.timedOut && guiPid !== null && !(await weztermGuiAlive(guiPid))) {
             probeGate.failed(socket);
           } else probeGate.cooledDown(socket);
           return null;

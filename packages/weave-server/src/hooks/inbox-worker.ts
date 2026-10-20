@@ -416,6 +416,9 @@ export interface IngestedHandlerDeps {
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。
      *  `eventId` 随回执记下（对话面按它把投递行挂到这条事件的气泡上）。 */
     onSessionPrompt?(sessionId: string, prompt: string, eventId?: number): string[];
+    /** 回合判死（`HARNESS_LIFECYCLE[<harness>].closeFailed`）= 输入框恢复响应的信号：
+     *  层② 已贴进框、没回执的队头行立即补一记回车，不等未回执闸的节拍。 */
+    onSessionStopFailure?(sessionId: string): Promise<void> | void;
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
@@ -517,6 +520,14 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
             record.eventId,
           ) ?? [];
         if (ids.length > 0) deps.uploads?.linkToEvent(record.eventId, ids);
+      }
+      // 回合判死（closeFailed）= 输入框恢复响应：重试态期间 hook 静默，宿主只在这时
+      // 冒头——层② 在飞的队头行立即补一记回车，把被吞回车的残框提交掉。
+      const failedCloses: readonly string[] = isHarness(record.input.source)
+        ? HARNESS_LIFECYCLE[record.input.source].closeFailed
+        : [];
+      if (failedCloses.includes(record.input.eventType)) {
+        void deps.messagePipe?.onSessionStopFailure?.(record.input.sessionId);
       }
       // 会话退出（谁是退出事件归 harness 生命周期表）：旁路事实随进程作废——
       // inbox 凭据出盘、pane 定位清，压队的行也已成死信（sessionExited 内一并落定）。

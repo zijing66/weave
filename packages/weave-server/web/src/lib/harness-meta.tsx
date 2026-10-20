@@ -1,5 +1,24 @@
-import { Asterisk, Hexagon, Loader2, type LucideIcon } from 'lucide-react';
+import type { ComponentType } from 'react';
+import { Asterisk, Loader2 } from 'lucide-react';
 import type { Harness } from '@weavecode/core/harness';
+
+/**
+ * Codex 标记：六角线圈——单笔从外圈顶点逐边收缩盘入中心（每边约 -12%），
+ * 替代 lucide Hexagon 的空框；旋转起来（harness-run-codex）读作涡轮在转。
+ */
+function CodexMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path
+        d="M12 1.1L3.72 7.22L4.73 16.2L12 19.36L17.59 15.23L16.9 9.17L12 7.04L8.23 9.83L8.69 13.91"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /**
  * harness 的展示元数据单点表（样式 / 图标 / 显示名）。web 侧的「harness 知识」
@@ -19,8 +38,8 @@ export interface HarnessUi {
   badge: string;
   /** 来源徽标配色（日志/事件链，`hook-payload.SOURCE_STYLES`）。 */
   source: string;
-  /** 会话状态图标。 */
-  icon: LucideIcon;
+  /** 会话状态图标（lucide 图标，或本文件内的 harness 专属 SVG 标记）。 */
+  icon: ComponentType<{ className?: string }>;
   /** 图标运行态色。 */
   iconRunning: string;
   /** 图标静默态色。 */
@@ -48,7 +67,7 @@ export const HARNESS_UI = {
     tooltip: 'Codex',
     badge: 'border-cyan-800/50 bg-cyan-900/40 text-cyan-300',
     source: 'bg-cyan-900/40 text-cyan-300',
-    icon: Hexagon,
+    icon: CodexMark,
     iconRunning: 'text-cyan-400',
     iconIdle: 'text-cyan-400/45',
     runAnimation: 'harness-run-codex',

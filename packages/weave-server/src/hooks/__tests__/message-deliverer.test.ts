@@ -1051,6 +1051,44 @@ describe('MessageDeliverer 裁决表', () => {
     expect(sendText).toHaveBeenCalledTimes(1);
   });
 
+  it('StopFailure = 输入框恢复响应：已贴进框、没回执的队头行立即补一记回车（不等闸的节拍）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendKeys = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys,
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const sent = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'no ack after paste',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (sent as { messageId: string }).messageId;
+    await vi.waitFor(() => expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered' }));
+
+    // 回合判死一到就补回车：正文只贴过一次，缺的只是那记提交键
+    await deliverer.onSessionStopFailure(SESSION_ID);
+    expect(sendKeys).toHaveBeenCalledWith('pane-1', '\r');
+    expect(sendText).toHaveBeenCalledTimes(1);
+
+    // 回执已到（等待位撤防）→ 不再补
+    deliverer.onSessionPrompt(SESSION_ID, 'no ack after paste');
+    await deliverer.onSessionStopFailure(SESSION_ID);
+    expect(sendKeys).toHaveBeenCalledTimes(1);
+  });
+
   it('层序随面变：编排域（非 oneWay）无 inbox 凭据时，中继先于终端', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const fake = createFakeSpawn();
@@ -1201,8 +1239,9 @@ describe('MessageDeliverer 裁决表', () => {
       expect.objectContaining({ kind: 'message.acknowledged', messageId: id }),
     );
 
-    // 短文本（< ACK_MIN_TEXT）只认**整条相等**：包含不算，本体相等才算。
-    // 另起一个实例：上面那条中继还在飞，同一会话再发会直接落队列（没有内存行可比）。
+    // 短文本（< ACK_MIN_TEXT）认**尾部相等**：宿主在后面接的别的后文不算，尾部是本
+    // 行原文才算。另起一个实例：上面那条中继还在飞，同一会话再发会直接落队列（没有
+    // 内存行可比）。
     const shortDeliverer = new MessageDeliverer(
       makeDeps({ spawnImpl: createFakeSpawn().spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
     );
@@ -1216,7 +1255,7 @@ describe('MessageDeliverer 裁决表', () => {
     const tinyId = (tiny as { messageId: string }).messageId;
     shortDeliverer.onSessionPrompt(SESSION_ID, 'ok 我这边没问题');
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBeUndefined();
-    // 短正文只认整条相等（包含匹配对短文本会误配）——本体相等即回执
+    // 尾部相等即回执（整条相等是它的特例）
     shortDeliverer.onSessionPrompt(SESSION_ID, 'ok');
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBe(true);
   });
@@ -1264,6 +1303,47 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(firstId)?.acked).toBe(true);
     expect(deliverer.getMessage(secondId)?.acked).toBe(true);
     expect(deliverer.getMessage(secondId)?.ackedEventId).toBe(901);
+  });
+
+  it('短文本核销：框内残留垫在前面（1继续继续）也认——整条相等在这些形态面前永不命中', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText: vi.fn().mockResolvedValue(undefined),
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const first = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '继续',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const firstId = (first as { messageId: string }).messageId;
+    // 清等待位让第二条同时在飞（同上一条测试的手法）：两条「继续」都贴进了框
+    deliverer.sessionExited(SESSION_ID);
+    const second = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '继续',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const secondId = (second as { messageId: string }).messageId;
+
+    // 实测形态：框里先有一个手敲的「1」，两条「继续」叠进去后一并提交——尾部相等
+    // 把两条都核销（整条相等则两条都只能挂到未回执闸，队列每条吃一次 10 分钟闸）
+    deliverer.onSessionPrompt(SESSION_ID, '1继续继续', 910);
+    expect(deliverer.getMessage(firstId)?.acked).toBe(true);
+    expect(deliverer.getMessage(secondId)?.acked).toBe(true);
+    expect(deliverer.getMessage(firstId)?.ackedEventId).toBe(910);
   });
 
   it('中继失败但回执已到：按已送达收、不置闸（已送达的会话队列不能被无限期停住）', async () => {

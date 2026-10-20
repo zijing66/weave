@@ -41,7 +41,7 @@
 - **消息域 = 纯递送管道，非记录系统**：消息唯一归宿是目标会话自己的转录，队列送达即删、不落任何 DB 行。投递裁决唯一单点 = `MessageDeliverer`；`GET /messaging/capabilities` 纯派生矩阵，web 按钮与选项全表驱动、不写死 harness 白名单；触发源 ⊥ 投递通道，**不预抽 `TriggerSource`**。（§4）
 - **手动面恒终端**：`/sessions/:id/messages` 无 `mode` 入参、恒 prompt 通道，且恒带 `forceTerminal: true` = 只剩层② 终端击键——直投与中继在宿主眼里都是「另一个会话发的」，要用户权威只有终端击键。**层序随面变**（手动 = 只剩层②；编排 = 直投 → 中继 → 终端），唯一实现 = `MessageDeliverer`，调用方不自排；队列冲洗同序。（§4）
 - **投递语义以官方契约为准**：中继 exit 0 只说明「已交给对方」，接收侧可能 Held/Refused ⇒ `delivered` **不是「已读」**，UI 文案别写成已读；严格 **1 送 1 回执**，同一会话快速连发会在发送侧被拒。（§3）
-- **投递可靠性**：回执未到（`ackStallMs`）/ 投递失败 → 该会话冲洗暂停（闸），解除 = 回执命中 / 手动重发 / 到点自动清除。**回执先到即已送达**——失败落定按「当前行」判、不看投递前的快照；回执比对先剥运输装饰，短文本只认整条相等，一条 UPS 可核销多条在途。判死（`pidAliveOf === false`）即不入队，落 `failed` + `offline`，不假装排队。（§4）
+- **投递可靠性**：回执未到（`ackStallMs`）/ 投递失败 → 该会话冲洗暂停（闸），解除 = 回执命中 / 手动重发 / 到点自动清除。**回执先到即已送达**——失败落定按「当前行」判、不看投递前的快照；回执比对先剥运输装饰，短文本认尾部相等（层② 往框里追加、残文只会垫在前面），一条 UPS 可核销多条在途；回合判死（`closeFailed`）= 输入框恢复响应的信号，在飞的层② 队头行立即补一记回车、不等闸的节拍。判死（`pidAliveOf === false`）即不入队，落 `failed` + `offline`，不假装排队。（§4）
 - **层①-a 直投**（claude 专属，其他 harness `PromptInboxSpec` = null）：凭据随 hook 事件**旁路**上报（不进 payload/DB/UI），落盘只解 daemon 自己的重启、`SessionEnd` 到达即出盘并落定压队行（会话行与对话照常保留）。协议/键名归 claude adapter，server 只做通用传输。（§3）
 - **中继（SendMessage）为何保留**：手动面已不走它，但它有 socket 结构上做不到的三件事——具名来源、回复面、覆盖非 weave 会话。启动开关 `--strict-mcp-config --disable-slash-commands` 恒开；**禁用 `--bare`**（该版本下 `--tools` 白名单失效 + 只认 API key）。中继是每轮次一次性子进程：不设超时、daemon 退出统一回收。（§3）
 - **投递诊断只读**：三层「为什么送不到」的唯一诊断面 = `GET /messaging/diagnostics` + `weave doctor`，口径恒被动（不连 socket、不枚举 pane、不起中继），凭据只出「有没有」。采集脚本是 init 生成物、不随包升级 ⇒ 存量项目「发消息排队」先看它：重跑 `weave init` 即修，重装包不修。（§3）
