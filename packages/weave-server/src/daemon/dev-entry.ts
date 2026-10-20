@@ -40,6 +40,7 @@ import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
+import { readStatuslineFacts } from '../statusline/manager.js';
 import { WatchService } from '../watch/watch-service.js';
 import { weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
@@ -265,6 +266,26 @@ async function main(): Promise<void> {
     { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   interruptRefresher.start();
+  // 对话页底条的 git 事实（分支 / 上游差异 / diff 行数）：由宿主的状态栏脚本算好
+  // 落在缓存里，weave 自己不探 git。缓存每渲染一次就重写，但没人会通知 dashboard——
+  // 底条只在挂载时读一次，两扇对话窗开窗时刻不同就停在不同的快照上（同一个仓库，
+  // 一个显示 main (20↑)、另一个还是 main）。5s 一拍复读活跃项目的缓存，事实变了
+  // 就发失效帧，底条既有的 invalidator 各自重拉。
+  const statuslineRefresher = new SnapshotRefresher(
+    () => {
+      const facts: Record<number, unknown> = {};
+      for (const p of projects.list()) facts[p.id] = readStatuslineFacts(p.path);
+      return facts;
+    },
+    dataBus,
+    {
+      key: 'statusline',
+      intervalMs: 5_000,
+      shouldRun: () => dataBus.hasSubscribers(),
+      invalidateOnly: true,
+    },
+  );
+  statuslineRefresher.start();
   // 在途消息角标（会话行）：无定时器——message.* 帧驱动重算、值变才推快照。
   const inflightRefresher = new InflightCountsRefresher(
     () => messageDeliverer.listInflightCounts(),

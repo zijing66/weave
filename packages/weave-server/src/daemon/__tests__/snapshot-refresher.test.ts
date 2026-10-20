@@ -30,6 +30,26 @@ describe('SnapshotRefresher', () => {
     expect(frames).toHaveLength(3);
   });
 
+  it('invalidateOnly 只发失效键（前端按 key 重拉，不拿快照直写状态）', () => {
+    const bus = new DataBus();
+    const frames = collect(bus);
+    let facts: Record<number, unknown> = { 10: { git: { branch: 'main' } } };
+    const refresher = new SnapshotRefresher(() => facts, bus, {
+      key: 'statusline',
+      invalidateOnly: true,
+    });
+
+    refresher.tick();
+    expect(frames).toEqual([{ key: 'statusline' }]); // 没有 payload
+    refresher.tick();
+    expect(frames).toHaveLength(1); // 同值不重复推
+
+    facts = { 10: { git: { branch: 'main', sync: '(20↑)' } } };
+    refresher.tick();
+    expect(frames).toHaveLength(2);
+    expect(frames[1]).toEqual({ key: 'statusline' });
+  });
+
   it('没人看时不探（shouldRun 为假直接跳过，注册表都不读）', () => {
     const bus = new DataBus();
     const snapshot = vi.fn(() => ({ s1: true }));

@@ -2,7 +2,7 @@ import type { DataBus, DataKey } from './data-bus.js';
 
 /**
  * SnapshotRefresher — 「前端不轮询，后端有人看时定期探、只在值变化时推绝对值快照」
- * 的通用骨架（两个使用者：会话存活 pidAlive、会话中断态）。
+ * 的通用骨架（使用者：会话存活 pidAlive、会话中断态、状态栏底条的 git 事实）。
  *
  * 为什么要有它：这两类事实都可能**没有** hook 事件来触发变化（claude 进程被杀 =
  * 无 SessionEnd；用户按 ESC 打断 = 无任何事件），GET /sessions 里算好的值于是卡在
@@ -17,6 +17,12 @@ export interface SnapshotRefresherOptions {
   intervalMs?: number;
   /** 是否值得探测（一般为「有 SSE 客户端」）。缺省恒真（测试用）。 */
   shouldRun?: () => boolean;
+  /**
+   * 只发失效帧（不带 payload）：前端按 key 调既有 fetcher 重拉，而不是拿这份
+   * 快照直写状态。用于「快照是别的进程算的、前端已经有一份更完整的取数口」的域
+   * （如 statusline 底条的 git 事实：同一份 GET 里还带着配置与脚本）。
+   */
+  invalidateOnly?: boolean;
 }
 
 export class SnapshotRefresher {
@@ -51,7 +57,7 @@ export class SnapshotRefresher {
       const fingerprint = JSON.stringify(payload);
       if (fingerprint === this.lastFingerprint) return;
       this.lastFingerprint = fingerprint;
-      this.bus.emit({ key: this.options.key, payload });
+      this.bus.emit(this.options.invalidateOnly ? { key: this.options.key } : { key: this.options.key, payload });
     } catch {
       // 探测失败（注册表/转录读不到）不推不抛：下个周期自会重试
     }

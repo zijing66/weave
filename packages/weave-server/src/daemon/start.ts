@@ -11,6 +11,7 @@ import { createRuntimeRegistry } from '@weavecode/harness';
 import { TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
+import { readStatuslineFacts } from '../statusline/manager.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
@@ -292,6 +293,26 @@ export function startDaemon(): void {
     { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   interruptRefresher.start();
+  // 对话页底条的 git 事实（分支 / 上游差异 / diff 行数）：由宿主的状态栏脚本算好
+  // 落在缓存里，weave 自己不探 git。缓存每渲染一次就重写，但没人会通知 dashboard——
+  // 底条只在挂载时读一次，两扇对话窗开窗时刻不同就停在不同的快照上（同一个仓库，
+  // 一个显示 main (20↑)、另一个还是 main）。5s 一拍复读活跃项目的缓存，事实变了
+  // 就发失效帧，底条既有的 invalidator 各自重拉。
+  const statuslineRefresher = new SnapshotRefresher(
+    () => {
+      const facts: Record<number, unknown> = {};
+      for (const p of projects.list()) facts[p.id] = readStatuslineFacts(p.path);
+      return facts;
+    },
+    dataBus,
+    {
+      key: 'statusline',
+      intervalMs: 5_000,
+      shouldRun: () => dataBus.hasSubscribers(),
+      invalidateOnly: true,
+    },
+  );
+  statuslineRefresher.start();
   // 在途消息角标同理，但没有定时器：变化源全是 message.* 帧（事件驱动），
   // 帧到即重算、值变才推绝对值快照；新 SSE 客户端接入补一份首帧。
   const inflightRefresher = new InflightCountsRefresher(
