@@ -15,8 +15,10 @@ import { isVersionAtLeast } from '../hooks/toolkit.js';
  * 这里问的是「用户 init 时装了什么」。
  *
  * 老项目 / 未 weave 化的项目没有该字段：回落注册表首个（起会话的既有默认，不写死名字）。
+ *
+ * 「这个项目该不该采某个 harness 的日志」也走它（拉取式采集的 cwd 白名单来源）。
  */
-async function readProjectHarnesses(projectPath: string): Promise<Harness[]> {
+export async function projectHarnessIds(projectPath: string): Promise<Harness[]> {
   const fallback: Harness[] = [HARNESS_KEYS[0]!];
   let raw: string;
   try {
@@ -95,7 +97,7 @@ export async function projectHarnesses(
   /** 版本探测（测试注入；缺省真跑 `<bin> --version`）。 */
   versionOf: (bin: string) => Promise<string | null> = detectBinVersion,
 ): Promise<ProjectHarness[]> {
-  const ids = await readProjectHarnesses(projectPath);
+  const ids = await projectHarnessIds(projectPath);
   return Promise.all(
     ids.map(async (id) => {
       const spec = registry?.get(id)?.resume;

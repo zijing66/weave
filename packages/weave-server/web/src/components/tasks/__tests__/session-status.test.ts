@@ -243,9 +243,10 @@ describe('canInterrupt', () => {
 });
 
 describe('hasTurnSignal', () => {
-  it('只认有「回合开合」事件名的 harness（codex 空占位 → false）', () => {
+  it('只认有「回合开合」事件名的 harness', () => {
     expect(hasTurnSignal('claude')).toBe(true);
-    expect(hasTurnSignal('codex')).toBe(false);
+    // codex 也有回合开合（rollout 里的 UserPromptSubmit / task_complete）
+    expect(hasTurnSignal('codex')).toBe(true);
     expect(hasTurnSignal(null)).toBe(false);
     expect(hasTurnSignal(undefined)).toBe(false);
     expect(hasTurnSignal('nope')).toBe(false);

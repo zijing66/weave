@@ -94,8 +94,8 @@ export type SessionListEntry = TerminalBlock | { kind: 'row'; row: SessionRow };
 /**
  * 终端分块（窗口管理）：**同一块可见屏幕**上的会话聚成一块，块的位置 = 首成员
  * 在活动序里的位置，块内保持活动序。没有屏幕信息的行（没装 hooks / 终端不支持
- * 反查 / pane 已关）不分组、原位留在块外——不猜它属于哪个终端。一块屏只有一个
- * 会话时不立块头（那行没跟人挤在一起，立块头只是噪音）。
+ * 反查 / pane 已关）不分组、原位留在块外——不猜它属于哪个终端。块里只有一个
+ * 会话也照样立块头：块头答的是「这块屏在哪」，与会话数无关。
  */
 export function groupByTerminal(rows: readonly SessionRow[]): SessionListEntry[] {
   const out: SessionListEntry[] = [];
@@ -114,11 +114,7 @@ export function groupByTerminal(rows: readonly SessionRow[]): SessionListEntry[]
     }
     block.rows.push(row);
   }
-  return out.map((entry) =>
-    entry.kind === 'block' && entry.rows.length === 1
-      ? { kind: 'row', row: entry.rows[0]! }
-      : entry,
-  );
+  return out;
 }
 
 /**

@@ -37,6 +37,7 @@ export const EVENT_TYPE_STYLES: Record<string, string> = {
   Notification: 'bg-amber-900/40 text-amber-300',
   Stop: 'bg-orange-900/40 text-orange-300',
   StopFailure: 'bg-red-900/40 text-red-300',
+  TurnAborted: 'bg-slate-900/40 text-slate-300',
   SubagentStop: 'bg-orange-900/40 text-orange-300',
   SubagentStart: 'bg-orange-900/40 text-orange-300',
   PostToolUseFailure: 'bg-red-900/40 text-red-300',

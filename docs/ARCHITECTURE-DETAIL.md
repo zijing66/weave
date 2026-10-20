@@ -22,9 +22,20 @@
 
 新增抽象类按需即可，但扩张前先与项目所有者确认。
 
-## §2 能力槽与 statusline 面
+## §2 能力槽与 statusline / logs 面
 
-十一能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十二能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+
+### logs 槽（拉取式采集）
+
+`LogSource` = `poll(options) → LogRecord[]` + `health()`。`events` 槽答「一份上报怎么归一」，前提是有人把上报递进来（claude 靠 hook 脚本写 inbox 文件）；没有 push 面的 harness 只能拉，这个槽就是那条面。今天唯一实现 = codex（`weave-harness/src/codex/rollout.ts`）。
+
+- **尾读 rollout JSONL**：codex 把每个会话 durable 地写在 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`（归档的在 `archived_sessions/`）。会话身份 = 首行 `session_meta.session_id`（与文件名里的 uuid 同值）；实测 `codex resume` **接着写同一个文件**（`ordinal` 续号、不重发 `session_meta`），子线程 / 归档仍可能让一个 id 跨多个文件 ⇒ 游标按**文件字节偏移**记（`<dataDir>/logs/codex/cursors.json`），不假设一 id 一文件。
+- **规范化事件名**：codex 的线名（`task_complete` / `turn_aborted` / `exec_command_end` / 两版用户输入落点 `user_message` 与 `item_completed(UserMessage)`）在 adapter 里归一成 `SessionStart` / `UserPromptSubmit` / `Stop` / `TurnAborted` / `PostToolUse`，服务端的 `turnOpen` 判据、`hasRun`、事件链配色一条 SQL 都不改。
+- **卷控三道**：白名单（只认上述五类行）、单行 512KB 上限、单拍预算（400 条 / 4MB，游标**逐行**推进——一次跳到文件尾等于静默丢事件）。首次发现的文件只回填 256KB 尾窗（2 分钟内写过且 <1MB 的从头读），7 天以上的只登记不读。
+- **`cwdWhitelist` 的契约**：源自己负责路径归一（大小写 / 分隔符 / 解析），命中即把**白名单原文**回填进 `report.cwd`，调用方按原样等值匹配到项目。
+- **进程内锁**：`<stateDir>/.lock` 存 pid（`pidAlive` 判活接管、60s 节流心跳）——dev 与 start 两个 daemon 共用一个数据目录时不双写同一批事件。
+- **没进采集面的**（诚实清单）：`reasoning` / `token_count` / `world_state` / `turn_context` / 图片附件 / `mcp_tool_call` 的入参与结果都不是事件，dashboard 不展示；codex 也没有「侧边聊天」「阻塞式问答」「压缩态」——对应表位留 null / 空。
 
 ### statusline 面
 
@@ -595,7 +606,7 @@ dashboard 右下角浮层，配置齐才显示。走**服务端代理**——web
 
 数据面吃既有隐藏刷新（`daemon/terminal-topology-refresher.ts` 快照 = `{counts, terminals}`，帧键 `terminalTopology`）：`GET /sessions` 回上次快照、增量经 push 帧补丁行（web 不自算、不新开探测）；`locateScreens` 走 10s 探活缓存（展示滞后无感），而**投递路径的定位必须实时枚举**（缓存会把消息落进刚关的 pane）。
 
-web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚成一块，块位 = 首成员位置、块内保持活动序；**同屏只有一个会话不立块头**，反查不到的行不分组、原位留在块外）。
+web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚成一块，块位 = 首成员位置、块内保持活动序；**块里只有一个会话也照样立块头**——块头答的是「这块屏在哪」，与会话数无关；反查不到的行不分组、原位留在块外）。
 
 ### 三处「开终端类」按钮的 loading 同口径
 

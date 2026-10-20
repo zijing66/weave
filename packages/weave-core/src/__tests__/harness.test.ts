@@ -62,22 +62,23 @@ describe('HARNESS_LIFECYCLE', () => {
     });
   });
 
-  it('codex 占位条目类型完整（B0 闸门，事件表仍空）', () => {
+  it('codex：TurnAborted 只进 close 不进 closeFailed（用户自己断的不算失败）', () => {
     expect(HARNESS_LIFECYCLE.codex).toEqual({
-      open: '',
-      close: [],
+      open: 'UserPromptSubmit',
+      close: ['Stop', 'TurnAborted'],
       closeFailed: [],
-      sessionMarkers: [],
+      sessionMarkers: ['SessionStart'],
       subagentStop: '',
       questionTools: [],
       sessionExit: null,
     });
-    expect(HARNESS_EVENTS.codex).toHaveLength(0);
   });
 
-  it('close / closeFailed 里的事件都在采集面内（表外事件收不到，关组会失效）', () => {
-    for (const name of [...HARNESS_LIFECYCLE.claude.close, ...HARNESS_LIFECYCLE.claude.closeFailed]) {
-      expect(HARNESS_EVENTS.claude).toContain(name);
+  it('开/关组与标记事件都在采集面内（表外事件收不到，分组会失效）', () => {
+    for (const harness of ['claude', 'codex'] as const) {
+      const spec = HARNESS_LIFECYCLE[harness];
+      const names = [spec.open, ...spec.close, ...spec.closeFailed, ...spec.sessionMarkers];
+      for (const name of names) expect(HARNESS_EVENTS[harness]).toContain(name);
     }
   });
 });

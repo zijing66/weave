@@ -77,15 +77,19 @@ function turnCloseSql(alias: string): string {
 export class SessionRepository {
   constructor(private readonly db: DatabaseSync) {}
 
-  /** 事件到达时 upsert（刷新 last_seen_at，project_id 首次非空时补上）。 */
-  touch(sessionId: string, projectId?: number | null): SessionRow {
-    const now = new Date().toISOString();
+  /**
+   * 事件到达时 upsert（刷新 last_seen_at，project_id 首次非空时补上）。
+   * `at` = 事件真实时刻（拉取式采集回填历史时带上）；`last_seen_at` 只增不减——
+   * 回填的旧事件晚到，不能把一个活跃会话的时间往回拨。
+   */
+  touch(sessionId: string, projectId?: number | null, at?: string | null): SessionRow {
+    const now = at ?? new Date().toISOString();
     this.db
       .prepare(
         `INSERT INTO sessions (session_id, project_id, last_seen_at, created_at)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
-           last_seen_at = excluded.last_seen_at,
+           last_seen_at = MAX(sessions.last_seen_at, excluded.last_seen_at),
            project_id = COALESCE(sessions.project_id, excluded.project_id)`,
       )
       .run(sessionId, projectId ?? null, now, now);

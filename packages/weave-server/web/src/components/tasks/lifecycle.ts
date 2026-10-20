@@ -20,12 +20,11 @@ export const HARNESS_LIFECYCLE = {
     questionTools: ['AskUserQuestion', 'ExitPlanMode'],
     sessionExit: 'SessionEnd',
   },
-  /** Codex 事件 B0 闸门未开，空值占位（与 core 同步）。 */
   codex: {
-    open: '',
-    close: [],
+    open: 'UserPromptSubmit',
+    close: ['Stop', 'TurnAborted'],
     closeFailed: [],
-    sessionMarkers: [],
+    sessionMarkers: ['SessionStart'],
     subagentStop: '',
     questionTools: [],
     sessionExit: null,

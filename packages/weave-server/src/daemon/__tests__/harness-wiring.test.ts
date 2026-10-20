@@ -55,14 +55,14 @@ describe('批 4b：registry 派生 adapters 与旧构造等价', () => {
   const derived = harnesses.byCapability('events').flatMap((d) => d.events ?? []);
   const legacy = [new ClaudeCodeAdapter()];
 
-  it("byCapability('events') 派生列表 == [ClaudeEventSource]（旧 [ClaudeCodeAdapter()]）", () => {
-    expect(derived).toHaveLength(legacy.length);
-    expect(derived).toHaveLength(1);
+  it("byCapability('events') 派生列表：claude 在前，codex 也进来（尾读 rollout 那一路）", () => {
     expect(derived[0]).toBeInstanceOf(ClaudeEventSource);
     expect(derived[0]!.source).toBe(legacy[0]!.source);
     expect(derived[0]!.source).toBe('claude');
-    // 事件表来自批 1 下沉 core 的 HARNESS_EVENTS.claude（旧 HookAdapter 无此字段）
+    // 事件表来自批 1 下沉 core 的 HARNESS_EVENTS（旧 HookAdapter 无此字段）
     expect(derived[0]!.events).toEqual(HARNESS_EVENTS.claude);
+    expect(derived.map((a) => a.source)).toEqual(['claude', 'codex']);
+    expect(derived[1]!.events).toEqual(HARNESS_EVENTS.codex);
   });
 
   it('normalize 输出逐字段一致（含畸形 / 空 eventType payload）', () => {
@@ -80,9 +80,9 @@ describe('批 4b：registry 派生 adapters 与旧构造等价', () => {
     // claude 命中：两侧找到同一规格的 adapter，归一化结果一致
     expect(findNew(SAMPLE_REPORTS[0]!)).toEqual(findLegacy(SAMPLE_REPORTS[0]!));
     // 未知 source：两侧同样找不到
-    const codexReport: HookReport = { source: 'codex', eventType: 'X', payload: '{}' };
-    expect(findNew(codexReport)).toBeUndefined();
-    expect(findLegacy(codexReport)).toBeUndefined();
+    const bogusReport = { source: 'bogus', eventType: 'X', payload: '{}' } as unknown as HookReport;
+    expect(findNew(bogusReport)).toBeUndefined();
+    expect(findLegacy(bogusReport)).toBeUndefined();
   });
 });
 
@@ -130,7 +130,8 @@ describe('批 4b：inbox 消费侧的适配器派生（worker 自持 registry）
     const derived = createRuntimeRegistry().byCapability('events').flatMap((d) => d.events ?? []);
     writeFileSync(
       path.join(hooksDir, 'inbox', 'wiring.jsonl'),
-      inboxLine(SAMPLE_REPORTS[0]!) + inboxLine({ source: 'codex', eventType: 'X', payload: '{}' }),
+      inboxLine(SAMPLE_REPORTS[0]!) +
+        inboxLine({ source: 'bogus', eventType: 'X', payload: '{}' } as unknown as HookReport),
     );
 
     const records = drainInboxOnce({

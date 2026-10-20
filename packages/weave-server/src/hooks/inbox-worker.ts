@@ -9,8 +9,12 @@ import {
   startedModelOf,
   switchedModelOf,
   type EventSource,
+  type LogRecord,
+  type LogSource,
 } from '@weavecode/harness';
 import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
+import { getDataDir } from '../db/paths.js';
+import { projectHarnessIds } from '../daemon/project-harnesses.js';
 import { openDatabase } from '../db/db.js';
 import { HookEventRepository, type HookEventInput } from '../repositories/hook-events.js';
 import { ProjectRepository, type ProjectRow } from '../repositories/projects.js';
@@ -235,15 +239,97 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
  * 的 autoDeleteAt）：无 prompt 的新会话 1 小时快过期、收到过 prompt 的走 settings
  * `sessions.idleDays` 闲置窗，SessionSweeper 过期即清（复用手动删会话级联）。
  */
-function insertBatch(deps: InboxDrainDeps, project: ProjectRow, inputs: HookEventInput[]): number[] {
+function insertBatch(deps: IngestSink, project: ProjectRow, inputs: HookEventInput[]): number[] {
   const ids = deps.hookEvents.insertMany(inputs);
-  const touched = new Set<string>();
+  // 每会话只 touch 一次，取该批里最晚的时刻（回填的旧事件不能把 last_seen 往回拨）
+  const seen = new Map<string, string | undefined>();
   for (const input of inputs) {
-    if (!input.sessionId || touched.has(input.sessionId)) continue;
-    touched.add(input.sessionId);
-    deps.hookSessions.touch(input.sessionId, project.id);
+    if (!input.sessionId) continue;
+    const prev = seen.get(input.sessionId);
+    const at = input.createdAt;
+    if (!seen.has(input.sessionId) || (at && (!prev || at > prev))) seen.set(input.sessionId, at);
   }
+  for (const [sessionId, at] of seen) deps.hookSessions.touch(sessionId, project.id, at);
   return ids;
+}
+
+/** 入库只需要这两张表（hook 文件管道与日志轮询共用的最小依赖）。 */
+interface IngestSink {
+  hookEvents: Pick<HookEventRepository, 'insertMany'>;
+  hookSessions: Pick<SessionRepository, 'touch'>;
+}
+
+// ---- 拉取式采集（`logs` 槽）：codex rollout 这类没有 push 面的 harness ----
+
+/** 日志源扫描间隔：durable 文件尾读，秒级够用，不与 200ms 的 inbox 热循环同频。 */
+export const LOGS_TICK_MS = 1000;
+
+export interface LogPollDeps extends IngestSink {
+  /** 活跃项目（归档不采：归档即焚，与 inbox 同口径）。 */
+  projects: Pick<ProjectRepository, 'list'>;
+  /** 归一化面（规范事件名）——与 hook 侧同一份 adapter，不另造一条链。 */
+  adapters: readonly EventSource[];
+  /** 游标根：`<dataDir>/logs`（每个 harness 一个子目录，路径归 harness 自己）。 */
+  logsDir: string;
+  sources: readonly LogSource[];
+}
+
+/**
+ * 一轮日志轮询 → 与 inbox **同形**的入库记录（主线程照旧补 SSE / 规则分发）。
+ *
+ * 白名单 = 「项目路径 × 该项目 init 时选的 harness」：只有真接入了这个 harness 的
+ * 项目才采（未 weave 化的项目回落默认 harness，不算），否则本机别的项目里跑的
+ * 会话会串进 dashboard。cwd 的路径归一归日志源，这里按原文等值匹配。
+ */
+export async function pollLogsOnce(deps: LogPollDeps): Promise<InboxRecord[]> {
+  if (deps.sources.length === 0) return [];
+  const byCwd = new Map<string, ProjectRow>();
+  for (const project of deps.projects.list()) {
+    const ids = await projectHarnessIds(project.path);
+    if (deps.sources.some((s) => ids.includes(s.harness))) byCwd.set(project.path, project);
+  }
+  if (byCwd.size === 0) return [];
+
+  const records: InboxRecord[] = [];
+  for (const source of deps.sources) {
+    const adapter = deps.adapters.find((a) => a.source === source.harness);
+    if (!adapter) continue;
+    let polled: LogRecord[];
+    try {
+      polled = await source.poll({
+        stateDir: join(deps.logsDir, source.harness),
+        cwdWhitelist: [...byCwd.keys()],
+      });
+    } catch {
+      continue; // 日志源读不动不该拖垮 inbox（下一拍再试）
+    }
+    const groups = new Map<ProjectRow, HookEventInput[]>();
+    for (const record of polled) {
+      const project = record.report.cwd ? byCwd.get(record.report.cwd) : undefined;
+      if (!project) continue;
+      try {
+        const input = adapter.normalize(record.report, project.id) as HookEventInput;
+        input.createdAt = record.at; // 历史回填不印成插入时刻
+        const group = groups.get(project);
+        if (group) group.push(input);
+        else groups.set(project, [input]);
+      } catch {
+        // 单条坏报告不拖垮整批
+      }
+    }
+    for (const [project, inputs] of groups) {
+      try {
+        const ids = insertBatch(deps, project, inputs);
+        for (let i = 0; i < inputs.length; i++) {
+          records.push({ eventId: ids[i]!, projectId: project.id, input: inputs[i]! });
+        }
+      } catch (e) {
+        // 游标已推进：这批读过就不重读（宁可漏这几条，也不热循环刷同一段日志）
+        console.error('[weave] log ingest failed:', e);
+      }
+    }
+  }
+  return records;
 }
 
 /** 行形 `{v, token, report, messaging?, terminal?}`；require 三样齐全（缺 token 无从归因，直接丢）。 */
@@ -371,7 +457,7 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       sessionId: record.input.sessionId ?? null,
       eventType: record.input.eventType,
       ...frameFacts(payload),
-      at: new Date().toISOString(),
+      at: record.input.createdAt ?? new Date().toISOString(),
     });
     if (record.input.sessionId) {
       // 阻塞式问答状态机：Pre/PostToolUse 与 Notification 带 toolName/raw，
@@ -504,12 +590,14 @@ interface InboxWorkerData extends InboxWorkerOptions {
 if (!isMainThread && (workerData as InboxWorkerData | undefined)?.inboxWorker === true) {
   const data = workerData as InboxWorkerData;
   const db = openDatabase(data.dbPath);
+  const registry = createRuntimeRegistry();
+  const projects = new ProjectRepository(db);
   const deps: InboxDrainDeps = {
     hooksDir: data.hooksDir,
-    projects: new ProjectRepository(db),
+    projects,
     hookEvents: new HookEventRepository(db),
     hookSessions: new SessionRepository(db),
-    adapters: createRuntimeRegistry().byCapability('events').flatMap((d) => d.events ?? []),
+    adapters: registry.byCapability('events').flatMap((d) => d.events ?? []),
   };
   const attempts = new Map<string, number>();
   const tick = (): void => {
@@ -525,4 +613,32 @@ if (!isMainThread && (workerData as InboxWorkerData | undefined)?.inboxWorker ==
   // 退出——worker 会在第一 tick 后静默死掉（表现为「积压只被爆冲一遍，之后
   // inbox 只涨不消、dashboard 再无事件」）。生命周期由主线程 terminate 掌控。
   setInterval(tick, data.tickMs ?? INBOX_TICK_MS);
+
+  // 拉取式采集与 inbox 同线程：入库仍是这一条连接、一串同步事务——
+  // 两个 tick 不会在 BEGIN/中间插进来（insertMany 是单次同步调用）。
+  const logDeps: LogPollDeps = {
+    projects,
+    hookEvents: deps.hookEvents,
+    hookSessions: deps.hookSessions,
+    adapters: deps.adapters,
+    logsDir: join(getDataDir(), 'logs'),
+    sources: registry.byCapability('logs').flatMap((d) => d.logs ?? []),
+  };
+  let polling = false;
+  const tickLogs = (): void => {
+    if (polling) return;
+    polling = true;
+    void pollLogsOnce(logDeps)
+      .then((records) => {
+        if (records.length > 0) parentPort?.postMessage(records);
+      })
+      .catch((e) => console.error('[weave] log poll failed:', e))
+      .finally(() => {
+        polling = false;
+      });
+  };
+  if (logDeps.sources.length > 0) {
+    tickLogs();
+    setInterval(tickLogs, LOGS_TICK_MS);
+  }
 }

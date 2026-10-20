@@ -62,7 +62,23 @@ export const HARNESS_EVENTS = {
     'PostModelSwitch',
   ] as const,
   /** Codex 事件待批 2 B0 调研锁定（BACKLOG §10-6）；一期不注册（B0 闸门）。 */
-  codex: [] as const,
+  /**
+   * Codex 采集（尾读 rollout JSONL，`weave-harness/src/codex/rollout.ts`）——事件名
+   * 是**规范名**：codex 的线名（`task_complete` / `turn_aborted` / …）由 adapter 归一，
+   * 服务端与 web 只认这一列。
+   */
+  codex: [
+    /** 会话落盘文件的首行 `session_meta`（新开会话 / resume 新起文件各一条）。 */
+    'SessionStart',
+    /** 用户输入：`event_msg:user_message`（≤0.150）或 `item_completed(UserMessage)`（0.163）。 */
+    'UserPromptSubmit',
+    /** 回合收尾（`task_complete`；`last_agent_message` 多为 null，由 adapter 补位）。 */
+    'Stop',
+    /** 回合被中断（`turn_aborted`，reason=interrupted）——codex 自己有这条，不必猜。 */
+    'TurnAborted',
+    /** 工具执行收尾（`exec_command_end` / `patch_apply_end`）。 */
+    'PostToolUse',
+  ] as const,
 } satisfies Record<Harness, readonly string[]>;
 
 /**
@@ -156,12 +172,16 @@ export const HARNESS_LIFECYCLE = {
     questionTools: ['AskUserQuestion', 'ExitPlanMode'],
     sessionExit: 'SessionEnd',
   },
-  /** Codex 事件待批 2 B0 调研锁定（同 HARNESS_EVENTS 闸）；空值占位，类型完整。 */
+  /**
+   * Codex（尾读 rollout JSONL，事件名见 HARNESS_EVENTS.codex）。
+   * `TurnAborted` 只进 `close` 不进 `closeFailed`：用户按 ESC 自己断掉的回合
+   * 若落「失败」态，比说「打开」更误导。
+   */
   codex: {
-    open: '',
-    close: [],
+    open: 'UserPromptSubmit',
+    close: ['Stop', 'TurnAborted'],
     closeFailed: [],
-    sessionMarkers: [],
+    sessionMarkers: ['SessionStart'],
     subagentStop: '',
     questionTools: [],
     sessionExit: null,

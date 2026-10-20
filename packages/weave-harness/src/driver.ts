@@ -20,7 +20,8 @@ export type HarnessCapability =
   | 'messaging'
   | 'questions'
   | 'capture'
-  | 'statusline';
+  | 'statusline'
+  | 'logs';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -99,6 +100,58 @@ export interface EventSource {
   readonly source: Harness;
   readonly events: readonly string[];
   normalize(report: unknown, projectId: number): unknown;
+}
+
+/**
+ * 一条从外部日志读出来的原始上报 + 它的真实时刻（历史回填不能印成插入时刻）。
+ * `report` 与 hook 上报同形，故 server 拿它走**同一个** `EventSource.normalize`。
+ */
+export interface LogRecord {
+  report: { eventType: string; sessionId?: string; cwd?: string; payload: unknown };
+  /** 事件真实时刻（ISO；日志行自带时间戳优先，缺失才用文件 mtime）。 */
+  at: string;
+}
+
+export interface LogPollOptions {
+  /** 游标 / 边读缓存落点（daemon 传 `<dataDir>/logs/<harness>`）。 */
+  stateDir: string;
+  /**
+   * 只采这些工作目录的会话（daemon 从 projects 表 + 项目 `.weave/config.yaml` 算出）。
+   * 命中即把**该目录原文**回填进 `report.cwd`——路径归一（大小写、分隔符、解析）
+   * 是日志源自己的事，调用方按原样等值匹配即可。
+   */
+  cwdWhitelist: readonly string[];
+  /** 单拍上限：到顶就返回，游标只推进到真读过的位置（下一拍续）。 */
+  maxRecords?: number;
+  maxBytes?: number;
+}
+
+/** 日志源健康（诊断面只读；「没数据」与「读不到」要分得开）。 */
+export interface LogHealth {
+  /** 宿主数据根（不存在 = 该 harness 没在本机用过）。 */
+  root: string | null;
+  /** 白名单内可读的日志文件数。 */
+  files: number;
+  /** 最近一次真读到新行的时刻（ISO）。 */
+  lastPollAt: string | null;
+  /** 最近一次错误（读不动 / 落盘失败）；正常为 null。 */
+  lastError: string | null;
+}
+
+/**
+ * 日志源槽：**拉取式**采集面。`events` 槽答「一份上报怎么归一」，前提是有人把
+ * 上报递进来（hook 脚本写 inbox 文件）；没有 push 面的 harness（codex 只把会话
+ * 写在自己的 rollout JSONL 里）需要第二个答案——这份数据从哪来。故本槽只负责
+ * 「读出新行」，归一化仍归同一个 harness 的 `events` 槽：server 不认识任何
+ * harness 的文件格式，harness 也不认识 projects 表。
+ *
+ * 契约：poll 幂等（游标落 `stateDir`，重启不重放）且守预算（到 maxRecords /
+ * maxBytes 即返回）；只挑白名单工作目录的会话，别的一行都不产出。
+ */
+export interface LogSource {
+  readonly harness: Harness;
+  poll(options: LogPollOptions): Promise<LogRecord[]>;
+  health(options: { stateDir: string }): Promise<LogHealth>;
 }
 
 /**
@@ -667,6 +720,7 @@ export interface HarnessDriver {
   questions?: BlockingPromptSpec;
   capture?: CaptureSurface;
   statusline?: StatuslineSurface;
+  logs?: LogSource;
 }
 
 /**

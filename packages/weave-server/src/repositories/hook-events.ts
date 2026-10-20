@@ -9,6 +9,11 @@ export interface HookEventInput {
   sessionId?: string;
   /** Serialized JSON payload captured from the agent hook. */
   payload: string;
+  /**
+   * 事件真实时刻（ISO）。缺省 = 插入时刻。只有**拉取式**采集（`logs` 槽）会带：
+   * 回填的历史行若印成插入时刻，会话列表与对话气泡的时序会全糊在一起。
+   */
+  createdAt?: string;
 }
 
 export interface HookEventRow {
@@ -54,7 +59,7 @@ export class HookEventRepository {
       input.eventType,
       input.sessionId ?? null,
       input.payload,
-      new Date().toISOString(),
+      input.createdAt ?? new Date().toISOString(),
     );
     return Number(result.lastInsertRowid);
   }
@@ -72,7 +77,7 @@ export class HookEventRepository {
           input.eventType,
           input.sessionId ?? null,
           input.payload,
-          new Date().toISOString(),
+          input.createdAt ?? new Date().toISOString(),
         );
         ids.push(Number(result.lastInsertRowid));
       }

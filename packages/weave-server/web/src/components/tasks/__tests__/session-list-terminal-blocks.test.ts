@@ -43,17 +43,18 @@ describe('groupByTerminal（终端分块）', () => {
     expect(shape(entries)).toEqual([
       'r1',
       ['块 mux:0:0', 'r2', 'r4'], // r4 被拉到同屏的 r2 一起（跨过 r3）
-      'r3', // 那块屏只有它一个会话 → 不立块头
+      ['块 mux:0:1', 'r3'], // 那块屏只有它一个会话，块头照立
       'r5',
     ]);
   });
 
-  it('一块屏只有一个会话 → 不立块头（那行没跟人挤在一起）', () => {
-    expect(shape(groupByTerminal([row('r1', screen('mux:0:0'))]))).toEqual(['r1']);
-    // 有块头的是 ≥2 个成员的那块，单个的成员仍留在原位
+  it('一块屏只有一个会话 → 照样立块头（块头答的是「这块屏在哪」）', () => {
+    expect(shape(groupByTerminal([row('r1', screen('mux:0:0'))]))).toEqual([
+      ['块 mux:0:0', 'r1'],
+    ]);
     expect(
       shape(groupByTerminal([row('r1', screen('mux:0:0')), row('r2', screen('mux:0:1')), row('r3', screen('mux:0:1'))])),
-    ).toEqual(['r1', ['块 mux:0:1', 'r2', 'r3']]);
+    ).toEqual([['块 mux:0:0', 'r1'], ['块 mux:0:1', 'r2', 'r3']]);
   });
 
   it('terminal 为 null / 缺席（反查不到、没装 hooks）→ 不分组', () => {
