@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { api, type ConfigFileId, type ConfigModelOption, type ConfigModelsResponse } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
@@ -18,6 +18,7 @@ export function ConfigModelCard({
   projectId,
   currentModel,
   configuredBaseUrl,
+  configuredCredential,
   onApply,
 }: {
   harness: Harness;
@@ -27,11 +28,18 @@ export function ConfigModelCard({
   currentModel: unknown;
   /** 配置里的 `env.ANTHROPIC_BASE_URL`（占位提示用）。 */
   configuredBaseUrl: string;
+  /** 配置里是否已有 key / token（只用来出提示，不读值）。 */
+  configuredCredential: boolean;
   onApply: (modelId: string) => void;
 }) {
   const t = useT();
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充，这是最硬的一道闸
+  // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会），否则浏览器存的
+  // 登录凭据会直接填进来把 placeholder 的提示盖掉。
+  const [keyFocused, setKeyFocused] = useState(false);
+  const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ConfigModelsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,13 +87,40 @@ export function ConfigModelCard({
         </label>
         <label className="space-y-1">
           <span className="text-[11px] text-neutral-500">{t('cfg.modelsApiKey')}</span>
-          <input
-            type="password"
-            value={apiKey}
-            placeholder={t('cfg.modelsApiKeyPlaceholder')}
-            onChange={(e) => setApiKey(e.target.value)}
-            className={INPUT_CLS}
-          />
+          <div className="flex items-center gap-1.5">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKey}
+              readOnly={!keyFocused}
+              onFocus={() => setKeyFocused(true)}
+              onBlur={() => setKeyFocused(false)}
+              onChange={(e) => setApiKey(e.target.value)}
+              // 不是登录凭据：显式让浏览器与密码管理器别当密码字段填（同设置里 AI key 那框）。
+              // one-time-code 比 off/new-password 稳：既不自填已存凭据，也不弹强密码生成器。
+              name="weaveConfigModelApiKey"
+              autoComplete="one-time-code"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore
+              placeholder={
+                configuredCredential
+                  ? t('cfg.modelsApiKeyConfigured')
+                  : t('cfg.modelsApiKeyPlaceholder')
+              }
+              className={INPUT_CLS}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey((v) => !v)}
+              title={showKey ? t('cfg.modelsApiKeyHide') : t('cfg.modelsApiKeyShow')}
+              className="shrink-0 rounded-md bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+            >
+              {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
         </label>
       </div>
 

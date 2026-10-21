@@ -24,7 +24,7 @@
 
 ## §2 能力槽与 statusline / logs 面
 
-十三能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十四能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
 
 ### logs 槽（拉取式采集）
 
@@ -36,6 +36,19 @@
 - **`cwdWhitelist` 的契约**：源自己负责路径归一（大小写 / 分隔符 / 解析），命中即把**白名单原文**回填进 `report.cwd`，调用方按原样等值匹配到项目。
 - **进程内锁**：`<stateDir>/.lock` 存 pid（`pidAlive` 判活接管、60s 节流心跳）——dev 与 start 两个 daemon 共用一个数据目录时不双写同一批事件。
 - **没进采集面的**（诚实清单）：`reasoning` / `token_count` / `world_state` / `turn_context` / 图片附件 / `mcp_tool_call` 的入参与结果都不是事件，dashboard 不展示；codex 也没有「侧边聊天」「阻塞式问答」「压缩态」——对应表位留 null / 空。
+
+### edits 槽（会话改动汇总）
+
+`EditsSurface` = `sessionEdits({ sessionId, transcriptPath }) → FileEdit[] | null`：`FileEdit` 是一处改动 `{ path, hunk: { before, after }, at }`，时间序、不聚合（按文件摞是 server 的事）。今天唯一实现 = `weave-harness/src/claude/edits.ts`（`CLAUDE_EDITS`），codex 没有这个槽。
+
+- **源头是转录，不是库里的 `hook_events`**：入站时 `tool_input` 逐字段被 `capFields` 裁到 4000 字符（`weave-harness/src/shared/json-cap.ts`），大一点的 `Write.content` / `Edit.new_string` 只剩前半份——拿它拼 diff 是错的。转录一行不裁，`Old_string → new_string`、`Write.content` 原样在 `message.content[].tool_use` 里。
+- **只认三个工具**：`Edit` / `Write` / `MultiEdit`（`MultiEdit.edits[]` 摊平成多条）。`Write` 记 `before: ''`（新建也是一处改动，不能消失）；`NotebookEdit` 不算——它改的是 cell 源，没有可比对的整份文本。
+- **工具调用 id 去重**：中断 / 重开后同一批 assistant 条目会被重放，`tool_use.id` 是它自己的身份。
+- **转录路径归 server**：`SessionProbe.transcriptPathOf`（hook 事件旁路上报进来的那条，daemon 重启后从库里最近一条事件补回），claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
+- **读法**：流式逐行扫（`readline` + 先按 `"tool_use"` 子串预筛再 parse），不整份进内存——实测 90MB 转录 1.4s / 909 处改动，够一次点击用；半路读崩就回 `null`，不交半份。
+- **汇总与限流在 server**（`summarizeEdits`）：`GET /sessions/:id/edits` → `{ files: [{ path, hunks: [{ before, after, at, clamped? }] }], hunks, truncated }`。展示路径相对项目根（posix 分隔），项目外的保留绝对路径；单处字段裁到 200k 字符（标 `clamped: true`）、总量 4MB（超了标 `truncated: true`）——都不许假装是全份。
+- **null 也是答案**：没有该槽的 harness 回 `reason: 'unsupported'`，读不到转录回 `reason: 'unreadable'`，前端如实说明「为什么这里什么都没有」，不空转、不摆空壳。
+- **diff 在 web 现算**：`web/src/lib/text-diff.ts` 的 `diffLines` + `collapseDiff`，行渲染是 `components/ui/diff-rows.tsx`（与配置对照弹窗 `DiffDialog` 共用）。入口 = 对话气泡右键「改动汇总」（`SessionEditsDialog`），整段对话一个面、不是单条气泡的。
 
 ### statusline 面
 
@@ -447,6 +460,8 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 
 `POST /sessions/:id/interrupt` → `MessageDeliverer.interrupt`：经层② 终端 `TerminalBackend.sendKeys` 向 pane 打**一记** ESC（连打两记是 claude 的历史回退菜单；与开窗 preset 无关，层② 门控见 §4）。pane 定位同 `terminalPaneFor`（locator 优先 + 标题/cwd 回落）。
 
+**一记之后要自证，键送出去 ≠ 宿主停了**：路由打完键等一拍（`INTERRUPT_CONFIRM_WAIT_MS` = 1.2s）回读转录，回 `interrupted: true | false | null`（true = 出现比打键前更新的中断标记；false = 转录在、没有新标记；null = 判不了：没探针 / 转录路径未知 / 非 claude）。**false 时按标题+cwd 补打一记**（`interrupt(id, 'heuristic', <第一记的 pane>)`）——pane env 指着旧 pane（会话换过窗口）时第一记落进的是别人的输入行，宿主一声不响，而投递侧照样拿 exit 0（实机 2026-10-21：8c85b9c7 连按三次全 200、转录里一个标记都没有，同一分钟另一会话 0.5 秒即中断）。**补打落到同一个 pane 就不打**（`sent:false`，第二记会在 claude 里开出历史回退菜单）；web 依 `interrupted === false` 报错提示，不再拿「已送出停止」冒充「已停」。
+
 **locator 覆盖度 = 那条通道的覆盖度**：项目侧 `.claude/helpers/hook-handler.cjs` 若是加 locator 之前生成的（脚本里没有 `terminal` 字段）就永不落 `paneEnvs`，只剩标题等值回落，而 `--resume` 起的会话 TUI 标题回 claude 默认、无题会话（`title` null）直接判无 → 这类会话一律 409「Session pane not found」。跨项目一次性覆盖靠 user 档采集（`PUT /capture`），或对该项目重跑 `weave init`。
 
 ### web 入口与判据
@@ -695,7 +710,7 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ### 写盘语义
 
-`write(file, ctx, values)`：读**原文**（未知键保留）→ 只替换「该档词表可见的顶层键」→ tmp+rename 原子写、2 空格 + 尾换行。`deletes` 靠 `applyUpdates` 的 `remove:true`（深路径删），危险段（`__proto__` / `constructor` / `prototype` / 空段）一律拒。`global` 档因此只碰文档列出的键，`projects` / `oauthAccount` 等宿主自己的键原样留着。读上限 2MB；文件不存在 = `{}`；非法 JSON 直接抛（**不覆盖**）。
+`write(file, ctx, values)`：读**原文** → 只替换「该档词表可见的顶层键」→ tmp+rename 原子写、2 空格 + 尾换行。未知键与没动过的键**保持原位**（就着原对象改、新键追加在末尾）——改成「先收集未知键再拼回去」会让整份文件的键序翻个面，`settings.json` 进版本库的项目每次写都多一大片假 diff。`deletes` 靠 `applyUpdates` 的 `remove:true`（深路径删），危险段（`__proto__` / `constructor` / `prototype` / 空段）一律拒。`global` 档因此只碰文档列出的键，`projects` / `oauthAccount` 等宿主自己的键原样留着。读上限 2MB；文件不存在 = `{}`；非法 JSON 直接抛（**不覆盖**）。
 
 - 原始视图（`PUT /harness-config/raw`）先 `JSON.parse` 再走同一个 `write`，所以「原始 JSON 里删掉一个键」只在词表内键上生效，未知键不会被顺手清掉。
 - 每次写前 `pushBackup`（`backups/<file>-<ts>.json`，留最近 20 份），`restoreBackup` 反向写回。
@@ -714,4 +729,15 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ### web 侧
 
-`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索、按官方分组折叠、未设置的键给「写入」（写文档 Default）、枚举下拉、数组/对象按 JSON 框编辑、env 变量区（只列已设置的 + 搜索命中的，上限 50）、原始 JSON 视图、备份行、漂移横幅。纯函数落 `web/src/lib/config-form.ts`（type→控件、点号路径→值、文本→值）与 `text-diff.ts`。
+`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索/过滤、**JSON 结构的树**、模型卡、原始 JSON 视图、备份行、漂移横幅。**档位按视图分工**：项目页只摆 `project` / `projectLocal`，全局页只摆 `user` / `global`——在项目语境里顺手改到全机配置是最容易出事的一类误操作。表面（`files()`）与路由仍是四档，裁的是「怎么摆」不是「能不能读」。
+
+树怎么拼（`buildConfigTree`，纯函数在 `web/src/lib/config-form.ts`）：
+
+- **顺序先按文件**：文件里出现过的键按 JSON 原文顺序立节点，词表有、文件没有的键再接在后面——看第一眼就是自己那份文件的形状。
+- **同层父节点合并**：文件里的 `sandbox.enabled` 与词表的 `sandbox` 落到同一个 `sandbox` 节点，节点自带 spec 只在「没有子节点」时才出控件（`hooks` 这种整体就是一张 JSON 的键不拆开、出 JSON 框；`sandbox` 出的是子键）。
+- **词表没收的键照实列出来**（`extra`，只读 + 标「词表未收录」）：文件里真有而文档没写的键，隐瞒它就等于让人以为文件是干净的；改这类键只能走原始 JSON 视图。
+- **`env` 也是树上的一支**：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec），搜索时再补文档里命中的（上限 50）——不再单独开一块 env 区。
+- **默认展开只到「里面有已配置值」的对象**：一屏先看到自己配了什么，没配的嵌套结构折着；搜索或过滤生效时强制全开（否则命中项藏在折起来的分支里）。「全部展开/收起」把这些选择落成显式状态。
+- 叶子行 = 键名 + 按类型出的控件（Boolean→开关、枚举→下拉、数字→输入、数组→逐行文本、对象→JSON 框），未设置的给「写入」（写文档 Default），info 钮展开说明+文档分组+默认值。
+
+纯函数落 `web/src/lib/config-form.ts`（`buildConfigTree` / `pruneTree` / `treeHasValue` / type→控件 / 点号路径→值 / 文本→值）与 `text-diff.ts`。

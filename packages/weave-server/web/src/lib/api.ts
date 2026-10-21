@@ -1614,7 +1614,8 @@ export const api = {
       body: JSON.stringify({ answers }),
     }),
   /** 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）。 */
-  interruptSession: (sessionId: string): Promise<{ ok: boolean }> =>
+  /** 停止会话：`interrupted` 是宿主到底停没停（转录里有没有新标记）——null = 判不了。 */
+  interruptSession: (sessionId: string): Promise<{ ok: boolean; interrupted?: boolean | null }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: 'POST' }),
   /** 执行模式切换：一记 Shift+Tab，宿主自己算下一个模式（键序固定死在服务端）。 */
   cycleSessionMode: (sessionId: string): Promise<{ ok: boolean }> =>

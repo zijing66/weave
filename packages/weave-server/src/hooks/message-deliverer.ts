@@ -217,6 +217,12 @@ export type SendResult =
 /** answer() 返回（作答不建消息条目，无 messageId）。 */
 export type AnswerResult = { ok: true } | { ok: false; status: 400 | 404 | 409; error: string };
 
+/**
+ * 层② 定位来源：both = pane env 优先、标题+cwd 回落（投递路径的常规口径）；
+ * locator = 只认 env；heuristic = 只按标题+cwd（中断补打用，见 interrupt）。
+ */
+export type PaneTargetSource = 'both' | 'locator' | 'heuristic';
+
 /** 通道现况：ready = 现在就能投；unknown = 判不动（终端只剩标题/cwd 回落，被动面看不出来）。 */
 interface ChannelState<R extends string> {
   status: 'ready' | 'unavailable' | 'unknown';
@@ -932,13 +938,29 @@ export class MessageDeliverer {
    * 中断目标会话正在跑的回合（dashboard 停止按钮）：往 pane 打**一记 ESC**。
    * 键序固定死在服务端（**不当参数收**）——这条通道一放开就是任意击键注入；
    * 且只打一记：claude 里 ESC 一次是中断，连打两次是开历史回退菜单。
+   *
+   * `source` / `avoidPaneId` 只给 /interrupt 的**补打**用（缺省 = 老口径：locator
+   * 优先、标题+cwd 回落）。宿主没反应时可指定 'heuristic' 只按标题+cwd 重打一记——
+   * pane env 指着旧 pane（会话换了窗口）时，第一记落进的是别人的输入行，宿主
+   * 那边毫无动静，而错误在投递侧根本看不出来（send-text 照样 exit 0）。
+   * `avoidPaneId` 命中即**不打**（`sent:false`）：落到同一个 pane 的第二记只会
+   * 在 claude 里开出历史回退菜单。
    */
-  async interrupt(sessionId: string): Promise<AnswerResult> {
-    const target = await this.sessionKeysTarget(sessionId);
+  async interrupt(
+    sessionId: string,
+    source: PaneTargetSource = 'both',
+    avoidPaneId?: string,
+  ): Promise<
+    { ok: true; paneId: string; sent: boolean } | Extract<AnswerResult, { ok: false }>
+  > {
+    const target = await this.sessionKeysTarget(sessionId, '击键', source);
     if (!target.ok) return target;
+    if (avoidPaneId != null && target.paneId === avoidPaneId) {
+      return { ok: true, paneId: target.paneId, sent: false };
+    }
     try {
       await target.terminal.sendKeys(target.paneId, ESC);
-      return { ok: true };
+      return { ok: true, paneId: target.paneId, sent: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
     }
@@ -1043,6 +1065,7 @@ export class MessageDeliverer {
   private async sessionKeysTarget(
     sessionId: string,
     action = '击键',
+    source: PaneTargetSource = 'both',
   ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
     const session = this.deps.sessions.getBySessionId(sessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
@@ -1055,7 +1078,7 @@ export class MessageDeliverer {
     if (!terminal) {
       return { ok: false, status: 409, error: `终端通道未装配，无法远程${action}` };
     }
-    const pane = await this.terminalPaneFor(session, project);
+    const pane = await this.terminalPaneFor(session, project, source);
     if (!pane) {
       return {
         ok: false,
@@ -1428,14 +1451,18 @@ export class MessageDeliverer {
    * 与标题是否漂移无关，也覆盖从没上报过标题的会话；后端已做存在性校验）→
    * ② 回落「标题（剥 spinner 前缀，字符集含 ◐ 等输入等待态）+ 项目 cwd」启发式
    * （无定位能力的终端 / 老 hook），歧义拒绝不打。
+   *
+   * `source='heuristic'` 跳过 ①：只给中断的补打用——① 命中的 pane 活着但已经
+   * 不是这个会话（换过窗口），宿主对那一记毫无反应，此时只剩「按标题认回来」一条路。
    */
   private async terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
+    source: PaneTargetSource = 'both',
   ): Promise<{ id: string } | null> {
     const terminal = this.terminalChannel();
     if (!terminal) return null;
-    const env = this.paneEnvs.get(session.sessionId);
+    const env = source === 'heuristic' ? undefined : this.paneEnvs.get(session.sessionId);
     if (env) {
       const located = await terminal.locatePane?.(env).catch(() => null);
       if (located) return { id: located };

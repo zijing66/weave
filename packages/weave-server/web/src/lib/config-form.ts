@@ -68,14 +68,110 @@ export function defaultValueOf(type: string, options?: readonly string[]): unkno
   return '';
 }
 
-/** 同组键按词表顺序排（服务端已按文档顺序下发，这里只做稳定分组）。 */
-export function groupKeys<T extends { key: string; group: string }>(
-  keys: readonly T[],
-  groups: readonly string[],
-): { group: string; keys: T[] }[] {
-  return groups
-    .map((group) => ({ group, keys: keys.filter((k) => k.group === group) }))
-    .filter((g) => g.keys.length > 0);
+/** 一个键在树里最小需要的信息（词表条目或为 env 变量现拼的条目）。 */
+export interface TreeNodeSpec {
+  key: string;
+  type: string;
+  group: string;
+  description: string;
+  options?: readonly string[];
+  default?: string;
+  deprecated?: boolean;
+}
+
+/** 配置树的一个节点：段名 + 完整点号路径；有 spec 的是词表里的键，`extra` 的是文件里多出来的。 */
+export interface ConfigTreeNode {
+  segment: string;
+  path: string;
+  spec?: TreeNodeSpec;
+  extra?: boolean;
+  children: ConfigTreeNode[];
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 词表 + 文件实际值 → 树。
+ *
+ * 顺序先按文件里出现的键（JSON 原文顺序），词表独有的键再接在后面；同层的父节点被两条
+ * 路合并（文件里 `sandbox.enabled` 与词表 `sandbox` 落到同一个 `sandbox` 节点）。
+ * 对象只在「词表在它下面还有键」或「词表根本没收它」时展开：`hooks` 这类整体就是一张
+ * JSON 的键不拆开，数组一律当叶子。
+ */
+export function buildConfigTree(
+  keys: readonly TreeNodeSpec[],
+  values: Record<string, unknown>,
+): ConfigTreeNode[] {
+  const byPath = new Map<string, ConfigTreeNode>();
+  const roots: ConfigTreeNode[] = [];
+  const descendants = new Set<string>();
+  for (const spec of keys) {
+    const segs = spec.key.split('.');
+    for (let i = 1; i < segs.length; i++) descendants.add(segs.slice(0, i).join('.'));
+  }
+  const specOf = new Map(keys.map((s) => [s.key, s]));
+
+  const ensure = (segs: string[]): ConfigTreeNode => {
+    let list = roots;
+    let node: ConfigTreeNode | undefined;
+    let path = '';
+    for (const seg of segs) {
+      path = path ? `${path}.${seg}` : seg;
+      let next = byPath.get(path);
+      if (!next) {
+        next = { segment: seg, path, children: [] };
+        byPath.set(path, next);
+        list.push(next);
+      }
+      node = next;
+      list = next.children;
+    }
+    return node as ConfigTreeNode;
+  };
+
+  const walkValues = (object: Record<string, unknown>, prefix: string): void => {
+    for (const [seg, value] of Object.entries(object)) {
+      const path = prefix ? `${prefix}.${seg}` : seg;
+      const node = ensure(path.split('.'));
+      if (specOf.has(path)) node.spec = specOf.get(path);
+      else node.extra = true;
+      const expand = isPlainObject(value) && (!specOf.has(path) || descendants.has(path));
+      if (expand) walkValues(value as Record<string, unknown>, path);
+    }
+  };
+  walkValues(values, '');
+
+  for (const spec of keys) {
+    const node = ensure(spec.key.split('.'));
+    node.spec = spec;
+    node.extra = false;
+  }
+  return roots;
+}
+
+/** 树上有没有已配置的值（决定默认展不展开）。 */
+export function treeHasValue(node: ConfigTreeNode, hasValue: (path: string) => boolean): boolean {
+  if (node.children.length === 0) return hasValue(node.path);
+  return node.children.some((child) => treeHasValue(child, hasValue));
+}
+
+/** 按叶子判据剪枝：留下的叶子连同祖先，一个叶子都不剩的分支整枝去掉。 */
+export function pruneTree(
+  nodes: readonly ConfigTreeNode[],
+  keepLeaf: (node: ConfigTreeNode) => boolean,
+): ConfigTreeNode[] {
+  const out: ConfigTreeNode[] = [];
+  for (const node of nodes) {
+    if (node.children.length === 0) {
+      if (keepLeaf(node)) out.push(node);
+      continue;
+    }
+    const children = pruneTree(node.children, keepLeaf);
+    if (children.length > 0) out.push({ ...node, children });
+  }
+  return out;
 }
 
 /** 搜索：键名或说明里含关键词即命中（大小写不敏感）。 */

@@ -4,6 +4,29 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-10-21
 
+- **配置面板从「按文档分组的平铺表单」改成「按文件 JSON 结构的树」（用户原话「可以把配置都按照json的结构化，展示成树结构吗，平铺表单不好看」）**：分组是**文档**的组织方式，不是**文件**的形状——用户要的是「我这份 settings.json 长什么样」，所以树按文件键序立节点，词表有而文件没有的键补在后面。三处连带：
+  ① **父节点合并**：文件里 `sandbox.enabled` 与词表 `sandbox` 落到同一个 `sandbox`，节点有子键时自己不出控件（`hooks` 没有子键 ⇒ 仍是一张 JSON 框）。不合并会出现「sandbox 展开里还有一个 sandbox」。
+  ② **词表未收录的键只读列出来**（`extra`）：本机实测 `autoMode.allow` / `autoMode.environment` 就在文件里而文档没写。隐瞒它们等于让人以为文件是干净的；改这类键只能去原始 JSON 视图。
+  ③ **`env` 收进树里当一支**（孩子 = 已设置变量 + 搜索命中，上限 50），env 变量本就不是 settings 键，之前单开一块是平铺时代的遗留。
+  默认展开只到「里面有已配置值」的对象（先看自己配了什么），搜索/过滤时强制全开——否则命中项藏在折起来的分支里，等于搜不到。
+
+- **配置面档位按视图分工（用户原话「项目中，只管项目和项目本地；全局配置中，保持现状」）**：项目页只摆 `project` / `projectLocal`，全局面板照旧 `user` + `global`。理由是**场景**：站在项目语境里切档，最容易顺手改到全机配置（改完别的项目一起变），而用户此刻要看的就是「这个项目的 claude 怎么跑」。能力面与路由不动，仍是四档——裁的是「怎么摆」不是「能不能读」。
+
+- **对话右键加「改动汇总」：新增第十四个能力槽 `edits`，claude 从转录里认编辑调用（用户原话「对话右键可以增加一个修改内容的diff汇总吗？按文件汇总，折叠条展开，注意抽象实现，具体harness各自有提取diff逻辑」）**：三处取舍定案。
+  ① **源头 = 转录，不是库里的 `hook_events`**：入站时 `capFields`（`shared/json-cap.ts`）把 `tool_input` 逐字段裁到 4000 字符，`Write.content` / `Edit.new_string` 只剩前半份——拿它拼 diff 会是错的，而「大文件」恰恰是用户唯一想看的那种。转录一行不裁，`message.content[].tool_use` 原样在。
+  ② **不重建整份文件，按处摆 hunk**：同一文件多处改动想合成「首次改动前 → 最后改动后」需要首份全文，转录里没有（`Edit` 只带 `old_string` 片段），从当前盘上文件反推又会被后续编辑打断、还依赖 `replace_all` 的匹配歧义；`file-history`（`~/.claude/file-history/<sessionId>/<hash>@vN`，rewind 快照）实测**不可靠**（`trackedFileBackups` 早期恒空，`dict/tasks.ts` 45 次编辑只留 1 份 v1，且 v1 不含首次编辑的 `old_string`）。故一处改动 = 一个 hunk（`before → after`），按文件摞在一条折叠条下，增删行数由前端逐 hunk 汇总。`Write` 记 `before: ''`（新建/整份重写都是一处改动，不消失）；`NotebookEdit` 不收（改的是 cell 源，没有可比对的整份文本）；`MultiEdit` 摊平。
+  ③ **抽象落点 = `EditsSurface` 一个方法**：`sessionEdits({ sessionId, transcriptPath }) → FileEdit[] | null`，槽清单仍以 `driver.ts` 的 `HarnessCapability` 为唯一权威（十四槽）。转录**路径**由 `SessionProbe.transcriptPathOf` 给（hook 事件旁路进来的那条，重启后从库里最近一条事件补回），adapter 不自己拼 `~/.claude/projects/<slug>/`；汇总（按文件、相对项目路径、限流）与 diff（`text-diff` 现算）都不归 harness——harness 只答「这次对话改了哪些文件的哪几段」。
+  边界与实测：90MB 转录流式扫（先按 `"tool_use"` 预筛再 parse）1.4s / 909 处改动 / 133 个文件，故不加缓存；单处 200k 字符、总量 4MB 封顶，超了标 `clamped` / `truncated`，绝不假装全份；没有该槽的 harness（codex）回 `reason:'unsupported'`、读不到转录回 `'unreadable'`，前端如实说明。`hook_events` 的保留期（默认 90 天）与这里无关——转录在多久就能看多久，转录被清则如实说读不到。
+  回归：`claude/__tests__/edits.test.ts` 四例（Write + Edit 时序与空 before、MultiEdit 摊平 + 非编辑工具不算、重放去重、无路径/坏路径 → null）+ `daemon/__tests__/session-edits-route.test.ts` 四例（按文件合并与相对 posix 路径、超长裁剪标注、读不到 → unreadable、codex → unsupported）。
+
+- **停止键不再「报喜不报忧」：一记 ESC 之后回读转录自证，没停就按标题+cwd 补打一记（用户原话「两条ESC的问题怎么解决」，症状是 8c85b9c7 连按两次停止毫无反应、自己在终端按 Esc 反而把未处理的 prompt 出队了）**：先分清两件事——**键通道没坏**，坏的是「键送到了谁那儿」和「有没有停下来没人验」。实测三条证据：
+  ① **通道与宿主都正常**：`wezterm cli send-text --no-pane-id --no-paste <ESC>` 与 weave 的配方逐字节相同；当场起一个 scratch claude（2.1.296）跑 `sleep 120` 的 prompt，正好撞进 `500 litellm.InternalServerError · Retrying in 6s · attempt 5/10` 的同一窗口，敲一记 ESC 即中止重试、prompt 退回输入行——**与用户手按 Esc 的现象完全一致**（验证完 `kill-pane`、清转录、库里无残留行）。
+  ② **成功的样本在同一分钟**：b3c8a15e 的 `interrupt` 12:09:35.451 / 15:15:42.908 / 16:04:33.614 三次，转录里 0.5s 内各落一条 `[Request interrupted by user]`。
+  ③ **失败的样本一个标记都没有**：8c85b9c7 的 `interrupt` 02:57:35 / 03:00:41 / 03:00:49（更早还有 15:16 连按四次、15:54、23:54 两次、00:17）**全部 200、转录里从头到尾只留过一条真标记**（10-20 03:27）；而 `send-text` 对不存在的 pane / 别人的 pane 一样 exit 0 ⇒ 投递侧「成功」什么都不能证明。
+  裁决：**键送出去之后必须自证**——路由等 1.2s 回读 `SessionProbe.interruptedAt`，答 `interrupted: true/false/null`（null = 判不了：没探针 / 转录路径未知 / 非 claude），`false` 时按**标题+cwd** 补打一记（`interrupt(id, 'heuristic', 第一记的 pane)`，pane env 指着旧 pane 时第一记落进的是别人家的输入行）；**补打落到同一 pane 就不打**（`sent:false`——第二记在 claude 里是历史回退菜单）。web 依 `interrupted === false` 报错提示，不再拿「已送出停止」冒充「已停」。
+  边界：补打只多一次 `listPanes` + 一记 ESC，且只在**有转录证据**「没停」时发生；判不了（null）一律维持老口径只报送出、不补打；`pidAliveOf` / 投递层单点（层序、闸）一行没动。
+  回归：`daemon/__tests__/interrupt-route.test.ts` 四例（标记落地 → true 不补打、补打到另一个 pane 生效、补打同 pane 则 `sent:false` 如实答没停、转录未知 → null）+ `message-deliverer.test.ts` 一例（`heuristic` 绕开 env、`avoidPaneId` 命中即不打）。
+
 - **资源管理接管 harness 配置文件（用户原话「全面接管harness的配置文件（先以claude为主），即所有参数均可见，包括expiramental的设置项，需要翻阅官方文档，对于配置文件未配置的，可以开关控制写入配置，对于已有配置的，可以表单形式展示…最后，可以支持本地保存多份配置，支持配置整体复制与切换，并且模型相关参数，可以通过配置的api地址和apikey调用接口进行查询切换」）**：四问四答定案，① 文件档位「再加 ~/.claude.json」= 四档全收（`user` / `project` / `projectLocal` / `global`）；② weave 托管键「只读 + 说明入口」；③ 切换语义「每份配置都落库，切换时先弹出 diff 的 modal 交给用户确认，再整体覆盖。还有，加载配置时应当读最新的实际配置文件内容，如果有差异，也弹出 diff 告知用户手动确认覆盖库」；④ 说明文案「英文原文」。
   ① **词表不手抄**：官方 `settings-reference.md`（245 键）+ `env-vars.md`（402 条）可直取 markdown，`scripts/gen-claude-catalog.mjs` 解析成提交进仓的生成物（实测 248 键 / 17 分组 / 391 env，`Fields for <key>` 表格落成子键，文档索引类标题不出分组）——键的唯一权威是文档，加键 = 重跑 `pnpm gen:catalog`。解析踩过的两处：Boolean 键的「true/false」不是枚举（否则全部变下拉）、砍类型串必须在抽 options 之后（先砍就把 34 份选项列表砍没了）。
   ② **写盘口径统一成「只替换本档词表可见的顶层键，未知键原样保留」**，四档一致：这是 `~/.claude.json` 非要单独一套投影的原因——那文件里 `projects` / `oauthAccount` 是宿主自己的数据，面板一旦整份写回就把它们抹了。原始 JSON 视图也走同一个 `write`（先 `JSON.parse`），所以「原始视图里删掉一个键」只在词表内生效，未知键不会顺手被清。

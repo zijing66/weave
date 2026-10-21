@@ -166,9 +166,10 @@ export const CLAUDE_CONFIG: ConfigSurface = {
     const target = resolveFile(file, ctx);
     const current = await readRawObject(target);
     const tops = topKeysOf(file);
-    const next: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(current)) {
-      if (!tops.has(k)) next[k] = v;
+    // 就着原对象改：未知键与「没动过的键」保持原位，只在末尾追加新键（少制造 diff 噪声）
+    const next: Record<string, unknown> = { ...current };
+    for (const key of Object.keys(current)) {
+      if (tops.has(key) && !(key in values)) delete next[key];
     }
     for (const [k, v] of Object.entries(values)) {
       if (!tops.has(k.split('.')[0])) continue;

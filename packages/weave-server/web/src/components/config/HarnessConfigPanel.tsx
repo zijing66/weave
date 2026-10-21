@@ -1,20 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileWarning, RefreshCw } from 'lucide-react';
+import { FileWarning, RefreshCw } from 'lucide-react';
 import {
   api,
   type ConfigCatalogResponse,
   type ConfigFileId,
-  type ConfigKeySpec,
   type ConfigUpdate,
   type ConfigView,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
-import { groupKeys, matchesQuery, valueAt, valueOfText } from '@/lib/config-form';
+import {
+  buildConfigTree,
+  matchesQuery,
+  pruneTree,
+  treeHasValue,
+  valueAt,
+  valueOfText,
+  type ConfigTreeNode,
+  type TreeNodeSpec,
+} from '@/lib/config-form';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
-import { ConfigValueRow, type RowEdit } from './ConfigValueRow';
+import { ConfigTree, type ConfigTreeHandlers } from './ConfigTree';
+import type { RowEdit } from './ConfigValueRow';
 import { ConfigProfiles } from './ConfigProfiles';
 import { ConfigModelCard } from './ConfigModelCard';
 import { DiffDialog } from './DiffDialog';
@@ -69,7 +78,8 @@ export function HarnessConfigPanel({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  /** 每个对象节点的展/收（没记过就看默认：里面有已配置的值就展开）。 */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState('');
   const [diffState, setDiffState] = useState<{
@@ -102,7 +112,10 @@ export function HarnessConfigPanel({
     void load();
   }, [load]);
 
-  useEffect(() => setRawMode(false), [file, target]);
+  useEffect(() => {
+    setRawMode(false);
+    setExpanded({});
+  }, [file, target]);
 
   const values = view?.values ?? {};
   const managed = view?.managedKeys ?? [];
@@ -131,7 +144,7 @@ export function HarnessConfigPanel({
   const save = async (): Promise<void> => {
     if (pendingCount === 0 || !catalog) return;
     const updates: ConfigUpdate[] = Object.entries(edits).map(([path, edit]) =>
-      edit.remove ? { path, remove: true } : { path, value: edit.value },
+      edit.remove || edit.value === undefined ? { path, remove: true } : { path, value: edit.value },
     );
     setBusy(true);
     setError(null);
@@ -204,38 +217,83 @@ export function HarnessConfigPanel({
     }
   };
 
-  const groups = useMemo(() => {
-    if (!catalog) return [];
-    const inScope = catalog.keys.filter((key) => {
-      const set = currentValue(key.key) !== undefined;
-      if (filter === 'set' && !set) return false;
-      if (filter === 'unset' && set) return false;
-      return matchesQuery(key.key, key.description, query);
-    });
-    return groupKeys(inScope, catalog.groups);
-  }, [catalog, currentValue, filter, query]);
-
-  const envRows = useMemo(() => {
-    if (!catalog) return [];
+  // env 块在树上就是 `env` 这个对象：孩子 = 已设置的那些变量，搜索时再补文档里命中的
+  const envSpecs = useMemo<TreeNodeSpec[]>(() => {
+    if (!catalog || filter === 'unset') return [];
     const env = valueAt(values, 'env');
-    const setNames = new Set(
+    const names = new Set(
       typeof env === 'object' && env !== null && !Array.isArray(env) ? Object.keys(env) : [],
     );
-    const editedNames = Object.keys(edits)
-      .filter((k) => k.startsWith('env.'))
-      .map((k) => k.slice(4));
-    for (const name of editedNames) {
-      const edit = edits[`env.${name}`];
-      if (edit?.remove) setNames.delete(name);
-      else setNames.add(name);
+    for (const [path, edit] of Object.entries(edits)) {
+      if (!path.startsWith('env.')) continue;
+      const name = path.slice(4);
+      if (edit.remove) names.delete(name);
+      else names.add(name);
     }
-    if (filter === 'unset') return [];
-    const all = catalog.envVars;
-    const matched = query.trim()
-      ? all.filter((v) => matchesQuery(v.name, v.description, query)).slice(0, 50)
-      : all.filter((v) => setNames.has(v.name));
-    return matched;
+    if (query.trim()) {
+      let added = 0;
+      for (const envVar of catalog.envVars) {
+        if (added >= 50) break;
+        if (names.has(envVar.name) || !matchesQuery(envVar.name, envVar.description, query)) continue;
+        names.add(envVar.name);
+        added += 1;
+      }
+    }
+    const byName = new Map(catalog.envVars.map((v) => [v.name, v]));
+    return [...names].map((name) => ({
+      key: `env.${name}`,
+      group: 'Environment',
+      type: 'string',
+      description: byName.get(name)?.description ?? '',
+    }));
   }, [catalog, edits, filter, query, values]);
+
+  const tree = useMemo(() => {
+    if (!catalog) return { nodes: [] as ConfigTreeNode[], byPath: new Map<string, ConfigTreeNode>() };
+    const nodes = buildConfigTree([...catalog.keys, ...envSpecs], values);
+    const byPath = new Map<string, ConfigTreeNode>();
+    const walk = (list: readonly ConfigTreeNode[]): void => {
+      for (const node of list) {
+        byPath.set(node.path, node);
+        walk(node.children);
+      }
+    };
+    walk(nodes);
+    const q = query.trim();
+    const kept = pruneTree(nodes, (node) => {
+      if (node.extra) return filter !== 'unset' && matchesQuery(node.path, '', q);
+      if (!node.spec) return false;
+      const set = currentValue(node.path) !== undefined;
+      if (filter === 'set' && !set) return false;
+      if (filter === 'unset' && set) return false;
+      return matchesQuery(node.path, node.spec.description, q);
+    });
+    return { nodes: kept, byPath };
+  }, [catalog, currentValue, envSpecs, filter, query, values]);
+
+  const treeHandlers: ConfigTreeHandlers = {
+    isOpen: (node) => {
+      if (query.trim() !== '' || filter !== 'all') return true;
+      const flag = expanded[node.path];
+      if (flag !== undefined) return flag;
+      return treeHasValue(node, (path) => currentValue(path) !== undefined);
+    },
+    onToggle: (path) => {
+      const node = tree.byPath.get(path);
+      const open = node ? treeHandlers.isOpen(node) : false;
+      setExpanded((prev) => ({ ...prev, [path]: !open }));
+    },
+    hasValue: (path) => currentValue(path) !== undefined,
+    isManaged,
+    valueOf: currentValue,
+    onChange: setEdit,
+  };
+
+  const setAllOpen = (open: boolean): void => {
+    const next: Record<string, boolean> = {};
+    for (const node of tree.byPath.values()) if (node.children.length > 0) next[node.path] = open;
+    setExpanded(next);
+  };
 
   if (catalog && !catalog.supported) {
     return (
@@ -257,7 +315,11 @@ export function HarnessConfigPanel({
     );
   }
 
-  const files = catalog.files.filter((f) => projectId != null || (f.id !== 'project' && f.id !== 'projectLocal'));
+  // 项目的这一页只管项目自己的两份；用户级与全局键只在全局页里出现
+  const inProject = projectId != null;
+  const files = catalog.files.filter((f) =>
+    inProject ? f.id === 'project' || f.id === 'projectLocal' : f.id === 'user' || f.id === 'global',
+  );
 
   return (
     <div className="space-y-3">
@@ -360,18 +422,29 @@ export function HarnessConfigPanel({
         onActivate={(id) => void activate(id)}
       />
 
-      <ConfigModelCard
-        harness={target}
-        file={file}
-        projectId={projectId}
-        currentModel={currentValue('model')}
-        configuredBaseUrl={(() => {
-          const env = valueAt(values, 'env');
-          const url = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, 'ANTHROPIC_BASE_URL') : undefined;
-          return typeof url === 'string' ? url : '';
-        })()}
-        onApply={(modelId) => setEdit('model', { value: modelId })}
-      />
+      {/* 该档词表里有 model 键才摆模型卡（global 档写不进去 model） */}
+      {catalog.keys.some((k) => k.key === 'model') && (
+        <ConfigModelCard
+          harness={target}
+          file={file}
+          projectId={projectId}
+          currentModel={currentValue('model')}
+          configuredBaseUrl={(() => {
+            const env = valueAt(values, 'env');
+            const url = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, 'ANTHROPIC_BASE_URL') : undefined;
+            return typeof url === 'string' ? url : '';
+          })()}
+          configuredCredential={(() => {
+            const env = valueAt(values, 'env');
+            const read = (name: string): string => {
+              const got = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, name) : '';
+              return typeof got === 'string' ? got.trim() : '';
+            };
+            return read('ANTHROPIC_API_KEY') !== '' || read('ANTHROPIC_AUTH_TOKEN') !== '';
+          })()}
+          onApply={(modelId) => setEdit('model', { value: modelId })}
+        />
+      )}
 
       {/* 搜索 / 过滤 / 原始视图 */}
       <div className="flex flex-wrap items-center gap-2">
@@ -395,6 +468,18 @@ export function HarnessConfigPanel({
             </button>
           ))}
         </div>
+        <button
+          onClick={() => setAllOpen(true)}
+          className="rounded-md px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+        >
+          {t('cfg.expandAll')}
+        </button>
+        <button
+          onClick={() => setAllOpen(false)}
+          className="rounded-md px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+        >
+          {t('cfg.collapseAll')}
+        </button>
         <button
           onClick={() => {
             setRawMode((v) => !v);
@@ -439,86 +524,12 @@ export function HarnessConfigPanel({
         </div>
       ) : (
         <>
-          {groups.length === 0 && <p className="text-[11px] text-neutral-500">{t('cfg.empty')}</p>}
-          {groups.map((group) => {
-            const isCollapsed = collapsed[group.group] ?? false;
-            return (
-              <section key={group.group} className="rounded-xl border border-edge/[0.06] bg-neutral-900/40">
-                <button
-                  onClick={() => setCollapsed((prev) => ({ ...prev, [group.group]: !isCollapsed }))}
-                  className="flex w-full items-center gap-1.5 px-3 py-2 text-left"
-                >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-3 w-3 text-neutral-500" />
-                  ) : (
-                    <ChevronDown className="h-3 w-3 text-neutral-500" />
-                  )}
-                  <span className="text-xs font-semibold text-neutral-300">{group.group}</span>
-                  <span className="text-[11px] text-neutral-600">{group.keys.length}</span>
-                </button>
-                {!isCollapsed && (
-                  <div className="grid gap-1.5 px-3 pb-3 sm:grid-cols-2">
-                    {group.keys.map((key: ConfigKeySpec) => (
-                      <ConfigValueRow
-                        key={key.key}
-                        spec={key}
-                        value={currentValue(key.key)}
-                        managed={isManaged(key.key)}
-                        onChange={(edit) => setEdit(key.key, edit)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-
-          {/* env 块 */}
-          <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3 space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-neutral-300">{t('cfg.env')}</span>
-              <span className="text-[11px] text-neutral-500">{t('cfg.envHint')}</span>
-            </div>
-            {envRows.length === 0 ? (
-              <p className="text-[11px] text-neutral-500">{t('cfg.envEmpty')}</p>
-            ) : (
-              <div className="space-y-1">
-                {envRows.map((envVar) => {
-                  const dotted = `env.${envVar.name}`;
-                  const value = currentValue(dotted);
-                  return (
-                    <div key={envVar.name} className="flex items-center gap-2" title={envVar.description}>
-                      <span className="w-72 shrink-0 truncate font-mono text-[11px] text-neutral-300">
-                        {envVar.name}
-                      </span>
-                      {value === undefined ? (
-                        <button
-                          onClick={() => setEdit(dotted, { value: '' })}
-                          className="rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-200 hover:border-edge/[0.3]"
-                        >
-                          {t('cfg.write')}
-                        </button>
-                      ) : (
-                        <>
-                          <input
-                            value={String(value)}
-                            onChange={(e) => setEdit(dotted, { value: e.target.value })}
-                            className="flex-1 rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-0.5 font-mono text-[11px] text-neutral-200 focus:outline-none focus:border-mac-accent/50"
-                          />
-                          <button
-                            onClick={() => setEdit(dotted, { remove: true })}
-                            className="text-[11px] text-neutral-600 hover:text-red-300"
-                          >
-                            {t('cfg.clear')}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          {tree.nodes.length === 0 && <p className="text-[11px] text-neutral-500">{t('cfg.empty')}</p>}
+          {tree.nodes.length > 0 && (
+            <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-1.5">
+              <ConfigTree nodes={tree.nodes} handlers={treeHandlers} />
+            </section>
+          )}
         </>
       )}
 

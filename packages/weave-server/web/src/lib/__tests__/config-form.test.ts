@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   boolOf,
+  buildConfigTree,
   controlOf,
   defaultValueOf,
-  groupKeys,
   linesOf,
   listOfLines,
   matchesQuery,
+  pruneTree,
   textOf,
+  treeHasValue,
   valueAt,
   valueOfText,
 } from '../config-form';
@@ -48,12 +50,44 @@ describe('配置表单纯函数', () => {
     expect(defaultValueOf('number')).toBe(0);
   });
 
-  it('分组按词表顺序、空组不出现', () => {
-    const keys = [
-      { key: 'a', group: 'G1' },
-      { key: 'b', group: 'G2' },
-    ];
-    expect(groupKeys(keys, ['G2', 'G1', 'G3']).map((g) => g.group)).toEqual(['G2', 'G1']);
+  it('配置树：文件键序在前、词表独有键补在后，同层父节点合并', () => {
+    const spec = (key: string, type = 'string') => ({ key, type, group: 'G', description: '' });
+    const keys = [spec('sandbox'), spec('sandbox.enabled', 'Boolean'), spec('model'), spec('env.ANTHROPIC_MODEL')];
+    const values = {
+      model: 'opus',
+      sandbox: { enabled: true },
+      extras: { a: 1 },
+    };
+    const tree = buildConfigTree(keys, values);
+    expect(tree.map((n) => n.segment)).toEqual(['model', 'sandbox', 'extras', 'env']);
+    const sandbox = tree.find((n) => n.segment === 'sandbox')!;
+    expect(sandbox.spec?.key).toBe('sandbox');
+    expect(sandbox.children.map((n) => n.path)).toEqual(['sandbox.enabled']);
+    expect(sandbox.children[0].extra).toBe(false);
+    // 词表没收录的对象展开到叶子，并标 extra
+    expect(tree.find((n) => n.segment === 'extras')!.children[0].extra).toBe(true);
+    // env 只收到词表给的子键（env 变量由调用方合成）
+    expect(tree.find((n) => n.segment === 'env')!.children[0].path).toBe('env.ANTHROPIC_MODEL');
+  });
+
+  it('配置树：整体是一张 JSON 的对象键不拆开（hooks）', () => {
+    const keys = [{ key: 'hooks', type: 'object', group: 'G', description: '' }];
+    const tree = buildConfigTree(keys, { hooks: { Stop: [{ command: 'x' }] } });
+    expect(tree).toHaveLength(1);
+    expect(tree[0].children).toEqual([]);
+    expect(tree[0].spec?.key).toBe('hooks');
+  });
+
+  it('配置树：剪枝与「里面有值」判据', () => {
+    const spec = (key: string) => ({ key, type: 'string', group: 'G', description: '' });
+    const tree = buildConfigTree(
+      [spec('sandbox'), spec('sandbox.enabled', ), spec('sandbox.network'), spec('model')],
+      { model: 'opus', sandbox: { enabled: true } },
+    );
+    const hasValue = (path: string) => (path === 'model' || path === 'sandbox.enabled' ? 'x' : undefined) !== undefined;
+    expect(treeHasValue(tree.find((n) => n.segment === 'sandbox')!, hasValue)).toBe(true);
+    const kept = pruneTree(tree, (node) => node.path === 'model');
+    expect(kept.map((n) => n.segment)).toEqual(['model']);
   });
 
   it('搜索与数组文本往返', () => {

@@ -2789,8 +2789,37 @@ describe('MessageDeliverer 裁决表', () => {
       ]);
       const deliverer = new MessageDeliverer(makeDeps({ terminal }));
 
-      await expect(deliverer.interrupt(SESSION_ID)).resolves.toEqual({ ok: true });
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toEqual({
+        ok: true,
+        paneId: 'pane-1',
+        sent: true,
+      });
       expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
+    });
+
+    it('补打 source=heuristic 绕开 pane env、只按标题+cwd 认回来（env 指着旧 pane 的那种）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const locatePane = vi.fn(async () => 'stale-pane');
+      const deliverer = new MessageDeliverer(makeDeps({ terminal: { ...terminal, locatePane } }));
+      deliverer.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '3' });
+
+      // 常规口径：env 命中即用（即使它指的是别的 pane）
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ paneId: 'stale-pane' });
+      expect(locatePane).toHaveBeenCalledTimes(1);
+      // 补打：不再问 env，按标题+cwd 认回真正的那个 pane
+      await expect(deliverer.interrupt(SESSION_ID, 'heuristic', 'stale-pane')).resolves.toMatchObject(
+        { paneId: 'pane-1', sent: true },
+      );
+      expect(locatePane).toHaveBeenCalledTimes(1);
+      // 会落到同一个 pane 就不打（连打两记在 claude 里是历史回退菜单）
+      await expect(deliverer.interrupt(SESSION_ID, 'heuristic', 'pane-1')).resolves.toMatchObject({
+        paneId: 'pane-1',
+        sent: false,
+      });
+      expect(sendKeys).toHaveBeenCalledTimes(2);
     });
 
     it('与作答同一套落点判定：会话没有 404 / 无终端通道 409 / pane 找不到 409', async () => {

@@ -319,13 +319,18 @@ export function TasksPanel({
     [fb],
   );
   /** 停止会话：向 pane 打一记 ESC（长工具卡住 / API 报错重试 / 模态框都吃这一记），
-   *  打不进终端的原因由 409 文案说清（没开窗口、终端不支持文本）。 */
+   *  打不进终端的原因由 409 文案说清（没开窗口、终端不支持文本）；键确实送出去了、
+   *  宿主却没停（转录里没新标记）也要说清——否则「已送出停止」就是句假话。 */
   const onInterrupt = useCallback(
     (sessionId: string): void => {
       void fb.run(
         `interrupt:${sessionId}`,
         async () => {
-          await api.interruptSession(sessionId);
+          const res = await api.interruptSession(sessionId);
+          if (res.interrupted === false) {
+            show('error', t('tasks.stopUnconfirmed'));
+            return;
+          }
           show('success', t('tasks.stopOk'));
         },
         { fail: (e) => t('tasks.stopFail', { error: errorText(e) }) },

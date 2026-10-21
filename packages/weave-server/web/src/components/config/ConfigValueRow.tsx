@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Lock, Plus, X } from 'lucide-react';
-import type { ConfigKeySpec } from '@/lib/api';
+import { Info, Lock, Plus, X } from 'lucide-react';
+import type { TreeNodeSpec } from '@/lib/config-form';
 import {
   boolOf,
   controlOf,
@@ -14,6 +14,9 @@ import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 
+/** 树里一层的缩进（px）；树节点行与叶子行共用同一个数。 */
+export const TREE_INDENT = 14;
+
 const INPUT_CLS =
   'w-full rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-mac-accent/50';
 
@@ -24,16 +27,21 @@ export interface RowEdit {
 }
 
 /**
- * 一行配置：词表说类型，控件按类型出；未设置的键给「写入」。
+ * 树里的一片叶子：左边键名、右边按类型出的控件。
  * 托管键只读并标出来由——手改会把采集/插件/状态栏改坏。
  */
 export function ConfigValueRow({
   spec,
+  label,
+  depth,
   value,
   managed,
   onChange,
 }: {
-  spec: ConfigKeySpec;
+  spec: TreeNodeSpec;
+  /** 本层的键名（树上只显示这一段，完整路径在 tooltip 里）。 */
+  label: string;
+  depth: number;
   value: unknown;
   managed: boolean;
   onChange: (edit: RowEdit) => void;
@@ -43,12 +51,10 @@ export function ConfigValueRow({
   const set = value !== undefined;
   const control = controlOf(spec.type, spec.options);
 
-  const readOnly = managed;
-
   const body = (() => {
-    if (readOnly) {
+    if (managed) {
       return (
-        <div className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+        <div className="flex items-center gap-1.5 text-[11px] text-neutral-500" title={t('cfg.managedHint')}>
           <Lock className="h-3 w-3" />
           <span>{t('cfg.managed')}</span>
         </div>
@@ -101,7 +107,7 @@ export function ConfigValueRow({
             const raw = e.target.value;
             onChange({ value: raw === '' ? undefined : Number(raw) });
           }}
-          className={cn(INPUT_CLS, 'max-w-[160px]')}
+          className={cn(INPUT_CLS, 'max-w-[140px]')}
         />
       );
     }
@@ -128,48 +134,57 @@ export function ConfigValueRow({
   })();
 
   return (
-    <div className={cn('rounded-lg border border-edge/[0.06] bg-neutral-900/30 p-2', !set && 'opacity-80')}>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="font-mono text-[11px] text-neutral-200 hover:text-mac-accent text-left break-all"
-          title={spec.description}
+    <div style={{ paddingLeft: depth * TREE_INDENT }} className="group">
+      <div className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-neutral-800/30">
+        <span
+          className={cn(
+            'w-[38%] shrink-0 truncate font-mono text-[11px] leading-6',
+            set ? 'text-neutral-200' : 'text-neutral-500',
+          )}
+          title={spec.key}
         >
-          {spec.key}
-        </button>
-        <span className="text-[10px] text-neutral-600">{spec.type}</span>
-        {managed && (
-          <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-300">
-            {t('cfg.managed')}
-          </span>
-        )}
-        {spec.deprecated && (
-          <span className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] text-red-300">
-            {t('cfg.deprecated')}
-          </span>
-        )}
-        {set && !readOnly && (
+          {label}
+        </span>
+        <div className="min-w-0 flex-1">{body}</div>
+        <div className="flex shrink-0 items-center gap-1 pt-1">
+          {spec.deprecated && (
+            <span className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] text-red-300">{t('cfg.deprecated')}</span>
+          )}
           <button
-            onClick={() => onChange({ remove: true })}
-            className="ml-auto p-0.5 rounded text-neutral-600 hover:text-red-300 hover:bg-neutral-800"
-            title={t('cfg.clear')}
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className={cn(
+              'rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300',
+              open && 'text-neutral-300',
+            )}
+            title={t('cfg.description')}
           >
-            <X className="h-3 w-3" />
+            <Info className="h-3 w-3" />
           </button>
-        )}
+          {set && !managed && (
+            <button
+              onClick={() => onChange({ remove: true })}
+              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+              title={t('cfg.clear')}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {open && (
-        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+        <p
+          style={{ paddingLeft: 6 }}
+          className="pb-1 pr-2 text-[11px] leading-relaxed text-neutral-500"
+        >
           {spec.description}
+          <span className="ml-1 text-neutral-600">{spec.group}</span>
           {spec.default && (
             <span className="ml-1 text-neutral-600">{t('cfg.defaultValue', { value: spec.default })}</span>
           )}
         </p>
       )}
-
-      <div className="mt-1.5">{body}</div>
     </div>
   );
 }

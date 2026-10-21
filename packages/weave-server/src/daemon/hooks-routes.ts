@@ -325,6 +325,19 @@ function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): b
   return surface.prompt !== null || terminalChannel;
 }
 
+/** 中断后等宿主把标记写进转录的时间（实测 0.5s 落地，留一倍余量）。 */
+const INTERRUPT_CONFIRM_WAIT_MS = 1_200;
+
+/**
+ * 中断标记等一拍再读：出现比打键前更新的标记 = 这一记 ESC 真让宿主停下来了。
+ * 标记只会被更新的事件盖过（自愈），故「新标记」就是「刚停的」这一件事。
+ */
+async function confirmInterrupt(markerOf: () => number | null, before: number): Promise<boolean> {
+  await new Promise((resolve) => setTimeout(resolve, INTERRUPT_CONFIRM_WAIT_MS));
+  const after = markerOf();
+  return after !== null && after > before;
+}
+
 function intParam(url: URL, key: string): number | undefined {
   const raw = url.searchParams.get(key);
   if (raw == null || raw === '') return undefined;
@@ -1300,15 +1313,35 @@ export async function handleHooksRoutes(
       return true;
     }
     const sessionId = decodeURIComponent(interruptMatch[1]!);
+    // 「停没停」的唯一证据在转录里（hook 域没有中断事件）。判不了（没探针 / 转录
+    // 路径未知 / 非 claude）就只报送出，不猜结果。
+    const probe = deps.sessionProbe;
+    const session = deps.hookSessions?.getBySessionId(sessionId) ?? null;
+    const judgeable = !!probe && !!session && probe.transcriptPresent(sessionId) !== null;
+    const markerOf = (): number | null =>
+      judgeable ? (probe!.interruptedAt(sessionId, session!.lastSeenAt) ?? null) : null;
+    const before = markerOf() ?? 0;
+
     const result = await deps.messageDeliverer.interrupt(sessionId);
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;
     }
+    // 一记没反应就按标题+cwd 补打一记（**只打别的 pane**）：pane env 指着旧 pane
+    // 时第一记落进的是别人的输入行，宿主一声不响，投递侧却照样拿 exit 0 —— 实机
+    // 2026-10-21：8c85b9c7 连按三次 200 全无效果，而同一分钟另一会话 0.5 秒即中断。
+    let interrupted: boolean | null = null;
+    if (judgeable) {
+      interrupted = await confirmInterrupt(markerOf, before);
+      if (interrupted === false) {
+        const retry = await deps.messageDeliverer.interrupt(sessionId, 'heuristic', result.paneId);
+        if (retry.ok && retry.sent) interrupted = await confirmInterrupt(markerOf, before);
+      }
+    }
     // 打断之后 claude 要过一下才把中断标记写进转录：补一拍探针，让「生成中」尽快
     // 变成「已中断」（不补则要等下一个周期）。同 terminalTopology 的即时刷新口径。
     setTimeout(() => deps.interruptRefresher?.tick(), 1_500);
-    sendJson(res, 200, { ok: true, sessionId });
+    sendJson(res, 200, { ok: true, sessionId, interrupted });
     return true;
   }
 
