@@ -183,10 +183,10 @@ describe('MessageDeliverer 裁决表', () => {
     expect(result).toMatchObject({ ok: false, status: 400 });
   });
 
-  it('codex 面：inject / headless / auto / prompt（无终端通道）均 409 + 面内原因', async () => {
+  it('codex 面：inject / headless / auto 均 409 + 面内原因；prompt 走宿主队列', async () => {
     const deliverer = new MessageDeliverer(makeDeps());
     pushEvent(CODEX_SESSION, 'Stop', 'codex');
-    for (const mode of ['inject', 'headless', 'auto', 'prompt'] as const) {
+    for (const mode of ['inject', 'headless', 'auto'] as const) {
       const result = await deliverer.send({
         toSessionId: CODEX_SESSION,
         text: 'hi',
@@ -195,15 +195,16 @@ describe('MessageDeliverer 裁决表', () => {
       });
       expect(result, mode).toMatchObject({ ok: false, status: 409 });
     }
+    // prompt：codex 面有 queuedPrompt（codex queue）——spawn 真实 CLI 会失败（无此会话），
+    // 失败即回落，三层全无通路 → 入队（不 409）。
     const prompt = await deliverer.send({
       toSessionId: CODEX_SESSION,
       text: 'hi',
       mode: 'prompt',
       fromKind: 'dashboard',
     });
-    expect((prompt as Extract<SendResult, { ok: false }>).error).toContain('Codex');
-    expect(deliverer.listVisible(CODEX_SESSION)).toHaveLength(0);
-    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+    expect(prompt).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
   });
 
   it('inject 通道：信封落 outbox → injected + created/delivered 帧', async () => {
@@ -563,6 +564,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],
@@ -695,6 +697,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       promptInbox: null,
       inject: null,
       headless: null,
@@ -773,6 +776,119 @@ describe('MessageDeliverer 裁决表', () => {
       via: 'socket',
     });
     inbox.close();
+  });
+
+  it('层①-q 宿主队列（codex）：spawn 面给的命令，exit 0 = delivered + 布防回执闸', async () => {
+    const fake = createFakeSpawn();
+    const queueCalls: Array<{ bin: string; args: readonly string[] }> = [];
+    const surface: MessagingSurface = {
+      harness: 'codex',
+      discovery: false,
+      prompt: null,
+      promptInbox: null,
+      queuedPrompt: {
+        command(sessionId, text) {
+          const call = { bin: 'fake-codex', args: ['queue', '--thread', sessionId, '--message', text] };
+          queueCalls.push(call);
+          return call;
+        },
+      },
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface }),
+    );
+    pushEvent(CODEX_SESSION, 'Stop', 'codex');
+
+    const sending = deliverer.send({
+      toSessionId: CODEX_SESSION,
+      text: 'queue 正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1));
+    fake.children[0]!.emit('exit', 0, null);
+    const result = await sending;
+    expect(result).toMatchObject({ ok: true, status: 'delivered' });
+    expect(queueCalls).toEqual([
+      { bin: 'fake-codex', args: ['queue', '--thread', CODEX_SESSION, '--message', 'queue 正文'] },
+    ]);
+    // 正文进 argv、不经 shell 拼串
+    expect(fake.calls[0]!.options.shell).toBeFalsy();
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      status: 'delivered',
+      via: 'queue',
+    });
+    // 手动面（oneWay）也走它：宿主眼里队列投递就是用户输入
+    expect(busEvents.some((m) => m.kind === 'message.delivered')).toBe(true);
+  });
+
+  it('层①-q 失败即回落：exit 非 0 → 不留痕，照旧走下一层（入队）', async () => {
+    const fake = createFakeSpawn();
+    const surface: MessagingSurface = {
+      harness: 'codex',
+      discovery: false,
+      prompt: null,
+      promptInbox: null,
+      queuedPrompt: {
+        command: (sessionId, text) => ({ bin: 'fake-codex', args: ['queue', '--thread', sessionId, '--message', text] }),
+      },
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface }),
+    );
+    pushEvent(CODEX_SESSION, 'Stop', 'codex');
+
+    const sending = deliverer.send({
+      toSessionId: CODEX_SESSION,
+      text: 'queue 失败',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    await vi.waitFor(() => expect(fake.calls).toHaveLength(1));
+    fake.children[0]!.emit('exit', 1, null);
+    const result = await sending;
+    // 队列拒绝（exit 1）→ 回落：三层全无通路 → 入队等下一次事件
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toBeNull();
+  });
+
+  it('层①-q 带图不走：CLI 硬拒 --images，带图消息直接落下一层', async () => {
+    const fake = createFakeSpawn();
+    const surface: MessagingSurface = {
+      harness: 'codex',
+      discovery: false,
+      prompt: null,
+      promptInbox: null,
+      queuedPrompt: {
+        command: (sessionId, text) => ({ bin: 'fake-codex', args: ['queue', '--thread', sessionId, '--message', text] }),
+      },
+      inject: null,
+      headless: null,
+      idleSignals: [],
+      imageAttach: { composePrompt: (text, images) => `${text}\n\n${images.map((i) => i.path).join('\n')}` },
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface }),
+    );
+    pushEvent(CODEX_SESSION, 'Stop', 'codex');
+
+    const result = await deliverer.send({
+      toSessionId: CODEX_SESSION,
+      text: '带图',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      images: [{ id: 'img-1', name: 'a.png', mediaType: 'image/png', path: '/uploads/a.png' }],
+    });
+    expect(fake.calls).toHaveLength(0); // 队列没起进程
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
   });
 
   it('awaitInboxReady：无凭据到点 false，凭据在手 true，机制缺席立刻 false', async () => {
@@ -1718,6 +1834,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],
@@ -1905,6 +2022,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],
@@ -1947,6 +2065,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],
@@ -2009,6 +2128,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],
@@ -2053,6 +2173,7 @@ describe('MessageDeliverer 裁决表', () => {
       harness: 'codex',
       discovery: true,
       prompt: null,
+      queuedPrompt: null,
       inject: null,
       headless: null,
       idleSignals: [],

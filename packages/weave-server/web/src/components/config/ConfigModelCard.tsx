@@ -89,13 +89,15 @@ export function ConfigModelCard({
           <span className="text-[11px] text-neutral-500">{t('cfg.modelsApiKey')}</span>
           <div className="flex items-center gap-1.5">
             <input
-              type={showKey ? 'text' : 'password'}
+              type="text"
               value={apiKey}
               readOnly={!keyFocused}
               onFocus={() => setKeyFocused(true)}
               onBlur={() => setKeyFocused(false)}
               onChange={(e) => setApiKey(e.target.value)}
               // 不是登录凭据：显式让浏览器与密码管理器别当密码字段填（同设置里 AI key 那框）。
+              // 掩码走 CSS（masked-input）而非 type=password：后者会让浏览器把前面的
+              // 地址框当用户名、这里当密码，弹「保存凭据」并自动填充。
               // one-time-code 比 off/new-password 稳：既不自填已存凭据，也不弹强密码生成器。
               name="weaveConfigModelApiKey"
               autoComplete="one-time-code"
@@ -110,7 +112,7 @@ export function ConfigModelCard({
                   ? t('cfg.modelsApiKeyConfigured')
                   : t('cfg.modelsApiKeyPlaceholder')
               }
-              className={INPUT_CLS}
+              className={cn(INPUT_CLS, !showKey && 'masked-input')}
             />
             <button
               type="button"

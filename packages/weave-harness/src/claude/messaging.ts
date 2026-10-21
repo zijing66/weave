@@ -92,6 +92,7 @@ export const CLAUDE_MESSAGING: MessagingSurface = {
   discovery: true,
   prompt: CLAUDE_PROMPT_RELAY,
   promptInbox: CLAUDE_PROMPT_INBOX,
+  queuedPrompt: null,
   inject: { rideEvents: INJECTABLE_EVENTS.claude },
   headless: CLAUDE_RESUME,
   idleSignals: [...HARNESS_LIFECYCLE.claude.close, 'SessionEnd'],

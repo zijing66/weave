@@ -24,6 +24,7 @@ import {
 import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
+import { cn } from '@/lib/utils';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
 import { NumberStepper } from '@/components/ui/number-stepper';
@@ -566,7 +567,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
             <div className="flex items-center gap-2">
               <input
-                type={showApiKey ? 'text' : 'password'}
+                type="text"
                 value={apiKeyInput}
                 readOnly={!keyFocused}
                 onFocus={() => setKeyFocused(true)}
@@ -577,6 +578,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 }}
                 // 这不是登录凭据：显式告诉浏览器与密码管理器别把它当密码字段——
                 // 同源上「保存的凭据」只该归登录页那个框（见 LoginPage：current-password）。
+                // 掩码走 CSS（masked-input）而非 type=password：后者会让浏览器把
+                // 前面的地址框当用户名、这里当密码，弹「保存凭据」并自动填充。
                 // one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器。
                 name="weaveAiApiKey"
                 autoComplete="one-time-code"
@@ -586,12 +589,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 data-1p-ignore
                 data-lpignore="true"
                 data-bwignore
+                className={cn(
+                  'min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500',
+                  !showApiKey && 'masked-input',
+                )}
                 placeholder={
                   settings?.ai?.apiKeySet
                     ? t('settings.aiApiKeySet')
                     : t('settings.aiApiKeyUnset')
                 }
-                className="min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <button
                 type="button"

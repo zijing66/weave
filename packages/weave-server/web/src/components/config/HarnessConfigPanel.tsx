@@ -36,7 +36,7 @@ const FILE_LABEL: Record<ConfigFileId, MessageKey> = {
   global: 'cfg.file.global',
 };
 
-type Filter = 'all' | 'set' | 'unset';
+type Filter = 'set' | 'all' | 'unset';
 
 /** env 变量的文档类型 → 表单类型串（控件种类由 controlOf 从类型串推）。 */
 const ENV_TYPE: Record<ConfigEnvVarSpec['kind'], string> = {
@@ -49,8 +49,8 @@ const ENV_TYPE: Record<ConfigEnvVarSpec['kind'], string> = {
 };
 
 const FILTERS: { key: Filter; label: MessageKey }[] = [
-  { key: 'all', label: 'cfg.all' },
   { key: 'set', label: 'cfg.setOnly' },
+  { key: 'all', label: 'cfg.all' },
   { key: 'unset', label: 'cfg.unsetOnly' },
 ];
 
@@ -88,7 +88,8 @@ export function HarnessConfigPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  // 默认只看已配置的（文件里真有 key 的）；「全部」才把词表里没配的键亮出来
+  const [filter, setFilter] = useState<Filter>('set');
   /** 每个对象节点的展/收（没记过就看默认：里面有已配置的值就展开）。 */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [rawMode, setRawMode] = useState(false);

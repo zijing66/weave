@@ -50,7 +50,7 @@ interface DiagSession {
   alive: boolean | null;
   eventCount: number;
   lastEventType: string | null;
-  channels: { inbox: DiagChannel; relay: DiagChannel; terminal: DiagChannel };
+  channels: { inbox: DiagChannel; queue: DiagChannel; relay: DiagChannel; terminal: DiagChannel };
   queue: { pending: number; stalled: boolean };
   reachable: boolean;
   hints: string[];
@@ -199,6 +199,7 @@ async function printDeliveryDiagnostics(port: number, projectId: number): Promis
       '    ' +
         t('out.doctor.diagChannels', {
           inbox: channelText(s.channels.inbox),
+          queue: channelText(s.channels.queue),
           relay: channelText(s.channels.relay),
           terminal: channelText(s.channels.terminal),
         }),

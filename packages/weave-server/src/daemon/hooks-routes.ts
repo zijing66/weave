@@ -384,9 +384,9 @@ const RUN_STATUSES = new Set<OrchestrationRunStatus>([
   'interrupted',
 ]);
 
-/** prompt 通道可用性（与投递裁决同口径）：层① 原生中继 || 层② 终端 send-text 兜底。 */
+/** prompt 通道可用性（与投递裁决同口径）：宿主队列 || 层① 原生中继 || 层② 终端 send-text 兜底。 */
 function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
-  return surface.prompt !== null || terminalChannel;
+  return surface.queuedPrompt !== null || surface.prompt !== null || terminalChannel;
 }
 
 /** 中断后等宿主把标记写进转录的时间（实测 0.5s 落地，留一倍余量）。 */
@@ -2025,7 +2025,7 @@ export async function handleHooksRoutes(
       .map((s) => {
         const diag = deps.messageDeliverer!.diagnose(s.sessionId);
         const capture = captureOf(s.projectId, s.harness ?? null);
-        const channels = { inbox: diag.inbox, relay: diag.relay, terminal: diag.terminal };
+        const channels = { inbox: diag.inbox, queue: diag.queue, relay: diag.relay, terminal: diag.terminal };
         return {
           sessionId: s.sessionId,
           projectId: s.projectId,

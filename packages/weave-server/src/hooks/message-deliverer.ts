@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -100,8 +101,8 @@ export interface PipeMessage {
   oneWay?: boolean;
   /** 发送人强制层② 终端（层序收窄成只剩它，且重发沿用）。 */
   forceTerminal?: boolean;
-  /** prompt 通道的实际落法（socket 直投 / 中继 / 终端 send-text）。 */
-  via?: 'socket' | 'relay' | 'terminal';
+  /** prompt 通道的实际落法（socket 直投 / 宿主队列 / 中继 / 终端 send-text）。 */
+  via?: 'socket' | 'queue' | 'relay' | 'terminal';
   /** 投递回执：会话自己的 UserPromptSubmit 与本文匹配上了（真到达，非「已交给」）。 */
   acked?: boolean;
   /** 回执命中的那条开轮事件 id：对话面据此把投递行精确挂到它的气泡上（比比对
@@ -234,6 +235,7 @@ export interface SessionDeliveryDiagnosis {
   /** 存活三态（同 `pidAliveOf` 口径：判不动 = null）。 */
   alive: boolean | null;
   inbox: ChannelState<'no-mechanism' | 'no-credentials' | 'auth-token-required'>;
+  queue: ChannelState<'no-mechanism'>;
   relay: ChannelState<'no-mechanism' | 'no-peer-name'>;
   terminal: ChannelState<'no-backend' | 'no-pane-env'>;
   /** 该会话有没有上报过 pane 定位 env。 */
@@ -739,6 +741,10 @@ export class MessageDeliverer {
           ? { status: 'unavailable', reason: 'auth-token-required' }
           : { status: 'ready', reason: null };
 
+    const queue: SessionDeliveryDiagnosis['queue'] = !surface?.queuedPrompt
+      ? { status: 'unavailable', reason: 'no-mechanism' }
+      : { status: 'ready', reason: null };
+
     const peer = surface?.prompt?.resolve(sessionId) ?? null;
     const relay: SessionDeliveryDiagnosis['relay'] = !surface?.prompt
       ? { status: 'unavailable', reason: 'no-mechanism' }
@@ -762,6 +768,7 @@ export class MessageDeliverer {
     return {
       alive,
       inbox,
+      queue,
       relay,
       terminal,
       paneEnvReported,
@@ -1290,6 +1297,12 @@ export class MessageDeliverer {
           return;
         }
       }
+      // 层①-q 宿主队列（codex）：比终端击键更接近「用户本人发送」，手动面也先走它。
+      if (surface && (await this.tryQueuedDeliver(msg, surface))) {
+        removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
+        this.settleQueueIndex(sessionId, project.token);
+        return;
+      }
       // 层①-a 直投优先：冲洗正是被「刚上报凭据的那条 hook 事件」触发的（本机毫秒级、
       // 零进程零 LLM），队列里的手动面行不该绕过它直奔中继。
       if (surface && (await this.tryInboxDeliver(msg, surface))) {
@@ -1415,7 +1428,7 @@ export class MessageDeliverer {
     surface: MessagingSurface,
   ): ResolvedChannel | { reason: string } {
     if (mode === 'prompt') {
-      if (surface.prompt) return 'prompt';
+      if (surface.prompt || surface.queuedPrompt) return 'prompt';
       if (this.terminalChannel()) return 'prompt';
       return {
         reason:
@@ -1522,6 +1535,14 @@ export class MessageDeliverer {
         return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
       }
     }
+    // 层①-q 宿主自带队列（codex queue）：消息进目标会话自己的队列，活会话 <1s 注入。
+    // 它在宿主眼里**就是用户输入**，故强制终端（手动面）也先走它——终端击键只在
+    // 队列拒绝时回落（会话不在 / CLI 起不来）。带图不走它（CLI 硬拒 `--images`）。
+    const queued = await this.tryQueuedDeliver(entry, surface);
+    if (queued) {
+      return { ok: true, messageId: entry.id, status: 'delivered', message: queued };
+    }
+
     const socketDelivered = await this.tryInboxDeliver(entry, surface);
     if (socketDelivered) {
       return { ok: true, messageId: entry.id, status: 'delivered', message: socketDelivered };
@@ -1567,6 +1588,81 @@ export class MessageDeliverer {
     this.queueEntry(entry, project.token);
     const pending: PipeMessage = { ...entry, status: 'pending' };
     return { ok: true, messageId: entry.id, status: 'pending', message: pending };
+  }
+
+  /**
+   * 层①-q 宿主自带队列（codex queue）：成功返回落定后的内存行；回落（无面 / 带图 /
+   * CLI 失败）返回 null，调用方照旧走下一层。**队列冲洗也走它**。exit 0 只说明
+   * 「已交给宿主队列」——真正的到达由 UPS 回执核销（codex 的队列投递在宿主眼里
+   * 就是用户输入，UPS 原文与投递正文逐字相同，回执比对天然成立）。
+   */
+  private async tryQueuedDeliver(
+    entry: PipeMessage,
+    surface: MessagingSurface,
+  ): Promise<PipeMessage | null> {
+    const spec = surface.queuedPrompt;
+    if (!spec || this.hasImages(entry)) return null;
+    const { bin, args } = spec.command(entry.sessionId, this.wireTextOf(entry));
+    this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'queue' });
+    try {
+      await this.spawnOnce(bin, args, spec.timeoutMs ?? 30_000, this.deps.spawnImpl);
+    } catch {
+      // 队列拒绝（会话不在 / CLI 起不来）：回落下一层，不留痕
+      this.memory.delete(entry.id);
+      return null;
+    }
+    const delivered: PipeMessage = {
+      ...this.memory.get(entry.id)!,
+      status: 'delivered',
+      via: 'queue',
+      settledAt: new Date().toISOString(),
+    };
+    this.memory.set(entry.id, delivered);
+    this.awaitingAck.set(entry.sessionId, entry.id);
+    this.armAckWatch(delivered);
+    this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
+    return delivered;
+  }
+
+  /** 一次性子进程：收集输出、超时强杀；非零退出 / spawn 失败都算拒绝。 */
+  private spawnOnce(
+    bin: string,
+    args: readonly string[],
+    timeoutMs: number,
+    spawnImpl?: SpawnLike,
+  ): Promise<void> {
+    const doSpawn = spawnImpl ?? ((command, argv, options) => spawn(command, [...argv], options));
+    return new Promise((resolve, reject) => {
+      const child = doSpawn(bin, args, {
+        cwd: tmpdir(),
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const out: Buffer[] = [];
+      child.stdout?.on('data', (c: Buffer) => out.push(c));
+      child.stderr?.on('data', (c: Buffer) => out.push(c));
+      const timer = setTimeout(() => {
+        try {
+          (child as ChildProcess).kill();
+        } catch {
+          // 已退出：忽略
+        }
+        reject(new Error(`queue timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      child.on('error', (err: Error) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('exit', (code: number | null) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const tail = Buffer.concat(out).toString('utf8').slice(-500);
+        reject(new Error(`queue exit ${code}${tail ? `: ${tail}` : ''}`));
+      });
+    });
   }
 
   /**

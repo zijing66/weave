@@ -10,6 +10,7 @@ import type {
   ConfigSurface,
 } from '../driver.js';
 import { CONFIG_SHAPE_OVERRIDES } from './config-shapes.js';
+import { WEAVE_MARKETPLACE } from './plugins.js';
 import {
   CLAUDE_ENV_VARS,
   CLAUDE_SETTINGS_GROUPS,
@@ -28,8 +29,10 @@ const ANTHROPIC_VERSION = '2023-06-01';
 /**
  * 表单只读的 weave 托管键（点号路径）。`statusLine` 另按「命令是否指向 weave」判。
  * `permissions` 不在这里：weave 只往它的 allow/deny 里加几条，判据见 {@link managedEntries}。
+ * `enabledPlugins` 也不整键托管：weave 只写 `name@weave`（weave 市场的插件），
+ * 用户从官方市场装的（`figma@claude-plugins-official`…）是自己的，判据见 {@link managedEntries}。
  */
-const MANAGED_PATHS = ['$comment', 'hooks', 'enabledPlugins', 'env.WEAVE_ENABLED'];
+const MANAGED_PATHS = ['$comment', 'hooks', 'env.WEAVE_ENABLED'];
 
 type FileCtx = { projectPath: string | null; homedir: string };
 
@@ -207,6 +210,13 @@ export const CLAUDE_CONFIG: ConfigSurface = {
       const list = readPath(values, path);
       if (!Array.isArray(list)) continue;
       for (const entry of entries) if (list.includes(entry)) out.push({ path, entry });
+    }
+    // weave 市场的插件（`name@weave`）是装/停面板写进去的；其他市场的键是用户自己的
+    const ep = readPath(values, 'enabledPlugins');
+    if (isPlainObject(ep)) {
+      for (const key of Object.keys(ep)) {
+        if (key.endsWith(`@${WEAVE_MARKETPLACE}`)) out.push({ path: 'enabledPlugins', entry: key });
+      }
     }
     return out;
   },

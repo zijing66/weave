@@ -142,4 +142,22 @@ describe('MessagingSurface 契约', () => {
       expect(CODEX_MESSAGING.unsupportedReasons?.[channel]).toBeTruthy();
     }
   });
+
+  it('codex：queuedPrompt = codex queue，正文进 argv、命令行无 shell 元字符风险', () => {
+    const spec = CODEX_MESSAGING.queuedPrompt!;
+    const { bin, args } = spec.command('0197aaaa-bbbb-7ccc-8ddd-eeeeffff0000', '正文 with spaces & quotes');
+    // win32 探得到 npm 包时前面多一段 node 入口（bin = node、args[0] = codex.js）；
+    // 探不到就是裸名 codex。两种形态的 queue 参数都一样。
+    const queueArgs = args[0]!.endsWith('codex.js') ? args.slice(1) : args;
+    expect(queueArgs).toEqual([
+      'queue',
+      '--thread',
+      '0197aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
+      '--message',
+      '正文 with spaces & quotes',
+    ]);
+    expect(queueArgs.slice(0, -1).every((a) => !a.includes('&'))).toBe(true);
+    expect(typeof bin).toBe('string');
+    expect(bin.length).toBeGreaterThan(0);
+  });
 });

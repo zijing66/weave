@@ -137,10 +137,10 @@ describe('QuestionTracker 状态机', () => {
     feed(SESSION, preTool('ExitPlanMode', {}));
     const q = tracker.get(SESSION)!.questions[0]!;
     expect(q.key).toBe('ExitPlanMode:approve');
+    // 宿主 2.1.296 实测：计划对话框只有两行（485dc96）
     expect(q.options.map((o) => o.label)).toEqual([
-      'Yes, auto-accept edits',
-      'Yes, manually approve edits',
-      'No, keep planning',
+      'Yes, and switch to default (ask each time) for this session',
+      'No',
     ]);
   });
 

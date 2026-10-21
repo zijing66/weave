@@ -103,7 +103,7 @@ export const zh = {
   'out.doctor.diagUnavailable': '不可用（{reason}）',
   'out.doctor.diagUnknown': '判不动（{reason}）',
   'out.doctor.diagSession': '{id}「{title}」  存活 {alive} · 事件 {events} · 末次 {last}',
-  'out.doctor.diagChannels': '直投 {inbox}   中继 {relay}   终端 {terminal}',
+  'out.doctor.diagChannels': '直投 {inbox}   队列 {queue}   中继 {relay}   终端 {terminal}',
   'out.doctor.diagQueue': '队列 {pending} 条 · 暂停闸 {stalled}',
   'out.doctor.diagHints': '修法：{hints}',
   'out.doctor.reason.noMechanism': '该 harness 没有这个机制',

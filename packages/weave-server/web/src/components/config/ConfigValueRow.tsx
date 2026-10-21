@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Info, Lock, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Info, Lock, Plus, X } from 'lucide-react';
 import type { ConfigFieldSpec, TreeNodeSpec } from '@/lib/config-form';
 import {
   arrayItemsOf,
@@ -93,16 +93,23 @@ export function ConfigValueRow({
       );
     }
     if (shape === 'map') {
-      return <MapField spec={spec} value={value} onCommit={(next) => onChange({ value: next })} />;
+      return (
+        <ShapedField count={mapEntriesOf(value).length} label={`${mapEntriesOf(value).length}`}>
+          <MapField spec={spec} value={value} onCommit={(next) => onChange({ value: next })} />
+        </ShapedField>
+      );
     }
     if (shape === 'array') {
+      const items = arrayItemsOf(value);
       return (
-        <ListField
-          spec={spec}
-          value={value}
-          locked={locked ?? []}
-          onCommit={(next) => onChange({ value: next })}
-        />
+        <ShapedField count={items.length} label={String(items.length)}>
+          <ListField
+            spec={spec}
+            value={value}
+            locked={locked ?? []}
+            onCommit={(next) => onChange({ value: next })}
+          />
+        </ShapedField>
       );
     }
     if (control === 'select') {
@@ -210,6 +217,27 @@ export function ConfigValueRow({
           )}
         </p>
       )}
+    </div>
+  );
+}
+
+/** map / 数组的外壳：折起来只露条数，展开才是逐项编辑器。 */
+function ShapedField({ count, label, children }: { count: number; label: string; children: ReactNode }) {
+  const t = useT();
+  const [open, setOpen] = useState(count <= 3);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200"
+        title={t('cfg.shapedToggle')}
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <span className="font-mono">{label}</span>
+        <span className="text-neutral-600">{t('cfg.entryCount', { count })}</span>
+      </button>
+      {open && <div className="mt-1 space-y-1">{children}</div>}
     </div>
   );
 }

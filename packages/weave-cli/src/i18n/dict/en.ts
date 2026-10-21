@@ -111,7 +111,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.doctor.diagUnavailable': 'unavailable ({reason})',
   'out.doctor.diagUnknown': 'undecidable ({reason})',
   'out.doctor.diagSession': '{id} "{title}"  alive {alive} · events {events} · last {last}',
-  'out.doctor.diagChannels': 'inbox {inbox}   relay {relay}   terminal {terminal}',
+  'out.doctor.diagChannels': 'inbox {inbox}   queue {queue}   relay {relay}   terminal {terminal}',
   'out.doctor.diagQueue': 'queue {pending} · stalled {stalled}',
   'out.doctor.diagHints': 'fix: {hints}',
   'out.doctor.reason.noMechanism': 'this harness has no such mechanism',

@@ -25,6 +25,13 @@
     'Courier New', monospace;
 }
 
+/* 掩码但不做密码框：type=password 会让 Chromium/Edge 把同表单的前一个文本框
+   当用户名、这个框当密码，弹「保存凭据」并自动填充——API key 不是登录凭据。
+   用 CSS 圆点掩码代替（Firefox 不支持则明文，眼睛按钮本就可切明文）。 */
+.masked-input {
+  -webkit-text-security: disc;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

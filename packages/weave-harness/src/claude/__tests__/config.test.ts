@@ -189,4 +189,16 @@ describe('claude 配置面', () => {
     ]);
     expect(CLAUDE_CONFIG.managedEntries({ permissions: { allow: ['Bash(git:*)'] } })).toEqual([]);
   });
+
+  it('enabledPlugins 只锁 weave 市场的键，其他市场的是用户自己的', () => {
+    const entries = CLAUDE_CONFIG.managedEntries({
+      enabledPlugins: {
+        'weave-plugin-creator@weave': true,
+        'figma@claude-plugins-official': false,
+        'rust-analyzer-lsp@claude-plugins-official': true,
+      },
+    });
+    expect(entries).toEqual([{ path: 'enabledPlugins', entry: 'weave-plugin-creator@weave' }]);
+    expect(CLAUDE_CONFIG.managedKeys({ enabledPlugins: { 'figma@claude-plugins-official': true } })).toEqual([]);
+  });
 });

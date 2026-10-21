@@ -340,7 +340,7 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(frames[0]).toMatchObject({ eventId: id, projectId: project.id, eventType: 'Stop' });
   });
 
-  it('SessionEnd 到达即会话退出（谁是退出事件查生命周期表）；codex / 其他事件不动', () => {
+  it('SessionEnd 到达即会话退出（谁是退出事件查生命周期表）；其他事件不动', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
     const hookEvents = new HookEventRepository(db);
@@ -367,9 +367,9 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
 
     handleIngestedRecords(deps, [record('SessionEnd', 'claude', 's-exit')]);
     handleIngestedRecords(deps, [record('Stop', 'claude', 's-exit')]);
-    // codex 没有退出事件（表里 null）——即便事件名撞上也不动
+    // codex 的退出事件也是 SessionEnd（e33f0f2 起 lifecycle 表有 sessionExit）
     handleIngestedRecords(deps, [record('SessionEnd', 'codex', 's-codex')]);
-    expect(exited).toEqual(['s-exit']);
+    expect(exited).toEqual(['s-exit', 's-codex']);
   });
 
   it('回合判死（closeFailed）交给投递器补回车；正常收尾与其他事件不动', () => {

@@ -163,17 +163,27 @@ claude 专属机制（inbox socket）；其他 harness 的 `PromptInboxSpec` = n
 
 ### 4.3 手动发送：无模式选项、无通道选项
 
-发送键就是一枚（旧的那枚箭头下拉与它记的 localStorage 已删）：路由无 `mode` 入参、恒走 prompt 通道，且**手动面恒带 `forceTerminal: true` = 只剩层② 终端击键**——直投与中继不带发送方名字，宿主也不把它们当用户输入（socket 直投被包成「另一个会话发的」、对方会话可能答给一个随机同伴），人工对话要的是用户权威。
+发送键就是一枚（旧的那枚箭头下拉与它记的 localStorage 已删）：路由无 `mode` 入参、恒走 prompt 通道，且**手动面恒带 `forceTerminal: true`**——直投与中继不带发送方名字，宿主也不把它们当用户输入（socket 直投被包成「另一个会话发的」、对方会话可能答给一个随机同伴），人工对话要的是用户权威。**层①-q 宿主队列例外**：codex queue 的投递在宿主眼里就是用户输入（见 4.4a），故手动面也先走它、终端击键回落。
 
 ### 4.4 层序随面变
 
-唯一实现 = `MessageDeliverer` 的直投先行 + 两处按 `forceTerminal` 定的层序；调用方不自排。
+唯一实现 = `MessageDeliverer` 的队列先行 + 两处按 `forceTerminal` 定的层序；调用方不自排。
 
-- **手动面**（`forceTerminal` 恒开）= **只剩层② 终端**。
-- **编排域** = 层①-a 直投 → 层① 中继 → 层② 终端（直投最快，没凭据才落中继——那里的 @weave 身份正是要投递的东西）。
-- **队列冲洗同序**，且先试直投——冲洗正是被「刚上报凭据的那条 hook 事件」触发的，命中最优。
+- **手动面**（`forceTerminal` 恒开）= 层①-q 宿主队列（面声明了才试；codex queue 在宿主眼里**就是用户输入**，比终端击键更接近「用户本人发送」）→ 层② 终端。
+- **编排域** = 层①-q 宿主队列 → 层①-a 直投 → 层① 中继 → 层② 终端。
+- **队列冲洗同序**，且先试队列/直投——冲洗正是被「刚上报凭据的那条 hook 事件」触发的，命中最优。
 
 `SendInput.forceTerminal` 随 promptbox 行落盘、重发沿用。pane 找不到时照旧入队等下一次冲洗（不假装送达），也不回落另两层。
+
+### 4.4a 层①-q 宿主自带队列
+
+`MessagingSurface.queuedPrompt`（`QueuedPromptSpec`）：宿主自己的排队投递机制，**各 harness 各自实现适配**（codex = `codex queue --thread <UUID> --message <TEXT>`，经 app-server `thread/queue/add`；claude = null）。活会话 <1s 注入、没开的会话下次 resume 自动领走。
+
+- **在宿主眼里就是用户输入**（无带外来源位，投递正文 = 普通 user 回合）——这是它与直投/中继的本质差别，也是手动面敢走它的原因。
+- **exit 0 = 已交给宿主队列即 `delivered`**；真到达由 UPS 回执核销（投递正文与 UPS 原文逐字相同，回执比对天然成立）。
+- **不收图**（codex CLI 硬拒 `--images`）：带图消息跳过这层，层② 终端 bracketed paste 优先。
+- **正文只进 argv、不经 shell**：win32 的 `codex` 是 npm `.cmd` 垫片，harness 探 PATH 上 `@openai/codex` 包的 bin 入口改用 `node <pkg>/bin/codex.js` 直接 spawn（`WEAVE_CODEX_BIN` 可覆盖）；探不到按裸名 spawn、失败即回落下一层。
+- 一次性子进程、带超时（30s）：队列是小操作，挂住即当失败回落。
 
 ### 4.5 层① 原生中继
 
@@ -749,10 +759,10 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 两个面，粒度不同：
 
-- `managedKeys(values)` 答**整个键**是 weave 的：`['$comment','hooks','enabledPlugins','env.WEAVE_ENABLED']` + `statusLine`（仅当命令指向 weave，判据 = `statusLineIsWeave`）。web 渲染成 `<Lock/>` + 「weave 托管」并指向对应面板。
-- `managedEntries(values)` 答**数组里的哪几条**是 weave 的：`permissions.allow` / `permissions.deny` 里 `weave init` 加的那 6 条（常量 = `settings-gen.ts` 的 `WEAVE_PERMISSIONS_ALLOW` / `_DENY`，与 init/uninit 同一来源），只报值里真在的。web 把这几行标只读，同一数组里用户自己的规则照常增删。
+- `managedKeys(values)` 答**整个键**是 weave 的：`['$comment','hooks','env.WEAVE_ENABLED']` + `statusLine`（仅当命令指向 weave，判据 = `statusLineIsWeave`）。web 渲染成 `<Lock/>` + 「weave 托管」并指向对应面板。
+- `managedEntries(values)` 答**行级**托管，只报值里真在的：`permissions.allow` / `permissions.deny` 里 `weave init` 加的那 6 条（常量 = `settings-gen.ts` 的 `WEAVE_PERMISSIONS_ALLOW` / `_DENY`，与 init/uninit 同一来源）；`enabledPlugins` 里以 `@weave` 结尾的键（weave 只写自己市场的插件，`figma@claude-plugins-official` 这类用户装的不是 weave 的）。web 把这几行标只读，同一容器里用户自己的行照常增删。
 
-**`permissions` 不整键托管**：以前按「顶层键存在」判（`MANAGED_PATHS` 含 `permissions`），结果一条 weave 规则都没有的文件也被整块锁死，连 `defaultMode`（`bypassPermissions` 就是它的取值）都改不了。判据必须是内容而不是键在不在。
+**`permissions` / `enabledPlugins` 不整键托管**：以前按「顶层键存在」判（`MANAGED_PATHS` 含它们），结果一条 weave 规则都没有的文件也被整块锁死，连 `defaultMode`（`bypassPermissions` 就是它的取值）都改不了、用户从官方市场装的插件也动不了。判据必须是内容而不是键在不在。
 
 **为什么托管**：这些是 `weave init` / 状态栏 / 插件面写进去的，表单删了会被下一次 init 合并加回来，用户看到「改了又变回来」。逃生口是原始 JSON 视图，那里照写不误。
 
@@ -786,8 +796,9 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 - **词表没收的键照实列出来**（`extra`，只读 + 标「词表未收录」）：文件里真有而文档没写的键，隐瞒它就等于让人以为文件是干净的；改这类键只能走原始 JSON 视图。
 - **`env` 也是树上的一支**：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec，**值的控件按变量 `kind` 出**：Boolean→开关、枚举→下拉、number、list），搜索时再补文档里命中的（上限 50）；节点底部一行输入框，候选就是文档里那 391 个变量名（`<datalist>` 可搜、也可自由输入），选中即落一条 `env.<NAME>` 待保存。不再单独开一块 env 区。
 - **默认展开只到「里面有已配置值」的对象**：一屏先看到自己配了什么，没配的嵌套结构折着；搜索或过滤生效时强制全开（否则命中项藏在折起来的分支里）。「全部展开/收起」把这些选择落成显式状态。
+- **过滤默认档 = 「已配置」**：文件里没有 key 的键默认不出现（用户原话「隐藏指的就是没有 key 的场景」），「全部」才把词表里未配置的亮出来，「只看未配置」反向。搜索时三档都放行命中项。
 - 叶子行 = 键名 + 按类型出的控件（Boolean→开关、枚举→下拉、数字→输入、对象→JSON 框），未设置的给「写入」（写文档 Default），info 钮展开说明+文档分组+默认值。
-- **有 `shape` 时就换成逐项编辑器**（`ConfigValueRow` 内的 `MapField` / `ListField`）：map 一行一个键（键名自己起）+ 值控件，数组一行一个元素（有 `fields` 时行内摆各字段控件，标量时行内一个控件），尾行「添加一项」。**草稿留在节点本地**（`committed` 记最近一次提交的 JSON，只有外部值真变了才回灌）——否则键名还没敲完就整份回写、行会当场消失；全空的行（空串/空对象）不写进文件。
+- **有 `shape` 时就换成逐项编辑器**（`ConfigValueRow` 内的 `MapField` / `ListField`，外面套 `ShapedField` 折叠壳——折起来只露条数，≤3 项默认展开）：map 一行一个键（键名自己起）+ 值控件，数组一行一个元素（有 `fields` 时行内摆各字段控件，标量时行内一个控件），尾行「添加一项」。**草稿留在节点本地**（`committed` 记最近一次提交的 JSON，只有外部值真变了才回灌）——否则键名还没敲完就整份回写、行会当场消失；全空的行（空串/空对象）不写进文件。
 - **托管锁到行**：`view.managedEntries` 里属于这个数组路径的那几条渲染成只读文本 + 锁标，同一数组里用户自己的行照常增删（判据与 `managedKeys` 互补：整键锁 vs 行锁）。
 
 纯函数落 `web/src/lib/config-form.ts`（`buildConfigTree` / `pruneTree` / `treeHasValue` / type→控件 / 点号路径→值 / 文本→值 / `shapeOf` + map 条目与元素字段的读写 `mapEntriesOf`·`mapOfEntries`·`fieldValueOf`·`withFieldValue`·`emptyItemOf`）与 `text-diff.ts`。

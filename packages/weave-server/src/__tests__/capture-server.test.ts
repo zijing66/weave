@@ -102,9 +102,10 @@ describe('daemon /capture', () => {
     const data = (await res.json()) as {
       rows: Array<{ harness: string; installed: boolean; helperPresent: boolean }>;
     };
-    // 只有 claude 声明了 capture 槽；codex 无该能力不出现（不写白名单）
-    expect(data.rows).toHaveLength(1);
-    expect(data.rows[0]).toMatchObject({ harness: 'claude', installed: false, helperPresent: false });
+    // claude 与 codex 都声明了 capture 槽（e33f0f2 起 codex 走 hooks.json）
+    expect(data.rows).toHaveLength(2);
+    expect(data.rows.find((r) => r.harness === 'claude')).toMatchObject({ installed: false, helperPresent: false });
+    expect(data.rows.find((r) => r.harness === 'codex')).toMatchObject({ installed: false, helperPresent: false });
   });
 
   it('PUT 安装：user settings 落组+脚本，项目档旧 weave 组清光、用户组保留', async () => {
