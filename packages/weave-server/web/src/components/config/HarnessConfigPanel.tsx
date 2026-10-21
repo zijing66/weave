@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { ConfigTree, type ConfigTreeHandlers } from './ConfigTree';
+import { Combobox } from '@/components/ui/combobox';
 import type { RowEdit } from './ConfigValueRow';
 import { ConfigProfiles } from './ConfigProfiles';
 import { ConfigModelCard } from './ConfigModelCard';
@@ -629,37 +630,30 @@ function EnvVarPicker({
   onAdd: (name: string) => void;
 }) {
   const t = useT();
-  const [text, setText] = useState('');
-  const name = text.trim();
-  const spec = envVars.find((v) => v.name === name);
-  const canAdd = name !== '' && !exists(name);
+  const [picked, setPicked] = useState('');
+  const spec = envVars.find((v) => v.name === picked);
+  const canAdd = picked !== '' && !exists(picked);
   const add = (): void => {
     if (!canAdd) return;
-    onAdd(name);
-    setText('');
+    onAdd(picked);
+    setPicked('');
   };
   return (
     <div style={{ paddingLeft: depth * 14 }} className="flex items-start gap-1.5 rounded-md px-1.5 py-1">
-      <input
-        value={text}
-        list="weave-env-vars"
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') add();
-        }}
+      {/* 391 个候选走统一 Combobox（虚拟滚动 + 可搜）；词表是建议不是白名单，creatable 兜自由输入 */}
+      <Combobox
+        value={picked}
+        options={envVars.map((v) => ({ value: v.name, hint: v.description }))}
+        onChange={setPicked}
         placeholder={t('cfg.addEnvVar')}
-        className="w-[38%] shrink-0 rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 font-mono text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-mac-accent/50"
+        searchPlaceholder={t('cfg.search')}
+        creatable
+        creatableLabel={t('cfg.createEnvVar')}
+        className="w-[38%] shrink-0 font-mono text-[11px]"
       />
-      <datalist id="weave-env-vars">
-        {envVars.map((v) => (
-          <option key={v.name} value={v.name}>
-            {v.description}
-          </option>
-        ))}
-      </datalist>
       <div className="min-w-0 flex-1">
         {spec && <p className="truncate text-[11px] text-neutral-500">{spec.description}</p>}
-        {!spec && name !== '' && exists(name) && (
+        {!spec && picked !== '' && exists(picked) && (
           <p className="text-[11px] text-neutral-600">{t('cfg.alreadySet')}</p>
         )}
       </div>

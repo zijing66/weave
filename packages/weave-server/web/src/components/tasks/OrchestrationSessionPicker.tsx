@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { Combobox } from '@/components/ui/combobox';
 import { cn } from '@/lib/utils';
 import { sessionLabel } from '@/lib/hook-payload';
 import { HarnessIcon } from './HarnessIcon';
@@ -93,21 +94,17 @@ export function OrchestrationSessionPicker({
             autoFocus
             className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
-          <select
+          <Combobox
             value={String(projectId)}
-            onChange={(e) =>
-              setProjectId(e.target.value === 'all' ? 'all' : Number(e.target.value))
-            }
+            onChange={(v) => setProjectId(v === 'all' ? 'all' : Number(v))}
             title={t('orch.filterProject')}
-            className="max-w-[10rem] shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
-          >
-            <option value="all">{t('orch.pickerAllProjects')}</option>
-            {projectOptions.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+            placeholder={t('orch.pickerAllProjects')}
+            className="max-w-[10rem] shrink-0 rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+            options={[
+              { value: 'all', label: t('orch.pickerAllProjects') },
+              ...projectOptions.map((p) => ({ value: String(p.id), label: p.name })),
+            ]}
+          />
         </div>
         {rows.length === 0 ? (
           <p className="py-3 text-center text-[11px] text-neutral-600">{t('orch.pickerEmpty')}</p>

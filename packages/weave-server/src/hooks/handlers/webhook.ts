@@ -26,45 +26,40 @@ const WEBHOOK_TIMEOUT_MS = 5_000;
 const RESPONSE_TRUNCATE = 4_096;
 
 /**
- * 出站 webhook 处理器：POST 事件摘要到外部系统。
- * 边界：仅 http/https、5s 超时、响应体截断 4KB、可选 HMAC-SHA256 签名头
- * `X-Weave-Signature: sha256=<hex>`（secret 即签名密钥）。
+ * 出站 POST 的唯一 HTTP 边界（hook 规则与编排出口共用）：仅 http/https、5s 超时、
+ * 响应体截断 4KB、可选 HMAC-SHA256 签名头 `X-Weave-Signature: sha256=<hex>`
+ * （secret 即签名密钥）。body 为任意可序列化载荷（形状归调用方）。
  */
-export async function runWebhook(
-  rule: HookRule,
-  summary: EventSummary,
+export async function postJson(
+  rawUrl: string,
+  secret: string | undefined,
+  body: unknown,
   fetchImpl: typeof fetch = fetch,
 ): Promise<WebhookResult> {
-  const handler = rule.handler;
-  if (handler.type !== 'webhook') {
-    return { ok: false, status: 'failed', error: `rule ${rule.id} is not a webhook handler` };
-  }
-
   let url: URL;
   try {
-    url = new URL(handler.url);
+    url = new URL(rawUrl);
   } catch {
-    return { ok: false, status: 'failed', error: `invalid url: ${handler.url}` };
+    return { ok: false, status: 'failed', error: `invalid url: ${rawUrl}` };
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return { ok: false, status: 'failed', error: `unsupported protocol: ${url.protocol}` };
   }
 
-  const body = JSON.stringify(summary);
+  const payload = JSON.stringify(body);
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'user-agent': 'weave-daemon',
-    ...(handler.headers ?? {}),
   };
-  if (handler.secret) {
-    headers['x-weave-signature'] = `sha256=${createHmac('sha256', handler.secret).update(body).digest('hex')}`;
+  if (secret) {
+    headers['x-weave-signature'] = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
   }
 
   try {
     const res = await fetchImpl(url, {
       method: 'POST',
       headers,
-      body,
+      body: payload,
       signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
     const text = (await res.text()).slice(0, RESPONSE_TRUNCATE);
@@ -80,4 +75,20 @@ export async function runWebhook(
       error: isTimeout ? `webhook timed out after ${WEBHOOK_TIMEOUT_MS}ms` : String(err),
     };
   }
+}
+
+/**
+ * hook 规则的出站 webhook 处理器：POST 事件摘要到外部系统。
+ * 协议白名单、超时、签名等边界全在 {@link postJson}——这里只定载荷形状。
+ */
+export async function runWebhook(
+  rule: HookRule,
+  summary: EventSummary,
+  fetchImpl: typeof fetch = fetch,
+): Promise<WebhookResult> {
+  const handler = rule.handler;
+  if (handler.type !== 'webhook') {
+    return { ok: false, status: 'failed', error: `rule ${rule.id} is not a webhook handler` };
+  }
+  return postJson(handler.url, handler.secret, summary, fetchImpl);
 }

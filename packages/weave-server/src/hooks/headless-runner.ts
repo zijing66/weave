@@ -41,6 +41,8 @@ export interface HeadlessRunInput {
   prompt: string;
   spec: ResumeCommandSpec;
   bin: string;
+  /** 覆盖 spec.args 的参数来源（编排边级提取的 fork 形态：extractArgs 拼装）。 */
+  argsOf?: (sessionId: string) => string[];
   /** 单次超时（毫秒），超时强杀 → timeout；**0 = 不设看门狗**（投递等待发生在
    *  目标会话内的场景，如 prompt 中继——设上限只会把正常投递误判成 timeout）。 */
   timeoutMs?: number;
@@ -132,7 +134,9 @@ export class HeadlessRunner {
     // win32 下 shell+detached 管道输出全丢、只余 exit code）。bin 是带路径的
     // 覆盖值（可能含空格）时不走 shell，按真实 exe 直接 spawn。
     const viaStdin = input.spec.promptStdin === true;
-    const args = input.spec.args(input.sessionId, viaStdin ? '' : input.prompt);
+    const args = input.argsOf
+      ? input.argsOf(input.sessionId)
+      : input.spec.args(input.sessionId, viaStdin ? '' : input.prompt);
     const useShell =
       viaStdin && process.platform === 'win32' && !/[\s"\\/]/.test(input.bin);
     // detached：POSIX 自成进程组（超时可整组强杀）；中继显式 false = 本轮次的

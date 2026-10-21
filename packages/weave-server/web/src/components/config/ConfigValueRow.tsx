@@ -19,6 +19,7 @@ import {
 } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
+import { Combobox } from '@/components/ui/combobox';
 import { useT } from '@/i18n/I18nProvider';
 
 /** 树里一层的缩进（px）；树节点行与叶子行共用同一个数。 */
@@ -117,17 +118,12 @@ export function ConfigValueRow({
       const current = typeof value === 'string' ? value : textOf(value);
       if (current && !options.includes(current)) options.push(current);
       return (
-        <select
+        <Combobox
           value={current}
-          onChange={(e) => onChange({ value: e.target.value })}
-          className={cn(INPUT_CLS, 'max-w-xs')}
-        >
-          {options.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
+          options={options.map((opt) => ({ value: opt }))}
+          onChange={(next) => onChange({ value: next })}
+          className="max-w-xs"
+        />
       );
     }
     if (control === 'number') {
@@ -474,7 +470,6 @@ function PlainControl({
   onChange: (next: unknown) => void;
   compact?: boolean;
 }) {
-  const t = useT();
   const control = controlOf(spec.type, spec.options);
   if (control === 'switch') return <Switch checked={boolOf(value)} title={spec.key} onChange={onChange} />;
   if (control === 'select') {
@@ -482,18 +477,12 @@ function PlainControl({
     const current = typeof value === 'string' ? value : textOf(value);
     if (current && !options.includes(current)) options.push(current);
     return (
-      <select
+      <Combobox
         value={current}
-        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-        className={cn(INPUT_CLS, compact ? 'w-28' : 'max-w-xs')}
-      >
-        <option value="">{t('cfg.unset')}</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
+        options={options.map((opt) => ({ value: opt }))}
+        onChange={(next) => onChange(next === '' ? undefined : next)}
+        className={compact ? 'w-28' : 'max-w-xs'}
+      />
     );
   }
   if (control === 'number') {

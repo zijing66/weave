@@ -1,20 +1,21 @@
-import type { OrchestrationEdge } from '@/lib/api';
+import type { OrchestrationEdge, OrchestrationNode } from '@/lib/api';
 import { ranksOf } from './orchestration-graph';
 
 /**
- * 编排画布布局（纯函数，可单测）：会话按层（起点在左、每波右推一列）排布；
+ * 编排画布布局（纯函数，可单测）：节点按层（入口在左、每波右推一列）排布；
  * 全局视图额外给每个项目画一个分组框，框住它自己的会话——收起的项目只剩
- * 一个框（带会话数），展开才摆出里面的会话。项目框按「不重叠」的纵向带排：
- * 同一列上两个项目不会叠在一起。
+ * 一个框（带会话数），展开才摆出里面的会话。webhook 节点不属于任何项目，
+ * 归「未知项目」（id 0）框。项目框按「不重叠」的纵向带排：同一列上两个项目
+ * 不会叠在一起。
  */
 
-/** 会话节点宽（对齐 OrchestrationCanvas 节点的 w-[220px]）。 */
+/** 节点宽（对齐画布节点的 w-[220px]）。 */
 export const ORCH_NODE_W = 220;
-/** 会话节点高。 */
+/** 节点高。 */
 export const ORCH_NODE_H = 56;
 /** 层间距（列）。 */
 export const ORCH_COL_W = 320;
-/** 同列会话的行距。 */
+/** 同列节点的行距。 */
 export const ORCH_ROW_H = 84;
 /** 分组框的内边距（上下左右）与头部高。 */
 export const ORCH_GROUP_PAD = 14;
@@ -29,17 +30,18 @@ export interface OrchCanvasSession {
 }
 
 export interface OrchLaidNode {
-  /** ReactFlow 节点 id：`s:<sessionId>` / `g:<projectId>`。 */
+  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>`。 */
   key: string;
-  kind: 'session' | 'group';
+  kind: 'session' | 'webhook' | 'group';
   x: number;
   y: number;
-  sessionId?: string;
+  /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>）。 */
+  nodeId?: string;
   projectId?: number;
   /** 分组框尺寸（kind = group 时有效）。 */
   width?: number;
   height?: number;
-  /** 收起时被藏起的会话数。 */
+  /** 收起时被藏起的节点数。 */
   hidden?: number;
 }
 
@@ -58,36 +60,35 @@ export interface OrchCanvasLayout {
 }
 
 export interface OrchLayoutInput {
-  nodes: readonly string[];
+  nodes: readonly OrchestrationNode[];
   edges: readonly OrchestrationEdge[];
-  startSessionId: string;
   sessions: ReadonlyMap<string, OrchCanvasSession>;
-  /** 全局视图 = true：按项目分组（可收起）；项目视图 = false：只摆会话。 */
+  /** 全局视图 = true：按项目分组（可收起）；项目视图 = false：只摆节点。 */
   groupProjects: boolean;
-  /** 收起的分组（项目 id；未知项目的会话归 0）。 */
+  /** 收起的分组（项目 id；未知项目的节点归 0）。 */
   collapsed: ReadonlySet<number>;
 }
 
-/** 会话所属项目（查不到 / 无项目归 0 = 显式的「未知项目」框）。 */
-function projectOf(sessions: ReadonlyMap<string, OrchCanvasSession>, sessionId: string): number {
-  return sessions.get(sessionId)?.projectId ?? 0;
+/** 节点所属项目（session 查表；webhook 不属于项目，归「未知项目」框）。 */
+function projectOf(sessions: ReadonlyMap<string, OrchCanvasSession>, node: OrchestrationNode): number {
+  return node.kind === 'webhook' ? 0 : (sessions.get(node.id)?.projectId ?? 0);
 }
 
 export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLayout {
-  const { nodes, edges, startSessionId, sessions, groupProjects, collapsed } = input;
-  const ranks = ranksOf(nodes, edges, startSessionId);
+  const { nodes, edges, sessions, groupProjects, collapsed } = input;
+  const ranks = ranksOf(nodes, edges);
 
-  // 分组：项目 → 会话（保持节点输入序），列序取组内最小层。
-  const groups = new Map<number, string[]>();
-  for (const sessionId of nodes) {
-    const projectId = projectOf(sessions, sessionId);
+  // 分组：项目 → 节点（保持节点输入序），列序取组内最小层。
+  const groups = new Map<number, OrchestrationNode[]>();
+  for (const node of nodes) {
+    const projectId = projectOf(sessions, node);
     const list = groups.get(projectId) ?? [];
-    list.push(sessionId);
+    list.push(node);
     groups.set(projectId, list);
   }
   const groupOrder = [...groups.keys()].sort((a, b) => {
     const minRank = (id: number): number =>
-      Math.min(...(groups.get(id) ?? []).map((s) => ranks.get(s) ?? 0));
+      Math.min(...(groups.get(id) ?? []).map((n) => ranks.get(n.id) ?? 0));
     return minRank(a) - minRank(b) || a - b;
   });
 
@@ -96,6 +97,7 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
   const groupNodes: OrchLaidNode[] = [];
   /** 每一列当前已占到的 y（分组带依次下叠，同列不重叠）。 */
   const columnCursor = new Map<number, number>();
+  /** 编排节点 id → 渲染节点 key。 */
   const nodeKeyOf = new Map<string, string>();
 
   for (const projectId of groupProjects ? groupOrder : [null]) {
@@ -103,7 +105,7 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
       ? (groups.get(projectId as number) ?? [])
       : [...nodes];
     const isCollapsed = groupProjects && collapsed.has(projectId as number);
-    const rankOfMember = (id: string): number => ranks.get(id) ?? 0;
+    const rankOfMember = (n: OrchestrationNode): number => ranks.get(n.id) ?? 0;
     const minRank = Math.min(...members.map(rankOfMember));
     const maxRank = Math.max(...members.map(rankOfMember));
     const span: number[] = [];
@@ -114,26 +116,27 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
     // 同一列内的成员按节点序上下排。
     const rowCursor = new Map<number, number>();
     let maxBottom = top;
-    for (const sessionId of members) {
-      const rank = rankOfMember(sessionId);
+    for (const member of members) {
+      const rank = rankOfMember(member);
       const row = rowCursor.get(rank) ?? 0;
       rowCursor.set(rank, row + 1);
       const x = rank * ORCH_COL_W;
       const y = top + row * ORCH_ROW_H;
+      const key = member.kind === 'webhook' ? member.id : `s:${member.id}`;
       if (isCollapsed) {
-        nodeKeyOf.set(sessionId, `g:${projectId}`);
+        nodeKeyOf.set(member.id, `g:${projectId}`);
         continue;
       }
       const node: OrchLaidNode = {
-        key: `s:${sessionId}`,
-        kind: 'session',
-        sessionId,
+        key,
+        kind: member.kind,
+        nodeId: member.id,
         projectId: groupProjects ? (projectId as number) : undefined,
         x,
         y,
       };
       laidNodes.push(node);
-      nodeKeyOf.set(sessionId, node.key);
+      nodeKeyOf.set(member.id, key);
       maxBottom = Math.max(maxBottom, y + ORCH_NODE_H);
     }
 

@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { Combobox } from '@/components/ui/combobox';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
@@ -942,77 +943,57 @@ export function HooksPanel({
 
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.project')}</span>
-                    <select
-                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <Combobox
+                      className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.projectId === null ? '' : String(form.state.projectId)}
-                      onChange={(e) =>
-                        patchForm({ projectId: e.target.value === '' ? null : Number(e.target.value) })
-                      }
-                    >
-                      <option value="">{t('hooks.projectGlobal')}</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={String(p.id)}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: '', label: t('hooks.projectGlobal') },
+                        ...projects.map((p) => ({ value: String(p.id), label: p.name })),
+                      ]}
+                      onChange={(v) => patchForm({ projectId: v === '' ? null : Number(v) })}
+                    />
                   </label>
 
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
-                    <select
-                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <Combobox
+                      className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.sourceKind}
-                      onChange={(e) =>
-                        patchForm({ sourceKind: e.target.value as RuleFormState['sourceKind'] })
-                      }
-                    >
-                      {SOURCE_KINDS.map((kind) => (
-                        <option key={kind} value={kind}>
-                          {kind === 'hook-event'
-                            ? t('hooks.sourceKind.hookEvent')
-                            : t('hooks.sourceKind.legacy')}
-                        </option>
-                      ))}
-                    </select>
+                      options={SOURCE_KINDS.map((kind) => ({
+                        value: kind,
+                        label: kind === 'hook-event' ? t('hooks.sourceKind.hookEvent') : t('hooks.sourceKind.legacy'),
+                      }))}
+                      onChange={(v) => patchForm({ sourceKind: v as RuleFormState['sourceKind'] })}
+                    />
                   </label>
 
                   {form.state.sourceKind === 'hook-event' && (
                     <label className="block space-y-1">
                       <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
-                      <select
-                        className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      <Combobox
+                        className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                         value={form.state.harness}
-                        onChange={(e) =>
-                          patchForm({ harness: e.target.value as Harness | 'any' })
-                        }
-                      >
-                        {HARNESS_OPTIONS.map((h) => (
-                          <option key={h} value={h}>
-                            {/* harness 名走 meta 单点表（加 harness 自动跟随）；只有 any 是词条。 */}
-                            {h === 'any' ? t('hooks.harness.any') : harnessUiOf(h).label}
-                          </option>
-                        ))}
-                      </select>
+                        options={HARNESS_OPTIONS.map((h) => ({
+                          value: h,
+                          // harness 名走 meta 单点表（加 harness 自动跟随）；只有 any 是词条。
+                          label: h === 'any' ? t('hooks.harness.any') : harnessUiOf(h).label,
+                        }))}
+                        onChange={(v) => patchForm({ harness: v as Harness | 'any' })}
+                      />
                     </label>
                   )}
 
                   <label className="block space-y-1">
                     <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
-                    <select
-                      className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <Combobox
+                      className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.event}
-                      onChange={(e) => patchForm({ event: e.target.value })}
-                    >
-                      {(form.state.handlerType === 'inject'
+                      options={(form.state.handlerType === 'inject'
                         ? INJECTABLE_HOOK_EVENTS
                         : CLAUDE_HOOK_EVENTS
-                      ).map((ev) => (
-                        <option key={ev} value={ev}>
-                          {ev}
-                        </option>
-                      ))}
-                    </select>
+                      ).map((ev) => ({ value: ev }))}
+                      onChange={(v) => patchForm({ event: v })}
+                    />
                     {form.state.handlerType === 'inject' && (
                       <span className="block text-[10px] text-amber-400/80">
                         {t('hooks.eventInjectHint', { events: INJECTABLE_HOOK_EVENTS.join(', ') })}

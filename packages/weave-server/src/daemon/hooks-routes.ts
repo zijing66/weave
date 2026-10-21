@@ -26,9 +26,10 @@ import type { MessageImage, SessionDeliveryDiagnosis } from '../hooks/message-de
 import { readBody, readJson, sendJson } from './http.js';
 import { nextRunAt, parseCron } from './cron.js';
 import { validateOrchestration } from '../hooks/orchestration-graph.js';
-import { toRunSummary } from '../repositories/orchestrations.js';
+import { graphDirections, toRunSummary } from '../repositories/orchestrations.js';
 import type {
   OrchestrationEdge,
+  OrchestrationNode,
   OrchestrationRow,
   OrchestrationRunStatus,
 } from '../repositories/orchestrations.js';
@@ -361,6 +362,7 @@ const DeleteWatchBody = z.object({ watchId: z.number().int().positive() });
 
 /** 模型切换：名字用户自填（网关模型 ID 会增删，不做静态映射表），形态由 deliverer 验。 */
 const SetModelBody = z.object({ model: z.string().min(1).max(128) });
+const SetEffortBody = z.object({ level: z.string().min(1).max(32) });
 
 /** Web Push 订阅注册：endpoint = 浏览器推送服务分配的绝对 URL；keys = 载荷加密密钥对。 */
 const SubscribePushBody = z.object({
@@ -370,33 +372,52 @@ const SubscribePushBody = z.object({
 
 const UnsubscribePushBody = z.object({ endpoint: z.string().url() });
 
-/** 跨会话编排的定义体：图规模与成环由 `validateOrchestration` 判（错误文案归它）。 */
+/** 跨会话编排的定义体：图规模/成环/方向形状由 `validateOrchestration` 判（错误文案归它）。 */
+const OrchestrationNodeBody = z.object({
+  /** session 节点 = sessionId；webhook 节点 = `w:<uuid>`（画布生成，校验判前缀）。 */
+  id: z.string().min(1).max(128),
+  kind: z.enum(['session', 'webhook']),
+  /** webhook 入口的触发 token（省略由仓储补发；回存已有 token 原样保留）。 */
+  webhookToken: z.string().min(1).max(200).optional(),
+  /** webhook 出口的出站目标与可选 HMAC 密钥。 */
+  url: z.string().max(2_000).optional(),
+  secret: z.string().max(400).optional(),
+});
+
 const OrchestrationBody = z.object({
   name: z.string().min(1).max(200),
-  startSessionId: z.string().min(1),
   startText: z.string().max(20_000).optional(),
-  /** 「交接总结」指令（空 = 内置默认那句）；给下游带输出前先向源会话要这一份。 */
-  handoffPrompt: z.string().max(4_000).optional(),
-  nodes: z.array(z.string().min(1)).min(1),
+  /** webhook-only 编排的项目归属（有 session 入口时恒从入口派生，给了不一致即拒）。 */
+  projectId: z.number().int().optional(),
+  nodes: z.array(OrchestrationNodeBody).min(1),
   edges: z.array(
     z.object({
       id: z.string().min(1).max(64),
       from: z.string().min(1),
       to: z.string().min(1),
-      /** 空正文只在带 `carryOutput` 时合法（`validateOrchestration` 判）。 */
+      /** 空正文只在 webhook 入口的出边或设了提取指令的边上合法（`validateOrchestration` 判）。 */
       text: z.string().max(20_000),
-      carryOutput: z.boolean().optional(),
+      /** 本边提取指令（对上游会话 fork 无头回合产出 {summary}；空 = 不提取）。 */
+      extract: z.string().max(4_000).optional(),
     }),
   ),
   cron: z.string().max(200).nullish(),
+  /** false = 停用：cron 不触发、入口会话的自然回合不自动启动。 */
+  enabled: z.boolean().optional(),
 });
 
 const OrchestrationPatchBody = OrchestrationBody.partial();
 
 const InstallBody = z.object({ src: z.string().min(1) });
 
-/** 手动触发可带一条首步消息（缺省用编排自己的起始文本）。 */
-const TriggerBody = z.object({ text: z.string().min(1).max(20_000).optional() });
+/** 手动触发可带一条首步消息（缺省用编排自己的起始文本）与入口子集（缺省全部 session 入口）。 */
+const TriggerBody = z.object({
+  text: z.string().min(1).max(20_000).optional(),
+  entries: z.array(z.string().min(1)).optional(),
+});
+
+/** 换某枚 webhook 入口节点的 token。 */
+const RotateNodeBody = z.object({ nodeId: z.string().min(1).max(128) });
 
 const RUN_STATUSES = new Set<OrchestrationRunStatus>([
   'running',
@@ -438,17 +459,17 @@ function withNextRun(row: OrchestrationRow) {
 }
 
 /**
- * 定义落库前的唯一闸（POST/PUT 同一份判据）：图合法（规模/可达/成环）、
- * 每个节点都是还在管的会话、cron 可解析。项目归属恒从起始会话派生。
+ * 定义落库前的唯一闸（POST/PUT 同一份判据）：图合法（规模/可达/成环/方向形状）、
+ * session 节点都还在管、cron 可解析。项目归属 = 入口 session 节点所属项目
+ * （入口必须同项目，web 项目视图同判据）；webhook-only 编排由 body 显式给。
  */
 function resolveOrchestration(
   deps: WeaveServerDeps,
   input: {
     name: string;
-    startSessionId: string;
     startText?: string;
-    handoffPrompt?: string;
-    nodes: string[];
+    projectId?: number;
+    nodes: OrchestrationNode[];
     edges: OrchestrationEdge[];
     cron?: string | null;
   },
@@ -458,10 +479,8 @@ function resolveOrchestration(
       value: {
         name: string;
         projectId: number;
-        startSessionId: string;
         startText: string;
-        handoffPrompt: string;
-        nodes: string[];
+        nodes: OrchestrationNode[];
         edges: OrchestrationEdge[];
         cron: string | null;
       };
@@ -473,21 +492,44 @@ function resolveOrchestration(
   if (!valid.ok) return { ok: false, error: valid.error };
   const cron = input.cron?.trim() || null;
   if (cron && !parseCron(cron)) return { ok: false, error: `Invalid cron expression: ${cron}` };
-  let projectId: number | null = null;
-  for (const sessionId of input.nodes) {
-    const session = deps.hookSessions?.getBySessionId(sessionId);
-    if (!session) return { ok: false, error: `Unknown session: ${sessionId}` };
-    if (sessionId === input.startSessionId) projectId = session.projectId;
+  for (const node of input.nodes) {
+    if (node.kind !== 'session') continue;
+    if (!deps.hookSessions?.getBySessionId(node.id)) {
+      return { ok: false, error: `Unknown session: ${node.id}` };
+    }
   }
-  if (projectId == null) return { ok: false, error: 'Start session has no project' };
+  const { entries } = graphDirections(input.nodes, input.edges);
+  const sessionEntries = entries.filter((e) => e.kind === 'session');
+  let projectId = input.projectId ?? null;
+  if (sessionEntries.length > 0) {
+    const first = deps.hookSessions!.getBySessionId(sessionEntries[0]!.id)!;
+    if (projectId != null && projectId !== first.projectId) {
+      return { ok: false, error: 'projectId must match the entry sessions' };
+    }
+    projectId = first.projectId;
+    if (projectId == null) return { ok: false, error: 'Entry session has no project' };
+    for (const entry of sessionEntries) {
+      if (deps.hookSessions!.getBySessionId(entry.id)!.projectId !== projectId) {
+        return { ok: false, error: 'All entry sessions must belong to the same project' };
+      }
+    }
+  } else {
+    // 没有 session 入口（webhook 入口直挂 session / webhook-only）：项目归属
+    // 回落到第一个 session 节点，纯 webhook 编排才要求显式给。
+    const firstSession = input.nodes.find((n) => n.kind === 'session');
+    if (firstSession) {
+      projectId = deps.hookSessions!.getBySessionId(firstSession.id)!.projectId ?? projectId;
+    }
+  }
+  if (projectId == null) {
+    return { ok: false, error: 'projectId is required for webhook-only orchestrations' };
+  }
   return {
     ok: true,
     value: {
       name,
       projectId,
-      startSessionId: input.startSessionId,
       startText: (input.startText ?? '').trim(),
-      handoffPrompt: (input.handoffPrompt ?? '').trim(),
       nodes: input.nodes,
       edges: input.edges,
       cron,
@@ -1523,6 +1565,24 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 思考强度调整：宿主自己的 `/effort <档位>`（档位过 core 表词表白名单）----
+  const effortMatch = pathname.match(/^\/sessions\/([^/]+)\/effort$/);
+  if (effortMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(effortMatch[1]!);
+    const body = SetEffortBody.parse(await readJson(req));
+    const result = await deps.messageDeliverer.setEffort(sessionId, body.level);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
   // ---- 旁路会话（claude = /btw）：问句经层② 终端打进 pane ----
   // 宿主侧问开着 skipTranscript，问与答**都不落盘**（面板历史只在宿主内存里），
   // 所以问句只有 weave 自己发过才知道——落 side_questions 是这条历史的唯一出处。
@@ -1812,9 +1872,8 @@ export async function handleHooksRoutes(
       // 在飞的运行吃的是触发那一刻的快照：改图不影响它，下一次触发才生效。
       const resolved = resolveOrchestration(deps, {
         name: body.name ?? row.name,
-        startSessionId: body.startSessionId ?? row.startSessionId,
         startText: body.startText ?? row.startText,
-        handoffPrompt: body.handoffPrompt ?? row.handoffPrompt,
+        projectId: body.projectId ?? (row.nodes.some((n) => n.kind === 'session') ? undefined : row.projectId),
         nodes: body.nodes ?? row.nodes,
         edges: body.edges ?? row.edges,
         cron: body.cron === undefined ? row.cron : body.cron,
@@ -1825,7 +1884,9 @@ export async function handleHooksRoutes(
       }
       sendJson(res, 200, {
         ok: true,
-        orchestration: withNextRun(deps.orchestrations.update(id, resolved.value)!),
+        orchestration: withNextRun(
+          deps.orchestrations.update(id, { ...resolved.value, enabled: body.enabled })!,
+        ),
       });
       return true;
     }
@@ -1851,15 +1912,20 @@ export async function handleHooksRoutes(
       sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
       return true;
     }
-    let text: string | undefined;
+    let body: z.infer<typeof TriggerBody> = {};
     try {
       const raw = (await readBody(req)).trim();
-      if (raw) text = TriggerBody.parse(JSON.parse(raw)).text;
+      if (raw) body = TriggerBody.parse(JSON.parse(raw));
     } catch {
       sendJson(res, 400, { error: 'Invalid body' });
       return true;
     }
-    const result = await deps.orchestrationEngine.start(Number(triggerMatch[1]), 'manual', text);
+    const result = await deps.orchestrationEngine.start(
+      Number(triggerMatch[1]),
+      'manual',
+      body.text,
+      body.entries,
+    );
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;
@@ -1874,9 +1940,16 @@ export async function handleHooksRoutes(
       sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
       return true;
     }
-    const token = deps.orchestrations.rotateToken(Number(rotateMatch[1]));
+    let body: z.infer<typeof RotateNodeBody>;
+    try {
+      body = RotateNodeBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const token = deps.orchestrations.rotateNodeToken(Number(rotateMatch[1]), body.nodeId);
     if (!token) {
-      sendJson(res, 404, { error: 'Orchestration not found' });
+      sendJson(res, 404, { error: 'Webhook entry node not found' });
       return true;
     }
     sendJson(res, 200, { ok: true, webhookToken: token });
@@ -1934,7 +2007,9 @@ export async function handleHooksRoutes(
       sendJson(res, 404, { error: 'Run not found' });
       return true;
     }
-    sendJson(res, 200, { run });
+    // 详情 = summary + state：列表行带 pendingCounts 无 state，原始行反之——
+    // web 的 OrchestrationRunRow 两者都要（展开行直接顶替列表行渲染）。
+    sendJson(res, 200, { run: { ...toRunSummary(run), state: run.state } });
     return true;
   }
 
@@ -1967,14 +2042,16 @@ export async function handleHooksRoutes(
       sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
       return true;
     }
-    const row = deps.orchestrations.getByToken(webhookMatch[1]!);
-    if (!row) {
+    const hit = deps.orchestrations.getByNodeToken(webhookMatch[1]!);
+    if (!hit) {
       sendJson(res, 404, { error: 'Unknown webhook token' });
       return true;
     }
-    // 载荷原样当首步消息（空则引擎回落到编排自己的起始文本）。
+    // 载荷随该入口的出边正文下发（空则只发边正文）。
     const payload = (await readBody(req)).trim().slice(0, 20_000);
-    const result = await deps.orchestrationEngine.start(row.id, 'webhook', payload || undefined);
+    const result = await deps.orchestrationEngine.start(hit.row.id, 'webhook', payload || undefined, [
+      hit.nodeId,
+    ]);
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;

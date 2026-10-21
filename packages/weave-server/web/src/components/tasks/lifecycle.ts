@@ -43,8 +43,9 @@ export const HARNESS_SESSION_CONTROL = {
     modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
     modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
     modelFactEvents: ['PostModelSwitch', 'SessionStart'],
+    effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
   },
-  codex: { modeNames: [], modelNames: [], modelFactEvents: [] },
+  codex: { modeNames: [], modelNames: [], modelFactEvents: [], effortLevels: [] },
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /** 该 harness 的执行模式词表（宿主自己的名字，展示原样）；空 = 无此概念。 */
@@ -57,6 +58,12 @@ export function modeNamesFor(harness: string | null | undefined): readonly strin
 export function modelNamesFor(harness: string | null | undefined): readonly string[] {
   if (harness == null) return [];
   return HARNESS_SESSION_CONTROL[harness as Harness]?.modelNames ?? [];
+}
+
+/** 该 harness 的思考强度可调词表（宿主自己的名字）；空 = 无程序化调整通道。 */
+export function effortLevelsFor(harness: string | null | undefined): readonly string[] {
+  if (harness == null) return [];
+  return HARNESS_SESSION_CONTROL[harness as Harness]?.effortLevels ?? [];
 }
 
 /**

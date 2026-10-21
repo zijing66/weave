@@ -16,7 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  Flag,
+  Globe,
   Link2,
   MessageSquare,
   Plus,
@@ -30,6 +30,7 @@ import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type MessagingCapability,
+  type OrchestrationNode,
   type OrchestrationRow,
   type OrchestrationRunRow,
   type OrchestrationRunStatus,
@@ -41,11 +42,13 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Combobox } from '@/components/ui/combobox';
 import { formatStamp, sessionLabel } from '@/lib/hook-payload';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { copyText } from '@/lib/clipboard';
 import { usePullLoad } from '@/lib/pull-load';
 import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
@@ -58,8 +61,10 @@ import {
   ORCH_MAX_EDGES,
   ORCH_MAX_NODES,
   addEdge,
-  addNode,
+  addSessionNode,
+  addWebhookNode,
   findCycle,
+  graphDirections,
   removeEdge,
   removeNode,
   validateDraft,
@@ -111,9 +116,7 @@ const TRIGGER_KEY: Record<OrchestrationTrigger, MessageKey> = {
 
 const emptyDraft = (): OrchDraft => ({
   name: '',
-  startSessionId: '',
   startText: '',
-  handoffPrompt: '',
   nodes: [],
   edges: [],
   cron: null,
@@ -121,10 +124,8 @@ const emptyDraft = (): OrchDraft => ({
 
 const draftOf = (row: OrchestrationRow): OrchDraft => ({
   name: row.name,
-  startSessionId: row.startSessionId,
   startText: row.startText,
-  handoffPrompt: row.handoffPrompt,
-  nodes: [...row.nodes],
+  nodes: row.nodes.map((n) => ({ ...n })),
   edges: row.edges.map((e) => ({ ...e })),
   cron: row.cron,
 });
@@ -133,11 +134,9 @@ const draftOf = (row: OrchestrationRow): OrchDraft => ({
 const serialize = (draft: OrchDraft): string =>
   JSON.stringify([
     draft.name,
-    draft.startSessionId,
     draft.startText,
-    draft.handoffPrompt,
-    draft.nodes,
-    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.carryOutput === true]),
+    draft.nodes.map((n) => [n.id, n.kind, n.webhookToken ?? '', n.url ?? '', n.secret ?? '']),
+    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.extract ?? '']),
     draft.cron,
   ]);
 
@@ -164,7 +163,8 @@ type SessionNodeData = {
   projectLabel: string;
   harness: Harness | null;
   status: SessionStatus;
-  isStart: boolean;
+  /** 入口 = 没有入边（触发从这里进来），出口 = 没有出边；中间节点两者皆否。 */
+  isEntry: boolean;
   pending: number;
   hot: boolean;
   missing: boolean;
@@ -182,7 +182,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
     projectLabel,
     harness,
     status,
-    isStart,
+    isEntry,
     pending,
     hot,
     missing,
@@ -217,9 +217,9 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1">
           <span className="min-w-0 truncate text-xs font-medium text-neutral-100">{label}</span>
-          {isStart && (
+          {isEntry && (
             <Badge className="shrink-0 bg-teal-900/50 text-[9px] text-teal-300">
-              {t('orch.startTag')}
+              {t('orch.entryTag')}
             </Badge>
           )}
         </span>
@@ -286,7 +286,64 @@ function GroupNode({ data }: NodeProps<GroupFlowNode>) {
   );
 }
 
-const nodeTypes = { orchSession: SessionNode, orchGroup: GroupNode };
+type WebhookNodeData = {
+  /** 入口（无入边，端点可复制/轮换）或出口（无出边，url/secret 在检查器里填）。 */
+  direction: 'entry' | 'exit';
+  hot: boolean;
+  selected: boolean;
+  missing: boolean;
+};
+type WebhookFlowNode = Node<WebhookNodeData, 'orchWebhook'>;
+
+function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
+  const t = useT();
+  const { direction, hot, selected, missing } = data;
+  return (
+    <div
+      style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
+      title={missing ? t('orch.webhookUnconnected') : undefined}
+      className={cn(
+        'flex items-center gap-2 rounded-lg border bg-neutral-900/95 px-2 shadow-mac transition-colors',
+        hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
+        selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
+        missing ? 'opacity-50' : 'hover:border-blue-500/40',
+      )}
+    >
+      {direction === 'exit' && (
+        <Handle
+          type="target"
+          id="l"
+          position={Position.Left}
+          className="!h-2 !w-2 !border-0 !bg-neutral-600"
+        />
+      )}
+      {direction === 'entry' && (
+        <Handle
+          type="source"
+          id="r"
+          position={Position.Right}
+          className="!h-2 !w-2 !border-0 !bg-neutral-600 hover:!bg-teal-400"
+        />
+      )}
+      <Globe className="h-4 w-4 shrink-0 text-violet-400" />
+      <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+        {t(direction === 'entry' ? 'orch.webhookEntry' : 'orch.webhookExit')}
+      </span>
+      <Badge
+        className={cn(
+          'shrink-0 text-[9px]',
+          direction === 'entry'
+            ? 'bg-violet-900/50 text-violet-300'
+            : 'bg-neutral-800 text-neutral-400',
+        )}
+      >
+        {t(direction === 'entry' ? 'orch.entryTag' : 'orch.exitTag')}
+      </Badge>
+    </div>
+  );
+}
+
+const nodeTypes = { orchSession: SessionNode, orchWebhook: WebhookNode, orchGroup: GroupNode };
 
 // ---------------------------------------------------------------------------
 // 组件
@@ -386,21 +443,27 @@ export function OrchestrationCanvas({
   /** 换一份编排：分组的「翻动」记录回到未动过。 */
   useEffect(() => setGroupTouched(null), [order]);
 
-  const startProject = useMemo(() => {
-    const id = draft?.startSessionId ?? '';
-    return id ? (sessionById.get(id)?.projectId ?? null) : null;
-  }, [draft?.startSessionId, sessionById]);
+  /** 默认展开的分组 = 第一个 session 节点所属项目（没定过就都收着）。 */
+  const primaryProject = useMemo(() => {
+    const first = draft?.nodes.find((n) => n.kind === 'session');
+    return first ? (sessionById.get(first.id)?.projectId ?? null) : null;
+  }, [draft?.nodes, sessionById]);
 
   const expandedGroups = useMemo<ReadonlySet<number>>(
-    () => groupTouched ?? new Set(startProject == null ? [] : [startProject]),
-    [groupTouched, startProject],
+    () => groupTouched ?? new Set(primaryProject == null ? [] : [primaryProject]),
+    [groupTouched, primaryProject],
   );
 
   const canvasSessions = useMemo(() => {
     const m = new Map<string, { sessionId: string; title: string | null; projectId: number | null }>();
-    for (const id of draft?.nodes ?? []) {
-      const row = sessionById.get(id);
-      m.set(id, { sessionId: id, title: row?.title ?? null, projectId: row?.projectId ?? null });
+    for (const node of draft?.nodes ?? []) {
+      if (node.kind !== 'session') continue;
+      const row = sessionById.get(node.id);
+      m.set(node.id, {
+        sessionId: node.id,
+        title: row?.title ?? null,
+        projectId: row?.projectId ?? null,
+      });
     }
     return m;
   }, [draft?.nodes, sessionById]);
@@ -409,21 +472,25 @@ export function OrchestrationCanvas({
     if (!draft) return null;
     const q = sessionQuery.trim().toLowerCase();
     const pq = projectQuery.trim().toLowerCase();
-    const nodes = draft.nodes.filter((id) => {
-      const row = sessionById.get(id);
-      const label = sessionLabel(row?.title ?? null, id);
-      const hitSession = !q || label.toLowerCase().includes(q) || id.toLowerCase().includes(q);
-      if (!hitSession) return false;
+    const nodes = draft.nodes.filter((node) => {
+      const row = node.kind === 'session' ? sessionById.get(node.id) : undefined;
+      const label =
+        node.kind === 'webhook'
+          ? t('orch.webhookEntry')
+          : sessionLabel(row?.title ?? null, node.id);
+      const hit = !q || label.toLowerCase().includes(q) || node.id.toLowerCase().includes(q);
+      if (!hit) return false;
       if (!groupProjects || !pq) return true;
       return projectName(row?.projectId ?? null).toLowerCase().includes(pq);
     });
     return { nodes, edges: draft.edges };
-  }, [draft, sessionQuery, projectQuery, sessionById, groupProjects, projectName]);
+  }, [draft, sessionQuery, projectQuery, sessionById, groupProjects, projectName, t]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<number, number>();
-    for (const id of visible?.nodes ?? []) {
-      const pid = sessionById.get(id)?.projectId ?? 0;
+    for (const node of visible?.nodes ?? []) {
+      const pid =
+        node.kind === 'webhook' ? 0 : (sessionById.get(node.id)?.projectId ?? 0);
       m.set(pid, (m.get(pid) ?? 0) + 1);
     }
     return m;
@@ -551,7 +618,9 @@ export function OrchestrationCanvas({
       }
 
       if (frame.kind === 'orchestration.delivery') {
-        const key = frame.edgeId ? frame.edgeId : `s:${frame.to ?? ''}`;
+        const to = frame.to ?? '';
+        // 节点键：session 挂 `s:` 前缀，webhook 节点直接用它的 `w:` id。
+        const key = frame.edgeId ? frame.edgeId : to.startsWith('w:') ? to : `s:${to}`;
         const until = Date.now() + FLASH_MS;
         setFlash((prev) => ({ ...prev, [key]: until }));
       }
@@ -675,7 +744,6 @@ export function OrchestrationCanvas({
     return layoutOrchestrationCanvas({
       nodes: visible.nodes,
       edges: visible.edges,
-      startSessionId: draft.startSessionId,
       sessions: canvasSessions,
       groupProjects,
       collapsed: collapsedGroups,
@@ -685,6 +753,7 @@ export function OrchestrationCanvas({
   const flowNodes: Node[] = useMemo(() => {
     if (!laid || !draft) return [];
     const now = Date.now();
+    const entryIds = new Set(graphDirections(draft.nodes, draft.edges).entries.map((n) => n.id));
     return laid.nodes.map((n) => {
       if (n.kind === 'group') {
         const pid = n.projectId ?? 0;
@@ -710,7 +779,23 @@ export function OrchestrationCanvas({
           },
         };
       }
-      const sessionId = n.sessionId ?? '';
+      if (n.kind === 'webhook') {
+        const nodeId = n.nodeId ?? '';
+        const node = draft.nodes.find((x) => x.id === nodeId);
+        return {
+          id: n.key,
+          type: 'orchWebhook',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            direction: entryIds.has(nodeId) ? ('entry' as const) : ('exit' as const),
+            hot: (flash[nodeId] ?? 0) > now,
+            missing: !node,
+            selected: sel?.kind === 'node' && sel.id === nodeId,
+          },
+        } satisfies Node;
+      }
+      const sessionId = n.nodeId ?? '';
       const row = sessionById.get(sessionId);
       const pending = live?.pendingCounts[sessionId] ?? 0;
       return {
@@ -724,7 +809,7 @@ export function OrchestrationCanvas({
           projectLabel: projectName(row?.projectId ?? null),
           harness: row?.harness ?? null,
           status: statuses.get(sessionId) ?? 'open',
-          isStart: sessionId === draft.startSessionId,
+          isEntry: entryIds.has(sessionId),
           pending,
           hot: (flash[`s:${sessionId}`] ?? 0) > now,
           missing: !row,
@@ -785,19 +870,37 @@ export function OrchestrationCanvas({
 
   // ---- 定义编辑 ----
   const check = draft ? validateDraft(draft) : null;
+  /** 项目视图的入口 session 必须属于本项目（中间节点可跨项目）；全局不限。 */
+  const entryProjectsMisplaced = useMemo(() => {
+    if (!draft || groupProjects) return false;
+    const { entries } = graphDirections(draft.nodes, draft.edges);
+    return entries.some((n) => {
+      if (n.kind !== 'session') return false;
+      const row = sessionById.get(n.id);
+      return row == null || row.projectId !== projectId;
+    });
+  }, [draft, groupProjects, sessionById, projectId]);
   const canSave = !!draft && !!check?.ok && dirty && fb.stateOf('orch:save') !== 'loading';
   const [triggerText, setTriggerText] = useState('');
+  /** 手动触发的入口子集（null = 全部 session 入口）；仅入口 ≥ 2 时出选择面。 */
+  const [triggerEntries, setTriggerEntries] = useState<string[] | null>(null);
+  const manualEntryChoices = useMemo(
+    () => (draft ? graphDirections(draft.nodes, draft.edges).entries : []),
+    [draft],
+  );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
   const [edgeError, setEdgeError] = useState<string | null>(null);
 
-  /** 项目视图里起点还没落到本项目会话上（先挑了跨项目节点）。 */
-  const startMissing =
-    !!draft && !groupProjects && draft.nodes.length > 0 && !draft.startSessionId;
+  /** 项目视图里入口 session 落到了别的项目上（中间节点跨项目是允许的）。 */
   const statusText =
     edgeError ??
-    (startMissing ? t('orch.startNeeded') : check && !check.ok ? check.error : t('orch.hint'));
-  const statusWarn = !!edgeError || startMissing || (!!check && !check.ok);
+    (entryProjectsMisplaced
+      ? t('orch.startNeeded')
+      : check && !check.ok
+        ? check.error
+        : t('orch.hint'));
+  const statusWarn = !!edgeError || entryProjectsMisplaced || (!!check && !check.ok);
 
   /**
    * 加一条连线：自环、重边、成环、条数上限都在本地先拒（服务端同判据才是权威）。
@@ -832,14 +935,18 @@ export function OrchestrationCanvas({
     return next.edges[next.edges.length - 1]?.id ?? null;
   };
 
-  /** 画布节点 id = `s:<sessionId>`（分组框 `g:` 不参与连线）。 */
-  const sessionOfNode = (nodeId: string): string | null =>
-    nodeId.startsWith('s:') ? nodeId.slice(2) : null;
+  /** 渲染节点 id → 编排节点 id：session 挂 `s:` 前缀，webhook 用裸 `w:` id；`g:` 不参与连线。 */
+  const orchNodeIdOf = (flowNodeId: string | undefined): string | null => {
+    if (!flowNodeId) return null;
+    if (flowNodeId.startsWith('s:')) return flowNodeId.slice(2);
+    if (flowNodeId.startsWith('w:')) return flowNodeId;
+    return null;
+  };
 
   /** 从节点右侧圆点拖到另一个节点 = 连一条边，随即选中好去写正文。 */
   const connectEdge = (c: Connection): void => {
-    const from = sessionOfNode(c.source);
-    const to = sessionOfNode(c.target);
+    const from = orchNodeIdOf(c.source);
+    const to = orchNodeIdOf(c.target);
     if (!from || !to) return;
     const id = tryAddEdge(from, to);
     if (id) setSel({ kind: 'edge', id });
@@ -862,23 +969,6 @@ export function OrchestrationCanvas({
     [sessions, capabilityMap],
   );
 
-  /** 项目视图的起点只能是本项目的会话（其余节点可跨项目）；全局不限。 */
-  const startAllowed = useCallback(
-    (sessionId: string): boolean => {
-      if (groupProjects) return true;
-      const row = sessionById.get(sessionId);
-      return row == null || row.projectId === projectId;
-    },
-    [groupProjects, sessionById, projectId],
-  );
-
-  /** 起点落到别的项目上就清空——宁可让校验拦住，也不让起点悄悄飘走。 */
-  const guardStart = useCallback(
-    (d: OrchDraft): OrchDraft =>
-      d.startSessionId && !startAllowed(d.startSessionId) ? { ...d, startSessionId: '' } : d,
-    [startAllowed],
-  );
-
   const nextRunAt = useMemo(
     () => (list ?? []).find((r) => r.id === order)?.nextRunAt ?? null,
     [list, order],
@@ -886,11 +976,15 @@ export function OrchestrationCanvas({
 
   const save = (): void => {
     if (!editing || !check?.ok) return;
+    // webhook-only 编排没有 session 入口可派生项目，带上画布所在项目。
+    const hasSessionEntry =
+      graphDirections(editing.draft.nodes, editing.draft.edges).entries.some(
+        (n) => n.kind === 'session',
+      ) || editing.draft.nodes.some((n) => n.kind === 'session');
     const body = {
       name: editing.draft.name.trim(),
-      startSessionId: editing.draft.startSessionId,
       startText: editing.draft.startText,
-      handoffPrompt: editing.draft.handoffPrompt,
+      ...(hasSessionEntry ? {} : projectId != null ? { projectId } : {}),
       nodes: editing.draft.nodes,
       edges: editing.draft.edges,
       cron: editing.draft.cron,
@@ -918,6 +1012,14 @@ export function OrchestrationCanvas({
     );
   };
 
+  // 破坏性动作走应用内确认弹窗（原生 confirm/alert 一律不用）。
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    action: () => void;
+  } | null>(null);
+
   const remove = (): void => {
     if (!editing) return;
     if (editing.id == null) {
@@ -925,19 +1027,26 @@ export function OrchestrationCanvas({
       return;
     }
     const name = editing.draft.name.trim() || t('orch.untitled');
-    if (!window.confirm(t('orch.deleteConfirm', { name }))) return;
-    void fb.run(
-      'orch:delete',
-      async () => {
-        await api.deleteOrchestration(editing.id!);
-        setEditing(null);
-        setList((prev) => prev?.filter((row) => row.id !== editing.id) ?? prev);
-        show('success', t('orch.deleted'));
-        window.dispatchEvent(new Event('weave:orchestrations-changed'));
-        void refreshRuns();
+    const id = editing.id;
+    setConfirmState({
+      title: t('orch.deleteOrch'),
+      message: t('orch.deleteConfirm', { name }),
+      confirmLabel: t('orch.deleteOrch'),
+      action: () => {
+        void fb.run(
+          'orch:delete',
+          async () => {
+            await api.deleteOrchestration(id);
+            setEditing(null);
+            setList((prev) => prev?.filter((row) => row.id !== id) ?? prev);
+            show('success', t('orch.deleted'));
+            window.dispatchEvent(new Event('weave:orchestrations-changed'));
+            void refreshRuns();
+          },
+          { fail: (e) => t('orch.deleteFailed', { error: errorText(e) }) },
+        );
       },
-      { fail: (e) => t('orch.deleteFailed', { error: errorText(e) }) },
-    );
+    });
   };
 
   const trigger = (): void => {
@@ -945,7 +1054,10 @@ export function OrchestrationCanvas({
     void fb.run(
       'orch:trigger',
       async () => {
-        const res = await api.triggerOrchestration(editing.id!, triggerText.trim() || undefined);
+        const res = await api.triggerOrchestration(editing.id!, {
+          ...(triggerText.trim() ? { text: triggerText.trim() } : {}),
+          ...(triggerEntries ? { entries: triggerEntries } : {}),
+        });
         setTriggerText('');
         show('success', t('orch.triggerOk', { id: res.runId }));
         void refreshRuns();
@@ -954,36 +1066,68 @@ export function OrchestrationCanvas({
     );
   };
 
-  const rotate = (): void => {
+  const rotate = (nodeId: string): void => {
     if (!editing || editing.id == null) return;
-    if (!window.confirm(t('orch.rotateConfirm'))) return;
-    void fb.run(
-      'orch:rotate',
-      async () => {
-        const res = await api.rotateOrchestrationWebhook(editing.id!);
-        setList((prev) =>
-          prev?.map((row) =>
-            row.id === editing.id ? { ...row, webhookToken: res.webhookToken } : row,
-          ) ?? prev,
+    const id = editing.id;
+    setConfirmState({
+      title: t('orch.rotate'),
+      message: t('orch.rotateConfirm'),
+      confirmLabel: t('orch.rotate'),
+      action: () => {
+        void fb.run(
+          'orch:rotate',
+          async () => {
+            const res = await api.rotateOrchestrationWebhook(id, nodeId);
+            setList((prev) =>
+              prev?.map((row) =>
+                row.id === id
+                  ? {
+                      ...row,
+                      nodes: row.nodes.map((n) =>
+                        n.id === nodeId ? { ...n, webhookToken: res.webhookToken } : n,
+                      ),
+                    }
+                  : row,
+              ) ?? prev,
+            );
+            setEditing((prev) =>
+              prev && prev.id === id
+                ? {
+                    ...prev,
+                    draft: {
+                      ...prev.draft,
+                      nodes: prev.draft.nodes.map((n) =>
+                        n.id === nodeId ? { ...n, webhookToken: res.webhookToken } : n,
+                      ),
+                    },
+                  }
+                : prev,
+            );
+            show('success', t('orch.rotate'));
+          },
+          { fail: (e) => t('orch.rotateFailed', { error: errorText(e) }) },
         );
-        show('success', t('orch.rotate'));
       },
-      { fail: (e) => t('orch.rotateFailed', { error: errorText(e) }) },
-    );
+    });
   };
 
   const clearRuns = (scope: 'finished' | 'all'): void => {
-    if (!window.confirm(t(scope === 'all' ? 'orch.runsClearAllConfirm' : 'orch.runsClearFinishedConfirm')))
-      return;
-    void fb.run(
-      `orch:clear:${scope}`,
-      async () => {
-        const res = await api.clearOrchestrationRuns(scope, projectId ?? undefined);
-        show('success', t('orch.runsCleared', { n: res.deleted }));
-        await refreshRuns();
+    setConfirmState({
+      title: t('orch.runsTitle'),
+      message: t(scope === 'all' ? 'orch.runsClearAllConfirm' : 'orch.runsClearFinishedConfirm'),
+      confirmLabel: scope === 'all' ? t('orch.runsClearAll') : t('orch.runsClearFinished'),
+      action: () => {
+        void fb.run(
+          `orch:clear:${scope}`,
+          async () => {
+            const res = await api.clearOrchestrationRuns(scope, projectId ?? undefined);
+            show('success', t('orch.runsCleared', { n: res.deleted }));
+            await refreshRuns();
+          },
+          { fail: (e) => t('orch.runsClearFailed', { error: errorText(e) }) },
+        );
       },
-      { fail: (e) => t('orch.runsClearFailed', { error: errorText(e) }) },
-    );
+    });
   };
 
   const cancelRun = (runId: number): void => {
@@ -997,15 +1141,12 @@ export function OrchestrationCanvas({
     );
   };
 
+  /** 当前列表里这份编排的行（启用开关读它，编辑态的 enabled 不进 draft）。 */
   const current = (list ?? []).find((row) => row.id === order) ?? null;
-  const webhookUrl =
-    current?.webhookToken != null
-      ? `${window.location.origin}/webhooks/orchestrate/${current.webhookToken}`
-      : null;
 
-  const copyEndpoint = (): void => {
-    if (!webhookUrl) return;
-    void copyText(webhookUrl).then((ok) =>
+  const copyEndpoint = (token: string): void => {
+    const endpoint = `${window.location.origin}/webhooks/orchestrate/${token}`;
+    void copyText(endpoint).then((ok) =>
       show(ok ? 'success' : 'error', ok ? t('orch.copied') : t('common.copyFailed')),
     );
   };
@@ -1015,10 +1156,27 @@ export function OrchestrationCanvas({
     : 0;
 
   // 图上选中的东西（选中态即编辑态：节点改归属/删、边改正文/删）。
-  const selNode = sel?.kind === 'node' && draft?.nodes.includes(sel.id) ? sel.id : null;
+  const selNode =
+    sel?.kind === 'node' && draft?.nodes.some((n) => n.id === sel.id) ? sel.id : null;
+  const selNodeKind = selNode ? draft?.nodes.find((n) => n.id === selNode)?.kind ?? null : null;
   const selEdge =
     sel?.kind === 'edge' ? (draft?.edges.find((e) => e.id === sel.id) ?? null) : null;
   const selNodeOut = selNode ? (draft?.edges ?? []).filter((e) => e.from === selNode) : [];
+  /** 节点显示名：session 用会话标题，webhook 用端点角色名。 */
+  const nodeLabel = useCallback(
+    (nodeId: string): string => {
+      if (nodeId.startsWith('w:')) {
+        const { entries } = draft
+          ? graphDirections(draft.nodes, draft.edges)
+          : { entries: [] as OrchestrationNode[] };
+        return t(
+          entries.some((n) => n.id === nodeId) ? 'orch.webhookEntry' : 'orch.webhookExit',
+        );
+      }
+      return sessionLabel(sessionById.get(nodeId)?.title ?? null, nodeId);
+    },
+    [draft, sessionById, t],
+  );
 
   return (
     <div className="space-y-3">
@@ -1043,23 +1201,20 @@ export function OrchestrationCanvas({
 
       {/* 选择 / 命名 / 保存（图外的定义项都在这几条工具条上，没有单独的表单卡片） */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <select
-          value={editing?.id != null ? String(editing.id) : '__new'}
-          onChange={(e) => {
-            const row = (list ?? []).find((r) => String(r.id) === e.target.value);
+        <Combobox
+          value={editing?.id != null ? String(editing.id) : ''}
+          onChange={(v) => {
+            const row = (list ?? []).find((r) => String(r.id) === v);
             setEditing(row ? asEditing(row) : null);
           }}
           title={t('orch.listLabel')}
-          className="min-w-[10rem] max-w-[16rem] rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-1 text-[11px] text-neutral-200"
-        >
-          {editing?.id == null && <option value="__new">{t('orch.new')}</option>}
-          {(list ?? []).map((row) => (
-            <option key={row.id} value={row.id}>
-              {row.name || t('orch.untitled')}
-            </option>
-          ))}
-          {list === null && <option value="__new">{t('hooks.loading')}</option>}
-        </select>
+          placeholder={list === null ? t('hooks.loading') : t('orch.new')}
+          className="min-w-[10rem] max-w-[16rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+          options={(list ?? []).map((row) => ({
+            value: String(row.id),
+            label: row.name || t('orch.untitled'),
+          }))}
+        />
         <button
           type="button"
           onClick={() =>
@@ -1107,7 +1262,7 @@ export function OrchestrationCanvas({
         )}
       </div>
 
-      {/* 自动触发：起始消息 / 定时 / webhook */}
+      {/* 自动触发：起始消息 / 定时（webhook 端点归节点自己的检查器） */}
       {editing && draft && (
         <div className="flex flex-wrap items-center gap-1.5">
           <input
@@ -1115,13 +1270,6 @@ export function OrchestrationCanvas({
             onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
             placeholder={t('orch.startTextHint')}
             title={t('orch.startTextLabel')}
-            className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-          />
-          <input
-            value={draft.handoffPrompt}
-            onChange={(e) => patch((d) => ({ ...d, handoffPrompt: e.target.value }))}
-            placeholder={t('orch.handoffHint')}
-            title={t('orch.handoffLabel')}
             className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
           <button
@@ -1136,39 +1284,71 @@ export function OrchestrationCanvas({
           >
             {draft.cron ? t('orch.cronBadge', { expr: draft.cron }) : t('orch.cronSet')}
           </button>
-          <code
-            title={t('orch.webhookHint')}
-            className="max-w-[16rem] min-w-0 shrink truncate rounded bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-400"
-          >
-            {webhookUrl ?? t('orch.endpointMissing')}
-          </code>
-          <button
-            type="button"
-            disabled={!webhookUrl}
-            onClick={copyEndpoint}
-            title={t('orch.copyEndpoint')}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
-          >
-            <Copy className="h-3 w-3" />
-            {t('orch.copyEndpoint')}
-          </button>
-          {editing.id != null && (
+          {editing.id != null && current && (
             <button
               type="button"
-              disabled={fb.stateOf('orch:rotate') === 'loading'}
-              onClick={rotate}
-              title={t('orch.rotate')}
-              className="shrink-0 rounded border border-edge/[0.1] px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              disabled={fb.stateOf('orch:enabled') === 'loading'}
+              onClick={() => {
+                const id = editing.id!;
+                void fb.run(
+                  'orch:enabled',
+                  async () => {
+                    const res = await api.updateOrchestration(id, { enabled: !current.enabled });
+                    setList((prev) =>
+                      prev?.map((row) => (row.id === id ? res.orchestration : row)) ?? prev,
+                    );
+                  },
+                  { fail: (e) => t('orch.saveFailed', { error: errorText(e) }) },
+                );
+              }}
+              title={t('orch.enabledHint')}
+              className={cn(
+                'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                current.enabled
+                  ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                  : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+              )}
             >
-              {t('orch.rotate')}
+              {t(current.enabled ? 'orch.enabledOn' : 'orch.enabledOff')}
             </button>
           )}
         </div>
       )}
 
-      {/* 手动触发 */}
-      {editing && (
+      {/* 手动触发：入口 ≥ 2 时先选跑哪些（缺省全部 session 入口） */}
+      {editing && draft && (
         <div className="flex flex-wrap items-center gap-1.5">
+          {manualEntryChoices.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1">
+              {manualEntryChoices.map((entry) => {
+                const checked = triggerEntries?.includes(entry.id) ?? false;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() =>
+                      setTriggerEntries((prev) => {
+                        const base = prev ?? manualEntryChoices.map((n) => n.id);
+                        return base.includes(entry.id)
+                          ? base.filter((x) => x !== entry.id)
+                          : [...base, entry.id];
+                      })
+                    }
+                    title={nodeLabel(entry.id)}
+                    className={cn(
+                      'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                      checked
+                        ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                        : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+                    )}
+                  >
+                    {entry.kind === 'webhook' ? <Globe className="h-2.5 w-2.5" /> : null}
+                    <span className="min-w-0 truncate">{nodeLabel(entry.id)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <input
             value={triggerText}
             onChange={(e) => setTriggerText(e.target.value)}
@@ -1230,8 +1410,8 @@ export function OrchestrationCanvas({
             deleteKeyCode={null}
             onConnect={connectEdge}
             onNodeClick={(_, node) => {
-              const sessionId = sessionOfNode(node.id);
-              if (sessionId) setSel({ kind: 'node', id: sessionId });
+              const nodeId = orchNodeIdOf(node.id);
+              if (nodeId) setSel({ kind: 'node', id: nodeId });
             }}
             onEdgeClick={(_, edge) => selectEdge(edge.id)}
             onPaneClick={() => {
@@ -1270,6 +1450,16 @@ export function OrchestrationCanvas({
                 <Plus className="h-3 w-3" />
                 {t('orch.addNode')}
               </button>
+              <button
+                type="button"
+                disabled={draft.nodes.length >= ORCH_MAX_NODES}
+                onClick={() => patch(addWebhookNode)}
+                title={t('orch.addWebhook')}
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              >
+                <Globe className="h-3 w-3" />
+                {t('orch.addWebhook')}
+              </button>
               <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
                 {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
               </span>
@@ -1280,7 +1470,7 @@ export function OrchestrationCanvas({
               )}
             </Panel>
             {/* 点节点 / 点边 = 就地编辑那一份定义（右侧检查器）。 */}
-            {selNode && draft && (
+            {selNode && draft && selNodeKind === 'session' && (
               <Panel
                 position="top-right"
                 className="nopan w-56 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
@@ -1303,16 +1493,6 @@ export function OrchestrationCanvas({
                 <div className="flex flex-wrap items-center gap-1">
                   <button
                     type="button"
-                    disabled={selNode === draft.startSessionId || !startAllowed(selNode)}
-                    title={startAllowed(selNode) ? undefined : t('orch.startMustBeProject')}
-                    onClick={() => patch((d) => ({ ...d, startSessionId: selNode }))}
-                    className="inline-flex items-center gap-1 rounded border border-teal-400/30 px-1.5 py-0.5 text-[10px] text-teal-200 transition-colors hover:bg-teal-500/10 disabled:opacity-30"
-                  >
-                    <Flag className="h-3 w-3" />
-                    {t('orch.setStart')}
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => openMessages(selNode)}
                     className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
                   >
@@ -1322,7 +1502,7 @@ export function OrchestrationCanvas({
                   <button
                     type="button"
                     onClick={() => {
-                      patch((d) => guardStart(removeNode(d, selNode)));
+                      patch((d) => removeNode(d, selNode));
                       setSel(null);
                     }}
                     className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
@@ -1345,9 +1525,7 @@ export function OrchestrationCanvas({
                             className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[10px] text-neutral-300 hover:bg-edge/[0.08]"
                           >
                             <Link2 className="h-2.5 w-2.5 shrink-0 text-neutral-600" />
-                            <span className="min-w-0 flex-1 truncate">
-                              {sessionLabel(sessionById.get(edge.to)?.title ?? null, edge.to)}
-                            </span>
+                            <span className="min-w-0 flex-1 truncate">{nodeLabel(edge.to)}</span>
                           </button>
                         </li>
                       ))}
@@ -1364,9 +1542,9 @@ export function OrchestrationCanvas({
               >
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
-                    {sessionLabel(sessionById.get(selEdge.from)?.title ?? null, selEdge.from)}
+                    {nodeLabel(selEdge.from)}
                     {' → '}
-                    {sessionLabel(sessionById.get(selEdge.to)?.title ?? null, selEdge.to)}
+                    {nodeLabel(selEdge.to)}
                   </span>
                   <button
                     type="button"
@@ -1389,23 +1567,26 @@ export function OrchestrationCanvas({
                   }}
                   rows={3}
                   placeholder={t('orch.edgeText')}
+                  title={t('orch.edgeVars')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
-                <label className="flex items-center gap-1 text-[10px] text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={selEdge.carryOutput === true}
-                    onChange={(e) => {
-                      const carryOutput = e.target.checked;
-                      patch((d) => ({
-                        ...d,
-                        edges: d.edges.map((x) => (x.id === selEdge.id ? { ...x, carryOutput } : x)),
-                      }));
-                    }}
-                    className="h-3 w-3 accent-blue-500"
-                  />
-                  {t('orch.edgeCarry')}
-                </label>
+                <p className="text-[9px] leading-relaxed text-neutral-600">{t('orch.edgeVars')}</p>
+                <textarea
+                  value={selEdge.extract ?? ''}
+                  onChange={(e) => {
+                    const extract = e.target.value;
+                    patch((d) => ({
+                      ...d,
+                      edges: d.edges.map((x) =>
+                        x.id === selEdge.id ? { ...x, extract: extract || undefined } : x,
+                      ),
+                    }));
+                  }}
+                  rows={2}
+                  placeholder={t('orch.edgeExtractHint')}
+                  title={t('orch.edgeExtract')}
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
                 <button
                   type="button"
                   onClick={() => {
@@ -1416,6 +1597,107 @@ export function OrchestrationCanvas({
                 >
                   <Trash2 className="h-3 w-3" />
                   {t('orch.removeEdge')}
+                </button>
+              </Panel>
+            )}
+            {/* webhook 节点检查器：入口管端点（复制/轮换），出口填 url/secret。 */}
+            {selNode && draft && selNodeKind === 'webhook' && (
+              <Panel
+                position="top-right"
+                className="nopan w-64 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
+                    {nodeLabel(selNode)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSel(null)}
+                    title={t('common.close')}
+                    aria-label={t('common.close')}
+                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                {graphDirections(draft.nodes, draft.edges).entries.some((n) => n.id === selNode) ? (
+                  <>
+                    {(() => {
+                      const node = draft.nodes.find((n) => n.id === selNode);
+                      const token = node?.webhookToken ?? null;
+                      return (
+                        <>
+                          <code className="block truncate rounded bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-400">
+                            {token
+                              ? `${window.location.origin}/webhooks/orchestrate/${token}`
+                              : t('orch.endpointMissing')}
+                          </code>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={!token}
+                              onClick={() => token && copyEndpoint(token)}
+                              className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                            >
+                              <Copy className="h-2.5 w-2.5" />
+                              {t('orch.copyEndpoint')}
+                            </button>
+                            {editing?.id != null && (
+                              <button
+                                type="button"
+                                disabled={fb.stateOf('orch:rotate') === 'loading'}
+                                onClick={() => rotate(selNode)}
+                                className="rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                              >
+                                {t('orch.rotate')}
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <>
+                    <input
+                      value={draft.nodes.find((n) => n.id === selNode)?.url ?? ''}
+                      onChange={(e) => {
+                        const url = e.target.value;
+                        patch((d) => ({
+                          ...d,
+                          nodes: d.nodes.map((n) => (n.id === selNode ? { ...n, url } : n)),
+                        }));
+                      }}
+                      placeholder={t('orch.webhookUrlHint')}
+                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                    />
+                    <input
+                      value={draft.nodes.find((n) => n.id === selNode)?.secret ?? ''}
+                      onChange={(e) => {
+                        const secret = e.target.value;
+                        patch((d) => ({
+                          ...d,
+                          nodes: d.nodes.map((n) =>
+                            n.id === selNode ? { ...n, secret: secret || undefined } : n,
+                          ),
+                        }));
+                      }}
+                      placeholder={t('orch.webhookSecretHint')}
+                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                    />
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    patch((d) => removeNode(d, selNode));
+                    setSel(null);
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  {t('orch.removeNode')}
                 </button>
               </Panel>
             )}
@@ -1440,19 +1722,17 @@ export function OrchestrationCanvas({
         <div className="flex flex-wrap items-center gap-2 pb-1.5">
           <span className="text-xs font-medium text-neutral-200">{t('orch.runsTitle')}</span>
           <span className="text-[11px] text-neutral-500">{runs === null ? '' : runs.length}</span>
-          <select
+          <Combobox
             value={runStatus}
-            onChange={(e) => setRunStatus(e.target.value as OrchestrationRunStatus | '')}
+            onChange={(v) => setRunStatus(v as OrchestrationRunStatus | '')}
             title={t('orch.runStatusAll')}
-            className="rounded border border-edge/[0.08] bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-200"
-          >
-            <option value="">{t('orch.runStatusAll')}</option>
-            {(Object.keys(RUN_STATUS_KEY) as OrchestrationRunStatus[]).map((s) => (
-              <option key={s} value={s}>
-                {t(RUN_STATUS_KEY[s])}
-              </option>
-            ))}
-          </select>
+            placeholder={t('orch.runStatusAll')}
+            className="rounded bg-neutral-900 px-1 py-0.5 text-[10px]"
+            options={(Object.keys(RUN_STATUS_KEY) as OrchestrationRunStatus[]).map((s) => ({
+              value: s,
+              label: t(RUN_STATUS_KEY[s]),
+            }))}
+          />
           <input
             value={runText}
             onChange={(e) => setRunText(e.target.value)}
@@ -1595,19 +1875,11 @@ export function OrchestrationCanvas({
                                       {formatStamp(event.at)}
                                     </span>
                                     <span className="shrink-0 text-[10px] text-neutral-300">
-                                      {event.from
-                                        ? sessionLabel(
-                                            sessionById.get(event.from)?.title ?? null,
-                                            event.from,
-                                          )
-                                        : t('orch.startTag')}
+                                      {event.from ? nodeLabel(event.from) : t('orch.triggerManual')}
                                     </span>
                                     <Link2 className="h-2.5 w-2.5 shrink-0 text-neutral-600" />
                                     <span className="shrink-0 text-[10px] text-neutral-300">
-                                      {sessionLabel(
-                                        sessionById.get(event.to)?.title ?? null,
-                                        event.to,
-                                      )}
+                                      {nodeLabel(event.to)}
                                     </span>
                                     <Badge
                                       className={cn(
@@ -1654,11 +1926,21 @@ export function OrchestrationCanvas({
         <OrchestrationSessionPicker
           sessions={candidates}
           projects={projects}
-          selected={new Set(draft.nodes)}
-          onPick={(sessionId) => patch((d) => guardStart(addNode(d, sessionId)))}
+          selected={new Set(draft.nodes.filter((n) => n.kind === 'session').map((n) => n.id))}
+          onPick={(sessionId) => patch((d) => addSessionNode(d, sessionId))}
           onClose={() => setPickerOpen(false)}
         />
       )}
+
+      {/* 破坏性动作的应用内确认（原生 confirm/alert 不用）。 */}
+      <ConfirmDialog
+        open={confirmState != null}
+        title={confirmState?.title ?? ''}
+        message={confirmState?.message ?? ''}
+        confirmLabel={confirmState?.confirmLabel ?? ''}
+        onConfirm={() => confirmState?.action()}
+        onClose={() => setConfirmState(null)}
+      />
 
       {cronOpen && draft && (
         <OrchestrationCronDialog

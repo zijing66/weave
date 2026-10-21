@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
@@ -60,10 +60,11 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     port = (server.address() as { port: number }).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     server.close();
     db.close();
     setDaemonSettingsDb(null); // back to the machine default for other suites
+    await rm(projectPath, { recursive: true, force: true });
   });
 
   afterEach(() => {

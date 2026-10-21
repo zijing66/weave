@@ -242,6 +242,12 @@ export interface HarnessSessionControl {
    * 一条，落定事件才答得出新值，最新是重开则旧答案作废（不补）。空 = 无从回读。
    */
   modelFactEvents: readonly string[];
+  /**
+   * 思考强度（推理档位）可调词表（宿主自己的名字，展示原样）。空 = 该 harness
+   * 没有程序化调整通道（控件不渲染）。**模型能力差异不进表**——同一 harness 里
+   * 各模型的支持档位不同，宿主自己降档并回报，表只给全梯子供白名单与展示。
+   */
+  effortLevels: readonly string[];
 }
 
 /**
@@ -254,9 +260,10 @@ export const HARNESS_SESSION_CONTROL = {
     modeNames: ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'],
     modelNames: ['default', 'opus', 'sonnet', 'haiku', 'fable'],
     modelFactEvents: ['PostModelSwitch', 'SessionStart'],
+    effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
   },
   /** Codex 待调研；空值占位，类型完整。 */
-  codex: { modeNames: [], modelNames: [], modelFactEvents: [] },
+  codex: { modeNames: [], modelNames: [], modelFactEvents: [], effortLevels: [] },
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /**

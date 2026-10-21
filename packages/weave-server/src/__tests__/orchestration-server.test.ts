@@ -12,6 +12,7 @@ import {
   OrchestrationRepository,
   OrchestrationRunRepository,
   type OrchestrationEdge,
+  type OrchestrationNode,
 } from '../repositories/orchestrations.js';
 import { AuthService } from '../daemon/dashboard-auth.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -20,8 +21,8 @@ import type { SendInput, SendResult, PipeMessage } from '../hooks/message-delive
 import { createWeaveServer } from '../daemon/server.js';
 
 /**
- * 编排域端到端：定义 CRUD 与图校验、触发/取消、公开 webhook（认证门豁免）、
- * 运行日志的筛选/翻页/清空、删编排保留日志。
+ * 编排域端到端：定义 CRUD 与图校验（多入口/webhook 节点）、触发/取消、
+ * 公开 webhook（认证门豁免）、运行日志的筛选/翻页/清空、删编排保留日志。
  */
 
 vi.setConfig({ testTimeout: 20000 });
@@ -50,11 +51,13 @@ const edge = (from: string, to: string): OrchestrationEdge => ({
   text: `msg ${from}->${to}`,
 });
 
+const sNode = (id: string): OrchestrationNode => ({ id, kind: 'session' });
+const wNode = (id: string): OrchestrationNode => ({ id, kind: 'webhook' });
+
 const graphBody = (over: Record<string, unknown> = {}) => ({
   name: 'chain',
-  startSessionId: 'sa',
   startText: 'kick off',
-  nodes: ['sa', 'sb'],
+  nodes: [sNode('sa'), sNode('sb')],
   edges: [edge('sa', 'sb')],
   ...over,
 });
@@ -137,15 +140,6 @@ describe('orchestration definitions', () => {
     expect(webhook.status).toBe(404);
   });
 
-  it('图校验：起始会话必须在节点集里', async () => {
-    const res = await adminFetch(
-      '/messaging/orchestrations',
-      json('POST', graphBody({ startSessionId: 'sc' })),
-    );
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain('Start session must be part of the node set');
-  });
-
   it('图校验：成环被拒', async () => {
     const res = await adminFetch(
       '/messaging/orchestrations',
@@ -158,20 +152,55 @@ describe('orchestration definitions', () => {
   it('图校验：无名会话被拒', async () => {
     const res = await adminFetch(
       '/messaging/orchestrations',
-      json('POST', graphBody({ nodes: ['sa', 'nope'], edges: [edge('sa', 'nope')] })),
+      json('POST', graphBody({ nodes: [sNode('sa'), sNode('nope')], edges: [edge('sa', 'nope')] })),
     );
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('Unknown session: nope');
   });
 
-  it('边可只转发上游输出（正文空 + carryOutput），两者皆无则拒', async () => {
-    const carry = await adminFetch(
+  it('图校验：webhook-only 缺 projectId / webhook 出口缺 URL / 中间 webhook 节点被拒', async () => {
+    const webhookOnly = await adminFetch(
       '/messaging/orchestrations',
-      json('POST', graphBody({ edges: [{ ...edge('sa', 'sb'), text: '', carryOutput: true }] })),
+      json('POST', graphBody({ nodes: [wNode('w:in')], edges: [] })),
     );
-    expect(carry.status).toBe(201);
-    const created = (await carry.json()).orchestration;
-    expect(created.edges[0]).toMatchObject({ text: '', carryOutput: true });
+    expect(webhookOnly.status).toBe(400);
+
+    const noUrl = await adminFetch(
+      '/messaging/orchestrations',
+      json('POST', graphBody({ nodes: [sNode('sa'), wNode('w:out')], edges: [edge('sa', 'w:out')] })),
+    );
+    expect(noUrl.status).toBe(400);
+    expect((await noUrl.json()).error).toContain('http(s)');
+
+    const middle = await adminFetch(
+      '/messaging/orchestrations',
+      json(
+        'POST',
+        graphBody({
+          nodes: [sNode('sa'), wNode('w:mid'), sNode('sb')],
+          edges: [edge('sa', 'w:mid'), edge('w:mid', 'sb')],
+        }),
+      ),
+    );
+    expect(middle.status).toBe(400);
+    expect((await middle.json()).error).toContain('both inbound and outbound');
+  });
+
+  it('空正文只在 webhook 入口的出边上放行', async () => {
+    const ok = await adminFetch(
+      '/messaging/orchestrations',
+      json(
+        'POST',
+        graphBody({
+          nodes: [wNode('w:in'), sNode('sb')],
+          edges: [{ ...edge('w:in', 'sb'), text: '' }],
+        }),
+      ),
+    );
+    expect(ok.status).toBe(201);
+    const created = (await ok.json()).orchestration;
+    expect(created.nodes[0]).toMatchObject({ id: 'w:in', kind: 'webhook' });
+    expect(created.nodes[0].webhookToken).toMatch(/^[A-Za-z0-9_-]{10,}$/);
 
     const mute = await adminFetch(
       '/messaging/orchestrations',
@@ -180,42 +209,35 @@ describe('orchestration definitions', () => {
     expect(mute.status).toBe(400);
     expect((await mute.json()).error).toContain('has no message');
 
-    await adminFetch(`/messaging/orchestrations/${created.id}`, { method: 'DELETE' });
-  });
-
-  it('交接总结指令随定义存取（PUT 省略即保持原值）', async () => {
-    const res = await adminFetch(
+    // 提取指令 + 空正文合法（{summary} 填充）；extract 随定义往返
+    const withExtract = await adminFetch(
       '/messaging/orchestrations',
-      json('POST', graphBody({ handoffPrompt: '请按交接格式总结' })),
+      json(
+        'POST',
+        graphBody({ edges: [{ ...edge('sa', 'sb'), text: '', extract: '请总结这一轮' }] }),
+      ),
     );
-    expect(res.status).toBe(201);
-    const created = (await res.json()).orchestration;
-    expect(created.handoffPrompt).toBe('请按交接格式总结');
+    expect(withExtract.status).toBe(201);
+    const extracted = (await withExtract.json()).orchestration;
+    expect(extracted.edges[0]).toMatchObject({ text: '', extract: '请总结这一轮' });
+    await adminFetch(`/messaging/orchestrations/${extracted.id}`, { method: 'DELETE' });
 
-    const put = await adminFetch(
-      `/messaging/orchestrations/${created.id}`,
-      json('PUT', { name: 'renamed' }),
-    );
-    expect((await put.json()).orchestration).toMatchObject({
-      name: 'renamed',
-      handoffPrompt: '请按交接格式总结',
-    });
     await adminFetch(`/messaging/orchestrations/${created.id}`, { method: 'DELETE' });
   });
 
-  it('创建返回定义 + webhook token，列表可按项目过滤', async () => {
+  it('创建返回定义（enabled 缺省 true），列表可按项目过滤', async () => {
     const res = await adminFetch('/messaging/orchestrations', json('POST', graphBody()));
     expect(res.status).toBe(201);
     const { orchestration } = await res.json();
     expect(orchestration).toMatchObject({
       name: 'chain',
       projectId,
-      startSessionId: 'sa',
       startText: 'kick off',
+      enabled: true,
       cron: null,
       nextRunAt: null,
     });
-    expect(orchestration.webhookToken).toMatch(/^[A-Za-z0-9_-]{10,}$/);
+    expect(orchestration.startSessionId).toBeUndefined();
 
     const mine = await adminFetch(`/messaging/orchestrations?projectId=${projectId}`);
     expect(((await mine.json()) as { orchestrations: unknown[] }).orchestrations).toHaveLength(1);
@@ -242,7 +264,7 @@ describe('orchestration definitions', () => {
     const id = orchestrations.list()[0]!.id;
     const res = await adminFetch(`/messaging/orchestrations/${id}`, json('PUT', { name: 'renamed' }));
     expect(res.status).toBe(200);
-    expect((await res.json()).orchestration).toMatchObject({ name: 'renamed', startSessionId: 'sa' });
+    expect((await res.json()).orchestration).toMatchObject({ name: 'renamed', startText: 'kick off' });
     expect(
       (await adminFetch('/messaging/orchestrations/9999', json('PUT', { name: 'x' }))).status,
     ).toBe(404);
@@ -272,20 +294,25 @@ describe('orchestration runs', () => {
     const { run } = await detail.json();
     expect(run).toMatchObject({ orchestrationId: orchId, trigger: 'manual', status: 'running' });
     expect(run.state.pending.sa).toHaveLength(1);
+    // 详情行要同时带 summary 的 pendingCounts 与原始 state——web 展开行直接顶替
+    // 列表行渲染，缺 pendingCounts 会让 Object.values 崩（回归）。
+    expect(run.pendingCounts).toEqual({ sa: 1 });
   });
 
-  it('手动触发可带首步消息覆盖起始文本', async () => {
+  it('手动触发可带首步消息与入口子集', async () => {
     const id = orchestrations.insert({
       name: 'second',
       projectId,
-      startSessionId: 'sc',
       startText: 'fallback',
-      nodes: ['sc'],
+      nodes: [sNode('sc'), sNode('sb')],
       edges: [],
     }).id;
-    const res = await adminFetch(`/messaging/orchestrations/${id}/trigger`, json('POST', { text: 'from hook' }));
+    const res = await adminFetch(
+      `/messaging/orchestrations/${id}/trigger`,
+      json('POST', { text: 'from hook', entries: ['sb'] }),
+    );
     expect(res.status).toBe(201);
-    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sc', text: 'from hook' });
+    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sb', text: 'from hook' });
     await adminFetch(`/messaging/orchestration-runs/${(await res.json()).runId}/cancel`, {
       method: 'POST',
     });
@@ -349,9 +376,8 @@ describe('orchestration runs', () => {
     const id = orchestrations.insert({
       name: 'to-clear',
       projectId,
-      startSessionId: 'sc',
       startText: 'x',
-      nodes: ['sc'],
+      nodes: [sNode('sc')],
       edges: [],
     }).id;
     const started = await adminFetch(`/messaging/orchestrations/${id}/trigger`, {
@@ -387,17 +413,16 @@ describe('orchestration runs', () => {
   });
 });
 
-describe('webhook trigger', () => {
-  it('token 触发免认证；载荷当首步消息；错 token 404', async () => {
+describe('webhook entry trigger', () => {
+  it('节点 token 触发免认证；载荷随出边正文下发；错 token 404', async () => {
     const id = orchestrations.insert({
       name: 'hook',
       projectId,
-      startSessionId: 'sb',
       startText: 'fallback',
-      nodes: ['sb'],
-      edges: [],
+      nodes: [wNode('w:in'), sNode('sb')],
+      edges: [{ ...edge('w:in', 'sb'), text: 'go' }],
     }).id;
-    const token = orchestrations.getById(id)!.webhookToken!;
+    const token = orchestrations.getById(id)!.nodes[0]!.webhookToken!;
 
     const res = await fetch(url(`/webhooks/orchestrate/${token}`), {
       method: 'POST',
@@ -405,7 +430,7 @@ describe('webhook trigger', () => {
       body: 'deploy finished',
     });
     expect(res.status).toBe(202);
-    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sb', text: 'deploy finished' });
+    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sb', text: 'go\n\ndeploy finished' });
     const { runId } = await res.json();
     expect(runs.getById(runId)).toMatchObject({ trigger: 'webhook' });
 
@@ -416,22 +441,23 @@ describe('webhook trigger', () => {
 
     expect((await fetch(url('/webhooks/orchestrate/unknown'), { method: 'POST' })).status).toBe(404);
 
-    // 空载荷回落编排自己的起始文本
+    // 空载荷 = 只发出边正文
     await adminFetch(`/messaging/orchestration-runs/${runId}/cancel`, { method: 'POST' });
     const empty = await fetch(url(`/webhooks/orchestrate/${token}`), { method: 'POST' });
     expect(empty.status).toBe(202);
-    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sb', text: 'fallback' });
+    expect(sent.at(-1)).toMatchObject({ toSessionId: 'sb', text: 'go' });
     await adminFetch(`/messaging/orchestration-runs/${(await empty.json()).runId}/cancel`, {
       method: 'POST',
     });
   });
 
-  it('rotate-webhook 换 token，旧 token 立即失效', async () => {
+  it('rotate-webhook 按节点换 token，旧 token 立即失效', async () => {
     const row = orchestrations.list().find((o) => o.name === 'hook')!;
-    const old = row.webhookToken!;
-    const res = await adminFetch(`/messaging/orchestrations/${row.id}/rotate-webhook`, {
-      method: 'POST',
-    });
+    const old = row.nodes[0]!.webhookToken!;
+    const res = await adminFetch(
+      `/messaging/orchestrations/${row.id}/rotate-webhook`,
+      json('POST', { nodeId: 'w:in' }),
+    );
     expect(res.status).toBe(200);
     const { webhookToken } = await res.json();
     expect(webhookToken).not.toBe(old);
@@ -440,7 +466,13 @@ describe('webhook trigger', () => {
       (await fetch(url(`/webhooks/orchestrate/${webhookToken}`), { method: 'POST' })).status,
     ).toBe(202);
     expect(
-      (await adminFetch('/messaging/orchestrations/9999/rotate-webhook', { method: 'POST' })).status,
+      (
+        await adminFetch('/messaging/orchestrations/9999/rotate-webhook', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ nodeId: 'w:in' }),
+        })
+      ).status,
     ).toBe(404);
   });
 });

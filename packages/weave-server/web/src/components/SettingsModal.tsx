@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
 import { NumberStepper } from '@/components/ui/number-stepper';
+import { Combobox } from '@/components/ui/combobox';
 import { registerInvalidator } from '@/lib/sse';
 import { useToast } from '@/components/Toast';
 import {
@@ -256,19 +257,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               {t('settings.language')}
             </label>
             <p className="text-[11px] text-neutral-500">{t('settings.languageHint')}</p>
-            <select
+            <Combobox
+              className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={settings?.locale ?? locale}
-              onChange={(e) =>
-                setSettings((s) => (s ? { ...s, locale: e.target.value as Locale } : s))
-              }
-              className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              {SUPPORTED_LOCALES.map((l) => (
-                <option key={l} value={l}>
-                  {LOCALE_NATIVE_NAMES[l]}
-                </option>
-              ))}
-            </select>
+              options={SUPPORTED_LOCALES.map((l) => ({ value: l, label: LOCALE_NATIVE_NAMES[l] }))}
+              onChange={(v) => setSettings((s) => (s ? { ...s, locale: v as Locale } : s))}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -277,25 +271,20 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               {t('settings.defaultTerminal')}
             </label>
             <p className="text-[11px] text-neutral-500">{t('settings.defaultTerminalHint')}</p>
-            <select
+            <Combobox
+              className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={preset}
-              onChange={(e) =>
-                setSettings((s) =>
-                  s ? { ...s, terminal: { ...s.terminal, preset: e.target.value as TerminalPreset } } : s,
-                )
-              }
-              className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              {presets.map((p) => {
+              options={presets.map((p) => {
                 // 本地词典优先（中英随 UI 切换），未知 id 回落服务端 label
                 const key = `preset.${p.id}` as MessageKey;
-                return (
-                  <option key={p.id} value={p.id}>
-                    {key in zh ? t(key) : p.label}
-                  </option>
-                );
+                return { value: p.id, label: key in zh ? t(key) : p.label };
               })}
-            </select>
+              onChange={(v) =>
+                setSettings((s) =>
+                  s ? { ...s, terminal: { ...s.terminal, preset: v as TerminalPreset } } : s,
+                )
+              }
+            />
           </div>
 
           {preset === 'custom' && (
@@ -497,34 +486,26 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <div className="flex items-center gap-1">
-                {/* 拉到候选 → 原生 select（样式可跟暗色，同「终端预设」口径）；
-                    没拉到（有的网关没有 /models）→ 回退文本框手填。
-                    刻意不用 <datalist>：它的弹层由浏览器/系统画，浅色且不可控。 */}
+                {/* 拉到候选 → 统一 Combobox（可搜，网关模型上百也不卡）；
+                    没拉到（有的网关没有 /models）→ 回退文本框手填。 */}
                 {models.length > 0 ? (
-                  <select
+                  <Combobox
+                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                     value={settings?.ai?.model ?? ''}
-                    onChange={(e) =>
+                    placeholder={t('settings.aiModelPlaceholder')}
+                    options={[
+                      // 已存模型不在列表里（网关换过/曾手填）也要能显示，别静默丢值
+                      ...(settings?.ai?.model && !models.includes(settings.ai.model)
+                        ? [{ value: settings.ai.model }]
+                        : []),
+                      ...models.map((model) => ({ value: model })),
+                    ]}
+                    onChange={(v) =>
                       setSettings((s) =>
-                        s === null
-                          ? s
-                          : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: e.target.value } },
+                        s === null ? s : { ...s, ai: { ...(s.ai ?? { baseUrl: '' }), model: v } },
                       )
                     }
-                    className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {/* 已存模型不在列表里（网关换过/曾手填）也要能显示，别静默丢值 */}
-                    {(settings?.ai?.model ?? '') === '' && (
-                      <option value="">{t('settings.aiModelPlaceholder')}</option>
-                    )}
-                    {settings?.ai?.model && !models.includes(settings.ai.model) && (
-                      <option value={settings.ai.model}>{settings.ai.model}</option>
-                    )}
-                    {models.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 ) : (
                   <input
                     value={settings?.ai?.model ?? ''}

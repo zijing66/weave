@@ -15,6 +15,17 @@ export const CLAUDE_RESUME: ResumeCommandSpec = {
   promptStdin: true,
   // 交互式打开：无 -p，进终端后由用户继续对话。
   openArgs: (sessionId) => ['--resume', sessionId],
+  // 编排边级提取：fork 一次无头回合——继承会话上下文提炼信息，不动原会话、
+  // 不留转录（--no-session-persistence 只关落盘，hook 照发，故 forkSessionId
+  // 由 server 预登记、ingest 侧过滤）。实测 2.1.296：fork 真继承上下文。
+  extractArgs: (sessionId, forkSessionId) => [
+    '--resume',
+    sessionId,
+    '--fork-session',
+    '--no-session-persistence',
+    '--session-id',
+    forkSessionId,
+  ],
   // weave 的 claude 集成（hook 面 / 阻塞问答键序 / 计划正文）都按 2.1.287 起的
   // 宿主任约写，低于它的不接新会话（UI 置灰并报出实际版本）。
   minVersion: '2.1.287',

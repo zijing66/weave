@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { openDatabase } from '../db/db.js';
@@ -69,6 +69,7 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   afterAll(() => {
     server.close();
     db.close();
+    rmSync(staticDir, { recursive: true, force: true });
   });
 
   it('strips the /api prefix so /api/projects works like /projects', async () => {

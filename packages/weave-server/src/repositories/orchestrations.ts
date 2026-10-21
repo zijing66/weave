@@ -9,26 +9,81 @@ export interface OrchestrationEdge {
   id: string;
   from: string;
   to: string;
-  /** 边上的消息正文（源会话完成一轮时投给目标）。 */
+  /**
+   * 边上的消息正文，支持变量：`{upstream}` 上游这一轮最终输出、`{summary}`
+   * 本边提取结果（回落 `{upstream}`）、`{session}` 上游会话名。缺值占位原样
+   * 保留 → 引擎渲染后判残留，残留即记失败（不投半截模板）。
+   */
   text: string;
-  /** 投递时把源会话这一轮的最终输出附在正文后面（正文可空 ⇒ 只转发那段输出）。 */
-  carryOutput?: boolean;
+  /** 本边的提取指令（空 = 不提取）：对上游会话 fork 无头回合产出 `{summary}`。 */
+  extract?: string;
+}
+
+export type OrchestrationNodeKind = 'session' | 'webhook';
+
+export interface OrchestrationNode {
+  /**
+   * session 节点 id = sessionId（运行态 pending 键、RunEvent.from/to、画布 flash
+   * 全按它流转）；webhook 节点 = `w:<uuid>`，不与任何 sessionId 碰撞。
+   */
+  id: string;
+  kind: OrchestrationNodeKind;
+  /** webhook 入口：入站触发 token（`POST /webhooks/orchestrate/<token>`）。 */
+  webhookToken?: string;
+  /** webhook 出口：出站 POST 目标与可选 HMAC 签名密钥。 */
+  url?: string;
+  secret?: string;
+}
+
+/** nodes JSON 的解析（只认新形；坏项丢弃——写入口已 zod 拦，这里只兜磁盘）。 */
+function parseNodes(raw: unknown): OrchestrationNode[] {
+  let list: unknown;
+  try {
+    list = JSON.parse(String(raw));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  const out: OrchestrationNode[] = [];
+  for (const n of list) {
+    if (typeof n !== 'object' || n === null) continue;
+    const o = n as Record<string, unknown>;
+    if (typeof o.id !== 'string' || !o.id) continue;
+    const node: OrchestrationNode = { id: o.id, kind: o.kind === 'webhook' ? 'webhook' : 'session' };
+    if (typeof o.webhookToken === 'string' && o.webhookToken) node.webhookToken = o.webhookToken;
+    if (typeof o.url === 'string' && o.url) node.url = o.url;
+    if (typeof o.secret === 'string' && o.secret) node.secret = o.secret;
+    out.push(node);
+  }
+  return out;
+}
+
+/** 入口 = 无入边节点；出口 = 无出边节点（校验/引擎/触发共用这一份图语义）。 */
+export function graphDirections(
+  nodes: readonly OrchestrationNode[],
+  edges: readonly OrchestrationEdge[],
+): { entries: OrchestrationNode[]; exits: OrchestrationNode[] } {
+  const hasIn = new Set(edges.map((e) => e.to));
+  const hasOut = new Set(edges.map((e) => e.from));
+  return {
+    entries: nodes.filter((n) => !hasIn.has(n.id)),
+    exits: nodes.filter((n) => !hasOut.has(n.id)),
+  };
 }
 
 export interface OrchestrationRow {
   id: number;
   name: string;
-  /** 起始会话所属项目（「项目编排」即按它过滤）。 */
+  /** 入口 session 节点所属项目（「项目编排」即按它过滤）；webhook-only 由创建方显式给。 */
   projectId: number;
-  startSessionId: string;
+  /** session 入口的首条消息（手动/定时触发投给入口会话；webhook 入口不用它）。 */
   startText: string;
-  /** 每轮结束后向该会话要一份「交接总结」的指令（空 = 用内置默认那句）。 */
-  handoffPrompt: string;
-  nodes: string[];
+  nodes: OrchestrationNode[];
   edges: OrchestrationEdge[];
+  /** false = 停用：cron 不触发、入口会话的自然回合不自动启动。 */
+  enabled: boolean;
   cron: string | null;
   lastCronAt: string | null;
-  webhookToken: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -104,30 +159,28 @@ export class OrchestrationRepository {
   insert(input: {
     name: string;
     projectId: number;
-    startSessionId: string;
     startText: string;
-    handoffPrompt?: string;
-    nodes: string[];
+    nodes: OrchestrationNode[];
     edges: OrchestrationEdge[];
+    enabled?: boolean;
     cron?: string | null;
   }): OrchestrationRow {
     const now = new Date().toISOString();
+    const nodes = assignNodeTokens(this.db, input.nodes, input.edges);
     const result = this.db
       .prepare(
         `INSERT INTO orchestrations
-           (name, project_id, start_session_id, start_text, handoff_prompt, nodes, edges, cron, webhook_token, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (name, project_id, start_text, nodes, edges, enabled, cron, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.name,
         input.projectId,
-        input.startSessionId,
         input.startText,
-        input.handoffPrompt ?? '',
-        JSON.stringify(input.nodes),
+        JSON.stringify(nodes),
         JSON.stringify(input.edges),
+        input.enabled === false ? 0 : 1,
         input.cron ?? null,
-        newToken(),
         now,
         now,
       );
@@ -139,9 +192,13 @@ export class OrchestrationRepository {
     return row ? toOrchestration(row) : undefined;
   }
 
-  getByToken(token: string): OrchestrationRow | undefined {
-    const row = this.db.prepare('SELECT * FROM orchestrations WHERE webhook_token = ?').get(token);
-    return row ? toOrchestration(row) : undefined;
+  /** webhook 入口的 token → 编排 + 节点 id（nodes JSON 无索引，全表扫——量小）。 */
+  getByNodeToken(token: string): { row: OrchestrationRow; nodeId: string } | undefined {
+    for (const row of this.list()) {
+      const hit = row.nodes.find((n) => n.kind === 'webhook' && n.webhookToken === token);
+      if (hit) return { row, nodeId: hit.id };
+    }
+    return undefined;
   }
 
   list(): OrchestrationRow[] {
@@ -160,31 +217,33 @@ export class OrchestrationRepository {
     patch: {
       name?: string;
       projectId?: number;
-      startSessionId?: string;
       startText?: string;
-      handoffPrompt?: string;
-      nodes?: string[];
+      nodes?: OrchestrationNode[];
       edges?: OrchestrationEdge[];
+      enabled?: boolean;
       cron?: string | null;
     },
   ): OrchestrationRow | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
+    const nodes = assignNodeTokens(
+      this.db,
+      patch.nodes ?? row.nodes,
+      patch.edges ?? row.edges,
+    );
     this.db
       .prepare(
         `UPDATE orchestrations
-            SET name = ?, project_id = ?, start_session_id = ?, start_text = ?, handoff_prompt = ?,
-                nodes = ?, edges = ?, cron = ?, updated_at = ?
+            SET name = ?, project_id = ?, start_text = ?, nodes = ?, edges = ?, enabled = ?, cron = ?, updated_at = ?
           WHERE id = ?`,
       )
       .run(
         patch.name ?? row.name,
         patch.projectId ?? row.projectId,
-        patch.startSessionId ?? row.startSessionId,
         patch.startText ?? row.startText,
-        patch.handoffPrompt ?? row.handoffPrompt,
-        JSON.stringify(patch.nodes ?? row.nodes),
+        JSON.stringify(nodes),
         JSON.stringify(patch.edges ?? row.edges),
+        (patch.enabled ?? row.enabled) ? 1 : 0,
         patch.cron === undefined ? row.cron : patch.cron,
         new Date().toISOString(),
         id,
@@ -196,14 +255,29 @@ export class OrchestrationRepository {
     this.db.prepare('UPDATE orchestrations SET last_cron_at = ? WHERE id = ?').run(minute, id);
   }
 
-  rotateToken(id: number): string | null {
-    const token = newToken();
-    const changes = Number(
-      this.db
-        .prepare('UPDATE orchestrations SET webhook_token = ?, updated_at = ? WHERE id = ?')
-        .run(token, new Date().toISOString(), id).changes,
-    );
-    return changes === 1 ? token : null;
+  /** 换某枚 webhook 入口节点的 token（旧 token 即刻作废）。 */
+  rotateNodeToken(id: number, nodeId: string): string | null {
+    const row = this.getById(id);
+    if (!row) return null;
+    const target = row.nodes.find((n) => n.id === nodeId && n.kind === 'webhook');
+    if (!target) return null;
+    const taken = this.allTokens();
+    let token = newToken();
+    while (taken.has(token)) token = newToken();
+    const nodes = row.nodes.map((n) => (n.id === nodeId ? { ...n, webhookToken: token } : n));
+    this.db
+      .prepare('UPDATE orchestrations SET nodes = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(nodes), new Date().toISOString(), id);
+    return token;
+  }
+
+  /** 全库现役 token（行内 + 各节点），新 token 查重用。 */
+  private allTokens(): Set<string> {
+    const taken = new Set<string>();
+    for (const row of this.list()) {
+      for (const n of row.nodes) if (n.webhookToken) taken.add(n.webhookToken);
+    }
+    return taken;
   }
 
   /** 删定义（运行日志保留：日志表已去规范化编排名与项目 id）。 */
@@ -211,10 +285,10 @@ export class OrchestrationRepository {
     return Number(this.db.prepare('DELETE FROM orchestrations WHERE id = ?').run(id).changes) === 1;
   }
 
-  /** 删会话连带清定义（起始会话或任一节点命中）。 */
+  /** 删会话连带清定义（任一 session 节点命中）。 */
   deleteMentioningSession(sessionId: string): number {
-    const doomed = this.list().filter(
-      (row) => row.startSessionId === sessionId || row.nodes.includes(sessionId),
+    const doomed = this.list().filter((row) =>
+      row.nodes.some((n) => n.kind === 'session' && n.id === sessionId),
     );
     return this.deleteAll(doomed);
   }
@@ -227,6 +301,35 @@ export class OrchestrationRepository {
     const del = this.db.prepare('DELETE FROM orchestrations WHERE id = ?');
     return rows.reduce((n, row) => n + Number(del.run(row.id).changes), 0);
   }
+}
+
+/**
+ * 给 webhook 入口节点补 token（缺才发，已有保留），全库查重。入口 = 无入边的
+ * webhook 节点；出口节点（有入边）不需要 token。返回定稿后的节点数组。
+ */
+function assignNodeTokens(
+  db: DatabaseSync,
+  nodes: readonly OrchestrationNode[],
+  edges: readonly OrchestrationEdge[],
+): OrchestrationNode[] {
+  const hasIn = new Set(edges.map((e) => e.to));
+  const taken = new Set<string>();
+  try {
+    for (const row of db.prepare('SELECT nodes FROM orchestrations').all()) {
+      for (const n of parseNodes((row as { nodes: unknown }).nodes)) {
+        if (n.webhookToken) taken.add(n.webhookToken);
+      }
+    }
+  } catch {
+    // 表还没建（首启 SCHEMA 之前不会走到这里）；查重尽力而为
+  }
+  return nodes.map((n) => {
+    if (n.kind !== 'webhook' || n.webhookToken || hasIn.has(n.id)) return n;
+    let token = newToken();
+    while (taken.has(token)) token = newToken();
+    taken.add(token);
+    return { ...n, webhookToken: token };
+  });
 }
 
 /** 运行日志域：一次触发一行，跨编排/跨项目统一查询 + 保留期清理。 */
@@ -388,14 +491,12 @@ function toOrchestration(row: Record<string, unknown>): OrchestrationRow {
     id: Number(row.id),
     name: String(row.name),
     projectId: Number(row.project_id),
-    startSessionId: String(row.start_session_id),
-    startText: String(row.start_text),
-    handoffPrompt: String(row.handoff_prompt ?? ''),
-    nodes: parseJson<string[]>(row.nodes, []),
+    startText: String(row.start_text ?? ''),
+    nodes: parseNodes(row.nodes),
     edges: parseJson<OrchestrationEdge[]>(row.edges, []),
+    enabled: Number(row.enabled ?? 1) !== 0,
     cron: row.cron == null ? null : String(row.cron),
     lastCronAt: row.last_cron_at == null ? null : String(row.last_cron_at),
-    webhookToken: row.webhook_token == null ? null : String(row.webhook_token),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };

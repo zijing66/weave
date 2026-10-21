@@ -118,11 +118,11 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     port = (server.address() as { port: number }).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     server.close();
     db.close();
     setDaemonSettingsDb(null);
-    void rm(hooksDir, { recursive: true, force: true });
+    await rm(hooksDir, { recursive: true, force: true });
   });
 
   it('规则 CRUD + toggle 全流程', async () => {
@@ -473,10 +473,10 @@ describe('daemon server /hooks/plugins API', () => {
     port = (server.address() as { port: number }).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     server.close();
     db.close();
-    void rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
   it('GET /hooks/plugins 列出 SPI 加载结果', async () => {

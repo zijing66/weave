@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { isHarness, type Harness } from '@weavecode/core';
+import { HARNESS_SESSION_CONTROL, isHarness, type Harness } from '@weavecode/core';
 import {
   turnOutputOf,
   type MessagingSurface,
@@ -306,6 +306,14 @@ const SHIFT_TAB = '\x1b[Z';
  */
 const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;
 const modelCommand = (name: string) => `/model ${name}`;
+
+/**
+ * 思考强度 = 宿主自己的 `/effort <档位>`（claude 的 immediate 命令，与 `/model`
+ * 同一通道、同一 sendText 理由）。档位**过词表白名单**（core 表 `effortLevels`，
+ * 该会话 harness 的）——比模型名严一档：模型名用户可自填，档位是封闭枚举，
+ * 表外一律 400 不打键。
+ */
+const effortCommand = (level: string) => `/effort ${level}`;
 
 /**
  * 原子之间的间隔（毫秒）：宿主把同一批到达的多个文本字符当成一次粘贴/过滤输入
@@ -1019,6 +1027,30 @@ export class MessageDeliverer {
     if (!target.ok) return target;
     try {
       await target.terminal.sendText(target.paneId, modelCommand(trimmed));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * 思考强度调整：往会话的输入行打宿主自己的 `/effort <档位>` 并提交。档位过
+   * **词表白名单**（core 表该 harness 的 `effortLevels`）——封闭枚举，表外 400
+   * 不打键；模型能力差异宿主自己降档并回报（事件自带 `effort.level` 纠正显示）。
+   */
+  async setEffort(sessionId: string, level: string): Promise<AnswerResult> {
+    const trimmed = level.trim();
+    // 落点判定在前（404/409 优先于 400）：会话都不存在时谈档位没有意义
+    const target = await this.sessionKeysTarget(sessionId);
+    if (!target.ok) return target;
+    const latest = this.deps.hookEvents.listBySession(sessionId, 1);
+    const src = latest[latest.length - 1]?.source;
+    const levels = isHarness(src) ? (HARNESS_SESSION_CONTROL[src]?.effortLevels ?? []) : [];
+    if (!levels.includes(trimmed)) {
+      return { ok: false, status: 400, error: `思考强度档位不合法（可选：${levels.join(' / ') || '无'}）` };
+    }
+    try {
+      await target.terminal.sendText(target.paneId, effortCommand(trimmed));
       return { ok: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };

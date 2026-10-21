@@ -27,6 +27,7 @@ import {
 } from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { Combobox } from '@/components/ui/combobox';
 import type { MessageKey } from '@/i18n/dict';
 import {
   buildLifecycleGroups,
@@ -1364,17 +1365,15 @@ export function LifecycleMindmap({
       {!focusGroupId && (
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-neutral-500">{t('hooks.mindmap.pickSession')}</label>
-          <select
+          <Combobox
             value={sessionId}
-            onChange={(e) => onSelect?.(e.target.value)}
-            className="rounded-md border border-edge/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
-          >
-            {(sessions ?? []).map((s) => (
-              <option key={s.sessionId} value={s.sessionId}>
-                {sessionLabel(s.title, s.sessionId)}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => onSelect?.(v)}
+            className="rounded-md bg-neutral-900 px-2 py-1 text-xs"
+            options={(sessions ?? []).map((s) => ({
+              value: s.sessionId,
+              label: sessionLabel(s.title, s.sessionId),
+            }))}
+          />
           <span className="text-[11px] text-neutral-500">
             {events === null ? t('hooks.loading') : t('catbar.items', { n: groups.length })}
           </span>

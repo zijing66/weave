@@ -78,6 +78,18 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
   });
 
+  it('claude：fork 提取参数——resume+fork+不落盘+指定 fork 会话 id；codex 无此能力', () => {
+    expect(CLAUDE_RESUME.extractArgs?.('sid-1', 'sx-1')).toEqual([
+      '--resume',
+      'sid-1',
+      '--fork-session',
+      '--no-session-persistence',
+      '--session-id',
+      'sx-1',
+    ]);
+    expect(CODEX_MESSAGING.headless?.extractArgs).toBeUndefined();
+  });
+
   it('claude：promptInbox = CLAUDE_PROMPT_INBOX 对象引用（inbox socket 是 claude 专属机制）', () => {
     expect(CLAUDE_MESSAGING.promptInbox).toBe(CLAUDE_PROMPT_INBOX);
     // 平台差异：native Windows 必须带 auth 行；POSIX 可选

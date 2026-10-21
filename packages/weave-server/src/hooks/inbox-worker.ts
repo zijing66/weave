@@ -28,6 +28,7 @@ import type { OrchestrationEngine } from './orchestration-engine.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
 import type { SideQuestionEvent } from './side-questions.js';
+import { isSyntheticSession, replaceSyntheticSessions } from './synthetic-sessions.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -173,7 +174,10 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
       : undefined;
     if (!adapter || !parsed.report.eventType) continue; // 不可归一化 → 丢此行
     try {
-      group.inputs.push(adapter.normalize(parsed.report, group.project.id) as HookEventInput);
+      const input = adapter.normalize(parsed.report, group.project.id) as HookEventInput;
+      // 合成会话（编排 fork 提取）不落库：行即焚，同归档口径。
+      if (isSyntheticSession(input.sessionId)) continue;
+      group.inputs.push(input);
       group.delivered.push(parsed.report.deliveredTitle ?? null);
       group.terminals.push(parsed.terminalEnv);
       group.messaging.push(parsed.messaging);
@@ -611,6 +615,12 @@ if (!isMainThread && (workerData as InboxWorkerData | undefined)?.inboxWorker ==
     hookSessions: new SessionRepository(db),
     adapters: registry.byCapability('events').flatMap((d) => d.events ?? []),
   };
+  // 合成会话名单（编排 fork 提取）：主线程登记后全量推过来，drain 侧即焚。
+  parentPort?.on('message', (msg: { type?: string; ids?: string[] }) => {
+    if (msg?.type === 'synthetic-sessions' && Array.isArray(msg.ids)) {
+      replaceSyntheticSessions(msg.ids);
+    }
+  });
   const attempts = new Map<string, number>();
   const tick = (): void => {
     try {

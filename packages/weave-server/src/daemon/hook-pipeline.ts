@@ -124,6 +124,8 @@ export function purgeOrphanPipelineFiles(deps: {
 export interface HookPipeline {
   /** 交给 createWeaveServer：会话改名/删除后即时重写镜像。 */
   mirror: MirrorWriter;
+  /** 登记合成会话（编排 fork 提取）：全量快照推给消费线程，drain 侧即焚。 */
+  pushSyntheticSessions(ids: readonly string[]): void;
   stop(): Promise<void>;
 }
 
@@ -174,5 +176,9 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
     );
   });
   worker.on('error', (e) => console.error('[weave] inbox worker failed:', e));
-  return { mirror, stop: () => worker.terminate().then(() => undefined) };
+  return {
+    mirror,
+    pushSyntheticSessions: (ids) => worker.postMessage({ type: 'synthetic-sessions', ids }),
+    stop: () => worker.terminate().then(() => undefined),
+  };
 }

@@ -27,6 +27,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
   let port: number;
   let projectId: number;
   let configFile: string;
+  let tempDirs: string[] = [];
   let origHome: string | undefined;
   let origProfile: string | undefined;
 
@@ -34,6 +35,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
     db = openDatabase(':memory:');
     const projects = new ProjectRepository(db);
     const projectDir = mkdtempSync(join(tmpdir(), 'weave-cxmcp-proj-'));
+    tempDirs.push(projectDir);
     const row = projects.register({
       path: projectDir,
       name: 'proj',
@@ -43,6 +45,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
     projectId = row.id;
 
     const home = mkdtempSync(join(tmpdir(), 'weave-cxmcp-home-'));
+    tempDirs.push(home);
     configFile = join(home, '.codex', 'config.toml');
     mkdirSync(join(home, '.codex'), { recursive: true });
     writeFileSync(configFile, SEED);
@@ -65,6 +68,7 @@ describe('daemon server — codex MCP (config.toml)', () => {
     db.close();
     process.env.HOME = origHome;
     process.env.USERPROFILE = origProfile;
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   const auth = { 'content-type': 'application/json' };

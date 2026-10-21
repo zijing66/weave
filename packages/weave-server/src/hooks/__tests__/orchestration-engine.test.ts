@@ -8,14 +8,16 @@ import {
   OrchestrationRepository,
   OrchestrationRunRepository,
   type OrchestrationEdge,
+  type OrchestrationNode,
 } from '../../repositories/orchestrations.js';
 import { HookEventBus } from '../bus.js';
 import { OrchestrationEngine } from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
 
 /**
- * 编排引擎回归：起点投递记账、idle 消费一条即 fan-out 全部出边、两轮收尾、
- * 失败不增待回、判死才拉起终端、投递预算、cron 同分钟去重、rearm 落 interrupted、
+ * 编排引擎回归：入口投递记账（session 收首条 / webhook 载荷随边下发）、
+ * idle 消费一条即 fan-out 全部出边、两轮收尾、失败不增待回、webhook 出口
+ * 出站 POST、判死才拉起终端、投递预算、cron 同分钟去重、rearm 落 interrupted、
  * sweepTerminated 丢弃死目标、收尾即清日志。
  */
 
@@ -44,6 +46,8 @@ afterEach(() => {
   db.close();
 });
 
+const sNode = (id: string): OrchestrationNode => ({ id, kind: 'session' });
+const wNode = (id = 'w:1'): OrchestrationNode => ({ id, kind: 'webhook' });
 const edge = (from: string, to: string, id = `${from}-${to}`): OrchestrationEdge => ({
   id,
   from,
@@ -55,8 +59,6 @@ const deliverer = (
   opts: {
     status?: PipeStatus;
     reject?: string;
-    /** 按正文挑着拒（测「某一步失败、其余照走」）。 */
-    rejectWhen?: (input: SendInput) => string | undefined;
     offline?: string;
     lastOutput?: { output: string; at: string };
   } = {},
@@ -65,8 +67,6 @@ const deliverer = (
   let lastOutput = opts.lastOutput ?? null;
   const send = vi.fn(async (input: SendInput): Promise<SendResult> => {
     if (opts.reject) return { ok: false, status: 400, error: opts.reject };
-    const picked = opts.rejectWhen?.(input);
-    if (picked) return { ok: false, status: 400, error: picked };
     const status = opts.status ?? 'delivered';
     const msg: PipeMessage = {
       id: `m-${++seq}`,
@@ -94,11 +94,21 @@ const setup = (
     ensureOpen?: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
     liveness?: Map<string, boolean>;
     maxDeliveries?: number;
+    supportsExtract?: (sessionId: string) => boolean;
+    extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
+    postJson?: (
+      url: string,
+      secret: string | undefined,
+      body: unknown,
+    ) => Promise<{ ok: boolean; status: string; error?: string }>;
   } = {},
 ) => {
   const bus = new HookEventBus();
   const d = deliverer(opts.deliverer);
   const ensureOpen = vi.fn(opts.ensureOpen ?? (async () => ({ ok: true }) as const));
+  const postJson = vi.fn(
+    opts.postJson ?? (async () => ({ ok: true, status: 'succeeded' }) as const),
+  );
   const engine = new OrchestrationEngine({
     orchestrations,
     runs,
@@ -108,12 +118,15 @@ const setup = (
     ensureOpen,
     livenessOf: () => opts.liveness ?? new Map(),
     ...(opts.maxDeliveries ? { maxDeliveries: opts.maxDeliveries } : {}),
+    ...(opts.supportsExtract ? { supportsExtract: opts.supportsExtract } : {}),
+    ...(opts.extract ? { extract: opts.extract } : {}),
+    postJsonImpl: postJson as never,
   });
   const frames: Array<{ kind: string; [k: string]: unknown }> = [];
   bus.subscribe((m) => {
     if (m.kind.startsWith('orchestration.')) frames.push(m);
   });
-  return { bus, d, engine, ensureOpen, frames };
+  return { bus, d, engine, ensureOpen, postJson, frames };
 };
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -122,21 +135,18 @@ const idleOf = (engine: OrchestrationEngine, sessionId: string): void => {
   engine.onEvent({ sessionId, eventType: 'Stop', source: 'claude' });
 };
 
-/** 一份 a→b、a→c 的图（起点 a）。 */
-const fanOut = (name = 'fan'): number => {
-  const row = orchestrations.insert({
+/** 一份 a→b、a→c 的图（单 session 入口 a）。 */
+const fanOut = (name = 'fan'): number =>
+  orchestrations.insert({
     name,
     projectId,
-    startSessionId: 'a',
     startText: 'kick off',
-    nodes: ['a', 'b', 'c'],
+    nodes: [sNode('a'), sNode('b'), sNode('c')],
     edges: [edge('a', 'b'), edge('a', 'c')],
-  });
-  return row.id;
-};
+  }).id;
 
-describe('start：起点投递', () => {
-  it('起点收到首条消息并计入待回，run 落 running', async () => {
+describe('start：入口投递', () => {
+  it('缺省触发全部 session 入口；入口收首条并计入待回', async () => {
     const { d, engine, frames } = setup();
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     const id = fanOut();
@@ -155,7 +165,6 @@ describe('start：起点投递', () => {
     expect(run.state.pending.a).toHaveLength(1);
     expect(run.state.events[0]).toMatchObject({ from: '', to: 'a', ok: true });
     expect(frames[0]).toMatchObject({ kind: 'orchestration.run', status: 'running' });
-    expect(frames.some((f) => f.kind === 'orchestration.delivery')).toBe(true);
   });
 
   it('同编排已有 running → 409（不叠跑）', async () => {
@@ -172,15 +181,80 @@ describe('start：起点投递', () => {
     const id = fanOut();
     await engine.start(id, 'webhook', 'from payload');
     expect(d.send.mock.calls[0]![0].text).toBe('from payload');
-    await engine.start(orchestrations.insert({
-      name: 'n',
-      projectId,
-      startSessionId: 'a',
-      startText: '',
-      nodes: ['a'],
-      edges: [],
-    }).id, 'manual');
+    await engine.start(
+      orchestrations.insert({
+        name: 'n',
+        projectId,
+        startText: '',
+        nodes: [sNode('a')],
+        edges: [],
+      }).id,
+      'manual',
+    );
     expect(d.send.mock.calls[1]![0].text).toBe('n');
+  });
+
+  it('多 session 入口：缺省各收一条；entryIds 只挑选中的那些', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'x', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'two-entries',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('x'), sNode('b')],
+      edges: [edge('a', 'b'), edge('x', 'b')],
+    }).id;
+    const first = await engine.start(id, 'manual');
+    expect(d.send).toHaveBeenCalledTimes(2);
+    expect(d.send.mock.calls.map((c) => c[0].toSessionId).sort()).toEqual(['a', 'x']);
+
+    // 同编排不叠跑：先收掉第一轮再选入口触发
+    engine.cancel((first as { runId: number }).runId);
+    await engine.start(id, 'manual', undefined, ['x']);
+    expect(d.send).toHaveBeenCalledTimes(3);
+    expect(d.send.mock.calls[2]![0].toSessionId).toBe('x');
+  });
+
+  it('entryIds 一个都没命中 → 409', async () => {
+    const { engine } = setup();
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const id = fanOut();
+    await expect(engine.start(id, 'manual', undefined, ['nope'])).resolves.toMatchObject({
+      ok: false,
+      status: 409,
+    });
+  });
+});
+
+describe('webhook 入口', () => {
+  it('载荷随出边正文下发（正文空 = 只转发载荷），不向入口投消息', async () => {
+    const { d, engine } = setup();
+    sessions.touch('a', projectId);
+    const id = orchestrations.insert({
+      name: 'hook-in',
+      projectId,
+      startText: '',
+      nodes: [wNode(), sNode('a'), sNode('b')],
+      edges: [edge('w:1', 'a'), { ...edge('w:1', 'b'), text: '' }],
+    }).id;
+    await engine.start(id, 'webhook', 'payload', ['w:1']);
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain(`msg to a\n\npayload`);
+    expect(texts).toContain('payload');
+  });
+
+  it('webhook 入口不在 session 入口列表里：cron/缺省触发跳过它', async () => {
+    const { d, engine } = setup();
+    sessions.touch('a', projectId);
+    const id = orchestrations.insert({
+      name: 'hook-only-entry',
+      projectId,
+      startText: '',
+      nodes: [wNode(), sNode('a')],
+      edges: [edge('w:1', 'a')],
+    }).id;
+    await engine.start(id, 'manual'); // 缺省 = session 入口，此图没有 → 409
+    expect(d.send).not.toHaveBeenCalled();
   });
 });
 
@@ -220,9 +294,8 @@ describe('推进：idle 消费一条即 fan-out', () => {
     const id = orchestrations.insert({
       name: 'two',
       projectId,
-      startSessionId: 'a',
       startText: '',
-      nodes: ['a', 'b', 'c'],
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
       edges: [edge('a', 'b'), edge('a', 'c'), edge('c', 'b')],
     }).id;
     const result = await engine.start(id, 'manual');
@@ -241,114 +314,268 @@ describe('推进：idle 消费一条即 fan-out', () => {
   });
 });
 
-describe('边「带上游输出」', () => {
-  const AT = '2026-10-20T10:00:00.000Z';
-  const carryGraph = (): number =>
+describe('webhook 出口', () => {
+  const exitGraph = (): number =>
     orchestrations.insert({
-      name: 'carry',
+      name: 'hook-out',
       projectId,
-      startSessionId: 'a',
-      startText: 'kick off',
-      nodes: ['a', 'b', 'c', 'c2'],
-      edges: [
-        { id: 'a-b', from: 'a', to: 'b', text: '给 b', carryOutput: true },
-        { id: 'a-c', from: 'a', to: 'c', text: '给 c' },
-        { id: 'a-c2', from: 'a', to: 'c2', text: '', carryOutput: true },
-      ],
+      startText: 'go',
+      nodes: [sNode('a'), { id: 'w:9', kind: 'webhook', url: 'https://x/h', secret: 's3' }],
+      edges: [edge('a', 'w:9')],
     }).id;
 
-  it('勾了输出的边把上游结论拼在正文后（正文空就只发那段），没勾的不受影响', async () => {
-    const { d, engine } = setup({ deliverer: { lastOutput: { output: '上游结论', at: AT } } });
-    for (const id of ['a', 'b', 'c', 'c2']) sessions.touch(id, projectId);
-    await engine.start(carryGraph(), 'manual');
-    idleOf(engine, 'a'); // 这一轮要总结
+  it('出口节点出站 POST（带签名密钥与载荷），不判活不入 pending', async () => {
+    const { d, engine, ensureOpen, postJson } = setup();
+    sessions.touch('a', projectId);
+    const result = await engine.start(exitGraph(), 'manual');
+    idleOf(engine, 'a');
     await flush();
-    idleOf(engine, 'a'); // 总结这一轮收尾 → fan-out
-    await flush();
-    const texts = d.send.mock.calls.map((c) => c[0].text);
-    const block = `[upstream output] from=a at=${AT}\n\n上游结论`;
-    expect(texts).toContain(`给 b\n\n${block}`);
-    expect(texts).toContain(block);
-    expect(texts).toContain('给 c');
+    expect(ensureOpen).not.toHaveBeenCalled();
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有入口那条
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    expect(run.deliveries).toBe(2);
+    expect(postJson).toHaveBeenCalledWith(
+      'https://x/h',
+      's3',
+      expect.objectContaining({ text: 'msg to w:9' }),
+    );
+    expect(run.state.pending['w:9']).toBeUndefined(); // webhook 出口不入待回
+    expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: true });
   });
 
-  it('上游还没有输出 → 只发正文（不摆空壳）', async () => {
-    const { d, engine } = setup();
-    for (const id of ['a', 'b', 'c', 'c2']) sessions.touch(id, projectId);
-    await engine.start(carryGraph(), 'manual');
+  it('POST 失败记失败事件，不影响 run 里其他成功投递', async () => {
+    const { engine, postJson } = setup({
+      postJson: async () => ({ ok: false, status: 'failed', error: 'HTTP 500' }),
+    });
+    sessions.touch('a', projectId);
+    const result = await engine.start(exitGraph(), 'manual');
     idleOf(engine, 'a');
     await flush();
-    idleOf(engine, 'a');
-    await flush();
-    const texts = d.send.mock.calls.map((c) => c[0].text);
-    expect(texts).toContain('给 b');
-    expect(texts.some((text) => text.includes('upstream output'))).toBe(false);
-    // 正文空、上游又没输出：不发空消息，只记一次失败
-    expect(texts.every((text) => text.trim() !== '')).toBe(true);
+    expect(postJson).toHaveBeenCalled();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done'); // 入口投递成功即 done
+    expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: false, error: 'HTTP 500' });
   });
 });
 
-describe('交接总结', () => {
-  const AT = '2026-10-20T10:00:00.000Z';
-  const graph = (handoffPrompt = ''): number =>
+describe('边级提取与变量', () => {
+  const AT = '2026-10-21T10:00:00.000Z';
+  const graph = (edges: OrchestrationEdge[]): number =>
     orchestrations.insert({
-      name: 'handoff',
+      name: 'vars',
       projectId,
-      startSessionId: 'a',
-      startText: 'kick off',
-      handoffPrompt,
-      nodes: ['a', 'b'],
-      edges: [{ id: 'a-b', from: 'a', to: 'b', text: '给 b', carryOutput: true }],
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges,
     }).id;
 
-  it('有边要带上游输出 → 先向该会话要一份总结，收尾后 fan-out 带的是这份总结', async () => {
-    const { d, engine, frames } = setup({ deliverer: { lastOutput: { output: '原始碎片', at: AT } } });
-    for (const id of ['a', 'b']) sessions.touch(id, projectId);
-    await engine.start(graph('请按交接格式总结'), 'manual');
-    idleOf(engine, 'a');
-    await flush();
-    // 只多了一条「要总结」：目标还没收到任何东西，run 也没收尾
-    expect(d.send).toHaveBeenCalledTimes(2);
-    expect(d.send.mock.calls[1]![0]).toMatchObject({ toSessionId: 'a', text: '请按交接格式总结' });
-    expect(frames.at(-1)).toMatchObject({ kind: 'orchestration.delivery', from: 'a', to: 'a' });
-    // 宿主这一轮给出的就是总结：连线带下去的该是它
-    d.setLastOutput({ output: '交接说明', at: AT });
-    idleOf(engine, 'a');
-    await flush();
-    expect(d.send).toHaveBeenCalledTimes(3);
-    expect(d.send.mock.calls[2]![0]).toMatchObject({ toSessionId: 'b' });
-    expect(d.send.mock.calls[2]![0].text).toBe(`给 b\n\n[upstream output] from=a at=${AT}\n\n交接说明`);
-  });
-
-  it('没填指令 → 用内置那句（不投空消息，也不复用边正文）', async () => {
-    const { d, engine } = setup();
-    for (const id of ['a', 'b']) sessions.touch(id, projectId);
-    await engine.start(graph(), 'manual');
-    idleOf(engine, 'a');
-    await flush();
-    const text = d.send.mock.calls[1]![0].text;
-    expect(text.trim()).not.toBe('');
-    expect(text).not.toBe('给 b');
-  });
-
-  it('总结投不出去 → 不卡住，直接照旧 fan-out', async () => {
-    const { d, engine } = setup({ deliverer: { rejectWhen: (i) => (i.text === '请总结' ? 'no' : undefined) } });
-    for (const id of ['a', 'b']) sessions.touch(id, projectId);
-    await engine.start(graph('请总结'), 'manual');
-    idleOf(engine, 'a');
-    await flush();
-    expect(d.send).toHaveBeenCalledTimes(3);
-    expect(d.send.mock.calls[2]![0].toSessionId).toBe('b');
-  });
-
-  it('没有边要带上游输出 → 不要总结（原样 fan-out）', async () => {
-    const { d, engine } = setup();
+  it('{upstream}/{session} 渲染上游输出与会话名（无标题回落会话 id）', async () => {
+    const { d, engine } = setup({
+      deliverer: { lastOutput: { output: '上游结论', at: AT } },
+    });
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
-    await engine.start(fanOut(), 'manual');
+    await engine.start(
+      graph([
+        { id: 'a-b', from: 'a', to: 'b', text: '给 {session}：{upstream}' },
+        { id: 'a-c', from: 'a', to: 'c', text: 'plain' },
+      ]),
+      'manual',
+    );
     idleOf(engine, 'a');
     await flush();
-    expect(d.send).toHaveBeenCalledTimes(3);
-    expect(d.send.mock.calls.slice(1).map((c) => c[0].toSessionId).sort()).toEqual(['b', 'c']);
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain('给 a：上游结论');
+    expect(texts).toContain('plain');
+  });
+
+  it('extract：fork 提取结果填 {summary}；失败回落 {upstream}', async () => {
+    const prompts: string[] = [];
+    const { d, engine } = setup({
+      deliverer: { lastOutput: { output: '上游原文', at: AT } },
+      supportsExtract: (id) => id === 'a',
+      extract: async (input) => {
+        prompts.push(input.prompt);
+        return input.prompt.includes('fail') ? null : '提炼后的交接说明';
+      },
+    });
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    await engine.start(
+      graph([
+        { id: 'a-b', from: 'a', to: 'b', text: '{summary}', extract: '请总结' },
+        { id: 'a-c', from: 'a', to: 'c', text: '{summary}', extract: '请 fail' },
+      ]),
+      'manual',
+    );
+    idleOf(engine, 'a');
+    await flush();
+    expect(prompts).toEqual(['请总结', '请 fail']);
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain('提炼后的交接说明');
+    expect(texts).toContain('上游原文'); // 提取失败回落上游输出
+  });
+
+  it('不支持提取 → 不跑 fork，直接回落 {upstream}', async () => {
+    const { d, engine } = setup({
+      deliverer: { lastOutput: { output: '上游原文', at: AT } },
+      supportsExtract: () => false,
+      extract: async () => '不该被调用',
+    });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    await engine.start(
+      graph([{ id: 'a-b', from: 'a', to: 'b', text: '{summary}', extract: '请总结' }]),
+      'manual',
+    );
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send.mock.calls.at(-1)![0].text).toBe('上游原文');
+  });
+
+  it('上游无输出且提取失败 → 占位残留记失败，不投半截模板', async () => {
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => null,
+    });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    await engine.start(
+      orchestrations.insert({
+        name: 'vars-fail',
+        projectId,
+        startText: 'go',
+        nodes: [sNode('a'), sNode('b')],
+        edges: [{ id: 'a-b', from: 'a', to: 'b', text: '结论：{summary}', extract: '请总结' }],
+      }).id,
+      'manual',
+    );
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有起点那条
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts.every((t) => !t.includes('结论：'))).toBe(true);
+  });
+
+  it('webhook 入口：{upstream} 引用载荷；模板没引用就拼在正文后', async () => {
+    const { d, engine } = setup();
+    sessions.touch('a', projectId);
+    sessions.touch('b', projectId);
+    await engine.start(
+      orchestrations.insert({
+        name: 'hook-vars',
+        projectId,
+        startText: '',
+        nodes: [wNode(), sNode('a'), sNode('b')],
+        edges: [
+          { id: 'w-a', from: 'w:1', to: 'a', text: 'build {upstream}' },
+          { id: 'w-b', from: 'w:1', to: 'b', text: '静态正文' },
+        ],
+      }).id,
+      'webhook',
+      'v1.2.3',
+      ['w:1'],
+    );
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain('build v1.2.3');
+    expect(texts).toContain('静态正文\n\nv1.2.3');
+  });
+});
+
+describe('自然回合自动触发', () => {
+  const AT = '2026-10-21T12:00:00.000Z';
+
+  it('入口会话自然回合 → 下游直启（不向入口再投消息），{upstream} 是该轮输出', async () => {
+    const { d, engine } = setup({ deliverer: { lastOutput: { output: '自然结论', at: AT } } });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    orchestrations.insert({
+      name: 'auto',
+      projectId,
+      startText: 'unused',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [{ id: 'a-b', from: 'a', to: 'b', text: '交给 {session}：{upstream}' }],
+    });
+    idleOf(engine, 'a'); // 没有任何 start()：自然回合完成
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有下游，入口没被塞消息
+    expect(d.send.mock.calls[0]![0]).toMatchObject({
+      toSessionId: 'b',
+      text: '交给 a：自然结论',
+    });
+  });
+
+  it('编排投递产生的回合不触发别的编排（会话级判据，跨 run）', async () => {
+    const { d, engine } = setup({ deliverer: { lastOutput: { output: 'x', at: AT } } });
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    // 编排 X：a → c（a 是中间节点）
+    orchestrations.insert({
+      name: 'x',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('c')],
+      edges: [edge('a', 'c')],
+    });
+    // 编排 Y：a 为入口
+    orchestrations.insert({
+      name: 'y',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    });
+    const x = await engine.start(
+      orchestrations.list().find((o) => o.name === 'x')!.id,
+      'manual',
+    );
+    expect(x).toMatchObject({ ok: true });
+    const sendsBefore = d.send.mock.calls.length;
+    idleOf(engine, 'a'); // 这一轮是编排 X 投递驱动的
+    await flush();
+    // X 消费 pending → fan-out 到 c；Y 不起跑
+    expect(runs.listRunning().some((r) => r.orchestrationName === 'y')).toBe(false);
+    expect(d.send.mock.calls.length).toBe(sendsBefore + 1);
+    expect(d.send.mock.calls.at(-1)![0].toSessionId).toBe('c');
+  });
+
+  it('enabled=false / 孤立入口 / 冷却期内连拍都不触发', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const off = orchestrations.insert({
+      name: 'off',
+      projectId,
+      startText: '',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    });
+    orchestrations.update(off.id, { enabled: false });
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).not.toHaveBeenCalled();
+
+    orchestrations.update(off.id, { enabled: true });
+    // 孤立入口（无出边）：不空转
+    orchestrations.insert({
+      name: 'lonely',
+      projectId,
+      startText: '',
+      nodes: [sNode('a')],
+      edges: [],
+    });
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).not.toHaveBeenCalled();
+
+    // 正常触发一次后，冷却期内（Stop → SessionEnd 连拍）不重复
+    const on = orchestrations.insert({
+      name: 'on',
+      projectId,
+      startText: '',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    });
+    orchestrations.update(on.id, { enabled: true });
+    idleOf(engine, 'a');
+    await flush();
+    const after = d.send.mock.calls.length;
+    idleOf(engine, 'a'); // 冷却期内
+    expect(d.send.mock.calls.length).toBe(after);
   });
 });
 
@@ -408,13 +635,6 @@ describe('失败路径', () => {
     expect(runs.getById((result as { runId: number }).runId)!.deliveries).toBe(1);
   });
 
-  it('活着的会话不白等凭据', async () => {
-    const { d, engine } = setup({ liveness: new Map([['a', true]]) });
-    sessions.touch('a', projectId);
-    await engine.start(fanOut(), 'manual');
-    expect(d.awaitInboxReady).not.toHaveBeenCalled();
-  });
-
   it('投递预算：到顶即 failed（环路兜底）', async () => {
     const { engine } = setup({ maxDeliveries: 1 });
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
@@ -439,6 +659,23 @@ describe('cronTick', () => {
     // 下一分钟：同编排还在跑 → 跳过
     expect(engine.cronTick(new Date('2026-03-05T09:31:00'))).toBe(0);
     expect(runs.listRunning()).toHaveLength(1);
+  });
+
+  it('停用的编排 cron 不触发；webhook-only 无可定时的入口也不触发', async () => {
+    const { engine } = setup();
+    const id = fanOut();
+    orchestrations.update(id, { cron: '* * * * *', enabled: false });
+    expect(engine.cronTick(new Date('2026-03-05T09:30:20'))).toBe(0);
+
+    const hookOnly = orchestrations.insert({
+      name: 'hook-only',
+      projectId,
+      startText: '',
+      nodes: [wNode()],
+      edges: [],
+    });
+    orchestrations.update(hookOnly.id, { cron: '* * * * *' });
+    expect(engine.cronTick(new Date('2026-03-05T09:30:20'))).toBe(0);
   });
 });
 

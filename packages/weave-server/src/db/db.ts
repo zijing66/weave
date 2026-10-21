@@ -131,27 +131,27 @@ CREATE TABLE IF NOT EXISTS side_questions (
 );
 CREATE INDEX IF NOT EXISTS idx_side_questions_session ON side_questions(session_id, id);
 
--- 跨会话编排：一份 = 起始会话 + 节点集 + 有向边集（边带消息正文）。
--- project_id = 起始会话所属项目（「项目编排」即按它过滤）。
--- webhook_token 为公开触发端点的凭证；cron 为 5 字段表达式（NULL = 无定时）。
--- 线性链的 session_sequences 已由本模型取代。
+-- 跨会话编排：一份 = 节点集（session / webhook）+ 有向边集（边带消息正文）。
+-- 节点是对象数组：session 节点 id = sessionId，webhook 节点 id = w:<uuid>
+-- （入口带 webhookToken，出口带 url/secret）；入口 = 无入边，出口 = 无出边。
+-- project_id = 入口 session 节点所属项目（webhook-only 由创建方显式给）。
+-- cron 为 5 字段表达式（NULL = 无定时）；enabled = 停用闸（cron/自然回合都不跑）。
+-- 线性链 session_sequences 与旧单起点表已由本模型取代（旧形状行不迁移，
+-- 由 rebuildOrchestrations 判形状后一次性重建）。
 DROP TABLE IF EXISTS session_sequences;
 CREATE TABLE IF NOT EXISTS orchestrations (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  name             TEXT NOT NULL,
-  project_id       INTEGER NOT NULL,
-  start_session_id TEXT NOT NULL,
-  start_text       TEXT NOT NULL DEFAULT '',
-  handoff_prompt   TEXT NOT NULL DEFAULT '',
-  nodes            TEXT NOT NULL,
-  edges            TEXT NOT NULL,
-  cron             TEXT,
-  last_cron_at     TEXT,
-  webhook_token    TEXT,
-  created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  project_id   INTEGER NOT NULL,
+  start_text   TEXT NOT NULL DEFAULT '',
+  nodes        TEXT NOT NULL,
+  edges        TEXT NOT NULL,
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  cron         TEXT,
+  last_cron_at TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_orchestrations_token ON orchestrations(webhook_token);
 
 -- 编排运行日志：一次触发一行，手动 / webhook / cron 同表（统一视图的数据源）。
 -- 编排名与 project_id 去规范化——删编排不删日志（保留「当时跑了什么」）。
@@ -224,6 +224,7 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
+  rebuildOrchestrations(db);
   db.exec(SCHEMA);
   // 消息域重塑：session_messages 退役（消息 = 纯递送管道，本地文件 + 内存态）。
   // 存量行均为测试数据，随表删；DROP 幂等。
@@ -232,7 +233,6 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   migrateProjectsColumns(db);
   migrateProjectPaths(db);
   migrateSessionWatchesColumns(db);
-  migrateOrchestrationsColumns(db);
   return db;
 }
 
@@ -299,20 +299,17 @@ function migrateProjectsColumns(db: DatabaseSync): void {
 }
 
 /**
- * 给既有库补 orchestrations.handoff_prompt（编排节点的「交接总结」指令，
- * 空 = 用内置默认那句）。幂等：列已存在则跳过。
+ * 编排表形状重建：多入口/节点对象化的新模型不带旧列（start_session_id /
+ * handoff_prompt / webhook_token）。判据 = 表在但缺 `enabled` 列（旧形状唯一
+ * 稳定特征）→ 整表删掉，交给随后的 SCHEMA 按新形状重建；新表（有 enabled）
+ * 永不动。定义不迁移（用户裁决：不考虑旧编排兼容），运行日志行保留。
  */
-function migrateOrchestrationsColumns(db: DatabaseSync): void {
-  const cols = new Set(
-    db
-      .prepare('PRAGMA table_info(orchestrations)')
-      .all()
-      .map((row) => String((row as { name: string }).name)),
-  );
-  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
-  if (!cols.has('handoff_prompt')) {
-    db.exec("ALTER TABLE orchestrations ADD COLUMN handoff_prompt TEXT NOT NULL DEFAULT ''");
-  }
+function rebuildOrchestrations(db: DatabaseSync): void {
+  const cols = db
+    .prepare('PRAGMA table_info(orchestrations)')
+    .all() as Array<{ name: string }>;
+  if (cols.length === 0 || cols.some((c) => c.name === 'enabled')) return;
+  db.exec('DROP TABLE orchestrations');
 }
 
 /**

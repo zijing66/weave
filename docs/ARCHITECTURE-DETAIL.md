@@ -273,54 +273,57 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - headless：`promptStdin=true`——stdin 传 prompt、命令行无用户内容，win32 `.cmd` shim 由此可经 shell 安全启动；shell 模式禁 detached（实测该组合丢管道输出）。headless 终态仅内存 + SSE、daemon 重启即丢。
 - auto：忙→inject、闲→headless。
 
-### 4.12 编排 = 多份命名编排
+### 4.12 编排 = 多入口/出口图
 
-`orchestrations` 表 = 名字 + 起始会话与起始文本 + 节点/边 + `cron` + `webhook_token`，一份全局共享列表。**项目编排 = 起始会话属于该项目的子集**（`project_id` 只记起点归属，节点与投递可跨项目）。
+`orchestrations` 表 = 名字 + 起始文本 + **节点/边** + `enabled` + `cron`，一份全局共享列表。节点是对象数组：**session 节点 id = sessionId**（运行态 pending 键、`RunEvent.from/to`、画布 flash 全按它流转），**webhook 节点 id = `w:<uuid>`**（入口带 `webhookToken`，出口带 `url`/`secret`）。`project_id` = 入口 session 节点所属项目（入口必须同项目；webhook-only 由创建方显式给），中间节点可跨项目。
 
-图是**任意有向图**（≤24 节点 / ≤64 边，无自环 / 无重边 / 无环 / 全节点从起点可达），校验唯一实现 = `hooks/orchestration-graph.ts` 的 `validateOrchestration`——服务端写入口直接拒，web 的 `validateDraft` 同判据只做即时提示。
+图是**任意有向 DAG**（≤24 节点 / ≤64 边，无自环 / 无重边 / 无重复边 id / 无环）。**入口 = 无入边节点、出口 = 无出边节点；中间节点只能是 session 且必须有两端方向；webhook 节点只能站两端**（两端形状 XOR 判据 + 出口 URL http(s) 校验）。可达性不单查：入口 = 全部无入边节点，DAG 里入边链必然落回某入口，多源可达恒真（成环已被拒）；孤立 session 节点 = 自成入口的平凡编排，合法。校验唯一实现 = `hooks/orchestration-graph.ts` 的 `validateOrchestration`——服务端写入口直接拒，web 的 `validateDraft` 同判据只做即时提示。
 
-### 4.13 推进 = 消息传递
+### 4.13 推进 = 消息传递（每到一条执行一次）
 
-- 某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次。
+- **扇入无 join/barrier**：某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次（`Promise.allSettled`）。
 - 任务节点每收一条消息被激活一次（`state.pending[to]` 一条对一次 idle），无待处理且在飞清零即 done。
 - 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环。
-- **边可带「上游这一轮的最终输出」**（`OrchestrationEdge.carryOutput`）：投递时把源会话最近一条「说出口的结论」拼在正文后面——读的是既有 `hook_events`（`raw.last_assistant_message`，键形知识归 `weave-harness/src/shared/turn-output.ts` 的 `turnOutputOf`，取值唯一实现 = `MessageDeliverer.lastTurnOutput`，跳过空回合）。正文可空 ⇒ 只转发那段；**上游还没输出就不带**（不摆空壳），正文也空则记一条失败、不投空消息；那段超过 `CARRY_OUTPUT_MAX_CHARS = 4000` 截断。
-- **先要一份「交接总结」再往下传**：一轮结束时若该节点有出边勾了 `carryOutput`，引擎先以 `from = to = 该会话`（`edgeId: ''`）投一条总结指令（`orchestrations.handoff_prompt`，空则用内置 `DEFAULT_HANDOFF_PROMPT`），把该会话记进 `Runtime.awaitingHandoff`；**它下一轮 idle 才真正 fan-out**，此时 `lastTurnOutput` 读到的是这份总结而不是上一轮的碎片。总结投不出去（或该节点没有带输出的出边）就照旧立刻 fan-out，不卡住。这一步**只能由引擎自己排**：hook 的 `inject` 只往当轮塞上下文、plugin handler 只有 5s 且拿不到「本轮完成」信号，都排不出一个新回合。
+- **边正文变量**（服务端 `renderTemplate` 渲染，web 只当文本）：`{upstream}` = 上游这一轮最终输出（`MessageDeliverer.lastTurnOutput` 读既有 `hook_events` 的 `raw.last_assistant_message`，超 `CARRY_OUTPUT_MAX_CHARS = 4000` 截断；webhook 入口 = 触发载荷）、`{summary}` = 本边提取结果、`{session}` = 上游会话名。缺值占位原样保留 → **渲染后判残留，残留即记失败**（不投半截模板）。
+- **边级提取**（`edge.extract`）：对上游会话 **fork 一个无头回合**提炼信息（`ResumeCommandSpec.extractArgs` 归 harness；claude = `--resume <sid> --fork-session --no-session-persistence --session-id <引擎自造 uuid>`，实测 2.1.296 fork 真继承上下文、转录不落盘）。fork 的 hook 事件照发 ⇒ **合成会话名单**（`hooks/synthetic-sessions.ts`）：引擎 spawn 前登记、经 `HookPipeline.pushSyntheticSessions` 全量推给 inbox worker、**行即焚**（不落库不建会话行）。不支持 fork 的 harness（`extractArgs` 缺席，codex 留位）回落 `{upstream}` 并如实记事件。`handoffPrompt` 自投总结回合与 `carryOutput` 已退役（那才是污染原会话的来源）。
+- **自然回合自动触发**（enabled 闸）：入口会话 idle 且**消费前任何 run 对该会话都无 pending**（会话级判据，跨编排安全——判据取消费前快照）→ 该入口下游直启（不走 `start()` 的首投，`{upstream}` 就是这一轮的输出）。护栏：入口有出边（孤立入口不空转）、同编排无在飞 run、同入口 5s 冷却（Stop/SessionEnd 连拍）、入口索引 TTL 10s 缓存。残余风险如实记：投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合（毫秒级窗口）。
+- **webhook 出口在 `deliver` 分流**：不经判活/`ensureOpen`/pending（它不会回话），直接 `postJson`（`hooks/handlers/webhook.ts` 抽出的共用边界：http/https、5s 超时、HMAC 头）出站 POST，body = `{orchestrationName, runId, from, text, at}`；POST 计入 inflight 与投递预算。
 
-### 4.14 两枚非人工触发
+### 4.14 三枚触发
 
-- **webhook**：`POST /webhooks/orchestrate/<token>`，载荷作首步消息、空则回落 `start_text`；`webhook_token` 唯一索引、`POST .../rotate-webhook` 换发；路由在认证豁免内，api-log 把 token 段脱敏成 `[redacted]`。
-- **cron**：5 字段表达式，daemon 30s 一探、同分钟只 fire 一次、已有在跑 run 则跳过。
+- **手动**：`POST :id/trigger` 可带首步消息与**入口子集**（缺省 = 全部 session 入口）。
+- **webhook**：`POST /webhooks/orchestrate/<节点token>`——token 归 webhook **入口节点**（仓储 insert 时补发 + 全库查重，`POST .../rotate-webhook` 按节点换发）；载荷随该入口的出边正文下发（正文里 `{upstream}` 引用载荷，模板没引用就拼在正文后，正文空 = 只转发载荷）；路由在认证豁免内，api-log 把 token 段脱敏成 `[redacted]`。
+- **cron**：5 字段表达式，daemon 30s 一探、同分钟只 fire 一次、已有在跑 run 则跳过；只驱动 session 入口（webhook-only 无可定时的入口），`enabled = false` 不触发。
 
-### 4.15 起点判死即拉起终端 + 等 socket 就绪
+### 4.15 会话判死即拉起终端 + 等 socket 就绪
 
-每一跳（含起点）都先复用 `openSessionTerminal`（与会话列表「打开会话」同一入口）等它上报存活，再经 `MessageDeliverer.awaitInboxReady` 等它随首个 hook 事件上报 inbox 凭据（`INBOX_READY_WAIT_MS`；等不到照旧回落中继/终端，不挡投递）——冷启动拉起的会话若不吃这一等，第一跳就得白起一个几十秒的中继子进程（直投实测 86ms）。拉不起来落一条失败投递、不假装推进。
+每一跳（含入口）都先复用 `openSessionTerminal`（与会话列表「打开会话」同一入口）等它上报存活，再经 `MessageDeliverer.awaitInboxReady` 等它随首个 hook 事件上报 inbox 凭据（`INBOX_READY_WAIT_MS`；等不到照旧回落中继/终端，不挡投递）——冷启动拉起的会话若不吃这一等，第一跳就得白起一个几十秒的中继子进程（直投实测 86ms）。拉不起来落一条失败投递、不假装推进。
 
 ### 4.16 运行日志 = `orchestration_runs`
 
 一次触发一行：`trigger` = manual/webhook/cron、`status`、`deliveries`、整份 `state`（pending 与逐条投递记录）、`error`。
 
-- `GET /messaging/orchestration-runs` 按 status/orchestrationId/projectId 过滤并向前翻页；`:id` 带 `state.events`；`POST :id/cancel`。
-- 清理 = 自动 `prune`（7 天 + 每编排留 100 条，daemon 启动跑一次）＋ 手动 `DELETE /messaging/orchestration-runs?scope=finished|all`；删编排级联取消在跑 run。
+- `GET /messaging/orchestration-runs` 按 status/orchestrationId/projectId 过滤并向前翻页；`:id` 返回 **summary + state 合体**（列表行走 `toRunSummary`，web 展开行直接顶替渲染，缺 `pendingCounts` 会崩）；`POST :id/cancel`。
+- 清理 = 自动 `prune`（7 天 + 每编排留 100 条，daemon 启动跑一次）＋ 手动 `DELETE /messaging/orchestration-runs?scope=finished|all`；删编排级联取消在跑 run；删会话连带清定义（`deleteMentioningSession` 按 session 节点判）。
 - **daemon 重启不续跑**：`rearm` 把 running 全标 `interrupted`（编排状态不是消息，宁可重触发也不重放 prompt）。
 
 ### 4.17 实时刷新与画布
 
-实时刷新走既有 hook 帧域的 kind 扩展：`message.*` / `watch.fired` / `question.pending` / `sideQuestion.answered` / `orchestration.run` / `orchestration.delivery`——后两条各带全量轻量态（`status`/`trigger`/`deliveries`/`pendingCounts`/`at`），画布就地更新（节点环 + 边动画 1.2s、`pendingCounts` 出待处理角标），不轮询也不扩 `DataKey`。
+实时刷新走既有 hook 帧域的 kind 扩展：`message.*` / `watch.fired` / `question.pending` / `sideQuestion.answered` / `orchestration.run` / `orchestration.delivery`——后两条各带全量轻量态（`status`/`trigger`/`deliveries`/`pendingCounts`/`at`），画布就地更新（节点环 + 边动画 1.2s、`pendingCounts` 出待处理角标；webhook 节点的 flash 键 = 裸 `w:` id），不轮询也不扩 `DataKey`。
 
 画布规则：
 
-- **只摆编排内的会话**——全局按项目分组、组默认收起、起点所在项目初始展开，项目视图全展示。
-- 节点从受管会话里挑且**排除 1h 快速过期的 `promptless` 新会话**，选择器逐行标出会话所属项目（节点可跨项目）。
-- **项目视图的起点只能是本项目的会话**（别的项目的会话照常可当中间节点，起点落到别处即清空并由校验拦住），全局视图不限。
-- 项目与起始会话各有检索框；「复制端点」只读地拼 webhook URL。
+- **只摆编排内的节点**——session 节点挂 `s:` 前缀、webhook 节点用裸 id；全局按项目分组（webhook 归「未知项目」框）、组默认收起、首个 session 节点所在项目初始展开，项目视图全展示。
+- 会话节点从受管会话里挑且**排除 1h 快速过期的 `promptless` 新会话**（能力面 prompt 列过滤）；webhook 节点画布左上一枚钮即加。
+- **项目视图的入口 session 只能是本项目的会话**（中间节点可跨项目，越界由底栏警示）。
 - ReactFlow 的背景样式设置条（`CanvasBackground`，编排与事件链共用）**恒从收起开始**。
 
 **图即编辑面**：
 
-- 点节点 / 点边开右上检查器就地改（节点 = 设起点 / 打开对话 / 移除并列它的出边；边 = 改投递正文 / 删），从节点右侧圆点拖到另一节点即连边。
-- 图上每一种改法与工具条**共用同一份 draft 与同一组纯函数**（`addEdge` / `removeNode` / `removeEdge` + `findCycle` 先拒环）。
-- **没有单独的表单卡片**——图外那几项（名称 / 起始消息 / cron / webhook）就在画布上方的三条工具条里，新增节点在画布左上（空画布时在占位块里），节点数/连线数与校验错误在画布内就地显示。
+- 点节点 / 点边开右上检查器就地改（session 节点 = 打开对话 / 移除 / 列出边；webhook 节点 = 入口复制/轮换端点、出口填 url/secret；边 = 改投递正文（变量提示）/ 提取指令 / 删），从节点右侧圆点拖到另一节点即连边。
+- 图上每一种改法与工具条**共用同一份 draft 与同一组纯函数**（`addEdge` / `addWebhookNode` / `removeNode` / `removeEdge` + `findCycle` 先拒环）；**边 id 是短序号**（`e1`、`e2`…，会话 id 本身 36+ 字符，拼两端会顶爆服务端 64 上限），id 只当内部键、不进展示。
+- **没有单独的表单卡片**——图外那几项（名称 / 起始消息 / cron / enabled 开关）就在画布上方的工具条里，手动触发的入口多选（入口 ≥ 2 时出 checkbox 面板）也在其上；新增节点在画布左上（空画布时在占位块里），节点数/连线数与校验错误在画布内就地显示。
+- **破坏性确认走应用内 `ConfirmDialog`**（原生 confirm/alert 禁用）。
 - 节点正文点击 = 选中（不是开对话，对话是节点上那枚图标与检查器里的按钮）。
 
 ### 4.18 消息优先、事件驱动
@@ -524,6 +527,8 @@ hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发�
 - **开/恢复会话**：`SessionStart` 的 `startedModelOf`——带真名（startup / compact）就以它为准；`--resume` 的 raw 里**不带** `model`（实测，40 条抽样恒 null），但重开 = 宿主把模型落回默认，**默认值就写在全局配置里**：`defaultModelOf` 读同一份 settings.json（env 块 `ANTHROPIC_MODEL` → 顶层 `model` 键、别名经 `ANTHROPIC_DEFAULT_<别名>_MODEL` 换真名 → 内建 `sonnet` 档）直接答上并经 `noteModel` 闩死——不答的话转录里上一轮的照会会顶着旧模型直到第一轮新条目落地（8c85b9c7 实测：上一轮 deepseek-flash、重开实际落 ftm）。转录新照会 / `PostModelSwitch` 照旧接管；重启回读那拍仍按上条「重开不补」（回读侧没有可比对的 `from_model`）。清闩重读只剩不带值的 harness 降级路径（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
 - **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
 - web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。
+- **思考强度（effort）同归它**：工具/回合类事件每条带 `raw.effort.level`（`effortLevelOf`），`noteEffort` 逐条覆盖、`currentEffort` 只放内存——状态栏 `thinking` 块与对话控制行的 slider 同吃这一个事实。
+- **思考强度的调整入口**（对话控制行）：词表归 core 表 `HARNESS_SESSION_CONTROL[<harness>].effortLevels`（claude = `low/medium/high/xhigh/max`，codex = 空——0.163 无程序化通道，见 DECISIONS 同日取证）；命令形态归 `MessageDeliverer.setEffort`（`/effort <档位>` 经层② sendText，与 `/model` 同一通道、同一「整行粘贴」理由），档位**过词表白名单**（封闭枚举，表外 400 不打键）。**模型能力差异不进表**：同一 harness 各模型支持档位不同，宿主自己降档并提示（claude 的 cap 语义），下一轮事件的 `effort.level` 回报自动纠正显示——weave 不读宿主运行时 cap（拿不到）。web 控件 = `EnumSlider`（拖动中只本地预览、松手/方向键才提交，裁决归 `enum-slider-core.commitOf`），不做 pending 态（事件几秒内就到，不同于「可能永远不来事件」的 Shift+Tab）。
 
 ### 语义边界
 

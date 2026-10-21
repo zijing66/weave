@@ -17,7 +17,10 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
-import { TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
+import { TERMINAL_LOCATOR_ENV_KEYS, isHarness } from '@weavecode/core';
+import { messagingSurfaceFor } from '../surfaces.js';
+import { syntheticSessionIds } from '../hooks/synthetic-sessions.js';
+import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { HookEventBus } from '../hooks/bus.js';
@@ -309,6 +312,20 @@ async function main(): Promise<void> {
     dataBus,
     hookBus,
   );
+  // 编排边级提取（fork 无头回合）：与 start.ts 同装配，pipeline 引用占位后赋值。
+  let hookPipelineRef: ReturnType<typeof wireHookFilePipeline> | null = null;
+  const edgeExtract = createEdgeExtract({
+    sessions: hookSessions,
+    projects,
+    harnessOf: (sessionId) => {
+      const latest = hookEvents.listBySession(sessionId, 1);
+      const src = latest[latest.length - 1]?.source;
+      return isHarness(src) ? src : null;
+    },
+    surfaceFor: messagingSurfaceFor,
+    headless: headlessRunner,
+    onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
+  });
   // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。
   const orchestrationEngine = new OrchestrationEngine({
     orchestrations,
@@ -316,6 +333,8 @@ async function main(): Promise<void> {
     deliverer: messageDeliverer,
     sessions: hookSessions,
     bus: hookBus,
+    supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
+    extract: (input) => edgeExtract.run(input),
     ensureOpen: async (sessionId) => {
       const opened = await openSessionTerminal(
         { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
@@ -379,6 +398,7 @@ async function main(): Promise<void> {
     sessionProbe,
     uploads,
   });
+  hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。

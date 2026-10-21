@@ -3111,6 +3111,47 @@ describe('MessageDeliverer 裁决表', () => {
         status: 409,
       });
     });
+
+    it('setEffort 走 sendText（`/effort <档位>`），档位过词表白名单', async () => {
+      const { terminal, sendText, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop'); // harness 归属 = 最新事件 source
+
+      await expect(deliverer.setEffort(SESSION_ID, 'high')).resolves.toEqual({ ok: true });
+      expect(sendText.mock.calls).toEqual([['pane-1', '/effort high']]);
+      expect(sendKeys).not.toHaveBeenCalled();
+
+      // 首尾空白剥掉（输入噪音）
+      await expect(deliverer.setEffort(SESSION_ID, '  low  ')).resolves.toEqual({ ok: true });
+      expect(sendText.mock.calls[1]).toEqual(['pane-1', '/effort low']);
+    });
+
+    it('setEffort 档位不在词表（或会话无 harness 归属）→ 400，键一个都不打', async () => {
+      const { terminal, sendText, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+
+      // 没有任何事件 = harness 归属判不出，词表为空
+      for (const bad of ['ultra', 'auto', '', 'a\r\nb', 'x\x1by', 'high low']) {
+        await expect(deliverer.setEffort(SESSION_ID, bad)).resolves.toMatchObject({ ok: false, status: 400 });
+      }
+      expect(sendText).not.toHaveBeenCalled();
+      expect(sendKeys).not.toHaveBeenCalled();
+
+      // 有 harness 归属后，表外档位照样 400
+      pushEvent(SESSION_ID, 'Stop');
+      await expect(deliverer.setEffort(SESSION_ID, 'ultra')).resolves.toMatchObject({ ok: false, status: 400 });
+      expect(sendText).not.toHaveBeenCalled();
+    });
+
+    it('setEffort 与中断同一套落点判定：会话没有 404 / pane 找不到 409', async () => {
+      const { terminal } = paneFixture();
+      vi.mocked(terminal.listPanes).mockResolvedValue([]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop');
+
+      await expect(deliverer.setEffort('sess-ghost', 'high')).resolves.toMatchObject({ ok: false, status: 404 });
+      await expect(deliverer.setEffort(SESSION_ID, 'high')).resolves.toMatchObject({ ok: false, status: 409 });
+    });
   });
 
   // ---- 图片随 prompt（harness `imageAttach` 对齐面）：投递文本现合成、回执放宽 ----

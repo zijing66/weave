@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
+import { Combobox } from '@/components/ui/combobox';
 import type { MessageKey } from '@/i18n/dict';
 import type { SessionRow } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -158,18 +159,13 @@ export function GlobalTasksOverview({
 
       {/* 查询条件：项目 + 时间段（客户端过滤，不新造 API） */}
       <div className="flex flex-wrap items-center gap-1.5 px-2">
-        <select
+        <Combobox
+          className="rounded-md bg-neutral-900 px-2 py-1 text-xs"
           value={projectFilter === 'all' ? '' : String(projectFilter)}
-          onChange={(e) => setProjectFilter(e.target.value === '' ? 'all' : Number(e.target.value))}
-          className="rounded-md border border-edge/[0.08] bg-neutral-900 px-2 py-1 text-xs text-neutral-200"
-        >
-          <option value="">{t('tasks.overviewAllProjects')}</option>
-          {projects.map((p) => (
-            <option key={p.id} value={String(p.id)}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+          placeholder={t('tasks.overviewAllProjects')}
+          options={projects.map((p) => ({ value: String(p.id), label: p.name }))}
+          onChange={(v) => setProjectFilter(v === '' ? 'all' : Number(v))}
+        />
         <span className="flex overflow-hidden rounded-md border border-edge/[0.08]">
           {RANGE_KEYS.map((k) => (
             <button

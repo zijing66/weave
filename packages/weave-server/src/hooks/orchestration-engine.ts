@@ -2,20 +2,24 @@ import type { Harness } from '@weavecode/core';
 import type { MessagingSurface } from '@weavecode/harness';
 import type {
   OrchestrationEdge,
+  OrchestrationNode,
   OrchestrationRepository,
+  OrchestrationRow,
   OrchestrationRunRepository,
   OrchestrationRunState,
   OrchestrationRunStatus,
   OrchestrationTrigger,
   RunEvent,
 } from '../repositories/orchestrations.js';
-import { pendingCountsOf } from '../repositories/orchestrations.js';
+import { graphDirections, pendingCountsOf } from '../repositories/orchestrations.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { matchesMinute, minuteKey, parseCron } from '../daemon/cron.js';
 import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
 import type { HookEventBus } from './bus.js';
 import type { MessageDeliverer } from './message-deliverer.js';
+import { postJson } from './handlers/webhook.js';
+import { renderTemplate } from './match.js';
 import { ORCH_MAX_DELIVERIES, validateOrchestration } from './orchestration-graph.js';
 
 export type StartResult =
@@ -27,12 +31,8 @@ interface Runtime {
   id: number;
   orchestrationId: number;
   trigger: OrchestrationTrigger;
-  startSessionId: string;
-  startText: string;
-  handoffPrompt: string;
-  /** 已在等「交接总结」回合的节点：它这一轮结束就是 fan-out 的时机。 */
-  awaitingHandoff: Set<string>;
   name: string;
+  nodes: OrchestrationNode[];
   edges: OrchestrationEdge[];
   state: OrchestrationRunState;
   deliveries: number;
@@ -48,31 +48,43 @@ interface Runtime {
  */
 const INBOX_READY_WAIT_MS = 5_000;
 
-/**
- * 边「带上游输出」时那段正文的上限：宿主上报的最终输出不受 `capFields` 约束
- * （那管的是工具载荷），整段塞进下游 prompt 没有意义。
- */
-const CARRY_OUTPUT_MAX_CHARS = 4_000;
-
-/**
- * 没填「交接总结」指令时用的那一句：原始最终输出对下游常常只有半句结论，故默认
- * 先让源会话按交接口径复述一遍（用户填了就按用户的）。
- */
-const DEFAULT_HANDOFF_PROMPT =
-  '把这一轮的目标、已完成的工作、关键结论与下游会话继续所需的上下文，整理成一段可以直接交接的说明；只输出这段说明本身，不要复述全部过程。';
-
-/** 边正文 + 附带的上游输出（正文可空 = 只转发那段输出）。 */
+/** 边正文 + 附带的触发载荷（webhook 入口：正文可空 = 只转发载荷）。 */
 function joined(text: string, carried: string): string {
   const head = text.trim();
   return head ? `${head}\n\n${carried}` : carried;
 }
 
+/** `{upstream}` 那段的上限（宿主上报的最终输出不受 capFields 约束，整段没意义）。 */
+const CARRY_OUTPUT_MAX_CHARS = 4_000;
+
+/** 边正文的模板变量（缺值占位原样保留 → 渲染后判残留，残留即失败）。 */
+function renderEdgeText(
+  template: string,
+  vars: { upstream: string | null; summary: string | null; session: string },
+): string {
+  return renderTemplate(template, {
+    upstream: vars.upstream,
+    summary: vars.summary,
+    session: vars.session,
+  });
+}
+
+const UNRESOLVED_VAR = /\{(upstream|summary|session)\}/;
+
+/** 自然回合自动触发的冷却：Stop 与 SessionEnd 连拍（同轮收尾两条 idle）不重复触发。 */
+const AUTO_FIRE_COOLDOWN_MS = 5_000;
+/** 入口 → 编排索引的缓存窗：定义变更最多这么久才被自然回合触发看到。 */
+const ENTRY_INDEX_TTL_MS = 10_000;
+
 /**
  * 跨会话编排引擎：有向图 + 消息传递推进。
  *
- * 语义：起点会话收第一条消息 → 它每完成一轮（harness idleSignals）消耗一条待回
- * 并把它所有出边各投递一次 → 目标每收一条消息被激活一次。无待回且无在飞即 done。
- * 成环由 POST/PUT 静态拒（validateOrchestration），运行时另有投递预算兜底。
+ * 语义：入口（无入边的节点，session 或 webhook）各自独立触发 → session 入口收
+ * 首条消息，webhook 入口的载荷随出边正文下发 → 每个会话节点每完成一轮
+ * （harness idleSignals）消耗一条待回并把它所有出边各投一次（扇入 = 每到一条
+ * 执行一次，不等待其他前驱）。出口（无出边节点）若是 webhook 则出站 POST。
+ * 中间节点只能是 session。成环由 POST/PUT 静态拒（validateOrchestration），
+ * 运行时另有投递预算兜底。
  *
  * 状态：定义在 DB，运行态在内存（重启 → interrupted，不重发）；每次转场落一行日志。
  * 一切异常内部吞掉：编排失败永不影响采集与消息投递。
@@ -91,6 +103,10 @@ export class OrchestrationEngine {
         Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
       sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId'>;
       bus: HookEventBus;
+      /** 上游会话是否支持 fork 提取（harness 无 extractArgs = false，边回落 {upstream}）。 */
+      supportsExtract?: (sessionId: string) => boolean;
+      /** 边级提取（装配侧 fork 无头回合实现）；null/拒绝 = 回落 {upstream}。 */
+      extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
       /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等注册表落名）。 */
       ensureOpen?: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
       /** 能力面访问器（测试注入）；缺省 surfaces.ts 模块级 registry。 */
@@ -99,17 +115,35 @@ export class OrchestrationEngine {
       livenessOf?: () => Map<string, boolean>;
       /** 投递预算（测试注入）；缺省 ORCH_MAX_DELIVERIES。 */
       maxDeliveries?: number;
+      /** 出站 POST（测试注入）；缺省 handlers/webhook 的 postJson。 */
+      postJsonImpl?: typeof postJson;
     },
   ) {}
 
-  /** 触发一次运行（手动 / webhook / cron 同一个入口）。 */
-  async start(orchId: number, trigger: OrchestrationTrigger, text?: string): Promise<StartResult> {
+  /**
+   * 触发一次运行。`entryIds` 缺省 = 全部 session 入口（cron 语义）；显式给 =
+   * 只跑这些入口（手动多选 / webhook 单入口）。载荷 `text` 投给选中的 session
+   * 入口，并随 webhook 入口的出边正文下发。
+   */
+  async start(
+    orchId: number,
+    trigger: OrchestrationTrigger,
+    text?: string,
+    entryIds?: readonly string[],
+  ): Promise<StartResult> {
     const orch = this.deps.orchestrations.getById(orchId);
     if (!orch) return { ok: false, status: 404, error: 'Orchestration not found' };
     const valid = validateOrchestration(orch);
     if (!valid.ok) return { ok: false, status: 409, error: valid.error };
     if (this.activeOf(orchId)) {
       return { ok: false, status: 409, error: 'Orchestration already has a running run' };
+    }
+    const { entries } = graphDirections(orch.nodes, orch.edges);
+    const chosen = entryIds
+      ? entries.filter((e) => entryIds.includes(e.id))
+      : entries.filter((e) => e.kind === 'session');
+    if (chosen.length === 0) {
+      return { ok: false, status: 409, error: 'No matching entry node' };
     }
     const row = this.deps.runs.insert({
       orchestrationId: orch.id,
@@ -121,11 +155,8 @@ export class OrchestrationEngine {
       id: row.id,
       orchestrationId: orch.id,
       trigger,
-      startSessionId: orch.startSessionId,
-      startText: orch.startText,
-      handoffPrompt: orch.handoffPrompt,
-      awaitingHandoff: new Set(),
       name: orch.name,
+      nodes: orch.nodes,
       edges: orch.edges,
       state: { pending: {}, events: [] },
       deliveries: 0,
@@ -135,12 +166,18 @@ export class OrchestrationEngine {
     };
     this.runtime.set(rt.id, rt);
     this.emitRun(rt, 'running');
-    await this.deliver(rt, {
-      from: '',
-      to: orch.startSessionId,
-      edgeId: '',
-      text: text?.trim() || orch.startText.trim() || orch.name,
-    });
+    await Promise.allSettled(
+      chosen.map((entry) =>
+        entry.kind === 'webhook'
+          ? this.fireEdges(rt, entry.id, text ?? '')
+          : this.deliver(rt, {
+              from: '',
+              to: entry.id,
+              edgeId: '',
+              text: text?.trim() || orch.startText.trim() || orch.name,
+            }),
+      ),
+    );
     this.maybeDone(rt);
     return { ok: true, runId: rt.id };
   }
@@ -155,24 +192,105 @@ export class OrchestrationEngine {
     try {
       const surface = this.deps.surfaceFor?.(input.source) ?? messagingSurfaceFor(input.source);
       if (!surface.idleSignals.includes(input.eventType)) return;
+      // 「编排回合」判据取**消费前**快照：这一轮若是任何编排投出来的，各 run 的
+      // pending 都会在这同一拍被消费掉，消费后再判就永远是「自然回合」了。
+      const orchestrationTurn = this.hasPendingAnywhere(input.sessionId);
       for (const rt of [...this.runtime.values()]) {
-        if (!rt.running) continue;
-        // 这一轮就是我们要的「交接总结」：消耗掉它自己的那条待回，然后连线往下走。
-        if (rt.awaitingHandoff.delete(input.sessionId)) {
-          rt.state.pending[input.sessionId]?.shift();
-          this.persist(rt);
-          void this.fireEdges(rt, input.sessionId);
-          continue;
-        }
         const pending = rt.state.pending[input.sessionId];
-        if (!pending || pending.length === 0) continue;
+        if (!rt.running || !pending || pending.length === 0) continue;
         pending.shift();
         this.persist(rt);
-        void this.advance(rt, input.sessionId);
+        void this.fireEdges(rt, input.sessionId);
       }
+      if (!orchestrationTurn) this.maybeAutoFire(input.sessionId);
     } catch {
       // 面缺席/库错误都不影响采集
     }
+  }
+
+  /** 任何在跑 run 对该会话还有未消费的投递 ⇒ 这一轮是编排/投递驱动的，不是自然回合。 */
+  private hasPendingAnywhere(sessionId: string): boolean {
+    return [...this.runtime.values()].some(
+      (rt) => (rt.state.pending[sessionId]?.length ?? 0) > 0,
+    );
+  }
+
+  /**
+   * 入口会话的自然回合 → 该入口的下游直启（不走 start() 的首投：不向入口再塞
+   * 消息，`{upstream}` 就是这一轮的输出）。判据与护栏：编排 enabled、入口有出边
+   * （孤立入口的平凡编排不空转跑）、同编排无在飞 run、同入口 5s 冷却（Stop 与
+   * SessionEnd 连拍不重复触发）。残余风险如实记：投递走投递器队列还没入 pending
+   * 的窗口里到达的 idle 会被误判成自然回合（窗口毫秒级）。
+   */
+  private maybeAutoFire(sessionId: string): void {
+    const now = Date.now();
+    for (const orch of this.entryIndex().get(sessionId) ?? []) {
+      if (!orch.enabled || this.activeOf(orch.id)) continue;
+      const key = `${orch.id}:${sessionId}`;
+      if (now - (this.lastAutoFireAt.get(key) ?? 0) < AUTO_FIRE_COOLDOWN_MS) continue;
+      const { entries } = graphDirections(orch.nodes, orch.edges);
+      const entry = entries.find((e) => e.id === sessionId);
+      if (!entry || !orch.edges.some((edge) => edge.from === entry.id)) continue;
+      this.lastAutoFireAt.set(key, now);
+      void this.fireFromEntry(orch, entry.id);
+    }
+  }
+
+  /** 入口会话的自然回合直启一份 run（快照语义与 start() 相同，只是跳过首投）。 */
+  private async fireFromEntry(orch: {
+    id: number;
+    name: string;
+    projectId: number;
+    nodes: OrchestrationNode[];
+    edges: OrchestrationEdge[];
+  }, entryId: string): Promise<void> {
+    const valid = validateOrchestration(orch);
+    if (!valid.ok) return;
+    const row = this.deps.runs.insert({
+      orchestrationId: orch.id,
+      orchestrationName: orch.name,
+      projectId: orch.projectId,
+      trigger: 'manual',
+    });
+    const rt: Runtime = {
+      id: row.id,
+      orchestrationId: orch.id,
+      trigger: 'manual',
+      name: orch.name,
+      nodes: orch.nodes,
+      edges: orch.edges,
+      state: { pending: {}, events: [] },
+      deliveries: 0,
+      inflight: 0,
+      running: true,
+      finishing: false,
+    };
+    this.runtime.set(rt.id, rt);
+    this.emitRun(rt, 'running');
+    await this.fireEdges(rt, entryId);
+    this.maybeDone(rt);
+  }
+
+  /** 入口 → 编排索引（TTL 缓存：定义变更 10s 内生效，别每个 idle 全表扫）。 */
+  private entryIndexCache: { at: number; map: Map<string, OrchestrationRow[]> } | null = null;
+  private lastAutoFireAt = new Map<string, number>();
+
+  private entryIndex(): Map<string, OrchestrationRow[]> {
+    if (this.entryIndexCache && Date.now() - this.entryIndexCache.at < ENTRY_INDEX_TTL_MS) {
+      return this.entryIndexCache.map;
+    }
+    const map = new Map<string, OrchestrationRow[]>();
+    for (const orch of this.deps.orchestrations.list()) {
+      if (!orch.enabled) continue;
+      for (const node of graphDirections(orch.nodes, orch.edges).entries) {
+        if (node.kind !== 'session') continue;
+        const list = map.get(node.id) ?? [];
+        list.push(orch);
+        map.set(node.id, list);
+      }
+    }
+    this.entryIndexCache = { at: Date.now(), map };
+    return map;
   }
 
   /** 定时触发（装配侧 30s 一枪）：同一编排同分钟只 fire 一次、跑着的跳过。 */
@@ -181,9 +299,12 @@ export class OrchestrationEngine {
     try {
       const key = minuteKey(now);
       for (const orch of this.deps.orchestrations.list()) {
-        if (!orch.cron || orch.lastCronAt === key) continue;
+        if (!orch.enabled || !orch.cron || orch.lastCronAt === key) continue;
         const schedule = parseCron(orch.cron);
         if (!schedule || !matchesMinute(schedule, now)) continue;
+        // cron 只驱动 session 入口；webhook-only 的编排没有可定时的入口。
+        const { entries } = graphDirections(orch.nodes, orch.edges);
+        if (!entries.some((e) => e.kind === 'session')) continue;
         this.deps.orchestrations.setCronFired(orch.id, key);
         if (this.activeOf(orch.id)) continue;
         void this.start(orch.id, 'cron');
@@ -241,54 +362,70 @@ export class OrchestrationEngine {
   }
 
   /**
-   * 一轮跑完、该往下走了：有出边要带上游输出时，先向这个会话要一份「交接总结」，
-   * 拿下一轮的 idle 再 fan-out（那时 `lastTurnOutput` 读到的是这份总结而不是上一轮的
-   * 碎片）。其余情况直接 fan-out。
+   * fan-out：把 `from` 的所有出边各投一次。每条边先渲染变量——`{upstream}` =
+   * 上游这一轮最终输出（webhook 入口 = 触发载荷），`{summary}` = 按边的提取指令
+   * fork 出的结果（失败回落 `{upstream}`，都没有则占位残留 → 记失败不投），
+   * `{session}` = 上游会话名。webhook 入口的载荷直接拼在正文后（不渲染）。
    */
-  private async advance(rt: Runtime, sessionId: string): Promise<void> {
-    if (rt.edges.some((edge) => edge.from === sessionId && edge.carryOutput === true)) {
-      const text = rt.handoffPrompt.trim() || DEFAULT_HANDOFF_PROMPT;
-      const started = await this.deliver(rt, { from: sessionId, to: sessionId, edgeId: '', text });
-      if (!rt.running) return;
-      if (started) {
-        rt.awaitingHandoff.add(sessionId);
-        return;
-      }
-    }
-    await this.fireEdges(rt, sessionId);
-  }
-
-  private async fireEdges(rt: Runtime, from: string): Promise<void> {
+  private async fireEdges(rt: Runtime, from: string, payload = ''): Promise<void> {
     const edges = rt.edges.filter((edge) => edge.from === from);
     if (edges.length === 0) {
       this.maybeDone(rt);
       return;
     }
-    const carried = edges.some((edge) => edge.carryOutput === true) ? this.upstreamOf(from) : null;
+    const rawUpstream = payload || (this.deps.deliverer.lastTurnOutput?.(from)?.output ?? null);
+    const upstream = rawUpstream
+      ? rawUpstream.length > CARRY_OUTPUT_MAX_CHARS
+        ? `${rawUpstream.slice(0, CARRY_OUTPUT_MAX_CHARS)}…`
+        : rawUpstream
+      : null;
+    const session = this.deps.sessions.getBySessionId(from)?.title || from;
     await Promise.allSettled(
-      edges.map((edge) => {
-        const text = edge.carryOutput === true && carried ? joined(edge.text, carried) : edge.text;
+      edges.map(async (edge) => {
+        if (payload) {
+          // webhook 入口：{upstream} = 触发载荷；模板没引用它就把载荷拼在正文后
+          // （载荷不静默丢弃），正文空 = 只转发载荷。
+          const rendered = renderEdgeText(edge.text, {
+            upstream: payload,
+            summary: payload,
+            session: from,
+          });
+          const text = edge.text.includes('{upstream}')
+            ? rendered
+            : joined(rendered, payload);
+          return this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text });
+        }
+        let summary: string | null = null;
+        if (edge.extract?.trim()) {
+          summary = this.deps.supportsExtract?.(from)
+            ? ((await this.deps.extract?.({ sessionId: from, prompt: edge.extract.trim() })) ?? null)
+            : null;
+        }
+        const text = renderEdgeText(edge.text, {
+          upstream,
+          summary: summary ?? upstream,
+          session,
+        });
+        if (UNRESOLVED_VAR.test(text)) {
+          this.record(rt, {
+            from,
+            to: edge.to,
+            edgeId: edge.id,
+            ok: false,
+            error: 'unresolved template variable — no upstream output and no extract result',
+          });
+          return;
+        }
         return this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text });
       }),
     );
     this.maybeDone(rt);
   }
 
-  /** 边要「带上游输出」时拼上的那块：上游最近一条结论 + 出处；读不到就不带（不摆空壳）。 */
-  private upstreamOf(sessionId: string): string | null {
-    const found = this.deps.deliverer.lastTurnOutput?.(sessionId) ?? null;
-    if (!found) return null;
-    const output =
-      found.output.length > CARRY_OUTPUT_MAX_CHARS
-        ? `${found.output.slice(0, CARRY_OUTPUT_MAX_CHARS)}…`
-        : found.output;
-    const title = this.deps.sessions.getBySessionId(sessionId)?.title || sessionId;
-    return `[upstream output] from=${title} at=${found.at}\n\n${output}`;
-  }
-
   /**
-   * 投一次：判死先拉起会话（并按需等它的 inbox 凭据）；送达（含入队）才计入待回，
-   * 失败只留日志。返回是否真的送到（调用方据此决定要不要等它下一轮）。
+   * 投一次：session 目标判活（死则拉起并按需等 inbox 凭据）、送达（含入队）才
+   * 计入待回；webhook 出口直接出站 POST、不判活不入 pending（它不会回话）。
+   * 返回是否真的送达（调用方据此决定要不要等它下一轮）。
    */
   private async deliver(
     rt: Runtime,
@@ -297,9 +434,28 @@ export class OrchestrationEngine {
     rt.inflight++;
     try {
       if (!rt.running) return false;
-      // 正文空 + 上游这一轮没留下输出：没有可送的东西，照样记一笔失败（不投空消息）。
+      const target = rt.nodes.find((n) => n.id === input.to);
+      if (!target) {
+        this.record(rt, { ...input, ok: false, error: 'target node is not in the snapshot' });
+        return false;
+      }
+      if (target.kind === 'webhook') {
+        const result = await (this.deps.postJsonImpl ?? postJson)(target.url ?? '', target.secret, {
+          orchestrationName: rt.name,
+          runId: rt.id,
+          from: input.from,
+          text: input.text,
+          at: new Date().toISOString(),
+        });
+        if (!rt.running) return false;
+        rt.deliveries++;
+        this.record(rt, { ...input, ok: result.ok, ...(result.ok ? {} : { error: result.error }) });
+        this.checkBudget(rt);
+        return result.ok;
+      }
+      // 正文空：没有可送的东西，照样记一笔失败（不投空消息）。
       if (!input.text.trim()) {
-        this.record(rt, { ...input, ok: false, error: 'edge has no message and no upstream output' });
+        this.record(rt, { ...input, ok: false, error: 'edge has no message' });
         return false;
       }
       if (this.aliveOf(input.to) === false) {
@@ -344,15 +500,20 @@ export class OrchestrationEngine {
       rt.state.pending[input.to] = pending;
       rt.deliveries++;
       this.record(rt, { ...input, ok: true });
-      if (rt.deliveries >= (this.deps.maxDeliveries ?? ORCH_MAX_DELIVERIES)) {
-        this.finish(rt, 'failed', `delivery budget exceeded (${ORCH_MAX_DELIVERIES})`);
-      }
+      this.checkBudget(rt);
       return true;
     } catch (err) {
       this.record(rt, { ...input, ok: false, error: err instanceof Error ? err.message : String(err) });
       return false;
     } finally {
       rt.inflight--;
+    }
+  }
+
+  /** 投递预算：到顶即 failed（环路兜底）。 */
+  private checkBudget(rt: Runtime): void {
+    if (rt.deliveries >= (this.deps.maxDeliveries ?? ORCH_MAX_DELIVERIES)) {
+      this.finish(rt, 'failed', `delivery budget exceeded (${ORCH_MAX_DELIVERIES})`);
     }
   }
 

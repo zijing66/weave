@@ -26,6 +26,7 @@ import {
   handleIngestedRecords,
   type InboxDrainDeps,
 } from '../inbox-worker.js';
+import { registerSyntheticSession } from '../synthetic-sessions.js';
 import { hookShardId, outboxPathOf } from '../mirror.js';
 
 const TOKEN = 'tok-inbox';
@@ -181,6 +182,19 @@ describe('drainInboxOnce：inbox 认领 → 入库 → 即删', () => {
     expect(records).toHaveLength(1);
     expect(hookEvents.listByProject(projectId).map((r) => r.eventType)).toEqual(['SessionStart']);
     expect(existsSync(file)).toBe(false);
+  });
+
+  it('合成会话（编排 fork 提取）行即焚：不落库、不建会话行', () => {
+    const file = path.join(inbox(), `${hookShardId(TOKEN)}.jsonl`);
+    const fork = registerSyntheticSession();
+    writeFileSync(file, inboxLine(TOKEN, 'SessionStart', fork) + inboxLine(TOKEN, 'Stop', 's1'));
+
+    const records = drainInboxOnce(deps());
+    expect(records).toHaveLength(1);
+    expect(records[0]!.input.sessionId).toBe('s1');
+    expect(hookEvents.listByProject(projectId).map((r) => r.sessionId)).toEqual(['s1']);
+    expect(hookSessions.getBySessionId(fork)).toBeUndefined(); // 不建会话行
+    expect(existsSync(file)).toBe(false); // 行即焚，不进 failedLines
   });
 
   it('崩在半途的残留 claim 先被消费（顺序在前），活文件随后认领', () => {

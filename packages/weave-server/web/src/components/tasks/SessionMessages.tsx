@@ -15,6 +15,8 @@ import {
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Combobox } from '@/components/ui/combobox';
+import { EnumSlider } from '@/components/ui/enum-slider';
 import { AssistantMarkdown } from '@/components/AiAssistant';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -47,6 +49,7 @@ import {
 import {
   HARNESS_COMPACTION,
   HARNESS_LIFECYCLE,
+  effortLevelsFor,
   isCompactionEnd,
   modeNamesFor,
   modeTintFor,
@@ -1845,6 +1848,7 @@ export function SessionMessages({
   const sessionRow = sessions?.find((s) => s.sessionId === sessionId);
   const modeNames = modeNamesFor(capability.harness);
   const modelNames = modelNamesFor(capability.harness);
+  const effortLevels = effortLevelsFor(capability.harness);
   const modelTargets = modelCatalog[capability.harness] ?? [];
   const currentMode = sessionRow?.mode ?? null;
   const currentModel = sessionRow?.model ?? null;
@@ -1886,6 +1890,19 @@ export function SessionMessages({
         show('success', t('tasks.modelSet'));
       },
       { fail: (e) => t('tasks.modelSetFailed', { error: errorText(e) }) },
+    );
+  };
+
+  /** 思考强度：打 `/effort <档位>`，下一轮事件的 `effort.level` 回报自动跟上。 */
+  const applyEffort = (level: string): void => {
+    void fb.run(
+      `setEffort:${sessionId}`,
+      async () => {
+        await api.setSessionEffort(sessionId, level);
+        await refresh();
+        show('success', t('tasks.effortSet', { level }));
+      },
+      { fail: (e) => t('tasks.effortSetFailed', { error: errorText(e) }) },
     );
   };
 
@@ -2669,29 +2686,36 @@ export function SessionMessages({
                         {t('tasks.modelLabel')}
                       </span>
                       <div className="relative min-w-0">
-                        <select
+                        <Combobox
                           value={modelValue}
-                          onChange={(e) => {
-                            const v = e.target.value;
+                          onChange={(v) => {
                             if (v) applyModel(v);
                           }}
                           title={t('tasks.modelLastKnown')}
-                          aria-label={t('tasks.modelLabel')}
-                          className="max-w-[12rem] appearance-none rounded border border-edge/[0.1] bg-neutral-950 py-0.5 pl-1.5 pr-6 font-mono text-[11px] text-neutral-200 focus:border-blue-500/40 focus:outline-none max-lg:max-w-[8rem]"
-                        >
-                          {!modelValue && <option value="">{t('tasks.modelUnknown')}</option>}
-                          {modelOptions.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                          {/* 认不出别名的真名（别名表缺配）也得能显示成选中 */}
-                          {modelValue && !modelOptions.some((o) => o.value === modelValue) && (
-                            <option value={modelValue}>{modelValue}</option>
-                          )}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-1 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500" />
+                          placeholder={t('tasks.modelUnknown')}
+                          className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-[11px] max-lg:max-w-[8rem]"
+                          options={[
+                            ...modelOptions,
+                            // 认不出别名的真名（别名表缺配）也得能显示成选中
+                            ...(modelValue && !modelOptions.some((o) => o.value === modelValue)
+                              ? [{ value: modelValue }]
+                              : []),
+                          ]}
+                        />
                       </div>
+                    </div>
+                  )}
+                  {effortLevels.length > 0 && (
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="shrink-0 text-[10px] text-neutral-500">
+                        {t('tasks.effortLabel')}
+                      </span>
+                      <EnumSlider
+                        levels={effortLevels}
+                        value={sessionRow?.effort ?? null}
+                        title={t('tasks.effortLastKnown')}
+                        onCommit={applyEffort}
+                      />
                     </div>
                   )}
                 </div>

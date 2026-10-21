@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
+import { Combobox } from '@/components/ui/combobox';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
 import { SessionList } from './SessionList';
 import { SessionMessages } from './SessionMessages';
@@ -912,17 +913,15 @@ export function TasksPanel({
                     >
                       {d.prompt}
                     </span>
-                    <select
+                    <Combobox
                       value={target}
-                      onChange={(e) => setAssign((prev) => ({ ...prev, [d.id]: e.target.value }))}
-                      className="shrink-0 rounded border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
-                    >
-                      {(sessions ?? []).map((s) => (
-                        <option key={s.sessionId} value={s.sessionId}>
-                          {sessionLabel(s.title, s.sessionId)}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setAssign((prev) => ({ ...prev, [d.id]: v }))}
+                      className="shrink-0 rounded bg-neutral-900 px-1.5 py-0.5 text-[11px]"
+                      options={(sessions ?? []).map((s) => ({
+                        value: s.sessionId,
+                        label: sessionLabel(s.title, s.sessionId),
+                      }))}
+                    />
                     <button
                       type="button"
                       disabled={!target || fb.stateOf(`dispatch:${d.id}`) === 'loading'}

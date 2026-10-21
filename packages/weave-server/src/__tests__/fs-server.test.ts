@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
@@ -10,9 +10,16 @@ import { LibraryRepository } from '../repositories/libraries.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { listBrowseRoots, listDirectoryChildren } from '../daemon/fs-browser.js';
 
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 describe('fs-browser', () => {
   it('listDirectoryChildren returns only directories, sorted numerically', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'weave-fs-'));
+    tempDirs.push(dir);
     await mkdir(path.join(dir, 'b-dir'));
     await mkdir(path.join(dir, 'a-dir'));
     await mkdir(path.join(dir, '10-dir'));
@@ -64,9 +71,10 @@ describe('daemon /fs routes', () => {
     port = (server.address() as { port: number }).port;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     server.close();
     db.close();
+    await rm(scratch, { recursive: true, force: true });
   });
 
   it('GET /fs/roots returns browse roots', async () => {

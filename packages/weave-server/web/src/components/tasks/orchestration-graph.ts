@@ -1,4 +1,4 @@
-import type { OrchestrationEdge } from '@/lib/api';
+import type { OrchestrationEdge, OrchestrationNode } from '@/lib/api';
 
 /**
  * 编排图的 web 侧纯函数（可单测）：节点/边编辑 + 与服务端同判据的即时校验。
@@ -11,20 +11,15 @@ export const ORCH_MAX_EDGES = 64;
 
 export interface OrchDraft {
   name: string;
-  startSessionId: string;
   startText: string;
-  handoffPrompt: string;
-  nodes: string[];
+  nodes: OrchestrationNode[];
   edges: OrchestrationEdge[];
   cron: string | null;
 }
 
 export type ValidateDraftResult = { ok: true } | { ok: false; error: string };
 
-/**
- * 边 id：短序号。会话 id 本身就 36+ 字符，拼两端会把 id 顶到服务端 64 上限之外
- * （真会话画第一根线就保存失败）；id 只当内部键用，运行日志与画布都不展示它。
- */
+/** 边 id：短序号（会话 id 本身就 36+ 字符，拼两端会顶到服务端 64 上限之外）。 */
 export function newEdgeId(taken: ReadonlySet<string>): string {
   let n = taken.size + 1;
   let id = `e${n}`;
@@ -32,32 +27,53 @@ export function newEdgeId(taken: ReadonlySet<string>): string {
   return id;
 }
 
-export function addNode(draft: OrchDraft, sessionId: string): OrchDraft {
-  if (draft.nodes.includes(sessionId)) return draft;
+/** webhook 节点 id：`w:<uuid>`，与任何 sessionId 不碰撞。 */
+export function newWebhookNodeId(taken: ReadonlySet<string>): string {
+  let id = `w:${crypto.randomUUID()}`;
+  while (taken.has(id)) id = `w:${crypto.randomUUID()}`;
+  return id;
+}
+
+/** 入口 = 无入边节点；出口 = 无出边节点（与服务端 `graphDirections` 同一份图语义）。 */
+export function graphDirections(
+  nodes: readonly OrchestrationNode[],
+  edges: readonly OrchestrationEdge[],
+): { entries: OrchestrationNode[]; exits: OrchestrationNode[] } {
+  const hasIn = new Set(edges.map((e) => e.to));
+  const hasOut = new Set(edges.map((e) => e.from));
   return {
-    ...draft,
-    nodes: [...draft.nodes, sessionId],
-    startSessionId: draft.startSessionId || sessionId,
+    entries: nodes.filter((n) => !hasIn.has(n.id)),
+    exits: nodes.filter((n) => !hasOut.has(n.id)),
   };
 }
 
-/** 去节点连带它的边；起点的继任 = 剩下的第一个节点。 */
-export function removeNode(draft: OrchDraft, sessionId: string): OrchDraft {
-  const nodes = draft.nodes.filter((id) => id !== sessionId);
+export function addSessionNode(draft: OrchDraft, sessionId: string): OrchDraft {
+  if (draft.nodes.some((n) => n.id === sessionId)) return draft;
+  return { ...draft, nodes: [...draft.nodes, { id: sessionId, kind: 'session' }] };
+}
+
+export function addWebhookNode(draft: OrchDraft): OrchDraft {
   return {
     ...draft,
-    nodes,
-    edges: draft.edges.filter((e) => e.from !== sessionId && e.to !== sessionId),
-    startSessionId: draft.startSessionId === sessionId ? (nodes[0] ?? '') : draft.startSessionId,
+    nodes: [...draft.nodes, { id: newWebhookNodeId(new Set(draft.nodes.map((n) => n.id))), kind: 'webhook' }],
   };
 }
 
-/** 新画的边默认带「上游输出」：新边多半只写一句指令，没有上游结论就没有信息量。 */
+/** 去节点连带它的边。 */
+export function removeNode(draft: OrchDraft, nodeId: string): OrchDraft {
+  return {
+    ...draft,
+    nodes: draft.nodes.filter((n) => n.id !== nodeId),
+    edges: draft.edges.filter((e) => e.from !== nodeId && e.to !== nodeId),
+  };
+}
+
+/** 新画的边默认只写一句指令；要带上游输出就在正文里引用 `{upstream}`。 */
 export function addEdge(draft: OrchDraft, from: string, to: string, text: string): OrchDraft {
   const taken = new Set(draft.edges.map((e) => e.id));
   return {
     ...draft,
-    edges: [...draft.edges, { id: newEdgeId(taken), from, to, text, carryOutput: true }],
+    edges: [...draft.edges, { id: newEdgeId(taken), from, to, text }],
   };
 }
 
@@ -70,11 +86,11 @@ export function removeEdge(draft: OrchDraft, edgeId: string): OrchDraft {
  * 与 server 同判据（同样返回环上路径，文案层面各自渲染）。
  */
 export function findCycle(
-  nodes: readonly string[],
+  nodes: readonly OrchestrationNode[],
   edges: readonly OrchestrationEdge[],
 ): string[] | null {
   const out = new Map<string, string[]>();
-  for (const node of nodes) out.set(node, []);
+  for (const node of nodes) out.set(node.id, []);
   for (const edge of edges) {
     const list = out.get(edge.from);
     if (list) list.push(edge.to);
@@ -97,53 +113,31 @@ export function findCycle(
     return null;
   };
   for (const node of nodes) {
-    if ((state.get(node) ?? 0) !== 0) continue;
-    const found = visit(node);
+    if ((state.get(node.id) ?? 0) !== 0) continue;
+    const found = visit(node.id);
     if (found) return found;
   }
   return null;
 }
 
-/** 从起点出发能到的节点集（可达性校验用）。 */
-export function reachableFrom(
-  nodes: readonly string[],
-  edges: readonly OrchestrationEdge[],
-  start: string,
-): Set<string> {
-  const out = new Map<string, string[]>();
-  for (const node of nodes) out.set(node, []);
-  for (const edge of edges) out.get(edge.from)?.push(edge.to);
-  const seen = new Set<string>();
-  const stack = [start];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (seen.has(node)) continue;
-    seen.add(node);
-    for (const next of out.get(node) ?? []) stack.push(next);
-  }
-  return seen;
-}
-
-/** 分层（Kahn 最长路径）：起点层 0，其余 = 所有前驱最大层 + 1（人读成「第几波」）。 */
+/** 分层（Kahn 最长路径，多源）：无前驱 = 0，其余 = 所有前驱最大层 + 1（人读成「第几波」）。 */
 export function ranksOf(
-  nodes: readonly string[],
+  nodes: readonly OrchestrationNode[],
   edges: readonly OrchestrationEdge[],
-  startSessionId: string,
 ): Map<string, number> {
   const indeg = new Map<string, number>();
   const out = new Map<string, string[]>();
   for (const node of nodes) {
-    indeg.set(node, 0);
-    out.set(node, []);
+    indeg.set(node.id, 0);
+    out.set(node.id, []);
   }
   for (const edge of edges) {
     out.get(edge.from)?.push(edge.to);
     indeg.set(edge.to, (indeg.get(edge.to) ?? 0) + 1);
   }
   const rank = new Map<string, number>();
-  if (nodes.includes(startSessionId)) rank.set(startSessionId, 0);
-  const queue = nodes.filter((n) => (indeg.get(n) ?? 0) === 0);
-  for (const node of queue) if (!rank.has(node)) rank.set(node, 0);
+  const queue = nodes.filter((n) => (indeg.get(n.id) ?? 0) === 0).map((n) => n.id);
+  for (const node of queue) rank.set(node, 0);
   while (queue.length > 0) {
     const node = queue.shift()!;
     const base = rank.get(node) ?? 0;
@@ -154,7 +148,7 @@ export function ranksOf(
       if (left === 0) queue.push(next);
     }
   }
-  for (const node of nodes) if (!rank.has(node)) rank.set(node, 0);
+  for (const node of nodes) if (!rank.has(node.id)) rank.set(node.id, 0);
   return rank;
 }
 
@@ -165,15 +159,20 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
   if (draft.nodes.length > ORCH_MAX_NODES) {
     return { ok: false, error: `At most ${ORCH_MAX_NODES} nodes per orchestration` };
   }
-  if (!draft.startSessionId || !draft.nodes.includes(draft.startSessionId)) {
-    return { ok: false, error: 'Start session must be part of the node set' };
-  }
   if (draft.edges.length > ORCH_MAX_EDGES) {
     return { ok: false, error: `At most ${ORCH_MAX_EDGES} edges per orchestration` };
   }
+  const ids = new Set<string>();
+  for (const node of draft.nodes) {
+    if (ids.has(node.id)) return { ok: false, error: `Duplicate node ${node.id}` };
+    ids.add(node.id);
+    if (node.kind === 'webhook' && !node.id.startsWith('w:')) {
+      return { ok: false, error: `Webhook node id must start with "w:": ${node.id}` };
+    }
+  }
   const pairs = new Set<string>();
   for (const edge of draft.edges) {
-    if (!draft.nodes.includes(edge.from) || !draft.nodes.includes(edge.to)) {
+    if (!ids.has(edge.from) || !ids.has(edge.to)) {
       return { ok: false, error: `Edge ${edge.id} references a node outside the node set` };
     }
     if (edge.from === edge.to) return { ok: false, error: `Self-loop on ${edge.from}` };
@@ -181,12 +180,44 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     if (pairs.has(pair)) return { ok: false, error: `Duplicate edge ${edge.from} → ${edge.to}` };
     pairs.add(pair);
   }
-  const mute = draft.edges.find((edge) => !edge.text.trim() && edge.carryOutput !== true);
+  const { entries } = graphDirections(draft.nodes, draft.edges);
+  const hasIn = new Set(draft.edges.map((e) => e.to));
+  const hasOut = new Set(draft.edges.map((e) => e.from));
+  const webhookEntryIds = new Set(entries.filter((n) => n.kind === 'webhook').map((n) => n.id));
+  // 空正文只在两处合法：webhook 入口的出边（载荷就是正文）、设了提取指令的边。
+  const mute = draft.edges.find(
+    (edge) => !edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim(),
+  );
   if (mute) return { ok: false, error: `Edge ${mute.from} → ${mute.to} has no message` };
+  for (const node of draft.nodes) {
+    if (node.kind !== 'webhook') continue;
+    // webhook 节点只能站在图的两端：入口（只出）或出口（只入），不当中间节点。
+    if (hasIn.has(node.id) && hasOut.has(node.id)) {
+      return {
+        ok: false,
+        error: 'Webhook nodes cannot have both inbound and outbound edges',
+      };
+    }
+    if (!hasIn.has(node.id) && !hasOut.has(node.id)) {
+      return { ok: false, error: 'A webhook node is not connected' };
+    }
+  }
+  for (const node of draft.nodes) {
+    if (node.kind !== 'webhook' || !hasIn.has(node.id)) continue;
+    // 出口 webhook 必须给出合法的出站 URL（入口的 token 由服务端补发，不在这验）。
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(node.url ?? '');
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+      return { ok: false, error: 'Webhook exit nodes need a valid http(s) URL' };
+    }
+  }
   const cycle = findCycle(draft.nodes, draft.edges);
   if (cycle) return { ok: false, error: `Cycle detected: ${cycle.join(' → ')}` };
-  const reachable = reachableFrom(draft.nodes, draft.edges, draft.startSessionId);
-  const orphan = draft.nodes.find((node) => !reachable.has(node));
-  if (orphan) return { ok: false, error: `Node ${orphan} is unreachable from the start session` };
+  // 可达性不再单查：入口 = 全部无入边节点，DAG 里每个节点的入边链必然落回某个
+  // 入口（成环已被拒），多源可达恒真。
   return { ok: true };
 }

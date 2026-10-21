@@ -283,6 +283,14 @@ export interface ResumeCommandSpec {
    */
   openArgs?(sessionId: string): string[];
   /**
+   * 编排边级提取的无头 fork 参数：从上游会话派生一个**一次性 fork 回合**提炼
+   * 信息（`['--resume', sessionId, '--fork-session', '--no-session-persistence',
+   * '--session-id', forkSessionId]` 形态），不动原会话、不留转录。缺省 = 该
+   * harness 无 fork 提取能力（codex 留位，调用方回落只读上游输出）。
+   * `forkSessionId` 由 server 预生成并登记合成会话（ingest 侧过滤），harness 只定键形。
+   */
+  extractArgs?(sessionId: string, forkSessionId: string): string[];
+  /**
    * `bin` 的版本下限（semver）：低于它的宿主，weave 的会话功能不可信 → 起不了
    * 新会话（UI 置灰并说明）。缺省 = 不设闸。
    */

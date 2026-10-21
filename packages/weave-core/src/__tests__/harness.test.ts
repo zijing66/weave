@@ -67,10 +67,10 @@ describe('HARNESS_LIFECYCLE', () => {
       open: 'UserPromptSubmit',
       close: ['Stop', 'TurnAborted'],
       closeFailed: [],
-      sessionMarkers: ['SessionStart'],
-      subagentStop: '',
+      sessionMarkers: ['SessionStart', 'SessionEnd'],
+      subagentStop: 'SubagentStop',
       questionTools: [],
-      sessionExit: null,
+      sessionExit: 'SessionEnd',
     });
   });
 

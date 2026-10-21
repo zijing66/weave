@@ -5,6 +5,7 @@ import {
   layoutOrchestrationCanvas,
   type OrchCanvasSession,
 } from '../orchestration-canvas-layout';
+import type { OrchestrationNode } from '@/lib/api';
 
 const sessions = new Map<string, OrchCanvasSession>([
   ['a', { sessionId: 'a', title: 'A', projectId: 1 }],
@@ -12,17 +13,19 @@ const sessions = new Map<string, OrchCanvasSession>([
   ['c', { sessionId: 'c', title: 'C', projectId: 2 }],
 ]);
 
+const sessionNodes = (...ids: string[]): OrchestrationNode[] =>
+  ids.map((id) => ({ id, kind: 'session' as const }));
+
 const edges = [
   { id: 'a->b', from: 'a', to: 'b', text: '' },
   { id: 'b->c', from: 'b', to: 'c', text: '' },
 ];
 
 describe('layoutOrchestrationCanvas', () => {
-  it('项目视图：会话按层摆列，跨层边直接连会话节点', () => {
+  it('项目视图：节点按层摆列，跨层边直接连节点', () => {
     const laid = layoutOrchestrationCanvas({
-      nodes: ['a', 'b', 'c'],
+      nodes: sessionNodes('a', 'b', 'c'),
       edges,
-      startSessionId: 'a',
       sessions,
       groupProjects: false,
       collapsed: new Set(),
@@ -35,11 +38,22 @@ describe('layoutOrchestrationCanvas', () => {
     expect(laid.edges.map((e) => `${e.from}->${e.to}`)).toEqual(['s:a->s:b', 's:b->s:c']);
   });
 
-  it('全局视图：每个项目一个框，框住自己的会话且两框不重叠', () => {
+  it('webhook 节点摆成自己的键（w: 前缀），不属于任何项目框', () => {
     const laid = layoutOrchestrationCanvas({
-      nodes: ['a', 'b', 'c'],
+      nodes: [...sessionNodes('a', 'b'), { id: 'w:1', kind: 'webhook' as const }],
+      edges: [{ id: 'w->a', from: 'w:1', to: 'a', text: '' }],
+      sessions,
+      groupProjects: false,
+      collapsed: new Set(),
+    });
+    expect(laid.nodes.map((n) => n.key)).toContain('w:1');
+    expect(laid.edges.map((e) => `${e.from}->${e.to}`)).toEqual(['w:1->s:a']);
+  });
+
+  it('全局视图：每个项目一个框，框住自己的节点且两框不重叠', () => {
+    const laid = layoutOrchestrationCanvas({
+      nodes: sessionNodes('a', 'b', 'c'),
       edges,
-      startSessionId: 'a',
       sessions,
       groupProjects: true,
       collapsed: new Set(),
@@ -67,11 +81,10 @@ describe('layoutOrchestrationCanvas', () => {
     expect(overlaps(g1, g2)).toBe(false);
   });
 
-  it('收起的项目只剩一个框：会话不摆出来，边折到框上并合并', () => {
+  it('收起的项目只剩一个框：节点不摆出来，边折到框上并合并', () => {
     const laid = layoutOrchestrationCanvas({
-      nodes: ['a', 'b', 'c'],
+      nodes: sessionNodes('a', 'b', 'c'),
       edges,
-      startSessionId: 'a',
       sessions,
       groupProjects: true,
       collapsed: new Set([1, 2]),
@@ -85,11 +98,10 @@ describe('layoutOrchestrationCanvas', () => {
     ]);
   });
 
-  it('同一项目的同列会话按行距上下排', () => {
+  it('同一项目的同列节点按行距上下排', () => {
     const laid = layoutOrchestrationCanvas({
-      nodes: ['a', 'b'],
+      nodes: sessionNodes('a', 'b'),
       edges: [],
-      startSessionId: 'a',
       sessions,
       groupProjects: false,
       collapsed: new Set(),

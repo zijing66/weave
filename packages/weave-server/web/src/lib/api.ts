@@ -623,10 +623,23 @@ export interface OrchestrationEdge {
   id: string;
   from: string;
   to: string;
-  /** 源会话每完成一轮就投给目标的正文。 */
+  /** 源节点每完成一轮就投给目标的正文（支持 {upstream}/{summary}/{session} 变量）。 */
   text: string;
-  /** 投递时把源会话这一轮的最终输出附在正文后面（正文可空 ⇒ 只转发那段输出）。 */
-  carryOutput?: boolean;
+  /** 本边提取指令（对上游会话 fork 无头回合产出 {summary}；空 = 不提取）。 */
+  extract?: string;
+}
+
+export type OrchestrationNodeKind = 'session' | 'webhook';
+
+/** mirror of `OrchestrationNode`：session 节点 id = sessionId；webhook 节点 = `w:<uuid>`。 */
+export interface OrchestrationNode {
+  id: string;
+  kind: OrchestrationNodeKind;
+  /** webhook 入口的触发 token（端点 = `/webhooks/orchestrate/<token>`）。 */
+  webhookToken?: string;
+  /** webhook 出口的出站目标与可选 HMAC 密钥。 */
+  url?: string;
+  secret?: string;
 }
 
 export type OrchestrationTrigger = 'manual' | 'webhook' | 'cron';
@@ -636,18 +649,15 @@ export type OrchestrationRunStatus = 'running' | 'done' | 'failed' | 'cancelled'
 export interface OrchestrationRow {
   id: number;
   name: string;
-  /** 起始会话所属项目（项目编排即按它过滤）。 */
+  /** 入口 session 节点所属项目（项目编排即按它过滤）。 */
   projectId: number;
-  startSessionId: string;
   startText: string;
-  /** 每轮结束后向该会话要「交接总结」的指令（空 = 用服务端内置那句）。 */
-  handoffPrompt: string;
-  nodes: string[];
+  nodes: OrchestrationNode[];
   edges: OrchestrationEdge[];
+  /** false = 停用：cron 不触发、入口会话的自然回合不自动启动。 */
+  enabled: boolean;
   cron: string | null;
   lastCronAt: string | null;
-  /** 公开 webhook 的凭证段（端点 = `/webhooks/orchestrate/<token>`）。 */
-  webhookToken: string | null;
   createdAt: string;
   updatedAt: string;
   nextRunAt: string | null;
@@ -687,12 +697,14 @@ export interface OrchestrationRunRow {
 /** 定义体（POST/PUT 同一个形状；PUT 接受它的部分字段）。 */
 export interface OrchestrationInput {
   name: string;
-  startSessionId: string;
   startText?: string;
-  handoffPrompt?: string;
-  nodes: string[];
+  /** webhook-only 编排的项目归属（有 session 入口时由服务端从入口派生）。 */
+  projectId?: number;
+  nodes: OrchestrationNode[];
   edges: OrchestrationEdge[];
   cron?: string | null;
+  /** false = 停用：cron 不触发、入口会话的自然回合不自动启动。 */
+  enabled?: boolean;
 }
 
 export interface LibraryRow {
@@ -1673,6 +1685,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ model }),
     }),
+  /** 思考强度调整：宿主自己的 `/effort <档位>`；档位过 core 表词表白名单（服务端判）。 */
+  setSessionEffort: (sessionId: string, level: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/effort`, {
+      method: 'POST',
+      body: JSON.stringify({ level }),
+    }),
   /** 旁路会话（claude = /btw）：问句经层② 终端打进会话 pane，服务端落一条历史行。 */
   askSideQuestion: (
     sessionId: string,
@@ -1763,15 +1781,25 @@ export const api = {
   deleteOrchestration: (id: number): Promise<{ ok: boolean }> =>
     apiFetch(`/messaging/orchestrations/${id}`, { method: 'DELETE' }),
 
-  triggerOrchestration: (id: number, text?: string): Promise<{ ok: boolean; runId: number }> =>
+  triggerOrchestration: (
+    id: number,
+    opts: { text?: string; entries?: string[] } = {},
+  ): Promise<{ ok: boolean; runId: number }> =>
     apiFetch(`/messaging/orchestrations/${id}/trigger`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(text ? { text } : {}),
+      body: JSON.stringify(opts),
     }),
 
-  rotateOrchestrationWebhook: (id: number): Promise<{ ok: boolean; webhookToken: string }> =>
-    apiFetch(`/messaging/orchestrations/${id}/rotate-webhook`, { method: 'POST' }),
+  rotateOrchestrationWebhook: (
+    id: number,
+    nodeId: string,
+  ): Promise<{ ok: boolean; webhookToken: string }> =>
+    apiFetch(`/messaging/orchestrations/${id}/rotate-webhook`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nodeId }),
+    }),
 
   listOrchestrationRuns: (q: {
     orchestrationId?: number;

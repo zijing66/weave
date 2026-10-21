@@ -1,17 +1,24 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { gitCacheKeyOf, statuslineFactsFromCache } from '../statusline/git-cache.js';
 
 const NOW = 1_700_000_000_000;
 
+const dirs: string[] = [];
+
 function cacheDirWith(git: Record<string, unknown>): { dir: string; cwd: string } {
   const dir = mkdtempSync(path.join(tmpdir(), 'weave-sl-'));
+  dirs.push(dir);
   const cwd = path.join('D:', 'repo', 'proj');
   writeFileSync(path.join(dir, `git-${gitCacheKeyOf(cwd)}.json`), JSON.stringify({ git }));
   return { dir, cwd };
 }
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('statuslineFactsFromCache', () => {
   it('把缓存条目翻成块 token（git 三块）', () => {

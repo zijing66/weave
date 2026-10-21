@@ -8,7 +8,10 @@ import { HookDispatchRepository } from '../repositories/hook-dispatches.js';
 import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
-import { TERMINAL_LOCATOR_ENV_KEYS } from '@weavecode/core';
+import { TERMINAL_LOCATOR_ENV_KEYS, isHarness } from '@weavecode/core';
+import { messagingSurfaceFor } from '../surfaces.js';
+import { syntheticSessionIds } from '../hooks/synthetic-sessions.js';
+import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
@@ -336,6 +339,21 @@ export function startDaemon(): void {
     dataBus,
     hookBus,
   );
+  // 编排边级提取（fork 无头回合）：合成名单经 hookPipeline 推给消费线程过滤；
+  // pipeline 在引擎之后装配，用引用占位（提取跑起来时必然已赋值）。
+  let hookPipelineRef: ReturnType<typeof wireHookFilePipeline> | null = null;
+  const edgeExtract = createEdgeExtract({
+    sessions: hookSessions,
+    projects,
+    harnessOf: (sessionId) => {
+      const latest = hookEvents.listBySession(sessionId, 1);
+      const src = latest[latest.length - 1]?.source;
+      return isHarness(src) ? src : null;
+    },
+    surfaceFor: messagingSurfaceFor,
+    headless: headlessRunner,
+    onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
+  });
   // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。
   // 新起的 resume 进程要先在 claude 注册表落名，投递器才不把它判成离线——
   // 等它出现（最多 8s）；等不到也放行，交给队列在 SessionStart 后冲洗。
@@ -345,6 +363,8 @@ export function startDaemon(): void {
     deliverer: messageDeliverer,
     sessions: hookSessions,
     bus: hookBus,
+    supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
+    extract: (input) => edgeExtract.run(input),
     ensureOpen: async (sessionId) => {
       const opened = await openSessionTerminal(
         { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
@@ -400,6 +420,7 @@ export function startDaemon(): void {
     sessionProbe,
     uploads,
   });
+  hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
