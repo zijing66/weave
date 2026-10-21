@@ -1,14 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Info, Lock, Plus, X } from 'lucide-react';
-import type { TreeNodeSpec } from '@/lib/config-form';
+import type { ConfigFieldSpec, TreeNodeSpec } from '@/lib/config-form';
 import {
+  arrayItemsOf,
   boolOf,
   controlOf,
   defaultValueOf,
+  emptyItemOf,
+  fieldValueOf,
   linesOf,
   listOfLines,
+  mapEntriesOf,
+  mapOfEntries,
+  shapeOf,
   textOf,
   valueOfText,
+  withFieldValue,
 } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
@@ -36,6 +43,7 @@ export function ConfigValueRow({
   depth,
   value,
   managed,
+  locked,
   onChange,
 }: {
   spec: TreeNodeSpec;
@@ -44,12 +52,15 @@ export function ConfigValueRow({
   depth: number;
   value: unknown;
   managed: boolean;
+  /** 这个数组里 weave 自己写进去的条目：这几行只读，其余照常增删。 */
+  locked?: readonly string[];
   onChange: (edit: RowEdit) => void;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const set = value !== undefined;
   const control = controlOf(spec.type, spec.options);
+  const shape = shapeOf(spec);
 
   const body = (() => {
     if (managed) {
@@ -70,14 +81,28 @@ export function ConfigValueRow({
       );
     }
     if (!set) {
+      const empty = shape === 'map' ? {} : shape === 'array' ? [] : defaultValueOf(spec.type, spec.options);
       return (
         <button
-          onClick={() => onChange({ value: defaultValueOf(spec.type, spec.options) })}
+          onClick={() => onChange({ value: empty })}
           className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-200 hover:border-edge/[0.3]"
         >
           <Plus className="h-3 w-3" />
           {t('cfg.write')}
         </button>
+      );
+    }
+    if (shape === 'map') {
+      return <MapField spec={spec} value={value} onCommit={(next) => onChange({ value: next })} />;
+    }
+    if (shape === 'array') {
+      return (
+        <ListField
+          spec={spec}
+          value={value}
+          locked={locked ?? []}
+          onCommit={(next) => onChange({ value: next })}
+        />
       );
     }
     if (control === 'select') {
@@ -186,6 +211,290 @@ export function ConfigValueRow({
         </p>
       )}
     </div>
+  );
+}
+
+/** map 值的标量形状（`valueType` / `valueOptions`）当作一个匿名字段来出控件。 */
+function valueSpecOf(spec: TreeNodeSpec): TreeNodeSpec {
+  return {
+    ...spec,
+    key: `${spec.key}.*`,
+    type: spec.valueType ?? 'string',
+    options: spec.valueOptions,
+  };
+}
+
+/**
+ * map 值：键名由用户起（模型名、插件 ID），所以不能拆成点号路径的子键——
+ * 一行一个条目，值按字段（或标量）在旁边编辑。草稿留在本地，键还没写完也不会掉行。
+ */
+function MapField({
+  spec,
+  value,
+  onCommit,
+}: {
+  spec: TreeNodeSpec;
+  value: unknown;
+  onCommit: (next: Record<string, unknown>) => void;
+}) {
+  const t = useT();
+  const [rows, setRows] = useState(() => mapEntriesOf(value));
+  const committed = useRef(JSON.stringify(value));
+  useEffect(() => {
+    const next = JSON.stringify(value);
+    if (next === committed.current) return;
+    committed.current = next;
+    setRows(mapEntriesOf(value));
+  }, [value]);
+
+  const commit = (next: typeof rows): void => {
+    setRows(next);
+    // 空键名不落进对象：值没变就别攒出一条「待保存」
+    const object = mapOfEntries(next);
+    const json = JSON.stringify(object);
+    if (json === committed.current) return;
+    committed.current = json;
+    onCommit(object);
+  };
+  const patch = (index: number, rowValue: unknown, key?: string): void =>
+    commit(rows.map((row, i) => (i === index ? { key: key ?? row.key, value: rowValue } : row)));
+
+  const fields = spec.fields ?? [];
+  return (
+    <div className="space-y-1">
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-start gap-1.5">
+          <input
+            value={row.key}
+            onChange={(e) => patch(i, row.value, e.target.value)}
+            placeholder={t('cfg.mapKey')}
+            className={cn(INPUT_CLS, 'max-w-[180px] font-mono')}
+          />
+          <div className="min-w-0 flex-1">
+            {fields.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {fields.map((f) => (
+                  <FieldControl
+                    key={f.name}
+                    field={f}
+                    value={fieldValueOf(row.value, f)}
+                    onChange={(next) => patch(i, withFieldValue(row.value, f, next))}
+                  />
+                ))}
+              </div>
+            ) : (
+              <PlainControl
+                spec={valueSpecOf(spec)}
+                value={row.value}
+                onChange={(next) => patch(i, next)}
+              />
+            )}
+          </div>
+          <button
+            onClick={() => commit(rows.filter((_, j) => j !== i))}
+            className="mt-1 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+            title={t('cfg.clear')}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={() => commit([...rows, { key: '', value: fields.length > 0 ? {} : emptyItemOf(valueSpecOf(spec)) }])}
+        className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
+      >
+        <Plus className="h-3 w-3" />
+        {t('cfg.addEntry')}
+      </button>
+    </div>
+  );
+}
+
+/** 元素是对象的数组：一行一个元素，元素字段就在行里编。 */
+function ListField({
+  spec,
+  value,
+  locked,
+  onCommit,
+}: {
+  spec: TreeNodeSpec;
+  value: unknown;
+  locked: readonly string[];
+  onCommit: (next: unknown[]) => void;
+}) {
+  const t = useT();
+  const [rows, setRows] = useState(() => arrayItemsOf(value));
+  const committed = useRef(JSON.stringify(value));
+  useEffect(() => {
+    const next = JSON.stringify(value);
+    if (next === committed.current) return;
+    committed.current = next;
+    setRows(arrayItemsOf(value));
+  }, [value]);
+
+  const commit = (next: unknown[]): void => {
+    setRows(next);
+    const kept = next.filter((item) => !isBlank(item));
+    const json = JSON.stringify(kept);
+    if (json === committed.current) return;
+    committed.current = json;
+    onCommit(kept);
+  };
+  const fields = spec.fields ?? [];
+  return (
+    <div className="space-y-1">
+      {rows.map((item, i) => {
+        const lock = locked.includes(String(item));
+        return (
+          <div key={i} className="flex items-start gap-1.5">
+            {fields.length > 0 ? (
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                {fields.map((f) => (
+                  <FieldControl
+                    key={f.name}
+                    field={f}
+                    value={fieldValueOf(item, f)}
+                    onChange={(next) =>
+                      commit(rows.map((row, j) => (j === i ? withFieldValue(row, f, next) : row)))
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {lock ? (
+                  <span className="truncate font-mono text-[11px] text-neutral-400">{String(item)}</span>
+                ) : (
+                  <PlainControl
+                    spec={valueSpecOf(spec)}
+                    value={item}
+                    onChange={(next) => commit(rows.map((row, j) => (j === i ? next : row)))}
+                    compact
+                  />
+                )}
+              </div>
+            )}
+            {lock ? (
+              <span className="mt-1 flex items-center gap-1 text-[10px] text-neutral-500" title={t('cfg.managedEntry')}>
+                <Lock className="h-3 w-3" />
+              </span>
+            ) : (
+              <button
+                onClick={() => commit(rows.filter((_, j) => j !== i))}
+                className="mt-1 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+                title={t('cfg.clear')}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <button
+        onClick={() => commit([...rows, emptyItemOf(spec)])}
+        className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
+      >
+        <Plus className="h-3 w-3" />
+        {t('cfg.addEntry')}
+      </button>
+    </div>
+  );
+}
+
+/** 全空的行（空串 / 空对象）不值得写进文件。 */
+function isBlank(item: unknown): boolean {
+  if (item === undefined || item === null) return true;
+  if (typeof item === 'string') return item.trim() === '';
+  if (typeof item === 'object') return Object.keys(item as Record<string, unknown>).length === 0;
+  return false;
+}
+
+/** 对象里的一个字段：小标签 + 按类型出的控件。 */
+function FieldControl({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigFieldSpec;
+  value: unknown;
+  onChange: (next: unknown) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1">
+      <span className="font-mono text-[10px] text-neutral-500" title={field.description ?? field.name}>
+        {field.name}
+      </span>
+      <PlainControl
+        spec={{ key: field.name, group: '', description: field.description ?? '', type: field.type, options: field.options }}
+        value={value}
+        onChange={onChange}
+        compact
+      />
+    </label>
+  );
+}
+
+/** 按类型出一个控件（不含「写」按钮与托管判定——那两层由外层负责）。 */
+function PlainControl({
+  spec,
+  value,
+  onChange,
+  compact,
+}: {
+  spec: TreeNodeSpec;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  compact?: boolean;
+}) {
+  const t = useT();
+  const control = controlOf(spec.type, spec.options);
+  if (control === 'switch') return <Switch checked={boolOf(value)} title={spec.key} onChange={onChange} />;
+  if (control === 'select') {
+    const options = [...(spec.options ?? [])];
+    const current = typeof value === 'string' ? value : textOf(value);
+    if (current && !options.includes(current)) options.push(current);
+    return (
+      <select
+        value={current}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        className={cn(INPUT_CLS, compact ? 'w-28' : 'max-w-xs')}
+      >
+        <option value="">{t('cfg.unset')}</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (control === 'number') {
+    return (
+      <input
+        type="number"
+        value={typeof value === 'number' ? value : textOf(value)}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+        className={cn(INPUT_CLS, compact ? 'w-24' : 'max-w-[140px]')}
+      />
+    );
+  }
+  if (control === 'list') {
+    const text = linesOf(value);
+    return (
+      <textarea
+        value={text}
+        rows={Math.min(4, Math.max(1, text.split('\n').length))}
+        onChange={(e) => onChange(listOfLines(e.target.value))}
+        className={cn(INPUT_CLS, 'font-mono', compact ? 'w-40' : 'w-full')}
+      />
+    );
+  }
+  return (
+    <input
+      value={typeof value === 'string' ? value : textOf(value)}
+      onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+      className={cn(INPUT_CLS, compact ? 'w-40' : 'w-full')}
+    />
   );
 }
 

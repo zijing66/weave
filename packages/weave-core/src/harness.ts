@@ -61,23 +61,32 @@ export const HARNESS_EVENTS = {
     /** 模型切换落定（切换真发生后发）——确认框了结的信号（答「No, go back」不发）。 */
     'PostModelSwitch',
   ] as const,
-  /** Codex 事件待批 2 B0 调研锁定（BACKLOG §10-6）；一期不注册（B0 闸门）。 */
   /**
-   * Codex 采集（尾读 rollout JSONL，`weave-harness/src/codex/rollout.ts`）——事件名
-   * 是**规范名**：codex 的线名（`task_complete` / `turn_aborted` / …）由 adapter 归一，
-   * 服务端与 web 只认这一列。
+   * Codex 采集（主源 = codex hooks，兜底尾读 rollout JSONL）——事件名是**规范名**：
+   * codex 的线名（`Interrupt` / `task_complete` / …）由 adapter 归一，服务端与 web
+   * 只认这一列。0.163 的 hooks 引擎载荷与 claude 逐字同形。
    */
   codex: [
-    /** 会话落盘文件的首行 `session_meta`（新开会话 / resume 新起文件各一条）。 */
+    /** 会话开始：hook 的 `SessionStart`，或 rollout 首行 `session_meta`（新开 / resume / fork）。 */
     'SessionStart',
-    /** 用户输入：`event_msg:user_message`（≤0.150）或 `item_completed(UserMessage)`（0.163）。 */
+    /** 用户输入（hook 的 `UserPromptSubmit`；rollout 兜底读 `user_message` / `item_completed(UserMessage)`）。 */
     'UserPromptSubmit',
-    /** 回合收尾（`task_complete`；`last_agent_message` 多为 null，由 adapter 补位）。 */
+    /** 回合收尾（hook 的 `Stop` 自带 `last_assistant_message`；rollout 兜底靠行序补位）。 */
     'Stop',
-    /** 回合被中断（`turn_aborted`，reason=interrupted）——codex 自己有这条，不必猜。 */
+    /** 回合被中断——codex 线名是 `Interrupt`，adapter 翻成规范名。 */
     'TurnAborted',
-    /** 工具执行收尾（`exec_command_end` / `patch_apply_end`）。 */
+    /** 工具执行收尾（hook 的 `PostToolUse`；rollout 兜底读 `CommandExecution` / `FileChange` / `McpToolCall`）。 */
     'PostToolUse',
+    /** 会话退出（hook 的 `SessionEnd`，只覆盖正常退出）——退出即清的信号。 */
+    'SessionEnd',
+    /** 压缩开始（带 trigger=manual/auto）。 */
+    'PreCompact',
+    /** 压缩收尾。 */
+    'PostCompact',
+    /** 子代理启动（agent_id / agent_type）——与 SubagentStop 成对。 */
+    'SubagentStart',
+    /** 子代理收尾（带 last_assistant_message 与 agent_transcript_path）。 */
+    'SubagentStop',
   ] as const,
 } satisfies Record<Harness, readonly string[]>;
 
@@ -173,18 +182,19 @@ export const HARNESS_LIFECYCLE = {
     sessionExit: 'SessionEnd',
   },
   /**
-   * Codex（尾读 rollout JSONL，事件名见 HARNESS_EVENTS.codex）。
+   * Codex（主源 hooks，兜底 rollout；事件名见 HARNESS_EVENTS.codex）。
    * `TurnAborted` 只进 `close` 不进 `closeFailed`：用户按 ESC 自己断掉的回合
-   * 若落「失败」态，比说「打开」更误导。
+   * 若落「失败」态，比说「打开」更误导。codex 没有「回合因 API 错误收尾」的
+   * 独立事件，故 `closeFailed` 恒空。
    */
   codex: {
     open: 'UserPromptSubmit',
     close: ['Stop', 'TurnAborted'],
     closeFailed: [],
-    sessionMarkers: ['SessionStart'],
-    subagentStop: '',
+    sessionMarkers: ['SessionStart', 'SessionEnd'],
+    subagentStop: 'SubagentStop',
     questionTools: [],
-    sessionExit: null,
+    sessionExit: 'SessionEnd',
   },
 } satisfies Record<Harness, HarnessLifecycle>;
 

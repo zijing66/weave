@@ -88,6 +88,7 @@ async function snapshotView(
     exists: await exists(target),
     values,
     managedKeys: surface.managedKeys(values),
+    managedEntries: surface.managedEntries(values),
     profiles: state.profiles,
     activeId: state.activeId,
     liveText,

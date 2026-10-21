@@ -447,6 +447,24 @@ export interface SessionPlan {
   text: string;
 }
 
+/** 一处改动（`before` → `after`）：宿主只给片段（Edit 的 old/new）就只摆片段。 */
+export interface SessionEditHunk {
+  before: string;
+  after: string;
+  at: string | null;
+  /** 单处超长被服务端裁了尾巴 → 标「已截断」，不假装是全份。 */
+  clamped?: true;
+}
+
+/** 按文件汇总的会话改动（GET /sessions/:id/edits）。`files` 为 null = 没有这份面 /
+ *  读不到转录，`reason` 说明是哪一种（前端据此出「为什么这里什么都没有」）。 */
+export interface SessionEdits {
+  files: Array<{ path: string; hunks: SessionEditHunk[] }> | null;
+  hunks: number;
+  truncated: boolean;
+  reason?: 'unsupported' | 'unreadable';
+}
+
 /** mirror of MessagingSurface 派生能力矩阵（GET /messaging/capabilities 行）——
  *  web 只渲染不判定：按钮门控、编排域模式选项都从这张表来。 */
 export interface MessagingCapability {
@@ -1209,6 +1227,21 @@ export interface ConfigKeySpec {
   scope: 'any' | 'managed' | 'user' | 'project' | 'local' | 'global';
   deprecated?: boolean;
   nested?: boolean;
+  /** 值的容器形状：map = 键名由用户起（模型名、插件 ID），array = 有序列表。 */
+  shape?: 'map' | 'array';
+  /** 值（map）/ 元素（array）是对象时的字段。 */
+  fields?: ConfigFieldSpec[];
+  /** 值（map）/ 元素（array）是标量时的类型与枚举；有 `fields` 时以字段为准。 */
+  valueType?: string;
+  valueOptions?: string[];
+}
+
+/** 对象值的一个字段（控件文法与顶层键同一套）。 */
+export interface ConfigFieldSpec {
+  name: string;
+  type: string;
+  options?: string[];
+  description?: string;
 }
 
 export interface ConfigEnvVarSpec {
@@ -1244,6 +1277,8 @@ export interface ConfigView {
   exists: boolean;
   values: Record<string, unknown>;
   managedKeys: string[];
+  /** 数组里的 weave 托管条目（weave init 加的规则）——只有这几行只读。 */
+  managedEntries: Array<{ path: string; entry: string }>;
   profiles: ConfigProfileMeta[];
   activeId: string | null;
   /** 活文件当前内容（与 `activeText` 比即漂移）。 */
@@ -1503,6 +1538,10 @@ export const api = {
     apiFetch<{ plan: SessionPlan | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/plan`,
     ).then((r) => r.plan),
+  /** 会话的改动汇总（按文件聚合；diff 由前端算）。没有该 harness 的提取面 / 读不到
+   *  转录时 `files` 为 null。 */
+  sessionEdits: (sessionId: string): Promise<SessionEdits> =>
+    apiFetch<SessionEdits>(`/sessions/${encodeURIComponent(sessionId)}/edits`),
   /** 投递消息到会话：恒 prompt 通道、无模式入参（直投 → 终端 send-text → 中继
    *  降级 → 未开会话积压队列）；`forceTerminal` 收窄成只剩层② 终端击键——dashboard
    *  的手动对话恒带它（直投/中继不带发送方，宿主也不当用户输入）。层①② 皆无才

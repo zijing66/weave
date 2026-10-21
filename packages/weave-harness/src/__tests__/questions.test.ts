@@ -61,10 +61,14 @@ describe('claude 阻塞问答面', () => {
     expect(twoSingle.map((q) => q.submit === true)).toEqual([false, false, true]);
   });
 
-  it('计划确认与权限确认：键序同为原子、单问不追加 Submit 步', () => {
+  it('计划确认两行（1 = 批准并切默认模式 / 2 = 拒绝）、不追加 Submit 步', () => {
     const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});
     expect(plan).toHaveLength(1);
-    expect(plan[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2'], ['3']]);
+    expect(plan[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
+    expect(plan[0]!.options.map((o) => o.label)).toEqual([
+      'Yes, and switch to default (ask each time) for this session',
+      'No',
+    ]);
     const perm = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
       toolName: 'Bash',
       toolInput: {},

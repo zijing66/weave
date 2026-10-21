@@ -24,18 +24,29 @@
 
 ## §2 能力槽与 statusline / logs 面
 
-十四能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十五能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits / images）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
 
-### logs 槽（拉取式采集）
+### capture 槽（hook 脚本的安装面）
 
-`LogSource` = `poll(options) → LogRecord[]` + `health()`。`events` 槽答「一份上报怎么归一」，前提是有人把上报递进来（claude 靠 hook 脚本写 inbox 文件）；没有 push 面的 harness 只能拉，这个槽就是那条面。今天唯一实现 = codex（`weave-harness/src/codex/rollout.ts`）。
+`CaptureSurface` = `readUserCapture` / `installUserCapture` / `uninstallUserCapture` / `stripProjectCapture` / `scriptHealth`：答「这个 harness 的 hook 声明写在哪个文件、weave 那一组长什么样」。今天两实现——claude（`~/.claude/settings.json` 的 `hooks` 键 + `.claude/helpers/hook-handler.cjs`，另有项目档）与 codex（`<CODEX_HOME>/hooks.json` + `<CODEX_HOME>/helpers/hook-handler.cjs`，**只装 user 档**）。
+
+- **脚本正文只有一份生成器**：`claude/capture.ts` 的 `generateHookHandler(version, harness)`。harness 只决定编码进脚本的三张表（`OWN_HARNESS` / `INJECTABLE_EVENTS` / `TITLE_EFFECTIVE_EVENTS`）与注入文法；codex 的后两张都空 ⇒ 永不回注 `additionalContext`、永不改会话名。
+- **投递路径与 harness 无关**：脚本按 `<projectDir>/.weave/token` 取令牌、把**原始载荷**append 进 `<cacheDir>/hooks/inbox`，daemon 的 inbox worker 按 `report.source` 挑 `EventSource`（见 §9 的单通道口径）。故接一个新 harness 只需「装声明 + 让脚本跑起来」，服务端一条 SQL 都不用改。
+- **codex 侧四处与 claude 不同**：① 声明落点 `hooks.json`（`HooksFile` 形状 + `deny_unknown_fields`）；② 事件词表少几条、多一个 `Interrupt`（线名，weave 规范名是 `TurnAborted`）；③ **信任闸**（见下）；④ 项目档不装——写 `<repo>/.codex/hooks.json` 还额外要求该文件夹被 codex 标成 trusted，多一道用户自己解不了的坎。
+- **信任闸**：非 builtin / 非 managed 的 handler 必须有 `[hooks.state.'<hooks.json 绝对路径>:<snake_event>:<group>:<handler>']` 的 `trusted_hash`（键形 = `codex-rs/hooks/src/lib.rs:120` 的 `hook_key`，事件段是 `pre_tool_use` 这类下划线名），否则**不执行**。哈希盖住 handler 的声明内容 ⇒ `command` 串必须**恒定**（不带版本号/时间戳），这样「Trust all and continue」点一次即跨 weave 升级长期有效；weave 不自己算这个哈希（那等于替用户签字，且算错的表现是静默不跑）。CLI 只有一次性 `--dangerously-bypass-hook-trust`，config.toml 无持久开关 ⇒ 这一下只能用户在 codex 启动那张 Review hooks 弹窗里点。
+- **hook 的执行环境**：以 `current_dir = 会话 cwd` 跑；非 unix 先 `env_clear()` 再回放整份继承快照（只滤 `NON_INHERITABLE_ENV_VARS`）⇒ `WEZTERM_PANE` 还在，pane 定位（§4.10）不用为 codex 改。codex 不设 `CLAUDE_PROJECT_DIR`，脚本的项目目录回落到载荷里的 `cwd`。
+- `hook_transcript_path()` 给的就是 rollout 文件路径（内部会 `ensure_rollout_materialized`）——将来 codex 的 `edits` 槽从这里读。
+
+### logs 槽（拉取式兜底）
+
+`LogSource` = `poll(options) → LogRecord[]` + `health()`。`events` 槽答「一份上报怎么归一」，前提是有人把上报递进来（hook 脚本写 inbox）；没有 push 面的 harness 只能拉，这个槽就是那条面。今天唯一实现 = codex（`weave-harness/src/codex/rollout.ts`），且**已降为兜底**：`capture` 装上（10s 记忆、按 `CODEX_HOME` 失效）就让位，避免同一事件入库两份。
 
 - **尾读 rollout JSONL**：codex 把每个会话 durable 地写在 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`（归档的在 `archived_sessions/`）。会话身份 = 首行 `session_meta.session_id`（与文件名里的 uuid 同值）；实测 `codex resume` **接着写同一个文件**（`ordinal` 续号、不重发 `session_meta`），子线程 / 归档仍可能让一个 id 跨多个文件 ⇒ 游标按**文件字节偏移**记（`<dataDir>/logs/codex/cursors.json`），不假设一 id 一文件。
-- **规范化事件名**：codex 的线名（`task_complete` / `turn_aborted` / `exec_command_end` / 两版用户输入落点 `user_message` 与 `item_completed(UserMessage)`）在 adapter 里归一成 `SessionStart` / `UserPromptSubmit` / `Stop` / `TurnAborted` / `PostToolUse`，服务端的 `turnOpen` 判据、`hasRun`、事件链配色一条 SQL 都不改。
-- **卷控三道**：白名单（只认上述五类行）、单行 512KB 上限、单拍预算（400 条 / 4MB，游标**逐行**推进——一次跳到文件尾等于静默丢事件）。首次发现的文件只回填 256KB 尾窗（2 分钟内写过且 <1MB 的从头读），7 天以上的只登记不读。
+- **规范化事件名**：0.163 的行形状是 `TurnItem`（`AgentMessage` / `CommandExecution` / `FileChange` / `McpToolCall` / `UserMessage`），adapter 归一成 `SessionStart` / `UserPromptSubmit` / `Stop` / `TurnAborted` / `PostToolUse`，服务端的 `turnOpen` 判据、`hasRun`、事件链配色一条 SQL 都不改。**`"Text"`（AgentMessage）与 `"text"`（UserMessage）大小写不统一**，按 `type` 逐字比会漏正文。
+- **卷控三道**：白名单（只认上述几类行）、单行 512KB 上限、单拍预算（400 条 / 4MB，游标**逐行**推进——一次跳到文件尾等于静默丢事件）。首次发现的文件只回填 256KB 尾窗（2 分钟内写过且 <1MB 的从头读），7 天以上的只登记不读。
 - **`cwdWhitelist` 的契约**：源自己负责路径归一（大小写 / 分隔符 / 解析），命中即把**白名单原文**回填进 `report.cwd`，调用方按原样等值匹配到项目。
 - **进程内锁**：`<stateDir>/.lock` 存 pid（`pidAlive` 判活接管、60s 节流心跳）——dev 与 start 两个 daemon 共用一个数据目录时不双写同一批事件。
-- **没进采集面的**（诚实清单）：`reasoning` / `token_count` / `world_state` / `turn_context` / 图片附件 / `mcp_tool_call` 的入参与结果都不是事件，dashboard 不展示；codex 也没有「侧边聊天」「阻塞式问答」「压缩态」——对应表位留 null / 空。
+- **没进采集面的**（诚实清单）：`reasoning` / `token_count` / `world_state` / `turn_context` / 图片附件 / `mcp_tool_call` 的入参与结果都不是事件，dashboard 不展示；阻塞式问答的对应表位留空。
 
 ### edits 槽（会话改动汇总）
 
@@ -49,6 +60,18 @@
 - **汇总与限流在 server**（`summarizeEdits`）：`GET /sessions/:id/edits` → `{ files: [{ path, hunks: [{ before, after, at, clamped? }] }], hunks, truncated }`。展示路径相对项目根（posix 分隔），项目外的保留绝对路径；单处字段裁到 200k 字符（标 `clamped: true`）、总量 4MB（超了标 `truncated: true`）——都不许假装是全份。
 - **null 也是答案**：没有该槽的 harness 回 `reason: 'unsupported'`，读不到转录回 `reason: 'unreadable'`，前端如实说明「为什么这里什么都没有」，不空转、不摆空壳。
 - **diff 在 web 现算**：`web/src/lib/text-diff.ts` 的 `diffLines` + `collapseDiff`，行渲染是 `components/ui/diff-rows.tsx`（与配置对照弹窗 `DiffDialog` 共用）。入口 = 对话气泡右键「改动汇总」（`SessionEditsDialog`），整段对话一个面、不是单条气泡的。
+
+### images 槽（入站图采集）
+
+`ImagesSurface` = `sessionImages({ sessionId, transcriptPath }) → PromptImageSet[] | null`：一条 user 消息 = `{ text, at, images: [{ mediaType, bytes }] }`，时间序。今天唯一实现 = `weave-harness/src/claude/images.ts`（`CLAUDE_IMAGES`）；codex 留位（它的图是独立 `ImageView` TurnItem、且侧边会话不落 rollout，形状不同）。
+
+- **为什么读转录**：终端输入框里粘的图，hook 载荷只有一个 `[Image #N]` 占位记号，base64 根本没进 payload；图只存在于转录 user 条目的 `{type:'image', source:{type:'base64', media_type, data}}`。与 `edits` 槽同一个理由：把被裁过的事件当真会丢数据。
+- **只认顶层 image 块**：工具结果（`toolUseResult` 非空的 user 条目、或包一层 `tool_result` 的内嵌图）与 assistant 条目都不算「人贴的图」，否则气泡会凭空多出图。媒体类型只认 uploads 支持的四种（png/jpeg/gif/webp），单张 ≤10MB，超了跳过不猜。
+- **读法同 `edits`**：流式逐行，先按 `"type":"image"` 子串预筛再 parse；读崩回 `null`，不交半份。
+- **补采在 server**（`daemon/prompt-images.ts`）：`pendingOf` 取该会话 `UserPromptSubmit` 里「带占位、还没挂 `event_images`」的事件；与转录条目**归一去占位记号后按正文全等**认领（取时间最近的一条），纯图消息两侧正文皆空、只能按时间窗口（120s）兜底——空正文没有可比的证据，超窗宁可不挂。认到就把图 `save` 进 uploads（内容寻址，重复即 no-op）并 `linkToEvent`，之后缩略图 / lightbox / 分享图全走既有路径。
+- **触发恒被动**：`GET /projects/:id/hooks?sessionId=` 取事件时 `needsImageImport` 判一下，有缺口才 `importPromptImagesOnce`——**等它一拍再回响应**（历史会话不会再来事件帧，后台补完前端没有刷新时机，图会一直不出现直到重开对话）；同一会话进程内 `attempted` 只扫一次，失败静默（回 0）。**不在 ingest 里扫**：那时图可能还没落盘，且会拖慢事件管道。单次上限 64 张 / 64MB，超出的留到下次进程。代价 = 第一次打开这段对话多扫一遍转录（预筛只 parse 带 `"type":"image"` 的行）。
+- **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
+- **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
 
 ### statusline 面
 
@@ -379,7 +402,7 @@ Web Push 细节：
 - 权限 Notification 类型。
 - 静默权限模式名单：该模式下宿主结构上不弹对话框，其 permission_prompt 恒为噪声；名单是「宿主是否可能问人」的事实，只放结构上不可能弹框的模式；模式名是 harness 知识，不得散写进 server。
 - 事件弹框判据（`eventQuestion`）：不是工具、也非权限提醒的对话框（claude 的「Switch model?」）——事件到达且**对话框确实要弹**才给问题面；弹不弹是 harness 知识，猜错即幽灵问题。采集面 = 可裁剪开关 `hooks.preModelSwitch`（Pre 置位 / Post 落定成对登记，存量项目须重跑 `weave init`）。
-- 问题面解析：AskUserQuestion 的 toolInput 全量解析；ExitPlanMode toolInput 恒空 → 合成固定三选项；解析不出 → OPAQUE 兜底「看得见阻塞、无远程作答面」。
+- 问题面解析：AskUserQuestion 的 toolInput 全量解析；ExitPlanMode toolInput 恒空 → 合成固定两选项（`1` = 批准并切会话默认模式、`2` = 拒绝，文案取宿主模态框原文）；解析不出 → OPAQUE 兜底「看得见阻塞、无远程作答面」。
 - **预览形态** = 单选 && 任一选项带 preview（多选即使带预览也落旧形态）——每选项归一化出 `preview` 文案（超 2000 字符或含不可见/双向字符 → withhold 文案、无可见内容 → 「No preview available」、缺省 → null 且不计入判据）+ `previewMode`。
 
 ### 选项键序
@@ -698,15 +721,40 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ### 词表 = 官方文档的生成物
 
-`settings-reference.md`（设置键）+ `env-vars.md`（环境变量）→ `scripts/gen-claude-catalog.mjs` → 提交进仓的 `settings-catalog.generated.ts`（248 键 / 17 组 / 391 env）。运行期**不联网**；重生成 `pnpm gen:catalog`（`--from <目录>` 走已下载的 md）。说明文案是官方英文原文（截断、剥链接），不翻译——翻错了比英文原文更难核。
+`settings-reference.md`（设置键）+ `env-vars.md`（环境变量）→ `scripts/gen-claude-catalog.mjs` → 提交进仓的 `settings-catalog.generated.ts`（307 键 / 17 组 / 391 env）。运行期**不联网**；重生成 `pnpm gen:catalog`（`--from <目录>` 走已下载的 md）。说明文案是官方英文原文（截断、剥链接），不翻译——翻错了比英文原文更难核。
 
 - 键 = **点号路径**（`sandbox.filesystem.allowWrite`），嵌套结构天然在路径里；`README` 表格里的 `Fields for <key>` 解析成子键。
 - 档位可见性：`global` 档只给 `scope === 'global'` 的键、且不给 env 表；其余档 = `any` + 本档专属。**`read()` 同口径投影**——档外的键既不展示也不写回。
 - 类型不是猜的：`Boolean` / 枚举（文档 `one of` 或列举的引号值 → `options`）各自的控件由 `options` 有无决定；类型串太长的按分号截断并标 `…`。
 
-### 托管键只读
+### 值形状：`shape` / `fields` / `valueType`
 
-`MANAGED_PATHS = ['$comment','hooks','permissions','enabledPlugins','env.WEAVE_ENABLED']` + `statusLine`（仅当命令指向 weave，判据 = `statusLineIsWeave`）由 `managedKeys(values)` 出具，web 渲染成 `<Lock/>` + 「weave 托管」并指向对应面板。**为什么不给编辑**：这些键是 `weave init` / 状态栏 / 插件面写进去的，表单改了会被下一次 init 合并覆盖掉，用户看到「改了又变回来」。逃生口是原始 JSON 视图，那里照写不误。
+标量之外的值要能**逐字段/逐项**编辑，靠 `ConfigKeySpec` 上这四个字段答「值长什么样」（都从文档的 Type 从句派生，不是手写）：
+
+| 字段 | 答什么 |
+| --- | --- |
+| `shape: 'map'` | 键名由用户起（模型名、插件 ID）→ 拼不成点号路径的子键，web 用「一行一键」编辑器 |
+| `shape: 'array'` | 有序列表，**一律标出**（连标量数组也是：weave 的托管条目锁在行上，整段文本域做不到按行只读） |
+| `fields[]` | 值（map）/ 元素（array）是对象时有哪些字段，各带自己的 `type` / `options` |
+| `valueType` + `valueOptions` | 没有 `fields` 时值（map）/ 元素（array）是标量：类型与枚举 |
+
+解析上的两个坑（都踩过）：
+
+- **`options` 不再是万金油**。Type 从句里的项目符号两种都长一样（`* \`x\`: …`），带引号的是**取值**、不带引号的是**字段名**；全塞进 `options` 会让 `modelSettings` 这类对象键出成一个下拉框。现在分开：字段进 `fields`，取值进该字段的 `options` 或 `valueOptions`。
+- **map 的「to」之前说的是键**（`object mapping <model name> to an object with …`），只解析「to」之后的从句，否则键名（`plugin-name@marketplace-name`）会被当成字段。
+
+文档只在从句里写「with `a`, `b`, and `c` arrays of prose rules」的对象键（`autoMode`、`spinnerVerbs`），生成器补出子键、类型取共用那句。散文化的数组元素（`modelPicker.options` 等 8 个键）与 `modelPricing.overrides` 落**覆盖表** `weave-harness/src/claude/config-shapes.ts`（按点号路径索引，harness 知识、不进生成物）；`config.test.ts` 兜住「文档改名后覆盖表静默失效」与「数组类键缺 `fields`」。
+
+### 托管判据：weave 真写进去的那一部分
+
+两个面，粒度不同：
+
+- `managedKeys(values)` 答**整个键**是 weave 的：`['$comment','hooks','enabledPlugins','env.WEAVE_ENABLED']` + `statusLine`（仅当命令指向 weave，判据 = `statusLineIsWeave`）。web 渲染成 `<Lock/>` + 「weave 托管」并指向对应面板。
+- `managedEntries(values)` 答**数组里的哪几条**是 weave 的：`permissions.allow` / `permissions.deny` 里 `weave init` 加的那 6 条（常量 = `settings-gen.ts` 的 `WEAVE_PERMISSIONS_ALLOW` / `_DENY`，与 init/uninit 同一来源），只报值里真在的。web 把这几行标只读，同一数组里用户自己的规则照常增删。
+
+**`permissions` 不整键托管**：以前按「顶层键存在」判（`MANAGED_PATHS` 含 `permissions`），结果一条 weave 规则都没有的文件也被整块锁死，连 `defaultMode`（`bypassPermissions` 就是它的取值）都改不了。判据必须是内容而不是键在不在。
+
+**为什么托管**：这些是 `weave init` / 状态栏 / 插件面写进去的，表单删了会被下一次 init 合并加回来，用户看到「改了又变回来」。逃生口是原始 JSON 视图，那里照写不误。
 
 ### 写盘语义
 
@@ -736,8 +784,10 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 - **顺序先按文件**：文件里出现过的键按 JSON 原文顺序立节点，词表有、文件没有的键再接在后面——看第一眼就是自己那份文件的形状。
 - **同层父节点合并**：文件里的 `sandbox.enabled` 与词表的 `sandbox` 落到同一个 `sandbox` 节点，节点自带 spec 只在「没有子节点」时才出控件（`hooks` 这种整体就是一张 JSON 的键不拆开、出 JSON 框；`sandbox` 出的是子键）。
 - **词表没收的键照实列出来**（`extra`，只读 + 标「词表未收录」）：文件里真有而文档没写的键，隐瞒它就等于让人以为文件是干净的；改这类键只能走原始 JSON 视图。
-- **`env` 也是树上的一支**：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec），搜索时再补文档里命中的（上限 50）——不再单独开一块 env 区。
+- **`env` 也是树上的一支**：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec，**值的控件按变量 `kind` 出**：Boolean→开关、枚举→下拉、number、list），搜索时再补文档里命中的（上限 50）；节点底部一行输入框，候选就是文档里那 391 个变量名（`<datalist>` 可搜、也可自由输入），选中即落一条 `env.<NAME>` 待保存。不再单独开一块 env 区。
 - **默认展开只到「里面有已配置值」的对象**：一屏先看到自己配了什么，没配的嵌套结构折着；搜索或过滤生效时强制全开（否则命中项藏在折起来的分支里）。「全部展开/收起」把这些选择落成显式状态。
-- 叶子行 = 键名 + 按类型出的控件（Boolean→开关、枚举→下拉、数字→输入、数组→逐行文本、对象→JSON 框），未设置的给「写入」（写文档 Default），info 钮展开说明+文档分组+默认值。
+- 叶子行 = 键名 + 按类型出的控件（Boolean→开关、枚举→下拉、数字→输入、对象→JSON 框），未设置的给「写入」（写文档 Default），info 钮展开说明+文档分组+默认值。
+- **有 `shape` 时就换成逐项编辑器**（`ConfigValueRow` 内的 `MapField` / `ListField`）：map 一行一个键（键名自己起）+ 值控件，数组一行一个元素（有 `fields` 时行内摆各字段控件，标量时行内一个控件），尾行「添加一项」。**草稿留在节点本地**（`committed` 记最近一次提交的 JSON，只有外部值真变了才回灌）——否则键名还没敲完就整份回写、行会当场消失；全空的行（空串/空对象）不写进文件。
+- **托管锁到行**：`view.managedEntries` 里属于这个数组路径的那几条渲染成只读文本 + 锁标，同一数组里用户自己的行照常增删（判据与 `managedKeys` 互补：整键锁 vs 行锁）。
 
-纯函数落 `web/src/lib/config-form.ts`（`buildConfigTree` / `pruneTree` / `treeHasValue` / type→控件 / 点号路径→值 / 文本→值）与 `text-diff.ts`。
+纯函数落 `web/src/lib/config-form.ts`（`buildConfigTree` / `pruneTree` / `treeHasValue` / type→控件 / 点号路径→值 / 文本→值 / `shapeOf` + map 条目与元素字段的读写 `mapEntriesOf`·`mapOfEntries`·`fieldValueOf`·`withFieldValue`·`emptyItemOf`）与 `text-diff.ts`。

@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CODEX_LOG_SOURCE, CodexLogSource } from '../rollout.js';
+import { installUserCapture } from '../capture.js';
 
 const CWD = 'C:/work/proj';
 
@@ -144,5 +145,22 @@ describe('CodexLogSource', () => {
     expect(health.root).toBe(path.resolve(home));
     expect(health.files).toBe(1);
     expect(health.lastPollAt).not.toBeNull();
+  });
+});
+
+describe('CodexLogSource 让位给 hooks', () => {
+  it('采集装上后不再轮询 rollout（否则同一条事件入库两次）', async () => {
+    await writeFile(
+      sessionFile,
+      metaLine('th-1') +
+        line({ timestamp: '2026-11-01T00:00:10.000Z', ordinal: 2, type: 'event_msg', payload: { type: 'user_message', message: '跑测试' } }),
+    );
+    const source = new CodexLogSource();
+    expect((await poll(source)).length).toBeGreaterThan(0);
+
+    await installUserCapture({ home, version: '1.2.3' });
+    // 同实例的缓存窗内也换过来了？走新实例，避开 10s 缓存窗
+    const after = new CodexLogSource();
+    expect(await poll(after)).toEqual([]);
   });
 });

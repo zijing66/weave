@@ -16,6 +16,7 @@ import {
   aliasOfModel,
   modelAliasTargets,
   type CaptureScriptHealth,
+  type FileEdit,
   type MessagingSurface,
   type ModelAliasTarget,
   type PathRefSpec,
@@ -41,6 +42,7 @@ import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import {
   blockingPromptFor,
   captureSurfaces,
+  editSurfaceFor,
   messagingSurfaceFor,
   messagingSurfaces,
 } from '../surfaces.js';
@@ -191,6 +193,68 @@ function readPlanFile(path: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 改动汇总的取数上限：一次对话可以改几百处、整份 Write 也不小，全量回给浏览器
+ * 只会把面板拖死。超长的单处裁掉尾巴（前端标「已截断」），总额用完就不再取。
+ */
+const EDIT_MAX_FIELD_CHARS = 200_000;
+const EDIT_MAX_TOTAL_CHARS = 4_000_000;
+
+/** 展示路径：项目内的给相对（posix 分隔），项目外的保留绝对路径。 */
+function displayEditPath(abs: string, projectPath: string): string {
+  const rel = path.relative(projectPath, abs);
+  const inside = !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  return (inside ? rel : abs).split(path.sep).join('/');
+}
+
+interface SessionEditHunk {
+  before: string;
+  after: string;
+  at: string | null;
+  /** 单处超长被裁了尾巴（前端标「已截断」，不假装是全份）。 */
+  clamped?: true;
+}
+
+/** 按文件汇总改动（首见序）；diff 还没算——那是 web 的事。 */
+function summarizeEdits(
+  records: readonly FileEdit[],
+  projectPath: string,
+): { files: Array<{ path: string; hunks: SessionEditHunk[] }>; hunks: number; truncated: boolean } {
+  const files: Array<{ path: string; hunks: SessionEditHunk[] }> = [];
+  const byPath = new Map<string, (typeof files)[number]>();
+  let budget = EDIT_MAX_TOTAL_CHARS;
+  let hunks = 0;
+  let truncated = false;
+
+  for (const record of records) {
+    const clampedBefore = record.hunk.before.slice(0, EDIT_MAX_FIELD_CHARS);
+    const clampedAfter = record.hunk.after.slice(0, EDIT_MAX_FIELD_CHARS);
+    const clamped = clampedBefore.length < record.hunk.before.length || clampedAfter.length < record.hunk.after.length;
+    if (clamped) truncated = true;
+    const cost = clampedBefore.length + clampedAfter.length;
+    if (cost > budget) {
+      truncated = true;
+      continue;
+    }
+    budget -= cost;
+    const shown = displayEditPath(record.path, projectPath);
+    let file = byPath.get(shown);
+    if (!file) {
+      file = { path: shown, hunks: [] };
+      byPath.set(shown, file);
+      files.push(file);
+    }
+    file.hunks.push({
+      before: clampedBefore,
+      after: clampedAfter,
+      at: record.at,
+      ...(clamped ? { clamped: true as const } : {}),
+    });
+    hunks++;
+  }
+  return { files, hunks, truncated };
 }
 
 const CreateRuleBody = z.object({
@@ -430,7 +494,9 @@ function deliveryHints(input: {
   const hints: string[] = [];
   if (!capture || capture.source === 'none' || !capture.present) hints.push('no-hook-script');
   else if (!capture.weaveOwned) hints.push('hook-script-not-weave');
-  else if (!capture.reportsInbox) hints.push('hook-script-stale');
+  // 只有「该 harness 本来就有会话 inbox 通道」时，脚本不上报凭据才算陈旧——
+  // 没有这个通道的 harness（codex）恒不上报，不是成因。
+  else if (!capture.reportsInbox && diag?.inbox.reason !== 'no-mechanism') hints.push('hook-script-stale');
   if (eventCount === 0) hints.push('no-events');
   if (!diag) return hints;
   if (diag.alive === false) hints.push('not-running');
@@ -1005,6 +1071,32 @@ export async function handleHooksRoutes(
     sendJson(res, 200, {
       plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
     });
+    return true;
+  }
+
+  // ---- 会话改动汇总：这次对话改了哪些文件、每处改了什么（diff 由 web 现算）----
+  // 改动记在各 harness 自己的账本里（claude = 转录的 Edit/Write 调用），故取数走
+  // 能力面；没有这个面的 harness 答 null，前端据此说明「为什么这里什么都没有」。
+  const editsMatch = pathname.match(/^\/sessions\/([^/]+)\/edits$/);
+  if (editsMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(editsMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? editSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { files: null, hunks: 0, truncated: false, reason: 'unsupported' });
+      return true;
+    }
+    const records = await surface.sessionEdits({
+      sessionId,
+      transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
+    });
+    if (!records) {
+      sendJson(res, 200, { files: null, hunks: 0, truncated: false, reason: 'unreadable' });
+      return true;
+    }
+    sendJson(res, 200, summarizeEdits(records, project.path));
     return true;
   }
 

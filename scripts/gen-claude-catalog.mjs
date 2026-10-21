@@ -41,6 +41,9 @@ async function loadSource(key, file) {
 function clean(text) {
   return text
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    // 从句子里切开的半截链接（`](#anchor) 或尾部孤零零的 `[`）
+    .replace(/\]\([^)]*\)/g, '')
+    .replace(/\[\s*$/, '')
     .replace(/\\\[/g, '[')
     .replace(/\\\]/g, ']')
     .replace(/\*\*|__/g, '')
@@ -82,6 +85,54 @@ function optionsOf(typeText) {
   return undefined;
 }
 
+/** 一段文字里的引号取值（`"low"` → low）；超过 12 个视为散文，不当枚举。 */
+function quotedValuesOf(text) {
+  const quoted = [...text.matchAll(/`"([a-zA-Z0-9_.:/@-]{1,60})"`/g)].map((m) => m[1]);
+  return quoted.length > 0 && quoted.length <= 12 ? [...new Set(quoted)] : undefined;
+}
+
+/**
+ * Type 的项目符号：带引号的是**取值**（`* `"low"`: …`），不带引号的是**字段名**
+ * （`* `effortLevel`: …`）。两种混成一个 options 会让 `modelSettings` 出成下拉框。
+ */
+function bulletsOf(typeText) {
+  const out = [];
+  for (const line of typeText.split(/\r?\n/)) {
+    const m = /^\s*\* (?:\[`([^`]+)`\]\([^)]*\)|`([^`]+)`):\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const token = m[1] ?? m[2];
+    const quoted = token.startsWith('"');
+    out.push({ name: token.replace(/^"|"$/g, ''), quoted, body: m[3] ?? '' });
+  }
+  return out;
+}
+
+/** 字段的上下文（"`x` as a Boolean" / "`x` array of strings"）→ 类型串。只看紧跟名字的那一小段。 */
+function fieldTypeOf(context) {
+  const t = context
+    .trim()
+    .replace(/^,\s*/, '')
+    .replace(/^as\s+(?:an?\s+)?/i, '')
+    .replace(/^an?\s+(?:optional\s+)?/i, '');
+  if (/^Boolean\b/i.test(t)) return 'Boolean';
+  if (/^arrays? of\b/i.test(t)) return 'array of strings';
+  if (/^(?:number|integer)\b/i.test(t)) return 'number';
+  return 'string';
+}
+
+/** 一个字段：名字 + 类型 + 取值枚举（有引号取值且说 one of 才算枚举）。 */
+function fieldSpecOf(name, body, context) {
+  const raw = body || context || '';
+  const text = clean(raw);
+  const options = /\bone of\b|\beither\b/i.test(text) ? quotedValuesOf(raw) : undefined;
+  return {
+    name,
+    type: options ? 'enum' : fieldTypeOf(text),
+    ...(options ? { options } : {}),
+    ...(text ? { description: clip(text) } : {}),
+  };
+}
+
 /** Type 文案收敛成一行短标签——枚举明细已经在 options 里，正文不进表单。 */
 function typeOf(full, options) {
   let t = full.replace(/[:,]?\s*(?:one of|either)\b[\s\S]*$/i, '');
@@ -114,20 +165,117 @@ function parseSettings(md) {
   const flushFields = () => {
     for (const row of fieldRows) {
       const full = `${fieldParent}.${row.field}`;
-      if (keys.some((k) => k.key === full)) continue;
-      keys.push({
+      const spec = {
         key: full,
         group: group,
         type: typeOf(row.type, optionsOf(row.type)),
         options: optionsOf(row.type),
-        default: undefined,
         description: clip(clean(row.desc)),
         scope: 'any',
         nested: true,
-      });
+      };
+      upsert(spec);
     }
     fieldRows = [];
     fieldParent = null;
+  };
+
+  /** 同键只留一条：真条目与 Fields-for 表都能盖掉 Type 从句猜出来的占位。 */
+  const upsert = (spec) => {
+    const i = keys.findIndex((k) => k.key === spec.key);
+    if (i < 0) keys.push(spec);
+    else if (keys[i].nested) keys[i] = spec;
+  };
+
+  const pushNested = (parent, field, parentType = '') => {
+    const full = `${parent}.${field.name}`;
+    if (keys.some((k) => k.key === full)) return;
+    keys.push({
+      key: full,
+      group,
+      type: typeOf(field.type, field.options),
+      options: field.options,
+      default: undefined,
+      // 文档只在 Type 从句里写「object with a, b, c」时子键没有自己的散文——退回父键那句
+      description:
+        field.description ||
+        clip(`${parent}: ${parentType.replace(/[,;:]?\s*(?:one of|either)\b[\s\S]*$/i, '').trim()}`),
+      scope: 'any',
+      nested: true,
+    });
+  };
+
+  /**
+   * Type 文案里的结构：`array of …` / `object mapping …` / `object with …`。
+   * 项目符号分流——带引号是取值，不带引号是字段；`each one of:` 前面的反引号名字
+   * 是字段（`voice` 的 enabled/autoSubmit/mode），数组的值枚举则来自 `each one of`。
+   */
+  const structureOf = (typeRaw) => {
+    const rawHead = typeRaw
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*\* /.test(l))
+      .join('\n')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const head = clean(rawHead);
+    const bullets = bulletsOf(typeRaw);
+    const [rawBefore = '', rawAfter = ''] = rawHead.split(/\b(?:one of|either)\b/i);
+    const enumTail = /\b(?:one of|either)\s*:?$/i.test(head);
+    const bulletsEnum = bullets.length > 0 && (bullets.every((b) => b.quoted) || enumTail);
+    const values = bulletsEnum ? [...new Set(bullets.map((b) => b.name))] : quotedValuesOf(rawAfter);
+
+    const isArray = /^array\b/i.test(head);
+    const isMap = /\bobject mapping\b|\bmap of\b/i.test(head);
+    const isObject = !isArray && !isMap && /^object\b/i.test(head);
+    // map 的「to」之前说的是键（模型名、插件 ID），之后才是值的字段
+    const toIdx = isMap ? rawHead.search(/\bto\b/i) : -1;
+    const fieldSource = toIdx >= 0 ? rawHead.slice(toIdx + 2) : rawBefore;
+    const eachAll = /\beach\b/i.test(fieldSource);
+
+    // 字段名只认 Type 从句里的反引号标识符；one of 之后是取值
+    const windows = [];
+    for (const m of fieldSource.matchAll(/`([^`]+)`/g)) {
+      const name = m[1].replace(/^"|"$/g, '');
+      if (name.startsWith('"')) continue;
+      windows.push({ name, start: m.index, end: m.index + m[0].length });
+    }
+    // 「with `a`, `b`, and `c` arrays of prose rules」：只剩逗号的字段共用最后那句里的类型
+    const contextOf = (i) =>
+      clean(fieldSource.slice(windows[i].end, i + 1 < windows.length ? windows[i + 1].start : undefined));
+    // 「… and `c` arrays of prose rules」里的类型说的是这一组，不是最后那个带自己类型的名字
+    let groupType = 'string';
+    for (let i = windows.length - 1; i >= 0; i--) {
+      const c = contextOf(i);
+      if (/^(?:arrays?|objects?|maps?)\b/i.test(c)) {
+        groupType = fieldTypeOf(c);
+        break;
+      }
+    }
+    const inlineFields = windows.map((w, i) => {
+      const ctx = contextOf(i);
+      const isEnum = bulletsEnum && values && (eachAll || i === windows.length - 1);
+      const bare = /^[,;]?(?:\s*(?:and|or))?[,;]?$/.test(ctx);
+      return {
+        name: w.name,
+        type: isEnum ? 'enum' : bare ? groupType : fieldTypeOf(ctx),
+        ...(isEnum ? { options: values } : {}),
+      };
+    });
+    const bulletFields = bulletsEnum ? [] : bullets.map((b) => fieldSpecOf(b.name, b.body));
+    const toClause = /\bto\s+([\s\S]*)$/i.exec(head)?.[1] ?? '';
+    const valueType = /Boolean/i.test(toClause)
+      ? 'Boolean'
+      : /\barray of\b/i.test(toClause)
+        ? 'array of strings'
+        : 'string';
+    return {
+      head,
+      shape: isArray ? 'array' : isMap ? 'map' : undefined,
+      fields: isMap || isObject ? [...bulletFields, ...inlineFields] : [],
+      values: isArray || isMap ? values : undefined,
+      valueType: isArray || isMap ? valueType : undefined,
+      isObject,
+    };
   };
 
   const flush = () => {
@@ -144,23 +292,38 @@ function parseSettings(md) {
       .trim();
     const description = clip(clean(prose));
     const deprecated = /\bdeprecated\b|\[DEPRECATED\]|Removed in v/i.test(prose);
-    const options = optionsOf(typeRaw);
-    const typeFull = clean(typeRaw).replace(/\s*;?\s*\* /g, '; ');
+    // env 单列（web 有自己的变量选择器），其余按结构记录形状
+    const st =
+      key === 'env'
+        ? { head: clean(typeRaw), shape: undefined, fields: [], values: undefined, valueType: undefined, isObject: false }
+        : structureOf(typeRaw);
+    const typeFull = st.head || clean(typeRaw);
     if (!typeFull) {
       key = null;
       buf = [];
       return;
     }
-    keys.push({
+    // 数组一律记形状：连标量数组也要逐行编辑（weave 的托管条目就锁在行上）
+    const hasShape = st.shape === 'map' || st.shape === 'array';
+    // 对象的取值枚举属于某个字段（voice 的 mode），不是这个键自己的 options
+    const scalarOptions = hasShape || (st.isObject && st.fields.length > 0) ? undefined : optionsOf(typeRaw);
+    upsert({
       key,
       group,
-      type: typeOf(typeFull, options),
-      options,
+      type: typeOf(typeFull, scalarOptions),
+      options: scalarOptions,
       default: defaultRaw ? clip(clean(defaultRaw)) : undefined,
       description,
       scope: scopeOf(scopeRaw),
       ...(deprecated ? { deprecated: true } : {}),
+      ...(hasShape ? { shape: st.shape } : {}),
+      ...(st.fields.length > 0 && !st.isObject ? { fields: st.fields } : {}),
+      ...(hasShape && st.values ? { valueOptions: st.values } : {}),
+      ...(hasShape && st.fields.length === 0 && st.values === undefined && st.valueType
+        ? { valueType: st.valueType }
+        : {}),
     });
+    if (st.isObject) for (const f of st.fields) pushNested(key, f, st.head);
     key = null;
     buf = [];
   };

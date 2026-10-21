@@ -5,6 +5,8 @@ import {
   type BlockingPromptSpec,
   type CaptureSurface,
   type ConfigSurface,
+  type EditsSurface,
+  type ImagesSurface,
   type MessagingSurface,
   type PluginStateSurface,
   type PluginSurface,
@@ -136,6 +138,16 @@ export function statuslineSurfaces(): Array<{ harness: Harness; surface: Statusl
 /** 按 harness 取配置面；null = 该 harness 尚无配置文件接管（web 渲染占位）。 */
 export function configSurfaceFor(harness: Harness): ConfigSurface | null {
   return registry.get(harness)?.config ?? null;
+}
+
+/** 按 harness 取改动汇总面；null = 该 harness 没有改动提取（对话右键的汇总处如实说明）。 */
+export function editSurfaceFor(harness: Harness): EditsSurface | null {
+  return registry.get(harness)?.edits ?? null;
+}
+
+/** 按 harness 取入站图面；null = 该 harness 的粘贴图无处可取（对话里只剩 `[Image #N]` 占位）。 */
+export function imagesSurfaceFor(harness: Harness): ImagesSurface | null {
+  return registry.get(harness)?.images ?? null;
 }
 
 /** 全部声明了 config 槽的 (harness, 面) 列表——配置面板的 harness 页签按本表枚举。 */

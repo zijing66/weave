@@ -5,22 +5,31 @@ import type {
   ConfigFileId,
   ConfigFileSpec,
   ConfigKeySpec,
+  ConfigManagedEntry,
   ConfigModelOption,
   ConfigSurface,
 } from '../driver.js';
+import { CONFIG_SHAPE_OVERRIDES } from './config-shapes.js';
 import {
   CLAUDE_ENV_VARS,
   CLAUDE_SETTINGS_GROUPS,
   CLAUDE_SETTINGS_KEYS,
 } from './settings-catalog.generated.js';
-import { statusLineIsWeave } from './settings-gen.js';
+import {
+  WEAVE_PERMISSIONS_ALLOW,
+  WEAVE_PERMISSIONS_DENY,
+  statusLineIsWeave,
+} from './settings-gen.js';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const ANTHROPIC_VERSION = '2023-06-01';
 
-/** 表单只读的 weave 托管键（点号路径）。`statusLine` 另按「命令是否指向 weave」判。 */
-const MANAGED_PATHS = ['$comment', 'hooks', 'permissions', 'enabledPlugins', 'env.WEAVE_ENABLED'];
+/**
+ * 表单只读的 weave 托管键（点号路径）。`statusLine` 另按「命令是否指向 weave」判。
+ * `permissions` 不在这里：weave 只往它的 allow/deny 里加几条，判据见 {@link managedEntries}。
+ */
+const MANAGED_PATHS = ['$comment', 'hooks', 'enabledPlugins', 'env.WEAVE_ENABLED'];
 
 type FileCtx = { projectPath: string | null; homedir: string };
 
@@ -54,6 +63,11 @@ function keysOf(file: ConfigFileId): readonly ConfigKeySpec[] {
   if (file === 'global') return CLAUDE_SETTINGS_KEYS.filter((k) => k.scope === 'global');
   const own = scopeKeyOf(file);
   return CLAUDE_SETTINGS_KEYS.filter((k) => k.scope === 'any' || k.scope === own);
+}
+
+/** 生成器抽不出的值形状（数组元素字段、少数 map 的值）由覆盖表补上。 */
+function withShapes(keys: readonly ConfigKeySpec[]): ConfigKeySpec[] {
+  return keys.map((k) => (k.key in CONFIG_SHAPE_OVERRIDES ? { ...k, ...CONFIG_SHAPE_OVERRIDES[k.key] } : k));
 }
 
 function topKeysOf(file: ConfigFileId): Set<string> {
@@ -146,7 +160,7 @@ export const CLAUDE_CONFIG: ConfigSurface = {
   },
 
   catalog(file): ConfigCatalog {
-    const keys = keysOf(file);
+    const keys = withShapes(keysOf(file));
     return {
       groups: CLAUDE_SETTINGS_GROUPS.filter((g) => keys.some((k) => k.group === g)),
       keys,
@@ -181,6 +195,19 @@ export const CLAUDE_CONFIG: ConfigSurface = {
   managedKeys(values) {
     const out = MANAGED_PATHS.filter((p) => readPath(values, p) !== undefined);
     if (values['statusLine'] !== undefined && statusLineIsWeave(values['statusLine'])) out.push('statusLine');
+    return out;
+  },
+
+  managedEntries(values) {
+    const out: ConfigManagedEntry[] = [];
+    for (const [path, entries] of [
+      ['permissions.allow', WEAVE_PERMISSIONS_ALLOW],
+      ['permissions.deny', WEAVE_PERMISSIONS_DENY],
+    ] as const) {
+      const list = readPath(values, path);
+      if (!Array.isArray(list)) continue;
+      for (const entry of entries) if (list.includes(entry)) out.push({ path, entry });
+    }
     return out;
   },
 

@@ -77,6 +77,67 @@ export interface TreeNodeSpec {
   options?: readonly string[];
   default?: string;
   deprecated?: boolean;
+  shape?: 'map' | 'array';
+  fields?: readonly ConfigFieldSpec[];
+  valueType?: string;
+  valueOptions?: readonly string[];
+}
+
+export interface ConfigFieldSpec {
+  name: string;
+  type: string;
+  options?: readonly string[];
+  description?: string;
+}
+
+/** 值的容器形状：有 map/array 或字段时，控件换成逐项编辑而不是一段 JSON。 */
+export function shapeOf(spec: TreeNodeSpec): 'map' | 'array' | null {
+  if (spec.shape === 'map' || spec.shape === 'array') return spec.shape;
+  return null;
+}
+
+/** map 值 → 有序条目（非对象给空表；调用方据此判「还没设置」）。 */
+export function mapEntriesOf(value: unknown): Array<{ key: string; value: unknown }> {
+  if (!isPlainObject(value)) return [];
+  return Object.entries(value).map(([key, v]) => ({ key, value: v }));
+}
+
+/** 有序条目 → map 值（键名重复时后写的覆盖先写的，交给服务端按普通 JSON 处理）。 */
+export function mapOfEntries(entries: readonly { key: string; value: unknown }[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const entry of entries) {
+    const key = entry.key.trim();
+    if (key) out[key] = entry.value;
+  }
+  return out;
+}
+
+/** array 值 → 元素表（非数组给空表）。 */
+export function arrayItemsOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** 元素 → 字段对象（标量元素在带字段的数组里包一层空对象）。 */
+export function itemObjectOf(item: unknown): Record<string, unknown> {
+  return isPlainObject(item) ? item : {};
+}
+
+/** 一个字段值的控件初值（缺省 = 空串/关，写进去时才落默认值）。 */
+export function fieldValueOf(item: unknown, field: ConfigFieldSpec): unknown {
+  return itemObjectOf(item)[field.name];
+}
+
+/** 改一个字段 → 新的元素值；字段清空即从元素里删掉这个键。 */
+export function withFieldValue(item: unknown, field: ConfigFieldSpec, value: unknown): Record<string, unknown> {
+  const next = { ...itemObjectOf(item) };
+  if (value === undefined) delete next[field.name];
+  else next[field.name] = value;
+  return next;
+}
+
+/** 新加一个元素：字段都填上宿主认的默认值吗？不——留空，靠用户填。 */
+export function emptyItemOf(spec: TreeNodeSpec): unknown {
+  return spec.fields && spec.fields.length > 0 ? {} : defaultValueOf(spec.valueType ?? 'string', spec.valueOptions);
 }
 
 /** 配置树的一个节点：段名 + 完整点号路径；有 spec 的是词表里的键，`extra` 的是文件里多出来的。 */

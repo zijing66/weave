@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { FileWarning, RefreshCw } from 'lucide-react';
 import {
   api,
   type ConfigCatalogResponse,
+  type ConfigEnvVarSpec,
   type ConfigFileId,
   type ConfigUpdate,
   type ConfigView,
@@ -36,6 +37,16 @@ const FILE_LABEL: Record<ConfigFileId, MessageKey> = {
 };
 
 type Filter = 'all' | 'set' | 'unset';
+
+/** env 变量的文档类型 → 表单类型串（控件种类由 controlOf 从类型串推）。 */
+const ENV_TYPE: Record<ConfigEnvVarSpec['kind'], string> = {
+  string: 'string',
+  boolean: 'Boolean',
+  number: 'number',
+  list: 'array of strings',
+  enum: 'enum',
+  path: 'string',
+};
 
 const FILTERS: { key: Filter; label: MessageKey }[] = [
   { key: 'all', label: 'cfg.all' },
@@ -133,6 +144,12 @@ export function HarnessConfigPanel({
     (dotted: string): boolean =>
       managed.some((m) => dotted === m || dotted.startsWith(`${m}.`)),
     [managed],
+  );
+
+  const lockedEntriesOf = useCallback(
+    (dotted: string): readonly string[] =>
+      (view?.managedEntries ?? []).filter((e) => e.path === dotted).map((e) => e.entry),
+    [view],
   );
 
   const setEdit = (dotted: string, edit: RowEdit): void => {
@@ -240,12 +257,16 @@ export function HarnessConfigPanel({
       }
     }
     const byName = new Map(catalog.envVars.map((v) => [v.name, v]));
-    return [...names].map((name) => ({
-      key: `env.${name}`,
-      group: 'Environment',
-      type: 'string',
-      description: byName.get(name)?.description ?? '',
-    }));
+    return [...names].map((name) => {
+      const spec = byName.get(name);
+      return {
+        key: `env.${name}`,
+        group: 'Environment',
+        type: ENV_TYPE[spec?.kind ?? 'string'] ?? 'string',
+        options: spec?.options,
+        description: spec?.description ?? '',
+      };
+    });
   }, [catalog, edits, filter, query, values]);
 
   const tree = useMemo(() => {
@@ -285,9 +306,21 @@ export function HarnessConfigPanel({
     },
     hasValue: (path) => currentValue(path) !== undefined,
     isManaged,
+    lockedEntriesOf,
     valueOf: currentValue,
     onChange: setEdit,
   };
+
+  /** env 节点底下那行：文档里的变量名当候选（能搜），也允许自己敲一个。 */
+  const envFooter = (node: ConfigTreeNode, depth: number): ReactNode =>
+    node.path !== 'env' || !catalog ? null : (
+      <EnvVarPicker
+        depth={depth}
+        envVars={catalog.envVars}
+        exists={(name) => currentValue(`env.${name}`) !== undefined}
+        onAdd={(name) => setEdit(`env.${name}`, { value: '' })}
+      />
+    );
 
   const setAllOpen = (open: boolean): void => {
     const next: Record<string, boolean> = {};
@@ -527,7 +560,7 @@ export function HarnessConfigPanel({
           {tree.nodes.length === 0 && <p className="text-[11px] text-neutral-500">{t('cfg.empty')}</p>}
           {tree.nodes.length > 0 && (
             <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-1.5">
-              <ConfigTree nodes={tree.nodes} handlers={treeHandlers} />
+              <ConfigTree nodes={tree.nodes} handlers={treeHandlers} footer={envFooter} />
             </section>
           )}
         </>
@@ -575,6 +608,67 @@ export function HarnessConfigPanel({
           }
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * env 底下「加一个变量」：候选是文档里的变量名（可搜），也允许自己敲一个——
+ * 值先进 edits 再照常保存。
+ */
+function EnvVarPicker({
+  depth,
+  envVars,
+  exists,
+  onAdd,
+}: {
+  depth: number;
+  envVars: readonly ConfigEnvVarSpec[];
+  exists: (name: string) => boolean;
+  onAdd: (name: string) => void;
+}) {
+  const t = useT();
+  const [text, setText] = useState('');
+  const name = text.trim();
+  const spec = envVars.find((v) => v.name === name);
+  const canAdd = name !== '' && !exists(name);
+  const add = (): void => {
+    if (!canAdd) return;
+    onAdd(name);
+    setText('');
+  };
+  return (
+    <div style={{ paddingLeft: depth * 14 }} className="flex items-start gap-1.5 rounded-md px-1.5 py-1">
+      <input
+        value={text}
+        list="weave-env-vars"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') add();
+        }}
+        placeholder={t('cfg.addEnvVar')}
+        className="w-[38%] shrink-0 rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 font-mono text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-mac-accent/50"
+      />
+      <datalist id="weave-env-vars">
+        {envVars.map((v) => (
+          <option key={v.name} value={v.name}>
+            {v.description}
+          </option>
+        ))}
+      </datalist>
+      <div className="min-w-0 flex-1">
+        {spec && <p className="truncate text-[11px] text-neutral-500">{spec.description}</p>}
+        {!spec && name !== '' && exists(name) && (
+          <p className="text-[11px] text-neutral-600">{t('cfg.alreadySet')}</p>
+        )}
+      </div>
+      <button
+        disabled={!canAdd}
+        onClick={add}
+        className="shrink-0 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200 disabled:opacity-40"
+      >
+        {t('cfg.write')}
+      </button>
     </div>
   );
 }

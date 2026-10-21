@@ -149,6 +149,14 @@ export class SessionProbe {
     return fromDb;
   }
 
+  /**
+   * 该会话的转录路径（没登记过 → null）：按需读**全量**转录的地方用（改动汇总要
+   * 从头扫 tool_use，尾窗读不到），路径归一处，别处不自己拼 projects 目录。
+   */
+  transcriptPathOf(sessionId: string): string | null {
+    return this.pathOf(sessionId);
+  }
+
   forget(sessionId: string): void {
     this.paths.delete(sessionId);
     this.known.delete(sessionId);

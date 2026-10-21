@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, FileCode, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -31,6 +31,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickItem, type PickTarget } from './FilePicker';
+import { SessionEditsDialog } from './SessionEditsDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { StatuslineBar } from './StatuslineBar';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
@@ -881,6 +882,8 @@ export function SessionMessages({
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
   const [menu, setMenu] = useState<ConvMenu | null>(null);
+  /** 改动汇总弹窗（会话级：一次对话改过的所有文件，按文件折叠）。 */
+  const [editsOpen, setEditsOpen] = useState(false);
   /** 队列气泡里展开看全文的那一行（多条时每行一句，点开才完整）。 */
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
@@ -2853,14 +2856,28 @@ export function SessionMessages({
               onClick={(e) => e.stopPropagation()}
             >
               {menu.kind === 'bubble' ? (
-                <button
-                  type="button"
-                  onClick={() => enterSelect(menu.key)}
-                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
-                >
-                  <Check className="h-3 w-3 text-neutral-500" />
-                  {t('tasks.convSelect')}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => enterSelect(menu.key)}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Check className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convSelect')}
+                  </button>
+                  {/* 汇总的是整段对话（不是这一条气泡）：右键只是入口 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenu(null);
+                      setEditsOpen(true);
+                    }}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <FileDiff className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.editsTitle')}
+                  </button>
+                </>
               ) : (
                 <>
                   <button
@@ -2945,6 +2962,13 @@ export function SessionMessages({
             onClose={closePicker}
           />
         )}
+
+        {/* 改动汇总：整段对话改过的文件（取数归 harness 能力面，diff 在本页算） */}
+        <SessionEditsDialog
+          sessionId={sessionId}
+          open={editsOpen}
+          onClose={() => setEditsOpen(false)}
+        />
 
         {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来 */}
         {sideOpen && (

@@ -1,8 +1,9 @@
 import { mkdir, open as openFile, readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import type { LogHealth, LogPollOptions, LogRecord, LogSource } from '../driver.js';
 import { CodexTurnBuffer, metaOfLine, type CodexLine } from './event-source.js';
+import { readUserCapture } from './capture.js';
+import { codexHome } from './home.js';
 
 /**
  * codex 的会话采集：**尾读 rollout JSONL**（`logs` 槽的唯一实现）。
@@ -56,11 +57,6 @@ interface RolloutFile {
   mtimeMs: number;
 }
 
-/** 宿主的会话落盘根（`CODEX_HOME` 缺省 `~/.codex`）。 */
-function codexHome(): string {
-  const env = process.env.CODEX_HOME;
-  return env && env.trim() ? path.resolve(env) : path.join(homedir(), '.codex');
-}
 
 /** 日志根下的两个会话目录（归档会话也读：`archived_sessions/` 是同一批文件挪过去的）。 */
 function sessionRoots(): string[] {
@@ -202,13 +198,35 @@ async function acquireLock(dir: string): Promise<boolean> {
   );
 }
 
+/** hook 接管判据的缓存窗：hooks.json 不会在 10s 里反复变，每秒读一遍是白读。 */
+const CAPTURE_CHECK_MS = 10_000;
+
 export class CodexLogSource implements LogSource {
   readonly harness = 'codex' as const;
   /** 每文件的行转换器（含「本轮最终 assistant 消息」缓存，必须跨拍留着）。 */
   private readonly buffers = new Map<string, CodexTurnBuffer>();
   private lastError: string | null = null;
+  private capture: { root: string; at: number; on: boolean } | null = null;
+
+  /**
+   * 采集装上就由 hooks 主供事件——这时 rollout 再读一遍，同一条用户输入 / 回合
+   * 收尾会入库两次。停止轮询是本槽唯一安全的兜底语义：hooks 一装上，兜底就该让位
+   * （codex 还没信任 hooks 的那段时间确实看不到新事件，`scriptHealth` 与
+   * `weave doctor` 是明说这一点的诊断面）。
+   */
+  private async hooksTakeOver(): Promise<boolean> {
+    const now = Date.now();
+    const root = codexHome();
+    if (this.capture && this.capture.root === root && now - this.capture.at < CAPTURE_CHECK_MS) {
+      return this.capture.on;
+    }
+    const on = (await readUserCapture()).installed;
+    this.capture = { root, at: now, on };
+    return on;
+  }
 
   async poll(options: LogPollOptions): Promise<LogRecord[]> {
+    if (await this.hooksTakeOver()) return [];
     if (!(await acquireLock(options.stateDir))) return [];
     const files = (await listRollouts()).sort((a, b) => a.mtimeMs - b.mtimeMs);
     const state = await readState(options.stateDir);

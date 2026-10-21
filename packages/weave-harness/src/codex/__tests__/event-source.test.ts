@@ -229,3 +229,98 @@ describe('CodexEventSource.normalize', () => {
     expect(raw.call_id).toBeNull();
   });
 });
+
+/** codex hooks 上报（`payload` 是原始 stdin JSON，与 rollout 上报同走一个 normalize）。 */
+const hook = (eventType: string, extra: Record<string, unknown> = {}) => ({
+  source: 'codex' as const,
+  eventType,
+  sessionId: 'th-1',
+  cwd: 'C:/work/proj',
+  payload: JSON.stringify({
+    hook_event_name: eventType,
+    session_id: 'th-1',
+    cwd: 'C:/work/proj',
+    transcript_path: 'C:/codex/sessions/rollout-th-1.jsonl',
+    ...extra,
+  }),
+});
+
+const normalizeHook = (eventType: string, extra: Record<string, unknown> = {}) => {
+  const built = CODEX_EVENT_SOURCE.normalize(hook(eventType, extra), 7);
+  return { built, out: JSON.parse(built.payload) as Record<string, unknown> };
+};
+
+describe('CodexEventSource.normalize（hooks 主源）', () => {
+  it('Stop 直接用载荷里的 last_assistant_message，不再靠行序猜', () => {
+    const { out } = normalizeHook('Stop', { last_assistant_message: '改完了，浅色也看得清' });
+    expect((out.raw as Record<string, unknown>).last_assistant_message).toBe('改完了，浅色也看得清');
+  });
+
+  it('PostToolUse 载荷自带 tool_name / tool_input / tool_response，提升到顶层', () => {
+    const { out } = normalizeHook('PostToolUse', {
+      tool_name: 'shell',
+      tool_input: { command: 'pnpm test' },
+      tool_response: { exit_code: 0 },
+    });
+    expect(out.toolName).toBe('shell');
+    expect(out.toolInput).toEqual({ command: 'pnpm test' });
+    expect(out.toolResponse).toEqual({ exit_code: 0 });
+  });
+
+  it('Interrupt 翻成规范名 TurnAborted（close 表认这个）', () => {
+    const { built, out } = normalizeHook('Interrupt', { turn_id: 'turn-3' });
+    expect(built.eventType).toBe('TurnAborted');
+    expect(built.source).toBe('codex');
+    expect((out.raw as Record<string, unknown>).turn_id).toBe('turn-3');
+  });
+
+  it('会话起止的来源与原因原样留在 raw 里', () => {
+    expect((normalizeHook('SessionStart', { source: 'fork' }).out.raw as Record<string, unknown>).source).toBe('fork');
+    expect((normalizeHook('SessionEnd', { reason: 'other' }).out.raw as Record<string, unknown>).reason).toBe('other');
+  });
+
+  it('cwd / transcript_path 提升到顶层（TranscriptPath 读取方不再自己翻载荷）', () => {
+    const { out } = normalizeHook('SessionStart', { source: 'startup' });
+    expect(out.cwd).toBe('C:/work/proj');
+    expect(out.transcriptPath).toBe('C:/codex/sessions/rollout-th-1.jsonl');
+  });
+
+  it('认不出的线名原样透传，不吞事件', () => {
+    expect(normalizeHook('PermissionRequest', { tool_name: 'shell' }).built.eventType).toBe('PermissionRequest');
+  });
+});
+
+describe('CodexTurnBuffer + 0.163 TurnItem（rollout 兜底）', () => {
+  const itemCompleted = (type: string, item: Record<string, unknown>): CodexLine => ({
+    timestamp: '2026-11-01T00:02:00.000Z',
+    ordinal: 11,
+    type: 'event_msg',
+    payload: { type: 'item_completed', item: { type, ...item } },
+  });
+
+  it('AgentMessage 的 PascalCase "Text" 段进缓存，Stop 补位拿得到', () => {
+    const buf = new CodexTurnBuffer();
+    buf.report(userMessage('改一下颜色'));
+    buf.report(itemCompleted('AgentMessage', { content: [{ type: 'Text', text: '改完了' }] }));
+    expect(buf.report(event('task_complete'))?.payload.lastAgentMessage).toBe('改完了');
+  });
+
+  it('CommandExecution / FileChange / McpToolCall 都是 PostToolUse', () => {
+    const buf = new CodexTurnBuffer();
+    for (const type of ['CommandExecution', 'FileChange', 'McpToolCall']) {
+      expect(buf.report(itemCompleted(type, {}))?.eventType).toBe('PostToolUse');
+    }
+  });
+
+  it('TurnItem 形态的工具事件也归一（rollout 兜底不能只有事件名没有工具字段）', () => {
+    const exec = normalize(
+      itemCompleted('CommandExecution', { command: ['bash', '-lc', 'pnpm test'], cwd: 'C:/p', exit_code: 0 }),
+    );
+    expect(exec.toolName).toBe('exec_command');
+    expect((exec.toolInput as { command: string }).command).toBe('bash -lc pnpm test');
+
+    const patch = normalize(itemCompleted('FileChange', { changes: { 'src/a.ts': {} }, status: 'success' }));
+    expect(patch.toolName).toBe('apply_patch');
+    expect(patch.toolInput).toEqual({ paths: ['src/a.ts'] });
+  });
+});

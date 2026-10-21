@@ -10,7 +10,7 @@ import { CLAUDE_PLAN } from './plan.js';
  *   （`questions[].question/header/options[].label+description/multiSelect`），
  *   `PostToolUse(AskUserQuestion)` 带 answers（阻塞解除）；
  * - `ExitPlanMode` 的 Pre toolInput 恒空、Post 的 toolResponse 带 plan filePath——
- *   问题面是合成的（宿主 UI 固定三选项）；
+ *   问题面是合成的（宿主 UI 固定两选项，见 `PLAN_QUESTION`）；
  * - `Notification` 的 `raw.notification_type = permission_prompt` = 权限对话框
  *   （不带工具面，由 tracker 补最近一次 PreToolUse 的上下文）。
  *
@@ -50,16 +50,21 @@ const NOTES_HINT = 'press n to add notes';
 /** 隐形 / 双向控制字符（宿主会把它们中和掉，改得动就整条不展示）。 */
 const INVISIBLE_CHARS = /[\p{M}\u200b-\u200f\u2028-\u202e\u2060-\u206f\u180b-\u180f\ufe0e\ufe0f]/u;
 
-/** 计划确认的合成问题（ExitPlanMode 的 toolInput 恒空，宿主 UI 选项固定）。 */
+/**
+ * 计划确认的合成问题（ExitPlanMode 的 toolInput 恒空）。文案 = 实测宿主模态框
+ * （claude 2.1.296，2026-10-21 抓屏）：**只有两行**，第 1 行批准并切到会话默认
+ * 模式、第 2 行就是拒绝——照老的 3 行面发键，想拒绝会按成批准。批准行的模式名
+ * 由宿主按会话默认模式拼（本机 = `default (ask each time)`；自动化目标另有
+ * `Yes, and switch to auto mode` 字样，键义不变）。
+ */
 const PLAN_QUESTION: BlockingQuestion = {
   key: 'ExitPlanMode:approve',
-  header: 'Plan approval',
-  question: 'Approve this plan and start execution?',
+  header: 'Exit plan mode?',
+  question: 'Claude wants to exit plan mode',
   multiSelect: false,
   options: [
-    { keys: ['1'], label: 'Yes, auto-accept edits' },
-    { keys: ['2'], label: 'Yes, manually approve edits' },
-    { keys: ['3'], label: 'No, keep planning' },
+    { keys: ['1'], label: 'Yes, and switch to default (ask each time) for this session' },
+    { keys: ['2'], label: 'No' },
   ],
 };
 
@@ -310,7 +315,7 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
       if (out.length >= 2 || out.some((q) => q.multiSelect)) out.push(submitStep());
       return out;
     }
-    // ExitPlanMode：toolInput 恒空——合成计划确认问题
+    // ExitPlanMode：toolInput 恒空——合成计划确认问题（两行：批准并切默认模式 / 拒绝）
     return [PLAN_QUESTION];
   },
   eventQuestion(eventType, raw) {

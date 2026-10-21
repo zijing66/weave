@@ -22,7 +22,9 @@ export type HarnessCapability =
   | 'capture'
   | 'statusline'
   | 'logs'
-  | 'config';
+  | 'config'
+  | 'edits'
+  | 'images';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -533,6 +535,21 @@ export interface PromptInboxSpec {
 }
 
 /**
+ * 宿主自带的排队投递（codex queue）：消息写进目标会话自己的队列——活会话 <1s 注入、
+ * 没开的会话下次 resume 自动领走，且**在宿主眼里就是用户输入**（没有带外来源位）。
+ * 这层比终端击键更接近「用户本人发送」，故手动面也允许走它（层序见 MessageDeliverer）。
+ *
+ * `command` 一次给全 bin + argv：win32 的 `codex` 是 npm `.cmd` 垫片，CreateProcess
+ * 不认，必须由 harness 换成可直接 spawn 的入口（node + 包 bin）；用户正文只出现在
+ * argv 里、不经 shell 拼接。
+ */
+export interface QueuedPromptSpec {
+  command(sessionId: string, text: string): { bin: string; args: string[] };
+  /** 单次超时（毫秒）——队列是一次性小操作，挂住即当失败回落下一层。 */
+  readonly timeoutMs?: number;
+}
+
+/**
  * 会话消息能力面（session-orchestration 批 1）：每 harness 一份声明式规格，
  * server 的 MessageDeliverer 按面裁决支持状态与编排控制；claude = 完整参考实现，
  * codex = 显式不支持面（缺席无法渲染「为什么置灰」）。设计见
@@ -546,6 +563,8 @@ export interface MessagingSurface {
   readonly prompt: PromptRelaySpec | null;
   /** 会话本地收件箱直投（层①-a，毫秒级）；null = 该 harness 没有这类机制。 */
   readonly promptInbox: PromptInboxSpec | null;
+  /** 宿主自带的排队投递（宿主侧队列）；null = 该 harness 没有这类机制。 */
+  readonly queuedPrompt: QueuedPromptSpec | null;
   /** 非抢占注入通道（忙排）；null = 不支持。 */
   readonly inject: InjectChannelSpec | null;
   /** 无头强制回合通道（闲投）；null = 不支持。引用 resume 槽规格对象，不复制。 */
@@ -753,6 +772,30 @@ export interface ConfigKeySpec {
   deprecated?: boolean;
   /** 由「Fields for」表补出的子字段（文档没有独立条目）。 */
   nested?: boolean;
+  /**
+   * 值的容器形状：`map` = 键名由用户起（模型名、技能名…，拼不成点号路径）、
+   * `array` = 有序列表。有它时 `fields` / `valueType` + `valueOptions` 描述**值**。
+   */
+  shape?: 'map' | 'array';
+  /** 值（map）/ 元素（array）是对象时，它有哪些字段。 */
+  fields?: readonly ConfigFieldSpec[];
+  /** 值（map）/ 元素（array）是标量时的类型与枚举；`fields` 非空则以字段为准。 */
+  valueType?: string;
+  valueOptions?: readonly string[];
+}
+
+/** 对象值的一个字段（`type` / `options` 与顶层键同文法，控件也同一套）。 */
+export interface ConfigFieldSpec {
+  name: string;
+  type: string;
+  options?: readonly string[];
+  description?: string;
+}
+
+/** 数组里的一条 weave 托管条目：`path` 是数组的点号路径，`entry` 是那条的当前值。 */
+export interface ConfigManagedEntry {
+  path: string;
+  entry: string;
 }
 
 /** `env` 块里可写的环境变量（值恒为字符串，`kind` 只决定输入控件）。 */
@@ -803,6 +846,11 @@ export interface ConfigSurface {
    */
   managedKeys(values: Record<string, unknown>): readonly string[];
   /**
+   * weave 写进数组里的条目（行级托管）：只有这些行只读，同一个数组里用户自己的行照常
+   * 增删——按「整个数组」判会把 30 条用户规则一起锁死。
+   */
+  managedEntries(values: Record<string, unknown>): readonly ConfigManagedEntry[];
+  /**
    * 模型列表（HTTP 调宿主自己的 API）。`baseUrl` / 凭据缺省时由实现从配置里取；
    * 传输在实现侧，server 只传语义参数。
    */
@@ -813,6 +861,67 @@ export interface ConfigSurface {
     authToken?: string | null;
     timeoutMs?: number;
   }): Promise<{ models: ConfigModelOption[]; baseUrl: string; credential: string }>;
+}
+
+/** 一处改动：改前 → 改后。宿主只给片段（claude 的 Edit 就是 old_string/new_string）就只摆片段。 */
+export interface EditHunk {
+  /** 改前的文本；整文件新写 = 空串（「新建」在汇总里也是一处改动，不能消失）。 */
+  before: string;
+  /** 改后的文本。 */
+  after: string;
+}
+
+/** 按时间序返回的一处改动（同一文件可以有多条，汇总归 server）。 */
+export interface FileEdit {
+  /** 文件绝对路径——相对项目的展示名由 server 算，宿主不拼。 */
+  path: string;
+  hunk: EditHunk;
+  /** 这处改动的时刻（ISO）；宿主没带 → null。 */
+  at: string | null;
+}
+
+/**
+ * 会话改动面（「这次对话把哪些文件改成了什么样」）：读哪、怎么认改文件的调用都是
+ * harness 知识（claude = 转录里的 Edit/Write/MultiEdit 工具调用），server 不解析
+ * 宿主格式，只按文件汇总后交前端渲染 diff。
+ */
+export interface EditsSurface {
+  /** 该会话的全部改动（时间序）；读不到（无转录 / 路径未知 / 半路出错）→ null（不猜）。 */
+  sessionEdits(req: {
+    sessionId: string;
+    /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<FileEdit[] | null>;
+}
+
+/** 一张粘贴进宿主输入框的图（转录里的 image block 解出来的原始字节）。 */
+export interface PromptImage {
+  /** MIME（`image/png` 这类）；认不出的类型上游就该丢掉。 */
+  mediaType: string;
+  bytes: Uint8Array;
+}
+
+/** 转录里的一条 user 消息 + 它随附的图（时间序）。 */
+export interface PromptImageSet {
+  /** 该条消息的正文（宿主保留 `[Image #N]` 占位——匹配事件时按它归一比对）。 */
+  text: string;
+  /** 消息时刻（ISO）；宿主没带 → null。 */
+  at: string | null;
+  images: PromptImage[];
+}
+
+/**
+ * 入站图采集面：宿主输入框里粘的图**只活在转录**（hook 载荷只有 `[Image #N]` 占位），
+ * server 因此在这里问「这段对话里的图长什么样」，再自己落 uploads + 挂到开轮事件。
+ * 缺这个槽 = 该 harness 的入站图无处可取（对话里只剩占位记号）。
+ */
+export interface ImagesSurface {
+  /** 带图的那几条 user 消息（时间序）；读不到（无转录 / 路径未知 / 半路出错）→ null（不猜）。 */
+  sessionImages(req: {
+    sessionId: string;
+    /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<PromptImageSet[] | null>;
 }
 
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
@@ -833,6 +942,8 @@ export interface HarnessDriver {
   statusline?: StatuslineSurface;
   logs?: LogSource;
   config?: ConfigSurface;
+  edits?: EditsSurface;
+  images?: ImagesSurface;
 }
 
 /**

@@ -10,6 +10,8 @@ import { CLAUDE_RESUME } from './resume.js';
 import { CLAUDE_DETECTOR } from './detect.js';
 import { CLAUDE_STATUSLINE } from './statusline/surface.js';
 import { CLAUDE_CONFIG } from './config.js';
+import { CLAUDE_EDITS } from './edits.js';
+import { CLAUDE_IMAGES } from './images.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
@@ -25,6 +27,8 @@ export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { CLAUDE_SIDE_QUESTION } from './side-question.js';
 export { interruptMarkerAt, currentModelAt, currentModeAt } from './transcript.js';
+export { CLAUDE_EDITS } from './edits.js';
+export { CLAUDE_IMAGES } from './images.js';
 export { modelAliasTargets, aliasOfModel, bareModelName, defaultModelOf, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';
 export { resolveClaudePeer } from './peers.js';
 export {
@@ -59,7 +63,8 @@ export * from './statusline/config.js';
 /**
  * Claude 接入模块的驱动：批 4a 补 assets、批 4b 补 events/resume、批 5 补
  * detect、批 3 补 plugins、P2 补 pluginState、session-orchestration 批 1 补
- * messaging、阻塞式问答补 questions、tool-object-model §6-2 补 capture——
+ * messaging、阻塞式问答补 questions、tool-object-model §6-2 补 capture、
+ * 配置面补 config、会话改动汇总补 edits、入站图采集补 images——
  * init 槽不在此（init 实现半球留 cli，由 init/wiring 携带）。
  */
 export const CLAUDE_DRIVER: HarnessDriver = {
@@ -77,6 +82,8 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'capture',
     'statusline',
     'config',
+    'edits',
+    'images',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -89,4 +96,6 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   capture: CLAUDE_CAPTURE,
   statusline: CLAUDE_STATUSLINE,
   config: CLAUDE_CONFIG,
+  edits: CLAUDE_EDITS,
+  images: CLAUDE_IMAGES,
 };

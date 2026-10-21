@@ -22,6 +22,7 @@ import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { SnapshotRefresher } from './snapshot-refresher.js';
 import type { SessionProbe } from './session-probe.js';
+import { importPromptImagesOnce, needsImageImport } from './prompt-images.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
@@ -360,7 +361,17 @@ async function handleRequest(
     if (sessionId) {
       const events = deps.hookEvents.listBySession(sessionId, limit ?? 300, beforeId, types);
       // 消息随附图（对话气泡缩略图）：挂在开轮事件上，逐行带回。
-      const images = deps.uploads?.imagesBySession(sessionId);
+      let images = deps.uploads?.imagesBySession(sessionId);
+      // 终端里粘的图只在转录里（hook 只有 `[Image #N]` 占位）：缺图就补采一次。
+      // 等它一拍——历史会话不会再来事件帧，后台补完前端没有刷新时机。
+      if (needsImageImport(events, images)) {
+        const imported = await importPromptImagesOnce(
+          { hookEvents: deps.hookEvents, uploads: deps.uploads, sessionProbe: deps.sessionProbe },
+          sessionId,
+          harnessOf(events),
+        );
+        if (imported) images = deps.uploads?.imagesBySession(sessionId);
+      }
       sendJson(res, 200, {
         events: events.map((e) => {
           const rows = images?.get(e.id);
@@ -1921,6 +1932,15 @@ function mime(filePath: string): string {
   if (filePath.endsWith('.svg')) return 'image/svg+xml';
   if (filePath.endsWith('.json')) return 'application/json';
   return 'application/octet-stream';
+}
+
+/** 一页事件所属 harness（取最新那条认得出来的 source；认不出 = null，不猜）。 */
+function harnessOf(events: readonly { source: string }[]): Harness | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const source = events[i]!.source;
+    if (isHarness(source)) return source;
+  }
+  return null;
 }
 
 function clampLimit(raw: string | null): number {

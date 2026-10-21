@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import type { ConfigTreeNode } from '@/lib/config-form';
 import { textOf } from '@/lib/config-form';
@@ -11,6 +12,8 @@ export interface ConfigTreeHandlers {
   onToggle: (path: string) => void;
   hasValue: (path: string) => boolean;
   isManaged: (path: string) => boolean;
+  /** 这个数组里 weave 自己写进去的条目。 */
+  lockedEntriesOf: (path: string) => readonly string[];
   valueOf: (path: string) => unknown;
   onChange: (path: string, edit: RowEdit) => void;
 }
@@ -28,10 +31,13 @@ export function ConfigTree({
   nodes,
   depth = 0,
   handlers,
+  footer,
 }: {
   nodes: readonly ConfigTreeNode[];
   depth?: number;
   handlers: ConfigTreeHandlers;
+  /** 展开对象节点后、子节点下面追加的一行（env 的「加一个变量」就在这儿）。 */
+  footer?: (node: ConfigTreeNode, depth: number) => ReactNode;
 }) {
   const t = useT();
   return (
@@ -69,7 +75,8 @@ export function ConfigTree({
                   </span>
                 )}
               </button>
-              {open && <ConfigTree nodes={node.children} depth={depth + 1} handlers={handlers} />}
+              {open && <ConfigTree nodes={node.children} depth={depth + 1} handlers={handlers} footer={footer} />}
+              {open && footer?.(node, depth + 1)}
             </div>
           );
         }
@@ -101,6 +108,7 @@ export function ConfigTree({
             depth={depth}
             value={handlers.valueOf(node.path)}
             managed={handlers.isManaged(node.path)}
+            locked={handlers.lockedEntriesOf(node.path)}
             onChange={(edit) => handlers.onChange(node.path, edit)}
           />
         );

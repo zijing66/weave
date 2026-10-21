@@ -6,6 +6,7 @@ import {
   HARNESS_EVENTS,
   INJECTABLE_EVENTS,
   TERMINAL_LOCATOR_ENV_KEYS,
+  TITLE_EFFECTIVE_EVENTS,
   type Harness,
 } from '@weavecode/core';
 import type { CaptureDeps, CaptureScriptHealth, CaptureState, CaptureSurface } from '../driver.js';
@@ -53,13 +54,13 @@ const os = require('os');
 const crypto = require('crypto');
 
 const HOOK_GUARD_MS = 2000;
-// Events that can carry additionalContext back via hook output (Claude Code
-// contract; mirrors INJECTABLE_EVENTS.claude server-side).
-const INJECTABLE_EVENTS = ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop', 'SubagentStop'];
-// Claude Code applies hookSpecificOutput.sessionTitle ONLY on these events
-// (mirrors TITLE_EFFECTIVE_EVENTS.claude) — tool events record hook_success
-// but drop the field (verified against 2.1.296).
-const TITLE_EVENTS = ['SessionStart', 'UserPromptSubmit'];
+// Events that can carry additionalContext back via hook output (harness
+// contract; mirrors INJECTABLE_EVENTS server-side).
+const INJECTABLE_EVENTS = ${JSON.stringify(INJECTABLE_EVENTS[harness])};
+// The host applies hookSpecificOutput.sessionTitle ONLY on these events (mirrors
+// TITLE_EFFECTIVE_EVENTS) — tool events record hook_success but drop the field
+// (verified against Claude Code 2.1.296).
+const TITLE_EVENTS = ${JSON.stringify(TITLE_EFFECTIVE_EVENTS[harness])};
 // Terminal pane locator env (mirrors TERMINAL_LOCATOR_ENV_KEYS in @weavecode/core):
 // captured in the pane's own child process and reported on the inbox line's side
 // channel, so the daemon can address THIS session's pane exactly.
@@ -305,7 +306,7 @@ async function main() {
   var parsed = {};
   try { parsed = JSON.parse(raw); } catch {}
 
-  var projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  var projectDir = process.env.CLAUDE_PROJECT_DIR || parsed.cwd || process.cwd();
   var token = readProjectToken(projectDir);
   // No token = project not registered — nothing to attribute the event to.
   if (!token) { process.exit(0); }

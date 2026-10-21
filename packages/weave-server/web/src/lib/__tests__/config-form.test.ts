@@ -1,17 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import {
+  arrayItemsOf,
   boolOf,
   buildConfigTree,
   controlOf,
   defaultValueOf,
+  emptyItemOf,
+  fieldValueOf,
+  itemObjectOf,
   linesOf,
   listOfLines,
+  mapEntriesOf,
+  mapOfEntries,
   matchesQuery,
   pruneTree,
+  shapeOf,
   textOf,
   treeHasValue,
   valueAt,
   valueOfText,
+  withFieldValue,
 } from '../config-form';
 
 describe('配置表单纯函数', () => {
@@ -95,5 +103,35 @@ describe('配置表单纯函数', () => {
     expect(matchesQuery('model', 'Set the model', 'theme')).toBe(false);
     expect(linesOf(['a', 'b'])).toBe('a\nb');
     expect(listOfLines(' a \n\n b\n')).toEqual(['a', 'b']);
+  });
+
+  it('值形状：map 的条目往返，空键名不写进文件', () => {
+    const value = { opus: { effortLevel: 'high' }, 'claude-sonnet': { maxEffortLevel: 'medium' } };
+    const entries = mapEntriesOf(value);
+    expect(entries.map((e) => e.key)).toEqual(['opus', 'claude-sonnet']);
+    expect(mapOfEntries(entries)).toEqual(value);
+    expect(mapOfEntries([...entries, { key: '  ', value: {} }])).toEqual(value);
+    expect(mapEntriesOf(undefined)).toEqual([]);
+    expect(mapEntriesOf(['not', 'a', 'map'])).toEqual([]);
+  });
+
+  it('值形状：元素字段读改写，清空字段即删掉那个键', () => {
+    const field = { name: 'mode', type: 'enum', options: ['deny', 'mask'] };
+    const item = { path: '/a', mode: 'deny' };
+    expect(fieldValueOf(item, field)).toBe('deny');
+    expect(withFieldValue(item, field, undefined)).toEqual({ path: '/a' });
+    expect(withFieldValue(item, field, 'mask')).toEqual({ path: '/a', mode: 'mask' });
+    expect(withFieldValue(undefined, field, 'deny')).toEqual({ mode: 'deny' });
+    expect(itemObjectOf('scalar')).toEqual({});
+  });
+
+  it('值形状：新元素按字段（对象）或标量（默认值）起手', () => {
+    const rows = { key: 'rows', type: 'array of rows', group: 'G', description: '', shape: 'array' as const, fields: [{ name: 'model', type: 'string' }] };
+    expect(emptyItemOf(rows)).toEqual({});
+    const scalars = { key: 'names', type: 'array of strings', group: 'G', description: '', shape: 'array' as const, valueOptions: ['a', 'b'] };
+    expect(emptyItemOf(scalars)).toBe('a');
+    expect(shapeOf(rows)).toBe('array');
+    expect(shapeOf({ key: 'model', type: 'string', group: 'G', description: '' })).toBeNull();
+    expect(arrayItemsOf({})).toEqual([]);
   });
 });
