@@ -13,15 +13,19 @@ interface EditBlock {
 }
 
 /**
- * 会话改动汇总：这次对话改过的文件按文件摞起来，一条折叠条一个文件，展开看 diff。
- * 改动本身归能力面取（claude = 转录里的编辑调用），这条弹窗只摆，不算数。
+ * 会话改动汇总：默认只看右键那一轮的改动（上一次回复 → 这一次回复），头部可切
+ * 「全部对话」。改动本身归能力面取（claude = 转录里的编辑调用），这条弹窗只摆，
+ * 不算数。
  */
 export function SessionEditsDialog({
   sessionId,
+  range,
   open,
   onClose,
 }: {
   sessionId: string;
+  /** 右键锚所在轮的窗口（双 null = 会话里还没有回复，恒为全部）。 */
+  range: { since: string | null; until: string | null };
   open: boolean;
   onClose: () => void;
 }) {
@@ -31,15 +35,24 @@ export function SessionEditsDialog({
   const [loading, setLoading] = useState(false);
   /** 展开着的文件（第一次进来默认摊开第一个，免得满屏折叠条看不出有没有东西）。 */
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  /** 取数范围：默认这一轮；「全部对话」不带参（整段会话的逃生门）。 */
+  const [scope, setScope] = useState<'turn' | 'all'>('turn');
+  const hasTurn = range.since !== null || range.until !== null;
 
   useEffect(() => {
     if (!open) return;
+    setScope('turn');
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const active = scope === 'turn' && hasTurn ? range : null;
     let live = true;
     setLoading(true);
     setError(null);
     setData(null);
     api
-      .sessionEdits(sessionId)
+      .sessionEdits(sessionId, active ?? undefined)
       .then((r) => {
         if (!live) return;
         setData(r);
@@ -55,7 +68,7 @@ export function SessionEditsDialog({
     return () => {
       live = false;
     };
-  }, [open, sessionId]);
+  }, [open, sessionId, scope, hasTurn, range]);
 
   const files = useMemo(() => {
     return (data?.files ?? []).map((file) => {
@@ -94,7 +107,9 @@ export function SessionEditsDialog({
         ? t('tasks.editsUnsupported')
         : data?.reason === 'unreadable'
           ? t('tasks.editsUnreadable')
-          : t('tasks.editsEmpty')
+          : scope === 'turn' && hasTurn
+            ? t('tasks.editsTurnEmpty')
+            : t('tasks.editsEmpty')
       : null;
 
   return createPortal(
@@ -109,9 +124,27 @@ export function SessionEditsDialog({
               <span className="text-red-400">-{total.removed}</span>
             </span>
           )}
+          {hasTurn && (
+            <div className="ml-auto flex items-center rounded-md border border-edge/[0.08] p-0.5 text-[11px]">
+              {(['turn', 'all'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setScope(s)}
+                  className={
+                    scope === s
+                      ? 'rounded px-2 py-0.5 bg-edge/[0.12] text-neutral-100'
+                      : 'rounded px-2 py-0.5 text-neutral-500 hover:text-neutral-200'
+                  }
+                >
+                  {s === 'turn' ? t('tasks.editsScopeTurn') : t('tasks.editsScopeAll')}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             onClick={onClose}
-            className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            className={hasTurn ? 'p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800' : 'ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}
             title={t('common.close')}
           >
             <X className="h-4 w-4" />

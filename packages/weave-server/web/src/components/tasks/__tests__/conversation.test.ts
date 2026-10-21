@@ -4,6 +4,7 @@ import {
   buildSegments,
   conversationOf,
   countdownLabel,
+  editsWindowOf,
   imagesFrom,
   exportConversationText,
   exportStamp,
@@ -863,5 +864,54 @@ describe('对话缓存（sessionStorage）', () => {
     store.set('weave:conv:s1', '{ 这不是 json');
     expect(readConvCache('s1')).toBeNull();
     expect(readConvCache('从没写过')).toBeNull();
+  });
+});
+
+describe('editsWindowOf（按轮取数的窗口）', () => {
+  const conv = (id: number, over: Partial<ConvEntry> = {}): ConvEntry => ({
+    key: `e${id}`,
+    eventId: id,
+    role: 'user',
+    at: at(id),
+    text: `t${id}`,
+    ...over,
+  });
+
+  it('回复锚：上界是自己、下界是前一条回复', () => {
+    const entries = [
+      conv(1, { role: 'assistant' }),
+      conv(2),
+      conv(3, { role: 'assistant' }),
+      conv(4),
+      conv(5, { role: 'assistant' }),
+    ];
+    expect(editsWindowOf(entries, 'e3')).toEqual({ since: at(1), until: at(3) });
+  });
+
+  it('用户锚：取包夹它的两条回复；同一轮里的气泡窗口相同', () => {
+    const entries = [
+      conv(1, { role: 'assistant' }),
+      conv(2),
+      conv(3, { role: 'assistant' }),
+      conv(4),
+      conv(5, { role: 'assistant' }),
+    ];
+    expect(editsWindowOf(entries, 'e4')).toEqual({ since: at(3), until: at(5) });
+    expect(editsWindowOf(entries, 'e2')).toEqual(editsWindowOf(entries, 'e3'));
+  });
+
+  it('尾巴上的用户条目（回合还在跑）：until = null', () => {
+    const entries = [conv(1, { role: 'assistant' }), conv(2)];
+    expect(editsWindowOf(entries, 'e2')).toEqual({ since: at(1), until: null });
+  });
+
+  it('会话开头没有更早的回复：since = null', () => {
+    const entries = [conv(1), conv(2, { role: 'assistant' })];
+    expect(editsWindowOf(entries, 'e1')).toEqual({ since: null, until: at(2) });
+  });
+
+  it('全程没有回复条目 → 双 null（退化为全部）；找不到的 key 同样', () => {
+    expect(editsWindowOf([conv(1), conv(2)], 'e1')).toEqual({ since: null, until: null });
+    expect(editsWindowOf([conv(1)], 'e999')).toEqual({ since: null, until: null });
   });
 });

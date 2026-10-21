@@ -22,7 +22,12 @@ export function HarnessIcon({
     const Icon = ui.icon;
     return (
       <span className={cn('inline-flex shrink-0', running && ui.runAnimation, className)}>
-        <Icon className={cn('h-3.5 w-3.5', running ? ui.iconRunning : ui.iconIdle)} />
+        <Icon
+          className={cn(
+            'h-3.5 w-3.5',
+            running ? cn(ui.iconRunning, ui.breatheAnimation) : ui.iconIdle,
+          )}
+        />
       </span>
     );
   }

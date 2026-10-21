@@ -217,6 +217,28 @@ interface SessionEditHunk {
   clamped?: true;
 }
 
+/**
+ * 按轮取数的窗口（`?since=&until=`，语义 **(since, until]**）：since 是上一条回复
+ * 的 hook 时刻——它比上一轮最后的转录条目**晚** ~1s（hook 记晚一步），严格大于
+ * 才能把上一轮收尾的改动排除在外；until 取闭包保证这一轮一条不漏。`at` 缺失或
+ * 解析不了的改动没法归轮，范围视图里不摆（不带参的「全部」照旧全给）。
+ */
+function parseIsoParam(raw: string | null): number | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : null;
+}
+
+function editInRange(at: string | null, since: number | null, until: number | null): boolean {
+  if (since === null && until === null) return true;
+  if (!at) return false;
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return false;
+  if (since !== null && t <= since) return false;
+  if (until !== null && t > until) return false;
+  return true;
+}
+
 /** 按文件汇总改动（首见序）；diff 还没算——那是 web 的事。 */
 function summarizeEdits(
   records: readonly FileEdit[],
@@ -1096,7 +1118,11 @@ export async function handleHooksRoutes(
       sendJson(res, 200, { files: null, hunks: 0, truncated: false, reason: 'unreadable' });
       return true;
     }
-    sendJson(res, 200, summarizeEdits(records, project.path));
+    // 按轮取数：前端把「上一次回复 → 这一次回复」的窗口带上来（不带 = 全部）
+    const since = parseIsoParam(url.searchParams.get('since'));
+    const until = parseIsoParam(url.searchParams.get('until'));
+    const ranged = since !== null || until !== null ? records.filter((r) => editInRange(r.at, since, until)) : records;
+    sendJson(res, 200, summarizeEdits(ranged, project.path));
     return true;
   }
 

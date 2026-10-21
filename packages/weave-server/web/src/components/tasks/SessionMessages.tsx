@@ -265,6 +265,32 @@ export function conversationOf(
   return out;
 }
 
+/** 按轮取数的窗口（改动汇总的取数范围）：锚及其后第一条回复的 `at` 为上界、
+ *  锚之前最近一条回复的 `at` 为下界——同一轮里的气泡算出同一个窗口。全程没有
+ *  回复条目 → 双 null = 退化为「全部」。 */
+export function editsWindowOf(
+  entries: readonly ConvEntry[],
+  key: string,
+): { since: string | null; until: string | null } {
+  const idx = entries.findIndex((e) => e.key === key);
+  if (idx < 0) return { since: null, until: null };
+  let until: string | null = null;
+  for (let i = idx; i < entries.length; i++) {
+    if (entries[i]!.role === 'assistant') {
+      until = entries[i]!.at;
+      break;
+    }
+  }
+  let since: string | null = null;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (entries[i]!.role === 'assistant') {
+      since = entries[i]!.at;
+      break;
+    }
+  }
+  return { since, until };
+}
+
 /**
  * 文案归一（`claims` 的比对形态）：会话那侧的原文外面会被加东西（`stripPromptDecor`
  * 剥的那些）——剥掉、折叠空白，两侧才是同一形态（服务端回执比对是同一条规则，
@@ -882,8 +908,12 @@ export function SessionMessages({
   /** 弹出菜单（位置 = 指针处）：气泡右键（那条一并勾上）与底栏「分享图片」共用一套
    *  外点关闭/Esc/滚轮退场，故只留一份状态、用 kind 分面。 */
   const [menu, setMenu] = useState<ConvMenu | null>(null);
-  /** 改动汇总弹窗（会话级：一次对话改过的所有文件，按文件折叠）。 */
+  /** 改动汇总弹窗（默认按轮：右键哪条气泡就看那一轮的改动；「全部对话」是逃生门）。 */
   const [editsOpen, setEditsOpen] = useState(false);
+  const [editsRange, setEditsRange] = useState<{ since: string | null; until: string | null }>({
+    since: null,
+    until: null,
+  });
   /** 队列气泡里展开看全文的那一行（多条时每行一句，点开才完整）。 */
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const [size, setSize] = useState<ConvSize>(() => loadConvSize());
@@ -2865,11 +2895,12 @@ export function SessionMessages({
                     <Check className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convSelect')}
                   </button>
-                  {/* 汇总的是整段对话（不是这一条气泡）：右键只是入口 */}
+                  {/* 汇总的是这一轮（锚所在轮：上一次回复 → 这一次回复）；「全部」在弹窗里切 */}
                   <button
                     type="button"
                     onClick={() => {
                       setMenu(null);
+                      setEditsRange(editsWindowOf(thread, menu.key));
                       setEditsOpen(true);
                     }}
                     className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
@@ -2963,9 +2994,10 @@ export function SessionMessages({
           />
         )}
 
-        {/* 改动汇总：整段对话改过的文件（取数归 harness 能力面，diff 在本页算） */}
+        {/* 改动汇总：默认这一轮的文件（取数归 harness 能力面，diff 在本页算） */}
         <SessionEditsDialog
           sessionId={sessionId}
+          range={editsRange}
           open={editsOpen}
           onClose={() => setEditsOpen(false)}
         />

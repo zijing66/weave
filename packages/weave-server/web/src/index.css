@@ -177,11 +177,13 @@
   animation-delay: 150ms;
 }
 
-/* 会话执行中：harness 自身的跑马灯动效——claude 星芒、codex 六角线圈各自匀速
-   旋转带辉光（各 harness 一套，静态时由状态点接管）。
+/* 会话执行中：harness 自身的跑马灯动效——claude 星芒、codex OpenAI 结花印
+   各自匀速旋转带辉光（各 harness 一套，静态时由状态点接管）。
    只动 transform：filter 不可合成，写进 keyframes 会让每个跑着的会话每帧都
    重绘一次（实测 3 个 = 主线程空转 20%、样式重算 55 次/秒），而它多半躺在
-   .frosted 里，连带每帧重算背景模糊。辉光移出动画、常量化。 */
+   .frosted 里，连带每帧重算背景模糊。辉光移出动画、常量化。
+   呼吸（放大缩小）是第二层：外层壳转（harness-run-*）、图标本体缩
+   （harness-breathe），两层 transform 不打架。 */
 @keyframes harness-run-claude {
   from {
     transform: rotate(0deg);
@@ -206,6 +208,19 @@
 .harness-run-codex {
   filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.8));
   animation: harness-run-codex 3s linear infinite;
+}
+
+@keyframes harness-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+.harness-breathe {
+  animation: harness-breathe 1.6s ease-in-out infinite;
 }
 
 /* 生成中滚动带：新事件一到，新的那条从下面滚进来顶掉旧的。 */

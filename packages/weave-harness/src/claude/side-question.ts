@@ -17,6 +17,21 @@ const QUESTION_SHAPE = /^[^\x00-\x1f\x7f]+$/;
  */
 const COMPACT_SUMMARY_HEAD = /^<(?:analysis|summary)>/;
 
+/**
+ * 后台任务进度播报的形态：宿主给后台子任务的 narration fork 同样 skipTranscript
+ * （无转录文件），事件与侧问回答同形状——不加门它先到就抢答（实测一次：真回答
+ * 晚 13 秒到、被静默丢弃）。播报恒为单行英文短句、以进行体动词开头，且无 CJK；
+ * 真回答是完整内容（长句 / 中文 / 多行），落不进这四条合取。词表来自实机采集，
+ * 宿主换文案时靠真回答的完整性兜底。
+ */
+const PROGRESS_VERBS =
+  'exploring|reviewing|inspecting|tracing|checking|locating|reporting|summarizing|examining|reading|searching|scanning|analyzing|investigating|fetching|loading|probing|auditing|mapping|listing|comparing|verifying|testing|extracting|processing|measuring|assessing|evaluating|identifying|confirming|drafting|refactoring|debugging|grepping';
+const PROGRESS_NOTE_HEAD = new RegExp(`^[\\p{P}\\s]*(${PROGRESS_VERBS})\\b`, 'iu');
+const HAS_CJK = /\p{Script=Han}/u;
+
+const isProgressNote = (text: string): boolean =>
+  !text.includes('\n') && text.length <= 80 && !HAS_CJK.test(text) && PROGRESS_NOTE_HEAD.test(text);
+
 const pick = (raw: unknown, key: string): unknown =>
   raw && typeof raw === 'object' ? (raw as Record<string, unknown>)[key] : undefined;
 
@@ -56,6 +71,6 @@ export const CLAUDE_SIDE_QUESTION: SideQuestionSpec = {
     const answer = pick(raw, 'last_assistant_message');
     if (typeof answer !== 'string') return null;
     const text = answer.trim();
-    return text && !COMPACT_SUMMARY_HEAD.test(text) ? text : null;
+    return text && !COMPACT_SUMMARY_HEAD.test(text) && !isProgressNote(text) ? text : null;
   },
 };

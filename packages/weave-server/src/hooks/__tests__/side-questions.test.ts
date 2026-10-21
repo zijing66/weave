@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,9 +8,11 @@ import { openDatabase } from '../../db/db.js';
 import { SideQuestionRepository } from '../../repositories/side-questions.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import {
+  answerScore,
   claimSideAnswer,
   readSideQuestions,
   SIDE_ANSWER_WINDOW_MS,
+  SIDE_SETTLE_WINDOW_MS,
   type SideQuestionDeps,
 } from '../side-questions.js';
 
@@ -28,11 +30,12 @@ let dir: string;
 
 const surfaceFor = (): MessagingSurface => ({ sideQuestion: CLAUDE_SIDE_QUESTION }) as MessagingSurface;
 
-const deps = (now?: number): SideQuestionDeps => ({
+const deps = (now?: number, settle?: (row: { id: number }) => void): SideQuestionDeps => ({
   repo,
   bus,
   surfaceFor,
   now: now === undefined ? undefined : () => now,
+  ...(settle ? { settle: settle as SideQuestionDeps['settle'] } : {}),
 });
 
 /** 一条 SubagentStop 的归一化载荷（`agent_transcript_path` 指向不存在 = skipTranscript）。 */
@@ -76,6 +79,21 @@ describe('harness 判据（claude SideQuestionSpec.answerOf）', () => {
     expect(
       CLAUDE_SIDE_QUESTION.answerOf('SubagentStop', subagentStop('<analysis>x</analysis>')),
     ).toBeNull();
+  });
+
+  it('后台任务进度播报不算旁路回答（单行英文短句 + 进行体动词开头）', () => {
+    expect(
+      CLAUDE_SIDE_QUESTION.answerOf(
+        'SubagentStop',
+        subagentStop('Reviewing orchestration test coverage'),
+      ),
+    ).toBeNull();
+    expect(CLAUDE_SIDE_QUESTION.answerOf('SubagentStop', subagentStop('Exploring repo layout'))).toBeNull();
+    // 超长 / 多行 / 带中文不进门——真回答不因词表损耗被误排
+    expect(CLAUDE_SIDE_QUESTION.answerOf('SubagentStop', subagentStop(`Exploring ${'x'.repeat(90)}`))).toBe(
+      `Exploring ${'x'.repeat(90)}`,
+    );
+    expect(CLAUDE_SIDE_QUESTION.answerOf('SubagentStop', subagentStop('Exploring 布局'))).toBe('Exploring 布局');
   });
 
   it('非 SubagentStop 一律不认', () => {
@@ -150,6 +168,107 @@ describe('认领（claimSideAnswer）', () => {
         },
       ),
     ).toBeNull();
+  });
+});
+
+describe('候选打分（answerScore）', () => {
+  it('语种一致 +2、展开长度 +1、bigram 重叠 +1', () => {
+    const q = 'claude的fork的子agent，是否有给其他会话sendmessage的能力';
+    // 中文真回答：语种 + 长度 + 重叠全中
+    const good =
+      '可以，但取决于子 agent 是否拿到了 SendMessage 工具及相应权限。编排里 fork 出来的子 agent 与主会话共享项目配置，只要工具面放行了 SendMessage 就能投递；没放行就只能走宿主自己的回报通道，weave 侧看不到也不会替它转。';
+    expect(answerScore(q, good)).toBe(4);
+    // 英文进度播报：语种不合（-2）、短（-1）；与问句沾了 agent/orchestration 等公共
+    // bigram，dice 恰过 0.15 线 +1——相似度只加分不否决的活例子
+    expect(answerScore(q, 'Reviewing orchestration test coverage')).toBe(1);
+    // 英文问句配英文长回答：语种 + 长度
+    expect(answerScore('how does the queue flush work', 'The queue flushes after each delivery attempt; retries back off exponentially until the ack gate opens.')).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('稳定窗（认领后可被更高分候选替换）', () => {
+  it('弱候选先认领，真回答窗内替换并重发帧；settle 只对最终答案发一次', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_700_000_000_000);
+      const settled: number[] = [];
+      const id = ask('claude的fork的子agent，是否有给其他会话sendmessage的能力');
+      // 第一候选过了 harness 形状门但信息量低（英文短句）；真回答中文长句分更高。
+      const first = claimSideAnswer(deps(undefined, (row) => settled.push(row.id)), {
+        sessionId: 's1',
+        source: 'claude',
+        eventType: 'SubagentStop',
+        payload: subagentStop('Orchestration test coverage looks thin.'),
+        eventId: 101,
+      });
+      expect(first).toMatchObject({ id, answer: 'Orchestration test coverage looks thin.' });
+      expect(frames).toHaveLength(1);
+
+      vi.advanceTimersByTime(SIDE_SETTLE_WINDOW_MS - 5_000);
+      const real = claimSideAnswer(deps(undefined, (row) => settled.push(row.id)), {
+        sessionId: 's1',
+        source: 'claude',
+        eventType: 'SubagentStop',
+        payload: subagentStop('可以，但要取决于子 agent 是否拿到了 SendMessage 工具与相应权限，编排里 fork 出来的子 agent 与主会话共享项目配置，工具面放行即可投递。'),
+        eventId: 102,
+      });
+      expect(real).toMatchObject({ id, answerEventId: 102 });
+      expect(frames).toHaveLength(2); // 替换也广播（web 重拉即显示真回答）
+
+      vi.advanceTimersByTime(SIDE_SETTLE_WINDOW_MS + 1_000);
+      expect(settled).toEqual([id]); // 只对最终答案落定一次
+      expect(repo.getById(id)).toMatchObject({ answerEventId: 102, status: 'answered' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('分数不高于现任（平分/更低）不替换', () => {
+    const id = ask('它用的是什么方案？');
+    claimSideAnswer(deps(), {
+      sessionId: 's1',
+      source: 'claude',
+      eventType: 'SubagentStop',
+      payload: subagentStop('用的是轮询加指数退避的方案，队列冲洗由投递完成事件驱动，回执到账即撤防。'),
+      eventId: 201,
+    });
+    const before = repo.getById(id);
+    const again = claimSideAnswer(deps(), {
+      sessionId: 's1',
+      source: 'claude',
+      eventType: 'SubagentStop',
+      payload: subagentStop('Checking queue flush state'),
+      eventId: 202,
+    });
+    expect(again).toBeNull();
+    expect(repo.getById(id)).toEqual(before);
+  });
+
+  it('稳定窗外（answeredAt 早于窗下界）不再替换', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_700_000_000_000);
+      const id = ask();
+      claimSideAnswer(deps(), {
+        sessionId: 's1',
+        source: 'claude',
+        eventType: 'SubagentStop',
+        payload: subagentStop('第一份回答，内容足够长以便通过长度门槛的判定逻辑一些补充文字。'),
+        eventId: 301,
+      });
+      vi.advanceTimersByTime(SIDE_SETTLE_WINDOW_MS + 60_000);
+      const late = claimSideAnswer(deps(), {
+        sessionId: 's1',
+        source: 'claude',
+        eventType: 'SubagentStop',
+        payload: subagentStop('更晚也更长的回答，同样越过长度门槛，但稳定窗已经关上了呀。'),
+        eventId: 302,
+      });
+      expect(late).toBeNull();
+      expect(repo.getById(id)?.answerEventId).toBe(301);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

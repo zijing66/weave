@@ -65,6 +65,22 @@ export class SideQuestionRepository {
   }
 
   /**
+   * 稳定窗内的替换：把仍在窗里（`settled_after` 之后落定）的已答行换成更可信的
+   * 候选。只按 id 精确替换（调用方已选定目标行），条件更新幂等。
+   */
+  supersede(id: number, answer: string, eventId: number, settledAfter: string): SideQuestionRow | null {
+    const changes = Number(
+      this.db
+        .prepare(
+          `UPDATE side_questions SET answer = ?, answer_event_id = ?, answered_at = ?
+           WHERE id = ? AND status = 'answered' AND answered_at >= ?`,
+        )
+        .run(answer, eventId, new Date().toISOString(), id, settledAfter).changes,
+    );
+    return changes === 1 ? (this.getById(id) ?? null) : null;
+  }
+
+  /**
    * 待答超窗落定（时间窗过了宿主不会再作答：面板可能被 Esc 关掉、主回合可能
    * 已经收尾）。惰性执行——在列表读取前跑一次，不另起定时器。
    */

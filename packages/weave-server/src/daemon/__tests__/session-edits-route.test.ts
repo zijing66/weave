@@ -33,7 +33,7 @@ describe('会话改动汇总路由', () => {
     reason?: string;
   }
 
-  const call = async (): Promise<{ status: number; body: Body }> => {
+  const call = async (query = ''): Promise<{ status: number; body: Body }> => {
     const req = Readable.from([Buffer.from('')]) as unknown as IncomingMessage;
     req.method = 'GET';
     let bodyOut = '';
@@ -47,7 +47,7 @@ describe('会话改动汇总路由', () => {
         bodyOut = typeof chunk === 'string' ? chunk : '';
       },
     };
-    const url = new URL('/sessions/sess/edits', 'http://x');
+    const url = new URL(`/sessions/sess/edits${query}`, 'http://x');
     await handleHooksRoutes(req, res as unknown as ServerResponse, deps, url.pathname, url);
     return { status: res.statusCode, body: JSON.parse(bodyOut) as Body };
   };
@@ -130,5 +130,43 @@ describe('会话改动汇总路由', () => {
     transcript([use('t1', 'Edit', { file_path: join(dir, 'a.ts'), old_string: 'a', new_string: 'b' })]);
     const hit = await call();
     expect(hit.body).toMatchObject({ files: null, reason: 'unsupported' });
+  });
+
+  // ---- 按轮取数（?since=&until=，语义 (since, until]）----
+
+  const useAt = (id: string, name: string, input: unknown, at: string): string =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: at,
+      message: { content: [{ type: 'tool_use', id, name, input }] },
+    });
+
+  it('窗口只回界内的改动：at==since 排除、at==until 包含、at:null 不归轮', async () => {
+    transcript([
+      useAt('t0', 'Edit', { file_path: join(dir, 'prev.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T00:59:00.000Z'),
+      useAt('t1', 'Edit', { file_path: join(dir, 'in1.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T01:00:30.000Z'),
+      useAt('t2', 'Edit', { file_path: join(dir, 'edge.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T01:02:00.000Z'),
+      useAt('t3', 'Edit', { file_path: join(dir, 'later.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T01:05:00.000Z'),
+      // 无时刻的改动没法归轮：范围视图不摆
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 't4', name: 'Edit', input: { file_path: join(dir, 'noat.ts'), old_string: 'a', new_string: 'b' } }] },
+      }),
+    ]);
+    const hit = await call('?since=2026-10-21T01:00:00.000Z&until=2026-10-21T01:02:00.000Z');
+    expect(hit.body.files?.map((f) => f.path)).toEqual(['in1.ts', 'edge.ts']);
+    expect(hit.body.hunks).toBe(2);
+  });
+
+  it('不带参 = 全部（现行为），非法 ISO 按缺省处理', async () => {
+    transcript([
+      useAt('t1', 'Edit', { file_path: join(dir, 'a.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T01:00:00.000Z'),
+      useAt('t2', 'Edit', { file_path: join(dir, 'b.ts'), old_string: 'a', new_string: 'b' }, '2026-10-21T02:00:00.000Z'),
+    ]);
+    const all = await call();
+    expect(all.body.hunks).toBe(2);
+    // since 非法 → 当没带；until 合法仍生效
+    const bad = await call('?since=not-a-date&until=2026-10-21T01:30:00.000Z');
+    expect(bad.body.files?.map((f) => f.path)).toEqual(['a.ts']);
   });
 });

@@ -236,7 +236,14 @@ export function startDaemon(): void {
   // 旁路会话历史（claude = /btw）：宿主两侧都不落盘，只有 weave 自己发过的问句
   // 才知道——回答由采集事件认领回来（判据归 harness 能力面）。
   const sideQuestions = new SideQuestionRepository(db);
-  const sideQuestionDeps: SideQuestionDeps = { repo: sideQuestions, bus: hookBus };
+  const sideQuestionDeps: SideQuestionDeps = {
+    repo: sideQuestions,
+    bus: hookBus,
+    // 稳定窗落定才收起宿主的 btw 面板（一记 ESC）：面板是 local JSX UI，开着会
+    // 一直吃键盘——后续投递会落进面板里白丢。ESC 正是它的关闭键。挪到落定点，
+    // 稳定窗内的误认领被替换时就不再多打这一记。
+    settle: (row) => void messageDeliverer.interrupt(row.sessionId),
+  };
   const watch = new WatchService(projects);
   watch.start();
   const fingerprintCache = new FingerprintCache();
@@ -387,10 +394,7 @@ export function startDaemon(): void {
     questionTracker,
     sideQuestions: {
       onEvent: (input) => {
-        const row = claimSideAnswer(sideQuestionDeps, input);
-        // 回答到账即收起宿主的 btw 面板：面板是 local JSX UI，开着会一直吃键盘——
-        // 后续打到这个 pane 的投递会落进面板里白丢。ESC 正是它的关闭键。
-        if (row) void messageDeliverer.interrupt(row.sessionId);
+        claimSideAnswer(sideQuestionDeps, input);
       },
     },
     sessionProbe,

@@ -58,8 +58,9 @@
 - **转录路径归 server**：`SessionProbe.transcriptPathOf`（hook 事件旁路上报进来的那条，daemon 重启后从库里最近一条事件补回），claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
 - **读法**：流式逐行扫（`readline` + 先按 `"tool_use"` 子串预筛再 parse），不整份进内存——实测 90MB 转录 1.4s / 909 处改动，够一次点击用；半路读崩就回 `null`，不交半份。
 - **汇总与限流在 server**（`summarizeEdits`）：`GET /sessions/:id/edits` → `{ files: [{ path, hunks: [{ before, after, at, clamped? }] }], hunks, truncated }`。展示路径相对项目根（posix 分隔），项目外的保留绝对路径；单处字段裁到 200k 字符（标 `clamped: true`）、总量 4MB（超了标 `truncated: true`）——都不许假装是全份。
+- **按轮取数**（`?since=&until=`，语义 **(since, until]**）：默认视图是右键锚所在的那一轮——`until` = 锚及其后第一条回复的 hook 时刻、`since` = 锚之前最近一条回复的（`editsWindowOf`，web 侧唯一判据）。下界取严格大于是因为 since（上一条回复的 hook 时刻）比上一轮最后的转录条目**晚** ~0.4–1.3s（hook 记晚一步，实测样本：UPS +0.46s ×2、Stop +0.51/+0.75/+1.32s），放宽反而漏进上一轮尾巴；上界取闭包保证这一轮一条不漏。轮与轮之间隔着「人读 + 打字 + 模型首 token」≥2s，远大于钟差 ⇒ 不会串轮。`at` 缺失或解析不了的改动没法归轮，范围视图不摆（不带参 = 全部，照旧全给）；非法 ISO 按缺省处理。**已知局限**：窗口在已加载的条目里算，贴着历史头顶右键时真实的上一条回复可能还没翻出来 → since 退化成 null、窗口变宽（多摆不少摆错）。
 - **null 也是答案**：没有该槽的 harness 回 `reason: 'unsupported'`，读不到转录回 `reason: 'unreadable'`，前端如实说明「为什么这里什么都没有」，不空转、不摆空壳。
-- **diff 在 web 现算**：`web/src/lib/text-diff.ts` 的 `diffLines` + `collapseDiff`，行渲染是 `components/ui/diff-rows.tsx`（与配置对照弹窗 `DiffDialog` 共用）。入口 = 对话气泡右键「改动汇总」（`SessionEditsDialog`），整段对话一个面、不是单条气泡的。
+- **diff 在 web 现算**：`web/src/lib/text-diff.ts` 的 `diffLines` + `collapseDiff`，行渲染是 `components/ui/diff-rows.tsx`（与配置对照弹窗 `DiffDialog` 共用）。入口 = 对话气泡右键「改动汇总」（`SessionEditsDialog`），默认这一轮、头部可切「全部对话」（会话里还没有回复条目时隐藏切换、恒为全部）。
 
 ### images 槽（入站图采集）
 
@@ -474,8 +475,8 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 因此这是消息域里**唯一的记录系统**：
 
 - 问句由 weave 自己记（`side_questions` 表 / `repositories/side-questions.ts`）。
-- 回答由之后那条采集事件认领——判据归 harness 能力面 `MessagingSurface.sideQuestion`（`SideQuestionSpec.command/validate/answerOf`；claude 的 `answerOf` = `SubagentStop` 且宿主**没给这个 agent 留转录**（普通 / skill 子 agent 都有 `subagents/agent-*.jsonl`，skipTranscript 的 fork 才没有）+ 压缩摘要形态排除，server/web 不认识宿主事件名）。
-- 认领 = 该会话**最早一条 pending 且提问在 10 分钟窗口内**的行（条件更新、幂等；窗口外落 `timeout`，读列表前惰性跑一次、不另起定时器）；人工在宿主面板里发的侧问没有 pending 行、天然不认领。
+- 回答由之后那条采集事件认领——判据归 harness 能力面 `MessagingSurface.sideQuestion`（`SideQuestionSpec.command/validate/answerOf`；claude 的 `answerOf` = `SubagentStop` 且宿主**没给这个 agent 留转录**（普通 / skill 子 agent 都有 `subagents/agent-*.jsonl`，skipTranscript 的 fork 才没有）+ 压缩摘要形态排除 + **后台任务进度播报排除**（单行 ≤80 字符、无 CJK、进行体动词开头——这类 narration fork 与侧问回答事件形状逐字节相同，不加门会先到抢答、真回答被静默丢弃），server/web 不认识宿主事件名）。
+- 认领 = 该会话**最早一条 pending 且提问在 10 分钟窗口内**的行（条件更新、幂等；窗口外落 `timeout`，读列表前惰性跑一次、不另起定时器）；人工在宿主面板里发的侧问没有 pending 行、天然不认领。认领后行在 **30s 稳定窗**内仍可被**严格更高分**候选替换（`answerScore`：语种一致 +2、长度 ≥120 +1、与问句 bigram Dice ≥0.15 +1，纯机械；平分保持现任 = 先到者赢），替换重发 `sideQuestion.answered` 帧；窗闭落定才发收尾 ESC——误认领被替换就不再多打一记。
 
 **宿主的 btw 面板是 local JSX UI、开着就一直吃键盘**（字母与方向键都是它自己的快捷键）⇒ 不收起来，weave 后续打到这个 pane 的层② 投递会落进面板里白丢一条：故**认领到回答的那一刻补一记 ESC**（`MessageDeliverer.interrupt`，ESC 就是面板的关闭键；主回合在跑时这一记由面板消费、回合不受影响——代价是用户若已自己关掉面板而回合在跑，这记会打断那一轮，故只打这一次、不延时也不重试）。
 

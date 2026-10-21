@@ -1539,9 +1539,17 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}/plan`,
     ).then((r) => r.plan),
   /** 会话的改动汇总（按文件聚合；diff 由前端算）。没有该 harness 的提取面 / 读不到
-   *  转录时 `files` 为 null。 */
-  sessionEdits: (sessionId: string): Promise<SessionEdits> =>
-    apiFetch<SessionEdits>(`/sessions/${encodeURIComponent(sessionId)}/edits`),
+   *  转录时 `files` 为 null。`range` = 按轮取数的窗口（语义 (since, until]，服务端
+   *  判）；缺省 = 整段会话。 */
+  sessionEdits: (sessionId: string, range?: { since?: string | null; until?: string | null }): Promise<SessionEdits> => {
+    const qs = [
+      range?.since ? `since=${encodeURIComponent(range.since)}` : '',
+      range?.until ? `until=${encodeURIComponent(range.until)}` : '',
+    ]
+      .filter(Boolean)
+      .join('&');
+    return apiFetch<SessionEdits>(`/sessions/${encodeURIComponent(sessionId)}/edits${qs ? `?${qs}` : ''}`);
+  },
   /** 投递消息到会话：恒 prompt 通道、无模式入参（直投 → 终端 send-text → 中继
    *  降级 → 未开会话积压队列）；`forceTerminal` 收窄成只剩层② 终端击键——dashboard
    *  的手动对话恒带它（直投/中继不带发送方，宿主也不当用户输入）。层①② 皆无才
