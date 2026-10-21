@@ -70,6 +70,14 @@ export function getPushKeysPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'push.json');
 }
 
+/**
+ * harness 配置快照根（`<local>/harness-config/<harness>/`）：整份配置文件快照里
+ * 可能带 API key，属本机专属 → 落 `local/`、不进 settings 表、不随迁移带走。
+ */
+export function getHarnessConfigDir(dir?: string): string {
+  return path.join(dataRoots(dir).local, 'harness-config');
+}
+
 /** 自签证书目录（局域网 HTTPS）。 */
 export function getCertsDir(dir?: string): string {
   return path.join(dataRoots(dir).local, 'certs');

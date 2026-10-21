@@ -9,6 +9,7 @@ import { CLAUDE_BLOCKING_PROMPT as CLAUDE_QUESTIONS } from './questions.js';
 import { CLAUDE_RESUME } from './resume.js';
 import { CLAUDE_DETECTOR } from './detect.js';
 import { CLAUDE_STATUSLINE } from './statusline/surface.js';
+import { CLAUDE_CONFIG } from './config.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
@@ -24,7 +25,7 @@ export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { CLAUDE_SIDE_QUESTION } from './side-question.js';
 export { interruptMarkerAt, currentModelAt, currentModeAt } from './transcript.js';
-export { modelAliasTargets, aliasOfModel, bareModelName, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';
+export { modelAliasTargets, aliasOfModel, bareModelName, defaultModelOf, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';
 export { resolveClaudePeer } from './peers.js';
 export {
   CLAUDE_CAPTURE,
@@ -48,6 +49,7 @@ export {
 export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from './mcp-gen.js';
 export { generateAutoMemoryHook } from './helpers-gen.js';
 export { CLAUDE_STATUSLINE } from './statusline/surface.js';
+export { CLAUDE_CONFIG } from './config.js';
 export {
   generateStatuslineScript,
   type GenerateStatuslineOptions,
@@ -74,6 +76,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'questions',
     'capture',
     'statusline',
+    'config',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -85,4 +88,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   questions: CLAUDE_QUESTIONS,
   capture: CLAUDE_CAPTURE,
   statusline: CLAUDE_STATUSLINE,
+  config: CLAUDE_CONFIG,
 };

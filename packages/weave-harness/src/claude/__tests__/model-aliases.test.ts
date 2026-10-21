@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   aliasOfModel,
   bareModelName,
+  defaultModelOf,
   effortLevelOf,
   modelAliasTargets,
   permissionModeOf,
@@ -70,14 +71,58 @@ describe('switchedModelOf', () => {
   });
 });
 
+describe('defaultModelOf', () => {
+  const home = () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'weave-ma-'));
+    fs.mkdirSync(path.join(h, '.claude'), { recursive: true });
+    return h;
+  };
+
+  it('env 块的 ANTHROPIC_MODEL 压过顶层 model 键（实测：新会话 startup 落在 env 那个）', () => {
+    const h = home();
+    fs.writeFileSync(
+      path.join(h, '.claude', 'settings.json'),
+      JSON.stringify({ env: { ANTHROPIC_MODEL: 'ftm' }, model: 'sonnet' }),
+    );
+    expect(defaultModelOf(h, {})).toBe('ftm');
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+
+  it('没有 env 就用顶层 model 键：别名经 ANTHROPIC_DEFAULT_<别名>_MODEL 换真名，非别名照原样回落', () => {
+    const h = home();
+    fs.writeFileSync(
+      path.join(h, '.claude', 'settings.json'),
+      JSON.stringify({ model: 'sonnet', env: { ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-flash' } }),
+    );
+    expect(defaultModelOf(h, {})).toBe('deepseek-flash');
+    fs.writeFileSync(path.join(h, '.claude', 'settings.json'), JSON.stringify({ model: 'ftm' }));
+    expect(defaultModelOf(h, {})).toBe('ftm');
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+
+  it('两处都没配就答宿主内建默认 sonnet 档；进程 env 只做兜底', () => {
+    const h = home(); // 无 settings.json
+    expect(defaultModelOf(h, {})).toBe('sonnet');
+    expect(defaultModelOf(h, { ANTHROPIC_MODEL: 'GLM-5.3-Flash' })).toBe('GLM-5.3-Flash');
+    fs.rmSync(h, { recursive: true, force: true });
+  });
+});
+
 describe('startedModelOf', () => {
   it('SessionStart 带 model（startup / compact）就报真名', () => {
     expect(startedModelOf('SessionStart', { source: 'startup', model: 'ftm' })).toEqual({ model: 'ftm' });
   });
 
-  it('resume 不带 model 也要报一声：null = 旧答案作废、重读（不是「不知道」）', () => {
-    expect(startedModelOf('SessionStart', { source: 'resume' })).toEqual({ model: null });
-    expect(startedModelOf('SessionStart', null)).toEqual({ model: null });
+  it('resume 不带 model 就答全局配置里的默认模型（重开 = 宿主落回默认）', () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'weave-ma-'));
+    fs.mkdirSync(path.join(h, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(h, '.claude', 'settings.json'),
+      JSON.stringify({ env: { ANTHROPIC_MODEL: 'ftm' }, model: 'sonnet' }),
+    );
+    expect(startedModelOf('SessionStart', { source: 'resume' }, h, {})).toEqual({ model: 'ftm' });
+    expect(startedModelOf('SessionStart', null, h, {})).toEqual({ model: 'ftm' });
+    fs.rmSync(h, { recursive: true, force: true });
   });
 
   it('别的动静一律 null', () => {

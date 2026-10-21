@@ -1,0 +1,214 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type {
+  ConfigCatalog,
+  ConfigFileId,
+  ConfigFileSpec,
+  ConfigKeySpec,
+  ConfigModelOption,
+  ConfigSurface,
+} from '../driver.js';
+import {
+  CLAUDE_ENV_VARS,
+  CLAUDE_SETTINGS_GROUPS,
+  CLAUDE_SETTINGS_KEYS,
+} from './settings-catalog.generated.js';
+import { statusLineIsWeave } from './settings-gen.js';
+
+const MAX_BYTES = 2 * 1024 * 1024;
+const DEFAULT_BASE_URL = 'https://api.anthropic.com';
+const ANTHROPIC_VERSION = '2023-06-01';
+
+/** 表单只读的 weave 托管键（点号路径）。`statusLine` 另按「命令是否指向 weave」判。 */
+const MANAGED_PATHS = ['$comment', 'hooks', 'permissions', 'enabledPlugins', 'env.WEAVE_ENABLED'];
+
+type FileCtx = { projectPath: string | null; homedir: string };
+
+const FILES: ReadonlyArray<{ id: ConfigFileId; profiles: boolean }> = [
+  { id: 'user', profiles: true },
+  { id: 'project', profiles: false },
+  { id: 'projectLocal', profiles: false },
+  { id: 'global', profiles: true },
+];
+
+function pathOf(id: ConfigFileId, ctx: FileCtx): string {
+  switch (id) {
+    case 'user':
+      return path.join(ctx.homedir, '.claude', 'settings.json');
+    case 'project':
+      return ctx.projectPath ? path.join(ctx.projectPath, '.claude', 'settings.json') : '';
+    case 'projectLocal':
+      return ctx.projectPath ? path.join(ctx.projectPath, '.claude', 'settings.local.json') : '';
+    case 'global':
+      return path.join(ctx.homedir, '.claude.json');
+  }
+}
+
+/** 文档的 Scope 词表 → 文件档位（`local` 即项目本地那份）。 */
+function scopeKeyOf(file: ConfigFileId): string {
+  return file === 'projectLocal' ? 'local' : file;
+}
+
+/** 某档可见的键：global 档只要 global 键；其余档 = any 键 + 本档专属键。 */
+function keysOf(file: ConfigFileId): readonly ConfigKeySpec[] {
+  if (file === 'global') return CLAUDE_SETTINGS_KEYS.filter((k) => k.scope === 'global');
+  const own = scopeKeyOf(file);
+  return CLAUDE_SETTINGS_KEYS.filter((k) => k.scope === 'any' || k.scope === own);
+}
+
+function topKeysOf(file: ConfigFileId): Set<string> {
+  return new Set(keysOf(file).map((k) => k.key.split('.')[0]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isDangerousSegment(seg: string): boolean {
+  return seg === '__proto__' || seg === 'constructor' || seg === 'prototype';
+}
+
+/** 点号路径 → 值（逐段走，只在普通对象上走）。 */
+function readPath(root: Record<string, unknown>, dotted: string): unknown {
+  let cur: unknown = root;
+  for (const seg of dotted.split('.')) {
+    if (!isPlainObject(cur)) return undefined;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
+/** 点号路径 → 写入（空段/危险段一律拒绝，避免 __proto__ 注入）。 */
+function assignPath(root: Record<string, unknown>, dotted: string, value: unknown): void {
+  const segs = dotted.split('.');
+  if (segs.some((s) => !s || isDangerousSegment(s))) throw new Error(`非法配置键：${dotted}`);
+  let cur = root;
+  for (const seg of segs.slice(0, -1)) {
+    if (!isPlainObject(cur[seg])) cur[seg] = {};
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  cur[segs[segs.length - 1]] = value;
+}
+
+async function readRawObject(file: string): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    const stat = await fs.stat(file);
+    if (stat.size > MAX_BYTES) throw new Error(`配置文件超过 ${MAX_BYTES} 字节：${file}`);
+    text = await fs.readFile(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  const body = text.replace(/^﻿/, '').trim();
+  if (!body) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error(`配置文件不是合法 JSON：${file}`);
+  }
+  if (!isPlainObject(parsed)) throw new Error(`配置文件顶层不是对象：${file}`);
+  return parsed;
+}
+
+async function writeRawObject(file: string, values: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
+  await fs.rename(tmp, file);
+}
+
+function resolveFile(file: ConfigFileId, ctx: FileCtx): string {
+  const p = pathOf(file, ctx);
+  if (!p) throw new Error(`配置档位 ${file} 需要项目路径`);
+  return p;
+}
+
+function credentialOf(values: Record<string, unknown>, input: { apiKey?: string | null; authToken?: string | null }): {
+  header: Record<string, string>;
+  credential: string;
+} {
+  const env = isPlainObject(values['env']) ? values['env'] : {};
+  const apiKey = input.apiKey || (typeof env['ANTHROPIC_API_KEY'] === 'string' ? env['ANTHROPIC_API_KEY'] : '');
+  const authToken =
+    input.authToken || (typeof env['ANTHROPIC_AUTH_TOKEN'] === 'string' ? env['ANTHROPIC_AUTH_TOKEN'] : '');
+  if (apiKey) return { header: { 'x-api-key': apiKey }, credential: 'apiKey' };
+  if (authToken) return { header: { authorization: `Bearer ${authToken}` }, credential: 'authToken' };
+  return { header: {}, credential: 'none' };
+}
+
+export const CLAUDE_CONFIG: ConfigSurface = {
+  harness: 'claude',
+
+  files(): ConfigFileSpec[] {
+    return FILES.map((f) => ({ id: f.id, profiles: f.profiles, path: (c) => pathOf(f.id, c) }));
+  },
+
+  catalog(file): ConfigCatalog {
+    const keys = keysOf(file);
+    return {
+      groups: CLAUDE_SETTINGS_GROUPS.filter((g) => keys.some((k) => k.group === g)),
+      keys,
+      envVars: file === 'global' ? [] : CLAUDE_ENV_VARS,
+    };
+  },
+
+  async read(file, ctx) {
+    const raw = await readRawObject(resolveFile(file, ctx));
+    const tops = topKeysOf(file);
+    const out: Record<string, unknown> = {};
+    for (const k of tops) if (k in raw) assignPath(out, k, raw[k]);
+    return out;
+  },
+
+  async write(file, ctx, values) {
+    const target = resolveFile(file, ctx);
+    const current = await readRawObject(target);
+    const tops = topKeysOf(file);
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(current)) {
+      if (!tops.has(k)) next[k] = v;
+    }
+    for (const [k, v] of Object.entries(values)) {
+      if (!tops.has(k.split('.')[0])) continue;
+      assignPath(next, k, v);
+    }
+    await writeRawObject(target, next);
+  },
+
+  managedKeys(values) {
+    const out = MANAGED_PATHS.filter((p) => readPath(values, p) !== undefined);
+    if (values['statusLine'] !== undefined && statusLineIsWeave(values['statusLine'])) out.push('statusLine');
+    return out;
+  },
+
+  async models(input) {
+    const env = isPlainObject(input.values['env']) ? input.values['env'] : {};
+    const configured = typeof env['ANTHROPIC_BASE_URL'] === 'string' ? env['ANTHROPIC_BASE_URL'] : '';
+    // baseUrl 有人会把 `/v1` 一起填进来，按 SDK 的根口径收齐后再拼 `/v1/models`
+    const baseUrl = (input.baseUrl || configured || DEFAULT_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
+    const { header, credential } = credentialOf(input.values, input);
+    const res = await fetch(`${baseUrl}/v1/models?limit=1000`, {
+      headers: { 'anthropic-version': ANTHROPIC_VERSION, ...header },
+      signal: AbortSignal.timeout(input.timeoutMs ?? 10_000),
+    });
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 200);
+      throw new Error(`模型列表请求失败：HTTP ${res.status}${detail ? ` ${detail}` : ''}`);
+    }
+    const body = (await res.json()) as { data?: unknown };
+    const models: ConfigModelOption[] = [];
+    if (Array.isArray(body.data)) {
+      for (const item of body.data) {
+        if (!isPlainObject(item) || typeof item['id'] !== 'string') continue;
+        models.push({
+          id: item['id'],
+          ...(typeof item['display_name'] === 'string' ? { name: item['display_name'] } : {}),
+          ...(typeof item['created_at'] === 'string' ? { createdAt: item['created_at'] } : {}),
+        });
+      }
+    }
+    return { models, baseUrl, credential };
+  },
+};

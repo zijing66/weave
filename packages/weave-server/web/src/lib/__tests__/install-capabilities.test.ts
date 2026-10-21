@@ -24,6 +24,7 @@ const table: InstallCapabilities = {
     rule: { surfaces: [{ harness: 'claude', scopes: ['project'] }] },
   },
   statusline: [{ harness: 'claude', tui: 'injectable', segments: ['project', 'model'] }],
+  config: ['claude'],
 };
 
 describe('canInstall', () => {

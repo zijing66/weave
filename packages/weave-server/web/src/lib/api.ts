@@ -845,6 +845,8 @@ export interface StatuslineCapability {
 export interface InstallCapabilities {
   categories: Record<InstallCategory, CategoryCapability>;
   statusline: StatuslineCapability[];
+  /** 有配置文件接管面的 harness（服务端由 config 槽派生）。 */
+  config: Harness[];
 }
 
 export interface SkillUpdate {
@@ -1191,6 +1193,84 @@ export const CONTEXT_STYLE_FORMAT: Record<'percent' | 'bar' | 'both', string> = 
   bar: '{bar}',
   both: '{percent}% {bar}',
 };
+
+// --- harness 配置文件（资源管理 · 配置视图） ---
+
+export type ConfigFileId = 'user' | 'project' | 'projectLocal' | 'global';
+
+/** 词表一条（键形/说明/枚举全归 harness 的 config 槽，web 只渲染）。 */
+export interface ConfigKeySpec {
+  key: string;
+  group: string;
+  type: string;
+  options?: string[];
+  default?: string;
+  description: string;
+  scope: 'any' | 'managed' | 'user' | 'project' | 'local' | 'global';
+  deprecated?: boolean;
+  nested?: boolean;
+}
+
+export interface ConfigEnvVarSpec {
+  name: string;
+  description: string;
+  kind: 'string' | 'boolean' | 'number' | 'list' | 'enum' | 'path';
+  options?: string[];
+}
+
+export interface ConfigCatalogResponse {
+  /** false = 该 harness 还没有 config 槽（codex），面板渲染占位。 */
+  supported: boolean;
+  harness: Harness;
+  file: ConfigFileId;
+  files: { id: ConfigFileId; profiles: boolean }[];
+  groups: string[];
+  keys: ConfigKeySpec[];
+  envVars: ConfigEnvVarSpec[];
+}
+
+export interface ConfigProfileMeta {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 一份配置的完整状态：活文件最新内容 + 快照 + 漂移 + 备份。 */
+export interface ConfigView {
+  harness: Harness;
+  file: ConfigFileId;
+  path: string;
+  exists: boolean;
+  values: Record<string, unknown>;
+  managedKeys: string[];
+  profiles: ConfigProfileMeta[];
+  activeId: string | null;
+  /** 活文件当前内容（与 `activeText` 比即漂移）。 */
+  liveText: string;
+  activeText: string | null;
+  drifted: boolean;
+  backups: string[];
+}
+
+/** 表单的一次改动：点号路径 → 落值 / 删键。 */
+export interface ConfigUpdate {
+  path: string;
+  value?: unknown;
+  remove?: boolean;
+}
+
+export interface ConfigModelOption {
+  id: string;
+  name?: string;
+  createdAt?: string;
+}
+
+export interface ConfigModelsResponse {
+  models: ConfigModelOption[];
+  baseUrl: string;
+  credential: 'apiKey' | 'authToken' | 'none';
+}
 
 export const api = {
   listProjects: (): Promise<ProjectRow[]> =>
@@ -1927,6 +2007,48 @@ export const api = {
       mcp: McpTemplate[];
       plugins: MarketPluginAsset[];
     }>(`/libraries/${id}/assets`),
+
+  // --- harness 配置文件（/harness-config/*） ---
+  getConfigCatalog: (harness: Harness, file: ConfigFileId): Promise<ConfigCatalogResponse> =>
+    apiFetch<ConfigCatalogResponse>(`/harness-config/catalog?harness=${harness}&file=${file}`),
+  getHarnessConfig: (
+    harness: Harness,
+    file: ConfigFileId,
+    projectId: number | null,
+  ): Promise<ConfigView> => {
+    const params = new URLSearchParams({ harness, file });
+    if (projectId != null) params.set('projectId', String(projectId));
+    return apiFetch<ConfigView>(`/harness-config?${params}`);
+  },
+  putConfigValues: (body: {
+    harness: Harness;
+    file: ConfigFileId;
+    projectId: number | null;
+    updates: ConfigUpdate[];
+  }): Promise<ConfigView> =>
+    apiFetch<ConfigView>('/harness-config/values', { method: 'PUT', body: JSON.stringify(body) }),
+  putConfigRaw: (body: {
+    harness: Harness;
+    file: ConfigFileId;
+    projectId: number | null;
+    text: string;
+  }): Promise<ConfigView> =>
+    apiFetch<ConfigView>('/harness-config/raw', { method: 'PUT', body: JSON.stringify(body) }),
+  /** profile 生命周期：list/create/save/duplicate/rename/remove/activate/acceptDrift/restoreBackup。 */
+  postConfigProfile: <T = ConfigView>(body: Record<string, unknown>): Promise<T> =>
+    apiFetch<T>('/harness-config/profile', { method: 'POST', body: JSON.stringify(body) }),
+  postConfigModels: (body: {
+    harness: Harness;
+    file: ConfigFileId;
+    projectId: number | null;
+    baseUrl?: string;
+    apiKey?: string;
+    authToken?: string;
+  }): Promise<ConfigModelsResponse> =>
+    apiFetch<ConfigModelsResponse>('/harness-config/models', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   /** 事件流地址；`since` = 上次收到的帧 id，服务端据此补发断流期间漏掉的帧。 */
   eventsUrl: (since: string | null = null): string =>

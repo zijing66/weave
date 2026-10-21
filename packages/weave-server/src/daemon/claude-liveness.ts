@@ -55,7 +55,7 @@ export const CLAUDE_REG_GRACE_MS = 90_000;
  *   即进程已死；豁免窗内不猜（新会话文件可能还没落盘）；
  * - 「仅一条 SessionStart」的空壳行不判：/continue、compact 会各留一行
  *   幽灵会话（事件跟在新 id 后面流），判死会把活着的会谈错标 terminated；
- *   它们反正由 SessionSweeper 在保活期后清走；
+ *   它们交给 SessionSweeper 清（宿主丢弃的见 shellDiscardedByClaude，其余保活期后）；
  * - 其余（codex/未知 harness/新鲜会话）→ null，上游不判。
  */
 export function pidAliveOf(
@@ -76,6 +76,32 @@ export function pidAliveOf(
   const seen = Date.parse(row.lastSeenAt);
   if (!Number.isFinite(seen) || now - seen < CLAUDE_REG_GRACE_MS) return null;
   return false;
+}
+
+/**
+ * 空壳会话（仅一条 SessionStart）是否已被宿主整个丢弃：claude 一句没说就退出时会把
+ * session id 连转录一起删——不发 SessionEnd、注册表自清。于是「查无登记 + 已过豁免窗」
+ * 就是再没有进程会以这个 id 发事件的证据，不必等满 1 小时保活期（用户原话：claude 那边
+ * 会话没了，weave 的会话列表却还留着）。
+ * 与 pidAliveOf 的「空壳不判」不冲突：那是状态面不猜，这里只决定清扫时机。
+ * 仍有登记的（活着的空闲会话 / 崩溃残留）一律不动，照旧走保活期。
+ */
+export function shellDiscardedByClaude(
+  row: {
+    sessionId: string;
+    harness?: string | null;
+    lastSeenAt: string;
+    lastEventType?: string | null;
+    eventCount?: number;
+  },
+  liveness: Map<string, boolean>,
+  now: number = Date.now(),
+): boolean {
+  if (row.harness !== 'claude') return false;
+  if (row.lastEventType !== 'SessionStart' || (row.eventCount ?? 0) > 1) return false;
+  if (liveness.has(row.sessionId)) return false;
+  const seen = Date.parse(row.lastSeenAt);
+  return Number.isFinite(seen) && now - seen >= CLAUDE_REG_GRACE_MS;
 }
 
 /**

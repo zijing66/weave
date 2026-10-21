@@ -10,7 +10,7 @@ import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookRuleRepository } from '../../repositories/hook-rules.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
 import { SessionRepository, PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
-import { ClaudeEventSource } from '@weavecode/harness';
+import { ClaudeEventSource, defaultModelOf } from '@weavecode/harness';
 import { HookRuleRegistry } from '../registry.js';
 import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { HookDispatcher } from '../dispatcher.js';
@@ -505,7 +505,7 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect((seen[0]!.payload as { raw: unknown }).raw).toEqual(raw);
   });
 
-  it('SessionStart 交给会话探测：带 model 就报真名，resume 不带也要说一声（旧答案作废重读）', () => {
+  it('SessionStart 交给会话探测：带 model 就报真名，resume 不带就答默认模型', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
     const hookEvents = new HookEventRepository(db);
@@ -535,7 +535,8 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     handleIngestedRecords(deps, [record({ source: 'resume' })]);
     expect(started).toEqual([
       ['s1', 'ftm'],
-      ['s1', null],
+      // resume 不带 model：worker 与这里用同一份全局配置算默认，两值相等即接线正确
+      ['s1', defaultModelOf()],
     ]);
   });
 

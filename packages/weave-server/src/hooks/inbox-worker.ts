@@ -497,8 +497,9 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // 模型，切完不跑一轮就读不到——由事件先说，标签才跟着立刻变。
       const switched = switchedModelOf(record.input.eventType, payload?.raw);
       if (switched) deps.sessionProbe?.noteModel?.(record.input.sessionId, switched.to);
-      // 开/恢复会话：模型由宿主重新决定（`--resume` 落回默认），旧的「最后已知」作废
-      // 重读；startup / compact 带了真名就直接用它。
+      // 开/恢复会话：模型由宿主重新决定（`--resume` 落回默认），旧的「最后已知」作废；
+      // startup / compact 带了真名就直接用，resume 不带就答全局配置里的默认模型
+      // （startedModelOf 内取）——不答的话转录里上一轮的旧照会会顶到新条目落地。
       const started = startedModelOf(record.input.eventType, payload?.raw);
       if (started) deps.sessionProbe?.sessionStarted?.(record.input.sessionId, started.model);
       // 推理档位（`effort.level`）：工具/回合类事件每条都带，逐条覆盖——状态栏

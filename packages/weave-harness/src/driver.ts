@@ -21,7 +21,8 @@ export type HarnessCapability =
   | 'questions'
   | 'capture'
   | 'statusline'
-  | 'logs';
+  | 'logs'
+  | 'config';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -721,6 +722,99 @@ export interface StatuslineSurface {
 /** 缓存里的块事实：与 `buildPreviewItems` 吃的 token 表同形。 */
 export type StatuslineFacts = Record<string, Record<string, string>>;
 
+/**
+ * 配置档位：host 读配置文件的四个落点。`global` 指宿主单独放「全局 config」键的
+ * 那个文件（claude = `~/.claude.json`，与 settings 文件不是一回事）。
+ */
+export type ConfigFileId = 'user' | 'project' | 'projectLocal' | 'global';
+
+/** 一个档位的落点；`profiles` = 该档支持本地多份配置（快照/切换）。 */
+export interface ConfigFileSpec {
+  id: ConfigFileId;
+  path(ctx: { projectPath: string | null; homedir: string }): string;
+  profiles: boolean;
+}
+
+/**
+ * 词表里的一条键。条目的**类型原文**（含枚举说明）来自官方文档，web 自己决定控件；
+ * `options` 只是从类型文案里认出来的候选值，认窄了不致命（前端始终留手填口）。
+ */
+export interface ConfigKeySpec {
+  key: string;
+  /** 文档主题（分组表头）。 */
+  group: string;
+  type: string;
+  options?: readonly string[];
+  /** 文档默认值原文（展示用，不是结构化值）。 */
+  default?: string;
+  description: string;
+  /** 该键在哪个文件生效；`managed` = 只在组织托管设置里认。 */
+  scope: 'any' | 'managed' | 'user' | 'project' | 'local' | 'global';
+  deprecated?: boolean;
+  /** 由「Fields for」表补出的子字段（文档没有独立条目）。 */
+  nested?: boolean;
+}
+
+/** `env` 块里可写的环境变量（值恒为字符串，`kind` 只决定输入控件）。 */
+export interface ConfigEnvVarSpec {
+  name: string;
+  description: string;
+  kind: 'string' | 'boolean' | 'number' | 'list' | 'enum' | 'path';
+  options?: readonly string[];
+}
+
+export interface ConfigCatalog {
+  groups: readonly string[];
+  keys: readonly ConfigKeySpec[];
+  envVars: readonly ConfigEnvVarSpec[];
+}
+
+/** 模型列表接口返回的一条（字段名归 harness，web 只认 id/name）。 */
+export interface ConfigModelOption {
+  id: string;
+  name?: string;
+  createdAt?: string;
+}
+
+/**
+ * 配置面：一个 harness 的配置文件**词表 + 读写**。
+ *
+ * 为什么整块归 harness：文件落点、键形、哪些键是 weave 自己写进去的（改了就断
+ * 采集/插件/statusline）、模型列表接口的文法，全是 harness 知识；server 只做
+ * 存储、深路径合并与 HTTP 传输，web 只渲染词表。
+ */
+export interface ConfigSurface {
+  readonly harness: Harness;
+  /** 该 harness 的配置文件档位（project 档在 `projectPath` 缺省时路径无意义）。 */
+  files(ctx: { projectPath: string | null; homedir: string }): ConfigFileSpec[];
+  /** 某档可见的词表（`global` 档只列本档生效的键）。 */
+  catalog(file: ConfigFileId): ConfigCatalog;
+  /** 读该档的配置；文件不存在 → 空对象。`global` 档只回本档可见的键。 */
+  read(file: ConfigFileId, ctx: { projectPath: string | null; homedir: string }): Promise<Record<string, unknown>>;
+  /** 整体写（原子）：`global` 档只把可见键并回文件，其余键原样保留。 */
+  write(
+    file: ConfigFileId,
+    ctx: { projectPath: string | null; homedir: string },
+    values: Record<string, unknown>,
+  ): Promise<void>;
+  /**
+   * weave 写进去的键（按当前值判，如 statusLine 只有指向 weave 脚本时才算）：
+   * 表单里只读并指向对应面板——手改会把采集/插件/statusline 改坏。
+   */
+  managedKeys(values: Record<string, unknown>): readonly string[];
+  /**
+   * 模型列表（HTTP 调宿主自己的 API）。`baseUrl` / 凭据缺省时由实现从配置里取；
+   * 传输在实现侧，server 只传语义参数。
+   */
+  models(input: {
+    values: Record<string, unknown>;
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    authToken?: string | null;
+    timeoutMs?: number;
+  }): Promise<{ models: ConfigModelOption[]; baseUrl: string; credential: string }>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -738,6 +832,7 @@ export interface HarnessDriver {
   capture?: CaptureSurface;
   statusline?: StatuslineSurface;
   logs?: LogSource;
+  config?: ConfigSurface;
 }
 
 /**

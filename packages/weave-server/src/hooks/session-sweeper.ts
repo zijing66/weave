@@ -1,13 +1,16 @@
 import { purgeSession, type SessionPurgeDeps } from './session-purge.js';
 import type { WatchEngine } from './watch-engine.js';
 import type { OrchestrationEngine } from './orchestration-engine.js';
+import { claudeLivenessById, shellDiscardedByClaude } from '../daemon/claude-liveness.js';
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
 /**
- * 定时清过期会话：判据与期限的单一事实源 = sessions 仓储的 `listWithCounts`
- * （`autoDeleteAt` 计算列，两档——没等到用户 prompt 的新会话 1 小时快过期、
- * 收到过 prompt 的走 settings `sessions.idleDays` 闲置窗），本清扫器只做「过期即清」。
+ * 定时清过期会话，两条判据：
+ * 1. `autoDeleteAt`（期限与档位唯一事实源 = sessions 仓储的 `listWithCounts`：没等到
+ *    用户 prompt 的新会话 1 小时快过期、收到过 prompt 的走 settings `sessions.idleDays`）；
+ * 2. 宿主已丢弃的空壳会话（`shellDiscardedByClaude`）——claude 一句没说就退出会连 id 带
+ *    转录一起删，等满保活期只是让列表多摆一条幽灵。
  *
  * 注：入库路径对**每个**首现 sessionId 都建档（含仅一条 SessionStart 的新会话
  * ——新建会话要马上出现在列表），期限倒计时随行展示，看得见它还剩多久。
@@ -19,6 +22,8 @@ export class SessionSweeper {
       watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
       /** 编排补射：同 tick——待回目标已死即复活会话或丢弃待回。 */
       orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
+      /** 存活图来源（空壳判据要用）；不给就只按期限清。 */
+      livenessOf?: () => Map<string, boolean>;
     },
     private readonly now: () => number = Date.now,
   ) {}
@@ -26,8 +31,14 @@ export class SessionSweeper {
   /** 清一轮，返回清掉的会话数（无候选即 0，可反复调用）。 */
   sweep(): number {
     const now = this.now();
+    const liveness = this.deps.livenessOf?.();
     let purged = 0;
     for (const row of this.deps.sessions.listWithCounts()) {
+      if (liveness && shellDiscardedByClaude(row, liveness, now)) {
+        purgeSession(this.deps, row.sessionId);
+        purged++;
+        continue;
+      }
       const deadline = row.autoDeleteAt == null ? null : Date.parse(row.autoDeleteAt);
       if (deadline == null || now < deadline) continue;
       purgeSession(this.deps, row.sessionId);
@@ -63,5 +74,5 @@ export function startSessionSweeper(
     orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
   },
 ): NodeJS.Timeout {
-  return new SessionSweeper(deps).start();
+  return new SessionSweeper({ ...deps, livenessOf: () => claudeLivenessById() }).start();
 }

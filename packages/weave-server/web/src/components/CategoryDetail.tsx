@@ -36,6 +36,7 @@ import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
+import { HarnessConfigPanel } from '@/components/config/HarnessConfigPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { OrchestrationCanvas } from '@/components/tasks/OrchestrationCanvas';
@@ -50,11 +51,12 @@ export type Mode = 'project' | 'global';
  * 原「文件/技能/MCP/插件」四 tab 层已去掉——技能与 MCP 里不属任何包的（外置）并进
  * 主视图的「外部资源」折叠块，包内的随包启停（不在此露面）。
  */
-export type ResourceView = 'packs' | 'files';
+export type ResourceView = 'packs' | 'files' | 'config';
 
 /** 视图按钮表（顺序即展示顺序）。 */
 const VIEWS: { key: ResourceView; label: MessageKey }[] = [
   { key: 'packs', label: 'assetView.packs' },
+  { key: 'config', label: 'assetView.config' },
   { key: 'files', label: 'assetView.files' },
 ];
 
@@ -427,6 +429,15 @@ export function CategoryDetail({
             onOpenFile={onOpenFile}
           />
         ))}
+
+      {/* 配置视图：harness 配置文件全量接管（词表由 harness 的 config 槽派生） */}
+      {category === 'files' && resourceView === 'config' && (
+        <HarnessConfigPanel
+          harness={runtimeTab}
+          projectId={isGlobal ? null : projectId}
+          key={`${projectId}-${isGlobal ? 'global' : 'project'}-${runtimeTab}`}
+        />
+      )}
 
       {category === 'files' && resourceView === 'packs' && (
         <>

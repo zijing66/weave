@@ -24,7 +24,7 @@
 
 ## §2 能力槽与 statusline / logs 面
 
-十二能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十三能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
 
 ### logs 槽（拉取式采集）
 
@@ -356,6 +356,7 @@ Web Push 细节：
 - **全局总览同口径**——`GlobalTasksOverview` 同一份冻结活动序逐行渲染（**跨项目混排、不按项目分组**），共用同一套门控（`useActivityOrder`）与 FLIP（`useFlipRows`），过滤条件换批则立即采用新序、不做增量合并。
 - **会话行随首个事件即建**——含仅一条 SessionStart 的新会话，建档侧不按事件类型挑拣（「新建会话马上出现在列表」靠它）。
 - **保留策略两档**：没等到用户 prompt 的新会话 1 小时快速过期（`PROMPTLESS_GRACE_MS`）；收到过 prompt 的会话 = 无操作 n 天后自动移除（n = settings `sessions.idleDays`，缺省 90，设置页可调并标出两条策略）——判据与期限唯一实现 = `listWithCounts` 的 `autoDeleteAt`（= lastSeenAt + 该档窗），`SessionSweeper` 过期即 purge（复用手动删会话级联）、web 行内剩余存活倒计时 tag（天/时/分三档）。
+- **宿主丢弃的空壳提前清**（不等上面那 1 小时）：claude 开出来一句没说就退出时会把 session id 连转录一起删——**不发 SessionEnd、写 0 条转录、注册表自清**，weave 这边只剩一条 SessionStart，用户看到的就是「claude 里没了，会话列表还在」。判据唯一实现 = `daemon/claude-liveness.ts` 的 `shellDiscardedByClaude`（harness=claude ‖ 仅一条 SessionStart ‖ 注册表查无登记 ‖ 已过 `CLAUDE_REG_GRACE_MS` 豁免窗），由 `SessionSweeper` 同 tick 清走；**`pidAliveOf` 的「空壳不判」不动**（那是状态/投递面不猜），仍有登记的一律照旧走保活期。存活图由 `startSessionSweeper` 这个共用装配点注入（`livenessOf`），入口不自接线。`/continue`、compact 留下的幽灵行（注册表里也没有）同样 90 秒后被清——照本次裁决接受（它们是同一 pid 下的废行，事件跟在新 id 后面流）。
 
 ## §5 阻塞式问答
 
@@ -471,7 +472,7 @@ hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发�
 
 - **换模型**：`PostModelSwitch` 的 `to_model` 进闩锁、取更晚的那个——换模型不在转录里留条目，标签靠它才跟得上；事件名与键形归 claude adapter 的 `switchedModelOf`，server 不自拼。
 - **闩扛不过重启 ⇒ 回读库**：闩在内存，daemon 一重启就没了，而转录只在本轮 assistant 条目上照会模型 ⇒「换完就放着」的会话重启后一直停在切换前那个模型（实测窗口：切换 17:35:23 → dev daemon 重启 17:37:18 → 转录 17:40:39 才照会，见 DECISIONS 同日）。兜底 = `session-probe.ts` 的 `dbModelFactResolver`：取库里这条会话最近一条 `HARNESS_SESSION_CONTROL[<harness>].modelFactEvents` 事件（claude = `PostModelSwitch` + `SessionStart`），**是换模型**才拿 `from_model` 跟转录此刻照会的值比（`bareModelName` 剥网关前缀），相同即宿主还没跑过新一轮 → 用 `to_model` 锁进闩；**最新一条是 `SessionStart`** 就什么都不补（`--resume` 把模型交还宿主重定，旧答案作废）。每个会话 daemon 生命周期内只问一次（`probed`；`sessionStarted` / `forget` 清掉）。
-- **开/恢复会话**：`SessionStart` 的 `startedModelOf`——宿主 `--resume` 时把模型落回默认、而这条事件的 raw 里**不带** `model`（startup/compact 有），转录里又只有上一轮的照会，故带真名就以它为准、不带就清掉闩与最后已知让下一次问重读（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
+- **开/恢复会话**：`SessionStart` 的 `startedModelOf`——带真名（startup / compact）就以它为准；`--resume` 的 raw 里**不带** `model`（实测，40 条抽样恒 null），但重开 = 宿主把模型落回默认，**默认值就写在全局配置里**：`defaultModelOf` 读同一份 settings.json（env 块 `ANTHROPIC_MODEL` → 顶层 `model` 键、别名经 `ANTHROPIC_DEFAULT_<别名>_MODEL` 换真名 → 内建 `sonnet` 档）直接答上并经 `noteModel` 闩死——不答的话转录里上一轮的照会会顶着旧模型直到第一轮新条目落地（8c85b9c7 实测：上一轮 deepseek-flash、重开实际落 ftm）。转录新照会 / `PostModelSwitch` 照旧接管；重启回读那拍仍按上条「重开不补」（回读侧没有可比对的 `from_model`）。清闩重读只剩不带值的 harness 降级路径（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
 - **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
 - web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。
 
@@ -664,3 +665,53 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 - **旁挂扫描缓存** `<data>/market/.weave-scans/<库名>/scans.json`：`skills[].dirPath` / `files[].filePath` / `mcp[].sourcePath` 都是扫描当时的绝对路径。搬迁后库路径变了而缓存还在，命中就拿到旧路径，同步时 `cp` 源不存在 → `400 ENOENT ... lstat '<旧路径>'`。故 `scans.json` 记一个 `root`，读侧 `root !== libPath` 整份作废重扫（`install/scan-cache.ts`）——缓存里的绝对路径只有在根没动过时才可信。
 - **宿主侧市场注册**（`~/.claude/plugins/known_marketplaces.json`、`~/.claude/settings.json` 的 `extraKnownMarketplaces`）：装市场包时由 `claude plugin marketplace add <数据目录内市场目录>` 写入，路径是写死的绝对路径。搬迁后这些注册指向已不存在的旧位置（宿主启动时报市场加载失败），**须重新 `marketplace add` 或把路径改到 `<dataDir>/data/market/<id>`**；weave 不再自动改写宿主的配置文件。
+
+## §17 配置面（资源管理 · 接管 harness 配置文件）
+
+第 13 个能力槽 `config`：`HarnessDriver.config?: ConfigSurface`。词表（文件落点 / 键形 / 托管键 / 模型接口文法）全归 harness，今天唯一实现 = `weave-harness/src/claude/config.ts`（`CLAUDE_CONFIG`）；server 只做「取档 → 读改写 → 快照与漂移」的装配，web 只渲染。无此槽的 harness（codex）→ `GET /harness-config/catalog` 回 `supported:false`，前端渲染占位、不写 harness 名白名单（能力清单由 `GET /capabilities` 的 `config` 行给）。
+
+### 四档文件（`ConfigSurface.files(ctx)`）
+
+| id | 落点 | 文档 Scope | 快照 |
+| --- | --- | --- | --- |
+| `user` | `~/.claude/settings.json` | `user` | 有 |
+| `project` | `<project>/.claude/settings.json` | `project` | 无 |
+| `projectLocal` | `<project>/.claude/settings.local.json` | `local` | 无 |
+| `global` | `~/.claude.json` | `global` | 有 |
+
+项目路径由 server 按 `projectId` 查库得出，**绝不接受前端传路径**。`project*` 两份不含快照（`files[].profiles:false`）：它们是项目级、随项目走，快照只对「本机全局语境」有意义。
+
+### 词表 = 官方文档的生成物
+
+`settings-reference.md`（设置键）+ `env-vars.md`（环境变量）→ `scripts/gen-claude-catalog.mjs` → 提交进仓的 `settings-catalog.generated.ts`（248 键 / 17 组 / 391 env）。运行期**不联网**；重生成 `pnpm gen:catalog`（`--from <目录>` 走已下载的 md）。说明文案是官方英文原文（截断、剥链接），不翻译——翻错了比英文原文更难核。
+
+- 键 = **点号路径**（`sandbox.filesystem.allowWrite`），嵌套结构天然在路径里；`README` 表格里的 `Fields for <key>` 解析成子键。
+- 档位可见性：`global` 档只给 `scope === 'global'` 的键、且不给 env 表；其余档 = `any` + 本档专属。**`read()` 同口径投影**——档外的键既不展示也不写回。
+- 类型不是猜的：`Boolean` / 枚举（文档 `one of` 或列举的引号值 → `options`）各自的控件由 `options` 有无决定；类型串太长的按分号截断并标 `…`。
+
+### 托管键只读
+
+`MANAGED_PATHS = ['$comment','hooks','permissions','enabledPlugins','env.WEAVE_ENABLED']` + `statusLine`（仅当命令指向 weave，判据 = `statusLineIsWeave`）由 `managedKeys(values)` 出具，web 渲染成 `<Lock/>` + 「weave 托管」并指向对应面板。**为什么不给编辑**：这些键是 `weave init` / 状态栏 / 插件面写进去的，表单改了会被下一次 init 合并覆盖掉，用户看到「改了又变回来」。逃生口是原始 JSON 视图，那里照写不误。
+
+### 写盘语义
+
+`write(file, ctx, values)`：读**原文**（未知键保留）→ 只替换「该档词表可见的顶层键」→ tmp+rename 原子写、2 空格 + 尾换行。`deletes` 靠 `applyUpdates` 的 `remove:true`（深路径删），危险段（`__proto__` / `constructor` / `prototype` / 空段）一律拒。`global` 档因此只碰文档列出的键，`projects` / `oauthAccount` 等宿主自己的键原样留着。读上限 2MB；文件不存在 = `{}`；非法 JSON 直接抛（**不覆盖**）。
+
+- 原始视图（`PUT /harness-config/raw`）先 `JSON.parse` 再走同一个 `write`，所以「原始 JSON 里删掉一个键」只在词表内键上生效，未知键不会被顺手清掉。
+- 每次写前 `pushBackup`（`backups/<file>-<ts>.json`，留最近 20 份），`restoreBackup` 反向写回。
+
+### 快照 / 漂移 / 切换
+
+落点 `<local>/harness-config/<harness>/`（`getHarnessConfigDir()`）：`profiles.json`（`{ file: { activeId, profiles[] } }`）+ `<file>-<id>.json`（整份快照）+ `backups/`。放 `local/` 是因为**快照里可能带 API key**：本机专属、不进 settings 表、不随迁移带走。
+
+- **漂移只来自外部改文件**：本面板的写入口（values / raw / 切换 / 恢复）每次都把结果同步进激活快照，故 `liveText !== activeText` 必然意味着有人在外面改了文件。打开面板即比，横幅里给「看差异」/「用文件覆盖库」（`acceptDrift`）。
+- **切换是两拍**：`activate` 不带 `confirm` → 只回 `{ requiresConfirm, liveText, profileText }`，web 弹 `DiffDialog` 交用户确认；带 `confirm:true` 才备份 + 整体覆盖 + `setActive`。**不先弹 diff 就覆盖等于偷偷改宿主配置**。
+- diff 是自写的行级 LCS（`web/src/lib/text-diff.ts`，`MAX_LINES` 超限退化成整段替换），不引依赖；比对文本 = `JSON.stringify(values, null, 2) + '\n'`，两侧同口径才不会满屏假差异。
+
+### 拉模型列表
+
+`POST /harness-config/models`：baseUrl 取 入参 → 配置 `env.ANTHROPIC_BASE_URL` → `https://api.anthropic.com`（尾部 `/v1` 收齐后再拼 `/v1/models?limit=1000`，因为有人会把 `/v1` 一起填）；凭据取 入参 → `env.ANTHROPIC_API_KEY`（`x-api-key`）→ `env.ANTHROPIC_AUTH_TOKEN`（`Authorization: Bearer`）。响应只回 `{ models, baseUrl, credential }`——**key 永不回显**，`credential` 只是个「用的哪一种」的标签。10s 超时，非 2xx 带状态码与 200 字正文。
+
+### web 侧
+
+`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索、按官方分组折叠、未设置的键给「写入」（写文档 Default）、枚举下拉、数组/对象按 JSON 框编辑、env 变量区（只列已设置的 + 搜索命中的，上限 50）、原始 JSON 视图、备份行、漂移横幅。纯函数落 `web/src/lib/config-form.ts`（type→控件、点号路径→值、文本→值）与 `text-diff.ts`。

@@ -12,6 +12,7 @@ import { HookEventRepository } from '../../repositories/hook-events.js';
 import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
 import { SessionSweeper } from '../session-sweeper.js';
 import { PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
+import { CLAUDE_REG_GRACE_MS } from '../../daemon/claude-liveness.js';
 
 /**
  * 会话自动移除回归：期限两档——没等到用户 prompt 的新会话 1 小时快过期（PROMPTLESS_GRACE_MS），
@@ -156,5 +157,35 @@ describe('SessionSweeper.sweep', () => {
     expect(sweeper.sweep()).toBe(0);
     expect(watchSweep).toHaveBeenCalledTimes(1);
     expect(orchestrationSweep).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** claude 一句没说就退出：它那边连 id 带转录一起删，不留 SessionEnd——本清清扫器靠注册表查无登记认。 */
+describe('宿主丢弃的空壳会话不等 1 小时保活期', () => {
+  const sweepWith = (liveness: [string, boolean][]): number =>
+    new SessionSweeper({ sessions, events, dispatches, livenessOf: () => new Map(liveness) }).sweep();
+
+  it('查无登记且过了豁免窗 → 立刻清（离保活期还有 1 小时也清）', () => {
+    seed('x-exited', ['SessionStart']);
+    age('x-exited', CLAUDE_REG_GRACE_MS + 60_000);
+    expect(sweepWith([])).toBe(1);
+    expect(sessions.getBySessionId('x-exited')).toBeUndefined();
+  });
+
+  it('登记在册 / 豁免窗内 / 说过话 / 非 claude → 都留着', () => {
+    seed('x-idle', ['SessionStart']);
+    age('x-idle', CLAUDE_REG_GRACE_MS + 60_000);
+    seed('x-fresh', ['SessionStart']);
+    age('x-fresh', 30_000);
+    seed('x-talked', ['SessionStart', 'UserPromptSubmit']);
+    age('x-talked', CLAUDE_REG_GRACE_MS + 60_000);
+    sessions.touch('x-codex', projectId);
+    events.insert({ projectId, source: 'codex', eventType: 'SessionStart', sessionId: 'x-codex', payload: '{}' });
+    age('x-codex', CLAUDE_REG_GRACE_MS + 60_000);
+
+    expect(sweepWith([['x-idle', true]])).toBe(0);
+    for (const id of ['x-idle', 'x-fresh', 'x-talked', 'x-codex']) {
+      expect(sessions.getBySessionId(id)).toBeDefined();
+    }
   });
 });

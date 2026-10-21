@@ -21,13 +21,15 @@ export interface OrchDraft {
 
 export type ValidateDraftResult = { ok: true } | { ok: false; error: string };
 
-/** 边 id：两端 + 序号（同一对节点只允许一条边，序号留给以后放宽）。 */
-export function newEdgeId(from: string, to: string, taken: ReadonlySet<string>): string {
-  const base = `${from}->${to}`;
-  if (!taken.has(base)) return base;
-  let n = 2;
-  while (taken.has(`${base}#${n}`)) n++;
-  return `${base}#${n}`;
+/**
+ * 边 id：短序号。会话 id 本身就 36+ 字符，拼两端会把 id 顶到服务端 64 上限之外
+ * （真会话画第一根线就保存失败）；id 只当内部键用，运行日志与画布都不展示它。
+ */
+export function newEdgeId(taken: ReadonlySet<string>): string {
+  let n = taken.size + 1;
+  let id = `e${n}`;
+  while (taken.has(id)) id = `e${++n}`;
+  return id;
 }
 
 export function addNode(draft: OrchDraft, sessionId: string): OrchDraft {
@@ -55,7 +57,7 @@ export function addEdge(draft: OrchDraft, from: string, to: string, text: string
   const taken = new Set(draft.edges.map((e) => e.id));
   return {
     ...draft,
-    edges: [...draft.edges, { id: newEdgeId(from, to, taken), from, to, text, carryOutput: true }],
+    edges: [...draft.edges, { id: newEdgeId(taken), from, to, text, carryOutput: true }],
   };
 }
 

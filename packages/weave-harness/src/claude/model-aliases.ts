@@ -54,18 +54,39 @@ export function switchedModelOf(eventType: string, raw: unknown): ModelSwitchFac
 }
 
 /**
+ * 宿主开新会话 / `--resume` 重开时落的**默认模型**（用户实测：重开把模型落回默认，
+ * 默认值就读全局配置文件）。解析序：env 块的 `ANTHROPIC_MODEL` → 顶层 `model` 键
+ * （是别名就经 `ANTHROPIC_DEFAULT_<别名>_MODEL` 换真名，与 {@link modelAliasTargets}
+ * 同一来源；非别名的自定义名照原样回落）→ 宿主内建默认 `sonnet` 档。
+ */
+export function defaultModelOf(
+  homedir: string = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const fromSettings = settingsEnvOf(homedir);
+  const direct = fromSettings.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
+  if (direct) return direct;
+  const configured = userSettingsOf(homedir)?.model;
+  const chosen = typeof configured === 'string' && configured ? configured : 'sonnet';
+  return modelAliasTargets([chosen], env, homedir)[0]!.actual;
+}
+
+/**
  * 会话开/恢复（`SessionStart`）上关于模型的话：startup / compact 带 `model` 就报得出
- * 真名；`source=resume` **不带**（实测：重开时宿主把模型落回默认，且这一拍转录里还
- * 只有上一轮的照会）——故 model 为 null 不是「不知道」，是「旧答案作废、得重新读」。
- * 这条事件与模型无关时返回 null。
+ * 真名；`source=resume` **不带**（实测）——但重开 = 宿主把模型落回默认，默认值就写
+ * 在全局配置里（{@link defaultModelOf}），直接答它：不答的话转录里上一轮的旧照会
+ * 会一直顶到第一轮新条目落地。这条事件与模型无关时返回 null。
  */
 export function startedModelOf(
   eventType: string,
   raw: unknown,
+  homedir: string = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
 ): { model: string | null } | null {
   if (eventType !== 'SessionStart') return null;
   const model = (raw as { model?: unknown } | null)?.model;
-  return { model: typeof model === 'string' && model ? model : null };
+  if (typeof model === 'string' && model) return { model };
+  return { model: defaultModelOf(homedir, env) };
 }
 
 /**
@@ -108,13 +129,19 @@ export function aliasOfModel(
   return targets.find((t) => t.actual === model || t.actual === bare)?.alias ?? null;
 }
 
-function settingsEnvOf(homedir: string): Record<string, string> {
-  let parsed: { env?: Record<string, unknown> } | null = null;
+function userSettingsOf(homedir: string): Record<string, unknown> | null {
   try {
-    parsed = JSON.parse(fs.readFileSync(CLAUDE_ASSETS.userConfigFile(homedir), 'utf8'));
+    return JSON.parse(fs.readFileSync(CLAUDE_ASSETS.userConfigFile(homedir), 'utf8')) as Record<
+      string,
+      unknown
+    >;
   } catch {
-    return {};
+    return null;
   }
+}
+
+function settingsEnvOf(homedir: string): Record<string, string> {
+  const parsed = userSettingsOf(homedir);
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(parsed?.env ?? {})) {
     if (typeof v === 'string') out[k] = v;

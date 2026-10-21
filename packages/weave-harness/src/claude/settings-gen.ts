@@ -172,7 +172,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function statusLineIsWeave(statusLine: unknown): boolean {
+export function statusLineIsWeave(statusLine: unknown): boolean {
   if (!isPlainObject(statusLine)) return false;
   const command = statusLine['command'];
   return typeof command === 'string' && commandIsWeave(command, WEAVE_STATUSLINE_MARKER);

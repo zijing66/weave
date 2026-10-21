@@ -4,6 +4,7 @@ import {
   type AssetSurface,
   type BlockingPromptSpec,
   type CaptureSurface,
+  type ConfigSurface,
   type MessagingSurface,
   type PluginStateSurface,
   type PluginSurface,
@@ -130,4 +131,17 @@ export function statuslineSurfaces(): Array<{ harness: Harness; surface: Statusl
     .all()
     .filter((d) => d.statusline !== undefined)
     .map((d) => ({ harness: d.id, surface: d.statusline! }));
+}
+
+/** 按 harness 取配置面；null = 该 harness 尚无配置文件接管（web 渲染占位）。 */
+export function configSurfaceFor(harness: Harness): ConfigSurface | null {
+  return registry.get(harness)?.config ?? null;
+}
+
+/** 全部声明了 config 槽的 (harness, 面) 列表——配置面板的 harness 页签按本表枚举。 */
+export function configSurfaces(): Array<{ harness: Harness; surface: ConfigSurface }> {
+  return registry
+    .all()
+    .filter((d) => d.config !== undefined)
+    .map((d) => ({ harness: d.id, surface: d.config! }));
 }

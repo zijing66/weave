@@ -29,6 +29,7 @@
     "dev:server": "tsx watch --conditions=development packages/weave-server/src/daemon/dev-entry.ts",
     "dev:web": "pnpm -C packages/weave-server dev:web",
     "test": "vitest run",
+  "gen:catalog": "node scripts/gen-claude-catalog.mjs",
     "test:watch": "vitest",
     "pack:weave": "node scripts/pack-weave.mjs",
     "version:bump": "node scripts/bump-version.mjs",

@@ -46,9 +46,17 @@ describe('orchestration draft editing', () => {
     });
   });
 
+  it('边 id 不随会话 id 长度伸缩（UUID 两端也顶不破服务端 64 上限）', () => {
+    const a = 'e62f6fa7-8c10-4a51-acd5-4f7fd56a0112';
+    const b = '9c05d2f1-3b47-4c6a-8d21-0f5e9a8b7c6d';
+    const next = addEdge(draft({ nodes: [a, b], startSessionId: a, edges: [] }), a, b, '');
+    const id = next.edges[0]!.id;
+    expect(id.length).toBeLessThanOrEqual(64); // 服务端 zod：edge id max(64)
+  });
+
   it('加边生成稳定 id，成环由校验拦住', () => {
     const withBack = addEdge(draft(), 'b', 'a', 'back');
-    expect(withBack.edges.map((e) => e.id)).toEqual(['a->b', 'b->a']);
+    expect(withBack.edges.map((e) => e.id)).toEqual(['a->b', 'e2']);
     expect(validateDraft(withBack)).toEqual({
       ok: false,
       error: 'Cycle detected: a → b → a',

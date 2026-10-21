@@ -67,6 +67,7 @@ export const assetsZh = {
   // —— 资源管理页视图（四 tab 层已去掉：只留「插件包为主」与「查看文件」两个视图；
   //     标签沿用英文原文，与术语纪律一致） ——
   'assetView.packs': 'Plugins',
+  'assetView.config': 'Config',
   'assetView.files': 'Files',
   // —— 主视图里的「外部资源」折叠块（不属任何包的技能/MCP） ——
   'category.externalAssets': '外部资源',
@@ -175,6 +176,7 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
 
   // —— Resource-management page views (the four-tab layer is gone: plugin-pack view + read-only files view) ——
   'assetView.packs': 'Plugins',
+  'assetView.config': 'Config',
   'assetView.files': 'Files',
   // —— "External" collapsible block in the main view (skills/MCP outside any pack) ——
   'category.externalAssets': 'External',

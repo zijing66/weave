@@ -104,6 +104,7 @@ import { ApiLogger } from './api-log.js';
 import { handleHooksRoutes } from './hooks-routes.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import { handleCaptureRoutes } from './capture-routes.js';
+import { handleConfigRoutes } from './config-routes.js';
 import { purgeProjectPipeline } from './hook-pipeline.js';
 import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js';
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
@@ -334,6 +335,9 @@ async function handleRequest(
 
   // §6-2d user 档采集面（能力槽 capture）——未命中返回 false，主链继续。
   if (await handleCaptureRoutes(req, res, deps, pathname)) return;
+
+  // 资源管理 · harness 配置文件（能力槽 config）——未命中返回 false，主链继续。
+  if (await handleConfigRoutes(req, res, deps, pathname, url)) return;
 
   // GET /projects/:id/hooks — hook events for the task view (by session).
   const hooksMatch = pathname.match(/^\/projects\/(\d+)\/hooks$/);

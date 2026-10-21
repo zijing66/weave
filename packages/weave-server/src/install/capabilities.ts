@@ -2,7 +2,7 @@ import path from 'node:path';
 import { homedir } from 'node:os';
 import { HARNESS_KEYS, type Harness } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
-import { assetSurfaces, statuslineSurfaces } from '../surfaces.js';
+import { assetSurfaces, configSurfaces, statuslineSurfaces } from '../surfaces.js';
 
 /** 安装范围（与 InstallBody.scope 同形；`user` = 个人全局配置面）。 */
 export type InstallScope = 'project' | 'user';
@@ -37,6 +37,8 @@ export interface StatuslineCapability {
 export interface InstallCapabilities {
   categories: Record<InstallCategory, CategoryCapability>;
   statusline: StatuslineCapability[];
+  /** 有配置文件接管面的 harness（按注册顺序）——web 不按 harness 名判有没有配置面板。 */
+  config: Harness[];
 }
 
 /**
@@ -105,5 +107,5 @@ export function installCapabilities(): InstallCapabilities {
     tui: surface.tui,
     segments: [...surface.segments],
   }));
-  return { categories, statusline };
+  return { categories, statusline, config: configSurfaces().map((c) => c.harness) };
 }
