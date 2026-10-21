@@ -5,6 +5,7 @@
  * codex 的配置表示法是 harness 知识，不得散在 server。fs 侧包装
  * （config.toml 路径 / MCP 读写）暂留 server 的同名模块，经本模块原语实现。
  */
+import { parse } from 'smol-toml';
 
 /** config.toml exists but does not parse — refusing to write protects the user. */
 export class CodexTomlCorruptError extends Error {
@@ -333,4 +334,211 @@ export function upsertCodexPluginEnabledInText(
     }
   }
   return upsertTomlSection(text, keyPath, body);
+}
+
+// ---------------------------------------------------------------------------
+// Generic dotted-path value editor (config surface: form writes / raw merge)
+// ---------------------------------------------------------------------------
+
+/** Render a JSON value as a TOML value literal. Objects become inline tables,
+ * arrays inline arrays — the config surface only writes scalar/leaf values
+ * through this path; big structures go through section upserts instead. */
+export function renderTomlValue(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '""';
+  if (typeof value === 'string') return renderTomlString(value);
+  if (Array.isArray(value)) return `[${value.map(renderTomlValue).join(', ')}]`;
+  const body = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${renderTomlKey(k)} = ${renderTomlValue(v)}`)
+    .join(', ');
+  return `{ ${body} }`;
+}
+
+/**
+ * Set one dotted-path key in config.toml text, preserving comments, key order
+ * and unrelated sections. `a.b.c = v` lands in the `[a.b]` section (created at
+ * EOF when missing); a bare `key = v` lands in the root segment. An existing
+ * inline value for the same path is replaced in place; intermediate tables
+ * declared inline (`a = { b = 1 }`) are converted to section form when a
+ * deeper path needs to grow. Returns whether anything changed.
+ */
+export function setTomlValueInText(
+  text: string,
+  path: readonly string[],
+  value: unknown,
+): string {
+  if (path.length === 0) return text;
+  const rendered = `${renderTomlKey(path[path.length - 1]!)} = ${renderTomlValue(value)}`;
+  const parentPath = path.slice(0, -1);
+
+  if (parentPath.length === 0) {
+    // root key: replace or append in the root segment
+    const sections = splitTomlSections(text);
+    const root = sections[0]!;
+    const key = path[0]!;
+    const lines = replaceOrAppendKeyValue(root.lines, key, rendered);
+    if (lines === root.lines) return text;
+    const out = sections.flatMap((s, i) => (i === 0 ? lines : s.lines));
+    return normalizeEof(out.join('\n'));
+  }
+
+  // ensure the parent section exists (convert inline parents on the way)
+  let current = ensureSectionPath(text, parentPath);
+  const sections = splitTomlSections(current);
+  const idx = sections.findIndex((s) => sameKey(s.key, parentPath));
+  if (idx < 0) return current; // ensureSectionPath guarantees this cannot happen
+  const section = sections[idx]!;
+  const key = path[path.length - 1]!;
+  const lines = replaceOrAppendKeyValue(section.lines, key, rendered);
+  if (lines === section.lines) return current;
+  const out = sections.flatMap((s, i) => (i === idx ? lines : s.lines));
+  return normalizeEof(out.join('\n'));
+}
+
+/** Remove one dotted-path key from config.toml text. Returns whether the key
+ * was found (sections themselves are left alone — removing the last key of a
+ * section leaves an empty section, which is harmless TOML). */
+export function removeTomlValueInText(
+  text: string,
+  path: readonly string[],
+): { text: string; removed: boolean } {
+  if (path.length === 0) return { text, removed: false };
+  const sections = splitTomlSections(text);
+  const parentPath = path.slice(0, -1);
+  const key = path[path.length - 1]!;
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]!;
+    const matches =
+      parentPath.length === 0 ? section.key === null : sameKey(section.key, parentPath);
+    if (!matches) continue;
+    const lines = removeKeyValueLine(section.lines, key);
+    if (lines !== section.lines) {
+      const out = sections.flatMap((s, j) => (j === i ? lines : s.lines));
+      return { text: normalizeEof(out.join('\n')), removed: true };
+    }
+  }
+  return { text, removed: false };
+}
+
+/** Replace `key = …` in a section body (comments before the key stay attached
+ * to their own lines; the key's own preceding comment is dropped with it) or
+ * append at the end. Returns the input array identity when nothing changed. */
+function replaceOrAppendKeyValue(lines: string[], key: string, rendered: string): string[] {
+  const out: string[] = [];
+  let replaced = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const t = line.trim();
+    if (!replaced && (t.startsWith(`${key} =`) || t.startsWith(`${key}=`))) {
+      out.push(rendered);
+      replaced = true;
+      continue;
+    }
+    out.push(line);
+  }
+  if (replaced) return out;
+  // append after the last value line (before trailing blanks/comments block)
+  let lastValue = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i]!.trim();
+    if (t !== '' && !t.startsWith('#')) {
+      lastValue = i;
+      break;
+    }
+  }
+  out.splice(lastValue + 1, 0, rendered);
+  return out;
+}
+
+function removeKeyValueLine(lines: string[], key: string): string[] {
+  const out: string[] = [];
+  let removed = false;
+  for (const line of lines) {
+    const t = line.trim();
+    if (!removed && (t.startsWith(`${key} =`) || t.startsWith(`${key}=`))) {
+      removed = true;
+      continue;
+    }
+    out.push(line);
+  }
+  return removed ? out : lines;
+}
+
+/**
+ * Make sure `[a.b]` exists as a section: walk the path converting inline
+ * declarations (`a = { b = 1 }`) into `[a]` sections appended at EOF (moving
+ * the inline value out of its original line — splicing a header in place
+ * would swallow the parent's remaining keys) and appending missing headers.
+ */
+function ensureSectionPath(text: string, path: readonly string[]): string {
+  let current = text;
+  for (let depth = 1; depth <= path.length; depth++) {
+    const prefix = path.slice(0, depth);
+    const sections = splitTomlSections(current);
+    // a deeper section ([projects."x"]) already implies every ancestor table —
+    // only an exact header (or an inline value) needs lifting/creating
+    if (
+      sections.some(
+        (s) => sameKey(s.key, prefix) || (s.key !== null && isNestedUnder(s.key, prefix)),
+      )
+    ) {
+      continue;
+    }
+    // inline declaration at the parent level? lift it into a section at EOF
+    const parentPrefix = prefix.slice(0, -1);
+    const parentSection =
+      parentPrefix.length === 0
+        ? sections[0]!
+        : sections.find((s) => sameKey(s.key, parentPrefix));
+    const key = prefix[depth - 1]!;
+    if (parentSection) {
+      const lifted = liftInlineTable(parentSection.lines, key);
+      if (lifted) {
+        const idx = sections.indexOf(parentSection);
+        current = normalizeEof(
+          [
+            ...sections.flatMap((s, i) => (i === idx ? lifted.lines : s.lines)),
+            ...lifted.sectionLines,
+          ].join('\n'),
+        );
+        continue;
+      }
+    }
+    current = upsertTomlSection(current, [...prefix], []);
+  }
+  return current;
+}
+
+/** Turn `key = { … }` in a section body into section lines appended at EOF.
+ * Returns null when the key is not an inline table (caller falls back to
+ * appending an empty section — which would collide, but only for documents
+ * that mix inline and section forms of the same table; smol-toml rejects
+ * those upstream anyway). */
+function liftInlineTable(
+  lines: string[],
+  key: string,
+): { lines: string[]; sectionLines: string[] } | null {
+  const idx = lines.findIndex((l) => {
+    const t = l.trim();
+    return t.startsWith(`${key} =`) && t.includes('{');
+  });
+  if (idx < 0) return null;
+  const t = lines[idx]!.trim();
+  const inline = t.slice(t.indexOf('=') + 1).trim();
+  let parsed: unknown;
+  try {
+    parsed = parse(`v = ${inline}`);
+  } catch {
+    return null;
+  }
+  const value = (parsed as { v?: unknown }).v;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = Object.entries(value as Record<string, unknown>).map(
+    ([k, v]) => `${renderTomlKey(k)} = ${renderTomlValue(v)}`,
+  );
+  const out = [...lines];
+  out.splice(idx, 1);
+  return { lines: out, sectionLines: [`[${key}]`, ...body] };
 }

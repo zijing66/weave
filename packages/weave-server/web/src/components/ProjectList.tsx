@@ -22,7 +22,6 @@ import {
   type TerminalPane,
   type TerminalTarget,
 } from '@/lib/api';
-import { AgentBadge } from '@/components/AgentBadge';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -396,18 +395,6 @@ export function ProjectList({
                   <span className="block truncate text-[11px] text-neutral-500" title={p.path}>
                     {p.path}
                   </span>
-                  {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
-                      选项同一份事实。 */}
-                  {(p.harnesses?.length ?? 0) > 0 && (
-                    <span
-                      className="mt-1 flex flex-wrap items-center gap-1"
-                      title={t('project.harnessesTip')}
-                    >
-                      {p.harnesses!.map((h) => (
-                        <AgentBadge key={h.id} agent={h.id} />
-                      ))}
-                    </span>
-                  )}
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-1.5 mt-1.5">
                   <SessionBadges counts={stats} />

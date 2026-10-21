@@ -109,16 +109,21 @@ export function permissionModeOf(raw: unknown): string | null {
 }
 
 /**
- * 剥掉网关前缀（转录照会的是 `custom_openai/ftm`，事件里是 `ftm`）：两处说同一个
- * 模型，比对前先归一。
+ * 比对前的模型名归一：剥网关前缀（转录照会 `custom_openai/ftm`，事件里是 `ftm`）
+ * 与上下文窗标注（settings env 是 `ftm-flash[1M]`，转录照会与事件 `from_model`
+ * 大小写不定地带着它）——两处说同一个模型，比对前先归一。**只用于比对**，展示
+ * 仍用原样（1M 标注不丢）。
  */
 export function bareModelName(model: string): string {
-  return model.slice(model.lastIndexOf('/') + 1);
+  return model
+    .slice(model.lastIndexOf('/') + 1)
+    .replace(/\[1m\]$/i, '');
 }
 
 /**
  * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
- * 认不出返回 null，调用方回落显示真名——不猜。
+ * 两边都过 {@link bareModelName} 归一（catalog 的 actual 带着 `[1M]` 标注，转录
+ * 照会不带）。认不出返回 null，调用方回落显示真名——不猜。
  */
 export function aliasOfModel(
   targets: readonly ModelAliasTarget[],
@@ -126,7 +131,7 @@ export function aliasOfModel(
 ): string | null {
   if (!model) return null;
   const bare = bareModelName(model);
-  return targets.find((t) => t.actual === model || t.actual === bare)?.alias ?? null;
+  return targets.find((t) => bareModelName(t.actual) === bare)?.alias ?? null;
 }
 
 function userSettingsOf(homedir: string): Record<string, unknown> | null {

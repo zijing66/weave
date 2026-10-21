@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { FileWarning, RefreshCw } from 'lucide-react';
+import { parse as parseToml } from 'smol-toml';
 import {
   api,
   type ConfigCatalogResponse,
@@ -160,6 +161,21 @@ export function HarnessConfigPanel({
 
   const pendingCount = Object.keys(edits).length;
 
+  // raw 视图的即时校验：语言随活文件（claude=JSON / codex=TOML），空文本 = 清空不算错
+  const rawInvalid = useMemo(() => {
+    const trimmed = rawText.trim();
+    if (!trimmed) return false;
+    if (catalog?.rawFormat === 'toml') {
+      try {
+        parseToml(trimmed);
+        return false;
+      } catch {
+        return true;
+      }
+    }
+    return valueOfText(rawText).error === 'invalidJson';
+  }, [catalog?.rawFormat, rawText]);
+
   const save = async (): Promise<void> => {
     if (pendingCount === 0 || !catalog) return;
     const updates: ConfigUpdate[] = Object.entries(edits).map(([path, edit]) =>
@@ -238,7 +254,8 @@ export function HarnessConfigPanel({
 
   // env 块在树上就是 `env` 这个对象：孩子 = 已设置的那些变量，搜索时再补文档里命中的
   const envSpecs = useMemo<TreeNodeSpec[]>(() => {
-    if (!catalog || filter === 'unset') return [];
+    // supported:false 的响应只有这一个字段（server 对无 config 槽的 harness 不带 envVars）
+    if (!catalog || !catalog.supported || filter === 'unset') return [];
     const env = valueAt(values, 'env');
     const names = new Set(
       typeof env === 'object' && env !== null && !Array.isArray(env) ? Object.keys(env) : [],
@@ -272,7 +289,9 @@ export function HarnessConfigPanel({
   }, [catalog, edits, filter, query, values]);
 
   const tree = useMemo(() => {
-    if (!catalog) return { nodes: [] as ConfigTreeNode[], byPath: new Map<string, ConfigTreeNode>() };
+    if (!catalog || !catalog.supported) {
+      return { nodes: [] as ConfigTreeNode[], byPath: new Map<string, ConfigTreeNode>() };
+    }
     const nodes = buildConfigTree([...catalog.keys, ...envSpecs], values);
     const byPath = new Map<string, ConfigTreeNode>();
     const walk = (list: readonly ConfigTreeNode[]): void => {
@@ -552,8 +571,10 @@ export function HarnessConfigPanel({
             >
               {t('cfg.reset')}
             </button>
-            {valueOfText(rawText).error === 'invalidJson' && (
-              <span className="text-[11px] text-red-400">{t('cfg.invalidJson')}</span>
+            {rawInvalid && (
+              <span className="text-[11px] text-red-400">
+                {catalog?.rawFormat === 'toml' ? t('cfg.invalidToml') : t('cfg.invalidJson')}
+              </span>
             )}
           </div>
         </div>
@@ -648,7 +669,6 @@ function EnvVarPicker({
         placeholder={t('cfg.addEnvVar')}
         searchPlaceholder={t('cfg.search')}
         creatable
-        creatableLabel={t('cfg.createEnvVar')}
         className="w-[38%] shrink-0 font-mono text-[11px]"
       />
       <div className="min-w-0 flex-1">

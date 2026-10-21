@@ -74,6 +74,15 @@
 - **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
 - **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
 
+### plugins / pluginState 槽（插件安装与启用）
+
+- **claude = 完整参考实现**（`claude/plugins.ts`）：两步 CLI（marketplace add + plugin install --scope user）、installed_plugins.json 读侧、三档 enabledPlugins 覆写（user/project/local）。
+- **codex = `codex/plugins.ts`**（0.163 源码核对，DECISIONS 2026-10-21）：键形 `<name>@<marketplace>` 与 claude 同形（`PluginId::parse` = `rsplit_once('@')`），拼装/拆解规则各自实现、不跨 harness 引用。安装 = `codex plugin add <key>`（CLI 内部整目录复制进 `~/.codex/plugins/cache/<market>/<name>/<version>/` 并自动写 `[plugins."<key>"] enabled = true`）；卸载 = `plugin remove`（删缓存目录，**不级联**、不动市场注册）。市场清单认 `.claude-plugin/marketplace.json`——**与 claude 共用同一份文件**（codex 的 `MARKETPLACE_MANIFEST_RELATIVE_PATHS` 第三项就是它），weave 的 `ensureMarketManifest` 维护一次两边受益；市场名取自清单 `name` 字段而非目录名（weave 已把 name 写成市场 id，恰好对上）。市场注册 = `marketplace add <本地目录>`：本地源不复制，config.toml 记 `source_type="local"`，根 = 目录本身。
+- **读侧不走 CLI**（`plugin list --json` 会拉远端目录、慢且可能联网）：已装 = 缓存目录存在（最新版本 = 字典序最大，与 server 的 `readCodexPluginSkills` 同口径）；启用态 = config.toml `[plugins]`（与 pluginState 槽同一份事实）。codex 无项目档启用面——project 读写都落全局、`pluginScopes()` 恒 `['user']`。
+- **removeMarketplace 按 source 路径反查注册名**（config.toml `[marketplaces]` 里 `source == <市场目录>` 的那个键；目录名不作依据），查不到 = 未注册 → 幂等返回；级联卸载该市场插件是宿主 CLI 语义，破坏性在调用方确认。
+- **无市场身份的包明确报错**：codex 的 `plugin add` 必须经市场（CLI 按名查已配置市场），weave 不发明「裸目录源」惯例。
+- **pluginState 槽**（`codex/plugin-state.ts`）保留：只管 `[plugins."<key>"] enabled` 布尔，供无 plugins 槽的消费方（global-config 技能分组装饰）取用；两面对同一份 config.toml 事实，不双写。
+
 ### statusline 面
 
 `StatuslineSurface` = `segments` / `tui` / `scriptRelPath` / `generate` / `wire`。块词表、脚本文法、`.claude/settings.json` 的 `statusLine` 键形都是 claude 知识，实现落 `weave-harness/src/claude/statusline/`；server 的 `statusline/` 只是持久化与默认值壳（`statuslineCacheDir` 与包版本归 server）。
@@ -722,9 +731,11 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ## §17 配置面（资源管理 · 接管 harness 配置文件）
 
-第 13 个能力槽 `config`：`HarnessDriver.config?: ConfigSurface`。词表（文件落点 / 键形 / 托管键 / 模型接口文法）全归 harness，今天唯一实现 = `weave-harness/src/claude/config.ts`（`CLAUDE_CONFIG`）；server 只做「取档 → 读改写 → 快照与漂移」的装配，web 只渲染。无此槽的 harness（codex）→ `GET /harness-config/catalog` 回 `supported:false`，前端渲染占位、不写 harness 名白名单（能力清单由 `GET /capabilities` 的 `config` 行给）。
+第 13 个能力槽 `config`：`HarnessDriver.config?: ConfigSurface`。词表（文件落点 / 键形 / 托管键 / 模型接口文法）全归 harness，两个实现 = `weave-harness/src/claude/config.ts`（`CLAUDE_CONFIG`，JSON）与 `weave-harness/src/codex/config.ts`（`CODEX_CONFIG`，TOML）；server 只做「取档 → 读改写 → 快照与漂移」的装配，web 只渲染。无此槽的 harness → `GET /harness-config/catalog` 回 `supported:false`，前端渲染占位、不写 harness 名白名单（能力清单由 `GET /capabilities` 的 `config` 行给）。
 
-### 四档文件（`ConfigSurface.files(ctx)`）
+**活文件的表示格式归 harness**：`ConfigSurface.rawFormat`（`'json' | 'toml'`）+ `parseRaw` / `serializeRaw`——原始视图的编辑语言、快照与漂移 diff 的两侧文本、catalog 响应都按它走；server 不写 `JSON.parse` 硬编码。
+
+### claude 的四档文件（`ConfigSurface.files(ctx)`）
 
 | id | 落点 | 文档 Scope | 快照 |
 | --- | --- | --- | --- |
@@ -735,9 +746,25 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 项目路径由 server 按 `projectId` 查库得出，**绝不接受前端传路径**。`project*` 两份不含快照（`files[].profiles:false`）：它们是项目级、随项目走，快照只对「本机全局语境」有意义。
 
-### 词表 = 官方文档的生成物
+### codex 的两档文件与 TOML 语义
 
-`settings-reference.md`（设置键）+ `env-vars.md`（环境变量）→ `scripts/gen-claude-catalog.mjs` → 提交进仓的 `settings-catalog.generated.ts`（307 键 / 17 组 / 391 env）。运行期**不联网**；重生成 `pnpm gen:catalog`（`--from <目录>` 走已下载的 md）。说明文案是官方英文原文（截断、剥链接），不翻译——翻错了比英文原文更难核。
+| id | 落点 | 快照 |
+| --- | --- | --- |
+| `user` | `~/.codex/config.toml`（`CODEX_HOME` 缺省 `~/.codex`） | 有 |
+| `project` | `<project>/.codex/config.toml` | 无 |
+
+- **分层合并是 codex 自己的事**（PackagedDefaults < MDM < System < EnterpriseManaged < User < Project < SessionFlags，递归表合并、标量/数组整体替换）——weave 只编辑单档文件，不模拟合并；但 **project 档的词表剥掉 codex loader 的 `PROJECT_LOCAL_CONFIG_DENYLIST` 12 键**（`model_providers` / `profiles` / `notify` / `otel` 等，project 层写了也被无视，生成器标 `scope:'user'`）。
+- **信任闸**：project `.codex/config.toml` 只在目录被 codex 信任（`[projects."<path>"] trust_level`）时生效——weave 如实展示文件内容，信任与否是用户在 codex 里点的事。
+- **TOML 写入保格式**（`codex/toml.ts`）：行级增量编辑（注释/键序/无关节原样），`setTomlValueInText` / `removeTomlValueInText` 走点号路径；inline 父表（`tui = {…}`）深层写入时提升为 section 挪到 EOF（原位插头会吞父节余键）；损坏 TOML 拒读写（`CodexTomlCorruptError`）。`serializeRaw`（整份重建）只用于 raw 视图整写与快照回放。
+- **托管判据 v1 从宽**：weave 的 MCP 安装（`[mcp_servers.weave]`）与插件启停（`[plugins."<key>"] enabled`）和用户在 codex 里手编同一张表是**两扇门写同一个值**，不上锁（`managedEntries` 恒空）；只把 `mcp_servers.weave` 标出来提示来源。
+- **models()**：codex 无可匿名调的 HTTP 模型接口；`model_catalog_json` 指向的本地 JSON（codex-rs `ModelsResponse`，取 `slug` / `display_name`）是自定义 provider 唯一可靠词表源，没配就诚实回空。
+
+### 词表 = 官方文档/schema 的生成物
+
+- claude：`settings-reference.md`（设置键）+ `env-vars.md`（环境变量）→ `scripts/gen-claude-catalog.mjs` → `settings-catalog.generated.ts`（307 键 / 17 组 / 391 env）。重生成 `pnpm gen:catalog`（`--from <目录>` 走已下载的 md）。
+- codex：codex-rs 同仓提交的 `core/config.schema.json` → `scripts/gen-codex-catalog.mjs` → `config-catalog.generated.ts`（426 键 / 17 组）。重生成 `pnpm gen:codex-catalog`（`--from <codex-rs 目录>`）。枚举/说明/默认值是 schema 英文原文；`tui.keymap`（171 叶键位表）与 `notice`（宿主状态记账）整键折叠；固定属性与 map 并存的键（`agents` / `apps` / `plugins`）两面都出（父键标 map + 固定属性照常递归）。
+
+运行期**不联网**；说明文案是官方英文原文（截断、剥链接），不翻译——翻错了比英文原文更难核。
 
 - 键 = **点号路径**（`sandbox.filesystem.allowWrite`），嵌套结构天然在路径里；`README` 表格里的 `Fields for <key>` 解析成子键。
 - 档位可见性：`global` 档只给 `scope === 'global'` 的键、且不给 env 表；其余档 = `any` + 本档专属。**`read()` 同口径投影**——档外的键既不展示也不写回。
@@ -770,13 +797,13 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 **`permissions` / `enabledPlugins` 不整键托管**：以前按「顶层键存在」判（`MANAGED_PATHS` 含它们），结果一条 weave 规则都没有的文件也被整块锁死，连 `defaultMode`（`bypassPermissions` 就是它的取值）都改不了、用户从官方市场装的插件也动不了。判据必须是内容而不是键在不在。
 
-**为什么托管**：这些是 `weave init` / 状态栏 / 插件面写进去的，表单删了会被下一次 init 合并加回来，用户看到「改了又变回来」。逃生口是原始 JSON 视图，那里照写不误。
+**为什么托管**：这些是 `weave init` / 状态栏 / 插件面写进去的，表单删了会被下一次 init 合并加回来，用户看到「改了又变回来」。逃生口是原始文件视图，那里照写不误。
 
 ### 写盘语义
 
 `write(file, ctx, values)`：读**原文** → 只替换「该档词表可见的顶层键」→ tmp+rename 原子写、2 空格 + 尾换行。未知键与没动过的键**保持原位**（就着原对象改、新键追加在末尾）——改成「先收集未知键再拼回去」会让整份文件的键序翻个面，`settings.json` 进版本库的项目每次写都多一大片假 diff。`deletes` 靠 `applyUpdates` 的 `remove:true`（深路径删），危险段（`__proto__` / `constructor` / `prototype` / 空段）一律拒。`global` 档因此只碰文档列出的键，`projects` / `oauthAccount` 等宿主自己的键原样留着。读上限 2MB；文件不存在 = `{}`；非法 JSON 直接抛（**不覆盖**）。
 
-- 原始视图（`PUT /harness-config/raw`）先 `JSON.parse` 再走同一个 `write`，所以「原始 JSON 里删掉一个键」只在词表内键上生效，未知键不会被顺手清掉。
+- 原始视图（`PUT /harness-config/raw`）先 `surface.parseRaw`（格式归 harness）再走同一个 `write`，所以「原始文件里删掉一个键」只在词表内键上生效，未知键不会被顺手清掉。
 - 每次写前 `pushBackup`（`backups/<file>-<ts>.json`，留最近 20 份），`restoreBackup` 反向写回。
 
 ### 快照 / 漂移 / 切换
@@ -785,7 +812,7 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 - **漂移只来自外部改文件**：本面板的写入口（values / raw / 切换 / 恢复）每次都把结果同步进激活快照，故 `liveText !== activeText` 必然意味着有人在外面改了文件。打开面板即比，横幅里给「看差异」/「用文件覆盖库」（`acceptDrift`）。
 - **切换是两拍**：`activate` 不带 `confirm` → 只回 `{ requiresConfirm, liveText, profileText }`，web 弹 `DiffDialog` 交用户确认；带 `confirm:true` 才备份 + 整体覆盖 + `setActive`。**不先弹 diff 就覆盖等于偷偷改宿主配置**。
-- diff 是自写的行级 LCS（`web/src/lib/text-diff.ts`，`MAX_LINES` 超限退化成整段替换），不引依赖；比对文本 = `JSON.stringify(values, null, 2) + '\n'`，两侧同口径才不会满屏假差异。
+- diff 是自写的行级 LCS（`web/src/lib/text-diff.ts`，`MAX_LINES` 超限退化成整段替换），不引依赖；比对文本 = `surface.serializeRaw(values)`（格式归 harness），两侧同口径才不会满屏假差异。
 
 ### 拉模型列表
 
@@ -793,14 +820,14 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ### web 侧
 
-`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索/过滤、**JSON 结构的树**、模型卡、原始 JSON 视图、备份行、漂移横幅。**档位按视图分工**：项目页只摆 `project` / `projectLocal`，全局页只摆 `user` / `global`——在项目语境里顺手改到全机配置是最容易出事的一类误操作。表面（`files()`）与路由仍是四档，裁的是「怎么摆」不是「能不能读」。
+`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索/过滤、**配置树**、模型卡、原始文件视图（编辑语言随 `rawFormat`：claude=JSON / codex=TOML，即时校验同语言）、备份行、漂移横幅。**档位按视图分工**：项目页只摆 `project`（+ claude 的 `projectLocal`），全局页只摆 `user`（+ claude 的 `global`）——在项目语境里顺手改到全机配置是最容易出事的一类误操作。裁的是「怎么摆」不是「能不能读」。
 
 树怎么拼（`buildConfigTree`，纯函数在 `web/src/lib/config-form.ts`）：
 
 - **顺序先按文件**：文件里出现过的键按 JSON 原文顺序立节点，词表有、文件没有的键再接在后面——看第一眼就是自己那份文件的形状。
 - **同层父节点合并**：文件里的 `sandbox.enabled` 与词表的 `sandbox` 落到同一个 `sandbox` 节点，节点自带 spec 只在「没有子节点」时才出控件（`hooks` 这种整体就是一张 JSON 的键不拆开、出 JSON 框；`sandbox` 出的是子键）。
-- **词表没收的键照实列出来**（`extra`，只读 + 标「词表未收录」）：文件里真有而文档没写的键，隐瞒它就等于让人以为文件是干净的；改这类键只能走原始 JSON 视图。
-- **`env` 也是树上的一支**：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec，**值的控件按变量 `kind` 出**：Boolean→开关、枚举→下拉、number、list），搜索时再补文档里命中的（上限 50）；节点底部一行输入框，候选就是文档里那 391 个变量名（`<datalist>` 可搜、也可自由输入），选中即落一条 `env.<NAME>` 待保存。不再单独开一块 env 区。
+- **词表没收的键照实列出来**（`extra`，只读 + 标「词表未收录」）：文件里真有而文档没写的键，隐瞒它就等于让人以为文件是干净的；改这类键只能走原始文件视图。
+- **`env` 也是树上的一支**（claude；codex 词表无 env 块）：孩子 = 已设置的变量（`env.*` 由面板按 `catalog.envVars` 现拼 spec，**值的控件按变量 `kind` 出**：Boolean→开关、枚举→下拉、number、list），搜索时再补文档里命中的（上限 50）；节点底部一行输入框，候选就是文档里那 391 个变量名（统一 Combobox：虚拟滚动 + 可搜 + 自由输入，说明文字在变量名下一行小字），选中即落一条 `env.<NAME>` 待保存。不再单独开一块 env 区。
 - **默认展开只到「里面有已配置值」的对象**：一屏先看到自己配了什么，没配的嵌套结构折着；搜索或过滤生效时强制全开（否则命中项藏在折起来的分支里）。「全部展开/收起」把这些选择落成显式状态。
 - **过滤默认档 = 「已配置」**：文件里没有 key 的键默认不出现（用户原话「隐藏指的就是没有 key 的场景」），「全部」才把词表里未配置的亮出来，「只看未配置」反向。搜索时三档都放行命中项。
 - 叶子行 = 键名 + 按类型出的控件（Boolean→开关、枚举→下拉、数字→输入、对象→JSON 框），未设置的给「写入」（写文档 Default），info 钮展开说明+文档分组+默认值。

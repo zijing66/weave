@@ -59,7 +59,7 @@ describe('generateHookHandler（脚本形态）', () => {
     expect(out).toContain('additionalContext');
     expect(out).toContain('sessionTitle');
     expect(out).toContain('deliveredTitle');
-    expect(out).toContain("const TITLE_EVENTS = ['SessionStart', 'UserPromptSubmit']");
+    expect(out).toContain('const TITLE_EVENTS = ["SessionStart","UserPromptSubmit"]');
     expect(out).toContain('DISPATCH_MARKER');
     expect(out).toContain('consumeOutbox');
     expect(out).toContain('DEDUPE_WINDOW_MS = 60000');

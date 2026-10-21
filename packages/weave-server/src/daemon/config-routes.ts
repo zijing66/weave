@@ -32,8 +32,9 @@ function asFileId(raw: unknown): ConfigFileId | null {
   return typeof raw === 'string' && (FILE_IDS as readonly string[]).includes(raw) ? (raw as ConfigFileId) : null;
 }
 
-function textOf(values: Record<string, unknown>): string {
-  return `${JSON.stringify(values, null, 2)}\n`;
+/** 值对象 → 活文件原文（格式归 harness：claude=JSON，codex=TOML）。 */
+function textOf(surface: ConfigSurface, values: Record<string, unknown>): string {
+  return surface.serializeRaw(values);
 }
 
 /** 档位 → 实际路径；project 档要项目路径（由 projectId 查库得出，绝不收前端路径）。 */
@@ -77,10 +78,10 @@ async function snapshotView(
 ): Promise<Record<string, unknown>> {
   const target = pathFor(surface, file, ctx);
   const values = await surface.read(file, ctx);
-  const liveText = textOf(values);
+  const liveText = textOf(surface, values);
   const state = await listProfiles(root, harness, file);
   const active = state.activeId ? await readSnapshot(root, harness, file, state.activeId) : null;
-  const activeText = active ? textOf(active) : null;
+  const activeText = active ? textOf(surface, active) : null;
   return {
     harness,
     file,
@@ -151,6 +152,7 @@ export async function handleConfigRoutes(
       supported: true,
       harness,
       file,
+      rawFormat: surface.rawFormat,
       files: surface.files(ctx).map((f) => ({ id: f.id, profiles: f.profiles })),
       groups: catalog.groups,
       keys: catalog.keys,
@@ -247,21 +249,17 @@ export async function handleConfigRoutes(
       sendJson(res, 400, { error: ctx });
       return true;
     }
-    let parsed: unknown;
+    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(String(body['text'] ?? ''));
-    } catch {
-      sendJson(res, 400, { error: '不是合法 JSON' });
-      return true;
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      sendJson(res, 400, { error: '顶层必须是对象' });
+      parsed = surface.parseRaw(String(body['text'] ?? ''));
+    } catch (err) {
+      sendJson(res, 400, { error: `不是合法${surface.rawFormat === 'toml' ? ' TOML' : ' JSON'}：${(err as Error).message}` });
       return true;
     }
     try {
       const current = await surface.read(file, ctx);
       await pushBackup(root, harness, file, current);
-      await surface.write(file, ctx, parsed as Record<string, unknown>);
+      await surface.write(file, ctx, parsed);
       const state = await listProfiles(root, harness, file);
       if (state.activeId) await saveProfile(root, harness, file, state.activeId, await surface.read(file, ctx));
     } catch (err) {
@@ -361,7 +359,11 @@ export async function handleConfigRoutes(
         const live = await surface.read(file, ctx);
         if (body['confirm'] !== true) {
           // 先给两侧文本，由 web 弹 diff modal 交用户确认
-          sendJson(res, 200, { requiresConfirm: true, liveText: textOf(live), profileText: textOf(values) });
+          sendJson(res, 200, {
+            requiresConfirm: true,
+            liveText: textOf(surface, live),
+            profileText: textOf(surface, values),
+          });
           return true;
         }
         try {

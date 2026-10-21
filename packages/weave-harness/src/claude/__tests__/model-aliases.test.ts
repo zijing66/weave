@@ -150,6 +150,17 @@ describe('aliasOfModel', () => {
     expect(bareModelName('ftm')).toBe('ftm');
   });
 
+  it('上下文窗标注（[1M]，大小写不定）剥掉再认——settings env 带它、转录照会不带', () => {
+    const ctx: ModelAliasTarget[] = [
+      { alias: 'opus', actual: 'ftm[1M]' },
+      { alias: 'sonnet', actual: 'ftm-flash[1M]' },
+    ];
+    expect(aliasOfModel(ctx, 'ftm-flash')).toBe('sonnet');
+    expect(aliasOfModel(ctx, 'custom_openai/ftm')).toBe('opus');
+    expect(bareModelName('ftm-flash[1m]')).toBe('ftm-flash');
+    expect(bareModelName('ftm-flash[1M]')).toBe('ftm-flash');
+  });
+
   it('认不出 / 没值都回 null，不猜', () => {
     expect(aliasOfModel(targets, 'gpt-unknown')).toBeNull();
     expect(aliasOfModel(targets, null)).toBeNull();

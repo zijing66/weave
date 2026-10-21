@@ -9,6 +9,7 @@ export const tasksZh = {
   'tasks.refreshed': '已刷新',
   'tasks.newSession': '新建会话',
   'tasks.newSessionTip': '起一个新会话',
+  'tasks.harnessFilterAll': '全部 harness',
   'tasks.newSessionNoHarness': '本项目还没有接入任何 harness——重跑 weave init 选一个',
   'tasks.newSessionFailed': '新建会话失败：{error}',
   'tasks.newSessionStarting': '正在新建会话…',
@@ -468,6 +469,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.refreshed': 'Refreshed',
   'tasks.newSession': 'New session',
   'tasks.newSessionTip': 'Start a new session',
+  'tasks.harnessFilterAll': 'All harnesses',
   'tasks.newSessionNoHarness':
     'No harness is integrated in this project yet — re-run weave init and pick one',
   'tasks.newSessionFailed': 'Failed to start a new session: {error}',

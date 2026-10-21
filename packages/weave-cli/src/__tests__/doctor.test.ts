@@ -144,6 +144,7 @@ const diagPayload = (id: number) => ({
       lastEventType: 'Stop',
       channels: {
         inbox: { status: 'unavailable', reason: 'no-credentials' },
+        queue: { status: 'unavailable', reason: 'no-mechanism' },
         relay: { status: 'unavailable', reason: 'no-peer-name' },
         terminal: { status: 'unavailable', reason: 'no-backend' },
       },

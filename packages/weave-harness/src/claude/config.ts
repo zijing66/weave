@@ -249,4 +249,18 @@ export const CLAUDE_CONFIG: ConfigSurface = {
     }
     return { models, baseUrl, credential };
   },
+
+  rawFormat: 'json',
+
+  parseRaw(text) {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('顶层必须是对象');
+    }
+    return parsed as Record<string, unknown>;
+  },
+
+  serializeRaw(values) {
+    return `${JSON.stringify(values, null, 2)}\n`;
+  },
 };

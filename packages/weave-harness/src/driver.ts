@@ -869,6 +869,12 @@ export interface ConfigSurface {
     authToken?: string | null;
     timeoutMs?: number;
   }): Promise<{ models: ConfigModelOption[]; baseUrl: string; credential: string }>;
+  /** 活文件的表示格式（raw 视图的编辑语言；快照/漂移 diff 也按它渲染）。 */
+  readonly rawFormat: 'json' | 'toml';
+  /** 活文件原文 → 值对象（解析失败抛错，调用方给 400）。 */
+  parseRaw(text: string): Record<string, unknown>;
+  /** 值对象 → 活文件原文（write 落盘前的最后一跳，格式归 harness）。 */
+  serializeRaw(values: Record<string, unknown>): string;
 }
 
 /** 一处改动：改前 → 改后。宿主只给片段（claude 的 Edit 就是 old_string/new_string）就只摆片段。 */

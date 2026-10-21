@@ -109,13 +109,14 @@ describe('readPluginRows — 插件工具行装配（模型协议 ToolStateRow�
     }
   });
 
-  it('仅启用面 harness（codex）：user 单行、无安装语义', async () => {
+  it('codex（plugins 槽已接）：user 单行、installScopes = [user]、无安装记录 = absent', async () => {
     const rows = await readPluginRows(projectDir);
     const cx = rows.find((r) => r.harness === 'codex' && r.key === 'cx@weave');
     expect(cx).toMatchObject({
-      scope: 'user', installScopes: [], enable: 'on', effective: true, category: 'plugin',
+      scope: 'user', installScopes: ['user'], install: 'absent', enable: 'on', effective: true, category: 'plugin',
     });
-    expect(cx?.install).toBeUndefined();
+    // codex 只出一行（pluginScopes = ['user']）
+    expect(rows.filter((r) => r.harness === 'codex')).toHaveLength(1);
   });
 
   it('全链无覆写回落 false（未声明 = 不加载，CC 三阶段模型）', async () => {

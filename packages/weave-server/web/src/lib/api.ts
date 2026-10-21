@@ -1264,10 +1264,12 @@ export interface ConfigEnvVarSpec {
 }
 
 export interface ConfigCatalogResponse {
-  /** false = 该 harness 还没有 config 槽（codex），面板渲染占位。 */
+  /** false = 该 harness 还没有 config 槽，面板渲染占位。 */
   supported: boolean;
   harness: Harness;
   file: ConfigFileId;
+  /** 活文件的表示格式（raw 视图的编辑语言；supported:false 时缺省）。 */
+  rawFormat?: 'json' | 'toml';
   files: { id: ConfigFileId; profiles: boolean }[];
   groups: string[];
   keys: ConfigKeySpec[];

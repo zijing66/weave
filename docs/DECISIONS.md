@@ -2,6 +2,23 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-22
+
+- **codex 配置面接通（config 槽第 2 个实现，词表源 = codex-rs 同仓 schema）**：词表不抓文档抓 **`core/config.schema.json`**（与 codex-rs 同仓提交，枚举/说明/默认值官方原文，`--from` 指本地 checkout 可离线重生成）——426 键 / 17 组。三个钉死的设计事实：①**project 档词表剥 `PROJECT_LOCAL_CONFIG_DENYLIST` 12 键**（codex loader 对 project 层强制剥离这批键，写了也被无视 → 生成器标 `scope:'user'`、`catalog('project')` 不给）；②**托管判据 v1 从宽**——weave 的 MCP 安装与插件启停和用户在 codex 里手编同一张表是「两扇门写同一个值」，谁后写谁生效，上锁只会误导（`managedEntries` 恒空，只标 `mcp_servers.weave` 提示来源）；③**models() 诚实回空**——codex 无可匿名调的 HTTP 模型接口，自定义 provider 场景唯一可靠词表源 = `model_catalog_json` 指向的本地 JSON（codex-rs `ModelsResponse`，取 `slug`/`display_name`），没配不猜。**TOML 写入保格式**：行级增量（注释/键序/无关节原样），inline 父表深层写入时提升为 section 挪 EOF（原位插头会吞父节余键——实测踩过：`tui = {…}` + 原位 `[tui]` = 重复定义）；带引号键名（Windows 路径节）靠 `sectionHeaderKey` 的转义解码命中；「更深的节已隐含祖先表」不追加空父节。**契约扩展**：`ConfigSurface` 补 `rawFormat` + `parseRaw`/`serializeRaw`——活文件表示格式归 harness（claude=JSON / codex=TOML），server 的 `textOf`/raw PUT、web 的 raw 校验全按它走，不再硬编码 `JSON.parse`。
+  回归：`codex/__tests__/config-catalog.test.ts` 6 例 + `toml-values.test.ts` 10 例 + `config.test.ts` 16 例 + `config-routes.test.ts` 7 例（codex 无槽断言更新为有槽 + TOML 端到端）+ web 353 例全绿；双 tsc 门绿。
+- **配置面板 codex 页签崩溃（用户报 Uncaught TypeError）**：`{supported:false}` 响应只有这一个字段，`envSpecs`/`tree` 两个 useMemo 只守 `!catalog` 不守 `supported` → `catalog.envVars.map` 炸。存量 bug，以前没人点到 codex 页签而已。
+- **Combobox 选项行 UI（用户原话「展示的应当是Key列表，描述信息应当作为小字浅色在key下方展示，而不是覆盖key展示; 还有新增自定义key时，可以直接在下拉框输入，下拉框不用额外增加选项展示」）**：hint 从右侧同行（长描述挤没 key）改为 key 下一行小字浅色、行高自适应（42/28）；creatable 删「用 xxx（自定义变量）」行——输入的文本本身当一行候选（等宽字体），Enter 直接落值。
+
+## 2026-10-22（早前）
+
+- **模型名比对归一加 `[1M]` 上下文窗标注（用户原话「模型如果带上1m上下文，在当前对话页面的模型处，是否会匹配错误」「当前选择应该是Sonnet模型，不是独立的ftm-flash」）**：三方数据形态实测不一致——settings env（catalog 出处）是 `ftm-flash[1M]`、转录照会 `message.model` 恒不带（本会话 14682 条 assistant 条目无一例外，`[1M]` 只出现在 `requestedModel` 字段）、`PostModelSwitch.from_model` 带且**大小写不定**（`ftm-flash[1m]`）。后果两处：①`aliasOfModel` 精确等值比对恒 miss → 活体 46 会话 `modelAlias` 全 null，下拉选中值掉成孤立真名（且会抖：事件链来的值带标注能命中、转录照会一到就掉）；②`switchOf` 重启回读拿 `from_model` 与转录照会比、永不相等 → 闩不成立，「换完模型还没跑新一轮」的会话重启后回读不到。修法 = `bareModelName` 扩为比对归一器（剥 `/` 前缀 + `/\[1m\]$/i` 后缀），`aliasOfModel` 两边（`t.actual` 与照会值）都过它；**只归一比对、不动展示**（catalog 与事件值原样显示，1M 标注不丢）。活体验证：修后 `ftm-flash → sonnet`、`custom_openai/ftm → opus` 认回；`deepseek-flash → null` 是诚实的（旧网关映射的真名，现行 catalog 已无此项，回落显示真名不猜）。
+  回归：`model-aliases.test.ts` 20 例（新增 `[1M]` 大小写两形态用例）+ `session-probe.test.ts` + `transcript.test.ts` 全绿。
+
+## 2026-10-21
+
+- **codex plugins 槽接通（Phase 3，源码核对 + 实机布局验证）**：codex 0.163 的插件 CLI 是完整的——`codex plugin add/list/remove` + `plugin marketplace add/list/upgrade/remove`，全部 `--json` 可机读。钉死的事实：①键形 `<name>@<marketplace>` 与 claude 同形（`core-plugin-common/src/plugin_id.rs` 的 `PluginId::parse` = `rsplit_once('@')`，插件名可含 `@`、市场名不会——与 claude 的 `parsePluginKey` 同规则）；②市场清单认 `.claude-plugin/marketplace.json`（`MARKETPLACE_MANIFEST_RELATIVE_PATHS` 第三项，前两项是 `.agents/plugins/`）——**与 claude 共用同一份文件**，weave 的 `ensureMarketManifest` 维护一次两边受益；③**市场名取自清单 `name` 字段而非目录名**（`validate_marketplace_root` → `load_marketplace().name`），weave 已把 name 写成市场 id，恰好对上；④本地市场源**不复制**：config.toml 记 `[marketplaces."<name>"] source_type="local" source=<目录>`，根 = 目录本身（`resolve_configured_marketplace_root`）；⑤安装 = 整目录**复制**进 `~/.codex/plugins/cache/<market>/<name>/<version>/`（`copy_dir_recursive`，无链接优化），版本缺省 `local`（`DEFAULT_PLUGIN_VERSION`），并**自动写 `[plugins."<key>"] enabled = true`**（`set_user_plugin_enabled`）；⑥卸载 = `plugin remove` 删缓存目录，**不级联**、不动市场注册（与 claude 的 uninstall 语义不同——claude 逐 scope 卸记录）；⑦`marketplace remove` 删 config 条目 + `.tmp/marketplaces/<name>` 安装根（本地源无安装根），**也不级联卸插件**（缓存目录留下，只是失去市场归属）；⑧`plugin list --json` 会拉远端目录（`fetch_remote_marketplaces`，无 ChatGPT 登录时静默跳过）——**读侧不走 CLI**：已装 = 缓存目录存在（最新版本 = 字典序最大，与 server 的 `readCodexPluginSkills` 同口径），启用态 = config.toml `[plugins]`；⑨codex 无项目档启用面（config.toml 只有用户级）——project 读写都落全局、`pluginScopes()` 恒 `['user']`；⑩win32 的 `codex` 是 npm `.cmd` 垫片，CLI 执行经 ComSpec 转发 + 自拼命令行（与 claude/plugins.ts 同一手艺，不用 `shell: true`——Node 二次转义吃反斜杠）。
+  设计取舍：**无市场身份的包明确报错**而不发明「裸目录源」惯例——codex 的 `plugin add` 按名查已配置市场，没有市场就没有安装路径；weave 的包恒经市场副本（`<dataDir>/market/<id>/`），`marketIdOf` 判不出市场 = 包不在市场里 = 不该装。**pluginState 槽保留**：两面对同一份 config.toml 事实，plugins 面写启用走同一 helper（`upsertCodexPluginEnabledInText`），不双写。
+  回归：`codex/__tests__/plugins.test.ts` 20 例（键形/安装 argv/幂等/清单维护/链接市场不写穿/缓存读侧/卸载幂等/启用态四档/市场反查/win32 命令行）+ `plugin-rows.test.ts` 跟进（codex 行从「仅启用面」变为带 `installScopes:['user']` 的安装行）。
 ## 2026-10-21
 
 - **编排重构：多入口图 + fork 提取替代「自投总结回合」（用户原话「会话编排当前实现不合我的设计……通过注入前台可配置 hook 的方式……将注入总结的关键信息，组合上连线的提示词（可通过变量引用上游输出），传递给下游会话」；扇入/入口/配置开放度三问裁决：每到一条执行一次、入口独立触发、模板+源码都可编辑）**：

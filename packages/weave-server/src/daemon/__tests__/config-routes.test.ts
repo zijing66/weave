@@ -16,7 +16,7 @@ vi.mock('../../db/paths.js', () => ({
 }));
 
 /**
- * 配置面路由：词表按 harness 派生（codex 无槽 → supported:false）、
+ * 配置面路由：词表按 harness 派生（claude=JSON / codex=TOML，rawFormat 随行）、
  * 表单写只动词表内的键、profile 切换先给 diff 再覆盖、外部改文件报漂移。
  */
 describe('harness 配置路由', () => {
@@ -74,10 +74,11 @@ describe('harness 配置路由', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('词表：claude 有面，codex 无槽 → supported:false', async () => {
+  it('词表：claude（JSON）与 codex（TOML）各有面，rawFormat 随行', async () => {
     const claude = await call('/harness-config/catalog?harness=claude&file=project', 'GET');
     expect(claude.status).toBe(200);
     expect(claude.body['supported']).toBe(true);
+    expect(claude.body['rawFormat']).toBe('json');
     expect((claude.body['keys'] as unknown[]).length).toBeGreaterThan(100);
     expect(claude.body['files']).toEqual([
       { id: 'user', profiles: true },
@@ -88,7 +89,13 @@ describe('harness 配置路由', () => {
 
     const codex = await call('/harness-config/catalog?harness=codex&file=user', 'GET');
     expect(codex.status).toBe(200);
-    expect(codex.body).toEqual({ supported: false });
+    expect(codex.body['supported']).toBe(true);
+    expect(codex.body['rawFormat']).toBe('toml');
+    expect((codex.body['keys'] as unknown[]).length).toBeGreaterThan(300);
+    expect(codex.body['files']).toEqual([
+      { id: 'user', profiles: true },
+      { id: 'project', profiles: false },
+    ]);
   });
 
   it('读：给路径/值与托管键；project 档缺 projectId 一律拒', async () => {
@@ -204,5 +211,27 @@ describe('harness 配置路由', () => {
     expect(accepted.status).toBe(200);
     expect(accepted.body['drifted']).toBe(false);
     expect(accepted.body['activeText']).toContain('haiku');
+  });
+
+  it('codex：TOML 原样写 → 读回 values；坏 TOML 400', async () => {
+    const ok = await call('/harness-config/raw', 'PUT', {
+      harness: 'codex',
+      file: 'user',
+      text: 'model = "gpt-5.2"\n\n[sandbox_workspace_write]\nnetwork_access = true\n',
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body['values']).toEqual({
+      model: 'gpt-5.2',
+      sandbox_workspace_write: { network_access: true },
+    });
+    expect(ok.body['liveText']).toContain('model = "gpt-5.2"');
+
+    const bad = await call('/harness-config/raw', 'PUT', {
+      harness: 'codex',
+      file: 'user',
+      text: 'model = [unclosed\n',
+    });
+    expect(bad.status).toBe(400);
+    expect(String(bad.body['error'])).toContain('TOML');
   });
 });

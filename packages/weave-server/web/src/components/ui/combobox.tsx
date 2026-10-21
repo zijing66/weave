@@ -18,8 +18,8 @@ export interface ComboboxOption {
  * 键盘可达（↑↓ 移动 / Enter 选 / Esc 关）、触屏友好（选项行高 ≥28px、点选即落）。
  *
  * - `value === ''` 表示「未选」：渲染成列表头部的清空项（与原生 select 的空 option 同义）。
- * - `creatable`：输入的文本不在候选里时，列表顶部给「用 "xxx"」一行——env 变量名
- *   这类「词表是建议不是白名单」的场景用。
+ * - `creatable`：输入的文本不在候选里时 Enter 直接落该值（词表是建议不是白名单的
+ *   场景用，如 env 变量名）——不额外出「用 xxx」行，输入本身就是候选。
  * - 弹层走 portal + fixed 定位（锚点矩形翻转防溢出），z-[60] 盖过对话框。
  * - 触屏（coarse pointer）不自动聚焦搜索框（弹软键盘遮住列表），桌面 autofocus。
  */
@@ -30,8 +30,8 @@ export function Combobox({
   placeholder,
   searchPlaceholder,
   emptyText,
+  clearLabel,
   creatable,
-  creatableLabel,
   disabled,
   title,
   className,
@@ -46,10 +46,10 @@ export function Combobox({
   searchPlaceholder?: string;
   /** 过滤无命中时的文案。 */
   emptyText?: string;
+  /** 清空项的文案（缺省「未设置」）。 */
+  clearLabel?: string;
   /** 允许自由输入（候选外的值也接受）。 */
   creatable?: boolean;
-  /** creatable 行的文案模板，`{value}` 会被替换。 */
-  creatableLabel?: string;
   disabled?: boolean;
   title?: string;
   className?: string;
@@ -81,7 +81,8 @@ export function Combobox({
     useMemo(() => {
       const out: Array<{ kind: 'option'; option: ComboboxOption } | { kind: 'create'; value: string } | { kind: 'clear' }> = [];
       if (value !== '') out.push({ kind: 'clear' });
-      if (creatable && !exactHit) out.push({ kind: 'create', value: query.trim() });
+      // creatable：输入的不是既有候选时，把输入本身当一行候选（Enter 即落值）
+      if (creatable && !exactHit && query.trim() !== '') out.push({ kind: 'create', value: query.trim() });
       for (const option of filtered) out.push({ kind: 'option', option });
       return out;
     }, [creatable, exactHit, filtered, query, value]);
@@ -89,7 +90,8 @@ export function Combobox({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => listRef.current,
-    estimateSize: () => 30,
+    // 带说明的行两行高（key + 灰字说明），纯选项行单行
+    estimateSize: (i) => (rows[i]?.kind === 'option' && rows[i]!.option.hint ? 42 : 28),
     overscan: 8,
   });
 
@@ -250,22 +252,25 @@ export function Combobox({
                         onClick={() => pick(row)}
                         className={cn(
                           'flex min-h-[28px] items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors',
+                          row.kind === 'option' && row.option.hint ? 'items-start py-1.5' : '',
                           isActive ? 'bg-blue-500/15 text-neutral-100' : 'text-neutral-300',
                         )}
                       >
                         {row.kind === 'clear' ? (
-                          <span className="text-neutral-500">{t('cfg.unset')}</span>
+                          <span className="text-neutral-500">{clearLabel ?? t('cfg.unset')}</span>
                         ) : row.kind === 'create' ? (
-                          <span className="truncate text-neutral-200">
-                            {(creatableLabel ?? '用 “{value}”').replace('{value}', row.value)}
-                          </span>
+                          <span className="truncate font-mono text-neutral-200">{row.value}</span>
                         ) : (
                           <>
-                            <span className="min-w-0 flex-1 truncate">{row.option.label ?? row.option.value}</span>
-                            {row.option.hint && (
-                              <span className="shrink-0 truncate text-[10px] text-neutral-500">{row.option.hint}</span>
-                            )}
-                            {selected && <Check className="h-3 w-3 shrink-0 text-mac-accent" />}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{row.option.label ?? row.option.value}</span>
+                              {row.option.hint && (
+                                <span className="block truncate text-[10px] leading-4 text-neutral-500">
+                                  {row.option.hint}
+                                </span>
+                              )}
+                            </span>
+                            {selected && <Check className="h-3 w-3 shrink-0 self-center text-mac-accent" />}
                           </>
                         )}
                       </button>

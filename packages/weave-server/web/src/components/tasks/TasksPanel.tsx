@@ -15,7 +15,7 @@ import {
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
-import { HARNESS_ORDER } from '@/lib/harness-meta';
+import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { Combobox } from '@/components/ui/combobox';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
@@ -154,9 +154,19 @@ export function TasksPanel({
   const listRef = useRef<HTMLDivElement | null>(null);
 
   /** 本项目会话：总线全量列表按 projectId 过滤（null = 首次加载中，沿用总线状态）。 */
-  const sessions = useMemo(
+  const projectSessions = useMemo(
     () => (allSessions === null ? null : allSessions.filter((s) => s.projectId === projectId)),
     [allSessions, projectId],
+  );
+
+  /** harness 筛选（'' = 全部）：只作用于列表与计数，不动选中态与右栏。 */
+  const [harnessFilter, setHarnessFilter] = useState<Harness | ''>('');
+  const sessions = useMemo(
+    () =>
+      projectSessions === null || harnessFilter === ''
+        ? projectSessions
+        : projectSessions.filter((s) => s.harness === harnessFilter),
+    [projectSessions, harnessFilter],
   );
 
   /** 会话行的同步影子：等「转绿」时要现读最新行，拿不到下一次 render 的闭包。 */
@@ -438,7 +448,9 @@ export function TasksPanel({
 
   // 会话归属 harness：分组生命周期表按它取（D7——分组差异是 harness 知识，
   // 不写死 claude 表；无事件流/未知 harness 回落名表首项的表）。
-  const selectedHarness = sessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
+  // 查未过滤列表：harness 筛选只藏列表行，不塌右栏。
+  const selectedHarness =
+    projectSessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
   const selectedLifecycle = HARNESS_LIFECYCLE[selectedHarness ?? HARNESS_ORDER[0] ?? 'claude'];
 
   // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
@@ -851,7 +863,7 @@ export function TasksPanel({
   // ——去掉原文字状态 tag（会话状态与组头信息重复）。
   const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
 
-  const selectedRow = sessions?.find((s) => s.sessionId === selectedId);
+  const selectedRow = projectSessions?.find((s) => s.sessionId === selectedId);
 
   /** 停止按钮露不露（事件链组头与对话弹窗共用同一判据）：回合开合信号不可信的
    *  harness（codex）传 undefined 让判据回落到状态。 */
@@ -1259,6 +1271,16 @@ export function TasksPanel({
             />
             {t('tasks.newSession')}
           </button>
+          {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。 */}
+          <Combobox
+            value={harnessFilter}
+            onChange={(v) => setHarnessFilter(v as Harness | '')}
+            title={t('tasks.harnessFilterAll')}
+            placeholder={t('tasks.harnessFilterAll')}
+            clearLabel={t('tasks.harnessFilterAll')}
+            className="rounded bg-neutral-900 px-1 py-0.5 text-[10px]"
+            options={harnesses.map((h) => ({ value: h.id, label: harnessUiOf(h.id).label }))}
+          />
           <RefreshIconButton
             className="ml-auto"
             title={t('tasks.refresh')}

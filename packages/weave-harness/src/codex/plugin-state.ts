@@ -9,7 +9,8 @@ import { CodexTomlCorruptError, upsertCodexPluginEnabledInText } from './toml.js
 /**
  * Codex 插件启用态表面：`~/.codex/config.toml` 的 `[plugins."<key>"] enabled`
  * （P2 从 server/install/global-config.ts 迁入——codex 的配置表示法是 harness
- * 知识；Codex 无安装/市场面，故走更窄的 pluginState 槽而非 plugins）。
+ * 知识）。安装/市场面在 `plugins.ts`（`codex plugin add` / `marketplace`）；
+ * 本面只管启用布尔，供无 plugins 槽的消费方（global-config 技能分组装饰）取用。
  */
 
 const pathExists = (file: string): Promise<boolean> =>
