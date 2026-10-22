@@ -9,6 +9,7 @@ import { useToast } from '@/components/Toast';
 import { registerInvalidator } from '@/lib/sse';
 import { useConvScreenOpen } from '@/lib/conv-screen';
 import { useT } from '@/i18n/I18nProvider';
+import { markdownPre } from '@/components/ui/mermaid-block';
 
 /**
  * 右下角 AI 助手浮层：**配置齐（地址 + 模型 + key）才出现按钮**，点开是与 weave
@@ -55,6 +56,7 @@ export function AssistantMarkdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+          pre: markdownPre,
           table: ({ node: _node, ...props }) => (
             <div className="my-1.5 max-w-full overflow-x-auto">
               <table {...props} />

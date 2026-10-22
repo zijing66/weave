@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import {
   bareModelName,
+  currentEffortAt,
   currentModelAt,
   currentModeAt,
   interruptMarkerAt,
@@ -26,7 +27,7 @@ import { HARNESS_SESSION_CONTROL, isHarness } from '@weavecode/core';
 const TAIL_BYTES = 64 * 1024;
 
 /** 没有可答的事实（未登记路径）。 */
-const NO_FACTS = { model: null, mode: null } as const;
+const NO_FACTS = { model: null, mode: null, effort: null } as const;
 
 /** 读文件尾部（读不到 → null，不猜）。 */
 export function readTail(path: string, bytes = TAIL_BYTES): string | null {
@@ -105,6 +106,7 @@ interface TailFacts {
   markerAt: number | null;
   model: string | null;
   mode: string | null;
+  effort: string | null;
 }
 
 export class SessionProbe {
@@ -123,7 +125,10 @@ export class SessionProbe {
   /** 路径 → 上次读到的事实（按文件大小缓存：没长过就不重读）。 */
   private readonly marks = new Map<string, TailFacts>();
   /** sessionId → 最后已知的模型/模式（读到就记；见 `latched`）。 */
-  private readonly known = new Map<string, { model: string | null; mode: string | null }>();
+  private readonly known = new Map<
+    string,
+    { model: string | null; mode: string | null; effort: string | null }
+  >();
   /**
    * sessionId → 宿主落定的换模型（`PostModelSwitch`）+ 记下的那一刻转录里还是哪个
    * 模型。转录只在 assistant 消息上照会模型，切完不跑一轮就永远读不到新值——故
@@ -171,9 +176,11 @@ export class SessionProbe {
     this.efforts.set(sessionId, level);
   }
 
-  /** 最后已知的推理档位；没上报过即 null（不猜）。 */
+  /** 最后已知的推理档位：事件优先、转录兜底；两者都没有即 null（不猜）。
+   *  兜底是为了 daemon 重启那一拍——事件只有工具/回合类才带 effort，重启后
+   *  若一直只有通知类事件，没这层就会长期显「未知」。 */
   currentEffort(sessionId: string): string | null {
-    return this.efforts.get(sessionId) ?? null;
+    return this.efforts.get(sessionId) ?? this.latched(sessionId).effort;
   }
 
   /** 宿主落定的换模型（`PostModelSwitch` 的 `to_model`）：立刻生效，见 `switched`。 */
@@ -249,15 +256,27 @@ export class SessionProbe {
    * 值只会被**更新的值**替换，不会被读空擦掉。中断标记不参与闩（它按「晚于最后
    * 一条事件」判，陈旧标记必须能被新事件盖过）。
    */
-  private latched(sessionId: string): { model: string | null; mode: string | null } {
+  private latched(sessionId: string): {
+    model: string | null;
+    mode: string | null;
+    effort: string | null;
+  } {
     const path = this.pathOf(sessionId);
     const facts = path ? this.factsOf(path) : NO_FACTS;
     const prev = this.known.get(sessionId);
     const next = {
       model: this.switchedModel(sessionId, facts.model) ?? prev?.model ?? null,
       mode: facts.mode ?? prev?.mode ?? null,
+      effort: facts.effort ?? prev?.effort ?? null,
     };
-    if (!prev || prev.model !== next.model || prev.mode !== next.mode) this.known.set(sessionId, next);
+    if (
+      !prev ||
+      prev.model !== next.model ||
+      prev.mode !== next.mode ||
+      prev.effort !== next.effort
+    ) {
+      this.known.set(sessionId, next);
+    }
     return next;
   }
 
@@ -296,7 +315,7 @@ export class SessionProbe {
     try {
       size = statSync(path).size;
     } catch {
-      return { size: -1, markerAt: null, model: null, mode: null };
+      return { size: -1, markerAt: null, model: null, mode: null, effort: null };
     }
     const hit = this.marks.get(path);
     if (hit && hit.size === size) return hit;
@@ -306,6 +325,7 @@ export class SessionProbe {
       markerAt: tail === null ? null : interruptMarkerAt(tail),
       model: tail === null ? null : currentModelAt(tail),
       mode: tail === null ? null : currentModeAt(tail),
+      effort: tail === null ? null : currentEffortAt(tail),
     };
     this.marks.set(path, facts);
     return facts;

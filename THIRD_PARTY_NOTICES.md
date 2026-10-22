@@ -61,3 +61,56 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Mermaid（dashboard 的 Markdown 图表渲染）
+
+`@weavecode/server` 的 dashboard bundle 含 **mermaid 12.x**（按需动态加载的独立
+chunk），用于渲染 Markdown 里的 ```mermaid 围栏。
+
+- **项目**：mermaid — <https://github.com/mermaid-js/mermaid>
+- **许可证**：MIT License
+- **版权**：Copyright (c) 2014 - 2022 Knut Sveidqvist
+- **改动**：无（仅随构建打包；初始化参数见 `web/src/components/ui/mermaid-block.tsx`）
+
+mermaid 打包后内含其运行期依赖，许可各不相同，随包一并声明：
+
+| 组件 | 许可证 | 版权/来源 |
+| --- | --- | --- |
+| elkjs（ELK 布局引擎） | **EPL-2.0** | Copyright (c) 2017 Kiel University and others — <https://github.com/kieler/elkjs> |
+| chevrotain（语法解析） | **Apache-2.0** | <https://github.com/Chevrotain/chevrotain> |
+| dompurify（HTML 消毒） | MPL-2.0 OR **Apache-2.0**（此处按 Apache-2.0 使用） | <https://github.com/cure53/DOMPurify> |
+| d3 | ISC | Copyright 2010-2023 Mike Bostock |
+| cytoscape、dagre-d3-es、marked、dayjs、katex、khroma、stylis、roughjs、uuid、ts-dedent、es-toolkit、@iconify/utils | MIT | 各自上游仓库 |
+| cytoscape-fcose | MIT | <https://github.com/iVis-at-Bilkent/cytoscape.js-fcose> |
+
+**ELK（EPL-2.0）特别声明**：weave **未修改** elkjs 源码，仅以未改动的形式随
+dashboard bundle 分发；其完整源码可从上游仓库取得（上表链接），EPL-2.0 全文见
+<https://www.eclipse.org/legal/epl-2.0/>。若需源码副本，请按该链接获取对应版本
+（`pnpm why elkjs` 可查实际解析版本）。
+
+**Apache-2.0（chevrotain / dompurify）**：保留其许可与 NOTICE 声明，全文见
+<https://www.apache.org/licenses/LICENSE-2.0>。
+
+### MIT License（mermaid）
+
+```
+Copyright (c) 2014 - 2022 Knut Sveidqvist
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

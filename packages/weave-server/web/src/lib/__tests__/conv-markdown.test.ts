@@ -68,6 +68,15 @@ describe('parseMarkdown', () => {
     expect(kinds(parseMarkdown('```\n裸的'))).toEqual(['code']);
   });
 
+  it('围栏的 info 串取第一个词作语言（导出图片据此认 mermaid）', () => {
+    const langOf = (md: string): string | null =>
+      (parseMarkdown(md)[0] as { lang: string | null }).lang;
+    expect(langOf('```mermaid\nflowchart LR\n```')).toBe('mermaid');
+    expect(langOf('```Mermaid title=x\nflowchart LR\n```')).toBe('mermaid');
+    expect(langOf('```ts\nconst a = 1;\n```')).toBe('ts');
+    expect(langOf('```\n裸的\n```')).toBeNull();
+  });
+
   it('列表：记号归一、任务框、嵌套层级、续行并入上一条', () => {
     const blocks = parseMarkdown('- 一条\n- [x] 做完\n  - 子项\n  续行');
     const items = (blocks[0] as { items: { marker: string; level: number; spans: MdSpan[] }[] }).items;

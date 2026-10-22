@@ -1,6 +1,10 @@
 /** 通用词条：跨面板复用的按钮与状态词，避免同义词在组件间漂移。 */
 export const commonZh = {
   'common.close': '关闭',
+  'common.mermaidShowSource': '源码',
+  'common.mermaidShowChart': '图表',
+  'common.mermaidRendering': '图表渲染中…',
+  'common.mermaidFailed': '图源渲染失败',
   'common.cancel': '取消',
   'common.confirm': '确认',
   'common.save': '保存',
@@ -27,6 +31,10 @@ export const commonZh = {
 
 export const commonEn: Record<keyof typeof commonZh, string> = {
   'common.close': 'Close',
+  'common.mermaidShowSource': 'Source',
+  'common.mermaidShowChart': 'Chart',
+  'common.mermaidRendering': 'Rendering chart…',
+  'common.mermaidFailed': 'Diagram failed to render',
   'common.cancel': 'Cancel',
   'common.confirm': 'Confirm',
   'common.save': 'Save',

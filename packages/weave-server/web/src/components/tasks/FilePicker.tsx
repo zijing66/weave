@@ -311,8 +311,8 @@ export function FilePicker({
   const [picked, setPicked] = useState<SessionFileEntry[]>([]);
   /** Shift 连选的锚点（列表下标）。 */
   const [pickAnchor, setPickAnchor] = useState<number | null>(null);
-  /** 行号选区：`setAnchor` 里存的是「已点了起始行、等第二下」；`lines` 是生效的区间。 */
-  const [, setAnchor] = useState<number | null>(null);
+  /** 行号选区：`anchor` 存的是「已点了起始行、等第二下」；`lines` 是生效的区间。 */
+  const [anchor, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
   const [busy, setBusy] = useState(false);
   /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
@@ -339,6 +339,10 @@ export function FilePicker({
   const ctrlRef = useRef<AbortController | null>(null);
   /** 编辑既有引用时要落回那一条：列表一回来就选中它，然后清账。 */
   const focusPath = useRef(initial?.kind === 'file' ? initial.path : null);
+  /** 键盘导航中：方向键按下后悬停不再抢选中，直到鼠标真的动一下（键盘优先）。 */
+  const kbdNav = useRef(false);
+  /** 当前因「选了行」而被自动勾上的那条（离开或取消行选区时按它退勾）。 */
+  const rangePicked = useRef<string | null>(null);
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false) => {
@@ -463,14 +467,23 @@ export function FilePicker({
     };
   }, [current, sessionId]);
 
-  // 换一条选中：选区与查找条重来；编辑既有引用时按它带来的行区间先选好
+  // 换一条选中：选区与查找条重来；编辑既有引用时按它带来的行区间先选好。
+  // 离开上一条文件 = 它那份行选区没了，勾选跟着退（只引用文件才留着手动勾）。
   useEffect(() => {
     setAnchor(null);
     setBar(null);
     setFind('');
     setJump('');
     setHits(null);
-    setLines(current && current.kind === 'file' && current.path === initial?.path ? (initial?.lines ?? null) : null);
+    const was = rangePicked.current;
+    rangePicked.current = null;
+    if (was) setPicked((p) => p.filter((e) => e.path !== was));
+    const keep = current && current.kind === 'file' && current.path === initial?.path ? (initial?.lines ?? null) : null;
+    setLines(keep);
+    if (keep && current) {
+      rangePicked.current = current.path;
+      setPicked((p) => (p.some((e) => e.path === current.path) ? p : [...p, current]));
+    }
   }, [current?.path, initial]);
 
   /** ESC 关掉选择器（焦点可能落在预览或哪儿都不在，故挂 document 上）。
@@ -511,17 +524,41 @@ export function FilePicker({
     goTo(dir === '' ? '' : slash >= 0 ? dir.slice(0, slash) : '');
   };
 
-  /** 行号点击：第一下起、第二下止（同一行就是单行引用）。 */
-  const onGutterClick = useCallback((n: number) => {
-    setAnchor((prev) => {
-      if (prev == null) {
-        setLines({ start: n, end: n });
-        return n;
+  /** 行选区与勾选联动：选上行 ⇒ 自动勾上；取消行 ⇒ 自动取消勾。
+   *  「只引用文件」没有行区间可依，仍要手动勾选或空格。 */
+  const applyLines = (next: { start: number; end: number } | null): void => {
+    setLines(next);
+    const cur = current;
+    if (!cur || cur.kind !== 'file') return;
+    if (next) {
+      rangePicked.current = cur.path;
+      setPicked((p) => (p.some((e) => e.path === cur.path) ? p : [...p, cur]));
+      return;
+    }
+    const was = rangePicked.current;
+    rangePicked.current = null;
+    if (was) setPicked((p) => p.filter((e) => e.path !== was));
+  };
+
+  /** 行号点击：第一下起、第二下止（同一行就是单行引用）；再点同一个起点 = 取消。 */
+  const onGutterClick = (n: number): void => {
+    if (anchor == null) {
+      if (lines && lines.start === n && lines.end === n) {
+        applyLines(null);
+        return;
       }
-      setLines({ start: Math.min(prev, n), end: Math.max(prev, n) });
-      return null;
-    });
-  }, []);
+      setAnchor(n);
+      applyLines({ start: n, end: n });
+      return;
+    }
+    setAnchor(null);
+    // 起点上再点一下 = 不要这段行了（勾选随之退掉）
+    if (anchor === n) {
+      applyLines(null);
+      return;
+    }
+    applyLines({ start: Math.min(anchor, n), end: Math.max(anchor, n) });
+  };
 
   /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。 */
   const matchesOf = (view: EditorView, q: string): { from: number; to: number }[] => {
@@ -602,13 +639,36 @@ export function FilePicker({
   };
 
   /** 落定底条那一枚钮：有已选就整批插（顺序 = 点选顺序），否则就当前这条。
-   *  批量的表达式列表里已经算好，不需要任何往返。 */
-  const commit = (): void => {
-    if (picked.length > 0) {
-      onPick(picked.map((e) => ({ ref: e.ref, target: { path: e.path, kind: e.kind } })));
+   *  带行区间的那一条要现算表达式（文法归服务端），其余直接用条目手里的 `ref`。 */
+  const commit = async (): Promise<void> => {
+    if (picked.length === 0) {
+      if (current) await pick(current, true);
       return;
     }
-    if (current) void pick(current, true);
+    const items: PickItem[] = [];
+    for (const e of picked) {
+      const range = linesSupported && e.kind === 'file' && e.path === current?.path ? lines : null;
+      if (!range) {
+        items.push({ ref: e.ref, target: { path: e.path, kind: e.kind } });
+        continue;
+      }
+      setBusy(true);
+      try {
+        const { ref } = await api.sessionFileRef(sessionId, {
+          path: e.path,
+          kind: 'file',
+          start: range.start,
+          end: range.end,
+        });
+        items.push({ ref, target: { path: e.path, kind: 'file', lines: range } });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    }
+    onPick(items);
   };
 
   /** 进一条：目录就下钻，文件则（桌面直接落定 / 窄屏先进预览）。 */
@@ -624,17 +684,37 @@ export function FilePicker({
       return;
     }
     if (picked.length > 0) {
-      commit();
+      void commit();
       return;
     }
     void pick(entry, true);
   };
 
+  /** 勾选/取消一条。取消的正是带行选区的那条 ⇒ 行选区跟着退（两处手势同一口径）。 */
+  const toggleCurrentPick = (entry: SessionFileEntry): void => {
+    const on = picked.some((p) => p.path === entry.path);
+    if (on && lines && entry.path === current?.path) {
+      applyLines(null);
+      return;
+    }
+    setPicked((p) => togglePick(p, entry));
+  };
+
+  /** 方向键/回车/空格的导航。挂在弹窗容器的捕获阶段：点过侧栏、面包屑、底条
+   *  之后焦点落在那些按钮上（甚至 body），事件不再经过中栏——只有容器级监听
+   *  才保证焦点在哪都还能用键盘走列表。查找 / 跳行那两个小输入框除外：那里
+   *  打的是字，方向键归光标。 */
   const onKeyDown = (e: React.KeyboardEvent): void => {
     // 输入法组字中的方向键/回车是宿主输入法的，不抢
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // 查找 / 跳行那两个小输入框里，方向键归光标（它们有自己的 Enter 处理）；
+    // 搜索框不同：打完词按 ↓ 进列表是主路径，故它下面的方向键照样算导航
+    const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    if (inInput && e.target !== searchRef.current) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      // 键盘接管：此后鼠标只是停着不动（悬停）就不许把选中抢回去
+      kbdNav.current = true;
       const step = e.key === 'ArrowDown' ? 1 : -1;
       setSelected((i) => Math.min(entries.length - 1, Math.max(0, i + step)));
       return;
@@ -650,12 +730,14 @@ export function FilePicker({
       if (hit) enter(hit);
       return;
     }
-    // 空格 = 加入/移出已选。搜索框里打字要给空格，那边的 target 是 input
-    if (e.key === ' ' && !(e.target instanceof HTMLInputElement)) {
+    // 空格 = 加入/移出已选（搜索框要打空格、按钮自己要吃空格，都不抢）
+    if (e.key === ' ') {
+      if (inInput) return;
+      if (e.target instanceof HTMLElement && e.target.closest('button')) return;
       const hit = entries[selected];
       if (!hit) return;
       e.preventDefault();
-      setPicked((p) => togglePick(p, hit));
+      toggleCurrentPick(hit);
       return;
     }
     if (e.key === 'ArrowRight') {
@@ -676,6 +758,10 @@ export function FilePicker({
     <ul
       ref={listRef}
       role="listbox"
+      // 鼠标真的动了才把选中权交回悬停（键盘优先：停着不动的指针不许抢）
+      onMouseMove={() => {
+        kbdNav.current = false;
+      }}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
     >
       {loading && entries.length === 0 && (
@@ -704,7 +790,10 @@ export function FilePicker({
               type="button"
               role="option"
               aria-selected={i === selected}
-              onMouseEnter={() => isDesktop && setSelected(i)}
+              onMouseEnter={() => {
+                // 键盘刚走过的行不许被「指针刚好停在那儿」抢回去
+                if (isDesktop && !kbdNav.current) setSelected(i);
+              }}
               onClick={(e) => {
                 // 修饰键 = 直接多选；触屏没有 hover 也没有修饰键，单击仍走「进入」
                 if (pickable && (e.ctrlKey || e.metaKey)) {
@@ -737,7 +826,7 @@ export function FilePicker({
                 onClick={(e) => {
                   if (!pickable) return;
                   e.stopPropagation();
-                  setPicked((p) => togglePick(p, entry));
+                  toggleCurrentPick(entry);
                 }}
                 className={cn(
                   'shrink-0 rounded',
@@ -837,6 +926,7 @@ export function FilePicker({
               if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key !== 'Enter') return;
               e.preventDefault();
+              e.stopPropagation();
               if (bar === 'find') stepMatch(e.shiftKey ? -1 : 1);
               else jumpTo();
             }}
@@ -973,7 +1063,12 @@ export function FilePicker({
   );
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0" onClick={onClose}>
+    // onKeyDownCapture 挂在外层遮罩上：焦点哪怕落在 body（点空白处）也收得到
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
+      onClick={onClose}
+      onKeyDownCapture={onKeyDown}
+    >
       <div
         className="flex h-[70dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
         onClick={(e) => e.stopPropagation()}
@@ -1003,6 +1098,7 @@ export function FilePicker({
                 </button>
                 {crumb.map((seg, i) => (
                   <span key={`${seg}-${i}`}>
+                    {'/'}
                     <button
                       type="button"
                       onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
@@ -1010,7 +1106,6 @@ export function FilePicker({
                     >
                       {seg}
                     </button>
-                    /
                   </span>
                 ))}
               </>
@@ -1022,7 +1117,6 @@ export function FilePicker({
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onKeyDown}
               placeholder={t('tasks.fileSearchPlaceholder')}
               className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
             />
@@ -1101,9 +1195,7 @@ export function FilePicker({
                     )}
                   </ul>
                 </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-                  {list}
-                </div>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.06]">{previewPane}</div>
               </>
             ) : screen === 'list' ? (
@@ -1130,7 +1222,7 @@ export function FilePicker({
               </button>
               <button
                 type="button"
-                onClick={commit}
+                onClick={() => void commit()}
                 className="flex shrink-0 items-center gap-1 rounded bg-blue-500/25 px-2 py-1 text-[11px] text-blue-100 transition-colors hover:bg-blue-500/40"
               >
                 {t('tasks.fileInsertPicked', { n: picked.length })}

@@ -361,9 +361,22 @@ describe('filterThread', () => {
     expect(filterThread(thread, 'all').map((e) => e.key)).toEqual(['e1', 'e2', 'e3']);
   });
 
-  it('② 「我发的」「回复」各留一半，仍按原时序', () => {
+  it('② 「我」「宿主回复」各留一半，仍按原时序', () => {
     expect(filterThread(thread, 'user').map((e) => e.key)).toEqual(['e1', 'e3']);
     expect(filterThread(thread, 'assistant').map((e) => e.key)).toEqual(['e2']);
+  });
+
+  it('⑤ 别的会话投递的 prompt 归「其他会话」，不再算进「我」', () => {
+    const mixed: ConvEntry[] = [
+      ...thread,
+      // 别的会话经中继发来的（带 from-name、不是 weave 自己）
+      { key: 'r1', role: 'user', at: at(4), text: '上游会话来的', fromWeave: false, fromName: 'sess-abc' },
+      // dashboard 直投（weave 发的 = 用户自己发话，仍算「我」）
+      { key: 'w1', role: 'user', at: at(5), text: '我叫它做的', fromWeave: true, fromName: 'weave' },
+    ];
+    expect(filterThread(mixed, 'user').map((e) => e.key)).toEqual(['e1', 'e3', 'w1']);
+    expect(filterThread(mixed, 'remote').map((e) => e.key)).toEqual(['r1']);
+    expect(filterThread(mixed, 'all')).toHaveLength(5);
   });
 
   it('③ 不原地改数组（过滤只影响显示）', () => {

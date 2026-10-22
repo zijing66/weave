@@ -384,19 +384,17 @@ export function removableOf(m: SessionMessageRow): boolean {
   return m.status !== 'delivered' || m.stalled === true;
 }
 
-/** 历史过滤：全部 / 只看自己发的 / 只看收到的回复（角色即过滤键）。 */
-export type ConvFilter = 'all' | 'user' | 'assistant';
+/** 历史过滤：全部 / 我 / 宿主回复 / 其他会话投递（角色 + 来源即过滤键）。 */
+export type ConvFilter = 'all' | 'user' | 'assistant' | 'remote';
 
-export const CONV_FILTERS = ['all', 'user', 'assistant'] as const;
+export const CONV_FILTERS = ['all', 'user', 'assistant', 'remote'] as const;
 
-const CONV_FILTER_KEY: Record<
-  ConvFilter,
-  'tasks.convFilterAll' | 'tasks.convFilterSent' | 'tasks.convFilterRecv'
-> = {
-  all: 'tasks.convFilterAll',
-  user: 'tasks.convFilterSent',
-  assistant: 'tasks.convFilterRecv',
-};
+/** 别的会话投递进来的 prompt：中继壳带 `from-name`，且不是 weave 自己发的
+ *  （weave 投递=用户经 dashboard 发话，仍算「我」）。它照样是 user 角色，
+ *  但发话的不是用户——不单列就会被算进「我」。 */
+export function isRemotePrompt(e: ConvEntry): boolean {
+  return e.role === 'user' && e.fromName != null && e.fromWeave !== true;
+}
 
 /** 尾上的「回复还在路上」= 压缩中（与尾条是谁无关），或这一轮开着而尾条还是
  *  「我刚说的那句」/ 压缩收尾分隔——自动压缩常打断在一轮中间，收尾笔一落尾条
@@ -553,7 +551,10 @@ export function filterThread(
   thread: readonly ConvEntry[],
   filter: ConvFilter,
 ): ConvEntry[] {
-  return filter === 'all' ? [...thread] : thread.filter((e) => e.role === filter);
+  if (filter === 'all') return [...thread];
+  if (filter === 'remote') return thread.filter(isRemotePrompt);
+  if (filter === 'user') return thread.filter((e) => e.role === 'user' && !isRemotePrompt(e));
+  return thread.filter((e) => e.role === filter);
 }
 
 /** 计划本体插进对话流（位置 = 提交那次工具调用的事件 id）：它不是某一轮的收尾
@@ -629,8 +630,7 @@ const toImageEntries = (entries: readonly ConvEntry[], planLabel: string): ConvI
     .map((e) => {
       const tags: ConvImageTag[] = [];
       if (e.role === 'user' && e.fromWeave === true) tags.push({ kind: 'weave', text: 'weave' });
-      if (e.role === 'user' && e.fromWeave !== true && e.fromName != null)
-        tags.push({ kind: 'name', text: e.fromName });
+      if (isRemotePrompt(e)) tags.push({ kind: 'name', text: e.fromName! });
       if (e.plan === true) tags.push({ kind: 'plan', text: planLabel });
       return {
         role: e.role as ConvImageEntry['role'],
@@ -1906,17 +1906,24 @@ export function SessionMessages({
     );
   };
 
-  /** 下拉选项 = 别名 + 真名（网关把别名换成自家 ID，两个都得看得见）；别名表是
-   *  `/model` 的取值，真名只是标注。老 daemon 不回表就只摆别名。 */
+  /** 下拉选项：**真名是主文案、别名降为灰字说明**——别名（opus/sonnet…）只是
+   *  分类标签，真正跑的是网关那串 ID，和宿主自己 statusline 报的同一个。选中值仍是
+   *  别名（`/model` 的稳定把手，宿主认它）。老 daemon 不回别名表就只摆词表。
+   */
   const modelOptions =
     modelTargets.length > 0
       ? modelTargets.map((t) => ({
           value: t.alias,
-          label: t.actual === t.alias ? t.alias : `${t.alias} — ${t.actual}`,
+          label: t.actual,
+          ...(t.actual === t.alias ? {} : { hint: t.alias }),
         }))
       : modelNames.map((n) => ({ value: n, label: n }));
   /** 选中值取**别名**：转录里照会的是网关真名（`ftm`），那是别名 opus 的真身。 */
   const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
+  /** 展示用真名（状态栏底条）：别名那档的真名与宿主 `display_name` 同形态
+   *  （`<网关模型ID>[1M]`）；认不出别名就退回转录照会的真名——**别名不上展板**。 */
+  const modelDisplay =
+    modelTargets.find((t) => t.alias === modelValue)?.actual ?? currentModel ?? (modelValue || null);
 
   /** 真销毁（关）：输入框里还有未提交内容时先问一句。只有浮窗的关闭钮走这条路——
    *  ESC、最小化钮、点蒙版都走挂起，不销毁。 */
@@ -2043,7 +2050,13 @@ export function SessionMessages({
                   : 'border-edge/[0.08] text-neutral-500 hover:text-neutral-300',
               )}
             >
-              {t(CONV_FILTER_KEY[f])}
+              {f === 'all'
+                ? t('tasks.convFilterAll')
+                : f === 'user'
+                  ? t('tasks.convFilterSent')
+                  : f === 'remote'
+                    ? t('tasks.convFilterRemote')
+                    : capability.harness}
             </button>
           ))}
           <span className="ml-auto text-[10px] text-neutral-600">
@@ -2208,7 +2221,7 @@ export function SessionMessages({
                         )}
                         {/* 不是 weave 发的会话间消息（别的会话用 CC 自己的 SendMessage）：
                             挂发送方会话名，与终端里手敲的 prompt 区分开 */}
-                        {m.fromWeave !== true && m.fromName != null && (
+                        {isRemotePrompt(m) && (
                           <span className="shrink-0 rounded border border-edge/[0.12] px-1 py-px text-[10px] text-neutral-400">
                             {m.fromName}
                           </span>
@@ -2876,7 +2889,7 @@ export function SessionMessages({
         <StatuslineBar
           projectId={projectId}
           sessionName={sessionRow?.title ?? label}
-          model={modelValue || null}
+          model={modelDisplay}
           effort={sessionRow?.effort ?? null}
         />
 

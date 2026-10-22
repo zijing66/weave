@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Info, Lock, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Info, Lock, Plus, RotateCcw, X } from 'lucide-react';
 import type { ConfigFieldSpec, TreeNodeSpec } from '@/lib/config-form';
 import {
   arrayItemsOf,
@@ -189,6 +189,15 @@ export function ConfigValueRow({
           >
             <Info className="h-3 w-3" />
           </button>
+          {set && !managed && defaultOfSpec(spec) !== undefined && (
+            <button
+              onClick={() => onChange({ value: defaultOfSpec(spec) })}
+              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+              title={t('cfg.resetDefault')}
+            >
+              <RotateCcw className="h-3 w-3" />
+            </button>
+          )}
           {set && !managed && (
             <button
               onClick={() => onChange({ remove: true })}
@@ -250,7 +259,7 @@ function valueSpecOf(spec: TreeNodeSpec): TreeNodeSpec {
 
 /**
  * map 值：键名由用户起（模型名、插件 ID），所以不能拆成点号路径的子键——
- * 一行一个条目，值按字段（或标量）在旁边编辑。草稿留在本地，键还没写完也不会掉行。
+ * 一条一行、对象字段缩进成子树。草稿留在本地，键还没写完也不会掉行。
  */
 function MapField({
   spec,
@@ -261,7 +270,6 @@ function MapField({
   value: unknown;
   onCommit: (next: Record<string, unknown>) => void;
 }) {
-  const t = useT();
   const [rows, setRows] = useState(() => mapEntriesOf(value));
   const committed = useRef(JSON.stringify(value));
   useEffect(() => {
@@ -284,57 +292,33 @@ function MapField({
     commit(rows.map((row, i) => (i === index ? { key: key ?? row.key, value: rowValue } : row)));
 
   const fields = spec.fields ?? [];
+  const scalarSpec = valueSpecOf(spec);
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       {rows.map((row, i) => (
-        <div key={i} className="flex items-start gap-1.5">
-          <input
-            value={row.key}
-            onChange={(e) => patch(i, row.value, e.target.value)}
-            placeholder={t('cfg.mapKey')}
-            className={cn(INPUT_CLS, 'max-w-[180px] font-mono')}
-          />
-          <div className="min-w-0 flex-1">
-            {fields.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {fields.map((f) => (
-                  <FieldControl
-                    key={f.name}
-                    field={f}
-                    value={fieldValueOf(row.value, f)}
-                    onChange={(next) => patch(i, withFieldValue(row.value, f, next))}
-                  />
-                ))}
-              </div>
-            ) : (
-              <PlainControl
-                spec={valueSpecOf(spec)}
-                value={row.value}
-                onChange={(next) => patch(i, next)}
-              />
-            )}
-          </div>
-          <button
-            onClick={() => commit(rows.filter((_, j) => j !== i))}
-            className="mt-1 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
-            title={t('cfg.clear')}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+        <EntryNode
+          key={i}
+          label={row.key}
+          labelEditable
+          onLabelChange={(next) => patch(i, row.value, next)}
+          value={row.value}
+          fields={fields}
+          scalarSpec={scalarSpec}
+          onValueChange={(next) => patch(i, next)}
+          onReset={() => patch(i, fields.length > 0 ? {} : emptyItemOf(scalarSpec))}
+          onRemove={() => commit(rows.filter((_, j) => j !== i))}
+        />
       ))}
-      <button
-        onClick={() => commit([...rows, { key: '', value: fields.length > 0 ? {} : emptyItemOf(valueSpecOf(spec)) }])}
-        className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
-      >
-        <Plus className="h-3 w-3" />
-        {t('cfg.addEntry')}
-      </button>
+      <AddButton
+        onClick={() =>
+          commit([...rows, { key: '', value: fields.length > 0 ? {} : emptyItemOf(scalarSpec) }])
+        }
+      />
     </div>
   );
 }
 
-/** 元素是对象的数组：一行一个元素，元素字段就在行里编。 */
+/** 数组：一项一行，对象元素展开成缩进子树。 */
 function ListField({
   spec,
   value,
@@ -346,7 +330,6 @@ function ListField({
   locked: readonly string[];
   onCommit: (next: unknown[]) => void;
 }) {
-  const t = useT();
   const [rows, setRows] = useState(() => arrayItemsOf(value));
   const committed = useRef(JSON.stringify(value));
   useEffect(() => {
@@ -366,61 +349,25 @@ function ListField({
   };
   const fields = spec.fields ?? [];
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       {rows.map((item, i) => {
         const lock = locked.includes(String(item));
         return (
-          <div key={i} className="flex items-start gap-1.5">
-            {fields.length > 0 ? (
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                {fields.map((f) => (
-                  <FieldControl
-                    key={f.name}
-                    field={f}
-                    value={fieldValueOf(item, f)}
-                    onChange={(next) =>
-                      commit(rows.map((row, j) => (j === i ? withFieldValue(row, f, next) : row)))
-                    }
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                {lock ? (
-                  <span className="truncate font-mono text-[11px] text-neutral-400">{String(item)}</span>
-                ) : (
-                  <PlainControl
-                    spec={valueSpecOf(spec)}
-                    value={item}
-                    onChange={(next) => commit(rows.map((row, j) => (j === i ? next : row)))}
-                    compact
-                  />
-                )}
-              </div>
-            )}
-            {lock ? (
-              <span className="mt-1 flex items-center gap-1 text-[10px] text-neutral-500" title={t('cfg.managedEntry')}>
-                <Lock className="h-3 w-3" />
-              </span>
-            ) : (
-              <button
-                onClick={() => commit(rows.filter((_, j) => j !== i))}
-                className="mt-1 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
-                title={t('cfg.clear')}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+          <EntryNode
+            key={i}
+            label={`#${i + 1}`}
+            labelEditable={false}
+            value={item}
+            fields={fields}
+            scalarSpec={valueSpecOf(spec)}
+            onValueChange={(next) => commit(rows.map((row, j) => (j === i ? next : row)))}
+            onReset={() => commit(rows.map((row, j) => (j === i ? emptyItemOf(spec) : row)))}
+            onRemove={() => commit(rows.filter((_, j) => j !== i))}
+            locked={lock}
+          />
         );
       })}
-      <button
-        onClick={() => commit([...rows, emptyItemOf(spec)])}
-        className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
-      >
-        <Plus className="h-3 w-3" />
-        {t('cfg.addEntry')}
-      </button>
+      <AddButton onClick={() => commit([...rows, emptyItemOf(spec)])} />
     </div>
   );
 }
@@ -433,28 +380,202 @@ function isBlank(item: unknown): boolean {
   return false;
 }
 
-/** 对象里的一个字段：小标签 + 按类型出的控件。 */
-function FieldControl({
+/** 词表里的默认值（生成物是 JSON 串；解析不了就按原文）。 */
+function defaultOfSpec(spec: TreeNodeSpec): unknown {
+  if (!spec.default) return undefined;
+  try {
+    return JSON.parse(spec.default) as unknown;
+  } catch {
+    return spec.default;
+  }
+}
+
+/**
+ * 一条条目（map 的一行 / 数组的一项）：行 = 展开箭头 + 名称 + 控件 + ↻ + 🗑。
+ * 对象值展开后字段各占一行、缩进一层——嵌套结构照树读，不再是挤在一起的两列。
+ */
+function EntryNode({
+  label,
+  labelEditable,
+  onLabelChange,
+  value,
+  fields,
+  scalarSpec,
+  onValueChange,
+  onReset,
+  onRemove,
+  locked,
+}: {
+  label: string;
+  /** map 的键名可以改；数组项只是序号。 */
+  labelEditable: boolean;
+  onLabelChange?: (next: string) => void;
+  value: unknown;
+  fields: readonly ConfigFieldSpec[];
+  scalarSpec: TreeNodeSpec;
+  onValueChange: (next: unknown) => void;
+  onReset: () => void;
+  onRemove: () => void;
+  locked?: boolean;
+}) {
+  const t = useT();
+  const isObject = fields.length > 0;
+  const [open, setOpen] = useState(fields.length <= 6);
+  return (
+    <div>
+      <div className="flex items-start gap-1.5 rounded-md px-1 py-0.5 hover:bg-neutral-800/20">
+        {isObject ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+            title={t('cfg.shapedToggle')}
+          >
+            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          </button>
+        ) : (
+          <span className="w-[13px] shrink-0" />
+        )}
+        {labelEditable ? (
+          <input
+            value={label}
+            onChange={(e) => onLabelChange?.(e.target.value)}
+            placeholder={t('cfg.mapKey')}
+            className={cn(INPUT_CLS, 'max-w-[180px] font-mono')}
+          />
+        ) : (
+          <span className="w-[72px] shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">
+            {label}
+          </span>
+        )}
+        {isObject ? (
+          !open && (
+            <span className="pt-1 text-[10px] text-neutral-600">
+              {t('cfg.fieldCount', { count: fields.length })}
+            </span>
+          )
+        ) : (
+          <div className="min-w-0 flex-1">
+            {locked ? (
+              <span className="block truncate font-mono text-[11px] leading-6 text-neutral-400">
+                {textOf(value)}
+              </span>
+            ) : (
+              <PlainControl spec={scalarSpec} value={value} onChange={onValueChange} compact />
+            )}
+          </div>
+        )}
+        <div className="flex shrink-0 items-center gap-0.5 pt-1">
+          {locked ? (
+            <span className="text-neutral-500" title={t('cfg.managedEntry')}>
+              <Lock className="h-3 w-3" />
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onReset}
+                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+                title={t('cfg.resetRow')}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={onRemove}
+                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+                title={t('cfg.clear')}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {isObject && open && (
+        <div style={{ paddingLeft: TREE_INDENT }} className="space-y-0.5 pb-0.5">
+          {fields.map((field) => (
+            <FieldRow
+              key={field.name}
+              field={field}
+              value={fieldValueOf(value, field)}
+              readOnly={locked}
+              onChange={(next) => onValueChange(withFieldValue(value, field, next))}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 对象里的一个字段：一行（名称 + 控件），有值时行尾给一记「置空」。 */
+function FieldRow({
   field,
   value,
+  readOnly,
   onChange,
 }: {
   field: ConfigFieldSpec;
   value: unknown;
+  readOnly?: boolean;
   onChange: (next: unknown) => void;
 }) {
+  const t = useT();
+  const set = value !== undefined;
   return (
-    <label className="flex items-center gap-1">
-      <span className="font-mono text-[10px] text-neutral-500" title={field.description ?? field.name}>
+    <div className="flex items-start gap-2 rounded px-1 py-0.5 hover:bg-neutral-800/20">
+      <span
+        className="w-[34%] shrink-0 truncate font-mono text-[10px] leading-6 text-neutral-500"
+        title={field.description ?? field.name}
+      >
         {field.name}
       </span>
-      <PlainControl
-        spec={{ key: field.name, group: '', description: field.description ?? '', type: field.type, options: field.options }}
-        value={value}
-        onChange={onChange}
-        compact
-      />
-    </label>
+      <div className="min-w-0 flex-1">
+        {readOnly ? (
+          <span className="block truncate font-mono text-[11px] leading-6 text-neutral-500">
+            {textOf(value)}
+          </span>
+        ) : (
+          <PlainControl
+            spec={{
+              key: field.name,
+              group: '',
+              description: field.description ?? '',
+              type: field.type,
+              options: field.options,
+            }}
+            value={value}
+            onChange={onChange}
+            compact
+          />
+        )}
+      </div>
+      {!readOnly && set && (
+        <button
+          type="button"
+          onClick={() => onChange(undefined)}
+          className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
+          title={t('cfg.resetRow')}
+        >
+          <RotateCcw className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 「添加一项」按钮（map / 数组共用）。 */
+function AddButton({ onClick }: { onClick: () => void }) {
+  const t = useT();
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
+    >
+      <Plus className="h-3 w-3" />
+      {t('cfg.addEntry')}
+    </button>
   );
 }
 
@@ -505,6 +626,9 @@ function PlainControl({
         className={cn(INPUT_CLS, 'font-mono', compact ? 'w-40' : 'w-full')}
       />
     );
+  }
+  if (control === 'object') {
+    return <JsonField key={JSON.stringify(value)} value={value} onCommit={onChange} />;
   }
   return (
     <input

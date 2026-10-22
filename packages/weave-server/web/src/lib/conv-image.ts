@@ -9,6 +9,7 @@
  */
 
 import { parseMarkdown, type MdSpan, type MdStyle } from './conv-markdown';
+import { renderMermaidImage, type MermaidImage } from './mermaid';
 import type { Theme } from './theme';
 
 export type ConvRole = 'user' | 'assistant';
@@ -240,6 +241,8 @@ export interface BoxBlock extends BlockBase {
   /** 内容相对块顶的内边距（代码块 = 内衬、引用 = 上下留白的一半）。 */
   pad: number;
   lines: ConvImageLine[];
+  /** mermaid 围栏渲染成的位图（有它就画图、`lines` 为空）。 */
+  image?: MermaidImage;
 }
 
 export interface TableBlock extends BlockBase {
@@ -444,7 +447,12 @@ function metaRow(
 }
 
 /** markdown 块 → 带位置的块（y 相对气泡内容区；宽度已按 TEXT_MAX 量过）。 */
-function layoutBlocks(measure: Measure, text: string, pal: Palette): ConvImageBlock[] {
+function layoutBlocks(
+  measure: Measure,
+  text: string,
+  pal: Palette,
+  diagrams?: Map<string, MermaidImage>,
+): ConvImageBlock[] {
   const out: ConvImageBlock[] = [];
   let y = 0;
   const add = (draft: BlockDraft): void => {
@@ -510,6 +518,21 @@ function layoutBlocks(measure: Measure, text: string, pal: Palette): ConvImageBl
         break;
       }
       case 'code': {
+        // mermaid 围栏：预渲染好的位图直接占位（渲染失败时表里没有它，回落成代码块）
+        const diagram = b.lang === 'mermaid' ? diagrams?.get(b.lines.join('\n')) : undefined;
+        if (diagram) {
+          add({
+            kind: 'box',
+            h: diagram.h + CODE_PAD * 2,
+            w: diagram.w + CODE_PAD * 2,
+            fill: pal.codeBg,
+            border: pal.codeBorder,
+            pad: CODE_PAD,
+            lines: [],
+            image: diagram,
+          });
+          break;
+        }
         const cpal: Palette = { ...pal, fg: pal.code };
         const lines: ConvImageLine[] = [];
         for (const line of b.lines.length > 0 ? b.lines : ['']) {
@@ -597,12 +620,13 @@ export function layoutConversation(
   measure: Measure,
   entries: readonly ConvImageEntry[],
   opts: ConvImageOpts,
+  diagrams?: Map<string, MermaidImage>,
 ): ConvImageLayout {
   const pal = TEXT[opts.theme];
   let y = PAD;
   const bubbles: ConvImageBubble[] = [];
   for (const e of entries) {
-    const blocks = layoutBlocks(measure, e.text, pal);
+    const blocks = layoutBlocks(measure, e.text, pal, diagrams);
     const meta = metaRow(measure, opts.theme, e.at, e.tags ?? [], e.role, opts);
     const contentW = Math.max(meta.w, 0, ...blocks.map((b) => b.w));
     const contentH = blocks.reduce((n, b) => n + b.gap + b.h, 0);
@@ -760,6 +784,10 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
           ctx.fillStyle = blk.leftBar;
           ctx.fillRect(x0, by, QUOTE_BAR, blk.h);
         }
+        if (blk.image) {
+          ctx.drawImage(blk.image.img, x0 + blk.pad, by + blk.pad, blk.image.w, blk.image.h);
+          continue;
+        }
         drawLines(ctx, blk.lines, x0, by + blk.pad);
         continue;
       }
@@ -802,6 +830,31 @@ export function drawConversation(ctx: CanvasRenderingContext2D, layout: ConvImag
   }
 }
 
+/**
+ * 先把消息里所有 ```mermaid 围栏渲染成位图（按图源去重；渲染失败的一块就不进表，
+ * 排版时回落成普通代码块——出图宁可照抄源码，也不留个空框）。画布要的是实际
+ * 尺寸，而排版必须**先知道**这块占多高，故必须排在 layout 之前。
+ */
+export async function prepareDiagrams(
+  entries: readonly ConvImageEntry[],
+  theme: Theme,
+): Promise<Map<string, MermaidImage>> {
+  const out = new Map<string, MermaidImage>();
+  for (const e of entries) {
+    for (const b of parseMarkdown(e.text)) {
+      if (b.kind !== 'code' || b.lang !== 'mermaid') continue;
+      const code = b.lines.join('\n');
+      if (!code.trim() || out.has(code)) continue;
+      try {
+        out.set(code, await renderMermaidImage(code, theme, TEXT_MAX - CODE_PAD * 2));
+      } catch {
+        // 图源坏了：这一块按代码块出，不阻断整张图
+      }
+    }
+  }
+  return out;
+}
+
 export async function renderConversationImage(
   entries: readonly ConvImageEntry[],
   opts: ConvImageOpts,
@@ -812,7 +865,8 @@ export async function renderConversationImage(
     probe.font = FONTS[font];
     return probe.measureText(text).width;
   };
-  const layout = layoutConversation(measure, entries, opts);
+  const diagrams = await prepareDiagrams(entries, opts.theme);
+  const layout = layoutConversation(measure, entries, opts, diagrams);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(layout.width * layout.scale);
   canvas.height = Math.round(layout.height * layout.scale);

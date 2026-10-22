@@ -11,8 +11,8 @@ export interface ModelAliasTarget {
 }
 
 /**
- * 别名 → 真名。网关把 claude 的稳定别名换成自家模型 ID（本机 opus→ftm、
- * sonnet→deepseek-flash…），出处 = Claude Code 的 `ANTHROPIC_DEFAULT_<别名>_MODEL`
+ * 别名 → 真名。网关把 claude 的稳定别名换成自家模型 ID（例如 opus→网关 A、
+ * sonnet→网关 B），出处 = Claude Code 的 `ANTHROPIC_DEFAULT_<别名>_MODEL`
  * 约定。daemon 是独立进程、未必带着宿主那套 env，故先读 settings.json 的 env 块、
  * 进程 env 兜底；两处都没有就原样回落别名（`/model opus` 仍然认，只是看不出真名）。
  */
@@ -109,10 +109,10 @@ export function permissionModeOf(raw: unknown): string | null {
 }
 
 /**
- * 比对前的模型名归一：剥网关前缀（转录照会 `custom_openai/ftm`，事件里是 `ftm`）
- * 与上下文窗标注（settings env 是 `ftm-flash[1M]`，转录照会与事件 `from_model`
- * 大小写不定地带着它）——两处说同一个模型，比对前先归一。**只用于比对**，展示
- * 仍用原样（1M 标注不丢）。
+ * 比对前的模型名归一：剥网关前缀（转录照会 `<网关>/<名>`，事件里是 `<名>`）
+ * 与上下文窗标注（settings env 带 `[1M]`，转录照会与事件 `from_model` 则大小写
+ * 不定地带着它）——两处说同一个模型，比对前先归一。**只用于比对**，展示仍用
+ * 原样（1M 标注不丢）。
  */
 export function bareModelName(model: string): string {
   return model
@@ -121,7 +121,7 @@ export function bareModelName(model: string): string {
 }
 
 /**
- * 真名 → 别名：转录里照会的是真名（`custom_openai/ftm`），下拉得认成别名那档。
+ * 真名 → 别名：转录里照会的是真名（可能带网关前缀），下拉得认成别名那档。
  * 两边都过 {@link bareModelName} 归一（catalog 的 actual 带着 `[1M]` 标注，转录
  * 照会不带）。认不出返回 null，调用方回落显示真名——不猜。
  */

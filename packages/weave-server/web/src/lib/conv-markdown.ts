@@ -27,7 +27,8 @@ export interface MdItem {
 export type MdBlock =
   | { kind: 'p'; spans: MdSpan[] }
   | { kind: 'h'; level: number; spans: MdSpan[] }
-  | { kind: 'code'; lines: string[] }
+  /** 围栏块：`lang` 取围栏 info 串的第一个词（小写）；没有 info 串即 null。 */
+  | { kind: 'code'; lang: string | null; lines: string[] }
   | { kind: 'list'; items: MdItem[] }
   | { kind: 'quote'; lines: MdSpan[][] }
   | { kind: 'table'; rows: MdSpan[][][] }
@@ -97,8 +98,14 @@ export function parseInline(text: string, outer: MdStyle = 'plain'): MdSpan[] {
   return out;
 }
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
 const FENCE_END = /^ {0,3}(`{3,}|~{3,})\s*$/;
+
+/** 围栏 info 串的第一个词（` ```mermaid title=… ` → `mermaid`）；没有即 null。 */
+function fenceLang(info: string | undefined): string | null {
+  const word = (info ?? '').trim().split(/\s+/)[0] ?? '';
+  return word ? word.toLowerCase() : null;
+}
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const HR = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
@@ -221,7 +228,7 @@ export function parseMarkdown(src: string): MdBlock[] {
         body.push(lines[i]!);
         i++;
       }
-      out.push({ kind: 'code', lines: body });
+      out.push({ kind: 'code', lang: fenceLang(fence[2]), lines: body });
       continue;
     }
     if (line.trim() === '') {

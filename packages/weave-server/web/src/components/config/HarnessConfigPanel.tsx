@@ -16,6 +16,7 @@ import {
   matchesQuery,
   pruneTree,
   treeHasValue,
+  textOf,
   valueAt,
   valueOfText,
   type ConfigTreeNode,
@@ -160,6 +161,19 @@ export function HarnessConfigPanel({
   };
 
   const pendingCount = Object.keys(edits).length;
+
+  // 待保存清单（悬停「N 处待保存」看）：每行一条路径 → 新值 / 删除
+  const pendingSummary = useMemo(
+    () =>
+      Object.entries(edits)
+        .map(([path, edit]) => {
+          if (edit.remove || edit.value === undefined) return `${path} → ${t('cfg.clear')}`;
+          const flat = textOf(edit.value).replace(/\s+/g, ' ');
+          return `${path} → ${flat.length > 80 ? `${flat.slice(0, 80)}…` : flat}`;
+        })
+        .join('\n'),
+    [edits, t],
+  );
 
   // raw 视图的即时校验：语言随活文件（claude=JSON / codex=TOML），空文本 = 清空不算错
   const rawInvalid = useMemo(() => {
@@ -401,7 +415,12 @@ export function HarnessConfigPanel({
         {!view.exists && <span className="text-[10px] text-amber-400/80">{t('cfg.notExists')}</span>}
         <div className="ml-auto flex items-center gap-2">
           {pendingCount > 0 && (
-            <span className="text-[11px] text-amber-300">{t('cfg.pending', { count: pendingCount })}</span>
+            <span
+              title={pendingSummary}
+              className="cursor-help text-[11px] text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2"
+            >
+              {t('cfg.pending', { count: pendingCount })}
+            </span>
           )}
           {pendingCount > 0 && (
             <button
@@ -653,19 +672,25 @@ function EnvVarPicker({
   const t = useT();
   const [picked, setPicked] = useState('');
   const spec = envVars.find((v) => v.name === picked);
-  const canAdd = picked !== '' && !exists(picked);
-  const add = (): void => {
-    if (!canAdd) return;
-    onAdd(picked);
-    setPicked('');
-  };
   return (
     <div style={{ paddingLeft: depth * 14 }} className="flex items-start gap-1.5 rounded-md px-1.5 py-1">
-      {/* 391 个候选走统一 Combobox（虚拟滚动 + 可搜）；词表是建议不是白名单，creatable 兜自由输入 */}
+      {/* 391 个候选走统一 Combobox（虚拟滚动 + 可搜）；词表是建议不是白名单，creatable 兜自由输入。
+          选定即落进表单（待保存行），不再要一次「写入」——值下一步就能填。 */}
       <Combobox
         value={picked}
         options={envVars.map((v) => ({ value: v.name, hint: v.description }))}
-        onChange={setPicked}
+        onChange={(name) => {
+          if (!name) {
+            setPicked('');
+            return;
+          }
+          if (exists(name)) {
+            setPicked(name);
+            return;
+          }
+          onAdd(name);
+          setPicked('');
+        }}
         placeholder={t('cfg.addEnvVar')}
         searchPlaceholder={t('cfg.search')}
         creatable
@@ -673,17 +698,10 @@ function EnvVarPicker({
       />
       <div className="min-w-0 flex-1">
         {spec && <p className="truncate text-[11px] text-neutral-500">{spec.description}</p>}
-        {!spec && picked !== '' && exists(picked) && (
+        {spec && exists(picked) && (
           <p className="text-[11px] text-neutral-600">{t('cfg.alreadySet')}</p>
         )}
       </div>
-      <button
-        disabled={!canAdd}
-        onClick={add}
-        className="shrink-0 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200 disabled:opacity-40"
-      >
-        {t('cfg.write')}
-      </button>
     </div>
   );
 }

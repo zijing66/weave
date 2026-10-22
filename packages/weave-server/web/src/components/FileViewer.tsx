@@ -8,6 +8,7 @@ import { splitFrontmatter } from '@/lib/markdown';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 import { AgentBadge } from '@/components/AgentBadge';
 import { SkeletonLines } from '@/components/ui/skeleton';
+import { markdownPre } from '@/components/ui/mermaid-block';
 
 /**
  * Fetches and renders a project file. Markdown files are split into
@@ -61,7 +62,11 @@ export function FileViewer({
           <>
             {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
             <div className="prose prose-invert prose-sm max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={{ pre: markdownPre }}
+              >
                 {parsed.body}
               </ReactMarkdown>
             </div>

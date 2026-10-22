@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { currentModeAt, currentModelAt, interruptMarkerAt } from '../transcript.js';
+import { currentEffortAt, currentModeAt, currentModelAt, interruptMarkerAt } from '../transcript.js';
 
 const line = (o: unknown): string => JSON.stringify(o);
 
@@ -88,5 +88,31 @@ describe('currentModeAt', () => {
     expect(currentModeAt('{"type":"user","permissionMode":')).toBeNull();
     expect(currentModeAt(line({ type: 'user', permissionMode: 3 }))).toBeNull();
     expect(currentModeAt(line({ type: 'user', permissionMode: '' }))).toBeNull();
+  });
+});
+
+describe('currentEffortAt', () => {
+  it('取最后一条顶层 effort 串（尾部按时间序，最后一条即最新）', () => {
+    const tail = [
+      line({ type: 'assistant', effort: 'low' }),
+      line({ type: 'assistant', effort: 'high' }),
+      line({ type: 'user' }),
+    ].join('\n');
+    expect(currentEffortAt(tail)).toBe('high');
+  });
+
+  it('工具参数里的 effort 不是事实：只认顶层字符串', () => {
+    const tail = [
+      line({ type: 'assistant', effort: 'medium' }),
+      line({ type: 'assistant', message: { content: [{ type: 'tool_use', input: { effort: 'max' } }] } }),
+    ].join('\n');
+    expect(currentEffortAt(tail)).toBe('medium');
+  });
+
+  it('没有该字段 / 坏行 / 非串一律 null（不猜）', () => {
+    expect(currentEffortAt('')).toBeNull();
+    expect(currentEffortAt(line({ type: 'assistant' }))).toBeNull();
+    expect(currentEffortAt('{\"broken\":')).toBeNull();
+    expect(currentEffortAt(line({ type: 'assistant', effort: { level: 'high' } }))).toBeNull();
   });
 });

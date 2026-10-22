@@ -249,7 +249,7 @@ const seg = (over: Partial<StatuslineSegment>): StatuslineSegment => ({
  * context bar.
  *
  * ```
- * 🤖 Model: deepseek-flash[1M] 🧠 [░░░░░░░░░░░░] 39k/1.0M (4%) 🌿 main ✏️ (+1, -1)
+ * 🤖 Model: <网关模型ID>[1M] 🧠 [░░░░░░░░░░░░] 39k/1.0M (4%) 🌿 main ✏️ (+1, -1)
  * 🧩 Thinking: high 💸 Cost: $0.45 🔢 Total: 960.9k 📁 D:\…\weave-cli
  * ```
  *

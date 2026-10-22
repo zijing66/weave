@@ -28,7 +28,8 @@ export function StatuslineBar({
   projectId: number;
   /** 会话显示名（title 回退）。 */
   sessionName: string | null;
-  /** 当前模型：别名优先（`/model` 收的那个），认不出就用真名。 */
+  /** 当前模型**真名**（网关模型 ID，与宿主 statusline 的 display_name 同一形态）；
+   *  别名只是分类标签，不上这条。 */
   model: string | null;
   /** 推理档位（hook 事件自带的 `effort.level`）：`thinking` 块的事实。 */
   effort: string | null;

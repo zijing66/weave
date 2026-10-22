@@ -76,6 +76,31 @@ export function currentModelAt(tail: string): string | null {
 }
 
 /**
+ * 转录尾部最后一次上报的推理档位（assistant 条目顶层的 `effort`）。
+ *
+ * 为什么绕到转录：hook 事件带的 `effort.level` 只出现在工具/回合类事件上
+ * （Notification / SessionStart 这些不带），而 daemon 重启会清掉内存里的「最后
+ * 已知」——不清的话，重启后这个会话会一直显「未知」，直到下一次工具调用。
+ * 转录里这份与 `message.model` 同位，重启后立刻读得到。
+ */
+export function currentEffortAt(tail: string): string | null {
+  let newest: string | null = null;
+  for (const line of tail.split('\n')) {
+    if (!line.includes('"effort"')) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const effort = (raw as { effort?: unknown })?.effort;
+    if (typeof effort !== 'string' || !effort) continue;
+    newest = effort; // 尾部按时间顺序，最后一条即最新
+  }
+  return newest;
+}
+
+/**
  * 转录尾部最后一次的执行模式（条目上的 `permissionMode`）。
  *
  * 同模型一样绕到转录：Shift+Tab **不发任何 hook 事件、不写任何转录条目**——模式

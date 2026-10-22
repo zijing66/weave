@@ -26,7 +26,7 @@ export { CLAUDE_BLOCKING_PROMPT } from './questions.js';
 export { CLAUDE_PROMPT_RELAY } from './prompt.js';
 export { CLAUDE_PROMPT_INBOX } from './prompt-inbox.js';
 export { CLAUDE_SIDE_QUESTION } from './side-question.js';
-export { interruptMarkerAt, currentModelAt, currentModeAt } from './transcript.js';
+export { interruptMarkerAt, currentModelAt, currentModeAt, currentEffortAt } from './transcript.js';
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
 export { modelAliasTargets, aliasOfModel, bareModelName, defaultModelOf, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';
