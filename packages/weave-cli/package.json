@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "CLI entry point for weave — parser, commands, and init executor",
   "type": "module",

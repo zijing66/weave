@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/weave",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "All-in-one install for weave — CLI, daemon + dashboard, harness drivers, and the built-in resource repo in a single npm package",
   "type": "module",
   "bin": {
