@@ -855,3 +855,14 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 - **偏移量**：传输层沿用 §9 的帧编号 + `?since=` 补发，断线重连能续上；仪表盘帧与其它 hook 帧同一套序号，不另造协议。
 
 web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChart` + `GridComponent` + `TooltipComponent` + `CanvasRenderer`），独立 chunk、只在仪表盘挂载时加载；`animation:false`，每次帧只 `setOption({xAxis:{data}, series:[{data}]})`；容器尺寸变化用 `ResizeObserver`；轴标签按容器宽度抽稀（窄屏每 10 分钟、桌面每 5 分钟）。
+
+## §19 回合完成判定（classify handler）
+
+规则来源 = `Stop`（一轮结束，`raw.last_assistant_message` 即本轮最终输出）。处理链：
+
+1. **预筛**：`handler.prefilter` 任一关键词命中本轮输出才继续——没命中不 fork，零成本；
+2. **判定**：fork 一个无头子 agent（复用编排边级提取的 `edgeExtract.run`，继承会话上下文、不动原会话），prompt = 规则里的判定指令 + 本轮输出（截断 8k）；模型只回一行 JSON `{label, reason?}`；
+3. **路由**：`label` 命中 `handler.routes[].label`（大小写不敏感）才 `postJson` 到该路由的 `url`（可带 `secret` 做 HMAC）；body = 事件摘要 + `label` + `verdict`；
+4. **防回环**：同规则同会话 `cooldownMs`（默认 10 分钟）内不重复判定——下游若是编排，它回投的那一轮不会再触发。
+
+fork 不支持的 harness（codex）由 `edgeExtract.supports` 判空 → 判定拿不到结果，按 `no label` 结束（不报错）。表单只读展示该处理器，创建走 API / 内置规则。

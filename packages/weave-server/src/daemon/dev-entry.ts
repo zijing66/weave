@@ -155,6 +155,10 @@ async function main(): Promise<void> {
     plugins: pluginManager,
     libraries,
   });
+  // classify handler 的无头判定器：edgeExtract 在引擎段才装配，用引用占位。
+  const classifyRef: {
+    run: ((input: { sessionId: string; prompt: string }) => Promise<string | null>) | null;
+  } = { run: null };
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
@@ -163,6 +167,7 @@ async function main(): Promise<void> {
     sessions: hookSessions,
     plugins: hookPlugins,
     pluginStates: new PluginStateRepository(db),
+    classify: (input) => (classifyRef.run ? classifyRef.run(input) : Promise.resolve(null)),
   });
   // session-orchestration 批 1（与 start.ts 同装配）：两域共享无头执行核。
   const headlessRunner = new HeadlessRunner();
@@ -340,6 +345,7 @@ async function main(): Promise<void> {
     headless: headlessRunner,
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
+  classifyRef.run = (input) => edgeExtract.run(input);
   // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。
   const orchestrationEngine = new OrchestrationEngine({
     orchestrations,

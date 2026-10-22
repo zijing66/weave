@@ -136,6 +136,27 @@ export const HandlerConfigSchema = z.discriminatedUnion('type', [
     handlerType: z.string().min(1),
     config: z.record(z.string(), z.unknown()).optional(),
   }),
+  /**
+   * 回合完成后派无头子 agent 判定「本轮是否属于某个操作类别」，命中标签就 POST
+   * 到该类别的下游服务。`prefilter` 是廉价预筛（本轮输出不含任一关键词就不 fork）；
+   * `cooldownMs` 防「触发的下游又跑一轮」造成的回环（同规则同会话内抑制）。
+   */
+  z.object({
+    type: z.literal('classify'),
+    prompt: z.string().min(1),
+    prefilter: z.array(z.string().min(1)).optional(),
+    cooldownMs: z.number().int().positive().optional(),
+    routes: z
+      .array(
+        z.object({
+          label: z.string().min(1),
+          url: z.string().url(),
+          secret: z.string().optional(),
+          headers: z.record(z.string(), z.string()).optional(),
+        }),
+      )
+      .min(1),
+  }),
 ]);
 export type HandlerConfig = z.infer<typeof HandlerConfigSchema>;
 

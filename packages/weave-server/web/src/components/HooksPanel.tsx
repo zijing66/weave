@@ -43,6 +43,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
   Bot,
+  Brain,
   FileCode,
   FileText,
   GitBranch,
@@ -70,7 +71,9 @@ import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackgro
 
 type FlowMode = 'project' | 'global';
 
-const HANDLER_TYPES: HandlerConfig['type'][] = ['log', 'webhook', 'inject', 'manual', 'plugin'];
+/** 表单可编辑的处理器（classify 只由 API/内置规则创建，表单只读展示）。 */
+const HANDLER_TYPES = ['log', 'webhook', 'inject', 'manual', 'plugin'] as const;
+type FormHandlerType = (typeof HANDLER_TYPES)[number];
 
 const HANDLER_LABEL_KEYS: Record<HandlerConfig['type'], MessageKey> = {
   log: 'hooks.handler.log',
@@ -78,6 +81,7 @@ const HANDLER_LABEL_KEYS: Record<HandlerConfig['type'], MessageKey> = {
   inject: 'hooks.handler.inject',
   manual: 'hooks.handler.manual',
   plugin: 'hooks.handler.plugin',
+  classify: 'hooks.handler.classify',
 };
 
 const HANDLER_TIP_KEYS: Record<HandlerConfig['type'], MessageKey> = {
@@ -86,6 +90,7 @@ const HANDLER_TIP_KEYS: Record<HandlerConfig['type'], MessageKey> = {
   inject: 'hooks.handlerInjectTip',
   manual: 'hooks.handlerManualTip',
   plugin: 'hooks.handlerPluginTip',
+  classify: 'hooks.handlerClassifyTip',
 };
 
 const HANDLER_ICONS: Record<HandlerConfig['type'], LucideIcon> = {
@@ -94,6 +99,7 @@ const HANDLER_ICONS: Record<HandlerConfig['type'], LucideIcon> = {
   inject: Bot,
   manual: Hand,
   plugin: Puzzle,
+  classify: Brain,
 };
 
 /** 规则来源的两种可编辑形（webhook 形一期不开放编辑）。 */
@@ -293,7 +299,8 @@ interface RuleFormState {
   toolNames: string;
   pathGlobs: string;
   crossProjectOnly: boolean;
-  handlerType: HandlerConfig['type'];
+  /** classify 规则只读展示，表单不覆盖（避免保存时把处理器降级成 inject）。 */
+  handlerType: Exclude<HandlerConfig['type'], 'classify'>;
   template: string;
   url: string;
   secret: string;
@@ -336,7 +343,7 @@ function formFromRule(rule: HookRule): RuleFormState {
     toolNames: (rule.filter.toolNames ?? []).join(', '),
     pathGlobs: (rule.filter.pathGlobs ?? []).join(', '),
     crossProjectOnly: rule.filter.crossProjectOnly ?? false,
-    handlerType: handler.type,
+    handlerType: handler.type === 'classify' ? 'inject' : handler.type,
     template: handler.type === 'inject' || handler.type === 'manual' ? handler.template : '',
     url: handler.type === 'webhook' ? handler.url : '',
     secret: handler.type === 'webhook' ? (handler.secret ?? '') : '',
@@ -551,7 +558,7 @@ export function HooksPanel({
   const patchForm = (p: Partial<RuleFormState>): void =>
     setForm((f) => (f ? { ...f, state: { ...f.state, ...p } } : f));
 
-  const setHandlerType = (type: HandlerConfig['type']): void =>
+  const setHandlerType = (type: FormHandlerType): void =>
     setForm((f) => {
       if (!f) return f;
       let event = f.state.event;
@@ -685,14 +692,16 @@ export function HooksPanel({
             {rule.name}
           </span>
           <Badge variant="helper">{eventLabel}</Badge>
-          <button
-            type="button"
-            title={t('hooks.edit')}
-            onClick={() => openEdit(rule)}
-            className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
+          {rule.handler.type !== 'classify' && (
+            <button
+              type="button"
+              title={t('hooks.edit')}
+              onClick={() => openEdit(rule)}
+              className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}

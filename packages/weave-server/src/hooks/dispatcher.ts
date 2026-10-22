@@ -16,7 +16,7 @@ import type { ProjectRepository, ProjectRow } from '../repositories/projects.js'
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { readHooksEnabled } from '../daemon/settings.js';
 import { effective, pluginsStateOf } from './plugin-project-state.js';
-import { runWebhook, type EventSummary } from './handlers/webhook.js';
+import { postJson, runWebhook, type EventSummary } from './handlers/webhook.js';
 import {
   DISPATCH_MARKER,
   extractFilePath,
@@ -51,7 +51,25 @@ export interface IngestOutcome {
   deferred?: string;
 }
 
+/** 从判定输出里取标签：优先首个 JSON 的 label，退而正则。 */
+function parseClassifyLabel(answer: string | null | undefined): string | null {
+  if (!answer) return null;
+  const json = answer.match(/\{[\s\S]*\}/);
+  if (json) {
+    try {
+      const value = JSON.parse(json[0]) as { label?: unknown };
+      if (typeof value.label === 'string' && value.label.trim()) return value.label.trim();
+    } catch {
+      // 落到正则
+    }
+  }
+  const m = /label\s*[:=]\s*"?([A-Za-z0-9_-]+)/i.exec(answer);
+  return m ? m[1]! : null;
+}
+
 const DEDUPE_WINDOW_MS = 60_000;
+/** classify 默认冷却：下游若是编排，跑完回投可能再触发一轮；默认 10 分钟内不重复。 */
+const CLASSIFY_COOLDOWN_MS = 10 * 60_000;
 const MAX_CONCURRENT_WEBHOOKS = 4;
 /** 插件执行并发闸（与 webhook 同形）：超出排队，避免慢处理器无界堆积。 */
 const MAX_CONCURRENT_PLUGINS = 4;
@@ -77,6 +95,8 @@ const PLUGIN_INJECT_BUDGET_MS = 3_000;
  */
 export class HookDispatcher {
   private readonly runningWebhooks = new Set<string>();
+  /** classify：规则级冷却（防下游回环）与「最后一次尝试」时刻。 */
+  private readonly lastClassifyAt = new Map<string, number>();
   private readonly recentPool = new Map<string, number>();
   private activeWebhooks = 0;
   private readonly pendingWebhooks: Array<() => void> = [];
@@ -97,6 +117,8 @@ export class HookDispatcher {
       pluginStates?: Pick<PluginStateRepository, 'get'>;
       /** 测试注入；缺省用全局 fetch。 */
       fetchImpl?: typeof fetch;
+      /** classify：对某一轮 fork 无头子 agent 判定类别（装配侧 = edgeExtract.run）。 */
+      classify?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
     },
   ) {}
 
@@ -221,6 +243,40 @@ export class HookDispatcher {
             at: new Date().toISOString(),
           });
           void this.runWebhookAsync(rule, this.summary(rule, ctx), row.id);
+          continue;
+        }
+
+        if (rule.handler.type === 'classify') {
+          const text = this.turnText(ctx);
+          if (!text) continue;
+          const handler = rule.handler;
+          const lowered = text.toLowerCase();
+          if (
+            handler.prefilter &&
+            handler.prefilter.length > 0 &&
+            !handler.prefilter.some((k) => lowered.includes(k.toLowerCase()))
+          ) {
+            continue;
+          }
+          const guardKey = `classify:${rule.id}`;
+          const cooldown = handler.cooldownMs ?? CLASSIFY_COOLDOWN_MS;
+          if (now - (this.lastClassifyAt.get(guardKey) ?? 0) < cooldown) continue;
+          if (this.runningWebhooks.has(guardKey)) continue;
+          this.lastClassifyAt.set(guardKey, now);
+          this.runningWebhooks.add(guardKey);
+          const row = this.createDispatch(rule, ctx, {
+            prompt: `classify → ${handler.routes.map((r) => r.label).join('/')}`,
+            status: 'running',
+            mode: 'auto',
+          });
+          this.deps.bus.emit({
+            kind: 'dispatch.started',
+            ruleId: rule.id,
+            dispatchId: row.id,
+            sessionId: ctx.sessionId,
+            at: new Date().toISOString(),
+          });
+          void this.runClassifyAsync(rule, ctx, row.id, text);
           continue;
         }
 
@@ -431,6 +487,87 @@ export class HookDispatcher {
       cwd: ctx.payload.cwd,
       at: new Date().toISOString(),
     };
+  }
+
+  /** 本轮的最终输出（Stop 的 last_assistant_message）；没有就当不适用。 */
+  private turnText(ctx: IngestContext): string {
+    const raw = (ctx.payload as { raw?: Record<string, unknown> }).raw;
+    const value = raw?.last_assistant_message;
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  /** classify：fork 一个无头回合判定类别 → 命中标签就出站 POST 到下游。 */
+  private async runClassifyAsync(
+    rule: HookRule,
+    ctx: IngestContext,
+    dispatchId: number,
+    text: string,
+  ): Promise<void> {
+    const handler = rule.handler;
+    if (handler.type !== 'classify') return;
+    const guardKey = `classify:${rule.id}`;
+    try {
+      const answer = await this.deps.classify?.({
+        sessionId: ctx.sessionId ?? '',
+        prompt: `${handler.prompt}\n\n本轮最终输出：\n${text.slice(0, 8_000)}`,
+      });
+      const label = parseClassifyLabel(answer);
+      const route = label
+        ? handler.routes.find((r) => r.label.toLowerCase() === label.toLowerCase())
+        : undefined;
+      if (!route) {
+        this.deps.dispatches.updateStatus(dispatchId, {
+          status: 'succeeded',
+          output: label ? `label=${label} (no route)` : 'no label',
+          finished: true,
+        });
+        this.deps.bus.emit({
+          kind: 'dispatch.finished',
+          ruleId: rule.id,
+          dispatchId,
+          status: 'succeeded',
+          sessionId: ctx.sessionId,
+          at: new Date().toISOString(),
+        });
+        return;
+      }
+      const result = await postJson(
+        route.url,
+        route.secret,
+        { ...this.summary(rule, ctx), label, verdict: answer?.slice(0, 500) },
+        this.deps.fetchImpl,
+      );
+      this.deps.dispatches.updateStatus(dispatchId, {
+        status: result.status,
+        output: `label=${label} ${result.output ?? ''}`.trim(),
+        error: result.error ?? null,
+        finished: true,
+      });
+      this.deps.bus.emit({
+        kind: 'dispatch.finished',
+        ruleId: rule.id,
+        dispatchId,
+        status: result.status,
+        sessionId: ctx.sessionId,
+        at: new Date().toISOString(),
+      });
+    } catch (err) {
+      this.deps.dispatches.updateStatus(dispatchId, {
+        status: 'failed',
+        error: String(err),
+        finished: true,
+      });
+      this.deps.bus.emit({
+        kind: 'dispatch.finished',
+        ruleId: rule.id,
+        dispatchId,
+        status: 'failed',
+        sessionId: ctx.sessionId,
+        at: new Date().toISOString(),
+      });
+    } finally {
+      this.runningWebhooks.delete(guardKey);
+    }
   }
 
   private async runWebhookAsync(rule: HookRule, summary: EventSummary, dispatchId: number): Promise<void> {

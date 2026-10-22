@@ -80,8 +80,6 @@ import {
 import {
   ORCH_COL_W,
   ORCH_GROUP_HEADER_H,
-  ORCH_HOOK_H,
-  ORCH_HOOK_W,
   ORCH_NODE_H,
   ORCH_NODE_W,
   layoutOrchestrationCanvas,
@@ -176,6 +174,16 @@ const asEditing = (row: OrchestrationRow): Editing => {
 // 画布节点
 // ---------------------------------------------------------------------------
 
+/** 卡片里的一枚外接连接点：管着一条连线（点它 = 选中那条边）。 */
+interface PortItem {
+  /** 端口 id 的邻居部分（下游 = `out:<下游>`；上游 = `in:<上游>`）。 */
+  neighbor: string;
+  /** 连线 id（编辑面用于选中；总览为空）。 */
+  edgeId?: string;
+  /** 悬停说明：hookN → 下游会话名 / 来自上游会话名。 */
+  hint: string;
+}
+
 type SessionNodeData = {
   sessionId: string;
   label: string;
@@ -192,54 +200,86 @@ type SessionNodeData = {
   selected: boolean;
   /** 首节点卡片可点（出「编辑/新建编排」面板）。 */
   pickable: boolean;
-  /** 外接连接点：每个不同的上游 / 下游各一个（连线挂在具体点上）。 */
-  inPorts: string[];
-  outPorts: string[];
+  inPorts: PortItem[];
+  outPorts: PortItem[];
+  /** 点连接点 = 选中那条连线（编辑面）。 */
+  onPickPort?: (edgeId: string) => void;
   /** 点节点本体 = 选中编辑；这枚小钮 = 直接看它的对话。 */
   onOpen: (sessionId: string) => void;
 };
 type SessionFlowNode = Node<SessionNodeData, 'orchSession'>;
 
-/** 外接连接点：沿左/右边按份数均分，每份一个 Handle（id = `in:<上游>` / `out:<下游>`）。 */
-function EdgePorts({ inPorts, outPorts }: { inPorts: string[]; outPorts: string[] }) {
+/**
+ * 三栏卡片的左右 hook 栏：一枚枚外接连接点（纵向均分）。连接点本身就是
+ * ReactFlow 的 Handle（id = `in:<上游>` / `out:<下游>`），所以线与点是同一个
+ * 东西——依附关系一眼可见，拖线也从这儿起手。
+ */
+function PortRail({ ports, side }: { ports: PortItem[]; side: 'in' | 'out' }) {
+  if (ports.length === 0) {
+    // 没有边也给一个锚点：新建的第一条连线才有地方起手（编辑面）。
+    return (
+      <Handle
+        type={side === 'in' ? 'target' : 'source'}
+        position={side === 'in' ? Position.Left : Position.Right}
+        className="!h-2 !w-2 !border-0 !bg-neutral-700/60 hover:!bg-teal-400"
+      />
+    );
+  }
   return (
     <>
-      {inPorts.map((id, i) => (
-        <Handle
-          key={`in:${id}`}
-          type="target"
-          id={`in:${id}`}
-          position={Position.Left}
-          style={{ top: `${((i + 1) / (inPorts.length + 1)) * 100}%` }}
-          className="!h-2 !w-2 !border-0 !bg-neutral-600"
-        />
-      ))}
-      {outPorts.map((id, i) => (
-        <Handle
-          key={`out:${id}`}
-          type="source"
-          id={`out:${id}`}
-          position={Position.Right}
-          style={{ top: `${((i + 1) / (outPorts.length + 1)) * 100}%` }}
-          className="!h-2 !w-2 !border-0 !bg-neutral-600 hover:!bg-teal-400"
-        />
-      ))}
-      {/* 没有任何边也给一个锚点，新建的第一条连线才有地方起手（编辑面）。 */}
-      {inPorts.length === 0 && (
-        <Handle
-          type="target"
-          position={Position.Left}
-          className="!h-2 !w-2 !border-0 !bg-neutral-700/60"
-        />
-      )}
-      {outPorts.length === 0 && (
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!h-2 !w-2 !border-0 !bg-neutral-700/60 hover:!bg-teal-400"
-        />
-      )}
+      {ports.map((port, i) => {
+        const pct = `${((i + 1) / (ports.length + 1)) * 100}%`;
+        return (
+          <Handle
+            key={`${side}:${port.neighbor}`}
+            type={side === 'in' ? 'target' : 'source'}
+            id={`${side === 'in' ? 'in' : 'out'}:${port.neighbor}`}
+            position={side === 'in' ? Position.Left : Position.Right}
+            style={{ top: pct }}
+            title={port.hint}
+            className="!h-2.5 !w-2.5 !border-0 !bg-teal-500/70 hover:!bg-teal-300"
+          />
+        );
+      })}
     </>
+  );
+}
+
+/** 左/右 hook 栏的可视连接点：和 Handle 同一纵向位置（卡片里长出连接点）。 */
+function PortColumn({
+  ports,
+  side,
+  onPick,
+}: {
+  ports: PortItem[];
+  side: 'in' | 'out';
+  onPick?: (edgeId: string) => void;
+}) {
+  return (
+    <div className="relative w-9 shrink-0">
+      {ports.map((port, i) => (
+        <button
+          key={port.neighbor}
+          type="button"
+          title={port.hint}
+          aria-label={port.hint}
+          onClick={(e) => {
+            // 点连接点 = 选中它管的连线，不要顺带把节点也选中。
+            e.stopPropagation();
+            if (port.edgeId) onPick?.(port.edgeId);
+          }}
+          style={{ top: `${((i + 1) / (ports.length + 1)) * 100}%` }}
+          className={cn(
+            'nodrag absolute left-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[8px] font-semibold ring-1 transition-colors',
+            side === 'in'
+              ? 'bg-teal-950/70 text-teal-300/90 ring-teal-500/25 hover:bg-teal-900/80'
+              : 'bg-teal-800/50 text-teal-100 ring-teal-400/40 hover:bg-teal-700/70',
+          )}
+        >
+          {i + 1}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -260,6 +300,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
     pickable,
     inPorts,
     outPorts,
+    onPickPort,
     onOpen,
   } = data;
   return (
@@ -267,7 +308,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
       style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
       title={missing ? t('orch.unknownSession') : label}
       className={cn(
-        'group flex items-center gap-2 rounded-lg border bg-neutral-900/95 px-2 shadow-mac transition-colors',
+        'group flex rounded-lg border bg-neutral-900/95 shadow-mac transition-colors',
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
         running && 'orch-node-running',
@@ -275,38 +316,44 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
-      <EdgePorts inPorts={inPorts} outPorts={outPorts} />
-      <SessionStatusIcon status={status} harness={harness} />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1">
-          <span className="min-w-0 truncate text-xs font-medium text-neutral-100">{label}</span>
-          {isEntry && (
-            <Badge className="shrink-0 bg-teal-900/50 text-[9px] text-teal-300">
-              {t('orch.entryTag')}
-            </Badge>
-          )}
+      <PortRail ports={inPorts} side="in" />
+      <PortRail ports={outPorts} side="out" />
+      <PortColumn ports={inPorts} side="in" onPick={onPickPort} />
+      {/* 中栏：会话本体 */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 border-x border-edge/[0.06] px-2">
+        <SessionStatusIcon status={status} harness={harness} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1">
+            <span className="min-w-0 truncate text-xs font-medium text-neutral-100">{label}</span>
+            {isEntry && (
+              <Badge className="shrink-0 bg-teal-900/50 text-[9px] text-teal-300">
+                {t('orch.entryTag')}
+              </Badge>
+            )}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1">
+            <span className="min-w-0 truncate text-[10px] text-neutral-500">{projectLabel}</span>
+            {pending > 0 && (
+              <Badge className="shrink-0 animate-pulse bg-amber-900/50 text-[9px] text-amber-300">
+                {t('orch.pendingTag', { n: pending })}
+              </Badge>
+            )}
+          </span>
         </span>
-        <span className="flex items-center gap-1">
-          <span className="min-w-0 truncate text-[10px] text-neutral-500">{projectLabel}</span>
-          {pending > 0 && (
-            <Badge className="shrink-0 animate-pulse bg-amber-900/50 text-[9px] text-amber-300">
-              {t('orch.pendingTag', { n: pending })}
-            </Badge>
-          )}
-        </span>
-      </span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpen(sessionId);
-        }}
-        title={t('orch.openChat')}
-        aria-label={t('orch.openChat')}
-        className="nodrag shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-edge/[0.08] hover:text-neutral-200 group-hover:opacity-100 max-lg:opacity-100"
-      >
-        <MessageSquare className="h-3 w-3" />
-      </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen(sessionId);
+          }}
+          title={t('orch.openChat')}
+          aria-label={t('orch.openChat')}
+          className="nodrag shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-edge/[0.08] hover:text-neutral-200 group-hover:opacity-100 max-lg:opacity-100"
+        >
+          <MessageSquare className="h-3 w-3" />
+        </button>
+      </div>
+      <PortColumn ports={outPorts} side="out" onPick={onPickPort} />
     </div>
   );
 }
@@ -361,9 +408,8 @@ type WebhookNodeData = {
   missing: boolean;
   /** 首节点卡片可点（出「编辑编排」面板）。 */
   pickable: boolean;
-  /** 外接连接点（入口只出、出口只入）。 */
-  inPorts: string[];
-  outPorts: string[];
+  inPorts: PortItem[];
+  outPorts: PortItem[];
 };
 type WebhookFlowNode = Node<WebhookNodeData, 'orchWebhook'>;
 
@@ -375,7 +421,7 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
       style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
       title={missing ? t('orch.webhookUnconnected') : undefined}
       className={cn(
-        'flex items-center gap-2 rounded-lg border bg-neutral-900/95 px-2 shadow-mac transition-colors',
+        'flex rounded-lg border bg-neutral-900/95 shadow-mac transition-colors',
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
         running && 'orch-node-running',
@@ -383,69 +429,26 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
-      <EdgePorts
-        inPorts={direction === 'exit' ? inPorts : []}
-        outPorts={direction === 'entry' ? outPorts : []}
-      />
-      <Globe className="h-4 w-4 shrink-0 text-violet-400" />
-      <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
-        {t(direction === 'entry' ? 'orch.webhookEntry' : 'orch.webhookExit')}
-      </span>
-      <Badge
-        className={cn(
-          'shrink-0 text-[9px]',
-          direction === 'entry'
-            ? 'bg-violet-900/50 text-violet-300'
-            : 'bg-neutral-800 text-neutral-400',
-        )}
-      >
-        {t(direction === 'entry' ? 'orch.entryTag' : 'orch.exitTag')}
-      </Badge>
-    </div>
-  );
-}
-
-type HookNodeData = {
-  /** 该连接点的序号（同一上游的第几条出边，从 1 起）。 */
-  label: string;
-  hot: boolean;
-  selected: boolean;
-  /** 该连线的状态：未保存（新增）/ 无效 —— 连接点跟着描边提示。 */
-  tone?: 'new' | 'invalid';
-};
-type HookFlowNode = Node<HookNodeData, 'orchHook'>;
-
-/** 连线中间的连接点：每条连线一枚，点它 = 选中那条边去改正文/提取。 */
-function HookNode({ data }: NodeProps<HookFlowNode>) {
-  const { label, hot, selected, tone } = data;
-  return (
-    <div
-      style={{ width: ORCH_HOOK_W, height: ORCH_HOOK_H }}
-      className={cn(
-        'flex items-center justify-center rounded-full border bg-neutral-900/95 text-[9px] font-medium shadow-mac',
-        hot
-          ? 'border-teal-400/80 text-teal-200'
-          : tone === 'invalid'
-            ? 'border-red-500/60 text-red-300'
-            : tone === 'new'
-              ? 'border-amber-500/60 text-amber-200'
-              : 'border-edge/[0.12] text-neutral-500',
-        selected && 'border-sky-400/80 text-sky-200 ring-2 ring-sky-500/40',
-      )}
-    >
-      <Handle
-        type="target"
-        id="in"
-        position={Position.Left}
-        className="!h-1.5 !w-1.5 !border-0 !bg-neutral-600"
-      />
-      {label}
-      <Handle
-        type="source"
-        id="out"
-        position={Position.Right}
-        className="!h-1.5 !w-1.5 !border-0 !bg-neutral-600"
-      />
+      <PortRail ports={inPorts} side="in" />
+      <PortRail ports={outPorts} side="out" />
+      <PortColumn ports={inPorts} side="in" />
+      <div className="flex min-w-0 flex-1 items-center gap-2 border-x border-edge/[0.06] px-2">
+        <Globe className="h-4 w-4 shrink-0 text-violet-400" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+          {t(direction === 'entry' ? 'orch.webhookEntry' : 'orch.webhookExit')}
+        </span>
+        <Badge
+          className={cn(
+            'shrink-0 text-[9px]',
+            direction === 'entry'
+              ? 'bg-violet-900/50 text-violet-300'
+              : 'bg-neutral-800 text-neutral-400',
+          )}
+        >
+          {t(direction === 'entry' ? 'orch.entryTag' : 'orch.exitTag')}
+        </Badge>
+      </div>
+      <PortColumn ports={outPorts} side="out" />
     </div>
   );
 }
@@ -454,7 +457,6 @@ const nodeTypes = {
   orchSession: SessionNode,
   orchWebhook: WebhookNode,
   orchGroup: GroupNode,
-  orchHook: HookNode,
 };
 
 /**
@@ -507,7 +509,8 @@ function OrchFlowEdge({
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              maxWidth: ORCH_COL_W - ORCH_NODE_W - 16,
+              // 标签只占连接点之后的空隙：不与节点卡片叠（标签层在节点之下）。
+              maxWidth: ORCH_COL_W - ORCH_NODE_W - 24,
             }}
             className={cn(
               'pointer-events-none select-none whitespace-pre-wrap break-words rounded px-1 py-0.5 text-[10px] leading-4',
@@ -532,6 +535,13 @@ const edgeTypes = { orchFlow: OrchFlowEdge };
 /** 节点的 flash 键（session 挂 `s:` 前缀，webhook 用裸 `w:` id）。 */
 function nodeFlashKey(nodeId: string): string {
   return nodeId.startsWith('w:') ? nodeId : `s:${nodeId}`;
+}
+
+/** 渲染节点键 → 编排节点 id（`s:<会话>` → 会话 id，`w:<uuid>` 原样，分组框 = null）。 */
+function orchIdOfRenderKey(key: string): string | null {
+  if (key.startsWith('s:')) return key.slice(2);
+  if (key.startsWith('w:')) return key;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,21 +1056,6 @@ export function OrchestrationCanvas({
     return { laid, counts };
   }, [overview, sessionById, canvasSessions, groupProjects, collapsedFrom]);
 
-  /** 编辑画布的外接连接点：每个不同的上游/下游一枚（连线挂在具体点上）。 */
-  const draftPorts = useMemo(() => {
-    const ins = new Map<string, string[]>();
-    const outs = new Map<string, string[]>();
-    for (const edge of draft?.edges ?? []) {
-      const out = outs.get(edge.from) ?? [];
-      if (!out.includes(edge.to)) out.push(edge.to);
-      outs.set(edge.from, out);
-      const inn = ins.get(edge.to) ?? [];
-      if (!inn.includes(edge.from)) inn.push(edge.from);
-      ins.set(edge.to, inn);
-    }
-    return { ins, outs };
-  }, [draft?.edges]);
-
   /** 新增（未保存）与无效的连线：都用虚线画（新增琥珀、无效红）。 */
   const edgeTone = useMemo(() => {
     if (!editing) return new Map<string, 'new' | 'invalid'>();
@@ -1086,13 +1081,28 @@ export function OrchestrationCanvas({
     const now = Date.now();
     const orchId = editing?.id ?? null;
     const entryIds = new Set(graphDirections(draft.nodes, draft.edges).entries.map((n) => n.id));
-    /** 连接点序号：按上游出边顺序 hook1/hook2…（对齐手稿）。 */
-    const hookLabel = (edgeKey: string): string => {
-      const [from] = edgeKey.split('->');
-      const out = draftPorts.outs.get(from ?? '') ?? [];
-      const to = edgeKey.slice((from ?? '').length + 2);
-      return `hook${Math.max(1, out.indexOf(to) + 1)}`;
-    };
+    const labelOf = (id: string): string =>
+      id.startsWith('w:')
+        ? t(entryIds.has(id) ? 'orch.webhookEntry' : 'orch.webhookExit')
+        : sessionLabel(sessionById.get(id)?.title ?? null, id);
+    /** 入向 hook（左栏）：一条入边一枚，标题写「hookN ← 上游」。 */
+    const insOf = (nodeId: string): PortItem[] =>
+      draft.edges
+        .filter((edge) => edge.to === nodeId)
+        .map((edge, i) => ({
+          neighbor: edge.from,
+          edgeId: edge.id,
+          hint: `hook${i + 1} ← ${labelOf(edge.from)}`,
+        }));
+    /** 出向 hook（右栏）：一条出边一枚，标题写「hookN → 下游」。 */
+    const outsOf = (nodeId: string): PortItem[] =>
+      draft.edges
+        .filter((edge) => edge.from === nodeId)
+        .map((edge, i) => ({
+          neighbor: edge.to,
+          edgeId: edge.id,
+          hint: `hook${i + 1} → ${labelOf(edge.to)}`,
+        }));
     return laid.nodes.map((n) => {
       if (n.kind === 'group') {
         const pid = n.projectId ?? 0;
@@ -1119,26 +1129,6 @@ export function OrchestrationCanvas({
           },
         };
       }
-      if (n.kind === 'hook') {
-        const edgeKey = n.edgeKey ?? '';
-        const realIds = laid.edges.find((e) => e.key === edgeKey)?.edgeIds ?? [];
-        const tone = realIds.map((id) => edgeTone.get(id)).find(Boolean);
-        const hot =
-          orchId != null &&
-          realIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
-        return {
-          id: n.key,
-          type: 'orchHook',
-          position: { x: n.x, y: n.y },
-          draggable: false,
-          data: {
-            label: hookLabel(edgeKey),
-            hot,
-            selected: sel?.kind === 'edge' && realIds.includes(sel.id),
-            ...(tone ? { tone } : {}),
-          },
-        } satisfies Node;
-      }
       if (n.kind === 'webhook') {
         const nodeId = n.nodeId ?? '';
         const node = draft.nodes.find((x) => x.id === nodeId);
@@ -1154,8 +1144,8 @@ export function OrchestrationCanvas({
             missing: !node,
             selected: sel?.kind === 'node' && sel.id === nodeId,
             pickable: false,
-            inPorts: draftPorts.ins.get(nodeId) ?? [],
-            outPorts: draftPorts.outs.get(nodeId) ?? [],
+            inPorts: insOf(nodeId),
+            outPorts: outsOf(nodeId),
           },
         } satisfies Node;
       }
@@ -1180,9 +1170,10 @@ export function OrchestrationCanvas({
           missing: !row,
           selected: sel?.kind === 'node' && sel.id === sessionId,
           pickable: false,
-          inPorts: draftPorts.ins.get(sessionId) ?? [],
-          outPorts: draftPorts.outs.get(sessionId) ?? [],
+          inPorts: insOf(sessionId),
+          outPorts: outsOf(sessionId),
           onOpen: openMessages,
+          onPickPort: (edgeId: string) => setSel({ kind: 'edge', id: edgeId }),
         },
       } satisfies Node;
     });
@@ -1199,8 +1190,7 @@ export function OrchestrationCanvas({
     projectName,
     openMessages,
     sel,
-    draftPorts,
-    edgeTone,
+    t,
   ]);
 
   const flowEdges: Edge[] = useMemo(() => {
@@ -1208,10 +1198,9 @@ export function OrchestrationCanvas({
     const now = Date.now();
     const orchId = editing?.id ?? null;
     const edgeById = new Map(draft.edges.map((e) => [e.id, e] as const));
-    const hookKeys = new Set(laid.nodes.filter((n) => n.kind === 'hook').map((n) => n.key));
-    // 每条连线拆两段：上游 → 连接点 → 下游（正文标签挂在第二段上，宽度受限可换行）。
-    // 端点被收进分组框时没有连接点，退回一整段。
-    return laid.edges.flatMap((e: OrchLaidEdge): Edge[] => {
+    // 一条连线 = 上游卡片右栏那枚 hook → 下游卡片左栏那枚 hook；正文标签挂在线上。
+    // 端点被收进分组框时没有端口，退回无 handle 的一整段。
+    return laid.edges.map((e: OrchLaidEdge): Edge => {
       const hot =
         orchId != null && e.edgeIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
       const picked = sel?.kind === 'edge' && e.edgeIds.includes(sel.id);
@@ -1226,49 +1215,23 @@ export function OrchestrationCanvas({
             : tone === 'new'
               ? { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '5 4' }
               : { strokeWidth: 1.5 };
-      const hookId = `h:${e.key}`;
-      const data = { hot, ...(text ? { label: text } : {}), ...(tone ? { tone } : {}) };
-      if (!hookKeys.has(hookId)) {
-        return [
-          {
-            id: e.key,
-            source: e.from,
-            target: e.to,
-            type: 'orchFlow',
-            animated: hot,
-            interactionWidth: 24,
-            data,
-            style: stroke,
-            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-          },
-        ] satisfies Edge[];
-      }
-      return [
-        {
-          id: `${e.key}::a`,
-          source: e.from,
-          target: hookId,
-          sourceHandle: `out:${e.to}`,
-          type: 'orchFlow',
-          animated: hot,
-          interactionWidth: 24,
-          data: { hot },
-          style: stroke,
-        },
-        {
-          id: `${e.key}::b`,
-          source: hookId,
-          target: e.to,
-          sourceHandle: 'out',
-          targetHandle: `in:${e.from}`,
-          type: 'orchFlow',
-          animated: hot,
-          interactionWidth: 24,
-          data,
-          style: stroke,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-        },
-      ] satisfies Edge[];
+      // 端口挂在**编排节点 id** 上（`s:<会话>` 是渲染键，端口是 `out:<会话>`）。
+      const fromId = orchIdOfRenderKey(e.from);
+      const toId = orchIdOfRenderKey(e.to);
+      return {
+        id: e.key,
+        source: e.from,
+        target: e.to,
+        ...(fromId != null && toId != null
+          ? { sourceHandle: `out:${toId}`, targetHandle: `in:${fromId}` }
+          : {}),
+        type: 'orchFlow',
+        animated: hot,
+        interactionWidth: 24,
+        data: { hot, ...(text ? { label: text } : {}), ...(tone ? { tone } : {}) },
+        style: stroke,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      };
     });
   }, [laid, draft, editing, flash, sel, edgeTone]);
 
@@ -1293,27 +1256,28 @@ export function OrchestrationCanvas({
     setEntryPick(nodeId);
   }, []);
 
-  /** 总览合并图的外接连接点（每个不同的上游/下游一枚）。 */
-  const overviewPorts = useMemo(() => {
-    const ins = new Map<string, string[]>();
-    const outs = new Map<string, string[]>();
-    for (const edge of overview?.edges ?? []) {
-      const out = outs.get(edge.from) ?? [];
-      if (!out.includes(edge.to)) out.push(edge.to);
-      outs.set(edge.from, out);
-      const inn = ins.get(edge.to) ?? [];
-      if (!inn.includes(edge.from)) inn.push(edge.from);
-      ins.set(edge.to, inn);
-    }
-    return { ins, outs };
-  }, [overview?.edges]);
-
   const overviewFlowNodes: Node[] = useMemo(() => {
     if (!overview || !laidOverview) return [];
     const now = Date.now();
     const hasIn = new Set(overview.edges.map((e) => e.to));
-    const pairByKey = new Map<string, MergedOrchEdge>();
-    for (const e of overview.edges) pairByKey.set(`${e.from}->${e.to}`, e);
+    const labelOf = (id: string): string =>
+      id.startsWith('w:')
+        ? t(hasIn.has(id) ? 'orch.webhookExit' : 'orch.webhookEntry')
+        : sessionLabel(sessionById.get(id)?.title ?? null, id);
+    const insOf = (nodeId: string): PortItem[] =>
+      overview.edges
+        .filter((edge) => edge.to === nodeId)
+        .map((edge, i) => ({
+          neighbor: edge.from,
+          hint: `hook${i + 1} ← ${labelOf(edge.from)}`,
+        }));
+    const outsOf = (nodeId: string): PortItem[] =>
+      overview.edges
+        .filter((edge) => edge.from === nodeId)
+        .map((edge, i) => ({
+          neighbor: edge.to,
+          hint: `hook${i + 1} → ${labelOf(edge.to)}`,
+        }));
     return laidOverview.laid.nodes.map((n) => {
       if (n.kind === 'group') {
         const pid = n.projectId ?? 0;
@@ -1341,26 +1305,6 @@ export function OrchestrationCanvas({
           },
         };
       }
-      if (n.kind === 'hook') {
-        const edgeKey = n.edgeKey ?? '';
-        const merged = pairByKey.get(edgeKey);
-        const hot =
-          merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
-        const from = edgeKey.split('->')[0] ?? '';
-        const out = overviewPorts.outs.get(from) ?? [];
-        const to = edgeKey.slice(from.length + 2);
-        return {
-          id: n.key,
-          type: 'orchHook',
-          position: { x: n.x, y: n.y },
-          draggable: false,
-          data: {
-            label: `hook${Math.max(1, out.indexOf(to) + 1)}`,
-            hot,
-            selected: edgeInfo != null && edgeInfo === edgeKey,
-          },
-        } satisfies Node;
-      }
       const nodeId = n.nodeId ?? '';
       const orchIds = overview.merged.orchIdsOf.get(nodeId) ?? [];
       const hot = orchIds.some(
@@ -1380,8 +1324,8 @@ export function OrchestrationCanvas({
             missing: false,
             selected: false,
             pickable,
-            inPorts: overviewPorts.ins.get(nodeId) ?? [],
-            outPorts: overviewPorts.outs.get(nodeId) ?? [],
+            inPorts: insOf(nodeId),
+            outPorts: outsOf(nodeId),
           },
         } satisfies Node;
       }
@@ -1411,8 +1355,8 @@ export function OrchestrationCanvas({
           missing: !srow,
           selected: false,
           pickable,
-          inPorts: overviewPorts.ins.get(nodeId) ?? [],
-          outPorts: overviewPorts.outs.get(nodeId) ?? [],
+          inPorts: insOf(nodeId),
+          outPorts: outsOf(nodeId),
           onOpen: openMessages,
         },
       } satisfies Node;
@@ -1428,8 +1372,7 @@ export function OrchestrationCanvas({
     openMessages,
     entryOrchestrations,
     expandedGroups,
-    overviewPorts,
-    edgeInfo,
+    t,
   ]);
 
   const overviewFlowEdges: Edge[] = useMemo(() => {
@@ -1438,60 +1381,27 @@ export function OrchestrationCanvas({
     // 合并边按端点对回查（laid 的 edgeIds 就是合成的 `${from}->${to}`）。
     const pairByKey = new Map<string, MergedOrchEdge>();
     for (const e of overview.edges) pairByKey.set(`${e.from}->${e.to}`, e);
-    const hookKeys = new Set(
-      laidOverview.laid.nodes.filter((n) => n.kind === 'hook').map((n) => n.key),
-    );
-    return laidOverview.laid.edges.flatMap((e: OrchLaidEdge): Edge[] => {
+    return laidOverview.laid.edges.map((e: OrchLaidEdge): Edge => {
       const merged = pairByKey.get(e.edgeIds[0] ?? '');
       const hot =
         merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
       const text = merged?.pairs.find((p) => p.text.trim())?.text ?? '';
-      const hookId = `h:${e.key}`;
-      const stroke = hot
-        ? { stroke: '#2dd4bf', strokeWidth: 2 }
-        : { strokeWidth: 1.5 };
-      const data = { hot, ...(text ? { label: text } : {}) };
-      if (!hookKeys.has(hookId)) {
-        return [
-          {
-            id: e.key,
-            source: e.from,
-            target: e.to,
-            type: 'orchFlow',
-            animated: hot,
-            interactionWidth: 24,
-            data,
-            style: stroke,
-            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-          },
-        ] satisfies Edge[];
-      }
-      return [
-        {
-          id: `${e.key}::a`,
-          source: e.from,
-          target: hookId,
-          sourceHandle: `out:${e.to}`,
-          type: 'orchFlow',
-          animated: hot,
-          interactionWidth: 24,
-          data: { hot },
-          style: stroke,
-        },
-        {
-          id: `${e.key}::b`,
-          source: hookId,
-          target: e.to,
-          sourceHandle: 'out',
-          targetHandle: `in:${e.from}`,
-          type: 'orchFlow',
-          animated: hot,
-          interactionWidth: 24,
-          data,
-          style: stroke,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-        },
-      ] satisfies Edge[];
+      const fromId = orchIdOfRenderKey(e.from);
+      const toId = orchIdOfRenderKey(e.to);
+      return {
+        id: e.key,
+        source: e.from,
+        target: e.to,
+        ...(fromId != null && toId != null
+          ? { sourceHandle: `out:${toId}`, targetHandle: `in:${fromId}` }
+          : {}),
+        type: 'orchFlow',
+        animated: hot,
+        interactionWidth: 24,
+        data: { hot, ...(text ? { label: text } : {}) },
+        style: hot ? { stroke: '#2dd4bf', strokeWidth: 2 } : { strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      };
     });
   }, [overview, laidOverview, flash]);
 
@@ -2038,11 +1948,8 @@ export function OrchestrationCanvas({
             nodesDraggable={false}
             nodesConnectable={false}
             deleteKeyCode={null}
-            onNodeClick={(_, node) => {
-              // 连接点 = 那条连线（只读：列出它在各编排里的正文）；其它节点 = 首节点面板。
-              if (node.id.startsWith('h:')) setEdgeInfo(node.id.slice(2));
-              else pickEntry(orchNodeIdOf(node.id));
-            }}
+            onNodeClick={(_, node) => pickEntry(orchNodeIdOf(node.id))}
+            onEdgeClick={(_, edge) => setEdgeInfo(edge.id)}
             onPaneClick={() => {
               setEntryPick(null);
               setEdgeInfo(null);
@@ -2146,9 +2053,13 @@ export function OrchestrationCanvas({
               >
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
-                    {nodeLabel(edgeInfo.split('->')[0] ?? '')}
+                    {nodeLabel(orchIdOfRenderKey(edgeInfo.split('->')[0] ?? '') ?? '')}
                     {' → '}
-                    {nodeLabel(edgeInfo.slice((edgeInfo.split('->')[0] ?? '').length + 2))}
+                    {nodeLabel(
+                      orchIdOfRenderKey(
+                        edgeInfo.slice((edgeInfo.split('->')[0] ?? '').length + 2),
+                      ) ?? '',
+                    )}
                   </span>
                   <button
                     type="button"
@@ -2160,20 +2071,24 @@ export function OrchestrationCanvas({
                     <X className="h-3 w-3" />
                   </button>
                 </div>
-                {(overview.edges.find((e) => `${e.from}->${e.to}` === edgeInfo)?.pairs ?? []).map(
-                  (pair) => {
-                    const name =
-                      list?.find((row) => row.id === pair.orchId)?.name || t('orch.untitled');
-                    return (
-                      <div key={`${pair.orchId}:${pair.edgeId}`} className="space-y-0.5">
-                        <span className="block truncate text-[10px] text-neutral-500">{name}</span>
-                        <p className="break-words whitespace-pre-wrap rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300">
-                          {pair.text.trim() || t('orch.edgeTextEmpty')}
-                        </p>
-                      </div>
-                    );
-                  },
-                )}
+                {(() => {
+                  const [fromKey, toKey] = edgeInfo.split('->');
+                  const pairKey = `${orchIdOfRenderKey(fromKey ?? '')}->${orchIdOfRenderKey(toKey ?? '')}`;
+                  return (overview.edges.find((e) => `${e.from}->${e.to}` === pairKey)?.pairs ?? []).map(
+                    (pair) => {
+                      const name =
+                        list?.find((row) => row.id === pair.orchId)?.name || t('orch.untitled');
+                      return (
+                        <div key={`${pair.orchId}:${pair.edgeId}`} className="space-y-0.5">
+                          <span className="block truncate text-[10px] text-neutral-500">{name}</span>
+                          <p className="break-words whitespace-pre-wrap rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300">
+                            {pair.text.trim() || t('orch.edgeTextEmpty')}
+                          </p>
+                        </div>
+                      );
+                    },
+                  );
+                })()}
                 <p className="text-[9px] leading-relaxed text-neutral-600">
                   {t('orch.edgeInfoHint')}
                 </p>

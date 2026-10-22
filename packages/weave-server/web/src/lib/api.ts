@@ -207,7 +207,14 @@ export type HandlerConfig =
   | { type: 'webhook'; url: string; secret?: string; headers?: Record<string, string> }
   | { type: 'inject'; template: string }
   | { type: 'manual'; template: string }
-  | { type: 'plugin'; pluginId: string; handlerType: string; config?: Record<string, unknown> };
+  | { type: 'plugin'; pluginId: string; handlerType: string; config?: Record<string, unknown> }
+  | {
+      type: 'classify';
+      prompt: string;
+      prefilter?: string[];
+      cooldownMs?: number;
+      routes: Array<{ label: string; url: string; secret?: string; headers?: Record<string, string> }>;
+    };
 
 /** mirror of `HookRule` in packages/weave-core/src/types.ts。 */
 export interface HookRule {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openDatabase } from '../../db/db.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { ProjectRepository, type ProjectRow } from '../../repositories/projects.js';
@@ -38,6 +38,8 @@ describe('HookDispatcher', () => {
   let messages: HookBusMessage[];
   let dispatcher: HookDispatcher;
   let fetchCalls: Array<{ url: string; init: RequestInit }>;
+  let classifyCalls: Array<{ sessionId: string; prompt: string }>;
+  let classifyImpl: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
 
   /** 每次调用先落一条真实 hook_events 行（event_id 是外键），再构造 ctx。 */
   const ctx = (over: Partial<IngestContext> = {}): IngestContext => {
@@ -77,6 +79,8 @@ describe('HookDispatcher', () => {
     messages = [];
     bus.subscribe((m) => messages.push(m));
     fetchCalls = [];
+    classifyCalls = [];
+    classifyImpl = async () => null;
     dispatcher = new HookDispatcher({
       registry,
       dispatches,
@@ -87,6 +91,10 @@ describe('HookDispatcher', () => {
         fetchCalls.push({ url: String(url), init: init ?? {} });
         return new Response('ok', { status: 200 });
       }) as typeof fetch,
+      classify: (input) => {
+        classifyCalls.push(input);
+        return classifyImpl(input);
+      },
     });
   });
 
@@ -627,5 +635,40 @@ describe('HookDispatcher', () => {
       expect(outcome.additionalContext).toBeUndefined();
       expect(dispatches.list()).toHaveLength(0);
     });
+  });
+
+
+  it('classify：Stop 回合过预筛 → 无头子 agent 判标签 → POST 到对应下游', async () => {
+    registry.create({
+      name: '发布判定',
+      projectId: null,
+      source: { kind: 'claude-event', event: 'Stop' },
+      handler: {
+        type: 'classify',
+        prompt: '判断这一轮是否完成了发布，只输出 JSON {label}',
+        prefilter: ['publish'],
+        routes: [{ label: 'release', url: 'http://127.0.0.1:9/release-hook' }],
+      },
+    });
+    classifyImpl = async () => '{"label":"release","reason":"npm publish"}';
+
+    // 不含关键词的一轮：不 fork、不出站
+    await dispatcher.onIngest(
+      ctx({ payload: payload({ eventType: 'Stop', toolName: undefined, toolInput: undefined, raw: { last_assistant_message: '普通回复' } }) }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(classifyCalls).toHaveLength(0);
+    expect(fetchCalls).toHaveLength(0);
+
+    // 含关键词：fork 判定 → 命中 route → POST
+    await dispatcher.onIngest(
+      ctx({ payload: payload({ eventType: 'Stop', toolName: undefined, toolInput: undefined, raw: { last_assistant_message: '已执行 npm publish 发布 0.1.3' } }) }),
+    );
+    await vi.waitFor(() => expect(fetchCalls).toHaveLength(1));
+    expect(classifyCalls[0]!.prompt).toContain('npm publish');
+    expect(fetchCalls[0]!.url).toBe('http://127.0.0.1:9/release-hook');
+    const body = JSON.parse(String(fetchCalls[0]!.init.body));
+    expect(body).toMatchObject({ label: 'release', ruleName: '发布判定' });
+    await vi.waitFor(() => expect(dispatches.list()[0]?.status).toBe('succeeded'));
   });
 });

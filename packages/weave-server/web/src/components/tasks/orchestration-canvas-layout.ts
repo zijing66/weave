@@ -10,22 +10,19 @@ import { ranksOf } from './orchestration-graph';
  * 布局复用本函数。
  */
 
-/** 节点宽（对齐画布节点的 w-[220px]）。 */
-export const ORCH_NODE_W = 220;
-/** 节点高。 */
-export const ORCH_NODE_H = 56;
-/** 层间距（列）。 */
-export const ORCH_COL_W = 320;
+/** 节点宽（三栏卡片：左 hook 栏 | 会话信息 | 右 hook 栏）。 */
+export const ORCH_NODE_W = 268;
+/** 节点高（多枚 hook 上下排得开）。 */
+export const ORCH_NODE_H = 88;
+/** 层间距（列）：够放可换行的连线正文。 */
+export const ORCH_COL_W = 392;
 /** 同列节点的行距。 */
-export const ORCH_ROW_H = 84;
+export const ORCH_ROW_H = 116;
 /** 分组框的内边距（上下左右）与头部高。 */
 export const ORCH_GROUP_PAD = 14;
 export const ORCH_GROUP_HEADER_H = 30;
 /** 收起的分组框高。 */
 export const ORCH_GROUP_COLLAPSED_H = 44;
-/** 连线中间的 hook 连接点尺寸（每条连线一个，挂在两层之间的空隙里）。 */
-export const ORCH_HOOK_W = 48;
-export const ORCH_HOOK_H = 22;
 
 export interface OrchCanvasSession {
   sessionId: string;
@@ -34,9 +31,9 @@ export interface OrchCanvasSession {
 }
 
 export interface OrchLaidNode {
-  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>` / `h:<边键>`。 */
+  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>`。 */
   key: string;
-  kind: 'session' | 'webhook' | 'group' | 'hook';
+  kind: 'session' | 'webhook' | 'group';
   x: number;
   y: number;
   /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>）。 */
@@ -47,8 +44,6 @@ export interface OrchLaidNode {
   height?: number;
   /** 收起时被藏起的节点数。 */
   hidden?: number;
-  /** 这条连接点管的那条（合并）边：`<from>-><to>`。 */
-  edgeKey?: string;
 }
 
 export interface OrchLaidEdge {
@@ -182,32 +177,5 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
     else merged.set(key, { key, from, to, edgeIds: [edge.id] });
   }
 
-  // 连接点：每条（合并）连线一个 hook 节点，摆在两层之间的空隙正中；同一处
-  // 叠着的按上下错开（扇出到同一列时不会完全重叠）。
-  const laidByKey = new Map(laidNodes.map((n) => [n.key, n] as const));
-  const hookNodes: OrchLaidNode[] = [];
-  const placed = new Map<string, number>();
-  for (const edge of merged.values()) {
-    const fromNode = laidByKey.get(edge.from);
-    const toNode = laidByKey.get(edge.to);
-    if (!fromNode || !toNode) continue;
-    const fromRight = fromNode.x + ORCH_NODE_W;
-    const gap = toNode.x - fromRight;
-    const x = fromRight + gap / 2 - ORCH_HOOK_W / 2;
-    const rawY =
-      (fromNode.y + toNode.y) / 2 + ORCH_NODE_H / 2 - ORCH_HOOK_H / 2;
-    const slot = `${Math.round(x)}:${Math.round(rawY)}`;
-    const seen = placed.get(slot) ?? 0;
-    placed.set(slot, seen + 1);
-    const shift = seen === 0 ? 0 : (seen % 2 === 1 ? 1 : -1) * Math.ceil(seen / 2) * (ORCH_HOOK_H + 8);
-    hookNodes.push({
-      key: `h:${edge.key}`,
-      kind: 'hook',
-      x,
-      y: rawY + shift,
-      edgeKey: edge.key,
-    });
-  }
-
-  return { nodes: [...groupNodes, ...laidNodes, ...hookNodes], edges: [...merged.values()] };
+  return { nodes: [...groupNodes, ...laidNodes], edges: [...merged.values()] };
 }

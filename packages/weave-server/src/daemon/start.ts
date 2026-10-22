@@ -130,6 +130,10 @@ export function startDaemon(): void {
     plugins: pluginManager,
     libraries,
   });
+  // classify handler 的无头判定器：edgeExtract 在引擎段才装配，用引用占位。
+  const classifyRef: {
+    run: ((input: { sessionId: string; prompt: string }) => Promise<string | null>) | null;
+  } = { run: null };
   const hookDispatcher = new HookDispatcher({
     registry: hookRegistry,
     dispatches: hookDispatches,
@@ -138,6 +142,7 @@ export function startDaemon(): void {
     sessions: hookSessions,
     plugins: pluginHostHolder,
     pluginStates: new PluginStateRepository(db),
+    classify: (input) => (classifyRef.run ? classifyRef.run(input) : Promise.resolve(null)),
   });
   // 内置仓落地必须先于装载：内置规则包装载根与工具包扫描根都指向 <dataDir>/market/weave。
   void ensureBuiltinMarket({ libraries })
@@ -368,6 +373,7 @@ export function startDaemon(): void {
     headless: headlessRunner,
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
+  classifyRef.run = (input) => edgeExtract.run(input);
   // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。
   // 新起的 resume 进程要先在 claude 注册表落名，投递器才不把它判成离线——
   // 等它出现（最多 8s）；等不到也放行，交给队列在 SessionStart 后冲洗。
