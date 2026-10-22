@@ -636,6 +636,8 @@ export interface OrchestrationEdge {
   text: string;
   /** 本边提取指令（对上游会话 fork 无头回合产出 {summary}；空 = 不提取）。 */
   extract?: string;
+  /** 本边放行条件（对上游会话问 yes/no；no 或判不出都拦下不投，webhook 入口边不可设）。 */
+  condition?: string;
 }
 
 export type OrchestrationNodeKind = 'session' | 'webhook';
@@ -679,6 +681,9 @@ export interface OrchestrationRunEvent {
   edgeId: string;
   ok: boolean;
   error?: string;
+  /** 缺省 = 一次投递；ensure = 拉起会话的尝试；condition = 条件边被拦下。 */
+  stage?: 'ensure' | 'condition';
+  ms?: number;
 }
 
 export interface OrchestrationRunState {

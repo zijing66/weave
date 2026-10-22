@@ -71,6 +71,18 @@ function renderEdgeText(
 
 const UNRESOLVED_VAR = /\{(upstream|summary|session)\}/;
 
+/** 条件边回答的认法：子 Agent 回答的首个词（中英都认），其余一律判不出。 */
+const CONDITION_YES = new Set(['yes', 'y', 'true', '是', '对的', '对', '需要', '发']);
+const CONDITION_NO = new Set(['no', 'n', 'false', '否', '不对', '不需要', '不发']);
+
+export function parseConditionAnswer(answer: string | null | undefined): boolean | null {
+  const first = (answer ?? '').trim().toLowerCase().split(/\s+/)[0] ?? '';
+  const word = first.replace(/[.。!！?？]/g, '');
+  if (CONDITION_YES.has(word)) return true;
+  if (CONDITION_NO.has(word)) return false;
+  return null;
+}
+
 /** 自然回合自动触发的冷却：Stop 与 SessionEnd 连拍（同轮收尾两条 idle）不重复触发。 */
 const AUTO_FIRE_COOLDOWN_MS = 5_000;
 /** 入口 → 编排索引的缓存窗：定义变更最多这么久才被自然回合触发看到。 */
@@ -438,6 +450,11 @@ export class OrchestrationEngine {
             ? ((await this.deps.extract?.({ sessionId: from, prompt: edge.extract.trim() })) ?? null)
             : null;
         }
+        // 放行条件：问上游会话的上下文子 Agent，只认 yes/no；no 或判不出都拦下。
+        if (edge.condition?.trim()) {
+          const verdict = await this.evaluateCondition(rt, from, edge);
+          if (!verdict) return;
+        }
         const text = renderEdgeText(edge.text, {
           upstream,
           summary: summary ?? upstream,
@@ -457,6 +474,42 @@ export class OrchestrationEngine {
       }),
     );
     this.maybeDone(rt);
+  }
+
+  /**
+   * 条件边的放行判断：对上游会话跑一次上下文子 Agent（能力面，claude = fork），
+   * 提问要求严格回答 yes/no。yes = 放行；no = 拦下；判不出（回答不认、超时、
+   * fork 失败、harness 无此能力面）= 拦下——宁可不发错包，原因都记 RunEvent。
+   */
+  private async evaluateCondition(
+    rt: Runtime,
+    from: string,
+    edge: OrchestrationEdge,
+  ): Promise<boolean> {
+    const block = (reason: string): false => {
+      this.record(rt, {
+        from,
+        to: edge.to,
+        edgeId: edge.id,
+        ok: false,
+        stage: 'condition',
+        error: reason,
+      });
+      return false;
+    };
+    if (!this.deps.supportsExtract?.(from)) {
+      return block('condition not evaluable — harness has no context sub-agent face');
+    }
+    const answer = await this.deps.extract?.({
+      sessionId: from,
+      prompt: `${edge.condition!.trim()}\n\nBased on the conversation context above, answer with exactly one word: yes or no.`,
+    });
+    const verdict = parseConditionAnswer(answer);
+    if (verdict === null) {
+      return block('condition could not be evaluated (no clear yes/no answer) — delivery blocked');
+    }
+    if (!verdict) return block('condition answered no — delivery skipped');
+    return true;
   }
 
   /**
@@ -574,7 +627,7 @@ export class OrchestrationEngine {
       edgeId: string;
       ok: boolean;
       error?: string;
-      stage?: 'ensure';
+      stage?: 'ensure' | 'condition';
       ms?: number;
     },
   ): void {
@@ -613,6 +666,11 @@ export class OrchestrationEngine {
     if (Object.values(rt.state.pending).some((list) => list.length > 0)) return;
     rt.finishing = true;
     const ok = rt.state.events.some((event) => event.ok);
+    if (!ok && rt.state.events.length > 0 && rt.state.events.every((e) => e.stage === 'condition')) {
+      // 每条出边都被条件拦下：判断按预期工作，不是失败——run 正常落定。
+      this.finish(rt, 'done');
+      return;
+    }
     const lastError = [...rt.state.events].reverse().find((event) => !event.ok)?.error ?? null;
     this.finish(rt, ok ? 'done' : 'failed', ok ? null : (lastError ?? 'no delivery succeeded'));
   }

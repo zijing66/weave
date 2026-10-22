@@ -264,6 +264,16 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     (edge) => !edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim(),
   );
   if (mute) return { ok: false, error: `Edge ${mute.from} → ${mute.to} has no message` };
+  // 条件边要有会话可问：webhook 入口没有会话，条件无从判断（服务端同判据）。
+  const conditionEdge = draft.edges.find(
+    (edge) => edge.condition?.trim() && webhookEntryIds.has(edge.from),
+  );
+  if (conditionEdge) {
+    return {
+      ok: false,
+      error: `Edge ${conditionEdge.from} → ${conditionEdge.to} cannot have a condition (webhook entries have no session to ask)`,
+    };
+  }
   for (const node of draft.nodes) {
     if (node.kind !== 'webhook') continue;
     // webhook 节点只能站在图的两端：入口（只出）或出口（只入），不当中间节点。

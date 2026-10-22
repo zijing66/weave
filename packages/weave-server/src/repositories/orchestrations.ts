@@ -17,6 +17,12 @@ export interface OrchestrationEdge {
   text: string;
   /** 本边的提取指令（空 = 不提取）：对上游会话 fork 无头回合产出 `{summary}`。 */
   extract?: string;
+  /**
+   * 本边的放行条件（空 = 无条件）：对上游会话跑一次「衔接上下文的子 Agent」
+   * （能力面，claude = fork），只认 yes/no 回答——yes 才投递；no / 判不出
+   * （含 harness 无此能力面）都拦下并记 `stage:'condition'` 事件。
+   */
+  condition?: string;
 }
 
 export type OrchestrationNodeKind = 'session' | 'webhook';
@@ -103,8 +109,11 @@ export interface RunEvent {
   edgeId: string;
   ok: boolean;
   error?: string;
-  /** 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试。 */
-  stage?: 'ensure';
+  /**
+   * 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试；
+   * `condition` = 条件边被拦下（回答 no 或判不出，没有投递发生）。
+   */
+  stage?: 'ensure' | 'condition';
   /** 耗时（ms）：ensure 用；投递事件不带。 */
   ms?: number;
 }

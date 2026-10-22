@@ -357,6 +357,9 @@ export const tasksZh = {
   'orch.edgeTextEmpty': '（空正文）',
   'orch.edgeInfoHint': '只读：这条线在各份编排里的正文；改正文请从首节点卡片进入那份编排',
   'orch.edgePendingHint': '虚线 = 未保存（琥珀）或无效（红）的连线',
+  'orch.edgeCondition': '放行条件',
+  'orch.edgeConditionHint':
+    '问上游会话（子 Agent 读上下文回答 yes/no）：yes 才投递，no 或判不出都拦下；webhook 入口的连线不能设',
 
   // 编排定义编辑器
   'orch.nameLabel': '名称',
@@ -839,6 +842,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'orch.edgeInfoHint':
     'Read-only — this link’s text in each orchestration; to edit, open that orchestration from its entry node’s card',
   'orch.edgePendingHint': 'Dashed = unsaved (amber) or invalid (red) links',
+  'orch.edgeCondition': 'Delivery condition',
+  'orch.edgeConditionHint':
+    'Ask the upstream session (a context-reading sub-agent answers yes/no): deliver only on yes; no or unclear answers block this link. Not available on webhook-entry links',
 
   // Definition editor
   'orch.nameLabel': 'Name',

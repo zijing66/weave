@@ -58,6 +58,15 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     (edge) => !edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim(),
   );
   if (mute) return { ok: false, error: `Edge ${mute.from}→${mute.to} has no message` };
+  // 条件边要求对上游会话跑一次「衔接上下文的子 Agent」——webhook 入口没有会话
+  // 可跑，条件无从判断。
+  for (const edge of edges) {
+    if (!edge.condition?.trim() || !webhookEntryIds.has(edge.from)) continue;
+    return {
+      ok: false,
+      error: `Edge ${edge.from}→${edge.to} cannot have a condition (webhook entries have no session to ask)`,
+    };
+  }
   for (const node of nodes) {
     if (node.kind !== 'webhook') continue;
     // webhook 节点只能站在图的两端：入口（只出）或出口（只入），不当中间节点。

@@ -399,6 +399,8 @@ const OrchestrationBody = z.object({
       text: z.string().max(20_000),
       /** 本边提取指令（对上游会话 fork 无头回合产出 {summary}；空 = 不提取）。 */
       extract: z.string().max(4_000).optional(),
+      /** 本边放行条件（对上游会话问 yes/no；no 或判不出都拦下不投）。 */
+      condition: z.string().max(4_000).optional(),
     }),
   ),
   cron: z.string().max(200).nullish(),

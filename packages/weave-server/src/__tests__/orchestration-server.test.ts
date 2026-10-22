@@ -237,6 +237,36 @@ describe('orchestration definitions', () => {
     await adminFetch(`/messaging/orchestrations/${orchestration.id}`, { method: 'DELETE' });
   });
 
+  it('条件边：session 出边可带 condition 并回读；webhook 入口出边带 condition 400', async () => {
+    const res = await adminFetch(
+      '/messaging/orchestrations',
+      json(
+        'POST',
+        graphBody({
+          name: 'cond',
+          edges: [{ ...edge('sa', 'sb'), condition: '改动是否需要发包？' }],
+        }),
+      ),
+    );
+    expect(res.status).toBe(201);
+    const { orchestration } = await res.json();
+    expect(orchestration.edges[0]).toMatchObject({ condition: '改动是否需要发包？' });
+    await adminFetch(`/messaging/orchestrations/${orchestration.id}`, { method: 'DELETE' });
+
+    const bad = await adminFetch(
+      '/messaging/orchestrations',
+      json(
+        'POST',
+        graphBody({
+          name: 'cond-w',
+          nodes: [wNode('w:in'), sNode('sb')],
+          edges: [{ ...edge('w:in', 'sb'), text: '', condition: '需要吗' }],
+        }),
+      ),
+    );
+    expect(bad.status).toBe(400);
+  });
+
   it('创建返回定义（enabled 缺省 true），列表可按项目过滤', async () => {
     const res = await adminFetch('/messaging/orchestrations', json('POST', graphBody()));
     expect(res.status).toBe(201);

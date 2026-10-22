@@ -145,7 +145,7 @@ const serialize = (draft: OrchDraft): string =>
     draft.name,
     draft.startText,
     draft.nodes.map((n) => [n.id, n.kind, n.webhookToken ?? '', n.url ?? '', n.secret ?? '']),
-    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.extract ?? '']),
+    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.extract ?? '', e.condition ?? '']),
     draft.cron,
   ]);
 
@@ -2322,6 +2322,22 @@ export function OrchestrationCanvas({
                   title={t('orch.edgeExtract')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
+                <textarea
+                  value={selEdge.condition ?? ''}
+                  onChange={(e) => {
+                    const condition = e.target.value;
+                    patch((d) => ({
+                      ...d,
+                      edges: d.edges.map((x) =>
+                        x.id === selEdge.id ? { ...x, condition: condition || undefined } : x,
+                      ),
+                    }));
+                  }}
+                  rows={2}
+                  placeholder={t('orch.edgeConditionHint')}
+                  title={t('orch.edgeCondition')}
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
                 <button
                   type="button"
                   onClick={() => {
@@ -2626,13 +2642,26 @@ export function OrchestrationCanvas({
                                         'shrink-0',
                                         event.ok
                                           ? 'bg-emerald-900/40 text-emerald-300'
-                                          : 'bg-red-900/40 text-red-300',
+                                          : event.stage === 'condition'
+                                            ? 'bg-amber-900/40 text-amber-300'
+                                            : 'bg-red-900/40 text-red-300',
                                       )}
                                     >
-                                      {event.ok ? 'ok' : 'failed'}
+                                      {event.ok
+                                        ? 'ok'
+                                        : event.stage === 'condition'
+                                          ? 'skipped'
+                                          : 'failed'}
                                     </Badge>
                                     {event.error && (
-                                      <span className="min-w-0 flex-1 break-words text-[10px] text-red-400/70">
+                                      <span
+                                        className={cn(
+                                          'min-w-0 flex-1 break-words text-[10px]',
+                                          event.stage === 'condition'
+                                            ? 'text-amber-400/70'
+                                            : 'text-red-400/70',
+                                        )}
+                                      >
                                         {event.error}
                                       </span>
                                     )}

@@ -297,3 +297,25 @@ describe('invalidEdgeIds（逐条描红）', () => {
     expect([...invalidEdgeIds(draft)]).toEqual(['e1']);
   });
 });
+
+describe('条件边校验（web 镜像）', () => {
+  it('webhook 入口出边带 condition → 拒；session 出边带 condition → 过', () => {
+    const webhookEntry: OrchDraft = {
+      name: 'x',
+      startText: '',
+      nodes: [sessionNode('a'), webhookNode('w:in')],
+      edges: [{ id: 'e1', from: 'w:in', to: 'a', text: '', condition: '需要吗' }],
+      cron: null,
+    };
+    expect(errorOf(webhookEntry)).toContain('cannot have a condition');
+
+    const sessionEdge: OrchDraft = {
+      name: 'x',
+      startText: '',
+      nodes: [sessionNode('a'), sessionNode('b')],
+      edges: [{ id: 'e1', from: 'a', to: 'b', text: 'go', condition: '需要吗' }],
+      cron: null,
+    };
+    expect(validateDraft(sessionEdge)).toEqual({ ok: true });
+  });
+});

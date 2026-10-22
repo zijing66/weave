@@ -11,7 +11,7 @@ import {
   type OrchestrationNode,
 } from '../../repositories/orchestrations.js';
 import { HookEventBus } from '../bus.js';
-import { OrchestrationEngine } from '../orchestration-engine.js';
+import { OrchestrationEngine, parseConditionAnswer } from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
 
 /**
@@ -750,5 +750,123 @@ describe('重启与清扫', () => {
     expect(run.state.pending.b).toBeUndefined();
     expect(run.state.pending.c).toHaveLength(1);
     expect(run.state.events.some((e) => e.error?.includes('pending dropped'))).toBe(true);
+  });
+});
+
+describe('条件边（edge.condition）', () => {
+  const condEdge = (
+    from: string,
+    to: string,
+    condition: string,
+    id = `${from}-${to}`,
+  ): OrchestrationEdge => ({ id, from, to, text: `msg to ${to}`, condition });
+
+  it('回答 yes → 放行投递；旁边无条件边不受影响', async () => {
+    const extract = vi.fn(async () => 'yes');
+    const { d, engine } = setup({ supportsExtract: () => true, extract });
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges: [condEdge('a', 'b', '改动是否需要发包？'), edge('a', 'c')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    // b/c 各欠一轮投递回执，回合完成才收尾
+    idleOf(engine, 'b');
+    idleOf(engine, 'c');
+    await flush();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
+    expect(targets).toContain('b');
+    expect(targets).toContain('c');
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(extract.mock.calls[0]![0].prompt).toContain('改动是否需要发包');
+    expect(run.state.events.find((e) => e.edgeId === 'a-b')).toMatchObject({ ok: true });
+  });
+
+  it('回答 no → 拦下不投（stage=condition）；全拦下 run 落 done', async () => {
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => 'no',
+    });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond-no',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [condEdge('a', 'b', '需要发吗')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    expect(run.deliveries).toBe(1); // 只有 start 的首投计入
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
+    expect(run.state.events.find((e) => e.stage === 'condition')).toMatchObject({
+      ok: false,
+      edgeId: 'a-b',
+    });
+  });
+
+  it('回答不认 → 拦下并给原因', async () => {
+    const { engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => '我觉得应该发一下',
+    });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond-ambiguous',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [condEdge('a', 'b', '需要发吗')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    const event = run.state.events.find((e) => e.stage === 'condition');
+    expect(event?.error).toContain('could not be evaluated');
+  });
+
+  it('harness 没有上下文子 Agent 面 → 拦下并给原因', async () => {
+    const { engine } = setup({ supportsExtract: () => false });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond-unsupported',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [condEdge('a', 'b', '需要发吗')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain(
+      'no context sub-agent face',
+    );
+  });
+
+  it('parseConditionAnswer：中英首词认 yes/no，其余 null', () => {
+    expect(parseConditionAnswer('yes')).toBe(true);
+    expect(parseConditionAnswer('Yes.')).toBe(true);
+    expect(parseConditionAnswer('是')).toBe(true);
+    expect(parseConditionAnswer('对')).toBe(true);
+    expect(parseConditionAnswer('no')).toBe(false);
+    expect(parseConditionAnswer('否')).toBe(false);
+    expect(parseConditionAnswer('不需要')).toBe(false);
+    expect(parseConditionAnswer('maybe')).toBeNull();
+    expect(parseConditionAnswer('')).toBeNull();
+    expect(parseConditionAnswer(null)).toBeNull();
   });
 });
