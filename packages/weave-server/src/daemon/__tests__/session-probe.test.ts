@@ -65,6 +65,26 @@ describe('SessionProbe', () => {
     expect(probe.interruptedAt('s1', at)).toBeNull();
   });
 
+  it('codex 的 rollout turn_aborted 行同样算中断标记（两套格式各归各的 adapter）', () => {
+    const file = tmpFile();
+    const at = '2026-10-20T08:38:23.166Z';
+    writeFileSync(
+      file,
+      JSON.stringify({
+        timestamp: at,
+        ordinal: 10,
+        type: 'event_msg',
+        payload: { type: 'turn_aborted', reason: 'interrupted', duration_ms: 70_046 },
+      }) + '\n',
+    );
+    const probe = new SessionProbe();
+    probe.noteTranscript('s1', file);
+
+    const marker = Date.parse(at);
+    expect(probe.interruptedAt('s1', new Date(marker - 1000).toISOString())).toBe(marker);
+    expect(probe.interruptedAt('s1', new Date(marker + 1000).toISOString())).toBeNull();
+  });
+
   it('未知路径 / 没登记 / 无标记 / 坏时间一律 null（不猜）', () => {
     const file = tmpFile();
     writeFileSync(file, '{"type":"user","message":{"content":"hi"}}\n');

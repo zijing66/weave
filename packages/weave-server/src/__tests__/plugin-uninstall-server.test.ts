@@ -87,9 +87,14 @@ describe('daemon /plugins/uninstall route', () => {
     expect(uninstallCalls().some((a) => a.includes('ghost@weave'))).toBe(false);
   });
 
-  it('runtime 非 claude（codex 无 plugins 槽）→ 400', async () => {
+  it('runtime 非 claude（codex）走 registry 的 codex 面：未装幂等 200', async () => {
+    // codex 已接 plugins 槽（a49e145）；本测试只注入 claude 假面，codex 走
+    // registry 真面——HOME 隔离下缓存目录为空 → 幂等返回，不发 CLI（claude
+    // 假面的调用数不增长；codex 面的 `plugin remove` 走真 spawn，不计入）。
+    const before = uninstallCalls().length;
     const res = await post({ runtime: 'codex', key: 'demo@weave' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(uninstallCalls()).toHaveLength(before);
   });
 
   it('缺 key / 坏 JSON → 400', async () => {

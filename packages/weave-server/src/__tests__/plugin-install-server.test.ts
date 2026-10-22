@@ -154,7 +154,7 @@ describe('daemon POST /projects/:id/install (category: plugin)', () => {
     expect(execCalls.length).toBe(before);
   });
 
-  it('scope 非 user 拒绝（project/local 安装待拍板 7-6 后续开）；codex 无安装面拒绝', async () => {
+  it('scope 非 user 拒绝（project/local 安装待拍板 7-6 后续开）；codex 走 registry 真面（市场清单就地维护）', async () => {
     const project = await post(`/projects/${projectId}/install`, {
       category: 'plugin',
       name: 'pack-a',
@@ -162,6 +162,8 @@ describe('daemon POST /projects/:id/install (category: plugin)', () => {
       scope: 'project',
     });
     expect(project.status).toBe(400);
+    // codex 已接 plugins 槽（a49e145）：走 registry 真面，HOME 隔离下 CLI 不可达
+    // 也会先失败在 spawn——断言只看「不再 400 拒面」，成败由 codex 侧单测覆盖。
     const codex = await post(`/projects/${projectId}/install`, {
       category: 'plugin',
       name: 'pack-a',
@@ -169,7 +171,7 @@ describe('daemon POST /projects/:id/install (category: plugin)', () => {
       scope: 'user',
       agent: 'codex',
     });
-    expect(codex.status).toBe(400);
+    expect(codex.status).toBe(201);
   });
 
   it('非市场包走 weave 自建市场：键 name@weave、marketplace add 自建目录源', async () => {

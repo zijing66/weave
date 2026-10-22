@@ -38,9 +38,33 @@ export interface MermaidImage {
 }
 
 /**
- * 图源 → 可 `drawImage` 的位图（导出图片用）。画布吃不下百分比宽高的 SVG——
- * `<img>` 拿到的尺寸会是 0——故先把宽高改写为 viewBox 的实际值，再按可用宽度
- * 等比缩到目标尺寸。
+ * 画布吃得下的 SVG：百分比宽高的 SVG 塞进 `<img>` 会量到 0 尺寸，故把宽高改写成
+ * viewBox 的实际值。返回改写后的源码与实际尺寸。
+ */
+function sizedSvg(svg: string): { svg: string; w: number; h: number } {
+  const box = /viewBox="([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)"/.exec(svg);
+  const w = box ? Number(box[3]) : 640;
+  const h = box ? Number(box[4]) : 400;
+  const out = svg.replace(
+    /<svg([^>]*)>/,
+    (_tag, attrs: string) =>
+      `<svg${attrs.replace(/\swidth="[^"]*"/, '').replace(/\sheight="[^"]*"/, '')} width="${w}" height="${h}">`,
+  );
+  return { svg: out, w, h };
+}
+
+/** SVG 源码 → 同源 data: URL 的 `<img>`。
+ *  **不能用 `blob:`**：那种 SVG 画进 canvas 会让画布 taint，`toBlob` 直接拒绝导出。 */
+async function svgImage(svg: string): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await img.decode();
+  return img;
+}
+
+/**
+ * 图源 → 可 `drawImage` 的位图（导出图片用）。先按 viewBox 得到实际尺寸，再按可用
+ * 宽度/高度等比缩到目标尺寸。
  */
 export async function renderMermaidImage(
   code: string,
@@ -48,20 +72,48 @@ export async function renderMermaidImage(
   maxW: number,
   maxH = 480,
 ): Promise<MermaidImage> {
-  const svg = await renderMermaidSvg(code, theme);
-  const box = /viewBox="([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)"/.exec(svg);
-  const iw = box ? Number(box[3]) : 640;
-  const ih = box ? Number(box[4]) : 400;
-  const scale = Math.min(1, maxW / iw, maxH / ih);
-  const sized = svg.replace(
-    /<svg([^>]*)>/,
-    (_tag, attrs: string) =>
-      `<svg${attrs.replace(/\swidth="[^"]*"/, '').replace(/\sheight="[^"]*"/, '')} width="${iw}" height="${ih}">`,
-  );
-  // 必须用 data: URL：blob: 的 SVG 画进 canvas 会让画布 taint（实测 toBlob 直接
-  // 拒绝导出），data: 视为同源内联内容，画布保持可导出。
-  const img = new Image();
-  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sized)}`;
-  await img.decode();
-  return { img, w: Math.round(iw * scale), h: Math.round(ih * scale) };
+  const sized = sizedSvg(await renderMermaidSvg(code, theme));
+  const scale = Math.min(1, maxW / sized.w, maxH / sized.h);
+  const img = await svgImage(sized.svg);
+  return { img, w: Math.round(sized.w * scale), h: Math.round(sized.h * scale) };
+}
+
+/** 单块图的可下载文件（块头上的「下载」用，与导出图片共用同一套尺寸处理）。 */
+export function mermaidSvgFile(svg: string): Blob {
+  return new Blob([sizedSvg(svg).svg], { type: 'image/svg+xml;charset=utf-8' });
+}
+
+/** PNG 版：按 `scale` 倍（缺省 2×，够屏显与贴文档）画到画布再编码。 */
+export async function mermaidPngFile(svg: string, scale = 2): Promise<Blob> {
+  const sized = sizedSvg(svg);
+  const img = await svgImage(sized.svg);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(sized.w * scale);
+  canvas.height = Math.round(sized.h * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d context unavailable');
+  ctx.scale(scale, scale);
+  ctx.drawImage(img, 0, 0, sized.w, sized.h);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('image encoding failed');
+  return blob;
+}
+
+/** 触发浏览器下载（同源 blob，不出网）。 */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** 下载文件名：`weave-mermaid-<YYYYMMDD-HHmmss>.<ext>`。 */
+export function mermaidFileName(ext: 'svg' | 'png', at: Date = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  const ts =
+    `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}` +
+    `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
+  return `weave-mermaid-${ts}.${ext}`;
 }

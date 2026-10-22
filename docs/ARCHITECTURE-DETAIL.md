@@ -395,8 +395,9 @@ Web Push 细节：
 
 **面板另有**：
 
+- **输入框草稿刷新不丢**：按会话分键存 `sessionStorage`（`weave:draft:<sessionId>`），停手 250ms 写一次、发送清空即删键，重新打开面板/刷新页面原地还回来（含已落盘待发的图）。**存结构化快照、不存 HTML**——正文按「文本 + 换行」、引用胶囊按 `data-ref*` 四项还原，还原时用 `document.createElement` 重建节点（不吃不可信标记，也不怕类名/结构改版）；两个方向唯一实现 = `draftSnapshotOf` / `applyDraftSnapshot`。
 - **停止按钮**贴在发送键**左侧**（生成中的会话，停它就该在发话的地方；判据见 §7）。
-- **历史过滤**（全部 / 我发的 / 回复，纯函数 `filterThread`；「生成中…/压缩会话中…/已中断」尾标是会话级状态、两档下照显，过滤后为空给专门提示别用「还没有对话」）。
+- **历史过滤**（全部 / 我 / 宿主名（`claude`/`codex`）/ 其他会话，纯函数 `filterThread`：别的会话经中继投进来的 prompt 归「其他会话」、weave 直投仍算「我」——判据唯一实现 `isRemotePrompt`；「生成中…/压缩会话中…/已中断」尾标是会话级状态、各档下照显，过滤后为空给专门提示别用「还没有对话」）。
 - **多选导出**：桌面右键菜单、触屏双击开同一份菜单（菜单里那一项进多选），点气泡即勾选、底栏换成「已选 n 条 · 复制 · 分享图片 · 取消」，多选态里重发/删除不渲染以免抢点击。
   - **全选**范围 = **已加载的全部条目**，不随过滤变——过滤只管显示，勾选面不跟着收。
   - 复制走 `lib/clipboard.ts` 的 `copyText`、失败也 toast——HTTP 局域网无安全上下文正是它的用武之地。
@@ -508,7 +509,7 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 
 `POST /sessions/:id/interrupt` → `MessageDeliverer.interrupt`：经层② 终端 `TerminalBackend.sendKeys` 向 pane 打**一记** ESC（连打两记是 claude 的历史回退菜单；与开窗 preset 无关，层② 门控见 §4）。pane 定位同 `terminalPaneFor`（locator 优先 + 标题/cwd 回落）。
 
-**一记之后要自证，键送出去 ≠ 宿主停了**：路由打完键等一拍（`INTERRUPT_CONFIRM_WAIT_MS` = 1.2s）回读转录，回 `interrupted: true | false | null`（true = 出现比打键前更新的中断标记；false = 转录在、没有新标记；null = 判不了：没探针 / 转录路径未知 / 非 claude）。**false 时按标题+cwd 补打一记**（`interrupt(id, 'heuristic', <第一记的 pane>)`）——pane env 指着旧 pane（会话换过窗口）时第一记落进的是别人的输入行，宿主一声不响，而投递侧照样拿 exit 0（实机 2026-10-21：8c85b9c7 连按三次全 200、转录里一个标记都没有，同一分钟另一会话 0.5 秒即中断）。**补打落到同一个 pane 就不打**（`sent:false`，第二记会在 claude 里开出历史回退菜单）；web 依 `interrupted === false` 报错提示，不再拿「已送出停止」冒充「已停」。
+**一记之后要自证，键送出去 ≠ 宿主停了**：路由打完键等一拍（`INTERRUPT_CONFIRM_WAIT_MS` = 1.2s）回读转录，回 `interrupted: true | false | null`（true = 出现比打键前更新的中断标记；false = 转录在、没有新标记；null = 判不了：没探针 / 转录路径未知）。**false 时按标题+cwd 补打一记**（`interrupt(id, 'heuristic', <第一记的 pane>)`）——pane env 指着旧 pane（会话换过窗口）时第一记落进的是别人的输入行，宿主一声不响，而投递侧照样拿 exit 0（实机 2026-10-21：8c85b9c7 连按三次全 200、转录里一个标记都没有，同一分钟另一会话 0.5 秒即中断）。**补打落到同一个 pane 就不打**（`sent:false`，第二记会在 claude 里开出历史回退菜单）；web 依 `interrupted === false` 报错提示，不再拿「已送出停止」冒充「已停」。
 
 **locator 覆盖度 = 那条通道的覆盖度**：项目侧 `.claude/helpers/hook-handler.cjs` 若是加 locator 之前生成的（脚本里没有 `terminal` 字段）就永不落 `paneEnvs`，只剩标题等值回落，而 `--resume` 起的会话 TUI 标题回 claude 默认、无题会话（`title` null）直接判无 → 这类会话一律 409「Session pane not found」。跨项目一次性覆盖靠 user 档采集（`PUT /capture`），或对该项目重跑 `weave init`。
 
@@ -525,7 +526,7 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 
 hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发），故打断之后 `turnOpen` 一直开着、会话永远卡「生成中」——真相只在转录里（claude 补一条 user 消息 `[Request interrupted by user]`，工具调用进行中被中断是 `… for tool use`）。
 
-- 解析唯一实现 = `weave-harness/src/claude/transcript.ts` 的 `interruptMarkerAt`（server 只读不解析格式）。
+- 解析按 harness 各归各的 adapter（server 只读不解析格式）：claude = `weave-harness/src/claude/transcript.ts` 的 `interruptMarkerAt`（转录 user 条目 `[Request interrupted by user`）；codex = `weave-harness/src/codex/transcript.ts` 的 `codexInterruptMarkerAt`（rollout 的 `event_msg`/`turn_aborted` 行，实测 0.163）。两套标记**互不相交**（对方的标记串不会出现在自己的转录里），`SessionProbe.factsOf` 两个都跑取更新者——probe 不必知道会话是哪个 harness（调用方也没传）。
 - `transcriptPath` 由 hook 事件旁路带来、存 `daemon/session-probe.ts` 的 `SessionProbe`（**只放内存**，与 paneEnv / inbox 凭据同口径：不落库、daemon 重启即清零、靠下一次 hook 事件补回；尾读 64KB 并按文件大小缓存；删会话随 `purgeSession` 的 `probe` 清）。
 - 判据 = 标记**晚于** `sessions.last_seen_at`（自愈——之后任何事件都盖过它）。
 - `GET /sessions` 只对 `turnOpen === true` 的行带 `interruptedAt`，另有 5s 的 `interruptRefresher`（同 `SnapshotRefresher`，key `sessionInterrupt`）把新标记推给 web。

@@ -257,8 +257,10 @@ const FLUSH_GAP_MS = 1_000;
 
 /** 终态驻留窗口与未回执闸的缺省时长（见 deps 同名注入位）。 */
 const VISIBLE_TTL_MS = 60_000;
-const ACK_STALL_MS = 120_000;
-const ACK_STALL_RELEASE_MS = 10 * 60_000;
+/** UPS 回执是宿主提交后即时产生的：半分钟等不到就不是「慢」而是「没进去」。 */
+const ACK_STALL_MS = 30_000;
+/** 闸到点自动解除——排队的消息等不起十分钟；用户也随时能手动清掉成因行。 */
+const ACK_STALL_RELEASE_MS = 90_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;

@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import {
   bareModelName,
+  codexInterruptMarkerAt,
   currentEffortAt,
   currentModelAt,
   currentModeAt,
@@ -107,6 +108,19 @@ interface TailFacts {
   model: string | null;
   mode: string | null;
   effort: string | null;
+}
+
+/**
+ * 中断标记两套格式各归各的 adapter（claude = 转录 user 条目、codex = rollout
+ * `turn_aborted` 行），且互不相交——对方的标记串不会出现在自己的转录里。故
+ * 两个都跑、取更新者：probe 不必知道会话是哪个 harness（调用方也没传）。
+ */
+function interruptMarkerOf(tail: string): number | null {
+  const claude = interruptMarkerAt(tail);
+  const codex = codexInterruptMarkerAt(tail);
+  if (claude === null) return codex;
+  if (codex === null) return claude;
+  return Math.max(claude, codex);
 }
 
 export class SessionProbe {
@@ -322,7 +336,7 @@ export class SessionProbe {
     const tail = readTail(path);
     const facts: TailFacts = {
       size,
-      markerAt: tail === null ? null : interruptMarkerAt(tail),
+      markerAt: tail === null ? null : interruptMarkerOf(tail),
       model: tail === null ? null : currentModelAt(tail),
       mode: tail === null ? null : currentModeAt(tail),
       effort: tail === null ? null : currentEffortAt(tail),

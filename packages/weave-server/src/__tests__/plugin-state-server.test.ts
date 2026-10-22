@@ -113,14 +113,18 @@ describe('daemon /projects/:id/plugins/state', () => {
     expect(settings.enabledPlugins['b@weave']).toBeUndefined();
   });
 
-  it('PUT codex（仅启用面）：user on/off 可写，inherit / 非 user 档 400', async () => {
+  it('PUT codex（plugins 槽已接）：user on/inherit 可写，非 user 档 400', async () => {
     const on = await put({ runtime: 'codex', key: 'cx@weave', scope: 'user', state: 'on' });
     expect(on.status).toBe(200);
     const toml = await readFile(join(fakeHome, '.codex', 'config.toml'), 'utf8');
     expect(toml).toContain('[plugins."cx@weave"]');
 
+    // inherit = 删该档键（codex 只有 user 档，删键 = 未启用）
     const inherit = await put({ runtime: 'codex', key: 'cx@weave', scope: 'user', state: 'inherit' });
-    expect(inherit.status).toBe(400);
+    expect(inherit.status).toBe(200);
+    const after = await readFile(join(fakeHome, '.codex', 'config.toml'), 'utf8');
+    expect(after).not.toContain('[plugins."cx@weave"]');
+
     const projectScope = await put({ runtime: 'codex', key: 'cx@weave', scope: 'project', state: 'on' });
     expect(projectScope.status).toBe(400);
   });

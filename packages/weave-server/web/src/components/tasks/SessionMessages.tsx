@@ -98,6 +98,9 @@ export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
 const CLAIM_MS = 10 * 60_000;
 
+/** 草稿写盘的抖动量：逐键写 sessionStorage 没必要，停手一小拍再写。 */
+const DRAFT_SAVE_MS = 250;
+
 /** 「切换中」最多挂这么久：宿主下一拍事件就回报新模式，一直没事件（会话闲着）就
  *  回落「最后已知」——一个永久的「切换中」比旧值更像卡死。 */
 const MODE_PENDING_MS = 60_000;
@@ -375,13 +378,14 @@ export function attachDeliveries(
 /** 能不能从队列里移除。**在飞的 delivering 也能删**——投递卡住时它就是队头，压着
  *  后面每一条都发不出去，不给动手就永远解不开（删除会连泵闸一起解除，服务端那条
  *  落定回调发现行没了即收手）。running 删不掉：编排域的一条真实子进程，删行只是把
- *  活着的进程藏起来。**已发出（delivered）删不掉**——会话那边已经收到了，只是 hook
- *  还没到（气泡随后就来），删掉等于假装撤回一条已经进了对话的消息。**例外 = 它正是
- *  暂停闸的成因**：闸没有可操作的成因行就永远开不了，而这一条又等不来回执（多半
- *  压根没进去），留着只是化石——用户得能亲手把它清出去。 */
+ *  活着的进程藏起来。**已发出且拿到回执（delivered + acked）删不掉**——会话那边
+ *  已经收到了、气泡随后就来，删掉等于假装撤回一条已经进了对话的消息。**没回执的
+ *  已发出行能删**：它正是压着整队的成因行，等到闸超时才有按钮等于把人锁住，而这一
+ *  条多半压根没进去，留着只是化石。 */
 export function removableOf(m: SessionMessageRow): boolean {
   if (m.status === 'running') return false;
-  return m.status !== 'delivered' || m.stalled === true;
+  if (m.status === 'delivered') return m.acked !== true;
+  return true;
 }
 
 /** 历史过滤：全部 / 我 / 宿主回复 / 其他会话投递（角色 + 来源即过滤键）。 */
@@ -461,6 +465,113 @@ export function serializeDraft(root: Node | null): string {
   root.childNodes.forEach(walk);
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
+}
+
+/** 输入框草稿的快照（按会话分键存 sessionStorage：刷新/重开面板都还回来）。
+ *  **存结构化条目、不存 HTML**：胶囊按 data-* 还原，正文按文本 + 换行还原，
+ *  这样既不用 innerHTML 吃不可信标记，也不怕类名/结构将来改。 */
+export interface DraftSnapshot {
+  parts: Array<
+    | { t: string }
+    | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
+  >;
+  /** 已落盘、还没发出去的图（同一条草稿的附件）。 */
+  staged: UploadImage[];
+}
+
+const DRAFT_KEY = (sessionId: string): string => `weave:draft:${sessionId}`;
+
+/** 输入框 DOM → 快照；空草稿（没字也没图）返回 null（调用方据此删键）。 */
+export function draftSnapshotOf(
+  root: HTMLElement | null,
+  staged: readonly UploadImage[],
+): DraftSnapshot | null {
+  if (!root) return null;
+  const parts: DraftSnapshot['parts'] = [];
+  let text = '';
+  const flush = (): void => {
+    if (text !== '') {
+      parts.push({ t: text });
+      text = '';
+    }
+  };
+  const walk = (node: Node): void => {
+    if (node.nodeType === TEXT_NODE) {
+      text += node.nodeValue ?? '';
+      return;
+    }
+    if (node.nodeType !== ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const ref = el.getAttribute(REF_ATTR);
+    if (ref != null) {
+      flush();
+      const [start, end] = (el.getAttribute(REF_LINES_ATTR) ?? '').split('-').map(Number);
+      parts.push({
+        r: ref,
+        path: el.getAttribute(REF_PATH_ATTR) ?? '',
+        kind: el.getAttribute(REF_KIND_ATTR) === 'dir' ? 'dir' : 'file',
+        ...(Number.isFinite(start) && Number.isFinite(end)
+          ? { lines: { start: start!, end: end! } }
+          : {}),
+      });
+      return;
+    }
+    if (el.tagName === 'BR') {
+      text += '\n';
+      return;
+    }
+    node.childNodes.forEach(walk);
+  };
+  root.childNodes.forEach(walk);
+  flush();
+  return parts.length > 0 || staged.length > 0 ? { parts, staged: [...staged] } : null;
+}
+
+/** 快照 → 输入框 DOM（全部新建节点；胶囊的 DOM 形状归调用方传进来的 `buildChip`）。 */
+export function applyDraftSnapshot(
+  root: HTMLElement,
+  snap: DraftSnapshot,
+  buildChip: (ref: string, target: PickTarget) => HTMLElement,
+): void {
+  root.replaceChildren();
+  for (const part of snap.parts) {
+    if ('r' in part) {
+      const target: PickTarget = {
+        path: part.path,
+        kind: part.kind,
+        ...(part.lines ? { lines: part.lines } : {}),
+      };
+      root.appendChild(buildChip(part.r, target));
+      continue;
+    }
+    // 输入框里的换行是 `<br>`（serializeDraft 同口径），逐行还原
+    part.t.split('\n').forEach((line, i) => {
+      if (i > 0) root.appendChild(document.createElement('br'));
+      if (line !== '') root.appendChild(document.createTextNode(line));
+    });
+  }
+}
+
+function readDraftSnapshot(sessionId: string): DraftSnapshot | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY(sessionId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DraftSnapshot>;
+    return Array.isArray(parsed.parts) && Array.isArray(parsed.staged)
+      ? { parts: parsed.parts as DraftSnapshot['parts'], staged: parsed.staged }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraftSnapshot(sessionId: string, snap: DraftSnapshot | null): void {
+  try {
+    if (snap) sessionStorage.setItem(DRAFT_KEY(sessionId), JSON.stringify(snap));
+    else sessionStorage.removeItem(DRAFT_KEY(sessionId));
+  } catch {
+    // 隐私模式写不进去：本次会话内照常，刷新后丢草稿，不影响别的
+  }
 }
 
 /** 敲下 `@` 之后该怎么处理（纯函数，DOM 那边只负责把「光标之前那截」喂进来）：
@@ -1588,6 +1699,29 @@ export function SessionMessages({
     chip.title = ref; // 长路径被截断时，悬停还看得见全文
     return chip;
   };
+
+  /** 刷新后把没发出去的草稿还回来（每个会话只还一次；键按会话分，多扇对话互不覆盖）。 */
+  const draftRestored = useRef<string | null>(null);
+  useEffect(() => {
+    if (draftRestored.current === sessionId) return;
+    draftRestored.current = sessionId;
+    const el = draftRef.current;
+    const snap = readDraftSnapshot(sessionId);
+    if (!el || !snap) return;
+    applyDraftSnapshot(el, snap, buildChip);
+    setDraft(serializeDraft(el));
+    if (snap.staged.length > 0) setStaged(snap.staged);
+    // buildChip 每次渲染都是新函数，不进门依赖（restored 闸已保证只跑一次）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  /** 草稿落 sessionStorage：输入/插图后延一小拍写成（逐键写盘没必要）。发送清空即删键。 */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      writeDraftSnapshot(sessionId, draftSnapshotOf(draftRef.current, staged));
+    }, DRAFT_SAVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, staged, sessionId]);
 
   /** 落定一批引用：在改既有胶囊就就地换掉（位置不动、只换一枚），否则在光标处
    *  依次插入，每枚后面补一个空格——接着打字才不粘在胶囊上。 */

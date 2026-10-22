@@ -330,13 +330,15 @@ describe('removableOf（队列里的行能不能删）', () => {
     expect(removableOf(delivery({ status: 'running' }))).toBe(false);
   });
 
-  it('③ 已发出（delivered）不删——会话已经收到了，只是 hook 还没到', () => {
-    expect(removableOf(delivery({ status: 'delivered' }))).toBe(false);
+  it('③ 已发出且拿到回执（delivered + acked）不删——会话确实收到了，只是气泡还没到', () => {
+    expect(removableOf(delivery({ status: 'delivered', acked: true }))).toBe(false);
   });
 
-  it('④ 暂停闸的成因行都能删：没送出去的、以及已发出却等不来回执的那条（闸没有成因行就开不了）', () => {
+  it('④ 暂停闸的成因行都能删：没送出去的、已发出却没回执的（它就是压住整队的队头，等超时才给按钮等于锁住用户）', () => {
     expect(removableOf(delivery({ status: 'failed', stalled: true }))).toBe(true);
     expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
+    expect(removableOf(delivery({ status: 'delivered', acked: null }))).toBe(true);
+    expect(removableOf(delivery({ status: 'delivered', acked: false }))).toBe(true);
   });
 });
 

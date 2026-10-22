@@ -7,7 +7,13 @@ import {
 } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import { useTheme } from '@/lib/theme';
-import { renderMermaidSvg } from '@/lib/mermaid';
+import {
+  mermaidFileName,
+  mermaidPngFile,
+  mermaidSvgFile,
+  renderMermaidSvg,
+  saveBlob,
+} from '@/lib/mermaid';
 
 /**
  * ```mermaid 围栏的图渲染（加载器与消毒口径都在 `lib/mermaid`，导出图片共用同一份）。
@@ -19,6 +25,8 @@ export function MermaidBlock({ code }: { code: string }) {
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState(false);
+  /** 下载在途（PNG 要画布编码）：防连点，也防下载中点 source 切换。 */
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -36,6 +44,20 @@ export function MermaidBlock({ code }: { code: string }) {
     };
   }, [code, theme]);
 
+  /** 下载：SVG 原样、PNG 走画布 2×；编码失败沿用块内的错误位（不弹窗）。 */
+  const download = (ext: 'svg' | 'png'): void => {
+    if (!svg || saving) return;
+    setSaving(true);
+    const job =
+      ext === 'svg'
+        ? Promise.resolve(mermaidSvgFile(svg))
+        : mermaidPngFile(svg);
+    void job
+      .then((blob) => saveBlob(blob, mermaidFileName(ext)))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setSaving(false));
+  };
+
   return (
     <div className="my-1.5 overflow-hidden rounded border border-edge/[0.08] bg-neutral-950/40">
       <div className="flex items-center gap-2 border-b border-edge/[0.06] px-2 py-1">
@@ -45,13 +67,27 @@ export function MermaidBlock({ code }: { code: string }) {
             {t('common.mermaidFailed')}
           </span>
         )}
-        <button
-          type="button"
-          onClick={() => setSource((v) => !v)}
-          className="ml-auto shrink-0 rounded border border-edge/[0.1] px-1.5 py-px text-[10px] text-neutral-400 hover:text-neutral-200"
-        >
-          {source ? t('common.mermaidShowChart') : t('common.mermaidShowSource')}
-        </button>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {(['svg', 'png'] as const).map((ext) => (
+            <button
+              key={ext}
+              type="button"
+              title={ext === 'svg' ? t('common.mermaidDownloadSvg') : t('common.mermaidDownloadPng')}
+              disabled={!svg || saving}
+              onClick={() => download(ext)}
+              className="rounded border border-edge/[0.1] px-1.5 py-px text-[10px] uppercase text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+            >
+              {ext}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setSource((v) => !v)}
+            className="rounded border border-edge/[0.1] px-1.5 py-px text-[10px] text-neutral-400 hover:text-neutral-200"
+          >
+            {source ? t('common.mermaidShowChart') : t('common.mermaidShowSource')}
+          </button>
+        </div>
       </div>
       {source || (error && !svg) ? (
         <pre className="m-0 max-w-full overflow-x-auto p-2 text-[11px] text-neutral-300">{code}</pre>
