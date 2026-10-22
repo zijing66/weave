@@ -225,6 +225,18 @@ describe('orchestration definitions', () => {
     await adminFetch(`/messaging/orchestrations/${created.id}`, { method: 'DELETE' });
   });
 
+  it('创建时 enabled:false 生效——默认启用的编排会在入口会话每个自然回合自动触发', async () => {
+    const res = await adminFetch(
+      '/messaging/orchestrations',
+      json('POST', graphBody({ name: 'paused', enabled: false })),
+    );
+    expect(res.status).toBe(201);
+    const { orchestration } = await res.json();
+    expect(orchestration).toMatchObject({ name: 'paused', enabled: false });
+    // 本文件后面的用例按项目数断言，清掉这一条
+    await adminFetch(`/messaging/orchestrations/${orchestration.id}`, { method: 'DELETE' });
+  });
+
   it('创建返回定义（enabled 缺省 true），列表可按项目过滤', async () => {
     const res = await adminFetch('/messaging/orchestrations', json('POST', graphBody()));
     expect(res.status).toBe(201);

@@ -1852,7 +1852,11 @@ export async function handleHooksRoutes(
       }
       sendJson(res, 201, {
         ok: true,
-        orchestration: withNextRun(deps.orchestrations.insert(resolved.value)),
+        // enabled 不在 resolve 的字段里（insert 默认启用）：建「默认停用」的编排
+        // 必须透传，否则入口会话的下一个自然回合就会自动触发
+        orchestration: withNextRun(
+          deps.orchestrations.insert({ ...resolved.value, enabled: body.enabled }),
+        ),
       });
       return true;
     }
