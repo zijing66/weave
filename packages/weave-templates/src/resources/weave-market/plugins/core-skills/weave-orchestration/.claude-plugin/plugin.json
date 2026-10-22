@@ -1,0 +1,8 @@
+{
+  "name": "weave-orchestration",
+  "version": "0.1.0",
+  "description": "Weave orchestration via MCP: list/get/create/update/delete/trigger/runs — workflow, argument shapes, response formats and pitfalls",
+  "author": {
+    "name": "weave"
+  }
+}

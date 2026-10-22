@@ -28,6 +28,12 @@
       "description": "Mission control: session/turn tool-call counters in a Pane, an AbovePrompt band and a status entry",
       "version": "0.1.0",
       "source": "./plugins/session-mods/mission-control"
+    },
+    {
+      "name": "weave-orchestration",
+      "description": "Weave orchestration via MCP: list/get/create/update/delete/trigger/runs — workflow, argument shapes, response formats and pitfalls",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/weave-orchestration"
     }
   ]
 }

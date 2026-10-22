@@ -85,30 +85,39 @@ const edgeSchema = {
   },
 } as const;
 
+/** 每个工具都带 outputSchema：宿主据此校验/展示返回，不用等模型猜形状。 */
+const ORCH_REF = { type: 'object', additionalProperties: true } as const;
+const RUN_REF = { type: 'object', additionalProperties: true } as const;
+
 const TOOLS = [
   {
     name: 'list_orchestrations',
-    description: 'List orchestrations (optionally filtered by project).',
-    inputSchema: {
+    description:
+      'List orchestrations (optionally by project). Returns { orchestrations: OrchestrationRow[] }; each row has id/name/projectId/startText/nodes/edges/enabled/cron/nextRunAt.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'number' } } },
+    outputSchema: {
       type: 'object',
-      properties: { projectId: { type: 'number' } },
+      properties: { orchestrations: { type: 'array', items: ORCH_REF } },
+      required: ['orchestrations'],
     },
   },
   {
     name: 'get_orchestration',
-    description: 'Get one orchestration definition (nodes, edges, startText, cron, enabled).',
+    description:
+      'Get one orchestration definition (nodes, edges, startText, cron, enabled). Returns { orchestration }.',
     inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'number' } } },
+    outputSchema: { type: 'object', properties: { orchestration: ORCH_REF }, required: ['orchestration'] },
   },
   {
     name: 'create_orchestration',
     description:
-      'Create an orchestration. Pass enabled:false to keep it manual-only (enabled means the entry session auto-fires every natural turn).',
+      'Create an orchestration. enabled defaults to true, which makes the entry session auto-fire the graph on EVERY natural turn — pass enabled:false when the run should be triggered manually. Edges support {upstream}/{summary}/{session}; a cycle is rejected. Returns { ok, orchestration }.',
     inputSchema: {
       type: 'object',
       required: ['name', 'nodes', 'edges'],
       properties: {
         name: { type: 'string' },
-        startText: { type: 'string' },
+        startText: { type: 'string', description: 'first message for session entries (manual trigger)' },
         projectId: { type: 'number', description: 'webhook-only orchestrations' },
         nodes: { type: 'array', items: nodeSchema },
         edges: { type: 'array', items: edgeSchema },
@@ -116,10 +125,16 @@ const TOOLS = [
         enabled: { type: 'boolean' },
       },
     },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, orchestration: ORCH_REF },
+      required: ['ok', 'orchestration'],
+    },
   },
   {
     name: 'update_orchestration',
-    description: 'Update part of an orchestration (omit fields to keep them).',
+    description:
+      'Update part of an orchestration (omit fields to keep them; changing the graph does not affect a run already in flight). Returns { ok, orchestration }.',
     inputSchema: {
       type: 'object',
       required: ['id'],
@@ -133,15 +148,27 @@ const TOOLS = [
         enabled: { type: 'boolean' },
       },
     },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, orchestration: ORCH_REF },
+      required: ['ok', 'orchestration'],
+    },
   },
   {
     name: 'delete_orchestration',
-    description: 'Delete an orchestration definition (run history is kept).',
+    description:
+      'Delete a definition. Run history (orchestration_runs) is kept. Returns { ok, orchestrationId }.',
     inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'number' } } },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, orchestrationId: { type: 'number' } },
+      required: ['ok', 'orchestrationId'],
+    },
   },
   {
     name: 'trigger_orchestration',
-    description: 'Start a run. Optional text overrides startText; entries restricts entry nodes.',
+    description:
+      'Start a run. Manual trigger works even when enabled=false. Optional text overrides startText; entries restricts which entry nodes run. Dead target sessions are opened automatically, and delivery waits for their SessionStart. Returns { ok, runId }.',
     inputSchema: {
       type: 'object',
       required: ['id'],
@@ -151,10 +178,16 @@ const TOOLS = [
         entries: { type: 'array', items: { type: 'string' } },
       },
     },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, runId: { type: 'number' } },
+      required: ['ok', 'runId'],
+    },
   },
   {
     name: 'list_runs',
-    description: 'List orchestration runs (newest first).',
+    description:
+      'List runs, newest first. Returns { runs: RunSummary[], nextBefore }. RunSummary has id/orchestrationId/name/status/deliveries/pendingCounts/createdAt.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -165,23 +198,41 @@ const TOOLS = [
         before: { type: 'number' },
       },
     },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        runs: { type: 'array', items: RUN_REF },
+        nextBefore: { type: ['number', 'null'] },
+      },
+      required: ['runs'],
+    },
   },
   {
     name: 'get_run',
-    description: 'Get a run with its delivery/ensure events and pending counts.',
+    description:
+      'Get a run with state.events (deliveries and stage:"ensure" opens) and state.pending per session. Returns { run }. status becomes interrupted when the daemon restarts (runs are not resumed).',
     inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'number' } } },
+    outputSchema: { type: 'object', properties: { run: RUN_REF }, required: ['run'] },
   },
   {
     name: 'cancel_run',
-    description: 'Cancel a running run.',
+    description: 'Cancel a running run. Returns { ok, runId }.',
     inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'number' } } },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, runId: { type: 'number' } },
+      required: ['ok', 'runId'],
+    },
   },
   {
     name: 'list_sessions',
-    description: 'List sessions (id, project, harness, title, liveness) for picking graph nodes.',
-    inputSchema: {
+    description:
+      'List sessions for picking graph nodes; minimal fields only (sessionId/projectId/title/harness/lastSeenAt/turnOpen/pidAlive). Returns { sessions }.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'number' } } },
+    outputSchema: {
       type: 'object',
-      properties: { projectId: { type: 'number' } },
+      properties: { sessions: { type: 'array', items: { type: 'object', additionalProperties: true } } },
+      required: ['sessions'],
     },
   },
 ] as const;
@@ -194,8 +245,18 @@ async function callTool(ctx: McpHttpContext, name: string, args: Args): Promise<
   switch (name) {
     case 'list_orchestrations':
       return api(ctx, 'GET', `/messaging/orchestrations${qs({ projectId: num(args.projectId) })}`);
-    case 'get_orchestration':
-      return api(ctx, 'GET', `/messaging/orchestrations/${num(args.id)}`);
+    case 'get_orchestration': {
+      // 服务端没有单条 GET（只有列表）：按 id 过滤，找不到明确报错，
+      // 绝不让 SPA 的 HTML 兜底页冒充编排定义。
+      const all = await api<{ orchestrations: Array<{ id: number }> }>(
+        ctx,
+        'GET',
+        '/messaging/orchestrations',
+      );
+      const found = all.orchestrations.find((o) => o.id === num(args.id));
+      if (!found) throw new Error(`Orchestration not found: ${String(args.id)}`);
+      return { orchestration: found };
+    }
     case 'create_orchestration':
       return api(ctx, 'POST', '/messaging/orchestrations', {
         name: args.name,
@@ -274,7 +335,11 @@ function buildServer(ctx: McpHttpContext): Server {
     const { name, arguments: args } = request.params;
     try {
       const result = await callTool(ctx, name, (args ?? {}) as Args);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      // text 留给老客户端；structuredContent 给声明了 outputSchema 的宿主
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        structuredContent: result as Record<string, unknown>,
+      };
     } catch (error) {
       return {
         isError: true,

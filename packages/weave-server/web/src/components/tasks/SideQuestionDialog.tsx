@@ -13,7 +13,7 @@ import {
   MessageCircleQuestion,
   X,
 } from 'lucide-react';
-import { AssistantMarkdown } from '@/components/AiAssistant';
+import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api, type SideQuestionRow } from '@/lib/api';

@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Combobox } from '@/components/ui/combobox';
 import { EnumSlider } from '@/components/ui/enum-slider';
-import { AssistantMarkdown } from '@/components/AiAssistant';
+import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';

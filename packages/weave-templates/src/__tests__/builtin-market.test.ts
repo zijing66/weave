@@ -78,14 +78,44 @@ describe('内置仓结构（resources/weave-market）', () => {
     expect(agentFiles.length).toBeGreaterThan(0);
     for (const file of agentFiles) {
       const text = await readFile(file, 'utf8');
-      const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
-      expect(m, `${file} 缺 frontmatter`).toBeTruthy();
-      const fm = m![1];
+      // 不写正则（避免转义坑）：去掉 CR 后按 --- 行切 frontmatter
+      const normalized = text.split(String.fromCharCode(13)).join('');
+      const closed = normalized.indexOf('\n---\n');
+      const fm = normalized.startsWith('---\n') && closed > 0 ? normalized.slice(4, closed) : null;
+      expect(fm, `${file} 缺 frontmatter`).toBeTruthy();
       expect(fm, `${file} frontmatter 缺 name`).toMatch(/^name:\s*\S+/m);
       expect(fm, `${file} frontmatter 缺 description`).toMatch(/^description:\s*\S+/m);
     }
   });
 
+
+  it('仓内所有 skills/*/SKILL.md 都带 name+description frontmatter（与外部 skills 仓同格式）', async () => {
+    const skillFiles: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(abs);
+        else if (
+          entry.isFile() &&
+          entry.name === 'SKILL.md' &&
+          path.basename(path.dirname(abs)) !== '' &&
+          dir.endsWith(`${path.sep}skills${path.sep}${path.basename(path.dirname(abs))}`)
+        )
+          skillFiles.push(abs);
+      }
+    };
+    await walk(path.join(REPO, 'plugins'));
+    expect(skillFiles.length).toBeGreaterThan(0);
+    for (const file of skillFiles) {
+      const text = await readFile(file, 'utf8');
+      // 不写正则（避免转义坑）：去掉 CR 后按 --- 行切 frontmatter
+      const normalized = text.split(String.fromCharCode(13)).join('');
+      const fm = normalized.startsWith('---\n') ? normalized.slice(4, normalized.indexOf('\n---\n')) : null;
+      expect(fm, `${file} 缺 frontmatter`).toBeTruthy();
+      expect(fm!, `${file} frontmatter 缺 name`).toMatch(/^name:\s*\S+/m);
+      expect(fm!, `${file} frontmatter 缺 description`).toMatch(/^description:\s*\S+/m);
+    }
+  });
   it('清单与 plugins/ 下的 CC 包双向一致', async () => {
     const manifest = JSON.parse(
       await readFile(path.join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'),
