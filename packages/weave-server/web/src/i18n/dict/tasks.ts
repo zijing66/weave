@@ -348,11 +348,15 @@ export const tasksZh = {
   'orch.summary': '{nodes} 节点 · {edges} 连线',
   'orch.cronBadge': '定时 {expr}',
 
-  // 总览（默认不选编排：所有编排各一块，只读）
+  // 总览（默认不选编排：所有编排合并成一张图，只读；编辑入口在首节点卡片上）
   'orch.overviewAll': '全部编排',
+  'orch.filterOrch': '筛选编排',
   'orch.overviewHint':
-    '总览：点节点或编排名进入那份编排；运行中的编排，待回节点带呼吸辉光、触发连线有流光',
-  'orch.overviewOpen': '进入这份编排',
+    '总览：所有编排合并成一张图（同一会话只摆一个节点）；点首节点卡片编辑该编排或新建；运行中待回节点带呼吸辉光、触发连线有流光',
+  'orch.newFromEntry': '以此会话为入口新建编排',
+  'orch.edgeTextEmpty': '（空正文）',
+  'orch.edgeInfoHint': '只读：这条线在各份编排里的正文；改正文请从首节点卡片进入那份编排',
+  'orch.edgePendingHint': '虚线 = 未保存（琥珀）或无效（红）的连线',
 
   // 编排定义编辑器
   'orch.nameLabel': '名称',
@@ -825,11 +829,16 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'orch.summary': '{nodes} nodes · {edges} edges',
   'orch.cronBadge': 'Cron {expr}',
 
-  // Overview (nothing selected by default: every orchestration gets a read-only block)
+  // Overview (nothing selected by default: all orchestrations merged into one read-only graph)
   'orch.overviewAll': 'All orchestrations',
+  'orch.filterOrch': 'Filter orchestrations',
   'orch.overviewHint':
-    'Overview — click a node or an orchestration name to open it; while a run is active, nodes with pending deliveries glow and triggered edges carry a travelling light',
-  'orch.overviewOpen': 'Open this orchestration',
+    'Overview — every orchestration merged into one graph (a session appears once); click an entry node’s card to edit its orchestration or create a new one; while a run is active, nodes with pending deliveries glow and triggered edges carry a travelling light',
+  'orch.newFromEntry': 'New orchestration starting here',
+  'orch.edgeTextEmpty': '(empty text)',
+  'orch.edgeInfoHint':
+    'Read-only — this link’s text in each orchestration; to edit, open that orchestration from its entry node’s card',
+  'orch.edgePendingHint': 'Dashed = unsaved (amber) or invalid (red) links',
 
   // Definition editor
   'orch.nameLabel': 'Name',

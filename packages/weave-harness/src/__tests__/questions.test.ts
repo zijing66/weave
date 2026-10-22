@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CLAUDE_BLOCKING_PROMPT } from '../claude/questions.js';
+import { CLAUDE_BLOCKING_PROMPT, planApprovalOptions } from '../claude/questions.js';
 
 /**
  * claude 阻塞问答面契约（实机 claude 2.1.296 定标）：键序按原子下发、多选数字
@@ -61,14 +61,26 @@ describe('claude 阻塞问答面', () => {
     expect(twoSingle.map((q) => q.submit === true)).toEqual([false, false, true]);
   });
 
-  it('计划确认两行（1 = 批准并切默认模式 / 2 = 拒绝）、不追加 Submit 步', () => {
-    const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});
-    expect(plan).toHaveLength(1);
-    expect(plan[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
-    expect(plan[0]!.options.map((o) => o.label)).toEqual([
+  it('计划确认面随默认权限模式变：default 两行、bypassPermissions 三行', () => {
+    expect(planApprovalOptions('default').map((o) => o.keys)).toEqual([['1'], ['2']]);
+    expect(planApprovalOptions(null).map((o) => o.label)).toEqual([
       'Yes, and switch to default (ask each time) for this session',
       'No',
     ]);
+    // bypassPermissions（实测原文）：1 = 切 bypass 批准、2 = 批准但每次手动确认、3 = 拒绝并说明
+    const bypass = planApprovalOptions('bypassPermissions');
+    expect(bypass.map((o) => o.keys)).toEqual([['1'], ['2'], ['3']]);
+    expect(bypass[0]!.label).toBe(
+      'Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session',
+    );
+    expect(bypass[1]!.label).toBe('Yes, manually approve edits');
+    expect(bypass[2]!.label).toBe('Tell Claude what to change');
+
+    // 接线：ExitPlanMode 那一面永远只有一条问题，行数取自本机默认模式
+    const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});
+    expect(plan).toHaveLength(1);
+    expect(plan[0]!.key).toBe('ExitPlanMode:approve');
+    expect([2, 3]).toContain(plan[0]!.options.length);
     const perm = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
       toolName: 'Bash',
       toolInput: {},

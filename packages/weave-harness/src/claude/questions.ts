@@ -1,6 +1,7 @@
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } from '../driver.js';
 import { CLAUDE_PLAN } from './plan.js';
+import { defaultPermissionModeOf } from './model-aliases.js';
 
 /**
  * 阻塞式交互问答（AskUserQuestion / 计划确认 / 权限确认）的 claude 规格：
@@ -10,7 +11,7 @@ import { CLAUDE_PLAN } from './plan.js';
  *   （`questions[].question/header/options[].label+description/multiSelect`），
  *   `PostToolUse(AskUserQuestion)` 带 answers（阻塞解除）；
  * - `ExitPlanMode` 的 Pre toolInput 恒空、Post 的 toolResponse 带 plan filePath——
- *   问题面是合成的（宿主 UI 固定两选项，见 `PLAN_QUESTION`）；
+ *   问题面是合成的（行数随会话默认权限模式变，见 `planApprovalOptions`）；
  * - `Notification` 的 `raw.notification_type = permission_prompt` = 权限对话框
  *   （不带工具面，由 tracker 补最近一次 PreToolUse 的上下文）。
  *
@@ -51,22 +52,49 @@ const NOTES_HINT = 'press n to add notes';
 const INVISIBLE_CHARS = /[\p{M}\u200b-\u200f\u2028-\u202e\u2060-\u206f\u180b-\u180f\ufe0e\ufe0f]/u;
 
 /**
- * 计划确认的合成问题（ExitPlanMode 的 toolInput 恒空）。文案 = 实测宿主模态框
- * （claude 2.1.296，2026-10-21 抓屏）：**只有两行**，第 1 行批准并切到会话默认
- * 模式、第 2 行就是拒绝——照老的 3 行面发键，想拒绝会按成批准。批准行的模式名
- * 由宿主按会话默认模式拼（本机 = `default (ask each time)`；自动化目标另有
- * `Yes, and switch to auto mode` 字样，键义不变）。
+ * 计划确认的选项面（ExitPlanMode 的 toolInput 恒空，只能合成）。**行数随会话默认
+ * 权限模式变**——同一个数字键在两种形态下语义不同，照错形态发键就是「想拒绝却
+ * 批准了」。实测（claude 2.1.296）：
+ * - 默认模式 = `default`：2 行，第 1 行批准并切到默认（ask each time）、第 2 行
+ *   就是拒绝（`No`）；
+ * - 默认模式 = `bypassPermissions`（本机 `permissions.defaultMode`）：3 行，
+ *   `1` 批准并切 bypass、`2` 批准但每次编辑手动确认、`3` 拒绝并说明（打完反馈
+ *   shift+tab 提交）。
+ * 默认模式取自设置文件（hook 事件的 `permission_mode` 在 plan 模式下恒为 plan，
+ * 带不出这个事实）。**已知残余**：其他非 default 模式（acceptEdits 等）宿主也可能
+ * 出 3 行，但那两种形态的文案未取证，先按缺省 2 行走——按错会像本轮这样被用户
+ * 抓到，届时按实测补表。
  */
-const PLAN_QUESTION: BlockingQuestion = {
-  key: 'ExitPlanMode:approve',
-  header: 'Exit plan mode?',
-  question: 'Claude wants to exit plan mode',
-  multiSelect: false,
-  options: [
-    { keys: ['1'], label: 'Yes, and switch to default (ask each time) for this session' },
-    { keys: ['2'], label: 'No' },
-  ],
+const PLAN_OPTIONS_DEFAULT: readonly BlockingQuestionOption[] = [
+  { keys: ['1'], label: 'Yes, and switch to default (ask each time) for this session' },
+  { keys: ['2'], label: 'No' },
+];
+
+/** 非 default 模式下第 1 行的模式显示名（实测原文；表外模式按 id 原样补）。 */
+const PLAN_SWITCH_LABEL: Record<string, string> = {
+  bypassPermissions: 'BYPASS PERMISSIONS (no further prompts)',
 };
+
+/** 计划确认选项面（纯函数：按默认权限模式给行）。 */
+export function planApprovalOptions(
+  defaultMode: string | null,
+): BlockingQuestionOption[] {
+  if (defaultMode == null || defaultMode === 'default' || defaultMode === 'plan') {
+    return PLAN_OPTIONS_DEFAULT.map((o) => ({ ...o }));
+  }
+  return [
+    {
+      keys: ['1'],
+      label: `Yes, and switch to ${PLAN_SWITCH_LABEL[defaultMode] ?? defaultMode} for this session`,
+    },
+    { keys: ['2'], label: 'Yes, manually approve edits' },
+    {
+      keys: ['3'],
+      label: 'Tell Claude what to change',
+      description: 'shift+tab to approve with this feedback',
+    },
+  ];
+}
 
 /**
  * 权限对话框的两种形态——**选项行数与键义完全不同**，按错形态发键就是「想批准
@@ -315,8 +343,16 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
       if (out.length >= 2 || out.some((q) => q.multiSelect)) out.push(submitStep());
       return out;
     }
-    // ExitPlanMode：toolInput 恒空——合成计划确认问题（两行：批准并切默认模式 / 拒绝）
-    return [PLAN_QUESTION];
+    // ExitPlanMode：toolInput 恒空——按会话默认权限模式合成选项面（2 行 / 3 行）
+    return [
+      {
+        key: 'ExitPlanMode:approve',
+        header: 'Exit plan mode?',
+        question: 'Claude wants to exit plan mode',
+        multiSelect: false,
+        options: planApprovalOptions(defaultPermissionModeOf()),
+      },
+    ];
   },
   eventQuestion(eventType, raw) {
     if (eventType === 'PreModelSwitch') return switchQuestion(raw);

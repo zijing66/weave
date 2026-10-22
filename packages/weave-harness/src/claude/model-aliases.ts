@@ -134,6 +134,18 @@ export function aliasOfModel(
   return targets.find((t) => bareModelName(t.actual) === bare)?.alias ?? null;
 }
 
+/**
+ * 用户设置里的默认权限模式（`permissions.defaultMode`）。宿主的计划确认框按它
+ * 拼选项行（`permissions.defaultMode = bypassPermissions` 时是 3 行，缺省是 2 行），
+ * 而 hook 事件只带**当下**的 `permission_mode`（plan 模式下一律是 `plan`）、带不出
+ * 会话默认，故只能读配置。读不到 = null（当缺省处理）。
+ */
+export function defaultPermissionModeOf(homedir: string = os.homedir()): string | null {
+  const permissions = userSettingsOf(homedir)?.permissions;
+  const mode = (permissions as { defaultMode?: unknown } | undefined)?.defaultMode;
+  return typeof mode === 'string' && mode !== '' ? mode : null;
+}
+
 function userSettingsOf(homedir: string): Record<string, unknown> | null {
   try {
     return JSON.parse(fs.readFileSync(CLAUDE_ASSETS.userConfigFile(homedir), 'utf8')) as Record<

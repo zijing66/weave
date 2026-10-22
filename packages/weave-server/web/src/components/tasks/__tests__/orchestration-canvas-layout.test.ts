@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   ORCH_GROUP_COLLAPSED_H,
-  ORCH_GROUP_HEADER_H,
-  ORCH_GROUP_PAD,
+  ORCH_HOOK_H,
+  ORCH_HOOK_W,
+  ORCH_NODE_W,
   ORCH_ROW_H,
   layoutOrchestrationCanvas,
-  layoutOrchestrationOverview,
   type OrchCanvasSession,
 } from '../orchestration-canvas-layout';
 import type { OrchestrationNode } from '@/lib/api';
@@ -24,6 +24,10 @@ const edges = [
   { id: 'b->c', from: 'b', to: 'c', text: '' },
 ];
 
+/** 只取会话/Webhook 节点（连接点单独断言）。 */
+const realNodes = (laid: ReturnType<typeof layoutOrchestrationCanvas>): string[] =>
+  laid.nodes.filter((n) => n.kind !== 'hook').map((n) => n.key);
+
 describe('layoutOrchestrationCanvas', () => {
   it('项目视图：节点按层摆列，跨层边直接连节点', () => {
     const laid = layoutOrchestrationCanvas({
@@ -33,12 +37,49 @@ describe('layoutOrchestrationCanvas', () => {
       groupProjects: false,
       collapsed: new Set(),
     });
-    expect(laid.nodes.map((n) => n.key)).toEqual(['s:a', 's:b', 's:c']);
-    const [a, b, c] = laid.nodes;
+    expect(realNodes(laid)).toEqual(['s:a', 's:b', 's:c']);
+    const [a, b, c] = laid.nodes.filter((n) => n.kind === 'session');
     expect(a!.y).toBe(b!.y);
     expect(b!.x).toBeGreaterThan(a!.x);
     expect(c!.x).toBeGreaterThan(b!.x);
     expect(laid.edges.map((e) => `${e.from}->${e.to}`)).toEqual(['s:a->s:b', 's:b->s:c']);
+  });
+
+  it('每条连线一个连接点：摆在两层之间的空隙正中', () => {
+    const laid = layoutOrchestrationCanvas({
+      nodes: sessionNodes('a', 'b'),
+      edges: [{ id: 'e1', from: 'a', to: 'b', text: 'go' }],
+      sessions,
+      groupProjects: false,
+      collapsed: new Set(),
+    });
+    const hooks = laid.nodes.filter((n) => n.kind === 'hook');
+    expect(hooks).toHaveLength(1);
+    const hook = hooks[0]!;
+    expect(hook.edgeKey).toBe('s:a->s:b');
+    const a = laid.nodes.find((n) => n.key === 's:a')!;
+    const b = laid.nodes.find((n) => n.key === 's:b')!;
+    // 横向落在两张卡片之间，纵向落在两卡片中线附近。
+    expect(hook.x).toBeGreaterThan(a.x + ORCH_NODE_W - 1);
+    expect(hook.x + ORCH_HOOK_W).toBeLessThan(b.x + 1);
+    expect(hook.y).toBeGreaterThanOrEqual(Math.min(a.y, b.y));
+  });
+
+  it('扇出到同一列的连接点上下错开（不重叠）', () => {
+    const laid = layoutOrchestrationCanvas({
+      nodes: sessionNodes('a', 'b', 'c'),
+      edges: [
+        { id: 'ab', from: 'a', to: 'b', text: 'x' },
+        { id: 'ac', from: 'a', to: 'c', text: 'y' },
+      ],
+      sessions,
+      groupProjects: false,
+      collapsed: new Set(),
+    });
+    const hooks = laid.nodes.filter((n) => n.kind === 'hook');
+    expect(hooks).toHaveLength(2);
+    const [h1, h2] = hooks.sort((p, q) => p.y - q.y);
+    expect(Math.abs(h1!.y - h2!.y)).toBeGreaterThanOrEqual(ORCH_HOOK_H);
   });
 
   it('webhook 节点摆成自己的键（w: 前缀），不属于任何项目框', () => {
@@ -49,8 +90,9 @@ describe('layoutOrchestrationCanvas', () => {
       groupProjects: false,
       collapsed: new Set(),
     });
-    expect(laid.nodes.map((n) => n.key)).toContain('w:1');
+    expect(realNodes(laid)).toContain('w:1');
     expect(laid.edges.map((e) => `${e.from}->${e.to}`)).toEqual(['w:1->s:a']);
+    expect(laid.nodes.filter((n) => n.kind === 'hook')).toHaveLength(1);
   });
 
   it('全局视图：每个项目一个框，框住自己的节点且两框不重叠', () => {
@@ -99,6 +141,8 @@ describe('layoutOrchestrationCanvas', () => {
     expect(laid.edges).toEqual([
       { key: 'g:1->g:2', from: 'g:1', to: 'g:2', edgeIds: ['b->c'] },
     ]);
+    // 端点收进分组框后不再摆连接点（连线上没有可点的钩子）。
+    expect(laid.nodes.filter((n) => n.kind === 'hook')).toHaveLength(0);
   });
 
   it('同一项目的同列节点按行距上下排', () => {
@@ -112,79 +156,5 @@ describe('layoutOrchestrationCanvas', () => {
     const [a, b] = laid.nodes;
     expect(b!.x).toBe(a!.x);
     expect(b!.y - a!.y).toBe(ORCH_ROW_H);
-  });
-});
-
-describe('layoutOrchestrationOverview', () => {
-  const block = (key: string, ids: string[], edgeList: { id: string; from: string; to: string }[]) => ({
-    key,
-    label: `编排 ${key}`,
-    nodes: sessionNodes(...ids),
-    edges: edgeList.map((e) => ({ ...e, text: '' })),
-  });
-
-  it('每份编排一块：键带 o<id>: 前缀，块纵向不重叠、各带分组框', () => {
-    const laid = layoutOrchestrationOverview({
-      blocks: [
-        block('1', ['a', 'b'], [{ id: 'e1', from: 'a', to: 'b' }]),
-        block('2', ['c'], []),
-      ],
-      sessions,
-      collapsed: new Set(),
-    });
-    // 分组框垫底（ReactFlow 后者画在上面），成员键带编排前缀。
-    expect(laid.nodes.filter((n) => n.kind === 'group').map((n) => n.key)).toEqual([
-      'o1:g',
-      'o2:g',
-    ]);
-    expect(laid.nodes.filter((n) => n.kind === 'session').map((n) => n.key)).toEqual([
-      'o1:s:a',
-      'o1:s:b',
-      'o2:s:c',
-    ]);
-    expect(laid.edges).toEqual([
-      { key: 'o1:s:a->o1:s:b', from: 'o1:s:a', to: 'o1:s:b', edgeIds: ['e1'] },
-    ]);
-    // 两块不重叠：第二块的框顶在第一块框底之下。
-    const [g1, g2] = laid.nodes.filter((n) => n.kind === 'group');
-    expect(g2!.y).toBeGreaterThanOrEqual(g1!.y + g1!.height! + ORCH_GROUP_PAD);
-    // 框头之下才是成员。
-    const a = laid.nodes.find((n) => n.key === 'o1:s:a')!;
-    expect(a.y).toBeGreaterThanOrEqual(g1!.y + ORCH_GROUP_HEADER_H + ORCH_GROUP_PAD);
-  });
-
-  it('跨编排的同名会话不碰撞（前缀隔离）', () => {
-    const laid = layoutOrchestrationOverview({
-      blocks: [block('1', ['a'], []), block('2', ['a'], [])],
-      sessions,
-      collapsed: new Set(),
-    });
-    const keys = laid.nodes.filter((n) => n.kind === 'session').map((n) => n.key);
-    expect(new Set(keys).size).toBe(2);
-    expect(keys).toEqual(['o1:s:a', 'o2:s:a']);
-  });
-
-  it('收起的块只剩框：成员不摆、边全丢、hidden 计数', () => {
-    const laid = layoutOrchestrationOverview({
-      blocks: [block('1', ['a', 'b'], [{ id: 'e1', from: 'a', to: 'b' }])],
-      sessions,
-      collapsed: new Set(['1']),
-    });
-    expect(laid.nodes).toHaveLength(1);
-    const g = laid.nodes[0]!;
-    expect(g.kind).toBe('group');
-    expect(g.key).toBe('o1:g');
-    expect(g.height).toBe(ORCH_GROUP_COLLAPSED_H);
-    expect(g.hidden).toBe(2);
-    expect(laid.edges).toEqual([]);
-  });
-
-  it('空节点的块不摆', () => {
-    const laid = layoutOrchestrationOverview({
-      blocks: [block('1', [], []), block('2', ['c'], [])],
-      sessions,
-      collapsed: new Set(),
-    });
-    expect(laid.nodes.map((n) => n.key)).toEqual(['o2:g', 'o2:s:c']);
   });
 });

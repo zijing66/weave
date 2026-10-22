@@ -152,6 +152,81 @@ export function ranksOf(
   return rank;
 }
 
+/** 总览合并图的边：多份编排的同端点边并成一条，参与对全部记在 pairs 里。 */
+export interface MergedOrchEdge {
+  from: string;
+  to: string;
+  pairs: { orchId: number; edgeId: string; text: string }[];
+}
+
+/**
+ * 总览合并（纯函数，可单测）：多份编排并成一张图——节点按 id 去重（同一会话
+ * 在多份编排里就是同一个节点，跨编排 n:n 扇入扇出），边按端点对合并。跨编排
+ * 的成环这里不拒（单份编排各自无环，环只能来自组合），布局层 ranksOf 兜底
+ * （环上节点落第 0 列）。
+ */
+export function mergeOrchestrations(
+  blocks: readonly {
+    orchId: number;
+    nodes: readonly OrchestrationNode[];
+    edges: readonly OrchestrationEdge[];
+  }[],
+): { nodes: OrchestrationNode[]; edges: MergedOrchEdge[]; orchIdsOf: Map<string, number[]> } {
+  const nodeById = new Map<string, OrchestrationNode>();
+  const orchIdsOf = new Map<string, number[]>();
+  for (const block of blocks) {
+    for (const node of block.nodes) {
+      if (!nodeById.has(node.id)) nodeById.set(node.id, node);
+      const ids = orchIdsOf.get(node.id) ?? [];
+      if (!ids.includes(block.orchId)) ids.push(block.orchId);
+      orchIdsOf.set(node.id, ids);
+    }
+  }
+  const edgeByPair = new Map<string, MergedOrchEdge>();
+  for (const block of blocks) {
+    for (const edge of block.edges) {
+      if (!nodeById.has(edge.from) || !nodeById.has(edge.to)) continue;
+      const key = `${edge.from}->${edge.to}`;
+      const found = edgeByPair.get(key);
+      const pair = { orchId: block.orchId, edgeId: edge.id, text: edge.text };
+      if (found) found.pairs.push(pair);
+      else edgeByPair.set(key, { from: edge.from, to: edge.to, pairs: [pair] });
+    }
+  }
+  return { nodes: [...nodeById.values()], edges: [...edgeByPair.values()], orchIdsOf };
+}
+
+/**
+ * 单条边的问题清单（画布上逐条描红/虚线用）：端点不存在、空正文（webhook
+ * 入口出边与带提取的边除外）、落在环上的边。整图能不能存仍以 `validateDraft`
+ * 为准（它只报第一处，这里报全部）。
+ */
+export function invalidEdgeIds(draft: OrchDraft): Set<string> {
+  const nodeIds = new Set(draft.nodes.map((n) => n.id));
+  const { entries } = graphDirections(draft.nodes, draft.edges);
+  const webhookEntryIds = new Set(
+    entries.filter((n) => n.kind === 'webhook').map((n) => n.id),
+  );
+  const bad = new Set<string>();
+  for (const edge of draft.edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      bad.add(edge.id);
+      continue;
+    }
+    if (!edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim()) {
+      bad.add(edge.id);
+    }
+  }
+  const cycle = findCycle(draft.nodes, draft.edges);
+  if (cycle) {
+    for (let i = 0; i < cycle.length - 1; i++) {
+      const edge = draft.edges.find((e) => e.from === cycle[i] && e.to === cycle[i + 1]);
+      if (edge) bad.add(edge.id);
+    }
+  }
+  return bad;
+}
+
 /** 提交前的即时校验（服务端仍是权威，错误文案两边同义）。 */
 export function validateDraft(draft: OrchDraft): ValidateDraftResult {
   if (!draft.name.trim()) return { ok: false, error: 'Name is required' };

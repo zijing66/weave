@@ -11,6 +11,7 @@ import {
   failedTail,
   filterThread,
   isGenerating,
+  hasRefCandidate,
   pickerIntent,
   removableOf,
   serializeDraft,
@@ -495,6 +496,14 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
 
   it('⑤ 没挂载 / 不是元素 = 空串（不抛）', () => {
     expect(serializeDraft(null)).toBe('');
+  });
+
+  it('⑥-a 粘贴快路：整段没有「行首/空白后的 @」就不必问服务端认引用', () => {
+    expect(hasRefCandidate('普通一段话，没有任何引用')).toBe(false);
+    expect(hasRefCandidate('邮箱 foo@bar.com 不算')).toBe(false);
+    expect(hasRefCandidate('看 @src/a.ts')).toBe(true);
+    expect(hasRefCandidate('@src/a.ts')).toBe(true);
+    expect(hasRefCandidate('第一行\n@src/b.ts')).toBe(true);
   });
 
   it('⑥ 敲完 `@` 该不该弹选择器：前面必须是空白，`\\@` 是转义', () => {

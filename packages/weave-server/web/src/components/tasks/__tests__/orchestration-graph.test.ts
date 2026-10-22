@@ -5,6 +5,8 @@ import {
   addWebhookNode,
   findCycle,
   graphDirections,
+  invalidEdgeIds,
+  mergeOrchestrations,
   ranksOf,
   removeNode,
   validateDraft,
@@ -174,5 +176,124 @@ describe('validateDraft', () => {
         }),
       ),
     ).toEqual({ ok: true });
+  });
+});
+
+describe('mergeOrchestrations（总览合并图）', () => {
+  const block = (
+    orchId: number,
+    ids: string[],
+    edgeList: { id: string; from: string; to: string; text?: string }[],
+  ) => ({
+    orchId,
+    nodes: ids.map((id) => ({ id, kind: 'session' as const })),
+    edges: edgeList.map((e) => ({ text: '', ...e })),
+  });
+
+  it('节点按 id 去重：同一会话在多份编排里就是一个节点，orchIdsOf 记全', () => {
+    const merged = mergeOrchestrations([
+      block(1, ['a', 'b'], [{ id: 'e1', from: 'a', to: 'b' }]),
+      block(2, ['a', 'c'], [{ id: 'e1', from: 'a', to: 'c' }]),
+    ]);
+    expect(merged.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(merged.orchIdsOf.get('a')).toEqual([1, 2]);
+    expect(merged.orchIdsOf.get('b')).toEqual([1]);
+  });
+
+  it('边按端点对合并：跨编排的同端点边并成一条，pairs 记全（边 id 跨编排可撞）', () => {
+    const merged = mergeOrchestrations([
+      block(1, ['a', 'b'], [{ id: 'e1', from: 'a', to: 'b', text: 'go' }]),
+      block(2, ['a', 'b'], [{ id: 'e1', from: 'a', to: 'b', text: 'run' }]),
+    ]);
+    expect(merged.edges).toEqual([
+      {
+        from: 'a',
+        to: 'b',
+        pairs: [
+          { orchId: 1, edgeId: 'e1', text: 'go' },
+          { orchId: 2, edgeId: 'e1', text: 'run' },
+        ],
+      },
+    ]);
+  });
+
+  it('跨编排 n:n：一个节点多前驱多后继，合并后仍是端点对一条', () => {
+    const merged = mergeOrchestrations([
+      block(1, ['a', 'c'], [{ id: 'e1', from: 'a', to: 'c' }]),
+      block(2, ['b', 'c', 'd'], [
+        { id: 'e2', from: 'b', to: 'c' },
+        { id: 'e3', from: 'c', to: 'd' },
+      ]),
+    ]);
+    expect(merged.edges.map((e) => `${e.from}->${e.to}`).sort()).toEqual([
+      'a->c',
+      'b->c',
+      'c->d',
+    ]);
+    // 合并图分层：c 在 a/b 之后、d 之前（单向无回环）。
+    const ranks = ranksOf(
+      merged.nodes,
+      merged.edges.map((e) => ({ id: e.from, from: e.from, to: e.to, text: '' })),
+    );
+    expect(ranks.get('c')).toBeGreaterThan(ranks.get('a')!);
+    expect(ranks.get('c')).toBeGreaterThan(ranks.get('b')!);
+    expect(ranks.get('d')).toBeGreaterThan(ranks.get('c')!);
+  });
+
+  it('端点不在节点集里的边丢弃', () => {
+    const merged = mergeOrchestrations([
+      block(1, ['a'], [{ id: 'e1', from: 'a', to: 'ghost' }]),
+    ]);
+    expect(merged.edges).toEqual([]);
+  });
+});
+
+describe('invalidEdgeIds（逐条描红）', () => {
+  it('空正文：webhook 入口出边与带提取的边合法，其余标红', () => {
+    const draft: OrchDraft = {
+      name: 'x',
+      startText: '',
+      nodes: [
+        { id: 'a', kind: 'session' },
+        { id: 'b', kind: 'session' },
+        { id: 'c', kind: 'session' },
+        { id: 'w:1', kind: 'webhook' },
+      ],
+      edges: [
+        { id: 'e1', from: 'a', to: 'b', text: '' },
+        { id: 'e2', from: 'a', to: 'c', text: '', extract: '提炼要点' },
+        { id: 'e3', from: 'w:1', to: 'a', text: '' },
+      ],
+      cron: null,
+    };
+    expect([...invalidEdgeIds(draft)]).toEqual(['e1']);
+  });
+
+  it('环上的边标红（成环时整条回路逐段标）', () => {
+    const draft: OrchDraft = {
+      name: 'x',
+      startText: '',
+      nodes: [
+        { id: 'a', kind: 'session' },
+        { id: 'b', kind: 'session' },
+      ],
+      edges: [
+        { id: 'e1', from: 'a', to: 'b', text: 'go' },
+        { id: 'e2', from: 'b', to: 'a', text: 'back' },
+      ],
+      cron: null,
+    };
+    expect([...invalidEdgeIds(draft)].sort()).toEqual(['e1', 'e2']);
+  });
+
+  it('端点不存在的边标红', () => {
+    const draft: OrchDraft = {
+      name: 'x',
+      startText: '',
+      nodes: [{ id: 'a', kind: 'session' }],
+      edges: [{ id: 'e1', from: 'a', to: 'ghost', text: 'go' }],
+      cron: null,
+    };
+    expect([...invalidEdgeIds(draft)]).toEqual(['e1']);
   });
 });

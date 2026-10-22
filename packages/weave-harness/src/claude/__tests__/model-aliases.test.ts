@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   aliasOfModel,
   bareModelName,
+  defaultPermissionModeOf,
   defaultModelOf,
   effortLevelOf,
   modelAliasTargets,
@@ -29,6 +30,20 @@ describe('modelAliasTargets', () => {
   it('_MODEL_NAME 变体也算数', () => {
     const t = modelAliasTargets(['haiku'], { ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: 'GLM-5.3-Flash' }, '/nope');
     expect(t[0]).toEqual({ alias: 'haiku', actual: 'GLM-5.3-Flash' });
+  });
+
+it('默认权限模式读自 permissions.defaultMode（计划确认面的行数靠它）', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'weave-pm-'));
+    fs.mkdirSync(path.join(home, '.claude'));
+    const write = (value: unknown): void =>
+      fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(value));
+    write({ permissions: { defaultMode: 'bypassPermissions' } });
+    expect(defaultPermissionModeOf(home)).toBe('bypassPermissions');
+    write({ permissions: {} });
+    expect(defaultPermissionModeOf(home)).toBeNull();
+    write({});
+    expect(defaultPermissionModeOf(home)).toBeNull();
+    fs.rmSync(home, { recursive: true, force: true });
   });
 
   it('settings.json 的 env 块压过进程 env（daemon 是独立进程、未必带宿主那套 env）', () => {

@@ -6,8 +6,8 @@ import { ranksOf } from './orchestration-graph';
  * 全局视图额外给每个项目画一个分组框，框住它自己的会话——收起的项目只剩
  * 一个框（带会话数），展开才摆出里面的会话。webhook 节点不属于任何项目，
  * 归「未知项目」（id 0）框。项目框按「不重叠」的纵向带排：同一列上两个项目
- * 不会叠在一起。总览（未选编排）走 `layoutOrchestrationOverview`：每份编排
- * 一块、框头是编排名。
+ * 不会叠在一起。总览（未选编排）是跨编排合并图（`mergeOrchestrations`），
+ * 布局复用本函数。
  */
 
 /** 节点宽（对齐画布节点的 w-[220px]）。 */
@@ -23,6 +23,9 @@ export const ORCH_GROUP_PAD = 14;
 export const ORCH_GROUP_HEADER_H = 30;
 /** 收起的分组框高。 */
 export const ORCH_GROUP_COLLAPSED_H = 44;
+/** 连线中间的 hook 连接点尺寸（每条连线一个，挂在两层之间的空隙里）。 */
+export const ORCH_HOOK_W = 48;
+export const ORCH_HOOK_H = 22;
 
 export interface OrchCanvasSession {
   sessionId: string;
@@ -31,21 +34,21 @@ export interface OrchCanvasSession {
 }
 
 export interface OrchLaidNode {
-  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>`；总览再叠 `o<编排id>:` 前缀。 */
+  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>` / `h:<边键>`。 */
   key: string;
-  kind: 'session' | 'webhook' | 'group';
+  kind: 'session' | 'webhook' | 'group' | 'hook';
   x: number;
   y: number;
   /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>）。 */
   nodeId?: string;
   projectId?: number;
-  /** 分组框标题（总览 = 编排名；缺省由组件按 projectId 查项目名）。 */
-  label?: string;
   /** 分组框尺寸（kind = group 时有效）。 */
   width?: number;
   height?: number;
   /** 收起时被藏起的节点数。 */
   hidden?: number;
+  /** 这条连接点管的那条（合并）边：`<from>-><to>`。 */
+  edgeKey?: string;
 }
 
 export interface OrchLaidEdge {
@@ -179,90 +182,32 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
     else merged.set(key, { key, from, to, edgeIds: [edge.id] });
   }
 
-  return { nodes: [...groupNodes, ...laidNodes], edges: [...merged.values()] };
-}
-
-/** 总览块：一份编排 = 一个分组框（框头是编排名，可收起）。 */
-export interface OrchOverviewBlock {
-  /** 分组键（编排 id 的字符串形）。 */
-  key: string;
-  label: string;
-  nodes: readonly OrchestrationNode[];
-  edges: readonly OrchestrationEdge[];
-}
-
-/**
- * 总览布局（未选编排时的默认面）：每份编排复用单图布局平铺成一块，块外包
- * 一个分组框；块内节点/边键叠 `o<key>:` 前缀——跨编排的同名会话、短边 id
- * （e1/e2）都不碰撞。收起的块只剩框（边两端都折进框，from === to 被丢）。
- */
-export function layoutOrchestrationOverview(input: {
-  blocks: readonly OrchOverviewBlock[];
-  sessions: ReadonlyMap<string, OrchCanvasSession>;
-  collapsed: ReadonlySet<string>;
-}): OrchCanvasLayout {
-  /** 分组框单独收：全部排在最前（ReactFlow 后者画在上面，框必须垫底）。 */
-  const groupNodes: OrchLaidNode[] = [];
-  const memberNodes: OrchLaidNode[] = [];
-  const edges: OrchLaidEdge[] = [];
-  let cursor = 0;
-  for (const block of input.blocks) {
-    if (block.nodes.length === 0) continue;
-    const prefix = `o${block.key}:`;
-    if (input.collapsed.has(block.key)) {
-      groupNodes.push({
-        key: `${prefix}g`,
-        kind: 'group',
-        label: block.label,
-        x: 0,
-        y: cursor,
-        width: ORCH_NODE_W + ORCH_GROUP_PAD * 2,
-        height: ORCH_GROUP_COLLAPSED_H,
-        hidden: block.nodes.length,
-      });
-      cursor += ORCH_GROUP_COLLAPSED_H + ORCH_GROUP_PAD * 2;
-      continue;
-    }
-    const laid = layoutOrchestrationCanvas({
-      nodes: block.nodes,
-      edges: block.edges,
-      sessions: input.sessions,
-      groupProjects: false,
-      collapsed: new Set(),
+  // 连接点：每条（合并）连线一个 hook 节点，摆在两层之间的空隙正中；同一处
+  // 叠着的按上下错开（扇出到同一列时不会完全重叠）。
+  const laidByKey = new Map(laidNodes.map((n) => [n.key, n] as const));
+  const hookNodes: OrchLaidNode[] = [];
+  const placed = new Map<string, number>();
+  for (const edge of merged.values()) {
+    const fromNode = laidByKey.get(edge.from);
+    const toNode = laidByKey.get(edge.to);
+    if (!fromNode || !toNode) continue;
+    const fromRight = fromNode.x + ORCH_NODE_W;
+    const gap = toNode.x - fromRight;
+    const x = fromRight + gap / 2 - ORCH_HOOK_W / 2;
+    const rawY =
+      (fromNode.y + toNode.y) / 2 + ORCH_NODE_H / 2 - ORCH_HOOK_H / 2;
+    const slot = `${Math.round(x)}:${Math.round(rawY)}`;
+    const seen = placed.get(slot) ?? 0;
+    placed.set(slot, seen + 1);
+    const shift = seen === 0 ? 0 : (seen % 2 === 1 ? 1 : -1) * Math.ceil(seen / 2) * (ORCH_HOOK_H + 8);
+    hookNodes.push({
+      key: `h:${edge.key}`,
+      kind: 'hook',
+      x,
+      y: rawY + shift,
+      edgeKey: edge.key,
     });
-    const members = laid.nodes.filter((n) => n.kind !== 'group');
-    if (members.length === 0) continue;
-    const minX = Math.min(...members.map((n) => n.x));
-    const minY = Math.min(...members.map((n) => n.y));
-    const maxX = Math.max(...members.map((n) => n.x + ORCH_NODE_W));
-    const maxBottom = Math.max(...members.map((n) => n.y + ORCH_NODE_H));
-    const top = cursor + ORCH_GROUP_HEADER_H + ORCH_GROUP_PAD;
-    const keyOf = new Map<string, string>();
-    for (const n of members) {
-      keyOf.set(n.key, prefix + n.key);
-      memberNodes.push({
-        ...n,
-        key: prefix + n.key,
-        x: n.x - minX + ORCH_GROUP_PAD,
-        y: n.y - minY + top,
-      });
-    }
-    groupNodes.push({
-      key: `${prefix}g`,
-      kind: 'group',
-      label: block.label,
-      x: 0,
-      y: cursor,
-      width: maxX - minX + ORCH_GROUP_PAD * 2,
-      height: maxBottom - minY + ORCH_GROUP_HEADER_H + ORCH_GROUP_PAD * 2,
-    });
-    for (const e of laid.edges) {
-      const from = keyOf.get(e.from);
-      const to = keyOf.get(e.to);
-      if (!from || !to) continue;
-      edges.push({ key: `${from}->${to}`, from, to, edgeIds: e.edgeIds });
-    }
-    cursor += maxBottom - minY + ORCH_GROUP_HEADER_H + ORCH_GROUP_PAD * 4;
   }
-  return { nodes: [...groupNodes, ...memberNodes], edges };
+
+  return { nodes: [...groupNodes, ...laidNodes, ...hookNodes], edges: [...merged.values()] };
 }

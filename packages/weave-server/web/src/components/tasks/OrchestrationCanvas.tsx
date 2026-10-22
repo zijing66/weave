@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BaseEdge,
   Controls,
-  EdgeText,
+  EdgeLabelRenderer,
   Handle,
   MarkerType,
   Panel,
@@ -34,7 +34,6 @@ import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type MessagingCapability,
-  type OrchestrationEdge,
   type OrchestrationNode,
   type OrchestrationRow,
   type OrchestrationRunRow,
@@ -70,28 +69,34 @@ import {
   addWebhookNode,
   findCycle,
   graphDirections,
+  invalidEdgeIds,
+  mergeOrchestrations,
   removeEdge,
   removeNode,
   validateDraft,
+  type MergedOrchEdge,
   type OrchDraft,
 } from './orchestration-graph';
 import {
+  ORCH_COL_W,
   ORCH_GROUP_HEADER_H,
+  ORCH_HOOK_H,
+  ORCH_HOOK_W,
   ORCH_NODE_H,
   ORCH_NODE_W,
   layoutOrchestrationCanvas,
-  layoutOrchestrationOverview,
   type OrchLaidEdge,
 } from './orchestration-canvas-layout';
 import { OrchestrationSessionPicker } from './OrchestrationSessionPicker';
 import { OrchestrationCronDialog } from './OrchestrationCronDialog';
 
 /**
- * 编排画布（session-orchestration 重做版）：一份命名编排 = 一张任意有向图，
- * 画布只摆**这份编排里的会话**（项目视图平铺；全局视图按项目分组、默认收起，
- * 点项目头展开）。节点上的待回计数与边上的流动来自 hook 帧域的两条帧
- * （`orchestration.run` / `orchestration.delivery`，都带全量轻量态），不轮询、
- * 不新开 EventSource。定义就编辑在图上（节点/边检查器）与画布上方的工具条里；
+ * 编排画布（session-orchestration 重做版）：默认是**跨编排合并总览**——所有编排
+ * 并成一张有向图（同一会话只摆一个节点，跨编排 n:n 扇入扇出，按层从左往右），
+ * 只读；编排名/会话/项目筛选收窄它。编辑入口在**首节点卡片**上（点它编辑以它
+ * 为入口的编排、或以它为入口新建）。选中某份编排后是编辑画布：图即编辑面。
+ * 节点上的待回计数与边上的流动来自 hook 帧域的两条帧（`orchestration.run` /
+ * `orchestration.delivery`，都带全量轻量态），不轮询、不新开 EventSource；
  * 下方是统一的运行日志（可筛选、可取消、可清理）。
  */
 
@@ -185,10 +190,58 @@ type SessionNodeData = {
   running: boolean;
   missing: boolean;
   selected: boolean;
+  /** 首节点卡片可点（出「编辑/新建编排」面板）。 */
+  pickable: boolean;
+  /** 外接连接点：每个不同的上游 / 下游各一个（连线挂在具体点上）。 */
+  inPorts: string[];
+  outPorts: string[];
   /** 点节点本体 = 选中编辑；这枚小钮 = 直接看它的对话。 */
   onOpen: (sessionId: string) => void;
 };
 type SessionFlowNode = Node<SessionNodeData, 'orchSession'>;
+
+/** 外接连接点：沿左/右边按份数均分，每份一个 Handle（id = `in:<上游>` / `out:<下游>`）。 */
+function EdgePorts({ inPorts, outPorts }: { inPorts: string[]; outPorts: string[] }) {
+  return (
+    <>
+      {inPorts.map((id, i) => (
+        <Handle
+          key={`in:${id}`}
+          type="target"
+          id={`in:${id}`}
+          position={Position.Left}
+          style={{ top: `${((i + 1) / (inPorts.length + 1)) * 100}%` }}
+          className="!h-2 !w-2 !border-0 !bg-neutral-600"
+        />
+      ))}
+      {outPorts.map((id, i) => (
+        <Handle
+          key={`out:${id}`}
+          type="source"
+          id={`out:${id}`}
+          position={Position.Right}
+          style={{ top: `${((i + 1) / (outPorts.length + 1)) * 100}%` }}
+          className="!h-2 !w-2 !border-0 !bg-neutral-600 hover:!bg-teal-400"
+        />
+      ))}
+      {/* 没有任何边也给一个锚点，新建的第一条连线才有地方起手（编辑面）。 */}
+      {inPorts.length === 0 && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          className="!h-2 !w-2 !border-0 !bg-neutral-700/60"
+        />
+      )}
+      {outPorts.length === 0 && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="!h-2 !w-2 !border-0 !bg-neutral-700/60 hover:!bg-teal-400"
+        />
+      )}
+    </>
+  );
+}
 
 function SessionNode({ data }: NodeProps<SessionFlowNode>) {
   const t = useT();
@@ -204,6 +257,9 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
     running,
     missing,
     selected,
+    pickable,
+    inPorts,
+    outPorts,
     onOpen,
   } = data;
   return (
@@ -215,22 +271,11 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
         running && 'orch-node-running',
+        pickable && 'cursor-pointer',
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
-      {/* 连线锚点：右出左入（消息沿起点往右流）。可见才拖得动，编辑面靠它连线。 */}
-      <Handle
-        type="target"
-        id="l"
-        position={Position.Left}
-        className="!h-2 !w-2 !border-0 !bg-neutral-600"
-      />
-      <Handle
-        type="source"
-        id="r"
-        position={Position.Right}
-        className="!h-2 !w-2 !border-0 !bg-neutral-600 hover:!bg-teal-400"
-      />
+      <EdgePorts inPorts={inPorts} outPorts={outPorts} />
       <SessionStatusIcon status={status} harness={harness} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1">
@@ -272,14 +317,12 @@ type GroupNodeData = {
   collapsed: boolean;
   hidden: number;
   onToggle: () => void;
-  /** 总览分组（编排框）：点名 = 进入那份编排；项目分组缺省 = 也只是收起。 */
-  onOpen?: () => void;
 };
 type GroupFlowNode = Node<GroupNodeData, 'orchGroup'>;
 
 function GroupNode({ data }: NodeProps<GroupFlowNode>) {
   const t = useT();
-  const { label, count, collapsed, hidden, onToggle, onOpen } = data;
+  const { label, count, collapsed, hidden, onToggle } = data;
   return (
     <div className="pointer-events-none relative h-full w-full rounded-xl border border-dashed border-edge/[0.14] bg-edge/[0.015]">
       <div
@@ -293,20 +336,10 @@ function GroupNode({ data }: NodeProps<GroupFlowNode>) {
             onToggle();
           }}
           aria-expanded={!collapsed}
-          className="flex items-center rounded px-1 py-0.5 text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
+          className="flex items-center gap-1 rounded px-1 py-0.5 text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
         >
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            (onOpen ?? onToggle)();
-          }}
-          title={onOpen ? t('orch.overviewOpen') : undefined}
-          className="max-w-[10rem] truncate rounded px-1 py-0.5 text-left text-[11px] font-medium text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
-        >
-          {label}
+          <span className="max-w-[10rem] truncate text-[11px] font-medium">{label}</span>
         </button>
         <span className="text-[10px] text-neutral-600">{count}</span>
         {collapsed && hidden > 0 && (
@@ -326,12 +359,17 @@ type WebhookNodeData = {
   running: boolean;
   selected: boolean;
   missing: boolean;
+  /** 首节点卡片可点（出「编辑编排」面板）。 */
+  pickable: boolean;
+  /** 外接连接点（入口只出、出口只入）。 */
+  inPorts: string[];
+  outPorts: string[];
 };
 type WebhookFlowNode = Node<WebhookNodeData, 'orchWebhook'>;
 
 function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
   const t = useT();
-  const { direction, hot, running, selected, missing } = data;
+  const { direction, hot, running, selected, missing, pickable, inPorts, outPorts } = data;
   return (
     <div
       style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
@@ -341,25 +379,14 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
         running && 'orch-node-running',
+        pickable && 'cursor-pointer',
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
-      {direction === 'exit' && (
-        <Handle
-          type="target"
-          id="l"
-          position={Position.Left}
-          className="!h-2 !w-2 !border-0 !bg-neutral-600"
-        />
-      )}
-      {direction === 'entry' && (
-        <Handle
-          type="source"
-          id="r"
-          position={Position.Right}
-          className="!h-2 !w-2 !border-0 !bg-neutral-600 hover:!bg-teal-400"
-        />
-      )}
+      <EdgePorts
+        inPorts={direction === 'exit' ? inPorts : []}
+        outPorts={direction === 'entry' ? outPorts : []}
+      />
       <Globe className="h-4 w-4 shrink-0 text-violet-400" />
       <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
         {t(direction === 'entry' ? 'orch.webhookEntry' : 'orch.webhookExit')}
@@ -378,12 +405,63 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
   );
 }
 
-const nodeTypes = { orchSession: SessionNode, orchWebhook: WebhookNode, orchGroup: GroupNode };
+type HookNodeData = {
+  /** 该连接点的序号（同一上游的第几条出边，从 1 起）。 */
+  label: string;
+  hot: boolean;
+  selected: boolean;
+  /** 该连线的状态：未保存（新增）/ 无效 —— 连接点跟着描边提示。 */
+  tone?: 'new' | 'invalid';
+};
+type HookFlowNode = Node<HookNodeData, 'orchHook'>;
+
+/** 连线中间的连接点：每条连线一枚，点它 = 选中那条边去改正文/提取。 */
+function HookNode({ data }: NodeProps<HookFlowNode>) {
+  const { label, hot, selected, tone } = data;
+  return (
+    <div
+      style={{ width: ORCH_HOOK_W, height: ORCH_HOOK_H }}
+      className={cn(
+        'flex items-center justify-center rounded-full border bg-neutral-900/95 text-[9px] font-medium shadow-mac',
+        hot
+          ? 'border-teal-400/80 text-teal-200'
+          : tone === 'invalid'
+            ? 'border-red-500/60 text-red-300'
+            : tone === 'new'
+              ? 'border-amber-500/60 text-amber-200'
+              : 'border-edge/[0.12] text-neutral-500',
+        selected && 'border-sky-400/80 text-sky-200 ring-2 ring-sky-500/40',
+      )}
+    >
+      <Handle
+        type="target"
+        id="in"
+        position={Position.Left}
+        className="!h-1.5 !w-1.5 !border-0 !bg-neutral-600"
+      />
+      {label}
+      <Handle
+        type="source"
+        id="out"
+        position={Position.Right}
+        className="!h-1.5 !w-1.5 !border-0 !bg-neutral-600"
+      />
+    </div>
+  );
+}
+
+const nodeTypes = {
+  orchSession: SessionNode,
+  orchWebhook: WebhookNode,
+  orchGroup: GroupNode,
+  orchHook: HookNode,
+};
 
 /**
- * 自定义边：smoothstep 折线 + 标签照旧；触发（hot）时沿路径滑一颗光点
- * （`animateMotion` 沿 path 走，方向即消息流向），叠加 ReactFlow 自带的
- * 虚线滚动（`animated` 类）双保险。
+ * 自定义边：smoothstep 折线 + 触发（hot）时沿路径滑一颗光点（`animateMotion`
+ * 沿 path 走，方向即消息流向），叠加 ReactFlow 自带的虚线滚动双保险。
+ * 正文标签走 HTML 层（`EdgeLabelRenderer`）：限宽在列间空隙里换行，不用单行
+ * `…` 截断，也不会被节点卡片盖住（标签宽度 = 列间距 − 两侧留白）。
  */
 function OrchFlowEdge({
   id,
@@ -395,10 +473,6 @@ function OrchFlowEdge({
   targetPosition,
   markerEnd,
   style,
-  label,
-  labelStyle,
-  labelBgStyle,
-  labelBgPadding,
   interactionWidth,
   data,
 }: EdgeProps): React.ReactElement {
@@ -411,6 +485,8 @@ function OrchFlowEdge({
     targetPosition,
   });
   const hot = (data?.hot as boolean | undefined) ?? false;
+  const label = (data?.label as string | undefined) ?? '';
+  const tone = (data?.tone as 'new' | 'invalid' | undefined) ?? undefined;
   return (
     <>
       <BaseEdge
@@ -425,15 +501,27 @@ function OrchFlowEdge({
           <animateMotion dur="0.9s" repeatCount="indefinite" path={path} />
         </circle>
       )}
-      {label != null && label !== '' && (
-        <EdgeText
-          x={labelX}
-          y={labelY}
-          label={label}
-          labelStyle={labelStyle}
-          labelBgStyle={labelBgStyle}
-          labelBgPadding={labelBgPadding}
-        />
+      {label !== '' && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              maxWidth: ORCH_COL_W - ORCH_NODE_W - 16,
+            }}
+            className={cn(
+              'pointer-events-none select-none whitespace-pre-wrap break-words rounded px-1 py-0.5 text-[10px] leading-4',
+              'bg-neutral-950/85',
+              tone === 'invalid'
+                ? 'text-red-300/90 ring-1 ring-red-500/30'
+                : tone === 'new'
+                  ? 'text-amber-200/90 ring-1 ring-amber-500/25'
+                  : 'text-neutral-400',
+            )}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
       )}
     </>
   );
@@ -441,10 +529,9 @@ function OrchFlowEdge({
 
 const edgeTypes = { orchFlow: OrchFlowEdge };
 
-/** 总览键 `o<编排id>:…` → 编排 id（编辑态键 s:/w:/g: 不带前缀，恒不命中）。 */
-function orchIdOfKey(key: string): number | null {
-  const hit = /^o(\d+):/.exec(key);
-  return hit ? Number(hit[1]) : null;
+/** 节点的 flash 键（session 挂 `s:` 前缀，webhook 用裸 `w:` id）。 */
+function nodeFlashKey(nodeId: string): string {
+  return nodeId.startsWith('w:') ? nodeId : `s:${nodeId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -532,12 +619,22 @@ export function OrchestrationCanvas({
 
   /** 图上选中的东西（会话 id / 边的原始 id）：右侧检查器跟着它长。 */
   const [sel, setSel] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null);
-  useEffect(() => setSel(null), [order]);
+  /** 总览里点开的首节点（编辑/新建编排面板挂在它上面）。 */
+  const [entryPick, setEntryPick] = useState<string | null>(null);
+  /** 总览里点开的连接点（那条连线在各编排里的正文，只读）。 */
+  const [edgeInfo, setEdgeInfo] = useState<string | null>(null);
+  useEffect(() => {
+    setSel(null);
+    setEntryPick(null);
+    setEdgeInfo(null);
+  }, [order]);
 
   // ---- 画布范围：筛选 + 分组收起 ----
   const [sessionQuery, setSessionQuery] = useState('');
   const [projectQuery, setProjectQuery] = useState('');
-  /** 用户亲手翻过的分组；null = 还没动过（只展开起点所在的项目）。 */
+  /** 总览的编排名筛选（空 = 全部编排参与合并）。 */
+  const [orchQuery, setOrchQuery] = useState('');
+  /** 用户亲手翻过的分组；null = 还没动过（编辑画布只展开起点所在的项目，总览全展开）。 */
   const [groupTouched, setGroupTouched] = useState<Set<number> | null>(null);
 
   /** 换一份编排：分组的「翻动」记录回到未动过。 */
@@ -549,24 +646,12 @@ export function OrchestrationCanvas({
     return first ? (sessionById.get(first.id)?.projectId ?? null) : null;
   }, [draft?.nodes, sessionById]);
 
-  const expandedGroups = useMemo<ReadonlySet<number>>(
-    () => groupTouched ?? new Set(primaryProject == null ? [] : [primaryProject]),
-    [groupTouched, primaryProject],
+  /** 展开集：null = 未收窄（总览默认全展开）。 */
+  const expandedGroups = useMemo<ReadonlySet<number> | null>(
+    () =>
+      groupTouched ?? (draft ? new Set(primaryProject == null ? [] : [primaryProject]) : null),
+    [groupTouched, draft, primaryProject],
   );
-
-  const canvasSessions = useMemo(() => {
-    const m = new Map<string, { sessionId: string; title: string | null; projectId: number | null }>();
-    for (const node of draft?.nodes ?? []) {
-      if (node.kind !== 'session') continue;
-      const row = sessionById.get(node.id);
-      m.set(node.id, {
-        sessionId: node.id,
-        title: row?.title ?? null,
-        projectId: row?.projectId ?? null,
-      });
-    }
-    return m;
-  }, [draft?.nodes, sessionById]);
 
   /** 节点筛选谓词（编辑画布与总览共用）：会话名/节点 id 命中 + 全局视图的项目过滤。 */
   const nodeMatches = useCallback(
@@ -594,29 +679,37 @@ export function OrchestrationCanvas({
     return { nodes: draft.nodes.filter(nodeMatches), edges: draft.edges };
   }, [draft, nodeMatches]);
 
-  /** 总览块（未选编排时的默认面）：每份编排一块，筛选同谓词；一块都没节点就不摆。 */
-  const overviewBlocks = useMemo(() => {
+  /**
+   * 总览（未选编排的默认面）：跨编排合并成一张图——节点按 id 去重（同一会话
+   * 一个节点，跨编排 n:n 扇入扇出）、边按端点对合并；编排名筛选先收窄参与合并
+   * 的编排，会话/项目筛选再裁节点（端点被裁掉的边跟着退场）。
+   */
+  const overview = useMemo(() => {
     if (list == null || editing != null) return null;
-    const blocks: {
-      key: string;
-      label: string;
-      row: OrchestrationRow;
-      nodes: OrchestrationNode[];
-      edges: OrchestrationEdge[];
-    }[] = [];
-    for (const row of list) {
-      const nodes = row.nodes.filter(nodeMatches);
-      if (nodes.length === 0) continue;
-      blocks.push({
-        key: String(row.id),
-        label: row.name || t('orch.untitled'),
-        row,
-        nodes,
-        edges: row.edges,
+    const oq = orchQuery.trim().toLowerCase();
+    const rows = list.filter((row) => !oq || (row.name || '').toLowerCase().includes(oq));
+    const merged = mergeOrchestrations(
+      rows.map((row) => ({ orchId: row.id, nodes: row.nodes, edges: row.edges })),
+    );
+    const nodes = merged.nodes.filter(nodeMatches);
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const edges = merged.edges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
+    return { rows, merged, nodes, edges };
+  }, [list, editing, orchQuery, nodeMatches]);
+
+  const canvasSessions = useMemo(() => {
+    const m = new Map<string, { sessionId: string; title: string | null; projectId: number | null }>();
+    for (const node of draft?.nodes ?? overview?.nodes ?? []) {
+      if (node.kind !== 'session') continue;
+      const row = sessionById.get(node.id);
+      m.set(node.id, {
+        sessionId: node.id,
+        title: row?.title ?? null,
+        projectId: row?.projectId ?? null,
       });
     }
-    return blocks;
-  }, [list, editing, nodeMatches, t]);
+    return m;
+  }, [draft?.nodes, overview, sessionById]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<number, number>();
@@ -628,10 +721,20 @@ export function OrchestrationCanvas({
     return m;
   }, [visible, sessionById]);
 
-  const collapsedGroups = useMemo(() => {
-    if (!groupProjects) return new Set<number>();
-    return new Set([...groupCounts.keys()].filter((id) => !expandedGroups.has(id)));
-  }, [groupProjects, groupCounts, expandedGroups]);
+  /** 收起的分组（counts = 当前面板的节点计数）：总览未动过 = 一个不收。 */
+  const collapsedFrom = useCallback(
+    (counts: ReadonlyMap<number, number>): ReadonlySet<number> => {
+      if (!groupProjects) return new Set<number>();
+      const open = expandedGroups ?? new Set(counts.keys());
+      return new Set([...counts.keys()].filter((id) => !open.has(id)));
+    },
+    [groupProjects, expandedGroups],
+  );
+
+  const collapsedGroups = useMemo(
+    () => collapsedFrom(groupCounts),
+    [collapsedFrom, groupCounts],
+  );
 
   // ---- 实时态（两条编排帧带全量轻量态：就地更新、不重拉） ----
   // 按编排记账：总览模式下所有编排的运行态与动效都要跟，不只选中的那份。
@@ -920,22 +1023,76 @@ export function OrchestrationCanvas({
     });
   }, [visible, draft, canvasSessions, groupProjects, collapsedGroups]);
 
-  /** 总览里收起的编排块（键 = 编排 id 字符串形）。 */
-  const [overviewCollapsed, setOverviewCollapsed] = useState<ReadonlySet<string>>(new Set());
+  /** 总览布局：合并图复用单图布局（全局视图按项目分组收起，同编辑画布机制）。 */
   const laidOverview = useMemo(() => {
-    if (!overviewBlocks) return null;
-    return layoutOrchestrationOverview({
-      blocks: overviewBlocks.map(({ key, label, nodes, edges }) => ({ key, label, nodes, edges })),
+    if (!overview) return null;
+    const counts = new Map<number, number>();
+    for (const node of overview.nodes) {
+      const pid = node.kind === 'webhook' ? 0 : (sessionById.get(node.id)?.projectId ?? 0);
+      counts.set(pid, (counts.get(pid) ?? 0) + 1);
+    }
+    const laid = layoutOrchestrationCanvas({
+      nodes: overview.nodes,
+      edges: overview.edges.map((e) => ({
+        id: `${e.from}->${e.to}`,
+        from: e.from,
+        to: e.to,
+        text: e.pairs[0]?.text ?? '',
+      })),
       sessions: canvasSessions,
-      collapsed: overviewCollapsed,
+      groupProjects,
+      collapsed: collapsedFrom(counts),
     });
-  }, [overviewBlocks, canvasSessions, overviewCollapsed]);
+    return { laid, counts };
+  }, [overview, sessionById, canvasSessions, groupProjects, collapsedFrom]);
+
+  /** 编辑画布的外接连接点：每个不同的上游/下游一枚（连线挂在具体点上）。 */
+  const draftPorts = useMemo(() => {
+    const ins = new Map<string, string[]>();
+    const outs = new Map<string, string[]>();
+    for (const edge of draft?.edges ?? []) {
+      const out = outs.get(edge.from) ?? [];
+      if (!out.includes(edge.to)) out.push(edge.to);
+      outs.set(edge.from, out);
+      const inn = ins.get(edge.to) ?? [];
+      if (!inn.includes(edge.from)) inn.push(edge.from);
+      ins.set(edge.to, inn);
+    }
+    return { ins, outs };
+  }, [draft?.edges]);
+
+  /** 新增（未保存）与无效的连线：都用虚线画（新增琥珀、无效红）。 */
+  const edgeTone = useMemo(() => {
+    if (!editing) return new Map<string, 'new' | 'invalid'>();
+    let baseIds = new Set<string>();
+    try {
+      const parsed = JSON.parse(editing.base) as unknown[];
+      const baseEdges = Array.isArray(parsed[3]) ? (parsed[3] as unknown[][]) : [];
+      baseIds = new Set(baseEdges.map((e) => String(e[0])));
+    } catch {
+      baseIds = new Set();
+    }
+    const invalid = invalidEdgeIds(editing.draft);
+    const m = new Map<string, 'new' | 'invalid'>();
+    for (const edge of editing.draft.edges) {
+      if (invalid.has(edge.id)) m.set(edge.id, 'invalid');
+      else if (!baseIds.has(edge.id)) m.set(edge.id, 'new');
+    }
+    return m;
+  }, [editing]);
 
   const flowNodes: Node[] = useMemo(() => {
     if (!laid || !draft) return [];
     const now = Date.now();
     const orchId = editing?.id ?? null;
     const entryIds = new Set(graphDirections(draft.nodes, draft.edges).entries.map((n) => n.id));
+    /** 连接点序号：按上游出边顺序 hook1/hook2…（对齐手稿）。 */
+    const hookLabel = (edgeKey: string): string => {
+      const [from] = edgeKey.split('->');
+      const out = draftPorts.outs.get(from ?? '') ?? [];
+      const to = edgeKey.slice((from ?? '').length + 2);
+      return `hook${Math.max(1, out.indexOf(to) + 1)}`;
+    };
     return laid.nodes.map((n) => {
       if (n.kind === 'group') {
         const pid = n.projectId ?? 0;
@@ -953,13 +1110,34 @@ export function OrchestrationCanvas({
             hidden: n.hidden ?? 0,
             // 以「此刻的展开集」为底再翻这个：收起态记成显式集合，翻回来即回原样。
             onToggle: () => {
-              const next = new Set([...groupCounts.keys()].filter((id) => expandedGroups.has(id)));
+              const open = expandedGroups ?? new Set(groupCounts.keys());
+              const next = new Set([...groupCounts.keys()].filter((id) => open.has(id)));
               if (next.has(pid)) next.delete(pid);
               else next.add(pid);
               setGroupTouched(next);
             },
           },
         };
+      }
+      if (n.kind === 'hook') {
+        const edgeKey = n.edgeKey ?? '';
+        const realIds = laid.edges.find((e) => e.key === edgeKey)?.edgeIds ?? [];
+        const tone = realIds.map((id) => edgeTone.get(id)).find(Boolean);
+        const hot =
+          orchId != null &&
+          realIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
+        return {
+          id: n.key,
+          type: 'orchHook',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            label: hookLabel(edgeKey),
+            hot,
+            selected: sel?.kind === 'edge' && realIds.includes(sel.id),
+            ...(tone ? { tone } : {}),
+          },
+        } satisfies Node;
       }
       if (n.kind === 'webhook') {
         const nodeId = n.nodeId ?? '';
@@ -971,10 +1149,13 @@ export function OrchestrationCanvas({
           draggable: false,
           data: {
             direction: entryIds.has(nodeId) ? ('entry' as const) : ('exit' as const),
-            hot: orchId != null && (flash[`o${orchId}:n:${nodeId}`] ?? 0) > now,
+            hot: orchId != null && (flash[`o${orchId}:n:${nodeFlashKey(nodeId)}`] ?? 0) > now,
             running: false,
             missing: !node,
             selected: sel?.kind === 'node' && sel.id === nodeId,
+            pickable: false,
+            inPorts: draftPorts.ins.get(nodeId) ?? [],
+            outPorts: draftPorts.outs.get(nodeId) ?? [],
           },
         } satisfies Node;
       }
@@ -994,10 +1175,13 @@ export function OrchestrationCanvas({
           status: statuses.get(sessionId) ?? 'open',
           isEntry: entryIds.has(sessionId),
           pending,
-          hot: orchId != null && (flash[`o${orchId}:n:s:${sessionId}`] ?? 0) > now,
+          hot: orchId != null && (flash[`o${orchId}:n:${nodeFlashKey(sessionId)}`] ?? 0) > now,
           running: live?.status === 'running' && pending > 0,
           missing: !row,
           selected: sel?.kind === 'node' && sel.id === sessionId,
+          pickable: false,
+          inPorts: draftPorts.ins.get(sessionId) ?? [],
+          outPorts: draftPorts.outs.get(sessionId) ?? [],
           onOpen: openMessages,
         },
       } satisfies Node;
@@ -1015,6 +1199,8 @@ export function OrchestrationCanvas({
     projectName,
     openMessages,
     sel,
+    draftPorts,
+    edgeTone,
   ]);
 
   const flowEdges: Edge[] = useMemo(() => {
@@ -1022,53 +1208,115 @@ export function OrchestrationCanvas({
     const now = Date.now();
     const orchId = editing?.id ?? null;
     const edgeById = new Map(draft.edges.map((e) => [e.id, e] as const));
-    return laid.edges.map((e: OrchLaidEdge) => {
+    const hookKeys = new Set(laid.nodes.filter((n) => n.kind === 'hook').map((n) => n.key));
+    // 每条连线拆两段：上游 → 连接点 → 下游（正文标签挂在第二段上，宽度受限可换行）。
+    // 端点被收进分组框时没有连接点，退回一整段。
+    return laid.edges.flatMap((e: OrchLaidEdge): Edge[] => {
       const hot =
         orchId != null && e.edgeIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
       const picked = sel?.kind === 'edge' && e.edgeIds.includes(sel.id);
-      const texts = e.edgeIds.map((id) => edgeById.get(id)?.text ?? '');
-      const first = texts[0] ?? '';
-      const label =
-        first.length > 16 ? `${first.slice(0, 16)}…` : first || undefined;
-      return {
-        id: e.key,
-        source: e.from,
-        target: e.to,
-        type: 'orchFlow',
-        animated: hot,
-        interactionWidth: 24,
-        data: { hot },
-        style: hot
-          ? { stroke: '#2dd4bf', strokeWidth: 2 }
-          : picked
-            ? { stroke: '#38bdf8', strokeWidth: 2 }
-            : { strokeWidth: 1.5 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-        ...(label
-          ? {
-              label,
-              labelBgPadding: [4, 2] as [number, number],
-              labelBgStyle: { fill: 'rgb(23 23 23 / 0.85)' },
-              labelStyle: { fill: '#a3a3a3', fontSize: 10 },
-            }
-          : {}),
-      } satisfies Edge;
+      const tone = e.edgeIds.map((id) => edgeTone.get(id)).find(Boolean);
+      const text = e.edgeIds.map((id) => edgeById.get(id)?.text ?? '').find((x) => x.trim()) ?? '';
+      const stroke = hot
+        ? { stroke: '#2dd4bf', strokeWidth: 2 }
+        : picked
+          ? { stroke: '#38bdf8', strokeWidth: 2 }
+          : tone === 'invalid'
+            ? { stroke: '#ef4444', strokeWidth: 1.5, strokeDasharray: '5 4' }
+            : tone === 'new'
+              ? { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '5 4' }
+              : { strokeWidth: 1.5 };
+      const hookId = `h:${e.key}`;
+      const data = { hot, ...(text ? { label: text } : {}), ...(tone ? { tone } : {}) };
+      if (!hookKeys.has(hookId)) {
+        return [
+          {
+            id: e.key,
+            source: e.from,
+            target: e.to,
+            type: 'orchFlow',
+            animated: hot,
+            interactionWidth: 24,
+            data,
+            style: stroke,
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+          },
+        ] satisfies Edge[];
+      }
+      return [
+        {
+          id: `${e.key}::a`,
+          source: e.from,
+          target: hookId,
+          sourceHandle: `out:${e.to}`,
+          type: 'orchFlow',
+          animated: hot,
+          interactionWidth: 24,
+          data: { hot },
+          style: stroke,
+        },
+        {
+          id: `${e.key}::b`,
+          source: hookId,
+          target: e.to,
+          sourceHandle: 'out',
+          targetHandle: `in:${e.from}`,
+          type: 'orchFlow',
+          animated: hot,
+          interactionWidth: 24,
+          data,
+          style: stroke,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        },
+      ] satisfies Edge[];
     });
-  }, [laid, draft, editing, flash, sel]);
+  }, [laid, draft, editing, flash, sel, edgeTone]);
 
-  // ---- 总览画布（未选编排）：只读 + 实时动效；点节点/编排名进入那份编排 ----
+  // ---- 总览画布（未选编排）：合并图只读 + 实时动效；编辑入口在首节点卡片上 ----
   const enterOrchestration = useCallback((row: OrchestrationRow): void => {
     setEditing(asEditing(row));
   }, []);
 
+  /** 以该节点为入口的编排（全部列表里找，不受当前筛选影响）。 */
+  const entryOrchestrations = useCallback(
+    (nodeId: string): OrchestrationRow[] =>
+      (list ?? []).filter((row) =>
+        graphDirections(row.nodes, row.edges).entries.some((n) => n.id === nodeId),
+      ),
+    [list],
+  );
+
+  /** 点节点卡片：出「编辑/新建编排」面板（任何会话都能当新编排的首节点）。 */
+  const pickEntry = useCallback((nodeId: string | null): void => {
+    if (nodeId == null) return;
+    setEdgeInfo(null);
+    setEntryPick(nodeId);
+  }, []);
+
+  /** 总览合并图的外接连接点（每个不同的上游/下游一枚）。 */
+  const overviewPorts = useMemo(() => {
+    const ins = new Map<string, string[]>();
+    const outs = new Map<string, string[]>();
+    for (const edge of overview?.edges ?? []) {
+      const out = outs.get(edge.from) ?? [];
+      if (!out.includes(edge.to)) out.push(edge.to);
+      outs.set(edge.from, out);
+      const inn = ins.get(edge.to) ?? [];
+      if (!inn.includes(edge.from)) inn.push(edge.from);
+      ins.set(edge.to, inn);
+    }
+    return { ins, outs };
+  }, [overview?.edges]);
+
   const overviewFlowNodes: Node[] = useMemo(() => {
-    if (!laidOverview || !overviewBlocks) return [];
+    if (!overview || !laidOverview) return [];
     const now = Date.now();
-    const rowById = new Map(overviewBlocks.map((b) => [b.row.id, b.row]));
-    return laidOverview.nodes.map((n) => {
-      const orchId = orchIdOfKey(n.key);
-      const row = orchId != null ? (rowById.get(orchId) ?? null) : null;
+    const hasIn = new Set(overview.edges.map((e) => e.to));
+    const pairByKey = new Map<string, MergedOrchEdge>();
+    for (const e of overview.edges) pairByKey.set(`${e.from}->${e.to}`, e);
+    return laidOverview.laid.nodes.map((n) => {
       if (n.kind === 'group') {
+        const pid = n.projectId ?? 0;
         return {
           id: n.key,
           type: 'orchGroup',
@@ -1077,116 +1325,175 @@ export function OrchestrationCanvas({
           draggable: false,
           selectable: false,
           data: {
-            label: n.label ?? '',
-            count: row?.nodes.length ?? 0,
+            label: projectName(pid),
+            count: laidOverview.counts.get(pid) ?? 0,
             collapsed: (n.hidden ?? 0) > 0,
             hidden: n.hidden ?? 0,
             onToggle: () => {
-              const key = String(orchId);
-              setOverviewCollapsed((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
+              const open = expandedGroups ?? new Set(laidOverview.counts.keys());
+              const next = new Set(
+                [...laidOverview.counts.keys()].filter((id) => open.has(id)),
+              );
+              if (next.has(pid)) next.delete(pid);
+              else next.add(pid);
+              setGroupTouched(next);
             },
-            ...(row ? { onOpen: () => enterOrchestration(row) } : {}),
           },
         };
       }
+      if (n.kind === 'hook') {
+        const edgeKey = n.edgeKey ?? '';
+        const merged = pairByKey.get(edgeKey);
+        const hot =
+          merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
+        const from = edgeKey.split('->')[0] ?? '';
+        const out = overviewPorts.outs.get(from) ?? [];
+        const to = edgeKey.slice(from.length + 2);
+        return {
+          id: n.key,
+          type: 'orchHook',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            label: `hook${Math.max(1, out.indexOf(to) + 1)}`,
+            hot,
+            selected: edgeInfo != null && edgeInfo === edgeKey,
+          },
+        } satisfies Node;
+      }
+      const nodeId = n.nodeId ?? '';
+      const orchIds = overview.merged.orchIdsOf.get(nodeId) ?? [];
+      const hot = orchIds.some(
+        (oid) => (flash[`o${oid}:n:${nodeFlashKey(nodeId)}`] ?? 0) > now,
+      );
+      const pickable = !nodeId.startsWith('w:') || entryOrchestrations(nodeId).length > 0;
       if (n.kind === 'webhook') {
-        const nodeId = n.nodeId ?? '';
         return {
           id: n.key,
           type: 'orchWebhook',
           position: { x: n.x, y: n.y },
           draggable: false,
           data: {
-            direction:
-              row && !row.edges.some((e) => e.to === nodeId)
-                ? ('entry' as const)
-                : ('exit' as const),
-            hot: orchId != null && (flash[`o${orchId}:n:${nodeId}`] ?? 0) > now,
+            direction: hasIn.has(nodeId) ? ('exit' as const) : ('entry' as const),
+            hot,
             running: false,
             missing: false,
             selected: false,
+            pickable,
+            inPorts: overviewPorts.ins.get(nodeId) ?? [],
+            outPorts: overviewPorts.outs.get(nodeId) ?? [],
           },
         } satisfies Node;
       }
-      const sessionId = n.nodeId ?? '';
-      const srow = sessionById.get(sessionId);
-      const orchLive = orchId != null ? liveRuns.get(orchId) : undefined;
-      const pending = orchLive?.pendingCounts[sessionId] ?? 0;
+      const srow = sessionById.get(nodeId);
+      // 待回 = 各在跑编排对该会话的 pending 之和（跨编排 n:n，一个节点可同时
+      // 收多份编排的投递）。
+      let pending = 0;
+      for (const oid of orchIds) {
+        const lr = liveRuns.get(oid);
+        if (lr?.status === 'running') pending += lr.pendingCounts[nodeId] ?? 0;
+      }
       return {
         id: n.key,
         type: 'orchSession',
         position: { x: n.x, y: n.y },
         draggable: false,
         data: {
-          sessionId,
-          label: sessionLabel(srow?.title ?? null, sessionId),
+          sessionId: nodeId,
+          label: sessionLabel(srow?.title ?? null, nodeId),
           projectLabel: projectName(srow?.projectId ?? null),
           harness: srow?.harness ?? null,
-          status: statuses.get(sessionId) ?? 'open',
-          isEntry: !!row && !row.edges.some((e) => e.to === sessionId),
+          status: statuses.get(nodeId) ?? 'open',
+          isEntry: !hasIn.has(nodeId),
           pending,
-          hot: orchId != null && (flash[`o${orchId}:n:s:${sessionId}`] ?? 0) > now,
-          running: orchLive?.status === 'running' && pending > 0,
+          hot,
+          running: pending > 0,
           missing: !srow,
           selected: false,
+          pickable,
+          inPorts: overviewPorts.ins.get(nodeId) ?? [],
+          outPorts: overviewPorts.outs.get(nodeId) ?? [],
           onOpen: openMessages,
         },
       } satisfies Node;
     });
   }, [
+    overview,
     laidOverview,
-    overviewBlocks,
     sessionById,
     statuses,
     liveRuns,
     flash,
     projectName,
     openMessages,
-    enterOrchestration,
+    entryOrchestrations,
+    expandedGroups,
+    overviewPorts,
+    edgeInfo,
   ]);
 
   const overviewFlowEdges: Edge[] = useMemo(() => {
-    if (!laidOverview || !overviewBlocks) return [];
+    if (!overview || !laidOverview) return [];
     const now = Date.now();
-    // 边 id（e1/e2）跨编排会撞，正文按 `o<编排id>:e:<边id>` 整键取。
-    const textByKey = new Map<string, string>();
-    for (const b of overviewBlocks) {
-      for (const e of b.edges) textByKey.set(`o${b.row.id}:e:${e.id}`, e.text);
-    }
-    return laidOverview.edges.map((e: OrchLaidEdge) => {
-      const orchId = orchIdOfKey(e.key);
+    // 合并边按端点对回查（laid 的 edgeIds 就是合成的 `${from}->${to}`）。
+    const pairByKey = new Map<string, MergedOrchEdge>();
+    for (const e of overview.edges) pairByKey.set(`${e.from}->${e.to}`, e);
+    const hookKeys = new Set(
+      laidOverview.laid.nodes.filter((n) => n.kind === 'hook').map((n) => n.key),
+    );
+    return laidOverview.laid.edges.flatMap((e: OrchLaidEdge): Edge[] => {
+      const merged = pairByKey.get(e.edgeIds[0] ?? '');
       const hot =
-        orchId != null && e.edgeIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
-      const first =
-        e.edgeIds.map((id) => (orchId != null ? (textByKey.get(`o${orchId}:e:${id}`) ?? '') : ''))[0] ??
-        '';
-      const label = first.length > 16 ? `${first.slice(0, 16)}…` : first || undefined;
-      return {
-        id: e.key,
-        source: e.from,
-        target: e.to,
-        type: 'orchFlow',
-        animated: hot,
-        interactionWidth: 24,
-        data: { hot },
-        style: hot ? { stroke: '#2dd4bf', strokeWidth: 2 } : { strokeWidth: 1.5 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-        ...(label
-          ? {
-              label,
-              labelBgPadding: [4, 2] as [number, number],
-              labelBgStyle: { fill: 'rgb(23 23 23 / 0.85)' },
-              labelStyle: { fill: '#a3a3a3', fontSize: 10 },
-            }
-          : {}),
-      } satisfies Edge;
+        merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
+      const text = merged?.pairs.find((p) => p.text.trim())?.text ?? '';
+      const hookId = `h:${e.key}`;
+      const stroke = hot
+        ? { stroke: '#2dd4bf', strokeWidth: 2 }
+        : { strokeWidth: 1.5 };
+      const data = { hot, ...(text ? { label: text } : {}) };
+      if (!hookKeys.has(hookId)) {
+        return [
+          {
+            id: e.key,
+            source: e.from,
+            target: e.to,
+            type: 'orchFlow',
+            animated: hot,
+            interactionWidth: 24,
+            data,
+            style: stroke,
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+          },
+        ] satisfies Edge[];
+      }
+      return [
+        {
+          id: `${e.key}::a`,
+          source: e.from,
+          target: hookId,
+          sourceHandle: `out:${e.to}`,
+          type: 'orchFlow',
+          animated: hot,
+          interactionWidth: 24,
+          data: { hot },
+          style: stroke,
+        },
+        {
+          id: `${e.key}::b`,
+          source: hookId,
+          target: e.to,
+          sourceHandle: 'out',
+          targetHandle: `in:${e.from}`,
+          type: 'orchFlow',
+          animated: hot,
+          interactionWidth: 24,
+          data,
+          style: stroke,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        },
+      ] satisfies Edge[];
     });
-  }, [laidOverview, overviewBlocks, flash]);
+  }, [overview, laidOverview, flash]);
 
   // ---- 定义编辑 ----
   const check = draft ? validateDraft(draft) : null;
@@ -1272,9 +1579,15 @@ export function OrchestrationCanvas({
     if (id) setSel({ kind: 'edge', id });
   };
 
-  /** 渲染边 id 是布局合并后的键，选中的必须是底下那条原始边。 */
+  /**
+   * 渲染边的 id 是布局合并后的键（两段各带 `::a` / `::b` 后缀），选中的必须是
+   * 底下那条原始边。连接点节点 id 是 `h:<边键>`，同一条线点哪儿都落到同一处。
+   */
   const selectEdge = (flowEdgeId: string): void => {
-    const real = laid?.edges.find((e) => e.key === flowEdgeId)?.edgeIds[0];
+    const baseKey = flowEdgeId.startsWith('h:')
+      ? flowEdgeId.slice(2)
+      : flowEdgeId.replace(/::[ab]$/, '');
+    const real = laid?.edges.find((e) => e.key === baseKey)?.edgeIds[0];
     if (real) setSel({ kind: 'edge', id: real });
   };
 
@@ -1706,12 +2019,12 @@ export function OrchestrationCanvas({
           <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
             {list === null ? t('hooks.loading') : t('orch.empty')}
           </p>
-        ) : draft === null && (overviewBlocks == null || overviewBlocks.length === 0) ? (
+        ) : draft === null && (overview == null || overview.nodes.length === 0) ? (
           <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
             {t('orch.noMatch')}
           </p>
         ) : draft === null ? (
-          /* 总览（默认面）：所有编排各一块，只读；点节点/编排名进入那份编排。 */
+          /* 总览（默认面）：所有编排合并成一张图，只读；编辑入口在首节点卡片上。 */
           <ReactFlow
             key="overview"
             nodes={overviewFlowNodes}
@@ -1726,14 +2039,13 @@ export function OrchestrationCanvas({
             nodesConnectable={false}
             deleteKeyCode={null}
             onNodeClick={(_, node) => {
-              const orchId = orchIdOfKey(node.id);
-              const row = orchId != null ? (list ?? []).find((r) => r.id === orchId) : undefined;
-              if (row) enterOrchestration(row);
+              // 连接点 = 那条连线（只读：列出它在各编排里的正文）；其它节点 = 首节点面板。
+              if (node.id.startsWith('h:')) setEdgeInfo(node.id.slice(2));
+              else pickEntry(orchNodeIdOf(node.id));
             }}
-            onEdgeClick={(_, edge) => {
-              const orchId = orchIdOfKey(edge.id);
-              const row = orchId != null ? (list ?? []).find((r) => r.id === orchId) : undefined;
-              if (row) enterOrchestration(row);
+            onPaneClick={() => {
+              setEntryPick(null);
+              setEdgeInfo(null);
             }}
           >
             <CanvasBackground />
@@ -1743,6 +2055,12 @@ export function OrchestrationCanvas({
               className="nopan flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1"
               onClick={(e) => e.stopPropagation()}
             >
+              <input
+                value={orchQuery}
+                onChange={(e) => setOrchQuery(e.target.value)}
+                placeholder={t('orch.filterOrch')}
+                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+              />
               {groupProjects && (
                 <input
                   value={projectQuery}
@@ -1759,11 +2077,108 @@ export function OrchestrationCanvas({
               />
               <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
                 {t('orch.summary', {
-                  nodes: overviewBlocks!.reduce((sum, b) => sum + b.nodes.length, 0),
-                  edges: overviewBlocks!.reduce((sum, b) => sum + b.edges.length, 0),
+                  nodes: overview!.nodes.length,
+                  edges: overview!.edges.length,
                 })}
               </span>
             </Panel>
+            {/* 首节点面板：编辑以它为入口的编排，或以它为入口新建一份。 */}
+            {entryPick != null && (
+              <Panel
+                position="top-right"
+                className="nopan w-60 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
+                    {entryPick.startsWith('w:')
+                      ? t('orch.webhookEntry')
+                      : sessionLabel(sessionById.get(entryPick)?.title ?? null, entryPick)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEntryPick(null)}
+                    title={t('common.close')}
+                    aria-label={t('common.close')}
+                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                {entryOrchestrations(entryPick).map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => {
+                      setEntryPick(null);
+                      enterOrchestration(row);
+                    }}
+                    className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-[11px] text-neutral-200 transition-colors hover:bg-edge/[0.08]"
+                  >
+                    <Waypoints className="h-3 w-3 shrink-0 text-teal-400" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {row.name || t('orch.untitled')}
+                    </span>
+                  </button>
+                ))}
+                {!entryPick.startsWith('w:') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = addSessionNode(emptyDraft(), entryPick);
+                      setEntryPick(null);
+                      setEditing({ id: null, draft: d, base: serialize(d) });
+                    }}
+                    className="flex w-full items-center gap-1 rounded border border-dashed border-edge/[0.14] px-1 py-1 text-left text-[11px] text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+                  >
+                    <Plus className="h-3 w-3 shrink-0" />
+                    {t('orch.newFromEntry')}
+                  </button>
+                )}
+              </Panel>
+            )}
+            {/* 连接点（只读）：这条线在各份编排里的正文，点各自编排去改。 */}
+            {edgeInfo != null && overview != null && (
+              <Panel
+                position="top-right"
+                className="nopan w-64 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
+                    {nodeLabel(edgeInfo.split('->')[0] ?? '')}
+                    {' → '}
+                    {nodeLabel(edgeInfo.slice((edgeInfo.split('->')[0] ?? '').length + 2))}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEdgeInfo(null)}
+                    title={t('common.close')}
+                    aria-label={t('common.close')}
+                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                {(overview.edges.find((e) => `${e.from}->${e.to}` === edgeInfo)?.pairs ?? []).map(
+                  (pair) => {
+                    const name =
+                      list?.find((row) => row.id === pair.orchId)?.name || t('orch.untitled');
+                    return (
+                      <div key={`${pair.orchId}:${pair.edgeId}`} className="space-y-0.5">
+                        <span className="block truncate text-[10px] text-neutral-500">{name}</span>
+                        <p className="break-words whitespace-pre-wrap rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300">
+                          {pair.text.trim() || t('orch.edgeTextEmpty')}
+                        </p>
+                      </div>
+                    );
+                  },
+                )}
+                <p className="text-[9px] leading-relaxed text-neutral-600">
+                  {t('orch.edgeInfoHint')}
+                </p>
+              </Panel>
+            )}
             <Panel position="bottom-center" className="pointer-events-none max-w-[70%]">
               <p className="min-w-0 truncate text-[10px] text-neutral-600">
                 {t('orch.overviewHint')}
@@ -1798,6 +2213,11 @@ export function OrchestrationCanvas({
             deleteKeyCode={null}
             onConnect={connectEdge}
             onNodeClick={(_, node) => {
+              // 点连接点 = 选中那条连线（正文/提取就在面板里改）。
+              if (node.id.startsWith('h:')) {
+                selectEdge(node.id);
+                return;
+              }
               const nodeId = orchNodeIdOf(node.id);
               if (nodeId) setSel({ kind: 'node', id: nodeId });
             }}
@@ -2100,6 +2520,11 @@ export function OrchestrationCanvas({
               >
                 {statusText}
               </p>
+              {edgeTone.size > 0 && (
+                <p className="truncate text-center text-[9px] text-neutral-600">
+                  {t('orch.edgePendingHint')}
+                </p>
+              )}
             </Panel>
           </ReactFlow>
         )}

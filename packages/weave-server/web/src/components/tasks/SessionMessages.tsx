@@ -610,6 +610,13 @@ function writeDraftSnapshot(sessionId: string, snap: DraftSnapshot | null): void
   }
 }
 
+/** 一段文本里**有没有可能**含引用表达式（`@` 前面是空白或行首）。
+ *  粘贴走这条快路：整段连一个候选都没有，就不必往服务端问一趟认引用——
+ *  纯文本粘贴卡顿的主因就是那一趟网络来回。 */
+export function hasRefCandidate(text: string): boolean {
+  return /(^|\s)@/.test(text);
+}
+
 /** 敲下 `@` 之后该怎么处理（纯函数，DOM 那边只负责把「光标之前那截」喂进来）：
  *  `escape` = `\@`，吃掉反斜杠留字面 `@`；`ignore` = 前面不是空白；`open` = 唤出选择器。
  *  **`@` 前面必须是空白（或行首）**——与服务端认引用的文法同一套判据：粘在字里
@@ -1895,6 +1902,12 @@ export function SessionMessages({
     const range = caretInDraft(el);
     atRange.current = range ? range.cloneRange() : null;
     const plain = (): void => insertNodes([document.createTextNode(text)]);
+    // 快路：整段没有一个「行首/空白后的 @」，就不可能含引用表达式——直接插，
+    // 不等那一趟服务端认引用（粘贴卡顿的主因：纯文本也要等网络来回才落字）
+    if (!hasRefCandidate(text)) {
+      plain();
+      return;
+    }
     api.recognizeRefs(sessionId, text).then((refs) => {
       insertNodes(
         buildSegments(text, refs).flatMap((seg): Node[] =>

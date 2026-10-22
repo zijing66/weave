@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -30,7 +30,10 @@ import { markdownPre } from '@/components/ui/mermaid-block';
  * 代码 11px、标题只比正文大半档，行内元素逐项收边距。链接强制新开页签：点一下不能
  * 把 dashboard 导航走。
  */
-export function AssistantMarkdown({ text }: { text: string }) {
+/** `memo`：正文 markdown 每次父组件重渲染都要重新解析一遍（react-markdown 的
+ *  解析发生在 render 里）。对话面板里敲一个字就会重渲染整串气泡——长会话下这是
+ *  「打字/粘贴发卡」的主要来源，文本没变就不该重解析。 */
+export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
   return (
     <div
       className={
@@ -68,7 +71,7 @@ export function AssistantMarkdown({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 export function AiAssistant() {
   const t = useT();

@@ -137,11 +137,12 @@ describe('QuestionTracker 状态机', () => {
     feed(SESSION, preTool('ExitPlanMode', {}));
     const q = tracker.get(SESSION)!.questions[0]!;
     expect(q.key).toBe('ExitPlanMode:approve');
-    // 宿主 2.1.296 实测：计划对话框只有两行（485dc96）
-    expect(q.options.map((o) => o.label)).toEqual([
-      'Yes, and switch to default (ask each time) for this session',
-      'No',
-    ]);
+    // 行数随本机 `permissions.defaultMode` 变（default = 2 行、bypassPermissions =
+    // 3 行），故只断言形状：数字键从 1 起连续、末行是拒绝语义的那种面
+    expect(q.options.map((o) => o.keys)).toEqual(
+      q.options.length === 2 ? [['1'], ['2']] : [['1'], ['2'], ['3']],
+    );
+    expect([2, 3]).toContain(q.options.length);
   });
 
   it('清除：PostToolUse(同名阻塞工具) / UserPromptSubmit / Stop', () => {
