@@ -103,6 +103,10 @@ export interface RunEvent {
   edgeId: string;
   ok: boolean;
   error?: string;
+  /** 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试。 */
+  stage?: 'ensure';
+  /** 耗时（ms）：ensure 用；投递事件不带。 */
+  ms?: number;
 }
 
 export interface OrchestrationRunState {

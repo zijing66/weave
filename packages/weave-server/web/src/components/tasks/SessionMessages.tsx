@@ -441,31 +441,90 @@ export const REF_LINES_ATTR = 'data-ref-lines';
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 
-/** composer DOM → 要发出去的原文：胶囊取 `data-ref`，换行（浏览器插的 `<br>`）还原成 `\n`。
- *  **表达式绝不在前端拼**——这里只把服务端回给的值吐出来。 */
-export function serializeDraft(root: Node | null): string {
-  if (!root || root.nodeType !== ELEMENT_NODE) return '';
-  let out = '';
-  const walk = (node: Node): void => {
+/** 换行容器：Chrome 的 contenteditable 用这些块表达「换了一行」（Shift+Enter 走
+ *  `execCommand`、粘多行文本都落成 `<div>`，不是 `<br>`）。 */
+const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3']);
+
+/** 输入框 DOM 摊平后的片段：一段文本（含换行）或一枚引用胶囊。 */
+type DraftToken =
+  | { text: string }
+  | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } };
+
+/** composer DOM → 线性 token。**换行规则只说这一处**：
+ *  - `<br>` = 一个换行；
+ *  - 块级元素 = 新的一行（与前一个兄弟之间补 `\n`），块尾那枚 `<br>` 是浏览器给
+ *    空行留的占位、不算换行——这样「连续回车留下的空行」原样保留；
+ *  - 引用胶囊取 `data-ref*`（表达式绝不在前端拼）。
+ *  `serializeDraft`（发出原文）与 `draftSnapshotOf`（草稿快照）共用这一份。 */
+function draftTokensOf(root: Node | null): DraftToken[] {
+  if (!root || root.nodeType !== ELEMENT_NODE) return [];
+  const out: DraftToken[] = [];
+  const text = (t: string): void => {
+    if (t !== '') out.push({ text: t });
+  };
+  const chip = (el: HTMLElement, ref: string): void => {
+    const [start, end] = (el.getAttribute(REF_LINES_ATTR) ?? '').split('-').map(Number);
+    out.push({
+      ref,
+      path: el.getAttribute(REF_PATH_ATTR) ?? '',
+      kind: el.getAttribute(REF_KIND_ATTR) === 'dir' ? 'dir' : 'file',
+      ...(Number.isFinite(start) && Number.isFinite(end)
+        ? { lines: { start: start!, end: end! } }
+        : {}),
+    });
+  };
+  const leaf = (node: Node): void => {
     if (node.nodeType === TEXT_NODE) {
-      out += node.nodeValue ?? '';
+      text(node.nodeValue ?? '');
       return;
     }
     if (node.nodeType !== ELEMENT_NODE) return;
     const el = node as HTMLElement;
     const ref = el.getAttribute(REF_ATTR);
     if (ref != null) {
-      out += ref;
+      chip(el, ref);
       return;
     }
-    // Enter / 插入文本都会落成 <br>，块级元素同理（兜底，正常路径不会走到）
     if (el.tagName === 'BR') {
-      out += '\n';
+      text('\n');
       return;
     }
-    node.childNodes.forEach(walk);
+    kids(el);
   };
-  root.childNodes.forEach(walk);
+  const kids = (parent: Node): void => {
+    let seen = 0;
+    Array.from(parent.childNodes).forEach((kid) => {
+      const el = kid.nodeType === ELEMENT_NODE ? (kid as HTMLElement) : null;
+      if (!el || !BLOCK_TAGS.has(el.tagName)) {
+        leaf(kid);
+        seen++;
+        return;
+      }
+      // 块 = 新的一行：与前面的兄弟之间补一个换行（第一个不补）
+      if (seen > 0) text('\n');
+      seen++;
+      const ref = el.getAttribute(REF_ATTR);
+      if (ref != null) {
+        chip(el, ref);
+        return;
+      }
+      const inner = Array.from(el.childNodes);
+      inner.forEach((g, gi) => {
+        const filler =
+          gi === inner.length - 1 && g.nodeType === ELEMENT_NODE && (g as HTMLElement).tagName === 'BR';
+        if (!filler) leaf(g);
+      });
+    });
+  };
+  kids(root);
+  return out;
+}
+
+/** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。 */
+export function serializeDraft(root: Node | null): string {
+  const out = draftTokensOf(root)
+    .map((t) => ('text' in t ? t.text : t.ref))
+    .join('');
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
 }
@@ -490,43 +549,17 @@ export function draftSnapshotOf(
   staged: readonly UploadImage[],
 ): DraftSnapshot | null {
   if (!root) return null;
+  // 相邻文本段合并（token 化会把块边界切出多段）
   const parts: DraftSnapshot['parts'] = [];
-  let text = '';
-  const flush = (): void => {
-    if (text !== '') {
-      parts.push({ t: text });
-      text = '';
+  for (const token of draftTokensOf(root)) {
+    if ('text' in token) {
+      const last = parts[parts.length - 1];
+      if (last && 't' in last) last.t += token.text;
+      else parts.push({ t: token.text });
+    } else {
+      parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
-  };
-  const walk = (node: Node): void => {
-    if (node.nodeType === TEXT_NODE) {
-      text += node.nodeValue ?? '';
-      return;
-    }
-    if (node.nodeType !== ELEMENT_NODE) return;
-    const el = node as HTMLElement;
-    const ref = el.getAttribute(REF_ATTR);
-    if (ref != null) {
-      flush();
-      const [start, end] = (el.getAttribute(REF_LINES_ATTR) ?? '').split('-').map(Number);
-      parts.push({
-        r: ref,
-        path: el.getAttribute(REF_PATH_ATTR) ?? '',
-        kind: el.getAttribute(REF_KIND_ATTR) === 'dir' ? 'dir' : 'file',
-        ...(Number.isFinite(start) && Number.isFinite(end)
-          ? { lines: { start: start!, end: end! } }
-          : {}),
-      });
-      return;
-    }
-    if (el.tagName === 'BR') {
-      text += '\n';
-      return;
-    }
-    node.childNodes.forEach(walk);
-  };
-  root.childNodes.forEach(walk);
-  flush();
+  }
   return parts.length > 0 || staged.length > 0 ? { parts, staged: [...staged] } : null;
 }
 

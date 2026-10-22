@@ -105,3 +105,16 @@
 - **#5 消除副作用**：编排拉起/投递唤醒的会话，其首个 `SessionStart` 不得被 `maybeAutoFire` 当成自然回合（打「编排拉起」标记，或把 SessionStart 排除出 auto-fire 的 idleSignals）。
 - **#6 补观测**：ensure/拉起结果落 run 事件（`stage:'ensure'`：sessionId、ok、耗时、失败原因），画布与 run 详情可见；同一 run 内失败节点不重复拉起。
 - **#7 codex 补全**：给 resume/liveness 槽补能力位，使 codex 会话也能判活、被自动拉起——这与「在会话列表里打开 codex 会话」是同一份能力，补一次两处受益。
+
+## 实施状态（2026-10-22）
+
+- **MCP（P0）已落地**：`weave mcp orchestration`（stdio，官方 SDK 1.32.1）。十个工具：
+  `list/get/create/update/delete_orchestration`、`trigger_orchestration`、`list_runs`、
+  `get_run`、`cancel_run`、`list_sessions`；全部转发 daemon HTTP（本机令牌），**零缓存**。
+  宿主配置：`{"command": "weave", "args": ["mcp", "orchestration"]}`。
+- **编排拉起（#2/#3/#5/#6）已落地**：ensureOpen 按会话单飞；回执先等新的
+  `SessionStart`（15s），退而认注册表 pid；run 事件新增 `stage:'ensure'`（含耗时/原因）；
+  编排拉起的会话 60s 内的回合不算自然回合。
+- **#1 预拉起**：按裁决不做。
+- **#7 codex 判活**：仍缺依据（codex 无 sessionId↔pid 注册表；rollout 锁是采集器的锁）。
+  要补需先做进程级取证，独立排期；在补齐前 codex 目标不会自动拉起。

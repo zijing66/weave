@@ -89,8 +89,18 @@ const ENTRY_INDEX_TTL_MS = 10_000;
  * 状态：定义在 DB，运行态在内存（重启 → interrupted，不重发）；每次转场落一行日志。
  * 一切异常内部吞掉：编排失败永不影响采集与消息投递。
  */
+/** 编排拉起的会话在这么久内的回合不算「自然回合」（覆盖冷启动 + 首轮）。 */
+const STARTED_AUTO_FIRE_GUARD_MS = 60_000;
+
 export class OrchestrationEngine {
   private readonly runtime = new Map<number, Runtime>();
+  /** ensureOpen 单飞：同一会话被多条边并发投递时只拉起一次。 */
+  private readonly opening = new Map<
+    string,
+    Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }>
+  >();
+  /** 编排刚拉起的会话 → 时刻：首个回合结束不许被当成「自然回合」去触发别的编排。 */
+  private readonly startedByOrchestration = new Map<string, number>();
 
   constructor(
     private readonly deps: {
@@ -107,8 +117,11 @@ export class OrchestrationEngine {
       supportsExtract?: (sessionId: string) => boolean;
       /** 边级提取（装配侧 fork 无头回合实现）；null/拒绝 = 回落 {upstream}。 */
       extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
-      /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等注册表落名）。 */
-      ensureOpen?: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+      /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等回执）。
+       *  `ack` 说明回执来源（`session-start` = 宿主真进了会话，`registry` = 只见到进程）。 */
+      ensureOpen?: (
+        sessionId: string,
+      ) => Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }>;
       /** 能力面访问器（测试注入）；缺省 surfaces.ts 模块级 registry。 */
       surfaceFor?: (harness: Harness) => MessagingSurface;
       /** liveness 探测（测试注入）；缺省 claude 注册表全量扫描。 */
@@ -202,7 +215,17 @@ export class OrchestrationEngine {
         this.persist(rt);
         void this.fireEdges(rt, input.sessionId);
       }
-      if (!orchestrationTurn) this.maybeAutoFire(input.sessionId);
+      if (!orchestrationTurn) {
+        const now = Date.now();
+        const startedAt = this.startedByOrchestration.get(input.sessionId);
+        if (startedAt !== undefined && now - startedAt < STARTED_AUTO_FIRE_GUARD_MS) {
+          // 编排刚拉起来的会话：它的首个回合并不能算「自然回合」
+          this.startedByOrchestration.delete(input.sessionId);
+        } else {
+          this.startedByOrchestration.delete(input.sessionId);
+          this.maybeAutoFire(input.sessionId);
+        }
+      }
     } catch {
       // 面缺席/库错误都不影响采集
     }
@@ -354,6 +377,20 @@ export class OrchestrationEngine {
     return touched;
   }
 
+  /** ensureOpen 单飞：并发的多条边/多个 run 对同一会话只拉起一次。 */
+  private ensureOpenOnce(
+    sessionId: string,
+  ): Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }> {
+    const existing = this.opening.get(sessionId);
+    if (existing) return existing;
+    const task = (
+      this.deps.ensureOpen?.(sessionId) ??
+      Promise.resolve({ ok: true } as { ok: true; ack?: 'session-start' | 'registry' })
+    ).finally(() => this.opening.delete(sessionId));
+    this.opening.set(sessionId, task);
+    return task;
+  }
+
   private async reviveOrDrop(rt: Runtime, sessionId: string): Promise<void> {
     const opened = await this.ensureOpen(sessionId);
     if (opened.ok || !rt.running) return;
@@ -459,8 +496,19 @@ export class OrchestrationEngine {
         return false;
       }
       if (this.aliveOf(input.to) === false) {
-        const opened = await this.ensureOpen(input.to);
+        const begun = Date.now();
+        const opened = await this.ensureOpenOnce(input.to);
         if (!rt.running) return false;
+        // 拉起是独立的一步：成功/失败都单独落一条事件（stage=ensure），画布能看见
+        this.record(rt, {
+          from: '',
+          to: input.to,
+          edgeId: input.edgeId,
+          ok: opened.ok,
+          stage: 'ensure',
+          ms: Date.now() - begun,
+          ...(opened.ok ? {} : { error: opened.error }),
+        });
         if (!opened.ok) {
           this.record(rt, {
             ...input,
@@ -469,6 +517,7 @@ export class OrchestrationEngine {
           });
           return false;
         }
+        this.startedByOrchestration.set(input.to, Date.now());
         // 刚从冷启动拉起来的会话：凭据随它的首个 hook 事件才上报，而层①-a 直投
         // 比中继快三个数量级（86ms vs 一个 headless 子进程）——值得等这一小会儿。
         // 等不到只是回落，不挡投递。
@@ -519,7 +568,15 @@ export class OrchestrationEngine {
 
   private record(
     rt: Runtime,
-    input: { from: string; to: string; edgeId: string; ok: boolean; error?: string },
+    input: {
+      from: string;
+      to: string;
+      edgeId: string;
+      ok: boolean;
+      error?: string;
+      stage?: 'ensure';
+      ms?: number;
+    },
   ): void {
     if (!rt.running) return;
     const event: RunEvent = {
@@ -529,6 +586,8 @@ export class OrchestrationEngine {
       edgeId: input.edgeId,
       ok: input.ok,
       ...(input.error ? { error: input.error } : {}),
+      ...(input.stage ? { stage: input.stage } : {}),
+      ...(input.ms === undefined ? {} : { ms: input.ms }),
     };
     rt.state.events.push(event);
     // 日志行内事件上限：长期跑的大图不把 state 撑爆（保留最近的）。

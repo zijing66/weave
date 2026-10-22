@@ -380,16 +380,27 @@ export function startDaemon(): void {
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
     ensureOpen: async (sessionId) => {
+      // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
+      // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
+      const baseline = hookEvents.listBySession(sessionId, 1).at(-1)?.id ?? 0;
       const opened = await openSessionTerminal(
         { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
         sessionId,
       );
       if (!opened.ok) return opened;
-      for (let i = 0; i < 32; i++) {
-        if (claudeLivenessById().get(sessionId) === true) break;
+      let alive = false;
+      for (let i = 0; i < 60; i++) {
+        // 15s 预算：冷启动 + 宿主落 SessionStart 的实测富余
+        const recent = hookEvents.listBySession(sessionId, 20);
+        if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
+          return { ok: true, ack: 'session-start' };
+        }
+        if (claudeLivenessById().get(sessionId) === true) alive = true;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      return { ok: true };
+      return alive
+        ? { ok: true, ack: 'registry' }
+        : { ok: false, error: 'session did not report ready within 15s' };
     },
   });
   orchestrationEngine.rearm();

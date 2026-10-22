@@ -91,7 +91,9 @@ const deliverer = (
 const setup = (
   opts: {
     deliverer?: Parameters<typeof deliverer>[0];
-    ensureOpen?: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+    ensureOpen?: (
+      sessionId: string,
+    ) => Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }>;
     liveness?: Map<string, boolean>;
     maxDeliveries?: number;
     supportsExtract?: (sessionId: string) => boolean;
@@ -633,6 +635,49 @@ describe('失败路径', () => {
     );
     expect(d.send).toHaveBeenCalledTimes(1);
     expect(runs.getById((result as { runId: number }).runId)!.deliveries).toBe(1);
+  });
+
+  it('拉起单落一条 ensure 事件（含耗时），排在投递事件之前', async () => {
+    const { engine } = setup({ liveness: new Map([['a', false]]) });
+    sessions.touch('a', projectId);
+    const result = await engine.start(fanOut(), 'manual');
+    const run = runs.getById((result as { runId: number }).runId)!;
+    const ensure = run.state.events.find((e) => e.stage === 'ensure');
+    expect(ensure).toMatchObject({ to: 'a', ok: true });
+    expect(typeof ensure!.ms).toBe('number');
+    expect(run.state.events.indexOf(ensure!)).toBeLessThan(
+      run.state.events.findIndex((e) => e.stage === undefined && e.to === 'a'),
+    );
+  });
+
+  it('同一目标被并发投递时只拉起一次（单飞）', async () => {
+    let release: (v: { ok: true }) => void = () => {};
+    const gate = new Promise<{ ok: true }>((resolve) => {
+      release = resolve;
+    });
+    const { engine, ensureOpen } = setup({
+      ensureOpen: () => gate,
+      liveness: new Map([
+        ['a', true],
+        ['b', false],
+        ['c', true],
+      ]),
+    });
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'join',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges: [edge('a', 'b'), edge('c', 'b')],
+    }).id;
+    await engine.start(id, 'manual'); // 入口 a、c 各收一条
+    idleOf(engine, 'a');
+    idleOf(engine, 'c'); // 两条边同一拍并发投 b
+    await flush();
+    expect(ensureOpen).toHaveBeenCalledTimes(1);
+    release({ ok: true });
+    await flush();
   });
 
   it('投递预算：到顶即 failed（环路兜底）', async () => {

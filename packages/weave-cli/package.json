@@ -50,10 +50,12 @@
     "dev": "tsx watch --conditions=development src/main.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@weavecode/core": "workspace:^",
     "@weavecode/harness": "workspace:^",
     "@weavecode/server": "workspace:^",
-    "@weavecode/templates": "workspace:^"
+    "@weavecode/templates": "workspace:^",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

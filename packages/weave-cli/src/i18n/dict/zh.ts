@@ -30,6 +30,8 @@ export const zh = {
   'cmd.daemon.stop.desc': '停止运行中的守护进程',
   'cmd.daemon.status.desc': '查看守护进程状态',
   'cmd.dashboard.desc': '在浏览器中打开 web 控制台（必要时先启动守护进程）',
+  'cmd.mcp.desc': '以内置 MCP 服务暴露 weave 能力（stdio）',
+  'cmd.mcp.orchestration.desc': '启动编排 MCP：列表/读写/校验/触发/运行日志（转发 daemon API）',
   'cmd.chpass.desc': '修改 dashboard 登录密码（指定新密码；本机执行不需要旧密码）',
   'cmd.scan.desc': '扫描已初始化 weave 的项目并注册',
   'cmd.doctor.desc': '诊断本机接线：这条检出是否已注册进本机 weave server',

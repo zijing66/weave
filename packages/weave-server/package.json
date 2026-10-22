@@ -57,7 +57,7 @@
     "selfsigned": "^5.5.0",
     "smol-toml": "^1.3.0",
     "web-push": "^3.6.7",
-    "zod": "^3.23.0"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@codemirror/search": "^6.7.2",
