@@ -101,6 +101,13 @@ export class SessionRepository {
     return row ? toSession(row) : undefined;
   }
 
+  /** 仪表盘用：会话总数不受列表 200 上限影响。 */
+  countAll(): number {
+    return Number(
+      (this.db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n,
+    );
+  }
+
   list(projectId?: number): SessionRow[] {
     // 创建时间固定排序（不随活跃跳动）。
     const rows =

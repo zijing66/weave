@@ -1848,6 +1848,10 @@ export const api = {
     return apiFetch(`/messaging/orchestration-runs?${params.toString()}`, { method: 'DELETE' });
   },
 
+  /** 仪表盘挂载时让服务端重推一次快照（空载荷；数据本身仍走 SSE）。 */
+  refreshDashboard: (): Promise<{ ok: boolean }> =>
+    apiFetch('/dashboard/refresh', { method: 'POST' }),
+
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>
     apiFetch<InstallCapabilities>('/capabilities'),

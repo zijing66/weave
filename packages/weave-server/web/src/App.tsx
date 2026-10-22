@@ -43,6 +43,7 @@ import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
+import { DashboardOverview } from '@/components/DashboardOverview';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { LibraryPanel } from '@/components/LibraryPanel';
 import { FileViewer } from '@/components/FileViewer';
@@ -158,7 +159,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   // 会话与状态全部来自全局状态总线（Provider 挂在 main.tsx）——App 只读计数，
   // 不再自拉一份（与项目行徽标/任务视图同源，状态不会各页漂移）。
-  const { sessions: allSessions, projectStats } = useSessionStatus();
+  const { sessions: allSessions, projectStats, statuses: sessionStatuses } = useSessionStatus();
   // 全局总览跳进项目任务视图的初始选中会话（离开任务视图即失效）。
   const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
   // All hook rules (global + per project) — drives the Weave card count; the
@@ -1506,7 +1507,12 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       // 首次访问：主区（分类栏 + 技能/资产列表）用骨架顶住
                       <SkeletonMain />
                     ) : (
-                      <CategoryDetail
+                      <>
+                        {/* 首页仪表盘：只在全局总览的默认（任务）页摆，切到别的分类不跟 */}
+                        {globalMode && mainCategory === 'tasks' && (
+                          <DashboardOverview sessions={allSessions} statuses={sessionStatuses} />
+                        )}
+                        <CategoryDetail
                         projectId={anchorId}
                         mode={mode}
                         category={mainCategory}
@@ -1539,6 +1545,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         initialSessionId={initialSessionId ?? undefined}
                         dragPayload={dragPayload}
                       />
+                      </>
                     )}
                   </div>
                 </>

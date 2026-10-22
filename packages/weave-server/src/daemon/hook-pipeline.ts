@@ -38,6 +38,8 @@ export interface HookPipelineDeps {
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = /btw）：同透传（判据归 harness 能力面）。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
+  /** 仪表盘速率快照（ingest 路径累加；读侧见 /dashboard/stats）。 */
+  dashboardRate?: { record(): void };
   /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）+ 推理档位。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
@@ -169,6 +171,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
         sideQuestions: deps.sideQuestions,
+        dashboardRate: deps.dashboardRate,
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
       },

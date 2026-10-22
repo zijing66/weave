@@ -32,6 +32,19 @@ export const appZh = {
   'app.mobileDrawerClose': '收起',
   'app.booting': '正在载入工作台',
 
+  // —— 仪表盘（首页） ——
+  'dashboard.sessions': '接管会话',
+  'dashboard.sessionsHint': '运行中 {n}',
+  'dashboard.events': '事件总数',
+  'dashboard.eventsHint': '今日 {n}',
+  'dashboard.projects': '项目',
+  'dashboard.projectsHint': '已登记项目',
+  'dashboard.rate': '近 1 分钟事件',
+  'dashboard.rateHint': '滚动 60 秒',
+  'dashboard.chartTitle': '事件速率',
+  'dashboard.chartHint': '最近 1 小时 · 每 10 秒事件数',
+  'dashboard.live': '实时',
+
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局配置',
   'project.globalSubtitle': '机器级 harness 默认模板',
@@ -141,6 +154,19 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.mobileLibrary': 'Resource market',
   'app.mobileDrawerClose': 'Dismiss',
   'app.booting': 'Loading workspace',
+
+  // —— Dashboard (home) ——
+  'dashboard.sessions': 'Sessions',
+  'dashboard.sessionsHint': '{n} running',
+  'dashboard.events': 'Events',
+  'dashboard.eventsHint': '{n} today',
+  'dashboard.projects': 'Projects',
+  'dashboard.projectsHint': 'Registered projects',
+  'dashboard.rate': 'Last minute',
+  'dashboard.rateHint': 'Rolling 60 seconds',
+  'dashboard.chartTitle': 'Event rate',
+  'dashboard.chartHint': 'Last hour · events per 10 seconds',
+  'dashboard.live': 'Live',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',

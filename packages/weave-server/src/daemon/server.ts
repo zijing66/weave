@@ -184,6 +184,10 @@ export interface WeaveServerDeps {
   dataBus?: DataBus;
   /** 事件流中枢（编号 + 环形缓冲 + 扇出）：weaveRequestHandler 建一份，两监听共享。 */
   sseHub?: SseHub;
+  /** SSE 首连回调（仪表盘在连接时流式补发历史）。 */
+  onAttach?: () => void;
+  /** POST /dashboard/refresh：仪表盘挂载时让服务端重推一次快照（数据仍走 SSE）。 */
+  dashboardRefresh?: () => void;
   /** 终端世界（角标计数 + 会话所在屏幕）的后端隐藏刷新器；缺省则该角标只能靠前端自拉（兼容旧装配）。 */
   terminalRefresher?: TerminalTopologyRefresher;
   /** 会话中断态快照刷新器（ESC 打断后多数连 Stop 都不发）：中断成功后即时补一拍。 */

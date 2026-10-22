@@ -24,6 +24,8 @@ export interface SseSources {
   watch?: Pick<WatchService, 'subscribe' | 'subscribeProjects'>;
   hookBus?: HookEventBus;
   dataBus?: DataBus;
+  /** 首个连接（或宽限期后重新挂源）时回调：按需补发「连接即要」的快照帧。 */
+  onAttach?: () => void;
 }
 
 export interface SseFrameOut {
@@ -95,6 +97,7 @@ export class SseHub {
       this.graceTimer = null;
     }
     if (this.detach) return;
+    this.sources.onAttach?.();
     const offs: Array<() => void> = [];
     const { watch, hookBus, dataBus } = this.sources;
     if (watch) {

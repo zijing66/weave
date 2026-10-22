@@ -101,6 +101,19 @@ export type HookBusMessage =
     }
   // ---- 旁路会话域：一条侧问认领到回答（旁路弹窗据此重拉历史） ----
   | { kind: 'sideQuestion.answered'; sessionId: string; sideQuestionId: number; at: string }
+  // ---- 首页仪表盘：连接时流式下发历史（分块），此后只在有事件时推增量 ----
+  | {
+      kind: 'dashboard.totals';
+      at: string;
+      totals: { projects: number; sessions: number; events: number; today: number };
+    }
+  | { kind: 'dashboard.series'; at: string; series: Array<{ at: string; n: number }> }
+  | {
+      kind: 'dashboard.delta';
+      at: string;
+      series: Array<{ at: string; n: number }>;
+      totals: { projects: number; sessions: number; events: number; today: number };
+    }
   // ---- 编排域：run 状态与单次投递（画布实时动效的唯一数据源，不做轮询） ----
   // 两条都带全量轻量态（deliveries / 每会话待回计数），web 就地更新、不重拉。
   | {

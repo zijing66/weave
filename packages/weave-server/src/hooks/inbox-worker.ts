@@ -440,6 +440,8 @@ export interface IngestedHandlerDeps {
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
+  /** 仪表盘速率快照：每条入库事件往当前 10 秒桶 +1（读侧不再扫时间窗口）。 */
+  dashboardRate?: { record(): void };
 }
 
 /**
@@ -451,6 +453,7 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
   for (const record of records) {
     const project = deps.projects.getById(record.projectId);
     if (!project) continue;
+    deps.dashboardRate?.record();
     let payload: NormalizedHookPayload | null = null;
     try {
       payload = JSON.parse(record.input.payload) as NormalizedHookPayload;

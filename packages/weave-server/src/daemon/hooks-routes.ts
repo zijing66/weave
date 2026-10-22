@@ -587,6 +587,7 @@ export async function handleHooksRoutes(
   // /images 就是这么死的——分支写好了却没进这张表，一律 404 Not found）。
   const isOwnedPath =
     pathname.startsWith('/hooks/') ||
+    pathname === '/dashboard/refresh' ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||
     pathname.startsWith('/messaging') ||
@@ -830,6 +831,14 @@ export async function handleHooksRoutes(
   }
 
   // ---- 会话列表 / 改名 ----
+  // POST /dashboard/refresh — 空载荷的「重推一次」触发：SSE 连接早于仪表盘挂载，
+  // 首连推送的分块会被错过；挂载时打这一枪让服务端按需重发（数据仍走 SSE）。
+  if (pathname === '/dashboard/refresh' && req.method === 'POST') {
+    deps.dashboardRefresh?.();
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   if (pathname === '/sessions' && req.method === 'GET') {
     if (!deps.hookSessions) {
       sendJson(res, 503, { error: 'Hooks subsystem unavailable' });

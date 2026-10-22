@@ -843,12 +843,14 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ## §18 首页仪表盘（全局总览）
 
-全局模式的默认（任务）页顶部 = `DashboardOverview`：四张总量卡（接管会话 / 事件总数 / 项目 / 近 1 分钟事件）+ 一张事件速率图。只在 `globalMode && mainCategory === 'tasks'` 摆，切到别的分类不跟。
+全局模式的默认（任务）页顶部 = `DashboardOverview`：四张总量卡（接管会话 / 事件总数 / 项目 / 近 1 分钟事件）+ 一张事件速率图（1 小时 × 360 格，每格 10 秒）。只在 `globalMode && mainCategory === 'tasks'` 摆，切到别的分类不跟。
 
-数据面 = `GET /dashboard/stats?seconds=`（hooks-routes）。**速率读的是进程内快照，不按请求扫时间窗口**：
+**数据全部走 SSE 推送，没有一次性拉取的 HTTP 面**（仍是 §9 的单通道：不加第二条 EventSource，只在既有 `/events` 上多了 `dashboard.*` 帧型）：
 
-- `DashboardRateCache`（`hooks/dashboard-rate.ts`）——每条 ingest 往当前 **10 秒桶** +1（主线程 `handleIngestedRecords` 调用，O(1)）；保留 24h（8,640 桶），清理节流到每分钟一次。
-- 读侧 `bucketsFor(start, steps)` O(点数)。daemon 重启后**首次读**才回填一次：`HookEventRepository.seriesBySecond`（逐秒分布，按项目循环走 `(project_id, created_at)` 索引——裸 `WHERE created_at >=` 是整表扫），折桶时与已计入的实时帧取 **max**（两侧只增，同一桶近似不翻倍）。
-- 总计/今日是走索引的轻查询（`countAll` / `countSince`），与图窗无关。
+- **连接即流式补历史**：`SseHub` 的 `onAttach`（首个订阅者 / 宽限期后重挂）→ `startDashboardPusher` 先推一帧 `dashboard.totals`，再把这一小时按 10 分钟分块推 `dashboard.series`（6 帧）——前端每收到一块就落一段图，不等整段查完。SSE 连接早于仪表盘组件挂载（App 启动就建），首连那份会被错过 ⇒ 组件挂载时打一枪 **`POST /dashboard/refresh`（空载荷）** 让服务端重推一次；数据本身仍只走 SSE。
+- **此后事件驱动**：pusher 订阅 `event.ingested`，1 秒内的入库事件合并成一帧 `dashboard.delta`（最近 12 格 + 总量）；**没有事件就不发帧**，不设空转节拍。
+- **速率读进程内快照**：`DashboardRateCache`（`hooks/dashboard-rate.ts`）——每条 ingest 往当前 **10 秒桶** +1（主线程 `handleIngestedRecords`，O(1)），总量/今日同拍累加；保留 24h（清理节流到每分钟）。只有 daemon 起来后**首次 attach** 才从库回填一次（`HookEventRepository.seriesBySecond`，按项目循环走 `(project_id, created_at)` 索引——裸 `WHERE created_at >=` 是整表扫），回填与已计入帧取 **max**，不翻倍。项目/会话数最多一分钟重取一次；事件/今日零查询。
+- **浏览器侧缓存**（`localStorage` 键 `weave.dashboard.v1`，5 秒节流写）：存最近一小时的桶 + 总量，**24h 过期**、每次落图顺手裁掉窗口外的桶（过期/损坏/超配额一律当没有）；刷新页面先拿缓存直接开画，服务端块到了就地覆盖、增量到了就地更新——服务端不必为「刚打开」多算一遍。**不落盘**：服务端只有进程内桶（24h 上限 8,640 个，节流清理），仪表盘不新增任何表或文件，磁盘不会因此增长。
+- **偏移量**：传输层沿用 §9 的帧编号 + `?since=` 补发，断线重连能续上；仪表盘帧与其它 hook 帧同一套序号，不另造协议。
 
-web 侧（`components/DashboardOverview.tsx`）：图窗 **1 小时 × 360 格（每格 10 秒）**，每 10 秒把刷新出的新点落一次图（`setOption` 只推 `xAxis.data` + `series.data`，`animation:false`）；帧到只累加、不渲染；`document.hidden` 时不落图、回到前台补一次。「近 1 分钟」卡 = 最近 6 格之和，与 1 小时图窗分开看。ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChart` + `GridComponent` + `TooltipComponent` + `CanvasRenderer`），独立 chunk、只在仪表盘挂载时加载；容器尺寸变化用 `ResizeObserver` 跟 `resize()`。轴标签按容器宽度抽稀（窄屏每 10 分钟、桌面每 5 分钟）。
+web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChart` + `GridComponent` + `TooltipComponent` + `CanvasRenderer`），独立 chunk、只在仪表盘挂载时加载；`animation:false`，每次帧只 `setOption({xAxis:{data}, series:[{data}]})`；容器尺寸变化用 `ResizeObserver`；轴标签按容器宽度抽稀（窄屏每 10 分钟、桌面每 5 分钟）。

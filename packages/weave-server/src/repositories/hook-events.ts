@@ -135,6 +135,44 @@ export class HookEventRepository {
     );
   }
 
+  /** 仪表盘：事件总数（整表，COUNT(*) 走索引）。 */
+  countAll(): number {
+    return Number(
+      (this.db.prepare('SELECT COUNT(*) AS n FROM hook_events').get() as { n: number }).n,
+    );
+  }
+
+  /**
+   * 某时刻以来的事件数。按项目循环查——只有 `(project_id, created_at)` 这条
+   * 索引，裸 `WHERE created_at >= ?` 会整表扫（实测 12 万行）。
+   */
+  countSince(projectIds: readonly number[], sinceIso: string): number {
+    const stmt = this.db.prepare(
+      'SELECT COUNT(*) AS n FROM hook_events WHERE project_id = ? AND created_at >= ?',
+    );
+    let total = 0;
+    for (const id of projectIds) total += Number((stmt.get(id, sinceIso) as { n: number }).n);
+    return total;
+  }
+
+  /**
+   * 仪表盘速率的**回填源**：窗口内逐秒分布（UTC 秒键，`YYYY-MM-DDTHH:MM:SS`）。
+   * 只在 daemon 启动后首次读图时调一次，之后由 `DashboardRateCache` 增量维护。
+   */
+  seriesBySecond(projectIds: readonly number[], sinceIso: string): Array<{ at: string; n: number }> {
+    const stmt = this.db.prepare(
+      `SELECT substr(created_at, 1, 19) AS at, COUNT(*) AS n
+       FROM hook_events WHERE project_id = ? AND created_at >= ? GROUP BY at`,
+    );
+    const bucket = new Map<string, number>();
+    for (const id of projectIds) {
+      for (const row of stmt.all(id, sinceIso) as Array<{ at: string; n: number }>) {
+        bucket.set(row.at, (bucket.get(row.at) ?? 0) + Number(row.n));
+      }
+    }
+    return [...bucket].map(([at, n]) => ({ at, n })).sort((a, b) => (a.at < b.at ? -1 : 1));
+  }
+
   /**
    * 按工具名择行（最近的 limit 条，倒序）：计划正文只藏在 ExitPlanMode 与「写计划
    * 文件」两类调用里，`needle` 再按路径特征收一道——不筛就得把整轮工具调用连同

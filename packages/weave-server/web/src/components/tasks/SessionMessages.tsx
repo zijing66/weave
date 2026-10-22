@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -1042,6 +1042,8 @@ export function SessionMessages({
   const [filter, setFilter] = useState<ConvFilter>('all');
   /** 多选态：气泡上出现复选框，点气泡即勾选，底栏换成工具条。 */
   const [selecting, setSelecting] = useState(false);
+  /** 全屏：面板自己铺满视口（两种形态都支持，ESC 也能退）。 */
+  const [fullscreen, setFullscreen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   /** 切模式前先问一句：一记 Shift+Tab 就拨一格、没有反向入口，误触可能越过 plan。 */
   const [confirmMode, setConfirmMode] = useState(false);
@@ -1225,11 +1227,13 @@ export function SessionMessages({
         setPicked(new Set());
       } else if (confirmMode) setConfirmMode(false);
       else if (confirming) setConfirming(false);
+      // 全屏优先于挂起：ESC 先把全屏退回去，再按一次才收面板
+      else if (fullscreen) setFullscreen(false);
       else onMinimize?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, selecting, confirmMode, confirming, minimized, onMinimize]);
+  }, [menu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize]);
 
   // ESC 键帽的冷却：一秒一格倒数，数到 0 才允许下一记。
   useEffect(() => {
@@ -2180,7 +2184,7 @@ export function SessionMessages({
         ref={panelRef}
         // 浮窗：桌面宽高跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽
         style={
-          !embedded && isDesktop
+          !embedded && isDesktop && !fullscreen
             ? {
                 width: size.w,
                 height: size.h || undefined,
@@ -2190,11 +2194,15 @@ export function SessionMessages({
         }
         className={cn(
           'relative min-h-0 w-full flex-col overflow-hidden p-3',
-          embedded
-            ? // 嵌入右栏不再套卡片壳：右栏就是这扇对话，再描一圈边框只是多一道线
-              // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
-              cn('flex-1', minimized ? 'hidden' : 'flex')
-            : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac',
+          fullscreen
+            ? // 全屏：自己铺满视口（不复用右栏/浮窗那套尺寸），z-55 在右栏之上、
+              // 菜单(60)/弹窗(60-70) 之下——开菜单或看大图不会被它挡住
+              'fixed inset-0 z-[55] flex h-[100dvh] w-screen rounded-none border-0 bg-neutral-900 shadow-none'
+            : embedded
+              ? // 嵌入右栏不再套卡片壳：右栏就是这扇对话，再描一圈边框只是多一道线
+                // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
+                cn('flex-1', minimized ? 'hidden' : 'flex')
+              : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac',
         )}
         onClick={(e) => e.stopPropagation()}
         // 拖放面 = 整块面板（拖进任何一处都算，别让浏览器接管去打开那个文件）
@@ -2206,7 +2214,7 @@ export function SessionMessages({
         }}
       >
         <div
-          {...(embedded
+          {...(embedded || fullscreen
             ? {}
             : {
                 onPointerDown: onDragDown,
@@ -2216,7 +2224,7 @@ export function SessionMessages({
               })}
           className={cn(
             'flex items-center justify-between gap-2 pb-2',
-            !embedded && isDesktop && 'cursor-grab active:cursor-grabbing',
+            !embedded && isDesktop && !fullscreen && 'cursor-grab active:cursor-grabbing',
           )}
         >
           <div className="min-w-0">
@@ -2252,6 +2260,18 @@ export function SessionMessages({
                 </button>
               </>
             )}
+            {/* 全屏：两种形态都能用（嵌入右栏被挤窄时尤其有用）；ESC 也能退。
+                样式与「事件链」同款按钮，图标用四角括线（放大 = 往外、缩小 = 往里）。 */}
+            <button
+              type="button"
+              title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+              aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+              onClick={() => setFullscreen((v) => !v)}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+            >
+              {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
+              {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+            </button>
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
               <>
@@ -3148,8 +3168,8 @@ export function SessionMessages({
           effort={sessionRow?.effort ?? null}
         />
 
-        {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局） */}
-        {!embedded && isDesktop && (
+        {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口） */}
+        {!embedded && !fullscreen && isDesktop && (
           <div
             role="separator"
             title={t('app.resizeDialog')}
@@ -3317,7 +3337,9 @@ export function SessionMessages({
       </div>
   );
 
-  if (embedded) return body;
+  // 嵌入右栏时 body 本来就在文档流里；全屏要脱离右栏的容器（祖先可能有
+  // transform/filter 建了包含块），故那一刻改走 portal。
+  if (embedded) return fullscreen ? createPortal(body, document.body) : body;
 
   return createPortal(
     <div

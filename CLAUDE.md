@@ -66,6 +66,7 @@
 - **依赖硬约束**：`@weavecode/harness → @weavecode/core` 是唯一 harness 外向依赖；core 只放纯类型与表（`HARNESS_*` 注册表）。
 - web 仅 `import type` 引用 core/harness（tsconfig paths + vite alias 源码直引）。
 - 面向抽象与接口编程：harness 专属格式/路径/键形不得在 server/cli/web 自拼或散写，一律经能力面取，server 只传语义参数。插件键形 `<name>@<marketplace>` 唯一拼装点 = `PluginSurface.pluginKey(name, market?)`（`weave-harness/src/driver.ts`）；市场身份唯一实现 = `packages/weave-server/src/market/identity.ts` 的 `marketIdOf`（包在 `<dataRoot>/market/<id>/` 下 → `name@<id>`，否则 `name@weave`）；web 只渲染不解析键形。
+- **首页仪表盘**：全局总览默认页顶部 = 总量卡 + 事件速率图（§18）。数据**全走既有 `/events` 的 `dashboard.*` 帧**（连接时分块流式补历史、此后只在有事件时推增量，不设空转节拍、不加第二条 EventSource）；速率读进程内快照（`DashboardRateCache`，ingest 按 10 秒桶累加、保留 24h、首次 attach 才回填一次），**不得按请求扫 `hook_events` 的时间窗口**；web 用 localStorage 缓存最近一小时（24h 过期、随手裁窗口外），图窗 1 小时 × 360 格。
 - **SSE 单通道**：dashboard ↔ 服务端只有 `GET /events`；前端唯一客户端 = `web/src/lib/sse.ts`，**不得再 `new EventSource`、不得写定时轮询**（心跳判活与重连是唯一例外）。断流补发归 `SseHub` 一处（帧编号 + 环形缓冲 + `?since=`），补不齐只发 `resync` 整页重来、不给半截帧；中枢不得常驻订阅源，无人在看必须摘。数据层走 TanStack Query，刷新只走 SSE 信号。（§9）
 - **位置即 URL**（唯一实现 = `web/src/lib/route.ts`）：URL 是唯一真源，手势只 `navigate()`，状态从 `parseRoute` 单向落下；卡片内部的视图态（tab/弹窗/滚动）不进 URL。（§10）
 - **web 移动端适配**：断点 `lg` 二分、断点与指针查询唯一入口 = `use-media-query.ts`；改布局的八条硬约束（`dvh`、hover 按钮常显、拖拽传感器分流、列同构收缩、`min-h-0`、触屏右键等价手势、拉动加载、`<lg` 对话开则 AI 助手退场）见 §11——破一条即触屏不可用。（§11）

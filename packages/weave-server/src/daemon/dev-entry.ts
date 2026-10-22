@@ -30,6 +30,8 @@ import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
 import { SideQuestionRepository } from '../repositories/side-questions.js';
 import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
+import { DashboardRateCache } from '../hooks/dashboard-rate.js';
+import { startDashboardPusher } from './dashboard-pusher.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -234,6 +236,16 @@ async function main(): Promise<void> {
   questionTracker.seedFromDb();
   // 旁路会话历史（claude = /btw）：与生产入口同一装配——见 start.ts 的说明。
   const sideQuestions = new SideQuestionRepository(db);
+  // 仪表盘速率快照：ingest 时累加、读侧 O(点数)；daemon 重启后首次读回填一次库。
+  const dashboardRate = new DashboardRateCache();
+  // 首页仪表盘：每 10s 推一帧 dashboard.rate（快照读内存桶，总量走索引轻查询）
+  const dashboardPusher = startDashboardPusher({
+    rate: dashboardRate,
+    events: hookEvents,
+    sessions: hookSessions,
+    projects,
+    bus: hookBus,
+  });
   const sideQuestionDeps: SideQuestionDeps = {
     repo: sideQuestions,
     bus: hookBus,
@@ -399,6 +411,7 @@ async function main(): Promise<void> {
     },
     sessionProbe,
     uploads,
+    dashboardRate,
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
@@ -438,6 +451,8 @@ async function main(): Promise<void> {
     orchestrationEngine,
     pushSubscriptions,
     pushNotifier,
+    onAttach: dashboardPusher.attach,
+    dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
@@ -460,6 +475,7 @@ async function main(): Promise<void> {
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
+    dashboardPusher.stop();
     void hookPipeline.stop();
     server.close();
     tls?.server.close();
