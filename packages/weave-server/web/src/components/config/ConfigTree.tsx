@@ -88,9 +88,10 @@ export function ConfigTree({
               className="flex items-start gap-2 rounded-md px-1.5 py-1"
               title={t('cfg.extraHint')}
             >
-              <span className="w-[38%] shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">
+              <span className="shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">
                 {node.segment}
               </span>
+              <span className="shrink-0 pt-0.5 text-[11px] leading-6 text-neutral-600">=</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] leading-6 text-neutral-600">
                 {textOf(handlers.valueOf(node.path))}
               </span>

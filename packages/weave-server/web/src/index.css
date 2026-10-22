@@ -177,6 +177,32 @@
   animation-delay: 150ms;
 }
 
+/* 编排运行中：有待回投递的节点外圈呼吸辉光（run 进行中 pending > 0）。
+   辉光（border + box-shadow）静态落在伪元素上、只动 opacity——合成层动画，
+   不进 keyframes 重绘（同 harness-run 的教训）。 */
+@keyframes orch-node-run {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.orch-node-running {
+  position: relative;
+}
+.orch-node-running::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 1.5px solid rgba(56, 189, 248, 0.9);
+  box-shadow: 0 0 9px rgba(56, 189, 248, 0.55);
+  animation: orch-node-run 1.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
 /* 会话执行中：harness 自身的跑马灯动效——claude 星芒、codex OpenAI 结花印
    各自匀速旋转带辉光（各 harness 一套，静态时由状态点接管）。
    只动 transform：filter 不可合成，写进 keyframes 会让每个跑着的会话每帧都

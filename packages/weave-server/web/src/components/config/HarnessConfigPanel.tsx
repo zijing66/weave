@@ -329,7 +329,9 @@ export function HarnessConfigPanel({
 
   const treeHandlers: ConfigTreeHandlers = {
     isOpen: (node) => {
-      if (query.trim() !== '' || filter !== 'all') return true;
+      // 只有搜索强制全开（命中项不能藏在折起来的分支里）；过滤档不影响折叠——
+      // 默认档「已配置」下不让折，用户点箭头就没反应
+      if (query.trim() !== '') return true;
       const flag = expanded[node.path];
       if (flag !== undefined) return flag;
       return treeHasValue(node, (path) => currentValue(path) !== undefined);

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BaseEdge,
   Controls,
+  EdgeText,
   Handle,
   MarkerType,
   Panel,
   Position,
   ReactFlow,
+  getSmoothStepPath,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
@@ -30,6 +34,7 @@ import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type MessagingCapability,
+  type OrchestrationEdge,
   type OrchestrationNode,
   type OrchestrationRow,
   type OrchestrationRunRow,
@@ -75,6 +80,7 @@ import {
   ORCH_NODE_H,
   ORCH_NODE_W,
   layoutOrchestrationCanvas,
+  layoutOrchestrationOverview,
   type OrchLaidEdge,
 } from './orchestration-canvas-layout';
 import { OrchestrationSessionPicker } from './OrchestrationSessionPicker';
@@ -148,6 +154,14 @@ interface Editing {
   base: string;
 }
 
+/** 一份编排的实时运行态（帧驱动；终态帧即清，画布辉光跟着收）。 */
+interface LiveRun {
+  runId: number;
+  status: OrchestrationRunStatus;
+  deliveries: number;
+  pendingCounts: Record<string, number>;
+}
+
 const asEditing = (row: OrchestrationRow): Editing => {
   const draft = draftOf(row);
   return { id: row.id, draft, base: serialize(draft) };
@@ -167,6 +181,8 @@ type SessionNodeData = {
   isEntry: boolean;
   pending: number;
   hot: boolean;
+  /** run 进行中且该节点有待回投递：外圈呼吸辉光（运行前沿）。 */
+  running: boolean;
   missing: boolean;
   selected: boolean;
   /** 点节点本体 = 选中编辑；这枚小钮 = 直接看它的对话。 */
@@ -185,6 +201,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
     isEntry,
     pending,
     hot,
+    running,
     missing,
     selected,
     onOpen,
@@ -197,6 +214,7 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
         'group flex items-center gap-2 rounded-lg border bg-neutral-900/95 px-2 shadow-mac transition-colors',
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
+        running && 'orch-node-running',
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
@@ -254,12 +272,14 @@ type GroupNodeData = {
   collapsed: boolean;
   hidden: number;
   onToggle: () => void;
+  /** 总览分组（编排框）：点名 = 进入那份编排；项目分组缺省 = 也只是收起。 */
+  onOpen?: () => void;
 };
 type GroupFlowNode = Node<GroupNodeData, 'orchGroup'>;
 
 function GroupNode({ data }: NodeProps<GroupFlowNode>) {
   const t = useT();
-  const { label, count, collapsed, hidden, onToggle } = data;
+  const { label, count, collapsed, hidden, onToggle, onOpen } = data;
   return (
     <div className="pointer-events-none relative h-full w-full rounded-xl border border-dashed border-edge/[0.14] bg-edge/[0.015]">
       <div
@@ -268,12 +288,25 @@ function GroupNode({ data }: NodeProps<GroupFlowNode>) {
       >
         <button
           type="button"
-          onClick={onToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           aria-expanded={!collapsed}
-          className="flex items-center gap-1 rounded px-1 py-0.5 text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
+          className="flex items-center rounded px-1 py-0.5 text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
         >
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          <span className="max-w-[10rem] truncate text-[11px] font-medium">{label}</span>
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            (onOpen ?? onToggle)();
+          }}
+          title={onOpen ? t('orch.overviewOpen') : undefined}
+          className="max-w-[10rem] truncate rounded px-1 py-0.5 text-left text-[11px] font-medium text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100"
+        >
+          {label}
         </button>
         <span className="text-[10px] text-neutral-600">{count}</span>
         {collapsed && hidden > 0 && (
@@ -290,6 +323,7 @@ type WebhookNodeData = {
   /** 入口（无入边，端点可复制/轮换）或出口（无出边，url/secret 在检查器里填）。 */
   direction: 'entry' | 'exit';
   hot: boolean;
+  running: boolean;
   selected: boolean;
   missing: boolean;
 };
@@ -297,7 +331,7 @@ type WebhookFlowNode = Node<WebhookNodeData, 'orchWebhook'>;
 
 function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
   const t = useT();
-  const { direction, hot, selected, missing } = data;
+  const { direction, hot, running, selected, missing } = data;
   return (
     <div
       style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
@@ -306,6 +340,7 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
         'flex items-center gap-2 rounded-lg border bg-neutral-900/95 px-2 shadow-mac transition-colors',
         hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
         selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
+        running && 'orch-node-running',
         missing ? 'opacity-50' : 'hover:border-blue-500/40',
       )}
     >
@@ -344,6 +379,73 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
 }
 
 const nodeTypes = { orchSession: SessionNode, orchWebhook: WebhookNode, orchGroup: GroupNode };
+
+/**
+ * 自定义边：smoothstep 折线 + 标签照旧；触发（hot）时沿路径滑一颗光点
+ * （`animateMotion` 沿 path 走，方向即消息流向），叠加 ReactFlow 自带的
+ * 虚线滚动（`animated` 类）双保险。
+ */
+function OrchFlowEdge({
+  id,
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+  markerEnd,
+  style,
+  label,
+  labelStyle,
+  labelBgStyle,
+  labelBgPadding,
+  interactionWidth,
+  data,
+}: EdgeProps): React.ReactElement {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const hot = (data?.hot as boolean | undefined) ?? false;
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={path}
+        markerEnd={markerEnd}
+        style={style}
+        interactionWidth={interactionWidth}
+      />
+      {hot && (
+        <circle r={3.5} fill="#2dd4bf">
+          <animateMotion dur="0.9s" repeatCount="indefinite" path={path} />
+        </circle>
+      )}
+      {label != null && label !== '' && (
+        <EdgeText
+          x={labelX}
+          y={labelY}
+          label={label}
+          labelStyle={labelStyle}
+          labelBgStyle={labelBgStyle}
+          labelBgPadding={labelBgPadding}
+        />
+      )}
+    </>
+  );
+}
+
+const edgeTypes = { orchFlow: OrchFlowEdge };
+
+/** 总览键 `o<编排id>:…` → 编排 id（编辑态键 s:/w:/g: 不带前缀，恒不命中）。 */
+function orchIdOfKey(key: string): number | null {
+  const hit = /^o(\d+):/.exec(key);
+  return hit ? Number(hit[1]) : null;
+}
 
 // ---------------------------------------------------------------------------
 // 组件
@@ -415,16 +517,14 @@ export function OrchestrationCanvas({
         if (prev.id == null) return prev;
         return list.some((row) => row.id === prev.id) ? prev : null;
       }
-      return list.length > 0 ? asEditing(list[0]) : null;
+      // 默认不选：总览模式展示所有编排（点节点/编排名才进入某一份）。
+      return null;
     });
   }, [list]);
 
   const draft = editing?.draft ?? null;
   const dirty = editing != null && serialize(editing.draft) !== editing.base;
   const order = editing?.id ?? null;
-  /** 帧回调要读「此刻选的是哪份」，订阅只挂一次。 */
-  const selectedRef = useRef<number | null>(null);
-  selectedRef.current = order;
 
   const patch = useCallback((fn: (d: OrchDraft) => OrchDraft): void => {
     setEditing((prev) => (prev ? { ...prev, draft: fn(prev.draft) } : prev));
@@ -468,23 +568,55 @@ export function OrchestrationCanvas({
     return m;
   }, [draft?.nodes, sessionById]);
 
-  const visible = useMemo(() => {
-    if (!draft) return null;
-    const q = sessionQuery.trim().toLowerCase();
-    const pq = projectQuery.trim().toLowerCase();
-    const nodes = draft.nodes.filter((node) => {
+  /** 节点筛选谓词（编辑画布与总览共用）：会话名/节点 id 命中 + 全局视图的项目过滤。 */
+  const nodeMatches = useCallback(
+    (node: OrchestrationNode): boolean => {
+      const q = sessionQuery.trim().toLowerCase();
+      const pq = projectQuery.trim().toLowerCase();
       const row = node.kind === 'session' ? sessionById.get(node.id) : undefined;
       const label =
         node.kind === 'webhook'
           ? t('orch.webhookEntry')
           : sessionLabel(row?.title ?? null, node.id);
-      const hit = !q || label.toLowerCase().includes(q) || node.id.toLowerCase().includes(q);
-      if (!hit) return false;
-      if (!groupProjects || !pq) return true;
-      return projectName(row?.projectId ?? null).toLowerCase().includes(pq);
-    });
-    return { nodes, edges: draft.edges };
-  }, [draft, sessionQuery, projectQuery, sessionById, groupProjects, projectName, t]);
+      if (q && !label.toLowerCase().includes(q) && !node.id.toLowerCase().includes(q)) {
+        return false;
+      }
+      if (groupProjects && pq) {
+        return projectName(row?.projectId ?? null).toLowerCase().includes(pq);
+      }
+      return true;
+    },
+    [sessionQuery, projectQuery, sessionById, groupProjects, projectName, t],
+  );
+
+  const visible = useMemo(() => {
+    if (!draft) return null;
+    return { nodes: draft.nodes.filter(nodeMatches), edges: draft.edges };
+  }, [draft, nodeMatches]);
+
+  /** 总览块（未选编排时的默认面）：每份编排一块，筛选同谓词；一块都没节点就不摆。 */
+  const overviewBlocks = useMemo(() => {
+    if (list == null || editing != null) return null;
+    const blocks: {
+      key: string;
+      label: string;
+      row: OrchestrationRow;
+      nodes: OrchestrationNode[];
+      edges: OrchestrationEdge[];
+    }[] = [];
+    for (const row of list) {
+      const nodes = row.nodes.filter(nodeMatches);
+      if (nodes.length === 0) continue;
+      blocks.push({
+        key: String(row.id),
+        label: row.name || t('orch.untitled'),
+        row,
+        nodes,
+        edges: row.edges,
+      });
+    }
+    return blocks;
+  }, [list, editing, nodeMatches, t]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<number, number>();
@@ -502,13 +634,24 @@ export function OrchestrationCanvas({
   }, [groupProjects, groupCounts, expandedGroups]);
 
   // ---- 实时态（两条编排帧带全量轻量态：就地更新、不重拉） ----
-  const [live, setLive] = useState<{
-    runId: number;
-    status: OrchestrationRunStatus;
-    deliveries: number;
-    pendingCounts: Record<string, number>;
-  } | null>(null);
-  /** 正在点亮的边 / 节点（键 = 边 id 或 `s:<会话>`，值 = 到期时刻）。 */
+  // 按编排记账：总览模式下所有编排的运行态与动效都要跟，不只选中的那份。
+  const [liveRuns, setLiveRuns] = useState<ReadonlyMap<number, LiveRun>>(new Map());
+  /** 选中那份的实时态（头部徽标与编辑画布的 pending 都读它）。 */
+  const live = order != null ? (liveRuns.get(order) ?? null) : null;
+  /** 编排被删：它的实时态跟着清。 */
+  useEffect(() => {
+    if (list == null) return;
+    setLiveRuns((prev) => {
+      let changed = false;
+      const next = new Map<number, LiveRun>();
+      for (const [id, run] of prev) {
+        if (list.some((row) => row.id === id)) next.set(id, run);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [list]);
+  /** 正在点亮的边 / 节点（键 = `o<编排id>:e:<边id>` 或 `o<编排id>:n:<节点键>`，值 = 到期时刻）。 */
   const [flash, setFlash] = useState<Record<string, number>>({});
   const flashRef = useRef(flash);
   flashRef.current = flash;
@@ -560,6 +703,20 @@ export function OrchestrationCanvas({
       const page = await api.listOrchestrationRuns(runFilters());
       setRuns(page.runs);
       setNextBefore(page.nextBefore);
+      // 对账：列表里已落终态的 run，实时态里还挂着的清掉（daemon 重启把
+      // running 改 interrupted 不发帧，只有这里能收掉残留辉光）。
+      setLiveRuns((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [orchId, run] of prev) {
+          const row = page.runs.find((r) => r.id === run.runId);
+          if (row && row.status !== 'running') {
+            next.delete(orchId);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     } catch {
       // daemon 未连：保持上次数据
     } finally {
@@ -608,19 +765,32 @@ export function OrchestrationCanvas({
       if (orchId == null || runId == null) return;
       const status = (frame.status as OrchestrationRunStatus | undefined) ?? undefined;
 
-      if (selectedRef.current === orchId) {
-        setLive((prev) => ({
+      setLiveRuns((prev) => {
+        // 终态帧：清掉这条（辉光/徽标跟着收）。
+        if (status && status !== 'running') {
+          if (!prev.has(orchId)) return prev;
+          const done = new Map(prev);
+          done.delete(orchId);
+          return done;
+        }
+        const cur = prev.get(orchId);
+        const next = new Map(prev);
+        next.set(orchId, {
           runId,
-          status: status ?? prev?.status ?? 'running',
-          deliveries: frame.deliveries ?? prev?.deliveries ?? 0,
-          pendingCounts: frame.pendingCounts ?? prev?.pendingCounts ?? {},
-        }));
-      }
+          status: status ?? cur?.status ?? 'running',
+          deliveries: frame.deliveries ?? cur?.deliveries ?? 0,
+          pendingCounts: frame.pendingCounts ?? cur?.pendingCounts ?? {},
+        });
+        return next;
+      });
 
       if (frame.kind === 'orchestration.delivery') {
         const to = frame.to ?? '';
-        // 节点键：session 挂 `s:` 前缀，webhook 节点直接用它的 `w:` id。
-        const key = frame.edgeId ? frame.edgeId : to.startsWith('w:') ? to : `s:${to}`;
+        // 节点键：session 挂 `s:` 前缀，webhook 节点直接用它的 `w:` id；边/节点键都带
+        // 编排前缀（总览与编辑同一套键，跨编排的短边 id e1/e2 不碰撞）。
+        const key = frame.edgeId
+          ? `o${orchId}:e:${frame.edgeId}`
+          : `o${orchId}:n:${to.startsWith('w:') ? to : `s:${to}`}`;
         const until = Date.now() + FLASH_MS;
         setFlash((prev) => ({ ...prev, [key]: until }));
       }
@@ -750,9 +920,21 @@ export function OrchestrationCanvas({
     });
   }, [visible, draft, canvasSessions, groupProjects, collapsedGroups]);
 
+  /** 总览里收起的编排块（键 = 编排 id 字符串形）。 */
+  const [overviewCollapsed, setOverviewCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const laidOverview = useMemo(() => {
+    if (!overviewBlocks) return null;
+    return layoutOrchestrationOverview({
+      blocks: overviewBlocks.map(({ key, label, nodes, edges }) => ({ key, label, nodes, edges })),
+      sessions: canvasSessions,
+      collapsed: overviewCollapsed,
+    });
+  }, [overviewBlocks, canvasSessions, overviewCollapsed]);
+
   const flowNodes: Node[] = useMemo(() => {
     if (!laid || !draft) return [];
     const now = Date.now();
+    const orchId = editing?.id ?? null;
     const entryIds = new Set(graphDirections(draft.nodes, draft.edges).entries.map((n) => n.id));
     return laid.nodes.map((n) => {
       if (n.kind === 'group') {
@@ -789,7 +971,8 @@ export function OrchestrationCanvas({
           draggable: false,
           data: {
             direction: entryIds.has(nodeId) ? ('entry' as const) : ('exit' as const),
-            hot: (flash[nodeId] ?? 0) > now,
+            hot: orchId != null && (flash[`o${orchId}:n:${nodeId}`] ?? 0) > now,
+            running: false,
             missing: !node,
             selected: sel?.kind === 'node' && sel.id === nodeId,
           },
@@ -811,7 +994,8 @@ export function OrchestrationCanvas({
           status: statuses.get(sessionId) ?? 'open',
           isEntry: entryIds.has(sessionId),
           pending,
-          hot: (flash[`s:${sessionId}`] ?? 0) > now,
+          hot: orchId != null && (flash[`o${orchId}:n:s:${sessionId}`] ?? 0) > now,
+          running: live?.status === 'running' && pending > 0,
           missing: !row,
           selected: sel?.kind === 'node' && sel.id === sessionId,
           onOpen: openMessages,
@@ -821,6 +1005,7 @@ export function OrchestrationCanvas({
   }, [
     laid,
     draft,
+    editing,
     sessionById,
     statuses,
     live,
@@ -835,9 +1020,11 @@ export function OrchestrationCanvas({
   const flowEdges: Edge[] = useMemo(() => {
     if (!laid || !draft) return [];
     const now = Date.now();
+    const orchId = editing?.id ?? null;
     const edgeById = new Map(draft.edges.map((e) => [e.id, e] as const));
     return laid.edges.map((e: OrchLaidEdge) => {
-      const hot = e.edgeIds.some((id) => (flash[id] ?? 0) > now);
+      const hot =
+        orchId != null && e.edgeIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
       const picked = sel?.kind === 'edge' && e.edgeIds.includes(sel.id);
       const texts = e.edgeIds.map((id) => edgeById.get(id)?.text ?? '');
       const first = texts[0] ?? '';
@@ -847,9 +1034,10 @@ export function OrchestrationCanvas({
         id: e.key,
         source: e.from,
         target: e.to,
-        type: 'smoothstep',
+        type: 'orchFlow',
         animated: hot,
         interactionWidth: 24,
+        data: { hot },
         style: hot
           ? { stroke: '#2dd4bf', strokeWidth: 2 }
           : picked
@@ -866,7 +1054,139 @@ export function OrchestrationCanvas({
           : {}),
       } satisfies Edge;
     });
-  }, [laid, draft, flash, sel]);
+  }, [laid, draft, editing, flash, sel]);
+
+  // ---- 总览画布（未选编排）：只读 + 实时动效；点节点/编排名进入那份编排 ----
+  const enterOrchestration = useCallback((row: OrchestrationRow): void => {
+    setEditing(asEditing(row));
+  }, []);
+
+  const overviewFlowNodes: Node[] = useMemo(() => {
+    if (!laidOverview || !overviewBlocks) return [];
+    const now = Date.now();
+    const rowById = new Map(overviewBlocks.map((b) => [b.row.id, b.row]));
+    return laidOverview.nodes.map((n) => {
+      const orchId = orchIdOfKey(n.key);
+      const row = orchId != null ? (rowById.get(orchId) ?? null) : null;
+      if (n.kind === 'group') {
+        return {
+          id: n.key,
+          type: 'orchGroup',
+          position: { x: n.x, y: n.y },
+          style: { width: n.width, height: n.height },
+          draggable: false,
+          selectable: false,
+          data: {
+            label: n.label ?? '',
+            count: row?.nodes.length ?? 0,
+            collapsed: (n.hidden ?? 0) > 0,
+            hidden: n.hidden ?? 0,
+            onToggle: () => {
+              const key = String(orchId);
+              setOverviewCollapsed((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            },
+            ...(row ? { onOpen: () => enterOrchestration(row) } : {}),
+          },
+        };
+      }
+      if (n.kind === 'webhook') {
+        const nodeId = n.nodeId ?? '';
+        return {
+          id: n.key,
+          type: 'orchWebhook',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            direction:
+              row && !row.edges.some((e) => e.to === nodeId)
+                ? ('entry' as const)
+                : ('exit' as const),
+            hot: orchId != null && (flash[`o${orchId}:n:${nodeId}`] ?? 0) > now,
+            running: false,
+            missing: false,
+            selected: false,
+          },
+        } satisfies Node;
+      }
+      const sessionId = n.nodeId ?? '';
+      const srow = sessionById.get(sessionId);
+      const orchLive = orchId != null ? liveRuns.get(orchId) : undefined;
+      const pending = orchLive?.pendingCounts[sessionId] ?? 0;
+      return {
+        id: n.key,
+        type: 'orchSession',
+        position: { x: n.x, y: n.y },
+        draggable: false,
+        data: {
+          sessionId,
+          label: sessionLabel(srow?.title ?? null, sessionId),
+          projectLabel: projectName(srow?.projectId ?? null),
+          harness: srow?.harness ?? null,
+          status: statuses.get(sessionId) ?? 'open',
+          isEntry: !!row && !row.edges.some((e) => e.to === sessionId),
+          pending,
+          hot: orchId != null && (flash[`o${orchId}:n:s:${sessionId}`] ?? 0) > now,
+          running: orchLive?.status === 'running' && pending > 0,
+          missing: !srow,
+          selected: false,
+          onOpen: openMessages,
+        },
+      } satisfies Node;
+    });
+  }, [
+    laidOverview,
+    overviewBlocks,
+    sessionById,
+    statuses,
+    liveRuns,
+    flash,
+    projectName,
+    openMessages,
+    enterOrchestration,
+  ]);
+
+  const overviewFlowEdges: Edge[] = useMemo(() => {
+    if (!laidOverview || !overviewBlocks) return [];
+    const now = Date.now();
+    // 边 id（e1/e2）跨编排会撞，正文按 `o<编排id>:e:<边id>` 整键取。
+    const textByKey = new Map<string, string>();
+    for (const b of overviewBlocks) {
+      for (const e of b.edges) textByKey.set(`o${b.row.id}:e:${e.id}`, e.text);
+    }
+    return laidOverview.edges.map((e: OrchLaidEdge) => {
+      const orchId = orchIdOfKey(e.key);
+      const hot =
+        orchId != null && e.edgeIds.some((id) => (flash[`o${orchId}:e:${id}`] ?? 0) > now);
+      const first =
+        e.edgeIds.map((id) => (orchId != null ? (textByKey.get(`o${orchId}:e:${id}`) ?? '') : ''))[0] ??
+        '';
+      const label = first.length > 16 ? `${first.slice(0, 16)}…` : first || undefined;
+      return {
+        id: e.key,
+        source: e.from,
+        target: e.to,
+        type: 'orchFlow',
+        animated: hot,
+        interactionWidth: 24,
+        data: { hot },
+        style: hot ? { stroke: '#2dd4bf', strokeWidth: 2 } : { strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        ...(label
+          ? {
+              label,
+              labelBgPadding: [4, 2] as [number, number],
+              labelBgStyle: { fill: 'rgb(23 23 23 / 0.85)' },
+              labelStyle: { fill: '#a3a3a3', fontSize: 10 },
+            }
+          : {}),
+      } satisfies Edge;
+    });
+  }, [laidOverview, overviewBlocks, flash]);
 
   // ---- 定义编辑 ----
   const check = draft ? validateDraft(draft) : null;
@@ -1208,12 +1528,15 @@ export function OrchestrationCanvas({
             setEditing(row ? asEditing(row) : null);
           }}
           title={t('orch.listLabel')}
-          placeholder={list === null ? t('hooks.loading') : t('orch.new')}
+          placeholder={list === null ? t('hooks.loading') : t('orch.overviewAll')}
           className="min-w-[10rem] max-w-[16rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
-          options={(list ?? []).map((row) => ({
-            value: String(row.id),
-            label: row.name || t('orch.untitled'),
-          }))}
+          options={[
+            { value: '', label: t('orch.overviewAll') },
+            ...(list ?? []).map((row) => ({
+              value: String(row.id),
+              label: row.name || t('orch.untitled'),
+            })),
+          ]}
         />
         <button
           type="button"
@@ -1379,10 +1702,74 @@ export function OrchestrationCanvas({
 
       {/* 画布 */}
       <div className={cn('relative h-[420px] rounded-lg border border-edge/[0.06]', tintClass)}>
-        {draft === null ? (
+        {draft === null && (list === null || list.length === 0) ? (
           <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
             {list === null ? t('hooks.loading') : t('orch.empty')}
           </p>
+        ) : draft === null && (overviewBlocks == null || overviewBlocks.length === 0) ? (
+          <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
+            {t('orch.noMatch')}
+          </p>
+        ) : draft === null ? (
+          /* 总览（默认面）：所有编排各一块，只读；点节点/编排名进入那份编排。 */
+          <ReactFlow
+            key="overview"
+            nodes={overviewFlowNodes}
+            edges={overviewFlowEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
+            minZoom={0.15}
+            maxZoom={1.5}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            deleteKeyCode={null}
+            onNodeClick={(_, node) => {
+              const orchId = orchIdOfKey(node.id);
+              const row = orchId != null ? (list ?? []).find((r) => r.id === orchId) : undefined;
+              if (row) enterOrchestration(row);
+            }}
+            onEdgeClick={(_, edge) => {
+              const orchId = orchIdOfKey(edge.id);
+              const row = orchId != null ? (list ?? []).find((r) => r.id === orchId) : undefined;
+              if (row) enterOrchestration(row);
+            }}
+          >
+            <CanvasBackground />
+            <Controls showInteractive={false} />
+            <Panel
+              position="top-left"
+              className="nopan flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {groupProjects && (
+                <input
+                  value={projectQuery}
+                  onChange={(e) => setProjectQuery(e.target.value)}
+                  placeholder={t('orch.filterProject')}
+                  className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
+              )}
+              <input
+                value={sessionQuery}
+                onChange={(e) => setSessionQuery(e.target.value)}
+                placeholder={t('orch.filterSession')}
+                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+              />
+              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                {t('orch.summary', {
+                  nodes: overviewBlocks!.reduce((sum, b) => sum + b.nodes.length, 0),
+                  edges: overviewBlocks!.reduce((sum, b) => sum + b.edges.length, 0),
+                })}
+              </span>
+            </Panel>
+            <Panel position="bottom-center" className="pointer-events-none max-w-[70%]">
+              <p className="min-w-0 truncate text-[10px] text-neutral-600">
+                {t('orch.overviewHint')}
+              </p>
+            </Panel>
+          </ReactFlow>
         ) : draft.nodes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-xs text-neutral-600">{t('orch.canvasEmpty')}</p>
@@ -1401,6 +1788,7 @@ export function OrchestrationCanvas({
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
             fitViewOptions={{ maxZoom: 1, padding: 0.12 }}
             minZoom={0.15}

@@ -7,7 +7,6 @@ import {
   controlOf,
   defaultValueOf,
   emptyItemOf,
-  fieldValueOf,
   linesOf,
   listOfLines,
   mapEntriesOf,
@@ -15,7 +14,6 @@ import {
   shapeOf,
   textOf,
   valueOfText,
-  withFieldValue,
 } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
@@ -166,13 +164,14 @@ export function ConfigValueRow({
       <div className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-neutral-800/30">
         <span
           className={cn(
-            'w-[38%] shrink-0 truncate font-mono text-[11px] leading-6',
+            'shrink-0 truncate font-mono text-[11px] leading-6',
             set ? 'text-neutral-200' : 'text-neutral-500',
           )}
           title={spec.key}
         >
           {label}
         </span>
+        <span className="shrink-0 pt-0.5 text-[11px] leading-6 text-neutral-600">=</span>
         <div className="min-w-0 flex-1">{body}</div>
         <div className="flex shrink-0 items-center gap-1 pt-1">
           {spec.deprecated && (
@@ -390,9 +389,92 @@ function defaultOfSpec(spec: TreeNodeSpec): unknown {
   }
 }
 
+function isPlainObjectValue(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** 值要不要按子树展开：对象一律展开；数组只有元素是对象时才展开（标量数组仍是多行框）。 */
+function containerOf(
+  value: unknown,
+  fields?: readonly ConfigFieldSpec[],
+): { kind: 'object' | 'array'; count: number } | null {
+  if (isPlainObjectValue(value)) {
+    return { kind: 'object', count: Math.max(fields?.length ?? 0, Object.keys(value).length) };
+  }
+  if (Array.isArray(value) && value.some(isPlainObjectValue)) {
+    return { kind: 'array', count: value.length };
+  }
+  return null;
+}
+
+/** 对象的一个子行：词表给了字段表就按它排，剩下的实际键接在后面（键名可改）。 */
+interface ObjectChild {
+  name: string;
+  free: boolean;
+  value: unknown;
+  spec: TreeNodeSpec;
+}
+
+function objectChildrenOf(obj: unknown, fields?: readonly ConfigFieldSpec[]): ObjectChild[] {
+  const source = isPlainObjectValue(obj) ? obj : {};
+  const out: ObjectChild[] = [];
+  const seen = new Set<string>();
+  for (const f of fields ?? []) {
+    seen.add(f.name);
+    out.push({
+      name: f.name,
+      free: false,
+      value: source[f.name],
+      spec: { key: f.name, group: '', description: f.description ?? '', type: f.type, options: f.options },
+    });
+  }
+  for (const [k, v] of Object.entries(source)) {
+    if (seen.has(k)) continue;
+    out.push({ name: k, free: true, value: v, spec: specOfValue(k, v) });
+  }
+  return out;
+}
+
+/** 没有词表字段的自由值：按运行期类型挑控件。 */
+function specOfValue(key: string, value: unknown): TreeNodeSpec {
+  const type =
+    typeof value === 'boolean'
+      ? 'Boolean'
+      : typeof value === 'number'
+        ? 'Number'
+        : Array.isArray(value)
+          ? 'Array of String'
+          : 'String';
+  return { key, group: '', description: '', type };
+}
+
+function withObjectKey(obj: unknown, key: string, next: unknown): Record<string, unknown> {
+  const base = isPlainObjectValue(obj) ? obj : {};
+  const out = { ...base };
+  if (next === undefined) delete out[key];
+  else out[key] = next;
+  return out;
+}
+
+function renameObjectKey(obj: unknown, from: string, to: string): Record<string, unknown> {
+  if (from === to) return isPlainObjectValue(obj) ? obj : {};
+  const base = isPlainObjectValue(obj) ? obj : {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(base)) out[k === from ? to : k] = v;
+  return out;
+}
+
+function withArrayItem(list: unknown, index: number, next: unknown): unknown[] {
+  return (Array.isArray(list) ? list : []).map((item, i) => (i === index ? next : item));
+}
+
+function withoutArrayItem(list: unknown, index: number): unknown[] {
+  return (Array.isArray(list) ? list : []).filter((_, i) => i !== index);
+}
+
 /**
- * 一条条目（map 的一行 / 数组的一项）：行 = 展开箭头 + 名称 + 控件 + ↻ + 🗑。
- * 对象值展开后字段各占一行、缩进一层——嵌套结构照树读，不再是挤在一起的两列。
+ * 一条条目（map 的一行 / 数组的一项）：行 = 箭头 + 名称 + `=` + 控件 + ↻ + 🗑。
+ * 名称不再独占一列，值是对象就展开成缩进子树——整棵按树读，没有对齐的两列。
  */
 function EntryNode({
   label,
@@ -419,12 +501,14 @@ function EntryNode({
   locked?: boolean;
 }) {
   const t = useT();
-  const isObject = fields.length > 0;
-  const [open, setOpen] = useState(fields.length <= 6);
+  const container = containerOf(value, fields);
+  const children = container?.kind === 'object' ? objectChildrenOf(value, fields) : null;
+  const count = children?.length ?? container?.count ?? 0;
+  const [open, setOpen] = useState(count <= 6);
   return (
     <div>
       <div className="flex items-start gap-1.5 rounded-md px-1 py-0.5 hover:bg-neutral-800/20">
-        {isObject ? (
+        {container ? (
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
@@ -444,26 +528,27 @@ function EntryNode({
             className={cn(INPUT_CLS, 'max-w-[180px] font-mono')}
           />
         ) : (
-          <span className="w-[72px] shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">
-            {label}
-          </span>
+          <span className="shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">{label}</span>
         )}
-        {isObject ? (
+        {container ? (
           !open && (
             <span className="pt-1 text-[10px] text-neutral-600">
-              {t('cfg.fieldCount', { count: fields.length })}
+              {t('cfg.entryCount', { count })}
             </span>
           )
         ) : (
-          <div className="min-w-0 flex-1">
-            {locked ? (
-              <span className="block truncate font-mono text-[11px] leading-6 text-neutral-400">
-                {textOf(value)}
-              </span>
-            ) : (
-              <PlainControl spec={scalarSpec} value={value} onChange={onValueChange} compact />
-            )}
-          </div>
+          <>
+            <span className="shrink-0 pt-1 text-[11px] text-neutral-600">=</span>
+            <div className="min-w-0 flex-1">
+              {locked ? (
+                <span className="block truncate font-mono text-[11px] leading-6 text-neutral-400">
+                  {textOf(value)}
+                </span>
+              ) : (
+                <PlainControl spec={scalarSpec} value={value} onChange={onValueChange} compact />
+              )}
+            </div>
+          </>
         )}
         <div className="flex shrink-0 items-center gap-0.5 pt-1">
           {locked ? (
@@ -492,74 +577,181 @@ function EntryNode({
           )}
         </div>
       </div>
-      {isObject && open && (
+      {container && open && (
         <div style={{ paddingLeft: TREE_INDENT }} className="space-y-0.5 pb-0.5">
-          {fields.map((field) => (
-            <FieldRow
-              key={field.name}
-              field={field}
-              value={fieldValueOf(value, field)}
-              readOnly={locked}
-              onChange={(next) => onValueChange(withFieldValue(value, field, next))}
-            />
-          ))}
+          {children
+            ? children.map((child) => (
+                <ValueNode
+                  key={child.name}
+                  name={child.name}
+                  nameEditable={child.free}
+                  value={child.value}
+                  spec={child.spec}
+                  onChange={(next) => onValueChange(withObjectKey(value, child.name, next))}
+                  onRename={
+                    child.free ? (next) => onValueChange(renameObjectKey(value, child.name, next)) : undefined
+                  }
+                  onRemove={() => onValueChange(withObjectKey(value, child.name, undefined))}
+                />
+              ))
+            : arrayItemsOf(value).map((item, i) => (
+                <ValueNode
+                  key={i}
+                  name={`#${i + 1}`}
+                  value={item}
+                  spec={specOfValue('', item)}
+                  onChange={(next) => onValueChange(withArrayItem(value, i, next))}
+                  onRemove={() => onValueChange(withoutArrayItem(value, i))}
+                />
+              ))}
         </div>
       )}
     </div>
   );
 }
 
-/** 对象里的一个字段：一行（名称 + 控件），有值时行尾给一记「置空」。 */
-function FieldRow({
-  field,
+/**
+ * 子树里的一个值节点：标量 = `名称 = [控件]`；对象/对象数组 = 可展开节点，
+ * 递归下去（不再有 JSON 框，也没有对齐的名称列）。自由键的键名可直接改。
+ */
+function ValueNode({
+  name,
+  nameEditable,
   value,
-  readOnly,
+  spec,
   onChange,
+  onRename,
+  onRemove,
 }: {
-  field: ConfigFieldSpec;
+  name: string;
+  nameEditable?: boolean;
   value: unknown;
-  readOnly?: boolean;
+  spec: TreeNodeSpec;
   onChange: (next: unknown) => void;
+  onRename?: (next: string) => void;
+  onRemove: () => void;
 }) {
   const t = useT();
-  const set = value !== undefined;
+  const container = containerOf(value);
+  const children = container?.kind === 'object' ? objectChildrenOf(value) : null;
+  const count = children?.length ?? container?.count ?? 0;
+  const [open, setOpen] = useState(count <= 6);
+  const canAdd = !!container && (container.kind === 'array' || !children?.some((c) => !c.free));
+  const addChild = (): void => {
+    if (!container) return;
+    if (container.kind === 'array') {
+      onChange([...(Array.isArray(value) ? value : []), {}]);
+      return;
+    }
+    const base = isPlainObjectValue(value) ? value : {};
+    let next = 'new_key';
+    let i = 2;
+    while (next in base) next = `new_key_${i++}`;
+    onChange({ ...base, [next]: '' });
+  };
   return (
-    <div className="flex items-start gap-2 rounded px-1 py-0.5 hover:bg-neutral-800/20">
-      <span
-        className="w-[34%] shrink-0 truncate font-mono text-[10px] leading-6 text-neutral-500"
-        title={field.description ?? field.name}
-      >
-        {field.name}
-      </span>
-      <div className="min-w-0 flex-1">
-        {readOnly ? (
-          <span className="block truncate font-mono text-[11px] leading-6 text-neutral-500">
-            {textOf(value)}
-          </span>
+    <div>
+      <div className="flex items-start gap-1.5 rounded px-1 py-0.5 hover:bg-neutral-800/20">
+        {container ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+            title={t('cfg.shapedToggle')}
+          >
+            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          </button>
         ) : (
-          <PlainControl
-            spec={{
-              key: field.name,
-              group: '',
-              description: field.description ?? '',
-              type: field.type,
-              options: field.options,
-            }}
-            value={value}
-            onChange={onChange}
-            compact
-          />
+          <span className="w-[13px] shrink-0" />
         )}
+        {nameEditable ? (
+          <input
+            value={name}
+            onChange={(e) => onRename?.(e.target.value)}
+            placeholder={t('cfg.mapKey')}
+            className={cn(INPUT_CLS, 'max-w-[160px] font-mono')}
+          />
+        ) : (
+          <span
+            className="shrink-0 truncate font-mono text-[10px] leading-6 text-neutral-500"
+            title={spec.description || name}
+          >
+            {name}
+          </span>
+        )}
+        {container ? (
+          !open && (
+            <span className="pt-1 text-[10px] text-neutral-600">
+              {t('cfg.entryCount', { count })}
+            </span>
+          )
+        ) : (
+          <>
+            <span className="shrink-0 pt-1 text-[11px] text-neutral-600">=</span>
+            <div className="min-w-0 flex-1">
+              <PlainControl spec={spec} value={value} onChange={onChange} compact />
+            </div>
+          </>
+        )}
+        <div className="flex shrink-0 items-center gap-0.5 pt-1">
+          {canAdd && (
+            <button
+              type="button"
+              onClick={addChild}
+              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+              title={t('cfg.addEntry')}
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          )}
+          {container && (
+            <button
+              type="button"
+              onClick={() => onChange(container.kind === 'array' ? [] : {})}
+              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+              title={t('cfg.resetRow')}
+            >
+              <RotateCcw className="h-3 w-3" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+            title={t('cfg.clear')}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
       </div>
-      {!readOnly && set && (
-        <button
-          type="button"
-          onClick={() => onChange(undefined)}
-          className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
-          title={t('cfg.resetRow')}
-        >
-          <RotateCcw className="h-3 w-3" />
-        </button>
+      {container && open && (
+        <div style={{ paddingLeft: TREE_INDENT }} className="space-y-0.5 pb-0.5">
+          {children
+            ? children.map((child) => (
+                <ValueNode
+                  key={child.name}
+                  name={child.name}
+                  nameEditable={child.free}
+                  value={child.value}
+                  spec={child.spec}
+                  onChange={(next) => onChange(withObjectKey(value, child.name, next))}
+                  onRename={
+                    child.free ? (next) => onChange(renameObjectKey(value, child.name, next)) : undefined
+                  }
+                  onRemove={() => onChange(withObjectKey(value, child.name, undefined))}
+                />
+              ))
+            : arrayItemsOf(value).map((item, i) => (
+                <ValueNode
+                  key={i}
+                  name={`#${i + 1}`}
+                  value={item}
+                  spec={specOfValue('', item)}
+                  onChange={(next) => onChange(withArrayItem(value, i, next))}
+                  onRemove={() => onChange(withoutArrayItem(value, i))}
+                />
+              ))}
+        </div>
       )}
     </div>
   );

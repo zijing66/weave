@@ -347,6 +347,12 @@ export const tasksZh = {
   'orch.summary': '{nodes} 节点 · {edges} 连线',
   'orch.cronBadge': '定时 {expr}',
 
+  // 总览（默认不选编排：所有编排各一块，只读）
+  'orch.overviewAll': '全部编排',
+  'orch.overviewHint':
+    '总览：点节点或编排名进入那份编排；运行中的编排，待回节点带呼吸辉光、触发连线有流光',
+  'orch.overviewOpen': '进入这份编排',
+
   // 编排定义编辑器
   'orch.nameLabel': '名称',
   'orch.namePlaceholder': '例如：评审 → 实现 → 评阅',
@@ -816,6 +822,12 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'orch.untitled': 'Untitled orchestration',
   'orch.summary': '{nodes} nodes · {edges} edges',
   'orch.cronBadge': 'Cron {expr}',
+
+  // Overview (nothing selected by default: every orchestration gets a read-only block)
+  'orch.overviewAll': 'All orchestrations',
+  'orch.overviewHint':
+    'Overview — click a node or an orchestration name to open it; while a run is active, nodes with pending deliveries glow and triggered edges carry a travelling light',
+  'orch.overviewOpen': 'Open this orchestration',
 
   // Definition editor
   'orch.nameLabel': 'Name',
