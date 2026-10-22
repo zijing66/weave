@@ -36,6 +36,50 @@ const run = (cmd, cwd = root) => {
   execSync(cmd, { cwd, stdio: 'inherit' });
 };
 
+
+/** 打包裁剪：非最终产物不进 tgz（sourcemap / 示例 / 测试 / 仓库元数据）。
+ *  运行依赖一个不删——伞包必须自包含（npm -g 不解析 tarball 的 dependencies）。 */
+const PRUNE_DIRS = new Set([
+  'demo',
+  'demos',
+  'example',
+  'examples',
+  'test',
+  'tests',
+  '__tests__',
+  'benchmark',
+  'benchmarks',
+  '.github',
+]);
+
+async function pruneStaged(dir) {
+  let removed = 0;
+  const walk = async (d) => {
+    let entries;
+    try {
+      entries = await readdir(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const abs = path.join(d, entry.name);
+      if (entry.isDirectory()) {
+        if (PRUNE_DIRS.has(entry.name)) {
+          await rm(abs, { recursive: true, force: true });
+          removed++;
+          continue;
+        }
+        await walk(abs);
+      } else if (entry.isFile() && entry.name.endsWith('.map')) {
+        await rm(abs, { force: true });
+        removed++;
+      }
+    }
+  };
+  await walk(dir);
+  return removed;
+}
+
 /**
  * Stage the bundle and pack it. Returns the produced tarball's absolute path
  * (dist/ keeps the artifact; the staging directory is removed).
@@ -150,8 +194,11 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
     ) + '\n',
   );
 
-  // dist/ is built map-free (tsconfig.base: no sourceMap/declarationMap), so
-  // the staged copies are clean without any pack-time filtering.
+  // dist/ 自身 map-free；第三方依赖里仍有大量 .map / demo / test，统一在暂存区裁掉
+  // （只删非最终产物，运行文件与许可证一个不动）。
+  const pruned = await pruneStaged(path.join(stage, 'node_modules'));
+  console.log(`
+pruned ${pruned} non-runtime entries (.map / demo / test)`);
 
   // Windows: spawning 'npm.cmd' without a shell is refused outright
   // (CVE-2024-27980 guard), so this one call goes through a shell — as a
