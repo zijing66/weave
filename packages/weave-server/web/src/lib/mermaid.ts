@@ -78,20 +78,37 @@ export async function renderMermaidImage(
   return { img, w: Math.round(sized.w * scale), h: Math.round(sized.h * scale) };
 }
 
+/** 下载图的底色：与导出图片的页面底色同源（`conv-image` 的 PAGE）。 */
+const DOWNLOAD_BG: Record<Theme, string> = { dark: '#0f0f0f', light: '#f8f8f8' };
+
+/**
+ * 给 SVG 垫一层底色。**必须垫**：mermaid 的 SVG 背景是透明的，深色主题下文字是
+ * 浅色——单独打开（浏览器/看图器默认白底）就是「一片空白、字看不见」。
+ */
+function withBackground(sized: string, color: string): string {
+  return sized.replace(/(<svg[^>]*>)/, `$1<rect x="0" y="0" width="100%" height="100%" fill="${color}"/>`);
+}
+
 /** 单块图的可下载文件（块头上的「下载」用，与导出图片共用同一套尺寸处理）。 */
-export function mermaidSvgFile(svg: string): Blob {
-  return new Blob([sizedSvg(svg).svg], { type: 'image/svg+xml;charset=utf-8' });
+export function mermaidSvgFile(svg: string, theme: Theme): Blob {
+  const sized = sizedSvg(svg);
+  return new Blob([withBackground(sized.svg, DOWNLOAD_BG[theme])], {
+    type: 'image/svg+xml;charset=utf-8',
+  });
 }
 
 /** PNG 版：按 `scale` 倍（缺省 2×，够屏显与贴文档）画到画布再编码。 */
-export async function mermaidPngFile(svg: string, scale = 2): Promise<Blob> {
+export async function mermaidPngFile(svg: string, theme: Theme, scale = 2): Promise<Blob> {
   const sized = sizedSvg(svg);
-  const img = await svgImage(sized.svg);
+  const img = await svgImage(withBackground(sized.svg, DOWNLOAD_BG[theme]));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(sized.w * scale);
   canvas.height = Math.round(sized.h * scale);
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('canvas 2d context unavailable');
+  // 再铺一层画布底色：SVG 那层只盖到 viewBox，缩放后的边缘像素不至于透出
+  ctx.fillStyle = DOWNLOAD_BG[theme];
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.scale(scale, scale);
   ctx.drawImage(img, 0, 0, sized.w, sized.h);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));

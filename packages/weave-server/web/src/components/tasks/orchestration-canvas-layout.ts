@@ -70,9 +70,9 @@ export interface OrchLayoutInput {
   collapsed: ReadonlySet<number>;
 }
 
-/** 节点所属项目（session 查表；webhook 不属于项目，归「未知项目」框）。 */
+/** 节点所属项目：统一查表（webhook 的项目由调用方按所属编排预先填进表里）。 */
 function projectOf(sessions: ReadonlyMap<string, OrchCanvasSession>, node: OrchestrationNode): number {
-  return node.kind === 'webhook' ? 0 : (sessions.get(node.id)?.projectId ?? 0);
+  return sessions.get(node.id)?.projectId ?? 0;
 }
 
 export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLayout {

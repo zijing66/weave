@@ -26,6 +26,7 @@ import { HarnessPicker } from './HarnessPicker';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
+  type LifecycleGroup,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
 import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
@@ -72,6 +73,23 @@ type ConvTarget = {
   label: string;
   capability: MessagingCapability;
 };
+
+/**
+ * 折叠条的渲染窗口：最新 `size` 组，**但展开着的那组一定在窗口里**。
+ * 新 turn 落地 = 组表变长，纯 `slice(-size)` 会把最旧那一行挤出去——若那行正展开着
+ * 事件链画布，整块画布会随行一起卸载，看着就是「刷新出新事件后节点全没了」。
+ * 命中时把窗口往前扩到那一组（保持时序，不把该组挪到顶部）。
+ */
+export function windowGroups(
+  groups: readonly LifecycleGroup[],
+  size: number,
+  activeId: string,
+): readonly LifecycleGroup[] {
+  const tailStart = Math.max(0, groups.length - size);
+  if (!activeId) return groups.slice(tailStart);
+  const idx = groups.findIndex((g) => g.id === activeId);
+  return idx >= 0 && idx < tailStart ? groups.slice(idx) : groups.slice(tailStart);
+}
 
 /**
  * 任务视图容器（项目级两栏）：左 = 会话列表（状态/计数/改名/拖拽目标），
@@ -720,7 +738,7 @@ export function TasksPanel({
   // 还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
   const shownGroups = matchedGroups
     ? matchedGroups.slice().reverse()
-    : groups.slice(-groupWindow).reverse();
+    : windowGroups(groups, groupWindow, expandedGroupId).slice().reverse();
   const olderRemaining = groups.length - shownGroups.length;
   const canLoadOlderEvents = !olderExhausted && events.length > 0;
   const hasOlder = olderRemaining > 0 || canLoadOlderEvents;

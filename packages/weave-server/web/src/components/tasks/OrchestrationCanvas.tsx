@@ -709,7 +709,8 @@ export function OrchestrationCanvas({
 
   const canvasSessions = useMemo(() => {
     const m = new Map<string, { sessionId: string; title: string | null; projectId: number | null }>();
-    for (const node of draft?.nodes ?? overview?.nodes ?? []) {
+    const nodes = draft?.nodes ?? overview?.nodes ?? [];
+    for (const node of nodes) {
       if (node.kind !== 'session') continue;
       const row = sessionById.get(node.id);
       m.set(node.id, {
@@ -718,18 +719,29 @@ export function OrchestrationCanvas({
         projectId: row?.projectId ?? null,
       });
     }
+    // webhook 跟着编排走：编辑面 = 这份编排的项目；总览 = 含它的第一份编排的项目。
+    for (const node of nodes) {
+      if (node.kind !== 'webhook') continue;
+      const pid =
+        draft != null
+          ? (order != null
+              ? (list?.find((r) => r.id === order)?.projectId ?? null)
+              : (projectId ?? null))
+          : (overview?.rows.find((r) => r.id === (overview.merged.orchIdsOf.get(node.id) ?? [])[0])
+              ?.projectId ?? null);
+      m.set(node.id, { sessionId: node.id, title: null, projectId: pid });
+    }
     return m;
-  }, [draft?.nodes, overview, sessionById]);
+  }, [draft, overview, sessionById, order, list, projectId]);
 
   const groupCounts = useMemo(() => {
     const m = new Map<number, number>();
     for (const node of visible?.nodes ?? []) {
-      const pid =
-        node.kind === 'webhook' ? 0 : (sessionById.get(node.id)?.projectId ?? 0);
+      const pid = canvasSessions.get(node.id)?.projectId ?? 0;
       m.set(pid, (m.get(pid) ?? 0) + 1);
     }
     return m;
-  }, [visible, sessionById]);
+  }, [visible, canvasSessions]);
 
   /** 收起的分组（counts = 当前面板的节点计数）：总览未动过 = 一个不收。 */
   const collapsedFrom = useCallback(
@@ -1038,7 +1050,7 @@ export function OrchestrationCanvas({
     if (!overview) return null;
     const counts = new Map<number, number>();
     for (const node of overview.nodes) {
-      const pid = node.kind === 'webhook' ? 0 : (sessionById.get(node.id)?.projectId ?? 0);
+      const pid = canvasSessions.get(node.id)?.projectId ?? 0;
       counts.set(pid, (counts.get(pid) ?? 0) + 1);
     }
     const laid = layoutOrchestrationCanvas({

@@ -539,16 +539,14 @@ export function SideQuestionDialog({
                             </>
                           )}
                           {row.status === 'pending' && (
-                            <Loader2
-                              title={t('tasks.sidePending')}
-                              className="h-3 w-3 shrink-0 animate-spin text-neutral-500"
-                            />
+                            <span title={t('tasks.sidePending')} className="shrink-0">
+                              <Loader2 className="h-3 w-3 animate-spin text-neutral-500" />
+                            </span>
                           )}
                           {row.status === 'timeout' && (
-                            <AlertTriangle
-                              title={t('tasks.sideTimeout')}
-                              className="h-3 w-3 shrink-0 text-amber-400/80"
-                            />
+                            <span title={t('tasks.sideTimeout')} className="shrink-0">
+                              <AlertTriangle className="h-3 w-3 text-amber-400/80" />
+                            </span>
                           )}
                         </div>
                         {open && (

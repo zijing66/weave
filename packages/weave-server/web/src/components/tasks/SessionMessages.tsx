@@ -1111,6 +1111,39 @@ export function SessionMessages({
   const [pos, setPos] = useState(loadConvPos);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+
+  /** 切全屏要保住的两样：气泡的滚动位置、输入框里没发出去的草稿。
+   *  嵌入形态切的那一刻 body 改走 portal（为了脱离右栏祖先的包含块），DOM 会整棵
+   *  重建——滚动归零、contenteditable 也会变空，故先快照、切完再还。 */
+  const scrollKeeper = useRef<{
+    top: number;
+    atBottom: boolean;
+    draft: DraftSnapshot | null;
+  } | null>(null);
+
+  const toggleFullscreen = (): void => {
+    const el = threadRef.current;
+    scrollKeeper.current = {
+      top: el?.scrollTop ?? 0,
+      atBottom: el ? el.scrollHeight - el.scrollTop - el.clientHeight < 8 : false,
+      draft: draftSnapshotOf(draftRef.current, staged),
+    };
+    setFullscreen((v) => !v);
+  };
+
+  useLayoutEffect(() => {
+    const keep = scrollKeeper.current;
+    if (!keep) return;
+    scrollKeeper.current = null;
+    const el = threadRef.current;
+    if (el) el.scrollTop = keep.atBottom ? el.scrollHeight : keep.top;
+    // 草稿只在嵌入形态会被重建（浮窗的 body 自始至终挂在同一个 portal 里）；
+    // 拿快照重建 DOM，胶囊按 data-* 还原，与「刷新不丢」同一套路径
+    if (embedded && keep.draft && draftRef.current) {
+      applyDraftSnapshot(draftRef.current, keep.draft, buildChip);
+      setDraft(serializeDraft(draftRef.current));
+    }
+  }, [fullscreen, embedded]);
   /** 向上翻页插入新条目后要补的滚动高度（渲染后按差值补，视口不跳）。 */
   const scrollFix = useRef<number | null>(null);
   const grip = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -1268,12 +1301,12 @@ export function SessionMessages({
       } else if (confirmMode) setConfirmMode(false);
       else if (confirming) setConfirming(false);
       // 全屏优先于挂起：ESC 先把全屏退回去，再按一次才收面板
-      else if (fullscreen) setFullscreen(false);
+      else if (fullscreen) toggleFullscreen();
       else onMinimize?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize]);
+  }, [menu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize, staged]);
 
   // ESC 键帽的冷却：一秒一格倒数，数到 0 才允许下一记。
   useEffect(() => {
@@ -2312,7 +2345,7 @@ export function SessionMessages({
               type="button"
               title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
-              onClick={() => setFullscreen((v) => !v)}
+              onClick={toggleFullscreen}
               className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
             >
               {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}

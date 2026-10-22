@@ -50,8 +50,8 @@ export function MermaidBlock({ code }: { code: string }) {
     setSaving(true);
     const job =
       ext === 'svg'
-        ? Promise.resolve(mermaidSvgFile(svg))
-        : mermaidPngFile(svg);
+        ? Promise.resolve(mermaidSvgFile(svg, theme))
+        : mermaidPngFile(svg, theme);
     void job
       .then((blob) => saveBlob(blob, mermaidFileName(ext)))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
