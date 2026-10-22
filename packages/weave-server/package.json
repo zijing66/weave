@@ -49,6 +49,7 @@
     "dev:web": "cd web && vite"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@weavecode/core": "workspace:^",
     "@weavecode/harness": "workspace:^",
     "@weavecode/templates": "workspace:^",

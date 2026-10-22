@@ -40,9 +40,26 @@ export function readCodexMcpFromText(text: string): Record<string, McpServerConf
   return out;
 }
 
+function stringMap(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function toMcpServerConfig(raw: unknown): McpServerConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
+  // Streamable HTTP：有 url 就是远程形（与 codex 自己的 untagged 判别一致）
+  if (typeof r.url === 'string') {
+    const cfg: McpServerConfig = { url: r.url };
+    const headers = stringMap(r.http_headers);
+    if (headers) cfg.headers = headers;
+    if (typeof r.bearer_token_env_var === 'string') cfg.bearerTokenEnvVar = r.bearer_token_env_var;
+    return cfg;
+  }
   if (typeof r.command !== 'string') return null;
   const cfg: McpServerConfig = { command: r.command };
   if (Array.isArray(r.args)) {
@@ -69,19 +86,37 @@ function renderMcpServerBody(
   oldEnvSection: TomlSection | undefined,
   mergeUnknown: boolean,
 ): string[] {
-  const body: string[] = [`command = ${renderTomlString(config.command)}`];
-  if (config.args && config.args.length > 0) {
-    body.push(`args = [${config.args.map(renderTomlString).join(', ')}]`);
+  const body: string[] = [];
+  if ('command' in config) {
+    body.push(`command = ${renderTomlString(config.command)}`);
+    if (config.args && config.args.length > 0) {
+      body.push(`args = [${config.args.map(renderTomlString).join(', ')}]`);
+    }
+  } else {
+    body.push(`url = ${renderTomlString(config.url)}`);
+    if (config.bearerTokenEnvVar) {
+      body.push(`bearer_token_env_var = ${renderTomlString(config.bearerTokenEnvVar)}`);
+    }
+    const headers = Object.entries(config.headers ?? {});
+    if (headers.length > 0) {
+      body.push(
+        `http_headers = { ${headers
+          .map(([k, v]) => `${renderTomlKey(k)} = ${renderTomlString(v)}`)
+          .join(', ')} }`,
+      );
+    }
   }
   if (mergeUnknown && oldSection) {
-    const known = new Set(['command', 'args', 'env']);
+    const known = new Set(['command', 'args', 'env', 'url', 'http_headers', 'bearer_token_env_var']);
     for (const [key, rawLine] of parseSectionEntries(oldSection.lines.slice(1))) {
       if (!known.has(key)) body.push(rawLine);
     }
   }
-  const envEntries = Object.entries(config.env ?? {});
+  const envEntries = Object.entries('env' in config ? (config.env ?? {}) : {});
   const oldEnvKeys = mergeUnknown && oldEnvSection
-    ? parseSectionEntries(oldEnvSection.lines.slice(1)).filter(([k]) => !(k in (config.env ?? {})))
+    ? parseSectionEntries(oldEnvSection.lines.slice(1)).filter(
+        ([k]) => !(k in ('env' in config ? (config.env ?? {}) : {})),
+      )
     : [];
   if (envEntries.length > 0 || oldEnvKeys.length > 0) {
     body.push('');

@@ -1,42 +1,35 @@
-import { readFileSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { getAuthPath, readDaemonState } from '@weavecode/server';
+import { readBody, sendJson } from './http.js';
 
 /**
- * 编排内置 MCP（stdio）：工具面只转发 daemon 的 HTTP API，**不缓存任何编排状态**
- * ——编排的唯一事实源仍是 daemon 的仓储，web 画布 / CLI / 这里的修改互相立刻可见。
+ * 编排内置 MCP（Streamable HTTP，daemon 托管）：工具面只转发 daemon 自己的 HTTP
+ * API，**不缓存任何编排状态**——编排的唯一事实源仍是 daemon 的仓储，web 画布、
+ * CLI、MCP 三处修改互相立刻可见。
  *
- * 宿主侧注册命令：`weave mcp orchestration`（daemon 没起时调用会直接报错）。
- * stdout 归协议，诊断一律走 stderr。
+ * 生命周期 = daemon 的启停（无子进程、无 CLI 命令）；端点固定 `/mcp`，无状态模式，
+ * 认证沿用本机令牌（MCP 客户端配置里带 `x-weave-local` 头）。诊断走 stderr。
  */
 
-interface DaemonTarget {
-  base: string;
-  token: string;
-}
-
-function daemonTarget(): DaemonTarget {
-  const state = readDaemonState();
-  if (!state?.port) {
-    throw new Error('weave daemon is not running — start it with `weave daemon start`');
-  }
-  const auth = JSON.parse(readFileSync(getAuthPath(), 'utf8')) as { localToken?: string };
-  if (!auth.localToken) throw new Error('local token missing — run `weave daemon start` first');
-  return { base: `http://127.0.0.1:${state.port}/api`, token: auth.localToken };
+export interface McpHttpContext {
+  /** daemon 自己的监听端口（工具调用转回自己的 API）。 */
+  port: number;
+  /** 本机令牌；null = 未装认证（测试/开放口），调用不带令牌。 */
+  token: string | null;
 }
 
 async function api<T>(
+  ctx: McpHttpContext,
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const { base, token } = daemonTarget();
-  const res = await fetch(`${base}${path}`, {
+  const res = await fetch(`http://127.0.0.1:${ctx.port}/api${path}`, {
     method,
     headers: {
-      'x-weave-local': token,
+      ...(ctx.token ? { 'x-weave-local': ctx.token } : {}),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -197,14 +190,14 @@ type Args = Record<string, unknown>;
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
-async function callTool(name: string, args: Args): Promise<unknown> {
+async function callTool(ctx: McpHttpContext, name: string, args: Args): Promise<unknown> {
   switch (name) {
     case 'list_orchestrations':
-      return api('GET', `/messaging/orchestrations${qs({ projectId: num(args.projectId) })}`);
+      return api(ctx, 'GET', `/messaging/orchestrations${qs({ projectId: num(args.projectId) })}`);
     case 'get_orchestration':
-      return api('GET', `/messaging/orchestrations/${num(args.id)}`);
+      return api(ctx, 'GET', `/messaging/orchestrations/${num(args.id)}`);
     case 'create_orchestration':
-      return api('POST', '/messaging/orchestrations', {
+      return api(ctx, 'POST', '/messaging/orchestrations', {
         name: args.name,
         startText: args.startText,
         projectId: num(args.projectId),
@@ -215,7 +208,7 @@ async function callTool(name: string, args: Args): Promise<unknown> {
       });
     case 'update_orchestration': {
       const id = num(args.id);
-      return api('PUT', `/messaging/orchestrations/${id}`, {
+      return api(ctx, 'PUT', `/messaging/orchestrations/${id}`, {
         ...(args.name === undefined ? {} : { name: args.name }),
         ...(args.startText === undefined ? {} : { startText: args.startText }),
         ...(args.nodes === undefined ? {} : { nodes: args.nodes }),
@@ -225,14 +218,15 @@ async function callTool(name: string, args: Args): Promise<unknown> {
       });
     }
     case 'delete_orchestration':
-      return api('DELETE', `/messaging/orchestrations/${num(args.id)}`);
+      return api(ctx, 'DELETE', `/messaging/orchestrations/${num(args.id)}`);
     case 'trigger_orchestration':
-      return api('POST', `/messaging/orchestrations/${num(args.id)}/trigger`, {
+      return api(ctx, 'POST', `/messaging/orchestrations/${num(args.id)}/trigger`, {
         ...(str(args.text) ? { text: args.text } : {}),
         ...(Array.isArray(args.entries) ? { entries: args.entries } : {}),
       });
     case 'list_runs':
       return api(
+        ctx,
         'GET',
         `/messaging/orchestration-runs${qs({
           orchestrationId: num(args.orchestrationId),
@@ -243,11 +237,12 @@ async function callTool(name: string, args: Args): Promise<unknown> {
         })}`,
       );
     case 'get_run':
-      return api('GET', `/messaging/orchestration-runs/${num(args.id)}`);
+      return api(ctx, 'GET', `/messaging/orchestration-runs/${num(args.id)}`);
     case 'cancel_run':
-      return api('POST', `/messaging/orchestration-runs/${num(args.id)}/cancel`);
+      return api(ctx, 'POST', `/messaging/orchestration-runs/${num(args.id)}/cancel`);
     case 'list_sessions': {
       const data = await api<{ sessions: Array<Record<string, unknown>> }>(
+        ctx,
         'GET',
         `/sessions${qs({ projectId: num(args.projectId) })}`,
       );
@@ -269,8 +264,7 @@ async function callTool(name: string, args: Args): Promise<unknown> {
   }
 }
 
-/** 启动 stdio MCP 服务（宿主按需拉起；daemon 不在时每次调用会明确报错）。 */
-export async function runOrchestrationMcp(): Promise<void> {
+function buildServer(ctx: McpHttpContext): Server {
   const server = new Server(
     { name: 'weave-orchestration', version: '0.1.0' },
     { capabilities: { tools: {} } },
@@ -279,7 +273,7 @@ export async function runOrchestrationMcp(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      const result = await callTool(name, (args ?? {}) as Args);
+      const result = await callTool(ctx, name, (args ?? {}) as Args);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       return {
@@ -288,5 +282,37 @@ export async function runOrchestrationMcp(): Promise<void> {
       };
     }
   });
-  await server.connect(new StdioServerTransport());
+  return server;
+}
+
+/**
+ * `/mcp` 的 HTTP 入口（无状态）：每个请求建一套 server+transport，响应完即回收。
+ * 无状态模式不带会话 id、不做会话校验——工具都是「一问一答」，不需要长连接状态。
+ */
+export async function handleMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  ctx: McpHttpContext,
+): Promise<void> {
+  const server = buildServer(ctx);
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  res.on('close', () => {
+    void transport.close();
+    void server.close();
+  });
+  await server.connect(transport);
+  let parsed: unknown;
+  if (req.method === 'POST') {
+    const raw = await readBody(req);
+    try {
+      parsed = raw.trim() ? JSON.parse(raw) : undefined;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+  }
+  await transport.handleRequest(req, res, parsed);
 }

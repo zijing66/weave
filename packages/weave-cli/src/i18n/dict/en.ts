@@ -31,8 +31,6 @@ export const en: Record<keyof typeof zh, string> = {
   'cmd.daemon.stop.desc': 'Stop the running daemon',
   'cmd.daemon.status.desc': 'Show daemon status',
   'cmd.dashboard.desc': 'Open the web console in a browser (starts the daemon if needed)',
-  'cmd.mcp.desc': 'Expose weave capabilities as a built-in MCP server (stdio)',
-  'cmd.mcp.orchestration.desc': 'Orchestration MCP: list/get/create/update/trigger/runs (proxies the daemon API)',
   'cmd.chpass.desc': 'Change the dashboard login password (new password given; no old password needed locally)',
   'cmd.scan.desc': 'Scan for weave-initialized projects and register them',
   'cmd.doctor.desc': 'Diagnose local wiring: is this checkout registered with the local weave server',

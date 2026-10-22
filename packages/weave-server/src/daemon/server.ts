@@ -103,6 +103,8 @@ import { detectInitFileUpdates, needsInit } from '../install/init-files.js';
 import { readBody, sendJson } from './http.js';
 import { ApiLogger } from './api-log.js';
 import { handleHooksRoutes } from './hooks-routes.js';
+import { handleMcpRequest } from './mcp-orchestration.js';
+import { BUILTIN_MCP_SERVERS } from '../install/builtin-mcp.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import { handleCaptureRoutes } from './capture-routes.js';
 import { handleConfigRoutes } from './config-routes.js';
@@ -310,6 +312,16 @@ async function handleRequest(
       sendJson(res, 401, { error: 'Unauthorized' });
       return;
     }
+  }
+
+  // POST/GET /mcp —— 内置 MCP（Streamable HTTP，无状态）：工具面 = 编排。
+  // 生命周期即 daemon 生命周期；认证沿用上面的门（MCP 客户端配置带本机令牌头）。
+  if (pathname === '/mcp') {
+    await handleMcpRequest(req, res, {
+      port: deps.port,
+      token: deps.auth?.getLocalToken() ?? null,
+    });
+    return;
   }
 
   // GET /api-logs —— 接口日志查询（只读面；写入侧见 daemon/api-log.ts）。
@@ -1022,6 +1034,48 @@ async function handleRequest(
     }
     return;
   }
+  // POST /projects/:id/mcp/builtin —— 安装 daemon 托管的内置 MCP。
+  // **只允许 user 档**（配置里带本机令牌，项目档会跟着仓库走）；令牌只写不回显。
+  const builtinMcpMatch = pathname.match(/^\/projects\/(\d+)\/mcp\/builtin$/);
+  if (builtinMcpMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(builtinMcpMatch[1]));
+    let body: { name?: string; agent?: string };
+    try {
+      body = JSON.parse(await readBody(req)) as { name?: string; agent?: string };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return;
+    }
+    const builtin = BUILTIN_MCP_SERVERS.find((b) => b.name === body.name);
+    if (!builtin) {
+      sendJson(res, 404, { error: `Unknown built-in MCP server: ${body.name ?? ''}` });
+      return;
+    }
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return;
+    }
+    const agent = body.agent ?? 'claude';
+    const surface = mcpSurfaceOf(agent);
+    if (!surface || !surface.mcpScopes().includes('user')) {
+      sendJson(res, 400, { error: `MCP servers for ${agent} have no user scope` });
+      return;
+    }
+    const token = deps.auth?.getLocalToken() ?? '';
+    const config: McpServerConfig = {
+      type: 'http',
+      url: `http://127.0.0.1:${deps.port}${builtin.path}`,
+      ...(token ? { headers: { 'x-weave-local': token } } : {}),
+    };
+    try {
+      await surface.mcpWrite('user', project.path, homedir(), builtin.name, config);
+      sendJson(res, 201, { category: 'mcp', name: builtin.name, scope: 'user', agent });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Install failed' });
+    }
+    return;
+  }
+
   const uninstallMatch = pathname.match(/^\/projects\/(\d+)\/uninstall$/);
   if (uninstallMatch && req.method === 'POST') {
     const project = deps.projects.getById(Number(uninstallMatch[1]));

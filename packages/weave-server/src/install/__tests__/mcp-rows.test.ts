@@ -56,8 +56,10 @@ describe('readMcpRows — 工具行装配（模型协议 ToolStateRow）', () =>
     expect(alpha?.installScopes).toEqual(['project', 'user']);
     expect(alpha?.detail).toEqual({ command: 'npx' });
 
-    // claude user 面：~/.claude.json（此环境无该文件 → 空，不炸）
-    expect(rows.filter((r) => r.harness === 'claude' && r.scope === 'user')).toEqual([]);
+    // claude user 面：~/.claude.json 不存在 → 只剩内置目录那一行
+    expect(
+      rows.filter((r) => r.harness === 'claude' && r.scope === 'user').map((r) => r.key),
+    ).toEqual(['weave-orchestration']);
 
     // codex user 面：config.toml
     const zeta = pick('codex', 'zeta');
@@ -76,6 +78,21 @@ describe('readMcpRows — 工具行装配（模型协议 ToolStateRow）', () =>
     // denied：显式 disabled → off / false
     expect(pick('denied').enable).toBe('off');
     expect(pick('denied').effective).toBe(false);
+  });
+
+  it('内置目录：未配置时以「未安装」行出现（不自动写用户配置）', async () => {
+    const rows = await readMcpRows(projectDir);
+    const builtin = rows.filter((r) => r.key === 'weave-orchestration');
+    expect(builtin.length).toBeGreaterThan(0);
+    for (const row of builtin) {
+      expect(row.builtin).toBe(true);
+      expect(row.install).toBe('absent');
+      expect(row.effective).toBe(false);
+      expect(row.detail).toMatchObject({ url: expect.stringContaining('/mcp') });
+    }
+    // 只允许 user 档（配置里带本机令牌，项目档会跟着仓库走）
+    expect(builtin.map((r) => r.scope)).toEqual(['user']);
+    expect(builtin[0]!.installScopes).toEqual(['user']);
   });
 
   it('user 面行无启停语义（enable = null，effective 恒 true）', async () => {

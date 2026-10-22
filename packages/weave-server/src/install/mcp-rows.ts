@@ -8,6 +8,8 @@ import {
   type McpEnableMap,
 } from './settings-mcp.js';
 import { assetSurfaces } from '../surfaces.js';
+import { BUILTIN_MCP_SERVERS } from './builtin-mcp.js';
+import { readDaemonState } from '../daemon/state.js';
 
 export type McpToolRow = ToolStateRow<McpServerConfig>;
 
@@ -40,6 +42,28 @@ export async function readMcpRows(projectPath: string): Promise<McpToolRow[]> {
           detail: config,
         });
       }
+    }
+  }
+  // weave 自带目录（daemon 托管的 HTTP MCP）：未配置时补一行「未安装」。
+  // **只允许 user 档**——配置里要带本机令牌，项目档会跟着仓库走。
+  // 端点用 daemon 当前端口（令牌不回显，安装时才由服务端填）。
+  const port = readDaemonState()?.port;
+  for (const surface of assetSurfaces()) {
+    for (const builtin of BUILTIN_MCP_SERVERS) {
+      if (surface.harness !== 'claude') continue;
+      if (rows.some((r) => r.harness === 'claude' && r.key === builtin.name)) continue;
+      rows.push({
+        key: builtin.name,
+        category: 'mcp',
+        harness: 'claude',
+        scope: 'user',
+        installScopes: ['user'],
+        install: 'absent',
+        enable: null,
+        effective: false,
+        detail: { url: `http://127.0.0.1:${port ?? 6420}${builtin.path}` },
+        builtin: true,
+      });
     }
   }
   return rows;

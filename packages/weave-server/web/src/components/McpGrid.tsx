@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Power, Server, Trash2 } from 'lucide-react';
+import { Download, Power, Server, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -38,6 +38,7 @@ export function McpGrid({
   empty,
   onUninstallMcp,
   onCycleMcpEnable,
+  onInstallBuiltinMcp,
 }: {
   rows: McpRow[];
   /** Which view this grid is rendered in — prefixes the section heading the
@@ -49,6 +50,8 @@ export function McpGrid({
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   /** 开关切换只交语义（名字 + 下一态），落盘与刷新由 App 统一负责。 */
   onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
+  /** 内置目录里「未安装」的行：服务端负责写 user 档并填令牌。 */
+  onInstallBuiltinMcp: (name: string, agent?: AssetAgent) => void | Promise<void>;
 }) {
   const t = useT();
   // 按钮本体自持三态反馈：卸载/开关 loading 转圈 + 失败 toast。
@@ -96,6 +99,10 @@ export function McpGrid({
           const enableState = fb.stateOf(enableKey);
           const uninstallKey = `mcp-uninstall:${s.harness}:${s.scope}:${s.key}`;
           const uninstallState = fb.stateOf(uninstallKey);
+          const installKey = `mcp-install:${s.harness}:${s.scope}:${s.key}`;
+          const installState = fb.stateOf(installKey);
+          // 内置目录行：还没写进配置 ⇒ 只给「安装」；装了之后回到普通行
+          const builtinAbsent = s.builtin === true && s.install === 'absent';
           return (
             <Card key={`${s.harness}-${s.scope}-${s.key}`}>
               <CardHeader className="items-center gap-2 max-lg:flex-wrap">
@@ -106,6 +113,11 @@ export function McpGrid({
                 <Badge variant="settings" className="ml-1">
                   {t(s.scope === 'user' ? 'library.scopeGlobal' : 'library.scopeProject')}
                 </Badge>
+                {s.builtin && (
+                  <Badge variant="default" className="ml-1">
+                    {t('mcp.builtin')}
+                  </Badge>
+                )}
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
                     {t('mcp.update')}
@@ -133,6 +145,31 @@ export function McpGrid({
                       {t(STATE_LABEL[state])}
                     </button>
                   )}
+                  {builtinAbsent ? (
+                    <button
+                      type="button"
+                      disabled={installState === 'loading'}
+                      onClick={() =>
+                        void fb.run(
+                          installKey,
+                          async () => {
+                            await onInstallBuiltinMcp(s.key, s.harness);
+                            show('success', t('mcp.installed', { name: s.key }));
+                          },
+                          { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
+                        )
+                      }
+                      title={t('mcp.installTip', { name: s.key })}
+                      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                    >
+                      <FeedbackIcon
+                        state={installState}
+                        className="h-3 w-3"
+                        icon={<Download className="h-3 w-3" />}
+                      />
+                      {t('mcp.install')}
+                    </button>
+                  ) : (
                   <button
                     type="button"
                     disabled={uninstallState === 'loading'}
@@ -155,17 +192,24 @@ export function McpGrid({
                       icon={<Trash2 className="h-3.5 w-3.5" />}
                     />
                   </button>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="pt-0 text-xs font-mono text-neutral-400 break-all">
-                <span className="text-neutral-300">{s.detail.command}</span>
-                {s.detail.args && s.detail.args.length > 0 && (
-                  <span className="text-neutral-500"> {s.detail.args.join(' ')}</span>
-                )}
-                {s.detail.env && Object.keys(s.detail.env).length > 0 && (
-                  <div className="mt-1 text-neutral-600">
-                    env: {Object.keys(s.detail.env).join(', ')}
-                  </div>
+                {'command' in s.detail ? (
+                  <>
+                    <span className="text-neutral-300">{s.detail.command}</span>
+                    {s.detail.args && s.detail.args.length > 0 && (
+                      <span className="text-neutral-500"> {s.detail.args.join(' ')}</span>
+                    )}
+                    {s.detail.env && Object.keys(s.detail.env).length > 0 && (
+                      <div className="mt-1 text-neutral-600">
+                        env: {Object.keys(s.detail.env).join(', ')}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-neutral-300">{s.detail.url}</span>
                 )}
               </CardContent>
             </Card>

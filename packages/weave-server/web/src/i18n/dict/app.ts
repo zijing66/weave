@@ -56,7 +56,6 @@ export const appZh = {
   'project.terminalsOpen': '{n} 个终端已打开',
   'project.terminalMenu': '唤出或新开终端',
   'project.terminalListUnavailable': '当前终端不支持列出已开窗口——只能新开一个',
-  'project.closeTerminal': '关闭该项目的 {n} 个终端',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
@@ -180,7 +179,6 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.terminalMenu': 'Bring a terminal up or open a new one',
   'project.terminalListUnavailable':
     "This terminal preset can't list open windows — open a new one instead",
-  'project.closeTerminal': "Close this project's {n} terminal(s)",
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
   'project.needsInit': 'needs init',

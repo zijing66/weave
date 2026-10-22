@@ -15,13 +15,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import {
-  api,
-  type HarnessCheck,
-  type ProjectRow,
-  type TerminalPane,
-  type TerminalTarget,
-} from '@/lib/api';
+import { api, type HarnessCheck, type ProjectRow, type TerminalTarget } from '@/lib/api';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -29,13 +23,13 @@ import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { TerminalClosePicker } from '@/components/tasks/TerminalPicker';
 import { useToast } from '@/components/Toast';
 import { errorText, type ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
   Archive,
   ArchiveRestore,
+  ArrowUpRight,
   FolderOpen,
   Globe,
   GripVertical,
@@ -71,9 +65,8 @@ interface ProjectListProps {
   /** 开目录/终端按钮的反馈态（同源 useActionFeedback，键与回调成对）。 */
   openExplorerStateOf?: (projectId: number) => ActionState;
   openTerminalStateOf?: (projectId: number) => ActionState;
-  /** 关掉该项目的已开终端：只关勾选清单里的 pane（多选弹窗的确认结果）。 */
+  /** 关掉该项目的已开终端：只关清单里的 pane（终端弹层里勾选 / 单卡关闭的结果）。 */
   onCloseTerminal?: (p: ProjectRow, paneIds: string[]) => void;
-  closeTerminalStateOf?: (projectId: number) => ActionState;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
   /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
@@ -117,7 +110,6 @@ export function ProjectList({
   openExplorerStateOf,
   openTerminalStateOf,
   onCloseTerminal,
-  closeTerminalStateOf,
   sessionStatsOf,
   terminalsOf,
   onReorder,
@@ -138,20 +130,15 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
-  // 关终端多选弹窗：行内按钮现拉本项目名下的 pane 打开（实时枚举，不复用角标
-  // 计数）；勾选后交 App 关掉勾中的那些——**没有「全关」这条路**。
-  const [closePicker, setClosePicker] = useState<{
-    project: ProjectRow;
-    panes: TerminalPane[];
-  } | null>(null);
   // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
   }, [archivedOpen, archivedProjects.length]);
 
   // 项目行的终端弹层：点终端按钮不再直接开窗，而是先摆出本项目已开的终端卡片
-  // （点一张 = 切到前台），末尾常驻一张「+」开新终端——没有终端时只剩那张「+」。
-  // 卡片数据每次现拉（实时枚举，缓存会把刚关掉的终端列出来）。
+  // （点卡片 = 勾选，右上角图标切到前台 / 关掉这一张），末尾常驻一张「+」开新
+  // 终端——没有终端时只剩那张「+」。卡片数据每次现拉（实时枚举，缓存会把刚关掉
+  // 的终端列出来）。
   const [termMenu, setTermMenu] = useState<{
     project: ProjectRow;
     anchor: HTMLElement;
@@ -159,6 +146,8 @@ export function ProjectList({
     y: number;
     /** null = 还在拉；[] = 拉回来了，一个终端都没有 */
     targets: TerminalTarget[] | null;
+    /** 勾选的卡片 id（只收可关的那些）——顶部批量关闭按钮按它算。 */
+    selected: string[];
   } | null>(null);
   const termMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -168,7 +157,14 @@ export function ProjectList({
       return;
     }
     const rect = anchor.getBoundingClientRect();
-    setTermMenu({ project: p, anchor, x: rect.left, y: rect.bottom + 4, targets: null });
+    setTermMenu({
+      project: p,
+      anchor,
+      x: rect.left,
+      y: rect.bottom + 4,
+      targets: null,
+      selected: [],
+    });
     api
       .listProjectTerminals(p.id)
       .then((targets) =>
@@ -180,7 +176,7 @@ export function ProjectList({
       });
   };
 
-  /** 点卡片 = 切到前台；失败（终端已关 / preset 没这条通道）如实报因，不假装唤出了。 */
+  /** 卡片上的「切到前台」；失败（终端已关 / preset 没这条通道）如实报因，不假装唤出了。 */
   const focusTerminal = (project: ProjectRow, targetId: string): void => {
     setTermMenu(null);
     api
@@ -188,6 +184,35 @@ export function ProjectList({
       .catch((e: unknown) =>
         show('error', t('errors.focusTerminalFailed', { error: errorText(e) })),
       );
+  };
+
+  /** 点卡片 = 勾选/取消（只收可关的卡：后端给不出 pane 的卡片勾了也关不掉）。 */
+  const toggleTarget = (id: string): void => {
+    setTermMenu((cur) => {
+      if (!cur) return cur;
+      const selected = cur.selected.includes(id)
+        ? cur.selected.filter((x) => x !== id)
+        : [...cur.selected, id];
+      return { ...cur, selected };
+    });
+  };
+
+  /** 关掉这些卡片上属于本项目的 pane（loading / 角标对账 / toast 都归 App）；
+   *  卡片先从列表摘掉，剩下的照常可操作。 */
+  const closeTargets = (project: ProjectRow, targets: TerminalTarget[]): void => {
+    const paneIds = targets.flatMap((target) => target.paneIds ?? []);
+    if (paneIds.length === 0) return;
+    const gone = new Set(targets.map((target) => target.id));
+    setTermMenu((cur) =>
+      cur && cur.project.id === project.id
+        ? {
+            ...cur,
+            targets: (cur.targets ?? []).filter((t) => !gone.has(t.id)),
+            selected: cur.selected.filter((id) => !gone.has(id)),
+          }
+        : cur,
+    );
+    onCloseTerminal?.(project, paneIds);
   };
 
   // 点外面 / Esc / 滚动都收——按钮自己那一击不在这里收（留给 onClick 做开合切换，
@@ -277,6 +302,10 @@ export function ProjectList({
       clearPress();
     }
   };
+
+  // 弹层里勾中的卡片 → 要关的 pane 数（批量关闭按钮的文案）。
+  const pickedTargets = termMenu?.targets?.filter((x) => termMenu.selected.includes(x.id)) ?? [];
+  const pickedPaneCount = pickedTargets.reduce((n, x) => n + (x.paneIds?.length ?? 0), 0);
 
   return (
     <div className="flex flex-col">
@@ -471,28 +500,6 @@ export function ProjectList({
                     </span>
                   )}
                 </span>
-                {/* 关闭终端：有终端开着才出现（0 个没得关，不占位）——弹多选窗挑
-                    要关哪几个（关的是 cwd 恰为本项目目录的 pane，窗口里顺手开着的
-                    别的目录不动）。红色 + 二次确认：一键杀掉整批会话宿主，误触代价
-                    太大；而「一口气全关」这条路整个拿掉，只能一个一个勾。 */}
-                {terminals > 0 && onCloseTerminal && (
-                  <QuickButton
-                    danger
-                    title={t('project.closeTerminal', { n: terminals })}
-                    onClick={() => {
-                      api
-                        .listProjectPanes(p.id)
-                        .then((panes) => setClosePicker({ project: p, panes }))
-                        .catch((e) => show('error', t('errors.closeTerminalFailed', { error: errorText(e) })));
-                    }}
-                  >
-                    <FeedbackIcon
-                      state={closeTerminalStateOf?.(p.id) ?? 'idle'}
-                      className="h-3.5 w-3.5"
-                      icon={<Power className="h-3.5 w-3.5" />}
-                    />
-                  </QuickButton>
-                )}
               </div>
             </li>
               )}
@@ -579,20 +586,6 @@ export function ProjectList({
         onClose={() => setConfirmTarget(null)}
       />
 
-      {/* 关终端多选弹窗：挑要关哪几个 pane（蓝框勾选）→「关闭 n 个」才动手。
-          勾选本身就是那道二次确认——单击行内按钮关不掉任何东西。 */}
-      {closePicker && (
-        <TerminalClosePicker
-          panes={closePicker.panes}
-          onConfirm={(paneIds) => {
-            const { project } = closePicker;
-            setClosePicker(null);
-            onCloseTerminal?.(project, paneIds);
-          }}
-          onClose={() => setClosePicker(null)}
-        />
-      )}
-
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
           fixed 后代的 containing block，留在组件树里会被裁剪在侧栏内。 */}
       {menu &&
@@ -624,8 +617,10 @@ export function ProjectList({
         )}
 
       {/* 终端弹层 — 同样 portal 到 body（同上：侧栏的 backdrop-filter 会裁剪）。
-          卡片 = 本项目已开的终端（点 = 切到前台），末尾「+」= 新开一个；列不出来
-          （角标说有、列表空 = 该 preset 不能枚举已开窗口）如实说一句，不装作没有。 */}
+          卡片 = 本项目已开的终端：点卡片 = 勾选（蓝框），角上两枚图标分别「切到
+          前台」与「关掉这一张」；勾中后标题行右侧冒出批量关闭。末尾「+」= 新开
+          一个；列不出来（角标说有、列表空 = 该 preset 不能枚举已开窗口）如实说
+          一句，不装作没有。 */}
       {termMenu &&
         createPortal(
           <div
@@ -636,12 +631,27 @@ export function ProjectList({
             }}
             className="fixed z-50 w-72 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac p-1"
           >
-            <p
-              className="px-2 pb-1 pt-0.5 text-[10px] text-neutral-500 truncate"
-              title={termMenu.project.path}
-            >
-              {termMenu.project.name}
-            </p>
+            <div className="flex items-center gap-1.5 px-2 pb-1 pt-0.5">
+              <p
+                className="min-w-0 flex-1 truncate text-[10px] text-neutral-500"
+                title={termMenu.project.path}
+              >
+                {termMenu.project.name}
+              </p>
+              {pickedPaneCount > 0 && onCloseTerminal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeTargets(termMenu.project, pickedTargets);
+                    setTermMenu(null);
+                  }}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-red-600 px-2 py-1 text-xs text-white transition-colors hover:bg-red-500"
+                >
+                  <Power className="h-3.5 w-3.5" />
+                  {t('tasks.closeTerminalConfirmLabel', { n: pickedPaneCount })}
+                </button>
+              )}
+            </div>
             {termMenu.targets === null ? (
               <p className="px-2 py-2 text-[11px] text-neutral-500">{t('common.loading')}</p>
             ) : termMenu.targets.length === 0 ? (
@@ -652,36 +662,71 @@ export function ProjectList({
               )
             ) : (
               <ul className="space-y-1 pb-1">
-                {termMenu.targets.map((target) => (
-                  <li key={target.id}>
-                    <button
-                      type="button"
-                      onClick={() => focusTerminal(termMenu.project, target.id)}
-                      className="w-full rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06]"
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
-                          {target.title ??
-                            t('tasks.terminalTargetFallback', {
-                              w: target.windowId,
-                              t: target.tabId,
-                            })}
-                        </span>
-                        {target.active && (
-                          <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
-                            {t('tasks.terminalTargetActive')}
-                          </span>
+                {termMenu.targets.map((target) => {
+                  const picked = termMenu.selected.includes(target.id);
+                  const closable = (target.paneIds?.length ?? 0) > 0 && onCloseTerminal !== undefined;
+                  return (
+                    <li key={target.id}>
+                      <div
+                        className={cn(
+                          'flex items-start gap-1 rounded-lg border px-1 py-1 transition-colors',
+                          picked
+                            ? 'border-blue-500 bg-blue-500/10'
+                            : 'border-edge/[0.06] bg-edge/[0.02]',
                         )}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                        {t('tasks.terminalTargetDetail', {
-                          match: target.matchCount,
-                          total: target.paneCount,
-                        })}
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                      >
+                        <button
+                          type="button"
+                          disabled={!closable}
+                          onClick={() => toggleTarget(target.id)}
+                          title={closable ? undefined : t('tasks.terminalTargetNoClose')}
+                          className={cn(
+                            'min-w-0 flex-1 rounded px-1.5 py-1 text-left transition-colors',
+                            closable && 'hover:bg-edge/[0.06]',
+                          )}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
+                              {target.title ??
+                                t('tasks.terminalTargetFallback', {
+                                  w: target.windowId,
+                                  t: target.tabId,
+                                })}
+                            </span>
+                            {target.active && (
+                              <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                                {t('tasks.terminalTargetActive')}
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                            {t('tasks.terminalTargetDetail', {
+                              match: target.matchCount,
+                              total: target.paneCount,
+                            })}
+                          </span>
+                        </button>
+                        <span className="flex shrink-0 items-center gap-1 pt-1">
+                          <QuickButton
+                            title={t('tasks.terminalTargetFocus')}
+                            onClick={() => focusTerminal(termMenu.project, target.id)}
+                          >
+                            <ArrowUpRight className="h-3.5 w-3.5" />
+                          </QuickButton>
+                          {closable && (
+                            <QuickButton
+                              danger
+                              title={t('tasks.terminalTargetClose')}
+                              onClick={() => closeTargets(termMenu.project, [target])}
+                            >
+                              <Power className="h-3.5 w-3.5" />
+                            </QuickButton>
+                          )}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <button

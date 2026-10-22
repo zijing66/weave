@@ -55,4 +55,6 @@ export interface ToolStateRow<D = unknown> {
   effective: boolean;
   /** 类别专属载荷（MCP = 服务器配置；插件 = 市场身份等）。 */
   detail?: D;
+  /** weave 自带目录里的条目（未写进用户配置也有行；安装 = 写该档配置）。 */
+  builtin?: boolean;
 }

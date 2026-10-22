@@ -169,11 +169,26 @@ export interface LogSource {
  * 类型住这里而非 server：它出现在 [[AssetSurface]] 的方法签名上，server 反向
  * import 会绕回来。
  */
-export interface McpServerConfig {
+export interface McpStdioConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
 }
+
+/**
+ * Streamable HTTP 形态（daemon 托管的 MCP 用这一形）：`url` 即端点，
+ * `headers` 是客户端要带的头（本机令牌走它），`bearerTokenEnvVar` 只有 codex
+ * 支持（Bearer 必须来自环境变量，不许写死明文）。判别靠 `'command' in cfg`。
+ */
+export interface McpHttpConfig {
+  url: string;
+  /** 宿主自己的传输标签（claude 会写 `"type": "http"`），原样保留。 */
+  type?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+}
+
+export type McpServerConfig = McpStdioConfig | McpHttpConfig;
 
 export interface AssetSurface {
   /** 所属 harness——按序遍历多个 surface 时回指归属（`classifyAgent` 消费）。 */

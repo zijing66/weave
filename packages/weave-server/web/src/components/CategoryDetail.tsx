@@ -148,6 +148,7 @@ export function CategoryDetail({
   statuslineSource,
   onUninstallSkill,
   onUninstallMcp,
+  onInstallBuiltinMcp,
   onCycleMcpEnable,
   onCyclePluginState,
   onUninstallPlugin,
@@ -179,6 +180,7 @@ export function CategoryDetail({
   statuslineSource: StatuslineSource | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onInstallBuiltinMcp: (name: string, agent?: AssetAgent) => void | Promise<void>;
   /** MCP 启停三态循环：落盘与行刷新由 App 统一负责。 */
   onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
   /** 插件逐档启用覆写循环（§4 ②推广）：交语义（harness + 键 + 档位 + 下一态）。 */
@@ -493,6 +495,7 @@ export function CategoryDetail({
                     : t('category.emptyMcpProject')
               }
               onUninstallMcp={onUninstallMcp}
+              onInstallBuiltinMcp={onInstallBuiltinMcp}
               onCycleMcpEnable={onCycleMcpEnable}
             />
           </ExternalAssetsSection>

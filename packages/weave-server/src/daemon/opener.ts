@@ -1884,6 +1884,9 @@ export interface AttachTarget {
   active: boolean;
   /** 这个可见屏幕已长满（pane 数到上限）：前端置灰，后端定点附加明确拒绝。 */
   full: boolean;
+  /** 本卡片上 cwd 命中本项目的 pane（可关的那几个，表示法同 prompt pane id）；
+   *  给不出 = 该后端关不了远程 pane，前端不摆关闭键。 */
+  paneIds?: string[];
 }
 
 /**
@@ -2001,6 +2004,7 @@ export function attachTargetsFromMuxes(
   if (!key) return [];
   const out: AttachTarget[] = [];
   for (const mux of [...muxes].sort((a, b) => a.idleMs - b.idleMs)) {
+    const muxKey = weztermMuxKey(mux.socket);
     const byTarget = new Map<string, WeztermPaneInfo[]>();
     for (const p of mux.panes) {
       const k = `${p.windowId}:${p.tabId}`;
@@ -2010,20 +2014,23 @@ export function attachTargetsFromMuxes(
     }
     const rows: AttachTarget[] = [];
     for (const [k, panes] of byTarget) {
-      const matchCount = panes.filter((p) => normalizeDirKey(p.cwd, platform) === key).length;
-      if (matchCount === 0) continue; // 非本项目终端 → 不进候选
+      const mine = panes.filter((p) => normalizeDirKey(p.cwd, platform) === key);
+      if (mine.length === 0) continue; // 非本项目终端 → 不进候选
       const windowId = Number(k.slice(0, k.indexOf(':')));
       const tabId = Number(k.slice(k.indexOf(':') + 1));
       const focus = panes.find((p) => p.isActive) ?? panes[0]!;
       rows.push({
-        id: `${weztermMuxKey(mux.socket)}:${windowId}:${tabId}`,
+        id: `${muxKey}:${windowId}:${tabId}`,
         windowId,
         tabId,
         title: focus.title,
-        matchCount,
+        matchCount: mine.length,
         paneCount: panes.length,
         active: panes.some((p) => p.isActive),
         full: panes.length >= MAX_PANES_PER_SCREEN,
+        // 与 listProjectPanes 同一表示法（`<mux 短哈希>:<paneId>`）：关卡片时原样喂给
+        // closeTerminalsIn，项目外的 pane 不动。
+        paneIds: mine.map((p) => `${muxKey}:${p.paneId}`),
       });
     }
     rows.sort((a, b) => Number(b.active) - Number(a.active) || b.tabId - a.tabId);

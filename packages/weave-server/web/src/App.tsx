@@ -1007,11 +1007,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       ),
     [fb, show, t],
   );
-  const closeTerminalStateOf = useCallback(
-    (id: number) => fb.stateOf(`close-terminal:${id}`),
-    [fb],
-  );
-
   /** 归档：确认在 ProjectList（右键菜单）；此处只跑动作 + 汇报清空规模。
    *  被归档的是当前选中项目时切到下一个活跃项目——不留幽灵详情。 */
   const handleArchiveProject = useCallback(
@@ -1114,6 +1109,20 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       );
     },
     [handleInstallMcp, show, t],
+  );
+  const installBuiltinMcpSafely = useCallback(
+    (name: string, agent?: AssetAgent) => {
+      const projectId = selected?.id;
+      if (!projectId) return;
+      void api
+        .installBuiltinMcp(projectId, name, agent)
+        .then(() => {
+          show('success', t('mcp.installed', { name }));
+          refreshMcp(selected.id);
+        })
+        .catch((e) => show('error', t('errors.mcpInstallFailed', { error: errorText(e) })));
+    },
+    [selected, show, t, refreshMcp],
   );
   const updateAssetSafely = useCallback(
     (
@@ -1251,7 +1260,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}
-      closeTerminalStateOf={closeTerminalStateOf}
       onHoverProject={ensureUpdates}
       updatesOf={(id) => updatesMap[id]?.available}
       needsInitOf={(id) => updatesMap[id]?.needsInit}
@@ -1528,6 +1536,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         statuslineSource={statuslineSource}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
+                        onInstallBuiltinMcp={installBuiltinMcpSafely}
                         onCycleMcpEnable={handleCycleMcpEnable}
                         onCyclePluginState={handleCyclePluginState}
                         onUninstallPlugin={handleUninstallPlugin}

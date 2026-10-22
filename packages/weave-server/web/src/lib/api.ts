@@ -87,6 +87,8 @@ export interface TerminalTarget {
   active: boolean;
   /** 这个可见屏幕已长满（pane 数到服务端上限）：不可选，只能新开终端。 */
   full: boolean;
+  /** 这张卡片上属于本项目的 pane（可关）；缺省 = 该后端关不了远程 pane。 */
+  paneIds?: string[];
 }
 
 /** 项目名下可关的一个终端 pane（关终端多选弹窗的一张卡）；id 不透明，回传给
@@ -786,11 +788,19 @@ export interface McpTemplate {
   relPath: string;
 }
 
-export interface McpServerConfig {
+/** mirror of harness `McpServerConfig`：stdio（command）| Streamable HTTP（url）。 */
+export interface McpStdioConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
 }
+export interface McpHttpConfig {
+  url: string;
+  type?: string;
+  headers?: Record<string, string>;
+  bearerTokenEnvVar?: string;
+}
+export type McpServerConfig = McpStdioConfig | McpHttpConfig;
 
 /** MCP 工具行：模型协议 ToolStateRow，服务端 readMcpRows 装配；本路由的行恒带 detail（服务器配置）。 */
 export type McpRow = ToolStateRow<McpServerConfig> & { detail: McpServerConfig };
@@ -1920,6 +1930,16 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+    }),
+  /** 安装 daemon 托管的内置 MCP（只写 user 档；令牌由服务端填，不回显）。 */
+  installBuiltinMcp: (
+    projectId: number,
+    name: string,
+    agent?: AssetAgent,
+  ): Promise<{ ok: boolean }> =>
+    apiFetch(`/projects/${projectId}/mcp/builtin`, {
+      method: 'POST',
+      body: JSON.stringify({ name, agent }),
     }),
   uninstall: (projectId: number, body: InstallBody): Promise<Response> =>
     fetch(`${BASE}/projects/${projectId}/uninstall`, {

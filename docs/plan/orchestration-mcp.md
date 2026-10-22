@@ -108,10 +108,14 @@
 
 ## 实施状态（2026-10-22）
 
-- **MCP（P0）已落地**：`weave mcp orchestration`（stdio，官方 SDK 1.32.1）。十个工具：
-  `list/get/create/update/delete_orchestration`、`trigger_orchestration`、`list_runs`、
-  `get_run`、`cancel_run`、`list_sessions`；全部转发 daemon HTTP（本机令牌），**零缓存**。
-  宿主配置：`{"command": "weave", "args": ["mcp", "orchestration"]}`。
+- **MCP（P0）已落地，形态改为 daemon 托管**：daemon 在自己的监听上开 `POST/GET /mcp`
+  （Streamable HTTP、无状态；官方 SDK 1.32.1），启停 = daemon 启停，**没有 CLI 命令**。
+  十个工具：`list/get/create/update/delete_orchestration`、`trigger_orchestration`、
+  `list_runs`、`get_run`、`cancel_run`、`list_sessions`；零缓存转发 daemon API。
+- **`McpServerConfig` 扩成联合类型**（stdio `command` | Streamable HTTP `url`），
+  claude 原样透传、codex 写 `url`/`http_headers`/`bearer_token_env_var`。
+- **内置安装只允许 user 档**：配置里要带本机令牌，项目档配置会跟着仓库走；
+  安装路由 `POST /projects/:id/mcp/builtin` 由服务端填实际端口与令牌，令牌不回显。
 - **编排拉起（#2/#3/#5/#6）已落地**：ensureOpen 按会话单飞；回执先等新的
   `SessionStart`（15s），退而认注册表 pid；run 事件新增 `stage:'ensure'`（含耗时/原因）；
   编排拉起的会话 60s 内的回合不算自然回合。

@@ -776,6 +776,8 @@ describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹�
     ];
     const [t] = attachTargetsFromMuxes('/p/proj', muxes, 'linux');
     expect(t).toMatchObject({ matchCount: 2, paneCount: 3 });
+    // 卡片自带可关 pane（表示法与 listProjectPanes 一致）：本项目那两个，别的目录那个不在内
+    expect(t!.paneIds).toEqual([`${t!.id.slice(0, 8)}:10`, `${t!.id.slice(0, 8)}:11`]);
   });
 
   it('只列本项目终端：别的项目的 tab 不进候选；项目无终端 → 空表', () => {
