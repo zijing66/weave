@@ -21,7 +21,8 @@ describe('parseInline', () => {
 
   it('嵌套：代码与链接吃掉内层样式，粗+斜合成一档', () => {
     expect(styles(parseInline('`**x**`'))).toEqual(['**x**:code']);
-    expect(styles(parseInline('**[a](u)**'))).toEqual(['a (u):link']);
+    // 标签与「(目标)」补注拆成两段（第一段带 href，HTML 导出据此出真链接）
+    expect(styles(parseInline('**[a](u)**'))).toEqual(['a:link', ' (u):link']);
     expect(styles(parseInline('**_x_**'))).toEqual(['x:strongEm']);
   });
 

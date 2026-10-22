@@ -324,6 +324,9 @@ export function FilePicker({
   const [hits, setHits] = useState<number | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
+  /** 弹窗自己收焦点：不让按键漏到背后那个输入框（它正停在 `@` 上，
+   *  一个退格就把触发符删了）。 */
+  const dialogRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   /** 请求序号守卫：慢响应不许覆盖新结果（服务端在本机，但 LAN 下会有明显乱序）。 */
@@ -404,10 +407,6 @@ export function FilePicker({
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [selected, entries]);
-
-  useEffect(() => {
-    searchRef.current?.focus();
-  }, []);
 
   /** 第三栏要读的东西：目录 → 子项列表，文本文件 → 正文，图片 → 什么也不读（<img> 自己取）。
    *  防抖 + 缓存：hover 换行与箭头连滑是高频动作，逐行打请求既慢又白烧。 */
@@ -700,13 +699,13 @@ export function FilePicker({
     setPicked((p) => togglePick(p, entry));
   };
 
-  /** 方向键/回车/空格的导航。挂在弹窗容器的捕获阶段：点过侧栏、面包屑、底条
-   *  之后焦点落在那些按钮上（甚至 body），事件不再经过中栏——只有容器级监听
-   *  才保证焦点在哪都还能用键盘走列表。查找 / 跳行那两个小输入框除外：那里
-   *  打的是字，方向键归光标。 */
-  const onKeyDown = (e: React.KeyboardEvent): void => {
+  /** 方向键/回车/空格的导航。挂 document 捕获阶段：点空白处焦点会落到 `body`，
+   *  那时事件目标的祖先链上没有弹窗，容器级监听根本收不到——只有 document 级
+   *  才保证焦点在哪都还能用键盘。查找 / 跳行那两个小输入框除外：那里打的是字，
+   *  方向键归光标。 */
+  const onKeyDown = (e: KeyboardEvent): void => {
     // 输入法组字中的方向键/回车是宿主输入法的，不抢
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.isComposing || e.keyCode === 229) return;
     // 查找 / 跳行那两个小输入框里，方向键归光标（它们有自己的 Enter 处理）；
     // 搜索框不同：打完词按 ↓ 进列表是主路径，故它下面的方向键照样算导航
     const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -730,10 +729,12 @@ export function FilePicker({
       if (hit) enter(hit);
       return;
     }
-    // 空格 = 加入/移出已选（搜索框要打空格、按钮自己要吃空格，都不抢）
+    // 空格 = 加入/移出已选。搜索框空着时也算勾选（打开就按空格是主路径），
+    // 一旦打了字，空格还给查询；按钮上的空格是它自己的。
     if (e.key === ' ') {
-      if (inInput) return;
-      if (e.target instanceof HTMLElement && e.target.closest('button')) return;
+      if (inInput) {
+        if (e.target !== searchRef.current || query !== '') return;
+      } else if (e.target instanceof HTMLElement && e.target.closest('button')) return;
       const hit = entries[selected];
       if (!hit) return;
       e.preventDefault();
@@ -744,8 +745,29 @@ export function FilePicker({
       e.preventDefault();
       const hit = entries[selected];
       if (hit?.kind === 'dir') enter(hit);
+      return;
+    }
+    // 打进搜索框的字：默认焦点不在输入框（不然空格就成了打字），故可打印字符
+    // 一律转过去——打开选择器直接敲就是了，跟从搜索框里打一样。
+    if (!inInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setQuery((q) => q + e.key);
+      searchRef.current?.focus();
     }
   };
+
+  /** 监听器只挂一次、转给当下的闭包：省得每次渲染拆装。 */
+  const keyHandler = useRef(onKeyDown);
+  keyHandler.current = onKeyDown;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => keyHandler.current(e);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
 
   const crumb = dir ? dir.split('/') : [];
   const rangeText = lines
@@ -1044,11 +1066,13 @@ export function FilePicker({
               </>
             )}
           </span>
+          {/* 桌面这条钮与「双击 / Enter 落定」重复，只留给触屏：那边没有
+              Enter、双击也不进预览，不摆一枚钮就无路可走（§11）。 */}
           <button
             type="button"
             disabled={busy || (current.kind === 'file' && preview?.text == null)}
             onClick={() => void pick(current, true)}
-            className="flex shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-[11px] text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
+            className="hidden shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-[11px] text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40 max-lg:flex"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
             {current.kind === 'dir'
@@ -1063,14 +1087,14 @@ export function FilePicker({
   );
 
   return createPortal(
-    // onKeyDownCapture 挂在外层遮罩上：焦点哪怕落在 body（点空白处）也收得到
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
       onClick={onClose}
-      onKeyDownCapture={onKeyDown}
     >
       <div
-        className="flex h-[70dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="flex h-[70dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac focus:outline-none max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头：面包屑 + 搜索 */}

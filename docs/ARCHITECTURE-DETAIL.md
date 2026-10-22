@@ -242,9 +242,9 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - **反向认引用 = `recognize`（`expression` 的逆运算）**：粘贴回填时把一段现成文本还原成胶囊，走 `POST /sessions/:id/refs/recognize`。文法归 harness、**存在性归项目索引**（`hasPath` 二分查排序好的 files/dirs，不为此做一份 Set），索引里没有 / `kinds` 不认的一律不认；`ref` 回的是服务端 `expression` 归一后的形状（`@p` 归一成 `@p/` 这种差别由服务端消化）。
 - **引用前后必须是空白**（行首/行尾也算）：`看@a.ts`、`@a.ts，还有`、行内反引号里包着的都不算引用——前端那条 `@` 判据与服务端同一个规矩（输入框里粘着字敲 `@` 不弹选择器），否则邮箱、中文粘连全是误弹。胶囊不是空白：紧跟胶囊再敲 `@` 也不算。
 - `lines` 答「选择器摆不摆行号选择」；codex = null + `unsupportedReasons.pathRefs`（文件钮置灰）。
-- 选择器手势（`FilePicker`）：**单击只挪光标**（第三栏跟着走）、**双击 / Enter 才落定**（目录行 = 进入），空格与左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）是桌面加速键；触屏没有 hover 与修饰键 ⇒ 单击仍是「进入」，多选只靠**常显**的勾选框（藏起来的钮在触屏上等于没有，§11）。已选非空时底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序，每枚后面补一个空格）。`pathRefKinds` 不含 `dir` 时目录行不给「引用此文件夹」。
+- 选择器手势（`FilePicker`）：**单击只挪光标**（第三栏跟着走）、**双击 / Enter 才落定**（目录行 = 进入），空格与左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）是桌面加速键；触屏没有 hover 与修饰键 ⇒ 单击仍是「进入」，多选只靠**常显**的勾选框（藏起来的钮在触屏上等于没有，§11）。已选非空时底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序）。落点恒为**唤出选择器时那枚 `@` 的位置**（`atRange` 交给 `insertNodes` 消费，不是末尾追加）；胶囊前后必须是空白（服务端认引用的判据）——紧贴字补一个空格、本来就空着的不重复补。`pathRefKinds` 不含 `dir` 时目录行不给「引用此文件夹」。
 - **行选区 ⇄ 勾选联动**：行号点出区间（第一下起、第二下止，起点上再点一下 = 取消）即**自动勾上**该文件、取消即退勾；「只引用文件」没有区间可依，仍要手动勾或空格。勾掉带区间的那条同样退区间（两处手势一个口径）。落定时带区间的那条现算表达式（文法归服务端），其余用条目手里的 `ref`。
-- **键盘优先**：导航键挂在弹窗**捕获阶段**（点过侧栏/面包屑/底条、焦点落在按钮甚至 body 之后照样能用），查找/跳行小输入框除外（方向键归光标）；方向键一走 `kbdNav` 立起，**悬停不再抢选中**，直到鼠标真动一下（`mousemove`）才把选中权交回指针——指针刚好停在某行时按 ↓ 不会被它拽回去。
+- **键盘优先**：导航键挂 **document 捕获阶段**（点过侧栏/面包屑/底条、焦点落到 `body` 之后照样能用），查找/跳行小输入框除外（方向键归光标）。**默认焦点在弹窗自己身上**（`tabIndex=-1`），不在搜索框——否则空格成了打字、退格还会删掉背后输入框里那个触发用的 `@`；可打印字符一律转进搜索框（打开就能直接敲）。搜索框空着时空格仍是「勾选」，打了字才归查询。方向键一走 `kbdNav` 立起，**悬停不再抢选中**，直到鼠标真动一下（`mousemove`）才把选中权交回指针。
 - 第三栏答「这条选中是什么」：目录列直接子项（**只读**，下钻仍归第二栏，两栏都能进会打架）、文本给只读编辑器、图片给 `<img>`；换选中防抖 150ms + 目录/正文各一份 LRU（箭头连滑不重取）。
 - 预览是**只读**编辑器（`editable.of(false)`）、**没有替换**——查找与跳行用自绘的一条小条，不用 CodeMirror 自带搜索面板（那面板恒带 Replace 一行）。
 - **索引不常驻、不 watch，但重建结果落盘**（`daemon/project-files.ts`）：打开选择器第一拍带 `?fresh=1` **无条件重建**（`git ls-files`，非 git 回落枚举），之后每敲一下只走缓存。缓存不是纯 TTL：命中时先核 **git 指纹**（`.git/index` 的 mtime + size；worktree / 子模块按 `.git` 文件里那行 `gitdir:` 找过去），变了立刻重建、没变才复用（一次 lstat + 一次 stat，比一个请求本身还便宜）；**硬窗 30s**（`INDEX_TTL_MS`）兜底，因为新建的未跟踪文件不动 `.git/index`。
@@ -403,6 +403,7 @@ Web Push 细节：
   - 复制走 `lib/clipboard.ts` 的 `copyText`、失败也 toast——HTTP 局域网无安全上下文正是它的用武之地。
   - 导出格式唯一实现 = `exportConversationText`，本地 `YYYY-MM-DD HH:mm:ss` 时刻行 + 角色行、条目间空行。
   - **分享图片** = 一枚按钮 + 小菜单「复制到剪贴板 / 下载 PNG」，渲染唯一实现 = `lib/conv-image.ts`（zero-dep canvas 卡片，正文按窗口那套 markdown 预览排——解析归 `lib/conv-markdown.ts`（纯函数、零依赖，只覆盖窗口真会渲染的那套块与行内记号；解析不出的记号原样留在文本里）；DPR 2 起、超 canvas 像素上限自动降 1，剪贴板走 `copyImage`、下载撤 URL 延 1s 兼容 Safari）。
+  - **导出 HTML**（同一枚「分享」按钮的第三项）：唯一实现 = `lib/conv-html.ts` 的 `conversationHtml`（纯函数）。**单页自包含是硬约束**——样式进 `<style>`、随附图读成 `data:` URL 内联、mermaid 围栏预渲染成内联 SVG、字体用系统栈，**不引用任何外部资源**（无 `<link>`、无 `<script src>`、无 CDN）。正文来自模型输出 ⇒ 文本与属性值一律转义，链接只放行 http(s)/mailto/相对路径（`javascript:` 降成纯文本）。**自定义头**（用户配置的一段 style/script/片段）原样插在 `</head>` 前，**只在导出文件里生效、绝不在 dashboard 里渲染或执行**；多份配置存 daemon `settings` 表（`htmlExport` 一行 JSON），设置页标一份「当前使用」，导出直接用它、不在导出时弹窗选。
 
 **事件链收进弹窗**：面板头部右上角那枚「事件链」按钮开（右栏没有对话面时事件链仍在原位），弹窗 z-50 压在 `<lg` 全屏右栏 z-40 之上、作答弹窗 z-60 又在它之上。
 
@@ -839,3 +840,15 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 - **托管锁到行**：`view.managedEntries` 里属于这个数组路径的那几条渲染成只读文本 + 锁标，同一数组里用户自己的行照常增删（判据与 `managedKeys` 互补：整键锁 vs 行锁）。
 
 纯函数落 `web/src/lib/config-form.ts`（`buildConfigTree` / `pruneTree` / `treeHasValue` / type→控件 / 点号路径→值 / 文本→值 / `shapeOf` + map 条目与元素字段的读写 `mapEntriesOf`·`mapOfEntries`·`fieldValueOf`·`withFieldValue`·`emptyItemOf`）与 `text-diff.ts`。
+
+## §18 首页仪表盘（全局总览）
+
+全局模式的默认（任务）页顶部 = `DashboardOverview`：四张总量卡（接管会话 / 事件总数 / 项目 / 近 1 分钟事件）+ 一张事件速率图。只在 `globalMode && mainCategory === 'tasks'` 摆，切到别的分类不跟。
+
+数据面 = `GET /dashboard/stats?seconds=`（hooks-routes）。**速率读的是进程内快照，不按请求扫时间窗口**：
+
+- `DashboardRateCache`（`hooks/dashboard-rate.ts`）——每条 ingest 往当前 **10 秒桶** +1（主线程 `handleIngestedRecords` 调用，O(1)）；保留 24h（8,640 桶），清理节流到每分钟一次。
+- 读侧 `bucketsFor(start, steps)` O(点数)。daemon 重启后**首次读**才回填一次：`HookEventRepository.seriesBySecond`（逐秒分布，按项目循环走 `(project_id, created_at)` 索引——裸 `WHERE created_at >=` 是整表扫），折桶时与已计入的实时帧取 **max**（两侧只增，同一桶近似不翻倍）。
+- 总计/今日是走索引的轻查询（`countAll` / `countSince`），与图窗无关。
+
+web 侧（`components/DashboardOverview.tsx`）：图窗 **1 小时 × 360 格（每格 10 秒）**，每 10 秒把刷新出的新点落一次图（`setOption` 只推 `xAxis.data` + `series.data`，`animation:false`）；帧到只累加、不渲染；`document.hidden` 时不落图、回到前台补一次。「近 1 分钟」卡 = 最近 6 格之和，与 1 小时图窗分开看。ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChart` + `GridComponent` + `TooltipComponent` + `CanvasRenderer`），独立 chunk、只在仪表盘挂载时加载；容器尺寸变化用 `ResizeObserver` 跟 `resize()`。轴标签按容器宽度抽稀（窄屏每 10 分钟、桌面每 5 分钟）。

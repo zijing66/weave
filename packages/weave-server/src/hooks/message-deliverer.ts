@@ -183,12 +183,16 @@ export interface MessageDelivererDeps {
   /** 终态驻留窗口（毫秒）；缺省 60s——delivered/injected/succeeded 短时留在在途
    *  视图展示 via/acked，过后消失（failed/timeout/暂停闸成因常驻）。 */
   visibleTtlMs?: number;
-  /** 未回执闸窗口（毫秒）；缺省 120s——prompt 送达后没等到 UPS 回执即暂停该会话
+  /** 未回执闸窗口（毫秒）；缺省 30s——prompt 送达后没等到 UPS 回执即暂停该会话
    *  的队列冲洗（防继续向 Held/Refused 的会话灌消息），手动重发或回执解除。 */
   ackStallMs?: number;
-  /** 闸自动解除窗口（毫秒）；缺省 10min——闸挂着而回执永远不来（消息其实丢了）时，
+  /** 闸自动解除窗口（毫秒）；缺省 90s——闸挂着而回执永远不来（消息其实丢了）时，
    *  队列不能就此停到天荒地老：到点把成因行落成 failed（`unacked`）并续排。 */
   ackStallReleaseMs?: number;
+  /** 该会话此刻是否挂着阻塞式模态框（questions 槽；QuestionTracker 是唯一实现）。
+   *  模态框在场时层② 的文本与回车会被它吃掉：投出去只换来一条「已发出却没回执」
+   *  的假送达，回车还可能替用户按下某个选项。缺省 = 不判（测试与无 tracker 装配）。 */
+  blockedByQuestion?: (sessionId: string) => boolean;
   /** 会话存活图（测试注入）；缺省 `claudeLivenessById()`——同两个引擎（watch/sequence）
    *  的取法：没有注册表就空图，会话一律「查不动」，不猜。 */
   livenessOf?: () => Map<string, boolean>;
@@ -863,6 +867,8 @@ export class MessageDeliverer {
     if (!session?.projectId) return;
     const project = this.deps.projects.getById(session.projectId);
     if (!project) return;
+    // 模态框在场时不补回车：那一记会被它当成选项确认（正是残框被吞的成因）。
+    if (this.modalBlocked(sessionId)) return;
     const pane = await this.terminalPaneFor(session, project);
     if (pane) void this.runTerminalSubmit(messageId, pane.id);
   }
@@ -1300,6 +1306,8 @@ export class MessageDeliverer {
     }
     const surface = this.surfaceOfSession(sessionId);
     const relay = surface?.prompt ?? null;
+    // 模态框在场：层② 不可盲注（见 modalBlocked），本轮只走非终端通道。
+    const blocked = this.modalBlocked(sessionId);
     for (const entry of entries) {
       // 本轮中途置闸（中继即败 / 终端注入失败都是异步落定）：立即停，余下留队列
       if (this.stalled.has(sessionId)) return;
@@ -1319,7 +1327,7 @@ export class MessageDeliverer {
         at: entry.at,
       };
       // 带图同即时路径：层② 优先（只有 bracketed paste 能真贴图）。
-      if (this.hasImages(msg) && this.terminalChannel()) {
+      if (!blocked && this.hasImages(msg) && this.terminalChannel()) {
         const imgPane = await this.terminalPaneFor(session, project);
         if (imgPane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
@@ -1365,7 +1373,7 @@ export class MessageDeliverer {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
           break;
         }
-        if (layer === 'terminal' && this.terminalChannel()) {
+        if (layer === 'terminal' && !blocked && this.terminalChannel()) {
           const pane = await this.terminalPaneFor(session, project);
           if (pane) {
             removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
@@ -1540,6 +1548,11 @@ export class MessageDeliverer {
     return terminal && terminal.available() ? terminal : null;
   }
 
+  /** 模态框在场时层② 不可盲注（见 deps.blockedByQuestion）。 */
+  private modalBlocked(sessionId: string): boolean {
+    return this.deps.blockedByQuestion?.(sessionId) === true;
+  }
+
   /** prompt 通道入口（send 的即时路径）：层① 命中即时中继，层② 异步找 pane，都不行入队。 */
   private async deliverPrompt(
     entry: PipeMessage,
@@ -1560,7 +1573,9 @@ export class MessageDeliverer {
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
     // 带图消息层② 优先：只有 bracketed paste 能把绝对路径转成 `[Image #N]` + 真 image
     // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
-    if (this.hasImages(entry) && this.terminalChannel()) {
+    // 模态框挂着时层② 整段让位（见 modalBlocked）：图只能走终端，就留队列等作答。
+    const blocked = this.modalBlocked(entry.sessionId);
+    if (!blocked && this.hasImages(entry) && this.terminalChannel()) {
       const imgPane = await this.terminalPaneFor(session, project);
       if (imgPane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
@@ -1604,7 +1619,7 @@ export class MessageDeliverer {
         // 同会话中继在途：落队列，下轮冲洗
         this.memory.delete(entry.id);
       }
-      if (layer === 'terminal' && this.terminalChannel()) {
+      if (layer === 'terminal' && !blocked && this.terminalChannel()) {
         const pane = await this.terminalPaneFor(session, project);
         if (pane) {
           this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
@@ -1614,7 +1629,7 @@ export class MessageDeliverer {
         }
       }
     }
-    // 三层全无通路（没凭据 / 没 peer / 没 pane）：只有目标真的不在跑了才判死，
+    // 三层全无通路（没凭据 / 没 peer / 没 pane / 模态框占着终端）：只有目标真的不在跑了才判死，
     // 判不出来（null）照旧入队等下一次事件或刷新器。
     if (this.sessionJudgedDead(entry.sessionId)) {
       return { ok: true, messageId: entry.id, status: 'failed', message: this.failOffline(entry) };

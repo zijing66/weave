@@ -186,6 +186,8 @@ export function startDaemon(): void {
     bus: hookBus,
     headless: headlessRunner,
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+    // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
+    blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2：空闲订阅引擎（ingest 即时 fire + sweeper 补射）

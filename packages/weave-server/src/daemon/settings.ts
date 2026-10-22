@@ -69,6 +69,8 @@ export interface DaemonSettings {
   server?: ServerSettings;
   /** AI 助手（地址/模型；缺省空 = 未配置——读时归一化）。 */
   ai?: AiSettings;
+  /** 对话导出 HTML 的自定义头（多份保存、一份在用——读时归一化）。 */
+  htmlExport?: HtmlExportSettings;
 }
 
 export interface HooksSettings {
@@ -106,6 +108,19 @@ export interface AiSettings {
   model: string;
 }
 
+/** 一份「自定义头」：导出 HTML 时里原样注入 `</head>` 之前（内联 style/script/片段）。 */
+export interface HtmlExportProfile {
+  id: string;
+  name: string;
+  head: string;
+}
+
+/** 对话导出 HTML 的头配置：多份保存、一份在用（activeId 为空 = 不带自定义头）。 */
+export interface HtmlExportSettings {
+  activeId: string | null;
+  profiles: HtmlExportProfile[];
+}
+
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   preset: 'auto',
   customCommand: '',
@@ -136,6 +151,9 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_
 /** 缺省未配置（地址/模型皆空）——助手按钮此时不显示。 */
 export const DEFAULT_AI_SETTINGS: AiSettings = { baseUrl: '', model: '' };
 
+/** 缺省没有头配置（导出不带自定义头）。 */
+export const DEFAULT_HTML_EXPORT_SETTINGS: HtmlExportSettings = { activeId: null, profiles: [] };
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
@@ -145,6 +163,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   startup: DEFAULT_STARTUP_SETTINGS,
   server: DEFAULT_SERVER_SETTINGS,
   ai: DEFAULT_AI_SETTINGS,
+  htmlExport: DEFAULT_HTML_EXPORT_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -212,6 +231,36 @@ function normalizeTlsPort(raw: unknown): number {
     : DEFAULT_SERVER_SETTINGS.tlsPort;
 }
 
+/** 头配置条数/单份 head 的上限（这是「用户填的一段 HTML」，不是无界存储）。 */
+const HTML_EXPORT_MAX_PROFILES = 50;
+const HTML_EXPORT_MAX_HEAD = 200_000;
+
+/**
+ * 头配置归一：只留三字段皆字符串的项、id 去重、名称空则给序号；`activeId` 认不回
+ * 任何一项就归 null（导出不带自定义头）。**内容原样保留**——它只在导出文件里注入，
+ * 从不进 dashboard 的渲染面。
+ */
+function normalizeHtmlExport(raw: unknown): HtmlExportSettings {
+  const obj = (raw ?? {}) as Partial<HtmlExportSettings>;
+  const seen = new Set<string>();
+  const profiles: HtmlExportProfile[] = [];
+  for (const item of Array.isArray(obj.profiles) ? obj.profiles : []) {
+    const p = (item ?? {}) as Partial<HtmlExportProfile>;
+    if (typeof p.id !== 'string' || p.id === '' || seen.has(p.id)) continue;
+    if (typeof p.name !== 'string' || typeof p.head !== 'string') continue;
+    seen.add(p.id);
+    profiles.push({
+      id: p.id,
+      name: p.name.trim() || `profile-${profiles.length + 1}`,
+      head: p.head.slice(0, HTML_EXPORT_MAX_HEAD),
+    });
+    if (profiles.length >= HTML_EXPORT_MAX_PROFILES) break;
+  }
+  const activeId =
+    typeof obj.activeId === 'string' && seen.has(obj.activeId) ? obj.activeId : null;
+  return { activeId, profiles };
+}
+
 function mergeDefaults(raw: unknown): DaemonSettings {
   const obj = (raw ?? {}) as Partial<DaemonSettings>;
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
@@ -221,6 +270,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const server = (obj.server ?? {}) as Partial<ServerSettings>;
   const ai = (obj.ai ?? {}) as Partial<AiSettings>;
+  const htmlExport = normalizeHtmlExport(obj.htmlExport);
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -259,6 +309,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl.trim() : '',
       model: typeof ai.model === 'string' ? ai.model.trim() : '',
     },
+    htmlExport,
   };
 }
 
@@ -279,6 +330,8 @@ const KEYS = {
   serverTlsPort: 'server.tlsPort',
   aiBaseUrl: 'ai.baseUrl',
   aiModel: 'ai.model',
+  /** 整段 JSON（首个非标量键）：头配置是一组对象，不为它单开表。 */
+  htmlExport: 'htmlExport',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -346,7 +399,22 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.aiBaseUrl) || map.has(KEYS.aiModel)
       ? { ai: { baseUrl: map.get(KEYS.aiBaseUrl) ?? '', model: map.get(KEYS.aiModel) ?? '' } }
       : {}),
+    // 整段 JSON：坏 JSON 当没有这一段（mergeDefaults 落默认），不让一行脏数据废掉全部设置
+    ...(jsonOf(map.get(KEYS.htmlExport)) != null
+      ? { htmlExport: jsonOf(map.get(KEYS.htmlExport)) as Partial<HtmlExportSettings> }
+      : {}),
   });
+}
+
+/** 设置表里的 JSON blob：解析不出（或不是对象）即 null。 */
+function jsonOf(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed != null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** DaemonSettings → 全量 key 条目（写入是整体覆盖）。 */
@@ -369,6 +437,10 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [KEYS.serverTlsPort, String(settings.server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort)],
     [KEYS.aiBaseUrl, settings.ai?.baseUrl ?? ''],
     [KEYS.aiModel, settings.ai?.model ?? ''],
+    [
+      KEYS.htmlExport,
+      JSON.stringify(settings.htmlExport ?? DEFAULT_HTML_EXPORT_SETTINGS),
+    ],
   ];
 }
 

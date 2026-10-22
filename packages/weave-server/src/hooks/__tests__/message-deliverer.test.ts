@@ -2155,6 +2155,50 @@ describe('MessageDeliverer 裁决表', () => {
     );
   });
 
+  it('prompt 层② 模态框在场：终端不盲注（文本与回车会被模态框吃掉），留队列等作答', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    let blocked = true;
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const terminal: PromptTerminal = {
+      available: () => true,
+      listPanes: vi
+        .fn()
+        .mockResolvedValue([{ id: 'pane-9', title: 'msg-target', cwd: PROJECT_PATH }]),
+      sendText,
+      sendKeys: vi.fn(),
+      closePane: vi.fn(),
+    };
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      queuedPrompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => noNative, terminal, blockedByQuestion: () => blocked }),
+    );
+    pushEvent(SESSION_ID, 'Stop', 'codex');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'blocked msg',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'pending' });
+    expect(sendText).not.toHaveBeenCalled();
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(1);
+
+    // 作答完（模态框关）：下一拍冲洗即正常注入。
+    blocked = false;
+    await deliverer.flushSession(SESSION_ID);
+    expect(sendText).toHaveBeenCalledWith('pane-9', 'blocked msg');
+    expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
   it('prompt 层② pane 定位：hook 上报的 locator 优先，命中就不列 pane 猜标题', async () => {
     // 标题刻意留空（= 落库旧值已漂移/从未重命名）：locator 仍必须命中，
     // 否则回落到标题+cwd 是 0 命中 → 409。

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, MessageCircleQuestion, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -29,6 +29,9 @@ import {
   type ConvImageEntry,
   type ConvImageTag,
 } from '@/lib/conv-image';
+import { conversationHtml, htmlFileName } from '@/lib/conv-html';
+import { parseMarkdown } from '@/lib/conv-markdown';
+import { renderMermaidSvg } from '@/lib/mermaid';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
 import { useTheme } from '@/lib/theme';
@@ -727,10 +730,42 @@ const TAP_SLOP = 8;
  *  body 上按视口坐标定位。 */
 type ConvMenu =
   | { kind: 'bubble'; x: number; y: number; key: string }
-  | { kind: 'share'; x: number; y: number };
+  /** 分享菜单往上弹：`bottom` 量到视口底边（贴着按钮顶）——不拿菜单高度去猜，
+   *  少一项多一项都不会错位。 */
+  | { kind: 'share'; left: number; bottom: number };
 
 const MENU_W = 168;
-const MENU_H = 72;
+/** 菜单高度上限（分享菜单三项）：只用于向上定位与下沿夹取，略大无害。 */
+const MENU_H = 104;
+
+/** 设置页「当前使用」的自定义头；读不到设置就当没有（导出不该被设置面挡住）。 */
+async function activeHtmlHead(): Promise<string | null> {
+  try {
+    const { settings } = await api.getDaemonSettings();
+    const cfg = settings.htmlExport;
+    if (!cfg?.activeId) return null;
+    return cfg.profiles.find((p) => p.id === cfg.activeId)?.head ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 上传件 → data URL（单页导出要内联）；取不到即 null，调用方写占位文本。 */
+async function imageDataUrl(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/images/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
 /** 进图片的条目：正文原样全量（气泡里收着的也照全文；剥运输装饰是展示层的事，
  *  这里就是气泡里那串文本）。压缩分隔不是对话内容，不进图。气泡上的那几枚 tag
@@ -1449,10 +1484,69 @@ export function SessionMessages({
     );
   };
 
+  /** 导出为**单页 HTML**：样式/图片（base64）/mermaid（SVG）全内联，自定义头按设置页
+   *  「当前使用」那一份原样注入。取不到设置或某张图/某块图渲染失败都只降级、不中断。 */
+  const exportHtml = (): void => {
+    const chosen = pickedEntries();
+    if (chosen.length === 0) return;
+    setMenu(null);
+    void fb.run(
+      // 与图片分享共用一个反馈键：同一枚按钮上转圈，两个动作不会同时跑
+      `convImg:${sessionId}`,
+      async () => {
+        const head = await activeHtmlHead();
+
+        const assets = new Map<string, string>();
+        for (const entry of chosen) {
+          for (const img of entry.images ?? []) {
+            if (assets.has(img.id)) continue;
+            const data = await imageDataUrl(img.id);
+            if (data) assets.set(img.id, data);
+          }
+        }
+
+        const diagrams = new Map<string, string>();
+        for (const entry of chosen) {
+          if (entry.role === 'compaction') continue;
+          for (const block of parseMarkdown(entry.text)) {
+            if (block.kind !== 'code' || block.lang !== 'mermaid') continue;
+            const code = block.lines.join('\n');
+            if (!code.trim() || diagrams.has(code)) continue;
+            try {
+              diagrams.set(code, await renderMermaidSvg(code, theme));
+            } catch {
+              // 渲染不出就不进表：导出里它是普通代码块
+            }
+          }
+        }
+
+        const html = conversationHtml(chosen, {
+          title: label,
+          labels: {
+            user: t('tasks.convRoleUser'),
+            assistant: t('tasks.convRoleAssistant'),
+            plan: t('tasks.convPlan'),
+          },
+          head,
+          assets,
+          diagrams,
+        });
+        downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), htmlFileName(label));
+        show('success', t('tasks.convHtmlSaved', { n: chosen.length }));
+      },
+      { fail: (e) => t('tasks.convHtmlFailed', { error: errorText(e) }) },
+    );
+  };
+
   /** 分享菜单往上开：底栏在下沿，向下没有可用的地方。 */
   const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
+    // 左沿对齐按钮左沿、右上角留 4px 缝；右边放不下就整体左移（夹进视口）
+    setMenu({
+      kind: 'share',
+      left: Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8)),
+      bottom: window.innerHeight - r.top + 4,
+    });
   };
 
   /** 触屏双击开菜单（桌面走右键；鼠标不该有双击这回事）。
@@ -1724,21 +1818,35 @@ export function SessionMessages({
   }, [draft, staged, sessionId]);
 
   /** 落定一批引用：在改既有胶囊就就地换掉（位置不动、只换一枚），否则在光标处
-   *  依次插入，每枚后面补一个空格——接着打字才不粘在胶囊上。 */
+   *  依次插入。**引用前后必须是空白**（服务端认引用的判据）——紧贴字就补一个
+   *  空格，本来就空着的不重复补（`atRange` 留给 `insertNodes` 消费：那才是
+   *  「唤出选择器时那枚 `@` 的位置」，不是末尾）。 */
   const insertRefs = (items: PickItem[]): void => {
     const head = items[0];
     if (!head) return;
     const editing = picker?.chip ?? null;
-    atRange.current = null;
     setPicker(null);
     if (editing) {
       editing.replaceWith(buildChip(head.ref, head.target));
       setDraft(serializeDraft(draftRef.current));
       return;
     }
-    insertNodes(
-      items.flatMap((it) => [buildChip(it.ref, it.target), document.createTextNode(' ')]),
-    );
+    let lead = false;
+    let trail = true;
+    const saved = atRange.current;
+    if (saved?.startContainer.nodeType === TEXT_NODE) {
+      const value = saved.startContainer.nodeValue ?? '';
+      const at = saved.startOffset;
+      lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
+      if (at < value.length) trail = !/\s/.test(value[at] ?? '');
+    }
+    const nodes: Node[] = [];
+    if (lead) nodes.push(document.createTextNode(' '));
+    items.forEach((it, i) => {
+      nodes.push(buildChip(it.ref, it.target));
+      if (i < items.length - 1 || trail) nodes.push(document.createTextNode(' '));
+    });
+    insertNodes(nodes);
   };
 
   /** 粘贴回填：先把这段文本交给服务端认引用（文法归 harness、存在性归索引），
@@ -2487,7 +2595,13 @@ export function SessionMessages({
                   每行一句（点开看全文），操作纯图标常显在右。虚线边框标「还没落定」——
                   认领即退场，真气泡接手时位置不变。 */}
               {!selecting && outbox.length > 0 && (
-                <div className="flex justify-end">
+                <div className="flex flex-col items-end gap-1">
+                  {/* 模态框在场时层② 不盲注：这些行只能等作答完成（服务端判据同上）。 */}
+                  {answerPending && (
+                    <p className="max-w-[95%] text-right text-[10px] text-amber-300">
+                      {t('tasks.outboxBlockedByQuestion')}
+                    </p>
+                  )}
                   <div className="min-w-0 max-w-[95%] overflow-x-auto rounded-lg border border-dashed border-blue-500/30 bg-blue-500/[0.07] px-2 py-1.5">
                     {outbox.map((m, i) => {
                       const open = outbox.length === 1 || openQueued === m.id;
@@ -2688,6 +2802,13 @@ export function SessionMessages({
                   icon={<ImageIcon className="h-3 w-3" />}
                 />
                 {t('tasks.convShare')}
+                {/* 下拉的箭头：菜单是往上弹的，箭头朝上；展开时翻过来 */}
+                <ChevronUp
+                  className={cn(
+                    'h-3 w-3 shrink-0 text-neutral-500 transition-transform',
+                    menu?.kind === 'share' && 'rotate-180',
+                  )}
+                />
               </button>
               <button
                 type="button"
@@ -3050,10 +3171,14 @@ export function SessionMessages({
             <div
               data-conv-menu
               className="fixed z-[60] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
-              style={{
-                left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
-                top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
-              }}
+              style={
+                menu.kind === 'share'
+                  ? { left: menu.left, bottom: menu.bottom }
+                  : {
+                      left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
+                      top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
+                    }
+              }
               onClick={(e) => e.stopPropagation()}
             >
               {menu.kind === 'bubble' ? (
@@ -3097,6 +3222,14 @@ export function SessionMessages({
                   >
                     <Download className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareDownload')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportHtml}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <FileCode className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareHtml')}
                   </button>
                 </>
               )}

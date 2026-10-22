@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type AccessUrl, type DaemonSettings, type Locale, type TerminalPreset } from '@/lib/api';
+import {
+  api,
+  type AccessUrl,
+  type DaemonSettings,
+  type HtmlExportProfile,
+  type HtmlExportSettings,
+  type Locale,
+  type TerminalPreset,
+} from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
@@ -11,6 +19,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileCode,
   Globe,
   Languages,
   Power,
@@ -18,6 +27,7 @@ import {
   Settings,
   Sparkles,
   Terminal,
+  Trash2,
   X,
   Zap,
 } from 'lucide-react';
@@ -195,6 +205,37 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const preset = settings?.terminal.preset ?? 'auto';
   const customCommand = settings?.terminal.customCommand ?? '';
+
+  // ---- HTML 导出自定义头（多份保存、一份在用；内容只在导出文件里生效）----
+  const htmlExport: HtmlExportSettings = settings?.htmlExport ?? { activeId: null, profiles: [] };
+  const setHtmlExport = (next: HtmlExportSettings): void =>
+    setSettings((s) => (s ? { ...s, htmlExport: next } : s));
+  const setActiveHtmlExport = (id: string | null): void =>
+    setHtmlExport({ ...htmlExport, activeId: id });
+  const patchProfile = (id: string, patch: Partial<HtmlExportProfile>): void =>
+    setHtmlExport({
+      ...htmlExport,
+      profiles: htmlExport.profiles.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    });
+  const addProfile = (): void => {
+    // 新配置自动成为「当前使用」：刚加完就要能直接导出，少一步
+    const profile: HtmlExportProfile = {
+      id:
+        typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `p-${Date.now().toString(36)}`,
+      name: `${t('settings.htmlExportName')} ${htmlExport.profiles.length + 1}`,
+      head: '',
+    };
+    setHtmlExport({ activeId: profile.id, profiles: [...htmlExport.profiles, profile] });
+  };
+  const removeProfile = (id: string): void => {
+    const profiles = htmlExport.profiles.filter((p) => p.id !== id);
+    setHtmlExport({
+      profiles,
+      activeId: htmlExport.activeId === id ? null : htmlExport.activeId,
+    });
+  };
 
   async function handleSave(): Promise<void> {
     if (!settings) return;
@@ -602,6 +643,79 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               )}
             </div>
             <p className="text-[11px] text-neutral-500">{t('settings.aiHint')}</p>
+          </div>
+
+          {/* HTML 导出自定义头：多份保存、一份在用；导出时原样注入到 </head> 前。
+              这里只编辑**文本**——片段绝不在 dashboard 里渲染或执行。 */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <FileCode className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.htmlExport')}
+            </label>
+            <p className="text-[11px] text-neutral-500">{t('settings.htmlExportHint')}</p>
+            <div className="space-y-2">
+              {htmlExport.profiles.map((profile) => (
+                <div
+                  key={profile.id}
+                  className="space-y-1.5 rounded-lg border border-edge/[0.08] bg-neutral-900/60 p-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={profile.name}
+                      onChange={(e) => patchProfile(profile.id, { name: e.target.value })}
+                      placeholder={t('settings.htmlExportName')}
+                      className="min-w-0 flex-1 rounded bg-neutral-800 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <label className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
+                      <input
+                        type="radio"
+                        name="htmlExportActive"
+                        checked={htmlExport.activeId === profile.id}
+                        onChange={() => setActiveHtmlExport(profile.id)}
+                        className="accent-blue-500"
+                      />
+                      {t('settings.htmlExportActive')}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeProfile(profile.id)}
+                      title={t('settings.htmlExportDelete')}
+                      className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <textarea
+                    value={profile.head}
+                    onChange={(e) => patchProfile(profile.id, { head: e.target.value })}
+                    placeholder={t('settings.htmlExportHead')}
+                    spellCheck={false}
+                    rows={6}
+                    className="w-full resize-y rounded bg-neutral-950 border border-edge/[0.08] px-2 py-1.5 font-mono text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              ))}
+              {htmlExport.profiles.length === 0 && (
+                <p className="text-[11px] text-neutral-600">{t('settings.htmlExportEmpty')}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addProfile}
+                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700"
+                >
+                  {t('settings.htmlExportAdd')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveHtmlExport(null)}
+                  disabled={htmlExport.activeId === null}
+                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                >
+                  {t('settings.htmlExportNone')}
+                </button>
+              </div>
+            </div>
           </div>
 
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}

@@ -1020,6 +1020,20 @@ export interface DaemonSettings {
    * （服务端拆存 `<dataDir>/ai.json`，GET/PUT 都不回显），`apiKeySet` 是服务端派生布尔。
    */
   ai?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
+  /** 对话导出 HTML 的自定义头：多份保存、一份在用（activeId 为空 = 不带自定义头）。 */
+  htmlExport?: HtmlExportSettings;
+}
+
+/** 一份自定义头（原样注入导出 HTML 的 `</head>` 之前；只在导出文件里生效）。 */
+export interface HtmlExportProfile {
+  id: string;
+  name: string;
+  head: string;
+}
+
+export interface HtmlExportSettings {
+  activeId: string | null;
+  profiles: HtmlExportProfile[];
 }
 
 export interface TerminalPresetMeta {

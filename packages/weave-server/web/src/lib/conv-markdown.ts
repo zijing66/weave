@@ -14,6 +14,8 @@ export type MdStyle = 'plain' | 'strong' | 'em' | 'strongEm' | 'code' | 'link' |
 export interface MdSpan {
   text: string;
   style: MdStyle;
+  /** 链接目标（只有 link 段可能有；画布只画文本、HTML 导出据此出 `<a href>`）。 */
+  href?: string;
 }
 
 export interface MdItem {
@@ -79,14 +81,24 @@ export function parseInline(text: string, outer: MdStyle = 'plain'): MdSpan[] {
       const label = g[7];
       const url = g[8] ?? '';
       flush();
-      const text2 = url !== '' && url !== label ? `${label || url} (${url})` : label || url;
-      if (text2 !== '') out.push(...parseInline(text2, combine(outer, 'link')));
+      // 标签与目标分开成两段：一段带 href（HTML 导出要真链接），「(目标)」那段只是
+      // 给人看的补注。拼出来的文本与旧版逐字相同，画布导出不受影响。
+      if (label || url) {
+        out.push({
+          text: label || url,
+          style: combine(outer, 'link'),
+          ...(url !== '' ? { href: url } : {}),
+        });
+      }
+      if (url !== '' && url !== label) {
+        out.push(...parseInline(` (${url})`, combine(outer, 'link')));
+      }
     } else if (g[9] !== undefined) {
       // 裸链接：句末标点不属于它，退回正文
       const trail = /[.,;:!?]+$/.exec(g[9])?.[0] ?? '';
       const url = g[9].slice(0, g[9].length - trail.length);
       flush();
-      out.push({ text: url, style: combine(outer, 'link') });
+      out.push({ text: url, style: combine(outer, 'link'), href: url });
       plain = trail;
     } else if (g[10] !== undefined) {
       plain += g[10].slice(1);

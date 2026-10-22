@@ -27,6 +27,18 @@ export const settingsZh = {
   'settings.pushInsecure': '推送需 HTTPS 访问（当前是 HTTP，浏览器不支持）。',
   'settings.pushUnsupported': '此浏览器不支持 Web Push（iOS 需将本站加到主屏幕后可用）。',
   'settings.pushFailed': '推送订阅未成功——提醒保持「页面开着才通知」。',
+  'settings.htmlExport': 'HTML 导出自定义头',
+  'settings.htmlExportHint':
+    '导出对话 HTML 时，把「当前使用」那一份的内容原样插到 </head> 前。只写内联的 style / script / 片段——导出是单文件，不引用外部资源。它只在导出的文件里生效，dashboard 不会执行或渲染它。',
+  'settings.htmlExportAdd': '新增配置',
+  'settings.htmlExportName': '名称',
+  'settings.htmlExportHead': 'head 片段',
+  'settings.htmlExportActive': '当前使用',
+  'settings.htmlExportNone': '不使用自定义头',
+  'settings.htmlExportDelete': '删除',
+  'settings.htmlExportEmpty': '还没有配置——导出将不带自定义头。',
+  'settings.htmlExportExpand': '展开',
+  'settings.htmlExportCollapse': '收起',
 };
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
@@ -60,4 +72,16 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.pushInsecure': 'Push requires HTTPS (this page is HTTP, so the browser blocks it).',
   'settings.pushUnsupported': 'This browser has no Web Push support (on iOS, add the site to the Home Screen first).',
   'settings.pushFailed': 'Push subscription failed — alerts stay page-open-only.',
+  'settings.htmlExport': 'HTML export custom head',
+  'settings.htmlExportHint':
+    'When exporting a conversation to HTML, the "in use" profile is inserted verbatim before </head>. Keep it inline (style / script / markup only) — the export is a single file with no external resources. It only affects exported files; the dashboard never executes or renders it.',
+  'settings.htmlExportAdd': 'Add profile',
+  'settings.htmlExportName': 'Name',
+  'settings.htmlExportHead': 'Head snippet',
+  'settings.htmlExportActive': 'In use',
+  'settings.htmlExportNone': 'No custom head',
+  'settings.htmlExportDelete': 'Delete',
+  'settings.htmlExportEmpty': 'No profiles yet — exports will have no custom head.',
+  'settings.htmlExportExpand': 'Expand',
+  'settings.htmlExportCollapse': 'Collapse',
 };

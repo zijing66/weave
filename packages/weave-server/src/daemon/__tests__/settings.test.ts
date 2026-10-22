@@ -63,6 +63,59 @@ describe('daemon settings persistence (db key-value)', () => {
     expect(map.get('sessions.idleDays')).toBe('90');
   });
 
+  it('htmlExport：多份头配置往返（整段 JSON 落一行）', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      htmlExport: {
+        activeId: 'b',
+        profiles: [
+          { id: 'a', name: '甲', head: '<style>a{}</style>' },
+          { id: 'b', name: '乙', head: '<script>x()</script>' },
+        ],
+      },
+    });
+    expect(saved.htmlExport).toEqual({
+      activeId: 'b',
+      profiles: [
+        { id: 'a', name: '甲', head: '<style>a{}</style>' },
+        { id: 'b', name: '乙', head: '<script>x()</script>' },
+      ],
+    });
+    expect(await readDaemonSettings()).toEqual(saved);
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'htmlExport'")
+      .get() as { value: string };
+    expect(JSON.parse(row.value).profiles).toHaveLength(2);
+  });
+
+  it('htmlExport 归一：坏项丢弃、id 去重、名称空给序名、activeId 认不回即 null', async () => {
+    const saved = await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+      htmlExport: {
+        activeId: 'missing',
+        profiles: [
+          { id: 'a', name: '', head: 'x' },
+          { id: 'a', name: '重复 id', head: 'y' },
+          { id: 1 as never, name: '坏 id', head: 'z' },
+          { id: 'b', name: '乙', head: 42 as never },
+        ],
+      },
+    });
+    expect(saved.htmlExport?.profiles).toEqual([{ id: 'a', name: 'profile-1', head: 'x' }]);
+    expect(saved.htmlExport?.activeId).toBeNull();
+  });
+
+  it('htmlExport 段坏 JSON：当作没有（其余设置照常）', async () => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('htmlExport', '{not json')").run();
+    const read = await readDaemonSettings();
+    expect(read.htmlExport).toEqual(DEFAULT_DAEMON_SETTINGS.htmlExport);
+    expect(read.locale).toBe('zh-CN');
+  });
+
   it('an unknown preset falls back to auto; non-string customCommand to empty', async () => {
     const saved = await writeDaemonSettings({
       terminal: { preset: 'does-not-exist' as never, customCommand: 42 as never },
