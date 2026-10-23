@@ -704,9 +704,16 @@ export interface OrchestrationRunEvent {
   edgeId: string;
   ok: boolean;
   error?: string;
-  /** 缺省 = 一次投递；ensure = 拉起会话的尝试；condition = 条件边被拦下。 */
-  stage?: 'ensure' | 'condition';
+  /**
+   * 缺省 = 一次投递；ensure = 拉起会话的尝试；condition = 条件边判定（放行与
+   * 拦下都落一条）；defer = 人在场闸挂起。
+   */
+  stage?: 'ensure' | 'condition' | 'defer';
   ms?: number;
+  /** condition 事件专用：谁做的判断（decision-model / fork）。 */
+  source?: string;
+  /** condition 事件专用：判断依据（如 `P(yes)=0.85`）。 */
+  detail?: string;
 }
 
 export interface OrchestrationRunState {

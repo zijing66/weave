@@ -15,6 +15,7 @@ import {
   OrchestrationEngine,
   matchWhen,
   parseConditionAnswer,
+  type ConditionDecision,
   type ConditionJudge,
 } from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
@@ -946,6 +947,44 @@ describe('条件边（edge.condition）', () => {
     expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
     const run = runs.getById((result as { runId: number }).runId)!;
     expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain('api down');
+  });
+
+  it('判断证据用 32K 头尾预算（边正文仍 4000），截断落 detail 注记', async () => {
+    const judge = vi.fn(async (): Promise<ConditionDecision> => ({
+      ok: true,
+      source: 'decision-model',
+      detail: 'P(yes)=0.9',
+    }));
+    const { d, engine } = setup({ conditionJudge: { judge } });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'judge-budget',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [{ ...edge('a', 'b'), text: 'out: {upstream}', condition: '需要发吗' }],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    // 40K 输出：头有 HEAD、尾有 TAIL——头尾截取两头都得在，中段被丢。
+    d.setLastOutput({ output: `HEAD${'a'.repeat(40_000)}TAIL`, at: new Date().toISOString() });
+    idleOf(engine, 'a');
+    await flush();
+    // 判断拿到 32K 头尾版：两头都在、带截断标记。
+    const state = judge.mock.calls[0]![0].upstream ?? '';
+    expect(state).toContain('HEAD');
+    expect(state).toContain('TAIL');
+    expect(state).toContain('chars truncated');
+    expect(state.length).toBeLessThan(33_000);
+    // 边正文仍是 4000 头部版：只有 HEAD、没有 TAIL（首投是 start 的 'go'，取末条）。
+    const sent = d.send.mock.calls.at(-1)![0] as SendInput;
+    expect(sent.text).toContain('HEAD');
+    expect(sent.text).not.toContain('TAIL');
+    expect(sent.text.length).toBeLessThan(4_100);
+    // RunEvent 的 detail 带截断注记（误判可诊断）。
+    const run = runs.getById((result as { runId: number }).runId)!;
+    const event = run.state.events.find((e) => e.stage === 'condition');
+    expect(event?.detail).toContain('P(yes)=0.9');
+    expect(event?.detail).toContain('state truncated');
   });
 
   it('parseConditionAnswer：中英首词认 yes/no，其余 null', () => {

@@ -33,7 +33,7 @@ const mk = (opts: {
     config: async () =>
       opts.configured === false
         ? null
-        : { baseUrl: 'https://d.example/', model: 'ftm-decision', apiKey: 'k' },
+        : { baseUrl: 'https://d.example/', model: 'decision-model', apiKey: 'k' },
     fallback: { judge: fallback } as ConditionJudge,
     fetchImpl: fetchImpl as unknown as typeof fetch,
     ...(opts.hang ? { timeoutMs: 20 } : {}),
@@ -42,24 +42,34 @@ const mk = (opts: {
 };
 
 describe('决策模型判断（createDecisionConditionJudge）', () => {
-  it('P(yes)≥0.7 → 放行，fork 不跑', async () => {
+  it('P(yes)≥0.7 → 放行（source/detail 落痕），fork 不跑', async () => {
     const { judge, fallback } = mk({ noul: 0.95 });
-    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true });
-    expect(fallback).not.toHaveBeenCalled();
-  });
-
-  it('P(yes)≤0.3 → 拦下带概率原因，fork 不跑', async () => {
-    const { judge, fallback } = mk({ noul: 0.05 });
-    await expect(judge.judge(INPUT)).resolves.toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('P(yes)=0.05'),
+    await expect(judge.judge(INPUT)).resolves.toEqual({
+      ok: true,
+      source: 'decision-model',
+      detail: 'P(yes)=0.95',
     });
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it('中间带（判不准）→ 回落 fork', async () => {
+  it('P(yes)≤0.3 → 拦下带概率原因与来源，fork 不跑', async () => {
+    const { judge, fallback } = mk({ noul: 0.05 });
+    await expect(judge.judge(INPUT)).resolves.toMatchObject({
+      ok: false,
+      source: 'decision-model',
+      detail: 'P(yes)=0.05',
+      reason: expect.stringContaining('condition answered no'),
+    });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('中间带（判不准）→ 回落 fork（结果标 fork 来源）', async () => {
     const { judge, fallback } = mk({ noul: 0.5, fallback: { ok: false, reason: 'fork said no' } });
-    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: false, reason: 'fork said no' });
+    await expect(judge.judge(INPUT)).resolves.toEqual({
+      ok: false,
+      reason: 'fork said no',
+      source: 'fork',
+    });
     expect(fallback).toHaveBeenCalledWith(INPUT);
   });
 
@@ -80,7 +90,7 @@ describe('决策模型判断（createDecisionConditionJudge）', () => {
   it('非 200 / 坏响应 / 网络抛错 → 都回落 fork', async () => {
     for (const opts of [{ status: 500 }, { status: 401 }, { body: 'not json' }, { body: '{}' }]) {
       const { judge, fallback } = mk(opts);
-      await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true });
+      await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true, source: 'fork' });
       expect(fallback).toHaveBeenCalledTimes(1);
     }
     const fetchImpl = vi.fn(async () => {
@@ -91,12 +101,12 @@ describe('决策模型判断（createDecisionConditionJudge）', () => {
       fallback: { judge: vi.fn(async () => ({ ok: true })) } as ConditionJudge,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true });
+    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true, source: 'fork' });
   });
 
   it('超时（AbortController）→ 回落 fork', async () => {
     const { judge, fallback } = mk({ hang: true });
-    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true });
+    await expect(judge.judge(INPUT)).resolves.toEqual({ ok: true, source: 'fork' });
     expect(fallback).toHaveBeenCalledTimes(1);
   });
 
@@ -108,9 +118,81 @@ describe('决策模型判断（createDecisionConditionJudge）', () => {
     expect(url).toBe('https://d.example/v1/systemone');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer k');
     expect(JSON.parse(String(init.body))).toEqual({
-      model: 'ftm-decision',
+      model: 'decision-model',
       state: '上游这一轮的输出',
       questions: { proceed: { type: 'noul', instructions: '需要发吗' } },
     });
+  });
+});
+
+describe('决策模型批量判定（judgeBatch）', () => {
+  it('一次 HTTP 答多条边：逐键阈值判定，source/detail 随行', async () => {
+    const fallback = vi.fn(async (): Promise<ConditionDecision> => ({ ok: true }));
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init?.body)) as { questions: Record<string, unknown> };
+      const keys = Object.keys(body.questions);
+      expect(keys.sort()).toEqual(['e1', 'e2']); // 两条边一次请求
+      return new Response(
+        JSON.stringify({ answers: { e1: { noul: 0.9 }, e2: { noul: 0.1 } } }),
+        { status: 200 },
+      );
+    });
+    const judge = createDecisionConditionJudge({
+      config: async () => ({ baseUrl: 'https://d.example/', model: 'm', apiKey: 'k' }),
+      fallback: { judge: fallback } as ConditionJudge,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const out = await judge.judgeBatch!({
+      sessionId: 'a',
+      items: [
+        { key: 'e1', condition: '发 b 吗' },
+        { key: 'e2', condition: '发 c 吗' },
+      ],
+      upstream: '输出',
+    });
+    expect(fallback).not.toHaveBeenCalled();
+    expect(out[0]).toEqual({ ok: true, source: 'decision-model', detail: 'P(yes)=0.9' });
+    expect(out[1]!.ok).toBe(false);
+    expect(out[1]!.source).toBe('decision-model');
+    expect(out[1]!.detail).toBe('P(yes)=0.1');
+  });
+
+  it('某键判不出 → 该键回落 fork，其他键照常', async () => {
+    const fallback = vi.fn(async (): Promise<ConditionDecision> => ({ ok: false, reason: 'fork no' }));
+    const fetchImpl = vi.fn(async (): Promise<Response> =>
+      new Response(JSON.stringify({ answers: { e1: { noul: 0.9 } } }), { status: 200 }));
+    const judge = createDecisionConditionJudge({
+      config: async () => ({ baseUrl: 'https://d.example/', model: 'm', apiKey: 'k' }),
+      fallback: { judge: fallback } as ConditionJudge,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const out = await judge.judgeBatch!({
+      sessionId: 'a',
+      items: [
+        { key: 'e1', condition: 'x' },
+        { key: 'e2', condition: 'y' },
+      ],
+      upstream: '输出',
+    });
+    expect(out[0]).toMatchObject({ ok: true, source: 'decision-model' });
+    expect(out[1]).toMatchObject({ ok: false, source: 'fork', reason: 'fork no' });
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('未配置 → 整批回落 fork', async () => {
+    const fallback = vi.fn(async (): Promise<ConditionDecision> => ({ ok: true, source: 'fork' }));
+    const fetchImpl = vi.fn();
+    const judge = createDecisionConditionJudge({
+      config: async () => null,
+      fallback: { judge: fallback } as ConditionJudge,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const out = await judge.judgeBatch!({
+      sessionId: 'a',
+      items: [{ key: 'e1', condition: 'x' }],
+      upstream: '输出',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(out[0]).toMatchObject({ ok: true, source: 'fork' });
   });
 });

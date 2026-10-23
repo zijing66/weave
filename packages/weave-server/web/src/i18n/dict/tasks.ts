@@ -364,6 +364,13 @@ export const tasksZh = {
   'orch.edgeCondition': '放行条件',
   'orch.edgeConditionHint':
     '问上游会话（子 Agent 读上下文回答 yes/no）：yes 才投递，no 或判不出都拦下；webhook 入口的连线不能设',
+  'orch.judgeEngine': '判定引擎',
+  'orch.judgeEngineDecision': '决策模型（先问它，判不准回落子 Agent）',
+  'orch.judgeEngineFork': 'fork 子 Agent（未配置决策模型）',
+  'orch.judgeDecision': '决策模型',
+  'orch.judgeFork': 'fork 子 Agent',
+  'orch.projectLabel': '项目归属',
+  'orch.projectRequired': '选项目（纯 webhook/trigger 编排必选）',
   'orch.edgeWhen': '文本预筛',
   'orch.edgeWhenHint':
     '关键词（逗号/换行分隔）：上游文末总结命中任一才继续（才烧判断 fork），不含直接拦下',
@@ -866,6 +873,13 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'orch.edgeCondition': 'Delivery condition',
   'orch.edgeConditionHint':
     'Ask the upstream session (a context-reading sub-agent answers yes/no): deliver only on yes; no or unclear answers block this link. Not available on webhook-entry links',
+  'orch.judgeEngine': 'Judge engine',
+  'orch.judgeEngineDecision': 'Decision model (asked first; fork on uncertainty)',
+  'orch.judgeEngineFork': 'fork sub-agent (no decision model configured)',
+  'orch.judgeDecision': 'decision model',
+  'orch.judgeFork': 'fork sub-agent',
+  'orch.projectLabel': 'Project',
+  'orch.projectRequired': 'Pick a project (required for webhook/trigger-only graphs)',
   'orch.edgeWhen': 'Text pre-filter',
   'orch.edgeWhenHint':
     'Keywords (comma/newline separated): continue (and spend the judgment fork) only when the upstream end-of-turn summary contains any of them',

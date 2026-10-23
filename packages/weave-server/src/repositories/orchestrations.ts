@@ -127,12 +127,16 @@ export interface RunEvent {
   error?: string;
   /**
    * 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试；
-   * `condition` = 条件边被拦下（回答 no 或判不出，没有投递发生）；
+   * `condition` = 条件边判定（放行与拦下都落一条——谁判的、依据什么在 source/detail）；
    * `defer` = 人在场闸挂起（占位 pending 已入队，用户下一轮消费时真投）。
    */
   stage?: 'ensure' | 'condition' | 'defer';
   /** 耗时（ms）：ensure 用；投递事件不带。 */
   ms?: number;
+  /** condition 事件专用：谁做的判断（decision-model / fork）。 */
+  source?: string;
+  /** condition 事件专用：判断依据（如 `P(yes)=0.85`）。 */
+  detail?: string;
 }
 
 export interface OrchestrationRunState {

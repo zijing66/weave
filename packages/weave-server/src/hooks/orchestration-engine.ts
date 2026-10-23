@@ -60,6 +60,25 @@ function joined(text: string, carried: string): string {
 /** `{upstream}` 那段的上限（宿主上报的最终输出不受 capFields 约束，整段没意义）。 */
 const CARRY_OUTPUT_MAX_CHARS = 4_000;
 
+/**
+ * 判断证据的上限（when 预筛 + condition 判断共用；与边正文的 4000 分开账——
+ * 决策模型的 state 是它唯一的证据，fork 之外看不见更多）。超限取头尾各半
+ * （开头是背景、结尾是结论），截断量写进标记、RunEvent 的 detail 落注记，
+ * 误判可诊断。实测本机 1217 条回合总结仅 1 条超此限。
+ */
+const JUDGE_UPSTREAM_MAX_CHARS = 32_000;
+
+function judgeUpstreamOf(raw: string): { text: string; truncated: boolean } {
+  if (raw.length <= JUDGE_UPSTREAM_MAX_CHARS) return { text: raw, truncated: false };
+  const half = JUDGE_UPSTREAM_MAX_CHARS / 2;
+  return {
+    text: `${raw.slice(0, half)}\n…[weave: ${
+      raw.length - JUDGE_UPSTREAM_MAX_CHARS
+    } chars truncated]…\n${raw.slice(-half)}`,
+    truncated: true,
+  };
+}
+
 /** 边正文的模板变量（缺值占位原样保留 → 渲染后判残留，残留即失败）。 */
 function renderEdgeText(
   template: string,
@@ -86,10 +105,14 @@ export function parseConditionAnswer(answer: string | null | undefined): boolean
   return null;
 }
 
-/** 条件边的判断结果：ok = 放行投递；拦下时 reason 记进 RunEvent。 */
+/** 条件边的判断结果：ok = 放行投递；拦下时 reason 记进 RunEvent。source/detail 落日志（谁判的、依据）。 */
 export interface ConditionDecision {
   ok: boolean;
   reason?: string;
+  /** 谁做的判断：决策模型（Jev）/ fork 子 Agent。缺省 = 未知（旧引擎/测试）。 */
+  source?: 'decision-model' | 'fork';
+  /** 判断依据（如 `P(yes)=0.85`）；放行与拦下都带，日志可见。 */
+  detail?: string;
 }
 
 /**
@@ -126,16 +149,18 @@ export function createForkConditionJudge(deps: {
     verdict === null
       ? {
           ok: false,
+          source: 'fork',
           reason: 'condition could not be evaluated (no clear yes/no answer) — delivery blocked',
         }
       : verdict
-        ? { ok: true }
-        : { ok: false, reason: 'condition answered no — delivery skipped' };
+        ? { ok: true, source: 'fork' }
+        : { ok: false, source: 'fork', reason: 'condition answered no — delivery skipped' };
   return {
     async judge({ sessionId, condition }) {
       if (!deps.supports(sessionId)) {
         return {
           ok: false,
+          source: 'fork',
           reason: 'condition not evaluable — harness has no context sub-agent face',
         };
       }
@@ -151,6 +176,7 @@ export function createForkConditionJudge(deps: {
       if (!deps.supports(sessionId)) {
         return items.map(() => ({
           ok: false,
+          source: 'fork' as const,
           reason: 'condition not evaluable — harness has no context sub-agent face',
         }));
       }
@@ -660,6 +686,10 @@ export class OrchestrationEngine {
         ? `${rawUpstream.slice(0, CARRY_OUTPUT_MAX_CHARS)}…`
         : rawUpstream
       : null;
+    // 判断证据（when 预筛 + condition）用独立的宽预算：决策模型只看得到这份文本。
+    const judgeUpstream = rawUpstream
+      ? judgeUpstreamOf(rawUpstream)
+      : { text: null as string | null, truncated: false };
     const session = this.deps.sessions.getBySessionId(from)?.title || from;
 
     // 条件边整批预判（非载荷路径）：when 预筛先裁掉一半，剩下的 condition 一次
@@ -669,10 +699,16 @@ export class OrchestrationEngine {
       const conditioned = edges.filter(
         (edge) =>
           edge.condition?.trim() &&
-          !(edge.when?.trim() && !matchWhen(edge.when, upstream)),
+          !(edge.when?.trim() && !matchWhen(edge.when, judgeUpstream.text)),
       );
       if (conditioned.length > 0) {
-        const judged = await this.evaluateConditionsBatch(rt, from, conditioned, upstream);
+        const judged = await this.evaluateConditionsBatch(
+          rt,
+          from,
+          conditioned,
+          judgeUpstream.text,
+          judgeUpstream.truncated,
+        );
         for (const [edgeId, ok] of judged) verdicts.set(edgeId, ok);
       }
     }
@@ -700,7 +736,7 @@ export class OrchestrationEngine {
         }
         // 文本预筛：{upstream}（文末总结）命中任一关键词才继续——费 token 的
         // condition fork 不做无谓功。不命中拦下（不 fork、不投）。
-        if (edge.when?.trim() && !matchWhen(edge.when, upstream)) {
+        if (edge.when?.trim() && !matchWhen(edge.when, judgeUpstream.text)) {
           this.record(rt, {
             from,
             to: edge.to,
@@ -759,6 +795,7 @@ export class OrchestrationEngine {
     from: string,
     edges: OrchestrationEdge[],
     upstream: string | null,
+    stateTruncated: boolean,
   ): Promise<Map<string, boolean>> {
     const out = new Map<string, boolean>();
     const judge = this.deps.conditionJudge ?? this.forkJudge;
@@ -786,16 +823,19 @@ export class OrchestrationEngine {
           const decision = decisions[i];
           if (!decision) return;
           out.set(edge.id, decision.ok);
-          if (!decision.ok) {
-            this.record(rt, {
-              from,
-              to: edge.to,
-              edgeId: edge.id,
-              ok: false,
-              stage: 'condition',
-              error: decision.reason ?? 'condition not satisfied — delivery blocked',
-            });
-          }
+          // 放行与拦下都落痕：谁判的（source）、依据什么（detail）。
+          this.record(rt, {
+            from,
+            to: edge.to,
+            edgeId: edge.id,
+            ok: decision.ok,
+            stage: 'condition',
+            ...(decision.ok
+              ? {}
+              : { error: decision.reason ?? 'condition not satisfied — delivery blocked' }),
+            ...(decision.source ? { source: decision.source } : {}),
+            ...this.conditionDetail(decision.detail, stateTruncated),
+          });
         });
         return out;
       } catch {
@@ -803,9 +843,18 @@ export class OrchestrationEngine {
       }
     }
     for (const edge of edges) {
-      out.set(edge.id, await this.evaluateCondition(rt, from, edge, upstream));
+      out.set(edge.id, await this.evaluateCondition(rt, from, edge, upstream, stateTruncated));
     }
     return out;
+  }
+
+  /** 判断事件的 detail：判断依据 + 截断注记（有一样记一样，误判可诊断）。 */
+  private conditionDetail(detail: string | undefined, truncated: boolean): { detail?: string } {
+    const parts = [
+      detail,
+      truncated ? `state truncated to ${JUDGE_UPSTREAM_MAX_CHARS} chars` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? { detail: parts.join(' — ') } : {};
   }
 
   /**
@@ -818,6 +867,7 @@ export class OrchestrationEngine {
     from: string,
     edge: OrchestrationEdge,
     upstream: string | null,
+    stateTruncated = false,
   ): Promise<boolean> {
     const block = (reason: string): false => {
       this.record(rt, {
@@ -827,9 +877,13 @@ export class OrchestrationEngine {
         ok: false,
         stage: 'condition',
         error: reason,
+        ...(decisionSource ? { source: decisionSource } : {}),
+        ...this.conditionDetail(decisionDetail, stateTruncated),
       });
       return false;
     };
+    let decisionSource: ConditionDecision['source'] | undefined;
+    let decisionDetail: string | undefined;
     let decision: ConditionDecision;
     try {
       decision = await (this.deps.conditionJudge ?? this.forkJudge).judge({
@@ -837,6 +891,8 @@ export class OrchestrationEngine {
         condition: edge.condition!.trim(),
         upstream,
       });
+      decisionSource = decision.source;
+      decisionDetail = decision.detail;
     } catch (err) {
       return block(
         `condition judge failed — delivery blocked: ${
@@ -844,7 +900,19 @@ export class OrchestrationEngine {
         }`,
       );
     }
-    if (!decision.ok) return block(decision.reason ?? 'condition not satisfied — delivery blocked');
+    if (!decision.ok) {
+      return block(decision.reason ?? 'condition not satisfied — delivery blocked');
+    }
+    // 放行也落一条：日志看得出「谁判的、依据什么」（否则放行静默，决策模型不可见）。
+    this.record(rt, {
+      from,
+      to: edge.to,
+      edgeId: edge.id,
+      ok: true,
+      stage: 'condition',
+      ...(decisionSource ? { source: decisionSource } : {}),
+      ...this.conditionDetail(decisionDetail, stateTruncated),
+    });
     return true;
   }
 
@@ -1005,6 +1073,8 @@ export class OrchestrationEngine {
       error?: string;
       stage?: 'ensure' | 'condition' | 'defer';
       ms?: number;
+      source?: string;
+      detail?: string;
     },
   ): void {
     if (!rt.running) return;
@@ -1017,6 +1087,8 @@ export class OrchestrationEngine {
       ...(input.error ? { error: input.error } : {}),
       ...(input.stage ? { stage: input.stage } : {}),
       ...(input.ms === undefined ? {} : { ms: input.ms }),
+      ...(input.source ? { source: input.source } : {}),
+      ...(input.detail ? { detail: input.detail } : {}),
     };
     rt.state.events.push(event);
     // 日志行内事件上限：长期跑的大图不把 state 撑爆（保留最近的）。
@@ -1041,14 +1113,19 @@ export class OrchestrationEngine {
     if (!rt.running || rt.finishing || rt.inflight > 0) return;
     if (Object.values(rt.state.pending).some((list) => list.length > 0)) return;
     rt.finishing = true;
-    const ok = rt.state.events.some((event) => event.ok);
-    if (!ok && rt.state.events.length > 0 && rt.state.events.every((e) => e.stage === 'condition')) {
+    // 判定/defer 事件的 ok 不算「有成功投递」（它们没投东西）——只有真投递计。
+    const delivered = rt.state.events.some((event) => event.ok && event.stage === undefined);
+    if (
+      !delivered &&
+      rt.state.events.length > 0 &&
+      rt.state.events.every((e) => e.stage === 'condition')
+    ) {
       // 每条出边都被条件拦下：判断按预期工作，不是失败——run 正常落定。
       this.finish(rt, 'done');
       return;
     }
     const lastError = [...rt.state.events].reverse().find((event) => !event.ok)?.error ?? null;
-    this.finish(rt, ok ? 'done' : 'failed', ok ? null : (lastError ?? 'no delivery succeeded'));
+    this.finish(rt, delivered ? 'done' : 'failed', delivered ? null : (lastError ?? 'no delivery succeeded'));
   }
 
   private finish(rt: Runtime, status: Exclude<OrchestrationRunStatus, 'running'>, error: string | null = null): boolean {

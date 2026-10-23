@@ -158,6 +158,11 @@ interface Editing {
   draft: OrchDraft;
   /** 保存时的快照（脏标记）。 */
   base: string;
+  /**
+   * 项目归属（仅无 session 入口的编排可编辑——session 入口的编排由服务端从
+   * 入口派生；webhook-only 必须显式给，画布定义行的项目选择器写这里）。
+   */
+  projectId: number | null;
 }
 
 /** 一份编排的实时运行态（帧驱动；终态帧即清，画布辉光跟着收）。 */
@@ -170,7 +175,7 @@ interface LiveRun {
 
 const asEditing = (row: OrchestrationRow): Editing => {
   const draft = draftOf(row);
-  return { id: row.id, draft, base: serialize(draft) };
+  return { id: row.id, draft, base: serialize(draft), projectId: row.projectId };
 };
 
 // ---------------------------------------------------------------------------
@@ -1055,6 +1060,15 @@ export function OrchestrationCanvas({
     [fb],
   );
 
+  // 判定引擎信号（边面板提示用）：决策模型配没配（settings 派生，一次拉取）。
+  const [decisionConfigured, setDecisionConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    api
+      .getDaemonSettings()
+      .then((s) => setDecisionConfigured(!!s.settings.decision?.apiKeySet || !!(s.settings.decision?.baseUrl && s.settings.decision?.model)))
+      .catch(() => setDecisionConfigured(null));
+  }, []);
+
   const [messagesTarget, setMessagesTarget] = useState<{
     sessionId: string;
     projectId: number;
@@ -1613,15 +1627,14 @@ export function OrchestrationCanvas({
 
   const save = (): void => {
     if (!editing || !check?.ok) return;
-    // webhook-only 编排没有 session 入口可派生项目，带上画布所在项目。
-    const hasSessionEntry =
-      graphDirections(editing.draft.nodes, editing.draft.edges).entries.some(
-        (n) => n.kind === 'session',
-      ) || editing.draft.nodes.some((n) => n.kind === 'session');
+    // 项目归属：有 session 节点 = 服务端从入口派生（不传）；无 session 节点
+    // （纯 webhook/trigger 编排）= 必须显式给——画布定义行的项目选择器写
+    // editing.projectId（全局视图新建时必选，否则服务端 400）。
+    const hasSessionNode = editing.draft.nodes.some((n) => n.kind === 'session');
     const body = {
       name: editing.draft.name.trim(),
       startText: editing.draft.startText,
-      ...(hasSessionEntry ? {} : projectId != null ? { projectId } : {}),
+      ...(hasSessionNode ? {} : { projectId: editing.projectId ?? projectId ?? undefined }),
       nodes: editing.draft.nodes,
       edges: editing.draft.edges,
       cron: editing.draft.cron,
@@ -1792,6 +1805,9 @@ export function OrchestrationCanvas({
     ? Object.values(live.pendingCounts).reduce((sum, n) => sum + n, 0)
     : 0;
 
+  /** 编辑中的草稿是否没有任何 session 节点（纯 webhook/trigger）→ 服务端要求显式 projectId。 */
+  const needsProject = !!draft && !draft.nodes.some((n) => n.kind === 'session');
+
   // 图上选中的东西（选中态即编辑态：节点改归属/删、边改正文/删）。
   const selNode =
     sel?.kind === 'node' && draft?.nodes.some((n) => n.id === sel.id) ? sel.id : null;
@@ -1849,7 +1865,7 @@ export function OrchestrationCanvas({
               <button
                 type="button"
                 onClick={() =>
-                  setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                  setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()), projectId: projectId ?? null })
                 }
                 className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
               >
@@ -1927,7 +1943,7 @@ export function OrchestrationCanvas({
                 <button
                   type="button"
                   onClick={() =>
-                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()), projectId: projectId ?? null })
                   }
                   className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
                 >
@@ -2009,7 +2025,7 @@ export function OrchestrationCanvas({
                     onClick={() => {
                       const d = addSessionNode(emptyDraft(), entryPick);
                       setEntryPick(null);
-                      setEditing({ id: null, draft: d, base: serialize(d) });
+                      setEditing({ id: null, draft: d, base: serialize(d), projectId: projectId ?? null });
                     }}
                     className="flex w-full items-center gap-1 rounded border border-dashed border-edge/[0.14] px-1 py-1 text-left text-[11px] text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
                   >
@@ -2163,7 +2179,7 @@ export function OrchestrationCanvas({
                 <button
                   type="button"
                   onClick={() =>
-                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()), projectId: projectId ?? null })
                   }
                   className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
                 >
@@ -2203,6 +2219,25 @@ export function OrchestrationCanvas({
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
+                    {needsProject && (
+                      <Combobox
+                        value={editing.projectId != null ? String(editing.projectId) : ''}
+                        onChange={(v) =>
+                          setEditing((prev) =>
+                            prev
+                              ? { ...prev, projectId: v === '' ? null : Number(v) }
+                              : prev,
+                          )
+                        }
+                        title={t('orch.projectLabel')}
+                        placeholder={t('orch.projectRequired')}
+                        className="min-w-[10rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+                        options={projects.map((p) => ({
+                          value: String(p.id),
+                          label: p.name,
+                        }))}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -2545,6 +2580,15 @@ export function OrchestrationCanvas({
                   title={t('orch.edgeCondition')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
+                {/* 判定引擎信号：谁在判这条边（决策模型配了先问它，判不准回落 fork）。 */}
+                {decisionConfigured !== null && (
+                  <p className="text-[9px] leading-relaxed text-neutral-600">
+                    {t('orch.judgeEngine')}:{' '}
+                    <span className={decisionConfigured ? 'text-teal-400/80' : 'text-neutral-500'}>
+                      {decisionConfigured ? t('orch.judgeEngineDecision') : t('orch.judgeEngineFork')}
+                    </span>
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -2878,28 +2922,47 @@ export function OrchestrationCanvas({
                                       className={cn(
                                         'shrink-0',
                                         event.ok
-                                          ? 'bg-emerald-900/40 text-emerald-300'
+                                          ? event.stage === 'defer'
+                                            ? 'bg-neutral-800 text-neutral-400'
+                                            : event.stage === 'condition'
+                                              ? 'bg-teal-900/40 text-teal-300'
+                                              : 'bg-emerald-900/40 text-emerald-300'
                                           : event.stage === 'condition'
                                             ? 'bg-amber-900/40 text-amber-300'
                                             : 'bg-red-900/40 text-red-300',
                                       )}
                                     >
                                       {event.ok
-                                        ? 'ok'
+                                        ? event.stage === 'defer'
+                                          ? 'deferred'
+                                          : event.stage === 'condition'
+                                            ? 'judged'
+                                            : 'ok'
                                         : event.stage === 'condition'
                                           ? 'skipped'
                                           : 'failed'}
                                     </Badge>
-                                    {event.error && (
+                                    {event.stage === 'condition' && event.source && (
+                                      <Badge className="shrink-0 bg-neutral-800 text-[9px] text-neutral-400">
+                                        {event.source === 'decision-model'
+                                          ? t('orch.judgeDecision')
+                                          : event.source === 'fork'
+                                            ? t('orch.judgeFork')
+                                            : event.source}
+                                      </Badge>
+                                    )}
+                                    {(event.detail || event.error) && (
                                       <span
                                         className={cn(
                                           'min-w-0 flex-1 break-words text-[10px]',
-                                          event.stage === 'condition'
-                                            ? 'text-amber-400/70'
-                                            : 'text-red-400/70',
+                                          event.ok
+                                            ? 'text-neutral-500'
+                                            : event.stage === 'condition'
+                                              ? 'text-amber-400/70'
+                                              : 'text-red-400/70',
                                         )}
                                       >
-                                        {event.error}
+                                        {event.ok ? (event.detail ?? '') : (event.error ?? '')}
                                       </span>
                                     )}
                                   </li>

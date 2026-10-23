@@ -349,6 +349,8 @@ const KEYS = {
   serverTlsPort: 'server.tlsPort',
   aiBaseUrl: 'ai.baseUrl',
   aiModel: 'ai.model',
+  decisionBaseUrl: 'decision.baseUrl',
+  decisionModel: 'decision.model',
   /** 整段 JSON（首个非标量键）：头配置是一组对象，不为它单开表。 */
   htmlExport: 'htmlExport',
 } as const;
@@ -418,6 +420,14 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.aiBaseUrl) || map.has(KEYS.aiModel)
       ? { ai: { baseUrl: map.get(KEYS.aiBaseUrl) ?? '', model: map.get(KEYS.aiModel) ?? '' } }
       : {}),
+    ...(map.has(KEYS.decisionBaseUrl) || map.has(KEYS.decisionModel)
+      ? {
+          decision: {
+            baseUrl: map.get(KEYS.decisionBaseUrl) ?? '',
+            model: map.get(KEYS.decisionModel) ?? '',
+          },
+        }
+      : {}),
     // 整段 JSON：坏 JSON 当没有这一段（mergeDefaults 落默认），不让一行脏数据废掉全部设置
     ...(jsonOf(map.get(KEYS.htmlExport)) != null
       ? { htmlExport: jsonOf(map.get(KEYS.htmlExport)) as Partial<HtmlExportSettings> }
@@ -456,6 +466,8 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [KEYS.serverTlsPort, String(settings.server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort)],
     [KEYS.aiBaseUrl, settings.ai?.baseUrl ?? ''],
     [KEYS.aiModel, settings.ai?.model ?? ''],
+    [KEYS.decisionBaseUrl, settings.decision?.baseUrl ?? ''],
+    [KEYS.decisionModel, settings.decision?.model ?? ''],
     [
       KEYS.htmlExport,
       JSON.stringify(settings.htmlExport ?? DEFAULT_HTML_EXPORT_SETTINGS),

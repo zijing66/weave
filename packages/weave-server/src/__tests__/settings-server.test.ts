@@ -48,13 +48,15 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       },
     };
     setDaemonSettingsDb(db);
-    // aiKeyPath 同样隔离：否则 apiKeySet 读机器真实 <dataDir>/ai.json，断言看环境。
+    // aiKeyPath / decisionKeyPath 同样隔离：否则 apiKeySet 读机器真实 <dataDir> 下的
+    // ai.json / decision.json，断言看环境。
     server = createWeaveServer({
       projects,
       port: 0,
       opener,
       autoStart,
       aiKeyPath: path.join(projectPath, 'ai.json'),
+      decisionKeyPath: path.join(projectPath, 'decision.json'),
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -140,6 +142,30 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(((await bad.json()) as { locale: string }).locale).toBe('zh-CN');
     // 自启开关随保存透传给注册器（第一次 PUT 未带 → false）
     expect(autoStartCalls).toEqual([false, false, true]);
+  });
+
+  it('PUT /settings persists ai/decision sections through a follow-up GET（落库白名单回归）', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    const put = await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ai: { baseUrl: 'https://ai.example.com/v1', model: 'ftm-flash' },
+        decision: { baseUrl: 'https://decision.example.com', model: 'decision-model' },
+      }),
+    });
+    expect(put.status).toBe(200);
+    // 响应对了不算数——必须再 GET 回来（曾出过「mergeDefaults 有段、KEYS 白名单没键，
+    // PUT 响应带值但库里没落」的静默丢弃）。
+    const get = await fetch(`http://127.0.0.1:${port}/settings`);
+    const data = (await get.json()) as {
+      settings: { ai?: { baseUrl: string; model: string }; decision?: { baseUrl: string; model: string } };
+    };
+    expect(data.settings.ai).toMatchObject({ baseUrl: 'https://ai.example.com/v1', model: 'ftm-flash' });
+    expect(data.settings.decision).toMatchObject({
+      baseUrl: 'https://decision.example.com',
+      model: 'decision-model',
+    });
   });
 
   it('POST /projects/:id/open with target=explorer opens the project directory', async () => {
