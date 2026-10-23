@@ -74,6 +74,16 @@
 - **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
 - **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
 
+### commands 槽（`/` 候选与命令返显）
+
+`CommandsSurface` = `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。
+
+- **候选来源各归各的目录**：claude = 内建快照 + `<proj>/.claude/commands/**/*.md`（子目录成命名空间 `db/migrate.md` → `db:migrate`）+ 项目/用户 `skills/<name>/SKILL.md` + `plugins/cache/<market>/<plugin>/<version>/skills/*`（命名 `<plugin>:<skill>`，同名插件先到的版本赢）；codex = 内建快照 + `$CODEX_HOME/prompts/*.md`（文件名即命令名）+ `$CODEX_HOME/skills/<name>/SKILL.md`，`CODEX_HOME` 优先于 `~/.codex`。**内建表是版本快照**（宿主没有可扫目录），升级宿主后按 `/help` 复核——不联网、也不去猜二进制里的字符串。
+- **返显只能读转录**：内建命令在宿主里就地执行、**不发 UserPromptSubmit**（`/compact` 只有 PreCompact、`/model` 只有 Pre/PostModelSwitch、`/clear` 只有 `SessionStart(source:"clear")`）⇒ hook 域里根本没有这一轮。转录里它们是 `<command-name>/x</command-name>` + 紧随一条 `<local-command-stdout>`；**skill/插件命令没有 stdout**（展开成 prompt、走 UPS，对话里已有气泡）⇒ 只认带 stdout 的，天然不重复。ANSI 转义剥掉再入库。
+- **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。
+- **路由**：`GET /sessions/:id/commands` → `{ supported, commands }`（`projectPath` 由 server 查库得出）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
+- **web 侧**：`/` 在输入框行首（行内或换行后）触发候选面板，键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd`，与文件引用同一套 draft 序列化），提交时还原成 `/name args` 原文。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
+
 ### plugins / pluginState 槽（插件安装与启用）
 
 - **claude = 完整参考实现**（`claude/plugins.ts`）：两步 CLI（marketplace add + plugin install --scope user）、installed_plugins.json 读侧、三档 enabledPlugins 覆写（user/project/local）。

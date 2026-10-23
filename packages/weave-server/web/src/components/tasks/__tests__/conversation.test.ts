@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
   buildSegments,
+  commandOfText,
   conversationOf,
   countdownLabel,
   editsWindowOf,
@@ -16,7 +17,9 @@ import {
   removableOf,
   serializeDraft,
   textBeforeCaret,
+  withCommands,
   withPlan,
+  clearConvCache,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -498,6 +501,11 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     expect(serializeDraft(null)).toBe('');
   });
 
+  it('⑥ 命令胶囊还原成 /name，后面的参数照常拼上', () => {
+    const chip = el('SPAN', [text('/model')], { 'data-cmd': 'model' });
+    expect(serializeDraft(draft([chip, text(' opus')]))).toBe('/model opus');
+  });
+
   it('⑥-a 粘贴快路：整段没有「行首/空白后的 @」就不必问服务端认引用', () => {
     expect(hasRefCandidate('普通一段话，没有任何引用')).toBe(false);
     expect(hasRefCandidate('邮箱 foo@bar.com 不算')).toBe(false);
@@ -860,6 +868,7 @@ describe('对话缓存（sessionStorage）', () => {
     vi.stubGlobal('sessionStorage', {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
     });
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -888,6 +897,14 @@ describe('对话缓存（sessionStorage）', () => {
     store.set('weave:conv:s1', '{ 这不是 json');
     expect(readConvCache('s1')).toBeNull();
     expect(readConvCache('从没写过')).toBeNull();
+  });
+
+  it('发出即清：只删这个会话的键', () => {
+    writeConvCache('s1', [conv(1)]);
+    writeConvCache('s2', [conv(2)]);
+    clearConvCache('s1');
+    expect(readConvCache('s1')).toBeNull();
+    expect(readConvCache('s2')).not.toBeNull();
   });
 });
 
@@ -937,5 +954,60 @@ describe('editsWindowOf（按轮取数的窗口）', () => {
   it('全程没有回复条目 → 双 null（退化为全部）；找不到的 key 同样', () => {
     expect(editsWindowOf([conv(1), conv(2)], 'e1')).toEqual({ since: null, until: null });
     expect(editsWindowOf([conv(1)], 'e999')).toEqual({ since: null, until: null });
+  });
+});
+
+describe('commandOfText（气泡里的斜杠命令识别）', () => {
+  it('整条就是一条命令：拆出名字与参数', () => {
+    expect(commandOfText('/compact')).toEqual({ name: 'compact', args: '' });
+    expect(commandOfText('/model opus')).toEqual({ name: 'model', args: 'opus' });
+    expect(commandOfText('  /effort high  ')).toEqual({ name: 'effort', args: 'high' });
+    expect(commandOfText('/plugin:foo:bar --force')).toEqual({ name: 'plugin:foo:bar', args: '--force' });
+  });
+
+  it('参数可含换行（命令只在最前面生效）', () => {
+    expect(commandOfText('/goal 完成\n然后提交')).toEqual({ name: 'goal', args: '完成\n然后提交' });
+  });
+
+  it('命令不在最前面 / 不像命令 → 不是', () => {
+    expect(commandOfText('看看 /model')).toBeNull();
+    expect(commandOfText('a/b')).toBeNull();
+    expect(commandOfText('/')).toBeNull();
+    expect(commandOfText('普通消息')).toBeNull();
+  });
+});
+
+describe('withCommands（命令执行插进对话流）', () => {
+  const conv = (id: number, over: Partial<ConvEntry> = {}): ConvEntry => ({
+    key: `e${id}`,
+    eventId: id,
+    role: 'user',
+    at: at(id),
+    text: `msg ${id}`,
+    ...over,
+  });
+
+  it('按时刻插入，气泡是 /name + 参数，回显挂在同一条上', () => {
+    const entries = [conv(1), conv(3, { role: 'assistant' })];
+    const out = withCommands(entries, [
+      { name: 'compact', args: '', at: at(2), output: 'Compacted' },
+    ]);
+    expect(out.map((e) => e.key)).toEqual(['e1', 'x' + at(2) + ':compact', 'e3']);
+    expect(out[1]).toMatchObject({
+      role: 'user',
+      text: '/compact',
+      commandOutput: 'Compacted',
+    });
+  });
+
+  it('晚于所有事件的执行排在尾巴（正在发生的命令）', () => {
+    const out = withCommands([conv(1)], [{ name: 'model', args: 'opus', at: at(9) }]);
+    expect(out[out.length - 1]).toMatchObject({ text: '/model opus' });
+  });
+
+  it('没有记录面（null）或空表 → 原样返回', () => {
+    const entries = [conv(1)];
+    expect(withCommands(entries, null)).toEqual(entries);
+    expect(withCommands(entries, [])).toEqual(entries);
   });
 });

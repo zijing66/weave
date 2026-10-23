@@ -43,6 +43,7 @@ import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
 import {
   blockingPromptFor,
   captureSurfaces,
+  commandsSurfaceFor,
   editSurfaceFor,
   messagingSurfaceFor,
   messagingSurfaces,
@@ -1150,6 +1151,38 @@ export async function handleHooksRoutes(
     sendJson(res, 200, {
       plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
     });
+    return true;
+  }
+
+  // ---- 聊天窗口 `/` 的命令候选：内建 + 项目/用户命令 + skill（发现规则归 harness）----
+  const commandsMatch = pathname.match(/^\/sessions\/([^/]+)\/commands$/);
+  if (commandsMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(commandsMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? commandsSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, commands: [] });
+      return true;
+    }
+    sendJson(res, 200, { supported: true, commands: await surface.list({ projectPath: project.path }) });
+    return true;
+  }
+
+  // ---- 命令执行的返显：内建命令不发 hook 事件，只有转录记着 ----
+  const execMatch = pathname.match(/^\/sessions\/([^/]+)\/command-executions$/);
+  if (execMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(execMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? commandsSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, executions: null });
+      return true;
+    }
+    const executions = await surface.executions(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
+    sendJson(res, 200, { supported: executions !== null, executions });
     return true;
   }
 

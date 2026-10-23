@@ -4,6 +4,7 @@ import {
   type AssetSurface,
   type BlockingPromptSpec,
   type CaptureSurface,
+  type CommandsSurface,
   type ConfigSurface,
   type EditsSurface,
   type ImagesSurface,
@@ -148,6 +149,11 @@ export function editSurfaceFor(harness: Harness): EditsSurface | null {
 /** 按 harness 取入站图面；null = 该 harness 的粘贴图无处可取（对话里只剩 `[Image #N]` 占位）。 */
 export function imagesSurfaceFor(harness: Harness): ImagesSurface | null {
   return registry.get(harness)?.images ?? null;
+}
+
+/** 按 harness 取命令面；null = 该 harness 没有 `/` 提示（前端不弹命令菜单）。 */
+export function commandsSurfaceFor(harness: Harness): CommandsSurface | null {
+  return registry.get(harness)?.commands ?? null;
 }
 
 /** 全部声明了 config 槽的 (harness, 面) 列表——配置面板的 harness 页签按本表枚举。 */

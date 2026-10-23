@@ -1,0 +1,101 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CLAUDE_COMMANDS, commandExecutions } from '../commands.js';
+
+let root = '';
+const project = (): string => path.join(root, 'proj');
+const home = (): string => path.join(root, 'home');
+
+function touch(file: string, body = ''): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, body);
+}
+
+beforeEach(() => {
+  root = mkdtempSync(path.join(tmpdir(), 'weave-cmd-'));
+});
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe('claude 命令清单', () => {
+  it('内建 + 项目/用户命令 + skill + 插件 skill，插件带 `<插件>:<skill>`', async () => {
+    touch(path.join(project(), '.claude/commands/deploy.md'), '---\ndescription: Ship it\n---\n正文');
+    touch(path.join(project(), '.claude/commands/db/migrate.md'), '把库迁上去');
+    touch(path.join(project(), '.claude/skills/reviewer/SKILL.md'), '---\ndescription: Review code\n---');
+    touch(path.join(home(), '.claude/skills/helper/SKILL.md'), '帮个忙');
+    touch(
+      path.join(home(), '.claude/plugins/cache/mkt/plug/abc123/skills/design/SKILL.md'),
+      '---\ndescription: Design things\n---',
+    );
+
+    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    const byName = new Map(list.map((c) => [c.name, c]));
+
+    expect(byName.get('compact')).toMatchObject({ source: 'builtin', argsHint: '[instructions]' });
+    expect(byName.get('deploy')).toMatchObject({ source: 'command', description: 'Ship it' });
+    // 子目录 = 命名空间
+    expect(byName.get('db:migrate')).toMatchObject({ source: 'command', description: '把库迁上去' });
+    expect(byName.get('reviewer')).toMatchObject({ source: 'skill', description: 'Review code' });
+    expect(byName.get('helper')).toMatchObject({ source: 'skill', description: '帮个忙' });
+    expect(byName.get('plug:design')).toMatchObject({ source: 'plugin', description: 'Design things' });
+  });
+
+  it('目录都不存在时只剩内建（不抛）', async () => {
+    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    expect(list.length).toBeGreaterThan(10);
+    expect(list.every((c) => c.source === 'builtin')).toBe(true);
+  });
+
+  it('同名以内建为准（不重复列）', async () => {
+    touch(path.join(project(), '.claude/commands/model.md'), '自定义同名命令');
+    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    expect(list.filter((c) => c.name === 'model')).toHaveLength(1);
+    expect(list.find((c) => c.name === 'model')?.source).toBe('builtin');
+  });
+});
+
+describe('claude 命令执行返显', () => {
+  const line = (o: unknown): string => JSON.stringify(o);
+  const cmd = (name: string, args = '', at = '2026-10-23T01:39:11.452Z'): string =>
+    line({
+      type: 'user',
+      timestamp: at,
+      message: {
+        role: 'user',
+        content: `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args>${args}</command-args>`,
+      },
+    });
+  const out = (text: string, at = '2026-10-23T01:39:11.500Z'): string =>
+    line({ type: 'user', timestamp: at, message: { role: 'user', content: `<local-command-stdout>${text}</local-command-stdout>` } });
+  const skill = (at = '2026-10-23T01:39:12.000Z'): string =>
+    line({ type: 'user', isMeta: true, timestamp: at, message: { role: 'user', content: 'Base directory for this skill: …' } });
+
+  it('内建命令 + 紧随的输出 = 一条执行；ANSI 剥掉', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('model'), out('\u001b[2mSet model to opus\u001b[22m')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'model', args: '', at: '2026-10-23T01:39:11.452Z', output: 'Set model to opus' },
+    ]);
+  });
+
+  it('命令参数一并保留', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('goal', '完成当前计划'), out('Goal set')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'goal', args: '完成当前计划', at: '2026-10-23T01:39:11.452Z', output: 'Goal set' },
+    ]);
+  });
+
+  it('skill 命令没有 stdout（展开成 prompt，已有 UPS 气泡）→ 不算执行', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('playwright-cli', 'http://localhost'), skill()].join('\n'));
+    expect(await commandExecutions(file)).toEqual([]);
+  });
+
+  it('转录不存在 → null（不猜）', async () => {
+    expect(await commandExecutions(path.join(root, 'nope.jsonl'))).toBeNull();
+  });
+});

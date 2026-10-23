@@ -24,7 +24,8 @@ export type HarnessCapability =
   | 'logs'
   | 'config'
   | 'edits'
-  | 'images';
+  | 'images'
+  | 'commands';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -953,6 +954,42 @@ export interface ImagesSurface {
   }): Promise<PromptImageSet[] | null>;
 }
 
+/**
+ * 聊天窗口 `/` 提示里的一条命令：内建命令来自宿主（版本快照，随升级复核），
+ * 其余按目录现扫（自定义命令 / skill / 插件 skill）。
+ */
+export interface HarnessCommand {
+  /** 不含前导 `/`；插件/skill 命令带 `<plugin>:<skill>` 形态。 */
+  name: string;
+  /** 一句话说明（skill 取 SKILL.md frontmatter）。 */
+  description: string;
+  /** 参数提示（形如 `<model>` / `<file>`）；没有参数就省略。 */
+  argsHint?: string;
+  source: 'builtin' | 'command' | 'skill' | 'plugin';
+}
+
+/** 转录里的一条命令执行记录（内建命令不发 hook 事件，只有转录记着）。 */
+export interface CommandExecution {
+  name: string;
+  args: string;
+  /** 执行时刻（ISO UTC）。 */
+  at: string;
+  /** 宿主回显的输出原文；命令没有输出就省略。 */
+  output?: string;
+}
+
+/**
+ * 命令面：聊天窗口 `/` 的候选清单 + 命令执行的返显。
+ * `executions` 答 null = 该 harness 的转录不记命令执行（前端如实说明，不空转）。
+ */
+export interface CommandsSurface {
+  readonly harness: Harness;
+  /** 该会话此刻可用的命令（项目级命令按项目路径现扫；`homedir` 缺省 = 本机家目录）。 */
+  list(req: { projectPath: string; homedir?: string }): Promise<HarnessCommand[]>;
+  /** 转录里的命令执行（时间序）；读不到（无转录 / 路径未知 / 半路出错）→ null（不猜）。 */
+  executions(transcriptPath: string | null): Promise<CommandExecution[] | null>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -973,6 +1010,7 @@ export interface HarnessDriver {
   config?: ConfigSurface;
   edits?: EditsSurface;
   images?: ImagesSurface;
+  commands?: CommandsSurface;
 }
 
 /**

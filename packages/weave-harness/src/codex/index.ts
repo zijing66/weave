@@ -9,6 +9,7 @@ import { CODEX_PLUGINS } from './plugins.js';
 import { CODEX_PLUGIN_STATE } from './plugin-state.js';
 import { CODEX_RESUME } from './resume.js';
 import { CODEX_LOG_SOURCE } from './rollout.js';
+import { CODEX_COMMANDS } from './commands.js';
 
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
@@ -22,6 +23,7 @@ export { CODEX_PLUGINS, createCodexPluginSurface, CODEX_MARKETPLACE } from './pl
 export { CODEX_CONFIG } from './config.js';
 export * from './mcp.js';
 export * from './toml.js';
+export { CODEX_COMMANDS } from './commands.js';
 
 /**
  * Codex 接入模块的驱动：批 4a 补 assets 槽、批 5 补 detect、P2 补 pluginState
@@ -46,6 +48,7 @@ export const CODEX_DRIVER: HarnessDriver = {
     'capture',
     'logs',
     'config',
+    'commands',
   ],
   assets: CODEX_ASSETS,
   detect: CODEX_DETECTOR,
@@ -57,4 +60,5 @@ export const CODEX_DRIVER: HarnessDriver = {
   capture: CODEX_CAPTURE,
   logs: CODEX_LOG_SOURCE,
   config: CODEX_CONFIG,
+  commands: CODEX_COMMANDS,
 };

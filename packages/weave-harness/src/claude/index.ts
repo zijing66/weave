@@ -12,6 +12,7 @@ import { CLAUDE_STATUSLINE } from './statusline/surface.js';
 import { CLAUDE_CONFIG } from './config.js';
 import { CLAUDE_EDITS } from './edits.js';
 import { CLAUDE_IMAGES } from './images.js';
+import { CLAUDE_COMMANDS } from './commands.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
@@ -29,6 +30,7 @@ export { CLAUDE_SIDE_QUESTION } from './side-question.js';
 export { interruptMarkerAt, currentModelAt, currentModeAt, currentEffortAt } from './transcript.js';
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
+export { CLAUDE_COMMANDS, commandExecutions } from './commands.js';
 export { modelAliasTargets, aliasOfModel, bareModelName, defaultModelOf, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';
 export { resolveClaudePeer } from './peers.js';
 export {
@@ -84,6 +86,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'config',
     'edits',
     'images',
+    'commands',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -98,4 +101,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   config: CLAUDE_CONFIG,
   edits: CLAUDE_EDITS,
   images: CLAUDE_IMAGES,
+  commands: CLAUDE_COMMANDS,
 };

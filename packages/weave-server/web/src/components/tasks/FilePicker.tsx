@@ -36,8 +36,8 @@ import { useTheme } from '@/lib/theme';
  * **第三栏答「这条选中是什么」**：目录列它的直接子项（只读，下钻仍归第二栏，
  * 两栏都能进会打架），文本给只读编辑器，图片给 `<img>`。
  *
- * 手势：单击只挪光标（第三栏跟着走），**双击 / Enter 才落定**（目录 = 进入），
- * 空格或左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）
+ * 手势：单击只挪光标（第三栏跟着走），**Enter 恒为「确认选择」**（目录也当引用贴），
+ * 下钻只归 `→` / 双击；空格或左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）
  * 是桌面加速键。触屏没有 hover 也没有修饰键：单击仍是「进入」（老手感），
  * 多选只靠勾选框——**勾选框常显**，藏起来的钮在触屏上等于没有。已选非空时
  * 底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序）。
@@ -689,6 +689,21 @@ export function FilePicker({
     void pick(entry, true);
   };
 
+  /** Enter = 确认选择：有已选就整批落定，否则落定当前这条（目录也按目录引用贴）。
+   *  与「进入目录」分开——下钻归 `→` / 双击，回车只管「就它了」。 */
+  const confirm = (entry: SessionFileEntry): void => {
+    if (picked.length > 0) {
+      void commit();
+      return;
+    }
+    if (entry.kind === 'file' || dirSupported) {
+      void pick(entry, true);
+      return;
+    }
+    // harness 不认目录引用：这一条没有可贴的东西，回车只能带路
+    enter(entry);
+  };
+
   /** 勾选/取消一条。取消的正是带行选区的那条 ⇒ 行选区跟着退（两处手势同一口径）。 */
   const toggleCurrentPick = (entry: SessionFileEntry): void => {
     const on = picked.some((p) => p.path === entry.path);
@@ -726,7 +741,7 @@ export function FilePicker({
     if (e.key === 'Enter') {
       e.preventDefault();
       const hit = entries[selected];
-      if (hit) enter(hit);
+      if (hit) confirm(hit);
       return;
     }
     // 空格 = 加入/移出已选。搜索框空着时也算勾选（打开就按空格是主路径），
@@ -1261,7 +1276,19 @@ export function FilePicker({
                 : t('tasks.fileCount', { n: total })}
             </span>
             {truncated && <span className="text-amber-500/80">{t('tasks.fileTruncated')}</span>}
-            <span className="ml-auto hidden lg:block">{t('tasks.fileHint')}</span>
+            {/* 按键说明逐块摆：一整串挤在一格里，深色底上等于一团灰字 */}
+            <span className="ml-auto hidden items-center gap-1 lg:flex">
+              {t('tasks.fileHint')
+                .split(' · ')
+                .map((chunk) => (
+                  <kbd
+                    key={chunk}
+                    className="rounded border border-edge/[0.14] bg-neutral-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-neutral-400"
+                  >
+                    {chunk}
+                  </kbd>
+                ))}
+            </span>
           </div>
         </div>
       </div>

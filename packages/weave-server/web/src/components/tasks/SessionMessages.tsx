@@ -5,6 +5,8 @@ import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
   api,
+  type CommandExecutionRow,
+  type HarnessCommandRow,
   type HookEventRow,
   type MessagingCapability,
   type RecognizedRef,
@@ -122,10 +124,12 @@ const ESC_COOLDOWN_S = 3;
 const CONV_CACHE_TTL_MS = 10 * 60_000;
 const CONV_CACHE_MAX = 60;
 
+const CONV_KEY = (sessionId: string): string => `weave:conv:${sessionId}`;
+
 /** 命中且没过期才用；读不出/写满了都当没有——缓存是加速，不是功能。 */
 export function readConvCache(sessionId: string): ConvEntry[] | null {
   try {
-    const raw = sessionStorage.getItem(`weave:conv:${sessionId}`);
+    const raw = sessionStorage.getItem(CONV_KEY(sessionId));
     if (!raw) return null;
     const cached = JSON.parse(raw) as { at?: number; entries?: ConvEntry[] };
     if (typeof cached.at !== 'number' || Date.now() - cached.at > CONV_CACHE_TTL_MS) return null;
@@ -138,7 +142,7 @@ export function readConvCache(sessionId: string): ConvEntry[] | null {
 export function writeConvCache(sessionId: string, entries: readonly ConvEntry[]): void {
   try {
     sessionStorage.setItem(
-      `weave:conv:${sessionId}`,
+      CONV_KEY(sessionId),
       JSON.stringify({
         at: Date.now(),
         // 只留尾巴若干条（够首屏用，别把长会话的翻页历史一直堆在会话存储里）；
@@ -150,6 +154,16 @@ export function writeConvCache(sessionId: string, entries: readonly ConvEntry[])
     );
   } catch {
     // 配额满 / 隐私模式禁写：静默降级成每次都拉服务端
+  }
+}
+
+/** 发出即清：缓存里的尾巴停在发送前那一刻，留着只会在重开面板时先闪一眼旧账
+ *  （下一帧事件到了会重新写）。 */
+export function clearConvCache(sessionId: string): void {
+  try {
+    sessionStorage.removeItem(CONV_KEY(sessionId));
+  } catch {
+    // 隐私模式：本来也没写进去
   }
 }
 
@@ -219,6 +233,8 @@ export interface ConvEntry {
   failed?: boolean;
   /** 计划模式交出的计划正文（不是某轮的收尾总结，单独标出来给人批阅）。 */
   plan?: boolean;
+  /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
+  commandOutput?: string;
 }
 
 /**
@@ -437,6 +453,9 @@ export const REF_PATH_ATTR = 'data-ref-path';
 export const REF_KIND_ATTR = 'data-ref-kind';
 export const REF_LINES_ATTR = 'data-ref-lines';
 
+/** 命令胶囊：值是命令名（不含 `/`），发出去时还原成 `/name`。 */
+export const CMD_ATTR = 'data-cmd';
+
 /** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
  *  而这些数与 DOM 规范同寿，不会变。 */
 const ELEMENT_NODE = 1;
@@ -446,10 +465,11 @@ const TEXT_NODE = 3;
  *  `execCommand`、粘多行文本都落成 `<div>`，不是 `<br>`）。 */
 const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3']);
 
-/** 输入框 DOM 摊平后的片段：一段文本（含换行）或一枚引用胶囊。 */
+/** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊或一枚命令胶囊。 */
 type DraftToken =
   | { text: string }
-  | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } };
+  | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
+  | { cmd: string };
 
 /** composer DOM → 线性 token。**换行规则只说这一处**：
  *  - `<br>` = 一个换行；
@@ -481,6 +501,11 @@ function draftTokensOf(root: Node | null): DraftToken[] {
     }
     if (node.nodeType !== ELEMENT_NODE) return;
     const el = node as HTMLElement;
+    const cmd = el.getAttribute(CMD_ATTR);
+    if (cmd != null) {
+      out.push({ cmd });
+      return;
+    }
     const ref = el.getAttribute(REF_ATTR);
     if (ref != null) {
       chip(el, ref);
@@ -524,7 +549,7 @@ function draftTokensOf(root: Node | null): DraftToken[] {
 /** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。 */
 export function serializeDraft(root: Node | null): string {
   const out = draftTokensOf(root)
-    .map((t) => ('text' in t ? t.text : t.ref))
+    .map((t) => ('text' in t ? t.text : 'ref' in t ? t.ref : `/${t.cmd}`))
     .join('');
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
@@ -537,6 +562,7 @@ export interface DraftSnapshot {
   parts: Array<
     | { t: string }
     | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
+    | { c: string }
   >;
   /** 已落盘、还没发出去的图（同一条草稿的附件）。 */
   staged: UploadImage[];
@@ -557,6 +583,8 @@ export function draftSnapshotOf(
       const last = parts[parts.length - 1];
       if (last && 't' in last) last.t += token.text;
       else parts.push({ t: token.text });
+    } else if ('cmd' in token) {
+      parts.push({ c: token.cmd });
     } else {
       parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
@@ -569,9 +597,15 @@ export function applyDraftSnapshot(
   root: HTMLElement,
   snap: DraftSnapshot,
   buildChip: (ref: string, target: PickTarget) => HTMLElement,
+  buildCmdChip?: (name: string) => HTMLElement,
 ): void {
   root.replaceChildren();
   for (const part of snap.parts) {
+    if ('c' in part) {
+      if (buildCmdChip) root.appendChild(buildCmdChip(part.c));
+      else root.appendChild(document.createTextNode(`/${part.c}`));
+      continue;
+    }
     if ('r' in part) {
       const target: PickTarget = {
         path: part.path,
@@ -701,6 +735,39 @@ export function textBeforeCaret(root: Node, range: Range): string {
  *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。 */
 const REF_CHIP_CLASS =
   'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-blue-200';
+
+/** 命令胶囊：黄色系、**不截断**（命令名本来就短，截断只会藏掉分辨它们的最后几位）。 */
+const CMD_CHIP_CLASS =
+  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-amber-200';
+
+/** 一段文字是不是「一整条斜杠命令」（`/name [args]`）：是就拆出名字与参数，
+ *  对话气泡据此把命令画成黄色胶囊、参数照常当文字摆。 */
+export function commandOfText(text: string): { name: string; args: string } | null {
+  const m = /^\s*\/([A-Za-z][A-Za-z0-9:_-]*)(?:\s+([\s\S]*))?$/.exec(text);
+  return m ? { name: m[1]!, args: (m[2] ?? '').trim() } : null;
+}
+
+/** 命令执行记录插进对话流（按时刻定位；与事件条目同一条时间线）。 */
+export function withCommands(
+  entries: readonly ConvEntry[],
+  executions: readonly CommandExecutionRow[] | null,
+): ConvEntry[] {
+  if (!executions || executions.length === 0) return [...entries];
+  const out = [...entries];
+  for (const x of executions) {
+    const entry: ConvEntry = {
+      key: `x${x.at}:${x.name}`,
+      role: 'user',
+      at: x.at,
+      text: `/${x.name}${x.args ? ` ${x.args}` : ''}`,
+      ...(x.output ? { commandOutput: x.output } : {}),
+    };
+    const at = out.findIndex((e) => e.at > x.at);
+    if (at < 0) out.push(entry);
+    else out.splice(at, 0, entry);
+  }
+  return out;
+}
 
 export function filterThread(
   thread: readonly ConvEntry[],
@@ -1073,6 +1140,12 @@ export function SessionMessages({
   const [lightbox, setLightbox] = useState<UploadImage | null>(null);
   /** 文件引用选择器开着（三层：父目录 | 当前目录 | 预览）；`chip` 非空 = 在改那枚胶囊。 */
   const [picker, setPicker] = useState<{ chip: HTMLElement | null; initial?: PickTarget } | null>(null);
+  /** `/` 命令菜单：候选来自 harness 能力面（null = 还没取到）。`query` 是已经敲进去的
+   *  那截命令名，`active` 是键盘高亮项。 */
+  const [commands, setCommands] = useState<HarnessCommandRow[] | null>(null);
+  const [cmdMenu, setCmdMenu] = useState<{ query: string; active: number } | null>(null);
+  /** 内建命令的执行回显（转录里认出来的；null = 这个 harness 不记）。 */
+  const [executions, setExecutions] = useState<CommandExecutionRow[] | null>(null);
   /** `@` 触发时那枚 `@` 被删掉了，记下它的位置：取消就补回去，落定就地插胶囊。 */
   const atRange = useRef<Range | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1141,7 +1214,7 @@ export function SessionMessages({
     // 草稿只在嵌入形态会被重建（浮窗的 body 自始至终挂在同一个 portal 里）；
     // 拿快照重建 DOM，胶囊按 data-* 还原，与「刷新不丢」同一套路径
     if (embedded && keep.draft && draftRef.current) {
-      applyDraftSnapshot(draftRef.current, keep.draft, buildChip);
+      applyDraftSnapshot(draftRef.current, keep.draft, buildChip, buildCmdChip);
       setDraft(serializeDraft(draftRef.current));
     }
   }, [fullscreen, embedded]);
@@ -1203,6 +1276,32 @@ export function SessionMessages({
     }
   }, [capability.harness, convTypes, fail, lifecycle, projectId, sessionId]);
 
+  /** 内建命令的执行回显（转录里认；没有该面的 harness 答 null = 不摆）。 */
+  const loadExecutions = useCallback(async (): Promise<void> => {
+    try {
+      const r = await api.listCommandExecutions(sessionId);
+      setExecutions(r.executions);
+    } catch {
+      setExecutions(null);
+    }
+  }, [sessionId]);
+
+  /** `/` 菜单的候选：进面板取一次（目录扫描，不随每条消息重取）。 */
+  useEffect(() => {
+    let alive = true;
+    void api.listSessionCommands(sessionId).then(
+      (r) => {
+        if (alive) setCommands(r.commands);
+      },
+      () => {
+        if (alive) setCommands([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
+
   /** 在途投递面（消息域管道视图，送达即删的本地队列 + 内存态）。 */
   const refreshMessages = useCallback(async (): Promise<void> => {
     try {
@@ -1237,7 +1336,8 @@ export function SessionMessages({
     void loadNewest();
     void refreshMessages();
     void loadPlan();
-  }, [loadNewest, loadPlan, refreshMessages]);
+    void loadExecutions();
+  }, [loadExecutions, loadNewest, loadPlan, refreshMessages]);
 
   useEffect(() => {
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
@@ -1277,6 +1377,7 @@ export function SessionMessages({
         const planWanted = wantPlan;
         wantConv = wantMessages = wantLive = wantPlan = false;
         if (conv) void loadNewest();
+        if (conv) void loadExecutions();
         if (messages) void refreshMessages();
         if (live) void loadLive();
         if (planWanted) void loadPlan();
@@ -1287,7 +1388,7 @@ export function SessionMessages({
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadLive, loadNewest, loadPlan, refreshMessages, sessionId]);
+  }, [lifecycle, loadExecutions, loadLive, loadNewest, loadPlan, refreshMessages, sessionId]);
 
   // Esc 逐层退：右键菜单 → 多选态 → 关闭确认 → 最小化（一层层退出，不一把关掉）。
   // 挂起中不挂这个监听：几扇对话同时存活时，只有露着的那扇该吃 ESC。
@@ -1380,8 +1481,8 @@ export function SessionMessages({
     [messages],
   );
   const { thread, outbox } = useMemo(
-    () => attachDeliveries(withPlan(entries ?? [], plan), manualDeliveries),
-    [entries, manualDeliveries, plan],
+    () => attachDeliveries(withCommands(withPlan(entries ?? [], plan), executions), manualDeliveries),
+    [entries, executions, manualDeliveries, plan],
   );
   /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
   const newestAssistantKey = useMemo(() => {
@@ -1872,6 +1973,75 @@ export function SessionMessages({
     return chip;
   };
 
+  /** 造一枚命令胶囊：值 = 命令名（不含 `/`），发出去时还原成 `/name`。 */
+  const buildCmdChip = (name: string): HTMLElement => {
+    const chip = document.createElement('span');
+    chip.setAttribute('contenteditable', 'false');
+    chip.setAttribute(CMD_ATTR, name);
+    chip.className = CMD_CHIP_CLASS;
+    chip.textContent = `/${name}`;
+    return chip;
+  };
+
+  /** 光标前是不是正在敲一条命令（行首的 `/word`）：是就把已敲的名字片段交出来。 */
+  const commandQueryAt = (el: HTMLDivElement): string | null => {
+    const range = caretInDraft(el);
+    if (!range) return null;
+    return /(?:^|\n)\/([A-Za-z0-9:_-]*)$/.exec(textBeforeCaret(el, range))?.[1] ?? null;
+  };
+
+  /** 敲字时同步 `/` 菜单：不再是命令词就收起（发送/点走/删光都走这一处）。 */
+  const syncCmdMenu = (el: HTMLDivElement): void => {
+    const query = commandQueryAt(el);
+    if (query === null || !commands || commands.length === 0) {
+      if (cmdMenu) setCmdMenu(null);
+      return;
+    }
+    setCmdMenu({ query, active: 0 });
+  };
+
+  /** 落定一条命令：把已敲的 `/query` 换成黄色胶囊，光标停在它后面一格
+   *  （参数接着敲就行）。 */
+  const insertCommand = (name: string): void => {
+    const el = draftRef.current;
+    if (!el) return;
+    const range = caretInDraft(el);
+    setCmdMenu(null);
+    if (!range) return;
+    const query = commandQueryAt(el);
+    const node = range.startContainer;
+    if (query === null || node.nodeType !== TEXT_NODE) return;
+    const start = range.startOffset - (query.length + 1);
+    if (start < 0) return;
+    const r = document.createRange();
+    r.setStart(node, start);
+    r.setEnd(node, range.startOffset);
+    r.deleteContents();
+    const chip = buildCmdChip(name);
+    r.insertNode(chip);
+    const space = document.createTextNode(' ');
+    chip.after(space);
+    const after = document.createRange();
+    after.setStart(space, 1);
+    after.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+    el.focus({ preventScroll: true });
+    setDraft(serializeDraft(el));
+  };
+
+  /** 菜单里的候选：前缀命中的排前面，其余按包含排后面（都按大小写不敏感比）。 */
+  const cmdMatches = useMemo(() => {
+    if (!cmdMenu || !commands) return [];
+    const q = cmdMenu.query.toLowerCase();
+    const prefix = commands.filter((c) => c.name.toLowerCase().startsWith(q));
+    const rest = commands.filter(
+      (c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q),
+    );
+    return [...prefix, ...rest].slice(0, 40);
+  }, [cmdMenu, commands]);
+
   /** 刷新后把没发出去的草稿还回来（每个会话只还一次；键按会话分，多扇对话互不覆盖）。 */
   const draftRestored = useRef<string | null>(null);
   useEffect(() => {
@@ -1880,7 +2050,7 @@ export function SessionMessages({
     const el = draftRef.current;
     const snap = readDraftSnapshot(sessionId);
     if (!el || !snap) return;
-    applyDraftSnapshot(el, snap, buildChip);
+    applyDraftSnapshot(el, snap, buildChip, buildCmdChip);
     setDraft(serializeDraft(el));
     if (snap.staged.length > 0) setStaged(snap.staged);
     // buildChip 每次渲染都是新函数，不进门依赖（restored 闸已保证只跑一次）
@@ -2055,6 +2225,10 @@ export function SessionMessages({
     if (!text && images.length === 0) return;
     setDraftText('');
     setStaged([]);
+    // 发出即清盘：草稿键当场删（别等防抖那一拍），对话缓存也一并丢掉——
+    // 那一份是发送前的尾巴，重开面板时先闪旧账比首屏快慢更难受
+    writeDraftSnapshot(sessionId, null);
+    clearConvCache(sessionId);
     stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
       `sendMsg:${sessionId}`,
@@ -2536,6 +2710,7 @@ export function SessionMessages({
                   );
                 }
                 const pipe = m.pipe;
+                const cmd = commandOfText(m.text);
                 return (
                   <div
                     key={m.key}
@@ -2613,12 +2788,26 @@ export function SessionMessages({
                           ))}
                         </div>
                       ) : null}
-                      {/* 投递原文同样走 markdown 预览（与左侧回复气泡同渲染器）；
-                          `pre-wrap` 保住段落里的软换行——markdown 默认把单换行并成
-                          一行，而用户常整段粘贴多行文本 */}
-                      <div className="[&_p]:whitespace-pre-wrap">
-                        <AssistantMarkdown text={m.text} />
-                      </div>
+                      {/* 斜杠命令画成黄色胶囊（参数照常当文字）；其余走 markdown 预览
+                          （与左侧回复气泡同渲染器），`pre-wrap` 保住段落里的软换行 */}
+                      {cmd ? (
+                        <div className="flex flex-col gap-1">
+                          <p className="flex flex-wrap items-baseline gap-1 whitespace-pre-wrap break-words text-xs leading-relaxed">
+                            <span className={CMD_CHIP_CLASS}>{`/${cmd.name}`}</span>
+                            {cmd.args && <span>{cmd.args}</span>}
+                          </p>
+                          {/* 内建命令的宿主回显（转录里的 local-command-stdout） */}
+                          {m.commandOutput && (
+                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950/70 px-1.5 py-1 font-mono text-[10px] leading-4 text-neutral-400">
+                              {m.commandOutput}
+                            </pre>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="[&_p]:whitespace-pre-wrap">
+                          <AssistantMarkdown text={m.text} />
+                        </div>
+                      )}
                       {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                       {pipe?.reason === 'offline' ? (
                         <p className="mt-1 break-words text-[11px] text-amber-400">
@@ -3121,6 +3310,40 @@ export function SessionMessages({
                     {t('tasks.messagesPlaceholder')}
                   </span>
                 )}
+                {/* `/` 命令提示：候选归 harness 能力面，这里只筛与渲染 */}
+                {cmdMenu && cmdMatches.length > 0 && (
+                  <div
+                    data-cmd-menu
+                    className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-56 overflow-y-auto overscroll-contain rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
+                  >
+                    {cmdMatches.map((c, i) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        // 用 mousedown 落定：click 之前焦点已经离开 composer，光标就没了
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          insertCommand(c.name);
+                        }}
+                        className={cn(
+                          'flex w-full items-baseline gap-2 px-2 py-1 text-left',
+                          i === cmdMenu.active ? 'bg-edge/[0.08]' : 'hover:bg-edge/[0.06]',
+                        )}
+                      >
+                        <span className={CMD_CHIP_CLASS}>{`/${c.name}`}</span>
+                        {c.argsHint && (
+                          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{c.argsHint}</span>
+                        )}
+                        <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+                          {c.description}
+                        </span>
+                        <span className="shrink-0 text-[9px] text-neutral-600">
+                          {t(`tasks.cmdSource_${c.source}` as 'tasks.cmdSource_builtin')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div
                   ref={draftRef}
                   role="textbox"
@@ -3131,6 +3354,7 @@ export function SessionMessages({
                   onInput={(e) => {
                     if (maybeOpenPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
                     setDraft(serializeDraft(e.currentTarget));
+                    syncCmdMenu(e.currentTarget);
                   }}
                   onClick={(e) => {
                     // 点胶囊 = 改这枚引用（胶囊是原子块，点它不会落光标）
@@ -3140,6 +3364,28 @@ export function SessionMessages({
                   onKeyDown={(e) => {
                     // 输入法组字中的 Enter 是「确认候选词」，不是发送
                     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    // `/` 菜单开着时键盘归它：上下选、Enter/Tab 落定、ESC 收起
+                    if (cmdMenu && cmdMatches.length > 0) {
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const step = e.key === 'ArrowDown' ? 1 : -1;
+                        setCmdMenu((m) =>
+                          m ? { ...m, active: (m.active + step + cmdMatches.length) % cmdMatches.length } : m,
+                        );
+                        return;
+                      }
+                      if (e.key === 'Enter' || e.key === 'Tab') {
+                        e.preventDefault();
+                        insertCommand(cmdMatches[cmdMenu.active]?.name ?? cmdMatches[0]!.name);
+                        return;
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCmdMenu(null);
+                        return;
+                      }
+                    }
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
                       send();

@@ -448,6 +448,23 @@ export interface SessionMessageRow {
   at: string;
 }
 
+/** `/` 提示里的一条命令（mirror of harness `HarnessCommand`）。 */
+export interface HarnessCommandRow {
+  /** 不含前导 `/`；插件/skill 带 `<plugin>:<skill>` 形态。 */
+  name: string;
+  description: string;
+  argsHint?: string;
+  source: 'builtin' | 'command' | 'skill' | 'plugin';
+}
+
+/** 转录里的一条命令执行（返显；内建命令没有 hook 事件）。 */
+export interface CommandExecutionRow {
+  name: string;
+  args: string;
+  at: string;
+  output?: string;
+}
+
 /** 计划模式交出的计划正文（最近一次 ExitPlanMode）：对话面当一条气泡摆出来批阅。 */
 export interface SessionPlan {
   /** 提交那次工具调用的事件 id（气泡按它插进对话流）。 */
@@ -1587,6 +1604,15 @@ export const api = {
     apiFetch<{ messages: SessionMessageRow[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/messages`,
     ).then((r) => r.messages),
+  /** 聊天窗口 `/` 的命令候选（发现规则归 harness；supported=false = 没有命令面）。 */
+  listSessionCommands: (sessionId: string): Promise<{ supported: boolean; commands: HarnessCommandRow[] }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/commands`),
+  /** 命令执行的返显（内建命令不发 hook 事件，只有转录记着）。`executions: null` =
+   *  该 harness 不记命令执行（前端如实说明）。 */
+  listCommandExecutions: (
+    sessionId: string,
+  ): Promise<{ supported: boolean; executions: CommandExecutionRow[] | null }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/command-executions`),
   /** 最近一次计划模式交出的计划正文（无计划 / 正文已不可得 = null）。 */
   sessionPlan: (sessionId: string): Promise<SessionPlan | null> =>
     apiFetch<{ plan: SessionPlan | null }>(
