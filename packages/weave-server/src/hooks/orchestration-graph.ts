@@ -31,6 +31,9 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     if (node.kind === 'webhook' && !node.id.startsWith('w:')) {
       return { ok: false, error: `Webhook node id must start with "w:": ${node.id}` };
     }
+    if (node.kind === 'trigger' && !node.id.startsWith('t:')) {
+      return { ok: false, error: `Trigger node id must start with "t:": ${node.id}` };
+    }
   }
   if (edges.length > ORCH_MAX_EDGES) {
     return { ok: false, error: `At most ${ORCH_MAX_EDGES} edges per orchestration` };
@@ -58,14 +61,19 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     (edge) => !edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim(),
   );
   if (mute) return { ok: false, error: `Edge ${mute.from}→${mute.to} has no message` };
-  // 条件边要求对上游会话跑一次「衔接上下文的子 Agent」——webhook 入口没有会话
-  // 可跑，条件无从判断。
+  // 条件/预筛要求对上游会话的输出做判断——webhook 入口没有会话可跑。
   for (const edge of edges) {
-    if (!edge.condition?.trim() || !webhookEntryIds.has(edge.from)) continue;
-    return {
-      ok: false,
-      error: `Edge ${edge.from}→${edge.to} cannot have a condition (webhook entries have no session to ask)`,
-    };
+    if (webhookEntryIds.has(edge.from) && (edge.condition?.trim() || edge.when?.trim())) {
+      return {
+        ok: false,
+        error: `Edge ${edge.from}→${edge.to} cannot have a condition/pre-filter (webhook entries have no session to ask)`,
+      };
+    }
+  }
+  for (const node of nodes) {
+    if (node.kind === 'webhook' && node.autoFire) {
+      return { ok: false, error: `Webhook node ${node.id} cannot have autoFire` };
+    }
   }
   for (const node of nodes) {
     if (node.kind !== 'webhook') continue;
@@ -75,6 +83,16 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     }
     if (!hasIn.has(node.id) && !hasOut.has(node.id)) {
       return { ok: false, error: `Webhook node ${node.id} is not connected` };
+    }
+  }
+  for (const node of nodes) {
+    // 手动触发节点是纯入口：只出、必连（虚节点，没有会话/端点在后面）。
+    if (node.kind !== 'trigger') continue;
+    if (hasIn.has(node.id)) {
+      return { ok: false, error: `Trigger node ${node.id} cannot have inbound edges` };
+    }
+    if (!hasOut.has(node.id)) {
+      return { ok: false, error: `Trigger node ${node.id} is not connected` };
     }
   }
   for (const node of nodes) {

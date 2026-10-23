@@ -31,9 +31,9 @@ export interface OrchCanvasSession {
 }
 
 export interface OrchLaidNode {
-  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `g:<projectId>`。 */
+  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `t:<uuid>` / `g:<projectId>`。 */
   key: string;
-  kind: 'session' | 'webhook' | 'group';
+  kind: 'session' | 'webhook' | 'trigger' | 'group';
   x: number;
   y: number;
   /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>）。 */
@@ -123,7 +123,7 @@ export function layoutOrchestrationCanvas(input: OrchLayoutInput): OrchCanvasLay
       rowCursor.set(rank, row + 1);
       const x = rank * ORCH_COL_W;
       const y = top + row * ORCH_ROW_H;
-      const key = member.kind === 'webhook' ? member.id : `s:${member.id}`;
+      const key = member.kind === 'session' ? `s:${member.id}` : member.id;
       if (isCollapsed) {
         nodeKeyOf.set(member.id, `g:${projectId}`);
         continue;

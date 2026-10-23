@@ -83,6 +83,16 @@ export function parseConditionAnswer(answer: string | null | undefined): boolean
   return null;
 }
 
+/** when 预筛：关键词（逗号/换行/分号分隔）任一为文本的子串即命中（不区分大小写）。 */
+export function matchWhen(when: string, text: string | null): boolean {
+  const hay = (text ?? '').toLowerCase();
+  return when
+    .split(/[,，\n;；]/)
+    .map((k) => k.trim().toLowerCase())
+    .filter((k) => k.length > 0)
+    .some((k) => hay.includes(k));
+}
+
 /** 自然回合自动触发的冷却：Stop 与 SessionEnd 连拍（同轮收尾两条 idle）不重复触发。 */
 const AUTO_FIRE_COOLDOWN_MS = 5_000;
 /** 入口 → 编排索引的缓存窗：定义变更最多这么久才被自然回合触发看到。 */
@@ -193,14 +203,15 @@ export class OrchestrationEngine {
     this.emitRun(rt, 'running');
     await Promise.allSettled(
       chosen.map((entry) =>
-        entry.kind === 'webhook'
-          ? this.fireEdges(rt, entry.id, text ?? '')
-          : this.deliver(rt, {
+        entry.kind === 'session'
+          ? this.deliver(rt, {
               from: '',
               to: entry.id,
               edgeId: '',
               text: text?.trim() || orch.startText.trim() || orch.name,
-            }),
+            })
+          : // webhook / trigger 入口：载荷随出边正文下发（不向入口本身投递）。
+            this.fireEdges(rt, entry.id, text ?? ''),
       ),
     );
     this.maybeDone(rt);
@@ -251,11 +262,12 @@ export class OrchestrationEngine {
   }
 
   /**
-   * 入口会话的自然回合 → 该入口的下游直启（不走 start() 的首投：不向入口再塞
-   * 消息，`{upstream}` 就是这一轮的输出）。判据与护栏：编排 enabled、入口有出边
-   * （孤立入口的平凡编排不空转跑）、同编排无在飞 run、同入口 5s 冷却（Stop 与
-   * SessionEnd 连拍不重复触发）。残余风险如实记：投递走投递器队列还没入 pending
-   * 的窗口里到达的 idle 会被误判成自然回合（窗口毫秒级）。
+   * 可自然触发节点（入口恒可 + autoFire 标记的中间节点）的自然回合 → 其出边
+   * 直启（不走 start() 的首投：不再塞消息，`{upstream}` 就是这一轮的输出）。
+   * 判据与护栏：编排 enabled、节点有出边（孤立节点不空转跑）、同编排无在飞
+   * run、同节点 5s 冷却（Stop 与 SessionEnd 连拍不重复触发）。残余风险如实记：
+   * 投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合
+   * （窗口毫秒级）。
    */
   private maybeAutoFire(sessionId: string): void {
     const now = Date.now();
@@ -263,11 +275,10 @@ export class OrchestrationEngine {
       if (!orch.enabled || this.activeOf(orch.id)) continue;
       const key = `${orch.id}:${sessionId}`;
       if (now - (this.lastAutoFireAt.get(key) ?? 0) < AUTO_FIRE_COOLDOWN_MS) continue;
-      const { entries } = graphDirections(orch.nodes, orch.edges);
-      const entry = entries.find((e) => e.id === sessionId);
-      if (!entry || !orch.edges.some((edge) => edge.from === entry.id)) continue;
+      const node = orch.nodes.find((n) => n.id === sessionId && n.kind === 'session');
+      if (!node || !orch.edges.some((edge) => edge.from === node.id)) continue;
       this.lastAutoFireAt.set(key, now);
-      void this.fireFromEntry(orch, entry.id);
+      void this.fireFromEntry(orch, node.id);
     }
   }
 
@@ -306,10 +317,14 @@ export class OrchestrationEngine {
     this.maybeDone(rt);
   }
 
-  /** 入口 → 编排索引（TTL 缓存：定义变更 10s 内生效，别每个 idle 全表扫）。 */
+  /** 可自然触发的节点 → 编排索引（TTL 缓存：定义变更 10s 内生效，别每个 idle 全表扫）。 */
   private entryIndexCache: { at: number; map: Map<string, OrchestrationRow[]> } | null = null;
   private lastAutoFireAt = new Map<string, number>();
 
+  /**
+   * 自然触发的节点资格：入口 session 恒可；中间 session 节点显式 `autoFire`
+   * 才可（画布节点检查器开关）。webhook 节点永远不在列。
+   */
   private entryIndex(): Map<string, OrchestrationRow[]> {
     if (this.entryIndexCache && Date.now() - this.entryIndexCache.at < ENTRY_INDEX_TTL_MS) {
       return this.entryIndexCache.map;
@@ -317,8 +332,12 @@ export class OrchestrationEngine {
     const map = new Map<string, OrchestrationRow[]>();
     for (const orch of this.deps.orchestrations.list()) {
       if (!orch.enabled) continue;
-      for (const node of graphDirections(orch.nodes, orch.edges).entries) {
+      const entries = new Set(
+        graphDirections(orch.nodes, orch.edges).entries.map((n) => n.id),
+      );
+      for (const node of orch.nodes) {
         if (node.kind !== 'session') continue;
+        if (!entries.has(node.id) && !node.autoFire) continue;
         const list = map.get(node.id) ?? [];
         list.push(orch);
         map.set(node.id, list);
@@ -449,6 +468,19 @@ export class OrchestrationEngine {
           summary = this.deps.supportsExtract?.(from)
             ? ((await this.deps.extract?.({ sessionId: from, prompt: edge.extract.trim() })) ?? null)
             : null;
+        }
+        // 文本预筛：{upstream}（文末总结）命中任一关键词才继续——费 token 的
+        // condition fork 不做无谓功。不命中拦下（不 fork、不投）。
+        if (edge.when?.trim() && !matchWhen(edge.when, upstream)) {
+          this.record(rt, {
+            from,
+            to: edge.to,
+            edgeId: edge.id,
+            ok: false,
+            stage: 'condition',
+            error: 'pre-filter no match — upstream output lacks all keywords',
+          });
+          return;
         }
         // 放行条件：问上游会话的上下文子 Agent，只认 yes/no；no 或判不出都拦下。
         if (edge.condition?.trim()) {

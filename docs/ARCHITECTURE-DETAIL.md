@@ -286,9 +286,9 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 ### 4.12 编排 = 多入口/出口图
 
-`orchestrations` 表 = 名字 + 起始文本 + **节点/边** + `enabled` + `cron`，一份全局共享列表。节点是对象数组：**session 节点 id = sessionId**（运行态 pending 键、`RunEvent.from/to`、画布 flash 全按它流转），**webhook 节点 id = `w:<uuid>`**（入口带 `webhookToken`，出口带 `url`/`secret`）。`project_id` = 入口 session 节点所属项目（入口必须同项目；webhook-only 由创建方显式给），中间节点可跨项目。
+`orchestrations` 表 = 名字 + 起始文本 + **节点/边** + `enabled` + `cron`，一份全局共享列表。节点是对象数组：**session 节点 id = sessionId**（运行态 pending 键、`RunEvent.from/to`、画布 flash 全按它流转），**webhook 节点 id = `w:<uuid>`**（入口带 `webhookToken`，出口带 `url`/`secret`），**trigger 节点 id = `t:<uuid>`**（手动触发纯入口虚节点：只出必连，没有会话在后面——手动触发选中它时正文经出边 `{upstream}` 下发，`start()` 分流成「session 入口投首消息 / webhook·trigger 入口 fire 载荷」）。`project_id` = 入口 session 节点所属项目（入口必须同项目；webhook-only 由创建方显式给），中间节点可跨项目。
 
-图是**任意有向 DAG**（≤24 节点 / ≤64 边，无自环 / 无重边 / 无重复边 id / 无环）。**入口 = 无入边节点、出口 = 无出边节点；中间节点只能是 session 且必须有两端方向；webhook 节点只能站两端**（两端形状 XOR 判据 + 出口 URL http(s) 校验）。可达性不单查：入口 = 全部无入边节点，DAG 里入边链必然落回某入口，多源可达恒真（成环已被拒）；孤立 session 节点 = 自成入口的平凡编排，合法。校验唯一实现 = `hooks/orchestration-graph.ts` 的 `validateOrchestration`——服务端写入口直接拒，web 的 `validateDraft` 同判据只做即时提示。
+图是**任意有向 DAG**（≤24 节点 / ≤64 边，无自环 / 无重边 / 无重复边 id / 无环）。**入口 = 无入边节点、出口 = 无出边节点；中间节点只能是 session 且必须有两端方向；webhook 节点只能站两端**（两端形状 XOR 判据 + 出口 URL http(s) 校验）；**trigger 节点不可有入边**。可达性不单查：入口 = 全部无入边节点，DAG 里入边链必然落回某入口，多源可达恒真（成环已被拒）；孤立 session 节点 = 自成入口的平凡编排，合法。校验唯一实现 = `hooks/orchestration-graph.ts` 的 `validateOrchestration`——服务端写入口直接拒，web 的 `validateDraft` 同判据只做即时提示。
 
 ### 4.13 推进 = 消息传递（每到一条执行一次）
 
@@ -297,12 +297,13 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环。
 - **边正文变量**（服务端 `renderTemplate` 渲染，web 只当文本）：`{upstream}` = 上游这一轮最终输出（`MessageDeliverer.lastTurnOutput` 读既有 `hook_events` 的 `raw.last_assistant_message`，超 `CARRY_OUTPUT_MAX_CHARS = 4000` 截断；webhook 入口 = 触发载荷）、`{summary}` = 本边提取结果、`{session}` = 上游会话名。缺值占位原样保留 → **渲染后判残留，残留即记失败**（不投半截模板）。
 - **边级提取**（`edge.extract`）：对上游会话 **fork 一个无头回合**提炼信息（`ResumeCommandSpec.extractArgs` 归 harness；claude = `--resume <sid> --fork-session --no-session-persistence --session-id <引擎自造 uuid>`，实测 2.1.296 fork 真继承上下文、转录不落盘）。fork 的 hook 事件照发 ⇒ **合成会话名单**（`hooks/synthetic-sessions.ts`）：引擎 spawn 前登记、经 `HookPipeline.pushSyntheticSessions` 全量推给 inbox worker、**行即焚**（不落库不建会话行）。不支持 fork 的 harness（`extractArgs` 缺席，codex 留位）回落 `{upstream}` 并如实记事件。`handoffPrompt` 自投总结回合与 `carryOutput` 已退役（那才是污染原会话的来源）。
-- **自然回合自动触发**（enabled 闸）：入口会话 idle 且**消费前任何 run 对该会话都无 pending**（会话级判据，跨编排安全——判据取消费前快照）→ 该入口下游直启（不走 `start()` 的首投，`{upstream}` 就是这一轮的输出）。护栏：入口有出边（孤立入口不空转）、同编排无在飞 run、同入口 5s 冷却（Stop/SessionEnd 连拍）、入口索引 TTL 10s 缓存。残余风险如实记：投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合（毫秒级窗口）。
+- **边闸两道、先廉后贵**（顺序 = when → condition → 投递）：`when` **文本预筛**——`{upstream}`（宿主文末总结）命中任一关键词（逗号/换行分隔、大小写不敏感子串）才继续，不命中记 `stage:'condition'` 事件拦下，**fork 都不烧**；`condition` **放行判断**——对上游会话跑一次「衔接上下文的子 Agent」（能力面口径 `supportsExtract`/`extract`，claude = fork；codex 无此面），提问要求严格回答 yes/no（中英首词认法 `parseConditionAnswer`）：yes 放行，no / 判不出都**拦下不投**（用户裁决：宁可不发错包），`stage:'condition'` 事件带原因；**全部出边被拦下 run 落 done**（判断按预期工作，不是失败）。when/condition 不可设在载荷型入口（webhook/trigger）的出边——没有会话可问（校验两侧同拒）。**不走「hook 向会话补发判断 prompt」**：那是已退役 handoffPrompt 的污染路，判断一律 daemon 侧 fork。
+- **自然回合自动触发**（enabled 闸）：**入口 session 恒可 + `autoFire: true` 的中间 session 节点**（节点级 opt-in，画布检查器开关）idle 且**消费前任何 run 对该会话都无 pending**（会话级判据，跨编排安全——判据取消费前快照）→ 其出边直启（不走 `start()` 的首投，`{upstream}` 就是这一轮的输出）。护栏：节点有出边（孤立节点不空转）、同编排无在飞 run、同节点 5s 冷却（Stop/SessionEnd 连拍）、可触发节点索引 TTL 10s 缓存。残余风险如实记：投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合（毫秒级窗口）。
 - **webhook 出口在 `deliver` 分流**：不经判活/`ensureOpen`/pending（它不会回话），直接 `postJson`（`hooks/handlers/webhook.ts` 抽出的共用边界：http/https、5s 超时、HMAC 头）出站 POST，body = `{orchestrationName, runId, from, text, at}`；POST 计入 inflight 与投递预算。
 
 ### 4.14 三枚触发
 
-- **手动**：`POST :id/trigger` 可带首步消息与**入口子集**（缺省 = 全部 session 入口）。
+- **手动**：`POST :id/trigger` 可带首步消息与**入口子集**（缺省 = 全部 session 入口；选中 webhook/trigger 入口则从它们 fire 载荷而不是投首消息）。**enabled 闸只管自动路径（cron/自然回合）**——手动与 webhook 是显式行为，停用的编排仍可显式触发。
 - **webhook**：`POST /webhooks/orchestrate/<节点token>`——token 归 webhook **入口节点**（仓储 insert 时补发 + 全库查重，`POST .../rotate-webhook` 按节点换发）；载荷随该入口的出边正文下发（正文里 `{upstream}` 引用载荷，模板没引用就拼在正文后，正文空 = 只转发载荷）；路由在认证豁免内，api-log 把 token 段脱敏成 `[redacted]`。
 - **cron**：5 字段表达式，daemon 30s 一探、同分钟只 fire 一次、已有在跑 run 则跳过；只驱动 session 入口（webhook-only 无可定时的入口），`enabled = false` 不触发。
 
@@ -324,16 +325,18 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 画布规则：
 
-- **只摆编排内的节点**——session 节点挂 `s:` 前缀、webhook 节点用裸 id；全局按项目分组（webhook 归「未知项目」框）、组默认收起、首个 session 节点所在项目初始展开，项目视图全展示。
-- 会话节点从受管会话里挑且**排除 1h 快速过期的 `promptless` 新会话**（能力面 prompt 列过滤）；webhook 节点画布左上一枚钮即加。
+- **总览 + 编辑双形态**：默认**未选编排** = 总览——`mergeOrchestrations` 把范围内所有编排**合并成一张图**（节点按 id 去重：同一会话只摆一个节点，跨编排 n:n 扇入扇出；边按端点对合并，`pairs` 记全来源），布局复用单图分层、单向无环；只读，编排名/会话/项目筛选收窄显隐，**无任何画布跳转**；编辑入口 = 首节点卡片（点它列出以它为入口的编排 + 新建）。选中某份 = 编辑画布。
+- **只摆编排内的节点**——session 节点挂 `s:` 前缀、webhook/trigger 节点用裸 id；全局按项目分组（webhook/trigger 归所属编排的项目框）、组默认收起、首个 session 节点所在项目初始展开，项目视图全展示。
+- 会话节点从受管会话里挑且**排除 1h 快速过期的 `promptless` 新会话**（能力面 prompt 列过滤）；webhook / 手动触发节点画布左上各一枚钮即加。
+- **连线 = 上游卡片右栏 hook → 下游卡片左栏 hook**：节点是三栏卡片（左右栏是外接连接点，每个不同上游/下游一枚编号 hook），连线两端挂具体端口（Handle id = `in:<上游>` / `out:<下游>`——**必须按编排节点 id 拼**，渲染键 `s:<id>` 拼上去 handle 找不到、ReactFlow 静默不画，error 008 踩过）；点连接点/线段 = 选中那条边去改正文；未保存连线琥珀虚线、无效连线红虚线（`invalidEdgeIds` 逐条判）；正文标签走 HTML 层限宽换行（列间距 − 卡片宽 − 留白），不被节点盖住。
 - **项目视图的入口 session 只能是本项目的会话**（中间节点可跨项目，越界由底栏警示）。
 - ReactFlow 的背景样式设置条（`CanvasBackground`，编排与事件链共用）**恒从收起开始**。
 
 **图即编辑面**：
 
-- 点节点 / 点边开右上检查器就地改（session 节点 = 打开对话 / 移除 / 列出边；webhook 节点 = 入口复制/轮换端点、出口填 url/secret；边 = 改投递正文（变量提示）/ 提取指令 / 删），从节点右侧圆点拖到另一节点即连边。
-- 图上每一种改法与工具条**共用同一份 draft 与同一组纯函数**（`addEdge` / `addWebhookNode` / `removeNode` / `removeEdge` + `findCycle` 先拒环）；**边 id 是短序号**（`e1`、`e2`…，会话 id 本身 36+ 字符，拼两端会顶爆服务端 64 上限），id 只当内部键、不进展示。
-- **没有单独的表单卡片**——图外那几项（名称 / 起始消息 / cron / enabled 开关）就在画布上方的工具条里，手动触发的入口多选（入口 ≥ 2 时出 checkbox 面板）也在其上；新增节点在画布左上（空画布时在占位块里），节点数/连线数与校验错误在画布内就地显示。
+- 点节点 / 点边开**右侧贴屏检查器**（上下通高右栏 `w-80`，会话/连线/触发/webhook 各一节）就地改（session 节点 = 打开对话 / 移除 / **自然回合触发开关（autoFire）** / 列出边；trigger 节点 = 说明 + 移除；webhook 节点 = 入口复制/轮换端点、出口填 url/secret；边 = 改投递正文（变量提示）/ 提取指令 / **文本预筛 when** / **放行条件 condition** / 删），从节点 hook 端口拖到另一节点即连边。
+- 图上每一种改法与工具条**共用同一份 draft 与同一组纯函数**（`addEdge` / `addWebhookNode` / `addTriggerNode` / `removeNode` / `removeEdge` + `findCycle` 先拒环）；**边 id 是短序号**（`e1`、`e2`…，会话 id 本身 36+ 字符，拼两端会顶爆服务端 64 上限），id 只当内部键、不进展示。
+- **没有单独的表单卡片**——图外那几项（名称 / 起始消息 / cron / enabled 开关）就在画布上方的工具条里，手动触发的入口多选（入口 ≥ 2 时出 checkbox 面板）也在其上；新增节点在画布左上（空画布时在占位块里），节点数/连线数与校验错误在画布内就地显示；**画布可全屏**（标题行切换，fixed 贴满视口——贴屏表单才有地方摆）。
 - **破坏性确认走应用内 `ConfirmDialog`**（原生 confirm/alert 禁用）。
 - 节点正文点击 = 选中（不是开对话，对话是节点上那枚图标与检查器里的按钮）。
 
@@ -856,13 +859,8 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChart` + `GridComponent` + `TooltipComponent` + `CanvasRenderer`），独立 chunk、只在仪表盘挂载时加载；`animation:false`，每次帧只 `setOption({xAxis:{data}, series:[{data}]})`；容器尺寸变化用 `ResizeObserver`；轴标签按容器宽度抽稀（窄屏每 10 分钟、桌面每 5 分钟）。
 
-## §19 回合完成判定（classify handler）
+## §19 回合完成判定（classify handler · 已退役 2026-10-23）
 
-规则来源 = `Stop`（一轮结束，`raw.last_assistant_message` 即本轮最终输出）。处理链：
+> **已退役**：与编排的「自然回合（autoFire）+ when 预筛 + condition 判断」是同一件事的两套实现，裁决收敛进编排画布（触发/过滤/判断的唯一配置入口；见 §4.13 边闸两道与本节存档）。`HandlerConfigSchema` 与 `dispatcher.runClassifyAsync` **保留兼容读**——存量 classify 规则仍会执行，但 UI 不再露出、不可创建/编辑，删一条少一条。
 
-1. **预筛**：`handler.prefilter` 任一关键词命中本轮输出才继续——没命中不 fork，零成本；
-2. **判定**：fork 一个无头子 agent（复用编排边级提取的 `edgeExtract.run`，继承会话上下文、不动原会话），prompt = 规则里的判定指令 + 本轮输出（截断 8k）；模型只回一行 JSON `{label, reason?}`；
-3. **路由**：`label` 命中 `handler.routes[].label`（大小写不敏感）才 `postJson` 到该路由的 `url`（可带 `secret` 做 HMAC）；body = 事件摘要 + `label` + `verdict`；
-4. **防回环**：同规则同会话 `cooldownMs`（默认 10 分钟）内不重复判定——下游若是编排，它回投的那一轮不会再触发。
-
-fork 不支持的 harness（codex）由 `edgeExtract.supports` 判空 → 判定拿不到结果，按 `no label` 结束（不报错）。表单只读展示该处理器，创建走 API / 内置规则。
+退役前的机制（存档）：规则来源 = `Stop`（`raw.last_assistant_message` 即本轮最终输出）。预筛（`prefilter` 任一关键词命中才继续，零成本）→ fork 无头子 agent 判定（复用 `edgeExtract.run`，模型只回一行 JSON `{label, reason?}`）→ `label` 命中 `routes[].label` 才 `postJson` 出站（可带 `secret` HMAC）→ `cooldownMs`（默认 10 分钟）防下游回投的回环。fork 不支持的 harness 判定拿不到结果，按 `no label` 结束（不报错）。

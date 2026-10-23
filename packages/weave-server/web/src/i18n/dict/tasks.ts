@@ -360,6 +360,19 @@ export const tasksZh = {
   'orch.edgeCondition': '放行条件',
   'orch.edgeConditionHint':
     '问上游会话（子 Agent 读上下文回答 yes/no）：yes 才投递，no 或判不出都拦下；webhook 入口的连线不能设',
+  'orch.edgeWhen': '文本预筛',
+  'orch.edgeWhenHint':
+    '关键词（逗号/换行分隔）：上游文末总结命中任一才继续（才烧判断 fork），不含直接拦下',
+  'orch.autoFireOn': '自然回合触发：开',
+  'orch.autoFireOff': '自然回合触发：关',
+  'orch.autoFireHint':
+    '本会话自己的回合完成也触发下游（入口恒可不用勾；受编排「启用」闸管，投出来的回合不算）',
+  'orch.addTrigger': '手动触发',
+  'orch.triggerNode': '手动触发',
+  'orch.triggerNodeHint':
+    '纯入口虚节点：手动触发时选中它，输入的正文经出边 {upstream} 下发；它没有会话在后面',
+  'orch.canvasFull': '画布全屏',
+  'orch.canvasExitFull': '退出全屏',
 
   // 编排定义编辑器
   'orch.nameLabel': '名称',
@@ -845,6 +858,19 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'orch.edgeCondition': 'Delivery condition',
   'orch.edgeConditionHint':
     'Ask the upstream session (a context-reading sub-agent answers yes/no): deliver only on yes; no or unclear answers block this link. Not available on webhook-entry links',
+  'orch.edgeWhen': 'Text pre-filter',
+  'orch.edgeWhenHint':
+    'Keywords (comma/newline separated): continue (and spend the judgment fork) only when the upstream end-of-turn summary contains any of them',
+  'orch.autoFireOn': 'Natural-turn trigger: on',
+  'orch.autoFireOff': 'Natural-turn trigger: off',
+  'orch.autoFireHint':
+    'This session’s own turns also trigger downstream (entries always do; gated by the orchestration’s enabled switch; orchestration-delivered turns don’t count)',
+  'orch.addTrigger': 'Manual trigger',
+  'orch.triggerNode': 'Manual trigger',
+  'orch.triggerNodeHint':
+    'A pure entry marker: select it when triggering manually and the typed text flows down the outgoing links as {upstream}; no session sits behind it',
+  'orch.canvasFull': 'Fullscreen canvas',
+  'orch.canvasExitFull': 'Exit fullscreen',
 
   // Definition editor
   'orch.nameLabel': 'Name',

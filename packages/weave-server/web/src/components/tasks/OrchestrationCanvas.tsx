@@ -22,7 +22,9 @@ import {
   Copy,
   Globe,
   Link2,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Plus,
   Save,
   Trash2,
@@ -66,6 +68,7 @@ import {
   ORCH_MAX_NODES,
   addEdge,
   addSessionNode,
+  addTriggerNode,
   addWebhookNode,
   findCycle,
   graphDirections,
@@ -144,8 +147,8 @@ const serialize = (draft: OrchDraft): string =>
   JSON.stringify([
     draft.name,
     draft.startText,
-    draft.nodes.map((n) => [n.id, n.kind, n.webhookToken ?? '', n.url ?? '', n.secret ?? '']),
-    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.extract ?? '', e.condition ?? '']),
+    draft.nodes.map((n) => [n.id, n.kind, n.webhookToken ?? '', n.url ?? '', n.secret ?? '', n.autoFire ?? false]),
+    draft.edges.map((e) => [e.id, e.from, e.to, e.text, e.extract ?? '', e.condition ?? '', e.when ?? '']),
     draft.cron,
   ]);
 
@@ -453,9 +456,50 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
   );
 }
 
+type TriggerNodeData = {
+  hot: boolean;
+  selected: boolean;
+  missing: boolean;
+  inPorts: PortItem[];
+  outPorts: PortItem[];
+};
+type TriggerFlowNode = Node<TriggerNodeData, 'orchTrigger'>;
+
+/** 手动触发入口（虚节点）：手动触发选中它时，正文经出边 {upstream} 下发。 */
+function TriggerNode({ data }: NodeProps<TriggerFlowNode>) {
+  const t = useT();
+  const { hot, selected, missing, inPorts, outPorts } = data;
+  return (
+    <div
+      style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
+      className={cn(
+        'flex rounded-lg border bg-neutral-900/95 shadow-mac transition-colors',
+        hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
+        selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
+        missing ? 'opacity-50' : 'hover:border-blue-500/40',
+      )}
+    >
+      <PortRail ports={inPorts} side="in" />
+      <PortRail ports={outPorts} side="out" />
+      <PortColumn ports={inPorts} side="in" />
+      <div className="flex min-w-0 flex-1 items-center gap-2 border-x border-edge/[0.06] px-2">
+        <Zap className="h-4 w-4 shrink-0 text-amber-300" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+          {t('orch.triggerNode')}
+        </span>
+        <Badge className="shrink-0 bg-amber-900/50 text-[9px] text-amber-300">
+          {t('orch.entryTag')}
+        </Badge>
+      </div>
+      <PortColumn ports={outPorts} side="out" />
+    </div>
+  );
+}
+
 const nodeTypes = {
   orchSession: SessionNode,
   orchWebhook: WebhookNode,
+  orchTrigger: TriggerNode,
   orchGroup: GroupNode,
 };
 
@@ -514,6 +558,8 @@ function OrchFlowEdge({
             }}
             className={cn(
               'pointer-events-none select-none whitespace-pre-wrap break-words rounded px-1 py-0.5 text-[10px] leading-4',
+              // 文字过多只露前三行，余下省略（display:-webkit-box 才能钳行数）
+              'line-clamp-3',
               'bg-neutral-950/85',
               tone === 'invalid'
                 ? 'text-red-300/90 ring-1 ring-red-500/30'
@@ -532,15 +578,15 @@ function OrchFlowEdge({
 
 const edgeTypes = { orchFlow: OrchFlowEdge };
 
-/** 节点的 flash 键（session 挂 `s:` 前缀，webhook 用裸 `w:` id）。 */
+/** 节点的 flash 键（session 挂 `s:` 前缀；webhook/trigger 用裸 id）。 */
 function nodeFlashKey(nodeId: string): string {
-  return nodeId.startsWith('w:') ? nodeId : `s:${nodeId}`;
+  return nodeId.startsWith('w:') || nodeId.startsWith('t:') ? nodeId : `s:${nodeId}`;
 }
 
-/** 渲染节点键 → 编排节点 id（`s:<会话>` → 会话 id，`w:<uuid>` 原样，分组框 = null）。 */
+/** 渲染节点键 → 编排节点 id（`s:<会话>` → 会话 id，`w:`/`t:` 原样，分组框 = null）。 */
 function orchIdOfRenderKey(key: string): string | null {
   if (key.startsWith('s:')) return key.slice(2);
-  if (key.startsWith('w:')) return key;
+  if (key.startsWith('w:') || key.startsWith('t:')) return key;
   return null;
 }
 
@@ -622,6 +668,8 @@ export function OrchestrationCanvas({
   const draft = editing?.draft ?? null;
   const dirty = editing != null && serialize(editing.draft) !== editing.base;
   const order = editing?.id ?? null;
+  /** 画布全屏（对话弹窗同款语义）：编辑表单贴屏右侧才有地方摆。 */
+  const [canvasFull, setCanvasFull] = useState(false);
 
   const patch = useCallback((fn: (d: OrchDraft) => OrchDraft): void => {
     setEditing((prev) => (prev ? { ...prev, draft: fn(prev.draft) } : prev));
@@ -719,9 +767,9 @@ export function OrchestrationCanvas({
         projectId: row?.projectId ?? null,
       });
     }
-    // webhook 跟着编排走：编辑面 = 这份编排的项目；总览 = 含它的第一份编排的项目。
+    // webhook/trigger 虚节点跟着编排走：编辑面 = 这份编排的项目；总览 = 含它的第一份编排的项目。
     for (const node of nodes) {
-      if (node.kind !== 'webhook') continue;
+      if (node.kind === 'session') continue;
       const pid =
         draft != null
           ? (order != null
@@ -1141,6 +1189,22 @@ export function OrchestrationCanvas({
           },
         };
       }
+      if (n.kind === 'trigger') {
+        const nodeId = n.nodeId ?? '';
+        return {
+          id: n.key,
+          type: 'orchTrigger',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            hot: orchId != null && (flash[`o${orchId}:n:${nodeFlashKey(nodeId)}`] ?? 0) > now,
+            selected: sel?.kind === 'node' && sel.id === nodeId,
+            missing: !draft.nodes.some((x) => x.id === nodeId),
+            inPorts: [],
+            outPorts: outsOf(nodeId),
+          },
+        } satisfies Node;
+      }
       if (n.kind === 'webhook') {
         const nodeId = n.nodeId ?? '';
         const node = draft.nodes.find((x) => x.id === nodeId);
@@ -1317,6 +1381,24 @@ export function OrchestrationCanvas({
           },
         };
       }
+      if (n.kind === 'trigger') {
+        const nodeId = n.nodeId ?? '';
+        return {
+          id: n.key,
+          type: 'orchTrigger',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            hot: false,
+            selected: false,
+            missing: false,
+            inPorts: [],
+            outPorts: overview.edges
+              .filter((edge) => edge.from === nodeId)
+              .map((edge, i) => ({ neighbor: edge.to, hint: `hook${i + 1} → ${labelOf(edge.to)}` })),
+          },
+        } satisfies Node;
+      }
       const nodeId = n.nodeId ?? '';
       const orchIds = overview.merged.orchIdsOf.get(nodeId) ?? [];
       const hot = orchIds.some(
@@ -1488,7 +1570,7 @@ export function OrchestrationCanvas({
   const orchNodeIdOf = (flowNodeId: string | undefined): string | null => {
     if (!flowNodeId) return null;
     if (flowNodeId.startsWith('s:')) return flowNodeId.slice(2);
-    if (flowNodeId.startsWith('w:')) return flowNodeId;
+    if (flowNodeId.startsWith('w:') || flowNodeId.startsWith('t:')) return flowNodeId;
     return null;
   };
 
@@ -1717,7 +1799,7 @@ export function OrchestrationCanvas({
   const selEdge =
     sel?.kind === 'edge' ? (draft?.edges.find((e) => e.id === sel.id) ?? null) : null;
   const selNodeOut = selNode ? (draft?.edges ?? []).filter((e) => e.from === selNode) : [];
-  /** 节点显示名：session 用会话标题，webhook 用端点角色名。 */
+  /** 节点显示名：session 用会话标题，webhook/trigger 用端点角色名。 */
   const nodeLabel = useCallback(
     (nodeId: string): string => {
       if (nodeId.startsWith('w:')) {
@@ -1728,6 +1810,7 @@ export function OrchestrationCanvas({
           entries.some((n) => n.id === nodeId) ? 'orch.webhookEntry' : 'orch.webhookExit',
         );
       }
+      if (nodeId.startsWith('t:')) return t('orch.triggerNode');
       return sessionLabel(sessionById.get(nodeId)?.title ?? null, nodeId);
     },
     [draft, sessionById, t],
@@ -1735,212 +1818,46 @@ export function OrchestrationCanvas({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Waypoints className="h-3.5 w-3.5 text-teal-400" />
-        <h3 className="text-sm font-semibold text-neutral-200">{t('orch.title')}</h3>
-        {live && live.status === 'running' && (
-          <Badge className="bg-sky-900/50 text-sky-300">
-            {t('orch.statusRunning')} · {t('orch.runDeliveries', { n: live.deliveries })}
-            {livePending > 0 && ` · ${t('orch.runPending', { n: livePending })}`}
-          </Badge>
+      {/* 画布（全屏 = 对话弹窗同款：fixed 贴满视口；放大钮在画布右上角，检查器开着时左移让位） */}
+      <div
+        className={cn(
+          // 高度在非全屏时必须显式给（子元素全绝对定位，塌 0 = 整块画布消失）
+          'relative h-[420px] rounded-lg border border-edge/[0.06]',
+          tintClass,
+          // 全屏铺不透明底：网格照常画，但身后页面内容不许透出来（对话弹窗同款 bg）
+          canvasFull && 'fixed inset-0 z-[80] h-auto rounded-none border-0 bg-neutral-900',
         )}
-        <RefreshIconButton
-          className="ml-auto"
-          title={t('tasks.refresh')}
-          onClick={() => {
-            void refreshList();
-            void refreshRuns();
-          }}
-        />
-      </div>
-
-      {/* 选择 / 命名 / 保存（图外的定义项都在这几条工具条上，没有单独的表单卡片） */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Combobox
-          value={editing?.id != null ? String(editing.id) : ''}
-          onChange={(v) => {
-            const row = (list ?? []).find((r) => String(r.id) === v);
-            setEditing(row ? asEditing(row) : null);
-          }}
-          title={t('orch.listLabel')}
-          placeholder={list === null ? t('hooks.loading') : t('orch.overviewAll')}
-          className="min-w-[10rem] max-w-[16rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
-          options={[
-            { value: '', label: t('orch.overviewAll') },
-            ...(list ?? []).map((row) => ({
-              value: String(row.id),
-              label: row.name || t('orch.untitled'),
-            })),
-          ]}
-        />
+      >
         <button
           type="button"
-          onClick={() =>
-            setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
-          }
-          className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+          onClick={() => setCanvasFull((v) => !v)}
+          title={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
+          aria-label={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
+          className={cn(
+            'absolute top-2 z-30 rounded border border-edge/[0.1] bg-neutral-900/90 p-1 text-neutral-400 transition-colors hover:text-neutral-100',
+            (selNode && draft) || selEdge ? 'right-[21rem]' : 'right-2',
+          )}
         >
-          <Plus className="h-3 w-3" />
-          {t('orch.new')}
+          {canvasFull ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
         </button>
-        {editing && draft && (
-          <>
-            <input
-              value={draft.name}
-              onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
-              placeholder={t('orch.namePlaceholder')}
-              title={t('orch.nameLabel')}
-              className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-            />
-            {dirty && <span className="text-[10px] text-amber-400/80">{t('orch.unsaved')}</span>}
-            <button
-              type="button"
-              disabled={!canSave}
-              onClick={save}
-              title={check && !check.ok ? check.error : t('orch.save')}
-              className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800 disabled:opacity-40"
-            >
-              <FeedbackIcon
-                state={fb.stateOf('orch:save')}
-                className="h-3 w-3"
-                icon={<Save className="h-3 w-3" />}
-              />
-              {t('orch.save')}
-            </button>
-            <button
-              type="button"
-              disabled={fb.stateOf('orch:delete') === 'loading'}
-              onClick={remove}
-              title={t('orch.deleteOrch')}
-              className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-[11px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* 自动触发：起始消息 / 定时（webhook 端点归节点自己的检查器） */}
-      {editing && draft && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <input
-            value={draft.startText}
-            onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
-            placeholder={t('orch.startTextHint')}
-            title={t('orch.startTextLabel')}
-            className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => setCronOpen(true)}
-            className={cn(
-              'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
-              draft.cron
-                ? 'border-violet-400/40 bg-violet-500/10 text-violet-200'
-                : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
-            )}
-          >
-            {draft.cron ? t('orch.cronBadge', { expr: draft.cron }) : t('orch.cronSet')}
-          </button>
-          {editing.id != null && current && (
-            <button
-              type="button"
-              disabled={fb.stateOf('orch:enabled') === 'loading'}
-              onClick={() => {
-                const id = editing.id!;
-                void fb.run(
-                  'orch:enabled',
-                  async () => {
-                    const res = await api.updateOrchestration(id, { enabled: !current.enabled });
-                    setList((prev) =>
-                      prev?.map((row) => (row.id === id ? res.orchestration : row)) ?? prev,
-                    );
-                  },
-                  { fail: (e) => t('orch.saveFailed', { error: errorText(e) }) },
-                );
-              }}
-              title={t('orch.enabledHint')}
-              className={cn(
-                'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
-                current.enabled
-                  ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
-                  : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
-              )}
-            >
-              {t(current.enabled ? 'orch.enabledOn' : 'orch.enabledOff')}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 手动触发：入口 ≥ 2 时先选跑哪些（缺省全部 session 入口） */}
-      {editing && draft && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {manualEntryChoices.length > 1 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {manualEntryChoices.map((entry) => {
-                const checked = triggerEntries?.includes(entry.id) ?? false;
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    onClick={() =>
-                      setTriggerEntries((prev) => {
-                        const base = prev ?? manualEntryChoices.map((n) => n.id);
-                        return base.includes(entry.id)
-                          ? base.filter((x) => x !== entry.id)
-                          : [...base, entry.id];
-                      })
-                    }
-                    title={nodeLabel(entry.id)}
-                    className={cn(
-                      'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition-colors',
-                      checked
-                        ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
-                        : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
-                    )}
-                  >
-                    {entry.kind === 'webhook' ? <Globe className="h-2.5 w-2.5" /> : null}
-                    <span className="min-w-0 truncate">{nodeLabel(entry.id)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <input
-            value={triggerText}
-            onChange={(e) => setTriggerText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                trigger();
-              }
-            }}
-            placeholder={t('orch.triggerTextTitle')}
-            className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-          />
-          <button
-            type="button"
-            disabled={editing.id == null || fb.stateOf('orch:trigger') === 'loading'}
-            onClick={trigger}
-            className="inline-flex items-center gap-1 rounded bg-teal-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
-          >
-            <FeedbackIcon
-              state={fb.stateOf('orch:trigger')}
-              className="h-3 w-3"
-              icon={<Zap className="h-3 w-3" />}
-            />
-            {t('orch.triggerOnce')}
-          </button>
-        </div>
-      )}
-
-      {/* 画布 */}
-      <div className={cn('relative h-[420px] rounded-lg border border-edge/[0.06]', tintClass)}>
         {draft === null && (list === null || list.length === 0) ? (
-          <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
-            {list === null ? t('hooks.loading') : t('orch.empty')}
-          </p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-xs text-neutral-600">
+              {list === null ? t('hooks.loading') : t('orch.empty')}
+            </p>
+            {list !== null && list.length === 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                }
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
+              >
+                <Plus className="h-3 w-3" />
+                {t('orch.new')}
+              </button>
+            )}
+          </div>
         ) : draft === null && (overview == null || overview.nodes.length === 0) ? (
           <p className="flex h-full items-center justify-center px-6 text-center text-xs text-neutral-600">
             {t('orch.noMatch')}
@@ -1971,11 +1888,56 @@ export function OrchestrationCanvas({
             <Controls showInteractive={false} />
             <Panel
               position="top-left"
-              className="nopan flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1"
+              className="nopan max-w-[calc(100%-1rem)] space-y-1"
               onClick={(e) => e.stopPropagation()}
             >
-              <input
-                value={orchQuery}
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                <Waypoints className="h-3.5 w-3.5 text-teal-400" />
+                <h3 className="text-sm font-semibold text-neutral-200">{t('orch.title')}</h3>
+                {liveRuns.size > 0 && (
+                  <Badge className="bg-sky-900/50 text-sky-300">{t('orch.statusRunning')}</Badge>
+                )}
+                <RefreshIconButton
+                  className="ml-auto"
+                  title={t('tasks.refresh')}
+                  onClick={() => {
+                    void refreshList();
+                    void refreshRuns();
+                  }}
+                />
+              </div>
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                <Combobox
+                  value={editing?.id != null ? String(editing.id) : ''}
+                  onChange={(v) => {
+                    const row = (list ?? []).find((r) => String(r.id) === v);
+                    setEditing(row ? asEditing(row) : null);
+                  }}
+                  title={t('orch.listLabel')}
+                  placeholder={list === null ? t('hooks.loading') : t('orch.overviewAll')}
+                  className="min-w-[10rem] max-w-[16rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+                  options={[
+                    { value: '', label: t('orch.overviewAll') },
+                    ...(list ?? []).map((row) => ({
+                      value: String(row.id),
+                      label: row.name || t('orch.untitled'),
+                    })),
+                  ]}
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                >
+                  <Plus className="h-3 w-3" />
+                  {t('orch.new')}
+                </button>
+              </div>
+              <div className="flex max-w-full flex-wrap items-center gap-1">
+                <input
+                  value={orchQuery}
                 onChange={(e) => setOrchQuery(e.target.value)}
                 placeholder={t('orch.filterOrch')}
                 className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
@@ -2000,6 +1962,7 @@ export function OrchestrationCanvas({
                   edges: overview!.edges.length,
                 })}
               </span>
+              </div>
             </Panel>
             {/* 首节点面板：编辑以它为入口的编排，或以它为入口新建一份。 */}
             {entryPick != null && (
@@ -2158,9 +2121,92 @@ export function OrchestrationCanvas({
             <Controls showInteractive={false} />
             <Panel
               position="top-left"
-              className="nopan flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1"
+              className="nopan max-w-[calc(100%-1rem)] space-y-1"
               onClick={(e) => e.stopPropagation()}
             >
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                <Waypoints className="h-3.5 w-3.5 text-teal-400" />
+                <h3 className="text-sm font-semibold text-neutral-200">{t('orch.title')}</h3>
+                {live && live.status === 'running' && (
+                  <Badge className="bg-sky-900/50 text-sky-300">
+                    {t('orch.statusRunning')} · {t('orch.runDeliveries', { n: live.deliveries })}
+                    {livePending > 0 && ` · ${t('orch.runPending', { n: livePending })}`}
+                  </Badge>
+                )}
+                <RefreshIconButton
+                  className="ml-auto"
+                  title={t('tasks.refresh')}
+                  onClick={() => {
+                    void refreshList();
+                    void refreshRuns();
+                  }}
+                />
+              </div>
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                <Combobox
+                  value={editing?.id != null ? String(editing.id) : ''}
+                  onChange={(v) => {
+                    const row = (list ?? []).find((r) => String(r.id) === v);
+                    setEditing(row ? asEditing(row) : null);
+                  }}
+                  title={t('orch.listLabel')}
+                  placeholder={list === null ? t('hooks.loading') : t('orch.overviewAll')}
+                  className="min-w-[10rem] max-w-[16rem] rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+                  options={[
+                    { value: '', label: t('orch.overviewAll') },
+                    ...(list ?? []).map((row) => ({
+                      value: String(row.id),
+                      label: row.name || t('orch.untitled'),
+                    })),
+                  ]}
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditing({ id: null, draft: emptyDraft(), base: serialize(emptyDraft()) })
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                >
+                  <Plus className="h-3 w-3" />
+                  {t('orch.new')}
+                </button>
+                {editing && draft && (
+                  <>
+                    <input
+                      value={draft.name}
+                      onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
+                      placeholder={t('orch.namePlaceholder')}
+                      title={t('orch.nameLabel')}
+                      className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                    />
+                    {dirty && <span className="text-[10px] text-amber-400/80">{t('orch.unsaved')}</span>}
+                    <button
+                      type="button"
+                      disabled={!canSave}
+                      onClick={save}
+                      title={check && !check.ok ? check.error : t('orch.save')}
+                      className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800 disabled:opacity-40"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf('orch:save')}
+                        className="h-3 w-3"
+                        icon={<Save className="h-3 w-3" />}
+                      />
+                      {t('orch.save')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={fb.stateOf('orch:delete') === 'loading'}
+                      onClick={remove}
+                      title={t('orch.deleteOrch')}
+                      className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-[11px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="flex max-w-full flex-wrap items-center gap-1">
               {groupProjects && (
                 <input
                   value={projectQuery}
@@ -2195,6 +2241,16 @@ export function OrchestrationCanvas({
                 <Globe className="h-3 w-3" />
                 {t('orch.addWebhook')}
               </button>
+              <button
+                type="button"
+                disabled={draft.nodes.length >= ORCH_MAX_NODES}
+                onClick={() => patch(addTriggerNode)}
+                title={t('orch.addTrigger')}
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              >
+                <Zap className="h-3 w-3" />
+                {t('orch.addTrigger')}
+              </button>
               <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
                 {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
               </span>
@@ -2203,14 +2259,126 @@ export function OrchestrationCanvas({
                   {t('orch.noMatch')}
                 </span>
               )}
+              </div>
+              {/* 触发行：起始消息 / 手动触发设置（入口子集 + 一次性正文）/ 定时与启用 / 触发一次。 */}
+              {editing && (
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                <input
+                  value={draft.startText}
+                  onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
+                  placeholder={t('orch.startTextHint')}
+                  title={t('orch.startTextLabel')}
+                  className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
+                {manualEntryChoices.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    {manualEntryChoices.map((entry) => {
+                      const checked = triggerEntries?.includes(entry.id) ?? false;
+                      return (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          onClick={() =>
+                            setTriggerEntries((prev) => {
+                              const base = prev ?? manualEntryChoices.map((n) => n.id);
+                              return base.includes(entry.id)
+                                ? base.filter((x) => x !== entry.id)
+                                : [...base, entry.id];
+                            })
+                          }
+                          title={nodeLabel(entry.id)}
+                          className={cn(
+                            'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                            checked
+                              ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                              : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+                          )}
+                        >
+                          {entry.kind === 'webhook' ? <Globe className="h-2.5 w-2.5" /> : null}
+                          {entry.kind === 'trigger' ? <Zap className="h-2.5 w-2.5" /> : null}
+                          <span className="min-w-0 truncate">{nodeLabel(entry.id)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <input
+                  value={triggerText}
+                  onChange={(e) => setTriggerText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      trigger();
+                    }
+                  }}
+                  placeholder={t('orch.triggerTextTitle')}
+                  className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCronOpen(true)}
+                  className={cn(
+                    'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                    draft.cron
+                      ? 'border-violet-400/40 bg-violet-500/10 text-violet-200'
+                      : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
+                  )}
+                >
+                  {draft.cron ? t('orch.cronBadge', { expr: draft.cron }) : t('orch.cronSet')}
+                </button>
+                {editing.id != null && current && (
+                  <button
+                    type="button"
+                    disabled={fb.stateOf('orch:enabled') === 'loading'}
+                    onClick={() => {
+                      const id = editing.id!;
+                      void fb.run(
+                        'orch:enabled',
+                        async () => {
+                          const res = await api.updateOrchestration(id, { enabled: !current.enabled });
+                          setList((prev) =>
+                            prev?.map((row) => (row.id === id ? res.orchestration : row)) ?? prev,
+                          );
+                        },
+                        { fail: (e) => t('orch.saveFailed', { error: errorText(e) }) },
+                      );
+                    }}
+                    title={t('orch.enabledHint')}
+                    className={cn(
+                      'shrink-0 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                      current.enabled
+                        ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                        : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+                    )}
+                  >
+                    {t(current.enabled ? 'orch.enabledOn' : 'orch.enabledOff')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={editing.id == null || fb.stateOf('orch:trigger') === 'loading'}
+                  onClick={trigger}
+                  className="inline-flex items-center gap-1 rounded bg-teal-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf('orch:trigger')}
+                    className="h-3 w-3"
+                    icon={<Zap className="h-3 w-3" />}
+                  />
+                  {t('orch.triggerOnce')}
+                </button>
+              </div>
+              )}
             </Panel>
-            {/* 点节点 / 点边 = 就地编辑那一份定义（右侧检查器）。 */}
-            {selNode && draft && selNodeKind === 'session' && (
+            {/* 点节点 / 点边 = 就地编辑那一份定义（右侧贴屏检查器，上下通高）。 */}
+            {((selNode && draft) || selEdge) && (
               <Panel
                 position="top-right"
-                className="nopan w-56 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
+                className="nopan !m-0 w-80 overflow-y-auto rounded-none border-l border-edge/[0.12] bg-neutral-900/95 !bottom-0 p-2.5 shadow-mac"
                 onClick={(e) => e.stopPropagation()}
               >
+              {selNode && draft && selNodeKind === 'session' && (
+                <div className="space-y-1.5 border-b border-edge/[0.08] pb-2.5">
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
                     {sessionLabel(sessionById.get(selNode)?.title ?? null, selNode)}
@@ -2246,6 +2414,33 @@ export function OrchestrationCanvas({
                     {t('orch.removeNode')}
                   </button>
                 </div>
+                {/* 中间节点可勾「自然回合触发下游」（入口恒可，不用勾）。 */}
+                {!graphDirections(draft.nodes, draft.edges).entries.some((n) => n.id === selNode) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      patch((d) => ({
+                        ...d,
+                        nodes: d.nodes.map((n) =>
+                          n.id === selNode ? { ...n, autoFire: !n.autoFire } : n,
+                        ),
+                      }))
+                    }
+                    title={t('orch.autoFireHint')}
+                    className={cn(
+                      'w-full rounded border px-1.5 py-1 text-[10px] transition-colors',
+                      draft.nodes.find((n) => n.id === selNode)?.autoFire
+                        ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                        : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+                    )}
+                  >
+                    {t(
+                      draft.nodes.find((n) => n.id === selNode)?.autoFire
+                        ? 'orch.autoFireOn'
+                        : 'orch.autoFireOff',
+                    )}
+                  </button>
+                )}
                 <div className="space-y-1 border-t border-edge/[0.06] pt-1">
                   <span className="text-[10px] text-neutral-500">{t('orch.edgesLabel')}</span>
                   {selNodeOut.length === 0 ? (
@@ -2267,14 +2462,10 @@ export function OrchestrationCanvas({
                     </ul>
                   )}
                 </div>
-              </Panel>
-            )}
-            {selEdge && (
-              <Panel
-                position="top-right"
-                className="nopan w-60 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
-                onClick={(e) => e.stopPropagation()}
-              >
+                </div>
+              )}
+              {selEdge && (
+                <div className="space-y-1.5 border-b border-edge/[0.08] pb-2.5">
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
                     {nodeLabel(selEdge.from)}
@@ -2300,7 +2491,7 @@ export function OrchestrationCanvas({
                       edges: d.edges.map((x) => (x.id === selEdge.id ? { ...x, text } : x)),
                     }));
                   }}
-                  rows={3}
+                  rows={5}
                   placeholder={t('orch.edgeText')}
                   title={t('orch.edgeVars')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
@@ -2317,9 +2508,25 @@ export function OrchestrationCanvas({
                       ),
                     }));
                   }}
-                  rows={2}
+                  rows={3}
                   placeholder={t('orch.edgeExtractHint')}
                   title={t('orch.edgeExtract')}
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                />
+                <textarea
+                  value={selEdge.when ?? ''}
+                  onChange={(e) => {
+                    const when = e.target.value;
+                    patch((d) => ({
+                      ...d,
+                      edges: d.edges.map((x) =>
+                        x.id === selEdge.id ? { ...x, when: when || undefined } : x,
+                      ),
+                    }));
+                  }}
+                  rows={2}
+                  placeholder={t('orch.edgeWhenHint')}
+                  title={t('orch.edgeWhen')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <textarea
@@ -2333,7 +2540,7 @@ export function OrchestrationCanvas({
                       ),
                     }));
                   }}
-                  rows={2}
+                  rows={4}
                   placeholder={t('orch.edgeConditionHint')}
                   title={t('orch.edgeCondition')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
@@ -2349,15 +2556,43 @@ export function OrchestrationCanvas({
                   <Trash2 className="h-3 w-3" />
                   {t('orch.removeEdge')}
                 </button>
-              </Panel>
-            )}
-            {/* webhook 节点检查器：入口管端点（复制/轮换），出口填 url/secret。 */}
-            {selNode && draft && selNodeKind === 'webhook' && (
-              <Panel
-                position="top-right"
-                className="nopan w-64 space-y-1.5 rounded-lg border border-edge/[0.12] bg-neutral-900/95 p-2 shadow-mac"
-                onClick={(e) => e.stopPropagation()}
-              >
+                </div>
+              )}
+              {selNode && draft && selNodeKind === 'trigger' && (
+                <div className="space-y-1.5 border-b border-edge/[0.08] pb-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
+                      {t('orch.triggerNode')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSel(null)}
+                      title={t('common.close')}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <p className="text-[9px] leading-relaxed text-neutral-600">
+                    {t('orch.triggerNodeHint')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      patch((d) => removeNode(d, selNode));
+                      setSel(null);
+                    }}
+                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    {t('orch.removeNode')}
+                  </button>
+                </div>
+              )}
+              {/* webhook 节点检查器：入口管端点（复制/轮换），出口填 url/secret。 */}
+              {selNode && draft && selNodeKind === 'webhook' && (
+                <div className="space-y-1.5 pb-2.5">
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-100">
                     {nodeLabel(selNode)}
@@ -2450,6 +2685,8 @@ export function OrchestrationCanvas({
                   <Trash2 className="h-3 w-3" />
                   {t('orch.removeNode')}
                 </button>
+                </div>
+              )}
               </Panel>
             )}
             {/* 状态行贴底居中：连线被拒 > 起点未定 / 校验不过 > 操作提示。 */}

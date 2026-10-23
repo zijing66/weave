@@ -638,11 +638,13 @@ export interface OrchestrationEdge {
   extract?: string;
   /** 本边放行条件（对上游会话问 yes/no；no 或判不出都拦下不投，webhook 入口边不可设）。 */
   condition?: string;
+  /** 本边文本预筛（{upstream} 命中任一关键词才继续/才 fork；webhook 入口边不可设）。 */
+  when?: string;
 }
 
-export type OrchestrationNodeKind = 'session' | 'webhook';
+export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger';
 
-/** mirror of `OrchestrationNode`：session 节点 id = sessionId；webhook 节点 = `w:<uuid>`。 */
+/** mirror of `OrchestrationNode`：session 节点 id = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`。 */
 export interface OrchestrationNode {
   id: string;
   kind: OrchestrationNodeKind;
@@ -651,6 +653,8 @@ export interface OrchestrationNode {
   /** webhook 出口的出站目标与可选 HMAC 密钥。 */
   url?: string;
   secret?: string;
+  /** session 中间节点也参与自然回合触发（入口恒可；enabled 闸全局管）。 */
+  autoFire?: boolean;
 }
 
 export type OrchestrationTrigger = 'manual' | 'webhook' | 'cron';

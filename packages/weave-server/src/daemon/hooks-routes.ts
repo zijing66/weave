@@ -374,14 +374,16 @@ const UnsubscribePushBody = z.object({ endpoint: z.string().url() });
 
 /** 跨会话编排的定义体：图规模/成环/方向形状由 `validateOrchestration` 判（错误文案归它）。 */
 const OrchestrationNodeBody = z.object({
-  /** session 节点 = sessionId；webhook 节点 = `w:<uuid>`（画布生成，校验判前缀）。 */
+  /** session 节点 = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`。 */
   id: z.string().min(1).max(128),
-  kind: z.enum(['session', 'webhook']),
+  kind: z.enum(['session', 'webhook', 'trigger']),
   /** webhook 入口的触发 token（省略由仓储补发；回存已有 token 原样保留）。 */
   webhookToken: z.string().min(1).max(200).optional(),
   /** webhook 出口的出站目标与可选 HMAC 密钥。 */
   url: z.string().max(2_000).optional(),
   secret: z.string().max(400).optional(),
+  /** session 中间节点也参与自然回合触发（入口恒可；webhook 节点设了无效）。 */
+  autoFire: z.boolean().optional(),
 });
 
 const OrchestrationBody = z.object({
@@ -401,6 +403,8 @@ const OrchestrationBody = z.object({
       extract: z.string().max(4_000).optional(),
       /** 本边放行条件（对上游会话问 yes/no；no 或判不出都拦下不投）。 */
       condition: z.string().max(4_000).optional(),
+      /** 本边文本预筛（{upstream} 命中任一关键词才继续/才 fork）。 */
+      when: z.string().max(500).optional(),
     }),
   ),
   cron: z.string().max(200).nullish(),

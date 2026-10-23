@@ -23,14 +23,21 @@ export interface OrchestrationEdge {
    * （含 harness 无此能力面）都拦下并记 `stage:'condition'` 事件。
    */
   condition?: string;
+  /**
+   * 本边的文本预筛（空 = 不过筛）：`{upstream}`（宿主文末总结）里命中任一
+   * 关键词（逗号/换行分隔，大小写不敏感子串）才继续（才烧 condition 的
+   * fork）；不命中直接拦下——费 token 的判断不做，避免每回合都被触发。
+   */
+  when?: string;
 }
 
-export type OrchestrationNodeKind = 'session' | 'webhook';
+export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger';
 
 export interface OrchestrationNode {
   /**
    * session 节点 id = sessionId（运行态 pending 键、RunEvent.from/to、画布 flash
-   * 全按它流转）；webhook 节点 = `w:<uuid>`，不与任何 sessionId 碰撞。
+   * 全按它流转）；webhook 节点 = `w:<uuid>`；手动触发节点 = `t:<uuid>`——三者
+   * 互不碰撞。
    */
   id: string;
   kind: OrchestrationNodeKind;
@@ -39,6 +46,11 @@ export interface OrchestrationNode {
   /** webhook 出口：出站 POST 目标与可选 HMAC 签名密钥。 */
   url?: string;
   secret?: string;
+  /**
+   * session 节点：中间节点也参与「自然回合触发下游」（入口恒可）。
+   * 编排投出来的回合不算自然回合（消费前 pending 快照判），enabled 闸全局管。
+   */
+  autoFire?: boolean;
 }
 
 /** nodes JSON 的解析（只认新形；坏项丢弃——写入口已 zod 拦，这里只兜磁盘）。 */
@@ -55,10 +67,14 @@ function parseNodes(raw: unknown): OrchestrationNode[] {
     if (typeof n !== 'object' || n === null) continue;
     const o = n as Record<string, unknown>;
     if (typeof o.id !== 'string' || !o.id) continue;
-    const node: OrchestrationNode = { id: o.id, kind: o.kind === 'webhook' ? 'webhook' : 'session' };
+    const node: OrchestrationNode = {
+      id: o.id,
+      kind: o.kind === 'webhook' ? 'webhook' : o.kind === 'trigger' ? 'trigger' : 'session',
+    };
     if (typeof o.webhookToken === 'string' && o.webhookToken) node.webhookToken = o.webhookToken;
     if (typeof o.url === 'string' && o.url) node.url = o.url;
     if (typeof o.secret === 'string' && o.secret) node.secret = o.secret;
+    if (o.autoFire === true) node.autoFire = true;
     out.push(node);
   }
   return out;

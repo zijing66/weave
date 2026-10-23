@@ -11,7 +11,7 @@ import {
   type OrchestrationNode,
 } from '../../repositories/orchestrations.js';
 import { HookEventBus } from '../bus.js';
-import { OrchestrationEngine, parseConditionAnswer } from '../orchestration-engine.js';
+import { OrchestrationEngine, matchWhen, parseConditionAnswer } from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
 
 /**
@@ -868,5 +868,92 @@ describe('条件边（edge.condition）', () => {
     expect(parseConditionAnswer('maybe')).toBeNull();
     expect(parseConditionAnswer('')).toBeNull();
     expect(parseConditionAnswer(null)).toBeNull();
+  });
+});
+
+describe('when 预筛 + 中间节点自然触发', () => {
+  it('when 不命中 → 拦下且不烧 fork；命中 → 继续（fork 后投递）', async () => {
+    const extract = vi.fn(async () => 'yes');
+    const { d, engine } = setup({ supportsExtract: () => true, extract });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'when',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [{ ...edge('a', 'b'), when: 'MODE=,ARTIFACT=', condition: '需要发吗' }],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    // 第一轮输出没有关键词 → 拦下，fork 一次都没跑
+    d.setLastOutput({ output: '普通聊天内容', at: new Date().toISOString() });
+    idleOf(engine, 'a');
+    await flush();
+    expect(extract).not.toHaveBeenCalled();
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 首投
+    // 第二轮输出带 MODE= → 过筛，fork 判 yes → 投递
+    (engine as unknown as { deps: { deliverer: { setLastOutput: (v: unknown) => void } } }).deps
+      .deliverer.setLastOutput({ output: 'MODE=pack\nARTIFACT=x.tgz', at: new Date().toISOString() });
+    idleOf(engine, 'a');
+    await flush();
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(d.send).toHaveBeenCalledTimes(2);
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.state.events.filter((e) => e.stage === 'condition')).toHaveLength(1);
+  });
+
+  it('中间节点 autoFire：自然回合触发出边（when 拦噪）；未标记的不触发', async () => {
+    const extract = vi.fn(async () => 'yes');
+    const { d, engine } = setup({ supportsExtract: () => true, extract });
+    for (const id of ['b', 'x', 'm']) sessions.touch(id, projectId);
+    orchestrations.insert({
+      name: 'midfire',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), { ...sNode('m'), autoFire: true }, sNode('b'), sNode('x')],
+      edges: [{ ...edge('m', 'b'), when: 'MODE=' }, edge('a', 'x')],
+    });
+    // m 的自然回合：输出没关键词 → 预筛拦下（不烧 fork、不投）
+    d.setLastOutput({ output: '闲聊', at: new Date().toISOString() });
+    idleOf(engine, 'm');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(0);
+    expect(extract).not.toHaveBeenCalled();
+    // 输出命中 → fork 判 yes → 投 b（清掉冷却：真实场景两回合间隔远大于 5s）
+    (engine as unknown as { lastAutoFireAt: Map<string, number> }).lastAutoFireAt.clear();
+    d.setLastOutput({ output: 'MODE=pack', at: new Date().toISOString() });
+    idleOf(engine, 'm');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(1);
+    expect(d.send.mock.calls[0]![0].toSessionId).toBe('b');
+    // 未标记自然触发的节点 x：自然回合什么都不做
+    idleOf(engine, 'x');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('enabled=false：中间节点标记了 autoFire 也不触发', async () => {
+    const { d, engine } = setup({ supportsExtract: () => true, extract: async () => 'yes' });
+    for (const id of ['a', 'm', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'off',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), { ...sNode('m'), autoFire: true }, sNode('b')],
+      edges: [edge('m', 'b')],
+      enabled: false,
+    }).id;
+    await engine.start(id, 'manual', undefined, ['a']);
+    const before = d.send.mock.calls.length;
+    idleOf(engine, 'm');
+    await flush();
+    expect(d.send.mock.calls.length).toBe(before);
+  });
+
+  it('matchWhen：任一关键词命中即可，大小写不敏感', () => {
+    expect(matchWhen('MODE=', '输出 MODE=pack')).toBe(true);
+    expect(matchWhen('mode=', '输出 MODE=pack')).toBe(true);
+    expect(matchWhen('A,,B', 'has b')).toBe(true);
+    expect(matchWhen('A,B', 'nothing')).toBe(false);
+    expect(matchWhen('A,B', '')).toBe(false);
   });
 });

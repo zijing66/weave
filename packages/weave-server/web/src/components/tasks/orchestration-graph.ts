@@ -59,6 +59,13 @@ export function addWebhookNode(draft: OrchDraft): OrchDraft {
   };
 }
 
+/** 手动触发节点：纯入口虚节点（没有会话在后面），手动触发时正文经出边 {upstream} 下发。 */
+export function addTriggerNode(draft: OrchDraft): OrchDraft {
+  let id = `t:${crypto.randomUUID()}`;
+  while (draft.nodes.some((n) => n.id === id)) id = `t:${crypto.randomUUID()}`;
+  return { ...draft, nodes: [...draft.nodes, { id, kind: 'trigger' }] };
+}
+
 /** 去节点连带它的边。 */
 export function removeNode(draft: OrchDraft, nodeId: string): OrchDraft {
   return {
@@ -244,6 +251,9 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     if (node.kind === 'webhook' && !node.id.startsWith('w:')) {
       return { ok: false, error: `Webhook node id must start with "w:": ${node.id}` };
     }
+    if (node.kind === 'trigger' && !node.id.startsWith('t:')) {
+      return { ok: false, error: `Trigger node id must start with "t:": ${node.id}` };
+    }
   }
   const pairs = new Set<string>();
   for (const edge of draft.edges) {
@@ -259,19 +269,23 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
   const hasIn = new Set(draft.edges.map((e) => e.to));
   const hasOut = new Set(draft.edges.map((e) => e.from));
   const webhookEntryIds = new Set(entries.filter((n) => n.kind === 'webhook').map((n) => n.id));
-  // 空正文只在两处合法：webhook 入口的出边（载荷就是正文）、设了提取指令的边。
+  const triggerEntryIds = new Set(entries.filter((n) => n.kind === 'trigger').map((n) => n.id));
+  // 载荷型入口（webhook / 手动触发）：出边正文可空（载荷就是正文）。
+  const payloadEntryIds = new Set([...webhookEntryIds, ...triggerEntryIds]);
+  // 空正文只在两处合法：载荷型入口的出边、设了提取指令的边。
   const mute = draft.edges.find(
-    (edge) => !edge.text.trim() && !webhookEntryIds.has(edge.from) && !edge.extract?.trim(),
+    (edge) => !edge.text.trim() && !payloadEntryIds.has(edge.from) && !edge.extract?.trim(),
   );
   if (mute) return { ok: false, error: `Edge ${mute.from} → ${mute.to} has no message` };
-  // 条件边要有会话可问：webhook 入口没有会话，条件无从判断（服务端同判据）。
+  // 条件/预筛要有会话可问：载荷型入口没有会话（服务端同判据）。
   const conditionEdge = draft.edges.find(
-    (edge) => edge.condition?.trim() && webhookEntryIds.has(edge.from),
+    (edge) =>
+      payloadEntryIds.has(edge.from) && (edge.condition?.trim() || edge.when?.trim()),
   );
   if (conditionEdge) {
     return {
       ok: false,
-      error: `Edge ${conditionEdge.from} → ${conditionEdge.to} cannot have a condition (webhook entries have no session to ask)`,
+      error: `Edge ${conditionEdge.from} → ${conditionEdge.to} cannot have a condition/pre-filter (payload entries have no session to ask)`,
     };
   }
   for (const node of draft.nodes) {
@@ -285,6 +299,16 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     }
     if (!hasIn.has(node.id) && !hasOut.has(node.id)) {
       return { ok: false, error: 'A webhook node is not connected' };
+    }
+  }
+  for (const node of draft.nodes) {
+    // 手动触发节点是纯入口：只出、必连。
+    if (node.kind !== 'trigger') continue;
+    if (hasIn.has(node.id)) {
+      return { ok: false, error: 'Trigger nodes cannot have inbound edges' };
+    }
+    if (!hasOut.has(node.id)) {
+      return { ok: false, error: 'A trigger node is not connected' };
     }
   }
   for (const node of draft.nodes) {
