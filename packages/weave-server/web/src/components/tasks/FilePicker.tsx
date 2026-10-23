@@ -133,6 +133,30 @@ function sizeText(bytes: number | undefined): string | null {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** 搜索行尾的目录标注：搜索是全项目的，同名文件只有所在目录能区分。
+ *  太长的目录只留最深两级（`…/` 收头）；`clip` 把服务端按整条路径给的命中
+ *  区间裁进这段展示文本（落在名字里的、跨出展示段的都丢掉）。 */
+function dirBadge(
+  dir: string,
+): { text: string; clip: (ranges: [number, number][]) => [number, number][] } | null {
+  const trimmed = dir.endsWith('/') ? dir.slice(0, -1) : dir;
+  if (!trimmed) return null;
+  const segs = trimmed.split('/');
+  const short = segs.length <= 2;
+  const tail = short ? trimmed : segs.slice(-2).join('/');
+  const at = trimmed.length - tail.length;
+  const pre = short ? 0 : 2;
+  return {
+    text: short ? trimmed : `…/${tail}`,
+    clip: (ranges) =>
+      ranges.flatMap(([s, l]): [number, number][] => {
+        const from = Math.max(s, at);
+        const to = Math.min(s + l, trimmed.length);
+        return from < to ? [[from - at + pre, to - from]] : [];
+      }),
+  };
+}
+
 /** 把命中区间切成「亮 / 暗」交替的片段（区间来自服务端，已按路径下标给好）。 */
 function segmentsOf(name: string, ranges: [number, number][] | undefined): { text: string; hit: boolean }[] {
   if (!ranges || ranges.length === 0) return [{ text: name, hit: false }];
@@ -785,6 +809,8 @@ export function FilePicker({
   }, []);
 
   const crumb = dir ? dir.split('/') : [];
+  /** 搜索是全项目的（带 q 时 `dir` 归空）：行与预览头都按这个口径换展示。 */
+  const searching = query.trim() !== '';
   const rangeText = lines
     ? lines.start === lines.end
       ? t('tasks.fileLineAt', { n: lines.start })
@@ -885,10 +911,36 @@ export function FilePicker({
                   ),
                 )}
               </span>
-              {entry.size != null && (
-                <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
-                  {sizeText(entry.size)}
-                </span>
+              {/* 搜索是全项目的：size 那个槽位空着，正好摆所在目录——同名文件
+                  只有它能区分（浏览模式没有这个问题，目录就是面包屑）。 */}
+              {searching ? (
+                (() => {
+                  const badge = dirBadge(entry.path.slice(0, entry.path.length - entry.name.length));
+                  if (!badge) return null;
+                  const segs = segmentsOf(badge.text, badge.clip(entry.ranges ?? []));
+                  if (segs.every((s) => !s.hit)) return (
+                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">{badge.text}</span>
+                  );
+                  return (
+                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">
+                      {segs.map((seg, k) =>
+                        seg.hit ? (
+                          <span key={k} className="text-amber-300/80">
+                            {seg.text}
+                          </span>
+                        ) : (
+                          <span key={k}>{seg.text}</span>
+                        ),
+                      )}
+                    </span>
+                  );
+                })()
+              ) : (
+                entry.size != null && (
+                  <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
+                    {sizeText(entry.size)}
+                  </span>
+                )
               )}
             </button>
           </li>
@@ -911,8 +963,11 @@ export function FilePicker({
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
         )}
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-300">
-          {current?.name ?? ''}
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-300"
+          title={searching ? current?.path : undefined}
+        >
+          {(searching ? current?.path : current?.name) ?? ''}
         </span>
         {current?.kind === 'file' && !IMAGE_EXT.test(current.name) && preview?.text != null && (
           <>

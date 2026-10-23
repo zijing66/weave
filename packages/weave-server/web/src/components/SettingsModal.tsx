@@ -7,6 +7,7 @@ import {
   type HtmlExportProfile,
   type HtmlExportSettings,
   type Locale,
+  type SessionRow,
   type TerminalPreset,
 } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
@@ -22,6 +23,7 @@ import {
   FileCode,
   Globe,
   Languages,
+  Loader2,
   Power,
   RefreshCw,
   Settings,
@@ -43,6 +45,8 @@ import { Switch } from '@/components/ui/switch';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { Combobox } from '@/components/ui/combobox';
 import { registerInvalidator } from '@/lib/sse';
+import { sessionLabel } from '@/lib/hook-payload';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useToast } from '@/components/Toast';
 import {
   ensurePushSubscribed,
@@ -61,6 +65,19 @@ type DaemonSettingsExt = DaemonSettings & {
 /** 与 server DEFAULT_EVENT_RETENTION_DAYS / DEFAULT_SESSION_IDLE_DAYS 一致的展示兜底。 */
 const DEFAULT_RETENTION_DAYS = 90;
 const DEFAULT_SESSION_IDLE_DAYS = 90;
+
+/** 字节可读形状（清理面的容量标注；与对话附件格的 sizeLabel 同口径）。 */
+function fmtBytes(bytes: number): string {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
+}
 
 /** 权限未授的成因文案（tasks 字典的三态，与订阅手势同款）。 */
 const PUSH_PERMISSION_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
@@ -194,6 +211,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   /** 本浏览器推送通道态（逐设备开关，不属于 daemon settings——不进保存流程）。 */
   const [pushState, setPushState] = useState<PushChannelState | null>(null);
+  /** 对话附件存储：无引用件预告 + 按会话用量（打开时拉一次，清理后重拉）。 */
+  const [unref, setUnref] = useState<{ count: number; bytes: number } | null>(null);
+  const [usage, setUsage] = useState<Array<{ sessionId: string; count: number; bytes: number }>>([]);
+  const [sessionTitles, setSessionTitles] = useState<Map<string, string>>(new Map());
+  /** 清理进行中（进度 = 已清 / 预告数）；确认弹窗的目标（null = 关着）。 */
+  const [cleaning, setCleaning] = useState<{ done: number; total: number } | null>(null);
+  const [confirmClean, setConfirmClean] = useState<'unref' | string | null>(null);
   const fb = useActionFeedback();
   const { show } = useToast();
   /** 左栏导航高亮：滚动跟随——最后一个越过容器顶部阈值的分段；触底则钉在最后一段。 */
@@ -218,6 +242,59 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       ?.querySelector<HTMLElement>(`[data-settings-section="${id}"]`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
+
+  /** 对话附件存储的统计面（打开时拉一次；清理后重拉）。会话名顺带对一遍表。 */
+  const loadStorage = useCallback(async (): Promise<void> => {
+    try {
+      const [unrefR, usageR, sessionsR] = await Promise.all([
+        api.getUnreferencedUploads(),
+        api.getUploadsUsage(),
+        api.listSessions(),
+      ]);
+      setUnref(unrefR);
+      setUsage(usageR.sessions);
+      setSessionTitles(new Map(sessionsR.sessions.map((s: SessionRow) => [s.sessionId, sessionLabel(s.title, s.sessionId)])));
+    } catch {
+      // 统计面拉不到（旧 daemon）就空着——清理块整体不渲染，不挡设置页
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadStorage();
+  }, [open, loadStorage]);
+
+  /** 一键清无引用件：确认后逐条清（进度按预告数推进），完了重拉统计。 */
+  const runCleanupUnref = useCallback(async (): Promise<void> => {
+    const total = unref?.count ?? 0;
+    setCleaning({ done: 0, total });
+    try {
+      const r = await api.cleanupUnreferencedUploads();
+      show('success', t('settings.cleanUnrefDone', { n: r.removed }));
+    } catch (e) {
+      show('error', t('settings.cleanFailed', { error: String(e) }));
+    } finally {
+      setCleaning(null);
+      void loadStorage();
+    }
+  }, [unref, loadStorage, show, t]);
+
+  /** 按会话清：确认后删该会话全部随附件，完了重拉统计。 */
+  const runCleanupSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      setCleaning({ done: 0, total: 1 });
+      try {
+        const r = await api.deleteSessionUploads(sessionId);
+        show('success', t('settings.cleanSessionDone', { n: r.removed }));
+      } catch (e) {
+        show('error', t('settings.cleanFailed', { error: String(e) }));
+      } finally {
+        setCleaning(null);
+        void loadStorage();
+      }
+    },
+    [loadStorage, show, t],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -596,6 +673,71 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
           </div>
+
+          {/* 对话附件存储清理：只管对话框的图片/附件（有自动策略的域不在此列）。
+              每项先给「是什么、多大、清了损什么」再动手；清理中显示进度。 */}
+          {unref !== null && (
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+                <Database className="h-3.5 w-3.5 text-neutral-500" />
+                {t('settings.cleanStorage')}
+              </label>
+              <p className="text-[11px] text-neutral-500">{t('settings.cleanStorageHint')}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-neutral-400">
+                  {t('settings.cleanUnrefStat', { n: unref.count, size: fmtBytes(unref.bytes) })}
+                </span>
+                <span className="ml-auto flex items-center gap-2">
+                  {cleaning && cleaning.total > 1 && (
+                    <span className="text-[11px] text-blue-300">
+                      {t('settings.cleaningProgress', { done: cleaning.done, total: cleaning.total })}
+                    </span>
+                  )}
+                  {cleaning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-300" />
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={unref.count === 0}
+                      onClick={() => setConfirmClean('unref')}
+                      className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+                    >
+                      {t('settings.cleanUnrefBtn')}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {usage.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[11px] text-neutral-500">{t('settings.cleanBySession')}</p>
+                  <ul className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                    {usage.map((u) => (
+                      <li key={u.sessionId} className="flex items-center gap-2 rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1">
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-300">
+                          {sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-neutral-500">
+                          {t('settings.cleanSessionStat', { n: u.count, size: fmtBytes(u.bytes) })}
+                        </span>
+                        {cleaning ? (
+                          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-300" />
+                        ) : (
+                          <button
+                            type="button"
+                            title={t('settings.cleanSessionDamage')}
+                            onClick={() => setConfirmClean(u.sessionId)}
+                            className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
           </SettingsSection>
 
           <SettingsSection id="notify" icon={Bell} title={t('settings.sectionNotify')}>
@@ -934,6 +1076,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}
           </div>
         </div>
+
+        {/* 清理确认：每项写清「清的是什么、损什么」（原生 confirm/alert 禁用）。 */}
+        <ConfirmDialog
+          open={confirmClean !== null}
+          title={t('settings.cleanConfirmTitle')}
+          message={
+            confirmClean === 'unref'
+              ? t('settings.cleanUnrefDamage', { n: unref?.count ?? 0, size: fmtBytes(unref?.bytes ?? 0) })
+              : t('settings.cleanSessionDamageMsg', {
+                  name: sessionTitles.get(confirmClean ?? '') ?? (confirmClean ?? '').slice(0, 8),
+                  n: usage.find((u) => u.sessionId === confirmClean)?.count ?? 0,
+                  size: fmtBytes(usage.find((u) => u.sessionId === confirmClean)?.bytes ?? 0),
+                })
+          }
+          confirmLabel={t('settings.cleanConfirmBtn')}
+          onConfirm={() => {
+            if (confirmClean === 'unref') void runCleanupUnref();
+            else if (confirmClean) void runCleanupSession(confirmClean);
+          }}
+          onClose={() => setConfirmClean(null)}
+        />
 
         <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 flex items-center gap-2 frosted">
           <span className="flex-1 text-[11px] text-neutral-500">

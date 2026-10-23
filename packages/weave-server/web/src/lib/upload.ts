@@ -7,8 +7,8 @@
 
 import { API_BASE, type UploadFile } from './api';
 
-/** 一块的大小：服务端单块上限 16MB，取 4MB 让进度条有得动、失败重传也便宜。 */
-const CHUNK_BYTES = 4 * 1024 * 1024;
+/** 一块的大小：小到弱网重传不心疼（512MB 上限下也就几百块），大到进度条有得动。 */
+const CHUNK_BYTES = 1024 * 1024;
 const RESUME_PREFIX = 'weave:upload:';
 
 function resumeKeyOf(file: File): string {

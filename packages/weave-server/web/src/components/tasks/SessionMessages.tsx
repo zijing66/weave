@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
@@ -73,7 +73,7 @@ const CONV_PAGE = 10;
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 /** 普通文件的上限（服务端 `UPLOAD_FILE_MAX_BYTES`）。 */
-const FILE_MAX_BYTES = 64 * 1024 * 1024;
+const FILE_MAX_BYTES = 512 * 1024 * 1024;
 const ATTACH_MAX_COUNT = 8;
 
 /** 生成中那一行的素材窗口：取最近多少条事件（展示只挑最新那条有内容的）。 */
@@ -156,8 +156,9 @@ export function sizeLabel(bytes: number): string {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
-/** 附件条上的一格：图出缩略图、其余出文件格；上传中的进度（小进度条 + 百分比）
- *  就画在这一格上——别处再摆一条总进度，反而看不清是哪一个在传。 */
+/** 附件条上的一格：图出缩略图（点开大图）、文件只出图标 + 名字（不预览）；
+ *  上传中的进度（小进度条 + 百分比）就画在这一格上——别处再摆一条总进度，
+ *  反而看不清是哪一个在传。 */
 function StagedTile({
   item,
   onOpen,
@@ -233,6 +234,25 @@ function StagedTile({
         <X className="h-2.5 w-2.5" />
       </button>
     </span>
+  );
+}
+
+/** 附件预览区的一段（图片区 / 文件区各自一段）：标签 + 该类的格子。 */
+function StagedRow({
+  label,
+  items,
+  children,
+}: {
+  label: string;
+  items: StagedFile[];
+  children: ReactNode;
+}): ReactElement | null {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="shrink-0 text-[10px] text-neutral-500">{label}</span>
+      {children}
+    </div>
   );
 }
 
@@ -1334,6 +1354,8 @@ export function SessionMessages({
   /** `@` 触发时那枚 `@` 被删掉了，记下它的位置：取消就补回去，落定就地插胶囊。 */
   const atRange = useRef<Range | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  /** 图片选择器（移动端 `accept` 收窄成相册；文件选择器不带 accept 才能选任意类型）。 */
+  const imageFileRef = useRef<HTMLInputElement>(null);
   /** composer 用 contenteditable 而不是 textarea：内联引用胶囊要成原子块
    *  （`contenteditable=false` 的 span 里退格整枚删、光标进不去）。 */
   const draftRef = useRef<HTMLDivElement>(null);
@@ -3420,15 +3442,20 @@ export function SessionMessages({
           <div className="mt-2 flex shrink-0 flex-col gap-1.5">
             {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行。 */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              {/* 附件钮 + 已选缩略图（× 移除、点开大图）。粘贴/拖放也走同一份 staged——三条入口，一份状态。 */}
+              {/* 附件钮（图片/文件两枚）+ 两个预览区（图片区 / 文件区各自一段，
+                  <lg 各占一行、lg 起同行自适应折行）。粘贴/拖放也走同一份 staged
+                  ——三条入口，一份状态；文件格不预览，只摆图标 + 上传进度。 */}
               {/* 不挂 flex-1：`flex: 1 1 0%` 的基准是 0，换行判定时它永远「放得下」→
                   右组从不折行，左组被压到 0 宽、里面的附件钮溢出去盖在模式/模型上。
                   让左组按内容占位，放不下时父级的 flex-wrap 才会把右组挪到下一行。 */}
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {/* 图片选择器：`accept` 收窄成相册（移动端相册直开）；文件选择器
+                    显式 accept 星斜杠星——部分安卓内核（微信 X5 等）对不带 accept
+                    的输入框只给「图片/相机」，写了才会弹系统文件管理器（任意类型）。 */}
                 <input
-                  ref={fileRef}
+                  ref={imageFileRef}
                   type="file"
-                  accept={attachKinds.includes('file') ? undefined : IMAGE_TYPES.join(',')}
+                  accept={IMAGE_TYPES.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -3436,6 +3463,53 @@ export function SessionMessages({
                     e.target.value = '';
                   }}
                 />
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="*/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) stageFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!attachKinds.includes('image') || staged.length >= ATTACH_MAX_COUNT}
+                  title={
+                    attachKinds.includes('image')
+                      ? t('tasks.msgAttachImageHint')
+                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
+                  }
+                  aria-label={t('tasks.msgAttachImage')}
+                  onClick={() => imageFileRef.current?.click()}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                >
+                  <ImageIcon className="h-3 w-3" />
+                  {t('tasks.msgAttachImage')}
+                </button>
+                <button
+                  type="button"
+                  disabled={!attachKinds.includes('file') || staged.length >= ATTACH_MAX_COUNT}
+                  title={
+                    attachKinds.includes('file')
+                      ? t('tasks.msgAttachFileHint')
+                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
+                  }
+                  aria-label={t('tasks.msgAttachFile')}
+                  onClick={() => fileRef.current?.click()}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                >
+                  {staged.some((s) => !isImageUpload(s) && s.state === 'uploading') ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Paperclip className="h-3 w-3" />
+                  )}
+                  {t('tasks.msgAttachFile')}
+                </button>
+                {/* 引用文件（@ 路径引用选择器）：与上传是两扇门——它插的是项目内
+                    文件的引用胶囊，不占附件格。 */}
                 <button
                   type="button"
                   disabled={!capability.pathRefs}
@@ -3451,34 +3525,35 @@ export function SessionMessages({
                   <FileCode className="h-3 w-3" />
                   {t('tasks.fileAttach')}
                 </button>
-                <button
-                  type="button"
-                  disabled={attachKinds.length === 0 || staged.length >= ATTACH_MAX_COUNT}
-                  title={
-                    attachKinds.length === 0
-                      ? (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
-                      : t('tasks.msgAttachHint')
-                  }
-                  aria-label={t('tasks.msgAttach')}
-                  onClick={() => fileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
-                >
-                  {staged.some((s) => s.state === 'uploading') ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Paperclip className="h-3 w-3" />
-                  )}
-                  {t('tasks.msgAttach')}
-                </button>
-                {staged.map((item) => (
-                  <StagedTile
-                    key={item.key}
-                    item={item}
-                    onOpen={setLightbox}
-                    onRemove={() => unstage(item)}
-                    removeLabel={t('tasks.msgAttachRemove')}
-                  />
-                ))}
+                {/* 两个预览区：<lg 各占一行（basis-full），lg 起同行自适应折行。 */}
+                <div className="flex min-w-0 basis-full flex-wrap items-center gap-1.5 lg:basis-auto">
+                  <StagedRow label={t('tasks.msgAttachImage')} items={staged.filter(isImageUpload)}>
+                    {staged
+                      .filter(isImageUpload)
+                      .map((item) => (
+                        <StagedTile
+                          key={item.key}
+                          item={item}
+                          onOpen={setLightbox}
+                          onRemove={() => unstage(item)}
+                          removeLabel={t('tasks.msgAttachRemove')}
+                        />
+                      ))}
+                  </StagedRow>
+                  <StagedRow label={t('tasks.msgAttachFile')} items={staged.filter((s) => !isImageUpload(s))}>
+                    {staged
+                      .filter((s) => !isImageUpload(s))
+                      .map((item) => (
+                        <StagedTile
+                          key={item.key}
+                          item={item}
+                          onOpen={setLightbox}
+                          onRemove={() => unstage(item)}
+                          removeLabel={t('tasks.msgAttachRemove')}
+                        />
+                      ))}
+                  </StagedRow>
+                </div>
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
                 <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:ml-0 max-lg:basis-full max-lg:justify-between">

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -1118,24 +1118,92 @@ export async function handleHooksRoutes(
     return true;
   }
 
+  // ---- 对话附件存储清理（设置页）：按会话统计/删除 + 无引用件一键清 ----
+  const sessionUploadsMatch = pathname.match(/^\/sessions\/([^/]+)\/uploads$/);
+  if (sessionUploadsMatch && req.method === 'GET') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    const rows = deps.uploads.uploadsBySession(decodeURIComponent(sessionUploadsMatch[1]!));
+    sendJson(res, 200, {
+      uploads: (rows ?? []).map((r) => ({ ...toUploadDto(r), createdAt: r.createdAt })),
+      totalBytes: (rows ?? []).reduce((sum, r) => sum + r.size, 0),
+    });
+    return true;
+  }
+  if (sessionUploadsMatch && req.method === 'DELETE') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    const rows = deps.uploads.uploadsBySession(decodeURIComponent(sessionUploadsMatch[1]!));
+    if (!rows) {
+      sendJson(res, 200, { removed: 0, freedBytes: 0 });
+      return true;
+    }
+    const freedBytes = rows.reduce((sum, r) => sum + r.size, 0);
+    const removed = deps.uploads.removeMany(rows.map((r) => r.id));
+    deps.dataBus?.emit({ key: 'sessions' });
+    sendJson(res, 200, { removed, freedBytes });
+    return true;
+  }
+
+  if (pathname === '/uploads/unreferenced' && req.method === 'GET') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    sendJson(res, 200, deps.uploads.unreferencedStats());
+    return true;
+  }
+  if (pathname === '/uploads/usage' && req.method === 'GET') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    sendJson(res, 200, { sessions: deps.uploads.usageBySession() });
+    return true;
+  }
+  if (pathname === '/uploads/unreferenced' && req.method === 'POST') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    // 逐条回调只是给响应攒进度快照——HTTP 应答是一次性的，进度条由前端按
+    // 「已清 / 预告数」自行推进，这里最后只报总数。
+    let last = { done: 0, total: 0 };
+    const removed = deps.uploads.cleanupUnreferenced((done, total) => {
+      last = { done, total };
+    });
+    deps.dataBus?.emit({ key: 'sessions' });
+    sendJson(res, 200, { removed, ...last });
+    return true;
+  }
+
   const imageMatch = pathname.match(/^\/images\/([a-f0-9]{64})$/);
   if (imageMatch && req.method === 'GET') {
     if (!deps.uploads) {
       sendJson(res, 503, { error: 'Upload subsystem unavailable' });
       return true;
     }
-    const file = deps.uploads.fileOf(imageMatch[1]!);
+    const file = deps.uploads.fileStatOf(imageMatch[1]!);
     if (!file) {
       sendJson(res, 404, { error: 'Image not found' });
       return true;
     }
-    // 内容寻址（id = sha256）→ 永不改写，可长缓存
+    // 内容寻址（id = sha256）→ 永不改写，可长缓存。流式回显：512MB 的附件
+    // 不整份进内存，管道直灌（content-length 取 stat，不读内容）。
     res.writeHead(200, {
       'content-type': file.row.mediaType,
-      'content-length': String(file.bytes.length),
+      'content-length': String(file.size),
       'cache-control': 'private, max-age=31536000, immutable',
     });
-    res.end(file.bytes);
+    const stream = createReadStream(file.file);
+    stream.on('error', () => {
+      if (typeof (res as { destroy?: unknown }).destroy === 'function') res.destroy();
+    });
+    stream.pipe(res);
     return true;
   }
 

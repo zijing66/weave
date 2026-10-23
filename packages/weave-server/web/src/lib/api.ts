@@ -1114,6 +1114,12 @@ export interface DaemonSettingsBundle {
   urls?: AccessUrl[];
 }
 
+/** 某会话随附的上传件清单（按会话清理的统计面）。 */
+export interface SessionUploadsResult {
+  uploads: Array<UploadFile & { createdAt: string }>;
+  totalBytes: number;
+}
+
 /** user 档采集状态行（GET/PUT /capture；§6-2d 安装即启用，无独立开关位）。 */
 export interface CaptureRow {
   harness: Harness;
@@ -2143,6 +2149,25 @@ export const api = {
     apiFetch<DaemonSettings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    }),
+  /** 某会话随附的上传件（设置页「对话附件存储」按会话清理的统计面）。 */
+  getSessionUploads: (sessionId: string): Promise<SessionUploadsResult> =>
+    apiFetch<SessionUploadsResult>(`/sessions/${encodeURIComponent(sessionId)}/uploads`),
+  /** 清掉某会话的全部随附上传件（历史气泡的缩略图随之消失）。 */
+  deleteSessionUploads: (sessionId: string): Promise<{ removed: number; freedBytes: number }> =>
+    apiFetch<{ removed: number; freedBytes: number }>(`/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+      method: 'DELETE',
+    }),
+  /** 无引用上传件的预告数（一键清理前给用户看的「能清多少」）。 */
+  getUnreferencedUploads: (): Promise<{ count: number; bytes: number }> =>
+    apiFetch<{ count: number; bytes: number }>('/uploads/unreferenced'),
+  /** 各会话随附上传件的总量（按会话清理的列表面；一次聚合）。 */
+  getUploadsUsage: (): Promise<{ sessions: Array<{ sessionId: string; count: number; bytes: number }> }> =>
+    apiFetch<{ sessions: Array<{ sessionId: string; count: number; bytes: number }> }>('/uploads/usage'),
+  /** 一键清掉无引用上传件。 */
+  cleanupUnreferencedUploads: (): Promise<{ removed: number; done: number; total: number }> =>
+    apiFetch<{ removed: number; done: number; total: number }>('/uploads/unreferenced', {
+      method: 'POST',
     }),
   /** user 档采集状态行（§6-2d：跨项目事件采集的地基）。 */
   getCapture: (): Promise<CaptureRow[]> =>

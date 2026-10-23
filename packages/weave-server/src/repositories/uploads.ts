@@ -26,11 +26,18 @@ export function isImageMediaType(mediaType: string): mediaType is UploadImageTyp
 /** 图片单张上限：对齐 claude 自己贴图的粘贴缓存上限（~10MB）。 */
 export const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 /** 其它文件单件上限：文件不内联进上下文（宿主按需读），这里管的是磁盘配额。 */
-export const UPLOAD_FILE_MAX_BYTES = 64 * 1024 * 1024;
+export const UPLOAD_FILE_MAX_BYTES = 512 * 1024 * 1024;
 
 export function maxUploadBytes(mediaType: string): number {
   return isImageMediaType(mediaType) ? UPLOAD_MAX_BYTES : UPLOAD_FILE_MAX_BYTES;
 }
+
+/**
+ * 手动清理（设置页「对话附件存储」）对无引用件的宽限：比孤儿回收的 1h 短——
+ * 那道宽限防的是「选了图还没发」，手动清理是用户明确下的手，只护正在输入的
+ * 那一小会儿（刚拖进来还没发出的件）。
+ */
+export const UPLOAD_CLEANUP_GRACE_MS = 5 * 60_000;
 
 /**
  * 孤儿回收的宽限期：编辑器里选了图、还没发出去的那份此刻同样「无引用」，
@@ -139,6 +146,15 @@ export class UploadRepository {
   }
 
   /** 按行里记的媒体类型反查文件（serve 用；行不存在 / 文件被删 = undefined）。 */
+  fileStatOf(id: string): { row: UploadRow; file: string; size: number } | undefined {
+    const row = this.getById(id);
+    if (!row) return undefined;
+    const file = this.filePath(row.id, row.mediaType, row.name);
+    if (!existsSync(file)) return undefined;
+    return { row, file, size: statSync(file).size };
+  }
+
+  /** 按行里记的媒体类型反查文件（serve 用；行不存在 / 文件被删 = undefined）。 */
   fileOf(id: string): { row: UploadRow; bytes: Buffer } | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
@@ -201,6 +217,100 @@ export class UploadRepository {
       out.set(eventId, list);
     }
     return out;
+  }
+
+  /**
+   * 某会话随附的上传件（去重；设置页「按对话清理」的统计与删除都用它）。
+   * 返回 null = 会话没有任何随附件（与空数组区分，前端好出「无可清理」）。
+   */
+  uploadsBySession(sessionId: string): UploadRow[] | null {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT u.* FROM event_images e
+           JOIN uploads u ON u.id = e.upload_id
+           JOIN hook_events h ON h.id = e.event_id
+          WHERE h.session_id = ?
+          ORDER BY u.created_at`,
+      )
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.length === 0 ? null : rows.map(toRow);
+  }
+
+  /** 各会话随附上传件的总量（设置页「按对话清理」的列表面）：一次聚合，不逐会话查。 */
+  usageBySession(): Array<{ sessionId: string; count: number; bytes: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT h.session_id AS sessionId, COUNT(DISTINCT u.id) AS count, COALESCE(SUM(u.size), 0) AS bytes
+           FROM event_images e
+           JOIN uploads u ON u.id = e.upload_id
+           JOIN hook_events h ON h.id = e.event_id
+          GROUP BY h.session_id
+          ORDER BY bytes DESC`,
+      )
+      .all() as Array<{ sessionId: string; count: number; bytes: number }>;
+    return rows.map((r) => ({ sessionId: String(r.sessionId), count: Number(r.count), bytes: Number(r.bytes) }));
+  }
+
+  /**
+   * 删一批上传件（文件 + 行）。返回实际清掉的条数——行已不在（重复清理 /
+   * 内容寻址撞行）的跳过，文件尽力删。
+   */
+  removeMany(ids: readonly string[]): number {
+    const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
+    let removed = 0;
+    for (const id of ids) {
+      const row = this.getById(id);
+      if (!row) continue;
+      rmSync(this.filePath(row.id, row.mediaType, row.name), { force: true });
+      removed += Number(del.run(id).changes);
+    }
+    return removed;
+  }
+
+  /**
+   * 无引用上传件的统计（设置页「一键清理」的预告面）：只数过了宽限期的——
+   * 刚拖进来还没发出去的那份不算可清，报了数就得真能清掉这么多。
+   */
+  unreferencedStats(graceMs: number = UPLOAD_CLEANUP_GRACE_MS, now: number = Date.now()): {
+    count: number;
+    bytes: number;
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM uploads
+          WHERE created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images)`,
+      )
+      .get(new Date(now - graceMs).toISOString()) as { n: number; bytes: number };
+    return { count: Number(row.n), bytes: Number(row.bytes) };
+  }
+
+  /**
+   * 一键清掉无引用上传件（文件 + 行），逐条回调进度（设置页的清理进度条）。
+   * 宽限期内的不动（同 `pruneUnreferenced` 的口径，只是期限更短）。
+   */
+  cleanupUnreferenced(
+    onProgress: (done: number, total: number) => void,
+    graceMs: number = UPLOAD_CLEANUP_GRACE_MS,
+    now: number = Date.now(),
+  ): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, media_type, name FROM uploads
+          WHERE created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images)`,
+      )
+      .all(new Date(now - graceMs).toISOString()) as Array<{
+      id: string;
+      media_type: string;
+      name: string;
+    }>;
+    const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
+    let removed = 0;
+    for (const row of rows) {
+      rmSync(this.filePath(row.id, row.media_type, row.name), { force: true });
+      removed += Number(del.run(row.id).changes);
+      onProgress(removed, rows.length);
+    }
+    return removed;
   }
 }
 

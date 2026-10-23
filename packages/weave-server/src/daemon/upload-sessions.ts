@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { open, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getTmpDir } from '../db/paths.js';
 
@@ -7,9 +7,15 @@ import { getTmpDir } from '../db/paths.js';
  * 分块上传的会话态（断点续传）：客户端按 offset 顺序追加字节，服务端只认
  * 「下一块必须接在当前长度上」；偏移对不上就把真实长度回给客户端续传。
  *
- * 落点是 `cache/tmp/uploads/<id>.part` + 同名 `.json`（名字/类型/总长）——
+ * 落点是 `cache/tmp/uploads/<id>.part` + 同名 `.json`（名字/类型/总长/已收）——
  * 半截文件是**可弃产物**，不进 `data/`，也不进库；只有 finish 收尾时才由
  * `UploadRepository.adoptFromFile` 算 sha256 搬进正式落点。
+ *
+ * 写入 = **预分配 + 位置写**：begin 就把 `.part` 撑到声明总长（簇/稀疏预留随
+ * 文件系统），append 按偏移写进常开的句柄——内存里永远只有当前这一块，不整份
+ * 攒缓冲。已收长度记在 meta（预分配后 `stat.size` 是总长不是进度）；写完截回
+ * 真实长度，半途中断的 `.part` 不虚占磁盘。正式落点只经 rename 出现（tmp→改名，
+ * 不会有一半的正式文件）。
  */
 
 export interface UploadSession {
@@ -32,6 +38,9 @@ export const UPLOAD_SESSION_MAX_AGE_MS = 24 * 60 * 60_000;
 const ID_RE = /^[0-9a-f-]{36}$/;
 
 export class UploadSessions {
+  /** 常开的写句柄（id → handle）：位置写不复位游标，块与块之间不重开文件。 */
+  private readonly handles = new Map<string, import('node:fs/promises').FileHandle>();
+
   constructor(private readonly dir: string = path.join(getTmpDir(), 'uploads')) {}
 
   private part(id: string): string {
@@ -47,10 +56,13 @@ export class UploadSessions {
     const id = randomUUID();
     await writeFile(
       this.meta(id),
-      JSON.stringify({ name: input.name, mediaType: input.mediaType, size: input.size }),
+      JSON.stringify({ name: input.name, mediaType: input.mediaType, size: input.size, received: 0 }),
       'utf8',
     );
-    await writeFile(this.part(id), Buffer.alloc(0));
+    // 预分配：'w' 建档，句柄常开——后续块按偏移往里写，块间不重开文件
+    const handle = await open(this.part(id), 'w');
+    await handle.truncate(input.size);
+    this.handles.set(id, handle);
     return { id, ...input, received: 0 };
   }
 
@@ -62,12 +74,15 @@ export class UploadSessions {
         name?: unknown;
         mediaType?: unknown;
         size?: unknown;
+        received?: unknown;
       };
       if (typeof meta.name !== 'string' || typeof meta.mediaType !== 'string' || typeof meta.size !== 'number') {
         return null;
       }
-      const part = await stat(this.part(id));
-      return { id, name: meta.name, mediaType: meta.mediaType, size: meta.size, received: part.size };
+      // 已收长度记在 meta（预分配后 stat.size = 总长）；旧版半截件没有该字段，回落 stat
+      const received =
+        typeof meta.received === 'number' ? meta.received : (await stat(this.part(id))).size;
+      return { id, name: meta.name, mediaType: meta.mediaType, size: meta.size, received };
     } catch {
       return null;
     }
@@ -79,8 +94,22 @@ export class UploadSessions {
     if (!cur) return { kind: 'missing' };
     if (offset !== cur.received) return { kind: 'conflict', received: cur.received };
     if (cur.received + bytes.length > cur.size) return { kind: 'overflow', received: cur.received };
-    await appendFile(this.part(id), bytes);
-    return { kind: 'ok', received: cur.received + bytes.length };
+    let handle = this.handles.get(id);
+    if (!handle) {
+      // daemon 重启后半截件还在：重开句柄续写（'r+'，文件已由 begin 预分配）
+      handle = await open(this.part(id), 'r+');
+      this.handles.set(id, handle);
+    }
+    const received = cur.received + bytes.length;
+    await handle.write(bytes, 0, bytes.length, offset);
+    // 截回真实长度：预分配多撑的部分不跟着半截件过夜
+    await handle.truncate(received);
+    await writeFile(
+      this.meta(id),
+      JSON.stringify({ name: cur.name, mediaType: cur.mediaType, size: cur.size, received }),
+      'utf8',
+    );
+    return { kind: 'ok', received };
   }
 
   /** 收尾：交出临时件路径与元数据；临时件由调用方搬走后删。 */
@@ -94,6 +123,8 @@ export class UploadSessions {
   /** 丢弃（客户端取消 / 收尾搬完）。 */
   async abort(id: string): Promise<void> {
     if (!ID_RE.test(id)) return;
+    await this.handles.get(id)?.close().catch(() => undefined);
+    this.handles.delete(id);
     await rm(this.part(id), { force: true });
     await rm(this.meta(id), { force: true });
   }

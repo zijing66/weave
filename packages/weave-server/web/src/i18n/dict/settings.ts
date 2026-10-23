@@ -23,6 +23,24 @@ export const settingsZh = {
   'settings.sessionIdleDaysHint':
     '收到过消息的会话无操作 {n} 天后自动移除；没有消息的新会话 1 小时后过期。会话行内标注剩余存活时间。',
   'settings.daysUnit': '天',
+  'settings.cleanStorage': '对话附件存储',
+  'settings.cleanStorageHint':
+    '清理对话框发过的图片与附件（不影响会话与对话记录本身）。有自动保留策略的数据（事件日志、缓存）不在此列。',
+  'settings.cleanUnrefStat': '无引用的图片/附件：{n} 项 · {size}',
+  'settings.cleanUnrefBtn': '一键清理',
+  'settings.cleanUnrefDamage':
+    '将删除 {n} 项无引用的图片/附件（共 {size}）。这些是已从对话中失去引用的上传件，删除后无法恢复；正在编辑还没发出的不受影响。',
+  'settings.cleanBySession': '按对话清理：',
+  'settings.cleanSessionStat': '{n} 项 · {size}',
+  'settings.cleanSessionDamage': '清理这个对话的图片与附件',
+  'settings.cleanSessionDamageMsg':
+    '将删除对话「{name}」随附的全部图片/附件（{n} 项 · {size}）。对话文字保留，但历史气泡里的缩略图会消失，删除后无法恢复。',
+  'settings.cleanConfirmTitle': '确认清理',
+  'settings.cleanConfirmBtn': '删除',
+  'settings.cleaningProgress': '清理中 {done}/{total}',
+  'settings.cleanUnrefDone': '已清理 {n} 项',
+  'settings.cleanSessionDone': '已清理该对话的 {n} 项附件',
+  'settings.cleanFailed': '清理失败：{error}',
   'settings.accessUrls': '访问地址',
   'settings.accessUrlsHint':
     '本机与局域网设备访问 dashboard 的完整地址；https 端口用于手机浏览器通知（自签证书，首次访问需在浏览器接受）。',
@@ -74,6 +92,24 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.sessionIdleDaysHint':
     'Prompted sessions are removed after {n} idle days; new sessions with no prompt expire in 1 hour. Each row shows its remaining lifetime.',
   'settings.daysUnit': 'days',
+  'settings.cleanStorage': 'Conversation attachments',
+  'settings.cleanStorageHint':
+    'Clean up images and attachments sent in conversations (sessions and chat history are untouched). Data with automatic retention (event logs, caches) is not listed here.',
+  'settings.cleanUnrefStat': 'Unreferenced images/attachments: {n} · {size}',
+  'settings.cleanUnrefBtn': 'Clean up',
+  'settings.cleanUnrefDamage':
+    'Deletes {n} unreferenced images/attachments ({size}). These lost their references from conversations and cannot be recovered; drafts not yet sent are unaffected.',
+  'settings.cleanBySession': 'Per conversation:',
+  'settings.cleanSessionStat': '{n} · {size}',
+  'settings.cleanSessionDamage': "Clean this conversation's images and attachments",
+  'settings.cleanSessionDamageMsg':
+    "Deletes all images/attachments attached to \"{name}\" ({n} · {size}). Chat text remains, but thumbnails in past bubbles disappear. This cannot be undone.",
+  'settings.cleanConfirmTitle': 'Confirm cleanup',
+  'settings.cleanConfirmBtn': 'Delete',
+  'settings.cleaningProgress': 'Cleaning {done}/{total}',
+  'settings.cleanUnrefDone': 'Removed {n} items',
+  'settings.cleanSessionDone': "Removed {n} attachments from this conversation",
+  'settings.cleanFailed': 'Cleanup failed: {error}',
   'settings.accessUrls': 'Access URLs',
   'settings.accessUrlsHint':
     'Full URLs for this dashboard on loopback and LAN devices; the https port is what phone browsers need for notifications (self-signed — accept it on first visit).',

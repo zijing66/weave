@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../db/db.js';
 import { HookEventRepository } from '../../repositories/hook-events.js';
@@ -12,6 +12,167 @@ import { SessionRepository } from '../../repositories/sessions.js';
 import { UploadRepository, UPLOAD_MAX_BYTES } from '../../repositories/uploads.js';
 import { handleHooksRoutes } from '../hooks-routes.js';
 import type { WeaveServerDeps } from '../server.js';
+
+describe('UploadRepository 清理面（设置页「对话附件存储」）', () => {
+  let db: ReturnType<typeof openDatabase>;
+  let dir: string;
+  let uploads: UploadRepository;
+  let sessionId: string;
+  let eventId: number;
+
+  const bytesOf = (fill: string): Buffer => Buffer.from(fill.repeat(8), 'utf8');
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    dir = mkdtempSync(join(tmpdir(), 'weave-uploads-clean-'));
+    uploads = new UploadRepository(db, dir);
+    const project = new ProjectRepository(db).register({
+      path: join(dir, 'proj'),
+      name: 'clean',
+      token: 'clean-token',
+      source: 'init',
+    });
+    sessionId = 'sess-clean';
+    new SessionRepository(db).touch(sessionId, project.id);
+    eventId = new HookEventRepository(db).insert({
+      projectId: project.id,
+      source: 'claude',
+      eventType: 'UserPromptSubmit',
+      sessionId,
+      payload: '{}',
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('uploadsBySession 去重回该会话的全部随附件；无随附件回 null', () => {
+    const a = uploads.save({ name: 'a.png', mediaType: 'image/png', bytes: bytesOf('a') });
+    const b = uploads.save({ name: 'b.md', mediaType: 'text/markdown', bytes: bytesOf('b') });
+    uploads.linkToEvent(eventId, [a.id, a.id, b.id]);
+    const rows = uploads.uploadsBySession(sessionId)!;
+    expect(rows.map((r) => r.id).sort()).toEqual([a.id, b.id].sort());
+    expect(uploads.uploadsBySession('sess-none')).toBeNull();
+  });
+
+  it('removeMany 删文件 + 行；已删的 id 跳过不重复计', () => {
+    const a = uploads.save({ name: 'a.png', mediaType: 'image/png', bytes: bytesOf('a') });
+    uploads.linkToEvent(eventId, [a.id]);
+    expect(uploads.removeMany([a.id])).toBe(1);
+    expect(uploads.getById(a.id)).toBeUndefined();
+    expect(existsSync(uploads.filePath(a.id, 'image/png'))).toBe(false);
+    expect(uploads.removeMany([a.id])).toBe(0);
+  });
+
+  it('unreferencedStats 只数过宽限期的无引用件；cleanupUnreferenced 逐条报进度', () => {
+    const kept = uploads.save({ name: 'kept.png', mediaType: 'image/png', bytes: bytesOf('k') });
+    const orphan = uploads.save({ name: 'orphan.png', mediaType: 'image/png', bytes: bytesOf('o') });
+    uploads.linkToEvent(eventId, [kept.id]);
+    db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
+
+    expect(uploads.unreferencedStats()).toEqual({ count: 1, bytes: orphan.size });
+    const seen: Array<[number, number]> = [];
+    expect(uploads.cleanupUnreferenced((done, total) => seen.push([done, total]))).toBe(1);
+    expect(seen).toEqual([[1, 1]]);
+    expect(uploads.getById(orphan.id)).toBeUndefined();
+    expect(uploads.getById(kept.id)).toBeDefined();
+  });
+
+  it('宽限期内的无引用件不算可清（报了数就得真能清掉）', () => {
+    uploads.save({ name: 'fresh.png', mediaType: 'image/png', bytes: bytesOf('f') });
+    expect(uploads.unreferencedStats()).toEqual({ count: 0, bytes: 0 });
+    expect(uploads.cleanupUnreferenced(() => {})).toBe(0);
+  });
+});
+
+describe('清理路由（/sessions/:id/uploads 与 /uploads/unreferenced）', () => {
+  let dir: string;
+  let uploads: UploadRepository;
+  let eventId: number;
+  let sessionId: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'weave-uploads-cleanroute-'));
+    const db = openDatabase(':memory:');
+    uploads = new UploadRepository(db, join(dir, 'data'));
+    const project = new ProjectRepository(db).register({
+      path: join(dir, 'proj'),
+      name: 'cr',
+      token: 'cr-token',
+      source: 'init',
+    });
+    sessionId = 'sess-cr';
+    new SessionRepository(db).touch(sessionId, project.id);
+    eventId = new HookEventRepository(db).insert({
+      projectId: project.id,
+      source: 'claude',
+      eventType: 'UserPromptSubmit',
+      sessionId,
+      payload: '{}',
+    });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const call = async (
+    method: string,
+    path: string,
+  ): Promise<{ handled: boolean; status: number; body: unknown }> => {
+    const req = Readable.from([Buffer.from('')]) as unknown as IncomingMessage;
+    req.method = method;
+    let bodyOut: unknown = null;
+    const res = {
+      statusCode: 0,
+      setHeader: () => {},
+      writeHead: (code: number) => {
+        res.statusCode = code;
+      },
+      end: (chunk?: unknown) => {
+        bodyOut = typeof chunk === 'string' ? JSON.parse(chunk) : chunk;
+      },
+    };
+    const handled = await handleHooksRoutes(
+      req,
+      res as unknown as ServerResponse,
+      { uploads } as WeaveServerDeps,
+      path.split('?')[0]!,
+      new URL(path, 'http://x'),
+    );
+    return { handled, status: res.statusCode, body: bodyOut };
+  };
+
+  it('GET 统计 + DELETE 按会话清（无随附件也 200）', async () => {
+    const a = uploads.save({ name: 'a.png', mediaType: 'image/png', bytes: Buffer.from('aaaa') });
+    const b = uploads.save({ name: 'b.md', mediaType: 'text/markdown', bytes: Buffer.from('bbbbbb') });
+    uploads.linkToEvent(eventId, [a.id, b.id]);
+
+    const stats = await call('GET', `/sessions/${encodeURIComponent(sessionId)}/uploads`);
+    expect(stats.status).toBe(200);
+    expect((stats.body as { totalBytes: number }).totalBytes).toBe(10);
+
+    const del = await call('DELETE', `/sessions/${encodeURIComponent(sessionId)}/uploads`);
+    expect(del.status).toBe(200);
+    expect(del.body).toEqual({ removed: 2, freedBytes: 10 });
+    expect(uploads.getById(a.id)).toBeUndefined();
+
+    const empty = await call('DELETE', `/sessions/${encodeURIComponent(sessionId)}/uploads`);
+    expect(empty.body).toEqual({ removed: 0, freedBytes: 0 });
+  });
+
+  it('GET/POST /uploads/unreferenced：预告数与实清数一致', async () => {
+    const orphan = uploads.save({ name: 'o.png', mediaType: 'image/png', bytes: Buffer.from('oo') });
+    const stats = await call('GET', '/uploads/unreferenced');
+    expect(stats.status).toBe(200);
+    expect(stats.body).toEqual({ count: 0, bytes: 0 }); // 宽限期内不算
+    const post = await call('POST', '/uploads/unreferenced');
+    expect(post.body).toEqual({ removed: 0, done: 0, total: 0 });
+    expect(uploads.getById(orphan.id)).toBeDefined();
+  });
+});
 
 describe('UploadRepository', () => {
   let db: ReturnType<typeof openDatabase>;
@@ -155,23 +316,43 @@ describe('上传路由可达（handleHooksRoutes 的路径认领表）', () => {
     const req = Readable.from([Buffer.from(payload)]) as unknown as IncomingMessage;
     req.method = method;
     let bodyOut: unknown = null;
-    const res = {
-      statusCode: 0,
-      setHeader: () => {},
-      writeHead: (code: number) => {
-        res.statusCode = code;
+    // /images/:id 现在流式回显（pipe 进 res）：桩要是个能收流的 Writable
+    const chunks: Buffer[] = [];
+    const res = new Writable({
+      write(chunk, _enc, cb) {
+        chunks.push(chunk as Buffer);
+        cb();
       },
-      end: (chunk?: unknown) => {
-        bodyOut = typeof chunk === 'string' ? JSON.parse(chunk) : chunk;
-      },
+    }) as ServerResponse & { statusCode: number };
+    res.statusCode = 0;
+    res.setHeader = () => res;
+    res.writeHead = (code: number) => {
+      res.statusCode = code;
+      return res;
     };
+    const realEnd = res.end.bind(res);
+    res.end = ((chunk?: unknown) => {
+      if (typeof chunk === 'string') bodyOut = JSON.parse(chunk);
+      else if (chunk !== undefined) bodyOut = chunk;
+      realEnd(); // 真正收流：pipe 完成要靠它触发 'finish'
+      return res;
+    }) as typeof res.end;
     const handled = await handleHooksRoutes(
       req,
-      res as unknown as ServerResponse,
+      res,
       { uploads } as WeaveServerDeps,
       path,
       new URL(path, 'http://x'),
     );
+    // pipe 的流在 handleHooksRoutes 返回后才灌完：等 'finish' 再收字节
+    // （JSON 应答走 res.end(chunk)，字节已在 bodyOut；只有流式应答才等 flush）
+    if (bodyOut === null) {
+      await new Promise<void>((resolve) => {
+        if (res.writableFinished) resolve();
+        else res.on('finish', () => resolve());
+      });
+      if (chunks.length > 0) bodyOut = Buffer.concat(chunks);
+    }
     return { handled, status: res.statusCode, body: bodyOut };
   };
 
