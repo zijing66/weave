@@ -959,13 +959,15 @@ export interface ImagesSurface {
  * 其余按目录现扫（自定义命令 / skill / 插件 skill）。
  */
 export interface HarnessCommand {
-  /** 不含前导 `/`；插件/skill 命令带 `<plugin>:<skill>` 形态。 */
+  /** 不含触发符；插件/skill 命令带 `<plugin>:<skill>` 形态。 */
   name: string;
   /** 一句话说明（skill 取 SKILL.md frontmatter）。 */
   description: string;
   /** 参数提示（形如 `<model>` / `<file>`）；没有参数就省略。 */
   argsHint?: string;
   source: 'builtin' | 'command' | 'skill' | 'plugin';
+  /** 触发符：缺省 `/`；codex 的 skill 是 `$name`。前端按它展示与插胶囊。 */
+  sigil?: '/' | '$';
 }
 
 /** 转录里的一条命令执行记录（内建命令不发 hook 事件，只有转录记着）。 */

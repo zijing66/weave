@@ -76,13 +76,15 @@
 
 ### commands 槽（`/` 候选与命令返显）
 
-`CommandsSurface` = `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。
+`CommandsSurface` = `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source, sigil? }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源），`sigil` 答「怎么敲」（缺省 `/`，codex 的 skill 是 `$name`）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。
 
-- **候选来源各归各的目录**：claude = 内建快照 + `<proj>/.claude/commands/**/*.md`（子目录成命名空间 `db/migrate.md` → `db:migrate`）+ 项目/用户 `skills/<name>/SKILL.md` + `plugins/cache/<market>/<plugin>/<version>/skills/*`（命名 `<plugin>:<skill>`，同名插件先到的版本赢）；codex = 内建快照 + `$CODEX_HOME/prompts/*.md`（文件名即命令名）+ `$CODEX_HOME/skills/<name>/SKILL.md`，`CODEX_HOME` 优先于 `~/.codex`。**内建表是版本快照**（宿主没有可扫目录），升级宿主后按 `/help` 复核——不联网、也不去猜二进制里的字符串。
+- **skill 只列「当前生效」的**（用户裁决：只有生效的才可选）：claude 走官方 `claude plugin list --json` 的 `enabled` + `installPath`——**停用插件里的 skill 不进候选**；用户/项目 skill 没有逐条停用通道，照目录扫。codex 走官方 app-server 的 `skills/list`（JSON-RPC：initialize → skills/list `{cwds:[project]}`，`enabled`/`scope`/`pluginId` 都是宿主算的，插件 skill 自带 `<plugin>:<skill>` 名）；这是 Codex 唯一给出「生效集」的通道，也顺带说明它的 skill 触发符是 `$`。两条官方通道都拿不到（老版本 / CLI 缺失 / 超时）才退回目录扫描，**不假装知道启用态**。
+- **候选来源各归各的目录**：claude = 内建快照 + `<proj>/.claude/commands/**/*.md`（子目录成命名空间 `db/migrate.md` → `db:migrate`）+ 项目/用户 `skills/<name>/SKILL.md`；codex = 内建快照 + `$CODEX_HOME/prompts/*.md`（文件名即命令名），`CODEX_HOME` 优先于 `~/.codex`。**内建表是版本快照**（宿主没有可扫目录），升级宿主后按 `/help` 复核——不联网、也不去猜二进制里的字符串。
+- **成本**：官方通道每次 `list` 起一次进程（claude ~0.9s / codex app-server ~0.5s，冷启 ~5s），一扇会话面板只取一次；不做缓存——启停插件要立刻反映到候选里。
 - **返显只能读转录**：内建命令在宿主里就地执行、**不发 UserPromptSubmit**（`/compact` 只有 PreCompact、`/model` 只有 Pre/PostModelSwitch、`/clear` 只有 `SessionStart(source:"clear")`）⇒ hook 域里根本没有这一轮。转录里它们是 `<command-name>/x</command-name>` + 紧随一条 `<local-command-stdout>`；**skill/插件命令没有 stdout**（展开成 prompt、走 UPS，对话里已有气泡）⇒ 只认带 stdout 的，天然不重复。ANSI 转义剥掉再入库。
 - **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。
 - **路由**：`GET /sessions/:id/commands` → `{ supported, commands }`（`projectPath` 由 server 查库得出）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
-- **web 侧**：`/` 在输入框行首（行内或换行后）触发候选面板，键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd`，与文件引用同一套 draft 序列化），提交时还原成 `/name args` 原文。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
+- **web 侧**：空白后敲 `/` 或 `$` 触发候选面板（两种触发符各筛各的候选），键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd` + 来源/触发符，与文件引用同一套 draft 序列化），提交时还原成 `<sigil><name> args` 原文。气泡侧 `commandTokensOf` 认 token：**前后必须是空白**（与引用表达式同一条判据），官方命令只在句首、skill/插件可插句中；配色 skill/插件红、官方与自定义命令黄。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
 
 ### plugins / pluginState 槽（插件安装与启用）
 

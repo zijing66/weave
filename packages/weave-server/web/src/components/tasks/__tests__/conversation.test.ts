@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
   buildSegments,
-  commandOfText,
+  cmdChipClass,
+  commandTokensOf,
   conversationOf,
   countdownLabel,
   editsWindowOf,
@@ -947,23 +948,79 @@ describe('editsWindowOf（按轮取数的窗口）', () => {
   });
 });
 
-describe('commandOfText（气泡里的斜杠命令识别）', () => {
-  it('整条就是一条命令：拆出名字与参数', () => {
-    expect(commandOfText('/compact')).toEqual({ name: 'compact', args: '' });
-    expect(commandOfText('/model opus')).toEqual({ name: 'model', args: 'opus' });
-    expect(commandOfText('  /effort high  ')).toEqual({ name: 'effort', args: 'high' });
-    expect(commandOfText('/plugin:foo:bar --force')).toEqual({ name: 'plugin:foo:bar', args: '--force' });
+describe('commandTokensOf（气泡里的命令 token 识别）', () => {
+  type Src = 'builtin' | 'command' | 'skill' | 'plugin';
+  const table: Record<string, Src> = {
+    'compact': 'builtin',
+    'model': 'builtin',
+    'goal': 'builtin',
+    'deploy': 'command',
+    'minimax-docx': 'skill',
+    'plug:design': 'plugin',
+    'triage': 'skill',
+  };
+  /** codex 的 skill 走 `$`；其余一律 `/`。 */
+  const src = (sigil: '/' | '$', name: string): { source: Src; sigil: '/' | '$' } | undefined => {
+    const source: Src | undefined = sigil === '$' ? (name === 'triage' ? 'skill' : undefined) : table[name];
+    return source ? { source, sigil } : undefined;
+  };
+
+  it('句首的官方命令：名字成 token，参数留作文字', () => {
+    expect(commandTokensOf('/compact', src)).toEqual([{ cmd: 'compact', source: 'builtin', sigil: '/' }]);
+    expect(commandTokensOf('  /model opus  ', src)).toEqual([
+      { text: '  ' },
+      { cmd: 'model', source: 'builtin', sigil: '/' },
+      { text: ' opus  ' },
+    ]);
+    expect(commandTokensOf('/goal 完成\n然后提交', src)).toEqual([
+      { cmd: 'goal', source: 'builtin', sigil: '/' },
+      { text: ' 完成\n然后提交' },
+    ]);
   });
 
-  it('参数可含换行（命令只在最前面生效）', () => {
-    expect(commandOfText('/goal 完成\n然后提交')).toEqual({ name: 'goal', args: '完成\n然后提交' });
+  it('skill 可以插在句中任何位置（前后须空白）', () => {
+    expect(commandTokensOf('帮我用 /minimax-docx 生成文档', src)).toEqual([
+      { text: '帮我用 ' },
+      { cmd: 'minimax-docx', source: 'skill', sigil: '/' },
+      { text: ' 生成文档' },
+    ]);
+    expect(commandTokensOf('/plug:design 和 /minimax-docx', src)).toEqual([
+      { cmd: 'plug:design', source: 'plugin', sigil: '/' },
+      { text: ' 和 ' },
+      { cmd: 'minimax-docx', source: 'skill', sigil: '/' },
+    ]);
   });
 
-  it('命令不在最前面 / 不像命令 → 不是', () => {
-    expect(commandOfText('看看 /model')).toBeNull();
-    expect(commandOfText('a/b')).toBeNull();
-    expect(commandOfText('/')).toBeNull();
-    expect(commandOfText('普通消息')).toBeNull();
+  it('codex 的 skill 用 `$`（同样是空白包围、可插句中）', () => {
+    expect(commandTokensOf('请用 $triage 看一下', src)).toEqual([
+      { text: '请用 ' },
+      { cmd: 'triage', source: 'skill', sigil: '$' },
+      { text: ' 看一下' },
+    ]);
+  });
+
+  it('skill 贴着字就不认（与引用表达式同一条判据）', () => {
+    expect(commandTokensOf('用/minimax-docx生成', src)).toEqual([{ text: '用/minimax-docx生成' }]);
+    expect(commandTokensOf('/minimax-docx，帮我', src)).toEqual([{ text: '/minimax-docx，帮我' }]);
+    expect(commandTokensOf('价格$5', src)).toEqual([{ text: '价格$5' }]);
+  });
+
+  it('官方命令只在句首：句中不认', () => {
+    expect(commandTokensOf('看看 /model', src)).toEqual([{ text: '看看 /model' }]);
+  });
+
+  it('认不出的名字当普通文字', () => {
+    expect(commandTokensOf('/nope', src)).toEqual([{ text: '/nope' }]);
+    expect(commandTokensOf('a/b', src)).toEqual([{ text: 'a/b' }]);
+    expect(commandTokensOf('/', src)).toEqual([{ text: '/' }]);
+  });
+
+  it('胶囊配色：skill / 插件红，官方与自定义命令黄', () => {
+    expect(cmdChipClass('skill')).toContain('red');
+    expect(cmdChipClass('plugin')).toContain('red');
+    expect(cmdChipClass('builtin')).toContain('amber');
+    expect(cmdChipClass('command')).toContain('amber');
+    expect(cmdChipClass(undefined)).toContain('amber');
   });
 });
 

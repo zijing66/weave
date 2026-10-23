@@ -2,7 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CLAUDE_COMMANDS, commandExecutions } from '../commands.js';
+import type { PluginExecutor } from '../plugins.js';
+import { commandExecutions, createClaudeCommandSurface } from '../commands.js';
 
 let root = '';
 const project = (): string => path.join(root, 'proj');
@@ -13,6 +14,18 @@ function touch(file: string, body = ''): void {
   writeFileSync(file, body);
 }
 
+/** 官方口径的假 CLI：`plugin list --json` 回这张表（别的参数一律报错）。 */
+const cliOf =
+  (rows: unknown): PluginExecutor =>
+  async (args) => {
+    if (args.join(' ') !== 'plugin list --json') throw new Error(`unexpected: ${args.join(' ')}`);
+    return { stdout: JSON.stringify(rows), stderr: '' };
+  };
+
+const noCli: PluginExecutor = async () => {
+  throw new Error('claude not found');
+};
+
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'weave-cmd-'));
 });
@@ -21,17 +34,23 @@ afterEach(() => {
 });
 
 describe('claude 命令清单', () => {
-  it('内建 + 项目/用户命令 + skill + 插件 skill，插件带 `<插件>:<skill>`', async () => {
+  it('内建 + 项目/用户命令 + skill + **启用**插件的 skill（`<插件>:<skill>`）', async () => {
     touch(path.join(project(), '.claude/commands/deploy.md'), '---\ndescription: Ship it\n---\n正文');
     touch(path.join(project(), '.claude/commands/db/migrate.md'), '把库迁上去');
     touch(path.join(project(), '.claude/skills/reviewer/SKILL.md'), '---\ndescription: Review code\n---');
     touch(path.join(home(), '.claude/skills/helper/SKILL.md'), '帮个忙');
-    touch(
-      path.join(home(), '.claude/plugins/cache/mkt/plug/abc123/skills/design/SKILL.md'),
-      '---\ndescription: Design things\n---',
-    );
+    const on = path.join(root, 'plugins/on');
+    const off = path.join(root, 'plugins/off');
+    touch(path.join(on, 'skills/design/SKILL.md'), '---\ndescription: Design things\n---');
+    touch(path.join(off, 'skills/old/SKILL.md'), '停用的不该出现');
+    const surface = createClaudeCommandSurface({
+      exec: cliOf([
+        { id: 'plug@mkt', enabled: true, installPath: on },
+        { id: 'off@mkt', enabled: false, installPath: off },
+      ]),
+    });
 
-    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
     const byName = new Map(list.map((c) => [c.name, c]));
 
     expect(byName.get('compact')).toMatchObject({ source: 'builtin', argsHint: '[instructions]' });
@@ -41,19 +60,39 @@ describe('claude 命令清单', () => {
     expect(byName.get('reviewer')).toMatchObject({ source: 'skill', description: 'Review code' });
     expect(byName.get('helper')).toMatchObject({ source: 'skill', description: '帮个忙' });
     expect(byName.get('plug:design')).toMatchObject({ source: 'plugin', description: 'Design things' });
+    // 停用插件里的 skill 不可选
+    expect(byName.has('off:old')).toBe(false);
+  });
+
+  it('CLI 拿不到启用态 → 退回扫缓存目录（不假装知道）', async () => {
+    touch(
+      path.join(home(), '.claude/plugins/cache/mkt/plug/abc123/skills/design/SKILL.md'),
+      '---\ndescription: Design things\n---',
+    );
+    const surface = createClaudeCommandSurface({ exec: noCli });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
+    expect(list.find((c) => c.name === 'plug:design')).toMatchObject({ source: 'plugin' });
   });
 
   it('目录都不存在时只剩内建（不抛）', async () => {
-    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    const surface = createClaudeCommandSurface({ exec: noCli });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
     expect(list.length).toBeGreaterThan(10);
     expect(list.every((c) => c.source === 'builtin')).toBe(true);
   });
 
   it('同名以内建为准（不重复列）', async () => {
     touch(path.join(project(), '.claude/commands/model.md'), '自定义同名命令');
-    const list = await CLAUDE_COMMANDS.list({ projectPath: project(), homedir: home() });
+    const surface = createClaudeCommandSurface({ exec: noCli });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
     expect(list.filter((c) => c.name === 'model')).toHaveLength(1);
     expect(list.find((c) => c.name === 'model')?.source).toBe('builtin');
+  });
+
+  it('claude 的命令触发符恒为 `/`（sigil 不设）', async () => {
+    const surface = createClaudeCommandSurface({ exec: noCli });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
+    expect(list.every((c) => c.sigil === undefined)).toBe(true);
   });
 });
 

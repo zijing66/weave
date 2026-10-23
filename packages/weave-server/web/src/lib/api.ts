@@ -455,6 +455,8 @@ export interface HarnessCommandRow {
   description: string;
   argsHint?: string;
   source: 'builtin' | 'command' | 'skill' | 'plugin';
+  /** 触发符（缺省 `/`）：codex 的 skill 是 `$name`。 */
+  sigil?: '/' | '$';
 }
 
 /** 转录里的一条命令执行（返显；内建命令没有 hook 事件）。 */

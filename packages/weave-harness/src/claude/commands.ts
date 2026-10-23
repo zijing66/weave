@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { homedir as osHomedir } from 'node:os';
 import path from 'node:path';
 import type { CommandExecution, CommandsSurface, HarnessCommand } from '../driver.js';
+import { execCli as claudeExec, type PluginExecutor } from './plugins.js';
 
 /**
  * Claude Code 的斜杠命令：`/` 提示的候选清单 + 命令执行的返显。
@@ -11,8 +12,10 @@ import type { CommandExecution, CommandsSurface, HarnessCommand } from '../drive
  *   （`/help` 在宿主里可自查；升级宿主后按它复核这张表）。
  * - **自定义命令**：`.claude/commands/**\/*.md`（项目 + 用户级），文件名即命令名，
  *   子目录变成命名空间（`db/migrate.md` → `/db:migrate`）。
- * - **skill**：`skills/<name>/SKILL.md`（项目 + 用户 + 插件缓存）——插件的按
- *   `<plugin>:<skill>` 命名（宿主里就是这么敲的）。
+ * - **skill**：`skills/<name>/SKILL.md`（项目 + 用户），以及**已启用插件**的
+ *   skill（按 `<plugin>:<skill>` 命名，宿主里就是这么敲的）。插件这一档优先走
+ *   官方口径 `claude plugin list --json`：只有 `enabled` 的插件才可选——缓存目录
+ *   里躺着的停用插件不该出现在候选里；CLI 拿不到（老版本/异常）才退回扫缓存。
  *
  * 返显走转录：内建命令**不发 UserPromptSubmit**（`/compact` 只有 PreCompact），
  * 但它会在转录里留 `<command-name>` + 紧随的 `<local-command-stdout>`。skill/插件
@@ -137,6 +140,49 @@ async function readPluginSkills(home: string): Promise<HarnessCommand[]> {
   return out;
 }
 
+/** 官方口径的插件启用态（`claude plugin list --json`）：拿不到回 null，不猜。 */
+interface InstalledPlugin {
+  plugin: string;
+  enabled: boolean;
+  installPath: string;
+}
+
+async function installedPlugins(exec: PluginExecutor): Promise<InstalledPlugin[] | null> {
+  try {
+    const { stdout } = await exec(['plugin', 'list', '--json'], { timeoutMs: 15_000 });
+    const rows: unknown = JSON.parse(stdout);
+    if (!Array.isArray(rows)) return null;
+    const out: InstalledPlugin[] = [];
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as { id?: unknown; enabled?: unknown; installPath?: unknown };
+      if (typeof r.id !== 'string' || typeof r.installPath !== 'string') continue;
+      // id = `<plugin>@<market>`；插件名本身可能含 `@`，从最后一个拆
+      const at = r.id.lastIndexOf('@');
+      out.push({
+        plugin: at > 0 ? r.id.slice(0, at) : r.id,
+        enabled: r.enabled === true,
+        installPath: r.installPath,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** 启用插件的 skill（官方 installPath 直取）；CLI 不可用 → null（调用方退回落扫缓存）。 */
+async function enabledPluginSkills(exec: PluginExecutor): Promise<HarnessCommand[] | null> {
+  const plugins = await installedPlugins(exec);
+  if (!plugins) return null;
+  const out: HarnessCommand[] = [];
+  for (const p of plugins) {
+    if (!p.enabled) continue;
+    out.push(...(await readSkills(path.join(p.installPath, 'skills'), `${p.plugin}:`, 'plugin')));
+  }
+  return out;
+}
+
 /** 按名字去重（内建优先，其次项目/用户命令与 skill）。 */
 function dedupe(rows: readonly HarnessCommand[]): HarnessCommand[] {
   const seen = new Set<string>();
@@ -197,18 +243,23 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
   return out;
 }
 
-export const CLAUDE_COMMANDS: CommandsSurface = {
-  harness: 'claude',
-  async list({ projectPath, homedir = osHomedir() }) {
-    const home = path.join(homedir, '.claude');
-    return dedupe([
-      ...BUILTINS,
-      ...(await readCommands(path.join(projectPath, '.claude', 'commands'))),
-      ...(await readCommands(path.join(home, 'commands'))),
-      ...(await readSkills(path.join(projectPath, '.claude', 'skills'))),
-      ...(await readSkills(path.join(home, 'skills'))),
-      ...(await readPluginSkills(home)),
-    ]);
-  },
-  executions: (transcriptPath) => (transcriptPath ? commandExecutions(transcriptPath) : Promise.resolve(null)),
-};
+export function createClaudeCommandSurface(deps: { exec?: PluginExecutor } = {}): CommandsSurface {
+  const exec = deps.exec ?? claudeExec;
+  return {
+    harness: 'claude',
+    async list({ projectPath, homedir = osHomedir() }) {
+      const home = path.join(homedir, '.claude');
+      return dedupe([
+        ...BUILTINS,
+        ...(await readCommands(path.join(projectPath, '.claude', 'commands'))),
+        ...(await readCommands(path.join(home, 'commands'))),
+        ...(await readSkills(path.join(projectPath, '.claude', 'skills'))),
+        ...(await readSkills(path.join(home, 'skills'))),
+        ...((await enabledPluginSkills(exec)) ?? (await readPluginSkills(home))),
+      ]);
+    },
+    executions: (transcriptPath) => (transcriptPath ? commandExecutions(transcriptPath) : Promise.resolve(null)),
+  };
+}
+
+export const CLAUDE_COMMANDS = createClaudeCommandSurface();

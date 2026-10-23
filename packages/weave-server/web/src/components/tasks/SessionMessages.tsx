@@ -445,6 +445,10 @@ export const REF_LINES_ATTR = 'data-ref-lines';
 
 /** 命令胶囊：值是命令名（不含 `/`），发出去时还原成 `/name`。 */
 export const CMD_ATTR = 'data-cmd';
+/** 胶囊的来源（builtin/command/skill/plugin）：只决定颜色。 */
+const CMD_SRC_ATTR = 'data-cmd-src';
+/** 胶囊的触发符（缺省 `/`；codex 的 skill 是 `$`）：序列化时原样拼回去。 */
+const CMD_SIG_ATTR = 'data-cmd-sig';
 
 /** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
  *  而这些数与 DOM 规范同寿，不会变。 */
@@ -459,7 +463,7 @@ const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', '
 type DraftToken =
   | { text: string }
   | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
-  | { cmd: string };
+  | { cmd: string; sigil?: CmdSigil; source?: CmdSource };
 
 /** composer DOM → 线性 token。**换行规则只说这一处**：
  *  - `<br>` = 一个换行；
@@ -493,7 +497,9 @@ function draftTokensOf(root: Node | null): DraftToken[] {
     const el = node as HTMLElement;
     const cmd = el.getAttribute(CMD_ATTR);
     if (cmd != null) {
-      out.push({ cmd });
+      const source = el.getAttribute(CMD_SRC_ATTR) as CmdSource | null;
+      const sigil = el.getAttribute(CMD_SIG_ATTR) as CmdSigil | null;
+      out.push({ cmd, ...(source ? { source } : {}), ...(sigil ? { sigil } : {}) });
       return;
     }
     const ref = el.getAttribute(REF_ATTR);
@@ -539,7 +545,7 @@ function draftTokensOf(root: Node | null): DraftToken[] {
 /** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。 */
 export function serializeDraft(root: Node | null): string {
   const out = draftTokensOf(root)
-    .map((t) => ('text' in t ? t.text : 'ref' in t ? t.ref : `/${t.cmd}`))
+    .map((t) => ('text' in t ? t.text : 'ref' in t ? t.ref : `${t.sigil ?? '/'}${t.cmd}`))
     .join('');
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
@@ -552,7 +558,7 @@ export interface DraftSnapshot {
   parts: Array<
     | { t: string }
     | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
-    | { c: string }
+    | { c: string; s?: CmdSource; g?: CmdSigil }
   >;
   /** 已落盘、还没发出去的图（同一条草稿的附件）。 */
   staged: UploadImage[];
@@ -574,7 +580,11 @@ export function draftSnapshotOf(
       if (last && 't' in last) last.t += token.text;
       else parts.push({ t: token.text });
     } else if ('cmd' in token) {
-      parts.push({ c: token.cmd });
+      parts.push({
+        c: token.cmd,
+        ...(token.source ? { s: token.source } : {}),
+        ...(token.sigil ? { g: token.sigil } : {}),
+      });
     } else {
       parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
@@ -587,13 +597,13 @@ export function applyDraftSnapshot(
   root: HTMLElement,
   snap: DraftSnapshot,
   buildChip: (ref: string, target: PickTarget) => HTMLElement,
-  buildCmdChip?: (name: string) => HTMLElement,
+  buildCmdChip?: (name: string, source?: CmdSource, sigil?: CmdSigil) => HTMLElement,
 ): void {
   root.replaceChildren();
   for (const part of snap.parts) {
     if ('c' in part) {
-      if (buildCmdChip) root.appendChild(buildCmdChip(part.c));
-      else root.appendChild(document.createTextNode(`/${part.c}`));
+      if (buildCmdChip) root.appendChild(buildCmdChip(part.c, part.s, part.g));
+      else root.appendChild(document.createTextNode(`${part.g ?? '/'}${part.c}`));
       continue;
     }
     if ('r' in part) {
@@ -730,11 +740,53 @@ const REF_CHIP_CLASS =
 const CMD_CHIP_CLASS =
   'mx-0.5 inline-block whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-amber-200';
 
-/** 一段文字是不是「一整条斜杠命令」（`/name [args]`）：是就拆出名字与参数，
- *  对话气泡据此把命令画成黄色胶囊、参数照常当文字摆。 */
-export function commandOfText(text: string): { name: string; args: string } | null {
-  const m = /^\s*\/([A-Za-z][A-Za-z0-9:_-]*)(?:\s+([\s\S]*))?$/.exec(text);
-  return m ? { name: m[1]!, args: (m[2] ?? '').trim() } : null;
+/** skill / 插件命令：红色系——它们与官方命令不是一类东西（插在句子里也一样生效）。 */
+const SKILL_CHIP_CLASS =
+  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-red-500/40 bg-red-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-red-200';
+
+export type CmdSource = HarnessCommandRow['source'];
+export type CmdSigil = '/' | '$';
+
+/** 一枚命令胶囊该长什么样：skill/插件红、官方与自定义命令黄。 */
+export function cmdChipClass(source: CmdSource | undefined): string {
+  return source === 'skill' || source === 'plugin' ? SKILL_CHIP_CLASS : CMD_CHIP_CLASS;
+}
+
+/** 气泡里认出命令 token：官方/自定义命令**只在整句开头**生效（宿主判据），
+ *  skill/插件命令可以插在句中任何位置，但**前后必须是空白**（与引用表达式同一条
+ *  判据）。触发符也归能力面（claude 全 `/`、codex 的 skill 是 `$`）。
+ *  认不出的名字一律当普通文字，不猜。 */
+export interface CmdInfo {
+  source: CmdSource;
+  sigil: CmdSigil;
+}
+export type CmdToken =
+  | { text: string }
+  | { cmd: string; source: CmdSource | undefined; sigil: CmdSigil };
+
+export function commandTokensOf(
+  text: string,
+  infoOf: (sigil: CmdSigil, name: string) => CmdInfo | undefined,
+): CmdToken[] {
+  const out: CmdToken[] = [];
+  let at = 0;
+  const re = /(^|\s)([/$])([A-Za-z][A-Za-z0-9:_-]*)(?=\s|$)/g;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const sigil = m[2] as CmdSigil;
+    const name = m[3]!;
+    const info = infoOf(sigil, name);
+    if (!info) continue;
+    const start = m.index + m[1]!.length;
+    // 整句开头（前面只有空白）才认官方命令；skill/插件不看位置
+    const head = text.slice(0, start).trim() === '';
+    const skill = info.source === 'skill' || info.source === 'plugin';
+    if (sigil === '/' && !head && !skill) continue;
+    if (start > at) out.push({ text: text.slice(at, start) });
+    out.push({ cmd: name, source: info.source, sigil });
+    at = start + name.length + 1;
+  }
+  if (at < text.length) out.push({ text: text.slice(at) });
+  return out;
 }
 
 /** 命令执行记录插进对话流（按时刻定位；与事件条目同一条时间线）。 */
@@ -1133,7 +1185,7 @@ export function SessionMessages({
   /** `/` 命令菜单：候选来自 harness 能力面（null = 还没取到）。`query` 是已经敲进去的
    *  那截命令名，`active` 是键盘高亮项。 */
   const [commands, setCommands] = useState<HarnessCommandRow[] | null>(null);
-  const [cmdMenu, setCmdMenu] = useState<{ query: string; active: number } | null>(null);
+  const [cmdMenu, setCmdMenu] = useState<{ sigil: CmdSigil; query: string; active: number } | null>(null);
   /** 内建命令的执行回显（转录里认出来的；null = 这个 harness 不记）。 */
   const [executions, setExecutions] = useState<CommandExecutionRow[] | null>(null);
   /** `@` 触发时那枚 `@` 被删掉了，记下它的位置：取消就补回去，落定就地插胶囊。 */
@@ -1291,6 +1343,16 @@ export function SessionMessages({
       alive = false;
     };
   }, [sessionId]);
+
+  /** 触发符 + 名字 → 候选：胶囊颜色（skill 红 / 官方命令黄）与「句中能不能认」
+   *  都按它判；同名不同触发符的两条互不覆盖。 */
+  const commandInfoOf = useCallback(
+    (sigil: CmdSigil, name: string): CmdInfo | undefined => {
+      const hit = (commands ?? []).find((c) => c.name === name && (c.sigil ?? '/') === sigil);
+      return hit ? { source: hit.source, sigil } : undefined;
+    },
+    [commands],
+  );
 
   /** 在途投递面（消息域管道视图，送达即删的本地队列 + 内存态）。 */
   const refreshMessages = useCallback(async (): Promise<void> => {
@@ -1963,51 +2025,65 @@ export function SessionMessages({
     return chip;
   };
 
-  /** 造一枚命令胶囊：值 = 命令名（不含 `/`），发出去时还原成 `/name`。 */
-  const buildCmdChip = (name: string): HTMLElement => {
+  /** 造一枚命令胶囊：值 = 命令名（不含 `/`），发出去时还原成 `/name`。
+   *  颜色按来源（skill/插件红、官方命令黄）；草稿快照里带着来源就用它，
+   *  否则按当下取到的候选表查。 */
+  const buildCmdChip = (name: string, source?: CmdSource, sigil?: CmdSigil): HTMLElement => {
+    const sig = sigil ?? '/';
+    const src = source ?? commandInfoOf(sig, name)?.source;
     const chip = document.createElement('span');
     chip.setAttribute('contenteditable', 'false');
     chip.setAttribute(CMD_ATTR, name);
-    chip.className = CMD_CHIP_CLASS;
-    chip.textContent = `/${name}`;
+    if (src) chip.setAttribute(CMD_SRC_ATTR, src);
+    if (sig !== '/') chip.setAttribute(CMD_SIG_ATTR, sig);
+    chip.className = cmdChipClass(src);
+    chip.textContent = `${sig}${name}`;
     return chip;
   };
 
-  /** 光标前是不是正在敲一条命令（行首的 `/word`）：是就把已敲的名字片段交出来。 */
-  const commandQueryAt = (el: HTMLDivElement): string | null => {
+  /** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符
+   *  与已敲的名字片段交出来。`/` 在句首才是官方命令，但 skill 句中也能用，
+   *  故两种触发符都按「空白后」认。 */
+  const commandQueryAt = (el: HTMLDivElement): { sigil: CmdSigil; query: string } | null => {
     const range = caretInDraft(el);
     if (!range) return null;
-    return /(?:^|\n)\/([A-Za-z0-9:_-]*)$/.exec(textBeforeCaret(el, range))?.[1] ?? null;
+    const m = /(?:^|\s)([/$])([A-Za-z0-9:_-]*)$/.exec(textBeforeCaret(el, range));
+    return m ? { sigil: m[1] as CmdSigil, query: m[2]! } : null;
   };
 
-  /** 敲字时同步 `/` 菜单：不再是命令词就收起（发送/点走/删光都走这一处）。 */
+  /** 敲字时同步命令菜单：不再是命令词就收起（发送/点走/删光都走这一处）。 */
   const syncCmdMenu = (el: HTMLDivElement): void => {
-    const query = commandQueryAt(el);
-    if (query === null || !commands || commands.length === 0) {
+    const hit = commandQueryAt(el);
+    if (!hit || !commands || commands.length === 0) {
       if (cmdMenu) setCmdMenu(null);
       return;
     }
-    setCmdMenu({ query, active: 0 });
+    const known = commands.some((c) => (c.sigil ?? '/') === hit.sigil);
+    if (!known) {
+      if (cmdMenu) setCmdMenu(null);
+      return;
+    }
+    setCmdMenu({ sigil: hit.sigil, query: hit.query, active: 0 });
   };
 
-  /** 落定一条命令：把已敲的 `/query` 换成黄色胶囊，光标停在它后面一格
+  /** 落定一条命令：把已敲的 `/query` 换成胶囊（颜色随来源），光标停在它后面一格
    *  （参数接着敲就行）。 */
-  const insertCommand = (name: string): void => {
+  const insertCommand = (name: string, sigil: CmdSigil): void => {
     const el = draftRef.current;
     if (!el) return;
     const range = caretInDraft(el);
     setCmdMenu(null);
     if (!range) return;
-    const query = commandQueryAt(el);
+    const hit = commandQueryAt(el);
     const node = range.startContainer;
-    if (query === null || node.nodeType !== TEXT_NODE) return;
-    const start = range.startOffset - (query.length + 1);
+    if (!hit || node.nodeType !== TEXT_NODE) return;
+    const start = range.startOffset - (hit.query.length + 1);
     if (start < 0) return;
     const r = document.createRange();
     r.setStart(node, start);
     r.setEnd(node, range.startOffset);
     r.deleteContents();
-    const chip = buildCmdChip(name);
+    const chip = buildCmdChip(name, undefined, sigil);
     r.insertNode(chip);
     const space = document.createTextNode(' ');
     chip.after(space);
@@ -2025,8 +2101,9 @@ export function SessionMessages({
   const cmdMatches = useMemo(() => {
     if (!cmdMenu || !commands) return [];
     const q = cmdMenu.query.toLowerCase();
-    const prefix = commands.filter((c) => c.name.toLowerCase().startsWith(q));
-    const rest = commands.filter(
+    const same = commands.filter((c) => (c.sigil ?? '/') === cmdMenu.sigil);
+    const prefix = same.filter((c) => c.name.toLowerCase().startsWith(q));
+    const rest = same.filter(
       (c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q),
     );
     return [...prefix, ...rest].slice(0, 40);
@@ -2696,7 +2773,8 @@ export function SessionMessages({
                   );
                 }
                 const pipe = m.pipe;
-                const cmd = commandOfText(m.text);
+                // 官方命令只在句首生效；skill/插件可以插在句中（前后须是空白）
+                const cmdTokens = commandTokensOf(m.text, commandInfoOf);
                 return (
                   <div
                     key={m.key}
@@ -2774,13 +2852,21 @@ export function SessionMessages({
                           ))}
                         </div>
                       ) : null}
-                      {/* 斜杠命令画成黄色胶囊（参数照常当文字）；其余走 markdown 预览
-                          （与左侧回复气泡同渲染器），`pre-wrap` 保住段落里的软换行 */}
-                      {cmd ? (
+                      {/* 斜杠命令画成胶囊（skill 红 / 官方命令黄，参数照常当文字）；
+                          其余走 markdown 预览（与左侧回复气泡同渲染器），
+                          `pre-wrap` 保住段落里的软换行 */}
+                      {cmdTokens.some((tok) => 'cmd' in tok) || m.commandOutput ? (
                         <div className="flex flex-col gap-1">
-                          <p className="flex flex-wrap items-baseline gap-1 whitespace-pre-wrap break-words text-xs leading-relaxed">
-                            <span className={CMD_CHIP_CLASS}>{`/${cmd.name}`}</span>
-                            {cmd.args && <span>{cmd.args}</span>}
+                          <p className="flex flex-wrap items-baseline whitespace-pre-wrap break-words text-xs leading-relaxed">
+                            {cmdTokens.map((tok, i) =>
+                              'cmd' in tok ? (
+                                <span key={i} className={cmdChipClass(tok.source)}>
+                                  {`${tok.sigil}${tok.cmd}`}
+                                </span>
+                              ) : (
+                                <span key={i}>{tok.text}</span>
+                              ),
+                            )}
                           </p>
                           {/* 内建命令的宿主回显（转录里的 local-command-stdout） */}
                           {m.commandOutput && (
@@ -3309,14 +3395,14 @@ export function SessionMessages({
                         // 用 mousedown 落定：click 之前焦点已经离开 composer，光标就没了
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          insertCommand(c.name);
+                          insertCommand(c.name, c.sigil ?? '/');
                         }}
                         className={cn(
                           'flex w-full items-baseline gap-2 px-2 py-1 text-left',
                           i === cmdMenu.active ? 'bg-edge/[0.08]' : 'hover:bg-edge/[0.06]',
                         )}
                       >
-                        <span className={CMD_CHIP_CLASS}>{`/${c.name}`}</span>
+                        <span className={cmdChipClass(c.source)}>{`${c.sigil ?? '/'}${c.name}`}</span>
                         {c.argsHint && (
                           <span className="shrink-0 font-mono text-[10px] text-neutral-500">{c.argsHint}</span>
                         )}
@@ -3362,7 +3448,8 @@ export function SessionMessages({
                       }
                       if (e.key === 'Enter' || e.key === 'Tab') {
                         e.preventDefault();
-                        insertCommand(cmdMatches[cmdMenu.active]?.name ?? cmdMatches[0]!.name);
+                        const pick = cmdMatches[cmdMenu.active] ?? cmdMatches[0]!;
+                        insertCommand(pick.name, pick.sigil ?? '/');
                         return;
                       }
                       if (e.key === 'Escape') {

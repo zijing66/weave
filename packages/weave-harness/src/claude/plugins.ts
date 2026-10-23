@@ -90,7 +90,8 @@ function safeJson(text: string): Record<string, unknown> | null {
   }
 }
 
-const execCli: PluginExecutor = (args, opts) =>
+/** 缺省 CLI 执行器（commands 面取「哪些插件是启用的」也用它）。 */
+export const execCli: PluginExecutor = (args, opts) =>
   new Promise((resolve, reject) => {
     const win = process.platform === 'win32';
     // stdin 关死：CLI 的交互式确认不该吊住调用方（weave 全程只走非交互参数）。
