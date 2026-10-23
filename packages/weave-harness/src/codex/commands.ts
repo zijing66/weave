@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir as osHomedir } from 'node:os';
 import path from 'node:path';
 import type { CommandsSurface, HarnessCommand } from '../driver.js';
@@ -50,21 +50,39 @@ function describeMarkdown(text: string): string {
   return body.split('\n').find((l) => l.trim() !== '' && !l.startsWith('#'))?.trim() ?? '';
 }
 
+/** 跟随符号链接的真身判定：`Dirent` 只报链接本身，不报目标是什么。 */
+async function kindOf(full: string): Promise<'dir' | 'file' | 'other'> {
+  try {
+    const s = await stat(full);
+    return s.isDirectory() ? 'dir' : s.isFile() ? 'file' : 'other';
+  } catch {
+    return 'other';
+  }
+}
+
 async function markdownFiles(dir: string): Promise<string[]> {
   try {
-    return (await readdir(dir, { withFileTypes: true }))
-      .filter((e) => e.isFile() && e.name.endsWith('.md'))
-      .map((e) => path.join(dir, e.name));
+    const out: string[] = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (!e.name.endsWith('.md')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isFile() || (e.isSymbolicLink() && (await kindOf(full)) === 'file')) out.push(full);
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
+/** 符号链接到目录也算（与资源管理的扫描同口径）。 */
 async function subdirs(dir: string): Promise<string[]> {
   try {
-    return (await readdir(dir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => path.join(dir, e.name));
+    const out: string[] = [];
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory() || (e.isSymbolicLink() && (await kindOf(full)) === 'dir')) out.push(full);
+    }
+    return out;
   } catch {
     return [];
   }

@@ -168,6 +168,32 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     });
   });
 
+  it('PUT /settings 缺席的段继承现值（旧构建保存不清空 decision/ai）', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    // 先配好两段。
+    await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ai: { baseUrl: 'https://ai.example.com/v1', model: 'ftm-flash' },
+        decision: { baseUrl: 'https://decision.example.com', model: 'decision-model' },
+      }),
+    });
+    // 只保存 terminal（旧构建的表单里没有 decision 段时的 payload 形状）。
+    const put = await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'wt' } }),
+    });
+    expect(put.status).toBe(200);
+    const get = await fetch(`http://127.0.0.1:${port}/settings`);
+    const data = (await get.json()) as {
+      settings: { ai?: { baseUrl: string }; decision?: { baseUrl: string } };
+    };
+    expect(data.settings.ai?.baseUrl).toBe('https://ai.example.com/v1');
+    expect(data.settings.decision?.baseUrl).toBe('https://decision.example.com');
+  });
+
   it('POST /projects/:id/open with target=explorer opens the project directory', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
       method: 'POST',

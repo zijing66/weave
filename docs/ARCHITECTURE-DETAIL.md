@@ -80,6 +80,7 @@
 
 - **skill 只列「当前生效」的**（用户裁决：只有生效的才可选）：claude 走官方 `claude plugin list --json` 的 `enabled` + `installPath`——**停用插件里的 skill 不进候选**；用户/项目 skill 没有逐条停用通道，照目录扫。codex 走官方 app-server 的 `skills/list`（JSON-RPC：initialize → skills/list `{cwds:[project]}`，`enabled`/`scope`/`pluginId` 都是宿主算的，插件 skill 自带 `<plugin>:<skill>` 名）；这是 Codex 唯一给出「生效集」的通道，也顺带说明它的 skill 触发符是 `$`。两条官方通道都拿不到（老版本 / CLI 缺失 / 超时）才退回目录扫描，**不假装知道启用态**。
 - **候选来源各归各的目录**：claude = 内建快照 + `<proj>/.claude/commands/**/*.md`（子目录成命名空间 `db/migrate.md` → `db:migrate`）+ 项目/用户 `skills/<name>/SKILL.md`；codex = 内建快照 + `$CODEX_HOME/prompts/*.md`（文件名即命令名），`CODEX_HOME` 优先于 `~/.codex`。**内建表是版本快照**（宿主没有可扫目录），升级宿主后按 `/help` 复核——不联网、也不去猜二进制里的字符串。
+- **扫描跟随符号链接**（`Dirent` 只报链接本身，不报目标）：用户常把仓库里的 skill 链进 `~/.claude/skills`（本机 9 个 skill 里 8 个是链接），`isDirectory()` 一把筛就会漏掉；判据与资源管理的 skill 扫描同口径——`isDirectory()` 为假时再 `stat` 一次看真身。目录与 `.md` 两边都这样判，符号链接成环不追（只 stat 一层）。
 - **成本**：官方通道每次 `list` 起一次进程（claude ~0.9s / codex app-server ~0.5s，冷启 ~5s），一扇会话面板只取一次；不做缓存——启停插件要立刻反映到候选里。
 - **返显只能读转录**：内建命令在宿主里就地执行、**不发 UserPromptSubmit**（`/compact` 只有 PreCompact、`/model` 只有 Pre/PostModelSwitch、`/clear` 只有 `SessionStart(source:"clear")`）⇒ hook 域里根本没有这一轮。转录里它们是 `<command-name>/x</command-name>` + 紧随一条 `<local-command-stdout>`；**skill/插件命令没有 stdout**（展开成 prompt、走 UPS，对话里已有气泡）⇒ 只认带 stdout 的，天然不重复。ANSI 转义剥掉再入库。
 - **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。

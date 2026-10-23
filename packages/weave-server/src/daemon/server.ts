@@ -439,10 +439,15 @@ async function handleRequest(
       if (decisionKey !== undefined) {
         writeDecisionKey(typeof decisionKey === 'string' ? decisionKey : null, deps.decisionKeyPath);
       }
+      // 段级合并：请求里**缺席的段继承现值**（整体覆盖语义下，旧构建的设置页保存
+      // 其它设置时会把没进表单的段——如 decision——静默清空，实测清过一次）。
+      // 显式给出的段照常覆盖（用户清空某字段 ≠ 段缺席）。
+      const current = await readDaemonSettings();
       const saved = await writeDaemonSettings({
+        ...current,
         ...body,
-        ai: stripApiKey(body.ai),
-        decision: stripApiKey(body.decision),
+        ai: body.ai ? stripApiKey(body.ai) : current.ai,
+        decision: body.decision ? stripApiKey(body.decision) : current.decision,
       } as DaemonSettings);
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。

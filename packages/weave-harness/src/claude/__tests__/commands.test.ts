@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -79,6 +79,22 @@ describe('claude 命令清单', () => {
     const list = await surface.list({ projectPath: project(), homedir: home() });
     expect(list.length).toBeGreaterThan(10);
     expect(list.every((c) => c.source === 'builtin')).toBe(true);
+  });
+
+  it('符号链接进来的 skill 也识（用户常把仓库里的 skill 链进 ~/.claude/skills）', async (ctx) => {
+    touch(path.join(home(), '.claude/skills/plain/SKILL.md'), '原生目录');
+    const repo = path.join(root, 'repo/linked');
+    touch(path.join(repo, 'SKILL.md'), '---\ndescription: Linked skill\n---');
+    mkdirSync(path.join(home(), '.claude/skills'), { recursive: true });
+    try {
+      symlinkSync(repo, path.join(home(), '.claude/skills/linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      ctx.skip(); // 没权限建链接的机器上跳过
+    }
+    const surface = createClaudeCommandSurface({ exec: noCli });
+    const list = await surface.list({ projectPath: project(), homedir: home() });
+    expect(list.find((c) => c.name === 'plain')).toMatchObject({ source: 'skill' });
+    expect(list.find((c) => c.name === 'linked')).toMatchObject({ source: 'skill', description: 'Linked skill' });
   });
 
   it('同名以内建为准（不重复列）', async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,24 @@ describe('codex 命令清单', () => {
 
     const list = await surface.list({ projectPath: root, homedir: home() });
     expect(list.find((c) => c.name === 'triage')).toMatchObject({ source: 'skill', sigil: '$' });
+  });
+
+  it('符号链接进来的 skill 也识（退回目录扫描那条路）', async (ctx) => {
+    const repo = path.join(root, 'repo/linked');
+    touch(path.join(repo, 'SKILL.md'), '---\ndescription: Linked skill\n---');
+    mkdirSync(path.join(codexHome(), 'skills'), { recursive: true });
+    try {
+      symlinkSync(repo, path.join(codexHome(), 'skills/linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      ctx.skip();
+    }
+    const surface = createCodexCommandSurface({ skills: official(null) });
+    const list = await surface.list({ projectPath: root, homedir: home() });
+    expect(list.find((c) => c.name === 'linked')).toMatchObject({
+      source: 'skill',
+      sigil: '$',
+      description: 'Linked skill',
+    });
   });
 
   it('$CODEX_HOME 优先于 homedir', async () => {
