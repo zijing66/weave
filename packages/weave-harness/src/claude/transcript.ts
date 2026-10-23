@@ -123,3 +123,37 @@ export function currentModeAt(tail: string): string | null {
   }
   return newest;
 }
+
+/**
+ * 转录尾部最后一条 assistant 的上下文窗口占用（`message.usage` 四项之和：
+ * input + cache_read + cache_creation + output——实测与宿主 SessionStart 的
+ * `context_tokens` 交叉吻合）。
+ *
+ * 语义是「**上一轮完成时**的占用」：正在跑的那轮要等它写出 assistant 记录才
+ * 更新——与模型/模式的「最后已知」同口径。没有 usage 的行（合成条目等）跳过。
+ */
+export function currentContextTokensAt(tail: string): number | null {
+  let newest: number | null = null;
+  for (const line of tail.split('\n')) {
+    if (!line.includes('"usage"')) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = raw as { message?: { usage?: Record<string, unknown> } };
+    const usage = entry?.message?.usage;
+    if (!usage || typeof usage !== 'object') continue;
+    const num = (k: string): number =>
+      typeof usage[k] === 'number' && Number.isFinite(usage[k]) ? (usage[k] as number) : 0;
+    const sum =
+      num('input_tokens') +
+      num('output_tokens') +
+      num('cache_read_input_tokens') +
+      num('cache_creation_input_tokens');
+    if (sum <= 0) continue;
+    newest = sum; // 尾部按时间顺序，最后一条即最新
+  }
+  return newest;
+}

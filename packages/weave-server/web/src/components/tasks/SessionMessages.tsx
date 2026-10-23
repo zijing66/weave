@@ -90,6 +90,14 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const isImageFile = (f: File): boolean =>
   f.type.startsWith('image/') || (!f.type && IMAGE_EXT.test(f.name));
 
+/** token 数 → 紧凑读数（386.1k / 1.2M）；null/非正数 = 没有可摆的值。 */
+function humanizeTokens(n: number | null | undefined): string | null {
+  if (n == null || !Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(Math.round(n));
+}
+
 /**
  * 剪贴板/拖放里的文件（图与普通文件都收，类型是否可发由 `stageFiles` 判）。
  * **移动浏览器只填 `items`**（iOS Safari 的 `files` 恒空），桌面才稳定给 `files`
@@ -2623,6 +2631,8 @@ export function SessionMessages({
   const modelTargets = modelCatalog[capability.harness] ?? [];
   const currentMode = sessionRow?.mode ?? null;
   const currentModel = sessionRow?.model ?? null;
+  /** 上下文占用读数（「上一轮完成时」）：humanize 到 k/M；没跑过一轮 = 不摆。 */
+  const contextLabel = humanizeTokens(sessionRow?.contextTokens ?? null);
   /** 刚打出 Shift+Tab、新模式还没被任何事件回报：记下切换前的值，变了即收。 */
   const [modePending, setModePending] = useState<string | null>(null);
   const modeTint = modePending !== null ? null : modeTintFor(capability.harness, currentMode);
@@ -3628,6 +3638,14 @@ export function SessionMessages({
                         onCommit={applyEffort}
                       />
                     </div>
+                  )}
+                  {contextLabel !== null && (
+                    <span
+                      title={t('tasks.contextLastKnown')}
+                      className="shrink-0 font-mono text-[11px] text-neutral-400"
+                    >
+                      {contextLabel}
+                    </span>
                   )}
                 </div>
               )}

@@ -367,6 +367,9 @@ export interface SessionRow {
   mode?: string | null;
   /** 推理档位（hook 事件自带的 `effort.level`）：状态栏 `thinking` 块，最后已知。 */
   effort?: string | null;
+  /** 上下文窗口占用（token 数，转录最后一条 assistant 的 usage 四项之和）：
+   *  「上一轮完成时」的最后已知；没跑过一轮 / 没转录 = null。 */
+  contextTokens?: number | null;
   /** 自动移除时刻（= lastSeenAt + 无操作保留窗；服务端 listWithCounts 派生，全会话
    *  统一）。服务端 SessionSweeper 过期即清，行内渲染剩余存活倒计时 tag。 */
   autoDeleteAt?: string | null;

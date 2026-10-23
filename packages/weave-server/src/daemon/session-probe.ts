@@ -2,6 +2,7 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import {
   bareModelName,
   codexInterruptMarkerAt,
+  currentContextTokensAt,
   currentEffortAt,
   currentModelAt,
   currentModeAt,
@@ -28,7 +29,7 @@ import { HARNESS_SESSION_CONTROL, isHarness } from '@weavecode/core';
 const TAIL_BYTES = 64 * 1024;
 
 /** 没有可答的事实（未登记路径）。 */
-const NO_FACTS = { model: null, mode: null, effort: null } as const;
+const NO_FACTS = { model: null, mode: null, effort: null, contextTokens: null } as const;
 
 /** 读文件尾部（读不到 → null，不猜）。 */
 export function readTail(path: string, bytes = TAIL_BYTES): string | null {
@@ -108,6 +109,7 @@ interface TailFacts {
   model: string | null;
   mode: string | null;
   effort: string | null;
+  contextTokens: number | null;
 }
 
 /**
@@ -138,10 +140,10 @@ export class SessionProbe {
   private readonly paths = new Map<string, string>();
   /** 路径 → 上次读到的事实（按文件大小缓存：没长过就不重读）。 */
   private readonly marks = new Map<string, TailFacts>();
-  /** sessionId → 最后已知的模型/模式（读到就记；见 `latched`）。 */
+  /** sessionId → 最后已知的模型/模式/上下文占用（读到就记；见 `latched`）。 */
   private readonly known = new Map<
     string,
-    { model: string | null; mode: string | null; effort: string | null }
+    { model: string | null; mode: string | null; effort: string | null; contextTokens: number | null }
   >();
   /**
    * sessionId → 宿主落定的换模型（`PostModelSwitch`）+ 记下的那一刻转录里还是哪个
@@ -195,6 +197,15 @@ export class SessionProbe {
    *  若一直只有通知类事件，没这层就会长期显「未知」。 */
   currentEffort(sessionId: string): string | null {
     return this.efforts.get(sessionId) ?? this.latched(sessionId).effort;
+  }
+
+  /**
+   * 上下文窗口占用（token 数）：转录最后一条 assistant 的 usage 四项之和，语义是
+   * 「上一轮完成时」——与模型/模式同为「最后已知」。没有转录 / 还没跑过一轮 →
+   * null（不猜）。
+   */
+  currentContextTokens(sessionId: string): number | null {
+    return this.latched(sessionId).contextTokens;
   }
 
   /** 宿主落定的换模型（`PostModelSwitch` 的 `to_model`）：立刻生效，见 `switched`。 */
@@ -274,6 +285,7 @@ export class SessionProbe {
     model: string | null;
     mode: string | null;
     effort: string | null;
+    contextTokens: number | null;
   } {
     const path = this.pathOf(sessionId);
     const facts = path ? this.factsOf(path) : NO_FACTS;
@@ -282,12 +294,15 @@ export class SessionProbe {
       model: this.switchedModel(sessionId, facts.model) ?? prev?.model ?? null,
       mode: facts.mode ?? prev?.mode ?? null,
       effort: facts.effort ?? prev?.effort ?? null,
+      // 上下文占用跟着转录走（每轮 assistant 记录刷新）：读到新值即替换，读空沿用。
+      contextTokens: facts.contextTokens ?? prev?.contextTokens ?? null,
     };
     if (
       !prev ||
       prev.model !== next.model ||
       prev.mode !== next.mode ||
-      prev.effort !== next.effort
+      prev.effort !== next.effort ||
+      prev.contextTokens !== next.contextTokens
     ) {
       this.known.set(sessionId, next);
     }
@@ -329,7 +344,7 @@ export class SessionProbe {
     try {
       size = statSync(path).size;
     } catch {
-      return { size: -1, markerAt: null, model: null, mode: null, effort: null };
+      return { size: -1, markerAt: null, model: null, mode: null, effort: null, contextTokens: null };
     }
     const hit = this.marks.get(path);
     if (hit && hit.size === size) return hit;
@@ -340,6 +355,7 @@ export class SessionProbe {
       model: tail === null ? null : currentModelAt(tail),
       mode: tail === null ? null : currentModeAt(tail),
       effort: tail === null ? null : currentEffortAt(tail),
+      contextTokens: tail === null ? null : currentContextTokensAt(tail),
     };
     this.marks.set(path, facts);
     return facts;

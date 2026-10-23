@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { currentEffortAt, currentModeAt, currentModelAt, interruptMarkerAt } from '../transcript.js';
+import {
+  currentContextTokensAt,
+  currentEffortAt,
+  currentModeAt,
+  currentModelAt,
+  interruptMarkerAt,
+} from '../transcript.js';
 
 const line = (o: unknown): string => JSON.stringify(o);
 
@@ -114,5 +120,36 @@ describe('currentEffortAt', () => {
     expect(currentEffortAt(line({ type: 'assistant' }))).toBeNull();
     expect(currentEffortAt('{\"broken\":')).toBeNull();
     expect(currentEffortAt(line({ type: 'assistant', effort: { level: 'high' } }))).toBeNull();
+  });
+});
+
+describe('currentContextTokensAt', () => {
+  const usageLine = (usage: Record<string, unknown>): string =>
+    line({ type: 'assistant', message: { model: 'ftm', usage } });
+
+  it('取最后一条 assistant 的 usage 四项之和', () => {
+    const tail = [
+      usageLine({ input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 3000, cache_creation_input_tokens: 7 }),
+      usageLine({ input_tokens: 2222, output_tokens: 4955, cache_read_input_tokens: 378880, cache_creation_input_tokens: 0 }),
+    ].join('\n');
+    expect(currentContextTokensAt(tail)).toBe(2222 + 4955 + 378880 + 0);
+  });
+
+  it('缺项按 0 计（cache_creation 常缺省）', () => {
+    expect(currentContextTokensAt(usageLine({ input_tokens: 100, output_tokens: 5 }))).toBe(105);
+  });
+
+  it('没有 usage 的行跳过；全无 usage → null（不猜）', () => {
+    const tail = [
+      line({ type: 'assistant', message: { model: 'ftm' } }),
+      line({ type: 'user', message: { content: 'hi' } }),
+    ].join('\n');
+    expect(currentContextTokensAt(tail)).toBeNull();
+    expect(currentContextTokensAt('')).toBeNull();
+    expect(currentContextTokensAt('{"type":"assistant","message":{"usage":')).toBeNull();
+  });
+
+  it('全零 usage 不算事实（合成/空轮）', () => {
+    expect(currentContextTokensAt(usageLine({ input_tokens: 0, output_tokens: 0 }))).toBeNull();
   });
 });
