@@ -102,11 +102,22 @@ export class TerminalTopologyRefresher {
     this.running = true;
     try {
       const topology = await this.snapshot();
-      this.last = topology;
-      const fingerprint = JSON.stringify(topology);
+      // terminals **按键合并**：某 socket 这轮没探到（探活冷却 / cli 偶发超时——
+      // 实测繁忙 GUI 上 `cli list` 可拖到 45s，远超 5s 捕获超时）时它的会话在
+      // 结果里缺席，契约是「缺席 = 保留上次分块」；直接整包替换会让快照在
+      // 「全量 ↔ 只剩个别实例」之间打摆（GET /sessions 又按快照回 null，前端
+      // 分组跟着闪没）。显式 null（确认不在了）照常覆盖。
+      const mergedTerminals: TerminalTopology['terminals'] = { ...this.last?.terminals };
+      for (const [sessionId, screen] of Object.entries(topology.terminals)) {
+        if (screen === undefined) continue;
+        mergedTerminals[sessionId] = screen;
+      }
+      const merged: TerminalTopology = { counts: topology.counts, terminals: mergedTerminals };
+      this.last = merged;
+      const fingerprint = JSON.stringify(merged);
       if (fingerprint === this.lastFingerprint) return;
       this.lastFingerprint = fingerprint;
-      this.bus.emit({ key: 'terminalTopology', payload: topology });
+      this.bus.emit({ key: 'terminalTopology', payload: merged });
     } catch {
       // 探测失败（wezterm 不在/挂死）不推不抛：下个周期自会重试，角标与分块保持旧值。
     } finally {

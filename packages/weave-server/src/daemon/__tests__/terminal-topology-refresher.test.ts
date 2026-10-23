@@ -159,4 +159,28 @@ describe('TerminalTopologyRefresher', () => {
     expect(snapshot).toHaveBeenCalledTimes(1);
     expect(frames).toHaveLength(1);
   });
+
+  it('terminals 按键合并：某 socket 这轮没探到（缺席）保留上次分块，显式 null 照常覆盖', async () => {
+    const bus = new DataBus();
+    const frames = collect(bus);
+    const screen = { id: 'abcd1234:0:1', windowId: 0, tabId: 1, tabsInWindow: 2 };
+    let terminals: TerminalTopology['terminals'] = { s1: screen, s2: screen };
+    const refresher = new TerminalTopologyRefresher(
+      async () => ({ counts: { 1: 1 }, terminals }),
+      bus,
+    );
+
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.terminals).toEqual({ s1: screen, s2: screen });
+
+    // s1 的 socket 这轮没探到（缺席）→ 保留上次；s2 确认不在了（显式 null）→ 覆盖
+    terminals = { s1: undefined, s2: null } as unknown as TerminalTopology['terminals'];
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.terminals).toEqual({ s1: screen, s2: null });
+
+    // s1 回来了 → 覆盖回新值
+    terminals = { s1: screen };
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.terminals).toEqual({ s1: screen, s2: null });
+  });
 });
