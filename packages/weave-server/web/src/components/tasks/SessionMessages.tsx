@@ -157,16 +157,6 @@ export function writeConvCache(sessionId: string, entries: readonly ConvEntry[])
   }
 }
 
-/** 发出即清：缓存里的尾巴停在发送前那一刻，留着只会在重开面板时先闪一眼旧账
- *  （下一帧事件到了会重新写）。 */
-export function clearConvCache(sessionId: string): void {
-  try {
-    sessionStorage.removeItem(CONV_KEY(sessionId));
-  } catch {
-    // 隐私模式：本来也没写进去
-  }
-}
-
 /** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */
 const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
   pending: 'bg-amber-900/40 text-amber-300',
@@ -2225,10 +2215,6 @@ export function SessionMessages({
     if (!text && images.length === 0) return;
     setDraftText('');
     setStaged([]);
-    // 发出即清盘：草稿键当场删（别等防抖那一拍），对话缓存也一并丢掉——
-    // 那一份是发送前的尾巴，重开面板时先闪旧账比首屏快慢更难受
-    writeDraftSnapshot(sessionId, null);
-    clearConvCache(sessionId);
     stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
       `sendMsg:${sessionId}`,

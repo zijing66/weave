@@ -6,6 +6,8 @@ export const ORCH_MAX_NODES = 24;
 export const ORCH_MAX_EDGES = 64;
 /** 每 run 的投递上限：环路兜底（成环已被静态拒，这是运行时最后一道闸）。 */
 export const ORCH_MAX_DELIVERIES = 200;
+/** 每 run 的 fork 预算：condition/extract 的无头回合次数上限（token 成本闸）。 */
+export const ORCH_MAX_FORKS = 50;
 
 export interface OrchestrationGraph {
   nodes: readonly OrchestrationNode[];

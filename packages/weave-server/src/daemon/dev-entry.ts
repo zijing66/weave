@@ -39,7 +39,9 @@ import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
-import { OrchestrationEngine } from '../hooks/orchestration-engine.js';
+import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
+import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
+import { readDecisionKey } from './decision-config.js';
 import { openSessionTerminal } from './session-open.js';
 import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
@@ -346,6 +348,19 @@ async function main(): Promise<void> {
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
   classifyRef.run = (input) => edgeExtract.run(input);
+  // 条件边判断链（与 start.ts 同装配）：决策模型优先、fork 回落。
+  const conditionJudge = createDecisionConditionJudge({
+    config: async () => {
+      const decision = readDaemonSettingsSync().decision;
+      if (!decision?.baseUrl || !decision.model) return null;
+      const apiKey = readDecisionKey();
+      return apiKey ? { baseUrl: decision.baseUrl, model: decision.model, apiKey } : null;
+    },
+    fallback: createForkConditionJudge({
+      supports: (sessionId) => edgeExtract.supports(sessionId),
+      extract: (input) => edgeExtract.run(input),
+    }),
+  });
   // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。
   const orchestrationEngine = new OrchestrationEngine({
     orchestrations,
@@ -355,6 +370,7 @@ async function main(): Promise<void> {
     bus: hookBus,
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
+    conditionJudge,
     ensureOpen: async (sessionId) => {
       // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
       // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。

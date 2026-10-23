@@ -19,7 +19,6 @@ import {
   textBeforeCaret,
   withCommands,
   withPlan,
-  clearConvCache,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -868,7 +867,6 @@ describe('对话缓存（sessionStorage）', () => {
     vi.stubGlobal('sessionStorage', {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
-      removeItem: (k: string) => void store.delete(k),
     });
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -897,14 +895,6 @@ describe('对话缓存（sessionStorage）', () => {
     store.set('weave:conv:s1', '{ 这不是 json');
     expect(readConvCache('s1')).toBeNull();
     expect(readConvCache('从没写过')).toBeNull();
-  });
-
-  it('发出即清：只删这个会话的键', () => {
-    writeConvCache('s1', [conv(1)]);
-    writeConvCache('s2', [conv(2)]);
-    clearConvCache('s1');
-    expect(readConvCache('s1')).toBeNull();
-    expect(readConvCache('s2')).not.toBeNull();
   });
 });
 

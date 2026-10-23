@@ -35,7 +35,9 @@ import { UploadRepository } from '../repositories/uploads.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
-import { OrchestrationEngine } from '../hooks/orchestration-engine.js';
+import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
+import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
+import { readDecisionKey } from './decision-config.js';
 import { openSessionTerminal } from './session-open.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -374,6 +376,21 @@ export function startDaemon(): void {
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
   classifyRef.run = (input) => edgeExtract.run(input);
+  // 条件边判断链：配了决策模型（settings decision 段 + key）先问它（Jev 兼容
+  // noul，强 yes/no 出结论、判不准与失败回落），没配/回落都到 fork 子 Agent。
+  // 配置每次判断现读——设置页改完即时生效，不用重启 daemon。
+  const conditionJudge = createDecisionConditionJudge({
+    config: async () => {
+      const decision = readDaemonSettingsSync().decision;
+      if (!decision?.baseUrl || !decision.model) return null;
+      const apiKey = readDecisionKey();
+      return apiKey ? { baseUrl: decision.baseUrl, model: decision.model, apiKey } : null;
+    },
+    fallback: createForkConditionJudge({
+      supports: (sessionId) => edgeExtract.supports(sessionId),
+      extract: (input) => edgeExtract.run(input),
+    }),
+  });
   // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。
   // 新起的 resume 进程要先在 claude 注册表落名，投递器才不把它判成离线——
   // 等它出现（最多 8s）；等不到也放行，交给队列在 SessionStart 后冲洗。
@@ -385,6 +402,7 @@ export function startDaemon(): void {
     bus: hookBus,
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
+    conditionJudge,
     ensureOpen: async (sessionId) => {
       // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
       // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。

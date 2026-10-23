@@ -20,7 +20,7 @@ import type { HookEventBus } from './bus.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import { postJson } from './handlers/webhook.js';
 import { renderTemplate } from './match.js';
-import { ORCH_MAX_DELIVERIES, validateOrchestration } from './orchestration-graph.js';
+import { ORCH_MAX_DELIVERIES, ORCH_MAX_FORKS, validateOrchestration } from './orchestration-graph.js';
 
 export type StartResult =
   | { ok: true; runId: number }
@@ -36,6 +36,8 @@ interface Runtime {
   edges: OrchestrationEdge[];
   state: OrchestrationRunState;
   deliveries: number;
+  /** 本 run 已烧的 fork 次数（condition/extract 的无头回合，token 成本闸）。 */
+  forks: number;
   inflight: number;
   running: boolean;
   /** 收尾只走一次（并发路径都能触发 maybeDone）。 */
@@ -83,6 +85,114 @@ export function parseConditionAnswer(answer: string | null | undefined): boolean
   return null;
 }
 
+/** 条件边的判断结果：ok = 放行投递；拦下时 reason 记进 RunEvent。 */
+export interface ConditionDecision {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * 条件边判断引擎：输入上游会话与放行条件，答放行还是拦下。引擎只认这个
+ * 接口、不关心判断怎么做出来——缺省 = fork 子 Agent（createForkConditionJudge），
+ * 装配侧注入 `conditionJudge` 即整体替换（决策模型等其他方案走这里）。
+ */
+export interface ConditionJudge {
+  judge(input: {
+    sessionId: string;
+    condition: string;
+    /** 上游这一轮最终输出（`{upstream}` 同源）；无会话上下文的判断方案用它。 */
+    upstream: string | null;
+  }): Promise<ConditionDecision>;
+  /**
+   * 批量判定（可选实现）：同一节点同一轮的多条条件边一次判定——fork 型引擎
+   * 用它把 N 次 fork 合成 1 次（token 成本 ÷N）。缺省回落逐条 judge；返回
+   * 数组与输入同序。抛错 = 整批按逐条回落。
+   */
+  judgeBatch?(input: {
+    sessionId: string;
+    /** 每条的判定键（引擎用它对回答案），condition 原文随行。 */
+    items: { key: string; condition: string }[];
+    upstream: string | null;
+  }): Promise<ConditionDecision[]>;
+}
+
+/** 缺省判断引擎：对上游会话 fork 一次上下文子 Agent，只认 yes/no 回答。 */
+export function createForkConditionJudge(deps: {
+  supports(sessionId: string): boolean;
+  extract(input: { sessionId: string; prompt: string }): Promise<string | null>;
+}): ConditionJudge {
+  const single = (verdict: boolean | null): ConditionDecision =>
+    verdict === null
+      ? {
+          ok: false,
+          reason: 'condition could not be evaluated (no clear yes/no answer) — delivery blocked',
+        }
+      : verdict
+        ? { ok: true }
+        : { ok: false, reason: 'condition answered no — delivery skipped' };
+  return {
+    async judge({ sessionId, condition }) {
+      if (!deps.supports(sessionId)) {
+        return {
+          ok: false,
+          reason: 'condition not evaluable — harness has no context sub-agent face',
+        };
+      }
+      const answer = await deps.extract({
+        sessionId,
+        prompt: `${condition}\n\nBased on the conversation context above, answer with exactly one word: yes or no.`,
+      });
+      return single(parseConditionAnswer(answer));
+    },
+    // 批量：一次 fork 问全部（JSON 逐键答 yes/no）——N 条条件边的 token 成本 ÷N。
+    // fork 自带会话上下文，upstream 只是兜底信号，这里不单独拼进 prompt。
+    async judgeBatch({ sessionId, items }) {
+      if (!deps.supports(sessionId)) {
+        return items.map(() => ({
+          ok: false,
+          reason: 'condition not evaluable — harness has no context sub-agent face',
+        }));
+      }
+      const lines = items
+        .map((item, i) => `${i + 1}. key=${item.key}: ${item.condition}`)
+        .join('\n');
+      const answer = await deps.extract({
+        sessionId,
+        prompt: `For EACH item below, decide yes/no based on the conversation context.\n${lines}\n\nRespond with ONLY a JSON object mapping each key to true or false, e.g. {"k1":true,"k2":false}. No other text.`,
+      });
+      const parsed = parseBatchAnswer(answer, items.map((i) => i.key));
+      if (!parsed) return items.map(() => single(null));
+      return items.map((item) => {
+        const verdict = parsed.get(item.key);
+        if (verdict === undefined) return single(null);
+        return single(verdict);
+      });
+    },
+  };
+}
+
+/** 批量回答解析：首个 JSON 对象里逐键取布尔；缺键/解析失败 = null（整批判不出）。 */
+function parseBatchAnswer(
+  answer: string | null | undefined,
+  keys: readonly string[],
+): Map<string, boolean> | null {
+  if (!answer) return null;
+  const json = answer.match(/\{[\s\S]*\}/);
+  if (!json) return null;
+  try {
+    const value = JSON.parse(json[0]) as Record<string, unknown>;
+    const out = new Map<string, boolean>();
+    for (const key of keys) {
+      const v = value[key];
+      if (typeof v !== 'boolean') return null;
+      out.set(key, v);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 /** when 预筛：关键词（逗号/换行/分号分隔）任一为文本的子串即命中（不区分大小写）。 */
 export function matchWhen(when: string, text: string | null): boolean {
   const hay = (text ?? '').toLowerCase();
@@ -114,6 +224,13 @@ const ENTRY_INDEX_TTL_MS = 10_000;
 /** 编排拉起的会话在这么久内的回合不算「自然回合」（覆盖冷启动 + 首轮）。 */
 const STARTED_AUTO_FIRE_GUARD_MS = 60_000;
 
+/**
+ * 待回陈滞时限：目标活着但最老一条 pending 超过它仍无回合 → run 落 failed
+ * （释放「同编排单 run」闸——不然一个挂死的会话让编排永久静默失能）。
+ * 2 小时：正常 coding 回合（含长任务）远短于此；挂死/忘答的会话到此即弃。
+ */
+const PENDING_STALE_MS = 2 * 3_600_000;
+
 export class OrchestrationEngine {
   private readonly runtime = new Map<number, Runtime>();
   /** ensureOpen 单飞：同一会话被多条边并发投递时只拉起一次。 */
@@ -123,6 +240,8 @@ export class OrchestrationEngine {
   >();
   /** 编排刚拉起的会话 → 时刻：首个回合结束不许被当成「自然回合」去触发别的编排。 */
   private readonly startedByOrchestration = new Map<string, number>();
+  /** 缺省判断引擎（fork 子 Agent）；装配侧注入 conditionJudge 即整体替换。 */
+  private readonly forkJudge: ConditionJudge;
 
   constructor(
     private readonly deps: {
@@ -139,6 +258,11 @@ export class OrchestrationEngine {
       supportsExtract?: (sessionId: string) => boolean;
       /** 边级提取（装配侧 fork 无头回合实现）；null/拒绝 = 回落 {upstream}。 */
       extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
+      /**
+       * 条件边判断引擎（占位）：缺省 = supportsExtract/extract 拼的 fork 子 Agent
+       * 判断；注入即整体替换（决策模型等其他判断方案走这里）。
+       */
+      conditionJudge?: ConditionJudge;
       /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等回执）。
        *  `ack` 说明回执来源（`session-start` = 宿主真进了会话，`registry` = 只见到进程）。 */
       ensureOpen?: (
@@ -153,7 +277,12 @@ export class OrchestrationEngine {
       /** 出站 POST（测试注入）；缺省 handlers/webhook 的 postJson。 */
       postJsonImpl?: typeof postJson;
     },
-  ) {}
+  ) {
+    this.forkJudge = createForkConditionJudge({
+      supports: (sessionId) => deps.supportsExtract?.(sessionId) ?? false,
+      extract: (input) => deps.extract?.(input) ?? Promise.resolve(null),
+    });
+  }
 
   /**
    * 触发一次运行。`entryIds` 缺省 = 全部 session 入口（cron 语义）；显式给 =
@@ -195,6 +324,7 @@ export class OrchestrationEngine {
       edges: orch.edges,
       state: { pending: {}, events: [] },
       deliveries: 0,
+      forks: 0,
       inflight: 0,
       running: true,
       finishing: false,
@@ -307,6 +437,7 @@ export class OrchestrationEngine {
       edges: orch.edges,
       state: { pending: {}, events: [] },
       deliveries: 0,
+      forks: 0,
       inflight: 0,
       running: true,
       finishing: false,
@@ -392,12 +523,22 @@ export class OrchestrationEngine {
     try {
       const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
       const rows = new Map(this.deps.sessions.listWithCounts().map((r) => [r.sessionId, r] as const));
+      const now = Date.now();
       for (const rt of [...this.runtime.values()]) {
         if (!rt.running) continue;
         for (const [sessionId, list] of Object.entries(rt.state.pending)) {
           if (list.length === 0) continue;
           const row = rows.get(sessionId);
-          if (row && pidAliveOf(row, liveness) !== false) continue;
+          if (row && pidAliveOf(row, liveness) !== false) {
+            // 活着但陈滞：最老一条待回超过时限 → 该会话的 pending 全部作废
+            // （run 落 failed，释放「同编排单 run」闸——不然编排静默失能）。
+            const oldest = Date.parse(list[0]!.at);
+            if (Number.isFinite(oldest) && now - oldest > PENDING_STALE_MS) {
+              this.staleOut(rt, sessionId, list[0]!.at);
+              touched++;
+            }
+            continue;
+          }
           void this.reviveOrDrop(rt, sessionId);
           touched++;
         }
@@ -406,6 +547,17 @@ export class OrchestrationEngine {
       return touched;
     }
     return touched;
+  }
+
+  /** pending 陈滞收尾：作废该会话全部待回并落 failed（原因带最老待回的时刻）。 */
+  private staleOut(rt: Runtime, sessionId: string, oldestAt: string): void {
+    const hours = ((Date.now() - Date.parse(oldestAt)) / 3_600_000).toFixed(1);
+    this.dropPending(
+      rt,
+      sessionId,
+      `pending stale ${hours}h (oldest ${oldestAt}) — target alive but never turned; run failed to release the single-run gate`,
+    );
+    this.finish(rt, 'failed', `pending stale on ${sessionId} (${hours}h) — run aborted`);
   }
 
   /** ensureOpen 单飞：并发的多条边/多个 run 对同一会话只拉起一次。 */
@@ -434,6 +586,7 @@ export class OrchestrationEngine {
    * 上游这一轮最终输出（webhook 入口 = 触发载荷），`{summary}` = 按边的提取指令
    * fork 出的结果（失败回落 `{upstream}`，都没有则占位残留 → 记失败不投），
    * `{session}` = 上游会话名。webhook 入口的载荷直接拼在正文后（不渲染）。
+   * 条件边先整批判定（一次 fork 出全边路由，token ÷N），再按判定结果投递。
    */
   private async fireEdges(rt: Runtime, from: string, payload = ''): Promise<void> {
     const edges = rt.edges.filter((edge) => edge.from === from);
@@ -448,6 +601,22 @@ export class OrchestrationEngine {
         : rawUpstream
       : null;
     const session = this.deps.sessions.getBySessionId(from)?.title || from;
+
+    // 条件边整批预判（非载荷路径）：when 预筛先裁掉一半，剩下的 condition 一次
+    // 问完（judgeBatch；引擎没实现就逐条）。判定结果记进 verdicts，投递段只查表。
+    const verdicts = new Map<string, boolean>();
+    if (!payload) {
+      const conditioned = edges.filter(
+        (edge) =>
+          edge.condition?.trim() &&
+          !(edge.when?.trim() && !matchWhen(edge.when, upstream)),
+      );
+      if (conditioned.length > 0) {
+        const judged = await this.evaluateConditionsBatch(rt, from, conditioned, upstream);
+        for (const [edgeId, ok] of judged) verdicts.set(edgeId, ok);
+      }
+    }
+
     await Promise.allSettled(
       edges.map(async (edge) => {
         if (payload) {
@@ -464,7 +633,7 @@ export class OrchestrationEngine {
           return this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text });
         }
         let summary: string | null = null;
-        if (edge.extract?.trim()) {
+        if (edge.extract?.trim() && this.takeFork(rt)) {
           summary = this.deps.supportsExtract?.(from)
             ? ((await this.deps.extract?.({ sessionId: from, prompt: edge.extract.trim() })) ?? null)
             : null;
@@ -482,10 +651,22 @@ export class OrchestrationEngine {
           });
           return;
         }
-        // 放行条件：问上游会话的上下文子 Agent，只认 yes/no；no 或判不出都拦下。
+        // 放行条件：预判阶段已整批判定，这里只查表（不在表 = 预算耗尽没判成）。
         if (edge.condition?.trim()) {
-          const verdict = await this.evaluateCondition(rt, from, edge);
-          if (!verdict) return;
+          const verdict = verdicts.get(edge.id);
+          if (verdict !== true) {
+            if (verdict === undefined) {
+              this.record(rt, {
+                from,
+                to: edge.to,
+                edgeId: edge.id,
+                ok: false,
+                stage: 'condition',
+                error: `fork budget exhausted (${ORCH_MAX_FORKS}) — condition not evaluated`,
+              });
+            }
+            return;
+          }
         }
         const text = renderEdgeText(edge.text, {
           upstream,
@@ -509,14 +690,74 @@ export class OrchestrationEngine {
   }
 
   /**
-   * 条件边的放行判断：对上游会话跑一次上下文子 Agent（能力面，claude = fork），
-   * 提问要求严格回答 yes/no。yes = 放行；no = 拦下；判不出（回答不认、超时、
-   * fork 失败、harness 无此能力面）= 拦下——宁可不发错包，原因都记 RunEvent。
+   * 条件边整批判定：judgeBatch（一次 fork 出全边路由）优先，引擎没实现或抛错
+   * 回落逐条 judge。每条的结果（放行/拦下原因）都落 RunEvent；预算在批次入口
+   * 一次扣（整批一个 fork 名额），到顶整批记预算原因。
+   */
+  private async evaluateConditionsBatch(
+    rt: Runtime,
+    from: string,
+    edges: OrchestrationEdge[],
+    upstream: string | null,
+  ): Promise<Map<string, boolean>> {
+    const out = new Map<string, boolean>();
+    const judge = this.deps.conditionJudge ?? this.forkJudge;
+    if (!this.takeFork(rt)) {
+      for (const edge of edges) {
+        this.record(rt, {
+          from,
+          to: edge.to,
+          edgeId: edge.id,
+          ok: false,
+          stage: 'condition',
+          error: `fork budget exhausted (${ORCH_MAX_FORKS}) — condition not evaluated`,
+        });
+      }
+      return out;
+    }
+    if (judge.judgeBatch && edges.length > 1) {
+      try {
+        const decisions = await judge.judgeBatch({
+          sessionId: from,
+          items: edges.map((edge) => ({ key: edge.id, condition: edge.condition!.trim() })),
+          upstream,
+        });
+        edges.forEach((edge, i) => {
+          const decision = decisions[i];
+          if (!decision) return;
+          out.set(edge.id, decision.ok);
+          if (!decision.ok) {
+            this.record(rt, {
+              from,
+              to: edge.to,
+              edgeId: edge.id,
+              ok: false,
+              stage: 'condition',
+              error: decision.reason ?? 'condition not satisfied — delivery blocked',
+            });
+          }
+        });
+        return out;
+      } catch {
+        // 批量失败回落逐条（下面统一走）
+      }
+    }
+    for (const edge of edges) {
+      out.set(edge.id, await this.evaluateCondition(rt, from, edge, upstream));
+    }
+    return out;
+  }
+
+  /**
+   * 条件边的放行判断：委托 ConditionJudge（缺省 = fork 子 Agent，装配侧可注入
+   * 其他决策方案）。放行才投；拦下（no / 判不出 / 判断引擎自己抛错）都记
+   * `stage:'condition'` 事件——宁可不发错包。
    */
   private async evaluateCondition(
     rt: Runtime,
     from: string,
     edge: OrchestrationEdge,
+    upstream: string | null,
   ): Promise<boolean> {
     const block = (reason: string): false => {
       this.record(rt, {
@@ -529,18 +770,21 @@ export class OrchestrationEngine {
       });
       return false;
     };
-    if (!this.deps.supportsExtract?.(from)) {
-      return block('condition not evaluable — harness has no context sub-agent face');
+    let decision: ConditionDecision;
+    try {
+      decision = await (this.deps.conditionJudge ?? this.forkJudge).judge({
+        sessionId: from,
+        condition: edge.condition!.trim(),
+        upstream,
+      });
+    } catch (err) {
+      return block(
+        `condition judge failed — delivery blocked: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
-    const answer = await this.deps.extract?.({
-      sessionId: from,
-      prompt: `${edge.condition!.trim()}\n\nBased on the conversation context above, answer with exactly one word: yes or no.`,
-    });
-    const verdict = parseConditionAnswer(answer);
-    if (verdict === null) {
-      return block('condition could not be evaluated (no clear yes/no answer) — delivery blocked');
-    }
-    if (!verdict) return block('condition answered no — delivery skipped');
+    if (!decision.ok) return block(decision.reason ?? 'condition not satisfied — delivery blocked');
     return true;
   }
 
@@ -649,6 +893,16 @@ export class OrchestrationEngine {
     if (rt.deliveries >= (this.deps.maxDeliveries ?? ORCH_MAX_DELIVERIES)) {
       this.finish(rt, 'failed', `delivery budget exceeded (${ORCH_MAX_DELIVERIES})`);
     }
+  }
+
+  /**
+   * fork 预算闸：condition/extract 的无头回合都从这里领名额——到顶后不再烧
+   * token（extract 回落 {upstream}、condition 拦下并记原因），run 不因此失败。
+   */
+  private takeFork(rt: Runtime): boolean {
+    if (rt.forks >= ORCH_MAX_FORKS) return false;
+    rt.forks++;
+    return true;
   }
 
   private record(

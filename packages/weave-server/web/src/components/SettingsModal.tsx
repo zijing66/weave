@@ -30,6 +30,7 @@ import {
   Trash2,
   X,
   Zap,
+  Scale,
 } from 'lucide-react';
 import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -72,6 +73,70 @@ interface SettingsModalProps {
 }
 
 /**
+ * 只写密钥输入（AI 助手 / 决策模型共用）：常态为空（服务端不回显已存 key）、
+ * 「清除」= 显式写 null。掩码走 CSS（masked-input）而非 type=password——后者会让
+ * 浏览器把前面的地址框当用户名、这里当密码，弹「保存凭据」并自动填充；
+ * one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器。
+ * （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会——聚焦即可正常输入。）
+ */
+function SecretKeyInput(props: {
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
+  keySet: boolean | undefined;
+  onClear: () => void;
+  labels: { set: string; unset: string; clear: string; show: string; hide: string };
+}) {
+  const [show, setShow] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const { labels } = props;
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={props.value}
+        readOnly={!focused}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(e) => props.onChange(e.target.value)}
+        // 这不是登录凭据：显式告诉浏览器与密码管理器别把它当密码字段——
+        // 同源上「保存的凭据」只该归登录页那个框（见 LoginPage：current-password）。
+        name={props.name}
+        autoComplete="one-time-code"
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        className={cn(
+          'min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500',
+          !show && 'masked-input',
+        )}
+        placeholder={props.keySet ? labels.set : labels.unset}
+      />
+      <button
+        type="button"
+        onClick={() => setShow((value) => !value)}
+        title={show ? labels.hide : labels.show}
+        className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
+      >
+        {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+      </button>
+      {props.keySet === true && (
+        <button
+          type="button"
+          onClick={props.onClear}
+          className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700"
+        >
+          {labels.clear}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Daemon settings dialog (top-right gear): UI language, the terminal
  * "open in terminal" launches, the daemon hooks master switch, the login
  * autostart toggle, and event retention. Presets offered come from the
@@ -87,10 +152,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [urls, setUrls] = useState<AccessUrl[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // AI key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
+  // AI / 决策模型 key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [clearKey, setClearKey] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [decisionKeyInput, setDecisionKeyInput] = useState('');
+  const [clearDecisionKey, setClearDecisionKey] = useState(false);
   /** 服务端拉回的模型候选（datalist 用；空 = 还没拉/网关没有 /models）。 */
   const [models, setModels] = useState<string[]>([]);
   /** 逐行复制 URL 的反馈（1.5s ✓，折叠条同款惯例）。 */
@@ -152,15 +218,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     [],
   );
   // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充/弹生成器，这是最硬的一道闸
-  // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会）。聚焦即可正常输入。
-  const [keyFocused, setKeyFocused] = useState(false);
-
   const loadSettings = useCallback(() => {
     setError(null);
     // 每次打开都清空 key 相关输入态：不回显既有 key，也不留上一次的明文在内存里。
     setApiKeyInput('');
     setClearKey(false);
-    setShowApiKey(false);
+    setDecisionKeyInput('');
+    setClearDecisionKey(false);
     api
       .getDaemonSettings()
       .then((r) => {
@@ -242,7 +306,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setSaving(true);
     setError(null);
     try {
-      // `ai.apiKey` 只写：只在用户真输入过 / 点过清除时才带进请求（留空 = 服务端保持原值）。
+      // `ai.apiKey` / `decision.apiKey` 只写：只在用户真输入过 / 点过清除时才带进请求
+      // （留空 = 服务端保持原值）。
       const payload: DaemonSettingsExt = {
         ...settings,
         ...(settings.ai
@@ -258,11 +323,26 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               },
             }
           : {}),
+        ...(settings.decision
+          ? {
+              decision: {
+                baseUrl: settings.decision.baseUrl,
+                model: settings.decision.model,
+                ...(decisionKeyInput !== ''
+                  ? { apiKey: decisionKeyInput }
+                  : clearDecisionKey
+                    ? { apiKey: null }
+                    : {}),
+              },
+            }
+          : {}),
       };
       const saved = await api.putDaemonSettings(payload);
       setSettings(saved as DaemonSettingsExt);
       setApiKeyInput('');
       setClearKey(false);
+      setDecisionKeyInput('');
+      setClearDecisionKey(false);
       setLocale(saved.locale);
       onClose();
     } catch (e) {
@@ -587,62 +667,89 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 </button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={apiKeyInput}
-                readOnly={!keyFocused}
-                onFocus={() => setKeyFocused(true)}
-                onBlur={() => setKeyFocused(false)}
-                onChange={(e) => {
-                  setApiKeyInput(e.target.value);
-                  if (e.target.value !== '') setClearKey(false);
-                }}
-                // 这不是登录凭据：显式告诉浏览器与密码管理器别把它当密码字段——
-                // 同源上「保存的凭据」只该归登录页那个框（见 LoginPage：current-password）。
-                // 掩码走 CSS（masked-input）而非 type=password：后者会让浏览器把
-                // 前面的地址框当用户名、这里当密码，弹「保存凭据」并自动填充。
-                // one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器。
-                name="weaveAiApiKey"
-                autoComplete="one-time-code"
-                spellCheck={false}
-                autoCorrect="off"
-                autoCapitalize="off"
-                data-1p-ignore
-                data-lpignore="true"
-                data-bwignore
-                className={cn(
-                  'min-w-0 flex-1 cursor-text rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500',
-                  !showApiKey && 'masked-input',
-                )}
-                placeholder={
-                  settings?.ai?.apiKeySet
-                    ? t('settings.aiApiKeySet')
-                    : t('settings.aiApiKeyUnset')
-                }
-              />
-              <button
-                type="button"
-                onClick={() => setShowApiKey((value) => !value)}
-                title={showApiKey ? t('settings.aiApiKeyHide') : t('settings.aiApiKeyShow')}
-                className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
-              >
-                {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
-              {settings?.ai?.apiKeySet === true && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setApiKeyInput('');
-                    setClearKey(true);
-                  }}
-                  className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700"
-                >
-                  {t('settings.aiApiKeyClear')}
-                </button>
-              )}
-            </div>
+            <SecretKeyInput
+              name="weaveAiApiKey"
+              value={apiKeyInput}
+              onChange={(value) => {
+                setApiKeyInput(value);
+                if (value !== '') setClearKey(false);
+              }}
+              keySet={settings?.ai?.apiKeySet}
+              onClear={() => {
+                setApiKeyInput('');
+                setClearKey(true);
+              }}
+              labels={{
+                set: t('settings.aiApiKeySet'),
+                unset: t('settings.aiApiKeyUnset'),
+                clear: t('settings.aiApiKeyClear'),
+                show: t('settings.aiApiKeyShow'),
+                hide: t('settings.aiApiKeyHide'),
+              }}
+            />
             <p className="text-[11px] text-neutral-500">{t('settings.aiHint')}</p>
+          </div>
+
+          {/* 决策模型（Jev 兼容 / System One）：编排条件边的判断引擎——配了先问它，
+              判不准/失败回落 fork 子 Agent。 */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Scale className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.decision')}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={settings?.decision?.baseUrl ?? ''}
+                onChange={(e) =>
+                  setSettings((s) =>
+                    s === null
+                      ? s
+                      : {
+                          ...s,
+                          decision: { ...(s.decision ?? { model: '' }), baseUrl: e.target.value },
+                        },
+                  )
+                }
+                placeholder={t('settings.decisionBaseUrlPlaceholder')}
+                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <input
+                value={settings?.decision?.model ?? ''}
+                onChange={(e) =>
+                  setSettings((s) =>
+                    s === null
+                      ? s
+                      : {
+                          ...s,
+                          decision: { ...(s.decision ?? { baseUrl: '' }), model: e.target.value },
+                        },
+                  )
+                }
+                placeholder={t('settings.decisionModelPlaceholder')}
+                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <SecretKeyInput
+              name="weaveDecisionApiKey"
+              value={decisionKeyInput}
+              onChange={(value) => {
+                setDecisionKeyInput(value);
+                if (value !== '') setClearDecisionKey(false);
+              }}
+              keySet={settings?.decision?.apiKeySet}
+              onClear={() => {
+                setDecisionKeyInput('');
+                setClearDecisionKey(true);
+              }}
+              labels={{
+                set: t('settings.aiApiKeySet'),
+                unset: t('settings.aiApiKeyUnset'),
+                clear: t('settings.aiApiKeyClear'),
+                show: t('settings.aiApiKeyShow'),
+                hide: t('settings.aiApiKeyHide'),
+              }}
+            />
+            <p className="text-[11px] text-neutral-500">{t('settings.decisionHint')}</p>
           </div>
 
           {/* HTML 导出自定义头：多份保存、一份在用；导出时原样注入到 </head> 前。

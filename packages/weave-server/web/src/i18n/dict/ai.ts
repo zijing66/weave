@@ -29,6 +29,12 @@ export const aiZh = {
   'settings.aiApiKeyClear': '清除',
   'settings.aiApiKeyShow': '显示',
   'settings.aiApiKeyHide': '隐藏',
+
+  'settings.decision': '决策模型',
+  'settings.decisionHint':
+    'Jev 兼容（System One）接口。配置后编排条件边先问它（P(yes)≥0.7 放行、≤0.3 拦下），判不准或失败回落 fork 子 Agent；不配置则始终 fork。API key 只保存在服务端，不会回显到浏览器。',
+  'settings.decisionBaseUrlPlaceholder': 'https://decision.example.com',
+  'settings.decisionModelPlaceholder': 'ftm-decision',
 };
 
 export const aiEn: Record<keyof typeof aiZh, string> = {
@@ -63,4 +69,10 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
   'settings.aiApiKeyClear': 'Clear',
   'settings.aiApiKeyShow': 'Show',
   'settings.aiApiKeyHide': 'Hide',
+
+  'settings.decision': 'Decision model',
+  'settings.decisionHint':
+    'Jev-compatible (System One) endpoint. When configured, orchestration condition edges ask it first (P(yes) ≥ 0.7 passes, ≤ 0.3 blocks); uncertain or failed calls fall back to the fork sub-agent — always fork when unset. The API key is stored server-side and never sent back to the browser.',
+  'settings.decisionBaseUrlPlaceholder': 'https://decision.example.com',
+  'settings.decisionModelPlaceholder': 'ftm-decision',
 };

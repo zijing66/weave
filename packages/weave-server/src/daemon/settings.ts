@@ -69,6 +69,8 @@ export interface DaemonSettings {
   server?: ServerSettings;
   /** AI 助手（地址/模型；缺省空 = 未配置——读时归一化）。 */
   ai?: AiSettings;
+  /** 决策模型（编排条件边判断；缺省空 = 未配置，判断回落 fork——读时归一化）。 */
+  decision?: DecisionSettings;
   /** 对话导出 HTML 的自定义头（多份保存、一份在用——读时归一化）。 */
   htmlExport?: HtmlExportSettings;
 }
@@ -104,6 +106,15 @@ export interface ServerSettings {
  * `<dataDir>/ai.json`（0600，见 daemon/ai-config.ts），本表是 UI 可读面。
  */
 export interface AiSettings {
+  baseUrl: string;
+  model: string;
+}
+
+/**
+ * 决策模型（Jev 兼容 / System One 接口）的非密配置。**api key 不在这里**——
+ * 它落 `<dataDir>/decision.json`（0600，见 daemon/decision-config.ts）。
+ */
+export interface DecisionSettings {
   baseUrl: string;
   model: string;
 }
@@ -150,6 +161,9 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_
 
 /** 缺省未配置（地址/模型皆空）——助手按钮此时不显示。 */
 export const DEFAULT_AI_SETTINGS: AiSettings = { baseUrl: '', model: '' };
+
+/** 缺省未配置——条件边判断此时回落 fork 子 Agent。 */
+export const DEFAULT_DECISION_SETTINGS: DecisionSettings = { baseUrl: '', model: '' };
 
 /** 缺省没有头配置（导出不带自定义头）。 */
 export const DEFAULT_HTML_EXPORT_SETTINGS: HtmlExportSettings = { activeId: null, profiles: [] };
@@ -270,6 +284,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const server = (obj.server ?? {}) as Partial<ServerSettings>;
   const ai = (obj.ai ?? {}) as Partial<AiSettings>;
+  const decision = (obj.decision ?? {}) as Partial<DecisionSettings>;
   const htmlExport = normalizeHtmlExport(obj.htmlExport);
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
@@ -308,6 +323,10 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     ai: {
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl.trim() : '',
       model: typeof ai.model === 'string' ? ai.model.trim() : '',
+    },
+    decision: {
+      baseUrl: typeof decision.baseUrl === 'string' ? decision.baseUrl.trim() : '',
+      model: typeof decision.model === 'string' ? decision.model.trim() : '',
     },
     htmlExport,
   };

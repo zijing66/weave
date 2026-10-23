@@ -65,6 +65,11 @@ export function getAiKeyPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'ai.json');
 }
 
+/** Absolute path to the decision model key file (`{ apiKey }`, 0600; 同 ai.json 口径). */
+export function getDecisionKeyPath(dir?: string): string {
+  return path.join(dataRoots(dir).local, 'decision.json');
+}
+
 /** Absolute path to the Web Push VAPID keypair file (`{ publicKey, privateKey }`, 0600). */
 export function getPushKeysPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'push.json');

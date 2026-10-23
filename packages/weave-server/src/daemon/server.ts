@@ -113,10 +113,10 @@ import { projectFileNamespaces, type ToolkitService } from '../hooks/toolkit.js'
 import { listBrowseRoots, listDirectoryChildren } from './fs-browser.js';
 import {
   DEFAULT_AI_SETTINGS,
+  DEFAULT_DECISION_SETTINGS,
   readDaemonSettings,
   writeDaemonSettings,
   terminalPresetsFor,
-  type AiSettings,
   type DaemonSettings,
 } from './settings.js';
 import {
@@ -139,6 +139,7 @@ import { installPluginPack } from '../install/plugin-install.js';
 import { handleAuthRoutes } from './auth-routes.js';
 import { handleAiRoutes } from './ai-routes.js';
 import { hasAiKey, writeAiKey } from './ai-config.js';
+import { hasDecisionKey, writeDecisionKey } from './decision-config.js';
 import { accessUrls } from './tls.js';
 import { projectHarnesses, withProjectHarnesses } from './project-harnesses.js';
 import type { AuthService } from './dashboard-auth.js';
@@ -245,6 +246,8 @@ export interface WeaveServerDeps {
   auth?: AuthService;
   /** AI key 文件路径（测试注入）；缺省 `<local>/ai.json`（见 daemon/ai-config.ts）。 */
   aiKeyPath?: string;
+  /** Decision-model key file override (tests); default `<local>/decision.json`. */
+  decisionKeyPath?: string;
 }
 
 /**
@@ -404,7 +407,7 @@ async function handleRequest(
   if (pathname === '/settings') {
     if (req.method === 'GET') {
       sendJson(res, 200, {
-        settings: withAiStatus(await readDaemonSettings(), deps.aiKeyPath),
+        settings: withApiKeyStatus(await readDaemonSettings(), deps.aiKeyPath, deps.decisionKeyPath),
         presets: terminalPresetsFor(process.platform),
         platform: process.platform,
         // 对外访问地址（设置页展示面）：全部局域网 IP × 已开协议。
@@ -413,7 +416,10 @@ async function handleRequest(
       return;
     }
     if (req.method === 'PUT') {
-      let body: Partial<DaemonSettings> & { ai?: { apiKey?: string | null } };
+      let body: Partial<DaemonSettings> & {
+        ai?: { apiKey?: string | null };
+        decision?: { apiKey?: string | null };
+      };
       try {
         body = JSON.parse(await readBody(req)) as Partial<DaemonSettings> & {
           ai?: { apiKey?: string | null };
@@ -422,20 +428,29 @@ async function handleRequest(
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return;
       }
-      // `ai.apiKey` 是**只写**字段：拆出来落 <local>/ai.json（0600），不进 settings 表；
-      // 响应与 GET 都只回派生布尔 apiKeySet——密钥永不回显。
+      // `ai.apiKey` / `decision.apiKey` 是**只写**字段：拆出来落 <local>/ai.json 与
+      // <local>/decision.json（0600），不进 settings 表；响应与 GET 都只回派生布尔
+      // apiKeySet——密钥永不回显。
       const apiKey = body.ai?.apiKey;
       if (apiKey !== undefined) {
         writeAiKey(typeof apiKey === 'string' ? apiKey : null, deps.aiKeyPath);
       }
-      const saved = await writeDaemonSettings({ ...body, ai: stripAiKey(body.ai) } as DaemonSettings);
+      const decisionKey = body.decision?.apiKey;
+      if (decisionKey !== undefined) {
+        writeDecisionKey(typeof decisionKey === 'string' ? decisionKey : null, deps.decisionKeyPath);
+      }
+      const saved = await writeDaemonSettings({
+        ...body,
+        ai: stripApiKey(body.ai),
+        decision: stripApiKey(body.decision),
+      } as DaemonSettings);
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。
       deps.hookEvents?.resetPrune();
       // 开机自启即刻注册/注销（内部吞错，不阻塞保存响应）。
       (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
       deps.dataBus?.emit({ key: 'settings' });
-      sendJson(res, 200, withAiStatus(saved, deps.aiKeyPath));
+      sendJson(res, 200, withApiKeyStatus(saved, deps.aiKeyPath, deps.decisionKeyPath));
       return;
     }
   }
@@ -1965,21 +1980,34 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string): 
 }
 
 /**
- * /settings 的对外形状：`ai` 段补派生布尔 `apiKeySet`（地址/模型来自 settings 表，
- * key 来自 `<local>/ai.json`——密钥只写，GET/PUT 一律不回显）。
+ * /settings 的对外形状：`ai` / `decision` 段各补派生布尔 `apiKeySet`（地址/模型来自
+ * settings 表，key 来自 `<local>/ai.json` 与 `<local>/decision.json`——密钥只写，
+ * GET/PUT 一律不回显）。
  */
-function withAiStatus(settings: DaemonSettings, aiKeyPath?: string): Record<string, unknown> {
+function withApiKeyStatus(
+  settings: DaemonSettings,
+  aiKeyPath?: string,
+  decisionKeyPath?: string,
+): Record<string, unknown> {
   const ai = settings.ai ?? DEFAULT_AI_SETTINGS;
+  const decision = settings.decision ?? DEFAULT_DECISION_SETTINGS;
   return {
     ...settings,
     ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: hasAiKey(aiKeyPath) },
+    decision: {
+      baseUrl: decision.baseUrl,
+      model: decision.model,
+      apiKeySet: hasDecisionKey(decisionKeyPath),
+    },
   };
 }
 
-/** 落 settings 表前剥掉只写的 `apiKey`（它归 ai.json，不归本表）。 */
-function stripAiKey(ai: { apiKey?: string | null } | undefined): Partial<AiSettings> | undefined {
-  if (!ai) return undefined;
-  const { apiKey: _writeOnly, ...rest } = ai;
+/** 落 settings 表前剥掉只写的 `apiKey`（它归 ai.json / decision.json，不归本表）。 */
+function stripApiKey<T extends { apiKey?: string | null }>(
+  section: T | undefined,
+): Omit<T, 'apiKey'> | undefined {
+  if (!section) return undefined;
+  const { apiKey: _writeOnly, ...rest } = section;
   return rest;
 }
 

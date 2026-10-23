@@ -11,7 +11,12 @@ import {
   type OrchestrationNode,
 } from '../../repositories/orchestrations.js';
 import { HookEventBus } from '../bus.js';
-import { OrchestrationEngine, matchWhen, parseConditionAnswer } from '../orchestration-engine.js';
+import {
+  OrchestrationEngine,
+  matchWhen,
+  parseConditionAnswer,
+  type ConditionJudge,
+} from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
 
 /**
@@ -98,6 +103,7 @@ const setup = (
     maxDeliveries?: number;
     supportsExtract?: (sessionId: string) => boolean;
     extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
+    conditionJudge?: ConditionJudge;
     postJson?: (
       url: string,
       secret: string | undefined,
@@ -122,6 +128,7 @@ const setup = (
     ...(opts.maxDeliveries ? { maxDeliveries: opts.maxDeliveries } : {}),
     ...(opts.supportsExtract ? { supportsExtract: opts.supportsExtract } : {}),
     ...(opts.extract ? { extract: opts.extract } : {}),
+    ...(opts.conditionJudge ? { conditionJudge: opts.conditionJudge } : {}),
     postJsonImpl: postJson as never,
   });
   const frames: Array<{ kind: string; [k: string]: unknown }> = [];
@@ -857,6 +864,63 @@ describe('条件边（edge.condition）', () => {
     );
   });
 
+  it('注入 conditionJudge → 判断整体走它（fork 不跑），拦下带它给的原因', async () => {
+    const extract = vi.fn(async () => 'yes');
+    const judge = vi.fn(async () => ({ ok: false, reason: 'jev: P(yes)=0.3 below threshold' }));
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract,
+      conditionJudge: { judge },
+    });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond-judge',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [condEdge('a', 'b', '需要发吗')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    d.setLastOutput({ output: '上游这一轮的输出', at: new Date().toISOString() });
+    idleOf(engine, 'a');
+    await flush();
+    expect(extract).not.toHaveBeenCalled();
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(judge.mock.calls[0]![0]).toMatchObject({
+      sessionId: 'a',
+      condition: '需要发吗',
+      upstream: '上游这一轮的输出',
+    });
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain(
+      'jev: P(yes)=0.3',
+    );
+  });
+
+  it('conditionJudge 抛错 → 拦下并记原因（不投）', async () => {
+    const judge: ConditionJudge = {
+      judge: async () => {
+        throw new Error('api down');
+      },
+    };
+    const { d, engine } = setup({ conditionJudge: judge });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'cond-judge-throw',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [condEdge('a', 'b', '需要发吗')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain('api down');
+  });
+
   it('parseConditionAnswer：中英首词认 yes/no，其余 null', () => {
     expect(parseConditionAnswer('yes')).toBe(true);
     expect(parseConditionAnswer('Yes.')).toBe(true);
@@ -955,5 +1019,152 @@ describe('when 预筛 + 中间节点自然触发', () => {
     expect(matchWhen('A,,B', 'has b')).toBe(true);
     expect(matchWhen('A,B', 'nothing')).toBe(false);
     expect(matchWhen('A,B', '')).toBe(false);
+  });
+});
+
+describe('P0：fork 预算 + pending 陈滞超时', () => {
+  it('fork 预算到顶：condition 拦下并记原因，extract 回落 {upstream}，run 不因此失败', async () => {
+    let forks = 0;
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => {
+        forks++;
+        return 'yes';
+      },
+      maxDeliveries: 999,
+    });
+    for (const id of ['a', 'b', 'c', 'e']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'fork-budget',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c'), sNode('e')],
+      edges: [
+        { id: 'ab', from: 'a', to: 'b', text: 'to b', condition: '需要吗' },
+        { id: 'ac', from: 'a', to: 'c', text: 'to c', condition: '需要吗' },
+        { id: 'ae', from: 'a', to: 'e', text: 'to e {summary}', extract: '提炼' },
+      ],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    // 预算 50：三条边各烧 1 次远不到顶——直接把 rt.forks 顶到上限再触发一轮
+    const runId = (result as { runId: number }).runId;
+    idleOf(engine, 'b');
+    idleOf(engine, 'c');
+    idleOf(engine, 'e');
+    await flush();
+    // 白盒：把 forks 顶到上限，再让 a 完成一轮 → condition 拦下 + extract 回落
+    const rt = (engine as unknown as { runtime: Map<number, { forks: number }> }).runtime.get(runId);
+    if (rt) rt.forks = 50;
+    d.setLastOutput({ output: 'MODE=pack', at: new Date().toISOString() });
+    idleOf(engine, 'a');
+    await flush();
+    const run = runs.getById(runId)!;
+    const events = run.state.events;
+    expect(events.some((e) => e.stage === 'condition' && e.error?.includes('fork budget exhausted'))).toBe(true);
+    // extract 预算耗尽 → {summary} 回落 {upstream}（不残留占位）
+    const ae = events.find((e) => e.edgeId === 'ae' && e.ok);
+    expect(ae).toBeTruthy();
+  });
+
+  it('pending 陈滞：目标活着但最老待回超 2h → run 落 failed 释放单 run 闸', async () => {
+    const { engine } = setup({ liveness: new Map([['b', true]]) });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'stale',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    const runId = (result as { runId: number }).runId;
+    idleOf(engine, 'a');
+    await flush();
+    // 白盒：把 pending 的时刻拨回 3 小时前
+    const rt = (engine as unknown as { runtime: Map<number, { state: { pending: Record<string, { at: string }[]> } }> }).runtime.get(runId)!;
+    rt.state.pending['b']![0]!.at = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    engine.sweepTerminated();
+    await flush();
+    const run = runs.getById(runId)!;
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('pending stale');
+    expect(run.state.pending['b']).toBeUndefined();
+    // 单 run 闸已释放：能再起一份
+    await expect(engine.start(id, 'manual')).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('P1：条件边整批判定（一次 fork 出全边路由）', () => {
+  it('两条条件边只烧一次 fork：批量回答逐键生效，no 的边拦下', async () => {
+    let forkCount = 0;
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => {
+        forkCount++;
+        return '{"ab":true,"ac":false}';
+      },
+    });
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'batch-cond',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges: [
+        { id: 'ab', from: 'a', to: 'b', text: 'to b', condition: '需要发 b 吗' },
+        { id: 'ac', from: 'a', to: 'c', text: 'to c', condition: '需要发 c 吗' },
+      ],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    idleOf(engine, 'b');
+    await flush();
+    expect(forkCount).toBe(1); // 两条条件边一次 fork
+    const run = runs.getById((result as { runId: number }).runId)!;
+    const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
+    expect(targets).toContain('b');
+    expect(targets).not.toContain('c');
+    expect(run.state.events.find((e) => e.edgeId === 'ac' && e.stage === 'condition')).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it('judgeBatch 抛错 → 回落逐条判定（行为不变）', async () => {
+    let calls = 0;
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract: async () => {
+        calls++;
+        return 'yes';
+      },
+    });
+    // 注入一个 judgeBatch 恒抛的引擎
+    (engine as unknown as { deps: { conditionJudge?: unknown } }).deps.conditionJudge = {
+      judge: async () => ({ ok: true }),
+      judgeBatch: async () => {
+        throw new Error('boom');
+      },
+    };
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'batch-fallback',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges: [
+        { id: 'ab', from: 'a', to: 'b', text: 'to b', condition: 'x' },
+        { id: 'ac', from: 'a', to: 'c', text: 'to c', condition: 'y' },
+      ],
+    }).id;
+    await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    idleOf(engine, 'b');
+    idleOf(engine, 'c');
+    await flush();
+    const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
+    expect(targets).toContain('b');
+    expect(targets).toContain('c');
   });
 });

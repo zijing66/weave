@@ -1063,6 +1063,12 @@ export interface DaemonSettings {
    * （服务端拆存 `<dataDir>/ai.json`，GET/PUT 都不回显），`apiKeySet` 是服务端派生布尔。
    */
   ai?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
+  /**
+   * 决策模型（Jev 兼容 / System One 接口，编排条件边判断）。同 ai 段口径：
+   * 地址/模型非密，`apiKey` 只写（服务端拆存 `<dataDir>/decision.json`），
+   * `apiKeySet` 服务端派生。
+   */
+  decision?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
   /** 对话导出 HTML 的自定义头：多份保存、一份在用（activeId 为空 = 不带自定义头）。 */
   htmlExport?: HtmlExportSettings;
 }
