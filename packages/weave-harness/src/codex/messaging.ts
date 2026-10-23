@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import type { MessagingSurface, QueuedPromptSpec } from '../driver.js';
+import type { AttachSpec, MessagingSurface, QueuedPromptSpec } from '../driver.js';
 
 /**
  * codex CLI 的可直接 spawn 入口。win32 的 `codex` 是 npm `.cmd` 垫片
@@ -37,6 +37,19 @@ export const CODEX_QUEUED_PROMPT: QueuedPromptSpec = {
 };
 
 /**
+ * codex 的附件面：只有普通文件。宿主没有文件附件形态——提示词里一条绝对路径，
+ * 模型自己读（读得到读不到由用户的 codex 沙箱/工具配置决定，weave 不替它判断）。
+ * 图片不在此列：queue 通道硬拒 `--images`，终端通道也没有「路径 → 图」的转换。
+ */
+export const CODEX_ATTACH: AttachSpec = {
+  kinds: ['file'],
+  composePrompt(text, files) {
+    const paths = files.map((f) => f.path).join('\n');
+    return text ? `${text}\n\n${paths}` : paths;
+  },
+};
+
+/**
  * Codex 消息能力面：**显式不支持面**（不支持通道 null + 原因，不是槽位缺席——
  * 缺席无法渲染「为什么置灰」）。prompt 走宿主队列（`codex queue`，见上）+ 终端
  * send-text 兜底；无原生 peer 消息（中继）。B0 调研（BACKLOG §10-6）落地后在
@@ -51,7 +64,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   inject: null,
   headless: null,
   idleSignals: [],
-  imageAttach: null,
+  attach: CODEX_ATTACH,
   pathRefs: null,
   sideQuestion: null,
   unsupportedReasons: {

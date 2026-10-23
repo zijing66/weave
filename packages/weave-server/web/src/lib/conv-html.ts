@@ -21,7 +21,8 @@ export interface ConvHtmlEntry {
   failed?: boolean;
   fromWeave?: boolean;
   fromName?: string | null;
-  images?: Array<{ id: string; name: string }>;
+  /** 随附文件：图内联成 data URL，其余只列文件名（不做 PDF/音频之类的内联）。 */
+  attachments?: Array<{ id: string; name: string; mediaType?: string }>;
 }
 
 export interface HtmlExportOpts {
@@ -174,12 +175,16 @@ function entryHtml(
   if (entry.plan) tags.push(`<span class="tag">${escHtml(opts.labels.plan)}</span>`);
   if (entry.failed) tags.push('<span class="tag tag-failed">✕</span>');
 
-  const images = (entry.images ?? [])
-    .map((img, i) => {
-      const data = opts.assets?.get(img.id);
+  let imgN = 0;
+  const images = (entry.attachments ?? [])
+    .map((a) => {
+      const isImage = (a.mediaType ?? '').startsWith('image/');
+      if (!isImage) return `<p class="file">[File] ${escHtml(a.name)}</p>`;
+      imgN++;
+      const data = opts.assets?.get(a.id);
       return data
-        ? `<figure class="image"><img src="${data}" alt="${escHtml(img.name)}"></figure>`
-        : `<p class="image-missing">[Image #${i + 1}] ${escHtml(img.name)}</p>`;
+        ? `<figure class="image"><img src="${data}" alt="${escHtml(a.name)}"></figure>`
+        : `<p class="image-missing">[Image #${imgN}] ${escHtml(a.name)}</p>`;
     })
     .join('\n');
 

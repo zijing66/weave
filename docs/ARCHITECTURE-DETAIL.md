@@ -172,7 +172,7 @@ claude 专属机制（inbox socket）；其他 harness 的 `PromptInboxSpec` = n
 
 消息唯一归宿是目标会话自己的转录，weave 仅投递前短暂持有（本地文件队列），送达即删、**不落任何 DB 行**。
 
-- `MessagingSurface`（messaging 槽）声明通道能力（发现 / prompt / inject / headless / watch idleSignals / imageAttach 图片对齐）与不支持原因。
+- `MessagingSurface`（messaging 槽）声明通道能力（发现 / prompt / inject / headless / watch idleSignals / attach 附件对齐）与不支持原因。
 - 投递裁决唯一单点 = server 的 `MessageDeliverer`（404/409 语义拒绝；auto 忙→inject、绝无头抢占忙会话）。
 - `GET /messaging/capabilities` 纯派生矩阵、无第二事实源——web 按钮与模式选项全表驱动，不写死 harness 白名单。
 - 所有触发源（manual / 提醒订阅 / 编排 / webhook / cron）统一收敛到 `MessageDeliverer.send`。
@@ -240,10 +240,12 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 ### 4.8 门控、图片随附、上传与孤儿回收
 
 - **prompt 门控** = 层① `MessagingSurface.prompt`（claude 有、codex null）**|| 层② 终端文本通道可用**，能力矩阵两者皆无才置灰。
-- **图片随附**：表示法归 `MessagingSurface.imageAttach`（`ImageAttachSpec.composePrompt`——「一张图怎么被这个 harness 认出来」是 harness 知识，server 只传语义参数：原文 + 落盘图的路径/媒体类型/原名；claude = 裸绝对路径放原文后独立一行，与它自己的粘贴文法同源；codex = null 不收图，附件钮按此位置灰）。
-- **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存 `images` 引用、重启后按现 harness 面重合成）。
+- **附件随附**：`MessagingSurface.attach`（`AttachSpec { kinds, composePrompt }`）答两件事——`kinds` 收哪些类型（`image` / `file`），`composePrompt` 一个已落盘文件怎么被认出来。这是 harness 知识，server 只传语义参数（原文 + 路径/媒体类型/原名）。claude = `['image','file']`：裸绝对路径放原文后独立一行（与它自己的粘贴文法同源），图会被粘贴处理器转成 `[Image #N]` + 真 image block，**普通文件没有附件形态**、路径原样留在 prompt 里由模型自己 `Read`；codex = `['file']`（queue 通道硬拒 `--images`）。null = 不收附件，按钮按位置灰。`GET /messaging/capabilities` 下发 `attachKinds`，web 据此出按钮与 `accept`。
+- **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存附件引用、重启后按现 harness 面重合成）。
+- **只有图才逼层② 终端**（`hasImages` 按媒体类型判，不看有没有附件）：普通文件的路径走 socket / 中继 / codex queue 与走终端是同一个结果。
 - **带图消息层② 优先**：只有 bracketed paste 能把路径转成 `[Image #N]` + 真 image block，socket/中继拿到的是裸文本路径；打不进照常回落层①-a / 层①（降级为路径文本）。
-- **上传件内容寻址**：`<dataDir>/uploads/<sha256>.<ext>`，`POST /uploads` / `GET /images/:id` 长缓存；**上传 ≠ 投递**。
+- **上传件内容寻址**：`<dataDir>/data/uploads/<sha256>.<ext>`（图按媒体类型定扩展名，非图沿用原文件后缀），`GET /images/:id` 长缓存；**上传 ≠ 投递**。
+- **分块上传（断点续传）**：`POST /uploads/begin`（name/mediaType/size，超限当场 413）→ `PUT /uploads/:id?offset=N`（裸字节，单块 ≤16MB）→ `POST /uploads/:id/finish`。半截件落 `cache/tmp/uploads/<id>.part` + 同名 `.json`（**可弃产物**，不进库），finish 才流式算 sha256 并 `rename` 进 `data/uploads`（同盘原子）。偏移对不上回 409 `{received}`、没收到最后一块 finish 回 409——**服务端不猜不补齐**。临时件 24h 被 `UploadSessions.sweep` 回收（与孤儿回收同轮）。web 侧唯一实现 = `web/src/lib/upload.ts`：4MB 一块、XHR 取 `upload.onprogress`（fetch 没有上传进度），续传点记 sessionStorage（键 = 名字+大小+修改时刻），进度画在附件格自己的图标上（小进度条 + 百分比）。
 - **孤儿回收 = 引用计数式**（`UploadRepository.pruneUnreferenced`：删「没有任何 `event_images` 引用」的文件 + 行，1h 宽限——编辑器里选了图还没发的那份此刻也无引用；三处触发 = 删会话（`purgeSession` 内、**在 `events.deleteBySession` 之后**，指针靠级联先没）/ 项目归档 / `SessionSweeper` 每轮；**被引用即永不删**，历史气泡的图不会因清理破掉；否决按会话分目录——去重失效且上传时本就无归属）。
 - 回执命中把 upload id 挂到那条 UserPromptSubmit 事件上（`event_images` 指针，消息本身仍不落库）供气泡缩略图跨刷新回显；带图回执比对放宽一档（claude 的粘贴处理器会吃掉多行原文的换行）、纯图发送认空 UPS。
 

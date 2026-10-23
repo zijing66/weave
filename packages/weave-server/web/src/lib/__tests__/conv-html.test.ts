@@ -75,7 +75,7 @@ describe('conversationHtml', () => {
     expect(without).not.toContain('<script>');
   });
 
-  it('图片内联 data URL；取不到就给占位文本（不摆裂图）', () => {
+  it('图片内联 data URL；取不到就给占位文本（不摆裂图），普通文件只列文件名', () => {
     const assets = new Map([['img1', 'data:image/png;base64,AAA']]);
     const html = conversationHtml(
       [
@@ -83,9 +83,10 @@ describe('conversationHtml', () => {
           role: 'user',
           at,
           text: '看',
-          images: [
-            { id: 'img1', name: 'a.png' },
-            { id: 'img2', name: 'b.png' },
+          attachments: [
+            { id: 'img1', name: 'a.png', mediaType: 'image/png' },
+            { id: 'img2', name: 'b.png', mediaType: 'image/png' },
+            { id: 'doc1', name: 'r.pdf', mediaType: 'application/pdf' },
           ],
         },
       ],
@@ -94,6 +95,7 @@ describe('conversationHtml', () => {
     expect(html).toContain('src="data:image/png;base64,AAA"');
     expect(html).toContain('alt="a.png"');
     expect(html).toContain('[Image #2] b.png');
+    expect(html).toContain('[File] r.pdf');
   });
 
   it('mermaid：有 SVG 就内联，没有回落成代码块', () => {

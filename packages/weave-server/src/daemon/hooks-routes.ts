@@ -22,8 +22,8 @@ import {
   type PathRefSpec,
 } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
-import type { MessageImage, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
-import { readBody, readJson, sendJson } from './http.js';
+import type { MessageAttachment, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
+import { readBody, readJson, readRawBody, sendJson } from './http.js';
 import { nextRunAt, parseCron } from './cron.js';
 import { validateOrchestration } from '../hooks/orchestration-graph.js';
 import { graphDirections, toRunSummary } from '../repositories/orchestrations.js';
@@ -49,7 +49,8 @@ import {
   messagingSurfaces,
 } from '../surfaces.js';
 import { getDataDir } from '../db/paths.js';
-import { UPLOAD_MAX_BYTES, UPLOAD_MEDIA_TYPES, type UploadRow } from '../repositories/uploads.js';
+import { maxUploadBytes, type UploadRow } from '../repositories/uploads.js';
+import { defaultUploadSessions } from './upload-sessions.js';
 import type { HookEventRow } from '../repositories/hook-events.js';
 import { WEAVE_VERSION } from '../version.js';
 import { DEFAULT_WATCH_ON } from '../repositories/session-watches.js';
@@ -314,19 +315,32 @@ const SendMessageBody = z.object({
   text: z.string().max(20_000),
   fromKind: z.enum(['dashboard', 'session']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
-  /** 随附图（上传件 id）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
+  /** 随附文件（上传件 id）；带文件且目标 harness 的 `attach` 面不收该类型即 409。 */
+  attachments: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
+  /** 旧名（图片随附）；与 `attachments` 等价，读侧合并。 */
   images: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
   /** 强制层② 终端 send-text（发送人下拉选的通道；缺省 = 直投优先的自动层序）。 */
   forceTerminal: z.boolean().optional(),
 });
 
-/** 图片上传（base64 JSON；内容寻址落 `<dataDir>/uploads/<sha256>.<ext>`）。 */
+/** 一次性上传（base64 JSON；内容寻址落 `data/uploads/<sha256>.<ext>`）。分块上传走
+ *  `/uploads/begin` → `PUT /uploads/:id` → `/uploads/:id/finish`。 */
 const UploadBody = z.object({
   name: z.string().min(1).max(200),
-  mediaType: z.enum(UPLOAD_MEDIA_TYPES),
+  mediaType: z.string().min(1).max(100),
   /** base64（无 data: 前缀）；字节数以解码后计。 */
   data: z.string().min(1),
 });
+
+/** 分块上传的开场：总长先报（服务端据此拒超限、判收完）。 */
+const UploadBeginBody = z.object({
+  name: z.string().min(1).max(200),
+  mediaType: z.string().min(1).max(100),
+  size: z.number().int().positive(),
+});
+
+/** 分块上限：一块 16MB，够大（大文件几百块）又不至于把内存顶爆。 */
+const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024;
 
 /** 上传件出参（不带落盘路径——路径是服务端的事，前端用 `/images/<id>` 取图）。 */
 function toUploadDto(row: UploadRow): { id: string; name: string; mediaType: string; size: number } {
@@ -600,6 +614,7 @@ export async function handleHooksRoutes(
     pathname.startsWith('/messaging') ||
     pathname.startsWith('/webhooks/orchestrate/') ||
     pathname === '/uploads' ||
+    pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/');
   if (!isOwnedPath) return false;
 
@@ -989,7 +1004,94 @@ export async function handleHooksRoutes(
     return true;
   }
 
-  // ---- 会话图片上传 / 回显（内容寻址 `<dataDir>/uploads/`；上传 ≠ 投递） ----
+  // ---- 分块上传（断点续传）：begin → 按 offset 顺序 PUT → finish ----
+  const uploadSessions = deps.uploadSessions ?? defaultUploadSessions;
+  if (pathname === '/uploads/begin' && req.method === 'POST') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    let body: z.infer<typeof UploadBeginBody>;
+    try {
+      body = UploadBeginBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    if (body.size > maxUploadBytes(body.mediaType)) {
+      sendJson(res, 413, { error: 'File too large' });
+      return true;
+    }
+    const begun = await uploadSessions.begin(body);
+    sendJson(res, 201, { uploadId: begun.id, received: 0, size: begun.size });
+    return true;
+  }
+
+  const finishMatch = pathname.match(/^\/uploads\/([0-9a-f-]{36})\/finish$/);
+  if (finishMatch && req.method === 'POST') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    const info = await uploadSessions.finish(finishMatch[1]!);
+    if (!info) {
+      sendJson(res, 409, { error: 'Upload incomplete' });
+      return true;
+    }
+    const row = await deps.uploads.adoptFromFile(info);
+    await uploadSessions.abort(finishMatch[1]!);
+    sendJson(res, 201, { upload: toUploadDto(row) });
+    return true;
+  }
+
+  const chunkMatch = pathname.match(/^\/uploads\/([0-9a-f-]{36})$/);
+  if (chunkMatch) {
+    const uploadId = chunkMatch[1]!;
+    if (req.method === 'GET') {
+      const cur = await uploadSessions.get(uploadId);
+      if (!cur) {
+        sendJson(res, 404, { error: 'Upload not found' });
+        return true;
+      }
+      sendJson(res, 200, { received: cur.received, size: cur.size, name: cur.name, mediaType: cur.mediaType });
+      return true;
+    }
+    if (req.method === 'PUT') {
+      const offset = Number(url.searchParams.get('offset') ?? '');
+      if (!Number.isInteger(offset) || offset < 0) {
+        sendJson(res, 400, { error: 'Invalid offset' });
+        return true;
+      }
+      const bytes = await readRawBody(req, UPLOAD_CHUNK_MAX_BYTES).catch(() => null);
+      if (!bytes) {
+        sendJson(res, 413, { error: 'Chunk too large' });
+        return true;
+      }
+      const result = await uploadSessions.append(uploadId, offset, bytes);
+      if (result.kind === 'missing') {
+        sendJson(res, 404, { error: 'Upload not found' });
+        return true;
+      }
+      if (result.kind === 'conflict') {
+        // 客户端拿着旧偏移：把真实长度回给它，从那儿续
+        sendJson(res, 409, { received: result.received });
+        return true;
+      }
+      if (result.kind === 'overflow') {
+        sendJson(res, 413, { received: result.received, error: 'Exceeds declared size' });
+        return true;
+      }
+      sendJson(res, 200, { received: result.received });
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      await uploadSessions.abort(uploadId);
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // ---- 会话上传件：一次性上传 / 回显（内容寻址 `data/uploads/`；上传 ≠ 投递） ----
   if (pathname === '/uploads' && req.method === 'POST') {
     if (!deps.uploads) {
       sendJson(res, 503, { error: 'Upload subsystem unavailable' });
@@ -1004,11 +1106,11 @@ export async function handleHooksRoutes(
     }
     const bytes = Buffer.from(body.data, 'base64');
     if (bytes.length === 0) {
-      sendJson(res, 400, { error: 'Empty image' });
+      sendJson(res, 400, { error: 'Empty upload' });
       return true;
     }
-    if (bytes.length > UPLOAD_MAX_BYTES) {
-      sendJson(res, 413, { error: 'Image too large' });
+    if (bytes.length > maxUploadBytes(body.mediaType)) {
+      sendJson(res, 413, { error: 'File too large' });
       return true;
     }
     const row = deps.uploads.save({ name: body.name, mediaType: body.mediaType, bytes });
@@ -1065,24 +1167,25 @@ export async function handleHooksRoutes(
         sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
         return true;
       }
-      const imageIds = body.images ?? [];
-      if (!body.text.trim() && imageIds.length === 0) {
+      // 两种入参名并存：`attachments` 是新名，`images` 是既有调用方的旧名
+      const attachmentIds = [...(body.attachments ?? []), ...(body.images ?? [])];
+      if (!body.text.trim() && attachmentIds.length === 0) {
         sendJson(res, 400, { error: 'Message is empty' });
         return true;
       }
-      let images: MessageImage[] = [];
-      if (imageIds.length > 0) {
-        const refs = deps.uploads?.refsOf(imageIds) ?? null;
+      let attachments: MessageAttachment[] = [];
+      if (attachmentIds.length > 0) {
+        const refs = deps.uploads?.refsOf(attachmentIds) ?? null;
         if (!refs) {
-          sendJson(res, 404, { error: 'Image not found' });
+          sendJson(res, 404, { error: 'Attachment not found' });
           return true;
         }
-        images = refs;
+        attachments = refs;
       }
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,
         text: body.text,
-        ...(images.length > 0 ? { images } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
         ...(body.forceTerminal === true ? { forceTerminal: true } : {}),
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
@@ -2124,8 +2227,8 @@ export async function handleHooksRoutes(
         inject: surface.inject !== null,
         headless: surface.headless !== null,
         watch: surface.idleSignals.length > 0,
-        /** 图片随 prompt 的对齐面（null = 该 harness 不收图，附件钮置灰）。 */
-        imageAttach: surface.imageAttach !== null,
+        /** 附件随 prompt 的对齐面收哪些类型（空 = 该 harness 不收附件，附件钮置灰）。 */
+        attachKinds: surface.attach?.kinds ?? [],
         /** 项目内路径的引用文法（false = 该 harness 没有这种文法，文件钮置灰）。 */
         pathRefs: surface.pathRefs !== null,
         /** 该文法认不认行区间（false = 选择器只给整文件引用，不摆行号选择）。 */

@@ -873,7 +873,10 @@ describe('MessageDeliverer 裁决表', () => {
       inject: null,
       headless: null,
       idleSignals: [],
-      imageAttach: { composePrompt: (text, images) => `${text}\n\n${images.map((i) => i.path).join('\n')}` },
+      attach: {
+        kinds: ['image', 'file'],
+        composePrompt: (text, files) => `${text}\n\n${files.map((i) => i.path).join('\n')}`,
+      },
     };
     const deliverer = new MessageDeliverer(
       makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface }),
@@ -885,7 +888,7 @@ describe('MessageDeliverer 裁决表', () => {
       text: '带图',
       mode: 'prompt',
       fromKind: 'dashboard',
-      images: [{ id: 'img-1', name: 'a.png', mediaType: 'image/png', path: '/uploads/a.png' }],
+      attachments: [{ id: 'img-1', name: 'a.png', mediaType: 'image/png', path: '/uploads/a.png' }],
     });
     expect(fake.calls).toHaveLength(0); // 队列没起进程
     expect(result).toMatchObject({ ok: true, status: 'pending' });
@@ -3259,12 +3262,13 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
-  // ---- 图片随 prompt（harness `imageAttach` 对齐面）：投递文本现合成、回执放宽 ----
+  // ---- 附件随 prompt（harness `attach` 对齐面）：投递文本现合成、回执放宽 ----
 
-  /** 与 claude 同形态：图引用 = 裸绝对路径，每张一行，落在用户原文之后。 */
+  /** 与 claude 同形态：附件引用 = 裸绝对路径，每个一行，落在用户原文之后。 */
   const CLAUDE_ATTACH = {
-    composePrompt: (text: string, images: readonly { path: string }[]) =>
-      text ? `${text}\n\n${images.map((i) => i.path).join('\n')}` : images.map((i) => i.path).join('\n'),
+    kinds: ['image', 'file'] as const,
+    composePrompt: (text: string, files: readonly { path: string }[]) =>
+      text ? `${text}\n\n${files.map((i) => i.path).join('\n')}` : files.map((i) => i.path).join('\n'),
   };
 
   const oneImage = (path = 'D:/up/aa.png') => [
@@ -3273,12 +3277,12 @@ describe('MessageDeliverer 裁决表', () => {
 
   const surfaceWithImages = (resolve: (sessionId: string) => { name: string } | null = () => ({ name: PEER_NAME })) => {
     const base = relaySurface(resolve);
-    return { ...base, surface: { ...base.surface, imageAttach: CLAUDE_ATTACH } };
+    return { ...base, surface: { ...base.surface, attach: CLAUDE_ATTACH } };
   };
 
-  it('带图投递：harness 的 imageAttach 为 null → 409，不发号不投递', async () => {
+  it('带图投递：harness 的 attach 为 null → 409，不发号不投递', async () => {
     const fake = createFakeSpawn();
-    const { surface } = relaySurface(); // 没有 imageAttach
+    const { surface } = relaySurface(); // 没有 attach 面
     const deliverer = new MessageDeliverer(
       makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
     );
@@ -3289,10 +3293,67 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     expect(result).toMatchObject({ ok: false, status: 409 });
     expect(fake.calls).toHaveLength(0);
+  });
+
+  const oneFile = (path = 'D:/up/notes.md') => [
+    { id: 'b'.repeat(64), name: 'notes.md', mediaType: 'text/markdown', path },
+  ];
+
+  it('附件类型按 harness 的 kinds 判：只收图的 harness 带文件 → 409', async () => {
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ surfaceFor: () => ({ ...surface, attach: { ...CLAUDE_ATTACH, kinds: ['image'] } }) }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '读一下',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      attachments: oneFile(),
+    });
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect((result as { error: string }).error).toContain('file');
+  });
+
+  it('普通文件不逼层②：只有图才终端优先（文件路径走 socket 也由模型自己读）', async () => {
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => ({ ...surface, attach: { ...CLAUDE_ATTACH, kinds: ['file'] } }),
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText: vi.fn(),
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '读一下',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      attachments: oneFile(),
+    });
+    expect(result).toMatchObject({ ok: true, status: 'delivered' });
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({ via: 'socket' });
+    expect(got).toContain('D:/up/notes.md');
+    inbox.close();
   });
 
   it('带图投递：投递文本 = 原文 + 路径引用，msg.text 仍是用户原文', async () => {
@@ -3318,12 +3379,12 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     expect(sendText).toHaveBeenCalledWith('pane-1', '看看这个\n\nD:/up/aa.png');
     const id = (result as { messageId: string }).messageId;
     expect(deliverer.getMessage(id)).toMatchObject({ text: '看看这个' });
-    expect(deliverer.getMessage(id)?.images?.[0]?.path).toBe('D:/up/aa.png');
+    expect(deliverer.getMessage(id)?.attachments?.[0]?.path).toBe('D:/up/aa.png');
   });
 
   it('带图层② 优先：socket 在场也走终端粘贴（只有它能把路径转成 image block）', async () => {
@@ -3356,7 +3417,7 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     expect(sendText).toHaveBeenCalledWith('pane-1', '看图\n\nD:/up/aa.png');
     expect(deliverer.getMessage((withImage as { messageId: string }).messageId)).toMatchObject({ via: 'terminal' });
@@ -3395,11 +3456,11 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     const queued = readPromptbox(hooksDir, TOKEN).filter((e) => e.sessionId === SESSION_ID);
     expect(queued).toHaveLength(1);
-    expect(queued[0]?.images?.[0]).toMatchObject({ path: 'D:/up/aa.png', name: 'aa.png' });
+    expect(queued[0]?.attachments?.[0]).toMatchObject({ path: 'D:/up/aa.png', name: 'aa.png' });
     expect(queued[0]?.text).toBe('排队这条');
   });
 
@@ -3416,7 +3477,7 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     const id = (result as { messageId: string }).messageId;
     expect(deliverer.onSessionPrompt(SESSION_ID, '')).toEqual(['a'.repeat(64)]);
@@ -3436,7 +3497,7 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     const id = (result as { messageId: string }).messageId;
     // claude 粘贴处理会把多行 chunk 用空串连起来——回执原文与 msg.text 差在空白上
@@ -3457,7 +3518,7 @@ describe('MessageDeliverer 裁决表', () => {
       mode: 'prompt',
       fromKind: 'dashboard',
       oneWay: true,
-      images: oneImage(),
+      attachments: oneImage(),
     });
     const id = (result as { messageId: string }).messageId;
     expect(deliverer.onSessionPrompt(SESSION_ID, '我自己另敲的一句话')).toEqual([]);

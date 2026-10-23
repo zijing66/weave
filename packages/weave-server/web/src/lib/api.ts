@@ -154,12 +154,12 @@ export interface HookEventRow {
   sessionId: string | null;
   payload: string;
   createdAt: string;
-  /** 消息随附图（挂在开轮事件上；对话气泡缩略图）。取图走 `API_BASE + /images/<id>`。 */
-  images?: UploadImage[];
+  /** 消息随附文件（挂在开轮事件上；图片出缩略图）。取档走 `API_BASE + /images/<id>`。 */
+  images?: UploadFile[];
 }
 
-/** 上传件（服务端内容寻址落盘；回显经 `API_BASE + /images/<id>`）。 */
-export interface UploadImage {
+/** 上传件（图片与普通文件同一条内容寻址落盘；回显经 `API_BASE + /images/<id>`）。 */
+export interface UploadFile {
   id: string;
   name: string;
   mediaType: string;
@@ -421,8 +421,8 @@ export interface SessionMessageRow {
   /** 目标会话（本视图每行都是投给它的）。 */
   sessionId: string;
   text: string;
-  /** 随附图（上传件引用）；气泡缩略图的兜底源（历史在事件行的 `images` 上）。 */
-  images?: UploadImage[];
+  /** 随附文件（上传件引用）；气泡缩略图的兜底源（历史在事件行的 `images` 上）。 */
+  attachments?: UploadFile[];
   mode: 'prompt' | 'inject' | 'headless' | 'auto';
   /** 实际投递通道（auto 落定后回填；pending = 尚未裁决）。 */
   channel: 'prompt' | 'inject' | 'headless' | null;
@@ -503,8 +503,8 @@ export interface MessagingCapability {
   inject: boolean;
   headless: boolean;
   watch: boolean;
-  /** 图片随 prompt 的对齐面（false = 该 harness 不收图，附件钮置灰）。 */
-  imageAttach: boolean;
+  /** 附件随 prompt 的对齐面收哪些类型（空 = 该 harness 不收附件，附件钮置灰）。 */
+  attachKinds: ('image' | 'file')[];
   /** 项目内路径的引用文法（false = 该 harness 没有这种文法，文件钮置灰）。 */
   pathRefs: boolean;
   /** 该文法认不认行区间（false = 选择器只给整文件引用）。 */
@@ -1651,7 +1651,7 @@ export const api = {
    *  409，由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
-    body: { text: string; images?: string[]; forceTerminal?: boolean },
+    body: { text: string; attachments?: string[]; forceTerminal?: boolean },
   ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
@@ -1713,12 +1713,7 @@ export const api = {
     if (opts.end != null) params.set('end', String(opts.end));
     return apiFetch<{ ref: string }>(`/sessions/${encodeURIComponent(sessionId)}/ref?${params.toString()}`);
   },
-  /** 上传一张会话图片（内容寻址去重）；超限/类型不符由 apiFetch 抛 Error 原文。 */
-  uploadImage: (input: { name: string; mediaType: string; data: string }): Promise<UploadImage> =>
-    apiFetch<{ upload: UploadImage }>('/uploads', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }).then((r) => r.upload),
+  /** 上传（分块 + 进度 + 断点续传）只在 `lib/upload.ts`；本文件不摆第二条上传路径。 */
   /** 手动重发（队列暂停闸的解除动作）：只对 prompt 通道 failed / delivered-未回执
    *  开放（其余 409、未知 404 由 apiFetch 抛 Error 原文）。 */
   resendSessionMessage: (

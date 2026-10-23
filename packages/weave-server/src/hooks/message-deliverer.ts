@@ -13,6 +13,7 @@ import {
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
+import { isImageMediaType } from '../repositories/uploads.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
 import { normalizeDirKey, type SessionTerminal } from '../daemon/opener.js';
@@ -80,7 +81,7 @@ export type PipeStatus =
   | 'timeout'; // headless 终态（内存驻留）
 
 /** 随 prompt 投递的图（上传件引用；路径 = 落盘件的绝对路径，harness 合成引用形态）。 */
-export interface MessageImage {
+export interface MessageAttachment {
   id: string;
   name: string;
   mediaType: string;
@@ -92,10 +93,10 @@ export interface PipeMessage {
   id: string;
   sessionId: string;
   /** **用户原文**（回执比对、气泡文案都用它）；投递出去的文本是它经 harness
-   *  `imageAttach.composePrompt` 合成的形态（带图时追加图引用），见 `wireTextOf`。 */
+   *  `attach.composePrompt` 合成的形态（带附件时追加引用），见 `wireTextOf`。 */
   text: string;
-  /** 随附图（空/缺省 = 纯文本消息）。 */
-  images?: MessageImage[];
+  /** 随附文件（空/缺省 = 纯文本消息）。 */
+  attachments?: MessageAttachment[];
   mode: MessageMode;
   /** 单向注入（手动面：无接收方会话，中继载荷带「无需回复」注记）；编排域不置。 */
   oneWay?: boolean;
@@ -212,8 +213,8 @@ export interface SendInput {
   /** 强制层② 终端 send-text（手动面下拉选的通道）：跳过直投与中继——宿主把
    *  终端击键当用户输入，另外两层都是「另一个会话发的」。 */
   forceTerminal?: boolean;
-  /** 随附图（已落盘的上传件）；带图且目标 harness 的 `imageAttach` 为 null 即 409。 */
-  images?: readonly MessageImage[];
+  /** 随附文件（已落盘的上传件）；目标 harness 的 `attach` 面不收该类型即 409。 */
+  attachments?: readonly MessageAttachment[];
 }
 
 /** send() 返回：ok 由路由映射 200，否则 status 即 HTTP 码。 */
@@ -453,10 +454,16 @@ export class MessageDeliverer {
       return { ok: false, status: 400, error: 'Session has no hook events to determine its harness' };
     }
 
-    // 图片随 prompt 的对齐面归 harness（`imageAttach`）；null = 该 harness 不收图。
-    const images: MessageImage[] = input.images ? [...input.images] : [];
-    if (images.length > 0 && !surface.imageAttach) {
-      return { ok: false, status: 409, error: 'This harness cannot receive images' };
+    // 附件随 prompt 的对齐面归 harness（`attach`）：哪些类型收、怎么引用都由它答
+    const attachments: MessageAttachment[] = input.attachments ? [...input.attachments] : [];
+    if (attachments.length > 0) {
+      if (!surface.attach) return { ok: false, status: 409, error: 'This harness cannot receive attachments' };
+      if (attachments.some((a) => isImageMediaType(a.mediaType)) && !surface.attach.kinds.includes('image')) {
+        return { ok: false, status: 409, error: 'This harness cannot receive images' };
+      }
+      if (attachments.some((a) => !isImageMediaType(a.mediaType)) && !surface.attach.kinds.includes('file')) {
+        return { ok: false, status: 409, error: 'This harness cannot receive file attachments' };
+      }
     }
 
     const channel = this.resolveChannel(input.mode, input.toSessionId, surface);
@@ -483,7 +490,7 @@ export class MessageDeliverer {
       id: randomUUID(),
       sessionId: input.toSessionId,
       text: input.text,
-      ...(images.length > 0 ? { images } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
       mode: input.mode,
       oneWay: input.oneWay === true,
       ...(input.forceTerminal === true ? { forceTerminal: true } : {}),
@@ -543,7 +550,7 @@ export class MessageDeliverer {
             id: entry.id,
             sessionId,
             text: entry.text,
-            ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
+            ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
             mode: 'prompt',
             oneWay: entry.oneWay === true,
             ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
@@ -839,7 +846,7 @@ export class MessageDeliverer {
       // 后文（「继续……不要」）不认。
       const textHit = !!want && (want.length >= ACK_MIN_TEXT ? seenRaw.includes(want) : seenRaw.endsWith(want));
       const imageHit =
-        (msg.images?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
+        (msg.attachments?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
       if (!textHit && !imageHit) continue;
       hit = true;
       this.memory.set(msg.id, {
@@ -851,7 +858,7 @@ export class MessageDeliverer {
       // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
       if (this.stalled.get(sessionId)?.messageId === msg.id) this.stalled.delete(sessionId);
       if (this.awaitingAck.get(sessionId) === msg.id) this.awaitingAck.delete(sessionId);
-      imageIds.push(...(msg.images?.map((i) => i.id) ?? []));
+      imageIds.push(...(msg.attachments?.map((i) => i.id) ?? []));
       this.bus({
         kind: 'message.acknowledged',
         messageId: msg.id,
@@ -1355,7 +1362,7 @@ export class MessageDeliverer {
         id: entry.id,
         sessionId,
         text: entry.text,
-        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
+        ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
         mode: 'prompt',
         oneWay: entry.oneWay === true,
         ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
@@ -1794,7 +1801,7 @@ export class MessageDeliverer {
         text: entry.text,
         oneWay: entry.oneWay === true,
         ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
-        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
+        ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
       },
     ]);
     this.queuedSessions.add(entry.sessionId);
@@ -1851,7 +1858,7 @@ export class MessageDeliverer {
         id: entry.id,
         sessionId,
         text: entry.text,
-        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
+        ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
         mode: 'prompt',
         oneWay: entry.oneWay === true,
         channel: 'prompt',
@@ -2010,18 +2017,19 @@ export class MessageDeliverer {
   }
 
   /**
-   * 投递文本 = 用户原文经 harness `imageAttach.composePrompt` 现合成（带图时在
-   * 原文后追加图引用形态）。**只在投递那一刻合成**——`msg.text` 恒为用户原文
+   * 投递文本 = 用户原文经 harness `attach.composePrompt` 现合成（带附件时在
+   * 原文后追加引用形态）。**只在投递那一刻合成**——`msg.text` 恒为用户原文
    * （回执比对与气泡文案都要它），队列行也不存合成结果（换 harness 后仍按现面合成）。
    */
   private wireTextOf(entry: PipeMessage): string {
-    const imgs = entry.images;
-    if (!imgs || imgs.length === 0) return entry.text;
-    return this.surfaceOfSession(entry.sessionId)?.imageAttach?.composePrompt(entry.text, imgs) ?? entry.text;
+    const files = entry.attachments;
+    if (!files || files.length === 0) return entry.text;
+    return this.surfaceOfSession(entry.sessionId)?.attach?.composePrompt(entry.text, files) ?? entry.text;
   }
 
+  /** 有没有图（**不是**有没有附件）：宿主队列拒收图，故只有图才逼着走终端。 */
   private hasImages(entry: PipeMessage): boolean {
-    return (entry.images?.length ?? 0) > 0;
+    return (entry.attachments ?? []).some((a) => isImageMediaType(a.mediaType));
   }
 
   /** inject 通道：信封写 outbox → injected（fire-and-forget 语义）。 */

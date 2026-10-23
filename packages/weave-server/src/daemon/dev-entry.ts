@@ -36,6 +36,7 @@ import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import { UploadRepository } from '../repositories/uploads.js';
+import { defaultUploadSessions } from './upload-sessions.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
@@ -424,6 +425,7 @@ async function main(): Promise<void> {
     sideQuestions,
     probe: sessionProbe,
     uploads,
+    uploadSessions: defaultUploadSessions,
   });
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。

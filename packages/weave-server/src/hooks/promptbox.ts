@@ -11,8 +11,8 @@ import { hookShardId } from './mirror.js';
 
 export const PROMPTBOX_MAX_LINES = 200;
 
-/** 队列行的随附图（引用上传件；路径也落盘，重启后冲洗才能重合成投递文本）。 */
-export interface PromptboxImage {
+/** 队列行的随附文件（引用上传件；路径也落盘，重启后冲洗才能重合成投递文本）。 */
+export interface PromptboxAttachment {
   id: string;
   name: string;
   mediaType: string;
@@ -28,8 +28,8 @@ export interface PromptboxEntry {
   oneWay?: boolean;
   /** 发送人强制走层② 终端（下拉选的通道）——随行落盘，冲洗时同样不回落直投/中继。 */
   forceTerminal?: boolean;
-  /** 随附图：`text` 恒为用户原文，投递文本由 harness `imageAttach` 现合成。 */
-  images?: PromptboxImage[];
+  /** 随附文件：`text` 恒为用户原文，投递文本由 harness `attach` 现合成。 */
+  attachments?: PromptboxAttachment[];
   at: string;
 }
 
@@ -44,19 +44,29 @@ function parseLines(text: string): PromptboxEntry[] {
     try {
       const raw = JSON.parse(line) as Partial<PromptboxEntry>;
       if (typeof raw.id === 'string' && typeof raw.sessionId === 'string' && typeof raw.text === 'string') {
-        const images = Array.isArray(raw.images)
-          ? raw.images.filter(
-              (i): i is PromptboxImage =>
-                typeof i?.id === 'string' && typeof i?.name === 'string' && typeof i?.mediaType === 'string' && typeof i?.path === 'string',
-            )
-          : [];
+        // 旧行用的是 `images`（那时只收图）——读侧照收，不迁移
+        const legacy = (raw as { images?: unknown }).images;
+        const listed: unknown[] = Array.isArray(raw.attachments)
+          ? raw.attachments
+          : Array.isArray(legacy)
+            ? legacy
+            : [];
+        const attachments = listed.filter((i): i is PromptboxAttachment => {
+          const a = i as Partial<PromptboxAttachment> | null;
+          return (
+            typeof a?.id === 'string' &&
+            typeof a?.name === 'string' &&
+            typeof a?.mediaType === 'string' &&
+            typeof a?.path === 'string'
+          );
+        });
         out.push({
           id: raw.id,
           sessionId: raw.sessionId,
           text: raw.text,
           oneWay: raw.oneWay === true,
           ...(raw.forceTerminal === true ? { forceTerminal: true } : {}),
-          ...(images.length > 0 ? { images } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
           at: typeof raw.at === 'string' ? raw.at : '',
         });
       }
@@ -77,7 +87,7 @@ export function appendPromptbox(
     text: string;
     oneWay?: boolean;
     forceTerminal?: boolean;
-    images?: PromptboxImage[];
+    attachments?: PromptboxAttachment[];
   }>,
 ): void {
   if (entries.length === 0) return;

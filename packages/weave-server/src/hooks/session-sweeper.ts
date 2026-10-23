@@ -24,6 +24,8 @@ export class SessionSweeper {
       orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
       /** 存活图来源（空壳判据要用）；不给就只按期限清。 */
       livenessOf?: () => Map<string, boolean>;
+      /** 分块上传的半截件（过期回收；同轮顺带扫）。 */
+      uploadSessions?: { sweep(): Promise<number> };
     },
     private readonly now: () => number = Date.now,
   ) {}
@@ -44,8 +46,10 @@ export class SessionSweeper {
       purgeSession(this.deps, row.sessionId);
       purged++;
     }
-    // 与过期会话无关的孤儿上传件（选了图没发出去、事件早已清掉的）同轮收走
+    // 与过期会话无关的孤儿上传件（选了图没发出去、事件早已清掉的）同轮收走；
+    // 分块上传留下半截件的同理（异步扫，不吊这一拍）
     this.deps.uploads?.pruneUnreferenced();
+    void this.deps.uploadSessions?.sweep();
     this.deps.watchEngine?.sweepTerminated();
     this.deps.orchestrationEngine?.sweepTerminated();
     return purged;
@@ -72,6 +76,7 @@ export function startSessionSweeper(
   deps: SessionPurgeDeps & {
     watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
     orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
+    uploadSessions?: { sweep(): Promise<number> };
   },
 ): NodeJS.Timeout {
   return new SessionSweeper({ ...deps, livenessOf: () => claudeLivenessById() }).start();

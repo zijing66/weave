@@ -40,6 +40,7 @@ import type { OrchestrationEngine } from '../hooks/orchestration-engine.js';
 import type { PluginManager } from '../hooks/plugin-loader.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import type { UploadRepository } from '../repositories/uploads.js';
+import type { UploadSessions } from './upload-sessions.js';
 import { syncPlugins } from '../hooks/plugin-project-state.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { getLibraryScan, invalidateScan } from '../install/scan-cache.js';
@@ -209,8 +210,10 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
-  /** 会话图片上传件（内容寻址落盘 + event_images 指针）；/uploads 与 /images/:id 依赖它。 */
+  /** 会话上传件（内容寻址落盘 + event_images 指针）；/uploads 与 /images/:id 依赖它。 */
   uploads?: UploadRepository;
+  /** 分块上传的半截件（cache/tmp）；/uploads/begin 等依赖它（缺省用进程内默认落点）。 */
+  uploadSessions?: UploadSessions;
   /** 阻塞问答跟踪器（AskUserQuestion / 计划与权限确认）；/messaging/questions 与 /sessions/:id/answer 依赖它。 */
   questionTracker?: QuestionTracker;
   /** 旁路会话历史（claude = /btw）：问句只有 weave 自己发过才知道，故得自己记；

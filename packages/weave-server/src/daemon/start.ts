@@ -32,6 +32,7 @@ import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import { UploadRepository } from '../repositories/uploads.js';
+import { defaultUploadSessions } from './upload-sessions.js';
 import { PushNotifier } from '../hooks/push-notify.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
@@ -449,6 +450,7 @@ export function startDaemon(): void {
     sideQuestions,
     probe: sessionProbe,
     uploads,
+    uploadSessions: defaultUploadSessions,
   });
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。

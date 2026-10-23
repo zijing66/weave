@@ -7,7 +7,7 @@ import {
   conversationOf,
   countdownLabel,
   editsWindowOf,
-  imagesFrom,
+  attachedFilesFrom,
   exportConversationText,
   exportStamp,
   failedTail,
@@ -56,7 +56,7 @@ const delivery = (over: Partial<SessionMessageRow>): SessionMessageRow => ({
   output: null,
   error: over.error ?? null,
   at: over.at ?? at(10),
-  ...(over.images ? { images: over.images } : {}),
+  ...(over.attachments ? { attachments: over.attachments } : {}),
 });
 
 describe('conversationOf', () => {
@@ -679,7 +679,7 @@ describe('随附图', () => {
       ],
       claude,
     );
-    expect(entries[0]?.images?.[0]?.id).toBe('a'.repeat(64));
+    expect(entries[0]?.attachments?.[0]?.id).toBe('a'.repeat(64));
   });
 
   it('`[Image #N]` 是宿主输入框的占位、不是正文：有图就剥掉，没图（图丢了）才留', () => {
@@ -696,7 +696,7 @@ describe('随附图', () => {
   it('认领放宽一档：带图的投递行比空白更宽（粘贴处理连多行 chunk）', () => {
     const { thread } = attachDeliveries(
       [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '第一行\n第二行（够长）' }],
-      [delivery({ id: 'm1', text: '第一行第二行（够长）', at: at(3), images: [img('a'.repeat(64))] })],
+      [delivery({ id: 'm1', text: '第一行第二行（够长）', at: at(3), attachments: [img('a'.repeat(64))] })],
     );
     expect(thread).toHaveLength(1);
     expect(thread[0]?.pipe?.id).toBe('m1');
@@ -704,11 +704,11 @@ describe('随附图', () => {
 
   it('纯图发送（正文为空）也成一条，投递行认领后不再另起尾巴', () => {
     const { thread } = attachDeliveries(
-      [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '', images: [img('a'.repeat(64))] }],
-      [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
+      [{ key: 'e3', eventId: 3, role: 'user', at: at(3), text: '', attachments: [img('a'.repeat(64))] }],
+      [delivery({ id: 'm1', text: '', at: at(3), attachments: [img('a'.repeat(64))] })],
     );
     expect(thread).toHaveLength(1);
-    expect(thread[0]?.images).toHaveLength(1);
+    expect(thread[0]?.attachments).toHaveLength(1);
   });
 
   it('带图正文在会话那侧变成 `[Image #N]` 占位 → 认领得到（不然同一条显示两遍）', () => {
@@ -720,10 +720,10 @@ describe('随附图', () => {
           role: 'user',
           at: at(3),
           text: '看看这个[Image #1]',
-          images: [img('a'.repeat(64))],
+          attachments: [img('a'.repeat(64))],
         },
       ],
-      [delivery({ id: 'm1', text: '看看这个', at: at(3), images: [img('a'.repeat(64))] })],
+      [delivery({ id: 'm1', text: '看看这个', at: at(3), attachments: [img('a'.repeat(64))] })],
     );
     expect(thread).toHaveLength(1);
     expect(thread[0]?.pipe?.id).toBe('m1');
@@ -738,10 +738,10 @@ describe('随附图', () => {
           role: 'user',
           at: at(3),
           text: '[Image #1]',
-          images: [img('a'.repeat(64))],
+          attachments: [img('a'.repeat(64))],
         },
       ],
-      [delivery({ id: 'm1', text: '', at: at(3), images: [img('a'.repeat(64))] })],
+      [delivery({ id: 'm1', text: '', at: at(3), attachments: [img('a'.repeat(64))] })],
     );
     expect(thread).toHaveLength(1);
     expect(thread[0]?.pipe?.id).toBe('m1');
@@ -756,7 +756,7 @@ describe('随附图', () => {
           role: 'user',
           at: at(30),
           text: '消息重复了检查并修复，一条消息出现了2次',
-          images: [img('a'.repeat(64))],
+          attachments: [img('a'.repeat(64))],
         },
       ],
       [
@@ -768,7 +768,7 @@ describe('随附图', () => {
           settledAt: at(30),
           acked: true,
           ackedEventId: 3,
-          images: [img('a'.repeat(64))],
+          attachments: [img('a'.repeat(64))],
         }),
       ],
     );
@@ -793,7 +793,7 @@ describe('随附图', () => {
           role: 'user',
           at: new Date(2026, 9, 16, 9, 0, 0).toISOString(),
           text: '看看这个',
-          images: [img('a'.repeat(64), 'shot.png'), img('b'.repeat(64), 'two.png')],
+          attachments: [img('a'.repeat(64), 'shot.png'), img('b'.repeat(64), 'two.png')],
         },
       ],
       { user: '我', assistant: '会话', plan: '计划' },
@@ -804,7 +804,7 @@ describe('随附图', () => {
   });
 });
 
-describe('imagesFrom（剪贴板 / 拖放取图）', () => {
+describe('attachedFilesFrom（剪贴板 / 拖放取文件）', () => {
   const f = (name: string, type: string): File => new File(['x'], name, { type });
   const dt = (spec: { items?: { kind: string; type: string; file: File | null }[]; files?: File[] }): DataTransfer =>
     ({
@@ -818,17 +818,17 @@ describe('imagesFrom（剪贴板 / 拖放取图）', () => {
 
   it('移动浏览器只填 items（iOS Safari 的 files 恒空）→ 仍取到图', () => {
     const shot = f('shot.png', 'image/png');
-    const got = imagesFrom(dt({ items: [{ kind: 'file', type: 'image/png', file: shot }] }));
+    const got = attachedFilesFrom(dt({ items: [{ kind: 'file', type: 'image/png', file: shot }] }));
     expect(got.map((x) => x.name)).toEqual(['shot.png']);
   });
 
   it('桌面 files 兜底（items 空）', () => {
-    const got = imagesFrom(dt({ files: [f('a.jpg', 'image/jpeg'), f('b.gif', 'image/gif')] }));
+    const got = attachedFilesFrom(dt({ files: [f('a.jpg', 'image/jpeg'), f('b.gif', 'image/gif')] }));
     expect(got.map((x) => x.name)).toEqual(['a.jpg', 'b.gif']);
   });
 
-  it('文字项不吞：只取 kind=file，非图文件不进', () => {
-    const got = imagesFrom(
+  it('文字项不吞：只取 kind=file（图与普通文件都收，类型门在 stageFiles）', () => {
+    const got = attachedFilesFrom(
       dt({
         items: [
           { kind: 'string', type: 'text/plain', file: null },
@@ -837,18 +837,20 @@ describe('imagesFrom（剪贴板 / 拖放取图）', () => {
         ],
       }),
     );
-    expect(got.map((x) => x.name)).toEqual(['shot.png']);
+    expect(got.map((x) => x.name)).toEqual(['shot.png', 'doc.pdf']);
   });
 
-  it('剪贴板项不带 type 时按扩展名认（移动浏览器偶发）', () => {
-    const got = imagesFrom(dt({ items: [{ kind: 'file', type: '', file: f('photo.webp', '') }] }));
+  it('剪贴板项不带 type 也照收（类型由 stageFiles 按 MIME/扩展名判）', () => {
+    const got = attachedFilesFrom(dt({ items: [{ kind: 'file', type: '', file: f('photo.webp', '') }] }));
     expect(got.map((x) => x.name)).toEqual(['photo.webp']);
   });
 
   it('没有 clipboardData（或全是文字）→ 空表，调用方据此不压默认粘贴', () => {
-    expect(imagesFrom(null)).toEqual([]);
-    expect(imagesFrom(dt({ items: [{ kind: 'string', type: 'text/plain', file: null }] }))).toEqual([]);
-    expect(imagesFrom(dt({ files: [f('doc.pdf', 'application/pdf')] }))).toEqual([]);
+    expect(attachedFilesFrom(null)).toEqual([]);
+    expect(attachedFilesFrom(dt({ items: [{ kind: 'string', type: 'text/plain', file: null }] }))).toEqual([]);
+    expect(attachedFilesFrom(dt({ files: [f('doc.pdf', 'application/pdf')] })).map((x) => x.name)).toEqual([
+      'doc.pdf',
+    ]);
   });
 });
 

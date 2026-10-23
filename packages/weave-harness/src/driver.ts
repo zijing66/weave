@@ -351,20 +351,29 @@ export interface PromptRelaySpec {
 }
 
 /**
- * 图片随 prompt 投递的对齐面：「一张图怎么被这个 harness 认出来」是 harness 表示法
- * （claude = 裸绝对路径，它自己的粘贴处理器按 `\.(png|jpe?g|gif|webp)$` 把路径转成
- * `[Image #N]` + 真 image block），server 只传语义参数（原文 + 落盘图的可读路径 /
- * 媒体类型 / 原文件名），怎么引用归这里。null = 该 harness 不支持收图。
+ * 附件类型：`image` = 宿主认得图（claude 的粘贴处理器按
+ * `\.(png|jpe?g|gif|webp)$` 把路径变成 `[Image #N]` 占位 + 真 image block）；
+ * `file` = 其它文件，**宿主没有附件形态**，提示词里只有一条路径，由模型自己读。
  */
-export interface ImageAttachSpec {
+export type AttachKind = 'image' | 'file';
+
+/**
+ * 附件随 prompt 投递的对齐面：「一个已落盘的文件怎么被这个 harness 认出来」是
+ * harness 表示法（claude = 裸绝对路径、一行一条），server 只传语义参数（原文 +
+ * 落盘件的可读路径 / 媒体类型 / 原文件名），怎么引用归这里。null = 该 harness
+ * 不接受任何附件。
+ */
+export interface AttachSpec {
+  /** 收哪些类型；`image` 缺席 = 图片入口不摆，`file` 缺席 = 文件入口不摆。 */
+  readonly kinds: readonly AttachKind[];
   /**
-   * 把「用户原文 + 已落盘图片」合成投递 prompt 文本。images 恒非空；text 可为空
-   * （纯图发送）。返回值走三条层投递，**用户原文不得被改写**（回执比对靠它做包含
+   * 把「用户原文 + 已落盘附件」合成投递 prompt 文本。files 恒非空；text 可为空
+   * （纯附件发送）。返回值走三条层投递，**用户原文不得被改写**（回执比对靠它做包含
    * 匹配）——只允许追加引用形态。
    */
   composePrompt(
     text: string,
-    images: readonly { path: string; mediaType: string; name: string }[],
+    files: readonly { path: string; mediaType: string; name: string }[],
   ): string;
 }
 
@@ -597,8 +606,8 @@ export interface MessagingSurface {
   readonly idleSignals: readonly string[];
   /** 注入信封渲染（缺省 = server 的 weave 统一信封）。 */
   renderEnvelope?(text: string, meta: MessageMeta): string;
-  /** 图片随 prompt 的对齐面；null = 该 harness 不支持收图（web 据此置灰附件钮）。 */
-  readonly imageAttach: ImageAttachSpec | null;
+  /** 附件随 prompt 的对齐面；null = 该 harness 不收附件（web 据此置灰附件钮）。 */
+  readonly attach: AttachSpec | null;
   /** 项目内路径的引用文法；null = 该 harness 没有这种文法（web 据此不渲染入口）。 */
   readonly pathRefs: PathRefSpec | null;
   /** 旁路会话（侧问）；null = 该 harness 没有这种机制（web 据此不渲染入口）。 */

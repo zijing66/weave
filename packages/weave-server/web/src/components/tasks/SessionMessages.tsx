@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, Pencil, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -12,8 +12,9 @@ import {
   type RecognizedRef,
   type SessionMessageRow,
   type SessionPlan,
-  type UploadImage,
+  type UploadFile,
 } from '@/lib/api';
+import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -68,10 +69,12 @@ import { subscribeHook, type HookFrame } from '@/lib/sse';
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
 
-/** 附件口径（与服务端 UPLOAD_* 同值）：harness 认的就是这四种，超出就地挡。 */
+/** 附件口径（与服务端 UPLOAD_* 同值）：图就这四种，其余按「文件」收。 */
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const IMAGE_MAX_COUNT = 8;
+/** 普通文件的上限（服务端 `UPLOAD_FILE_MAX_BYTES`）。 */
+const FILE_MAX_BYTES = 64 * 1024 * 1024;
+const ATTACH_MAX_COUNT = 8;
 
 /** 生成中那一行的素材窗口：取最近多少条事件（展示只挑最新那条有内容的）。 */
 const LIVE_FETCH = 40;
@@ -88,17 +91,133 @@ const isImageFile = (f: File): boolean =>
   f.type.startsWith('image/') || (!f.type && IMAGE_EXT.test(f.name));
 
 /**
- * 剪贴板/拖放里的图。**移动浏览器只填 `items`**（iOS Safari 的 `files` 恒空），桌面
- * 才稳定给 `files` ⇒ items 优先、files 兜底；只取 file 项，文字项留着走默认粘贴。
+ * 剪贴板/拖放里的文件（图与普通文件都收，类型是否可发由 `stageFiles` 判）。
+ * **移动浏览器只填 `items`**（iOS Safari 的 `files` 恒空），桌面才稳定给 `files`
+ * ⇒ items 优先、files 兜底；只取 file 项，文字项留着走默认粘贴。
  */
-export function imagesFrom(dt: DataTransfer | null | undefined): File[] {
+export function attachedFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return [];
   const fromItems = Array.from(dt.items ?? [])
     .filter((i) => i.kind === 'file')
     .map((i) => i.getAsFile())
     .filter((f): f is File => !!f);
-  const list = fromItems.length > 0 ? fromItems : Array.from(dt.files ?? []);
-  return list.filter(isImageFile);
+  return fromItems.length > 0 ? fromItems : Array.from(dt.files ?? []);
+}
+
+/** 附件条上的一格：上传中/已落盘/失败都摆在同一个位置（进度条画在图标上）。 */
+export interface StagedFile {
+  /** 前端本地键（同一份文件拖两次也是两格）。 */
+  key: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  /** 0..1；1 = 已落盘。 */
+  progress: number;
+  state: 'uploading' | 'done' | 'error';
+  /** 已落盘的上传件（state='done' 时必有）。 */
+  upload?: UploadFile;
+  /** 失败原因（挂在图标上，不弹窗）。 */
+  error?: string;
+  /** 原始 File（只在内存里；撤掉上传中的格子时用它丢服务端半截件）。 */
+  file?: File;
+}
+
+/** 上传件是不是图（决定出缩略图还是文件行）。 */
+export const isImageUpload = (a: { mediaType: string }): boolean =>
+  (IMAGE_TYPES as readonly string[]).includes(a.mediaType);
+
+/** 附件条里已经落盘的那些（草稿快照只存这一份：上传中的刷新后没法续读文件本身）。 */
+const settledUploads = (staged: readonly StagedFile[]): UploadFile[] =>
+  staged.flatMap((s) => (s.state === 'done' && s.upload ? [s.upload] : []));
+
+/** 文件大小的可读形状（附件格里的副标题）。 */
+export function sizeLabel(bytes: number): string {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
+}
+
+/** 附件条上的一格：图出缩略图、其余出文件格；上传中的进度（小进度条 + 百分比）
+ *  就画在这一格上——别处再摆一条总进度，反而看不清是哪一个在传。 */
+function StagedTile({
+  item,
+  onOpen,
+  onRemove,
+  removeLabel,
+}: {
+  item: StagedFile;
+  onOpen: (u: UploadFile) => void;
+  onRemove: () => void;
+  removeLabel: string;
+}): ReactElement {
+  const pct = Math.round(item.progress * 100);
+  const image = isImageUpload(item) && item.state === 'done' && item.upload;
+  return (
+    <span className="relative inline-flex shrink-0">
+      <button
+        type="button"
+        title={
+          item.state === 'error'
+            ? `${item.name} — ${item.error ?? ''}`
+            : [item.name, sizeLabel(item.size)].filter(Boolean).join(' · ')
+        }
+        onClick={() => {
+          if (item.state === 'done' && item.upload) onOpen(item.upload);
+        }}
+        className={cn(
+          'relative flex shrink-0 items-center overflow-hidden rounded border bg-neutral-950',
+          image ? 'h-10 w-10' : 'h-10 max-w-[10rem] gap-1 px-1.5',
+          item.state === 'error'
+            ? 'border-red-500/50'
+            : 'border-edge/[0.12]',
+        )}
+      >
+        {image ? (
+          <img
+            src={`${API_BASE}/images/${item.upload!.id}`}
+            alt={item.name}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <>
+            <FileCode className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+            <span className="min-w-0 truncate text-[10px] text-neutral-300">{item.name}</span>
+          </>
+        )}
+        {item.state === 'uploading' && (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-[9px] font-medium text-white">
+            {pct}%
+          </span>
+        )}
+        {item.state === 'uploading' && (
+          <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/20">
+            <span className="block h-full bg-blue-400 transition-[width]" style={{ width: `${pct}%` }} />
+          </span>
+        )}
+        {item.state === 'error' && (
+          <span className="absolute inset-0 flex items-center justify-center bg-red-950/60">
+            <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        title={removeLabel}
+        aria-label={removeLabel}
+        onClick={onRemove}
+        className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+    </span>
+  );
 }
 
 /** 投递行被事件认领的时间容差：同文案且时刻相近 = 同一条消息（正常通道秒级）。 */
@@ -217,8 +336,8 @@ export interface ConvEntry {
   fromName?: string | null;
   /** 认领到的投递行：状态/回执/重发挂在气泡上，不另起一条。 */
   pipe?: SessionMessageRow;
-  /** 随附图（挂在开轮事件上；气泡缩略图，点开看大图）。 */
-  images?: UploadImage[];
+  /** 随附文件（挂在开轮事件上；图出缩略图，其余出文件行）。 */
+  attachments?: UploadFile[];
   /** 这一轮以失败收尾（`lifecycle.closeFailed`）：正文是宿主报的错，不是回答。 */
   failed?: boolean;
   /** 计划模式交出的计划正文（不是某轮的收尾总结，单独标出来给人批阅）。 */
@@ -261,7 +380,7 @@ export function conversationOf(
         text: e.images?.length ? text.replace(IMAGE_MARKER, '').trim() : text,
         fromWeave,
         fromName,
-        ...(e.images?.length ? { images: e.images } : {}),
+        ...(e.images?.length ? { attachments: e.images } : {}),
       });
     } else if (lifecycle.close.includes(e.eventType)) {
       const text = turnSummaryOf(e);
@@ -362,7 +481,7 @@ export function attachDeliveries(
     let best: SessionMessageRow | undefined;
     let bestGap = CLAIM_MS;
     for (const m of deliveries) {
-      if (taken.has(m.id) || !claims(entry.text, m.text, (m.images?.length ?? 0) > 0)) continue;
+      if (taken.has(m.id) || !claims(entry.text, m.text, (m.attachments?.length ?? 0) > 0)) continue;
       const gap = Math.abs(Date.parse(m.at) - Date.parse(entry.at));
       if (gap < bestGap) {
         best = m;
@@ -560,16 +679,16 @@ export interface DraftSnapshot {
     | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
     | { c: string; s?: CmdSource; g?: CmdSigil }
   >;
-  /** 已落盘、还没发出去的图（同一条草稿的附件）。 */
-  staged: UploadImage[];
+  /** 已落盘、还没发出去的文件（同一条草稿的附件）。 */
+  staged: UploadFile[];
 }
 
 const DRAFT_KEY = (sessionId: string): string => `weave:draft:${sessionId}`;
 
-/** 输入框 DOM → 快照；空草稿（没字也没图）返回 null（调用方据此删键）。 */
+/** 输入框 DOM → 快照；空草稿（没字也没附件）返回 null（调用方据此删键）。 */
 export function draftSnapshotOf(
   root: HTMLElement | null,
-  staged: readonly UploadImage[],
+  staged: readonly UploadFile[],
 ): DraftSnapshot | null {
   if (!root) return null;
   // 相邻文本段合并（token 化会把块边界切出多段）
@@ -863,9 +982,12 @@ export function exportConversationText(
   return entries
     .filter((e) => e.role !== 'compaction')
     .map((e) => {
-      const imgs =
-        e.images?.map((img, i) => `[Image #${i + 1}] ${img.name}`).join('\n') ?? '';
-      const body = [e.text, imgs].filter(Boolean).join('\n');
+      // 图片按宿主占位形态编号（`[Image #N]`），普通文件标 `[File]`
+      let imgN = 0;
+      const files = (e.attachments ?? [])
+        .map((a) => (isImageUpload(a) ? `[Image #${++imgN}] ${a.name}` : `[File] ${a.name}`))
+        .join('\n');
+      const body = [e.text, files].filter(Boolean).join('\n');
       return `[${exportStamp(e.at)}] ${role(e)}\n${body}`;
     })
     .join('\n\n');
@@ -1174,12 +1296,14 @@ export function SessionMessages({
   /** 输入框的**镜像**（真源是 contenteditable 的 DOM）：只给按钮置灰、占位、关闭
    *  确认这几处读；发出去的内容恒从 DOM 序列化，不信这份。 */
   const [draft, setDraft] = useState('');
-  /** 本条待发的图（已落盘、还没投出去）；发走或关弹窗即清。 */
-  const [staged, setStaged] = useState<UploadImage[]>([]);
-  /** 在飞的上传张数（附件钮转圈；也是防连点的闸）。 */
-  const [uploading, setUploading] = useState(0);
+  /** 本条待发的附件（上传中/已落盘/失败三态都在这一份里）；发走或关弹窗即清。 */
+  const [staged, setStaged] = useState<StagedFile[]>([]);
+  /** 在飞上传的取消把手（按 staged 本地键索引）。 */
+  const uploadAborters = useRef(new Map<string, AbortController>());
+  /** staged 本地键的自增尾号（同名同大小的两个文件各占一格）。 */
+  const stagedSeq = useRef(0);
   /** 点开的大图（缩略图点击）；null = 没开。 */
-  const [lightbox, setLightbox] = useState<UploadImage | null>(null);
+  const [lightbox, setLightbox] = useState<UploadFile | null>(null);
   /** 文件引用选择器开着（三层：父目录 | 当前目录 | 预览）；`chip` 非空 = 在改那枚胶囊。 */
   const [picker, setPicker] = useState<{ chip: HTMLElement | null; initial?: PickTarget } | null>(null);
   /** `/` 命令菜单：候选来自 harness 能力面（null = 还没取到）。`query` 是已经敲进去的
@@ -1242,7 +1366,7 @@ export function SessionMessages({
     scrollKeeper.current = {
       top: el?.scrollTop ?? 0,
       atBottom: el ? el.scrollHeight - el.scrollTop - el.clientHeight < 8 : false,
-      draft: draftSnapshotOf(draftRef.current, staged),
+      draft: draftSnapshotOf(draftRef.current, settledUploads(staged)),
     };
     setFullscreen((v) => !v);
   };
@@ -1729,10 +1853,10 @@ export function SessionMessages({
 
         const assets = new Map<string, string>();
         for (const entry of chosen) {
-          for (const img of entry.images ?? []) {
-            if (assets.has(img.id)) continue;
-            const data = await imageDataUrl(img.id);
-            if (data) assets.set(img.id, data);
+          for (const a of entry.attachments ?? []) {
+            if (!isImageUpload(a) || assets.has(a.id)) continue;
+            const data = await imageDataUrl(a.id);
+            if (data) assets.set(a.id, data);
           }
         }
 
@@ -1890,50 +2014,70 @@ export function SessionMessages({
     onClick: selecting ? () => togglePick(key) : undefined,
   });
 
-  /** 一张图从 File 到落盘：base64 走 `/uploads`（内容寻址去重），拿回引用。 */
-  const uploadOne = (file: File): Promise<UploadImage> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error(file.name));
-      reader.onload = () => {
-        const data = String(reader.result ?? '');
-        const comma = data.indexOf(',');
-        api
-          .uploadImage({
-            name: file.name || 'image',
-            mediaType: file.type,
-            data: comma >= 0 ? data.slice(comma + 1) : data,
-          })
-          .then(resolve, reject);
-      };
-      reader.readAsDataURL(file);
-    });
-
-  /** 选图（文件选择器 / 粘贴 / 拖放三个入口共用）：类型与大小就地挡，失败可见告知。 */
+  /** 选文件（文件选择器 / 粘贴 / 拖放三个入口共用）：类型与大小就地挡，
+   *  上传进度画在自己的图标上，失败也挂在那一格（不弹窗、不吞）。 */
   const stageFiles = (files: FileList | File[]): void => {
-    const list = Array.from(files).filter(isImageFile);
+    const list = Array.from(files);
     if (list.length === 0) return;
-    setUploading((n) => n + list.length);
-    void (async () => {
-      for (const f of list) {
-        try {
-          if (!IMAGE_TYPES.includes(f.type)) {
-            show('error', t('tasks.msgImageBadType'));
-            continue;
-          }
-          if (f.size > IMAGE_MAX_BYTES) {
-            show('error', t('tasks.msgImageTooLarge'));
-            continue;
-          }
-          const up = await uploadOne(f);
-          setStaged((s) => (s.length >= IMAGE_MAX_COUNT ? (show('error', t('tasks.msgImageTooMany')), s) : [...s, up]));
-        } catch (e) {
-          show('error', t('tasks.msgImageUploadFailed', { error: errorText(e) }));
-        } finally {
-          setUploading((n) => n - 1);
-        }
+    const kinds = capability.attachKinds;
+    for (const f of list) {
+      const image = isImageFile(f);
+      if (image ? !kinds.includes('image') : !kinds.includes('file')) {
+        show('error', t('tasks.msgAttachUnsupported'));
+        continue;
       }
-    })();
+      if (image && !IMAGE_TYPES.includes(f.type)) {
+        show('error', t('tasks.msgImageBadType'));
+        continue;
+      }
+      if (image ? f.size > IMAGE_MAX_BYTES : f.size > FILE_MAX_BYTES) {
+        show('error', t(image ? 'tasks.msgImageTooLarge' : 'tasks.msgAttachTooLarge'));
+        continue;
+      }
+      const key = `${f.name}:${f.size}:${f.lastModified}:${++stagedSeq.current}`;
+      let accepted = false;
+      setStaged((s) => {
+        if (s.length >= ATTACH_MAX_COUNT) return s;
+        accepted = true;
+        return [
+          ...s,
+          {
+            key,
+            name: f.name || 'file',
+            mediaType: f.type || 'application/octet-stream',
+            size: f.size,
+            progress: 0,
+            state: 'uploading',
+            file: f,
+          },
+        ];
+      });
+      if (!accepted) {
+        show('error', t('tasks.msgAttachTooMany'));
+        continue;
+      }
+      const ctl = new AbortController();
+      uploadAborters.current.set(key, ctl);
+      const patch = (next: Partial<StagedFile>): void =>
+        setStaged((s) => s.map((x) => (x.key === key ? { ...x, ...next } : x)));
+      void uploadFileWithProgress(f, (ratio) => patch({ progress: ratio }), { signal: ctl.signal })
+        .then((upload) => patch({ state: 'done', progress: 1, upload }))
+        .catch((e: unknown) => {
+          if (e instanceof DOMException && e.name === 'AbortError') {
+            setStaged((s) => s.filter((x) => x.key !== key));
+            return;
+          }
+          patch({ state: 'error', error: errorText(e) });
+        })
+        .finally(() => uploadAborters.current.delete(key));
+    }
+  };
+
+  /** 从附件条上撤掉一格（上传中的连临时件一起丢）。 */
+  const unstage = (item: StagedFile): void => {
+    uploadAborters.current.get(item.key)?.abort();
+    if (item.state === 'uploading' && item.file) discardUpload(item.file);
+    setStaged((s) => s.filter((x) => x.key !== item.key));
   };
 
   /** 当前选区在 composer 里就返回它，否则 null（选择器关掉后焦点已不在框里，
@@ -2119,7 +2263,18 @@ export function SessionMessages({
     if (!el || !snap) return;
     applyDraftSnapshot(el, snap, buildChip, buildCmdChip);
     setDraft(serializeDraft(el));
-    if (snap.staged.length > 0) setStaged(snap.staged);
+    if (snap.staged.length > 0)
+      setStaged(
+        snap.staged.map((u) => ({
+          key: `d:${u.id}`,
+          name: u.name,
+          mediaType: u.mediaType,
+          size: u.size ?? 0,
+          progress: 1,
+          state: 'done' as const,
+          upload: u,
+        })),
+      );
     // buildChip 每次渲染都是新函数，不进门依赖（restored 闸已保证只跑一次）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
@@ -2127,7 +2282,7 @@ export function SessionMessages({
   /** 草稿落 sessionStorage：输入/插图后延一小拍写成（逐键写盘没必要）。发送清空即删键。 */
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      writeDraftSnapshot(sessionId, draftSnapshotOf(draftRef.current, staged));
+      writeDraftSnapshot(sessionId, draftSnapshotOf(draftRef.current, settledUploads(staged)));
     }, DRAFT_SAVE_MS);
     return () => window.clearTimeout(timer);
   }, [draft, staged, sessionId]);
@@ -2288,17 +2443,17 @@ export function SessionMessages({
   const send = (): void => {
     // 从 DOM 现序列化：镜像可能落后一拍，而这一份是要真发出去的
     const text = serializeDraft(draftRef.current).trim();
-    const images = staged;
-    if (!text && images.length === 0) return;
+    const files = staged.filter((s) => s.state === 'done' && s.upload).map((s) => s.upload!);
+    if (!text && files.length === 0) return;
     setDraftText('');
-    setStaged([]);
+    setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));
     stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
     void fb.run(
       `sendMsg:${sessionId}`,
       async () => {
         const res = await api.sendSessionMessage(sessionId, {
           text,
-          ...(images.length > 0 ? { images: images.map((i) => i.id) } : {}),
+          ...(files.length > 0 ? { attachments: files.map((i) => i.id) } : {}),
           // 手动面恒走层② 终端击键：直投/中继在宿主眼里都是「另一个会话发的」、
           // 且不带发送方，对方会话可能答给一个随机同伴——人工对话要的是用户权威
           forceTerminal: true,
@@ -2320,7 +2475,20 @@ export function SessionMessages({
         await api.dismissSessionMessage(sessionId, row.id);
         const cur = serializeDraft(draftRef.current);
         setDraftText(cur.trim() ? `${cur}\n${row.text}` : row.text);
-        setStaged((s) => [...s, ...(row.images ?? [])].slice(0, IMAGE_MAX_COUNT));
+        setStaged((s) =>
+          [
+            ...s,
+            ...(row.attachments ?? []).map((u) => ({
+              key: `q:${u.id}`,
+              name: u.name,
+              mediaType: u.mediaType,
+              size: u.size ?? 0,
+              progress: 1,
+              state: 'done' as const,
+              upload: u,
+            })),
+          ].slice(0, ATTACH_MAX_COUNT),
+        );
         await refreshMessages();
       },
       { fail: (e) => t('tasks.msgDequeueFailed', { error: errorText(e) }) },
@@ -2526,8 +2694,8 @@ export function SessionMessages({
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
-          const imgs = imagesFrom(e.dataTransfer);
-          if (imgs.length > 0) stageFiles(imgs);
+          const files = attachedFilesFrom(e.dataTransfer);
+          if (files.length > 0) stageFiles(files);
         }}
       >
         <div
@@ -2826,30 +2994,50 @@ export function SessionMessages({
                           {formatStamp(m.at)}
                         </span>
                       </div>
-                      {/* 随附图缩略图（点开大图）：多选态让位给「点气泡即勾选」 */}
-                      {m.images?.length ? (
-                        <div className="mb-1 flex flex-wrap gap-1.5">
-                          {m.images.map((img) => (
-                            <button
-                              key={img.id}
-                              type="button"
-                              title={img.name}
-                              onClick={(e) => {
-                                if (selecting) return;
-                                e.stopPropagation();
-                                setLightbox(img);
-                              }}
-                              className="block h-14 w-14 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
-                            >
-                              <img
-                                // 走 API_BASE：dev 由 vite 代理剥离 /api，裸 /images 会被 SPA 回退成 index.html
-                                src={`${API_BASE}/images/${img.id}`}
-                                alt={img.name}
-                                className="h-full w-full object-cover"
-                                loading="lazy"
-                              />
-                            </button>
-                          ))}
+                      {/* 随附文件：图出缩略图（点开大图），其余出可下载的文件行 */}
+                      {m.attachments?.length ? (
+                        <div className="mb-1 flex flex-wrap items-start gap-1.5">
+                          {m.attachments.map((a) =>
+                            isImageUpload(a) ? (
+                              <button
+                                key={a.id}
+                                type="button"
+                                title={a.name}
+                                onClick={(e) => {
+                                  if (selecting) return;
+                                  e.stopPropagation();
+                                  setLightbox(a);
+                                }}
+                                className="block h-14 w-14 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
+                              >
+                                <img
+                                  // 走 API_BASE：dev 由 vite 代理剥离 /api，裸 /images 会被 SPA 回退成 index.html
+                                  src={`${API_BASE}/images/${a.id}`}
+                                  alt={a.name}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              </button>
+                            ) : (
+                              <a
+                                key={a.id}
+                                href={`${API_BASE}/images/${a.id}`}
+                                download={a.name}
+                                title={[a.name, sizeLabel(a.size ?? 0)].filter(Boolean).join(' · ')}
+                                onClick={(e) => {
+                                  if (selecting) {
+                                    e.preventDefault();
+                                    return;
+                                  }
+                                  e.stopPropagation();
+                                }}
+                                className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                              >
+                                <FileCode className="h-3 w-3 shrink-0" />
+                                <span className="min-w-0 truncate">{a.name}</span>
+                              </a>
+                            ),
+                          )}
                         </div>
                       ) : null}
                       {/* 斜杠命令画成胶囊（skill 红 / 官方命令黄，参数照常当文字）；
@@ -3008,8 +3196,8 @@ export function SessionMessages({
                                     })}
                                   </span>
                                 )}
-                                {m.images?.length ? (
-                                  <ImageIcon className="h-3 w-3 shrink-0 text-neutral-500" />
+                                {m.attachments?.length ? (
+                                  <Paperclip className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
                                 <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
                                   {formatStamp(m.at)}
@@ -3028,11 +3216,11 @@ export function SessionMessages({
                                 {m.stalled === true && (
                                   <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
                                 )}
-                                {m.images?.length ? (
-                                  <ImageIcon className="h-3 w-3 shrink-0 text-neutral-500" />
+                                {m.attachments?.length ? (
+                                  <Paperclip className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
                                 <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">
-                                  {m.text || m.images?.[0]?.name}
+                                  {m.text || m.attachments?.[0]?.name}
                                 </span>
                                 <span className="shrink-0 text-[10px] text-neutral-600">
                                   {formatStamp(m.at)}
@@ -3042,8 +3230,21 @@ export function SessionMessages({
                             {open && (
                               <>
                                 <div className="whitespace-pre-wrap break-words text-[12px] text-neutral-200">
-                                  {m.text || m.images?.[0]?.name}
+                                  {m.text || m.attachments?.[0]?.name}
                                 </div>
+                                {m.attachments?.length ? (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {m.attachments.map((a) => (
+                                      <span
+                                        key={a.id}
+                                        className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] px-1 py-0.5 text-[10px] text-neutral-400"
+                                      >
+                                        <Paperclip className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="min-w-0 truncate">{a.name}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                                 {m.reason === 'offline' ? (
                                   <p className="mt-1 break-words text-[11px] text-amber-400">
@@ -3209,7 +3410,7 @@ export function SessionMessages({
                 <input
                   ref={fileRef}
                   type="file"
-                  accept={IMAGE_TYPES.join(',')}
+                  accept={capability.attachKinds.includes('file') ? undefined : IMAGE_TYPES.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -3234,48 +3435,31 @@ export function SessionMessages({
                 </button>
                 <button
                   type="button"
-                  disabled={!capability.imageAttach || uploading > 0}
+                  disabled={capability.attachKinds.length === 0 || staged.length >= ATTACH_MAX_COUNT}
                   title={
-                    capability.imageAttach
-                      ? t('tasks.msgImageAttach')
-                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgImageUnsupported'))
+                    capability.attachKinds.length === 0
+                      ? (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
+                      : t('tasks.msgAttachHint')
                   }
-                  aria-label={t('tasks.msgImageAttach')}
+                  aria-label={t('tasks.msgAttach')}
                   onClick={() => fileRef.current?.click()}
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
                 >
-                  {uploading > 0 ? (
+                  {staged.some((s) => s.state === 'uploading') ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <ImageIcon className="h-3 w-3" />
+                    <Paperclip className="h-3 w-3" />
                   )}
-                  {t('tasks.msgImageAttach')}
+                  {t('tasks.msgAttach')}
                 </button>
-                {staged.map((img) => (
-                  <span key={img.id} className="relative inline-flex shrink-0">
-                    <button
-                      type="button"
-                      title={img.name}
-                      onClick={() => setLightbox(img)}
-                      className="block h-10 w-10 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
-                    >
-                      <img
-                        src={`${API_BASE}/images/${img.id}`}
-                        alt={img.name}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      title={t('tasks.msgImageRemove')}
-                      aria-label={t('tasks.msgImageRemove')}
-                      onClick={() => setStaged((s) => s.filter((x) => x.id !== img.id))}
-                      className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </span>
+                {staged.map((item) => (
+                  <StagedTile
+                    key={item.key}
+                    item={item}
+                    onOpen={setLightbox}
+                    onRemove={() => unstage(item)}
+                    removeLabel={t('tasks.msgAttachRemove')}
+                  />
                 ))}
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
@@ -3470,11 +3654,11 @@ export function SessionMessages({
                     }
                   }}
                   onPaste={(e) => {
-                    // 只在真取到图时才压默认：粘贴文字（或 PDF 之类非图）走纯文本
-                    const imgs = imagesFrom(e.clipboardData);
-                    if (imgs.length > 0) {
+                    // 只在真取到文件时才压默认：粘贴文字走纯文本
+                    const files = attachedFilesFrom(e.clipboardData);
+                    if (files.length > 0) {
                       e.preventDefault();
-                      stageFiles(imgs);
+                      stageFiles(files);
                       return;
                     }
                     // 一律走纯文本：粘进来的 HTML 会把样式和结构一起带进 DOM，
@@ -3541,6 +3725,8 @@ export function SessionMessages({
                   disabled={
                     !capability.prompt ||
                     (!draft.trim() && staged.length === 0) ||
+                    // 附件还在传：此刻发出去等于把它悄悄丢掉
+                    staged.some((s) => s.state === 'uploading') ||
                     fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
                   }
                   title={
