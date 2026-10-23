@@ -278,7 +278,7 @@ function PortColumn({
           }}
           style={{ top: `${((i + 1) / (ports.length + 1)) * 100}%` }}
           className={cn(
-            'nodrag absolute left-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[8px] font-semibold ring-1 transition-colors',
+            'nodrag absolute left-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[9px] font-semibold ring-1 transition-colors',
             side === 'in'
               ? 'bg-teal-950/70 text-teal-300/90 ring-teal-500/25 hover:bg-teal-900/80'
               : 'bg-teal-800/50 text-teal-100 ring-teal-400/40 hover:bg-teal-700/70',
@@ -334,15 +334,15 @@ function SessionNode({ data }: NodeProps<SessionFlowNode>) {
           <span className="flex items-center gap-1">
             <span className="min-w-0 truncate text-xs font-medium text-neutral-100">{label}</span>
             {isEntry && (
-              <Badge className="shrink-0 bg-teal-900/50 text-[9px] text-teal-300">
+              <Badge className="shrink-0 bg-teal-900/50 text-[10px] text-teal-300">
                 {t('orch.entryTag')}
               </Badge>
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-1">
-            <span className="min-w-0 truncate text-[10px] text-neutral-500">{projectLabel}</span>
+            <span className="min-w-0 truncate text-[11px] text-neutral-500">{projectLabel}</span>
             {pending > 0 && (
-              <Badge className="shrink-0 animate-pulse bg-amber-900/50 text-[9px] text-amber-300">
+              <Badge className="shrink-0 animate-pulse bg-amber-900/50 text-[10px] text-amber-300">
                 {t('orch.pendingTag', { n: pending })}
               </Badge>
             )}
@@ -396,9 +396,9 @@ function GroupNode({ data }: NodeProps<GroupFlowNode>) {
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           <span className="max-w-[10rem] truncate text-[11px] font-medium">{label}</span>
         </button>
-        <span className="text-[10px] text-neutral-600">{count}</span>
+        <span className="text-[11px] text-neutral-600">{count}</span>
         {collapsed && hidden > 0 && (
-          <span className="text-[10px] text-neutral-600">
+          <span className="text-[11px] text-neutral-600">
             {t('orch.groupHidden', { n: hidden })}
           </span>
         )}
@@ -447,7 +447,7 @@ function WebhookNode({ data }: NodeProps<WebhookFlowNode>) {
         </span>
         <Badge
           className={cn(
-            'shrink-0 text-[9px]',
+            'shrink-0 text-[10px]',
             direction === 'entry'
               ? 'bg-violet-900/50 text-violet-300'
               : 'bg-neutral-800 text-neutral-400',
@@ -492,7 +492,7 @@ function TriggerNode({ data }: NodeProps<TriggerFlowNode>) {
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
           {t('orch.triggerNode')}
         </span>
-        <Badge className="shrink-0 bg-amber-900/50 text-[9px] text-amber-300">
+        <Badge className="shrink-0 bg-amber-900/50 text-[10px] text-amber-300">
           {t('orch.entryTag')}
         </Badge>
       </div>
@@ -562,7 +562,7 @@ function OrchFlowEdge({
               maxWidth: ORCH_COL_W - ORCH_NODE_W - 24,
             }}
             className={cn(
-              'pointer-events-none select-none whitespace-pre-wrap break-words rounded px-1 py-0.5 text-[10px] leading-4',
+              'pointer-events-none select-none whitespace-pre-wrap break-words rounded px-1 py-0.5 text-[11px] leading-4',
               // 文字过多只露前三行，余下省略（display:-webkit-box 才能钳行数）
               'line-clamp-3',
               'bg-neutral-950/85',
@@ -1956,23 +1956,23 @@ export function OrchestrationCanvas({
                   value={orchQuery}
                 onChange={(e) => setOrchQuery(e.target.value)}
                 placeholder={t('orch.filterOrch')}
-                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
               {groupProjects && (
                 <input
                   value={projectQuery}
                   onChange={(e) => setProjectQuery(e.target.value)}
                   placeholder={t('orch.filterProject')}
-                  className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
               )}
               <input
                 value={sessionQuery}
                 onChange={(e) => setSessionQuery(e.target.value)}
                 placeholder={t('orch.filterSession')}
-                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
-              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
+              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-500">
                 {t('orch.summary', {
                   nodes: overview!.nodes.length,
                   edges: overview!.edges.length,
@@ -2071,8 +2071,8 @@ export function OrchestrationCanvas({
                         list?.find((row) => row.id === pair.orchId)?.name || t('orch.untitled');
                       return (
                         <div key={`${pair.orchId}:${pair.edgeId}`} className="space-y-0.5">
-                          <span className="block truncate text-[10px] text-neutral-500">{name}</span>
-                          <p className="break-words whitespace-pre-wrap rounded bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300">
+                          <span className="block truncate text-[11px] text-neutral-500">{name}</span>
+                          <p className="break-words whitespace-pre-wrap rounded bg-neutral-950 px-1.5 py-1 text-[11px] text-neutral-300">
                             {pair.text.trim() || t('orch.edgeTextEmpty')}
                           </p>
                         </div>
@@ -2080,13 +2080,13 @@ export function OrchestrationCanvas({
                     },
                   );
                 })()}
-                <p className="text-[9px] leading-relaxed text-neutral-600">
+                <p className="text-[10px] leading-relaxed text-neutral-600">
                   {t('orch.edgeInfoHint')}
                 </p>
               </Panel>
             )}
             <Panel position="bottom-center" className="pointer-events-none max-w-[70%]">
-              <p className="min-w-0 truncate text-[10px] text-neutral-600">
+              <p className="min-w-0 truncate text-[11px] text-neutral-600">
                 {t('orch.overviewHint')}
               </p>
             </Panel>
@@ -2193,9 +2193,9 @@ export function OrchestrationCanvas({
                       onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
                       placeholder={t('orch.namePlaceholder')}
                       title={t('orch.nameLabel')}
-                      className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                      className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                     />
-                    {dirty && <span className="text-[10px] text-amber-400/80">{t('orch.unsaved')}</span>}
+                    {dirty && <span className="text-[11px] text-amber-400/80">{t('orch.unsaved')}</span>}
                     <button
                       type="button"
                       disabled={!canSave}
@@ -2247,21 +2247,21 @@ export function OrchestrationCanvas({
                   value={projectQuery}
                   onChange={(e) => setProjectQuery(e.target.value)}
                   placeholder={t('orch.filterProject')}
-                  className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
               )}
               <input
                 value={sessionQuery}
                 onChange={(e) => setSessionQuery(e.target.value)}
                 placeholder={t('orch.filterSession')}
-                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
               <button
                 type="button"
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => setPickerOpen(true)}
                 title={t('orch.addNode')}
-                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Plus className="h-3 w-3" />
                 {t('orch.addNode')}
@@ -2271,7 +2271,7 @@ export function OrchestrationCanvas({
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => patch(addWebhookNode)}
                 title={t('orch.addWebhook')}
-                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Globe className="h-3 w-3" />
                 {t('orch.addWebhook')}
@@ -2281,16 +2281,16 @@ export function OrchestrationCanvas({
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => patch(addTriggerNode)}
                 title={t('orch.addTrigger')}
-                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Zap className="h-3 w-3" />
                 {t('orch.addTrigger')}
               </button>
-              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
+              <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-500">
                 {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
               </span>
               {visible != null && visible.nodes.length === 0 && (
-                <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-[11px] text-neutral-500">
                   {t('orch.noMatch')}
                 </span>
               )}
@@ -2303,7 +2303,7 @@ export function OrchestrationCanvas({
                   onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
                   placeholder={t('orch.startTextHint')}
                   title={t('orch.startTextLabel')}
-                  className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="min-w-[12rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 {manualEntryChoices.length > 1 && (
                   <div className="flex flex-wrap items-center gap-1">
@@ -2323,7 +2323,7 @@ export function OrchestrationCanvas({
                           }
                           title={nodeLabel(entry.id)}
                           className={cn(
-                            'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                            'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors',
                             checked
                               ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
                               : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
@@ -2347,7 +2347,7 @@ export function OrchestrationCanvas({
                     }
                   }}
                   placeholder={t('orch.triggerTextTitle')}
-                  className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <button
                   type="button"
@@ -2432,7 +2432,7 @@ export function OrchestrationCanvas({
                   <button
                     type="button"
                     onClick={() => openMessages(selNode)}
-                    className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
+                    className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
                   >
                     <MessageSquare className="h-3 w-3" />
                     {t('orch.openChat')}
@@ -2443,7 +2443,7 @@ export function OrchestrationCanvas({
                       patch((d) => removeNode(d, selNode));
                       setSel(null);
                     }}
-                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40"
                   >
                     <Trash2 className="h-3 w-3" />
                     {t('orch.removeNode')}
@@ -2463,7 +2463,7 @@ export function OrchestrationCanvas({
                     }
                     title={t('orch.autoFireHint')}
                     className={cn(
-                      'w-full rounded border px-1.5 py-1 text-[10px] transition-colors',
+                      'w-full rounded border px-1.5 py-1 text-[11px] transition-colors',
                       draft.nodes.find((n) => n.id === selNode)?.autoFire
                         ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
                         : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
@@ -2477,9 +2477,9 @@ export function OrchestrationCanvas({
                   </button>
                 )}
                 <div className="space-y-1 border-t border-edge/[0.06] pt-1">
-                  <span className="text-[10px] text-neutral-500">{t('orch.edgesLabel')}</span>
+                  <span className="text-[11px] text-neutral-500">{t('orch.edgesLabel')}</span>
                   {selNodeOut.length === 0 ? (
-                    <p className="text-[10px] text-neutral-600">{t('orch.nodeNoEdges')}</p>
+                    <p className="text-[11px] text-neutral-600">{t('orch.nodeNoEdges')}</p>
                   ) : (
                     <ul className="space-y-0.5">
                       {selNodeOut.map((edge) => (
@@ -2487,7 +2487,7 @@ export function OrchestrationCanvas({
                           <button
                             type="button"
                             onClick={() => setSel({ kind: 'edge', id: edge.id })}
-                            className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[10px] text-neutral-300 hover:bg-edge/[0.08]"
+                            className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[11px] text-neutral-300 hover:bg-edge/[0.08]"
                           >
                             <Link2 className="h-2.5 w-2.5 shrink-0 text-neutral-600" />
                             <span className="min-w-0 flex-1 truncate">{nodeLabel(edge.to)}</span>
@@ -2529,9 +2529,9 @@ export function OrchestrationCanvas({
                   rows={5}
                   placeholder={t('orch.edgeText')}
                   title={t('orch.edgeVars')}
-                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
-                <p className="text-[9px] leading-relaxed text-neutral-600">{t('orch.edgeVars')}</p>
+                <p className="text-[10px] leading-relaxed text-neutral-600">{t('orch.edgeVars')}</p>
                 <textarea
                   value={selEdge.extract ?? ''}
                   onChange={(e) => {
@@ -2546,7 +2546,7 @@ export function OrchestrationCanvas({
                   rows={3}
                   placeholder={t('orch.edgeExtractHint')}
                   title={t('orch.edgeExtract')}
-                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <textarea
                   value={selEdge.when ?? ''}
@@ -2562,7 +2562,7 @@ export function OrchestrationCanvas({
                   rows={2}
                   placeholder={t('orch.edgeWhenHint')}
                   title={t('orch.edgeWhen')}
-                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <textarea
                   value={selEdge.condition ?? ''}
@@ -2578,11 +2578,11 @@ export function OrchestrationCanvas({
                   rows={4}
                   placeholder={t('orch.edgeConditionHint')}
                   title={t('orch.edgeCondition')}
-                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                  className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 {/* 判定引擎信号：谁在判这条边（决策模型配了先问它，判不准回落 fork）。 */}
                 {decisionConfigured !== null && (
-                  <p className="text-[9px] leading-relaxed text-neutral-600">
+                  <p className="text-[10px] leading-relaxed text-neutral-600">
                     {t('orch.judgeEngine')}:{' '}
                     <span className={decisionConfigured ? 'text-teal-400/80' : 'text-neutral-500'}>
                       {decisionConfigured ? t('orch.judgeEngineDecision') : t('orch.judgeEngineFork')}
@@ -2595,7 +2595,7 @@ export function OrchestrationCanvas({
                     patch((d) => removeEdge(d, selEdge.id));
                     setSel(null);
                   }}
-                  className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                  className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40"
                 >
                   <Trash2 className="h-3 w-3" />
                   {t('orch.removeEdge')}
@@ -2618,7 +2618,7 @@ export function OrchestrationCanvas({
                       <X className="h-3 w-3" />
                     </button>
                   </div>
-                  <p className="text-[9px] leading-relaxed text-neutral-600">
+                  <p className="text-[10px] leading-relaxed text-neutral-600">
                     {t('orch.triggerNodeHint')}
                   </p>
                   <button
@@ -2627,7 +2627,7 @@ export function OrchestrationCanvas({
                       patch((d) => removeNode(d, selNode));
                       setSel(null);
                     }}
-                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40"
                   >
                     <Trash2 className="h-3 w-3" />
                     {t('orch.removeNode')}
@@ -2658,7 +2658,7 @@ export function OrchestrationCanvas({
                       const token = node?.webhookToken ?? null;
                       return (
                         <>
-                          <code className="block truncate rounded bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-400">
+                          <code className="block truncate rounded bg-neutral-950 px-1.5 py-1 font-mono text-[11px] text-neutral-400">
                             {token
                               ? `${window.location.origin}/webhooks/orchestrate/${token}`
                               : t('orch.endpointMissing')}
@@ -2668,7 +2668,7 @@ export function OrchestrationCanvas({
                               type="button"
                               disabled={!token}
                               onClick={() => token && copyEndpoint(token)}
-                              className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                              className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
                             >
                               <Copy className="h-2.5 w-2.5" />
                               {t('orch.copyEndpoint')}
@@ -2678,7 +2678,7 @@ export function OrchestrationCanvas({
                                 type="button"
                                 disabled={fb.stateOf('orch:rotate') === 'loading'}
                                 onClick={() => rotate(selNode)}
-                                className="rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+                                className="rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
                               >
                                 {t('orch.rotate')}
                               </button>
@@ -2700,7 +2700,7 @@ export function OrchestrationCanvas({
                         }));
                       }}
                       placeholder={t('orch.webhookUrlHint')}
-                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                     />
                     <input
                       value={draft.nodes.find((n) => n.id === selNode)?.secret ?? ''}
@@ -2714,7 +2714,7 @@ export function OrchestrationCanvas({
                         }));
                       }}
                       placeholder={t('orch.webhookSecretHint')}
-                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                     />
                   </>
                 )}
@@ -2724,7 +2724,7 @@ export function OrchestrationCanvas({
                     patch((d) => removeNode(d, selNode));
                     setSel(null);
                   }}
-                  className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40"
+                  className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40"
                 >
                   <Trash2 className="h-3 w-3" />
                   {t('orch.removeNode')}
@@ -2738,14 +2738,14 @@ export function OrchestrationCanvas({
               <p
                 title={statusText}
                 className={cn(
-                  'min-w-0 truncate text-[10px]',
+                  'min-w-0 truncate text-[11px]',
                   statusWarn ? 'text-amber-400/80' : 'text-neutral-600',
                 )}
               >
                 {statusText}
               </p>
               {edgeTone.size > 0 && (
-                <p className="truncate text-center text-[9px] text-neutral-600">
+                <p className="truncate text-center text-[10px] text-neutral-600">
                   {t('orch.edgePendingHint')}
                 </p>
               )}
@@ -2764,7 +2764,7 @@ export function OrchestrationCanvas({
             onChange={(v) => setRunStatus(v as OrchestrationRunStatus | '')}
             title={t('orch.runStatusAll')}
             placeholder={t('orch.runStatusAll')}
-            className="rounded bg-neutral-900 px-1 py-0.5 text-[10px]"
+            className="rounded bg-neutral-900 px-1 py-0.5 text-[11px]"
             options={(Object.keys(RUN_STATUS_KEY) as OrchestrationRunStatus[]).map((s) => ({
               value: s,
               label: t(RUN_STATUS_KEY[s]),
@@ -2774,14 +2774,14 @@ export function OrchestrationCanvas({
             value={runText}
             onChange={(e) => setRunText(e.target.value)}
             placeholder={t('orch.runFilterName')}
-            className="w-32 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+            className="w-32 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
           <div className="ml-auto flex items-center gap-1">
             <button
               type="button"
               disabled={fb.stateOf('orch:clear:finished') === 'loading'}
               onClick={() => clearRuns('finished')}
-              className="rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              className="rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
             >
               {t('orch.runsClearFinished')}
             </button>
@@ -2789,14 +2789,14 @@ export function OrchestrationCanvas({
               type="button"
               disabled={fb.stateOf('orch:clear:all') === 'loading'}
               onClick={() => clearRuns('all')}
-              className="rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
+              className="rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
             >
               {t('orch.runsClearAll')}
             </button>
           </div>
         </div>
         {runDetailError && (
-          <p className="pb-1 text-[10px] text-red-400/80">
+          <p className="pb-1 text-[11px] text-red-400/80">
             {t('orch.runDetailFailed', { error: runDetailError })}
           </p>
         )}
@@ -2846,19 +2846,19 @@ export function OrchestrationCanvas({
                         <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
                           {row.orchestrationName || t('orch.untitled')}
                         </span>
-                        <span className="shrink-0 text-[10px] text-neutral-500">
+                        <span className="shrink-0 text-[11px] text-neutral-500">
                           {t(TRIGGER_KEY[row.trigger])}
                         </span>
-                        <span className="shrink-0 text-[10px] text-neutral-500">
+                        <span className="shrink-0 text-[11px] text-neutral-500">
                           {t('orch.runDeliveries', { n: row.deliveries })}
                         </span>
                         {pending > 0 && (
-                          <span className="shrink-0 text-[10px] text-amber-400/80">
+                          <span className="shrink-0 text-[11px] text-amber-400/80">
                             {t('orch.runPending', { n: pending })}
                           </span>
                         )}
                         <span
-                          className="shrink-0 text-[10px] text-neutral-600"
+                          className="shrink-0 text-[11px] text-neutral-600"
                           title={`${t('orch.runStarted', { time: new Date(row.createdAt).toLocaleString() })}`}
                         >
                           {formatStamp(row.createdAt)}
@@ -2871,7 +2871,7 @@ export function OrchestrationCanvas({
                               cancelRun(run.id);
                             }}
                             disabled={fb.stateOf(`orch:runCancel:${run.id}`) === 'loading'}
-                            className="inline-flex shrink-0 items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[10px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-[11px] text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
                           >
                             {t('orch.runCancel')}
                           </button>
@@ -2885,21 +2885,21 @@ export function OrchestrationCanvas({
                       {expanded && (
                         <div className="space-y-1 border-t border-edge/[0.04] px-2 py-1.5">
                           {row.finishedAt && (
-                            <p className="text-[10px] text-neutral-600">
+                            <p className="text-[11px] text-neutral-600">
                               {t('orch.runFinished', {
                                 time: new Date(row.finishedAt).toLocaleString(),
                               })}
                             </p>
                           )}
                           {detail == null ? (
-                            <p className="text-[10px] text-neutral-600">{t('hooks.loading')}</p>
+                            <p className="text-[11px] text-neutral-600">{t('hooks.loading')}</p>
                           ) : events.length === 0 ? (
-                            <p className="text-[10px] text-neutral-600">
+                            <p className="text-[11px] text-neutral-600">
                               {t('orch.runEventsEmpty')}
                             </p>
                           ) : (
                             <>
-                              <p className="text-[10px] text-neutral-500">
+                              <p className="text-[11px] text-neutral-500">
                                 {t('orch.runEvents', { n: events.length })}
                               </p>
                               <ul className="space-y-0.5">
@@ -2908,14 +2908,14 @@ export function OrchestrationCanvas({
                                     key={i}
                                     className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
                                   >
-                                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">
+                                    <span className="shrink-0 font-mono text-[11px] text-neutral-600">
                                       {formatStamp(event.at)}
                                     </span>
-                                    <span className="shrink-0 text-[10px] text-neutral-300">
+                                    <span className="shrink-0 text-[11px] text-neutral-300">
                                       {event.from ? nodeLabel(event.from) : t('orch.triggerManual')}
                                     </span>
                                     <Link2 className="h-2.5 w-2.5 shrink-0 text-neutral-600" />
-                                    <span className="shrink-0 text-[10px] text-neutral-300">
+                                    <span className="shrink-0 text-[11px] text-neutral-300">
                                       {nodeLabel(event.to)}
                                     </span>
                                     <Badge
@@ -2943,7 +2943,7 @@ export function OrchestrationCanvas({
                                           : 'failed'}
                                     </Badge>
                                     {event.stage === 'condition' && event.source && (
-                                      <Badge className="shrink-0 bg-neutral-800 text-[9px] text-neutral-400">
+                                      <Badge className="shrink-0 bg-neutral-800 text-[10px] text-neutral-400">
                                         {event.source === 'decision-model'
                                           ? t('orch.judgeDecision')
                                           : event.source === 'fork'
@@ -2954,7 +2954,7 @@ export function OrchestrationCanvas({
                                     {(event.detail || event.error) && (
                                       <span
                                         className={cn(
-                                          'min-w-0 flex-1 break-words text-[10px]',
+                                          'min-w-0 flex-1 break-words text-[11px]',
                                           event.ok
                                             ? 'text-neutral-500'
                                             : event.stage === 'condition'
@@ -2982,7 +2982,7 @@ export function OrchestrationCanvas({
                 aria-hidden
                 className="pointer-events-none absolute bottom-1 left-0 right-0 flex justify-center"
               >
-                <span className="rounded bg-neutral-950/90 px-2 py-0.5 text-[10px] text-neutral-400">
+                <span className="rounded bg-neutral-950/90 px-2 py-0.5 text-[11px] text-neutral-400">
                   {t('orch.runsPullHint')}
                 </span>
               </div>

@@ -92,14 +92,14 @@ export function OrchestrationSessionPicker({
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('orch.pickerSearch')}
             autoFocus
-            className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+            className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
           <Combobox
             value={String(projectId)}
             onChange={(v) => setProjectId(v === 'all' ? 'all' : Number(v))}
             title={t('orch.filterProject')}
             placeholder={t('orch.pickerAllProjects')}
-            className="max-w-[10rem] shrink-0 rounded bg-neutral-900 px-1.5 py-1 text-[11px]"
+            className="max-w-[10rem] shrink-0 rounded bg-neutral-900 px-1.5 py-1 text-xs"
             options={[
               { value: 'all', label: t('orch.pickerAllProjects') },
               ...projectOptions.map((p) => ({ value: String(p.id), label: p.name })),
@@ -107,7 +107,7 @@ export function OrchestrationSessionPicker({
           />
         </div>
         {rows.length === 0 ? (
-          <p className="py-3 text-center text-[11px] text-neutral-600">{t('orch.pickerEmpty')}</p>
+          <p className="py-3 text-center text-xs text-neutral-600">{t('orch.pickerEmpty')}</p>
         ) : (
           <ul className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
             {rows.map((s) => {
@@ -135,13 +135,13 @@ export function OrchestrationSessionPicker({
                         {sessionLabel(s.title, s.sessionId)}
                       </span>
                       {s.projectId != null && (
-                        <span className="block truncate text-[10px] text-neutral-500">
+                        <span className="block truncate text-[11px] text-neutral-500">
                           {projectName.get(s.projectId) ?? `#${s.projectId}`}
                         </span>
                       )}
                     </span>
                     {joined && (
-                      <span className="shrink-0 text-[10px] text-teal-400/80">
+                      <span className="shrink-0 text-[11px] text-teal-400/80">
                         {t('orch.pickerJoined')}
                       </span>
                     )}

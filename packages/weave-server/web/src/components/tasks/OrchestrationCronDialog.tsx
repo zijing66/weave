@@ -61,7 +61,7 @@ function Num({
         aria-label={label}
         title={label}
         onChange={(e) => onChange(Number.parseInt(e.target.value, 10) || 0)}
-        className="w-14 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+        className="w-14 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 focus:border-blue-500/40 focus:outline-none"
       />
     </label>
   );
@@ -171,7 +171,7 @@ export function OrchestrationCronDialog({
               value={fields.custom}
               onChange={(e) => patch({ custom: e.target.value })}
               placeholder="*/30 * * * *"
-              className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 font-mono text-[11px] text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+              className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
             />
           )}
           {(fields.mode === 'daily' ||
@@ -228,7 +228,7 @@ export function OrchestrationCronDialog({
                     })
                   }
                   className={cn(
-                    'h-6 w-6 rounded-full border text-[10px] transition-colors',
+                    'h-6 w-6 rounded-full border text-[11px] transition-colors',
                     on
                       ? 'border-teal-400/50 bg-teal-500/15 text-teal-200'
                       : 'border-edge/[0.1] text-neutral-500 hover:text-neutral-200',
