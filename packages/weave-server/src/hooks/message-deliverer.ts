@@ -192,6 +192,9 @@ export interface MessageDelivererDeps {
   ackStallReleaseMs?: number;
   /** 斜杠命令等回执的短窗口（毫秒）；缺省 5s——过了仍无 UPS 即按内建命令收。 */
   commandAckGraceMs?: number;
+  /** 层② 提交键自动补打的窗口（毫秒）；缺省 4s——paste 与 CR 分离写入，宿主忙时
+   *  CR 被吞（正文积在输入框），窗口内无回执即补一记回车（只补一次）。 */
+  submitRetryMs?: number;
   /** 该会话此刻是否挂着阻塞式模态框（questions 槽；QuestionTracker 是唯一实现）。
    *  模态框在场时层② 的文本与回车会被它吃掉：投出去只换来一条「已发出却没回执」
    *  的假送达，回车还可能替用户按下某个选项。缺省 = 不判（测试与无 tracker 装配）。 */
@@ -271,6 +274,13 @@ const ACK_STALL_RELEASE_MS = 90_000;
 /** 斜杠命令等回执的短窗口：内建命令永远不发 UPS，skill/插件命令 ~0.6s 就报。
  *  过了这个窗口还没回执 = 内建命令，按已送达收（不布防未回执闸）。 */
 const COMMAND_ACK_GRACE_MS = 5_000;
+
+/**
+ * 层② 提交键的自动补打窗口：paste 与 CR 是两次独立写入，宿主 TUI 忙时那记 CR
+ * 会被吞（实测带图长文连贴两次都不提交，正文全积在输入框）——UPS 几秒内没到
+ * 就补一记回车，只补一次（再不济还有未回执闸与手动重发兜底）。
+ */
+const TERMINAL_SUBMIT_RETRY_MS = 4_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
@@ -1956,17 +1966,19 @@ export class MessageDeliverer {
   }
 
   /**
-   * 层② 只补一记回车（重发「已贴进框、没回执」的行）：文本在上一次投递里已经
-   * 落到会话的输入框，缺的只是那记提交键——重贴一次会在框里叠一份，用户收到
-   * 两遍正文与两遍图。
+   * 层② 只补一记回车（重发「已贴进框、没回执」的行 / 提交键自动补打共用）：文本在
+   * 上一次投递里已经落到会话的输入框，缺的只是那记提交键——重贴一次会在框里叠
+   * 一份，用户收到两遍正文与两遍图。补打不再布防下一轮自动补（见 armSubmitRetry）。
    */
   private async runTerminalSubmit(messageId: string, paneId: string): Promise<void> {
-    await this.runTerminal(messageId, (terminal) => terminal.sendKeys(paneId, '\r'));
+    await this.runTerminal(messageId, (terminal) => terminal.sendKeys(paneId, '\r'), false);
   }
 
   private async runTerminal(
     messageId: string,
     write: (terminal: PromptTerminal) => Promise<void>,
+    /** 初次投递（sendText）才布防提交键自动补打；补回车本身不再布防（防自激循环）。 */
+    armRetry = true,
   ): Promise<void> {
     const msg = this.memory.get(messageId);
     if (!msg) return;
@@ -1982,6 +1994,7 @@ export class MessageDeliverer {
       this.memory.set(messageId, done);
       if (isSlashCommand(current.text)) this.armCommandAck(messageId);
       else this.armAckWatch(done);
+      if (armRetry) this.armSubmitRetry(messageId, msg.sessionId);
       this.bus({
         kind: 'message.delivered',
         messageId,
@@ -2014,6 +2027,37 @@ export class MessageDeliverer {
         at: new Date().toISOString(),
       });
     }
+  }
+
+  /**
+   * 层② 提交键自动补打（一次性）：paste 与 CR 是两次独立写入，宿主 TUI 忙时那记
+   * CR 会被吞——正文全积在输入框、UPS 永远不来（实测带图长文连贴两次都不提交）。
+   * 窗口期内回执到了 / 行被处理过就什么都不做；到期仍 delivered-未回执才补这一记，
+   * 补出去的回车提交的是整个输入框（与重发「只补回车」同一语义），UPS 按放宽比对
+   * 核销。pane 现查（框可能在别的屏），找不到就放弃——未回执闸照旧兜底。
+   */
+  private armSubmitRetry(messageId: string, sessionId: string): void {
+    const timer = setTimeout(() => {
+      // 后台回调不许冒泡（测试里 DB 已关 / 运行中 repo 异常都只当「这一拍放弃」）
+      try {
+        const current = this.memory.get(messageId);
+        if (!current || current.acked || current.status !== 'delivered' || current.via !== 'terminal') {
+          return;
+        }
+        if (this.awaitingAck.get(sessionId) !== messageId) return;
+        if (this.modalBlocked(sessionId)) return;
+        const session = this.deps.sessions.getBySessionId(sessionId);
+        if (!session?.projectId) return;
+        const project = this.deps.projects.getById(session.projectId);
+        if (!project) return;
+        void this.terminalPaneFor(session, project).then((pane) => {
+          if (pane) void this.runTerminalSubmit(messageId, pane.id);
+        });
+      } catch {
+        return;
+      }
+    }, this.deps.submitRetryMs ?? TERMINAL_SUBMIT_RETRY_MS);
+    timer.unref?.();
   }
 
   /**
