@@ -403,6 +403,9 @@ export function startDaemon(): void {
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
     conditionJudge,
+    // 人在场闸：目标闲着且用户刚在看 → 编排投递 defer（搭用户下一轮的车），
+    // 防层② 击键突袭手输中的输入框（评审点名的中高概率/高后果风险）。
+    deferWhenUserPresent: true,
     ensureOpen: async (sessionId) => {
       // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
       // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。

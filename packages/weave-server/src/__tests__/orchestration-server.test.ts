@@ -320,7 +320,7 @@ describe('orchestration runs', () => {
     orchId = orchestrations.list()[0]!.id;
   });
 
-  it('触发建一次运行；再触发 409', async () => {
+  it('触发建一次运行；再触发并进在跑 run（不 409，pending 叠加）', async () => {
     const res = await adminFetch(`/messaging/orchestrations/${orchId}/trigger`, json('POST', {}));
     expect(res.status).toBe(201);
     const { runId } = await res.json();
@@ -329,16 +329,17 @@ describe('orchestration runs', () => {
     const again = await adminFetch(`/messaging/orchestrations/${orchId}/trigger`, {
       method: 'POST',
     });
-    expect(again.status).toBe(409);
+    expect(again.status).toBe(201);
+    expect(((await again.json()) as { runId: number }).runId).toBe(runId);
 
     const detail = await adminFetch(`/messaging/orchestration-runs/${runId}`);
     expect(detail.status).toBe(200);
     const { run } = await detail.json();
     expect(run).toMatchObject({ orchestrationId: orchId, trigger: 'manual', status: 'running' });
-    expect(run.state.pending.sa).toHaveLength(1);
+    expect(run.state.pending.sa).toHaveLength(2);
     // 详情行要同时带 summary 的 pendingCounts 与原始 state——web 展开行直接顶替
     // 列表行渲染，缺 pendingCounts 会让 Object.values 崩（回归）。
-    expect(run.pendingCounts).toEqual({ sa: 1 });
+    expect(run.pendingCounts).toEqual({ sa: 2 });
   });
 
   it('手动触发可带首步消息与入口子集', async () => {
@@ -476,9 +477,10 @@ describe('webhook entry trigger', () => {
     const { runId } = await res.json();
     expect(runs.getById(runId)).toMatchObject({ trigger: 'webhook' });
 
-    // 同一次运行没落定前再打一次 = 409（不排队、不重入）
+    // 同一次运行没落定前再打一次 = 并进在跑 run（202，载荷再下发一次）
     const dup = await fetch(url(`/webhooks/orchestrate/${token}`), { method: 'POST' });
-    expect(dup.status).toBe(409);
+    expect(dup.status).toBe(202);
+    expect(((await dup.json()) as { runId: number }).runId).toBe(runId);
     expect(runs.getById(runId)!.trigger).toBe('webhook');
 
     expect((await fetch(url('/webhooks/orchestrate/unknown'), { method: 'POST' })).status).toBe(404);

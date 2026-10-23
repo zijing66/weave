@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Harness } from '@weavecode/core';
 import type { MessagingSurface } from '@weavecode/harness';
 import type {
@@ -231,6 +232,15 @@ const STARTED_AUTO_FIRE_GUARD_MS = 60_000;
  */
 const PENDING_STALE_MS = 2 * 3_600_000;
 
+/** 投递失败的一次退避重试间隔（只重试投递动作失败，确定性失败不重试）。 */
+const DELIVERY_RETRY_DELAY_MS = 1_500;
+
+/**
+ * 人在场窗：目标闲着且最近这么久有过事件 = 用户在场 → 编排投递 defer（搭用户
+ * 下一轮的车），防止层② 击键突袭手输中的输入框。超过窗口 = 无人值守，直投。
+ */
+const USER_PRESENT_WINDOW_MS = 90_000;
+
 export class OrchestrationEngine {
   private readonly runtime = new Map<number, Runtime>();
   /** ensureOpen 单飞：同一会话被多条边并发投递时只拉起一次。 */
@@ -252,7 +262,7 @@ export class OrchestrationEngine {
       >;
       deliverer: Pick<MessageDeliverer, 'send'> &
         Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
-      sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId'>;
+      sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId' | 'turnOpenOf'>;
       bus: HookEventBus;
       /** 上游会话是否支持 fork 提取（harness 无 extractArgs = false，边回落 {upstream}）。 */
       supportsExtract?: (sessionId: string) => boolean;
@@ -274,6 +284,13 @@ export class OrchestrationEngine {
       livenessOf?: () => Map<string, boolean>;
       /** 投递预算（测试注入）；缺省 ORCH_MAX_DELIVERIES。 */
       maxDeliveries?: number;
+      /** 投递失败的重试间隔（测试注入）；缺省 DELIVERY_RETRY_DELAY_MS。 */
+      retryDelayMs?: number;
+      /**
+       * 人在场闸（默认关）：开 = 目标闲着且用户近期在场时 defer 投递（搭用户
+       * 下一轮的车），防层② 击键突袭手输中的输入框；关 = 恒直投（原语义）。
+       */
+      deferWhenUserPresent?: boolean;
       /** 出站 POST（测试注入）；缺省 handlers/webhook 的 postJson。 */
       postJsonImpl?: typeof postJson;
     },
@@ -299,15 +316,32 @@ export class OrchestrationEngine {
     if (!orch) return { ok: false, status: 404, error: 'Orchestration not found' };
     const valid = validateOrchestration(orch);
     if (!valid.ok) return { ok: false, status: 409, error: valid.error };
-    if (this.activeOf(orchId)) {
-      return { ok: false, status: 409, error: 'Orchestration already has a running run' };
-    }
     const { entries } = graphDirections(orch.nodes, orch.edges);
     const chosen = entryIds
       ? entries.filter((e) => entryIds.includes(e.id))
       : entries.filter((e) => e.kind === 'session');
     if (chosen.length === 0) {
       return { ok: false, status: 409, error: 'No matching entry node' };
+    }
+    // 并发分组（评审：Actions concurrency）：已有在跑 run 时不另起一份也不
+    // 409 丢弃——把本次触发的首步并进在跑 run 的 pending（扇入语义本来就
+    // 「每到一条执行一次」，多一条 pending 只是多一轮消费），runId 沿用在跑的。
+    const active = this.activeOf(orchId);
+    if (active) {
+      await Promise.allSettled(
+        chosen.map((entry) =>
+          entry.kind === 'session'
+            ? this.deliver(active, {
+                from: '',
+                to: entry.id,
+                edgeId: '',
+                text: text?.trim() || orch.startText.trim() || orch.name,
+              })
+            : this.fireEdges(active, entry.id, text ?? ''),
+        ),
+      );
+      this.maybeDone(active);
+      return { ok: true, runId: active.id };
     }
     const row = this.deps.runs.insert({
       orchestrationId: orch.id,
@@ -501,11 +535,37 @@ export class OrchestrationEngine {
     return fired;
   }
 
-  /** daemon 重启：进行中的 run 一律 interrupted（不重发），顺手清一次日志。 */
+  /**
+   * daemon 重启：进行中的 run **最小续跑**——从落库 state 重建 Runtime（pending
+   * 原样保留，重启后目标会话的下一次回合照常消费推进）；定义已删/校验不过的
+   * 才落 interrupted。state 每拍都落库，重建即无损（评审：agent 链以小时计，
+   * 重启全丢太伤；不必 event sourcing）。
+   */
   rearm(): void {
     try {
       for (const row of this.deps.runs.listRunning()) {
-        this.deps.runs.finish(row.id, 'interrupted', 'daemon restarted — not resumed');
+        const orch = this.deps.orchestrations.getById(row.orchestrationId);
+        const valid = orch ? validateOrchestration(orch) : { ok: false as const };
+        if (!valid.ok) {
+          this.deps.runs.finish(row.id, 'interrupted', 'daemon restarted — definition gone');
+          continue;
+        }
+        const rt: Runtime = {
+          id: row.id,
+          orchestrationId: row.orchestrationId,
+          trigger: row.trigger,
+          name: row.orchestrationName,
+          nodes: orch!.nodes,
+          edges: orch!.edges,
+          state: row.state,
+          deliveries: row.deliveries,
+          forks: 0,
+          inflight: 0,
+          running: true,
+          finishing: false,
+        };
+        this.runtime.set(rt.id, rt);
+        this.emitRun(rt, 'running');
       }
     } catch {
       // 恢复失败留待下次
@@ -789,11 +849,24 @@ export class OrchestrationEngine {
   }
 
   /**
-   * 投一次：session 目标判活（死则拉起并按需等 inbox 凭据）、送达（含入队）才
-   * 计入待回；webhook 出口直接出站 POST、不判活不入 pending（它不会回话）。
-   * 返回是否真的送达（调用方据此决定要不要等它下一轮）。
+   * 投一次（带一次退避重试）：session 目标判活（死则拉起并按需等 inbox 凭据）、
+   * 送达（含入队）才计入待回；webhook 出口直接出站 POST、不判活不入 pending
+   * （它不会回话）。返回是否真的送达（调用方据此决定要不要等它下一轮）。
    */
   private async deliver(
+    rt: Runtime,
+    input: { from: string; to: string; edgeId: string; text: string },
+  ): Promise<boolean> {
+    const first = await this.deliverOnce(rt, input);
+    if (first || !rt.running) return first;
+    // 瞬态故障（终端未就绪/中继抖动）一次退避重试——评审：失败即断支太脆。
+    // 只重试「投递动作失败」，判死拉不起/正文空这类确定性失败不重试。
+    await new Promise((resolve) => setTimeout(resolve, this.deps.retryDelayMs ?? DELIVERY_RETRY_DELAY_MS));
+    if (!rt.running) return false;
+    return this.deliverOnce(rt, input);
+  }
+
+  private async deliverOnce(
     rt: Runtime,
     input: { from: string; to: string; edgeId: string; text: string },
   ): Promise<boolean> {
@@ -823,6 +896,23 @@ export class OrchestrationEngine {
       if (!input.text.trim()) {
         this.record(rt, { ...input, ok: false, error: 'edge has no message' });
         return false;
+      }
+      // 人在场闸（评审：层②击键直进输入框会打断手输的用户；默认关）：目标
+      // 闲着且用户近期在场（刚看完/正要打字）→ 本拍不投，挂一条占位 pending
+      // ——用户的下一次回合完成会消费它（届时再真投，搭车）；无人值守照常直投。
+      // 返回 true（已处理）：不进重试、不计 deliveries。
+      if (this.deps.deferWhenUserPresent && this.userPresent(input.to)) {
+        const deferred = rt.state.pending[input.to] ?? [];
+        deferred.push({ messageId: `defer-${randomUUID()}`, at: new Date().toISOString() });
+        rt.state.pending[input.to] = deferred;
+        this.record(rt, {
+          from: input.from,
+          to: input.to,
+          edgeId: input.edgeId,
+          ok: true,
+          stage: 'defer',
+        });
+        return true;
       }
       if (this.aliveOf(input.to) === false) {
         const begun = Date.now();
@@ -913,7 +1003,7 @@ export class OrchestrationEngine {
       edgeId: string;
       ok: boolean;
       error?: string;
-      stage?: 'ensure' | 'condition';
+      stage?: 'ensure' | 'condition' | 'defer';
       ms?: number;
     },
   ): void {
@@ -1007,6 +1097,19 @@ export class OrchestrationEngine {
     if (!row) return false;
     const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
     return pidAliveOf(row, liveness);
+  }
+
+  /**
+   * 人在场判据：目标闲着（回合已收）且最近 USER_PRESENT_WINDOW 内有过事件
+   * （用户刚在看/正要打字）。回合开着不判在场——投递走队列/直投不扰回合；
+   * 只挡「闲会话被层② 击键突袭」这一种打断。
+   */
+  private userPresent(sessionId: string): boolean {
+    if (this.deps.sessions.turnOpenOf(sessionId)) return false;
+    const row = this.deps.sessions.listWithCounts().find((r) => r.sessionId === sessionId);
+    if (!row) return false;
+    const seen = Date.parse(row.lastSeenAt);
+    return Number.isFinite(seen) && Date.now() - seen < USER_PRESENT_WINDOW_MS;
   }
 
   private async ensureOpen(sessionId: string): Promise<{ ok: true } | { ok: false; error: string }> {

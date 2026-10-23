@@ -306,12 +306,17 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 - **扇入无 join/barrier**：某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次（`Promise.allSettled`）。
 - 任务节点每收一条消息被激活一次（`state.pending[to]` 一条对一次 idle），无待处理且在飞清零即 done。
-- 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环。
+- 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环；`ORCH_MAX_FORKS = 50` 管 condition/extract 的 fork 次数（token 闸——fork 不在投递预算内，评审点名的成本失控洞；到顶 condition 拦下记原因、extract 回落 `{upstream}`，run 不因此失败）。
+- **并发分组**（评审：Actions concurrency）：同编排已有在跑 run 时再触发不 409 丢弃——本次首步（session 入口投消息 / webhook·trigger 入口 fire 载荷）直接并进在跑 run 的 pending，runId 沿用；扇入语义本来就是「每到一条执行一次」，多一条 pending 只是多一轮消费。自然回合连拍不再白扔第二发。
 - **边正文变量**（服务端 `renderTemplate` 渲染，web 只当文本）：`{upstream}` = 上游这一轮最终输出（`MessageDeliverer.lastTurnOutput` 读既有 `hook_events` 的 `raw.last_assistant_message`，超 `CARRY_OUTPUT_MAX_CHARS = 4000` 截断；webhook 入口 = 触发载荷）、`{summary}` = 本边提取结果、`{session}` = 上游会话名。缺值占位原样保留 → **渲染后判残留，残留即记失败**（不投半截模板）。
 - **边级提取**（`edge.extract`）：对上游会话 **fork 一个无头回合**提炼信息（`ResumeCommandSpec.extractArgs` 归 harness；claude = `--resume <sid> --fork-session --no-session-persistence --session-id <引擎自造 uuid>`，实测 2.1.296 fork 真继承上下文、转录不落盘）。fork 的 hook 事件照发 ⇒ **合成会话名单**（`hooks/synthetic-sessions.ts`）：引擎 spawn 前登记、经 `HookPipeline.pushSyntheticSessions` 全量推给 inbox worker、**行即焚**（不落库不建会话行）。不支持 fork 的 harness（`extractArgs` 缺席，codex 留位）回落 `{upstream}` 并如实记事件。`handoffPrompt` 自投总结回合与 `carryOutput` 已退役（那才是污染原会话的来源）。
 - **边闸两道、先廉后贵**（顺序 = when → condition → 投递）：`when` **文本预筛**——`{upstream}`（宿主文末总结）命中任一关键词（逗号/换行分隔、大小写不敏感子串）才继续，不命中记 `stage:'condition'` 事件拦下，**fork 都不烧**；`condition` **放行判断**——对上游会话跑一次「衔接上下文的子 Agent」（能力面口径 `supportsExtract`/`extract`，claude = fork；codex 无此面），提问要求严格回答 yes/no（中英首词认法 `parseConditionAnswer`）：yes 放行，no / 判不出都**拦下不投**（用户裁决：宁可不发错包），`stage:'condition'` 事件带原因。判断引擎 = `ConditionJudge` 接口（`orchestration-engine.ts`：`judge({sessionId, condition, upstream}) → {ok, reason?}`），装配侧恒装 `createDecisionConditionJudge`（`hooks/decision-judge.ts`）：配了决策模型（settings `decision` 段 + `<local>/decision.json` 的 key，配置**每次判断现读**——设置页改完即时生效）先问它（Jev 兼容 `POST {baseUrl}/v1/systemone`，noul 问题：instructions = 条件、state = 上游输出；**P(yes)≥0.7 放行、≤0.3 拦下**带概率原因，阈值 = TypeSafe 文档推荐起点），**中间带（判不准）/ 失败（网络/超时 10s/坏响应）/ 未配置 / 上游无文本都回落 `createForkConditionJudge`**（fork 子 Agent，System 1 拿不准的交给 System 2）；judge 抛错同样拦下带原因；**全部出边被拦下 run 落 done**（判断按预期工作，不是失败）。when/condition 不可设在载荷型入口（webhook/trigger）的出边——没有会话可问（校验两侧同拒）。**不走「hook 向会话补发判断 prompt」**：那是已退役 handoffPrompt 的污染路，判断一律 daemon 侧 fork。
 - **自然回合自动触发**（enabled 闸）：**入口 session 恒可 + `autoFire: true` 的中间 session 节点**（节点级 opt-in，画布检查器开关）idle 且**消费前任何 run 对该会话都无 pending**（会话级判据，跨编排安全——判据取消费前快照）→ 其出边直启（不走 `start()` 的首投，`{upstream}` 就是这一轮的输出）。护栏：节点有出边（孤立节点不空转）、同编排无在飞 run、同节点 5s 冷却（Stop/SessionEnd 连拍）、可触发节点索引 TTL 10s 缓存。残余风险如实记：投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合（毫秒级窗口）。
 - **webhook 出口在 `deliver` 分流**：不经判活/`ensureOpen`/pending（它不会回话），直接 `postJson`（`hooks/handlers/webhook.ts` 抽出的共用边界：http/https、5s 超时、HMAC 头）出站 POST，body = `{orchestrationName, runId, from, text, at}`；POST 计入 inflight 与投递预算。
+- **投递可靠性三闸**（评审收敛项，2026-10-23）：
+  1. **有界重试**：投递动作失败（send 拒绝/failed/抛错）一次退避重试（`DELIVERY_RETRY_DELAY_MS = 1.5s`，测试注入 0）——只重试投递动作，判死拉不起/正文空/defer 等确定性结局不重试。
+  2. **pending 陈滞超时**：目标活着但最老一条 pending 超 `PENDING_STALE_MS = 2h`（挂 SessionSweeper 同 tick 扫）→ 该会话 pending 作废、run 落 failed——释放「同编排单 run」闸，编排不再因一个挂死会话静默失能（n8n Wait-for-Approval 的 deadline + 超时落定同型）。
+  3. **人在场闸**（`deferWhenUserPresent`，默认关、两个 daemon 入口均开）：目标闲着（`turnOpenOf` false）且用户 90s 内有过事件（`USER_PRESENT_WINDOW_MS`）→ 投递 defer——挂一条占位 pending（`stage:'defer'` 事件），用户的下一次回合完成消费它时再真投（搭车）；回合开着不判在场（队列/直投不扰回合）；无人值守照常直投。defer 返回「已处理」：不进重试、不计 deliveries。防的是层② 击键突袭手输中的输入框（评审：中高概率/高后果）。
 
 ### 4.14 三枚触发
 
@@ -329,7 +334,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 - `GET /messaging/orchestration-runs` 按 status/orchestrationId/projectId 过滤并向前翻页；`:id` 返回 **summary + state 合体**（列表行走 `toRunSummary`，web 展开行直接顶替渲染，缺 `pendingCounts` 会崩）；`POST :id/cancel`。
 - 清理 = 自动 `prune`（7 天 + 每编排留 100 条，daemon 启动跑一次）＋ 手动 `DELETE /messaging/orchestration-runs?scope=finished|all`；删编排级联取消在跑 run；删会话连带清定义（`deleteMentioningSession` 按 session 节点判）。
-- **daemon 重启不续跑**：`rearm` 把 running 全标 `interrupted`（编排状态不是消息，宁可重触发也不重放 prompt）。
+- **daemon 重启最小续跑**（2026-10-23 改判，推翻「不续跑」）：`rearm` 从落库 state 重建 Runtime（pending 原样保留，重启后目标会话的下一次回合照常消费推进；fork 计数归零重计）；定义已删/校验不过的才落 `interrupted`。state 每拍都落库，重建即无损——agent 链以小时计，重启全丢太伤；不必 event sourcing（会话本身就是持久态，run 只是投影）。
 
 ### 4.17 实时刷新与画布
 

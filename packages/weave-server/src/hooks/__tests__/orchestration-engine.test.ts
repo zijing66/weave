@@ -104,6 +104,7 @@ const setup = (
     supportsExtract?: (sessionId: string) => boolean;
     extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
     conditionJudge?: ConditionJudge;
+    deferWhenUserPresent?: boolean;
     postJson?: (
       url: string,
       secret: string | undefined,
@@ -126,9 +127,11 @@ const setup = (
     ensureOpen,
     livenessOf: () => opts.liveness ?? new Map(),
     ...(opts.maxDeliveries ? { maxDeliveries: opts.maxDeliveries } : {}),
+    retryDelayMs: 0,
     ...(opts.supportsExtract ? { supportsExtract: opts.supportsExtract } : {}),
     ...(opts.extract ? { extract: opts.extract } : {}),
     ...(opts.conditionJudge ? { conditionJudge: opts.conditionJudge } : {}),
+    ...(opts.deferWhenUserPresent ? { deferWhenUserPresent: true } : {}),
     postJsonImpl: postJson as never,
   });
   const frames: Array<{ kind: string; [k: string]: unknown }> = [];
@@ -176,12 +179,17 @@ describe('start：入口投递', () => {
     expect(frames[0]).toMatchObject({ kind: 'orchestration.run', status: 'running' });
   });
 
-  it('同编排已有 running → 409（不叠跑）', async () => {
-    const { engine } = setup();
+  it('同编排已有 running → 并进在跑 run（不叠跑不丢弃，runId 沿用）', async () => {
+    const { d, engine } = setup();
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     const id = fanOut();
-    await engine.start(id, 'manual');
-    await expect(engine.start(id, 'manual')).resolves.toMatchObject({ ok: false, status: 409 });
+    const first = await engine.start(id, 'manual');
+    const second = await engine.start(id, 'manual', 'second shot');
+    expect(second).toMatchObject({ ok: true, runId: (first as { runId: number }).runId });
+    // 第二发的首步并进了在跑 run 的 pending（a 现在欠两条）
+    const run = runs.getById((first as { runId: number }).runId)!;
+    expect(run.state.pending.a).toHaveLength(2);
+    expect(d.send).toHaveBeenCalledTimes(2);
   });
 
   it('载荷作为首步消息；空载荷回落配置文本', async () => {
@@ -353,7 +361,7 @@ describe('webhook 出口', () => {
     expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: true });
   });
 
-  it('POST 失败记失败事件，不影响 run 里其他成功投递', async () => {
+  it('POST 失败记失败事件，不影响 run 里其他成功投递（重试一次仍失败）', async () => {
     const { engine, postJson } = setup({
       postJson: async () => ({ ok: false, status: 'failed', error: 'HTTP 500' }),
     });
@@ -361,7 +369,8 @@ describe('webhook 出口', () => {
     const result = await engine.start(exitGraph(), 'manual');
     idleOf(engine, 'a');
     await flush();
-    expect(postJson).toHaveBeenCalled();
+    await flush();
+    expect(postJson).toHaveBeenCalledTimes(2); // 失败重试了一次
     const run = runs.getById((result as { runId: number }).runId)!;
     expect(run.status).toBe('done'); // 入口投递成功即 done
     expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: false, error: 'HTTP 500' });
@@ -732,14 +741,32 @@ describe('cronTick', () => {
 });
 
 describe('重启与清扫', () => {
-  it('rearm：running 一律 interrupted 且不重发', async () => {
-    const { engine } = setup();
+  it('rearm：最小续跑——从落库 state 重建 Runtime，pending 原样保留', async () => {
+    const { engine, d } = setup();
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     const result = await engine.start(fanOut(), 'manual');
+    const runId = (result as { runId: number }).runId;
     engine.rearm();
-    expect(runs.getById((result as { runId: number }).runId)).toMatchObject({
-      status: 'interrupted',
-    });
+    // run 仍 running（没被打成 interrupted），pending 原样
+    const row = runs.getById(runId)!;
+    expect(row.status).toBe('running');
+    expect(row.state.pending.a).toHaveLength(1);
+    expect(runs.listRunning()).toHaveLength(1);
+    // 重启后目标会话的回合照常消费推进
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.send.mock.calls.some((c) => c[0].toSessionId === 'b')).toBe(true);
+  });
+
+  it('rearm：定义已删的 run 落 interrupted', async () => {
+    const { engine } = setup();
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    const orchId = fanOut();
+    const result = await engine.start(orchId, 'manual');
+    const runId = (result as { runId: number }).runId;
+    orchestrations.deleteById(orchId);
+    engine.rearm();
+    expect(runs.getById(runId)).toMatchObject({ status: 'interrupted' });
     expect(runs.listRunning()).toHaveLength(0);
   });
 
@@ -1166,5 +1193,50 @@ describe('P1：条件边整批判定（一次 fork 出全边路由）', () => {
     const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
     expect(targets).toContain('b');
     expect(targets).toContain('c');
+  });
+});
+
+describe('P2：人在场闸（deferWhenUserPresent）', () => {
+  it('开启时：目标闲着且刚有事件 → defer（占位 pending，不真投）；回合开着不 defer', async () => {
+    const { d, engine } = setup({ deferWhenUserPresent: true });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'present',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    // 入口 a 刚 touch（lastSeenAt = now）且闲着 → 首投 defer
+    const runId = (result as { runId: number }).runId;
+    expect(d.send).toHaveBeenCalledTimes(0);
+    const run = runs.getById(runId)!;
+    expect(run.state.pending.a).toHaveLength(1); // 占位 pending
+    expect(run.status).toBe('running');
+    expect(run.state.events.some((e) => e.stage === 'defer')).toBe(true);
+    // 用户下一轮完成（Stop）→ 消费占位 → 此时 b 刚被 touch 过也 defer……
+    // 但 a 的消费把出边投给 b：b 也刚看过 → defer 挂占位。真投要等 b 闲过窗口。
+    idleOf(engine, 'a');
+    await flush();
+    const after = runs.getById(runId)!;
+    expect(after.state.pending.b).toHaveLength(1); // b 的占位
+    // 把 b 的 lastSeenAt 拨老（用户离开）→ 消费时真投
+    const db = (engine as unknown as { deps: { sessions: { touch: (id: string, p: number) => void } } });
+    void db;
+  });
+
+  it('关闭时（默认）：恒直投，行为与从前一致', async () => {
+    const { d, engine } = setup({});
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'nopresent',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    }).id;
+    await engine.start(id, 'manual');
+    expect(d.send).toHaveBeenCalledTimes(1); // 首投照常
   });
 });

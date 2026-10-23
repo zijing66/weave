@@ -127,9 +127,10 @@ export interface RunEvent {
   error?: string;
   /**
    * 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试；
-   * `condition` = 条件边被拦下（回答 no 或判不出，没有投递发生）。
+   * `condition` = 条件边被拦下（回答 no 或判不出，没有投递发生）；
+   * `defer` = 人在场闸挂起（占位 pending 已入队，用户下一轮消费时真投）。
    */
-  stage?: 'ensure' | 'condition';
+  stage?: 'ensure' | 'condition' | 'defer';
   /** 耗时（ms）：ensure 用；投递事件不带。 */
   ms?: number;
 }

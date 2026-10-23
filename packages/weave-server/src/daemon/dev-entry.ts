@@ -371,6 +371,8 @@ async function main(): Promise<void> {
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
     conditionJudge,
+    // 人在场闸（与 start.ts 同口径）：目标闲着且用户刚在看 → defer 搭车。
+    deferWhenUserPresent: true,
     ensureOpen: async (sessionId) => {
       // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
       // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
