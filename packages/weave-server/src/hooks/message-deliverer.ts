@@ -189,6 +189,8 @@ export interface MessageDelivererDeps {
   /** 闸自动解除窗口（毫秒）；缺省 90s——闸挂着而回执永远不来（消息其实丢了）时，
    *  队列不能就此停到天荒地老：到点把成因行落成 failed（`unacked`）并续排。 */
   ackStallReleaseMs?: number;
+  /** 斜杠命令等回执的短窗口（毫秒）；缺省 5s——过了仍无 UPS 即按内建命令收。 */
+  commandAckGraceMs?: number;
   /** 该会话此刻是否挂着阻塞式模态框（questions 槽；QuestionTracker 是唯一实现）。
    *  模态框在场时层② 的文本与回车会被它吃掉：投出去只换来一条「已发出却没回执」
    *  的假送达，回车还可能替用户按下某个选项。缺省 = 不判（测试与无 tracker 装配）。 */
@@ -265,6 +267,9 @@ const VISIBLE_TTL_MS = 60_000;
 const ACK_STALL_MS = 30_000;
 /** 闸到点自动解除——排队的消息等不起十分钟；用户也随时能手动清掉成因行。 */
 const ACK_STALL_RELEASE_MS = 90_000;
+/** 斜杠命令等回执的短窗口：内建命令永远不发 UPS，skill/插件命令 ~0.6s 就报。
+ *  过了这个窗口还没回执 = 内建命令，按已送达收（不布防未回执闸）。 */
+const COMMAND_ACK_GRACE_MS = 5_000;
 
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
@@ -344,6 +349,17 @@ function normalizePromptText(text: string): string {
 /** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
 function stripSpace(text: string): string {
   return text.replace(/\s+/g, '');
+}
+
+/**
+ * 斜杠命令（宿主内建命令与 skill/插件命令都算）：判据跟宿主一致——**trim 后以
+ * `/` 开头**（命令只在最前面生效）。两者的回执行为不同：内建命令（`/compact`、
+ * `/model`、`/effort`…）由宿主内部执行、**不发 UserPromptSubmit**，而 skill/插件
+ * 命令会把敲的那行原样报一条 UPS（实测 0.6s）。故不能一律当「无回执」收，见
+ * `armCommandAck` 的短窗口。
+ */
+function isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z][A-Za-z0-9:_-]*(\s|$)/.test(text.trim());
 }
 
 /** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
@@ -871,6 +887,28 @@ export class MessageDeliverer {
     if (this.modalBlocked(sessionId)) return;
     const pane = await this.terminalPaneFor(session, project);
     if (pane) void this.runTerminalSubmit(messageId, pane.id);
+  }
+
+  /**
+   * 斜杠命令的回执收尾（与 `armAckWatch` 二选一）：给一个短窗口等 UPS——skill/插件
+   * 命令会报，届时正常核销；窗口过期还没回执 = 宿主内建命令（`/compact` 之类压根
+   * 不发 UPS），按已送达收、解闸续排，**不布防未回执闸**（否则压缩几分钟里整段显示
+   * 「发送中」，还要等闸到点自动清除）。
+   */
+  private armCommandAck(messageId: string): void {
+    const timer = setTimeout(
+      () => {
+        const current = this.memory.get(messageId);
+        if (!current || current.acked || current.status !== 'delivered') return;
+        this.memory.set(messageId, { ...current, acked: true });
+        if (this.awaitingAck.get(current.sessionId) === messageId) {
+          this.awaitingAck.delete(current.sessionId);
+        }
+        if (this.queuedSessions.has(current.sessionId)) this.scheduleFlushContinuation(current.sessionId);
+      },
+      this.deps.commandAckGraceMs ?? COMMAND_ACK_GRACE_MS,
+    );
+    timer.unref?.();
   }
 
   /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */
@@ -1668,7 +1706,8 @@ export class MessageDeliverer {
     };
     this.memory.set(entry.id, delivered);
     this.awaitingAck.set(entry.sessionId, entry.id);
-    this.armAckWatch(delivered);
+    if (isSlashCommand(entry.text)) this.armCommandAck(entry.id);
+    else this.armAckWatch(delivered);
     this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
     return delivered;
   }
@@ -1740,7 +1779,8 @@ export class MessageDeliverer {
     this.memory.set(entry.id, delivered);
     // 一条在手（任何层）：下一条先等它的 UPS 回执——同会话的队列必须是「1 送 1 回」。
     this.awaitingAck.set(entry.sessionId, entry.id);
-    this.armAckWatch(delivered);
+    if (isSlashCommand(entry.text)) this.armCommandAck(entry.id);
+    else this.armAckWatch(delivered);
     this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
     return delivered;
   }
@@ -1868,7 +1908,8 @@ export class MessageDeliverer {
         settledAt: new Date().toISOString(),
       };
       this.memory.set(messageId, delivered);
-      this.armAckWatch(delivered);
+      if (isSlashCommand(msg.text)) this.armCommandAck(messageId);
+      else this.armAckWatch(delivered);
       this.bus({
         kind: 'message.delivered',
         messageId,
@@ -1930,9 +1971,10 @@ export class MessageDeliverer {
       // 行没了 = 期间被强制移除（投递卡死时人工清队头）：不写回，删了就是删了。
       const current = this.memory.get(messageId);
       if (!current) return;
-      const delivered: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
-      this.memory.set(messageId, delivered);
-      this.armAckWatch(delivered);
+      const done: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
+      this.memory.set(messageId, done);
+      if (isSlashCommand(current.text)) this.armCommandAck(messageId);
+      else this.armAckWatch(done);
       this.bus({
         kind: 'message.delivered',
         messageId,

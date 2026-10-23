@@ -32,6 +32,7 @@ import { HARNESS_LIFECYCLE } from './lifecycle';
 import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
+import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
@@ -1370,7 +1371,7 @@ export function TasksPanel({
               </span>
               {selectedRow?.harness && (
                 <span className="shrink-0">
-                  <HarnessIcon harness={selectedRow.harness} />
+                  <SessionStatusIcon status={activeStatus} harness={selectedRow.harness} />
                 </span>
               )}
               <button

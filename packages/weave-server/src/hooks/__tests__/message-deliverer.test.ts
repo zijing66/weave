@@ -1081,6 +1081,67 @@ describe('MessageDeliverer 裁决表', () => {
     inbox.close();
   });
 
+  it('斜杠命令：内建命令过了短窗口按已回执收（不发 UPS），skill 命令仍由 UPS 即时认领', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 20,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '/compact',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(sendText).toHaveBeenCalledWith('pane-1', '/compact');
+    // 窗口内先不 ack：skill/插件命令会在这几秒里报一条 UPS，要留出认领的机会
+    expect(deliverer.getMessage(id)?.acked).not.toBe(true);
+    await new Promise((r) => setTimeout(r, 60));
+    // 内建命令：窗口过期即按已送达收，且不布防未回执闸
+    expect(deliverer.getMessage(id)).toMatchObject({ via: 'terminal', status: 'delivered', acked: true });
+    expect(deliverer.getMessage(id)?.stalled).not.toBe(true);
+
+    // 对照：skill 命令的 UPS（正文就是用户敲的那行）到了就即时核销，不等窗口
+    const skill = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '/playwright-cli https://localhost:5173/',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const skillId = (skill as { messageId: string }).messageId;
+    deliverer.onSessionPrompt(SESSION_ID, '/playwright-cli https://localhost:5173/');
+    expect(deliverer.getMessage(skillId)).toMatchObject({ status: 'delivered', acked: true });
+
+    // 普通文本仍走「等 UPS 回执」的老路
+    const plain = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'plain text',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const plainId = (plain as { messageId: string }).messageId;
+    expect(deliverer.getMessage(plainId)).toMatchObject({ status: 'delivered' });
+    expect(deliverer.getMessage(plainId)?.acked).not.toBe(true);
+    deliverer.onSessionPrompt(SESSION_ID, 'plain text');
+    expect(deliverer.getMessage(plainId)).toMatchObject({ acked: true });
+  });
+
   it('强制终端随队列行落盘：pane 不在时入队，冲洗仍只打终端（不回落直投/中继）', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const path = uniqueInboxPath();

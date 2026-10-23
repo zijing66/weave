@@ -39,6 +39,7 @@ import { FilePicker, type PickItem, type PickTarget } from './FilePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { StatuslineBar } from './StatuslineBar';
+import { SessionStatusIcon } from './SessionStatusIcon';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import {
   formatStamp,
@@ -2306,11 +2307,16 @@ export function SessionMessages({
             !embedded && isDesktop && !fullscreen && 'cursor-grab active:cursor-grabbing',
           )}
         >
-          <div className="min-w-0">
-            <p className="truncate text-xs font-medium text-neutral-200">
-              {t('tasks.messagesTitle')} · {label}
-            </p>
-            <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            {/* 与会话列表同一枚状态图标（SessionStatusIcon 唯一渲染点）：跑马灯/静态
+                形/状态点三种形态都跟列表一致，不再自画 */}
+            <SessionStatusIcon status={status ?? 'open'} harness={capability.harness} />
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium text-neutral-200">
+                {t('tasks.messagesTitle')} · {label}
+              </p>
+              <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {/* 嵌入形态：事件链不再占右栏，从这枚按钮开成弹窗 */}
