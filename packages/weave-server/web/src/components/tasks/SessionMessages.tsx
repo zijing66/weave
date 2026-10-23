@@ -94,14 +94,27 @@ const isImageFile = (f: File): boolean =>
  * 剪贴板/拖放里的文件（图与普通文件都收，类型是否可发由 `stageFiles` 判）。
  * **移动浏览器只填 `items`**（iOS Safari 的 `files` 恒空），桌面才稳定给 `files`
  * ⇒ items 优先、files 兜底；只取 file 项，文字项留着走默认粘贴。
+ * 拖进来的**文件夹**不是可上传件（浏览器只给一个 size=0、无类型的假 File）：
+ * 按 entry 判掉，免得占一格再失败。
  */
 export function attachedFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return [];
-  const fromItems = Array.from(dt.items ?? [])
-    .filter((i) => i.kind === 'file')
-    .map((i) => i.getAsFile())
-    .filter((f): f is File => !!f);
-  return fromItems.length > 0 ? fromItems : Array.from(dt.files ?? []);
+  const isDir = (i: DataTransferItem): boolean => {
+    try {
+      return i.webkitGetAsEntry?.()?.isDirectory === true;
+    } catch {
+      return false;
+    }
+  };
+  const fileItems = Array.from(dt.items ?? []).filter((i) => i.kind === 'file');
+  // items 里有 file 项就以它为准（`files` 兜底会把刚判掉的文件夹又捡回来）
+  if (fileItems.length > 0) {
+    return fileItems
+      .filter((i) => !isDir(i))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => !!f);
+  }
+  return Array.from(dt.files ?? []);
 }
 
 /** 附件条上的一格：上传中/已落盘/失败都摆在同一个位置（进度条画在图标上）。 */
@@ -157,7 +170,8 @@ function StagedTile({
   removeLabel: string;
 }): ReactElement {
   const pct = Math.round(item.progress * 100);
-  const image = isImageUpload(item) && item.state === 'done' && item.upload;
+  const isImage = isImageUpload(item);
+  const thumb = isImage && item.state === 'done' && item.upload;
   return (
     <span className="relative inline-flex shrink-0">
       <button
@@ -172,19 +186,21 @@ function StagedTile({
         }}
         className={cn(
           'relative flex shrink-0 items-center overflow-hidden rounded border bg-neutral-950',
-          image ? 'h-10 w-10' : 'h-10 max-w-[10rem] gap-1 px-1.5',
+          isImage ? 'h-10 w-10 justify-center' : 'h-10 max-w-[10rem] gap-1 px-1.5',
           item.state === 'error'
             ? 'border-red-500/50'
             : 'border-edge/[0.12]',
         )}
       >
-        {image ? (
+        {thumb ? (
           <img
             src={`${API_BASE}/images/${item.upload!.id}`}
             alt={item.name}
             className="h-full w-full object-cover"
             loading="lazy"
           />
+        ) : isImage ? (
+          <ImageIcon className="h-4 w-4 text-neutral-400" />
         ) : (
           <>
             <FileCode className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
@@ -1304,6 +1320,9 @@ export function SessionMessages({
   const stagedSeq = useRef(0);
   /** 点开的大图（缩略图点击）；null = 没开。 */
   const [lightbox, setLightbox] = useState<UploadFile | null>(null);
+  /** 附件面收哪些类型（daemon 还没升级时这个字段缺席：当「不收」处理，按钮置灰
+   *  而不是整扇对话崩掉）。 */
+  const attachKinds = capability.attachKinds ?? [];
   /** 文件引用选择器开着（三层：父目录 | 当前目录 | 预览）；`chip` 非空 = 在改那枚胶囊。 */
   const [picker, setPicker] = useState<{ chip: HTMLElement | null; initial?: PickTarget } | null>(null);
   /** `/` 命令菜单：候选来自 harness 能力面（null = 还没取到）。`query` 是已经敲进去的
@@ -2019,7 +2038,10 @@ export function SessionMessages({
   const stageFiles = (files: FileList | File[]): void => {
     const list = Array.from(files);
     if (list.length === 0) return;
-    const kinds = capability.attachKinds;
+    const kinds = attachKinds;
+    // 上限按「本次已收 + 现有」算：`setStaged` 的 updater 是下一拍才跑的，
+    // 靠它回填一个 accepted 标志会读到旧值（连选多个时全被拒或全被收）
+    let room = Math.max(0, ATTACH_MAX_COUNT - staged.length);
     for (const f of list) {
       const image = isImageFile(f);
       if (image ? !kinds.includes('image') : !kinds.includes('file')) {
@@ -2034,28 +2056,24 @@ export function SessionMessages({
         show('error', t(image ? 'tasks.msgImageTooLarge' : 'tasks.msgAttachTooLarge'));
         continue;
       }
-      const key = `${f.name}:${f.size}:${f.lastModified}:${++stagedSeq.current}`;
-      let accepted = false;
-      setStaged((s) => {
-        if (s.length >= ATTACH_MAX_COUNT) return s;
-        accepted = true;
-        return [
-          ...s,
-          {
-            key,
-            name: f.name || 'file',
-            mediaType: f.type || 'application/octet-stream',
-            size: f.size,
-            progress: 0,
-            state: 'uploading',
-            file: f,
-          },
-        ];
-      });
-      if (!accepted) {
+      if (room <= 0) {
         show('error', t('tasks.msgAttachTooMany'));
         continue;
       }
+      room--;
+      const key = `${f.name}:${f.size}:${f.lastModified}:${++stagedSeq.current}`;
+      setStaged((s) => [
+        ...s,
+        {
+          key,
+          name: f.name || 'file',
+          mediaType: f.type || 'application/octet-stream',
+          size: f.size,
+          progress: 0,
+          state: 'uploading',
+          file: f,
+        },
+      ]);
       const ctl = new AbortController();
       uploadAborters.current.set(key, ctl);
       const patch = (next: Partial<StagedFile>): void =>
@@ -3410,7 +3428,7 @@ export function SessionMessages({
                 <input
                   ref={fileRef}
                   type="file"
-                  accept={capability.attachKinds.includes('file') ? undefined : IMAGE_TYPES.join(',')}
+                  accept={attachKinds.includes('file') ? undefined : IMAGE_TYPES.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -3435,9 +3453,9 @@ export function SessionMessages({
                 </button>
                 <button
                   type="button"
-                  disabled={capability.attachKinds.length === 0 || staged.length >= ATTACH_MAX_COUNT}
+                  disabled={attachKinds.length === 0 || staged.length >= ATTACH_MAX_COUNT}
                   title={
-                    capability.attachKinds.length === 0
+                    attachKinds.length === 0
                       ? (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
                       : t('tasks.msgAttachHint')
                   }

@@ -62,13 +62,21 @@ function putChunk(
   offset: number,
   body: Blob,
   onProgress: (loaded: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ received: number }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
     const xhr = new XMLHttpRequest();
+    const onAbort = (): void => xhr.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
     xhr.open('PUT', `${API_BASE}/uploads/${id}?offset=${offset}`);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded);
     };
+    xhr.onloadend = () => signal?.removeEventListener('abort', onAbort);
     xhr.onload = () => {
       let parsed: { received?: number; error?: string } = {};
       try {
@@ -140,9 +148,15 @@ export async function uploadFileWithProgress(
     let next: number;
     try {
       next = (
-        await putChunk(id, at, file.slice(at, end), (loaded) => {
-          onProgress(Math.min(1, (at + loaded) / file.size));
-        })
+        await putChunk(
+          id,
+          at,
+          file.slice(at, end),
+          (loaded) => {
+            onProgress(Math.min(1, (at + loaded) / file.size));
+          },
+          opts.signal,
+        )
       ).received;
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

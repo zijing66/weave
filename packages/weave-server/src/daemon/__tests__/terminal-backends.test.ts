@@ -654,6 +654,17 @@ describe('wt 击键通道 — env→pid 定位与 pane id 表示法', () => {
     // here-string 收尾必须在行首，否则 PowerShell 解析报错
     expect(decoded).toContain(`\n'@\n`);
   });
+
+  it('INPUT_RECORD 缓冲手写、stride 恒 20 字节（union 对齐 4；stride 错则只有首字符能到）', () => {
+    const decoded = Buffer.from(wtInjectEncodedScript(), 'base64').toString('utf16le');
+    // 手写缓冲的标志：AllocHGlobal + 按偏移写字段 + IntPtr 形参（不是结构体数组）
+    expect(decoded).toContain('AllocHGlobal');
+    expect(decoded).toContain('const int REC = 20;');
+    expect(decoded).toContain('Marshal.WriteInt16(r, 14, (short)c)'); // UnicodeChar
+    expect(decoded).toContain('WriteConsoleInputW(h, buf,');
+    expect(decoded).not.toContain('INPUT_RECORD[] recs');
+    expect(decoded).not.toContain('REC = 24');
+  });
 });
 
 describe('konsole / iterm 击键通道 — env→pane 定位与表示法（本机无法实机验证）', () => {

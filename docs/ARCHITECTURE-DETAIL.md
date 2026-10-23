@@ -222,7 +222,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 **无原生 peer 消息的 harness** 如 codex；**经 `TerminalBackend` 能力方法泛化**、不散写 wezterm。
 
 - **wezterm**：`cli list` 枚举 + `cli send-text`。
-- **Windows Terminal**：wt 没有 per-pane 写入面，走 conhost 的**输入记录通道**——`AttachConsole(会话进程)` + `WriteConsoleInputW`，不抢焦点、不依赖窗口在前台。会话进程取 hook 子进程自带的 `CLAUDE_PID`，`WT_PROFILE_ID` 认世界，pane id = `wt:<pid>`；经 `powershell -EncodedCommand` 把内联 C# 送进 P/Invoke，写的是 pane 自己的 console 输入缓冲区，故与窗口是否聚焦无关。
+- **Windows Terminal**：wt 没有 per-pane 写入面，走 conhost 的**输入记录通道**——`AttachConsole(会话进程)` + `WriteConsoleInputW`，不抢焦点、不依赖窗口在前台。会话进程取 hook 子进程自带的 `CLAUDE_PID`，`WT_PROFILE_ID` 认世界，pane id = `wt:<pid>`；经 `powershell -EncodedCommand` 把内联 C# 送进 P/Invoke，写的是 pane 自己的 console 输入缓冲区，故与窗口是否聚焦无关。**INPUT_RECORD 缓冲必须 `AllocHGlobal` 手写、stride 恒 20 字节**（x64 布局 = WORD EventType + 2 pad + KEY_EVENT_RECORD 16，union 对齐 4 **不对齐 8**——stride 写成 24 时第 0 条恰好落在真实槽 0、后续条全部错位，表现即「只有第一个字符能到、其余被 conhost 当垃圾丢掉」；24 与 20 只在字节 0 和 120 处重合，故偶有第二个字符幸存，错位公式可逐条对上实测）。
 - **Konsole**（KDE）：`KONSOLE_DBUS_SERVICE` + `KONSOLE_DBUS_SESSION` 定位，会话自带的 D-Bus `sendText` / `sendKey`，pane id = `konsole:<服务>|<会话路径>`。
 - **iTerm2**：`ITERM_SESSION_ID` 定位、AppleScript `write text`——**只有文本通道，中断/作答诚实不支持**。
 - Terminal.app / ghostty / gnome 按通道现实实现、没有就诚实不支持（前三者的通道就是「没有」：无 raw key 注入、无文本写入，`keystroke` 要前台故不用）。

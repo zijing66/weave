@@ -397,7 +397,12 @@ async function handleRequest(
       sendJson(res, 200, {
         events: events.map((e) => {
           const rows = images?.get(e.id);
-          return rows?.length ? { ...e, images: rows.map((r) => ({ id: r.id, name: r.name, mediaType: r.mediaType })) } : e;
+          return rows?.length
+            ? {
+                ...e,
+                images: rows.map((r) => ({ id: r.id, name: r.name, mediaType: r.mediaType, size: r.size })),
+              }
+            : e;
         }),
       });
       return;

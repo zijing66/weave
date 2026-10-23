@@ -593,27 +593,17 @@ if (-not $r.StartsWith('ok:')) { [Console]::Error.WriteLine($r); exit 3 }
  * 输入记录的最小 P/Invoke 面（ATTACH → 打开 CONIN$ → 写记录 → 释放）。
  * 控制字符给真 VK（ESC/CR/Tab/BS）——其余字符 VK=0 靠 UnicodeChar 直接成字，
  * 给错 VK 会变成别的键（如 `-` 曾按 VK_INSERT 翻成 `ESC[2~`，实测踩到）。
+ *
+ * **缓冲必须手写、stride 恒 20 字节**：wincon.h 的 INPUT_RECORD = WORD EventType
+ * (+2 pad) + KEY_EVENT_RECORD 16（BOOL 4 + WORD×3 + WCHAR 2 + DWORD 4），union
+ * 对齐 4 不对齐 8——x64 上就是 20，**不是 24**。stride 写错时第 0 条恰好落在
+ * 真实槽 0、后续条全部错位（24 与 20 只在 0 和 120 字节处重合），表现即「只有
+ * 第一个字符能到、其余被 conhost 当垃圾丢掉」（实测 'PQRS'→'P'、'ABC中文DEF'→
+ * 'AD'，与错位公式逐条吻合）。手写而非结构体数组 marshal，是为了让 stride 与
+ * 字段偏移一眼可见、不再受 C# 布局规则摆布。
  */
 const WT_KEY_EVENT_CS = `using System;
 using System.Runtime.InteropServices;
-
-[StructLayout(LayoutKind.Sequential)]
-public struct KEY_EVENT_RECORD
-{
-    [MarshalAs(UnmanagedType.Bool)] public bool bKeyDown;
-    public ushort wRepeatCount;
-    public ushort wVirtualKeyCode;
-    public ushort wVirtualScanCode;
-    public char UnicodeChar;
-    public uint dwControlKeyState;
-}
-
-[StructLayout(LayoutKind.Explicit)]
-public struct INPUT_RECORD
-{
-    [FieldOffset(0)] public ushort EventType;
-    [FieldOffset(4)] public KEY_EVENT_RECORD KeyEvent;
-}
 
 public static class WeaveWtKeys
 {
@@ -624,16 +614,16 @@ public static class WeaveWtKeys
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool WriteConsoleInputW(IntPtr h, INPUT_RECORD[] recs, uint len, out uint written);
+    static extern bool WriteConsoleInputW(IntPtr h, IntPtr recs, uint len, out uint written);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CloseHandle(IntPtr h);
 
     static ushort VkOf(char c)
     {
-        if (c == '\\x1b') return 0x1B;
-        if (c == '\\r') return 0x0D;
-        if (c == '\\t') return 0x09;
-        if (c == '\\b') return 0x08;
+        if (c == (char)0x1B) return 0x1B;
+        if (c == (char)0x0D) return 0x0D;
+        if (c == (char)0x09) return 0x09;
+        if (c == (char)0x08) return 0x08;
         return 0;
     }
 
@@ -648,22 +638,35 @@ public static class WeaveWtKeys
             FreeConsole();
             return "conin:" + e;
         }
-        INPUT_RECORD[] recs = new INPUT_RECORD[keys.Length * 2];
-        for (int i = 0; i < keys.Length; i++)
+        // 20 字节/条：WORD EventType; WORD pad; BOOL bKeyDown; WORD repeat; WORD vk;
+        // WORD scan; WCHAR unicodeChar; DWORD controlKeyState（union 对齐 4，见上）。
+        const int REC = 20;
+        IntPtr buf = Marshal.AllocHGlobal(keys.Length * 2 * REC);
+        try
         {
-            char c = keys[i];
-            ushort vk = VkOf(c);
-            recs[i * 2].EventType = 1;
-            recs[i * 2].KeyEvent = new KEY_EVENT_RECORD { bKeyDown = true, wRepeatCount = 1, wVirtualKeyCode = vk, wVirtualScanCode = 0, UnicodeChar = c, dwControlKeyState = 0 };
-            recs[i * 2 + 1].EventType = 1;
-            recs[i * 2 + 1].KeyEvent = new KEY_EVENT_RECORD { bKeyDown = false, wRepeatCount = 1, wVirtualKeyCode = vk, wVirtualScanCode = 0, UnicodeChar = c, dwControlKeyState = 0 };
+            for (int i = 0; i < keys.Length; i++)
+            {
+                char c = keys[i];
+                ushort vk = VkOf(c);
+                for (int down = 0; down < 2; down++)
+                {
+                    IntPtr r = new IntPtr(buf.ToInt64() + (i * 2 + down) * REC);
+                    Marshal.WriteInt16(r, 0, 1);                  // EventType = KEY_EVENT
+                    Marshal.WriteInt16(r, 2, 0);                  // padding（union 对齐 4）
+                    Marshal.WriteInt32(r, 4, down == 0 ? 1 : 0);  // bKeyDown
+                    Marshal.WriteInt16(r, 8, 1);                  // wRepeatCount
+                    Marshal.WriteInt16(r, 10, (short)vk);         // wVirtualKeyCode
+                    Marshal.WriteInt16(r, 12, 0);                 // wVirtualScanCode
+                    Marshal.WriteInt16(r, 14, (short)c);          // UnicodeChar
+                    Marshal.WriteInt32(r, 16, 0);                 // dwControlKeyState
+                }
+            }
+            uint written;
+            bool ok = WriteConsoleInputW(h, buf, (uint)(keys.Length * 2), out written);
+            int err = Marshal.GetLastWin32Error();
+            return ok ? "ok:" + written : "write:" + err;
         }
-        uint written;
-        bool ok = WriteConsoleInputW(h, recs, (uint)recs.Length, out written);
-        int err = Marshal.GetLastWin32Error();
-        CloseHandle(h);
-        FreeConsole();
-        return ok ? "ok:" + written : "write:" + err;
+        finally { Marshal.FreeHGlobal(buf); CloseHandle(h); FreeConsole(); }
     }
 }`;
 

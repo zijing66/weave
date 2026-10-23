@@ -806,12 +806,16 @@ describe('随附图', () => {
 
 describe('attachedFilesFrom（剪贴板 / 拖放取文件）', () => {
   const f = (name: string, type: string): File => new File(['x'], name, { type });
-  const dt = (spec: { items?: { kind: string; type: string; file: File | null }[]; files?: File[] }): DataTransfer =>
+  const dt = (spec: {
+    items?: { kind: string; type: string; file: File | null; dir?: boolean }[];
+    files?: File[];
+  }): DataTransfer =>
     ({
       items: (spec.items ?? []).map((i) => ({
         kind: i.kind,
         type: i.type,
         getAsFile: () => i.file,
+        ...(i.dir === undefined ? {} : { webkitGetAsEntry: () => ({ isDirectory: i.dir }) }),
       })),
       files: spec.files ?? [],
     }) as unknown as DataTransfer;
@@ -825,6 +829,18 @@ describe('attachedFilesFrom（剪贴板 / 拖放取文件）', () => {
   it('桌面 files 兜底（items 空）', () => {
     const got = attachedFilesFrom(dt({ files: [f('a.jpg', 'image/jpeg'), f('b.gif', 'image/gif')] }));
     expect(got.map((x) => x.name)).toEqual(['a.jpg', 'b.gif']);
+  });
+
+  it('拖进来的文件夹不是上传件（size=0 的假 File 会占格再失败）', () => {
+    const got = attachedFilesFrom(
+      dt({
+        items: [
+          { kind: 'file', type: '', file: f('repo', ''), dir: true },
+          { kind: 'file', type: 'text/plain', file: f('notes.txt', 'text/plain'), dir: false },
+        ],
+      }),
+    );
+    expect(got.map((x) => x.name)).toEqual(['notes.txt']);
   });
 
   it('文字项不吞：只取 kind=file（图与普通文件都收，类型门在 stageFiles）', () => {
