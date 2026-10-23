@@ -41,6 +41,11 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* 禁 Android Chrome 的 font boosting：它按文本块密度选择性放大（徽标被
+       boost、旁边文字不被），正是「部分文字过大、比例失衡」的来源；界面已有
+       自己的缩放控制（font-scale），不需要浏览器再插一手。 */
+    text-size-adjust: none;
+    -webkit-text-size-adjust: none;
   }
   body {
     @apply bg-neutral-950 text-neutral-100 font-sans;

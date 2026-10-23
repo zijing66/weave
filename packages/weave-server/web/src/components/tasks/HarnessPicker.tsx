@@ -59,7 +59,7 @@ export function HarnessPicker({
       }}
       className="fixed z-50 w-64 rounded-lg border border-edge/[0.08] bg-neutral-900 p-1 shadow-mac"
     >
-      <p className="px-2 pb-1 pt-0.5 text-[10px] text-neutral-500">{t('tasks.harnessPickTitle')}</p>
+      <p className="px-2 pb-1 pt-0.5 text-10 text-neutral-500">{t('tasks.harnessPickTitle')}</p>
       <ul className="space-y-1 pb-1">
         {harnesses.map((harness) => {
           const ui = harnessUiOf(harness.id);
@@ -87,7 +87,7 @@ export function HarnessPicker({
                 <HarnessIcon harness={harness.id} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs text-neutral-200">{ui.label}</span>
-                  {why && <span className="mt-0.5 block text-[10px] leading-tight text-neutral-500">{why}</span>}
+                  {why && <span className="mt-0.5 block text-10 leading-tight text-neutral-500">{why}</span>}
                 </span>
               </button>
             </li>

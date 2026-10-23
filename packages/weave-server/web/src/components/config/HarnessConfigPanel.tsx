@@ -411,15 +411,15 @@ export function HarnessConfigPanel({
             </button>
           ))}
         </div>
-        <span className="font-mono text-[10px] text-neutral-600 break-all" title={t('cfg.fileHint')}>
+        <span className="font-mono text-10 text-neutral-600 break-all" title={t('cfg.fileHint')}>
           {view.path || '—'}
         </span>
-        {!view.exists && <span className="text-[10px] text-amber-400/80">{t('cfg.notExists')}</span>}
+        {!view.exists && <span className="text-10 text-amber-400/80">{t('cfg.notExists')}</span>}
         <div className="ml-auto flex items-center gap-2">
           {pendingCount > 0 && (
             <span
               title={pendingSummary}
-              className="cursor-help text-[11px] text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2"
+              className="cursor-help text-11 text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2"
             >
               {t('cfg.pending', { count: pendingCount })}
             </span>
@@ -427,7 +427,7 @@ export function HarnessConfigPanel({
           {pendingCount > 0 && (
             <button
               onClick={() => setEdits({})}
-              className="rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700"
+              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700"
             >
               {t('cfg.reset')}
             </button>
@@ -435,7 +435,7 @@ export function HarnessConfigPanel({
           <button
             disabled={busy || pendingCount === 0}
             onClick={() => void save()}
-            className="rounded-md bg-mac-accent px-3 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+            className="rounded-md bg-mac-accent px-3 py-1 text-11 font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
             {busy ? t('cfg.saving') : t('cfg.save')}
           </button>
@@ -449,14 +449,14 @@ export function HarnessConfigPanel({
         </div>
       </div>
 
-      {error && <p className="text-[11px] text-red-400">{t('cfg.saveFailed', { error })}</p>}
+      {error && <p className="text-11 text-red-400">{t('cfg.saveFailed', { error })}</p>}
 
       {/* 漂移 */}
       {view.drifted && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2">
           <FileWarning className="h-4 w-4 text-amber-400" />
           <span className="text-xs text-amber-200">{t('cfg.drift')}</span>
-          <span className="text-[11px] text-neutral-500">{t('cfg.driftHint')}</span>
+          <span className="text-11 text-neutral-500">{t('cfg.driftHint')}</span>
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() =>
@@ -470,13 +470,13 @@ export function HarnessConfigPanel({
                   onAccept: () => void profileAction({ action: 'acceptDrift', id: view.activeId }),
                 })
               }
-              className="rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700"
+              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-200 hover:bg-neutral-700"
             >
               {t('cfg.driftDiff')}
             </button>
             <button
               onClick={() => void profileAction({ action: 'acceptDrift', id: view.activeId })}
-              className="rounded-md bg-amber-500/20 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/30"
+              className="rounded-md bg-amber-500/20 px-2 py-1 text-11 text-amber-200 hover:bg-amber-500/30"
             >
               {t('cfg.driftAccept')}
             </button>
@@ -535,7 +535,7 @@ export function HarnessConfigPanel({
               key={f.key}
               onClick={() => setFilter(f.key)}
               className={cn(
-                'rounded-md px-2 py-0.5 text-[11px]',
+                'rounded-md px-2 py-0.5 text-11',
                 filter === f.key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
               )}
             >
@@ -545,13 +545,13 @@ export function HarnessConfigPanel({
         </div>
         <button
           onClick={() => setAllOpen(true)}
-          className="rounded-md px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          className="rounded-md px-2 py-1 text-11 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
         >
           {t('cfg.expandAll')}
         </button>
         <button
           onClick={() => setAllOpen(false)}
-          className="rounded-md px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          className="rounded-md px-2 py-1 text-11 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
         >
           {t('cfg.collapseAll')}
         </button>
@@ -561,7 +561,7 @@ export function HarnessConfigPanel({
             setRawText(view.liveText);
           }}
           className={cn(
-            'ml-auto rounded-md px-2 py-1 text-[11px]',
+            'ml-auto rounded-md px-2 py-1 text-11',
             rawMode ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
           )}
           title={t('cfg.rawHint')}
@@ -576,24 +576,24 @@ export function HarnessConfigPanel({
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             spellCheck={false}
-            className="w-full min-h-[40dvh] rounded-xl border border-edge/[0.08] bg-neutral-950/60 p-3 font-mono text-[11px] leading-5 text-neutral-200 focus:outline-none"
+            className="w-full min-h-[40dvh] rounded-xl border border-edge/[0.08] bg-neutral-950/60 p-3 font-mono text-11 leading-5 text-neutral-200 focus:outline-none"
           />
           <div className="flex items-center gap-2">
             <button
               disabled={busy}
               onClick={() => void saveRaw()}
-              className="rounded-md bg-mac-accent px-3 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+              className="rounded-md bg-mac-accent px-3 py-1 text-11 font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               {t('cfg.save')}
             </button>
             <button
               onClick={() => setRawText(view.liveText)}
-              className="rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700"
+              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700"
             >
               {t('cfg.reset')}
             </button>
             {rawInvalid && (
-              <span className="text-[11px] text-red-400">
+              <span className="text-11 text-red-400">
                 {catalog?.rawFormat === 'toml' ? t('cfg.invalidToml') : t('cfg.invalidJson')}
               </span>
             )}
@@ -601,7 +601,7 @@ export function HarnessConfigPanel({
         </div>
       ) : (
         <>
-          {tree.nodes.length === 0 && <p className="text-[11px] text-neutral-500">{t('cfg.empty')}</p>}
+          {tree.nodes.length === 0 && <p className="text-11 text-neutral-500">{t('cfg.empty')}</p>}
           {tree.nodes.length > 0 && (
             <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-1.5">
               <ConfigTree nodes={tree.nodes} handlers={treeHandlers} footer={envFooter} />
@@ -611,7 +611,7 @@ export function HarnessConfigPanel({
       )}
 
       {view.backups.length > 0 && (
-        <div className="flex items-center gap-2 text-[11px] text-neutral-600">
+        <div className="flex items-center gap-2 text-11 text-neutral-600">
           <span>{t('cfg.backups', { count: view.backups.length })}</span>
           <button
             onClick={() => void profileAction({ action: 'restoreBackup', backupId: view.backups[0] })}
@@ -696,12 +696,12 @@ function EnvVarPicker({
         placeholder={t('cfg.addEnvVar')}
         searchPlaceholder={t('cfg.search')}
         creatable
-        className="w-[38%] shrink-0 font-mono text-[11px]"
+        className="w-[38%] shrink-0 font-mono text-11"
       />
       <div className="min-w-0 flex-1">
-        {spec && <p className="truncate text-[11px] text-neutral-500">{spec.description}</p>}
+        {spec && <p className="truncate text-11 text-neutral-500">{spec.description}</p>}
         {spec && exists(picked) && (
-          <p className="text-[11px] text-neutral-600">{t('cfg.alreadySet')}</p>
+          <p className="text-11 text-neutral-600">{t('cfg.alreadySet')}</p>
         )}
       </div>
     </div>

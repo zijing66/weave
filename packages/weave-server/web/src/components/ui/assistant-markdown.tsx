@@ -26,15 +26,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
         '[&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 ' +
         '[&_strong]:font-semibold [&_strong]:text-neutral-100 [&_em]:italic ' +
         '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5 ' +
-        '[&_code]:rounded [&_code]:bg-neutral-950/60 [&_code]:px-1 [&_code]:py-px [&_code]:text-[11px] [&_code]:text-neutral-300 ' +
+        '[&_code]:rounded [&_code]:bg-neutral-950/60 [&_code]:px-1 [&_code]:py-px [&_code]:text-11 [&_code]:text-neutral-300 ' +
         '[&_pre]:my-1.5 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-edge/[0.06] [&_pre]:bg-neutral-950/60 [&_pre]:p-2 ' +
-        '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[11px] ' +
-        '[&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-[13px] [&_h1]:font-semibold ' +
+        '[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-11 ' +
+        '[&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-13 [&_h1]:font-semibold ' +
         '[&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-xs [&_h2]:font-semibold ' +
         '[&_h3]:mt-1.5 [&_h3]:mb-1 [&_h3]:text-xs [&_h3]:font-medium ' +
         '[&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-neutral-700 [&_blockquote]:pl-2 [&_blockquote]:text-neutral-400 ' +
         '[&_a]:text-blue-400 [&_a]:underline ' +
-        '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px] ' +
+        '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-11 ' +
         '[&_th]:border [&_th]:border-edge/[0.08] [&_th]:bg-neutral-950/40 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium ' +
         '[&_td]:border [&_td]:border-edge/[0.08] [&_td]:px-1.5 [&_td]:py-1 [&_td]:align-top ' +
         '[&_hr]:my-2 [&_hr]:border-edge/[0.08]'

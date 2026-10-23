@@ -34,6 +34,7 @@ import {
   Zap,
   Scale,
   Server,
+  ZoomIn,
   type LucideIcon,
 } from 'lucide-react';
 import { fetchAiModels } from '@/lib/ai';
@@ -55,6 +56,13 @@ import {
   type PushChannelState,
 } from '@/lib/push';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
+import {
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  FONT_SCALE_STEP,
+  setFontScale,
+  useFontScale,
+} from '@/lib/font-scale';
 
 /** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events/sessions——本地扩展。 */
 type DaemonSettingsExt = DaemonSettings & {
@@ -112,7 +120,7 @@ function SettingsSection(props: { id: string; icon: LucideIcon; title: string; c
 
 /** 字段标签（AI 两卡的「API 地址 / 模型」这类行内小标）。 */
 function FieldLabel(props: { children: ReactNode }) {
-  return <span className="block text-[11px] text-neutral-500">{props.children}</span>;
+  return <span className="block text-11 text-neutral-500">{props.children}</span>;
 }
 
 interface SettingsModalProps {
@@ -175,7 +183,7 @@ function SecretKeyInput(props: {
         <button
           type="button"
           onClick={props.onClear}
-          className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700"
+          className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700"
         >
           {labels.clear}
         </button>
@@ -220,6 +228,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [confirmClean, setConfirmClean] = useState<'unref' | string | null>(null);
   const fb = useActionFeedback();
   const { show } = useToast();
+  const scale = useFontScale();
   /** 左栏导航高亮：滚动跟随——最后一个越过容器顶部阈值的分段；触底则钉在最后一段。 */
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [activeSection, setActiveSection] = useState('general');
@@ -531,13 +540,42 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.language')}
             </label>
-            <p className="text-[11px] text-neutral-500">{t('settings.languageHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.languageHint')}</p>
             <Combobox
               className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={settings?.locale ?? locale}
               options={SUPPORTED_LOCALES.map((l) => ({ value: l, label: LOCALE_NATIVE_NAMES[l] }))}
               onChange={(v) => setSettings((s) => (s ? { ...s, locale: v as Locale } : s))}
             />
+          </div>
+
+          {/* 界面缩放：纯本机显示偏好（localStorage），即调即生效，不进保存流程。 */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <ZoomIn className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.fontScale')}
+            </label>
+            <p className="text-11 text-neutral-500">{t('settings.fontScaleHint')}</p>
+            <div className="flex items-center gap-2">
+              <NumberStepper
+                value={scale}
+                min={FONT_SCALE_MIN}
+                max={FONT_SCALE_MAX}
+                step={FONT_SCALE_STEP}
+                onChange={setFontScale}
+                title={t('settings.fontScale')}
+              />
+              <span className="text-11 text-neutral-500">%</span>
+              {scale !== 100 && (
+                <button
+                  type="button"
+                  onClick={() => setFontScale(100)}
+                  className="rounded-lg bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700"
+                >
+                  {t('settings.fontScaleReset')}
+                </button>
+              )}
+            </div>
           </div>
           </SettingsSection>
 
@@ -548,7 +586,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <Terminal className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.defaultTerminal')}
             </label>
-            <p className="text-[11px] text-neutral-500">{t('settings.defaultTerminalHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.defaultTerminalHint')}</p>
             <Combobox
               className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={preset}
@@ -570,7 +608,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <label className="text-xs font-medium text-neutral-300">
                 {t('settings.customCommand')}
               </label>
-              <p className="text-[11px] text-neutral-500">
+              <p className="text-11 text-neutral-500">
                 <code className="text-neutral-400">{'{path}'}</code> {t('settings.pathHint')}
                 <code className="text-neutral-400"> alacritty -e cd {'{path}'}</code>
               </p>
@@ -604,7 +642,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-[11px] text-neutral-500">{t('settings.hooksHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.hooksHint')}</p>
           </div>
 
           <div className="space-y-1.5">
@@ -623,7 +661,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-[11px] text-neutral-500">{t('settings.launchOnLoginHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.launchOnLoginHint')}</p>
           </div>
           </SettingsSection>
 
@@ -634,7 +672,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <Database className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.retentionDays')}
             </label>
-            <p className="text-[11px] text-neutral-500">{t('settings.retentionDaysHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.retentionDaysHint')}</p>
             <div className="flex items-center gap-2">
               <NumberStepper
                 value={settings?.events?.retentionDays ?? DEFAULT_RETENTION_DAYS}
@@ -645,7 +683,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 }
                 title={t('settings.retentionDays')}
               />
-              <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
+              <span className="text-11 text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
           </div>
 
@@ -655,7 +693,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <Clock className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.sessionIdleDays')}
             </label>
-            <p className="text-[11px] text-neutral-500">
+            <p className="text-11 text-neutral-500">
               {t('settings.sessionIdleDaysHint', {
                 n: settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS,
               })}
@@ -670,7 +708,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 }
                 title={t('settings.sessionIdleDays')}
               />
-              <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
+              <span className="text-11 text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
           </div>
 
@@ -682,14 +720,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <Database className="h-3.5 w-3.5 text-neutral-500" />
                 {t('settings.cleanStorage')}
               </label>
-              <p className="text-[11px] text-neutral-500">{t('settings.cleanStorageHint')}</p>
+              <p className="text-11 text-neutral-500">{t('settings.cleanStorageHint')}</p>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-neutral-400">
+                <span className="text-11 text-neutral-400">
                   {t('settings.cleanUnrefStat', { n: unref.count, size: fmtBytes(unref.bytes) })}
                 </span>
                 <span className="ml-auto flex items-center gap-2">
                   {cleaning && cleaning.total > 1 && (
-                    <span className="text-[11px] text-blue-300">
+                    <span className="text-11 text-blue-300">
                       {t('settings.cleaningProgress', { done: cleaning.done, total: cleaning.total })}
                     </span>
                   )}
@@ -700,7 +738,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       type="button"
                       disabled={unref.count === 0}
                       onClick={() => setConfirmClean('unref')}
-                      className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+                      className="rounded-lg bg-neutral-800 px-2.5 py-1 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
                     >
                       {t('settings.cleanUnrefBtn')}
                     </button>
@@ -709,14 +747,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </div>
               {usage.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-[11px] text-neutral-500">{t('settings.cleanBySession')}</p>
+                  <p className="text-11 text-neutral-500">{t('settings.cleanBySession')}</p>
                   <ul className="max-h-40 space-y-1 overflow-y-auto pr-1">
                     {usage.map((u) => (
                       <li key={u.sessionId} className="flex items-center gap-2 rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1">
-                        <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-300">
+                        <span className="min-w-0 flex-1 truncate text-11 text-neutral-300">
                           {sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
                         </span>
-                        <span className="shrink-0 text-[10px] text-neutral-500">
+                        <span className="shrink-0 text-10 text-neutral-500">
                           {t('settings.cleanSessionStat', { n: u.count, size: fmtBytes(u.bytes) })}
                         </span>
                         {cleaning ? (
@@ -756,7 +794,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-[11px] text-neutral-500">
+            <p className="text-11 text-neutral-500">
               {pushState === 'insecure'
                 ? t('settings.pushInsecure')
                 : pushState === 'unsupported'
@@ -772,21 +810,21 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <Globe className="h-3.5 w-3.5 text-neutral-500" />
                 {t('settings.accessUrls')}
               </label>
-              <p className="text-[11px] text-neutral-500">{t('settings.accessUrlsHint')}</p>
+              <p className="text-11 text-neutral-500">{t('settings.accessUrlsHint')}</p>
               <ul className="space-y-1">
                 {urls.map((u) => (
                   <li key={u.url} className="flex items-center gap-1.5">
                     <span
                       className={
                         u.protocol === 'https'
-                          ? 'rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400'
-                          : 'rounded bg-edge/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-neutral-400'
+                          ? 'rounded bg-emerald-500/15 px-1.5 py-0.5 text-10 font-medium text-emerald-400'
+                          : 'rounded bg-edge/[0.06] px-1.5 py-0.5 text-10 font-medium text-neutral-400'
                       }
                     >
                       {u.scope === 'lan' ? t('settings.urlLan') : t('settings.urlLocal')} ·{' '}
                       {u.protocol.toUpperCase()}
                     </span>
-                    <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1 text-[11px] text-neutral-300">
+                    <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1 text-11 text-neutral-300">
                       {u.url}
                     </code>
                     <button
@@ -805,7 +843,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       className="shrink-0 rounded p-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
                     >
                       {copiedUrl === u.url ? (
-                        <span className="text-[10px] text-emerald-400">✓</span>
+                        <span className="text-10 text-emerald-400">✓</span>
                       ) : (
                         <Copy className="h-3 w-3" />
                       )}
@@ -892,7 +930,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   }
                   disabled={fb.stateOf('ai-models') === 'loading'}
                   title={t('settings.aiModelFetchTip')}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                  className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
                 >
                   <FeedbackIcon
                     state={fb.stateOf('ai-models')}
@@ -924,7 +962,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 hide: t('settings.aiApiKeyHide'),
               }}
             />
-            <p className="text-[11px] text-neutral-500">{t('settings.aiHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.aiHint')}</p>
           </div>
 
           {/* 决策模型（Jev 兼容 / System One）：编排条件边的判断引擎——配了先问它，
@@ -992,7 +1030,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 hide: t('settings.aiApiKeyHide'),
               }}
             />
-            <p className="text-[11px] text-neutral-500">{t('settings.decisionHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.decisionHint')}</p>
           </div>
           </SettingsSection>
 
@@ -1005,7 +1043,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <FileCode className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.htmlExport')}
             </label>
-            <p className="text-[11px] text-neutral-500">{t('settings.htmlExportHint')}</p>
+            <p className="text-11 text-neutral-500">{t('settings.htmlExportHint')}</p>
             <div className="space-y-2">
               {htmlExport.profiles.map((profile) => (
                 <div
@@ -1019,7 +1057,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       placeholder={t('settings.htmlExportName')}
                       className="min-w-0 flex-1 rounded bg-neutral-800 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
-                    <label className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
+                    <label className="flex shrink-0 items-center gap-1 text-11 text-neutral-400">
                       <input
                         type="radio"
                         name="htmlExportActive"
@@ -1044,18 +1082,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     placeholder={t('settings.htmlExportHead')}
                     spellCheck={false}
                     rows={6}
-                    className="w-full resize-y rounded bg-neutral-950 border border-edge/[0.08] px-2 py-1.5 font-mono text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full resize-y rounded bg-neutral-950 border border-edge/[0.08] px-2 py-1.5 font-mono text-11 text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
               ))}
               {htmlExport.profiles.length === 0 && (
-                <p className="text-[11px] text-neutral-600">{t('settings.htmlExportEmpty')}</p>
+                <p className="text-11 text-neutral-600">{t('settings.htmlExportEmpty')}</p>
               )}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={addProfile}
-                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700"
+                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-11 text-neutral-200 hover:bg-neutral-700"
                 >
                   {t('settings.htmlExportAdd')}
                 </button>
@@ -1063,7 +1101,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   type="button"
                   onClick={() => setActiveHtmlExport(null)}
                   disabled={htmlExport.activeId === null}
-                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                  className="rounded-lg bg-neutral-800 px-2.5 py-1 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
                 >
                   {t('settings.htmlExportNone')}
                 </button>
@@ -1073,7 +1111,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
           </SettingsSection>
 
-          {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}
+          {error && <p className="text-11 text-red-400 break-all">{error}</p>}
           </div>
         </div>
 
@@ -1099,7 +1137,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         />
 
         <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 flex items-center gap-2 frosted">
-          <span className="flex-1 text-[11px] text-neutral-500">
+          <span className="flex-1 text-11 text-neutral-500">
             {settings === null && !error ? t('common.loading') : ''}
           </span>
           <button

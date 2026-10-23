@@ -601,7 +601,7 @@ type MindmapFlowNode = Node<MindmapData, 'mindmap'>;
 const RunningGroupsCtx = createContext<ReadonlySet<string>>(new Set());
 
 function tagCls(base: string): string {
-  return `${base} rounded px-1 py-px text-[10px] leading-tight`;
+  return `${base} rounded px-1 py-px text-10 leading-tight`;
 }
 
 /** 当前使用的 model 显著 tag（会话 SessionStart / 子代理 resolvedModel）。 */
@@ -609,7 +609,7 @@ function ModelTag({ model }: { model: string }) {
   const short = model.replace(/\[.*$/, '');
   return (
     <span
-      className="rounded border border-indigo-500/40 bg-indigo-500/15 px-1 py-px text-[10px] font-medium leading-tight text-indigo-200"
+      className="rounded border border-indigo-500/40 bg-indigo-500/15 px-1 py-px text-10 font-medium leading-tight text-indigo-200"
       title={model}
     >
       {short}
@@ -697,7 +697,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             </span>
           )}
           {node.model && <ModelTag model={node.model} />}
-          <span className="text-[10px] text-neutral-500">
+          <span className="text-10 text-neutral-500">
             {t('catbar.items', { n: g.events.length })}
             {startedAt ? ` · ${formatTime(startedAt)}` : ''}
           </span>
@@ -736,7 +736,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             </span>
           )}
           {node.agentId && (
-            <span className="text-[10px] text-neutral-500">agent …{node.agentId.slice(-8)}</span>
+            <span className="text-10 text-neutral-500">agent …{node.agentId.slice(-8)}</span>
           )}
           {node.model && <ModelTag model={node.model} />}
           {node.agentRunning && (
@@ -744,12 +744,12 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
               {t('hooks.mindmap.agentRunning')}
             </span>
           )}
-          <span className="text-[10px] text-neutral-500">{formatTime(e.createdAt)}</span>
+          <span className="text-10 text-neutral-500">{formatTime(e.createdAt)}</span>
         </span>
         {summary && (
           <span
             className={cn(
-              'mt-0.5 block text-[11px] text-neutral-400',
+              'mt-0.5 block text-11 text-neutral-400',
               isSub ? 'line-clamp-2 text-orange-100/70' : 'truncate',
             )}
             title={summary}
@@ -778,10 +778,10 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           <span className={tagCls('bg-amber-900/40 text-amber-300')}>
             {t('hooks.mindmap.toolCluster')}
           </span>
-          <span className="text-[10px] text-neutral-400">×{evs.length}</span>
-          <span className="text-[10px] text-neutral-500">{formatTime(evs[0]!.createdAt)}</span>
+          <span className="text-10 text-neutral-400">×{evs.length}</span>
+          <span className="text-10 text-neutral-500">{formatTime(evs[0]!.createdAt)}</span>
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-neutral-400" title={all}>
+        <span className="mt-0.5 block truncate text-11 text-neutral-400" title={all}>
           {top}
           {ranked.length > 3 ? ` · +${ranked.length - 3}` : ''}
         </span>
@@ -797,7 +797,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             subagent
           </span>
           {node.agentId && (
-            <span className="text-[10px] text-neutral-500">agent …{node.agentId.slice(-8)}</span>
+            <span className="text-10 text-neutral-500">agent …{node.agentId.slice(-8)}</span>
           )}
           {node.model && <ModelTag model={node.model} />}
           {node.agentRunning && (
@@ -806,7 +806,7 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
             </span>
           )}
         </span>
-        <span className="mt-0.5 block text-[11px] text-neutral-400">
+        <span className="mt-0.5 block text-11 text-neutral-400">
           {t('hooks.mindmap.agentPending')}
         </span>
       </>
@@ -838,12 +838,12 @@ function MindmapNode({ data }: NodeProps<MindmapFlowNode>) {
           <span className={tagCls('bg-emerald-900/40 text-emerald-300')}>
             {t('hooks.mindmap.dispatchTag')}
           </span>
-          <span className="truncate text-[10px] text-neutral-400" title={data.ruleName ?? d.ruleId}>
+          <span className="truncate text-10 text-neutral-400" title={data.ruleName ?? d.ruleId}>
             {data.ruleName ?? d.ruleId}
           </span>
           <StatusDot status={d.status} />
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-neutral-400" title={d.prompt}>
+        <span className="mt-0.5 block truncate text-11 text-neutral-400" title={d.prompt}>
           {d.prompt}
         </span>
       </>
@@ -906,7 +906,7 @@ function StatusDot({ status }: { status: string }) {
             : 'bg-amber-400';
   const key = STATUS_LABEL[status];
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-neutral-500">
+    <span className="inline-flex items-center gap-1 text-10 text-neutral-500">
       <span className={`h-1.5 w-1.5 rounded-full ${tone}`} />
       {key ? t(key) : status}
     </span>
@@ -1197,21 +1197,21 @@ export function LifecycleMindmap({
           <div className="flex flex-wrap gap-1.5">
             {g.open &&
               (runningGroups.has(g.id) ? (
-                <span className="rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                <span className="rounded bg-emerald-900/40 px-1 text-10 text-emerald-300">
                   {t('hooks.mindmap.runningTag')}
                 </span>
               ) : (
-                <span className="rounded bg-red-900/40 px-1 text-[10px] text-red-300">
+                <span className="rounded bg-red-900/40 px-1 text-10 text-red-300">
                   {t('hooks.mindmap.openTag')}
                 </span>
               ))}
             {g.subagentStops > 0 && (
-              <span className="rounded bg-orange-900/40 px-1 text-[10px] text-orange-300">
+              <span className="rounded bg-orange-900/40 px-1 text-10 text-orange-300">
                 {t('hooks.mindmap.subagentCount', { n: g.subagentStops })}
               </span>
             )}
             {g.agentsDispatched > 0 && (
-              <span className="rounded bg-fuchsia-900/40 px-1 text-[10px] text-fuchsia-300">
+              <span className="rounded bg-fuchsia-900/40 px-1 text-10 text-fuchsia-300">
                 {t('hooks.mindmap.agentDispatched', { n: g.agentsDispatched })}
               </span>
             )}
@@ -1282,7 +1282,7 @@ export function LifecycleMindmap({
           <p className="whitespace-pre-wrap break-all text-neutral-100">{summarizeEvent(e)}</p>
           {d.toolInput != null && (
             <div>
-              <p className="text-[9px] uppercase tracking-wide text-neutral-600">input</p>
+              <p className="text-9 uppercase tracking-wide text-neutral-600">input</p>
               <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-400">
                 {json(d.toolInput)}
               </pre>
@@ -1290,7 +1290,7 @@ export function LifecycleMindmap({
           )}
           {d.toolResponse != null && (
             <div>
-              <p className="text-[9px] uppercase tracking-wide text-neutral-600">response</p>
+              <p className="text-9 uppercase tracking-wide text-neutral-600">response</p>
               <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-400">
                 {json(d.toolResponse)}
               </pre>
@@ -1310,7 +1310,7 @@ export function LifecycleMindmap({
         <>
           <div className="flex flex-wrap gap-1.5">
             {[...counts.entries()].map(([name, c]) => (
-              <span key={name} className="rounded bg-amber-900/40 px-1 text-[10px] text-amber-300">
+              <span key={name} className="rounded bg-amber-900/40 px-1 text-10 text-amber-300">
                 {name} ×{c}
               </span>
             ))}
@@ -1344,7 +1344,7 @@ export function LifecycleMindmap({
           <p className="whitespace-pre-wrap break-all text-neutral-100">{d.prompt}</p>
           {d.output && (
             <div>
-              <p className="text-[9px] uppercase tracking-wide text-neutral-600">output</p>
+              <p className="text-9 uppercase tracking-wide text-neutral-600">output</p>
               <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-neutral-500">
                 {d.output}
               </pre>
@@ -1364,7 +1364,7 @@ export function LifecycleMindmap({
     <div className={cn('space-y-2', focusGroupId && 'h-full')}>
       {!focusGroupId && (
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-neutral-500">{t('hooks.mindmap.pickSession')}</label>
+          <label className="text-11 text-neutral-500">{t('hooks.mindmap.pickSession')}</label>
           <Combobox
             value={sessionId}
             onChange={(v) => onSelect?.(v)}
@@ -1374,10 +1374,10 @@ export function LifecycleMindmap({
               label: sessionLabel(s.title, s.sessionId),
             }))}
           />
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-11 text-neutral-500">
             {events === null ? t('hooks.loading') : t('catbar.items', { n: groups.length })}
           </span>
-          <span className="ml-auto text-[11px] text-neutral-600">{t('hooks.mindmap.hint')}</span>
+          <span className="ml-auto text-11 text-neutral-600">{t('hooks.mindmap.hint')}</span>
         </div>
       )}
 
@@ -1448,7 +1448,7 @@ export function LifecycleMindmap({
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            <div className="space-y-2 overflow-y-auto px-3 py-2 text-[11px]">
+            <div className="space-y-2 overflow-y-auto px-3 py-2 text-11">
               {renderDetail(detailNode)}
             </div>
           </div>

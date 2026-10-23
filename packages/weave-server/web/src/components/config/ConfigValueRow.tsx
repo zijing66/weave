@@ -64,7 +64,7 @@ export function ConfigValueRow({
   const body = (() => {
     if (managed) {
       return (
-        <div className="flex items-center gap-1.5 text-[11px] text-neutral-500" title={t('cfg.managedHint')}>
+        <div className="flex items-center gap-1.5 text-11 text-neutral-500" title={t('cfg.managedHint')}>
           <Lock className="h-3 w-3" />
           <span>{t('cfg.managed')}</span>
         </div>
@@ -84,7 +84,7 @@ export function ConfigValueRow({
       return (
         <button
           onClick={() => onChange({ value: empty })}
-          className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-200 hover:border-edge/[0.3]"
+          className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-11 text-neutral-400 hover:text-neutral-200 hover:border-edge/[0.3]"
         >
           <Plus className="h-3 w-3" />
           {t('cfg.write')}
@@ -164,18 +164,18 @@ export function ConfigValueRow({
       <div className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-neutral-800/30">
         <span
           className={cn(
-            'shrink-0 truncate font-mono text-[11px] leading-6',
+            'shrink-0 truncate font-mono text-11 leading-6',
             set ? 'text-neutral-200' : 'text-neutral-500',
           )}
           title={spec.key}
         >
           {label}
         </span>
-        <span className="shrink-0 pt-0.5 text-[11px] leading-6 text-neutral-600">=</span>
+        <span className="shrink-0 pt-0.5 text-11 leading-6 text-neutral-600">=</span>
         <div className="min-w-0 flex-1">{body}</div>
         <div className="flex shrink-0 items-center gap-1 pt-1">
           {spec.deprecated && (
-            <span className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] text-red-300">{t('cfg.deprecated')}</span>
+            <span className="rounded bg-red-500/10 px-1 py-0.5 text-10 text-red-300">{t('cfg.deprecated')}</span>
           )}
           <button
             type="button"
@@ -212,7 +212,7 @@ export function ConfigValueRow({
       {open && (
         <p
           style={{ paddingLeft: 6 }}
-          className="pb-1 pr-2 text-[11px] leading-relaxed text-neutral-500"
+          className="pb-1 pr-2 text-11 leading-relaxed text-neutral-500"
         >
           {spec.description}
           <span className="ml-1 text-neutral-600">{spec.group}</span>
@@ -234,7 +234,7 @@ function ShapedField({ count, label, children }: { count: number; label: string;
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200"
+        className="flex items-center gap-1 rounded px-1 py-0.5 text-11 text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200"
         title={t('cfg.shapedToggle')}
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -528,20 +528,20 @@ function EntryNode({
             className={cn(INPUT_CLS, 'max-w-[180px] font-mono')}
           />
         ) : (
-          <span className="shrink-0 truncate font-mono text-[11px] leading-6 text-neutral-500">{label}</span>
+          <span className="shrink-0 truncate font-mono text-11 leading-6 text-neutral-500">{label}</span>
         )}
         {container ? (
           !open && (
-            <span className="pt-1 text-[10px] text-neutral-600">
+            <span className="pt-1 text-10 text-neutral-600">
               {t('cfg.entryCount', { count })}
             </span>
           )
         ) : (
           <>
-            <span className="shrink-0 pt-1 text-[11px] text-neutral-600">=</span>
+            <span className="shrink-0 pt-1 text-11 text-neutral-600">=</span>
             <div className="min-w-0 flex-1">
               {locked ? (
-                <span className="block truncate font-mono text-[11px] leading-6 text-neutral-400">
+                <span className="block truncate font-mono text-11 leading-6 text-neutral-400">
                   {textOf(value)}
                 </span>
               ) : (
@@ -673,7 +673,7 @@ function ValueNode({
           />
         ) : (
           <span
-            className="shrink-0 truncate font-mono text-[10px] leading-6 text-neutral-500"
+            className="shrink-0 truncate font-mono text-10 leading-6 text-neutral-500"
             title={spec.description || name}
           >
             {name}
@@ -681,13 +681,13 @@ function ValueNode({
         )}
         {container ? (
           !open && (
-            <span className="pt-1 text-[10px] text-neutral-600">
+            <span className="pt-1 text-10 text-neutral-600">
               {t('cfg.entryCount', { count })}
             </span>
           )
         ) : (
           <>
-            <span className="shrink-0 pt-1 text-[11px] text-neutral-600">=</span>
+            <span className="shrink-0 pt-1 text-11 text-neutral-600">=</span>
             <div className="min-w-0 flex-1">
               <PlainControl spec={spec} value={value} onChange={onChange} compact />
             </div>
@@ -763,7 +763,7 @@ function AddButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-[11px] text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
+      className="inline-flex items-center gap-1 rounded-md border border-dashed border-edge/[0.14] px-2 py-0.5 text-11 text-neutral-400 hover:border-edge/[0.3] hover:text-neutral-200"
     >
       <Plus className="h-3 w-3" />
       {t('cfg.addEntry')}
@@ -851,7 +851,7 @@ function JsonField({ value, onCommit }: { value: unknown; onCommit: (next: unkno
         className={cn(INPUT_CLS, 'font-mono')}
       />
       {parsed.error === 'invalidJson' && (
-        <p className="mt-0.5 text-[10px] text-red-400">{t('cfg.invalidJson')}</p>
+        <p className="mt-0.5 text-10 text-red-400">{t('cfg.invalidJson')}</p>
       )}
     </div>
   );

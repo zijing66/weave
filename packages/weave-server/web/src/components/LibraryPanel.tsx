@@ -515,7 +515,7 @@ export function LibraryPanel({
           {!noTemplates && (
             <button
               onClick={toggleAll}
-              className="ml-auto inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
+              className="ml-auto inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
               title={
                 anyCollapsed ? t('library.expandAllTip') : t('library.collapseAllTip')
               }
@@ -537,13 +537,13 @@ export function LibraryPanel({
           ) : (
             <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           )}
-          <span className="text-[11px] text-neutral-400">
+          <span className="text-11 text-neutral-400">
             {t('library.installTo')}{' '}
             <span className={cn('font-semibold', scope === 'user' ? 'text-emerald-300' : 'text-blue-300')}>
               {scope === 'user' ? t('library.scopeGlobal') : t('library.scopeProject')}
             </span>
           </span>
-          <span className="ml-auto text-[11px] text-neutral-600 max-lg:ml-0">
+          <span className="ml-auto text-11 text-neutral-600 max-lg:ml-0">
             {t('library.followsSelection')}
           </span>
         </div>
@@ -691,7 +691,7 @@ export function LibraryPanel({
             <p className="text-xs text-neutral-500">
               {t('library.noTemplates', { name: categoryLabel(category, t) })}
             </p>
-            <p className="text-[11px] text-neutral-600 mt-0.5">
+            <p className="text-11 text-neutral-600 mt-0.5">
               {t('library.noTemplatesHint')}
             </p>
           </div>
@@ -730,7 +730,7 @@ export function LibraryPanel({
             {/* 批量条：勾了才出现，贴在这块滚动区的底边，选在列表深处也够得着 */}
             {pickedSkills.length > 0 && (
               <div className="sticky bottom-0 z-10 flex items-center gap-2 rounded-lg border border-edge/[0.08] bg-neutral-900/95 px-2 py-1.5 backdrop-blur">
-                <span className="text-[11px] text-neutral-300">
+                <span className="text-11 text-neutral-300">
                   {t('library.batchPicked', { n: pickedSkills.length })}
                 </span>
                 <button
@@ -738,7 +738,7 @@ export function LibraryPanel({
                   onClick={() =>
                     setPicked(new Set(skills.filter(pickable).map((s) => s.dirPath)))
                   }
-                  className="text-[11px] text-neutral-500 hover:text-neutral-300"
+                  className="text-11 text-neutral-500 hover:text-neutral-300"
                   title={t('library.selectAllTip')}
                 >
                   {t('library.selectAll')}
@@ -746,7 +746,7 @@ export function LibraryPanel({
                 <button
                   type="button"
                   onClick={() => setPicked(new Set())}
-                  className="text-[11px] text-neutral-500 hover:text-neutral-300"
+                  className="text-11 text-neutral-500 hover:text-neutral-300"
                 >
                   {t('library.clearPicked')}
                 </button>
@@ -755,7 +755,7 @@ export function LibraryPanel({
                   disabled={batchInstalling || !skillVerdict.ok}
                   onClick={runBatchInstall}
                   title={reasonTitle(skillVerdict)}
-                  className="ml-auto inline-flex items-center gap-1 rounded bg-blue-900/40 px-2 py-0.5 text-[11px] text-blue-300 hover:bg-blue-900/60 disabled:opacity-40 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                  className="ml-auto inline-flex items-center gap-1 rounded bg-blue-900/40 px-2 py-0.5 text-11 text-blue-300 hover:bg-blue-900/60 disabled:opacity-40 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
                 >
                   <FeedbackIcon
                     state={fb.stateOf('lib-batch-install')}
@@ -783,7 +783,7 @@ export function LibraryPanel({
                         toggleGroup(key);
                       }
                     }}
-                    className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none"
+                    className="flex items-center gap-1 text-11 text-neutral-600 font-mono mb-0.5 cursor-pointer select-none hover:text-neutral-400 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 [&_svg]:pointer-events-none"
                     title={group || t('library.rootName')}
                   >
                     {collapsed ? (
@@ -857,7 +857,7 @@ export function LibraryPanel({
                 capabilitiesOf(cat, capabilities).surfaces[0]?.harness ?? 'claude';
               return (
                 <div key={cat} className="mb-1">
-                  <div className="flex items-center gap-1 text-[11px] text-neutral-600 font-mono mb-0.5">
+                  <div className="flex items-center gap-1 text-11 text-neutral-600 font-mono mb-0.5">
                     <Folder className="h-3 w-3 shrink-0 text-emerald-500/60" />
                     <span className="truncate">{cat}</span>
                     <Badge className="shrink-0">{items.length}</Badge>
@@ -1024,7 +1024,7 @@ export function LibraryPanel({
                     >
                       {pl.key ?? pl.name}
                     </span>
-                    <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+                    <span className="shrink-0 font-mono text-10 text-neutral-500">
                       v{pl.version}
                     </span>
                     {/* mods 按 CC 插件管线安装（toolkit isCcPluginPack），徽标同口径 */}
@@ -1045,7 +1045,7 @@ export function LibraryPanel({
                     <Badge className={cn('shrink-0', KIND_STYLES[pl.kind])}>
                       {t(KIND_KEY[pl.kind])}
                     </Badge>
-                    <span className="shrink-0 text-[10px] text-neutral-600">
+                    <span className="shrink-0 text-10 text-neutral-600">
                       {t('toolkit.targets', { targets: pl.targets.join('+') })}
                     </span>
                     <span
@@ -1082,14 +1082,14 @@ export function LibraryPanel({
                                 show('success', t('library.packInstalled', { name: pack.name })),
                               )
                             }
-                            className="rounded bg-blue-900/50 px-2 py-0.5 text-[10px] text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
+                            className="rounded bg-blue-900/50 px-2 py-0.5 text-10 text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
                           >
                             {packBusy ? t('library.installing') : t('library.install')}
                           </button>
                         )
                       ) : (
                         <span
-                          className="text-[10px] text-neutral-600"
+                          className="text-10 text-neutral-600"
                           title={t('library.pluginNotInToolkit')}
                         >
                           —
@@ -1101,13 +1101,13 @@ export function LibraryPanel({
                   {expanded && (
                     <div className="pl-4 space-y-1">
                       {pl.description ? (
-                        <p className="text-[11px] text-neutral-500" title={pl.description}>
+                        <p className="text-11 text-neutral-500" title={pl.description}>
                           {pl.description}
                         </p>
                       ) : null}
                       <div className="flex flex-wrap items-center gap-1">
                         {pl.components.map((c) => (
-                          <Badge key={c} variant="other" className="px-1 text-[10px]">
+                          <Badge key={c} variant="other" className="px-1 text-10">
                             {c}
                           </Badge>
                         ))}
@@ -1115,7 +1115,7 @@ export function LibraryPanel({
                       {pl.skills.length > 0 && (
                         <div>
                           <p
-                            className="mb-0.5 text-[10px] text-neutral-600"
+                            className="mb-0.5 text-10 text-neutral-600"
                             title={t('library.pluginSkillsFollowTip')}
                           >
                             {t('library.pluginSkillsLabel')}
@@ -1125,7 +1125,7 @@ export function LibraryPanel({
                               <Badge
                                 key={sname}
                                 variant="skill"
-                                className="px-1.5 text-[10px]"
+                                className="px-1.5 text-10"
                                 title={t('library.pluginSkillsFollowTip')}
                               >
                                 {sname}
@@ -1134,7 +1134,7 @@ export function LibraryPanel({
                           </div>
                         </div>
                       )}
-                      <p className="text-[10px] text-neutral-600">
+                      <p className="text-10 text-neutral-600">
                         <span className="text-neutral-500">
                           {t('library.pluginSourceDir')}
                         </span>{' '}
@@ -1226,7 +1226,7 @@ function MarketSourceBadge({ source }: { source: MarketItem['source'] }) {
     builtin: { label: t('toolkit.prov.builtin'), variant: 'helper' },
   }[source];
   return (
-    <Badge variant={cfg.variant} className="shrink-0 px-1.5 text-[10px]">
+    <Badge variant={cfg.variant} className="shrink-0 px-1.5 text-10">
       {cfg.label}
     </Badge>
   );
@@ -1256,7 +1256,7 @@ function MarketStatusBadge({ status }: { status?: MarketUpdateStatus }) {
     unknown: { label: t('library.statusUnknown'), cls: 'text-neutral-400 bg-neutral-800' },
   }[status];
   return (
-    <Badge className={cn('shrink-0 px-1.5 text-[10px]', cfg.cls)}>{cfg.label}</Badge>
+    <Badge className={cn('shrink-0 px-1.5 text-10', cfg.cls)}>{cfg.label}</Badge>
   );
 }
 
@@ -1317,7 +1317,7 @@ function MarketCard({
               }}
               disabled={migrateBusy}
               title={t('library.migrateTip')}
-              className="rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-900/30 hover:bg-amber-900/50 disabled:opacity-40"
+              className="rounded px-1.5 py-0.5 text-10 text-amber-300 bg-amber-900/30 hover:bg-amber-900/50 disabled:opacity-40"
             >
               {migrateBusy ? t('library.migrating') : t('library.migrate')}
             </button>
@@ -1351,14 +1351,14 @@ function MarketCard({
             <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
               {tag}
               {item.tags![tag]! > 1 && (
-                <span className="ml-1 tabular-nums text-[10px] opacity-70">
+                <span className="ml-1 tabular-nums text-10 opacity-70">
                   ×{item.tags![tag]}
                 </span>
               )}
             </span>
           ))}
         {item.source === 'git' && (item.origin || item.importedAt) && (
-          <span className="ml-auto text-[10px] text-neutral-600 truncate">
+          <span className="ml-auto text-10 text-neutral-600 truncate">
             {item.origin}
             {item.origin && item.importedAt ? ' · ' : ''}
             {item.importedAt
@@ -1426,13 +1426,13 @@ function AgentToggle({
   )?.dest?.[scope];
   return (
     <div className="flex items-center gap-1 mb-1 max-lg:flex-wrap">
-      <span className="text-[11px] text-neutral-500 shrink-0">{t('library.installTarget')}</span>
+      <span className="text-11 text-neutral-500 shrink-0">{t('library.installTarget')}</span>
       {HARNESS_ORDER.map((a) => (
         <button
           key={a}
           onClick={() => onChange(a)}
           className={cn(
-            'rounded px-1.5 py-0.5 text-[11px]',
+            'rounded px-1.5 py-0.5 text-11',
             agent === a
               ? 'bg-neutral-700 text-neutral-100'
               : 'text-neutral-500 hover:text-neutral-300',
@@ -1443,7 +1443,7 @@ function AgentToggle({
         </button>
       ))}
       {dest && (
-        <span className="min-w-0 truncate text-[10px] text-neutral-600" title={dest}>
+        <span className="min-w-0 truncate text-10 text-neutral-600" title={dest}>
           → {dest}
         </span>
       )}
@@ -1499,7 +1499,7 @@ function TemplateSection({
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
         {tag ?? (count !== undefined && <Badge variant="other">{count}</Badge>)}
         {hint && (
-          <span className="ml-auto text-[11px] text-neutral-500 max-lg:ml-0">{hint}</span>
+          <span className="ml-auto text-11 text-neutral-500 max-lg:ml-0">{hint}</span>
         )}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}

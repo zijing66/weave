@@ -165,14 +165,14 @@ export function HooksPluginsSection({
                 )}
               />
               <span className="shrink-0 text-xs font-medium text-neutral-200">{p.name}</span>
-              <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+              <span className="shrink-0 font-mono text-10 text-neutral-500">{p.id}</span>
               <Badge className={cn('shrink-0', SCOPE_STYLES[p.scope])}>{p.scope}</Badge>
-              <span className="shrink-0 text-[10px] text-neutral-600">v{p.version}</span>
-              <span className="shrink-0 text-[11px] text-neutral-500">
+              <span className="shrink-0 text-10 text-neutral-600">v{p.version}</span>
+              <span className="shrink-0 text-11 text-neutral-500">
                 {t('hooks.plugins.rules', { n: p.ruleCount })}
               </span>
               {p.status === 'rejected' && p.error && (
-                <span className="min-w-0 truncate text-[11px] text-red-400/90" title={p.error}>
+                <span className="min-w-0 truncate text-11 text-red-400/90" title={p.error}>
                   {p.error}
                 </span>
               )}
@@ -190,12 +190,12 @@ export function HooksPluginsSection({
                     type="button"
                     onClick={() => setUninstallTarget(p)}
                     title={t('hooks.plugins.uninstallTip')}
-                    className="rounded px-1 text-[11px] text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
+                    className="rounded px-1 text-11 text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
                   >
                     <FeedbackIcon
                       state={fb.stateOf(`uninstall:${p.id}`)}
                       className="h-3 w-3"
-                      icon={<span className="text-[11px]">✕</span>}
+                      icon={<span className="text-11">✕</span>}
                     />
                   </button>
                 )}
@@ -217,7 +217,7 @@ export function HooksPluginsSection({
         );
       })}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <p className="flex items-center gap-1 text-[10px] text-neutral-600">
+        <p className="flex items-center gap-1 text-10 text-neutral-600">
           <RotateCw className="h-3 w-3" />
           {t('hooks.plugins.hotReload')}
         </p>
@@ -226,7 +226,7 @@ export function HooksPluginsSection({
           type="button"
           onClick={rescan}
           title={t('hooks.plugins.rescanTip')}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-200"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-10 text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-200"
         >
           <FeedbackIcon state={fb.stateOf('rescan')} className="h-3 w-3" icon={<RotateCw className="h-3 w-3" />} />
           {t('hooks.plugins.rescan')}

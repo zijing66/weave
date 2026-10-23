@@ -119,13 +119,13 @@ export function SessionEditsDialog({
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <span className="text-sm font-semibold text-neutral-200">{t('tasks.editsTitle')}</span>
           {files.length > 0 && (
-            <span className="text-[11px] text-neutral-500">
+            <span className="text-11 text-neutral-500">
               <span className="text-emerald-400">+{total.added}</span> /{' '}
               <span className="text-red-400">-{total.removed}</span>
             </span>
           )}
           {hasTurn && (
-            <div className="ml-auto flex items-center rounded-md border border-edge/[0.08] p-0.5 text-[11px]">
+            <div className="ml-auto flex items-center rounded-md border border-edge/[0.08] p-0.5 text-11">
               {(['turn', 'all'] as const).map((s) => (
                 <button
                   key={s}
@@ -153,13 +153,13 @@ export function SessionEditsDialog({
 
         <div className="flex-1 min-h-0 overflow-auto">
           {loading && (
-            <p className="flex items-center gap-2 p-4 text-[11px] text-neutral-500">
+            <p className="flex items-center gap-2 p-4 text-11 text-neutral-500">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t('tasks.editsLoading')}
             </p>
           )}
-          {error && <p className="p-4 text-[11px] text-red-300">{error}</p>}
-          {empty && <p className="p-4 text-[11px] text-neutral-500">{empty}</p>}
+          {error && <p className="p-4 text-11 text-red-300">{error}</p>}
+          {empty && <p className="p-4 text-11 text-neutral-500">{empty}</p>}
           {files.map((file) => {
             const openFile = expanded.has(file.path);
             return (
@@ -174,22 +174,22 @@ export function SessionEditsDialog({
                   ) : (
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                   )}
-                  <span className="truncate font-mono text-[11px] text-neutral-200">
+                  <span className="truncate font-mono text-11 text-neutral-200">
                     {file.path}
                   </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-neutral-500">
+                  <span className="ml-auto shrink-0 text-11 text-neutral-500">
                     <span className="text-emerald-400">+{file.added}</span>{' '}
                     <span className="text-red-400">-{file.removed}</span>
                   </span>
-                  <span className="shrink-0 text-[10px] text-neutral-600">
+                  <span className="shrink-0 text-10 text-neutral-600">
                     {t('tasks.editsHunks', { n: file.count })}
                   </span>
                 </button>
                 {openFile && (
-                  <div className="pb-2 font-mono text-[11px] leading-5">
+                  <div className="pb-2 font-mono text-11 leading-5">
                     {file.blocks.map((block, idx) => (
                       <div key={idx} className={idx > 0 ? 'mt-2 border-t border-edge/[0.06]' : ''}>
-                        <div className="flex items-center gap-2 px-3 py-1 text-[10px] text-neutral-600">
+                        <div className="flex items-center gap-2 px-3 py-1 text-10 text-neutral-600">
                           <span>{stamp(block.hunk.at)}</span>
                           {block.hunk.clamped && (
                             <span className="text-amber-400/80">{t('tasks.editsClamped')}</span>
@@ -206,7 +206,7 @@ export function SessionEditsDialog({
         </div>
 
         {(data?.truncated || (data && data.hunks > 0)) && (
-          <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2 text-[10px] text-neutral-600 frosted">
+          <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2 text-10 text-neutral-600 frosted">
             {data?.truncated ? t('tasks.editsTruncated') : t('tasks.editsSummary', { n: data?.hunks ?? 0 })}
           </footer>
         )}

@@ -203,7 +203,7 @@ function SkillCard({
           {showForm && (
             <span
               className={cn(
-                'ml-1 shrink-0 rounded px-1 py-0.5 text-[10px]',
+                'ml-1 shrink-0 rounded px-1 py-0.5 text-10',
                 row.form === 'link'
                   ? 'bg-neutral-800 text-neutral-400'
                   : 'bg-amber-900/30 text-amber-300',
@@ -314,7 +314,7 @@ export function SkillGrid({
             {/* Project skills have no enable toggle, so this is a count, not
                 an effectiveness ratio — same pill shape as the global section
                 so the two rows read as one family. */}
-            <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+            <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-1.5 py-0.5 text-10 font-medium tabular-nums">
               {skills!.length}
             </span>
           </div>
@@ -447,7 +447,7 @@ function PackBlock({
         {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace（同工具箱行） */}
         {group.pluginKey && (
           <span
-            className="shrink-0 font-mono text-[10px] text-neutral-500"
+            className="shrink-0 font-mono text-10 text-neutral-500"
             title={t('skillGrid.keyTip')}
           >
             {group.pluginKey}
@@ -486,7 +486,7 @@ function PackBlock({
                     state: t(STATE_LABEL[s.enable]),
                   })}
                   className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                    'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                     s.enable === 'on'
                       ? 'bg-emerald-900/40 text-emerald-300'
                       : 'bg-neutral-800 text-neutral-500',
@@ -623,7 +623,7 @@ function GroupedSkills({
               global groups are shown but not editable. */}
           {t('skillGrid.globalHeading')}
           {readOnly && (
-            <span className="ml-1 text-[10px] text-neutral-600 normal-case">
+            <span className="ml-1 text-10 text-neutral-600 normal-case">
               {t('skillGrid.readOnly')}
             </span>
           )}
@@ -632,7 +632,7 @@ function GroupedSkills({
           <EffectivePill effective={effective} total={total} />
           <button
             onClick={toggleAll}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
+            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
             title={
               anyExpanded ? t('skillGrid.collapseAllGroups') : t('skillGrid.expandAllGroups')
             }
@@ -683,7 +683,7 @@ function GroupedSkills({
                 </span>
                 {!isLocal && (
                   <span
-                    className="shrink-0 text-[10px] text-neutral-600"
+                    className="shrink-0 text-10 text-neutral-600"
                     title={t('repo.namespaceTip')}
                   >
                     {t('repo.packCount', { n: repo.groups.length })}
@@ -694,7 +694,7 @@ function GroupedSkills({
                     后自己复制的，提示用户改设置是误导）。 */}
                 {isLocal && (
                   <span
-                    className="shrink-0 text-[10px] text-neutral-600"
+                    className="shrink-0 text-10 text-neutral-600"
                     title={t('repo.formTip')}
                   >
                     {t('repo.formLegend')}

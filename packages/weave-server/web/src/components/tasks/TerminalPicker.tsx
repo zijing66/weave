@@ -90,17 +90,17 @@ export function TerminalPicker({
                     t('tasks.terminalTargetFallback', { w: target.windowId, t: target.tabId })}
                 </span>
                 {target.full && (
-                  <span className="shrink-0 rounded bg-amber-900/40 px-1 text-[10px] text-amber-300">
+                  <span className="shrink-0 rounded bg-amber-900/40 px-1 text-10 text-amber-300">
                     {t('tasks.terminalTargetFull', { n: target.paneCount })}
                   </span>
                 )}
                 {target.active && (
-                  <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                  <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-10 text-emerald-300">
                     {t('tasks.terminalTargetActive')}
                   </span>
                 )}
               </span>
-              <span className="mt-0.5 block text-[10px] text-neutral-500">
+              <span className="mt-0.5 block text-10 text-neutral-500">
                 {t('tasks.terminalTargetDetail', {
                   match: target.matchCount,
                   total: target.paneCount,

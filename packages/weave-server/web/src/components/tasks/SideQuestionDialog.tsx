@@ -454,7 +454,7 @@ export function SideQuestionDialog({
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            <p className="pb-2 text-[11px] leading-relaxed text-neutral-500">{t('tasks.sideHint')}</p>
+            <p className="pb-2 text-11 leading-relaxed text-neutral-500">{t('tasks.sideHint')}</p>
 
             <div
               ref={threadRef}
@@ -468,18 +468,18 @@ export function SideQuestionDialog({
             >
               {pull.px > 0 && (
                 <div
-                  className="pointer-events-none absolute inset-x-0 top-0 flex justify-center text-[10px] text-neutral-500"
+                  className="pointer-events-none absolute inset-x-0 top-0 flex justify-center text-10 text-neutral-500"
                   style={{ transform: `translateY(${pull.px}px)` }}
                 >
                   {loadingEarlier ? t('tasks.sideLoading') : t('tasks.sidePullOlder')}
                 </div>
               )}
               {thread === null ? (
-                <p className="py-6 text-center text-[11px] text-neutral-500">
+                <p className="py-6 text-center text-11 text-neutral-500">
                   {t('tasks.sideLoading')}
                 </p>
               ) : thread.length === 0 ? (
-                <p className="py-6 text-center text-[11px] text-neutral-500">{t('tasks.sideEmpty')}</p>
+                <p className="py-6 text-center text-11 text-neutral-500">{t('tasks.sideEmpty')}</p>
               ) : (
                 <ul className="flex flex-col gap-1.5">
                   {thread.map((row) => {
@@ -500,7 +500,7 @@ export function SideQuestionDialog({
                           {selecting ? (
                             <>
                               <CheckBox on={picked.has(row.id)} />
-                              <span className="shrink-0 text-[10px] text-neutral-600">
+                              <span className="shrink-0 text-10 text-neutral-600">
                                 {stamp(row.askedAt)}
                               </span>
                               <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
@@ -520,7 +520,7 @@ export function SideQuestionDialog({
                                 ) : (
                                   <ChevronRight className="h-3 w-3 shrink-0 text-neutral-500" />
                                 )}
-                                <span className="shrink-0 text-[10px] text-neutral-600">
+                                <span className="shrink-0 text-10 text-neutral-600">
                                   {stamp(row.askedAt)}
                                 </span>
                                 <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
@@ -564,7 +564,7 @@ export function SideQuestionDialog({
                             ) : (
                               <p
                                 className={cn(
-                                  'flex items-center gap-1 px-2 text-[11px]',
+                                  'flex items-center gap-1 px-2 text-11',
                                   row.status === 'pending'
                                     ? 'text-neutral-500'
                                     : 'text-amber-300/80',
@@ -590,7 +590,7 @@ export function SideQuestionDialog({
             {/* 多选态：composer 换成工具条（与对话面板同口径，窄屏整组折行） */}
             {selecting ? (
               <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                <span className="min-w-0 truncate text-[11px] text-neutral-400">
+                <span className="min-w-0 truncate text-11 text-neutral-400">
                   {t('tasks.convSelected', { n: picked.size })}
                 </span>
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -599,7 +599,7 @@ export function SideQuestionDialog({
                     disabled={thread === null || thread.length === 0}
                     onClick={toggleAll}
                     className={cn(
-                      'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40',
+                      'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-11 transition-colors disabled:opacity-40',
                       allPicked
                         ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
                         : 'border-edge/[0.1] text-neutral-200 hover:border-edge/20',
@@ -612,7 +612,7 @@ export function SideQuestionDialog({
                     type="button"
                     disabled={picked.size === 0}
                     onClick={() => copyRows(pickedRows)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
                   >
                     <Copy className="h-3 w-3" />
                     {t('tasks.convCopy')}
@@ -622,7 +622,7 @@ export function SideQuestionDialog({
                     disabled={picked.size === 0}
                     onClick={openShareMenu}
                     title={t('tasks.convShare')}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
                   >
                     <FeedbackIcon
                       state={fb.stateOf('sideImg')}
@@ -637,7 +637,7 @@ export function SideQuestionDialog({
                       setSelecting(false);
                       setPicked(new Set());
                     }}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200"
                   >
                     {t('tasks.convCancel')}
                   </button>
@@ -661,7 +661,7 @@ export function SideQuestionDialog({
                   type="button"
                   disabled={busy || !draft.trim()}
                   onClick={send}
-                  className="flex shrink-0 items-center gap-1 rounded bg-violet-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-violet-600 disabled:opacity-40"
+                  className="flex shrink-0 items-center gap-1 rounded bg-violet-700/80 px-2.5 py-1 text-11 font-medium text-white transition-colors hover:bg-violet-600 disabled:opacity-40"
                 >
                   {t('tasks.answerSend')}
                   {busy && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -689,7 +689,7 @@ export function SideQuestionDialog({
               <button
                 type="button"
                 onClick={() => enterSelect(menu.id)}
-                className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
               >
                 <Check className="h-3 w-3 text-neutral-500" />
                 {t('tasks.convSelect')}
@@ -699,7 +699,7 @@ export function SideQuestionDialog({
                 <button
                   type="button"
                   onClick={() => shareImage('clipboard')}
-                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                 >
                   <Copy className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convShareCopy')}
@@ -707,7 +707,7 @@ export function SideQuestionDialog({
                 <button
                   type="button"
                   onClick={() => shareImage('download')}
-                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                 >
                   <Download className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convShareDownload')}

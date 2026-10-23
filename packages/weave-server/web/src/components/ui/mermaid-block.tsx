@@ -61,9 +61,9 @@ export function MermaidBlock({ code }: { code: string }) {
   return (
     <div className="my-1.5 overflow-hidden rounded border border-edge/[0.08] bg-neutral-950/40">
       <div className="flex items-center gap-2 border-b border-edge/[0.06] px-2 py-1">
-        <span className="text-[10px] font-medium text-neutral-500">mermaid</span>
+        <span className="text-10 font-medium text-neutral-500">mermaid</span>
         {error && (
-          <span title={error} className="truncate text-[10px] text-red-400">
+          <span title={error} className="truncate text-10 text-red-400">
             {t('common.mermaidFailed')}
           </span>
         )}
@@ -75,7 +75,7 @@ export function MermaidBlock({ code }: { code: string }) {
               title={ext === 'svg' ? t('common.mermaidDownloadSvg') : t('common.mermaidDownloadPng')}
               disabled={!svg || saving}
               onClick={() => download(ext)}
-              className="rounded border border-edge/[0.1] px-1.5 py-px text-[10px] uppercase text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+              className="rounded border border-edge/[0.1] px-1.5 py-px text-10 uppercase text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
             >
               {ext}
             </button>
@@ -83,14 +83,14 @@ export function MermaidBlock({ code }: { code: string }) {
           <button
             type="button"
             onClick={() => setSource((v) => !v)}
-            className="rounded border border-edge/[0.1] px-1.5 py-px text-[10px] text-neutral-400 hover:text-neutral-200"
+            className="rounded border border-edge/[0.1] px-1.5 py-px text-10 text-neutral-400 hover:text-neutral-200"
           >
             {source ? t('common.mermaidShowChart') : t('common.mermaidShowSource')}
           </button>
         </div>
       </div>
       {source || (error && !svg) ? (
-        <pre className="m-0 max-w-full overflow-x-auto p-2 text-[11px] text-neutral-300">{code}</pre>
+        <pre className="m-0 max-w-full overflow-x-auto p-2 text-11 text-neutral-300">{code}</pre>
       ) : svg ? (
         <div
           className="max-w-full overflow-x-auto p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
@@ -98,7 +98,7 @@ export function MermaidBlock({ code }: { code: string }) {
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
-        <div className="p-2 text-[11px] text-neutral-600">{t('common.mermaidRendering')}</div>
+        <div className="p-2 text-11 text-neutral-600">{t('common.mermaidRendering')}</div>
       )}
     </div>
   );

@@ -146,7 +146,7 @@ function SourceNode({ data }: NodeProps<SourceFlowNode>) {
   return (
     <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-neutral-900/90 px-2.5 py-1.5 shadow-mac-sm">
       <Zap className="h-3 w-3 shrink-0 text-amber-400" />
-      <span className="text-[11px] font-medium text-neutral-200">{data.event}</span>
+      <span className="text-11 font-medium text-neutral-200">{data.event}</span>
       <Handle type="source" position={Position.Right} className="!bg-amber-400/80" />
     </div>
   );
@@ -176,7 +176,7 @@ function RuleNode({ data }: NodeProps<RuleFlowNode>) {
           <HandlerIcon className="h-3 w-3" />
           {t(HANDLER_LABEL_KEYS[rule.handler.type])}
         </Badge>
-        <span className="truncate text-[10px] text-neutral-500" title={data.scopeLabel}>
+        <span className="truncate text-10 text-neutral-500" title={data.scopeLabel}>
           {eventLabel} · {data.scopeLabel}
         </span>
       </div>
@@ -192,10 +192,10 @@ function HandlerNode({ data }: NodeProps<HandlerFlowNode>) {
     <div className="flex w-[170px] items-center gap-2 rounded-lg border border-edge/[0.08] bg-neutral-900/90 px-3 py-2 shadow-mac-sm">
       <Handle type="target" position={Position.Left} className="!bg-blue-400/80" />
       <Icon className="h-3.5 w-3.5 shrink-0 text-purple-300" />
-      <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-neutral-200">
+      <span className="min-w-0 flex-1 truncate text-11 font-medium text-neutral-200">
         {t(HANDLER_LABEL_KEYS[data.handlerType])}
       </span>
-      <span className="text-[10px] text-neutral-500">{data.count}</span>
+      <span className="text-10 text-neutral-500">{data.count}</span>
       <Handle type="source" position={Position.Right} className="!bg-blue-400/80" />
     </div>
   );
@@ -394,7 +394,7 @@ function CaptureSection() {
     <Card>
       <CardHeader className="flex-row items-center gap-2 space-y-0">
         <CardTitle className="text-sm">{t('hooks.capture.title')}</CardTitle>
-        <span className="text-[11px] text-neutral-500">{t('hooks.capture.hint')}</span>
+        <span className="text-11 text-neutral-500">{t('hooks.capture.hint')}</span>
       </CardHeader>
       <CardContent className="space-y-2">
         {rows.map((row) => (
@@ -421,7 +421,7 @@ function CaptureSection() {
             </span>
           </div>
         ))}
-        <p className="text-[10px] text-neutral-600">{t('hooks.capture.note')}</p>
+        <p className="text-10 text-neutral-600">{t('hooks.capture.note')}</p>
       </CardContent>
     </Card>
   );
@@ -707,7 +707,7 @@ export function HooksPanel({
             title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
             onClick={() => void deleteRule(rule.id)}
             className={cn(
-              'rounded px-1.5 py-1 text-[11px] font-medium transition-colors',
+              'rounded px-1.5 py-1 text-11 font-medium transition-colors',
               confirmDeleteId === rule.id
                 ? 'bg-red-900/60 text-red-300'
                 : 'text-neutral-500 hover:text-red-300',
@@ -720,7 +720,7 @@ export function HooksPanel({
             )}
           </button>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-neutral-500">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-10 text-neutral-500">
           <Badge variant="command" className="gap-1">
             <HandlerIcon className="h-3 w-3" />
             {t(HANDLER_LABEL_KEYS[rule.handler.type])}
@@ -788,7 +788,7 @@ export function HooksPanel({
 
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-semibold tracking-tight">{t('hooks.title')}</h3>
-        <span className="text-[11px] text-neutral-500">
+        <span className="text-11 text-neutral-500">
           {rules === null ? t('hooks.loading') : t('catbar.items', { n: rules.length })}
         </span>
         {/* 项目级不能新增规则：隐藏新建入口（启用走编辑表单的 enabled 开关） */}
@@ -820,7 +820,7 @@ export function HooksPanel({
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-sm">{t('hooks.pluginsAndRules')}</CardTitle>
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-11 text-neutral-500">
             {mode === 'project' ? t('hooks.plugins.projectHint') : t('hooks.plugins.hint')}
           </span>
         </CardHeader>
@@ -859,13 +859,13 @@ export function HooksPanel({
           <div className="flex w-full items-center gap-2">
             <CardTitle>{t('hooks.flowTitle')}</CardTitle>
             {rules && rules.length === 0 && (
-              <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlow')}</span>
+              <span className="text-11 text-neutral-500">{t('hooks.emptyFlow')}</span>
             )}
             {rules && rules.length > 0 && !rules.some(isActiveRule) && (
-              <span className="text-[11px] text-neutral-500">{t('hooks.emptyFlowDisabled')}</span>
+              <span className="text-11 text-neutral-500">{t('hooks.emptyFlowDisabled')}</span>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-neutral-500">
             <LegendChip icon={Zap} tone="text-amber-400" label={t('hooks.colSource')} />
             <LegendChip icon={Workflow} tone="text-blue-400" label={t('hooks.colRule')} />
             <LegendChip icon={ScrollText} tone="text-purple-300" label={t('hooks.colHandler')} />
@@ -921,7 +921,7 @@ export function HooksPanel({
                       type="button"
                       onClick={applyQuickTemplate}
                       title={t('hooks.quickTemplateTip')}
-                      className="rounded-md border border-edge/[0.08] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800"
+                      className="rounded-md border border-edge/[0.08] px-2 py-1 text-11 text-neutral-300 transition-colors hover:bg-neutral-800"
                     >
                       {t('hooks.quickTemplate')}
                     </button>
@@ -941,7 +941,7 @@ export function HooksPanel({
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.name')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.name')}</span>
                     <input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.name}
@@ -951,7 +951,7 @@ export function HooksPanel({
                   </label>
 
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.project')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.project')}</span>
                     <Combobox
                       className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.projectId === null ? '' : String(form.state.projectId)}
@@ -964,7 +964,7 @@ export function HooksPanel({
                   </label>
 
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.sourceKind')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.sourceKind')}</span>
                     <Combobox
                       className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.sourceKind}
@@ -978,7 +978,7 @@ export function HooksPanel({
 
                   {form.state.sourceKind === 'hook-event' && (
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-neutral-500">{t('hooks.field.harness')}</span>
+                      <span className="text-11 text-neutral-500">{t('hooks.field.harness')}</span>
                       <Combobox
                         className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                         value={form.state.harness}
@@ -993,7 +993,7 @@ export function HooksPanel({
                   )}
 
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.event')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.event')}</span>
                     <Combobox
                       className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.event}
@@ -1004,14 +1004,14 @@ export function HooksPanel({
                       onChange={(v) => patchForm({ event: v })}
                     />
                     {form.state.handlerType === 'inject' && (
-                      <span className="block text-[10px] text-amber-400/80">
+                      <span className="block text-10 text-amber-400/80">
                         {t('hooks.eventInjectHint', { events: INJECTABLE_HOOK_EVENTS.join(', ') })}
                       </span>
                     )}
                   </label>
 
                   <div className="space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.handler')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.handler')}</span>
                     <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-edge/[0.06] bg-neutral-900/60 p-0.5">
                       {HANDLER_TYPES.map((type) => (
                         <button
@@ -1020,7 +1020,7 @@ export function HooksPanel({
                           title={t(HANDLER_TIP_KEYS[type])}
                           onClick={() => setHandlerType(type)}
                           className={cn(
-                            'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150',
+                            'rounded-md px-2.5 py-1 text-11 font-medium transition-colors duration-150',
                             form.state.handlerType === type
                               ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
                               : 'text-neutral-500 hover:text-neutral-300',
@@ -1036,7 +1036,7 @@ export function HooksPanel({
                 {form.state.handlerType === 'webhook' && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-neutral-500">{t('hooks.field.url')}</span>
+                      <span className="text-11 text-neutral-500">{t('hooks.field.url')}</span>
                       <input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.url}
@@ -1045,7 +1045,7 @@ export function HooksPanel({
                       />
                     </label>
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-neutral-500">{t('hooks.field.secret')}</span>
+                      <span className="text-11 text-neutral-500">{t('hooks.field.secret')}</span>
                       <input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.secret}
@@ -1058,7 +1058,7 @@ export function HooksPanel({
                 {form.state.handlerType === 'plugin' && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-neutral-500">{t('hooks.field.pluginId')}</span>
+                      <span className="text-11 text-neutral-500">{t('hooks.field.pluginId')}</span>
                       <input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.pluginId}
@@ -1067,7 +1067,7 @@ export function HooksPanel({
                       />
                     </label>
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-neutral-500">
+                      <span className="text-11 text-neutral-500">
                         {t('hooks.field.pluginHandlerType')}
                       </span>
                       <input
@@ -1082,7 +1082,7 @@ export function HooksPanel({
 
                 {(form.state.handlerType === 'inject' || form.state.handlerType === 'manual') && (
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.template')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.template')}</span>
                     <textarea
                       rows={3}
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1095,7 +1095,7 @@ export function HooksPanel({
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.toolNames')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.toolNames')}</span>
                     <input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.toolNames}
@@ -1104,7 +1104,7 @@ export function HooksPanel({
                     />
                   </label>
                   <label className="block space-y-1">
-                    <span className="text-[11px] text-neutral-500">{t('hooks.field.pathGlobs')}</span>
+                    <span className="text-11 text-neutral-500">{t('hooks.field.pathGlobs')}</span>
                     <input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.pathGlobs}
@@ -1185,7 +1185,7 @@ function CheckField({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-300">
+    <label className="inline-flex cursor-pointer items-center gap-1.5 text-11 text-neutral-300">
       <input
         type="checkbox"
         className="h-3.5 w-3.5 accent-blue-500"

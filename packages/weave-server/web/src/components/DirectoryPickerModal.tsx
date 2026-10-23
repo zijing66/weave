@@ -201,7 +201,7 @@ export function DirectoryPickerModal({
               {node.rootKind === 'drive' ? node.name : (meta ? t(meta.labelKey) : node.name)}
             </span>
             {isExisting && (
-              <span className="shrink-0 text-[10px] text-neutral-600">{t('picker.alreadyAdded')}</span>
+              <span className="shrink-0 text-10 text-neutral-600">{t('picker.alreadyAdded')}</span>
             )}
           </button>
           <button
@@ -235,7 +235,7 @@ export function DirectoryPickerModal({
               style={{ paddingLeft: (depth + 1) * 14 + 24 }}
             >
               <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="text-[11px]">{t('common.loading')}</span>
+              <span className="text-11">{t('common.loading')}</span>
             </div>,
           );
         } else if (children.length > 0) {
@@ -247,7 +247,7 @@ export function DirectoryPickerModal({
               className="text-neutral-600 py-1"
               style={{ paddingLeft: (depth + 1) * 14 + 24 }}
             >
-              <span className="text-[11px]">{t('common.empty')}</span>
+              <span className="text-11">{t('common.empty')}</span>
             </div>,
           );
         }
@@ -274,7 +274,7 @@ export function DirectoryPickerModal({
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted max-lg:px-3">
           <Folder className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('picker.title')}</span>
-          <span className="text-[11px] text-neutral-500 max-lg:hidden">{t('picker.subtitle')}</span>
+          <span className="text-11 text-neutral-500 max-lg:hidden">{t('picker.subtitle')}</span>
           <button
             onClick={onClose}
             className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 max-lg:p-2"
@@ -317,7 +317,7 @@ export function DirectoryPickerModal({
                 <button
                   key={r.path}
                   onClick={() => toggleExpand(r.path)}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-full bg-edge/[0.06] px-2.5 py-1.5 text-[11px] text-neutral-300 touch-manipulation"
+                  className="shrink-0 inline-flex items-center gap-1 rounded-full bg-edge/[0.06] px-2.5 py-1.5 text-11 text-neutral-300 touch-manipulation"
                   title={r.path}
                 >
                   {r.kind === 'drive' || r.kind === 'root' ? (
@@ -334,7 +334,7 @@ export function DirectoryPickerModal({
 
           <div className="flex-1 flex min-h-0">
             <aside className="hidden lg:block w-44 shrink-0 border-r border-edge/[0.06] overflow-y-auto overscroll-contain p-2 space-y-0.5 frosted">
-              <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+              <p className="px-2 pb-1 text-10 font-medium uppercase tracking-wide text-neutral-500">
                 {t('picker.quickAccess')}
               </p>
               {roots.map((r) => {
@@ -381,13 +381,13 @@ export function DirectoryPickerModal({
           {/* <lg：已选标签独占一行，计数与两个按钮换到下一行 */}
           <div className="flex-1 min-w-0 flex flex-wrap gap-1 max-h-12 overflow-y-auto max-lg:basis-full max-lg:max-h-24">
             {selected.length === 0 && (
-              <span className="text-[11px] text-neutral-500">{t('picker.noneSelected')}</span>
+              <span className="text-11 text-neutral-500">{t('picker.noneSelected')}</span>
             )}
             {selected.map((p) => (
               <button
                 key={p}
                 onClick={() => toggleCheck(p)}
-                className="inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-200 pl-2 pr-1 py-0.5 text-[11px] hover:bg-blue-900/60 max-lg:py-1.5"
+                className="inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-200 pl-2 pr-1 py-0.5 text-11 hover:bg-blue-900/60 max-lg:py-1.5"
                 title={t('picker.clickRemove')}
               >
                 <Folder className="h-3 w-3" />
@@ -396,8 +396,8 @@ export function DirectoryPickerModal({
               </button>
             ))}
           </div>
-          {error && <span className="text-[11px] text-red-400 max-w-[200px] truncate">{error}</span>}
-          <span className="text-[11px] text-neutral-500 shrink-0 max-lg:mr-auto">
+          {error && <span className="text-11 text-red-400 max-w-[200px] truncate">{error}</span>}
+          <span className="text-11 text-neutral-500 shrink-0 max-lg:mr-auto">
             {t('picker.selectedCount', { count: selected.length })}
           </span>
           <button

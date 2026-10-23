@@ -9,6 +9,9 @@ export const settingsZh = {
   'settings.sectionExport': '导出',
   'settings.language': '语言',
   'settings.languageHint': 'dashboard 与 weave CLI 共用的界面语言。',
+  'settings.fontScale': '界面缩放',
+  'settings.fontScaleHint': '整体等比缩放界面（文字、间距一起变）；只对本浏览器生效，立即保存。',
+  'settings.fontScaleReset': '重置',
   'settings.defaultTerminal': '默认终端',
   'settings.defaultTerminalHint': '「在终端中打开」使用的终端程序；自动 = 自动选择可用的终端。',
   'settings.customCommand': '自定义命令',
@@ -75,6 +78,10 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.sectionExport': 'Export',
   'settings.language': 'Language',
   'settings.languageHint': 'UI language shared by the dashboard and the weave CLI.',
+  'settings.fontScale': 'Interface scaling',
+  'settings.fontScaleHint':
+    'Scale the whole interface uniformly (text and spacing together); per-browser, applied immediately.',
+  'settings.fontScaleReset': 'Reset',
   'settings.defaultTerminal': 'Default terminal',
   'settings.defaultTerminalHint':
     'Terminal used by "Open in terminal"; auto picks an available terminal.',

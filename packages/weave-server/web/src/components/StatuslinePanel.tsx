@@ -194,7 +194,7 @@ function GlyphPicker({
           disabled={!editable}
           title={t('statusline.disableCap')}
           className={cn(
-            'rounded px-1.5 h-6 text-[10px] disabled:opacity-30',
+            'rounded px-1.5 h-6 text-10 disabled:opacity-30',
             value === ''
               ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
               : 'text-neutral-500 hover:text-neutral-300',
@@ -283,7 +283,7 @@ function ColorPicker({
         }
         style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
         className={cn(
-          'h-3.5 w-3.5 rounded-full border border-edge/25 text-[8px] leading-none disabled:opacity-30',
+          'h-3.5 w-3.5 rounded-full border border-edge/25 text-8 leading-none disabled:opacity-30',
           value && !isNamedColor(value) ? 'ring-2 ring-edge/60' : 'opacity-50 text-neutral-400',
         )}
       >
@@ -323,12 +323,12 @@ function ColorPicker({
                   if (e.key === 'Enter') commitDraft();
                 }}
                 placeholder={t('statusline.colorPlaceholder')}
-                className="bg-neutral-900 rounded px-1.5 py-0.5 text-[11px] font-mono flex-1"
+                className="bg-neutral-900 rounded px-1.5 py-0.5 text-11 font-mono flex-1"
               />
               <button
                 type="button"
                 onClick={commitDraft}
-                className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
+                className="text-11 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
               >
                 {t('statusline.ok')}
               </button>
@@ -616,7 +616,7 @@ export function StatuslinePanel({
           <CardTitle>{t('statusline.title')}</CardTitle>
           <AgentBadge agent="claude" />
           <span
-            className="rounded-full bg-emerald-900/40 px-1.5 py-0.5 text-[10px] text-emerald-300"
+            className="rounded-full bg-emerald-900/40 px-1.5 py-0.5 text-10 text-emerald-300"
             title={t('statusline.tuiHint')}
           >
             {t('statusline.tuiBadge')}
@@ -683,7 +683,7 @@ export function StatuslinePanel({
                 </div>
               );
             })}
-            <span className="text-neutral-600 text-[10px]">{t('statusline.preview')}</span>
+            <span className="text-neutral-600 text-10">{t('statusline.preview')}</span>
           </div>
         </div>
         <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto">
@@ -781,7 +781,7 @@ export function StatuslinePanel({
                 title={t('statusline.refresh')}
               />
               <span className="text-neutral-600">s</span>
-              <span className="text-neutral-600 text-[10px]">{t('statusline.refreshNote')}</span>
+              <span className="text-neutral-600 text-10">{t('statusline.refreshNote')}</span>
             </label>
           </div>
           <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -828,7 +828,7 @@ export function StatuslinePanel({
                 allowNone
                 onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
               />
-              <span className="text-neutral-600 text-[10px]">{t('statusline.nerdFontHint')}</span>
+              <span className="text-neutral-600 text-10">{t('statusline.nerdFontHint')}</span>
             </div>
           )}
           <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -838,7 +838,7 @@ export function StatuslinePanel({
             <span className="rounded bg-neutral-900 px-2 py-0.5 font-mono text-neutral-300">
               {config.logoText} v{WEAVE_VERSION}
             </span>
-            <span className="text-neutral-600 text-[10px]">{t('statusline.logoHint')}</span>
+            <span className="text-neutral-600 text-10">{t('statusline.logoHint')}</span>
             <div className="flex gap-1">
               <ColorPicker
                 value={config.logoColor}
@@ -906,13 +906,13 @@ export function StatuslinePanel({
               rows, + pill appends a block (type tags in the modal pick/move it) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-[11px] text-neutral-500 uppercase tracking-wide">
+              <p className="text-11 text-neutral-500 uppercase tracking-wide">
                 {t('statusline.lines')}
               </p>
               <button
                 onClick={addRow}
                 disabled={!editable}
-                className="text-[11px] rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30"
+                className="text-11 rounded bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30"
               >
                 {t('statusline.addRow')}
               </button>
@@ -1159,10 +1159,10 @@ function CapsuleRow({
       )}
     >
       <div className="flex items-center gap-2 pb-1">
-        <span className="text-[10px] text-neutral-600 font-mono">
+        <span className="text-10 text-neutral-600 font-mono">
           {t('statusline.rowN', { n: li + 1 })}
         </span>
-        <span className="text-[10px] text-neutral-600">
+        <span className="text-10 text-neutral-600">
           {t('statusline.blockCount', { n: row.length })}
         </span>
         {linesLen > 1 && (
@@ -1179,7 +1179,7 @@ function CapsuleRow({
       <SortableContext items={row} strategy={horizontalListSortingStrategy}>
         <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
           {row.length === 0 && (
-            <span className="text-[11px] text-neutral-600">{t('statusline.emptyRowHint')}</span>
+            <span className="text-11 text-neutral-600">{t('statusline.emptyRowHint')}</span>
           )}
           {row.map((key) => (
             <Capsule
@@ -1259,7 +1259,7 @@ function SegmentModal({
                 }`
               : t('statusline.addBlockTitle')}
           </span>
-          <span className="text-[10px] text-neutral-500">
+          <span className="text-10 text-neutral-500">
             {t('statusline.rowN', { n: editing.line + 1 })}
           </span>
           <button
@@ -1286,7 +1286,7 @@ function SegmentModal({
                 }}
                 title={otherRow ? t('statusline.tagOtherRow', { n: at + 1 }) : s.key}
                 className={cn(
-                  'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                  'rounded-full border px-1.5 py-0.5 text-10 transition-colors',
                   isCurrent
                     ? 'border-blue-500/50 bg-blue-900/50 text-blue-200'
                     : otherRow
@@ -1296,7 +1296,7 @@ function SegmentModal({
               >
                 {t(s.labelKey)}
                 {otherRow && (
-                  <span className="ml-1 text-[9px] opacity-70">
+                  <span className="ml-1 text-9 opacity-70">
                     {t('statusline.rowShort', { n: at + 1 })}
                   </span>
                 )}

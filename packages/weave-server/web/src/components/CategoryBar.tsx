@@ -128,7 +128,7 @@ export function CategoryBar({
                 own line the label gets squeezed to nothing and disappears. */}
             <span className="min-w-0 flex-auto">
               <span className="block truncate text-sm font-medium">{t(labelKey)}</span>
-              <span className="block truncate text-[11px] text-neutral-500">
+              <span className="block truncate text-11 text-neutral-500">
                 {t('catbar.items', { n: countFor(key) })}
               </span>
             </span>

@@ -66,7 +66,7 @@ export function LoginPage() {
           <FeedbackIcon state={state} />
           {t('auth.login')}
         </button>
-        <p className="mt-4 text-[11px] leading-relaxed text-neutral-600">{t('auth.hint')}</p>
+        <p className="mt-4 text-11 leading-relaxed text-neutral-600">{t('auth.hint')}</p>
       </form>
     </div>
   );

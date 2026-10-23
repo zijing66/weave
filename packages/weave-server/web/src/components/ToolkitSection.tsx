@@ -295,7 +295,7 @@ export function ToolkitSection({
           {p.key ?? p.name}
         </span>
         {p.id !== p.name && (
-          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{p.id}</span>
+          <span className="shrink-0 font-mono text-10 text-neutral-500">{p.id}</span>
         )}
         <Badge className={cn('shrink-0', KIND_STYLES[p.kind])}>{t(KIND_KEY[p.kind])}</Badge>
         <Badge
@@ -308,17 +308,17 @@ export function ToolkitSection({
         >
           {t(PROV_KEY[p.provenance])}
         </Badge>
-        <span className="shrink-0 text-[10px] text-neutral-600">v{p.version}</span>
-        <span className="shrink-0 text-[10px] text-neutral-600">
+        <span className="shrink-0 text-10 text-neutral-600">v{p.version}</span>
+        <span className="shrink-0 text-10 text-neutral-600">
           {t('toolkit.targets', { targets: p.targets.join('+') })}
         </span>
         {p.weave && (
-          <span className="shrink-0 text-[10px] text-neutral-600">
+          <span className="shrink-0 text-10 text-neutral-600">
             {t('toolkit.weaveRules', { n: p.weave.ruleCount })}
           </span>
         )}
         {p.description && (
-          <span className="min-w-0 truncate text-[11px] text-neutral-500" title={p.description}>
+          <span className="min-w-0 truncate text-11 text-neutral-500" title={p.description}>
             {p.description}
           </span>
         )}
@@ -344,7 +344,7 @@ export function ToolkitSection({
                 onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
                 title={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
                 className={cn(
-                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                  'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                   userState === 'on'
                     ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
                     : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
@@ -363,7 +363,7 @@ export function ToolkitSection({
                 disabled={isBusy}
                 onClick={() => void installUser(p)}
                 title={t('toolkit.installTip')}
-                className="rounded bg-blue-900/50 px-2 py-0.5 text-[10px] text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
+                className="rounded bg-blue-900/50 px-2 py-0.5 text-10 text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
               >
                 {isBusy ? t('toolkit.installing') : t('toolkit.install')}
               </button>
@@ -388,16 +388,16 @@ export function ToolkitSection({
         <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-400" />
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium text-amber-300">
+            <p className="text-11 font-medium text-amber-300">
               {t('toolkit.legacyTitle', { n: legacyCopies.length })}
             </p>
-            <p className="truncate text-[10px] text-amber-200/60" title={legacyCopies.join('\n')}>
+            <p className="truncate text-10 text-amber-200/60" title={legacyCopies.join('\n')}>
               {t('toolkit.legacyHint')}
             </p>
           </div>
           <button
             type="button"
-            className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/20"
+            className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-10 text-amber-200 hover:bg-amber-500/20"
             onClick={() => void cleanupLegacy()}
           >
             {t('toolkit.legacyCleanup')}
@@ -409,14 +409,14 @@ export function ToolkitSection({
 
       {visible.length > 0 && (
         <div className="flex items-center gap-1">
-          <span className="text-[11px] text-neutral-500">{t('toolkit.hint')}</span>
+          <span className="text-11 text-neutral-500">{t('toolkit.hint')}</span>
           <button
             type="button"
             onClick={() => {
               userTouchedFold.current = true;
               setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set());
             }}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
             title={anyExpanded ? t('toolkit.collapseAllGroups') : t('toolkit.expandAllGroups')}
           >
             {anyExpanded ? (
@@ -475,7 +475,7 @@ export function ToolkitSection({
                   total: repo.groups.length,
                 })}
               </StatusPill>
-              <span className="shrink-0 text-[10px] text-neutral-600" title={t('repo.namespaceTip')}>
+              <span className="shrink-0 text-10 text-neutral-600" title={t('repo.namespaceTip')}>
                 {t('repo.packCount', { n: packCount })}
               </span>
             </div>

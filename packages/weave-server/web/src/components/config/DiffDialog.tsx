@@ -43,7 +43,7 @@ export function DiffDialog({
       <div className="relative w-[860px] max-w-full max-h-[86dvh] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <span className="text-sm font-semibold text-neutral-200">{title}</span>
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-11 text-neutral-500">
             <span className="text-emerald-400">+{added}</span> / <span className="text-red-400">-{removed}</span>
           </span>
           <button
@@ -55,12 +55,12 @@ export function DiffDialog({
           </button>
         </header>
 
-        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 border-b border-edge/[0.06] text-[11px] text-neutral-500">
+        <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 border-b border-edge/[0.06] text-11 text-neutral-500">
           <span className="text-red-400">− {beforeLabel}</span>
           <span className="text-emerald-400">+ {afterLabel}</span>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto font-mono text-[11px] leading-5">
+        <div className="flex-1 min-h-0 overflow-auto font-mono text-11 leading-5">
           {rows.length === 0 ? (
             <p className="p-4 text-neutral-500">{t('cfg.diffNoChanges')}</p>
           ) : (

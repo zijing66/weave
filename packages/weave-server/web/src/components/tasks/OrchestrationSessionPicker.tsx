@@ -135,13 +135,13 @@ export function OrchestrationSessionPicker({
                         {sessionLabel(s.title, s.sessionId)}
                       </span>
                       {s.projectId != null && (
-                        <span className="block truncate text-[11px] text-neutral-500">
+                        <span className="block truncate text-11 text-neutral-500">
                           {projectName.get(s.projectId) ?? `#${s.projectId}`}
                         </span>
                       )}
                     </span>
                     {joined && (
-                      <span className="shrink-0 text-[11px] text-teal-400/80">
+                      <span className="shrink-0 text-11 text-teal-400/80">
                         {t('orch.pickerJoined')}
                       </span>
                     )}

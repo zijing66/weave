@@ -32,7 +32,7 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums',
+        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium tabular-nums',
         TONE[tone],
       )}
       title={title}

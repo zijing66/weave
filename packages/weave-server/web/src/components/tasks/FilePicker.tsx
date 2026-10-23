@@ -177,7 +177,7 @@ function segmentsOf(name: string, ranges: [number, number][] | undefined): { tex
 const cmTheme = (dark: boolean): Extension =>
   EditorView.theme(
     {
-      '&': { height: '100%', fontSize: '11px', color: 'rgb(var(--w-neutral-300))', backgroundColor: 'transparent' },
+      '&': { height: '100%', fontSize: '0.6875rem', color: 'rgb(var(--w-neutral-300))', backgroundColor: 'transparent' },
       '&.cm-focused': { outline: 'none' },
       '.cm-scroller': {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -828,13 +828,13 @@ export function FilePicker({
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
     >
       {loading && entries.length === 0 && (
-        <li className="flex items-center gap-2 px-3 py-6 text-[11px] text-neutral-500">
+        <li className="flex items-center gap-2 px-3 py-6 text-11 text-neutral-500">
           <Loader2 className="h-3 w-3 animate-spin" />
           {t('tasks.fileLoading')}
         </li>
       )}
       {!loading && entries.length === 0 && (
-        <li className="px-3 py-6 text-[11px] text-neutral-500">
+        <li className="px-3 py-6 text-11 text-neutral-500">
           {error ? t('tasks.fileLoadFailed', { error }) : t('tasks.fileEmpty')}
         </li>
       )}
@@ -919,10 +919,10 @@ export function FilePicker({
                   if (!badge) return null;
                   const segs = segmentsOf(badge.text, badge.clip(entry.ranges ?? []));
                   if (segs.every((s) => !s.hit)) return (
-                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">{badge.text}</span>
+                    <span className="shrink-0 font-mono text-10 text-neutral-600">{badge.text}</span>
                   );
                   return (
-                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">
+                    <span className="shrink-0 font-mono text-10 text-neutral-600">
                       {segs.map((seg, k) =>
                         seg.hit ? (
                           <span key={k} className="text-amber-300/80">
@@ -937,7 +937,7 @@ export function FilePicker({
                 })()
               ) : (
                 entry.size != null && (
-                  <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
+                  <span className="shrink-0 text-10 tabular-nums text-neutral-600">
                     {sizeText(entry.size)}
                   </span>
                 )
@@ -964,7 +964,7 @@ export function FilePicker({
           </button>
         )}
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-300"
+          className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-300"
           title={searching ? current?.path : undefined}
         >
           {(searching ? current?.path : current?.name) ?? ''}
@@ -1023,11 +1023,11 @@ export function FilePicker({
               else jumpTo();
             }}
             placeholder={bar === 'find' ? t('tasks.fileFindPlaceholder') : t('tasks.fileLinePlaceholder')}
-            className="min-w-0 flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+            className="min-w-0 flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-11 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
           />
           {bar === 'find' ? (
             <>
-              <span className="shrink-0 text-[10px] tabular-nums text-neutral-500">
+              <span className="shrink-0 text-10 tabular-nums text-neutral-500">
                 {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
               </span>
               <button
@@ -1053,7 +1053,7 @@ export function FilePicker({
             <button
               type="button"
               onClick={jumpTo}
-              className="shrink-0 rounded bg-blue-500/20 px-1.5 py-0.5 text-[11px] text-blue-200 hover:bg-blue-500/30"
+              className="shrink-0 rounded bg-blue-500/20 px-1.5 py-0.5 text-11 text-blue-200 hover:bg-blue-500/30"
             >
               {t('tasks.fileGo')}
             </button>
@@ -1075,19 +1075,19 @@ export function FilePicker({
         <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
           {sub?.dir === current.path ? (
             sub.entries.length === 0 ? (
-              <li className="px-2.5 py-3 text-[11px] text-neutral-600">{t('tasks.fileEmpty')}</li>
+              <li className="px-2.5 py-3 text-11 text-neutral-600">{t('tasks.fileEmpty')}</li>
             ) : (
               sub.entries.map((child) => (
                 <li
                   key={child.path}
-                  className="flex items-center gap-2 px-2.5 py-0.5 text-[11px] text-neutral-400"
+                  className="flex items-center gap-2 px-2.5 py-0.5 text-11 text-neutral-400"
                 >
                   {iconFor(child)}
                   <span className="min-w-0 flex-1 truncate font-mono">
                     {child.kind === 'dir' ? `${child.name}/` : child.name}
                   </span>
                   {child.size != null && (
-                    <span className="shrink-0 text-[10px] tabular-nums text-neutral-600">
+                    <span className="shrink-0 text-10 tabular-nums text-neutral-600">
                       {sizeText(child.size)}
                     </span>
                   )}
@@ -1095,7 +1095,7 @@ export function FilePicker({
               ))
             )
           ) : (
-            <li className="flex items-center gap-2 px-2.5 py-3 text-[11px] text-neutral-500">
+            <li className="flex items-center gap-2 px-2.5 py-3 text-11 text-neutral-500">
               <Loader2 className="h-3 w-3 animate-spin" />
               {t('tasks.fileLoading')}
             </li>
@@ -1113,7 +1113,7 @@ export function FilePicker({
         preview?.path === current.path && preview.text != null ? (
           <CodePreview text={preview.text} lines={lines} viewRef={viewRef} onGutterClick={onGutterClick} />
         ) : (
-          <div className="flex min-h-0 flex-1 items-center justify-center p-3 text-[11px] text-neutral-500">
+          <div className="flex min-h-0 flex-1 items-center justify-center p-3 text-11 text-neutral-500">
             {preview?.path === current.path ? t('tasks.fileNoPreview') : t('tasks.fileLoading')}
           </div>
         )
@@ -1124,7 +1124,7 @@ export function FilePicker({
           真正贴进 prompt 的表达式由服务端按 harness 文法算。 */}
       {current && (current.kind === 'file' || dirSupported) && (
         <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+          <span className="min-w-0 flex-1 truncate text-10 text-neutral-500">
             {current.kind === 'dir' ? (
               t('tasks.fileSubCount', { n: sub?.dir === current.path ? sub.total : 0 })
             ) : (
@@ -1142,7 +1142,7 @@ export function FilePicker({
             type="button"
             disabled={busy || (current.kind === 'file' && preview?.text == null)}
             onClick={() => void pick(current, true)}
-            className="hidden shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-[11px] text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40 max-lg:flex"
+            className="hidden shrink-0 items-center gap-1 rounded bg-blue-500/20 px-2 py-1 text-11 text-blue-200 transition-colors hover:bg-blue-500/30 disabled:opacity-40 max-lg:flex"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
             {current.kind === 'dir'
@@ -1179,7 +1179,7 @@ export function FilePicker({
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
-          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-400">
+          <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
             {query.trim() ? (
               // 搜索是全项目的，这时把目录面包屑换成范围说明，免得看成本目录
               <span className="text-neutral-500">
@@ -1212,7 +1212,7 @@ export function FilePicker({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('tasks.fileSearchPlaceholder')}
-              className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-[11px] text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+              className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-11 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
             />
             {query && (
               <button
@@ -1248,7 +1248,7 @@ export function FilePicker({
                 <div className="flex w-40 shrink-0 flex-col border-r border-edge/[0.06]">
                   <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
                     {dir === '' ? (
-                      <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-[11px] text-neutral-100">
+                      <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-11 text-neutral-100">
                         <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
                         <span className="truncate">{rootLabel}</span>
                       </li>
@@ -1263,7 +1263,7 @@ export function FilePicker({
                                 setDir(sib.path);
                               }}
                               className={cn(
-                                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-[11px]',
+                                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-11',
                                 sib.path === dir
                                   ? 'bg-blue-500/15 text-neutral-100'
                                   : 'text-neutral-400 hover:bg-edge/[0.04] hover:text-neutral-200',
@@ -1279,7 +1279,7 @@ export function FilePicker({
                         ) : (
                           <li
                             key={sib.path}
-                            className="flex items-center gap-2 px-2.5 py-1 text-[11px] text-neutral-600"
+                            className="flex items-center gap-2 px-2.5 py-1 text-11 text-neutral-600"
                           >
                             {iconFor(sib)}
                             <span className="truncate font-mono">{sib.name}</span>
@@ -1301,30 +1301,30 @@ export function FilePicker({
           {/* 已选条：有勾选就整批落定（顺序 = 点选顺序）。窄屏也摆——触屏只能靠它 */}
           {picked.length > 0 && (
             <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] bg-blue-500/[0.06] px-3 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-[11px] text-blue-200">
+              <span className="min-w-0 flex-1 truncate text-11 text-blue-200">
                 {t('tasks.filePickedCount', { n: picked.length })}
-                <span className="ml-1.5 truncate font-mono text-[10px] text-neutral-500">
+                <span className="ml-1.5 truncate font-mono text-10 text-neutral-500">
                   {picked.map((p) => p.name).join('、')}
                 </span>
               </span>
               <button
                 type="button"
                 onClick={() => setPicked([])}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-100"
+                className="shrink-0 rounded px-1.5 py-0.5 text-11 text-neutral-400 hover:text-neutral-100"
               >
                 {t('tasks.fileClearPicked')}
               </button>
               <button
                 type="button"
                 onClick={() => void commit()}
-                className="flex shrink-0 items-center gap-1 rounded bg-blue-500/25 px-2 py-1 text-[11px] text-blue-100 transition-colors hover:bg-blue-500/40"
+                className="flex shrink-0 items-center gap-1 rounded bg-blue-500/25 px-2 py-1 text-11 text-blue-100 transition-colors hover:bg-blue-500/40"
               >
                 {t('tasks.fileInsertPicked', { n: picked.length })}
               </button>
             </div>
           )}
           {/* 底条：条数 / 截断提示 */}
-          <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-[10px] text-neutral-600">
+          <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-10 text-neutral-600">
             <span>
               {query
                 ? t(capped ? 'tasks.fileHitsTop' : 'tasks.fileHits', { n: total })
@@ -1338,7 +1338,7 @@ export function FilePicker({
                 .map((chunk) => (
                   <kbd
                     key={chunk}
-                    className="rounded border border-edge/[0.14] bg-neutral-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-neutral-400"
+                    className="rounded border border-edge/[0.14] bg-neutral-950 px-1.5 py-0.5 font-sans text-10 font-normal text-neutral-400"
                   >
                     {chunk}
                   </kbd>

@@ -95,7 +95,7 @@ export function StatuslineBar({
     >
       {/* 整条一起横滚（行不各滚各的）：块多/路径长时不折行——折了 powerline 的块
           就断了；`w-max` 让这条按最宽那行撑开，各行左侧始终对齐 */}
-      <div className="flex w-max flex-col gap-0.5 text-[10px] leading-4">
+      <div className="flex w-max flex-col gap-0.5 text-10 leading-4">
         {lines.map((items, i) => (
           <PowerlineRow key={i} items={items} config={config} />
         ))}

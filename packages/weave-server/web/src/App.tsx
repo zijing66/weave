@@ -1349,7 +1349,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             >
               <Github className="h-4 w-4" />
               {stars !== null && (
-                <span className="text-[11px] tabular-nums">{formatStars(stars)}</span>
+                <span className="text-11 tabular-nums">{formatStars(stars)}</span>
               )}
             </a>
             {/* 深色 / 浅色切换：图标画的是「按下去会变成哪个」 */}
@@ -1401,7 +1401,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       <h2 className="text-sm font-semibold truncate">
                         {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
                       </h2>
-                      <p className="text-[11px] text-neutral-500 truncate">
+                      <p className="text-11 text-neutral-500 truncate">
                         {globalMode ? t('app.globalSubtitle') : (selected?.path ?? '')}
                       </p>
                     </div>
@@ -1429,25 +1429,25 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                           <>
                             <div className="fixed inset-0 z-20" onClick={() => setUpdatesOpen(false)} />
                             <div className="absolute left-4 right-4 top-full z-30 mt-1 overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac lg:left-auto lg:right-0 lg:w-[320px]">
-                              <p className="border-b border-edge/[0.06] px-3 py-2 text-[11px] text-neutral-500">
+                              <p className="border-b border-edge/[0.06] px-3 py-2 text-11 text-neutral-500">
                                 {t('app.updateListTitle', { n: updateRows.length })}
                               </p>
                               <ul className="max-h-[min(45dvh,320px)] overflow-y-auto py-1">
                                 {updateRows.map((row) => (
                                   <li key={`${row.kind}:${row.name}`} className="flex items-baseline gap-2 px-3 py-1">
-                                    <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                                    <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-400">
                                       {t(row.kind)}
                                     </span>
                                     <span className="min-w-0 flex-1 truncate text-xs text-neutral-200" title={row.name}>
                                       {row.name}
                                     </span>
                                     {row.scope && (
-                                      <span className="shrink-0 text-[10px] text-neutral-500">
+                                      <span className="shrink-0 text-10 text-neutral-500">
                                         {t(UPDATE_SCOPE_KEY[row.scope])}
                                       </span>
                                     )}
                                     {row.note && (
-                                      <span className="shrink-0 text-[10px] text-neutral-500">{row.note}</span>
+                                      <span className="shrink-0 text-10 text-neutral-500">{row.note}</span>
                                     )}
                                   </li>
                                 ))}
@@ -1488,7 +1488,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                     )}
                     {!globalMode && selected && (
                       <span
-                        className="shrink-0 hidden lg:inline-flex rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-[11px]"
+                        className="shrink-0 hidden lg:inline-flex rounded-full bg-neutral-800/60 text-neutral-500 px-2.5 py-1 text-11"
                         title={t('app.scopeCoverageTooltip')}
                       >
                         {t('app.scopeCoverageChip')}

@@ -128,7 +128,7 @@ export function AiAssistant() {
 
             <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
               {messages.length === 0 && streaming === '' && (
-                <div className="text-[11px] leading-relaxed text-neutral-500">
+                <div className="text-11 leading-relaxed text-neutral-500">
                   {t('ai.empty')}
                   <div className="mt-1 text-neutral-600">
                     {t('ai.intro')}

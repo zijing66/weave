@@ -904,7 +904,7 @@ export function TasksPanel({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('tasks.searchPlaceholder')}
-            className="h-6 w-full rounded border border-edge/[0.08] bg-neutral-900 pl-6 pr-5 text-[11px] text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none"
+            className="h-6 w-full rounded border border-edge/[0.08] bg-neutral-900 pl-6 pr-5 text-11 text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none"
           />
           {search && (
             <button
@@ -917,21 +917,21 @@ export function TasksPanel({
           )}
         </div>
         {matchedGroups && (
-          <span className="shrink-0 text-[10px] text-neutral-500">
+          <span className="shrink-0 text-10 text-neutral-500">
             {t('tasks.searchMatches', { n: matchedGroups.length })}
           </span>
         )}
-        <span className="ml-auto text-[10px] text-neutral-600">{t('tasks.legendNote')}</span>
+        <span className="ml-auto text-10 text-neutral-600">{t('tasks.legendNote')}</span>
       </div>
 
         {/* 待派发区：未投送的 pending 指令——选活跃会话后派发（结果在事件链高亮） */}
         {pendingToDispatch.length > 0 && (
           <div className="mb-2 shrink-0 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium text-amber-300">
+              <span className="text-11 font-medium text-amber-300">
                 {t('tasks.dispatchQueue', { n: pendingToDispatch.length })}
               </span>
-              <span className="text-[10px] text-amber-200/50">{t('tasks.dispatchHint')}</span>
+              <span className="text-10 text-amber-200/50">{t('tasks.dispatchHint')}</span>
             </div>
             <ul className="mt-1 space-y-1">
               {pendingToDispatch.map((d) => {
@@ -939,7 +939,7 @@ export function TasksPanel({
                 return (
                   <li key={d.id} className="flex items-center gap-2">
                     <span
-                      className="min-w-0 flex-1 truncate text-[11px] text-neutral-300"
+                      className="min-w-0 flex-1 truncate text-11 text-neutral-300"
                       title={d.prompt}
                     >
                       {d.prompt}
@@ -947,7 +947,7 @@ export function TasksPanel({
                     <Combobox
                       value={target}
                       onChange={(v) => setAssign((prev) => ({ ...prev, [d.id]: v }))}
-                      className="shrink-0 rounded bg-neutral-900 px-1.5 py-0.5 text-[11px]"
+                      className="shrink-0 rounded bg-neutral-900 px-1.5 py-0.5 text-11"
                       options={(sessions ?? []).map((s) => ({
                         value: s.sessionId,
                         label: sessionLabel(s.title, s.sessionId),
@@ -957,7 +957,7 @@ export function TasksPanel({
                       type="button"
                       disabled={!target || fb.stateOf(`dispatch:${d.id}`) === 'loading'}
                       onClick={() => runDispatch(d.id, target)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-700/80 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
+                      className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-700/80 px-2 py-0.5 text-11 font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
                     >
                       <FeedbackIcon state={fb.stateOf(`dispatch:${d.id}`)} className="h-3 w-3" />
                       {t('tasks.dispatchRun')}
@@ -1087,7 +1087,7 @@ export function TasksPanel({
                           e.stopPropagation();
                           setAnswerFor(selectedId);
                         }}
-                        className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-[10px] font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
+                        className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-10 font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
                       >
                         {t('tasks.answerPendingTag')}
                       </button>
@@ -1108,14 +1108,14 @@ export function TasksPanel({
                       </Badge>
                     )}
                     {timeIso && (
-                      <span className="shrink-0 text-[10px] text-neutral-500">
+                      <span className="shrink-0 text-10 text-neutral-500">
                         {formatTime(timeIso)}
                       </span>
                     )}
-                    <span className="shrink-0 text-[10px] text-neutral-500">
+                    <span className="shrink-0 text-10 text-neutral-500">
                       {t('tasks.events', { n: g.events.length })}
                     </span>
-                    <span className="shrink-0 text-[10px] text-neutral-500">
+                    <span className="shrink-0 text-10 text-neutral-500">
                       {t('tasks.groupDispatches', { n: g.dispatches.length })}
                     </span>
                     {g.prompt && (
@@ -1179,7 +1179,7 @@ export function TasksPanel({
                           answerable={isLatestGroup && !!questionOf(selectedId)}
                           onOpenAnswer={() => setAnswerFor(selectedId)}
                         />
-                        <p className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-neutral-600">
+                        <p className="pointer-events-none absolute bottom-1 left-2 text-10 text-neutral-600">
                           {t('tasks.legendNote')}
                         </p>
                       </div>
@@ -1194,14 +1194,14 @@ export function TasksPanel({
                 倒序列表（最新在顶），更早 prompt 向底部滚触底自动加载 */}
             {hasOlder && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-6 text-center">
-                <p className="text-[10px] text-neutral-500">
+                <p className="text-10 text-neutral-500">
                   {pull.px > 0 ? t('tasks.pullMoreEvents') : t('tasks.olderHint')}
                 </p>
                 <span className="pointer-events-auto mt-1 inline-flex gap-2">
                   <button
                     type="button"
                     onClick={() => void loadOlderGroups()}
-                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-200 transition-colors hover:bg-neutral-800"
+                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-200 transition-colors hover:bg-neutral-800"
                   >
                     {olderRemaining > 0
                       ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
@@ -1210,7 +1210,7 @@ export function TasksPanel({
                   <button
                     type="button"
                     onClick={() => setGroupWindow((w) => w + groups.length)}
-                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
                   >
                     {t('tasks.loadAll')}
                   </button>
@@ -1257,7 +1257,7 @@ export function TasksPanel({
       >
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-11 text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
           {/* 新建会话：不依赖已开终端——落点由终端后端自决（复用本项目的 pane
@@ -1276,7 +1276,7 @@ export function TasksPanel({
             }
             onClick={(e) => onNewSession(e.currentTarget)}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-[11px] transition-colors',
+              'inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
               !canNewSession
                 ? 'cursor-not-allowed text-neutral-600'
                 : 'text-neutral-200 hover:bg-neutral-800',
@@ -1297,7 +1297,7 @@ export function TasksPanel({
             title={t('tasks.harnessFilterAll')}
             placeholder={t('tasks.harnessFilterAll')}
             clearLabel={t('tasks.harnessFilterAll')}
-            className="rounded bg-neutral-900 px-1 py-0.5 text-[10px]"
+            className="rounded bg-neutral-900 px-1 py-0.5 text-10"
             options={harnesses.map((h) => ({ value: h.id, label: harnessUiOf(h.id).label }))}
           />
           <RefreshIconButton
@@ -1310,7 +1310,7 @@ export function TasksPanel({
           />
         </div>
         {error && (
-          <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+          <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
             {error}
           </p>
         )}

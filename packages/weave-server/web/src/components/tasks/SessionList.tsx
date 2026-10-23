@@ -425,7 +425,7 @@ export function SessionList({
         {inflight > 0 && (
           <span
             title={t('tasks.messageInflight', { n: inflight })}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-[10px] font-semibold leading-none text-amber-300"
+            className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300"
           >
             <MessageSquareText className="h-3 w-3" />
             {inflight > 9 ? '9+' : inflight}
@@ -534,7 +534,7 @@ export function SessionList({
                   <HelpCircle className="h-3 w-3 text-amber-300" />
                   <span
                     aria-hidden
-                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-black"
+                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-8 font-semibold leading-none text-black"
                   >
                     {pendingCount}
                   </span>
@@ -576,7 +576,7 @@ export function SessionList({
                   {watch && (
                     <span
                       aria-hidden
-                      className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[8px] font-semibold leading-none text-black"
+                      className="absolute -right-1.5 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-8 font-semibold leading-none text-black"
                     >
                       {watch.remaining === null ? '∞' : watch.remaining}
                     </span>
@@ -647,15 +647,15 @@ export function SessionList({
                   {t('tasks.transcriptMissing')}
                 </Badge>
               )}
-              <span className="shrink-0 text-[10px] text-neutral-500">
+              <span className="shrink-0 text-10 text-neutral-500">
                 {t('tasks.events', { n: s.eventCount ?? 0 })}
               </span>
               {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
-              <span className="shrink-0 text-[10px] text-neutral-500">
+              <span className="shrink-0 text-10 text-neutral-500">
                 {lastSeenLabel(t, s.lastSeenAt, now)}
               </span>
               {s.harness && (
-                <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+                <AgentBadge agent={s.harness} className="shrink-0 px-1 text-10" />
               )}
               <Badge className={cn('shrink-0', STATUS_BADGE[status])}>
                 {t(STATUS_KEY[status])}
@@ -691,7 +691,7 @@ export function SessionList({
             key={`terminal:${entry.terminal.id}`}
             className="rounded-xl border border-edge/[0.06] bg-edge/[0.02] p-2"
           >
-            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] text-neutral-400">
+            <div className="mb-1.5 flex items-center gap-1.5 text-10 text-neutral-400">
               <SquareTerminal className="h-3 w-3 shrink-0 text-neutral-500" />
               <span className="font-medium">{blockTitle(entry.terminal)}</span>
               <span className="text-neutral-500">

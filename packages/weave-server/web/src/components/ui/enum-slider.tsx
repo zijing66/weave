@@ -92,7 +92,7 @@ export function EnumSlider({
       >
         <span
           style={{ color: CURRENT_TINT }}
-          className="truncate font-mono text-[11px]"
+          className="truncate font-mono text-11"
         >
           {value ?? '—'}
         </span>
@@ -111,7 +111,7 @@ export function EnumSlider({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-2 flex items-baseline justify-end">
-              <span style={{ color: CURRENT_TINT }} className="font-mono text-[11px]">
+              <span style={{ color: CURRENT_TINT }} className="font-mono text-11">
                 {levels[shown] ?? ''}
               </span>
             </div>
@@ -153,7 +153,7 @@ export function EnumSlider({
                   <span
                     key={level}
                     style={i === shown ? { color: CURRENT_TINT } : undefined}
-                    className={cn('text-[10px] leading-none', i !== shown && 'text-neutral-500')}
+                    className={cn('text-10 leading-none', i !== shown && 'text-neutral-500')}
                   >
                     {level}
                   </span>

@@ -51,7 +51,7 @@ function Num({
   onChange: (n: number) => void;
 }) {
   return (
-    <label className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
+    <label className="flex shrink-0 items-center gap-1 text-11 text-neutral-400">
       <span className="sr-only">{label}</span>
       <input
         type="number"
@@ -128,7 +128,7 @@ export function OrchestrationCronDialog({
               type="button"
               onClick={() => patch({ mode: mode.id })}
               className={cn(
-                'rounded-md border px-2 py-1 text-[11px] transition-colors',
+                'rounded-md border px-2 py-1 text-11 transition-colors',
                 fields.mode === mode.id
                   ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
                   : 'border-edge/[0.08] text-neutral-400 hover:bg-edge/[0.06]',
@@ -142,7 +142,7 @@ export function OrchestrationCronDialog({
         <div className="flex flex-wrap items-center gap-1.5 pb-2">
           {fields.mode === 'minutes' && (
             <>
-              <span className="text-[11px] text-neutral-400">{t('orch.cronEvery')}</span>
+              <span className="text-11 text-neutral-400">{t('orch.cronEvery')}</span>
               <Num
                 value={fields.everyMinutes}
                 min={1}
@@ -150,12 +150,12 @@ export function OrchestrationCronDialog({
                 label={t('orch.cronMinute')}
                 onChange={(everyMinutes) => patch({ everyMinutes })}
               />
-              <span className="text-[11px] text-neutral-400">{t('orch.cronMinutesUnit')}</span>
+              <span className="text-11 text-neutral-400">{t('orch.cronMinutesUnit')}</span>
             </>
           )}
           {fields.mode === 'hourly' && (
             <>
-              <span className="text-[11px] text-neutral-400">{t('orch.cronAt')}</span>
+              <span className="text-11 text-neutral-400">{t('orch.cronAt')}</span>
               <Num
                 value={fields.minute}
                 min={0}
@@ -163,7 +163,7 @@ export function OrchestrationCronDialog({
                 label={t('orch.cronMinute')}
                 onChange={(minute) => patch({ minute })}
               />
-              <span className="text-[11px] text-neutral-400">:00</span>
+              <span className="text-11 text-neutral-400">:00</span>
             </>
           )}
           {fields.mode === 'custom' && (
@@ -180,7 +180,7 @@ export function OrchestrationCronDialog({
             <>
               {fields.mode === 'monthly' && (
                 <>
-                  <span className="text-[11px] text-neutral-400">{t('orch.cronDom')}</span>
+                  <span className="text-11 text-neutral-400">{t('orch.cronDom')}</span>
                   <Num
                     value={fields.dom}
                     min={1}
@@ -190,7 +190,7 @@ export function OrchestrationCronDialog({
                   />
                 </>
               )}
-              <span className="text-[11px] text-neutral-400">{t('orch.cronAt')}</span>
+              <span className="text-11 text-neutral-400">{t('orch.cronAt')}</span>
               <Num
                 value={fields.hour}
                 min={0}
@@ -198,7 +198,7 @@ export function OrchestrationCronDialog({
                 label={t('orch.cronHour')}
                 onChange={(hour) => patch({ hour })}
               />
-              <span className="text-[11px] text-neutral-400">:</span>
+              <span className="text-11 text-neutral-400">:</span>
               <Num
                 value={fields.minute}
                 min={0}
@@ -228,7 +228,7 @@ export function OrchestrationCronDialog({
                     })
                   }
                   className={cn(
-                    'h-6 w-6 rounded-full border text-[11px] transition-colors',
+                    'h-6 w-6 rounded-full border text-11 transition-colors',
                     on
                       ? 'border-teal-400/50 bg-teal-500/15 text-teal-200'
                       : 'border-edge/[0.1] text-neutral-500 hover:text-neutral-200',
@@ -242,23 +242,23 @@ export function OrchestrationCronDialog({
         )}
 
         <div className="flex items-center gap-2 border-t border-edge/[0.06] pt-2">
-          <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-400">
+          <code className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
             {expression || '—'}
           </code>
           {nextRunAt && (
-            <span className="shrink-0 text-[10px] text-neutral-600">
+            <span className="shrink-0 text-10 text-neutral-600">
               {t('orch.cronNext', { time: new Date(nextRunAt).toLocaleString() })}
             </span>
           )}
         </div>
-        {!valid && <p className="pt-1 text-[10px] text-amber-400/80">{t('orch.cronInvalid')}</p>}
+        {!valid && <p className="pt-1 text-10 text-amber-400/80">{t('orch.cronInvalid')}</p>}
 
         <div className="flex items-center justify-end gap-2 pt-2.5">
           {expr && (
             <button
               type="button"
               onClick={onClear}
-              className="rounded-md border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-edge/[0.06]"
+              className="rounded-md border border-edge/[0.1] px-2 py-1 text-11 text-neutral-300 transition-colors hover:bg-edge/[0.06]"
             >
               {t('orch.cronClear')}
             </button>
@@ -267,7 +267,7 @@ export function OrchestrationCronDialog({
             type="button"
             disabled={!valid || expression.trim() === ''}
             onClick={() => onApply(expression)}
-            className="rounded-md bg-teal-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
+            className="rounded-md bg-teal-700/80 px-2.5 py-1 text-11 font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-40"
           >
             {t('orch.cronApply')}
           </button>

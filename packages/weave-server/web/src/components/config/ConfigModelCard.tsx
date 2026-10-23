@@ -72,12 +72,12 @@ export function ConfigModelCard({
     <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3 space-y-2">
       <div className="flex items-center gap-2">
         <span className="text-xs font-semibold text-neutral-300">{t('cfg.models')}</span>
-        <span className="text-[11px] text-neutral-500">{t('cfg.modelsHint')}</span>
+        <span className="text-11 text-neutral-500">{t('cfg.modelsHint')}</span>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="space-y-1">
-          <span className="text-[11px] text-neutral-500">{t('cfg.modelsBaseUrl')}</span>
+          <span className="text-11 text-neutral-500">{t('cfg.modelsBaseUrl')}</span>
           <input
             value={baseUrl}
             placeholder={configuredBaseUrl || t('cfg.modelsBaseUrlPlaceholder')}
@@ -86,7 +86,7 @@ export function ConfigModelCard({
           />
         </label>
         <label className="space-y-1">
-          <span className="text-[11px] text-neutral-500">{t('cfg.modelsApiKey')}</span>
+          <span className="text-11 text-neutral-500">{t('cfg.modelsApiKey')}</span>
           <div className="flex items-center gap-1.5">
             <input
               type="text"
@@ -130,30 +130,30 @@ export function ConfigModelCard({
         <button
           disabled={busy}
           onClick={() => void fetchModels()}
-          className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2.5 py-1 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
         >
           <RefreshCw className={cn('h-3 w-3', busy && 'animate-spin')} />
           {busy ? t('cfg.modelsFetching') : t('cfg.modelsFetch')}
         </button>
         {result && (
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-11 text-neutral-500">
             {t('cfg.modelsCount', {
               count: result.models.length,
               credential: credentialLabel(result.credential),
             })}
           </span>
         )}
-        {error && <span className="text-[11px] text-red-400">{t('cfg.modelsFailed', { error })}</span>}
+        {error && <span className="text-11 text-red-400">{t('cfg.modelsFailed', { error })}</span>}
       </div>
 
       {currentModel !== undefined && (
-        <p className="text-[11px] text-neutral-500">
+        <p className="text-11 text-neutral-500">
           {t('cfg.modelsCurrent')}：<span className="font-mono text-neutral-300">{String(currentModel)}</span>
         </p>
       )}
 
       {result && result.models.length === 0 && (
-        <p className="text-[11px] text-neutral-500">{t('cfg.modelsEmpty')}</p>
+        <p className="text-11 text-neutral-500">{t('cfg.modelsEmpty')}</p>
       )}
 
       {result && result.models.length > 0 && (
@@ -163,11 +163,11 @@ export function ConfigModelCard({
               key={model.id}
               className="flex items-center gap-2 border-b border-edge/[0.04] last:border-0 px-2 py-1"
             >
-              <span className="font-mono text-[11px] text-neutral-200 break-all">{model.id}</span>
-              {model.name && <span className="text-[11px] text-neutral-500">{model.name}</span>}
+              <span className="font-mono text-11 text-neutral-200 break-all">{model.id}</span>
+              {model.name && <span className="text-11 text-neutral-500">{model.name}</span>}
               <button
                 onClick={() => onApply(model.id)}
-                className="ml-auto rounded-md bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200 hover:bg-neutral-700"
+                className="ml-auto rounded-md bg-neutral-800 px-2 py-0.5 text-11 text-neutral-200 hover:bg-neutral-700"
               >
                 {t('cfg.modelsApply')}
               </button>

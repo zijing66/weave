@@ -311,7 +311,7 @@ export function ProjectList({
   return (
     <div className="flex flex-col">
       {/* 全局配置 */}
-      <p className="px-4 pt-2 pb-1 text-[11px] text-neutral-500 uppercase tracking-wide">
+      <p className="px-4 pt-2 pb-1 text-11 text-neutral-500 uppercase tracking-wide">
         {t('project.globalConfig')}
       </p>
       <div className="px-2">
@@ -330,7 +330,7 @@ export function ProjectList({
           />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm">{t('project.globalConfig')}</span>
-            <span className="block text-[11px] text-neutral-500">
+            <span className="block text-11 text-neutral-500">
               {t('project.globalSubtitle')}
             </span>
           </span>
@@ -339,7 +339,7 @@ export function ProjectList({
 
       {/* 项目 */}
       <div className="flex items-center gap-1 px-4 pt-3 pb-1">
-        <p className="flex-1 text-[11px] text-neutral-500 uppercase tracking-wide">
+        <p className="flex-1 text-11 text-neutral-500 uppercase tracking-wide">
           {t('project.sectionHeader')}
         </p>
         {/* 查看归档入口：有归档项目才出现，点击弹 3 列卡片弹窗 */}
@@ -349,7 +349,7 @@ export function ProjectList({
             aria-label={t('project.archivedCount', { n: archivedProjects.length })}
             title={t('project.archivedCount', { n: archivedProjects.length })}
             onClick={() => setArchivedOpen(true)}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-11 text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
           >
             <Archive className="h-3 w-3" />
             {archivedProjects.length}
@@ -422,7 +422,7 @@ export function ProjectList({
                   <span className="block truncate text-sm" title={p.name}>
                     {p.name}
                   </span>
-                  <span className="block truncate text-[11px] text-neutral-500" title={p.path}>
+                  <span className="block truncate text-11 text-neutral-500" title={p.path}>
                     {p.path}
                   </span>
                   {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
@@ -450,7 +450,7 @@ export function ProjectList({
                 {needsInit && (
                   <span
                     title={t('project.needsInitTip')}
-                    className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-[10px] leading-4 text-amber-300"
+                    className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-10 leading-4 text-amber-300"
                   >
                     {t('project.needsInit')}
                   </span>
@@ -508,7 +508,7 @@ export function ProjectList({
                     />
                   </QuickButton>
                   {terminals > 0 && (
-                    <span className="pointer-events-none absolute -top-1 -right-1.5 rounded-full bg-emerald-900/80 px-1 text-[9px] leading-3 text-emerald-300">
+                    <span className="pointer-events-none absolute -top-1 -right-1.5 rounded-full bg-emerald-900/80 px-1 text-9 leading-3 text-emerald-300">
                       {terminals}
                     </span>
                   )}
@@ -557,11 +557,11 @@ export function ProjectList({
                           {p.name}
                         </span>
                       </div>
-                      <p className="text-[11px] text-neutral-500 truncate" title={p.path}>
+                      <p className="text-11 text-neutral-500 truncate" title={p.path}>
                         {p.path}
                       </p>
                       {p.archivedAt && (
-                        <p className="text-[11px] text-neutral-600">
+                        <p className="text-11 text-neutral-600">
                           {t('project.archivedOn', { date: new Date(p.archivedAt).toLocaleString() })}
                         </p>
                       )}
@@ -612,7 +612,7 @@ export function ProjectList({
             className="fixed z-50 w-48 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
             onContextMenu={(e) => e.preventDefault()}
           >
-            <p className="px-3 pb-1 pt-0.5 text-[10px] text-neutral-500 truncate" title={menu.project.path}>
+            <p className="px-3 pb-1 pt-0.5 text-10 text-neutral-500 truncate" title={menu.project.path}>
               {menu.project.name}
             </p>
             {/* 右键只留归档：开目录/开终端与行内按钮簇重复，行内是快捷路径。
@@ -646,7 +646,7 @@ export function ProjectList({
           >
             <div className="flex items-center gap-1.5 px-2 pb-1 pt-0.5">
               <p
-                className="min-w-0 flex-1 truncate text-[10px] text-neutral-500"
+                className="min-w-0 flex-1 truncate text-10 text-neutral-500"
                 title={termMenu.project.path}
               >
                 {termMenu.project.name}
@@ -666,10 +666,10 @@ export function ProjectList({
               )}
             </div>
             {termMenu.targets === null ? (
-              <p className="px-2 py-2 text-[11px] text-neutral-500">{t('common.loading')}</p>
+              <p className="px-2 py-2 text-11 text-neutral-500">{t('common.loading')}</p>
             ) : termMenu.targets.length === 0 ? (
               (terminalsOf?.(termMenu.project.id) ?? 0) > 0 && (
-                <p className="px-2 pb-1 text-[11px] text-neutral-500">
+                <p className="px-2 pb-1 text-11 text-neutral-500">
                   {t('project.terminalListUnavailable')}
                 </p>
               )
@@ -707,12 +707,12 @@ export function ProjectList({
                                 })}
                             </span>
                             {target.active && (
-                              <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-[10px] text-emerald-300">
+                              <span className="shrink-0 rounded bg-emerald-900/40 px-1 text-10 text-emerald-300">
                                 {t('tasks.terminalTargetActive')}
                               </span>
                             )}
                           </span>
-                          <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                          <span className="mt-0.5 block truncate text-10 text-neutral-500">
                             {t('tasks.terminalTargetDetail', {
                               match: target.matchCount,
                               total: target.paneCount,
@@ -863,7 +863,7 @@ function SessionBadges({ counts }: { counts: HarnessSessionCounts[] }) {
               title={t('project.sessionsRunning', { n: c.running })}
             >
               <HarnessIcon harness={c.harness} running />
-              <span className="text-[10px] font-medium text-orange-300">{c.running}</span>
+              <span className="text-10 font-medium text-orange-300">{c.running}</span>
             </span>
           )}
           {c.open > 0 && (
@@ -872,7 +872,7 @@ function SessionBadges({ counts }: { counts: HarnessSessionCounts[] }) {
               title={t('project.sessionsOpen', { n: c.open })}
             >
               <HarnessIcon harness={c.harness} />
-              <span className="text-[10px] font-medium text-neutral-400">{c.open}</span>
+              <span className="text-10 font-medium text-neutral-400">{c.open}</span>
             </span>
           )}
         </span>

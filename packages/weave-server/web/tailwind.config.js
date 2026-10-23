@@ -108,6 +108,17 @@ export default {
         mac: '0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)',
         'mac-sm': '0 2px 8px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.04)',
       },
+      // 密排仪表盘的小字号刻度：纯字号、不带行高（与原 text-[Npx] 任意值行为
+      // 严格等价——预设刻度如 text-xs 会附带 line-height，会挪动现有布局）。
+      // rem 基 = 跟随浏览器默认字号偏好，也为将来「只缩文字」留了地基。
+      fontSize: {
+        8: '0.5rem',
+        9: '0.5625rem',
+        10: '0.625rem',
+        11: '0.6875rem',
+        12: '0.75rem',
+        13: '0.8125rem',
+      },
       transitionTimingFunction: {
         mac: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
       },

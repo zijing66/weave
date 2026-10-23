@@ -111,7 +111,7 @@ function ExternalAssetsSection({
         )}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
         {tag}
-        <span className="text-[11px] text-neutral-500">{note}</span>
+        <span className="text-11 text-neutral-500">{note}</span>
       </button>
       {open && <div className="space-y-2 px-3 pb-3">{children}</div>}
     </section>
@@ -526,7 +526,7 @@ export function CategoryDetail({
       {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}
       {category === 'personalization' && (runtimeTab === 'claude' || runtimeTab === 'all') && (
         <div className="space-y-3">
-          <p className="text-[11px] text-neutral-500">
+          <p className="text-11 text-neutral-500">
             {isGlobal
               ? t('category.personalizationGlobal')
               : t('category.personalizationProject')}

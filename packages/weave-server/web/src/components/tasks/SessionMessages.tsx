@@ -213,11 +213,11 @@ function StagedTile({
         ) : (
           <>
             <FileCode className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-            <span className="min-w-0 truncate text-[10px] text-neutral-300">{item.name}</span>
+            <span className="min-w-0 truncate text-10 text-neutral-300">{item.name}</span>
           </>
         )}
         {item.state === 'uploading' && (
-          <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-[9px] font-medium text-white">
+          <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-9 font-medium text-white">
             {pct}%
           </span>
         )}
@@ -258,7 +258,7 @@ function StagedRow({
   if (items.length === 0) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="shrink-0 text-[10px] text-neutral-500">{label}</span>
+      <span className="shrink-0 text-10 text-neutral-500">{label}</span>
       {children}
     </div>
   );
@@ -897,15 +897,15 @@ export function textBeforeCaret(root: Node, range: Range): string {
 /** 胶囊的样式（动态建元素也想吃 Tailwind：类名写死在源码里才生成得出）。
  *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。 */
 const REF_CHIP_CLASS =
-  'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-blue-200';
+  'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-blue-200';
 
 /** 命令胶囊：黄色系、**不截断**（命令名本来就短，截断只会藏掉分辨它们的最后几位）。 */
 const CMD_CHIP_CLASS =
-  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-amber-200';
+  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-amber-200';
 
 /** skill / 插件命令：红色系——它们与官方命令不是一类东西（插在句子里也一样生效）。 */
 const SKILL_CHIP_CLASS =
-  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-red-500/40 bg-red-500/15 px-1.5 align-baseline font-mono text-[11px] leading-[1.5] text-red-200';
+  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-red-500/40 bg-red-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-red-200';
 
 export type CmdSource = HarnessCommandRow['source'];
 export type CmdSigil = '/' | '$';
@@ -2770,7 +2770,7 @@ export function SessionMessages({
               <p className="truncate text-xs font-medium text-neutral-200">
                 {t('tasks.messagesTitle')} · {label}
               </p>
-              <p className="truncate text-[10px] text-neutral-500">{projectLabel}</p>
+              <p className="truncate text-10 text-neutral-500">{projectLabel}</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -2783,7 +2783,7 @@ export function SessionMessages({
                     type="button"
                     title={t('tasks.sideTitle')}
                     onClick={() => setSideOpen(true)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
                     {t('tasks.sideTitle')}
@@ -2793,7 +2793,7 @@ export function SessionMessages({
                   type="button"
                   title={t('tasks.chainTitle')}
                   onClick={onOpenChain}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
                   {t('tasks.chainTitle')}
@@ -2807,7 +2807,7 @@ export function SessionMessages({
               title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               onClick={toggleFullscreen}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
             >
               {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
               {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
@@ -2846,7 +2846,7 @@ export function SessionMessages({
               type="button"
               onClick={() => setFilter(f)}
               className={cn(
-                'rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                'rounded border px-1.5 py-0.5 text-10 transition-colors',
                 filter === f
                   ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
                   : 'border-edge/[0.08] text-neutral-500 hover:text-neutral-300',
@@ -2861,7 +2861,7 @@ export function SessionMessages({
                     : capability.harness}
             </button>
           ))}
-          <span className="ml-auto text-[10px] text-neutral-600">
+          <span className="ml-auto text-10 text-neutral-600">
             {t('tasks.convCount', { n: thread.length })}
           </span>
         </div>
@@ -2897,7 +2897,7 @@ export function SessionMessages({
               className="pointer-events-none absolute left-0 right-0 top-1 flex justify-center"
               style={{ transform: `translateY(${pull.px}px)` }}
             >
-              <span className="text-[10px] text-neutral-600">{t('tasks.pullMore')}</span>
+              <span className="text-10 text-neutral-600">{t('tasks.pullMore')}</span>
             </div>
           )}
           <div
@@ -2916,7 +2916,7 @@ export function SessionMessages({
           ) : (
             <>
               {loadingEarlier && (
-                <p className="flex items-center justify-center gap-1.5 pt-1 text-[10px] text-neutral-600">
+                <p className="flex items-center justify-center gap-1.5 pt-1 text-10 text-neutral-600">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {t('tasks.msgEarlier')}
                 </p>
@@ -2930,7 +2930,7 @@ export function SessionMessages({
                 if (m.role === 'compaction') {
                   // 压缩分隔：不是谁说的话，只标上下文在这里断过一次（不参与勾选）
                   return (
-                    <div key={m.key} className="flex items-center gap-2 py-1 text-[10px] text-neutral-600">
+                    <div key={m.key} className="flex items-center gap-2 py-1 text-10 text-neutral-600">
                       <span className="h-px flex-1 bg-edge/[0.08]" />
                       <span className="shrink-0">
                         {t('hooks.mindmap.compactTag')} · {formatStamp(m.at)}
@@ -2960,10 +2960,10 @@ export function SessionMessages({
                             : 'border-edge/[0.08] bg-neutral-800/50',
                         )}
                       >
-                        <span className="mb-0.5 flex items-center gap-1.5 text-[10px] text-neutral-600">
+                        <span className="mb-0.5 flex items-center gap-1.5 text-10 text-neutral-600">
                           {formatStamp(m.at)}
                           {m.plan === true && (
-                            <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-300">
+                            <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-10 font-medium text-amber-300">
                               {t('tasks.convPlan')}
                             </span>
                           )}
@@ -3019,14 +3019,14 @@ export function SessionMessages({
                           （这里右对齐），weave 来源 tag 与投递状态徽标和它并排 */}
                       <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                         {m.fromWeave && (
-                          <span className="shrink-0 rounded bg-blue-500/15 px-1 py-px text-[10px] font-medium text-blue-300">
+                          <span className="shrink-0 rounded bg-blue-500/15 px-1 py-px text-10 font-medium text-blue-300">
                             weave
                           </span>
                         )}
                         {/* 不是 weave 发的会话间消息（别的会话用 CC 自己的 SendMessage）：
                             挂发送方会话名，与终端里手敲的 prompt 区分开 */}
                         {isRemotePrompt(m) && (
-                          <span className="shrink-0 rounded border border-edge/[0.12] px-1 py-px text-[10px] text-neutral-400">
+                          <span className="shrink-0 rounded border border-edge/[0.12] px-1 py-px text-10 text-neutral-400">
                             {m.fromName}
                           </span>
                         )}
@@ -3036,11 +3036,11 @@ export function SessionMessages({
                           </Badge>
                         )}
                         {pipe?.stalled === true && (
-                          <span className="shrink-0 text-[10px] text-amber-400">
+                          <span className="shrink-0 text-10 text-amber-400">
                             {t('tasks.msgStalled')}
                           </span>
                         )}
-                        <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
+                        <span className="ml-auto shrink-0 text-10 text-neutral-600">
                           {formatStamp(m.at)}
                         </span>
                       </div>
@@ -3081,7 +3081,7 @@ export function SessionMessages({
                                   }
                                   e.stopPropagation();
                                 }}
-                                className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] bg-neutral-950 px-1.5 py-1 text-[10px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                                className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] bg-neutral-950 px-1.5 py-1 text-10 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300"
                               >
                                 <FileCode className="h-3 w-3 shrink-0" />
                                 <span className="min-w-0 truncate">{a.name}</span>
@@ -3108,7 +3108,7 @@ export function SessionMessages({
                           </p>
                           {/* 内建命令的宿主回显（转录里的 local-command-stdout） */}
                           {m.commandOutput && (
-                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950/70 px-1.5 py-1 font-mono text-[10px] leading-4 text-neutral-400">
+                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950/70 px-1.5 py-1 font-mono text-10 leading-4 text-neutral-400">
                               {m.commandOutput}
                             </pre>
                           )}
@@ -3120,12 +3120,12 @@ export function SessionMessages({
                       )}
                       {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                       {pipe?.reason === 'offline' ? (
-                        <p className="mt-1 break-words text-[11px] text-amber-400">
+                        <p className="mt-1 break-words text-11 text-amber-400">
                           {t('tasks.msgOffline')}
                         </p>
                       ) : (
                         pipe?.error && (
-                          <p className="mt-1 break-words text-[11px] text-red-400">{pipe.error}</p>
+                          <p className="mt-1 break-words text-11 text-red-400">{pipe.error}</p>
                         )
                       )}
                       {/* 多选态里重发/删除不渲染——它们会跟「点气泡即勾选」抢点击。
@@ -3149,7 +3149,7 @@ export function SessionMessages({
                                   { fail: (e) => t('tasks.msgResendFailed', { error: errorText(e) }) },
                                 )
                               }
-                              className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
+                              className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-950/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40"
                             >
                               <FeedbackIcon
                                 state={fb.stateOf(`resend:${pipe.id}`)}
@@ -3179,7 +3179,7 @@ export function SessionMessages({
                                 { fail: (e) => t('tasks.msgDismissFailed', { error: errorText(e) }) },
                               )
                             }
-                            className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[10px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200 disabled:opacity-40"
                           >
                             <FeedbackIcon
                               state={fb.stateOf(`dismiss:${pipe.id}`)}
@@ -3202,7 +3202,7 @@ export function SessionMessages({
                 <div className="flex flex-col items-end gap-1">
                   {/* 模态框在场时层② 不盲注：这些行只能等作答完成（服务端判据同上）。 */}
                   {answerPending && (
-                    <p className="max-w-[95%] text-right text-[10px] text-amber-300">
+                    <p className="max-w-[95%] text-right text-10 text-amber-300">
                       {t('tasks.outboxBlockedByQuestion')}
                     </p>
                   )}
@@ -3234,13 +3234,13 @@ export function SessionMessages({
                                   {t(queueStatusKey(m.status))}
                                 </Badge>
                                 {m.stalled === true && (
-                                  <span className="shrink-0 text-[10px] text-amber-400">
+                                  <span className="shrink-0 text-10 text-amber-400">
                                     {t('tasks.msgStalled')}
                                   </span>
                                 )}
                                 {/* 闸会自己放掉这条（服务端时刻），倒计时是给人看清还剩多久的 */}
                                 {m.stalled === true && m.releaseAt != null && (
-                                  <span className="shrink-0 text-[10px] text-neutral-500">
+                                  <span className="shrink-0 text-10 text-neutral-500">
                                     {t('tasks.msgClearIn', {
                                       left: countdownLabel(m.releaseAt, now),
                                     })}
@@ -3249,7 +3249,7 @@ export function SessionMessages({
                                 {m.attachments?.length ? (
                                   <Paperclip className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
-                                <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
+                                <span className="ml-auto shrink-0 text-10 text-neutral-600">
                                   {formatStamp(m.at)}
                                 </span>
                               </div>
@@ -3269,17 +3269,17 @@ export function SessionMessages({
                                 {m.attachments?.length ? (
                                   <Paperclip className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
-                                <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">
+                                <span className="min-w-0 flex-1 truncate text-12 text-neutral-200">
                                   {m.text || m.attachments?.[0]?.name}
                                 </span>
-                                <span className="shrink-0 text-[10px] text-neutral-600">
+                                <span className="shrink-0 text-10 text-neutral-600">
                                   {formatStamp(m.at)}
                                 </span>
                               </button>
                             )}
                             {open && (
                               <>
-                                <div className="whitespace-pre-wrap break-words text-[12px] text-neutral-200">
+                                <div className="whitespace-pre-wrap break-words text-12 text-neutral-200">
                                   {m.text || m.attachments?.[0]?.name}
                                 </div>
                                 {m.attachments?.length ? (
@@ -3287,7 +3287,7 @@ export function SessionMessages({
                                     {m.attachments.map((a) => (
                                       <span
                                         key={a.id}
-                                        className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] px-1 py-0.5 text-[10px] text-neutral-400"
+                                        className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] px-1 py-0.5 text-10 text-neutral-400"
                                       >
                                         <Paperclip className="h-2.5 w-2.5 shrink-0" />
                                         <span className="min-w-0 truncate">{a.name}</span>
@@ -3297,11 +3297,11 @@ export function SessionMessages({
                                 ) : null}
                                 {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                                 {m.reason === 'offline' ? (
-                                  <p className="mt-1 break-words text-[11px] text-amber-400">
+                                  <p className="mt-1 break-words text-11 text-amber-400">
                                     {t('tasks.msgOffline')}
                                   </p>
                                 ) : m.error ? (
-                                  <p className="mt-1 break-words text-[11px] text-red-400">
+                                  <p className="mt-1 break-words text-11 text-red-400">
                                     {m.error}
                                   </p>
                                 ) : null}
@@ -3325,7 +3325,7 @@ export function SessionMessages({
                       type="button"
                       title={t('tasks.answerTooltip')}
                       onClick={() => onOpenAnswer?.()}
-                      className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-[10px] font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
+                      className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
                     >
                       <HelpCircle className="h-3 w-3" />
                       {t('tasks.convAnswer')}
@@ -3334,7 +3334,7 @@ export function SessionMessages({
                   {(generating || interrupted || failed) && (
                     <div
                       className={cn(
-                        'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[10px]',
+                        'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
                         failed
                           ? 'border-red-500/30 bg-red-950/30 text-red-300'
                           : 'border-edge/[0.08] bg-neutral-800/50 text-neutral-500',
@@ -3370,7 +3370,7 @@ export function SessionMessages({
         </div>
 
         {error && (
-          <p className="mt-1 shrink-0 rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+          <p className="mt-1 shrink-0 rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
             {error}
           </p>
         )}
@@ -3379,7 +3379,7 @@ export function SessionMessages({
             就整组折到第二行——按钮不等宽也不做横向滚动 */}
         {selecting ? (
           <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span className="min-w-0 truncate text-[11px] text-neutral-400">
+            <span className="min-w-0 truncate text-11 text-neutral-400">
               {t('tasks.convSelected', { n: picked.size })}
             </span>
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -3388,7 +3388,7 @@ export function SessionMessages({
                 disabled={thread.length === 0}
                 onClick={toggleAll}
                 className={cn(
-                  'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40',
+                  'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-11 transition-colors disabled:opacity-40',
                   allPicked
                     ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
                     : 'border-edge/[0.1] text-neutral-200 hover:border-edge/20',
@@ -3401,7 +3401,7 @@ export function SessionMessages({
                 type="button"
                 disabled={picked.size === 0}
                 onClick={copyPicked}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
               >
                 <Copy className="h-3 w-3" />
                 {t('tasks.convCopy')}
@@ -3411,7 +3411,7 @@ export function SessionMessages({
                 disabled={picked.size === 0}
                 onClick={openShareMenu}
                 title={t('tasks.convShare')}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
               >
                 <FeedbackIcon
                   state={fb.stateOf(`convImg:${sessionId}`)}
@@ -3433,7 +3433,7 @@ export function SessionMessages({
                   setSelecting(false);
                   setPicked(new Set());
                 }}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-[11px] text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200"
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-400 transition-colors hover:border-edge/20 hover:text-neutral-200"
               >
                 {t('tasks.convCancel')}
               </button>
@@ -3494,7 +3494,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachImage')}
                   onClick={() => imageFileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
                 >
                   <ImageIcon className="h-3 w-3" />
                   {t('tasks.msgAttachImage')}
@@ -3509,7 +3509,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachFile')}
                   onClick={() => fileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
                 >
                   {staged.some((s) => !isImageUpload(s) && s.state === 'uploading') ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -3530,7 +3530,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.fileAttach')}
                   onClick={() => setPicker({ chip: null })}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-[11px] text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
                 >
                   <FileCode className="h-3 w-3" />
                   {t('tasks.fileAttach')}
@@ -3580,7 +3580,7 @@ export function SessionMessages({
                         className="h-3 w-3 text-neutral-500"
                         icon={<RotateCcw className="h-3 w-3" />}
                       />
-                      <span className="shrink-0 text-[10px] text-neutral-500">
+                      <span className="shrink-0 text-10 text-neutral-500">
                         {t('tasks.modeLabel')}
                       </span>
                       <span
@@ -3591,7 +3591,7 @@ export function SessionMessages({
                         }
                         style={{ color: modeTint ?? undefined }}
                         className={cn(
-                          'truncate font-mono text-[11px] max-lg:max-w-[7rem]',
+                          'truncate font-mono text-11 max-lg:max-w-[7rem]',
                           !modeTint && 'text-neutral-400',
                         )}
                       >
@@ -3603,7 +3603,7 @@ export function SessionMessages({
                   )}
                   {modelNames.length > 0 && (
                     <div className="flex min-w-0 items-center gap-1">
-                      <span className="shrink-0 text-[10px] text-neutral-500">
+                      <span className="shrink-0 text-10 text-neutral-500">
                         {t('tasks.modelLabel')}
                       </span>
                       <div className="relative min-w-0">
@@ -3614,7 +3614,7 @@ export function SessionMessages({
                           }}
                           title={t('tasks.modelLastKnown')}
                           placeholder={t('tasks.modelUnknown')}
-                          className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-[11px] max-lg:max-w-[8rem]"
+                          className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-11 max-lg:max-w-[8rem]"
                           options={[
                             ...modelOptions,
                             // 认不出别名的真名（别名表缺配）也得能显示成选中
@@ -3628,7 +3628,7 @@ export function SessionMessages({
                   )}
                   {effortLevels.length > 0 && (
                     <div className="flex min-w-0 items-center gap-1">
-                      <span className="shrink-0 text-[10px] text-neutral-500">
+                      <span className="shrink-0 text-10 text-neutral-500">
                         {t('tasks.effortLabel')}
                       </span>
                       <EnumSlider
@@ -3642,7 +3642,7 @@ export function SessionMessages({
                   {contextLabel !== null && (
                     <span
                       title={t('tasks.contextLastKnown')}
-                      className="shrink-0 font-mono text-[11px] text-neutral-400"
+                      className="shrink-0 font-mono text-11 text-neutral-400"
                     >
                       {contextLabel}
                     </span>
@@ -3699,12 +3699,12 @@ export function SessionMessages({
                       >
                         <span className={cmdChipClass(c.source)}>{`${c.sigil ?? '/'}${c.name}`}</span>
                         {c.argsHint && (
-                          <span className="shrink-0 font-mono text-[10px] text-neutral-500">{c.argsHint}</span>
+                          <span className="shrink-0 font-mono text-10 text-neutral-500">{c.argsHint}</span>
                         )}
-                        <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+                        <span className="min-w-0 flex-1 truncate text-10 text-neutral-500">
                           {c.description}
                         </span>
-                        <span className="shrink-0 text-[9px] text-neutral-600">
+                        <span className="shrink-0 text-9 text-neutral-600">
                           {t(`tasks.cmdSource_${c.source}` as 'tasks.cmdSource_builtin')}
                         </span>
                       </button>
@@ -3822,7 +3822,7 @@ export function SessionMessages({
                     state={interruptStateOf(sessionId)}
                     className="h-3 w-3"
                     icon={
-                      <span className="text-[9px] font-medium tracking-tight max-lg:text-[10px]">
+                      <span className="text-9 font-medium tracking-tight max-lg:text-10">
                         {escCooldown > 0 ? escCooldown : 'ESC'}
                       </span>
                     }
@@ -3907,7 +3907,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={() => enterSelect(menu.key)}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <Check className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convSelect')}
@@ -3920,7 +3920,7 @@ export function SessionMessages({
                       setEditsRange(editsWindowOf(thread, menu.key));
                       setEditsOpen(true);
                     }}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <FileDiff className="h-3 w-3 text-neutral-500" />
                     {t('tasks.editsTitle')}
@@ -3931,7 +3931,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={() => shareImage('clipboard')}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <Copy className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareCopy')}
@@ -3939,7 +3939,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={() => shareImage('download')}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <Download className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareDownload')}
@@ -3947,7 +3947,7 @@ export function SessionMessages({
                   <button
                     type="button"
                     onClick={exportHtml}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[11px] text-neutral-200 hover:bg-edge/[0.06]"
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <FileCode className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareHtml')}

@@ -149,6 +149,8 @@ export function DashboardOverview({
       if (disposed || !el.current) return;
       core.use([charts.LineChart, components.GridComponent, components.TooltipComponent, renderers.CanvasRenderer]);
       const textColor = getComputedStyle(el.current).color;
+      // canvas 不吃 rem：按根字号实算 px（浏览器字号偏好变了图表字跟着走）
+      const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
       // 窄屏最多摆得下 7 个时刻（每 10 分钟一个），桌面上可以每 5 分钟一个
       const labelInterval = el.current.clientWidth < 520 ? 59 : 29;
       const c = core.init(el.current, undefined, {
@@ -164,7 +166,7 @@ export function DashboardOverview({
           confine: true,
           backgroundColor: 'rgba(17, 24, 39, 0.92)',
           borderWidth: 0,
-          textStyle: { color: '#e5e7eb', fontSize: 11 },
+          textStyle: { color: '#e5e7eb', fontSize: 0.6875 * remPx },
         },
         xAxis: {
           type: 'category',
@@ -175,7 +177,7 @@ export function DashboardOverview({
           // 360 格按宽度抽稀（只标到分），不然轴密得糊成一片
           axisLabel: {
             color: textColor,
-            fontSize: 10,
+            fontSize: 0.625 * remPx,
             interval: labelInterval,
             formatter: (v: string) => v.slice(0, 5),
           },
@@ -184,7 +186,7 @@ export function DashboardOverview({
           type: 'value',
           minInterval: 1,
           splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.14)' } },
-          axisLabel: { color: textColor, fontSize: 10 },
+          axisLabel: { color: textColor, fontSize: 0.625 * remPx },
         },
         series: [
           {
@@ -283,14 +285,14 @@ export function DashboardOverview({
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
         {cards.map((c) => (
           <div key={c.label} className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3">
-            <div className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <div className="flex items-center gap-1.5 text-11 text-neutral-500">
               <c.icon className={`h-3.5 w-3.5 ${c.tone}`} />
               <span className="truncate">{c.label}</span>
             </div>
             <div className="mt-1 text-xl font-semibold tabular-nums text-neutral-200 lg:text-2xl">
               {c.value === null ? '—' : c.value.toLocaleString()}
             </div>
-            <div className="truncate text-[10px] text-neutral-600">{c.hint}</div>
+            <div className="truncate text-10 text-neutral-600">{c.hint}</div>
           </div>
         ))}
       </div>
@@ -298,8 +300,8 @@ export function DashboardOverview({
       <div className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-xs font-semibold text-neutral-300">{t('dashboard.chartTitle')}</span>
-          <span className="text-[10px] text-neutral-500">{t('dashboard.chartHint')}</span>
-          <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-emerald-400/90">
+          <span className="text-10 text-neutral-500">{t('dashboard.chartHint')}</span>
+          <span className="ml-auto inline-flex items-center gap-1 text-10 text-emerald-400/90">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             {t('dashboard.live')}
           </span>

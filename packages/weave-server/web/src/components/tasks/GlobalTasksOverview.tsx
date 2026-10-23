@@ -140,7 +140,7 @@ export function GlobalTasksOverview({
       <div className="flex items-center gap-2">
         <Globe className="h-3.5 w-3.5 text-sky-400" />
         <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.overviewTitle')}</h3>
-        <span className="text-[11px] text-neutral-500">
+        <span className="text-11 text-neutral-500">
           {sessions === null
             ? t('hooks.loading')
             : filtered.length === (sessions?.length ?? 0)
@@ -173,7 +173,7 @@ export function GlobalTasksOverview({
               type="button"
               onClick={() => setRange(k)}
               className={cn(
-                'px-2 py-1 text-[11px] transition-colors',
+                'px-2 py-1 text-11 transition-colors',
                 range === k
                   ? 'bg-neutral-800 text-neutral-100'
                   : 'text-neutral-500 hover:bg-neutral-800/50',
@@ -184,13 +184,13 @@ export function GlobalTasksOverview({
           ))}
         </span>
         {range === 'custom' && (
-          <span className="flex items-center gap-1 text-[11px] text-neutral-500">
+          <span className="flex items-center gap-1 text-11 text-neutral-500">
             <input
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
               aria-label={t('tasks.rangeFrom')}
-              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-11 text-neutral-200"
             />
             —
             <input
@@ -198,14 +198,14 @@ export function GlobalTasksOverview({
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
               aria-label={t('tasks.rangeTo')}
-              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-200"
+              className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-11 text-neutral-200"
             />
           </span>
         )}
       </div>
 
       {error && (
-        <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-[11px] text-red-300">
+        <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
           {error}
         </p>
       )}
@@ -220,7 +220,7 @@ export function GlobalTasksOverview({
         <>
           {/* 列头与行同构收缩（<lg 项目列收窄、状态列自然宽、事件/时间列隐藏
               ——两条数据折进行内第二行），否则窄屏 shrink-0 定列互相挤压错位。 */}
-          <div className="flex items-center gap-3 px-2 text-[10px] text-neutral-600">
+          <div className="flex items-center gap-3 px-2 text-10 text-neutral-600">
             <span className="w-32 max-lg:w-24 shrink-0">{t('tasks.overviewProject')}</span>
             <span className="min-w-0 flex-1">{t('tasks.overviewSession')}</span>
             <span className="w-20 max-lg:w-auto shrink-0">{t('tasks.overviewStatus')}</span>
@@ -266,7 +266,7 @@ export function GlobalTasksOverview({
                     )}
                   >
                     <span
-                      className="w-32 max-lg:w-24 shrink-0 truncate rounded bg-neutral-800/80 px-1.5 py-0.5 text-[10px] text-neutral-300"
+                      className="w-32 max-lg:w-24 shrink-0 truncate rounded bg-neutral-800/80 px-1.5 py-0.5 text-10 text-neutral-300"
                       title={projectName}
                     >
                       {projectName}
@@ -275,23 +275,23 @@ export function GlobalTasksOverview({
                       {sessionLabel(s.title, s.sessionId)}
                     </span>
                     {s.harness && (
-                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-[10px]" />
+                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-10" />
                     )}
                     <span className="flex w-20 max-lg:w-auto shrink-0 items-center gap-1.5">
                       <SessionStatusIcon status={status} harness={s.harness} />
                       {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
-                      <span className={cn('text-[10px]', STATUS_BADGE[status].split(' ')[1])}>
+                      <span className={cn('text-10', STATUS_BADGE[status].split(' ')[1])}>
                         {t(STATUS_KEY[status])}
                       </span>
                     </span>
-                    <span className="hidden lg:block w-16 shrink-0 text-right text-[10px] text-neutral-500">
+                    <span className="hidden lg:block w-16 shrink-0 text-right text-10 text-neutral-500">
                       {t('tasks.events', { n: s.eventCount ?? 0 })}
                     </span>
-                    <span className="hidden lg:block w-16 shrink-0 text-right text-[10px] text-neutral-500">
+                    <span className="hidden lg:block w-16 shrink-0 text-right text-10 text-neutral-500">
                       {lastSeenLabel(t, s.lastSeenAt, Date.now())}
                     </span>
                     {/* <lg：事件/时间折到第二行（basis-full 强制换行），数据不丢 */}
-                    <span className="lg:hidden flex basis-full gap-3 text-[10px] text-neutral-500">
+                    <span className="lg:hidden flex basis-full gap-3 text-10 text-neutral-500">
                       <span>{t('tasks.events', { n: s.eventCount ?? 0 })}</span>
                       <span>{lastSeenLabel(t, s.lastSeenAt, Date.now())}</span>
                     </span>

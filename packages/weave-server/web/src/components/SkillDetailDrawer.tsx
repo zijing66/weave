@@ -328,7 +328,7 @@ export function SkillDetailDrawer({
         {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace */}
         {pluginKey && (
           <span
-            className="shrink-0 font-mono text-[10px] text-neutral-500"
+            className="shrink-0 font-mono text-10 text-neutral-500"
             title={t('skillGrid.keyTip')}
           >
             {pluginKey}
@@ -379,7 +379,7 @@ export function SkillDetailDrawer({
             <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
               <button
                 onClick={toggleAll}
-                className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
+                className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
                 title={
                   anyCollapsed
                     ? t('skillDetail.expandAllDirs')
@@ -440,7 +440,7 @@ export function SkillDetailDrawer({
       </div>
 
       {/* Footer hint */}
-      <div className="flex items-center gap-2 p-2 border-t border-edge/[0.06] text-[11px] text-neutral-500">
+      <div className="flex items-center gap-2 p-2 border-t border-edge/[0.06] text-11 text-neutral-500">
         {scope === 'project' ? (
           <>
             <Folder className="h-3 w-3" />

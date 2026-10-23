@@ -9,6 +9,7 @@ export function NumberStepper({
   value,
   min,
   max,
+  step = 1,
   disabled,
   onChange,
   title,
@@ -16,6 +17,8 @@ export function NumberStepper({
   value: number;
   min: number;
   max?: number;
+  /** 步长（缺省 1；缩放这类离散档用 5）。 */
+  step?: number;
   /** 行级防重入：忙碌中禁点。 */
   disabled?: boolean;
   onChange: (v: number) => void;
@@ -38,7 +41,7 @@ export function NumberStepper({
         aria-label={t('common.decrease')}
         title={t('common.decrease')}
         disabled={disabled || value <= min}
-        onClick={() => onChange(clamp(value - 1))}
+        onClick={() => onChange(clamp(value - step))}
         className="flex w-6 items-center justify-center rounded-l bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
       >
         <Minus className="h-3 w-3" />
@@ -58,7 +61,7 @@ export function NumberStepper({
         aria-label={t('common.increase')}
         title={t('common.increase')}
         disabled={disabled || (max !== undefined && value >= max)}
-        onClick={() => onChange(clamp(value + 1))}
+        onClick={() => onChange(clamp(value + step))}
         className="flex w-6 items-center justify-center rounded-r bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
       >
         <Plus className="h-3 w-3" />

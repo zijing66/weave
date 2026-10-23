@@ -16,6 +16,17 @@
         document.documentElement.dataset.theme = light ? 'light' : 'dark';
       })();
     </script>
+    <!-- 首屏落界面缩放：规则与 src/lib/font-scale.ts 同源（85–125，缺省 100 = 不缩），
+         React 挂载前定下 zoom，避免首屏尺寸跳一下。 -->
+    <script>
+      (function () {
+        var s = null;
+        try {
+          s = Number(localStorage.getItem('weave:fontScale'));
+        } catch (e) {}
+        if (s >= 85 && s <= 125 && s !== 100) document.documentElement.style.zoom = String(s / 100);
+      })();
+    </script>
     <title>Weave Dashboard</title>
     <!-- favicon：public/ 下的 SVG，不经 JS、首屏即生效（换图就抬 ?v，缓存口令） -->
     <link rel="icon" type="image/svg+xml" href="/weave-logo.svg?v=3" />

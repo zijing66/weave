@@ -96,7 +96,7 @@ export function WatchPicker({
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        <p className="pb-2 text-[11px] leading-relaxed text-neutral-500">
+        <p className="pb-2 text-11 leading-relaxed text-neutral-500">
           {t('tasks.watchPickerHint')}
         </p>
         <ul className="space-y-1">
@@ -124,7 +124,7 @@ export function WatchPicker({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs text-neutral-200">{t(KIND_LABEL[kind])}</span>
-                    <span className="mt-0.5 block text-[10px] text-neutral-500">
+                    <span className="mt-0.5 block text-10 text-neutral-500">
                       {t(KIND_HINT[kind])}
                     </span>
                   </span>
@@ -136,7 +136,7 @@ export function WatchPicker({
         {/* 提醒次数：数字 = 命中该次数后失效（所有已选类型共用一个计数）；
             勾了「持久化」= 不自动失效。 */}
         <div className="mt-3 flex items-center gap-2 border-t border-edge/[0.06] pt-2.5">
-          <span className="text-[11px] text-neutral-400">
+          <span className="text-11 text-neutral-400">
             {t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
           </span>
           <NumberStepper
@@ -147,7 +147,7 @@ export function WatchPicker({
             onChange={setTimes}
             title={t(current ? 'tasks.watchTimesLeft' : 'tasks.watchTimes')}
           />
-          <label className="flex cursor-pointer items-center gap-1 text-[11px] text-neutral-300">
+          <label className="flex cursor-pointer items-center gap-1 text-11 text-neutral-300">
             <input
               type="checkbox"
               checked={persistent}
@@ -167,7 +167,7 @@ export function WatchPicker({
                 persistent ? null : times,
               )
             }
-            className="flex-1 rounded bg-blue-600/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+            className="flex-1 rounded bg-blue-600/80 px-2.5 py-1 text-11 font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
           >
             {t(current ? 'tasks.watchUpdate' : 'tasks.watchSubscribe')}
           </button>
@@ -176,7 +176,7 @@ export function WatchPicker({
               type="button"
               disabled={busy}
               onClick={onUnwatch}
-              className="rounded border border-edge/[0.08] px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:border-red-400/40 hover:text-red-300 disabled:opacity-40"
+              className="rounded border border-edge/[0.08] px-2.5 py-1 text-11 text-neutral-300 transition-colors hover:border-red-400/40 hover:text-red-300 disabled:opacity-40"
             >
               {t('tasks.watchUnwatch')}
             </button>

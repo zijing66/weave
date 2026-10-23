@@ -85,7 +85,7 @@ export function McpGrid({
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
           {scope === 'user' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
         </h2>
-        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-1.5 py-0.5 text-10 font-medium tabular-nums">
           {rows.length}
         </span>
       </div>
@@ -131,7 +131,7 @@ export function McpGrid({
                       onClick={() => cycleEnable(s)}
                       title={t('mcp.enableTip', { state: t(STATE_LABEL[state]) })}
                       className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                         state === 'on'
                           ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
                           : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
@@ -160,7 +160,7 @@ export function McpGrid({
                         )
                       }
                       title={t('mcp.installTip', { name: s.key })}
-                      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
                     >
                       <FeedbackIcon
                         state={installState}

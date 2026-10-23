@@ -45,7 +45,7 @@ const ALL_OFF = 'text-neutral-400 hover:text-neutral-300';
 
 /** Grey chip shell — identical for every chip; only the text colour varies. */
 const CHIP_BASE =
-  'inline-flex items-center gap-1.5 rounded-full border border-transparent bg-neutral-800/60 px-2 py-0.5 text-[11px] font-medium transition-colors duration-150 hover:bg-neutral-700/60';
+  'inline-flex items-center gap-1.5 rounded-full border border-transparent bg-neutral-800/60 px-1.5 py-0.5 text-10 font-medium transition-colors duration-150 hover:bg-neutral-700/60';
 
 /** Highlight for a chip in the filtered (selected) state. */
 const CHIP_ACTIVE_HL = 'bg-neutral-700 ring-1 ring-blue-500/50 hover:bg-neutral-700';
@@ -211,7 +211,7 @@ function AssetTreeNode({
               renders ALL of its tags (mods rows show plugin + mods). */}
           <AgentBadge
             agent={a.agent}
-            className="shrink-0 px-1.5 py-0 text-[10px] font-sans"
+            className="shrink-0 px-1.5 py-0 text-10 font-sans"
           />
           {tags.map((tag) => (
             <span key={tag} className={cn(ROW_TAG_BASE, kindColor(tag).on)}>
@@ -226,12 +226,12 @@ function AssetTreeNode({
             </span>
           )}
           {update?.outdated && (
-            <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
+            <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-10 font-sans">
               {t('fileTree.update')}
             </Badge>
           )}
           {update?.custom && (
-            <Badge variant="other" className="shrink-0 px-1.5 py-0 text-[10px] font-sans">
+            <Badge variant="other" className="shrink-0 px-1.5 py-0 text-10 font-sans">
               {t('fileTree.custom')}
             </Badge>
           )}
@@ -280,7 +280,7 @@ function AssetTreeNode({
         )}
         <Folder className="h-3 w-3 shrink-0 text-neutral-500" />
         <span className="truncate">{node.name}</span>
-        <span className="text-[10px] text-neutral-600 tabular-nums">{node.fileCount}</span>
+        <span className="text-10 text-neutral-600 tabular-nums">{node.fileCount}</span>
       </button>
       {!isCollapsed &&
         node.children.map((c) => (
@@ -424,14 +424,14 @@ export function FileAssetTree({
             {scope === 'user' ? dirList : t('fileTree.pathsProject', { dirs: dirList })}
           </span>
         </h2>
-        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+        <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-1.5 py-0.5 text-10 font-medium tabular-nums">
           {active.size ? `${visible.length} / ${assets.length}` : assets.length}
         </span>
         {allDirPaths.length > 0 && (
           <button
             type="button"
             onClick={toggleAll}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-[10px] hover:bg-neutral-700 [&_svg]:pointer-events-none"
+            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
             title={anyCollapsed ? t('fileTree.expandAllDirs') : t('fileTree.collapseAllDirs')}
           >
             {anyCollapsed ? (
@@ -448,12 +448,12 @@ export function FileAssetTree({
       <div className="flex flex-wrap items-center gap-1.5">
         <KindChip active={active.size === 0} onClick={() => setSelected(new Set())}>
           {t('fileTree.all')}
-          <span className="tabular-nums text-[10px] opacity-70">{assets.length}</span>
+          <span className="tabular-nums text-10 opacity-70">{assets.length}</span>
         </KindChip>
         {chipKinds.map((k) => (
           <KindChip key={k} kind={k} active={active.has(k)} onClick={() => toggleKind(k)}>
             {k}
-            <span className="tabular-nums text-[10px] opacity-70">{counts.get(k) ?? 0}</span>
+            <span className="tabular-nums text-10 opacity-70">{counts.get(k) ?? 0}</span>
           </KindChip>
         ))}
       </div>

@@ -222,7 +222,7 @@ export function QuestionAnswer({
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        <p className="pb-2 text-[11px] leading-relaxed text-neutral-500">
+        <p className="pb-2 text-11 leading-relaxed text-neutral-500">
           {anyPreview ? t('tasks.answerPickerHintPreview') : t('tasks.answerPickerHint')}
         </p>
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
@@ -242,7 +242,7 @@ export function QuestionAnswer({
                 )}
               >
                 {q.header && (
-                  <span className="mb-1 inline-block rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-300">
+                  <span className="mb-1 inline-block rounded bg-blue-500/15 px-1.5 py-0.5 text-10 font-medium text-blue-300">
                     {q.header}
                   </span>
                 )}
@@ -284,7 +284,7 @@ export function QuestionAnswer({
                                 <span className="w-2.5 shrink-0 text-neutral-500">
                                   {active ? '›' : ''}
                                 </span>
-                                <span className="shrink-0 text-[11px] text-neutral-500">
+                                <span className="shrink-0 text-11 text-neutral-500">
                                   {i + 1}.
                                 </span>
                                 <span
@@ -304,7 +304,7 @@ export function QuestionAnswer({
                       <div className="flex min-w-0 flex-1 flex-col gap-1.5 lg:min-h-0">
                         <pre
                           className={cn(
-                            'overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-edge/[0.06] bg-neutral-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-neutral-300',
+                            'overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-edge/[0.06] bg-neutral-950 px-2.5 py-2 font-mono text-11 leading-relaxed text-neutral-300',
                             // 单独一问的预览形态：右栏吃掉余下高度（拖高才不白拖）
                             soloPreview ? 'h-40 lg:min-h-0 lg:flex-1' : 'h-40 lg:h-60',
                           )}
@@ -314,7 +314,7 @@ export function QuestionAnswer({
                         {notesOpt && (
                           <div className="flex items-center gap-1.5">
                             {/* 宿主这一行不编号、文案原文「Notes:」，未聚焦时提示按 n */}
-                            <span className="shrink-0 text-[11px] text-neutral-400">
+                            <span className="shrink-0 text-11 text-neutral-400">
                               {notesOpt.label}
                             </span>
                             <input
@@ -360,7 +360,7 @@ export function QuestionAnswer({
                             const pick = previewPick(q);
                             if (pick) answer(q.key, pick, draft);
                           }}
-                          className="flex items-center gap-1 rounded bg-blue-700/80 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
+                          className="flex items-center gap-1 rounded bg-blue-700/80 px-2.5 py-1 text-11 font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
                         >
                           {t('tasks.answerSend')}
                           {busy && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -377,7 +377,7 @@ export function QuestionAnswer({
                       const index = (
                         <span
                           className={cn(
-                            'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-semibold leading-none',
+                            'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-10 font-semibold leading-none',
                             chosen
                               ? 'border-blue-400/40 bg-blue-500/15 text-blue-200'
                               : 'border-edge/15 bg-neutral-950 text-neutral-300',
@@ -437,7 +437,7 @@ export function QuestionAnswer({
                                   type="button"
                                   disabled={busy || !draft.trim()}
                                   onClick={() => answer(q.key, [i], draft)}
-                                  className="shrink-0 rounded bg-blue-700/80 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
+                                  className="shrink-0 rounded bg-blue-700/80 px-2 py-0.5 text-10 font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
                                 >
                                   {t('tasks.answerSend')}
                                 </button>
@@ -470,7 +470,7 @@ export function QuestionAnswer({
                             <span className="min-w-0 flex-1">
                               <span className="block text-xs text-neutral-200">{opt.label}</span>
                               {opt.description && (
-                                <span className="mt-0.5 block text-[10px] leading-relaxed text-neutral-500">
+                                <span className="mt-0.5 block text-10 leading-relaxed text-neutral-500">
                                   {opt.description}
                                 </span>
                               )}
@@ -499,7 +499,7 @@ export function QuestionAnswer({
         {submitStep && (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-edge/[0.06] pt-2">
             {unanswered.length > 0 && (
-              <span className="min-w-0 flex-1 text-[10px] leading-relaxed text-amber-300/80">
+              <span className="min-w-0 flex-1 text-10 leading-relaxed text-amber-300/80">
                 {t('tasks.answerIncomplete', { n: unanswered.length })}
               </span>
             )}
@@ -512,7 +512,7 @@ export function QuestionAnswer({
                   disabled={busy || (i === 0 && unanswered.length > 0)}
                   onClick={() => answer(submitStep.key, [i])}
                   className={cn(
-                    'flex items-center gap-1 rounded px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-40',
+                    'flex items-center gap-1 rounded px-2.5 py-1 text-11 font-medium transition-colors disabled:opacity-40',
                     i === 0
                       ? 'bg-blue-700/80 text-white hover:bg-blue-600'
                       : 'border border-edge/[0.08] bg-edge/[0.02] text-neutral-300 hover:bg-edge/[0.08]',

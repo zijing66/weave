@@ -21,7 +21,8 @@ export function Badge({ className, variant = 'default', ...props }: BadgeProps) 
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium tracking-tight',
+        // 卡片元信息层基准 = text-10：徽标与旁边的时刻/计数同级，不再大一号
+        'inline-flex items-center rounded-full px-1.5 py-0.5 text-10 font-medium tracking-tight',
         variants[variant] ?? variants.default,
         className,
       )}

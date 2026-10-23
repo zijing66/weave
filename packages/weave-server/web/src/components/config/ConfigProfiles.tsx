@@ -41,7 +41,7 @@ export function ConfigProfiles({
   if (!enabled) {
     return (
       <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3">
-        <p className="text-[11px] text-neutral-500">{t('cfg.profileNoSwitch')}</p>
+        <p className="text-11 text-neutral-500">{t('cfg.profileNoSwitch')}</p>
       </section>
     );
   }
@@ -77,7 +77,7 @@ export function ConfigProfiles({
                 setName('');
                 setCreating(false);
               }}
-              className="rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
             >
               {t('common.confirm')}
             </button>
@@ -85,7 +85,7 @@ export function ConfigProfiles({
         ) : (
           <button
             onClick={() => setCreating(true)}
-            className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700"
+            className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-200 hover:bg-neutral-700"
           >
             <Plus className="h-3 w-3" />
             {t('cfg.profileNew')}
@@ -95,7 +95,7 @@ export function ConfigProfiles({
           <button
             disabled={busy}
             onClick={onSaveActive}
-            className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
           >
             <Save className="h-3 w-3" />
             {t('cfg.profileSave')}
@@ -104,7 +104,7 @@ export function ConfigProfiles({
       </div>
 
       {profiles.length === 0 ? (
-        <p className="text-[11px] text-neutral-500">{t('cfg.profileEmpty')}</p>
+        <p className="text-11 text-neutral-500">{t('cfg.profileEmpty')}</p>
       ) : (
         <ul className="space-y-1">
           {profiles.map((profile) => {
@@ -141,19 +141,19 @@ export function ConfigProfiles({
                   <span className="flex-1 truncate text-xs text-neutral-200">{profile.name}</span>
                 )}
                 {active && (
-                  <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-300">
+                  <span className="inline-flex items-center gap-0.5 text-10 text-emerald-300">
                     <Check className="h-3 w-3" />
                     {t('cfg.profileActive')}
                   </span>
                 )}
-                <span className="text-[10px] text-neutral-600">
+                <span className="text-10 text-neutral-600">
                   {profile.updatedAt.slice(0, 10)}
                 </span>
                 {!active && (
                   <button
                     disabled={busy}
                     onClick={() => onActivate(profile.id)}
-                    className="rounded-md bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+                    className="rounded-md bg-neutral-800 px-2 py-0.5 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
                   >
                     {t('cfg.profileActivate')}
                   </button>
