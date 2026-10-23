@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   api,
@@ -31,6 +31,8 @@ import {
   X,
   Zap,
   Scale,
+  Server,
+  type LucideIcon,
 } from 'lucide-react';
 import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -66,6 +68,35 @@ const PUSH_PERMISSION_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageK
   unsupported: 'tasks.notifyUnsupported',
   insecure: 'tasks.notifyInsecure',
 };
+
+/** 设置分段：桌面端左栏导航 + 滚动跟随高亮的锚点清单（移动端只渲染分隔标题）。 */
+const SECTIONS: Array<{ id: string; key: MessageKey; icon: LucideIcon }> = [
+  { id: 'general', key: 'settings.sectionGeneral', icon: Settings },
+  { id: 'service', key: 'settings.sectionService', icon: Server },
+  { id: 'data', key: 'settings.sectionData', icon: Database },
+  { id: 'notify', key: 'settings.sectionNotify', icon: Bell },
+  { id: 'ai', key: 'settings.sectionAi', icon: Sparkles },
+  { id: 'export', key: 'settings.sectionExport', icon: FileCode },
+];
+
+/** 分段容器：标题行 + 内容；id 供导航锚点与 IntersectionObserver 观察。 */
+function SettingsSection(props: { id: string; icon: LucideIcon; title: string; children: ReactNode }) {
+  const Icon = props.icon;
+  return (
+    <section id={`settings-section-${props.id}`} data-settings-section={props.id} className="scroll-mt-2">
+      <div className="mb-2 flex items-center gap-1.5 pb-1.5 border-b border-edge/[0.06]">
+        <Icon className="h-3.5 w-3.5 text-neutral-500" />
+        <h3 className="text-xs font-semibold text-neutral-200">{props.title}</h3>
+      </div>
+      <div className="space-y-4">{props.children}</div>
+    </section>
+  );
+}
+
+/** 字段标签（AI 两卡的「API 地址 / 模型」这类行内小标）。 */
+function FieldLabel(props: { children: ReactNode }) {
+  return <span className="block text-[11px] text-neutral-500">{props.children}</span>;
+}
 
 interface SettingsModalProps {
   open: boolean;
@@ -165,9 +196,32 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [pushState, setPushState] = useState<PushChannelState | null>(null);
   const fb = useActionFeedback();
   const { show } = useToast();
+  /** 左栏导航高亮：滚动跟随——最后一个越过容器顶部阈值的分段；触底则钉在最后一段。 */
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [activeSection, setActiveSection] = useState('general');
+  const onContentScroll = useCallback(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const rootTop = root.getBoundingClientRect().top;
+    let current = 'general';
+    for (const s of SECTIONS) {
+      const el = root.querySelector<HTMLElement>(`[data-settings-section="${s.id}"]`);
+      if (el && el.getBoundingClientRect().top - rootTop <= 24) current = s.id;
+    }
+    if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) {
+      current = SECTIONS[SECTIONS.length - 1]?.id ?? current;
+    }
+    setActiveSection(current);
+  }, []);
+  const jumpToSection = useCallback((id: string) => {
+    scrollRef.current
+      ?.querySelector<HTMLElement>(`[data-settings-section="${id}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    setActiveSection('general');
     void pushChannelState().then(setPushState);
   }, [open]);
 
@@ -358,7 +412,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       {/* max-h + 内容区 min-h-0/滚动：设置项变多后（AI 段）内容会超过视口，
           面板是 overflow-hidden——不这样收口会把底部输入裁掉、点不到（见 CLAUDE.md
           「纵向 flex 堆叠的下区要 min-h-0」）。 */}
-      <div className="relative w-[440px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+      <div className="relative w-[640px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <Settings className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('settings.title')}</span>
@@ -371,7 +425,30 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="min-h-0 flex-1 flex overflow-hidden">
+          <nav className="hidden lg:flex w-32 shrink-0 flex-col gap-0.5 border-r border-edge/[0.06] p-2">
+            {SECTIONS.map((s) => {
+              const Icon = s.icon;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => jumpToSection(s.id)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs',
+                    activeSection === s.id
+                      ? 'bg-edge/[0.08] text-neutral-100'
+                      : 'text-neutral-500 hover:text-neutral-200 hover:bg-edge/[0.04]',
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {t(s.key)}
+                </button>
+              );
+            })}
+          </nav>
+          <div ref={scrollRef} onScroll={onContentScroll} className="min-w-0 flex-1 overflow-y-auto p-4 space-y-6">
+          <SettingsSection id="general" icon={Settings} title={t('settings.sectionGeneral')}>
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
@@ -385,6 +462,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               onChange={(v) => setSettings((s) => (s ? { ...s, locale: v as Locale } : s))}
             />
           </div>
+          </SettingsSection>
+
+          <SettingsSection id="service" icon={Server} title={t('settings.sectionService')}>
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
@@ -468,6 +548,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
             <p className="text-[11px] text-neutral-500">{t('settings.launchOnLoginHint')}</p>
           </div>
+          </SettingsSection>
+
+          <SettingsSection id="data" icon={Database} title={t('settings.sectionData')}>
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
@@ -513,6 +596,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <span className="text-[11px] text-neutral-500">{t('settings.daysUnit')}</span>
             </div>
           </div>
+          </SettingsSection>
+
+          <SettingsSection id="notify" icon={Bell} title={t('settings.sectionNotify')}>
 
           {/* 推送通道（本浏览器开关，非 daemon 配置）：页面关掉后提醒仍能到达。 */}
           <div className="space-y-1.5">
@@ -587,6 +673,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </ul>
             </div>
           )}
+          </SettingsSection>
+
+          <SettingsSection id="ai" icon={Sparkles} title={t('settings.sectionAi')}>
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
@@ -594,19 +683,24 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               {t('settings.ai')}
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                value={settings?.ai?.baseUrl ?? ''}
-                onChange={(e) =>
-                  setSettings((s) =>
-                    s === null
-                      ? s
-                      : { ...s, ai: { ...(s.ai ?? { model: '' }), baseUrl: e.target.value } },
-                  )
-                }
-                placeholder={t('settings.aiBaseUrlPlaceholder')}
-                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <div className="flex items-center gap-1">
+              <div className="min-w-0 space-y-1">
+                <FieldLabel>{t('settings.aiBaseUrl')}</FieldLabel>
+                <input
+                  value={settings?.ai?.baseUrl ?? ''}
+                  onChange={(e) =>
+                    setSettings((s) =>
+                      s === null
+                        ? s
+                        : { ...s, ai: { ...(s.ai ?? { model: '' }), baseUrl: e.target.value } },
+                    )
+                  }
+                  placeholder={t('settings.aiBaseUrlPlaceholder')}
+                  className="w-full min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <FieldLabel>{t('settings.aiModel')}</FieldLabel>
+                <div className="flex items-center gap-1">
                 {/* 拉到候选 → 统一 Combobox（可搜，网关模型上百也不卡）；
                     没拉到（有的网关没有 /models）→ 回退文本框手填。 */}
                 {models.length > 0 ? (
@@ -665,6 +759,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   />
                   {t('settings.aiModelFetch')}
                 </button>
+                </div>
               </div>
             </div>
             <SecretKeyInput
@@ -698,36 +793,42 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               {t('settings.decision')}
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                value={settings?.decision?.baseUrl ?? ''}
-                onChange={(e) =>
-                  setSettings((s) =>
-                    s === null
-                      ? s
-                      : {
-                          ...s,
-                          decision: { ...(s.decision ?? { model: '' }), baseUrl: e.target.value },
-                        },
-                  )
-                }
-                placeholder={t('settings.decisionBaseUrlPlaceholder')}
-                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <input
-                value={settings?.decision?.model ?? ''}
-                onChange={(e) =>
-                  setSettings((s) =>
-                    s === null
-                      ? s
-                      : {
-                          ...s,
-                          decision: { ...(s.decision ?? { baseUrl: '' }), model: e.target.value },
-                        },
-                  )
-                }
-                placeholder={t('settings.decisionModelPlaceholder')}
-                className="min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+              <div className="min-w-0 space-y-1">
+                <FieldLabel>{t('settings.aiBaseUrl')}</FieldLabel>
+                <input
+                  value={settings?.decision?.baseUrl ?? ''}
+                  onChange={(e) =>
+                    setSettings((s) =>
+                      s === null
+                        ? s
+                        : {
+                            ...s,
+                            decision: { ...(s.decision ?? { model: '' }), baseUrl: e.target.value },
+                          },
+                    )
+                  }
+                  placeholder={t('settings.decisionBaseUrlPlaceholder')}
+                  className="w-full min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <FieldLabel>{t('settings.aiModel')}</FieldLabel>
+                <input
+                  value={settings?.decision?.model ?? ''}
+                  onChange={(e) =>
+                    setSettings((s) =>
+                      s === null
+                        ? s
+                        : {
+                            ...s,
+                            decision: { ...(s.decision ?? { baseUrl: '' }), model: e.target.value },
+                          },
+                    )
+                  }
+                  placeholder={t('settings.decisionModelPlaceholder')}
+                  className="w-full min-w-0 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
             </div>
             <SecretKeyInput
               name="weaveDecisionApiKey"
@@ -751,6 +852,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             />
             <p className="text-[11px] text-neutral-500">{t('settings.decisionHint')}</p>
           </div>
+          </SettingsSection>
+
+          <SettingsSection id="export" icon={FileCode} title={t('settings.sectionExport')}>
 
           {/* HTML 导出自定义头：多份保存、一份在用；导出时原样注入到 </head> 前。
               这里只编辑**文本**——片段绝不在 dashboard 里渲染或执行。 */}
@@ -825,7 +929,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
           </div>
 
+          </SettingsSection>
+
           {error && <p className="text-[11px] text-red-400 break-all">{error}</p>}
+          </div>
         </div>
 
         <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 flex items-center gap-2 frosted">
