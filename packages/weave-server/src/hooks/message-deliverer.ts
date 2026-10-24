@@ -1,9 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { HARNESS_SESSION_CONTROL, isHarness, type Harness } from '@weavecode/core';
+import { isHarness, type Harness } from '@weavecode/core';
 import {
   turnOutputOf,
   type MessagingSurface,
@@ -16,14 +14,44 @@ import type { SessionRepository } from '../repositories/sessions.js';
 import { isImageMediaType } from '../repositories/uploads.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
-import { normalizeDirKey, type SessionTerminal } from '../daemon/opener.js';
+import type { SessionTerminal } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
-import { HeadlessRunner, type HeadlessSettleResult, type SpawnLike } from './headless-runner.js';
-import { appendOutbox, hooksRoot } from './mirror.js';
+import { HeadlessRunner, type SpawnLike } from './headless-runner.js';
+import { hooksRoot } from './mirror.js';
 import { INBOX_TARGETS_FILE, InboxSocketRegistry, deliverViaInboxSocket } from './inbox-socket.js';
+import { AckGate } from './delivery/ack-gate.js';
 import {
-  appendPromptbox,
-  readAllPromptbox,
+  ANSWER_ATOM,
+  ANSWER_ATOM_GAP_MS,
+  ANSWER_TEXT,
+  ESC,
+  MODEL_NAME,
+  SHIFT_TAB,
+  effortCommand,
+  effortLevelsOf,
+  locateTerminalPane,
+  modelCommand,
+  sessionKeysTarget,
+} from './delivery/keys.js';
+import { hasImages, settleDelivered, spawnOnce, wireTextOf } from './delivery/channels.js';
+import {
+  deliverHeadless as deliverHeadlessIn,
+  deliverInject as deliverInjectIn,
+  resolveChannel as resolveChannelIn,
+} from './delivery/send.js';
+import {
+  appendQueueEntry,
+  failOffline as failOfflineIn,
+  failQueuedOffline as failQueuedOfflineIn,
+  sessionJudgedDead as sessionJudgedDeadIn,
+} from './delivery/queue.js';
+import { runRelay as runRelayIn, type RelayDeps } from './delivery/relay.js';
+import {
+  listInflightCounts as listInflightCountsIn,
+  listVisible as listVisibleIn,
+  sessionTerminals as sessionTerminalsIn,
+} from './delivery/views.js';
+import {
   readPromptbox,
   removePromptboxBySession,
   removePromptboxEntries,
@@ -260,7 +288,6 @@ export interface SessionDeliveryDiagnosis {
 type ResolvedChannel = 'prompt' | 'inject' | 'headless';
 
 /** 中继进程的工作目录：中性 cwd，避开项目 hooks（spike 实测防幽灵事件）。 */
-const relayCwd = () => tmpdir();
 
 /** 自续冲洗的最小间隔（回执到达后接下一拍不该是同步连发）。 */
 const FLUSH_GAP_MS = 1_000;
@@ -292,7 +319,6 @@ const INBOX_READY_POLL_MS = 250;
 const TURN_OUTPUT_LOOKBACK = 5;
 
 /** 判死落定时的技术性成因（用户可见的中文说明在 web，经 `reason` 标记译出）。 */
-const OFFLINE_ERROR = 'Session is not running';
 
 /** 刚删掉的队列行 id 保留多少条（冲洗的「先读盘 → 逐条投递」竞态闸，见 dismissedIds）。 */
 const DISMISS_GUARD_MAX = 200;
@@ -304,63 +330,6 @@ const DISMISS_GUARD_MAX = 200;
  * （无控制字符——CR/LF/ESC 混进来就成了任意键序注入，不只是打字）。原子表本身
  * 由 harness 规格拼装（选项 keys / textFocus / textTail），这里只验形态。
  */
-const ANSWER_ATOM = /^(?:[1-9]|n|\t|\r|\x1b\[B)$/;
-const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
-
-/** 中断键 = 一记 ESC（claude 里连打两次是历史回退菜单，故只打一记）。 */
-const ESC = '\x1b';
-
-/**
- * 执行模式切换键 = 一记 Shift+Tab。**固定死在服务端，不当参数收**（同 ESC 的理由：
- * 键序一放开这条通道就成了任意击键注入）。且不按模式名轮转——宿主自己算「下一个
- * 模式」（实测还会被计划提案、auto 闸插手），故这记键是周期性的，模式名只供识别。
- */
-const SHIFT_TAB = '\x1b[Z';
-
-/**
- * 模型切换 = 宿主自己的 `/model <名>`（会话级、不落盘）。走 **sendText**
- * 而非裸键：`/` 会唤起斜杠命令菜单、连打的字符被当筛选字串（同 `ANSWER_ATOM_GAP_MS`
- * 记的那件事），整行一次 bracketed paste 才能把参数完整落进输入框。名字**不经任何
- * 转义**直接进命令行，故形态由服务端验，且**贴着宿主自己的文法**（`/model` 的参数
- * 是 `\S*`）：一个不含空白、不含控制字符的词、≤128 字符——含换行就成了第二条命令，
- * 含 ESC/CR 就是任意键序注入，含空格则宿主整行都认不下（`Unknown model`）。注意
- * 不能只用 `\S`：ESC 不是空白，`a\x1bb` 会溜过去。
- */
-const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;
-const modelCommand = (name: string) => `/model ${name}`;
-
-/**
- * 思考强度 = 宿主自己的 `/effort <档位>`（claude 的 immediate 命令，与 `/model`
- * 同一通道、同一 sendText 理由）。档位**过词表白名单**（core 表 `effortLevels`，
- * 该会话 harness 的）——比模型名严一档：模型名用户可自填，档位是封闭枚举，
- * 表外一律 400 不打键。
- */
-const effortCommand = (level: string) => `/effort ${level}`;
-
-/**
- * 原子之间的间隔（毫秒）：宿主把同一批到达的多个文本字符当成一次粘贴/过滤输入
- * （实机「11」被当筛选字串，一个选项都没选上），所以键序必须一次一个原子地写。
- * win32 上 `wezterm cli send-text` 每次调用本身就要 ~100ms（进程启动），实际间隔
- * 更大；这里给 POSIX（走 socket，调用毫秒级）兜底。
- */
-const ANSWER_ATOM_GAP_MS = 120;
-
-/**
- * 回执比对归一：剥掉 Claude Code 给会话间消息裹的外壳（`<cross-session-message
- * from="uds:…" …>…</cross-session-message>`）再折叠空白——socket 直投的原文
- * 是裸文本、中继投递的会带壳，两边都归一成同一形态再比。
- */
-function normalizePromptText(text: string): string {
-  return text
-    .replace(/<\/?cross-session-message[^>]*>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
-function stripSpace(text: string): string {
-  return text.replace(/\s+/g, '');
-}
 
 /**
  * 斜杠命令（宿主内建命令与 skill/插件命令都算）：判据跟宿主一致——**trim 后以
@@ -369,7 +338,7 @@ function stripSpace(text: string): string {
  * 命令会把敲的那行原样报一条 UPS（实测 0.6s）。故不能一律当「无回执」收，见
  * `armCommandAck` 的短窗口。
  */
-function isSlashCommand(text: string): boolean {
+export function isSlashCommand(text: string): boolean {
   return /^\/[A-Za-z][A-Za-z0-9:_-]*(\s|$)/.test(text.trim());
 }
 
@@ -436,6 +405,8 @@ export class MessageDeliverer {
    * 故只留最近 `DISMISS_GUARD_MAX` 条。
    */
   private readonly dismissedIds = new Set<string>();
+  /** 回执闸 + 暂停闸（判定与计时逻辑在 delivery/ack-gate.ts，状态仍在本类）。 */
+  private readonly gate: AckGate;
 
   constructor(private readonly deps: MessageDelivererDeps) {
     this.headless =
@@ -448,6 +419,16 @@ export class MessageDeliverer {
     this.paneEnvs = new Map(Object.entries(loadedPaneEnvs));
     this.persistedPaneEnvs = JSON.stringify(loadedPaneEnvs);
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
+    this.gate = new AckGate(
+      { awaitingAck: this.awaitingAck, stalled: this.stalled, memory: this.memory },
+      {
+        ackStallMs: deps.ackStallMs ?? ACK_STALL_MS,
+        ackStallReleaseMs: deps.ackStallReleaseMs ?? ACK_STALL_RELEASE_MS,
+        commandAckGraceMs: deps.commandAckGraceMs ?? COMMAND_ACK_GRACE_MS,
+      },
+      { emit: (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]) },
+    );
+    this.gate.onAutoRelease = (sessionId) => this.scheduleFlushContinuation(sessionId);
   }
 
   /**
@@ -547,47 +528,13 @@ export class MessageDeliverer {
    * 它就是「还没落进对话」，等回执或未回执闸落定再说。
    */
   listVisible(sessionId: string): PipeMessage[] {
-    const ttl = this.deps.visibleTtlMs ?? VISIBLE_TTL_MS;
-    const now = Date.now();
-    const out: PipeMessage[] = [];
-    const session = this.deps.sessions.getBySessionId(sessionId);
-    if (session?.projectId != null) {
-      const project = this.deps.projects.getById(session.projectId);
-      if (project) {
-        for (const entry of readPromptbox(this.hooksDir, project.token)) {
-          if (entry.sessionId !== sessionId) continue;
-          out.push({
-            id: entry.id,
-            sessionId,
-            text: entry.text,
-            ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
-            mode: 'prompt',
-            oneWay: entry.oneWay === true,
-            ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
-            channel: 'prompt',
-            status: 'pending',
-            at: entry.at,
-          });
-        }
-      }
-    }
-    for (const msg of this.memory.values()) {
-      if (msg.sessionId !== sessionId) continue;
-      if (msg.stalled === true || msg.status === 'delivering' || msg.status === 'running') {
-        out.push(msg);
-        continue;
-      }
-      if (msg.status === 'failed' || msg.status === 'timeout') {
-        out.push(msg);
-        continue;
-      }
-      const settled = msg.settledAt ? Date.parse(msg.settledAt) : NaN;
-      // 送达未回执 = 在飞（气泡还没来）：窗口过了也别撤，否则队列里那条先消失、
-      // 等到未回执闸落定时又冒出来，看着像发丢了。
-      const unacked = msg.status === 'delivered' && msg.acked !== true;
-      if (unacked || (!Number.isNaN(settled) && now - settled < ttl)) out.push(msg);
-    }
-    return out.sort((a, b) => (a.at < b.at ? -1 : 1));
+    return listVisibleIn(
+      this.deps,
+      this.hooksDir,
+      this.memory,
+      sessionId,
+      this.deps.visibleTtlMs ?? VISIBLE_TTL_MS,
+    );
   }
 
   /** 该会话是否有队列行（ingest 冲洗守卫，O(1)）。 */
@@ -600,15 +547,7 @@ export class MessageDeliverer {
    * （在飞）。会话行角标用——终态（injected/delivered/succeeded/…）不计。
    */
   listInflightCounts(): Map<string, number> {
-    const counts = new Map<string, number>();
-    const bump = (sessionId: string): void => {
-      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
-    };
-    for (const entry of readAllPromptbox(this.hooksDir)) bump(entry.sessionId);
-    for (const msg of this.memory.values()) {
-      if (msg.status === 'delivering' || msg.status === 'running') bump(msg.sessionId);
-    }
-    return counts;
+    return listInflightCountsIn(this.hooksDir, this.memory);
   }
 
   /** 层② 终端 send-text 通道是否装配（能力矩阵 prompt 列合成用）。 */
@@ -632,12 +571,7 @@ export class MessageDeliverer {
 
   /** 等回执的那条已经落地（回执到 / 失败 / 行没了）→ 撤防，返回 true。 */
   private ackGateOpen(sessionId: string): boolean {
-    const id = this.awaitingAck.get(sessionId);
-    if (id === undefined) return true;
-    const msg = this.memory.get(id);
-    if (msg && msg.acked !== true && msg.status !== 'failed' && msg.status !== 'timeout') return false;
-    this.awaitingAck.delete(sessionId);
-    return true;
+    return this.gate.open(sessionId);
   }
 
   /**
@@ -751,20 +685,7 @@ export class MessageDeliverer {
    * 会话的 env：那是上一次见到它时的快照，它不会再来报一次，留着只会让死会话常占块头。
    */
   async sessionTerminals(): Promise<Record<string, SessionTerminal | null>> {
-    const terminal = this.terminalChannel();
-    if (!terminal?.locateScreens || this.paneEnvs.size === 0) return {};
-    const envs: Record<string, Record<string, string>> = {};
-    const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
-    for (const [sessionId, env] of this.paneEnvs) {
-      // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头
-      if (this.sessionJudgedDead(sessionId, liveness)) {
-        this.paneEnvs.delete(sessionId);
-        this.persistPaneEnvs();
-        continue;
-      }
-      envs[sessionId] = env;
-    }
-    return terminal.locateScreens(envs);
+    return sessionTerminalsIn(this.deps, this.terminalChannel(), this.paneEnvs, () => this.persistPaneEnvs());
   }
 
   /**
@@ -820,7 +741,7 @@ export class MessageDeliverer {
       terminal,
       paneEnvReported,
       pending,
-      stalled: this.stalled.has(sessionId),
+      stalled: this.gate.isStalled(sessionId),
     };
   }
 
@@ -839,45 +760,9 @@ export class MessageDeliverer {
    * 对应气泡上（见 `PipeMessage.ackedEventId`）。
    */
   onSessionPrompt(sessionId: string, prompt: string, eventId?: number): string[] {
-    const seenRaw = normalizePromptText(prompt);
-    const seen = seenRaw.replace(/\[Image #\d+\]/gi, '').trim();
-    const imageIds: string[] = [];
-    let hit = false;
-    // 一条 UPS 可以核销多条在途：宿主会把连着发的几条合成一次提交（终端里多行粘贴 /
-    // 队列合并），它们同属这条 UPS 的原文——只核销第一条，其余的会一路挂到未回执闸，
-    // 把该会话的队列误暂停。
-    for (const msg of [...this.memory.values()].reverse()) {
-      if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
-      const want = normalizePromptText(msg.text);
-      // 长文本按「包含」认（宿主可能给 prompt 加前缀/拼多段）；短文本认**尾部相等**：
-      // 层② 是往输入框追加，框里先在的内容只会垫在提交原文前面（「1」+「继续」→
-      // 「1继续」、两条队列行并一条 →「继续继续」），整条相等在这些实测形态面前永不
-      // 命中，「已发出」行只能一路挂到未回执闸。尾部相等仍比包含紧：宿主自己接的
-      // 后文（「继续……不要」）不认。
-      const textHit = !!want && (want.length >= ACK_MIN_TEXT ? seenRaw.includes(want) : seenRaw.endsWith(want));
-      const imageHit =
-        (msg.attachments?.length ?? 0) > 0 && (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
-      if (!textHit && !imageHit) continue;
-      hit = true;
-      this.memory.set(msg.id, {
-        ...msg,
-        acked: true,
-        stalled: false,
-        ...(eventId === undefined ? {} : { ackedEventId: eventId }),
-      });
-      // 回执命中暂停闸成因 → 闸解除；队头在等它 → 撤防（下一条可以发了）。
-      if (this.stalled.get(sessionId)?.messageId === msg.id) this.stalled.delete(sessionId);
-      if (this.awaitingAck.get(sessionId) === msg.id) this.awaitingAck.delete(sessionId);
-      imageIds.push(...(msg.attachments?.map((i) => i.id) ?? []));
-      this.bus({
-        kind: 'message.acknowledged',
-        messageId: msg.id,
-        sessionId,
-        at: new Date().toISOString(),
-      });
-    }
+    const imageIds = this.gate.acknowledge(sessionId, prompt, eventId, { ackMinText: ACK_MIN_TEXT });
     // 还有积压就继续排空（不必等下一次事件）
-    if (hit && this.queuedSessions.has(sessionId)) {
+    if (this.gate.hitLast && this.queuedSessions.has(sessionId)) {
       this.scheduleFlushContinuation(sessionId);
     }
     return imageIds;
@@ -891,7 +776,7 @@ export class MessageDeliverer {
    * 120s 布防与 10 分钟自动清除的老节拍。
    */
   async onSessionStopFailure(sessionId: string): Promise<void> {
-    const messageId = this.awaitingAck.get(sessionId);
+    const messageId = this.gate.headOf(sessionId);
     if (messageId === undefined) return;
     const msg = this.memory.get(messageId);
     // 只补层② 终端行：socket/中继交出去就进了会话自己的队列，没有「贴进框没提交」这回事。
@@ -906,81 +791,21 @@ export class MessageDeliverer {
     if (pane) void this.runTerminalSubmit(messageId, pane.id);
   }
 
-  /**
-   * 斜杠命令的回执收尾（与 `armAckWatch` 二选一）：给一个短窗口等 UPS——skill/插件
-   * 命令会报，届时正常核销；窗口过期还没回执 = 宿主内建命令（`/compact` 之类压根
-   * 不发 UPS），按已送达收、解闸续排，**不布防未回执闸**（否则压缩几分钟里整段显示
-   * 「发送中」，还要等闸到点自动清除）。
-   */
-  private armCommandAck(messageId: string): void {
-    const timer = setTimeout(
-      () => {
-        const current = this.memory.get(messageId);
-        if (!current || current.acked || current.status !== 'delivered') return;
-        this.memory.set(messageId, { ...current, acked: true });
-        if (this.awaitingAck.get(current.sessionId) === messageId) {
-          this.awaitingAck.delete(current.sessionId);
-        }
-        if (this.queuedSessions.has(current.sessionId)) this.scheduleFlushContinuation(current.sessionId);
-      },
-      this.deps.commandAckGraceMs ?? COMMAND_ACK_GRACE_MS,
-    );
-    timer.unref?.();
-  }
-
-  /** 未回执闸布防：prompt 送达后 ackStallMs 内没等到 UPS 回执 → 暂停该会话队列。 */
+  /** 未回执闸布防（判定与计时在 delivery/ack-gate.ts）。 */
   private armAckWatch(msg: PipeMessage): void {
-    const timer = setTimeout(
-      () => {
-        const current = this.memory.get(msg.id);
-        if (!current || current.acked || current.status !== 'delivered') return;
-        this.stall(current.sessionId, current, 'unacked');
-      },
-      this.deps.ackStallMs ?? ACK_STALL_MS,
-    );
-    timer.unref?.();
+    this.gate.armAckWatch(msg);
   }
 
-  /** 置闸：成因消息标记 stalled（常驻在途视图）+ message.stalled 帧（web 重拉）。 */
-  private stall(sessionId: string, msg: PipeMessage, reason: 'unacked' | 'failed'): void {
-    this.stalled.set(sessionId, { messageId: msg.id, reason });
-    const releaseMs = this.deps.ackStallReleaseMs ?? ACK_STALL_RELEASE_MS;
-    const current = this.memory.get(msg.id);
-    // 「已发出却没回执」那条闸到点会被清出队列（见 releaseStall）：把时刻一并下发，
-    // web 拿它走倒计时。投递失败的行没有这回事——它本来就是失败态，留在队列里等人重发。
-    const clearAt =
-      current && current.status === 'delivered' && current.acked !== true
-        ? new Date(Date.now() + releaseMs).toISOString()
-        : null;
-    if (current) this.memory.set(msg.id, { ...current, stalled: true, releaseAt: clearAt });
-    this.bus({
-      kind: 'message.stalled',
-      messageId: msg.id,
-      sessionId,
-      reason,
-      at: new Date().toISOString(),
+  /** 斜杠命令的回执收尾（短窗口；内建命令不发 UPS）。 */
+  private armCommandAck(messageId: string): void {
+    this.gate.armCommandAck(messageId, (sessionId) => {
+      if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
     });
-    const release = setTimeout(() => this.releaseStall(sessionId, msg.id), releaseMs);
-    release.unref?.();
   }
 
-  /**
-   * 闸到点自动解除：回执一直不来 = 那条很可能压根没进对话（贴着文本按下去的时候
-   * 会话正在重启，输入框被清掉就是这样），闸不能因此把该会话的队列永久停住。
-   * 「已发出却没回执」的行到点**直接从队列清除**（用户裁决：正文只在这一行里，
-   * 窗口期就是给人看清与重发的）；投递失败的行留着等人重发，只解闸续排。
-   */
-  private releaseStall(sessionId: string, messageId: string): void {
-    // 期间已被回执 / 重发 / 删除处理过：闸不在了或换了成因，这一拍作废。
-    if (this.stalled.get(sessionId)?.messageId !== messageId) return;
-    const current = this.memory.get(messageId);
-    if (current && current.status === 'delivered' && current.acked !== true) {
-      this.dismiss(sessionId, messageId); // 解闸 + 撤防 + 续排都在里面
-      return;
-    }
-    this.stalled.delete(sessionId);
-    if (this.awaitingAck.get(sessionId) === messageId) this.awaitingAck.delete(sessionId);
-    if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+  /** 置闸（成因消息标记 stalled + message.stalled 帧）。 */
+  private stall(sessionId: string, msg: PipeMessage, reason: 'unacked' | 'failed'): void {
+    this.gate.stall(sessionId, msg, reason);
   }
 
   /**
@@ -1106,9 +931,7 @@ export class MessageDeliverer {
     // 落点判定在前（404/409 优先于 400）：会话都不存在时谈档位没有意义
     const target = await this.sessionKeysTarget(sessionId);
     if (!target.ok) return target;
-    const latest = this.deps.hookEvents.listBySession(sessionId, 1);
-    const src = latest[latest.length - 1]?.source;
-    const levels = isHarness(src) ? (HARNESS_SESSION_CONTROL[src]?.effortLevels ?? []) : [];
+    const levels = effortLevelsOf(this.deps.hookEvents, sessionId);
     if (!levels.includes(trimmed)) {
       return { ok: false, status: 400, error: `思考强度档位不合法（可选：${levels.join(' / ') || '无'}）` };
     }
@@ -1158,37 +981,62 @@ export class MessageDeliverer {
     }
   }
 
-  /**
-   * 键序注入路径（作答 / 中断 / 关 pane）共用的落点解析：会话 → 项目 → 终端通道
-   * → pane。全部失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP；
-   * 两条 409 是给用户看的（web 直拼在「停止失败：」这类动作名后面），故写成中文
-   * 修法，动作名随调用方换。
-   */
   private async sessionKeysTarget(
     sessionId: string,
     action = '击键',
     source: PaneTargetSource = 'both',
   ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
-    const session = this.deps.sessions.getBySessionId(sessionId);
-    if (!session) return { ok: false, status: 404, error: 'Session not found' };
-    if (session.projectId == null) {
-      return { ok: false, status: 400, error: 'Session is not bound to a project' };
-    }
-    const project = this.deps.projects.getById(session.projectId);
-    if (!project) return { ok: false, status: 404, error: 'Project not found' };
-    const terminal = this.terminalChannel();
-    if (!terminal) {
-      return { ok: false, status: 409, error: `终端通道未装配，无法远程${action}` };
-    }
-    const pane = await this.terminalPaneFor(session, project, source);
-    if (!pane) {
-      return {
-        ok: false,
-        status: 409,
-        error: `找不到会话所在的终端窗口——这个会话所在终端没有可用的远程${action}通道`,
-      };
-    }
-    return { ok: true, terminal, paneId: pane.id };
+    return sessionKeysTarget(this.keysDeps(), sessionId, action, source);
+  }
+
+  /** bus 可选 → 必选形状（delivery 模块的入参）。 */
+  private busSafe(): Pick<HookEventBus, 'emit'> {
+    return {
+      emit: (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]),
+    };
+  }
+
+  /** 层① 通道尝试的依赖切片（delivery/channels.ts 的入参形状）。 */
+  private channelDeps() {
+    return {
+      setMemory: (msg: PipeMessage) => this.memory.set(msg.id, msg),
+      deleteMemory: (messageId: string) => this.memory.delete(messageId),
+      awaitAck: (sessionId: string, messageId: string) => this.gate.await(sessionId, messageId),
+      isSlashCommand,
+      armAckWatch: (msg: PipeMessage) => this.gate.armAckWatch(msg),
+      armCommandAck: (messageId: string) =>
+        this.gate.armCommandAck(messageId, (sessionId) => {
+          if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+        }),
+      emit: (m: { kind: string; [key: string]: unknown }) =>
+        this.bus(m as Parameters<HookEventBus['emit']>[0]),
+      ...(this.deps.spawnImpl ? { spawnImpl: this.deps.spawnImpl } : {}),
+    };
+  }
+
+  /** 投递文本合成（delivery/channels.ts 的纯函数，绑本类的面解析）。 */
+  private wireTextOfEntry(entry: PipeMessage): string {
+    return wireTextOf(entry, (sessionId) => this.surfaceOfSession(sessionId));
+  }
+
+  /** 有没有图（delivery/channels.ts 的纯函数）。 */
+  private hasImagesEntry(entry: PipeMessage): boolean {
+    return hasImages(entry);
+  }
+
+  /** 键序域的依赖切片（delivery/keys.ts 的入参形状）。 */
+  private keysDeps() {
+    return {
+      sessions: this.deps.sessions,
+      projects: this.deps.projects,
+      hookEvents: this.deps.hookEvents,
+      terminalChannel: () => this.terminalChannel(),
+      terminalPaneFor: (
+        session: { sessionId: string; title: string | null },
+        project: { path: string },
+        source?: PaneTargetSource,
+      ) => this.terminalPaneFor(session, project, source),
+    };
   }
 
   /**
@@ -1213,7 +1061,7 @@ export class MessageDeliverer {
     if (!surface) {
       return { ok: false, status: 400, error: 'Session has no hook events to determine its harness' };
     }
-    if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
+    this.gate.clearStall(msg.sessionId, messageId);
     // 层② 已把文本贴进输入框、回执却没到 = 那记回车没生效（本次实机：贴着图的长
     // 文本连贴两次都没提交，第三次才连前三份一起提交）。此时重发**只补回车**：
     // 重贴一份会让用户收到两遍正文与两遍图。
@@ -1277,12 +1125,12 @@ export class MessageDeliverer {
       if (msg.status === 'running') {
         return { ok: false, status: 409, error: 'Message is still in flight' };
       }
-      if (msg.status === 'delivering' && this.awaitingAck.get(msg.sessionId) === messageId) {
+      if (msg.status === 'delivering' && this.gate.headOf(msg.sessionId) === messageId) {
         this.flushing.delete(msg.sessionId);
       }
       this.memory.delete(messageId);
-      if (this.stalled.get(msg.sessionId)?.messageId === messageId) this.stalled.delete(msg.sessionId);
-      if (this.awaitingAck.get(msg.sessionId) === messageId) this.awaitingAck.delete(msg.sessionId);
+      this.gate.clearStall(msg.sessionId, messageId);
+      this.gate.release(msg.sessionId, messageId);
       if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
     } else if (!this.dropQueued(sessionId, messageId)) {
       return { ok: false, status: 404, error: 'Message not found' };
@@ -1382,13 +1230,13 @@ export class MessageDeliverer {
         at: entry.at,
       };
       // 带图同即时路径：层② 优先（只有 bracketed paste 能真贴图）。
-      if (!blocked && this.hasImages(msg) && this.terminalChannel()) {
+      if (!blocked && this.hasImagesEntry(msg) && this.terminalChannel()) {
         const imgPane = await this.terminalPaneFor(session, project);
         if (imgPane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
           this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
           this.awaitingAck.set(sessionId, msg.id);
-          await this.runTerminalPrompt(msg.id, imgPane.id, this.wireTextOf(msg));
+          await this.runTerminalPrompt(msg.id, imgPane.id, this.wireTextOfEntry(msg));
           // 终端层贴进框了：余下留队列，等这条的回执再发（同框叠字 = 两条并一条）
           this.settleQueueIndex(sessionId, project.token);
           return;
@@ -1434,7 +1282,7 @@ export class MessageDeliverer {
             removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
             this.memory.set(msg.id, { ...msg, via: 'terminal', status: 'delivering' });
             this.awaitingAck.set(sessionId, msg.id);
-            await this.runTerminalPrompt(msg.id, pane.id, this.wireTextOf(msg));
+            await this.runTerminalPrompt(msg.id, pane.id, this.wireTextOfEntry(msg));
             break;
           }
         }
@@ -1476,8 +1324,8 @@ export class MessageDeliverer {
     }
     removed += removePromptboxBySession(this.hooksDir, sessionId);
     this.queuedSessions.delete(sessionId);
-    this.stalled.delete(sessionId);
-    this.awaitingAck.delete(sessionId);
+    this.gate.clearStall(sessionId);
+    this.gate.release(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     this.persistPaneEnvs();
@@ -1493,8 +1341,8 @@ export class MessageDeliverer {
         this.memory.delete(id);
         this.inboxSockets.forget(msg.sessionId);
         this.paneEnvs.delete(msg.sessionId);
-        this.stalled.delete(msg.sessionId);
-        this.awaitingAck.delete(msg.sessionId);
+        this.gate.clearStall(msg.sessionId);
+        this.gate.release(msg.sessionId);
         removed++;
       }
     }
@@ -1524,36 +1372,7 @@ export class MessageDeliverer {
     sessionId: string,
     surface: MessagingSurface,
   ): ResolvedChannel | { reason: string } {
-    if (mode === 'prompt') {
-      if (surface.prompt || surface.queuedPrompt) return 'prompt';
-      if (this.terminalChannel()) return 'prompt';
-      return {
-        reason:
-          surface.unsupportedReasons?.prompt ??
-          `Harness "${surface.harness}" has no native prompt channel and the configured terminal cannot inject text`,
-      };
-    }
-    if (mode === 'inject' || mode === 'headless') {
-      const supported = mode === 'inject' ? surface.inject : surface.headless;
-      if (!supported) return { reason: this.unsupportedReason(surface, mode) };
-      return mode;
-    }
-    const turnOpen = this.deps.sessions.turnOpenOf(sessionId);
-    const channel: Exclude<ResolvedChannel, 'prompt'> = turnOpen ? 'inject' : 'headless';
-    const supported = channel === 'inject' ? surface.inject : surface.headless;
-    if (!supported) return { reason: this.unsupportedReason(surface, channel) };
-    return channel;
-  }
-
-  /** 不支持原因：面声明优先，缺省兜底文案。 */
-  private unsupportedReason(
-    surface: MessagingSurface,
-    channel: Exclude<ResolvedChannel, 'prompt'>,
-  ): string {
-    return (
-      surface.unsupportedReasons?.[channel] ??
-      `Harness "${surface.harness}" does not support the ${channel} messaging channel`
-    );
+    return resolveChannelIn(this.deps.sessions, () => this.terminalChannel() != null, mode, sessionId, surface);
   }
 
   /**
@@ -1570,31 +1389,7 @@ export class MessageDeliverer {
     project: { path: string },
     source: PaneTargetSource = 'both',
   ): Promise<{ id: string } | null> {
-    const terminal = this.terminalChannel();
-    if (!terminal) return null;
-    const env = source === 'heuristic' ? undefined : this.paneEnvs.get(session.sessionId);
-    if (env) {
-      const located = await terminal.locatePane?.(env).catch(() => null);
-      if (located) return { id: located };
-    }
-    if (!session.title) return null;
-    const want = session.title.replace(/^[✻✽✶✳✢⋅◦✦✧∘◐◑◒◓*]+\s*/, '');
-    const pathKey = normalizeDirKey(project.path, process.platform);
-    let panes: Array<{ id: string; title: string | null; cwd: string | null }>;
-    try {
-      panes = await terminal.listPanes();
-    } catch {
-      return null;
-    }
-    const hits = panes.filter(
-      (p) =>
-        p.title != null &&
-        p.cwd != null &&
-        pathKey != null &&
-        p.title.replace(/^[✻✽✶✳✢⋅◦✦✧∘◐◑◒◓*]+\s*/, '') === want &&
-        normalizeDirKey(p.cwd, process.platform) === pathKey,
-    );
-    return hits.length === 1 ? hits[0]! : null;
+    return locateTerminalPane(this.terminalChannel(), this.paneEnvs, session, project, source);
   }
 
   /** 层② 通道现取（装配期注入；与 settings 的 preset 无关，只有「没装」才是 null）。 */
@@ -1630,12 +1425,12 @@ export class MessageDeliverer {
     // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
     // 模态框挂着时层② 整段让位（见 modalBlocked）：图只能走终端，就留队列等作答。
     const blocked = this.modalBlocked(entry.sessionId);
-    if (!blocked && this.hasImages(entry) && this.terminalChannel()) {
+    if (!blocked && this.hasImagesEntry(entry) && this.terminalChannel()) {
       const imgPane = await this.terminalPaneFor(session, project);
       if (imgPane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
         this.awaitingAck.set(entry.sessionId, entry.id);
-        void this.runTerminalPrompt(entry.id, imgPane.id, this.wireTextOf(entry));
+        void this.runTerminalPrompt(entry.id, imgPane.id, this.wireTextOfEntry(entry));
         return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
       }
     }
@@ -1679,7 +1474,7 @@ export class MessageDeliverer {
         if (pane) {
           this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });
           this.awaitingAck.set(entry.sessionId, entry.id);
-          void this.runTerminalPrompt(entry.id, pane.id, this.wireTextOf(entry));
+          void this.runTerminalPrompt(entry.id, pane.id, this.wireTextOfEntry(entry));
           return { ok: true, messageId: entry.id, status: 'delivering', message: this.memory.get(entry.id)! };
         }
       }
@@ -1705,69 +1500,17 @@ export class MessageDeliverer {
     surface: MessagingSurface,
   ): Promise<PipeMessage | null> {
     const spec = surface.queuedPrompt;
-    if (!spec || this.hasImages(entry)) return null;
-    const { bin, args } = spec.command(entry.sessionId, this.wireTextOf(entry));
+    if (!spec || this.hasImagesEntry(entry)) return null;
+    const { bin, args } = spec.command(entry.sessionId, this.wireTextOfEntry(entry));
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'queue' });
     try {
-      await this.spawnOnce(bin, args, spec.timeoutMs ?? 30_000, this.deps.spawnImpl);
+      await spawnOnce(bin, args, spec.timeoutMs ?? 30_000, this.deps.spawnImpl);
     } catch {
       // 队列拒绝（会话不在 / CLI 起不来）：回落下一层，不留痕
       this.memory.delete(entry.id);
       return null;
     }
-    const delivered: PipeMessage = {
-      ...this.memory.get(entry.id)!,
-      status: 'delivered',
-      via: 'queue',
-      settledAt: new Date().toISOString(),
-    };
-    this.memory.set(entry.id, delivered);
-    this.awaitingAck.set(entry.sessionId, entry.id);
-    if (isSlashCommand(entry.text)) this.armCommandAck(entry.id);
-    else this.armAckWatch(delivered);
-    this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
-    return delivered;
-  }
-
-  /** 一次性子进程：收集输出、超时强杀；非零退出 / spawn 失败都算拒绝。 */
-  private spawnOnce(
-    bin: string,
-    args: readonly string[],
-    timeoutMs: number,
-    spawnImpl?: SpawnLike,
-  ): Promise<void> {
-    const doSpawn = spawnImpl ?? ((command, argv, options) => spawn(command, [...argv], options));
-    return new Promise((resolve, reject) => {
-      const child = doSpawn(bin, args, {
-        cwd: tmpdir(),
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      const out: Buffer[] = [];
-      child.stdout?.on('data', (c: Buffer) => out.push(c));
-      child.stderr?.on('data', (c: Buffer) => out.push(c));
-      const timer = setTimeout(() => {
-        try {
-          (child as ChildProcess).kill();
-        } catch {
-          // 已退出：忽略
-        }
-        reject(new Error(`queue timeout after ${timeoutMs}ms`));
-      }, timeoutMs);
-      child.on('error', (err: Error) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      child.on('exit', (code: number | null) => {
-        clearTimeout(timer);
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        const tail = Buffer.concat(out).toString('utf8').slice(-500);
-        reject(new Error(`queue exit ${code}${tail ? `: ${tail}` : ''}`));
-      });
-    });
+    return settleDelivered(this.channelDeps(), { ...entry, via: 'queue' } as PipeMessage, 'queue');
   }
 
   /**
@@ -1781,183 +1524,64 @@ export class MessageDeliverer {
     if (!spec || !target || entry.forceTerminal === true) return null;
     this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'socket' });
     try {
-      await deliverViaInboxSocket(spec, target, this.wireTextOf(entry));
+      await deliverViaInboxSocket(spec, target, this.wireTextOfEntry(entry));
     } catch {
       // 凭据失效（resume 后 socket 名重生成等）：回落，不留痕
       this.memory.delete(entry.id);
       return null;
     }
-    const delivered: PipeMessage = {
-      ...this.memory.get(entry.id)!,
-      status: 'delivered',
-      via: 'socket',
-      settledAt: new Date().toISOString(),
-    };
-    this.memory.set(entry.id, delivered);
     // 一条在手（任何层）：下一条先等它的 UPS 回执——同会话的队列必须是「1 送 1 回」。
-    this.awaitingAck.set(entry.sessionId, entry.id);
-    if (isSlashCommand(entry.text)) this.armCommandAck(entry.id);
-    else this.armAckWatch(delivered);
-    this.bus({ kind: 'message.delivered', messageId: entry.id, sessionId: entry.sessionId, at: new Date().toISOString() });
-    return delivered;
+    return settleDelivered(this.channelDeps(), entry, 'socket');
   }
 
   /** 入队（promptbox 追加 + 会话索引登记）。 */
   private queueEntry(entry: PipeMessage, token: string): void {
-    appendPromptbox(this.hooksDir, token, [
-      {
-        id: entry.id,
-        sessionId: entry.sessionId,
-        text: entry.text,
-        oneWay: entry.oneWay === true,
-        ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
-        ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
-      },
-    ]);
+    appendQueueEntry(this.hooksDir, token, entry);
     this.queuedSessions.add(entry.sessionId);
   }
 
-  /**
-   * 该会话是否已判死：claude 注册表 `pidAlive === false` 才认，`null` 不猜
-   * （codex / 新会话豁免窗 / SessionStart 空壳行都落 null）。判据与「已终止」
-   * 态、两条 terminated 补射同源（claude-liveness 的 pidAliveOf）——消息行与
-   * 会话行不会各说各话。
-   */
   private sessionJudgedDead(
     sessionId: string,
     liveness: Map<string, boolean> = this.deps.livenessOf?.() ?? claudeLivenessById(),
   ): boolean {
-    const row = this.deps.sessions.livenessRowOf(sessionId);
-    if (!row) return false;
-    return pidAliveOf(row, liveness) === false;
+    return sessionJudgedDeadIn(this.deps.sessions, sessionId, liveness);
   }
 
-  /**
-   * 判死落定：三层全无通路、目标进程又不在——**不假装排队**，落 `failed` +
-   * `reason: 'offline'`（`message.finished` 帧照抛，既有 messageFailed 订阅提醒
-   * 生效）。**刻意不置暂停闸**：队列整批转 offline 后已空，闸只会挡住用户重发
-   * ——重发是有意的可逆出口（判活残差 / 会话其实活着时，一点就回来）。
-   */
   private failOffline(entry: PipeMessage): PipeMessage {
-    const at = new Date().toISOString();
-    const failed: PipeMessage = {
-      ...entry,
-      status: 'failed',
-      reason: 'offline',
-      error: OFFLINE_ERROR,
-      settledAt: at,
-    };
-    this.memory.set(entry.id, failed);
-    this.bus({
-      kind: 'message.finished',
-      messageId: entry.id,
-      sessionId: entry.sessionId,
-      status: 'failed',
-      at,
-    });
-    return failed;
+    return failOfflineIn(this.memory, (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]), entry);
   }
 
-  /** 冲洗时判死：**该会话全部队列行**都是死信（死会话投不进去），整批落定 + 清队。 */
   private failQueuedOffline(sessionId: string, entries: readonly PromptboxEntry[]): void {
-    const session = this.deps.sessions.getBySessionId(sessionId);
-    const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
-    if (!project || entries.length === 0) return;
-    for (const entry of entries) {
-      this.failOffline({
-        id: entry.id,
-        sessionId,
-        text: entry.text,
-        ...(entry.attachments && entry.attachments.length > 0 ? { attachments: entry.attachments } : {}),
-        mode: 'prompt',
-        oneWay: entry.oneWay === true,
-        channel: 'prompt',
-        status: 'pending',
-        at: entry.at,
-      });
-    }
-    removePromptboxEntries(this.hooksDir, project.token, new Set(entries.map((e) => e.id)));
+    failQueuedOfflineIn(this.deps, this.hooksDir, this.memory, (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]), sessionId, entries);
     this.queuedSessions.delete(sessionId);
   }
 
-  /**
-   * 层① 中继：复用 HeadlessRunner 的 spawn 基建（win32 shell 单串 + stdin +
-   * 超时），键 = 合成键（不占目标会话的 headless 并发闸）。返回是否启动成功。
-   */
-  private runRelay(entry: PipeMessage, relay: PromptRelaySpec, peerName: string): boolean {
-    try {
-      return this.headless.run({
-        sessionId: `prompt-relay:${entry.sessionId}`,
-        cwd: relayCwd(),
-        prompt: relay.instruction(peerName, this.wireTextOf(entry), { oneWay: entry.oneWay === true }),
-        spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
-        bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
-        timeoutMs: this.deps.relayTimeoutMs ?? 0,
-        // 中继 = 本轮次的一次性子进程：与 daemon 同进程组，随 daemon 退出回收，
-        // 不留独立进程占资源（win32 恒非 detached，见 HeadlessRunner）。
-        detached: false,
-        onSettle: (result) => this.settleRelay(entry.id, result),
-      });
-    } catch (err) {
-      this.settleRelay(entry.id, {
-        status: 'failed',
-        output: null,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return true; // 已落终态，视作启动过（调用方不再入队）
-    }
+  private relayDeps(): RelayDeps {
+    return {
+      headless: this.headless,
+      getMemory: (id) => this.memory.get(id) ?? null,
+      setMemory: (msg) => this.memory.set(msg.id, msg),
+      awaitAck: (sessionId, messageId) => this.gate.await(sessionId, messageId),
+      stall: (sessionId, msg, reason) => this.gate.stall(sessionId, msg, reason),
+      isSlashCommand,
+      armAckWatch: (msg) => this.gate.armAckWatch(msg),
+      armCommandAck: (messageId, onRelease) =>
+        this.gate.armCommandAck(messageId, (sessionId) => {
+          onRelease(sessionId);
+          if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+        }),
+      onReleased: (sessionId) => {
+        if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+      },
+      emit: (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]),
+      ...(this.deps.bin ? { bin: this.deps.bin } : {}),
+      ...(this.deps.relayTimeoutMs === undefined ? {} : { relayTimeoutMs: this.deps.relayTimeoutMs }),
+    };
   }
 
-  /**
-   * 中继终态：成功 = delivered（+message.delivered，布防回执闸；中继闸释放后若还有
-   * 积压继续下一批）；失败 = failed 留内存可见（+message.finished）并置暂停闸——
-   * 不自动重试（避免对活着但拒收的会话反复打中继），手动重发解除。
-   */
-  private settleRelay(messageId: string, result: HeadlessSettleResult): void {
-    const msg = this.memory.get(messageId);
-    if (!msg) return;
-    if (result.status === 'succeeded') {
-      // 中继退出 = 同会话中继闸释放：若还有积压，继续下一批（不必等下一次事件）
-      if (this.queuedSessions.has(msg.sessionId)) this.scheduleFlushContinuation(msg.sessionId);
-      const delivered: PipeMessage = {
-        ...msg,
-        status: 'delivered',
-        settledAt: new Date().toISOString(),
-      };
-      this.memory.set(messageId, delivered);
-      if (isSlashCommand(msg.text)) this.armCommandAck(messageId);
-      else this.armAckWatch(delivered);
-      this.bus({
-        kind: 'message.delivered',
-        messageId,
-        sessionId: msg.sessionId,
-        at: new Date().toISOString(),
-      });
-      return;
-    }
-    // 回执先到 = 消息确实送进去了（中继 exit 状态只管进程、不管送达）：这时翻成
-    // failed 并置闸，会把一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍。
-    if (msg.acked === true) {
-      const at = new Date().toISOString();
-      this.memory.set(messageId, { ...msg, status: 'delivered', settledAt: at });
-      this.bus({ kind: 'message.delivered', messageId, sessionId: msg.sessionId, at });
-      return;
-    }
-    const failed: PipeMessage = {
-      ...msg,
-      status: 'failed',
-      error: result.error ?? `prompt relay ${result.status}`,
-      settledAt: new Date().toISOString(),
-    };
-    this.memory.set(messageId, failed);
-    this.stall(msg.sessionId, failed, 'failed');
-    this.bus({
-      kind: 'message.finished',
-      messageId,
-      sessionId: msg.sessionId,
-      status: 'failed',
-      at: new Date().toISOString(),
-    });
+  /** 层① 中继（判定与终态在 delivery/relay.ts）。 */
+  private runRelay(entry: PipeMessage, relay: PromptRelaySpec, peerName: string): boolean {
+    return runRelayIn(this.relayDeps(), entry, relay, peerName, this.wireTextOfEntry(entry));
   }
 
   /** 层② 终端注入终态（语义同中继：成功 delivered / 失败 failed 可见）。 */
@@ -2060,22 +1684,6 @@ export class MessageDeliverer {
     timer.unref?.();
   }
 
-  /**
-   * 投递文本 = 用户原文经 harness `attach.composePrompt` 现合成（带附件时在
-   * 原文后追加引用形态）。**只在投递那一刻合成**——`msg.text` 恒为用户原文
-   * （回执比对与气泡文案都要它），队列行也不存合成结果（换 harness 后仍按现面合成）。
-   */
-  private wireTextOf(entry: PipeMessage): string {
-    const files = entry.attachments;
-    if (!files || files.length === 0) return entry.text;
-    return this.surfaceOfSession(entry.sessionId)?.attach?.composePrompt(entry.text, files) ?? entry.text;
-  }
-
-  /** 有没有图（**不是**有没有附件）：宿主队列拒收图，故只有图才逼着走终端。 */
-  private hasImages(entry: PipeMessage): boolean {
-    return (entry.attachments ?? []).some((a) => isImageMediaType(a.mediaType));
-  }
-
   /** inject 通道：信封写 outbox → injected（fire-and-forget 语义）。 */
   private deliverInject(
     entry: PipeMessage,
@@ -2083,17 +1691,14 @@ export class MessageDeliverer {
     meta: MessageMeta,
     surface: MessagingSurface,
   ): SendResult {
-    const envelope = this.renderEnvelope(this.wireTextOf(entry), meta, surface);
-    appendOutbox(this.hooksDir, token, [{ sessionId: entry.sessionId, text: envelope }]);
-    const msg: PipeMessage = { ...entry, status: 'injected', settledAt: new Date().toISOString() };
-    this.memory.set(msg.id, msg);
-    this.bus({
-      kind: 'message.delivered',
-      messageId: msg.id,
-      sessionId: msg.sessionId,
-      at: new Date().toISOString(),
-    });
-    return { ok: true, messageId: msg.id, status: 'injected', message: msg };
+    return deliverInjectIn(
+      { hooksDir: this.hooksDir, memory: this.memory, bus: this.busSafe() },
+      entry,
+      token,
+      meta,
+      surface,
+      this.wireTextOfEntry(entry),
+    );
   }
 
   /** headless 通道：置 running → 无头 spawn；终态经 onSettle 后台回写。 */
@@ -2103,72 +1708,20 @@ export class MessageDeliverer {
     meta: MessageMeta,
     surface: MessagingSurface,
   ): SendResult {
-    const spec = surface.headless!;
-    const msg: PipeMessage = { ...entry, status: 'running' };
-    this.memory.set(msg.id, msg);
-    const state = { settled: false };
-    try {
-      const started = this.headless.run({
-        sessionId: msg.sessionId,
-        cwd,
-        prompt: this.renderEnvelope(this.wireTextOf(msg), meta, surface),
-        spec,
-        bin: this.deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? spec.bin,
-        timeoutMs: this.deps.timeoutMs,
-        onSettle: (result) => this.settle(msg, state, result),
-      });
-      // isBusy 前置检查与本调用之间无 await（纯同步段），false 只是防御位：
-      // 仍落 failed 留痕（消息可轮询），不 throw。
-      if (!started) {
-        this.settle(msg, state, {
-          status: 'failed',
-          output: null,
-          error: 'Session already has a running run',
-        });
-      }
-    } catch (err) {
-      this.settle(msg, state, {
-        status: 'failed',
-        output: null,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-    return { ok: true, messageId: msg.id, status: 'running', message: this.memory.get(msg.id)! };
-  }
-
-  /** 信封：面可覆写（harness 自己的表示法）；缺省 weave 通用头 + 正文。 */
-  private renderEnvelope(text: string, meta: MessageMeta, surface: MessagingSurface): string {
-    return surface.renderEnvelope?.(text, meta) ?? `[weave message] from=${meta.fromLabel} at=${meta.at} mode=${meta.mode}\n\n${text}`;
-  }
-
-  /** 终态落定（幂等，per-run state 守卫）：回写 → message.finished。 */
-  private settle(
-    msg: PipeMessage,
-    state: { settled: boolean },
-    result: HeadlessSettleResult,
-  ): void {
-    if (state.settled) return;
-    state.settled = true;
-    const current = this.memory.get(msg.id);
-    if (!current) return;
-    try {
-      this.memory.set(msg.id, {
-        ...current,
-        status: result.status,
-        output: result.output,
-        error: result.error,
-        settledAt: new Date().toISOString(),
-      });
-      this.bus({
-        kind: 'message.finished',
-        messageId: msg.id,
-        sessionId: msg.sessionId,
-        status: result.status,
-        at: new Date().toISOString(),
-      });
-    } catch {
-      // settle 运行在后台事件回调里，不允许异常冒泡。
-    }
+    return deliverHeadlessIn(
+      {
+        memory: this.memory,
+        headless: this.headless,
+        bus: this.busSafe(),
+        ...(this.deps.bin ? { bin: this.deps.bin } : {}),
+        ...(this.deps.timeoutMs === undefined ? {} : { timeoutMs: this.deps.timeoutMs }),
+      },
+      entry,
+      cwd,
+      meta,
+      surface,
+      this.wireTextOfEntry(entry),
+    );
   }
 
   private bus(message: Parameters<HookEventBus['emit']>[0]): void {
