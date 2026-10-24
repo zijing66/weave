@@ -2,9 +2,12 @@
  * 移动端返回键/侧滑的弹层劫持：打开时压一枚带标记的历史记录，`popstate` 到来
  * 先作用于弹层自己（`onBack`），退完了才落回路由——URL 恒不动，路由返回原样。
  *
- * 多层叠加走**栈**：后挂的先退（返回键永远先归最上层）。`onBack` 返回 false =
- * 这次返回被消费但层没退完（如文件选择器还有上一级），钩子再压一枚补位，让
- * 下一次返回继续归它；返回 true = 层已退完，这枚历史记录就此消费。
+ * 多层叠加走**栈**：后挂的先退（返回键永远先归最上层）。栈非空时返回一律归栈
+ * 顶、不看落点条目带不带标记——守卫压在当前位置**上方**，生产单次挂载下返回
+ * 的落点是它下面那条无标记的路由条目（dev 的 StrictMode 双挂载才会恰好落在
+ * 守卫上）。`onBack` 返回 false = 这次返回被消费但层没退完（如文件选择器还有
+ * 上一级），钩子再压一枚补位，让下一次返回继续归它；返回 true = 层已退完，
+ * 这枚历史记录就此消费。
  *
  * StrictMode 双挂载：effect 跑两遍，栈里始终只留一枚（卸载不 back，见 cleanup）。
  */
@@ -15,8 +18,9 @@ export const BACK_POP_MARK = 'weaveBackPop';
 type OnBack = () => boolean;
 
 /**
- * 栈的 popstate 处理（与 window/history 解耦，纯逻辑可测）：带标记的返回先归
- * 最上层；`onBack` 返回 false = 层没退完，压一枚补位让下一次返回继续归它。
+ * 栈的 popstate 处理（与 window/history 解耦，纯逻辑可测）：栈非空时返回先归
+ * 最上层（不看落点条目带不带标记，理由见文件头）；`onBack` 返回 false = 层没
+ * 退完，压一枚补位让下一次返回继续归它。
  */
 export function createBackPopStack(push: (state: Record<string, unknown>) => void) {
   const stack: { onBack: OnBack }[] = [];
@@ -36,8 +40,7 @@ export function createBackPopStack(push: (state: Record<string, unknown>) => voi
       return true;
     },
     /** popstate 到来：返回 `'consumed'`（层退完）/ `'pushed'`（补了位）/ `'ignored'`。 */
-    pop(state: unknown): 'consumed' | 'pushed' | 'ignored' {
-      if (!state || (state as Record<string, unknown>)[BACK_POP_MARK] !== true) return 'ignored';
+    pop(_state: unknown): 'consumed' | 'pushed' | 'ignored' {
       const top = stack[stack.length - 1];
       if (!top) return 'ignored';
       if (top.onBack()) {

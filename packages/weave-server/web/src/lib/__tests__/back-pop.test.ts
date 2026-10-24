@@ -13,14 +13,21 @@ describe('createBackPopStack', () => {
   };
   const marked = (): Record<string, unknown> => ({ [BACK_POP_MARK]: true });
 
-  it('① 不带标记的 state（路由自己的）= ignored，不惊动弹层', () => {
+  it('① 空栈时路由自己的返回 = ignored，不惊动任何弹层', () => {
     const { stack } = make();
-    const onBack = vi.fn(() => true);
-    stack.mount(onBack);
     expect(stack.pop({ someRoute: 1 })).toBe('ignored');
     expect(stack.pop(null)).toBe('ignored');
     expect(stack.pop(undefined)).toBe('ignored');
-    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('①′ 生产落点：守卫下面是无标记的路由条目，返回照样归栈顶（不看落点带没带标记）', () => {
+    const { stack, pushes } = make();
+    const onBack = vi.fn(() => true);
+    stack.mount(onBack);
+    // 生产单次挂载：返回的落点是 mount 前那条路由条目（state = null）
+    expect(stack.pop(null)).toBe('consumed');
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(pushes).toHaveLength(1);
   });
 
   it('② onBack 返回 true = consumed（层退完，历史记录就此消费）', () => {
@@ -59,7 +66,7 @@ describe('createBackPopStack', () => {
     expect(outer).toHaveBeenCalledTimes(1);
   });
 
-  it('⑤ 空栈时带标记也 ignored（弹层都已关，返回落回路由）', () => {
+  it('⑤ 空栈时（带不带标记都）ignored（弹层都已关，返回落回路由）', () => {
     const { stack } = make();
     expect(stack.pop(marked())).toBe('ignored');
   });
