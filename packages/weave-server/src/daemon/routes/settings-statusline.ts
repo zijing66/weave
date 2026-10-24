@@ -9,8 +9,8 @@ import {
   terminalPresetsFor,
   type DaemonSettings,
 } from '../settings.js';
-import { hasAiKey, writeAiKey } from '../ai-config.js';
-import { hasDecisionKey, writeDecisionKey } from '../decision-config.js';
+import { readAiKey, writeAiKey } from '../ai-config.js';
+import { readDecisionKey, writeDecisionKey } from '../decision-config.js';
 import { accessUrls } from '../tls.js';
 import { applyLaunchOnLogin } from '../auto-start.js';
 import { readProjectConfig, writeProjectConfig } from '../../install/project-config.js';
@@ -29,9 +29,9 @@ import { projectFileNamespaces } from '../../hooks/toolkit.js';
 import { listGlobalFileAssets } from '../../install/global-file-assets.js';
 
 /**
- * /settings 的对外形状：`ai` / `decision` 段各补派生布尔 `apiKeySet`（地址/模型来自
- * settings 表，key 来自 `<local>/ai.json` 与 `<local>/decision.json`——密钥只写，
- * GET/PUT 一律不回显）。
+ * /settings 的对外形状：`ai` / `decision` 段各补 `apiKey`（回显，设置页掩码展示）
+ * 与派生布尔 `apiKeySet`（地址/模型来自 settings 表，key 来自 `<local>/ai.json`
+ * 与 `<local>/decision.json`——0600 本机文件，dashboard 有认证门，回显给已登录的本机管理面）。
  */
 function withApiKeyStatus(
   settings: DaemonSettings,
@@ -40,13 +40,16 @@ function withApiKeyStatus(
 ): Record<string, unknown> {
   const ai = settings.ai ?? DEFAULT_AI_SETTINGS;
   const decision = settings.decision ?? DEFAULT_DECISION_SETTINGS;
+  const aiKey = readAiKey(aiKeyPath);
+  const decisionKey = readDecisionKey(decisionKeyPath);
   return {
     ...settings,
-    ai: { baseUrl: ai.baseUrl, model: ai.model, apiKeySet: hasAiKey(aiKeyPath) },
+    ai: { baseUrl: ai.baseUrl, model: ai.model, apiKey: aiKey, apiKeySet: aiKey !== null },
     decision: {
       baseUrl: decision.baseUrl,
       model: decision.model,
-      apiKeySet: hasDecisionKey(decisionKeyPath),
+      apiKey: decisionKey,
+      apiKeySet: decisionKey !== null,
     },
   };
 }

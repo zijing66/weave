@@ -135,6 +135,17 @@ export function HarnessConfigPanel({
   const values = view?.values ?? {};
   const managed = view?.managedKeys ?? [];
 
+  // 配置里已存的凭据值（模型卡回显用）：ANTHROPIC_API_KEY 优先、AUTH_TOKEN 回退
+  // （与 harness config.ts 的 credential 优先序一致）。
+  const configuredCredentialValue = (() => {
+    const env = valueAt(values, 'env');
+    const read = (name: string): string => {
+      const got = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, name) : '';
+      return typeof got === 'string' ? got.trim() : '';
+    };
+    return read('ANTHROPIC_API_KEY') || read('ANTHROPIC_AUTH_TOKEN');
+  })();
+
   const currentValue = useCallback(
     (dotted: string): unknown => {
       const edit = edits[dotted];
@@ -500,6 +511,7 @@ export function HarnessConfigPanel({
       {/* 该档词表里有 model 键才摆模型卡（global 档写不进去 model） */}
       {catalog.keys.some((k) => k.key === 'model') && (
         <ConfigModelCard
+          key={`${target}:${file}:${view.activeId ?? ''}`}
           harness={target}
           file={file}
           projectId={projectId}
@@ -509,14 +521,8 @@ export function HarnessConfigPanel({
             const url = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, 'ANTHROPIC_BASE_URL') : undefined;
             return typeof url === 'string' ? url : '';
           })()}
-          configuredCredential={(() => {
-            const env = valueAt(values, 'env');
-            const read = (name: string): string => {
-              const got = typeof env === 'object' && env !== null ? valueAt(env as Record<string, unknown>, name) : '';
-              return typeof got === 'string' ? got.trim() : '';
-            };
-            return read('ANTHROPIC_API_KEY') !== '' || read('ANTHROPIC_AUTH_TOKEN') !== '';
-          })()}
+          configuredCredential={configuredCredentialValue !== ''}
+          configuredCredentialValue={configuredCredentialValue}
           onApply={(modelId) => setEdit('model', { value: modelId })}
         />
       )}

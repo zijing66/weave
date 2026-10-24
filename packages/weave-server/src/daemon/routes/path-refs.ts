@@ -158,12 +158,12 @@ export async function handlePathRefRoutes(
       ...(ranges ? { ranges } : {}),
     });
 
-    // 搜索模式：全索引模糊匹配，不带 size/mtime（100 条 stat 每键一次太贵）
+    // 搜索模式：`dir` 子树内按名字模糊匹配，不带 size/mtime（100 条 stat 每键一次太贵）
     if (q.trim()) {
-      const { hits, total, capped } = await matchPaths(index, q, limit);
+      const { hits, total, capped } = await matchPaths(index, q, limit, dir);
       sendJson(res, 200, {
         root: project.path,
-        dir: '',
+        dir,
         total,
         capped,
         truncated: index.truncated,

@@ -10,7 +10,8 @@ const INPUT_CLS =
 
 /**
  * 模型：拿配置里的 API 地址 + key 去问宿主能开哪些模型，选中即写进配置的 `model` 键。
- * 手填的 key 只经这一次请求，不落盘（写进配置要回表单那一行自己写）。
+ * key 回显自配置（掩码展示），也可手填覆盖；只经这一次请求，不落盘
+ * （写进配置要回表单那一行自己写）。
  */
 export function ConfigModelCard({
   harness,
@@ -19,6 +20,7 @@ export function ConfigModelCard({
   currentModel,
   configuredBaseUrl,
   configuredCredential,
+  configuredCredentialValue,
   onApply,
 }: {
   harness: Harness;
@@ -30,11 +32,13 @@ export function ConfigModelCard({
   configuredBaseUrl: string;
   /** 配置里是否已有 key / token（只用来出提示，不读值）。 */
   configuredCredential: boolean;
+  /** 配置里已存的 key / token 值（回显进输入框，掩码展示）。 */
+  configuredCredentialValue: string;
   onApply: (modelId: string) => void;
 }) {
   const t = useT();
   const [baseUrl, setBaseUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState(configuredCredentialValue);
   // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充，这是最硬的一道闸
   // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会），否则浏览器存的
   // 登录凭据会直接填进来把 placeholder 的提示盖掉。

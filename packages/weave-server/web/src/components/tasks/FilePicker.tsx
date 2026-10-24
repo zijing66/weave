@@ -133,28 +133,13 @@ function sizeText(bytes: number | undefined): string | null {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 搜索行尾的目录标注：搜索是全项目的，同名文件只有所在目录能区分。
- *  太长的目录只留最深两级（`…/` 收头）；`clip` 把服务端按整条路径给的命中
- *  区间裁进这段展示文本（落在名字里的、跨出展示段的都丢掉）。 */
-function dirBadge(
-  dir: string,
-): { text: string; clip: (ranges: [number, number][]) => [number, number][] } | null {
+/** 搜索行尾的目录标注：搜索范围是当前目录的子树，命中条目摆出**相对当前目录**
+ *  的所在路径——同名文件只有它能区分。太长的只留最深两级（`…/` 收头）。 */
+function dirBadge(dir: string): string | null {
   const trimmed = dir.endsWith('/') ? dir.slice(0, -1) : dir;
   if (!trimmed) return null;
   const segs = trimmed.split('/');
-  const short = segs.length <= 2;
-  const tail = short ? trimmed : segs.slice(-2).join('/');
-  const at = trimmed.length - tail.length;
-  const pre = short ? 0 : 2;
-  return {
-    text: short ? trimmed : `…/${tail}`,
-    clip: (ranges) =>
-      ranges.flatMap(([s, l]): [number, number][] => {
-        const from = Math.max(s, at);
-        const to = Math.min(s + l, trimmed.length);
-        return from < to ? [[from - at + pre, to - from]] : [];
-      }),
-  };
+  return segs.length <= 2 ? trimmed : `…/${segs.slice(-2).join('/')}`;
 }
 
 /** 把命中区间切成「亮 / 暗」交替的片段（区间来自服务端，已按路径下标给好）。 */
@@ -392,7 +377,7 @@ export function FilePicker({
           setTotal(listing.total);
           setCapped(listing.capped ?? false);
           setTruncated(listing.truncated);
-          // 搜索是全项目的、不带父目录；这时留住上一次那份，左栏不闪成空栏
+          // 搜索不打父目录请求；这时留住上一次那份，左栏不闪成空栏
           if (!q) setSiblings(parentListing?.entries ?? []);
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
@@ -412,14 +397,14 @@ export function FilePicker({
     [sessionId, isDesktop],
   );
 
-  // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索是**全项目**的
-  // （索引本来就在项目级），故带 q 时 dir 归空——结果不按当前目录收窄。
+  // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
+  // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
   useEffect(() => {
     const timer = setTimeout(() => {
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
-      load(query.trim(), query.trim() ? '' : dir, ctrl.signal, firstLoad.current);
+      load(query.trim(), dir, ctrl.signal, firstLoad.current);
       firstLoad.current = false;
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -911,29 +896,17 @@ export function FilePicker({
                   ),
                 )}
               </span>
-              {/* 搜索是全项目的：size 那个槽位空着，正好摆所在目录——同名文件
-                  只有它能区分（浏览模式没有这个问题，目录就是面包屑）。 */}
+              {/* 搜索范围是当前目录的子树：size 那个槽位空着，正好摆相对当前
+                  目录的所在路径——同名文件只有它能区分（浏览模式的目录上下文
+                  就是面包屑，不需要）。 */}
               {searching ? (
                 (() => {
-                  const badge = dirBadge(entry.path.slice(0, entry.path.length - entry.name.length));
-                  if (!badge) return null;
-                  const segs = segmentsOf(badge.text, badge.clip(entry.ranges ?? []));
-                  if (segs.every((s) => !s.hit)) return (
-                    <span className="shrink-0 font-mono text-10 text-neutral-600">{badge.text}</span>
-                  );
-                  return (
-                    <span className="shrink-0 font-mono text-10 text-neutral-600">
-                      {segs.map((seg, k) =>
-                        seg.hit ? (
-                          <span key={k} className="text-amber-300/80">
-                            {seg.text}
-                          </span>
-                        ) : (
-                          <span key={k}>{seg.text}</span>
-                        ),
-                      )}
-                    </span>
-                  );
+                  const full = entry.path.slice(0, entry.path.length - entry.name.length);
+                  const rel = dir && full.startsWith(`${dir}/`) ? full.slice(dir.length + 1) : full;
+                  const badge = dirBadge(rel);
+                  return badge ? (
+                    <span className="shrink-0 font-mono text-10 text-neutral-600">{badge}</span>
+                  ) : null;
                 })()
               ) : (
                 entry.size != null && (
@@ -1180,30 +1153,22 @@ export function FilePicker({
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
           <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-            {query.trim() ? (
-              // 搜索是全项目的，这时把目录面包屑换成范围说明，免得看成本目录
-              <span className="text-neutral-500">
-                {t('tasks.fileSearchScope')} · <span className="text-neutral-300">{query.trim()}</span>
-              </span>
-            ) : (
-              <>
-                <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-                  {rootLabel}
+            {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
+            <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
+              {rootLabel}
+            </button>
+            {crumb.map((seg, i) => (
+              <span key={`${seg}-${i}`}>
+                {'/'}
+                <button
+                  type="button"
+                  onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
+                  className="text-neutral-300 hover:text-neutral-100"
+                >
+                  {seg}
                 </button>
-                {crumb.map((seg, i) => (
-                  <span key={`${seg}-${i}`}>
-                    {'/'}
-                    <button
-                      type="button"
-                      onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                      className="text-neutral-300 hover:text-neutral-100"
-                    >
-                      {seg}
-                    </button>
-                  </span>
-                ))}
-              </>
-            )}
+              </span>
+            ))}
           </div>
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />

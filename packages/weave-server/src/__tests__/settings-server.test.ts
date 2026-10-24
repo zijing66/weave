@@ -107,8 +107,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       sessions: { idleDays: 90 }, // 无操作会话闲置移除窗（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
       server: { bindHost: '0.0.0.0', tlsPort: 6443 }, // 监听绑定 + 局域网 HTTPS 端口（归一化补默认）
-      ai: { baseUrl: '', model: '', apiKeySet: false }, // AI 助手（归一化补默认，默认未配置）
-      decision: { baseUrl: '', model: '', apiKeySet: false }, // 决策模型（同上，默认未配置）
+      ai: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // AI 助手（归一化补默认，默认未配置；key 回显 null）
+      decision: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // 决策模型（同上）
       htmlExport: { activeId: null, profiles: [] }, // 导出 HTML 的自定义头（默认没有）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）

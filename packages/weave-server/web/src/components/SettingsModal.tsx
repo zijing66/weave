@@ -129,19 +129,19 @@ interface SettingsModalProps {
 }
 
 /**
- * 只写密钥输入（AI 助手 / 决策模型共用）：常态为空（服务端不回显已存 key）、
- * 「清除」= 显式写 null。掩码走 CSS（masked-input）而非 type=password——后者会让
+ * 密钥输入（AI 助手 / 决策模型共用）：服务端回显已存 key、掩码展示（眼睛切换明文），
+ * 清空文本框 = 保存时清除。掩码走 CSS（masked-input）而非 type=password——后者会让
  * 浏览器把前面的地址框当用户名、这里当密码，弹「保存凭据」并自动填充；
- * one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器。
- * （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会——聚焦即可正常输入。）
+ * one-time-code 比 off/new-password 稳：既不自动填充已存凭据，也不弹强密码生成器
+ * （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会——但回显态下
+ * readOnly 会挡住首次编辑，故只在「已存 key 且未动过」时只读，聚焦即解）。
  */
 function SecretKeyInput(props: {
   name: string;
   value: string;
   onChange: (value: string) => void;
   keySet: boolean | undefined;
-  onClear: () => void;
-  labels: { set: string; unset: string; clear: string; show: string; hide: string };
+  labels: { set: string; unset: string; show: string; hide: string };
 }) {
   const [show, setShow] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -179,15 +179,6 @@ function SecretKeyInput(props: {
       >
         {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
       </button>
-      {props.keySet === true && (
-        <button
-          type="button"
-          onClick={props.onClear}
-          className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700"
-        >
-          {labels.clear}
-        </button>
-      )}
     </div>
   );
 }
@@ -208,11 +199,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [urls, setUrls] = useState<AccessUrl[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // AI / 决策模型 key 只写：输入框常态为空（服务端不回显已存的 key）；「清除」= 显式写 null。
+  // AI / 决策模型 key：服务端回显已存值进输入框（掩码展示），编辑即改、清空 = 保存时清除。
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [clearKey, setClearKey] = useState(false);
   const [decisionKeyInput, setDecisionKeyInput] = useState('');
-  const [clearDecisionKey, setClearDecisionKey] = useState(false);
   /** 服务端拉回的模型候选（datalist 用；空 = 还没拉/网关没有 /models）。 */
   const [models, setModels] = useState<string[]>([]);
   /** 逐行复制 URL 的反馈（1.5s ✓，折叠条同款惯例）。 */
@@ -360,15 +349,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充/弹生成器，这是最硬的一道闸
   const loadSettings = useCallback(() => {
     setError(null);
-    // 每次打开都清空 key 相关输入态：不回显既有 key，也不留上一次的明文在内存里。
-    setApiKeyInput('');
-    setClearKey(false);
-    setDecisionKeyInput('');
-    setClearDecisionKey(false);
     api
       .getDaemonSettings()
       .then((r) => {
-        setSettings(r.settings as DaemonSettingsExt); // 运行时含 events（server 归一化回传）
+        const s = r.settings as DaemonSettingsExt;
+        setSettings(s);
+        // key 回显：服务端随 GET 返回已存值（掩码展示，眼睛可切明文）
+        setApiKeyInput(s.ai?.apiKey ?? '');
+        setDecisionKeyInput(s.decision?.apiKey ?? '');
         setPresets(r.presets);
         setUrls(r.urls ?? []);
         // 已配置（存的地址 + key 齐全）**不自动拉**——模型一般已选好，按需点「拉取模型」；
@@ -446,8 +434,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setSaving(true);
     setError(null);
     try {
-      // `ai.apiKey` / `decision.apiKey` 只写：只在用户真输入过 / 点过清除时才带进请求
-      // （留空 = 服务端保持原值）。
+      // `ai.apiKey` / `decision.apiKey`：输入框是回显态，原样提交（用户没动 = 原值
+      // 写回，无害）；清空 = 显式清除（服务端空串即删文件）。
       const payload: DaemonSettingsExt = {
         ...settings,
         ...(settings.ai
@@ -455,11 +443,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               ai: {
                 baseUrl: settings.ai.baseUrl,
                 model: settings.ai.model,
-                ...(apiKeyInput !== ''
-                  ? { apiKey: apiKeyInput }
-                  : clearKey
-                    ? { apiKey: null }
-                    : {}),
+                apiKey: apiKeyInput,
               },
             }
           : {}),
@@ -468,21 +452,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               decision: {
                 baseUrl: settings.decision.baseUrl,
                 model: settings.decision.model,
-                ...(decisionKeyInput !== ''
-                  ? { apiKey: decisionKeyInput }
-                  : clearDecisionKey
-                    ? { apiKey: null }
-                    : {}),
+                apiKey: decisionKeyInput,
               },
             }
           : {}),
       };
       const saved = await api.putDaemonSettings(payload);
       setSettings(saved as DaemonSettingsExt);
-      setApiKeyInput('');
-      setClearKey(false);
-      setDecisionKeyInput('');
-      setClearDecisionKey(false);
+      setApiKeyInput((saved as DaemonSettingsExt).ai?.apiKey ?? '');
+      setDecisionKeyInput((saved as DaemonSettingsExt).decision?.apiKey ?? '');
       setLocale(saved.locale);
       onClose();
     } catch (e) {
@@ -947,19 +925,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <SecretKeyInput
               name="weaveAiApiKey"
               value={apiKeyInput}
-              onChange={(value) => {
-                setApiKeyInput(value);
-                if (value !== '') setClearKey(false);
-              }}
+              onChange={setApiKeyInput}
               keySet={settings?.ai?.apiKeySet}
-              onClear={() => {
-                setApiKeyInput('');
-                setClearKey(true);
-              }}
               labels={{
                 set: t('settings.aiApiKeySet'),
                 unset: t('settings.aiApiKeyUnset'),
-                clear: t('settings.aiApiKeyClear'),
                 show: t('settings.aiApiKeyShow'),
                 hide: t('settings.aiApiKeyHide'),
               }}
@@ -1015,19 +985,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <SecretKeyInput
               name="weaveDecisionApiKey"
               value={decisionKeyInput}
-              onChange={(value) => {
-                setDecisionKeyInput(value);
-                if (value !== '') setClearDecisionKey(false);
-              }}
+              onChange={setDecisionKeyInput}
               keySet={settings?.decision?.apiKeySet}
-              onClear={() => {
-                setDecisionKeyInput('');
-                setClearDecisionKey(true);
-              }}
               labels={{
                 set: t('settings.aiApiKeySet'),
                 unset: t('settings.aiApiKeyUnset'),
-                clear: t('settings.aiApiKeyClear'),
                 show: t('settings.aiApiKeyShow'),
                 hide: t('settings.aiApiKeyHide'),
               }}

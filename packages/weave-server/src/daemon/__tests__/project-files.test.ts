@@ -243,10 +243,19 @@ describe('hydrateIndex（快照 → 可查的索引：持久化读回来走同�
 });
 
 describe('matchPaths', () => {
+  // 真实索引在建索引时已排序（`kept.sort()`），二分定位依赖这一点——夹具同口径
   const index = (files: string[], dirs: string[] = []) =>
-    hydrateIndex({ v: INDEX_VERSION, root: '/p', at: Date.now(), stamp: null, truncated: false, files, dirs });
+    hydrateIndex({
+      v: INDEX_VERSION,
+      root: '/p',
+      at: Date.now(),
+      stamp: null,
+      truncated: false,
+      files: [...files].sort(),
+      dirs: [...dirs].sort(),
+    });
 
-  it('① 文件名前缀 > 文件名包含 > 路径段前缀 > 子序列，同档短的在前', async () => {
+  it('① 名字前缀 > 名字包含 > 名字子序列，同档短的在前；路径段命中不算', async () => {
     const idx = index(['src/lib/route.ts', 'src/routes/other.ts', 'docs/route-notes.md', 'src/geroute.ts']);
     const hits = (await matchPaths(idx, 'route', 10)).hits;
     // 两条 basename 都以 route 开头：同档，短的那个在前（更可能是常用的那个）
@@ -255,15 +264,14 @@ describe('matchPaths', () => {
       'docs/route-notes.md',
       // 然后是 basename 里含 route 的
       'src/geroute.ts',
-      // 最后是路径段以 route 开头的（routes/）
-      'src/routes/other.ts',
+      // `src/routes/other.ts` 只有路径段命中——不算（匹配只认叶子名字）
     ]);
   });
 
-  it('② 命中区间落在原路径的下标上（前端拿去上色）', async () => {
+  it('② 命中区间落在名字段上（前端拿去上色）', async () => {
     const idx = index(['src/lib/route.ts']);
-    const hit = (await matchPaths(idx, 'lib', 10)).hits[0]!;
-    expect(hit.path.slice(...[hit.ranges[0]![0], hit.ranges[0]![0] + hit.ranges[0]![1]])).toBe('lib');
+    const hit = (await matchPaths(idx, 'route', 10)).hits[0]!;
+    expect(hit.path.slice(...[hit.ranges[0]![0], hit.ranges[0]![0] + hit.ranges[0]![1]])).toBe('route');
   });
 
   it('③ 大小写不敏感，且空查询不给结果', async () => {
@@ -272,13 +280,17 @@ describe('matchPaths', () => {
     expect((await matchPaths(idx, '   ', 10)).total).toBe(0);
   });
 
-  it('④ limit 只截返回、total 仍是全量（截断提示靠它）', async () => {
+  it('④ limit 只截返回；满档且最差已是最高档时 total 只是下限', async () => {
     const idx = index(['a/one.ts', 'a/two.ts', 'a/three.ts']);
-    const res = await matchPaths(idx, 'a', 2);
+    // two/three 的名字以 t 打头（rank 3）：榜满 2 条即停，total 只是下限
+    const res = await matchPaths(idx, 't', 2);
     expect(res.hits).toHaveLength(2);
-    // 同档（路径段前缀），档位没满级 → 扫完、数是准的
-    expect(res.total).toBe(3);
-    expect(res.capped).toBe(false);
+    expect(res.total).toBe(2);
+    expect(res.capped).toBe(true);
+    // 换一个不满档的查询：total 是准的全量
+    const all = await matchPaths(idx, 'ne', 10);
+    expect(all.hits.map((h) => h.path)).toEqual(['a/one.ts']);
+    expect(all.capped).toBe(false);
   });
 
   it('⑤ 满档且最差那条已是最高档 → 即停，total 只是下限', async () => {
@@ -291,17 +303,34 @@ describe('matchPaths', () => {
 
   it('⑥ 榜满后扫描序靠后的高分条目照样挤进来（有界 top-N 与全排一致）', async () => {
     const files = [
-      ...Array.from({ length: 50 }, (_, i) => `b/x${String(i).padStart(2, '0')}.ts`),
-      'b.ts',
+      ...Array.from({ length: 50 }, (_, i) => `b/xb${String(i).padStart(2, '0')}.ts`),
+      'ab.ts',
     ];
     const res = await matchPaths(index(files), 'b', 3);
-    // 前 50 条只是路径段前缀（rank 1），扫描序最后的 b.ts 是 basename 前缀（rank 3）
-    expect(res.hits.map((h) => h.path)).toEqual(['b.ts', 'b/x00.ts', 'b/x01.ts']);
+    // 前 50 条是名字包含（rank 2），扫描序最后的 ab.ts 是名字前缀（rank 3）
+    expect(res.hits.map((h) => h.path)).toEqual(['ab.ts', 'b/xb00.ts', 'b/xb01.ts']);
     expect(res.capped).toBe(false);
     expect(res.total).toBe(51);
   });
 
-  it('⑦ 分刀跑与一口气跑结果相同（刀与刀之间让出事件循环）', () => {
+  it('⑦ dir 子树：只收前缀段内的条目，段外同名不算', async () => {
+    const idx = index(
+      ['src/a.ts', 'src/deep/b.ts', 'docs/a.ts', 'a.ts'],
+      ['src', 'src/deep', 'docs'],
+    );
+    const res = await matchPaths(idx, 'a', 10, 'src');
+    // `src/deep/b.ts` 的名字不含 a（子序列也不构成）——只有 `src/a.ts` 命中
+    expect(res.hits.map((h) => h.path)).toEqual(['src/a.ts']);
+    expect(res.total).toBe(1);
+  });
+
+  it('⑧ dir 子树对目录条目同样生效（目录名匹配、范围按前缀段）', async () => {
+    const idx = index(['src/lib/x.ts', 'other/lib/y.ts'], ['src', 'src/lib', 'other', 'other/lib']);
+    const res = await matchPaths(idx, 'lib', 10, 'src');
+    expect(res.hits.map((h) => h.path)).toEqual(['src/lib']);
+  });
+
+  it('⑨ 分刀跑与一口气跑结果相同（刀与刀之间让出事件循环）', () => {
     // 刀点按毫秒判：条目太少时整趟扫完不到 1ms，一次也不会让出（快机器上曾假红）。
     // limit 大过真正能满档的命中数，扫描不会提前收工，整趟必须跨过若干刀。
     const files = Array.from({ length: 200_000 }, (_, i) => `d${i % 7}/x${i}.ts`);

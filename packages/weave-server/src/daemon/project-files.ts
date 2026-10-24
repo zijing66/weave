@@ -444,24 +444,12 @@ export function listDirOf(index: FileIndex, dir: string): { path: string; kind: 
   return out;
 }
 
-/** 有没有某一段路径以 `q` 开头。**不 split**——这条每敲一下都要对全索引跑一遍，
- *  每次分配一个分段数组正是这里最贵的动作。 */
-function segmentStartsWith(lowerPath: string, q: string): boolean {
-  let at = 0;
-  for (;;) {
-    if (lowerPath.startsWith(q, at)) return true;
-    const next = lowerPath.indexOf('/', at);
-    if (next < 0) return false;
-    at = next + 1;
-  }
-}
-
-/** 四档排序：basename 前缀 > basename 子串 > 路径段前缀 > 整条子序列；同档短的靠前。 */
-function rankOf(lowerPath: string, base: string, q: string): number {
+/** 三档排序：名字前缀 > 名字包含 > 名字子序列；同档短的靠前。
+ *  只认条目自己的名字——路径段命中不算（用户裁决：匹配叶子节点的名称）。 */
+function rankOf(base: string, q: string): number {
   if (base.startsWith(q)) return 3;
   if (base.includes(q)) return 2;
-  if (segmentStartsWith(lowerPath, q)) return 1;
-  return isSubsequence(lowerPath, q) ? 0 : -1;
+  return isSubsequence(base, q) ? 1 : -1;
 }
 
 function isSubsequence(hay: string, needle: string): boolean {
@@ -472,7 +460,7 @@ function isSubsequence(hay: string, needle: string): boolean {
   return i === needle.length;
 }
 
-/** 命中区间：按 rank 的档位定位（子序列档逐字符给），供前端上色。 */
+/** 命中区间：恒落在名字段上（匹配只认名字），供前端上色。 */
 function rangesOf(original: string, rank: number, q: string): [number, number][] {
   const baseAt = original.lastIndexOf('/') + 1;
   const base = original.slice(baseAt).toLowerCase();
@@ -480,16 +468,11 @@ function rangesOf(original: string, rank: number, q: string): [number, number][]
     const at = base.indexOf(q);
     return at < 0 ? [] : [[baseAt + at, q.length]];
   }
-  if (rank === 1) {
-    const at = original.toLowerCase().indexOf(q);
-    return at < 0 ? [] : [[at, q.length]];
-  }
   const out: [number, number][] = [];
-  const lower = original.toLowerCase();
   let i = 0;
-  for (let j = 0; j < lower.length && i < q.length; j++) {
-    if (lower[j] === q[i]) {
-      out.push([j, 1]);
+  for (let j = 0; j < base.length && i < q.length; j++) {
+    if (base[j] === q[i]) {
+      out.push([baseAt + j, 1]);
       i++;
     }
   }
@@ -526,20 +509,37 @@ export interface MatchJob {
 const MATCH_SLICE_MS = 8;
 const MATCH_YIELD_EVERY = 1024;
 
+/** 排序数组里 `dir/` 前缀段的起点（二分；'' = 全量从 0 起）。
+ *  数组按原始串排序，前缀类在字典序里连续——比较也用原始串，别小写。 */
+function firstIndexOf(sorted: readonly string[], prefix: string): number {
+  if (!prefix) return 0;
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid]! < prefix) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /**
- * 全索引模糊匹配 top `limit`（文件与目录同池竞争），分刀形态：调用方在刀与刀之间
- * 让出事件循环。`limit` 满且最差那条已是最高档时直接收工——再扫也挤不进榜。
+ * 模糊匹配 top `limit`（文件与目录同池竞争），范围 = `dir` 子树（'' = 全项目；
+ * 排序数组里 `dir/` 前缀是连续段，二分进段、出段即停）。分刀形态：调用方在刀与
+ * 刀之间让出事件循环。`limit` 满且最差那条已是最高档时直接收工——再扫也挤不进榜。
  */
-export function startMatch(index: FileIndex, query: string, limit: number): MatchJob {
+export function startMatch(index: FileIndex, query: string, limit: number, dir = ''): MatchJob {
   const q = query.trim().toLowerCase();
+  const prefix = dir ? `${dir}/` : '';
   const best: Candidate[] = [];
   let phase: 'files' | 'dirs' | 'done' = q && limit > 0 ? 'files' : 'done';
   let at = 0;
   let seen = 0;
   let capped = false;
 
-  const offer = (p: string, lowerPath: string, kind: PathRefKind): void => {
-    const rank = rankOf(lowerPath, lowerPath.slice(lowerPath.lastIndexOf('/') + 1), q);
+  const offer = (p: string, kind: PathRefKind): void => {
+    const base = p.slice(p.lastIndexOf('/') + 1).toLowerCase();
+    const rank = rankOf(base, q);
     if (rank < 0) return;
     seen++;
     const c: Candidate = { path: p, kind, rank, len: p.length };
@@ -562,10 +562,12 @@ export function startMatch(index: FileIndex, query: string, limit: number): Matc
       let ticks = 0;
       while (phase !== 'done') {
         const paths = phase === 'files' ? index.files : index.dirs;
-        const lowers = phase === 'files' ? index.lower : index.dirLower;
         const kind: PathRefKind = phase === 'files' ? 'file' : 'dir';
+        if (at === 0) at = firstIndexOf(paths, prefix);
         while (at < paths.length) {
-          offer(paths[at]!, lowers[at]!, kind);
+          const p = paths[at]!;
+          if (prefix && !p.startsWith(prefix)) break;
+          offer(p, kind);
           at++;
           if (best.length === limit && best[limit - 1]!.rank === 3) {
             capped = true;
@@ -580,7 +582,7 @@ export function startMatch(index: FileIndex, query: string, limit: number): Matc
       return true;
     },
     result(): MatchResult {
-      // 命中区间只为真的会下发的那几条算：宽查询（`src`）能命中整个索引，逐条去算
+      // 命中区间只为真的会下发的那几条算：宽查询（`src`）能命中整个子树，逐条去算
       // 区间就是白烧——被 limit 切掉的没人看。
       return {
         hits: best.map((s) => ({
@@ -595,13 +597,14 @@ export function startMatch(index: FileIndex, query: string, limit: number): Matc
   };
 }
 
-/** 全索引模糊匹配 top `limit`：分刀跑完，刀与刀之间让出事件循环。 */
+/** 模糊匹配 top `limit`（`dir` 子树内）：分刀跑完，刀与刀之间让出事件循环。 */
 export async function matchPaths(
   index: FileIndex,
   query: string,
   limit: number,
+  dir = '',
 ): Promise<MatchResult> {
-  const job = startMatch(index, query, limit);
+  const job = startMatch(index, query, limit, dir);
   while (!job.step(MATCH_SLICE_MS)) await new Promise<void>((resolve) => setImmediate(resolve));
   return job.result();
 }

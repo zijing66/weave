@@ -1071,13 +1071,14 @@ export interface DaemonSettings {
   /** 监听绑定地址（默认 0.0.0.0）+ 局域网 HTTPS 端口（0 = 关）。 */
   server?: { bindHost: string; tlsPort?: number };
   /**
-   * AI 助手（OpenAI 兼容端点）。地址/模型是非密配置；`apiKey` 是**只写**字段
-   * （服务端拆存 `<dataDir>/ai.json`，GET/PUT 都不回显），`apiKeySet` 是服务端派生布尔。
+   * AI 助手（OpenAI 兼容端点）。地址/模型是非密配置；`apiKey` 服务端拆存
+   * `<dataDir>/ai.json`（0600），GET 回显（设置页掩码展示）、PUT 原样写回，
+   * `apiKeySet` 是服务端派生布尔。
    */
   ai?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
   /**
    * 决策模型（Jev 兼容 / System One 接口，编排条件边判断）。同 ai 段口径：
-   * 地址/模型非密，`apiKey` 只写（服务端拆存 `<dataDir>/decision.json`），
+   * 地址/模型非密，`apiKey` 拆存 `<dataDir>/decision.json`、GET 回显，
    * `apiKeySet` 服务端派生。
    */
   decision?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };

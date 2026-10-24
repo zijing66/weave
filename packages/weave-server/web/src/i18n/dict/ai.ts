@@ -24,7 +24,7 @@ export const aiZh = {
   'settings.aiModelFetch': '拉取模型',
   'settings.aiModelFetchTip': '拉取该地址可用的模型（地址与 key 齐了会自动拉一次）',
   'settings.aiApiKey': 'API Key',
-  'settings.aiApiKeySet': '已设置（留空 = 保持不变）',
+  'settings.aiApiKeySet': '已设置（清空输入框 = 保存时清除）',
   'settings.aiApiKeyUnset': '未设置',
   'settings.aiApiKeyClear': '清除',
   'settings.aiApiKeyShow': '显示',
@@ -64,7 +64,7 @@ export const aiEn: Record<keyof typeof aiZh, string> = {
     'Fetch the models available at this base URL (auto-fetched once URL and key are set)',
 
   'settings.aiApiKey': 'API key',
-  'settings.aiApiKeySet': 'Set (leave blank to keep)',
+  'settings.aiApiKeySet': 'Set (clear the field to remove on save)',
   'settings.aiApiKeyUnset': 'Not set',
   'settings.aiApiKeyClear': 'Clear',
   'settings.aiApiKeyShow': 'Show',

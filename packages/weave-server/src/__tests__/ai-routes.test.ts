@@ -359,7 +359,7 @@ describe('daemon ai routes', () => {
     expect(empty.status).toBe(400);
   });
 
-  it('PUT /settings 的 ai.apiKey 只写：响应与 GET 都不回显，文件里才有', async () => {
+  it('PUT /settings 的 ai.apiKey：落文件、响应与 GET 回显（设置页掩码展示）', async () => {
     const put = await fetch(url('/settings'), {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
@@ -370,8 +370,11 @@ describe('daemon ai routes', () => {
     });
     expect(put.status).toBe(200);
     const putBody = (await put.json()) as { ai: Record<string, unknown> };
-    expect(putBody.ai).toMatchObject({ baseUrl: 'https://llm.example/v1', apiKeySet: true });
-    expect(JSON.stringify(putBody)).not.toContain('sk-put-test');
+    expect(putBody.ai).toMatchObject({
+      baseUrl: 'https://llm.example/v1',
+      apiKey: 'sk-put-test',
+      apiKeySet: true,
+    });
 
     expect((JSON.parse(readFileSync(keyPath, 'utf8')) as { apiKey: string }).apiKey).toBe(
       'sk-put-test',
@@ -380,8 +383,11 @@ describe('daemon ai routes', () => {
     const get = (await (await fetch(url('/settings'))).json()) as {
       settings: { ai: Record<string, unknown> };
     };
-    expect(get.settings.ai).toMatchObject({ baseUrl: 'https://llm.example/v1', apiKeySet: true });
-    expect(JSON.stringify(get)).not.toContain('sk-put-test');
+    expect(get.settings.ai).toMatchObject({
+      baseUrl: 'https://llm.example/v1',
+      apiKey: 'sk-put-test',
+      apiKeySet: true,
+    });
 
     // 清空：apiKey=null → 文件删除，apiKeySet 回落 false
     const cleared = await fetch(url('/settings'), {
