@@ -37,6 +37,7 @@ import { parseMarkdown } from '@/lib/conv-markdown';
 import { renderMermaidSvg } from '@/lib/mermaid';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { usePullLoad } from '@/lib/pull-load';
+import { useBackPop } from '@/lib/back-pop';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickItem, type PickTarget } from './FilePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
@@ -1259,6 +1260,15 @@ function Collapsible({
   );
 }
 
+/** 返回键收大图（hook 不能条件挂，包一层小组件；open 翻转时 effect 重挂）。 */
+function LightboxBackPop({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
+  return null;
+}
+
 /**
  * 会话对话：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
  * 没落进事件流的在途投递行（含暂停闸成因的重发入口）。历史就是既有的事件
@@ -1634,6 +1644,35 @@ export function SessionMessages({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [menu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize, staged]);
+
+  // 移动端返回键/侧滑逐层退：与 ESC 同一顺序（挂起中的扇子不吃返回——只有露着
+  // 的那扇该退；嵌入形态没有「挂起」这回事，恒挂）。文件选择器/大图/改动汇总/
+  // 旁路会话是各自挂层的弹窗（后挂的先退），不在这条链里。
+  useBackPop(!minimized, () => {
+    if (menu) {
+      setMenu(null);
+      return true;
+    }
+    if (selecting) {
+      setSelecting(false);
+      setPicked(new Set());
+      return true;
+    }
+    if (confirmMode) {
+      setConfirmMode(false);
+      return true;
+    }
+    if (confirming) {
+      setConfirming(false);
+      return true;
+    }
+    if (fullscreen) {
+      toggleFullscreen();
+      return true;
+    }
+    onMinimize?.();
+    return true;
+  });
 
   // ESC 键帽的冷却：一秒一格倒数，数到 0 才允许下一记。
   useEffect(() => {
@@ -3983,6 +4022,8 @@ export function SessionMessages({
             </div>,
             document.body,
           )}
+        {/* 大图也是一层：返回键先收它（z-70 在一切之上，后挂的先退） */}
+        <LightboxBackPop open={lightbox != null} onClose={() => setLightbox(null)} />
 
         {/* 关闭确认（非原生）：挂在面板内——面板自己 stopPropagation，
             点确认框的任何一处都不会被背后的遮罩当成「点外面即关」。 */}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '@/i18n/I18nProvider';
+import { useBackPop } from '@/lib/back-pop';
 import { harnessUiOf } from '@/lib/harness-meta';
 import type { ProjectHarness } from '@/lib/api';
 import { HarnessIcon } from './HarnessIcon';
@@ -49,6 +50,12 @@ export function HarnessPicker({
       window.removeEventListener('keydown', onKey);
     };
   }, [anchor, onClose]);
+
+  // 移动端返回键/侧滑 = 收起弹层
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   return createPortal(
     <div

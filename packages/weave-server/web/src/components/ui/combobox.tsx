@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
 
 /** 下拉里的一行：value 唯一；label 缺省用 value；hint 是第二行灰字（说明/真名）。 */
@@ -139,6 +140,12 @@ export function Combobox({
       window.removeEventListener('resize', close);
     };
   }, [open]);
+
+  // 移动端返回键/侧滑 = 收起下拉（z-[60] 盖着对话框，返回先归它）
+  useBackPop(open, () => {
+    setOpen(false);
+    return true;
+  });
 
   // 打开即定位到当前值；搜索框桌面自动聚焦（触屏不弹软键盘）。
   useEffect(() => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { commitOf, indexOf } from './enum-slider-core';
 
 /** 当前档文字色 = 宿主状态栏 thinking 块的紫（claude statusline 的 `#bb9af7`），
@@ -75,6 +76,12 @@ export function EnumSlider({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft, value, levels]);
+
+  // 移动端返回键/侧滑 = 关闭浮层并提交（与 Esc 同一口径）
+  useBackPop(open, () => {
+    close(true);
+    return true;
+  });
 
   const anchor = btnRef.current?.getBoundingClientRect();
   return (

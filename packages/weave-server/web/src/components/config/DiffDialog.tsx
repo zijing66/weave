@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { collapseDiff, countChanges, diffLines } from '@/lib/text-diff';
 import { DiffRows } from '@/components/ui/diff-rows';
 import { useT } from '@/i18n/I18nProvider';
+import { useBackPop } from '@/lib/back-pop';
 
 /**
  * 配置差异弹窗：切换快照 / 漂移确认前把两侧逐行摆出来。
@@ -34,6 +35,12 @@ export function DiffDialog({
     const counts = countChanges(lines);
     return { rows: collapseDiff(lines, 3), ...counts };
   }, [before, after]);
+
+  // 移动端返回键/侧滑 = 关闭弹窗（确认动作仍由 footer 的按钮做，返回只是退出）
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
 
   if (!open) return null;
 

@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import {
   cronFieldsFor,
   toCronExpression,
@@ -93,6 +94,12 @@ export function OrchestrationCronDialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   const expression = toCronExpression(fields);
   const valid = fields.mode !== 'custom' || expression.split(/\s+/).length === 5;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { createPortal } from 'react-dom';
 import { api, type BrowseChild, type BrowseRoot } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import type { MessageKey } from '@/i18n/dict';
@@ -261,6 +262,12 @@ export function DirectoryPickerModal({
     name: r.path,
     rootKind: r.kind,
   }));
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
 
   if (!open) return null;
 

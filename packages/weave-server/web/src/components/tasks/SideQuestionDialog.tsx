@@ -26,6 +26,7 @@ import {
 } from '@/lib/conv-image';
 import { subscribeHook } from '@/lib/sse';
 import { usePullLoad } from '@/lib/pull-load';
+import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useTheme } from '@/lib/theme';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -232,6 +233,21 @@ export function SideQuestionDialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [menu, selecting, onClose]);
+
+  // 移动端返回键/侧滑逐层退：菜单 → 多选态 → 关弹窗（与 ESC 同一顺序）
+  useBackPop(true, () => {
+    if (menu) {
+      setMenu(null);
+      return true;
+    }
+    if (selecting) {
+      setSelecting(false);
+      setPicked(new Set());
+      return true;
+    }
+    onClose();
+    return true;
+  });
 
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把折叠条展开/收起）
   useEffect(() => {

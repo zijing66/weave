@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { TerminalTarget } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { useBackPop } from '@/lib/back-pop';
 
 /** 弹窗壳（标题栏 + 蒙版 + 面板）：观感一致靠共用一份，不靠两处对齐。 */
 function PickerShell({
@@ -23,6 +24,12 @@ function PickerShell({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   return createPortal(
     <div

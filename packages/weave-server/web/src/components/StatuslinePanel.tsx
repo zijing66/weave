@@ -46,6 +46,7 @@ import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
+import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 
@@ -1242,6 +1243,12 @@ function SegmentModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭分段编辑弹窗
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   return createPortal(
     <div

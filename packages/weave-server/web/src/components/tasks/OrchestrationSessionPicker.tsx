@@ -5,6 +5,7 @@ import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Combobox } from '@/components/ui/combobox';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { sessionLabel } from '@/lib/hook-payload';
 import { HarnessIcon } from './HarnessIcon';
 
@@ -38,6 +39,12 @@ export function OrchestrationSessionPicker({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   const projectName = useMemo(() => {
     const m = new Map<number, string>();

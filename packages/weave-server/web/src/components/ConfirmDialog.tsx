@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { TriangleAlert, X } from 'lucide-react';
+import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 
 interface ConfirmDialogProps {
@@ -25,6 +26,11 @@ export function ConfirmDialog({
   onClose,
 }: ConfirmDialogProps) {
   const t = useT();
+  // 移动端返回键/侧滑 = 关闭确认框（不确认）
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
   if (!open) return null;
 
   // Portal 到 body：侧栏 .frosted（backdrop-filter）会成为 fixed 后代的

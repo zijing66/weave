@@ -57,6 +57,7 @@ import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { copyText } from '@/lib/clipboard';
 import { usePullLoad } from '@/lib/pull-load';
+import { useBackPop } from '@/lib/back-pop';
 import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
@@ -675,6 +676,26 @@ export function OrchestrationCanvas({
   const order = editing?.id ?? null;
   /** 画布全屏（对话弹窗同款语义）：编辑表单贴屏右侧才有地方摆。 */
   const [canvasFull, setCanvasFull] = useState(false);
+
+  // 移动端返回键/侧滑逐层退：全屏 → 编辑中的编排（脏草稿先弹确认）→ 关画布。
+  // 没开任何东西时不占返回键。
+  useBackPop(canvasFull || editing != null, () => {
+    if (canvasFull) {
+      setCanvasFull(false);
+      return true;
+    }
+    if (dirty) {
+      setConfirmState({
+        title: t('orch.dirtyCloseTitle'),
+        message: t('orch.dirtyCloseConfirm'),
+        confirmLabel: t('orch.dirtyCloseAction'),
+        action: () => setEditing(null),
+      });
+      return true;
+    }
+    setEditing(null);
+    return true;
+  });
 
   const patch = useCallback((fn: (d: OrchDraft) => OrchDraft): void => {
     setEditing((prev) => (prev ? { ...prev, draft: fn(prev.draft) } : prev));

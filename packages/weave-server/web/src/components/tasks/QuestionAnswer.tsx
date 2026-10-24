@@ -9,6 +9,7 @@ import type {
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
 
 /**
@@ -106,6 +107,12 @@ export function QuestionAnswer({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭作答弹窗（作答入口恒为手动点，返回只是退出）
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   // 收尾屏不是「第 n 个问题」，是整 call 的落定动作——单独渲染成底部按钮。
   const submitStep = entry.questions.find((q) => q.submit) ?? null;

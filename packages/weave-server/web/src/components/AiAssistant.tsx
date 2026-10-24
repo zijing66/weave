@@ -6,6 +6,7 @@ import { errorText } from '@/lib/action-feedback';
 import { useToast } from '@/components/Toast';
 import { registerInvalidator } from '@/lib/sse';
 import { useConvScreenOpen } from '@/lib/conv-screen';
+import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
 
@@ -87,6 +88,12 @@ export function AiAssistant() {
       setBusy(false);
     }
   }, [busy, input, messages, show, t]);
+
+  // 移动端返回键/侧滑 = 收起助手弹窗（必须在下面的条件 return 之前——Rules of Hooks）
+  useBackPop(open, () => {
+    setOpen(false);
+    return true;
+  });
 
   if (status?.configured !== true) return null;
   // `<lg` 的整屏对话把右下角占满：浮球与它那块弹窗都退场（会话历史留在内存，回来照旧）

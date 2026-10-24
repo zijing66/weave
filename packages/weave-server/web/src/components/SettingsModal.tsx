@@ -41,6 +41,7 @@ import { fetchAiModels } from '@/lib/ai';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
 import { NumberStepper } from '@/components/ui/number-stepper';
@@ -392,6 +393,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }, 700);
     return () => clearTimeout(timer);
   }, [open, savedConfigured, typedBaseUrl, typedKey, loadModels]);
+
+  // 移动端返回键/侧滑 = 关闭设置（层退完才落回路由）
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
 
   if (!open) return null;
 

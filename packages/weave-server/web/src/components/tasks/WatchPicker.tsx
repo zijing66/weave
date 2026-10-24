@@ -4,6 +4,7 @@ import { Check, X } from 'lucide-react';
 import type { SessionWatchRow, WatchOn } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { NumberStepper } from '@/components/ui/number-stepper';
 
 /** 可选触发类型（顺序即展示序）；标签/说明全走 i18n 表。 */
@@ -63,6 +64,12 @@ export function WatchPicker({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
 
   const toggle = (kind: WatchOn): void => {
     setSelected((prev) => {

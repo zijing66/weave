@@ -18,6 +18,7 @@ import {
 import { api, type HarnessCheck, type ProjectRow, type TerminalTarget } from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -273,6 +274,20 @@ export function ProjectList({
       window.removeEventListener('keydown', close);
     };
   }, [menu]);
+
+  // 移动端返回键/侧滑逐层退：终端弹层 → 右键菜单 → 归档弹窗（后挂的先退）
+  useBackPop(!!termMenu, () => {
+    setTermMenu(null);
+    return true;
+  });
+  useBackPop(!!menu, () => {
+    setMenu(null);
+    return true;
+  });
+  useBackPop(archivedOpen, () => {
+    setArchivedOpen(false);
+    return true;
+  });
 
   /** 触屏长按 = 右键的等价动作（移动端没有右键这回事）；抬手补的那个 click
    *  要吞掉，否则它顺带点选这个项目（用户要的是菜单里那一项）。 */

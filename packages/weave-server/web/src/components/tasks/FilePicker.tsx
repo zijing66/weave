@@ -23,6 +23,7 @@ import {
 import { api, type SessionFileEntry } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useTheme } from '@/lib/theme';
 
@@ -46,6 +47,10 @@ import { useTheme } from '@/lib/theme';
  * 用自己的一条小条（`SearchQuery` + `SearchCursor`）而不是它自带的搜索面板——
  * 那面板带替换与编辑，而预览只该看。选它是因为行号槽、行号上的鼠标事件、选区
  * 绘制与匹配高亮都是现成的，手写这四件只会四件都做不好。
+ *
+ * 移动端返回键/侧滑先归弹窗自己的层（工具条 → 预览回列表 → 清搜索 → 回上一级
+ * → 关弹窗），退完了才落回路由——压一枚带标记的历史记录消费 `popstate` 实现，
+ * URL 恒不动。
  */
 
 /** 搜索输入的防抖窗：服务端一次模糊匹配 ~10ms，剩下全是省往返。 */
@@ -511,6 +516,30 @@ export function FilePicker({
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, []);
+
+  /** 移动端返回键/侧滑：先归弹窗自己的层（工具条 → 预览回列表 → 清搜索 →
+   *  回上一级），退无可退才关弹窗——「返回上一级优先」由 onBack 返回 false
+   *  表达（层没退完，钩子补一枚历史记录让下一次返回继续归它）。 */
+  useBackPop(true, () => {
+    if (barRef.current) {
+      setBar(null);
+      return true;
+    }
+    if (!isDesktop && screen === 'preview') {
+      setScreen('list');
+      return true;
+    }
+    if (query !== '') {
+      setQuery('');
+      return true;
+    }
+    if (dir !== '') {
+      goUp();
+      return false;
+    }
+    closeRef.current();
+    return true;
+  });
 
   /** 回到某一级时把「刚离开的那一层」选中——不然每次都从列表头上再找一遍。
    *  只认真正的祖先：`target` 为空即项目根。 */

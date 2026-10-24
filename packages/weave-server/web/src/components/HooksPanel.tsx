@@ -38,6 +38,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { registerInvalidator } from '@/lib/sse';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
@@ -555,6 +556,11 @@ export function HooksPanel({
     setForm(null);
     setFormError(null);
   };
+  // 移动端返回键/侧滑 = 关闭规则表单（蒙版不绑 onClick 防编辑丢失，返回同理只关不确认）
+  useBackPop(form != null, () => {
+    closeForm();
+    return true;
+  });
   const patchForm = (p: Partial<RuleFormState>): void =>
     setForm((f) => (f ? { ...f, state: { ...f.state, ...p } } : f));
 

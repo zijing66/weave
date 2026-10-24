@@ -14,6 +14,7 @@ import {
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
+import { useBackPop } from '@/lib/back-pop';
 import { registerInvalidator } from '@/lib/sse';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
@@ -138,6 +139,11 @@ export function TasksPanel({
   });
   useEffect(() => localStorage.setItem('weave:tasks-list', String(listW)), [listW]);
   const [paneOpen, setPaneOpen] = useState(false);
+  // 移动端返回键/侧滑 = 收起会话抽屉（`<lg` 点会话滑出的那块全屏右栏）
+  useBackPop(paneOpen, () => {
+    setPaneOpen(false);
+    return true;
+  });
   /** 事件链弹窗：右栏被对话占着时从对话头部那枚按钮开（右栏没对话面时事件链仍在原位）。 */
   const [chainDialog, setChainDialog] = useState(false);
   const [rules, setRules] = useState<HookRule[]>([]);
@@ -155,6 +161,15 @@ export function TasksPanel({
     sessionId: string;
     sessionLabel: string;
   } | null>(null);
+  // 移动端返回键/侧滑逐层退：拖拽执行确认 → 事件链弹窗（后挂的先退）
+  useBackPop(pendingRun != null, () => {
+    setPendingRun(null);
+    return true;
+  });
+  useBackPop(chainDialog, () => {
+    setChainDialog(false);
+    return true;
+  });
   /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
   const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 待答弹窗目标（会话行图标与事件链组头/画布 tag 共开同一份；null = 关）。 */
@@ -1416,7 +1431,6 @@ export function TasksPanel({
           </div>
         </div>
       )}
-
       {/* 删会话确认弹窗：替代原生 window.confirm */}
       <ConfirmDialog
         open={deleteTarget !== null}

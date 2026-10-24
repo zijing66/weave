@@ -15,30 +15,24 @@ import {
   type AssetAgent,
   type AssetChangeEvent,
   type AssetScope,
-  type FileAssetCategory,
-  type FileAssetTemplate,
-  type HookRule,
-  type OrchestrationRow,
-  type McpServerConfig,
   type McpRow,
   type ProjectRow,
-  type SkillAsset,
   type StatuslineSource,
-  type UpdateReport,
-  type ProjectUpdateSummary,
   type GlobalSkillGroup,
   type PluginRow,
   type PluginRuntime,
   type GlobalSkillSource,
   type InstallCapabilities,
 } from '@/lib/api';
-import { canInstall, capabilitiesOf, type DragPayload } from '@/lib/install-capabilities';
-import { HARNESS_ORDER } from '@/lib/harness-meta';
-import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { registerInvalidator, subscribeFrame, subscribeHook, subscribePush } from '@/lib/sse';
+import type { DragPayload } from '@/lib/install-capabilities';
+import { registerInvalidator, subscribeFrame, subscribeHook } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
+import { useProjects } from '@/hooks/use-projects';
+import { useProjectUpdates } from '@/hooks/use-project-updates';
+import { useTerminalCounts } from '@/hooks/use-terminal-counts';
+import { useCardCounts } from '@/hooks/use-card-counts';
+import { useAssetMutations, pluginEffective } from '@/hooks/use-asset-mutations';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
@@ -67,16 +61,11 @@ import { BootSplash } from '@/components/BootSplash';
 import { WeaveLogo } from '@/components/WeaveLogo';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
-import { createAwaitGate } from '@/lib/await-gate';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
 const RIGHT_MIN = 260;
 const RIGHT_MAX = 440;
-/** 开终端后等角标上涨的上限：窗口起来 + cwd 上报 + 对账那一拍（服务端 600ms
- *  后自对账）通常 1~2s；口径只在可枚举的终端后端上成立，探不到就照旧提前收圈，
- *  别把按钮钉在转圈上。 */
-const OPEN_TERMINAL_COUNT_MS = 8_000;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /** 「n 个更新」展开面的一行。 */
@@ -87,10 +76,6 @@ interface UpdateRow {
   note: string | null;
 }
 const UPDATE_SCOPE_KEY = { project: 'skillGrid.scopeProject', user: 'skillGrid.scopeUser' } as const;
-
-/** 生效查表（链解析在服务端，前端只读行上的 effective）。 */
-const pluginEffective = (rows: readonly PluginRow[], runtime: PluginRuntime, key: string): boolean =>
-  rows.some((r) => r.harness === runtime && r.key === key && r.effective);
 
 /**
  * 认证门：未探测 → 启动页（不闪内容）；未登录 → **默认落登录页**（仅密码，
@@ -117,36 +102,10 @@ export default function App() {
 
 function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const t = useT();
-  // 项目列表 + 归档面（TanStack Query 缓存域·试点，后续域逐个并入）：fetch/缓存/
-  // 失效归 useQuery，重拉统一走 refreshProjects()（= invalidateQueries——SSE 帧
-  // 与变更后的落定都指它）。refetchOnWindowFocus 覆写全局缺省：后台 daemon 侧
-  // reconcile 有 ≤5s 窗口，切回标签页补一枪（替掉原手挂的 visibilitychange 监听）。
-  const queryClient = useQueryClient();
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => api.listProjects(),
-    staleTime: Infinity,
-    refetchOnWindowFocus: 'always',
-    retry: false,
-  });
-  const archivedQuery = useQuery({
-    queryKey: ['projects', 'archived'],
-    queryFn: () => api.listArchivedProjects(),
-    staleTime: Infinity,
-    refetchOnWindowFocus: 'always',
-    retry: false,
-  });
-  const projects = projectsQuery.data ?? [];
-  const archivedProjects = archivedQuery.data ?? [];
-  const refreshProjects = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['projects'] });
-  }, [queryClient]);
-  // 首屏门：项目列表回来前，左侧列表与主区用骨架屏顶住——首次访问不再「先空一下再蹦」。
-  // 同一个门也给启动页（App 的 BootSplash）放行；查询失败同样算就位，别把启动页焊在屏幕上。
-  const shellReady = !projectsQuery.isPending;
-  useEffect(() => {
-    if (shellReady) onBootReady();
-  }, [shellReady, onBootReady]);
+  // 项目列表 + 归档面（TanStack Query 缓存域）：fetch/缓存/失效归 useProjects，
+  // 重拉统一走 refreshProjects()（= invalidateQueries——SSE 帧与变更后的落定都指它）。
+  const { projects, archivedProjects, refreshProjects, shellReady, reorderProjects } =
+    useProjects(onBootReady);
   /** 位置（`lib/route.ts`）：URL 是唯一真源，手势只写它，状态由下面那条 effect 落。 */
   const path = useRoutePath();
   // 顶栏 GitHub 链接的 star 数（浏览器直取 + localStorage 缓存；未知 = null）
@@ -162,24 +121,17 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const { sessions: allSessions, projectStats, statuses: sessionStatuses } = useSessionStatus();
   // 全局总览跳进项目任务视图的初始选中会话（离开任务视图即失效）。
   const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
-  // All hook rules (global + per project) — drives the Weave card count; the
-  // panel refetches its own copy after every mutation.
-  const [hookRules, setHookRules] = useState<HookRule[]>([]);
-  // 全部编排定义（不分项目）——编排卡计数按当前视图过滤；画布改了定义会
-  // 发 `weave:orchestrations-changed` 让这里重拉。
-  const [orchestrations, setOrchestrations] = useState<OrchestrationRow[]>([]);
+  // 分类卡计数（hook 规则 / 编排定义）：变更经 window 事件回报，见 useCardCounts。
+  const { hookRules, refreshHookRules, orchestrations } = useCardCounts();
   // MCP 工具行（每行一个 (harness, scope) 面；enable/effective 服务端算好）。
   const [mcpRows, setMcpRows] = useState<McpRow[]>([]);
-  const [updates, setUpdates] = useState<UpdateReport | null>(null);
+  // 项目更新域（选中报告 + 行内计数缓存 + push 帧），见 useProjectUpdates。
+  const { updates, setUpdates, updatesMap, setUpdatesMap, refreshUpdates, ensureUpdates } =
+    useProjectUpdates();
   /** 「n 个更新」标签的展开态：点开看这批更新到底是谁。 */
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [globalSkillGroups, setGlobalSkillGroups] = useState<GlobalSkillGroup[]>([]);
   const [pluginRows, setPluginRows] = useState<PluginRow[]>([]);
-  // Per-project update summary — hover-lazy + cached per project id. Carries
-  // both the badge count and the 「待 init」 reminder (same fetch, one cache).
-  const [updatesMap, setUpdatesMap] = useState<
-    Record<number, { available: number; needsInit: boolean }>
-  >({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   // 统一消息提示：原先是顶栏下一行小红字（滚走就看不见）→ 一律走 toast。
   // setError 保留原名，全部既有调用点自动改道（一次改，处处统一）。
@@ -235,57 +187,16 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   });
   const sensors = useSensors(finePointer ? mouseSensor : touchSensor);
 
-  // 首拉失败（还没有任何数据可显示）toast 报因；此后刷新失败静默——与旧 fetcher
-  // 的口径一致（refreshProjects 的 catch 本来就吞错）。
-  useEffect(() => {
-    if (projectsQuery.isError && projectsQuery.data === undefined) {
-      setError(String(projectsQuery.error));
-    }
-  }, [projectsQuery.isError, projectsQuery.data, projectsQuery.error, setError]);
-
   // 安装属性矩阵（静态）：启动拉一次，下发 LibraryPanel（M6 拖拽 canDrop 也用）。
   const [installCaps, setInstallCaps] = useState<InstallCapabilities | null>(null);
   useEffect(() => {
     api.capabilities().then(setInstallCaps).catch(() => {});
   }, []);
 
-  // 拖拽中的统一 payload（onDragStart 提升）：落点 canInstall 判定与落定分派共用。
-  const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
-
   // 归档面与 SSE/变更刷新的说明见顶部查询块（['projects'] 前缀两面齐刷）。
 
-  // 项目行拖拽排序落定：乐观重排（落点即时反馈），持久化失败回滚到服务端
-  // 真值并报因（失败不静默）。乐观更新直接写查询缓存（setQueryData）。
-  const handleProjectReorder = useCallback(
-    (ids: number[]) => {
-      queryClient.setQueryData<ProjectRow[]>(['projects'], (prev) => {
-        if (!prev) return prev;
-        const byId = new Map(prev.map((p) => [p.id, p]));
-        const next = ids.map((id) => byId.get(id)).filter((p): p is ProjectRow => !!p);
-        for (const p of prev) if (!ids.includes(p.id)) next.push(p);
-        return next;
-      });
-      api.reorderProjects(ids).catch((e) => {
-        setError(t('errors.projectReorderFailed', { error: String(e) }));
-        refreshProjects();
-      });
-    },
-    [queryClient, setError, t, refreshProjects],
-  );
-
-  // 项目卡终端角标（已开终端数，单位 = 可见屏幕）：纯 push 帧驱动——SSE 接入即补上次快照
-  // 首帧、后台对账后推差量。前端零请求零定时器：探测要 spawn `wezterm cli`，
-  // 任何前端主动拉都会把 spawn 带回请求关键路径。
-  const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
-  /** 「开终端」loading 的放行闸：等的是角标上涨（= 那个窗口真起来了）——
-   *  同开会话/新建会话两个按钮的口径，见 lib/await-gate.ts。 */
-  const countsRef = useRef(terminalCounts);
-  countsRef.current = terminalCounts;
-  const terminalGate = useRef(createAwaitGate(OPEN_TERMINAL_COUNT_MS));
-  useEffect(() => {
-    terminalGate.current.poke();
-  }, [terminalCounts]);
-  useEffect(() => () => terminalGate.current.releaseAll(), []);
+  // 项目卡终端角标 + 开终端放行闸（push 帧驱动），见 useTerminalCounts。
+  const { terminalCounts, countsRef, terminalGate } = useTerminalCounts();
 
   const refreshAssets = useCallback((p: ProjectRow) => {
     api.listAssets(p.path).then(setAssets).catch(() => {});
@@ -294,24 +205,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const refreshMcp = useCallback((projectId: number) => {
     api.listMcp(projectId).then(setMcpRows).catch(() => {});
   }, []);
-
-  // `listUpdates` 每轮都要在项目里起 git 子进程（Windows 上数百毫秒），而 `asset`
-  // 帧是成批到的——同一项目的在飞请求直接复用，别一帧一次。
-  const updatesFlight = useRef<Map<number, Promise<UpdateReport>>>(new Map());
-  const fetchUpdates = useCallback((projectId: number): Promise<UpdateReport> => {
-    const flying = updatesFlight.current.get(projectId);
-    if (flying) return flying;
-    const p = api.listUpdates(projectId).finally(() => updatesFlight.current.delete(projectId));
-    updatesFlight.current.set(projectId, p);
-    return p;
-  }, []);
-
-  const refreshUpdates = useCallback(
-    (projectId: number) => {
-      fetchUpdates(projectId).then(setUpdates).catch(() => {});
-    },
-    [fetchUpdates],
-  );
 
   // 选中项目的既有 updates 刷新结果回填行计数缓存 —— 顶栏/任务页与行内按钮
   // 共用同一份取数，不为行列表单独再拉。
@@ -355,56 +248,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const refreshPluginRows = useCallback((projectId: number) => {
     api.listPluginState(projectId).then(setPluginRows).catch(() => {});
   }, []);
-
-  // 行内 updates 计数：行 hover 懒加载 + 按 id 缓存（listUpdates 要算指纹，
-  // 不做全量预拉）；force 供行同步后重拉。
-  const ensureUpdates = useCallback(
-    (projectId: number, force = false) => {
-      if (!force && updatesMap[projectId] !== undefined) return;
-      fetchUpdates(projectId)
-        .then((r) => {
-          setUpdatesMap((prev) => ({
-            ...prev,
-            [projectId]: { available: r.available, needsInit: r.needsInit },
-          }));
-        })
-        .catch(() => {});
-    },
-    [updatesMap, fetchUpdates],
-  );
-
-  /** Refresh the hooks rule set (card count). */
-  const refreshHookRules = useCallback(() => {
-    api.listHooksRules().then(setHookRules).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    refreshHookRules();
-  }, [refreshHookRules]);
-
-  /** Refresh the orchestration definitions (编排 card count). */
-  const refreshOrchestrations = useCallback(() => {
-    api.listOrchestrations().then(setOrchestrations).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    refreshOrchestrations();
-  }, [refreshOrchestrations]);
-
-  // 编排画布用这个事件回报定义的新增/改名/删除（同 weave:rules-changed）。
-  useEffect(() => {
-    window.addEventListener('weave:orchestrations-changed', refreshOrchestrations);
-    return () =>
-      window.removeEventListener('weave:orchestrations-changed', refreshOrchestrations);
-  }, [refreshOrchestrations]);
-
-  // HooksPanel announces rule mutations with this event so the category card
-  // count stays honest without threading callbacks through CategoryDetail.
-  useEffect(() => {
-    window.addEventListener('weave:rules-changed', refreshHookRules);
-    return () => window.removeEventListener('weave:rules-changed', refreshHookRules);
-  }, [refreshHookRules]);
-
   const loadProject = useCallback(
     (p: ProjectRow) => {
       setSelected(p);
@@ -484,7 +327,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       setInitialSessionId(null);
       return;
     }
-    const target = projects.find((p) => p.id === route.projectId);
+    const target = projects.find((p: ProjectRow) => p.id === route.projectId);
     if (!target) {
       // 项目没了（归档/删除）的旧链接：落到全局，别留一个指不到项目的地址
       navigate({ kind: 'global', category: 'tasks' }, { replace: true });
@@ -670,25 +513,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     [allSessions, show, t],
   );
 
-  // 数据帧：后端已算好的载荷直接写状态（终端角标 / 项目行更新角标）。
-  // 终端数（可见屏幕）：隐藏刷新器推的绝对值快照（会话所在屏幕的另一半在会话状态总线）。
-  useEffect(
-    () =>
-      subscribePush<{ counts: Record<number, number> }>('terminalTopology', (p) =>
-        setTerminalCounts(p.counts),
-      ),
-    [],
-  );
-  // 项目更新摘要（角标条数 + 待 init 提醒）：绝对值快照整体覆盖（含 0/false =
-  // 归零）——与 hover 懒拉共用同一个 updatesMap，push 到达后即以它为准，不双源。
-  useEffect(
-    () =>
-      subscribePush<{ counts: Record<number, ProjectUpdateSummary> }>('updates', (p) =>
-        setUpdatesMap(p.counts ?? {}),
-      ),
-    [],
-  );
-
   // asset 变更帧：只 patch 命中当前项目的行（selected 走 ref 读、不进依赖数组，
   // 否则每切一次项目就断线重连）。
   useEffect(
@@ -720,242 +544,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
         refreshUpdates(sel.id);
       }),
     [refreshMcp, refreshUpdates, refreshGlobalSkills],
-  );
-
-  // 安装/卸载/更新 handler 失败必抛（同 handleSyncAll）：文案归调用方的 fb.run /
-  // 兜底 catch——handler 内先报错又正常 resolve 的话，调用方会在失败时也弹成功。
-  /** 单装与批量共用的裸调用：只发请求不刷新（批量装完统一刷一次，别 N×3 次）。 */
-  const installSkillRaw = useCallback(
-    async (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => {
-      if (!selected && !globalMode) return null;
-      const target = selected ?? projects[0];
-      // user 档落在 home 下、与项目无关：全局面没有项目也照装（id 只是路由占位）。
-      if (!target && !(globalMode && scope === 'user')) return null;
-      const projectId = target?.id ?? 0;
-      const res = await api.install(projectId, {
-        category: 'skill',
-        name: skill.name,
-        sourceDir: skill.dirPath,
-        scope,
-        agent,
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      return { target, projectId };
-    },
-    [selected, projects, globalMode],
-  );
-
-  const refreshAfterInstall = useCallback(
-    (target: ProjectRow | undefined, projectId: number) => {
-      if (target) refreshAssets(target);
-      refreshGlobalSkills(projectId);
-      refreshUpdates(projectId);
-    },
-    [refreshAssets, refreshGlobalSkills, refreshUpdates],
-  );
-
-  const handleInstallSkill = useCallback(
-    async (
-      skill: SkillAsset,
-      scope: AssetScope = 'project',
-      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
-    ) => {
-      const r = await installSkillRaw(skill, scope, agent);
-      if (r) refreshAfterInstall(r.target, r.projectId);
-    },
-    [installSkillRaw, refreshAfterInstall],
-  );
-
-  /** 批量安装：逐条装、单条失败不中断，返回没装上的那些（面板留着勾让人再点）。 */
-  const handleInstallSkillsBatch = useCallback(
-    async (list: SkillAsset[], scope: AssetScope, agent: AssetAgent): Promise<SkillAsset[]> => {
-      const failed: SkillAsset[] = [];
-      let last: { target: ProjectRow | undefined; projectId: number } | null = null;
-      for (const skill of list) {
-        try {
-          const r = await installSkillRaw(skill, scope, agent);
-          if (!r) throw new Error('no install target');
-          last = r;
-        } catch {
-          failed.push(skill);
-        }
-      }
-      if (last) refreshAfterInstall(last.target, last.projectId);
-      return failed;
-    },
-    [installSkillRaw, refreshAfterInstall],
-  );
-
-  /** Install a single-file asset (command / agent / workflow / rule / output-style). */
-  const handleInstallFileAsset = useCallback(
-    async (file: FileAssetTemplate, scope: AssetScope = 'project') => {
-      if (!selected && !globalMode) return;
-      const target = selected ?? projects[0];
-      if (!target && !(globalMode && scope === 'user')) return;
-      const projectId = target?.id ?? 0;
-      const res = await api.install(projectId, {
-        category: file.category,
-        name: file.name,
-        sourceFile: file.filePath,
-        scope,
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
-      refreshUpdates(projectId);
-    },
-    [selected, projects, globalMode, refreshAssets, refreshUpdates],
-  );
-
-  const handleInstallMcp = useCallback(
-    async (
-      name: string,
-      config: McpServerConfig,
-      scope: AssetScope = 'project',
-      agent: AssetAgent = HARNESS_ORDER[0] ?? 'claude',
-    ) => {
-      if (!selected && !globalMode) return;
-      const target = selected ?? projects[0];
-      // 卡面规则与视图同源（CategoryDetail rowsFor）：该 harness 的 MCP 面含
-      // 当前 scope → 用之；否则回落首档（codex 无 project 档 → user）。
-      // 判据出自安装属性矩阵，不再点名 harness（§4 收编）。
-      const mcpScopes =
-        capabilitiesOf('mcp', installCaps).surfaces.find((s) => s.harness === agent)?.scopes ?? [];
-      const effectiveScope = mcpScopes.includes(scope) ? scope : mcpScopes[0] ?? 'user';
-      if (!target && !(globalMode && effectiveScope === 'user')) return;
-      const projectId = target?.id ?? 0;
-      const res = await api.install(projectId, {
-        category: 'mcp',
-        name,
-        mcpConfig: config,
-        scope: effectiveScope,
-        agent,
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
-      refreshMcp(projectId);
-      refreshUpdates(projectId);
-    },
-    [selected, projects, globalMode, installCaps, refreshAssets, refreshMcp, refreshUpdates],
-  );
-
-  const handleUninstallSkill = useCallback(
-    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
-      const target = selected ?? projects[0];
-      // user 档落在 home 下、与项目无关：全局面没有项目也照卸（id 只是路由占位）。
-      if (!target && !(globalMode && scope === 'user')) return;
-      const projectId = target?.id ?? 0;
-      const res = await api.uninstall(projectId, {
-        category: 'skill',
-        name,
-        scope,
-        ...(agent ? { agent } : {}),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
-      refreshGlobalSkills(projectId);
-      refreshUpdates(projectId);
-    },
-    [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
-  );
-
-  // 说明：文件类资产的卸载入口随「文件视图降级为只读」一并撤下（资源管理以插件包为准）；
-  // 服务端 POST /projects/:id/uninstall 仍在，日后要恢复入口只需再加回一个 handler。
-
-  const handleUninstallMcp = useCallback(
-    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
-      const target = selected ?? projects[0];
-      // claude 以外 harness 的 MCP 住用户级文件——卸载恒指用户级（同安装侧判定）。
-      const effectiveScope: AssetScope = (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user';
-      // 同上：用户级装卸与项目无关，没有项目时 0 号只是形状上的占位。
-      if (!target && !(globalMode && effectiveScope === 'user')) return;
-      const projectId = target?.id ?? 0;
-      const res = await api.uninstall(projectId, {
-        category: 'mcp',
-        name,
-        scope: effectiveScope,
-        ...(agent ? { agent } : {}),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
-      refreshMcp(projectId);
-      refreshUpdates(projectId);
-    },
-    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
-  );
-
-  // MCP 启停三态循环（on/off/inherit）：服务端解析 effective 并随行回传，
-  // 落盘成功即整表刷新（不乐观覆盖——行数据是唯一事实源）。
-  const handleCycleMcpEnable = useCallback(
-    async (name: string, next: EnableOverride) => {
-      const target = selected ?? projects[0];
-      if (!target) return;
-      await api.putMcpEnable(target.id, name, next);
-      refreshMcp(target.id);
-    },
-    [selected, projects, refreshMcp],
-  );
-
-  // 参数化：顶栏不传参走当前项目，行内按钮传本行项目（同一回调）。失败抛出，由
-  // 调用方的 fb.run 统一报错（toast）；成功返回服务端 payload 的更新条数——此前
-  // 这个 payload 被整个丢掉，才出现"点了立即同步看不到效果"。
-  const handleSyncAll = useCallback(
-    async (target?: ProjectRow): Promise<{ updated: number }> => {
-      const p = target ?? selected ?? projects[0];
-      if (!p) return { updated: 0 };
-      const res = await api.syncAll(p.id);
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      const data = (await res.json().catch(() => null)) as { updated?: unknown } | null;
-      // 只有当前视图项目才刷新共享的 updates/assets 状态；其他行只回填自己的
-      // 计数缓存（assets 是选中项目的镜像，别行同步不得覆盖）。
-      if (!globalMode && selected && p.id === selected.id) {
-        refreshUpdates(p.id);
-        refreshAssets(p);
-      } else {
-        ensureUpdates(p.id, true);
-      }
-      return { updated: Array.isArray(data?.updated) ? data.updated.length : 0 };
-    },
-    [selected, projects, globalMode, refreshUpdates, refreshAssets, ensureUpdates],
-  );
-
-  const handleUpdateAsset = useCallback(
-    async (
-      category: 'skill' | 'mcp' | FileAssetCategory,
-      name: string,
-      scope: AssetScope,
-      agent?: AssetAgent,
-    ) => {
-      const target = selected ?? projects[0];
-      if (!target) return;
-      const res = await api.updateAsset(target.id, {
-        category,
-        name,
-        scope,
-        ...((category === 'skill' || category === 'mcp') && agent ? { agent } : {}),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      refreshUpdates(target.id);
-      refreshAssets(target);
-      if (category === 'mcp') refreshMcp(target.id);
-      if (category === 'skill') refreshGlobalSkills(target.id);
-    },
-    [selected, projects, refreshUpdates, refreshAssets, refreshMcp, refreshGlobalSkills],
-  );
-
-  // 行内与顶栏共用的反馈包装：state 按 key 记（行内按项目 id，顶栏用 current/all）。
-  const syncActionStateOf = useCallback((id: number) => fb.stateOf(`sync:${id}`), [fb]);
-  const syncNowWithFeedback = useCallback(
-    (p: ProjectRow) =>
-      fb.run(
-        `sync:${p.id}`,
-        async () => {
-          const { updated } = await handleSyncAll(p);
-          if (updated > 0) show('success', t('toast.synced', { n: updated }));
-          else show('info', t('toast.nothingToSync'));
-        },
-        { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
-      ),
-    [fb, handleSyncAll, show, t],
   );
 
   /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
@@ -1024,7 +612,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             }),
           );
           if (selected?.id === p.id) {
-            const next = projects.find((x) => x.id !== p.id);
+            const next = projects.find((x: ProjectRow) => x.id !== p.id);
             navigate(
               next
                 ? { kind: 'project', projectId: next.id, category: 'tasks', sessionId: null }
@@ -1053,97 +641,32 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   );
   const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
 
-  /** Toggle a plugin's user-scope enable override (on/off) in the host config
-   * (Claude settings.json / Codex config.toml). Rows are the single source of
-   * truth — no optimistic flip, just refetch (effective is server-resolved).
-   * Reloads groups on success so enable badges stay in sync. Throws on failure
-   * (caller's fb.run reports). */
-  /** 插件逐档启用覆写循环（§4 ②推广·拍板 7-5/7-7 摆放）：档位由控件随行
-   *  交来（全局视图 user、项目视图 project/local），此处只落盘与刷新。 */
-  const handleCyclePluginState = useCallback(
-    async (runtime: PluginRuntime, key: string, scope: ToolScope, state: EnableOverride) => {
-      const target = selected ?? projects[0];
-      if (!target) return;
-      await api.putPluginState(target.id, runtime, key, scope, state);
-      refreshPluginRows(target.id);
-      refreshGlobalSkills(target.id);
-    },
-    [selected, projects, refreshPluginRows, refreshGlobalSkills],
-  );
+  // 资产装卸 handler 域（安装/卸载/启停/同步/更新 + 拖拽分派），见 useAssetMutations。
+  const {
+    dragPayload, setDragPayload,
+    handleInstallSkillsBatch, handleUninstallSkill, handleUninstallMcp,
+    handleCycleMcpEnable, handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
+    installSkillSafely, installFileAssetSafely, installMcpSafely, installBuiltinMcpSafely,
+    updateAssetSafely, uninstallSkillSafely, dispatchDrop,
+  } = useAssetMutations({
+    t, show, selected, projects, globalMode, installCaps,
+    refreshAssets, refreshMcp, refreshGlobalSkills, refreshPluginRows, refreshUpdates, ensureUpdates,
+  });
 
-  /** 卸载 CC 插件包（harness 注册表级；apiFetch 非 2xx 抛错，调用方 fb.run 报错）。 */
-  const handleUninstallPlugin = useCallback(
-    async (runtime: PluginRuntime, key: string) => {
-      const target = selected ?? projects[0];
-      if (!target) return;
-      await api.uninstallPluginPack(target.id, { runtime, key });
-      refreshGlobalSkills(target.id);
-      refreshPluginRows(target.id);
-    },
-    [selected, projects, refreshGlobalSkills, refreshPluginRows],
-  );
-
-  // 直连 fire-and-forget 调用点（拖拽落定 / 库面板安装·更新 / 抽屉卸载）没有
-  // 按钮本体可挂三态反馈，就地兜一条错误 toast：失败必有一条提示、也不产生
-  // unhandled rejection；成功维持无 toast（由 SSE 刷新与 ✓ 标呈现）。
-  const installSkillSafely = useCallback(
-    (skill: SkillAsset, scope: AssetScope, agent: AssetAgent) => {
-      void handleInstallSkill(skill, scope, agent).catch((e) =>
-        show('error', t('errors.installFailed', { error: errorText(e) })),
-      );
-    },
-    [handleInstallSkill, show, t],
-  );
-  const installFileAssetSafely = useCallback(
-    (file: FileAssetTemplate, scope: AssetScope) => {
-      void handleInstallFileAsset(file, scope).catch((e) =>
-        show('error', t('errors.installFailed', { error: errorText(e) })),
-      );
-    },
-    [handleInstallFileAsset, show, t],
-  );
-  const installMcpSafely = useCallback(
-    (name: string, config: McpServerConfig, scope: AssetScope, agent?: AssetAgent) => {
-      void handleInstallMcp(name, config, scope, agent).catch((e) =>
-        show('error', t('errors.mcpInstallFailed', { error: errorText(e) })),
-      );
-    },
-    [handleInstallMcp, show, t],
-  );
-  const installBuiltinMcpSafely = useCallback(
-    (name: string, agent?: AssetAgent) => {
-      const projectId = selected?.id;
-      if (!projectId) return;
-      void api
-        .installBuiltinMcp(projectId, name, agent)
-        .then(() => {
-          show('success', t('mcp.installed', { name }));
-          refreshMcp(selected.id);
-        })
-        .catch((e) => show('error', t('errors.mcpInstallFailed', { error: errorText(e) })));
-    },
-    [selected, show, t, refreshMcp],
-  );
-  const updateAssetSafely = useCallback(
-    (
-      category: 'skill' | 'mcp' | FileAssetCategory,
-      name: string,
-      scope: AssetScope,
-      agent?: AssetAgent,
-    ) => {
-      void handleUpdateAsset(category, name, scope, agent).catch((e) =>
-        show('error', t('errors.updateFailed', { error: errorText(e) })),
-      );
-    },
-    [handleUpdateAsset, show, t],
-  );
-  const uninstallSkillSafely = useCallback(
-    (name: string, scope: AssetScope, agent?: AssetAgent) => {
-      void handleUninstallSkill(name, scope, agent).catch((e) =>
-        show('error', t('errors.uninstallFailed', { error: errorText(e) })),
-      );
-    },
-    [handleUninstallSkill, show, t],
+  // 行内与顶栏共用的反馈包装：state 按 key 记（行内按项目 id，顶栏用 current/all）。
+  const syncActionStateOf = useCallback((id: number) => fb.stateOf(`sync:${id}`), [fb]);
+  const syncNowWithFeedback = useCallback(
+    (p: ProjectRow) =>
+      fb.run(
+        `sync:${p.id}`,
+        async () => {
+          const { updated } = await handleSyncAll(p);
+          if (updated > 0) show('success', t('toast.synced', { n: updated }));
+          else show('info', t('toast.nothingToSync'));
+        },
+        { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
+      ),
+    [fb, handleSyncAll, show, t],
   );
 
   const selectCategory = useCallback(
@@ -1164,7 +687,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   /** 全局任务总览行点击：退出全局 → 载入对应项目 → 任务视图选中该会话。 */
   const openSessionInProject = useCallback(
     (projectId: number, sessionId: string) => {
-      if (!projects.some((p) => p.id === projectId)) return;
+      if (!projects.some((p: ProjectRow) => p.id === projectId)) return;
       navigate({ kind: 'project', projectId, category: 'tasks', sessionId });
     },
     [projects],
@@ -1190,26 +713,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     setDragPayload(null);
     if (!over || over.id !== 'project-assets' || !data) return;
     const scope: AssetScope = globalMode ? 'user' : 'project';
-    // 属性判定单点：不合法 → 顶栏报因、不安装（与按钮 disabled 同谓词）。
-    const verdict = canInstall(data.attrs, { scope, agent: data.targetAgent });
-    if (!verdict.ok) {
-      if (verdict.reasonKey) setError(t(verdict.reasonKey));
-      return;
-    }
-    if (data.installKind === 'skill' && data.sourceDir && data.name) {
-      installSkillSafely(
-        { name: data.name, dirPath: data.sourceDir } as SkillAsset,
-        scope,
-        data.targetAgent,
-      );
-    } else if (data.installKind === 'file' && data.sourceFile && data.name) {
-      installFileAssetSafely(
-        { name: data.name, filePath: data.sourceFile, category: data.category } as FileAssetTemplate,
-        scope,
-      );
-    } else if (data.installKind === 'mcp' && data.mcpConfig && data.name) {
-      installMcpSafely(data.name, data.mcpConfig, scope, data.targetAgent);
-    }
+    dispatchDrop(data, scope, (reasonKey) => setError(t(reasonKey as Parameters<typeof t>[0])));
   }
 
   // Drawer data for the open skill (project-scope files; global rows have none).
@@ -1267,7 +771,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       onSyncNow={(p) => void syncNowWithFeedback(p)}
       sessionStatsOf={(id) => projectStats.get(id)}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
-      onReorder={handleProjectReorder}
+      onReorder={reorderProjects}
       archivedProjects={archivedProjects}
       onArchive={handleArchiveProject}
       onRestore={handleRestoreProject}

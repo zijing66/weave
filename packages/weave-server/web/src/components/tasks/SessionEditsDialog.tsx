@@ -5,6 +5,7 @@ import { DiffRows } from '@/components/ui/diff-rows';
 import { api, type SessionEditHunk, type SessionEdits } from '@/lib/api';
 import { collapseDiff, countChanges, diffLines } from '@/lib/text-diff';
 import { useT } from '@/i18n/I18nProvider';
+import { useBackPop } from '@/lib/back-pop';
 
 /** 一处改动算出来的东西：逐行 diff（折叠未变区）+ 增删行数。 */
 interface EditBlock {
@@ -98,6 +99,12 @@ export function SessionEditsDialog({
       return next;
     });
   };
+
+  // 移动端返回键/侧滑 = 关闭弹窗
+  useBackPop(open, () => {
+    onClose();
+    return true;
+  });
 
   if (!open) return null;
 
