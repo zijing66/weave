@@ -55,6 +55,9 @@ export const settingsZh = {
   'settings.cleanUnrefDone': '已清理 {n} 项',
   'settings.cleanSessionDone': '已清理该对话的 {n} 项附件',
   'settings.cleanFailed': '清理失败：{error}',
+  'settings.cleanSelectAll': '全选',
+  'settings.cleanOlderThan': '{n} 天以前',
+  'settings.cleanOlderCustom': '自定义天数——自动勾选更早的项',
   'settings.accessUrls': '访问地址',
   'settings.accessUrlsHint':
     '本机与局域网设备访问 dashboard 的完整地址；https 端口用于手机浏览器通知（自签证书，首次访问需在浏览器接受）。',
@@ -139,6 +142,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.cleanUnrefDone': 'Removed {n} items',
   'settings.cleanSessionDone': "Removed {n} attachments from this conversation",
   'settings.cleanFailed': 'Cleanup failed: {error}',
+  'settings.cleanSelectAll': 'Select all',
+  'settings.cleanOlderThan': 'Older than {n} days',
+  'settings.cleanOlderCustom': 'Custom days — auto-selects older items',
   'settings.accessUrls': 'Access URLs',
   'settings.accessUrlsHint':
     'Full URLs for this dashboard on loopback and LAN devices; the https port is what phone browsers need for notifications (self-signed — accept it on first visit).',

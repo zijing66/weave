@@ -353,6 +353,22 @@ export function useConvThread(deps: {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [entries, tailSig, minimized]);
+  /** 内容包裹层：气泡里的异步内容（mermaid 图渲染完成、图片解码出尺寸）在贴底
+   *  **之后**才撑高 scrollHeight——tail-follow 的依赖（entries/tailSig）不感知
+   *  这种变化，尾部就留在视口外了。内容变高且仍贴着（stick）就补一记贴底；
+   *  用户已上翻（stick=false）不抢视口。 */
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const inner = contentRef.current;
+    if (!inner) return;
+    const ro = new ResizeObserver(() => {
+      if (minimized || !stick.current) return;
+      const el = threadRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [minimized]);
 
   const visible = useMemo(() => filterThread(thread, filter), [thread, filter]);
   /** 拉动加载（向上那头）：贴顶后继续滚/拖才取更早，且一拉只取一页。 */
@@ -369,7 +385,7 @@ export function useConvThread(deps: {
     entries, setEntries, headDone, loadingEarlier, loadEarlier,
     thread, outbox, visible, newestAssistantKey, newestQueuedId, now,
     error, setError,
-    threadRef, scrollFix,
+    threadRef, contentRef, scrollFix,
     stick, atBottom, lastScroll,
     compacting, interrupted, generating, failed, liveText,
     pull,

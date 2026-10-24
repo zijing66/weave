@@ -154,6 +154,7 @@ export function SessionMessages({
     thread, outbox, visible, newestAssistantKey, newestQueuedId, now,
     error,
     threadRef,
+    contentRef,
     stick, atBottom, lastScroll,
     status,
     compacting, interrupted, generating, failed, liveText,
@@ -637,6 +638,7 @@ export function SessionMessages({
             </div>
           )}
           <div
+            ref={contentRef}
             className="space-y-2"
             style={pull.px > 0 ? { transform: `translateY(${pull.px}px)` } : undefined}
           >

@@ -96,6 +96,17 @@ function fmtBytes(bytes: number): string {
   return `${n >= 10 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
+/** 单件上传时刻（明细行；精确到分钟）。 */
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** 权限未授的成因文案（tasks 字典的三态，与订阅手势同款）。 */
 const PUSH_PERMISSION_KEY: Record<Exclude<NotifyPermission, 'granted'>, MessageKey> = {
   denied: 'tasks.notifyDenied',
@@ -229,6 +240,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [detail, setDetail] = useState<SessionUploadsResult | null>(null);
   /** 钻取层里勾选的单件 id 集。 */
   const [detailChecked, setDetailChecked] = useState<Set<string>>(new Set());
+  /** 按天勾选的自定义天数（改值即自动勾选更早的项）。 */
+  const [olderDays, setOlderDays] = useState(7);
   /** 清理进行中（进度 = 已清 / 预告数）；确认弹窗的目标（null = 关着）。 */
   const [cleaning, setCleaning] = useState<{ done: number; total: number } | null>(null);
   const [confirmClean, setConfirmClean] = useState<'unref' | string | null>(null);
@@ -300,6 +313,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       return next;
     });
   }, []);
+
+  /** 按天自动勾选：创建时刻早于 now − n 天的项替换当前勾选集。 */
+  const selectOlderThan = useCallback(
+    (days: number): void => {
+      if (!detail) return;
+      const cutoff = Date.now() - days * 86400_000;
+      setDetailChecked(
+        new Set(detail.uploads.filter((a) => new Date(a.createdAt).getTime() <= cutoff).map((a) => a.id)),
+      );
+    },
+    [detail],
+  );
 
   /** 钻取层按 ids 删（单件或图/文件分组勾选），完了重拉清单与总账。 */
   const runRemoveIds = useCallback(
@@ -924,6 +949,48 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                                 <p className="text-10 text-neutral-600">{t('settings.cleanDetailEmpty')}</p>
                               ) : (
                                 <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <label className="flex cursor-pointer items-center gap-1 text-10 text-neutral-400">
+                                      <input
+                                        type="checkbox"
+                                        checked={
+                                          detail.uploads.length > 0 &&
+                                          detail.uploads.every((a) => detailChecked.has(a.id))
+                                        }
+                                        onChange={(e) =>
+                                          setDetailChecked(
+                                            e.target.checked
+                                              ? new Set(detail.uploads.map((a) => a.id))
+                                              : new Set(),
+                                          )
+                                        }
+                                        className="shrink-0 accent-blue-500"
+                                      />
+                                      {t('settings.cleanSelectAll')}
+                                    </label>
+                                    {[7, 30].map((d) => (
+                                      <button
+                                        key={d}
+                                        type="button"
+                                        onClick={() => {
+                                          setOlderDays(d);
+                                          selectOlderThan(d);
+                                        }}
+                                        className="rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
+                                      >
+                                        {t('settings.cleanOlderThan', { n: d })}
+                                      </button>
+                                    ))}
+                                    <NumberStepper
+                                      value={olderDays}
+                                      min={1}
+                                      onChange={(v) => {
+                                        setOlderDays(v);
+                                        selectOlderThan(v);
+                                      }}
+                                      title={t('settings.cleanOlderCustom')}
+                                    />
+                                  </div>
                                   <ul className="max-h-40 space-y-0.5 overflow-y-auto">
                                     {detail.uploads.map((a) => (
                                       <li key={a.id} className="flex items-center gap-1.5">
@@ -951,6 +1018,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                                           <FileCode className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                                         )}
                                         <span className="min-w-0 flex-1 truncate text-10 text-neutral-300">{a.name}</span>
+                                        <span className="shrink-0 text-10 text-neutral-500">{fmtTime(a.createdAt)}</span>
                                         <span className="shrink-0 text-10 text-neutral-500">{fmtBytes(a.size ?? 0)}</span>
                                       </li>
                                     ))}
