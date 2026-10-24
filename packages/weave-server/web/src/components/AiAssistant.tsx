@@ -104,7 +104,9 @@ export function AiAssistant() {
       </button>
       {open &&
         createPortal(
-          <div className="fixed bottom-20 right-4 z-[55] flex h-[520px] max-h-[70dvh] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac">
+          // 双锚（left/right）：zoom 下单锚定宽会左溢，双锚宽度自动求解永不出屏
+          <div className="fixed bottom-20 left-4 right-4 z-[55] flex justify-end">
+            <div className="flex h-[520px] max-h-[70dvh] w-[380px] max-w-full flex-col overflow-hidden rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac">
             <header className="h-11 shrink-0 flex items-center gap-2 border-b border-edge/[0.06] px-4 frosted">
               <Bot className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-neutral-200">{t('ai.title')}</span>
@@ -208,6 +210,7 @@ export function AiAssistant() {
                 </button>
               )}
             </form>
+          </div>
           </div>,
           document.body,
         )}

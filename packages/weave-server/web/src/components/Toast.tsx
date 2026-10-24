@@ -59,13 +59,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {/* bottom-20：让开右下角的 AI 助手悬浮按钮（bottom-4），两者同在右下角 */}
-      <div className="pointer-events-none fixed bottom-20 right-4 z-[60] flex w-80 flex-col gap-2">
+      {/* bottom-20：让开右下角的 AI 助手悬浮按钮（bottom-4），两者同在右下角。
+          left/right 双锚让宽度自动 = 视口−两侧偏移（zoom 下 vw/max-w 百分比
+          基准都会错乱，双锚几何上不可能出屏）；items-end 保持右对齐。 */}
+      <div className="pointer-events-none fixed bottom-20 left-4 right-4 z-[60] flex flex-col items-end gap-2">
         {items.map((item) => (
           <div
             key={item.id}
             role="status"
-            className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2 text-xs shadow-mac backdrop-blur ${STYLE[item.kind].box}`}
+            className={`pointer-events-auto flex max-w-full items-start gap-2 rounded-lg border px-3 py-2 text-xs shadow-mac backdrop-blur ${STYLE[item.kind].box}`}
           >
             {STYLE[item.kind].icon}
             <span className="min-w-0 flex-1 break-words">{item.message}</span>

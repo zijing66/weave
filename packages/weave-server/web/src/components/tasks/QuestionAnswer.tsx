@@ -40,7 +40,7 @@ const SIZE_DEFAULTS: Record<'plain' | 'preview', PanelSize> = {
 };
 const SIZE_MIN = { w: 320, h: 220 };
 
-/** 上限 = 外层 p-4 之内（与 panel 的 `max-h-[calc(100dvh_-_2rem)]` 同源，否则拖出来的值被裁掉）。 */
+/** 上限 = 外层 p-4 之内（panel 用 max-h-full 钳到同一界，否则拖出来的值被裁掉）。 */
 const clampSize = (w: number, h: number): PanelSize => ({
   w: Math.min(Math.max(Math.round(w), SIZE_MIN.w), Math.max(SIZE_MIN.w + 40, innerWidth - 32)),
   h: h > 0 ? Math.min(Math.max(Math.round(h), SIZE_MIN.h), Math.max(SIZE_MIN.h + 40, innerHeight - 32)) : 0,
@@ -204,7 +204,8 @@ export function QuestionAnswer({
         className={cn(
           'relative flex w-full flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac',
           // <lg 整屏单列（触屏没有拖窗口这回事）；桌面缺省宽 448 / 预览形态 880，高度可拖
-          isDesktop ? 'max-h-[calc(100dvh_-_2rem)]' : 'h-[90dvh]',
+          // max-h-full：zoom 下 calc(dvh-rem) 基准错乱会爆高，父容器 inset-0+p-4 的百分比可靠
+          isDesktop ? 'max-h-full' : 'h-[90dvh]',
         )}
         onClick={(e) => e.stopPropagation()}
       >

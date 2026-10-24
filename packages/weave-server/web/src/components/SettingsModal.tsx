@@ -498,7 +498,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       {/* max-h + 内容区 min-h-0/滚动：设置项变多后（AI 段）内容会超过视口，
           面板是 overflow-hidden——不这样收口会把底部输入裁掉、点不到（见 CLAUDE.md
           「纵向 flex 堆叠的下区要 min-h-0」）。 */}
-      <div className="relative w-[640px] max-w-full max-h-[calc(100dvh-1.5rem)] lg:max-h-[calc(100dvh-3rem)] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+      {/* max-h-full：界面缩放（zoom）下 calc(dvh-rem) 混合单位基准错乱会爆高
+          （125% 时上下各溢 90px），父容器 inset-0+p-3 的百分比基准可靠。 */}
+      <div className="relative w-[640px] max-w-full max-h-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <Settings className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('settings.title')}</span>

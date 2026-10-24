@@ -435,7 +435,7 @@ export function SideQuestionDialog({
             className={cn(
               'relative flex w-full flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac',
               // <lg 整屏单列（与作答弹窗同口径：移动端没有拖窗口这回事）
-              'max-h-[calc(100dvh_-_2rem)] lg:h-[32rem] lg:w-[36rem] max-lg:h-[90dvh]',
+              'max-h-full lg:h-[32rem] lg:w-[36rem] max-lg:h-[90dvh]',
             )}
             onClick={(e) => e.stopPropagation()}
           >
