@@ -39,8 +39,9 @@ const FLOW_DELAYS = [0, 70];
 const DRAW_DELAYS = [180, 270];
 const GLYPH_DELAYS = [820, 880, 940, 1000, 1060];
 
-/** 组合标里图形与文字的相对尺度：图形墨迹被放大到与整行文字同高、垂直居中对齐。 */
-const MARK_TRANSFORM = 'translate(-6.63 -4.39) scale(2.26)';
+/** 组合标里图形与文字的相对尺度：图形墨迹放大到字高的 ~1.85 倍（品牌稿构图——
+ *  W 显著高出字标、底部略沉过字底），中心对齐字身并上偏少许。 */
+const MARK_TRANSFORM = 'translate(-8.36 -7.92) scale(2.28)';
 
 function Defs({ uid }: { uid: string }) {
   return (
