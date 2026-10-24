@@ -24,6 +24,8 @@ export interface UploadSession {
   mediaType: string;
   size: number;
   received: number;
+  /** 项目自定义存储目录（finish 时穿给 adoptFromFile；undefined = 全局默认）。 */
+  dir?: string | null;
 }
 
 export type AppendResult =
@@ -51,12 +53,23 @@ export class UploadSessions {
     return path.join(this.dir, `${id}.json`);
   }
 
-  async begin(input: { name: string; mediaType: string; size: number }): Promise<UploadSession> {
+  async begin(input: {
+    name: string;
+    mediaType: string;
+    size: number;
+    dir?: string | null;
+  }): Promise<UploadSession> {
     await mkdir(this.dir, { recursive: true });
     const id = randomUUID();
     await writeFile(
       this.meta(id),
-      JSON.stringify({ name: input.name, mediaType: input.mediaType, size: input.size, received: 0 }),
+      JSON.stringify({
+        name: input.name,
+        mediaType: input.mediaType,
+        size: input.size,
+        received: 0,
+        dir: input.dir ?? null,
+      }),
       'utf8',
     );
     // 预分配：'w' 建档，句柄常开——后续块按偏移往里写，块间不重开文件
@@ -75,6 +88,7 @@ export class UploadSessions {
         mediaType?: unknown;
         size?: unknown;
         received?: unknown;
+        dir?: unknown;
       };
       if (typeof meta.name !== 'string' || typeof meta.mediaType !== 'string' || typeof meta.size !== 'number') {
         return null;
@@ -82,7 +96,14 @@ export class UploadSessions {
       // 已收长度记在 meta（预分配后 stat.size = 总长）；旧版半截件没有该字段，回落 stat
       const received =
         typeof meta.received === 'number' ? meta.received : (await stat(this.part(id))).size;
-      return { id, name: meta.name, mediaType: meta.mediaType, size: meta.size, received };
+      return {
+        id,
+        name: meta.name,
+        mediaType: meta.mediaType,
+        size: meta.size,
+        received,
+        dir: typeof meta.dir === 'string' ? meta.dir : null,
+      };
     } catch {
       return null;
     }
@@ -106,18 +127,26 @@ export class UploadSessions {
     await handle.truncate(received);
     await writeFile(
       this.meta(id),
-      JSON.stringify({ name: cur.name, mediaType: cur.mediaType, size: cur.size, received }),
+      JSON.stringify({
+        name: cur.name,
+        mediaType: cur.mediaType,
+        size: cur.size,
+        received,
+        dir: cur.dir ?? null,
+      }),
       'utf8',
     );
     return { kind: 'ok', received };
   }
 
   /** 收尾：交出临时件路径与元数据；临时件由调用方搬走后删。 */
-  async finish(id: string): Promise<{ name: string; mediaType: string; file: string; size: number } | null> {
+  async finish(id: string): Promise<
+    { name: string; mediaType: string; file: string; size: number; dir?: string | null } | null
+  > {
     const cur = await this.get(id);
     if (!cur) return null;
     if (cur.received !== cur.size) return null; // 还差字节：不假装收完
-    return { name: cur.name, mediaType: cur.mediaType, file: this.part(id), size: cur.size };
+    return { name: cur.name, mediaType: cur.mediaType, file: this.part(id), size: cur.size, dir: cur.dir };
   }
 
   /** 丢弃（客户端取消 / 收尾搬完）。 */

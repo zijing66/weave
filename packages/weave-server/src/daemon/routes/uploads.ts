@@ -3,21 +3,30 @@ import { z } from 'zod';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WeaveServerDeps } from '../server.js';
 import { readJson, readRawBody, sendJson } from '../http.js';
-import { maxUploadBytes, type UploadRow } from '../../repositories/uploads.js';
+import { isImageMediaType, maxUploadBytes, type UploadRow } from '../../repositories/uploads.js';
 import { defaultUploadSessions } from '../upload-sessions.js';
+import type { ProjectStorage } from './projects.js';
 
 const UploadBody = z.object({
   name: z.string().min(1).max(200),
   mediaType: z.string().min(1).max(100),
   /** base64（无 data: 前缀）；字节数以解码后计。 */
   data: z.string().min(1),
+  /** 所属项目：给了就按项目存储配置解析落盘目录（图片/文件各一档）。 */
+  projectId: z.number().int().positive().optional(),
 });
 
 const UploadBeginBody = z.object({
   name: z.string().min(1).max(200),
   mediaType: z.string().min(1).max(100),
   size: z.number().int().positive(),
+  projectId: z.number().int().positive().optional(),
 });
+
+/** 项目存储配置里这个上传件该落哪档：图片走 images、其余走 files。 */
+function storageDirOf(storage: ProjectStorage | null | undefined, mediaType: string): string | null {
+  return (isImageMediaType(mediaType) ? storage?.images : storage?.files) ?? null;
+}
 
 /** 分块上限：一块 16MB，够大（大文件几百块）又不至于把内存顶爆。 */
 const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024;
@@ -25,6 +34,18 @@ const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024;
 /** 上传件出参（不带落盘路径——路径是服务端的事，前端用 `/images/<id>` 取图）。 */
 function toUploadDto(row: UploadRow): { id: string; name: string; mediaType: string; size: number } {
   return { id: row.id, name: row.name, mediaType: row.mediaType, size: row.size };
+}
+
+/** 项目上传件落哪：项目不存在/没配 = null（全局默认）；按媒体类型分 images/files 档。 */
+function projectUploadDir(
+  deps: WeaveServerDeps,
+  projectId: number,
+  mediaType: string,
+): string | null {
+  const project = deps.projects.getById(projectId);
+  if (!project) return null;
+  const meta = deps.projects.getMeta(projectId) as { storage?: ProjectStorage } | null;
+  return storageDirOf(meta?.storage, mediaType);
 }
 
 /**
@@ -56,7 +77,8 @@ export async function handleUploadRoutes(
       sendJson(res, 413, { error: 'File too large' });
       return true;
     }
-    const begun = await uploadSessions.begin(body);
+    const dir = body.projectId ? projectUploadDir(deps, body.projectId, body.mediaType) : null;
+    const begun = await uploadSessions.begin({ ...body, dir });
     sendJson(res, 201, { uploadId: begun.id, received: 0, size: begun.size });
     return true;
   }
@@ -147,7 +169,12 @@ export async function handleUploadRoutes(
       sendJson(res, 413, { error: 'File too large' });
       return true;
     }
-    const row = deps.uploads.save({ name: body.name, mediaType: body.mediaType, bytes });
+    const row = deps.uploads.save({
+      name: body.name,
+      mediaType: body.mediaType,
+      bytes,
+      dir: body.projectId ? projectUploadDir(deps, body.projectId, body.mediaType) : null,
+    });
     sendJson(res, 201, { upload: toUploadDto(row) });
     return true;
   }

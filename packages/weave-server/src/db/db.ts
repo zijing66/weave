@@ -194,12 +194,15 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 -- 会话图片上传：内容寻址 id = sha256（天然去重），文件落 <dataDir>/uploads/。
 -- 上传 ≠ 投递（资源三层里的「装到目标位」）；与会话的关系经 event_images。
+-- dir = 项目自定义存储目录（NULL = 全局默认 <dataDir>/uploads/）；存量行
+-- 保持 NULL 留在原处，新上传按项目配置落新路径，零迁移。
 CREATE TABLE IF NOT EXISTS uploads (
   id         TEXT PRIMARY KEY,
   media_type TEXT NOT NULL,
   name       TEXT NOT NULL,
   size       INTEGER NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  dir        TEXT
 );
 
 -- 消息随附的图（对话气泡的缩略图）：挂在**开轮事件**上——消息域不落库，
@@ -233,6 +236,7 @@ export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   migrateProjectsColumns(db);
   migrateProjectPaths(db);
   migrateSessionWatchesColumns(db);
+  migrateUploadsColumns(db);
   return db;
 }
 
@@ -295,6 +299,23 @@ function migrateProjectsColumns(db: DatabaseSync): void {
   }
   if (!cols.has('archived_at')) {
     db.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT');
+  }
+}
+
+/**
+ * 与 migrateProjectsColumns 同款的列级兜底：给既有库补 uploads.dir
+ * （项目自定义存储目录，NULL = 全局默认）。幂等：列已存在则跳过。
+ */
+function migrateUploadsColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(uploads)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列），无须迁移
+  if (!cols.has('dir')) {
+    db.exec('ALTER TABLE uploads ADD COLUMN dir TEXT');
   }
 }
 

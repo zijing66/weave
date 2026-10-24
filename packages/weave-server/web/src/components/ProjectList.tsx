@@ -25,6 +25,7 @@ import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { StorageSettingsModal } from '@/components/StorageSettingsModal';
 import { useToast } from '@/components/Toast';
 import { errorText, type ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
@@ -33,6 +34,7 @@ import {
   ArchiveRestore,
   ArrowUpRight,
   FolderOpen,
+  FolderCog,
   Globe,
   GripVertical,
   Plus,
@@ -132,6 +134,8 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
+  // 存储路径设置弹窗（项目卡设置按钮）：图片/文件落盘目录
+  const [storageTarget, setStorageTarget] = useState<ProjectRow | null>(null);
   // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
@@ -286,6 +290,10 @@ export function ProjectList({
   });
   useBackPop(archivedOpen, () => {
     setArchivedOpen(false);
+    return true;
+  });
+  useBackPop(!!storageTarget, () => {
+    setStorageTarget(null);
     return true;
   });
 
@@ -528,6 +536,12 @@ export function ProjectList({
                     </span>
                   )}
                 </span>
+                <QuickButton
+                  title={t('project.storageButton')}
+                  onClick={() => setStorageTarget(p)}
+                >
+                  <FolderCog className="h-3.5 w-3.5" />
+                </QuickButton>
               </div>
             </li>
               )}
@@ -613,6 +627,9 @@ export function ProjectList({
         }}
         onClose={() => setConfirmTarget(null)}
       />
+
+      {/* 存储路径设置弹窗（项目卡设置按钮）：图片/文件落盘目录，空 = 全局默认 */}
+      <StorageSettingsModal project={storageTarget} onClose={() => setStorageTarget(null)} />
 
       {/* 右键菜单 — portal 到 body：侧栏的 .frosted（backdrop-filter）会成为
           fixed 后代的 containing block，留在组件树里会被裁剪在侧栏内。 */}

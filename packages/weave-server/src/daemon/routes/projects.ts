@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
@@ -13,6 +14,13 @@ import {
 import { purgeProjectPipeline } from '../hook-pipeline.js';
 import { hooksRoot } from '../../hooks/mirror.js';
 import { projectHarnesses, withProjectHarnesses } from '../project-harnesses.js';
+import { getUploadsDir } from '../../db/paths.js';
+
+/** 项目存储配置（projects.meta.storage）：图片/文件各自的落盘目录，空 = 全局默认。 */
+export interface ProjectStorage {
+  images?: string | null;
+  files?: string | null;
+}
 
 /**
  * 项目域路由：目录/终端打开、关终端、唤出终端、新会话、归档/恢复、排序、
@@ -344,6 +352,79 @@ export async function handleProjectRoutes(
       sendJson(res, 200, { counts: await readTerminalCounts(deps.projects.list(), opener) });
     }
     return true;
+  }
+
+  // --- 项目存储路径（对话附件的图片/文件落盘目录）---
+  // GET：回配置 + 生效目录（自定义 ?? 全局默认）。PUT：校验绝对路径 + mkdirSync
+  // 试写（写不进的目录当场拒，不留一个存了也落不了盘的配置）；空串 = 清回全局默认。
+  // 存量文件留原处（uploads 行记 dir），新上传走新路径，零迁移。
+  const storageMatch = pathname.match(/^\/projects\/(\d+)\/storage$/);
+  if (storageMatch) {
+    const project = deps.projects.getById(Number(storageMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    const meta = deps.projects.getMeta(project.id) as { storage?: ProjectStorage } | null;
+    const storage: ProjectStorage = meta?.storage ?? {};
+    const fallback = deps.uploads?.defaultDir ?? getUploadsDir();
+    if (req.method === 'GET') {
+      sendJson(res, 200, {
+        storage,
+        effective: {
+          images: storage.images || fallback,
+          files: storage.files || fallback,
+        },
+      });
+      return true;
+    }
+    if (req.method === 'PUT') {
+      let body: { images?: unknown; files?: unknown };
+      try {
+        body = JSON.parse(await readBody(req)) as { images?: unknown; files?: unknown };
+      } catch {
+        sendJson(res, 400, { error: 'Invalid JSON body' });
+        return true;
+      }
+      const next: ProjectStorage = {};
+      for (const key of ['images', 'files'] as const) {
+        const raw = body[key];
+        if (raw === undefined || raw === null || raw === '') {
+          next[key] = null;
+          continue;
+        }
+        if (typeof raw !== 'string') {
+          sendJson(res, 400, { error: `"${key}" must be a string or null` });
+          return true;
+        }
+        const dir = raw.trim();
+        if (!path.isAbsolute(dir)) {
+          sendJson(res, 400, { error: `"${key}" must be an absolute path` });
+          return true;
+        }
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          fs.accessSync(dir, fs.constants.W_OK);
+        } catch (e) {
+          sendJson(res, 400, {
+            error: `"${key}" is not writable: ${e instanceof Error ? e.message : String(e)}`,
+          });
+          return true;
+        }
+        next[key] = dir;
+      }
+      deps.projects.setMeta(project.id, { storage: next });
+      deps.dataBus?.emit({ key: 'projects' });
+      sendJson(res, 200, {
+        storage: next,
+        effective: {
+          images: next.images || fallback,
+          files: next.files || fallback,
+        },
+      });
+      return true;
+    }
+    return false;
   }
 
   return false;

@@ -301,8 +301,15 @@ async function handleRequest(
       // 终端里粘的图只在转录里（hook 只有 `[Image #N]` 占位）：缺图就补采一次。
       // 等它一拍——历史会话不会再来事件帧，后台补完前端没有刷新时机。
       if (needsImageImport(events, images)) {
+        // 补采图落项目自定义存储目录（没配 = 全局默认）
+        const meta = deps.projects.getMeta(projectId) as { storage?: { images?: string | null } } | null;
         const imported = await importPromptImagesOnce(
-          { hookEvents: deps.hookEvents, uploads: deps.uploads, sessionProbe: deps.sessionProbe },
+          {
+            hookEvents: deps.hookEvents,
+            uploads: deps.uploads,
+            sessionProbe: deps.sessionProbe,
+            uploadDir: meta?.storage?.images ?? null,
+          },
           sessionId,
           harnessOf(events),
         );

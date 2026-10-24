@@ -80,6 +80,23 @@ export const appZh = {
   'errors.archiveFailed': '归档失败：{error}',
   'errors.restoreFailed': '恢复失败：{error}',
 
+  // —— 项目存储路径（项目卡设置按钮）——
+  'project.storageButton': '存储路径（对话附件的图片/文件落盘目录）',
+  'project.storageTitle': '存储路径 — {name}',
+  'project.storageIntro':
+    '配置本项目的对话附件（图片/文件）落盘目录。留空 = 使用全局默认；已上传的文件留在原处，新上传走这里的配置。',
+  'project.storageImages': '图片存储路径',
+  'project.storageFiles': '文件存储路径',
+  'project.storagePlaceholder': '留空使用全局默认',
+  'project.storageBrowse': '浏览…',
+  'project.storageEffective': '当前生效：{dir}',
+  'project.storageNotes':
+    '说明：改路径不影响已上传的文件（它们留在原处）；图片按扩展名识别（png/jpg/gif/webp），宿主按路径读取；codex 会话不支持图片附件。',
+  'project.storageKeepHint': '存量文件留原处，新上传走新路径',
+  'project.storageSaved': '存储路径已保存',
+  'project.storageLoadFailed': '读取存储配置失败：{error}',
+  'project.storageSaveFailed': '保存失败：{error}',
+
   // —— skill 详情抽屉 ——
   'skillDetail.readOnly': '只读',
   'skillDetail.plugin': '插件',
@@ -201,6 +218,23 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.projectRestored': 'Restored "{name}"',
   'errors.archiveFailed': 'Archive failed: {error}',
   'errors.restoreFailed': 'Restore failed: {error}',
+
+  // —— Project storage paths (card settings button) ——
+  'project.storageButton': 'Storage paths (where chat attachments land)',
+  'project.storageTitle': 'Storage paths — {name}',
+  'project.storageIntro':
+    'Where this project’s chat attachments (images / files) are stored. Leave empty for the global default; uploaded files stay where they are, new uploads follow this setting.',
+  'project.storageImages': 'Image storage path',
+  'project.storageFiles': 'File storage path',
+  'project.storagePlaceholder': 'Leave empty for the global default',
+  'project.storageBrowse': 'Browse…',
+  'project.storageEffective': 'Currently effective: {dir}',
+  'project.storageNotes':
+    'Notes: changing the path does not move already-uploaded files; images are recognized by extension (png/jpg/gif/webp) and read by path; codex sessions do not support image attachments.',
+  'project.storageKeepHint': 'Existing files stay put; new uploads follow the new path',
+  'project.storageSaved': 'Storage paths saved',
+  'project.storageLoadFailed': 'Failed to load storage settings: {error}',
+  'project.storageSaveFailed': 'Failed to save: {error}',
 
   // —— Skill detail drawer ——
   'skillDetail.readOnly': 'Read-only',

@@ -78,6 +78,18 @@ export interface HarnessCheck {
   ok: boolean;
 }
 
+/** 项目存储配置（对话附件的图片/文件落盘目录；null/缺省 = 全局默认）。 */
+export interface ProjectStorage {
+  images: string | null;
+  files: string | null;
+}
+
+export interface ProjectStorageResult {
+  storage: ProjectStorage;
+  /** 生效目录（自定义 ?? 全局默认）——展示用，配置为空时就是它。 */
+  effective: { images: string; files: string };
+}
+
 export const projectApi = {
   listProjects: (): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects').then((r) => r.projects),
@@ -150,6 +162,18 @@ export const projectApi = {
     apiFetch<{ ok: boolean }>(`/projects/${projectId}/focus-terminal`, {
       method: 'POST',
       body: JSON.stringify({ targetId }),
+    }),
+  /** 项目存储路径（对话附件落盘目录）：GET 回配置 + 生效目录。 */
+  getProjectStorage: (projectId: number): Promise<ProjectStorageResult> =>
+    apiFetch<ProjectStorageResult>(`/projects/${projectId}/storage`),
+  /** 保存项目存储路径：空串/null = 清回全局默认；服务端校验绝对路径与可写。 */
+  putProjectStorage: (
+    projectId: number,
+    storage: { images?: string | null; files?: string | null },
+  ): Promise<ProjectStorageResult> =>
+    apiFetch<ProjectStorageResult>(`/projects/${projectId}/storage`, {
+      method: 'PUT',
+      body: JSON.stringify(storage),
     }),
   listAssets: (projectPath: string): Promise<AssetEntry[]> =>
     apiFetch<{ projectPath: string; assets: AssetEntry[] }>(

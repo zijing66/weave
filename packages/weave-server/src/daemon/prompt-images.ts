@@ -33,11 +33,18 @@ export interface PromptImageDeps {
     ): HookEventRow[];
   };
   uploads?: {
-    save(input: { name: string; mediaType: UploadMediaType; bytes: Buffer }): { id: string };
+    save(input: {
+      name: string;
+      mediaType: UploadMediaType;
+      bytes: Buffer;
+      dir?: string | null;
+    }): { id: string };
     linkToEvent(eventId: number, uploadIds: readonly string[]): void;
     imagesBySession(sessionId: string): Map<number, unknown[]>;
   };
   sessionProbe?: { transcriptPathOf(sessionId: string): string | null };
+  /** 补采图的落盘目录（项目自定义存储；缺省 = 全局默认）。 */
+  uploadDir?: string | null;
 }
 
 /** 一次补采里要认领的事件（正文归一后的比对形态）。 */
@@ -133,6 +140,7 @@ export async function importPromptImages(
         name: `pasted-${count + 1}${ext}`,
         mediaType: image.mediaType as UploadMediaType,
         bytes: bytesIn,
+        dir: deps.uploadDir ?? null,
       });
       if (!ids.includes(row.id)) ids.push(row.id);
       count += 1;

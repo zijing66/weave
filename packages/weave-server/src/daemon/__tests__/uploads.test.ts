@@ -337,6 +337,31 @@ describe('UploadRepository', () => {
     const b = uploads.save({ name: 'y.png', mediaType: 'image/png', bytes: randomBytes(16) });
     expect(a.id).not.toBe(b.id);
   });
+
+  it('dir：自定义目录落盘落行，读取侧按行 dir 解析；缺省行 dir=null 走全局', () => {
+    const custom = join(dir, 'custom-store');
+    const row = uploads.save({
+      name: 'p.png',
+      mediaType: 'image/png',
+      bytes: bytesOf('p'),
+      dir: custom,
+    });
+    expect(row.dir).toBe(custom);
+    expect(existsSync(join(custom, `${row.id}.png`))).toBe(true);
+    expect(existsSync(uploads.filePath(row.id, 'image/png'))).toBe(false);
+    // 读取侧（refsOf/fileOf）按行 dir 解析，不落全局目录
+    expect(uploads.refsOf([row.id])![0]!.path).toBe(join(custom, `${row.id}.png`));
+    expect(uploads.fileOf(row.id)?.bytes.equals(bytesOf('p'))).toBe(true);
+
+    const plain = uploads.save({ name: 'q.png', mediaType: 'image/png', bytes: bytesOf('q') });
+    expect(plain.dir).toBeNull();
+    expect(uploads.refsOf([plain.id])![0]!.path).toBe(join(dir, `${plain.id}.png`));
+
+    // 孤儿回收按行 dir 删文件
+    db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
+    expect(uploads.pruneUnreferenced()).toBe(2);
+    expect(existsSync(join(custom, `${row.id}.png`))).toBe(false);
+  });
 });
 
 /** 路由可达性：分支写进 hooks-routes 还不够，得进它开头那张**路径认领表**——

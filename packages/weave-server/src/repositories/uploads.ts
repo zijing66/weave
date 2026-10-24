@@ -65,6 +65,8 @@ export interface UploadRow {
   name: string;
   size: number;
   createdAt: string;
+  /** 项目自定义存储目录（null = 全局默认 <dataDir>/uploads/）。 */
+  dir: string | null;
 }
 
 export class UploadRepository {
@@ -73,21 +75,28 @@ export class UploadRepository {
     private readonly dir: string = getUploadsDir(),
   ) {}
 
+  /** 全局默认目录（项目未配置时的落点；路由的 effective 口径从这里取）。 */
+  get defaultDir(): string {
+    return this.dir;
+  }
+
   /**
    * 落盘 + 登记（内容寻址，重复上传即 no-op）。返回已存行。
    * 调用方先验过媒体类型与大小，这里只按类型定扩展名。
+   * `dir` = 项目自定义存储目录（缺省 = 全局默认）。
    */
-  save(input: { name: string; mediaType: string; bytes: Buffer }): UploadRow {
+  save(input: { name: string; mediaType: string; bytes: Buffer; dir?: string | null }): UploadRow {
     const id = createHash('sha256').update(input.bytes).digest('hex');
-    mkdirSync(this.dir, { recursive: true });
-    const file = this.filePath(id, input.mediaType, input.name);
+    const dir = input.dir ?? this.dir;
+    mkdirSync(dir, { recursive: true });
+    const file = this.filePath(id, input.mediaType, input.name, dir);
     if (!existsSync(file)) writeFileSync(file, input.bytes);
     this.db
       .prepare(
-        `INSERT INTO uploads (id, media_type, name, size, created_at) VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO uploads (id, media_type, name, size, created_at, dir) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
-      .run(id, input.mediaType, input.name, input.bytes.length, new Date().toISOString());
+      .run(id, input.mediaType, input.name, input.bytes.length, new Date().toISOString(), input.dir ?? null);
     return this.getById(id)!;
   }
 
@@ -95,7 +104,12 @@ export class UploadRepository {
    * 从临时件落库（分块上传的收尾）：流式算 sha256，再把它 rename 到正式落点
    * （`cache/` 与 `data/` 同一个根 → 同盘 rename，32MB 文件不进内存）。
    */
-  async adoptFromFile(input: { name: string; mediaType: string; file: string }): Promise<UploadRow> {
+  async adoptFromFile(input: {
+    name: string;
+    mediaType: string;
+    file: string;
+    dir?: string | null;
+  }): Promise<UploadRow> {
     const hash = createHash('sha256');
     await new Promise<void>((resolve, reject) => {
       createReadStream(input.file)
@@ -105,17 +119,18 @@ export class UploadRepository {
     });
     const id = hash.digest('hex');
     const size = statSync(input.file).size;
-    mkdirSync(this.dir, { recursive: true });
-    const target = this.filePath(id, input.mediaType, input.name);
+    const dir = input.dir ?? this.dir;
+    mkdirSync(dir, { recursive: true });
+    const target = this.filePath(id, input.mediaType, input.name, dir);
     // 内容寻址：同一份内容可能已经在了（重复上传），那就只留旧的
     if (existsSync(target)) rmSync(input.file, { force: true });
     else renameSync(input.file, target);
     this.db
       .prepare(
-        `INSERT INTO uploads (id, media_type, name, size, created_at) VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO uploads (id, media_type, name, size, created_at, dir) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
-      .run(id, input.mediaType, input.name, size, new Date().toISOString());
+      .run(id, input.mediaType, input.name, size, new Date().toISOString(), input.dir ?? null);
     return this.getById(id)!;
   }
 
@@ -125,8 +140,13 @@ export class UploadRepository {
   }
 
   /** 磁盘绝对路径（harness 的 `composePrompt` 引用的就是它）。 */
-  filePath(id: string, mediaType: string, name: string): string {
-    return path.join(this.dir, `${id}${extOf(mediaType, name)}`);
+  filePath(id: string, mediaType: string, name: string, dir: string = this.dir): string {
+    return path.join(dir, `${id}${extOf(mediaType, name)}`);
+  }
+
+  /** 行的实际落盘目录：行里记了就用行里的，否则全局默认。 */
+  private dirOf(row: Pick<UploadRow, 'dir'>): string {
+    return row.dir ?? this.dir;
   }
 
   /** 投递引用（id + 展示名 + 落盘绝对路径）；任一 id 查不到即 null（整条拒绝）。 */
@@ -139,7 +159,7 @@ export class UploadRepository {
         id: row.id,
         name: row.name,
         mediaType: row.mediaType,
-        path: this.filePath(row.id, row.mediaType, row.name),
+        path: this.filePath(row.id, row.mediaType, row.name, this.dirOf(row)),
       });
     }
     return out;
@@ -149,7 +169,7 @@ export class UploadRepository {
   fileStatOf(id: string): { row: UploadRow; file: string; size: number } | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
-    const file = this.filePath(row.id, row.mediaType, row.name);
+    const file = this.filePath(row.id, row.mediaType, row.name, this.dirOf(row));
     if (!existsSync(file)) return undefined;
     return { row, file, size: statSync(file).size };
   }
@@ -158,7 +178,7 @@ export class UploadRepository {
   fileOf(id: string): { row: UploadRow; bytes: Buffer } | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
-    const file = this.filePath(row.id, row.mediaType, row.name);
+    const file = this.filePath(row.id, row.mediaType, row.name, this.dirOf(row));
     if (!existsSync(file)) return undefined;
     return { row, bytes: readFileSync(file) };
   }
@@ -179,17 +199,18 @@ export class UploadRepository {
   pruneUnreferenced(olderThanMs: number = UPLOAD_ORPHAN_GRACE_MS, now: number = Date.now()): number {
     const rows = this.db
       .prepare(
-        `SELECT id, media_type, name FROM uploads
+        `SELECT id, media_type, name, dir FROM uploads
           WHERE created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images)`,
       )
       .all(new Date(now - olderThanMs).toISOString()) as Array<{
       id: string;
       media_type: string;
       name: string;
+      dir: string | null;
     }>;
     const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
     for (const row of rows) {
-      rmSync(this.filePath(row.id, row.media_type, row.name), { force: true });
+      rmSync(this.filePath(row.id, row.media_type, row.name, row.dir ?? this.dir), { force: true });
       del.run(row.id);
     }
     return rows.length;
@@ -290,7 +311,7 @@ export class UploadRepository {
     for (const id of ids) {
       const row = this.getById(id);
       if (!row) continue;
-      rmSync(this.filePath(row.id, row.mediaType, row.name), { force: true });
+      rmSync(this.filePath(row.id, row.mediaType, row.name, this.dirOf(row)), { force: true });
       removed += Number(del.run(id).changes);
     }
     return removed;
@@ -359,18 +380,19 @@ export class UploadRepository {
   ): number {
     const rows = this.db
       .prepare(
-        `SELECT id, media_type, name FROM uploads
+        `SELECT id, media_type, name, dir FROM uploads
           WHERE created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images)`,
       )
       .all(new Date(now - graceMs).toISOString()) as Array<{
       id: string;
       media_type: string;
       name: string;
+      dir: string | null;
     }>;
     const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
     let removed = 0;
     for (const row of rows) {
-      rmSync(this.filePath(row.id, row.media_type, row.name), { force: true });
+      rmSync(this.filePath(row.id, row.media_type, row.name, row.dir ?? this.dir), { force: true });
       removed += Number(del.run(row.id).changes);
       onProgress(removed, rows.length);
     }
@@ -385,5 +407,6 @@ function toRow(raw: Record<string, unknown>): UploadRow {
     name: String(raw.name),
     size: Number(raw.size),
     createdAt: String(raw.created_at),
+    dir: raw.dir == null ? null : String(raw.dir),
   };
 }

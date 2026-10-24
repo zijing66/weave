@@ -170,4 +170,4 @@ export type {
   DaemonSettingsBundle,
   CaptureRow,
 } from './settings';
-export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck } from './projects';
+export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';
