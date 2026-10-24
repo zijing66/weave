@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-25
+
+- **配置树第三轮改判：彻底去两列化（用户原话「当前树格式还是不对，不需要严格的2列对齐。按树形展开，只要有keyvalue展示与编辑即可。意思就是，标签与输入框共同作为树的节点即可」）**：前两轮（e7e5ea41）只把 map 条目做成了内联树，但顶层叶子行仍是「名称列 + flex-1 控件拉满右缘」——输入框全部伸到行尾，视觉上还是两列表单。本轮三处收口：①**控件按内容出宽**（text=w-56 / number=w-24 / select=w-40 / list=w-64 / json=w-72，`min-w-0` 只防溢出不撑满），行内全部左聚；②**map / 对象数组值升格为容器节点**——顶层键的值是对象/对象数组时，箭头提到行首、条目缩进递归（此前裹在值列里的 ShapedField 折叠壳删除），收起时行内只露「N 项」；③**词表 fields 一层递归保留**（`objectChildrenOf`：词表字段按序 + 自由键接后可改名），`childSpecOf` 让 map 条目/数组元素继承父键的 valueType/valueOptions/fields。行尾动作统一 = 容器行 + / ↻ / 🗑、叶子行 ℹ️ / ↻(有默认才出) / 🗑。教训：**「树形」的判据不是有没有缩进，而是控件宽度和行结构是否还带着表格惯性**——flex-1 拉满是表单思维的最后残留。
+
 ## 2026-10-24
 
 - **上下文进度条（用户原话「当前会话的上下文长度可以展示，那是不是对话窗口的statusline？也可以把中间缺失的上下文相关的进度条也给展示出来，现在是否还有阻碍」）**：先答清两个事实——①头部那个读数**不是**底条 statusline，是对话控制行末尾的 mono 数字（`contextTokens`，转录 usage 求和、「上一轮完成时」口径）；②底条此前不摆 context 块，唯一阻碍 = `total`（窗口大小）只活在宿主渲染脚本 stdin 的 `context_window.context_window_size` 里，不落转录、不落 hook 事件。**解法 = 推档**：claude 窗口只有 200k/1M 两档，1M 档在模型真名里带 `[1M]` 标注（`bareModelName` 一直在剥它，既有约定），`used` 手里已有（与宿主 `current_usage` 同源同算法），`bar`/`percent` 由该百分比现算（web 侧 `segmentText` 本来就这么干）。落地两处：头部读数旁迷你进度条（60%/80% 变 amber/red）；底条 `StatuslineBar` 新增 context 块事实（`contextWindowOf` 推档 + `humanizeTokens` 与生成脚本同形）。`tokens`/`cost`/`rate` 仍不摆（session 累计量与花费真没有第二来源，不猜）。
