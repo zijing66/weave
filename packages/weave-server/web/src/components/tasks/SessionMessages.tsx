@@ -285,7 +285,7 @@ export function SessionMessages({
   // 会话控制面（执行模式/模型/effort）：显示恒为「最后已知」，切换只标本地乐观态
   const {
     sessionRow, modeNames, modelNames, effortLevels,
-    currentMode, contextLabel, modePending, modeTint,
+    currentMode, contextLabel, contextPercent, modePending, modeTint,
     cycleMode, applyModel, applyEffort, modelOptions, modelValue, modelDisplay,
   } = useSessionControls({
     sessionId,
@@ -1376,9 +1376,22 @@ export function SessionMessages({
                   {contextLabel !== null && (
                     <span
                       title={t('tasks.contextLastKnown')}
-                      className="shrink-0 font-mono text-11 text-neutral-400"
+                      className="flex shrink-0 items-center gap-1.5 font-mono text-11 text-neutral-400"
                     >
                       {contextLabel}
+                      {/* 迷你进度条：同一读数按窗口档位折成的百分比（200k/1M 两档） */}
+                      <span className="h-1 w-10 overflow-hidden rounded-full bg-neutral-800">
+                        <span
+                          className={`block h-full rounded-full ${
+                            (contextPercent ?? 0) >= 80
+                              ? 'bg-red-500/80'
+                              : (contextPercent ?? 0) >= 60
+                                ? 'bg-amber-500/80'
+                                : 'bg-emerald-500/70'
+                          }`}
+                          style={{ width: `${Math.max(2, contextPercent ?? 0)}%` }}
+                        />
+                      </span>
                     </span>
                   )}
                 </div>
@@ -1660,6 +1673,8 @@ export function SessionMessages({
           sessionName={sessionRow?.title ?? label}
           model={modelDisplay}
           effort={sessionRow?.effort ?? null}
+          contextTokens={sessionRow?.contextTokens ?? null}
+          contextPercent={contextPercent}
         />
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口） */}

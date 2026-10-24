@@ -13,6 +13,11 @@ function humanizeTokens(n: number | null | undefined): string | null {
   return String(Math.round(n));
 }
 
+/** 上下文窗口大小（tokens）：模型真名带 `[1M]` 标注 = 1M 档，否则 200k 档。 */
+export function contextWindowOf(model: string | null | undefined): number {
+  return /\[1m\]/i.test(model ?? '') ? 1_000_000 : 200_000;
+}
+
 /** 「切换中」最多挂这么久：宿主下一拍事件就回报新模式，一直没事件（会话闲着）就
  *  回落「最后已知」——一个永久的「切换中」比旧值更像卡死。 */
 const MODE_PENDING_MS = 60_000;
@@ -126,9 +131,19 @@ const modelValue = sessionRow?.modelAlias ?? currentModel ?? '';
 const modelDisplay =
   modelTargets.find((t) => t.alias === modelValue)?.actual ?? currentModel ?? (modelValue || null);
 
+  /** 上下文窗口大小（tokens）：模型真名带 `[1M]` 标注 = 1M 档，否则 200k 档——
+   *  与 harness 侧 `bareModelName` 剥的是同一个约定（claude 只有这两档窗口）。
+   *  宿主 statusline 的 `total` 只活在渲染脚本 stdin 里，weave 拿不到，只能推。 */
+  const contextWindowTokens = contextWindowOf(modelDisplay);
+  /** 上一轮完成时的占用百分比（进度条与底条 context 块共用）；没读过一轮 = null。 */
+  const contextPercent =
+    sessionRow?.contextTokens != null && Number.isFinite(sessionRow.contextTokens)
+      ? Math.min(100, Math.round((sessionRow.contextTokens / contextWindowTokens) * 100))
+      : null;
+
   return {
     sessionRow, modeNames, modelNames, effortLevels, modelTargets,
-    currentMode, currentModel, contextLabel, modePending, modeTint,
+    currentMode, currentModel, contextLabel, contextPercent, modePending, modeTint,
     cycleMode, applyModel, applyEffort, modelOptions, modelValue, modelDisplay,
   };
 }

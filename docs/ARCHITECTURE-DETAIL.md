@@ -101,9 +101,9 @@
 `StatuslineSurface` = `segments` / `tui` / `scriptRelPath` / `generate` / `wire`。块词表、脚本文法、`.claude/settings.json` 的 `statusLine` 键形都是 claude 知识，实现落 `weave-harness/src/claude/statusline/`；server 的 `statusline/` 只是持久化与默认值壳（`statuslineCacheDir` 与包版本归 server）。
 
 - 「TUI 里能不能注入」由面自己的 `tui` 答；`GET /capabilities` 的 `statusline` 行是唯一派生面，web 不按 harness 名判。
-- **对话页底条**（输入框下方、贴底边、各尺寸都摆）按同一份项目配置忠实渲染，但**只摆 weave 当下有数据的块**：project / session / model / time / thinking（hook 事件自带的 `effort.level`，`SessionProbe` 只放内存、最后已知）∪ 宿主渲染脚本算好落在缓存里的 `StatuslineSurface.facts`——今天 = `git` / `git_user` / `changes` 三块，读按 cwd 分片的 `git-<cwd 摘要>.json`、过期条目不认、文件缺席即当没有；缓存文件名与键形归 harness，server 只递缓存目录与目录路径。
+- **对话页底条**（输入框下方、贴底边、各尺寸都摆）按同一份项目配置忠实渲染，但**只摆 weave 当下有数据的块**：project / session / model / time / thinking（hook 事件自带的 `effort.level`，`SessionProbe` 只放内存、最后已知）∪ context（`used` = 转录 usage 求和的最后已知 `contextTokens`，`total` 按模型真名的 `[1M]` 标注推窗口档位——200k/1M 两档、与 `bareModelName` 剥的是同一约定，`percent`/`bar` 由该百分比现算；2026-10-24 起，此前只活在宿主 stdin 里）∪ 宿主渲染脚本算好落在缓存里的 `StatuslineSurface.facts`——今天 = `git` / `git_user` / `changes` 三块，读按 cwd 分片的 `git-<cwd 摘要>.json`、过期条目不认、文件缺席即当没有；缓存文件名与键形归 harness，server 只递缓存目录与目录路径。
 - **整条一起横向滚动**（行不各滚各的），块多了不许折行也不许被裁。
-- context / tokens / cost / rate 只活在宿主 statusline stdin 里，dashboard 这一侧没有，就不摆（与生成脚本「解析成空即丢块」同口径，绝不摆图标/标签空壳）；一块都摆不出就整条不出现。
+- tokens / cost / rate 只活在宿主 statusline stdin 里，dashboard 这一侧没有，就不摆（与生成脚本「解析成空即丢块」同口径，绝不摆图标/标签空壳）；一块都摆不出就整条不出现。
 - 这条**只读**，配置入口恒在个性化配置里那个 `StatuslinePanel`（头部标 TUI 注入），对话页不开第二处。
 
 ## §3 消息投递：层①-a 直投、中继、诊断与接口日志
@@ -565,6 +565,7 @@ hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发�
 - **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
 - web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。
 - **思考强度（effort）同归它**：工具/回合类事件每条带 `raw.effort.level`（`effortLevelOf`），`noteEffort` 逐条覆盖、`currentEffort` 只放内存——状态栏 `thinking` 块与对话控制行的 slider 同吃这一个事实。
+- **上下文占用（`contextTokens`）同归它**：`currentContextTokensAt`（claude adapter）尾读转录、取最后一条带 `usage` 的 assistant 条目按四项求和（input + output + cache_read + cache_creation，与宿主 statusline `current_usage` 同源同算法），语义 =「**上一轮完成时**的占用」——正在跑的那轮要等它写出 assistant 记录才更新，与模型/模式同为「最后已知」。web 两处消费：对话控制行的读数 + 迷你进度条、底条 `context` 块的 `used`；`total`（窗口大小）只活在宿主渲染脚本 stdin 里，web 按模型真名的 `[1M]` 标注推档（200k/1M 两档，`contextWindowOf`）。
 - **思考强度的调整入口**（对话控制行）：词表归 core 表 `HARNESS_SESSION_CONTROL[<harness>].effortLevels`（claude = `low/medium/high/xhigh/max`，codex = 空——0.163 无程序化通道，见 DECISIONS 同日取证）；命令形态归 `MessageDeliverer.setEffort`（`/effort <档位>` 经层② sendText，与 `/model` 同一通道、同一「整行粘贴」理由），档位**过词表白名单**（封闭枚举，表外 400 不打键）。**模型能力差异不进表**：同一 harness 各模型支持档位不同，宿主自己降档并提示（claude 的 cap 语义），下一轮事件的 `effort.level` 回报自动纠正显示——weave 不读宿主运行时 cap（拿不到）。web 控件 = `EnumSlider`（拖动中只本地预览、松手/方向键才提交，裁决归 `enum-slider-core.commitOf`），不做 pending 态（事件几秒内就到，不同于「可能永远不来事件」的 Shift+Tab）。
 
 ### 语义边界

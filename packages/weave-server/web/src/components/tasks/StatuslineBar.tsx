@@ -5,9 +5,14 @@ import { buildPreviewItems, type StatuslineTokens } from '@/lib/statusline-previ
 import { registerInvalidator } from '@/lib/sse';
 import { useT } from '@/i18n/I18nProvider';
 import { PowerlineRow } from '@/components/StatuslinePanel';
+import { contextWindowOf } from './use-session-controls';
 
-/** 对话页底条最多摆几行——再多就把对话挤没了。 */
-const BAR_LINES = 2;
+/** Token 数 → 紧凑读数（与生成脚本 `humanize` 同形：M 留一位、k 去 `.0`）。 */
+function humanizeTokens(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(Math.round(n));
+}
 
 /**
  * 对话页底部的状态栏条：把项目的 statusline 配置按**当下手里的数据**渲染出来。
@@ -24,6 +29,8 @@ export function StatuslineBar({
   sessionName,
   model,
   effort,
+  contextTokens,
+  contextPercent,
 }: {
   projectId: number;
   /** 会话显示名（title 回退）。 */
@@ -33,6 +40,10 @@ export function StatuslineBar({
   model: string | null;
   /** 推理档位（hook 事件自带的 `effort.level`）：`thinking` 块的事实。 */
   effort: string | null;
+  /** 上一轮完成时的上下文占用（转录 usage 求和）：`context` 块的 `used`。 */
+  contextTokens: number | null;
+  /** 同一读数按窗口档位（200k/1M）折成的百分比：`context` 块的 `percent` 与 `bar`。 */
+  contextPercent: number | null;
 }) {
   const t = useT();
   const [config, setConfig] = useState<StatuslineConfig | null>(null);
@@ -77,13 +88,24 @@ export function StatuslineBar({
   if (sessionName) tokens.session = { name: sessionName };
   if (model) tokens.model = { model };
   if (effort) tokens.thinking = { level: effort };
+  // context 块：used = 转录读数，total = 窗口档位（[1M] 标注 = 1M，否则 200k），
+  // percent/bar 由调用方给的百分比现算——宿主 stdin 的 context_window weave 拿不到，
+  // 这三样是同一事实的可靠替代（humanize 与生成脚本同形：M 留一位、k 去 .0）。
+  if (contextTokens != null && contextPercent != null) {
+    const total = contextWindowOf(model);
+    tokens.context = {
+      used: humanizeTokens(contextTokens) ?? '',
+      total: humanizeTokens(total) ?? '',
+      percent: String(contextPercent),
+      remaining: String(100 - contextPercent),
+    };
+  }
 
-  // 先丢空行再封顶：配置的行序是「model / 会话指标 / git+目录」，指标那行今天
-  // 全靠宿主 stdin（weave 拿不到）——先切后滤会把第三行的 project 白白砍掉。
+  // 行数跟配置走：配置摆几行、滤完非空有几行就摆几行，不设硬封顶——
+  // 封顶只在「配置行数 > 封顶」时咬人（曾把 git 行整行砍掉）。挤不挤由配置自己负责。
   const lines = config.lines
     .map((row) => buildPreviewItems(config, row, tokens))
-    .filter((items) => items.length > 0)
-    .slice(0, BAR_LINES);
+    .filter((items) => items.length > 0);
   // 一块都渲染不出来（还没配、或配置里的块都要宿主 stdin 的字段）→ 不摆空条
   if (lines.length === 0) return null;
 
