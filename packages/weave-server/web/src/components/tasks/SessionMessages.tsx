@@ -208,8 +208,6 @@ export function SessionMessages({
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const coarse = useMediaQuery('(pointer: coarse)');
-  /** 输入框高度可拖：鼠标才有这回事（触屏的拖拽是滚动）。 */
-  const fine = useMediaQuery('(pointer: fine)');
   const [inputRows, setInputRows] = useState<number>(() => {
     const v = Number(localStorage.getItem('weave:conv-input-rows'));
     return Number.isFinite(v) && v > 0
@@ -1116,7 +1114,7 @@ export function SessionMessages({
         {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆）。窄屏放不下
             就整组折到第二行——按钮不等宽也不做横向滚动 */}
         {selecting ? (
-          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-2">
             <span className="min-w-0 truncate text-11 text-neutral-400">
               {t('tasks.convSelected', { n: picked.size })}
             </span>
@@ -1187,7 +1185,7 @@ export function SessionMessages({
              模式做成按钮（点 = Shift+Tab 一档）；模型有 `/model <名>`，做成下拉。
              **图片上传对齐位**：附件钮 + 预览缩略图居左，模式/模型居右（`ml-auto`），
              放不下即折行；别占到输入行与发送键那两格去。 */
-          <div className="mt-2 flex shrink-0 flex-col gap-1.5">
+          <div className="mt-2 flex shrink-0 flex-col gap-1.5 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-2">
             {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行。 */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* 附件钮（图片/文件两枚）+ 两个预览区（图片区 / 文件区各自一段，
@@ -1401,22 +1399,21 @@ export function SessionMessages({
                 </div>
               )}
             </div>
-            {/* 顶边拖拽手柄：鼠标才有（触屏的拖拽是滚动）。贴在两行之间，
-                负边距吃掉 gap，免得常显多出一条空隙。 */}
-            {fine && (
-              <div
-                role="separator"
-                title={t('tasks.msgResizeInput')}
-                aria-label={t('tasks.msgResizeInput')}
-                onPointerDown={onRowsDown}
-                onPointerMove={onRowsMove}
-                onPointerUp={onRowsUp}
-                onPointerCancel={onRowsUp}
-                className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center"
-              >
-                <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
-              </div>
-            )}
+            {/* 顶边拖拽手柄：贴在两行之间，负边距吃掉 gap，免得常显多出一条空隙。
+                触屏同样可用（pointer capture + touch-none；手柄自身不吃滚动，
+                旁边的对话区照常滚）。 */}
+            <div
+              role="separator"
+              title={t('tasks.msgResizeInput')}
+              aria-label={t('tasks.msgResizeInput')}
+              onPointerDown={onRowsDown}
+              onPointerMove={onRowsMove}
+              onPointerUp={onRowsUp}
+              onPointerCancel={onRowsUp}
+              className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
+            >
+              <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
+            </div>
             <div className="flex flex-wrap items-end gap-1.5">
               {/* 输入框是 contenteditable 而非 textarea：内联引用胶囊必须是
                   `contenteditable=false` 的原子块（退格整枚删、光标进不去），
@@ -1681,8 +1678,9 @@ export function SessionMessages({
           contextPercent={contextPercent}
         />
 
-        {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口） */}
-        {!embedded && !fullscreen && isDesktop && (
+        {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
+            触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}
+        {!embedded && !fullscreen && (
           <div
             role="separator"
             title={t('app.resizeDialog')}
@@ -1692,9 +1690,9 @@ export function SessionMessages({
             onPointerUp={onGripUp}
             onPointerCancel={onGripUp}
             onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none max-lg:h-6 max-lg:w-6"
           >
-            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20" />
+            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20 max-lg:bottom-1.5 max-lg:right-1.5 max-lg:h-3 max-lg:w-3" />
           </div>
         )}
 
