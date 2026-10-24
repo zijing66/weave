@@ -1,29 +1,30 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   attachDeliveries,
-  buildSegments,
-  cmdChipClass,
-  commandTokensOf,
   conversationOf,
   countdownLabel,
   editsWindowOf,
-  attachedFilesFrom,
-  exportConversationText,
-  exportStamp,
   failedTail,
   filterThread,
   isGenerating,
-  hasRefCandidate,
-  pickerIntent,
   removableOf,
-  serializeDraft,
-  textBeforeCaret,
   withCommands,
   withPlan,
   readConvCache,
   writeConvCache,
   type ConvEntry,
-} from '../SessionMessages';
+} from '../conv-model';
+import {
+  buildSegments,
+  cmdChipClass,
+  commandTokensOf,
+  hasRefCandidate,
+  pickerIntent,
+  serializeDraft,
+  textBeforeCaret,
+} from '../draft-editor';
+import { attachedFilesFrom } from '../attach';
+import { exportConversationText, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
 import type { HookEventRow, SessionMessageRow } from '@/lib/api';
 
