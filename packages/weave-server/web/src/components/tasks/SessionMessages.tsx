@@ -399,6 +399,10 @@ export function SessionMessages({
     return () => window.clearTimeout(id);
   }, [ctrlCCooldown]);
 
+  /** 右键锚定的那条（菜单项按它的角色出）：改动汇总只对宿主回复的气泡有意义
+   *  ——我方发送的气泡没有「改动」可言，菜单里不摆这一项。 */
+  const menuEntry = menu?.kind === 'bubble' ? thread.find((e) => e.key === menu.key) : undefined;
+
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
   useEffect(() => {
     if (!menu) return;
@@ -1720,19 +1724,22 @@ export function SessionMessages({
                     <Check className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convSelect')}
                   </button>
-                  {/* 汇总的是这一轮（锚所在轮：上一次回复 → 这一次回复）；「全部」在弹窗里切 */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenu(null);
-                      setEditsRange(editsWindowOf(thread, menu.key));
-                      setEditsOpen(true);
-                    }}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
-                  >
-                    <FileDiff className="h-3 w-3 text-neutral-500" />
-                    {t('tasks.editsTitle')}
-                  </button>
+                  {/* 汇总的是这一轮（锚所在轮：上一次回复 → 这一次回复）；「全部」在弹窗里切。
+                      只对宿主回复的气泡出：我方发送的没有改动可言。 */}
+                  {menuEntry?.role === 'assistant' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenu(null);
+                        setEditsRange(editsWindowOf(thread, menu.key));
+                        setEditsOpen(true);
+                      }}
+                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                    >
+                      <FileDiff className="h-3 w-3 text-neutral-500" />
+                      {t('tasks.editsTitle')}
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
