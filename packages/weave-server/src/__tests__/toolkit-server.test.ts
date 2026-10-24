@@ -104,6 +104,7 @@ describe('daemon /toolkit routes', () => {
       'file-guard',
       'md-lint',
       'mission-control',
+      'weave-orchestration',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);

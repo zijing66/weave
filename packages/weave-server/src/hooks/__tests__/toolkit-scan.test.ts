@@ -226,6 +226,7 @@ describe('toolkit-scan 识别与发现', () => {
       'file-guard',
       'md-lint',
       'mission-control',
+      'weave-orchestration',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);
