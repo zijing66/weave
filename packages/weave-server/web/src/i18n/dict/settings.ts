@@ -29,6 +29,9 @@ export const settingsZh = {
   'settings.cleanStorage': '对话附件存储',
   'settings.cleanStorageHint':
     '清理对话框发过的图片与附件（不影响会话与对话记录本身）。有自动保留策略的数据（事件日志、缓存）不在此列。',
+  'settings.cleanTotalStat': '{n} 项附件',
+  'settings.cleanImagesStat': '图片 {n} 项 · {size}',
+  'settings.cleanFilesStat': '文件 {n} 项 · {size}',
   'settings.cleanUnrefStat': '无引用的图片/附件：{n} 项 · {size}',
   'settings.cleanUnrefBtn': '一键清理',
   'settings.cleanUnrefDamage':
@@ -38,6 +41,14 @@ export const settingsZh = {
   'settings.cleanSessionDamage': '清理这个对话的图片与附件',
   'settings.cleanSessionDamageMsg':
     '将删除对话「{name}」随附的全部图片/附件（{n} 项 · {size}）。对话文字保留，但历史气泡里的缩略图会消失，删除后无法恢复。',
+  'settings.cleanBatchBtn': '清理所选（{n}）',
+  'settings.cleanBatchDamage':
+    '将删除所选 {n} 个对话的全部图片/附件（共 {size}）。对话文字保留，但历史气泡里的缩略图会消失，删除后无法恢复。',
+  'settings.cleanBatchDone': '已清理所选对话的 {n} 项附件',
+  'settings.cleanExpand': '展开明细',
+  'settings.cleanCollapse': '收起明细',
+  'settings.cleanDetailEmpty': '该对话已没有随附的图片/附件。',
+  'settings.cleanSelectedBtn': '删除所选（{n}）',
   'settings.cleanConfirmTitle': '确认清理',
   'settings.cleanConfirmBtn': '删除',
   'settings.cleaningProgress': '清理中 {done}/{total}',
@@ -102,6 +113,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.cleanStorage': 'Conversation attachments',
   'settings.cleanStorageHint':
     'Clean up images and attachments sent in conversations (sessions and chat history are untouched). Data with automatic retention (event logs, caches) is not listed here.',
+  'settings.cleanTotalStat': '{n} attachments',
+  'settings.cleanImagesStat': 'Images {n} · {size}',
+  'settings.cleanFilesStat': 'Files {n} · {size}',
   'settings.cleanUnrefStat': 'Unreferenced images/attachments: {n} · {size}',
   'settings.cleanUnrefBtn': 'Clean up',
   'settings.cleanUnrefDamage':
@@ -111,6 +125,14 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.cleanSessionDamage': "Clean this conversation's images and attachments",
   'settings.cleanSessionDamageMsg':
     "Deletes all images/attachments attached to \"{name}\" ({n} · {size}). Chat text remains, but thumbnails in past bubbles disappear. This cannot be undone.",
+  'settings.cleanBatchBtn': 'Clean selected ({n})',
+  'settings.cleanBatchDamage':
+    "Deletes all images/attachments attached to the {n} selected conversations ({size}). Chat text remains, but thumbnails in past bubbles disappear. This cannot be undone.",
+  'settings.cleanBatchDone': 'Removed {n} attachments from selected conversations',
+  'settings.cleanExpand': 'Show details',
+  'settings.cleanCollapse': 'Hide details',
+  'settings.cleanDetailEmpty': 'No attachments left in this conversation.',
+  'settings.cleanSelectedBtn': 'Delete selected ({n})',
   'settings.cleanConfirmTitle': 'Confirm cleanup',
   'settings.cleanConfirmBtn': 'Delete',
   'settings.cleaningProgress': 'Cleaning {done}/{total}',

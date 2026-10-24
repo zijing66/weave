@@ -191,6 +191,34 @@ export async function handleUploadRoutes(
     sendJson(res, 200, deps.uploads.unreferencedStats());
     return true;
   }
+  // ---- 存储总览（微信式清理面头部）：总/图/文件/被引用/可安全清五档一次聚合 ----
+  if (pathname === '/uploads/overview' && req.method === 'GET') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    sendJson(res, 200, deps.uploads.overview());
+    return true;
+  }
+  // ---- 按 ids 批量删（单件/分组勾选清的落点）：只删行里存在的，文件尽力删 ----
+  const removeBody = z.object({ ids: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(500) });
+  if (pathname === '/uploads/remove' && req.method === 'POST') {
+    if (!deps.uploads) {
+      sendJson(res, 503, { error: 'Upload subsystem unavailable' });
+      return true;
+    }
+    let body: z.infer<typeof removeBody>;
+    try {
+      body = removeBody.parse(await readJson(req));
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const removed = deps.uploads.removeMany(body.ids);
+    deps.dataBus?.emit({ key: 'sessions' });
+    sendJson(res, 200, { removed });
+    return true;
+  }
   if (pathname === '/uploads/usage' && req.method === 'GET') {
     if (!deps.uploads) {
       sendJson(res, 503, { error: 'Upload subsystem unavailable' });

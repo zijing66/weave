@@ -236,6 +236,35 @@ export class UploadRepository {
     return rows.length === 0 ? null : rows.map(toRow);
   }
 
+  /**
+   * 某会话随附上传件按图/文件分档的小账（会话行展开钻取的头部）。
+   * null = 该会话没有任何随附件。
+   */
+  sessionBreakdown(sessionId: string): {
+    images: { count: number; bytes: number };
+    files: { count: number; bytes: number };
+  } | null {
+    const rows = this.db
+      .prepare(
+        `SELECT u.media_type AS mediaType, COUNT(DISTINCT u.id) AS n, SUM(u.size) AS bytes
+           FROM event_images e
+             JOIN uploads u ON u.id = e.upload_id
+             JOIN hook_events h ON h.id = e.event_id
+          WHERE h.session_id = ?
+          GROUP BY u.media_type`,
+      )
+      .all(sessionId) as Array<{ mediaType: string; n: number; bytes: number }>;
+    if (rows.length === 0) return null;
+    let images = { count: 0, bytes: 0 };
+    for (const r of rows) {
+      if (isImageMediaType(String(r.mediaType))) {
+        images = { count: images.count + Number(r.n), bytes: images.bytes + Number(r.bytes) };
+      }
+    }
+    const total = { count: rows.reduce((s, r) => s + Number(r.n), 0), bytes: rows.reduce((s, r) => s + Number(r.bytes), 0) };
+    return { images, files: { count: total.count - images.count, bytes: total.bytes - images.bytes } };
+  }
+
   /** 各会话随附上传件的总量（设置页「按对话清理」的列表面）：一次聚合，不逐会话查。 */
   usageBySession(): Array<{ sessionId: string; count: number; bytes: number }> {
     const rows = this.db
@@ -282,6 +311,41 @@ export class UploadRepository {
       )
       .get(new Date(now - graceMs).toISOString()) as { n: number; bytes: number };
     return { count: Number(row.n), bytes: Number(row.bytes) };
+  }
+
+  /**
+   * 存储总览（设置页清理面头部的账）：一次聚合出总/图/文件/被引用/可安全清五档，
+   * 不逐档各查一遍。`unreferenced` 与 `unreferencedStats` 同口径（过宽限期的才算）。
+   */
+  overview(graceMs: number = UPLOAD_CLEANUP_GRACE_MS, now: number = Date.now()): {
+    total: { count: number; bytes: number };
+    images: { count: number; bytes: number };
+    files: { count: number; bytes: number };
+    referenced: { count: number; bytes: number };
+    unreferenced: { count: number; bytes: number };
+  } {
+    const cutoff = new Date(now - graceMs).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes,
+                COALESCE(SUM(CASE WHEN media_type IN ('image/png','image/jpeg','image/gif','image/webp') THEN size ELSE 0 END), 0) AS imgBytes,
+                COALESCE(SUM(CASE WHEN media_type IN ('image/png','image/jpeg','image/gif','image/webp') THEN 1 ELSE 0 END), 0) AS imgN,
+                COALESCE(SUM(CASE WHEN id IN (SELECT upload_id FROM event_images) THEN size ELSE 0 END), 0) AS refBytes,
+                COALESCE(SUM(CASE WHEN id IN (SELECT upload_id FROM event_images) THEN 1 ELSE 0 END), 0) AS refN,
+                COALESCE(SUM(CASE WHEN created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images) THEN size ELSE 0 END), 0) AS unrefBytes,
+                COALESCE(SUM(CASE WHEN created_at <= ? AND id NOT IN (SELECT upload_id FROM event_images) THEN 1 ELSE 0 END), 0) AS unrefN
+           FROM uploads`,
+      )
+      .get(cutoff, cutoff) as Record<string, unknown>;
+    const total = { count: Number(row.n), bytes: Number(row.bytes) };
+    const images = { count: Number(row.imgN), bytes: Number(row.imgBytes) };
+    return {
+      total,
+      images,
+      files: { count: total.count - images.count, bytes: total.bytes - images.bytes },
+      referenced: { count: Number(row.refN), bytes: Number(row.refBytes) },
+      unreferenced: { count: Number(row.unrefN), bytes: Number(row.unrefBytes) },
+    };
   }
 
   /**

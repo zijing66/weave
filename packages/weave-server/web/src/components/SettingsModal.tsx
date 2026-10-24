@@ -8,13 +8,17 @@ import {
   type HtmlExportSettings,
   type Locale,
   type SessionRow,
+  type SessionUploadsResult,
   type TerminalPreset,
+  type UploadsOverview,
 } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
   Bell,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Copy,
   Database,
@@ -22,8 +26,10 @@ import {
   EyeOff,
   FileCode,
   Globe,
+  Image as ImageIcon,
   Languages,
   Loader2,
+  Paperclip,
   Power,
   RefreshCw,
   Settings,
@@ -38,6 +44,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { fetchAiModels } from '@/lib/ai';
+import { API_BASE } from '@/lib/api';
+import { isImageUpload } from '@/components/tasks/attach';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
@@ -209,10 +217,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   /** 本浏览器推送通道态（逐设备开关，不属于 daemon settings——不进保存流程）。 */
   const [pushState, setPushState] = useState<PushChannelState | null>(null);
-  /** 对话附件存储：无引用件预告 + 按会话用量（打开时拉一次，清理后重拉）。 */
+  /** 对话附件存储：总览账 + 无引用件预告 + 按会话用量（打开时拉一次，清理后重拉）。 */
+  const [overview, setOverview] = useState<UploadsOverview | null>(null);
   const [unref, setUnref] = useState<{ count: number; bytes: number } | null>(null);
   const [usage, setUsage] = useState<Array<{ sessionId: string; count: number; bytes: number }>>([]);
   const [sessionTitles, setSessionTitles] = useState<Map<string, string>>(new Map());
+  /** 按会话多选清理的勾选集；展开钻取的会话 id（null = 全收起）。 */
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<string | null>(null);
+  /** 展开会话的单件清单（懒加载：展开才拉）。 */
+  const [detail, setDetail] = useState<SessionUploadsResult | null>(null);
+  /** 钻取层里勾选的单件 id 集。 */
+  const [detailChecked, setDetailChecked] = useState<Set<string>>(new Set());
   /** 清理进行中（进度 = 已清 / 预告数）；确认弹窗的目标（null = 关着）。 */
   const [cleaning, setCleaning] = useState<{ done: number; total: number } | null>(null);
   const [confirmClean, setConfirmClean] = useState<'unref' | string | null>(null);
@@ -245,11 +261,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   /** 对话附件存储的统计面（打开时拉一次；清理后重拉）。会话名顺带对一遍表。 */
   const loadStorage = useCallback(async (): Promise<void> => {
     try {
-      const [unrefR, usageR, sessionsR] = await Promise.all([
+      const [overviewR, unrefR, usageR, sessionsR] = await Promise.all([
+        api.getUploadsOverview(),
         api.getUnreferencedUploads(),
         api.getUploadsUsage(),
         api.listSessions(),
       ]);
+      setOverview(overviewR);
       setUnref(unrefR);
       setUsage(usageR.sessions);
       setSessionTitles(new Map(sessionsR.sessions.map((s: SessionRow) => [s.sessionId, sessionLabel(s.title, s.sessionId)])));
@@ -260,8 +278,74 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   useEffect(() => {
     if (!open) return;
+    setChecked(new Set());
+    setExpanded(null);
+    setDetail(null);
+    setDetailChecked(new Set());
     void loadStorage();
   }, [open, loadStorage]);
+
+  /** 展开某会话：拉单件清单（懒加载），收起即清。 */
+  const toggleExpand = useCallback((sessionId: string): void => {
+    setExpanded((cur) => {
+      const next = cur === sessionId ? null : sessionId;
+      if (next === null) {
+        setDetail(null);
+        setDetailChecked(new Set());
+      } else if (next !== cur) {
+        setDetail(null);
+        setDetailChecked(new Set());
+        void api.getSessionUploads(next).then(setDetail).catch(() => setDetail(null));
+      }
+      return next;
+    });
+  }, []);
+
+  /** 钻取层按 ids 删（单件或图/文件分组勾选），完了重拉清单与总账。 */
+  const runRemoveIds = useCallback(
+    async (ids: readonly string[]): Promise<void> => {
+      if (ids.length === 0) return;
+      setCleaning({ done: 0, total: ids.length });
+      try {
+        const r = await api.removeUploads(ids);
+        show('success', t('settings.cleanUnrefDone', { n: r.removed }));
+        setDetailChecked(new Set());
+        if (expanded) {
+          const rows = await api.getSessionUploads(expanded).catch(() => null);
+          setDetail(rows);
+        }
+        await loadStorage();
+      } catch (e) {
+        show('error', t('settings.cleanFailed', { error: String(e) }));
+      } finally {
+        setCleaning(null);
+      }
+    },
+    [expanded, loadStorage, show, t],
+  );
+
+  /** 批量清勾选的会话（逐会话走既有 DELETE，进度按会话数推进）。 */
+  const runCleanupChecked = useCallback(async (): Promise<void> => {
+    const ids = [...checked];
+    if (ids.length === 0) return;
+    setCleaning({ done: 0, total: ids.length });
+    let removed = 0;
+    try {
+      for (const sessionId of ids) {
+        const r = await api.deleteSessionUploads(sessionId);
+        removed += r.removed;
+        setCleaning((c) => (c ? { ...c, done: c.done + 1 } : c));
+      }
+      show('success', t('settings.cleanBatchDone', { n: removed }));
+      setChecked(new Set());
+      await loadStorage();
+    } catch (e) {
+      show('error', t('settings.cleanFailed', { error: String(e) }));
+      await loadStorage();
+    } finally {
+      setCleaning(null);
+    }
+  }, [checked, loadStorage, show, t]);
 
   /** 一键清无引用件：确认后逐条清（进度按预告数推进），完了重拉统计。 */
   const runCleanupUnref = useCallback(async (): Promise<void> => {
@@ -699,15 +783,52 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
           </div>
 
-          {/* 对话附件存储清理：只管对话框的图片/附件（有自动策略的域不在此列）。
-              每项先给「是什么、多大、清了损什么」再动手；清理中显示进度。 */}
-          {unref !== null && (
+          {/* 对话附件存储清理（微信式）：总览大数字 + 图/文件占比条 + 「可安全清」
+              一键 + 按会话多选批量清 + 展开钻取按单件/分组删。每项先给「是什么、
+              多大、清了损什么」再动手；清理中显示进度。 */}
+          {overview !== null && unref !== null && (
             <div className="space-y-1.5">
               <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
                 <Database className="h-3.5 w-3.5 text-neutral-500" />
                 {t('settings.cleanStorage')}
               </label>
               <p className="text-11 text-neutral-500">{t('settings.cleanStorageHint')}</p>
+
+              {/* 总览：大数字 + 图/文件占比条（微信存储页的形态） */}
+              <div className="rounded-lg border border-edge/[0.08] bg-neutral-950/60 p-2.5">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-lg font-semibold text-neutral-100">{fmtBytes(overview.total.bytes)}</span>
+                  <span className="text-11 text-neutral-500">
+                    {t('settings.cleanTotalStat', { n: overview.total.count })}
+                  </span>
+                </div>
+                {overview.total.bytes > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex h-1.5 overflow-hidden rounded-full bg-neutral-800">
+                      <span
+                        className="bg-sky-500/80"
+                        style={{ width: `${Math.max(overview.images.bytes > 0 ? 2 : 0, (overview.images.bytes / overview.total.bytes) * 100)}%` }}
+                      />
+                      <span
+                        className="bg-violet-500/80"
+                        style={{ width: `${Math.max(overview.files.bytes > 0 ? 2 : 0, (overview.files.bytes / overview.total.bytes) * 100)}%` }}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-10 text-neutral-500">
+                      <span className="inline-flex items-center gap-1">
+                        <ImageIcon className="h-3 w-3 text-sky-400" />
+                        {t('settings.cleanImagesStat', { n: overview.images.count, size: fmtBytes(overview.images.bytes) })}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Paperclip className="h-3 w-3 text-violet-400" />
+                        {t('settings.cleanFilesStat', { n: overview.files.count, size: fmtBytes(overview.files.bytes) })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 可安全清理：无引用件（历史气泡不受影响） */}
               <div className="flex items-center gap-2">
                 <span className="text-11 text-neutral-400">
                   {t('settings.cleanUnrefStat', { n: unref.count, size: fmtBytes(unref.bytes) })}
@@ -732,32 +853,124 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   )}
                 </span>
               </div>
+
+              {/* 按会话清理：多选 + 批量清；行可展开钻取单件 */}
               {usage.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-11 text-neutral-500">{t('settings.cleanBySession')}</p>
-                  <ul className="max-h-40 space-y-1 overflow-y-auto pr-1">
-                    {usage.map((u) => (
-                      <li key={u.sessionId} className="flex items-center gap-2 rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1">
-                        <span className="min-w-0 flex-1 truncate text-11 text-neutral-300">
-                          {sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
-                        </span>
-                        <span className="shrink-0 text-10 text-neutral-500">
-                          {t('settings.cleanSessionStat', { n: u.count, size: fmtBytes(u.bytes) })}
-                        </span>
-                        {cleaning ? (
-                          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-300" />
-                        ) : (
-                          <button
-                            type="button"
-                            title={t('settings.cleanSessionDamage')}
-                            onClick={() => setConfirmClean(u.sessionId)}
-                            className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        )}
-                      </li>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <p className="text-11 text-neutral-500">{t('settings.cleanBySession')}</p>
+                    {checked.size > 0 && cleaning === null && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClean('__batch__')}
+                        className="ml-auto rounded-lg bg-red-500/15 px-2.5 py-1 text-11 text-red-300 hover:bg-red-500/25"
+                      >
+                        {t('settings.cleanBatchBtn', { n: checked.size })}
+                      </button>
+                    )}
+                  </div>
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                    {usage.map((u) => {
+                      const isOpen = expanded === u.sessionId;
+                      return (
+                        <li key={u.sessionId} className="rounded bg-neutral-950 border border-edge/[0.06]">
+                          <div className="flex items-center gap-2 px-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={checked.has(u.sessionId)}
+                              onChange={(e) =>
+                                setChecked((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(u.sessionId);
+                                  else next.delete(u.sessionId);
+                                  return next;
+                                })
+                              }
+                              className="shrink-0 accent-blue-500"
+                              aria-label={sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(u.sessionId)}
+                              className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                              title={isOpen ? t('settings.cleanCollapse') : t('settings.cleanExpand')}
+                            >
+                              {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                            </button>
+                            <span className="min-w-0 flex-1 truncate text-11 text-neutral-300">
+                              {sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
+                            </span>
+                            <span className="shrink-0 text-10 text-neutral-500">
+                              {t('settings.cleanSessionStat', { n: u.count, size: fmtBytes(u.bytes) })}
+                            </span>
+                            {cleaning ? (
+                              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-300" />
+                            ) : (
+                              <button
+                                type="button"
+                                title={t('settings.cleanSessionDamage')}
+                                onClick={() => setConfirmClean(u.sessionId)}
+                                className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                          {isOpen && (
+                            <div className="border-t border-edge/[0.06] px-2 py-1.5">
+                              {detail === null ? (
+                                <Loader2 className="h-3 w-3 animate-spin text-neutral-500" />
+                              ) : detail.uploads.length === 0 ? (
+                                <p className="text-10 text-neutral-600">{t('settings.cleanDetailEmpty')}</p>
+                              ) : (
+                                <div className="space-y-1">
+                                  <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+                                    {detail.uploads.map((a) => (
+                                      <li key={a.id} className="flex items-center gap-1.5">
+                                        <input
+                                          type="checkbox"
+                                          checked={detailChecked.has(a.id)}
+                                          onChange={(e) =>
+                                            setDetailChecked((prev) => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked) next.add(a.id);
+                                              else next.delete(a.id);
+                                              return next;
+                                            })
+                                          }
+                                          className="shrink-0 accent-blue-500"
+                                        />
+                                        {isImageUpload(a) ? (
+                                          <img
+                                            src={`${API_BASE}/images/${a.id}`}
+                                            alt=""
+                                            className="h-5 w-5 shrink-0 rounded object-cover"
+                                            loading="lazy"
+                                          />
+                                        ) : (
+                                          <FileCode className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                                        )}
+                                        <span className="min-w-0 flex-1 truncate text-10 text-neutral-300">{a.name}</span>
+                                        <span className="shrink-0 text-10 text-neutral-500">{fmtBytes(a.size ?? 0)}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {detailChecked.size > 0 && cleaning === null && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void runRemoveIds([...detailChecked])}
+                                      className="rounded-lg bg-red-500/15 px-2 py-0.5 text-10 text-red-300 hover:bg-red-500/25"
+                                    >
+                                      {t('settings.cleanSelectedBtn', { n: detailChecked.size })}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
@@ -1093,15 +1306,23 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           message={
             confirmClean === 'unref'
               ? t('settings.cleanUnrefDamage', { n: unref?.count ?? 0, size: fmtBytes(unref?.bytes ?? 0) })
-              : t('settings.cleanSessionDamageMsg', {
-                  name: sessionTitles.get(confirmClean ?? '') ?? (confirmClean ?? '').slice(0, 8),
-                  n: usage.find((u) => u.sessionId === confirmClean)?.count ?? 0,
-                  size: fmtBytes(usage.find((u) => u.sessionId === confirmClean)?.bytes ?? 0),
-                })
+              : confirmClean === '__batch__'
+                ? t('settings.cleanBatchDamage', {
+                    n: checked.size,
+                    size: fmtBytes(
+                      usage.filter((u) => checked.has(u.sessionId)).reduce((s, u) => s + u.bytes, 0),
+                    ),
+                  })
+                : t('settings.cleanSessionDamageMsg', {
+                    name: sessionTitles.get(confirmClean ?? '') ?? (confirmClean ?? '').slice(0, 8),
+                    n: usage.find((u) => u.sessionId === confirmClean)?.count ?? 0,
+                    size: fmtBytes(usage.find((u) => u.sessionId === confirmClean)?.bytes ?? 0),
+                  })
           }
           confirmLabel={t('settings.cleanConfirmBtn')}
           onConfirm={() => {
             if (confirmClean === 'unref') void runCleanupUnref();
+            else if (confirmClean === '__batch__') void runCleanupChecked();
             else if (confirmClean) void runCleanupSession(confirmClean);
           }}
           onClose={() => setConfirmClean(null)}

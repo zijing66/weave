@@ -1124,6 +1124,15 @@ export interface SessionUploadsResult {
   totalBytes: number;
 }
 
+/** 存储总览（设置页清理面头部；五档一次聚合）。 */
+export interface UploadsOverview {
+  total: { count: number; bytes: number };
+  images: { count: number; bytes: number };
+  files: { count: number; bytes: number };
+  referenced: { count: number; bytes: number };
+  unreferenced: { count: number; bytes: number };
+}
+
 /** user 档采集状态行（GET/PUT /capture；§6-2d 安装即启用，无独立开关位）。 */
 export interface CaptureRow {
   harness: Harness;
@@ -2171,6 +2180,15 @@ export const api = {
   /** 无引用上传件的预告数（一键清理前给用户看的「能清多少」）。 */
   getUnreferencedUploads: (): Promise<{ count: number; bytes: number }> =>
     apiFetch<{ count: number; bytes: number }>('/uploads/unreferenced'),
+  /** 存储总览（总/图/文件/被引用/可安全清五档，一次聚合）。 */
+  getUploadsOverview: (): Promise<UploadsOverview> =>
+    apiFetch<UploadsOverview>('/uploads/overview'),
+  /** 按 ids 批量删上传件（单件/分组勾选清的落点）。 */
+  removeUploads: (ids: readonly string[]): Promise<{ removed: number }> =>
+    apiFetch<{ removed: number }>('/uploads/remove', {
+      method: 'POST',
+      body: JSON.stringify({ ids: [...ids] }),
+    }),
   /** 各会话随附上传件的总量（按会话清理的列表面；一次聚合）。 */
   getUploadsUsage: (): Promise<{ sessions: Array<{ sessionId: string; count: number; bytes: number }> }> =>
     apiFetch<{ sessions: Array<{ sessionId: string; count: number; bytes: number }> }>('/uploads/usage'),

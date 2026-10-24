@@ -85,6 +85,31 @@ describe('UploadRepository 清理面（设置页「对话附件存储」）', ()
     expect(uploads.unreferencedStats()).toEqual({ count: 0, bytes: 0 });
     expect(uploads.cleanupUnreferenced(() => {})).toBe(0);
   });
+
+  it('overview 五档一次聚合：图/文件分档、被引用与可安全清互斥', () => {
+    const img = uploads.save({ name: 'i.png', mediaType: 'image/png', bytes: bytesOf('i') });
+    const file = uploads.save({ name: 'f.md', mediaType: 'text/markdown', bytes: bytesOf('f') });
+    const orphan = uploads.save({ name: 'o.png', mediaType: 'image/png', bytes: bytesOf('o') });
+    uploads.linkToEvent(eventId, [img.id, file.id]);
+    db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
+
+    const o = uploads.overview();
+    expect(o.total).toEqual({ count: 3, bytes: img.size + file.size + orphan.size });
+    expect(o.images).toEqual({ count: 2, bytes: img.size + orphan.size });
+    expect(o.files).toEqual({ count: 1, bytes: file.size });
+    expect(o.referenced).toEqual({ count: 2, bytes: img.size + file.size });
+    expect(o.unreferenced).toEqual({ count: 1, bytes: orphan.size });
+  });
+
+  it('sessionBreakdown 按图/文件分档；无随附件回 null', () => {
+    const img = uploads.save({ name: 'i.png', mediaType: 'image/png', bytes: bytesOf('i') });
+    const file = uploads.save({ name: 'f.md', mediaType: 'text/markdown', bytes: bytesOf('f') });
+    uploads.linkToEvent(eventId, [img.id, file.id]);
+    const b = uploads.sessionBreakdown(sessionId)!;
+    expect(b.images).toEqual({ count: 1, bytes: img.size });
+    expect(b.files).toEqual({ count: 1, bytes: file.size });
+    expect(uploads.sessionBreakdown('sess-none')).toBeNull();
+  });
 });
 
 describe('清理路由（/sessions/:id/uploads 与 /uploads/unreferenced）', () => {
@@ -121,8 +146,10 @@ describe('清理路由（/sessions/:id/uploads 与 /uploads/unreferenced）', ()
   const call = async (
     method: string,
     path: string,
+    body?: unknown,
   ): Promise<{ handled: boolean; status: number; body: unknown }> => {
-    const req = Readable.from([Buffer.from('')]) as unknown as IncomingMessage;
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    const req = Readable.from([Buffer.from(payload)]) as unknown as IncomingMessage;
     req.method = method;
     let bodyOut: unknown = null;
     const res = {
@@ -171,6 +198,28 @@ describe('清理路由（/sessions/:id/uploads 与 /uploads/unreferenced）', ()
     const post = await call('POST', '/uploads/unreferenced');
     expect(post.body).toEqual({ removed: 0, done: 0, total: 0 });
     expect(uploads.getById(orphan.id)).toBeDefined();
+  });
+
+  it('GET /uploads/overview 与 POST /uploads/remove（按 ids 批量删）', async () => {
+    const a = uploads.save({ name: 'a.png', mediaType: 'image/png', bytes: Buffer.from('aa') });
+    const b = uploads.save({ name: 'b.md', mediaType: 'text/markdown', bytes: Buffer.from('bb') });
+    uploads.linkToEvent(eventId, [a.id, b.id]);
+
+    const ov = await call('GET', '/uploads/overview');
+    expect(ov.status).toBe(200);
+    expect((ov.body as { total: { count: number } }).total.count).toBe(2);
+
+    const bad = await call('POST', '/uploads/remove', { ids: ['zz'] });
+    expect(bad.status).toBe(400);
+
+    const del = await call('POST', '/uploads/remove', { ids: [a.id, b.id] });
+    expect(del.status).toBe(200);
+    expect((del.body as { removed: number }).removed).toBe(2);
+    expect(uploads.getById(a.id)).toBeUndefined();
+    expect(uploads.getById(b.id)).toBeUndefined();
+
+    const again = await call('POST', '/uploads/remove', { ids: [a.id] });
+    expect((again.body as { removed: number }).removed).toBe(0);
   });
 });
 
