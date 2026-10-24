@@ -114,7 +114,8 @@ const unstage = (item: StagedFile): void => {
 const send = (): void => {
   // 从 DOM 现序列化：镜像可能落后一拍，而这一份是要真发出去的
   const text = serializeDraft(draftRef.current).trim();
-  const files = staged.filter((s) => s.state === 'done' && s.upload).map((s) => s.upload!);
+  const doneStaged = staged.filter((s) => s.state === 'done' && s.upload);
+  const files = doneStaged.map((s) => s.upload!);
   if (!text && files.length === 0) return;
   setDraftText('');
   setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));
@@ -122,16 +123,25 @@ const send = (): void => {
   void fb.run(
     `sendMsg:${sessionId}`,
     async () => {
-      const res = await api.sendSessionMessage(sessionId, {
-        text,
-        ...(files.length > 0 ? { attachments: files.map((i) => i.id) } : {}),
-        // 手动面恒走层② 终端击键：直投/中继在宿主眼里都是「另一个会话发的」、
-        // 且不带发送方，对方会话可能答给一个随机同伴——人工对话要的是用户权威
-        forceTerminal: true,
-      });
-      // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
-      // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
-      if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
+      try {
+        const res = await api.sendSessionMessage(sessionId, {
+          text,
+          ...(files.length > 0 ? { attachments: files.map((i) => i.id) } : {}),
+          // 手动面恒走层② 终端击键：直投/中继在宿主眼里都是「另一个会话发的」、
+          // 且不带发送方，对方会话可能答给一个随机同伴——人工对话要的是用户权威
+          forceTerminal: true,
+        });
+        // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
+        // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
+        if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
+      } catch (e) {
+        // 发送失败：草稿与附件原样放回输入框，不让用户重打一遍（offline 不抛——
+        // 那趟已落成 failed 行、重发按钮在行上）；飞行途中敲下的字垫在后面。
+        const cur = serializeDraft(draftRef.current);
+        setDraftText(cur.trim() ? `${text}\n${cur}` : text);
+        setStaged((s) => [...s, ...doneStaged]);
+        throw e;
+      }
       await refreshMessages();
     },
     { fail: (e) => t('tasks.msgSendFailed', { error: errorText(e) }) },
