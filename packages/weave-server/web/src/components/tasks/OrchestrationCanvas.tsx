@@ -1851,7 +1851,12 @@ export function OrchestrationCanvas({
           aria-label={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
           className={cn(
             'absolute top-2 z-30 rounded border border-edge/[0.1] bg-neutral-900/90 p-1 text-neutral-400 transition-colors hover:text-neutral-100',
-            (selNode && draft) || selEdge ? 'right-[21rem]' : 'right-2',
+            // 右上角有面板就让位：检查器（w-80）> 总览的连线信息/首节点面板（w-64/w-60）。
+            (selNode && draft) || selEdge
+              ? 'right-[21rem]'
+              : entryPick != null || edgeInfo != null
+                ? 'right-[17.5rem]'
+                : 'right-2',
           )}
         >
           {canvasFull ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
@@ -1904,7 +1909,14 @@ export function OrchestrationCanvas({
             <Controls showInteractive={false} />
             <Panel
               position="top-left"
-              className="nopan max-w-[calc(100%-1rem)] space-y-1"
+              // 右缘给右上角的家伙们让路（放大钮 / 首节点·连线信息面板）：
+              // 面板拉伸到满宽时刷新钮不该压上它们。
+              className={cn(
+                'nopan space-y-1',
+                entryPick != null || edgeInfo != null
+                  ? 'max-w-[calc(100%-18.5rem)]'
+                  : 'max-w-[calc(100%-3.5rem)]',
+              )}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex max-w-full flex-wrap items-center gap-1.5">
@@ -2137,7 +2149,14 @@ export function OrchestrationCanvas({
             <Controls showInteractive={false} />
             <Panel
               position="top-left"
-              className="nopan max-w-[calc(100%-1rem)] space-y-1"
+              // 右缘给右上角的家伙们让路（放大钮 / 贴屏检查器）：
+              // 面板拉伸到满宽时刷新钮不该压上它们。
+              className={cn(
+                'nopan space-y-1',
+                (selNode && draft) || selEdge
+                  ? 'max-w-[calc(100%-22rem)]'
+                  : 'max-w-[calc(100%-3.5rem)]',
+              )}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex max-w-full flex-wrap items-center gap-1.5">
