@@ -1,0 +1,283 @@
+import { z } from 'zod';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  HandlerConfigSchema,
+  HookDispatchStatusSchema,
+  HookRuleFilterSchema,
+  HookRuleSourceSchema,
+} from '@weavecode/core';
+import type { WeaveServerDeps } from '../server.js';
+import { readJson, sendJson } from '../http.js';
+import { installPlugin, uninstallPlugin } from '../../hooks/plugin-installer.js';
+import { effective, setProjectEnabled } from '../../hooks/plugin-project-state.js';
+
+const CreateRuleBody = z.object({
+  name: z.string().min(1),
+  enabled: z.boolean().optional(),
+  priority: z.number().int().optional(),
+  projectId: z.number().int().nullable(),
+  source: HookRuleSourceSchema,
+  filter: HookRuleFilterSchema.optional(),
+  handler: HandlerConfigSchema,
+  timeoutMs: z.number().int().positive().optional(),
+  record: z.boolean().optional(),
+});
+
+const UpdateRuleBody = CreateRuleBody.partial();
+
+const ToggleBody = z.object({ enabled: z.boolean() });
+
+/** 插件级开关：可选 projectId = 项目覆盖（写 meta.plugins.enabled，不动全局）。 */
+const PluginToggleBody = z.object({ enabled: z.boolean(), projectId: z.number().int().optional() });
+
+const RunDispatchBody = z.object({ sessionId: z.string().min(1) });
+
+const InstallBody = z.object({ src: z.string().min(1) });
+
+/**
+ * hooks 管理域路由：规则 CRUD/toggle、插件管理面（SPI 加载结果 + 开关 + 安装/卸载）、
+ * 派发记录查询、指令池 resume。返回 true = 本路由认领；false = 未命中，主链继续。
+ */
+export async function handleHookAdminRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  pathname: string,
+  url: URL,
+): Promise<boolean> {
+  // ---- 规则 CRUD ----
+  if (pathname === '/hooks/rules') {
+    if (!deps.hookRegistry) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    if (req.method === 'GET') {
+      const projectIdRaw = url.searchParams.get('projectId');
+      const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
+      sendJson(res, 200, { rules: deps.hookRegistry.list(projectId) });
+      return true;
+    }
+    if (req.method === 'POST') {
+      try {
+        const body = CreateRuleBody.parse(await readJson(req));
+        const rule = deps.hookRegistry.create(body);
+        sendJson(res, 201, { rule });
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
+      }
+      return true;
+    }
+  }
+
+  const ruleMatch = pathname.match(/^\/hooks\/rules\/([^/]+)$/);
+  if (ruleMatch) {
+    if (!deps.hookRegistry) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    const id = decodeURIComponent(ruleMatch[1]!);
+    if (req.method === 'PUT') {
+      try {
+        const patch = UpdateRuleBody.parse(await readJson(req));
+        const rule = deps.hookRegistry.update(id, patch);
+        if (!rule) {
+          sendJson(res, 404, { error: 'Rule not found' });
+          return true;
+        }
+        sendJson(res, 200, { rule });
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid rule body' });
+      }
+      return true;
+    }
+    if (req.method === 'DELETE') {
+      if (!deps.hookRegistry.remove(id)) {
+        sendJson(res, 404, { error: 'Rule not found' });
+        return true;
+      }
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  const toggleMatch = pathname.match(/^\/hooks\/rules\/([^/]+)\/toggle$/);
+  if (toggleMatch && req.method === 'POST') {
+    if (!deps.hookRegistry) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    try {
+      const body = ToggleBody.parse(await readJson(req));
+      const rule = deps.hookRegistry.setEnabled(decodeURIComponent(toggleMatch[1]!), body.enabled);
+      if (!rule) {
+        sendJson(res, 404, { error: 'Rule not found' });
+        return true;
+      }
+      sendJson(res, 200, { rule });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
+    return true;
+  }
+
+  // ---- 插件管理面（SPI 加载结果 + 插件级开关 + 安装/卸载）----
+  if (pathname === '/hooks/plugins') {
+    if (req.method === 'GET') {
+      const projectIdRaw = url.searchParams.get('projectId');
+      if (projectIdRaw == null || projectIdRaw === '') {
+        sendJson(res, 200, { plugins: deps.hookPlugins?.list() ?? [] });
+        return true;
+      }
+      const project = deps.projects.getById(Number(projectIdRaw));
+      if (!project) {
+        sendJson(res, 404, { error: 'Project not found' });
+        return true;
+      }
+      if (!deps.pluginStates) {
+        sendJson(res, 503, { error: 'Plugin states unavailable' });
+        return true;
+      }
+      const states = deps.pluginStates;
+      sendJson(res, 200, {
+        plugins: (deps.hookPlugins?.list() ?? []).map((info) => {
+          if (info.status === 'rejected') return info;
+          const status = effective(project, info.id, { states }) ? 'active' : 'disabled';
+          return status === info.status ? info : { ...info, status };
+        }),
+      });
+      return true;
+    }
+    if (req.method === 'POST') {
+      // 安装：body { src } = 本地路径 | git URL → 复制进全局插件根 → 立即重扫
+      if (!deps.hookPlugins) {
+        sendJson(res, 503, { error: 'Plugin loader unavailable' });
+        return true;
+      }
+      try {
+        const body = InstallBody.parse(await readJson(req));
+        const result = await installPlugin(body.src);
+        await deps.hookPlugins.reloadAll();
+        sendJson(res, 201, result);
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Install failed' });
+      }
+      return true;
+    }
+  }
+
+  const pluginUninstallMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/uninstall$/);
+  if (pluginUninstallMatch && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    const id = decodeURIComponent(pluginUninstallMatch[1]!);
+    const removed = await uninstallPlugin(id);
+    if (!removed) {
+      sendJson(res, 404, { error: 'Plugin directory not found' });
+      return true;
+    }
+    await deps.hookPlugins.reloadAll();
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // 「重新扫描」：重登记根（运行期新登记项目）+ 重扫 + watcher 重挂。启动时不存在的
+  // 根挂不上 watcher（见 plugin-loader 的 watchRoots），运行期才建起来的靠这一下纳管。
+  if (pathname === '/hooks/plugins/rescan' && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    try {
+      await deps.hookPlugins.rescan();
+      sendJson(res, 200, { ok: true, plugins: deps.hookPlugins.list().length });
+    } catch (err) {
+      sendJson(res, 500, { error: err instanceof Error ? err.message : 'Rescan failed' });
+    }
+    return true;
+  }
+
+  const pluginToggleMatch = pathname.match(/^\/hooks\/plugins\/([^/]+)\/toggle$/);
+  if (pluginToggleMatch && req.method === 'POST') {
+    if (!deps.hookPlugins) {
+      sendJson(res, 503, { error: 'Plugin loader unavailable' });
+      return true;
+    }
+    try {
+      const body = PluginToggleBody.parse(await readJson(req));
+      const id = decodeURIComponent(pluginToggleMatch[1]!);
+      if (body.projectId !== undefined) {
+        const project = deps.projects.getById(body.projectId);
+        if (!project) {
+          sendJson(res, 404, { error: 'Project not found' });
+          return true;
+        }
+        if (!deps.hookPlugins.list().some((p) => p.id === id)) {
+          sendJson(res, 404, { error: 'Plugin not found' });
+          return true;
+        }
+        setProjectEnabled(project, id, body.enabled, { projects: deps.projects });
+        sendJson(res, 200, { ok: true });
+        return true;
+      }
+      const ok = deps.hookPlugins.setPluginEnabled(id, body.enabled);
+      if (!ok) {
+        sendJson(res, 404, { error: 'Plugin not found' });
+        return true;
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+    }
+    return true;
+  }
+
+  // ---- 派发记录 ----
+  if (pathname === '/hooks/dispatches' && req.method === 'GET') {
+    if (!deps.hookDispatches) {
+      sendJson(res, 503, { error: 'Hooks subsystem unavailable' });
+      return true;
+    }
+    const ruleId = url.searchParams.get('ruleId') ?? undefined;
+    const statusRaw = url.searchParams.get('status');
+    const status = statusRaw ? HookDispatchStatusSchema.parse(statusRaw) : undefined;
+    const sessionId = url.searchParams.get('sessionId') ?? undefined;
+    const limitRaw = url.searchParams.get('limit');
+    const limit = limitRaw ? Number(limitRaw) : undefined;
+    sendJson(res, 200, {
+      dispatches: deps.hookDispatches.list({
+        ruleId,
+        status,
+        sessionId,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      }),
+    });
+    return true;
+  }
+
+  // ---- 指令池 resume：spawn claude --resume 后立即返回（「已启动」语义）----
+  const runMatch = pathname.match(/^\/hooks\/dispatches\/(\d+)\/run$/);
+  if (runMatch && req.method === 'POST') {
+    if (!deps.hookRunner) {
+      sendJson(res, 503, { error: 'Resume runner unavailable' });
+      return true;
+    }
+    let sessionId: string;
+    try {
+      sessionId = RunDispatchBody.parse(await readJson(req)).sessionId;
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+      return true;
+    }
+    const result = await deps.hookRunner.run(Number(runMatch[1]!), sessionId);
+    if (result.ok) {
+      sendJson(res, 200, { ok: true, dispatchId: result.dispatchId });
+    } else {
+      sendJson(res, result.status, { error: result.error });
+    }
+    return true;
+  }
+
+  return false;
+}

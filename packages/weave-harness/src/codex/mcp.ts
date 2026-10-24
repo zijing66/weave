@@ -21,8 +21,8 @@ import {
  */
 
 /** Read the `mcp_servers` map from config.toml text (empty when absent or
- * unparseable). stdio servers only — entries without a `command` (e.g. remote
- * url servers) are skipped. */
+ * unparseable). Entries with neither `url` (Streamable HTTP) nor `command`
+ * (stdio) are skipped. */
 export function readCodexMcpFromText(text: string): Record<string, McpServerConfig> {
   let parsed: unknown;
   try {

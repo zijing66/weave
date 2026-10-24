@@ -236,11 +236,12 @@ describe('readCodexMcpFromText', () => {
     expect(readCodexMcpFromText('mcp_servers = "oops"')).toEqual({});
   });
 
-  it('skips entries without a command (remote/url servers)', () => {
+  it('reads remote/url servers as the http shape; skips entries with neither url nor command', () => {
     const servers = readCodexMcpFromText(
-      `[mcp_servers.remote]\nurl = "http://x"\n\n[mcp_servers.local]\ncommand = "y"\n`,
+      `[mcp_servers.remote]\nurl = "http://x"\n\n[mcp_servers.local]\ncommand = "y"\n\n[mcp_servers.empty]\nfoo = "bar"\n`,
     );
-    expect(Object.keys(servers)).toEqual(['local']);
+    expect(Object.keys(servers)).toEqual(['remote', 'local']);
+    expect(servers.remote).toEqual({ url: 'http://x' });
   });
 });
 

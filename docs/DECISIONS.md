@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-10-24
+
+- **大文件拆分：hooks-routes 2392→700 行、message-deliverer 2181→1734 行（用户要求「几个超大文件都帮我拆了。唯一要求就是符合架构设计 以抽象可复用为准」「能拆尽拆」）**：`hooks-routes.ts` 按域拆出七个路由模块（`daemon/routes/`：orchestration 编排域、hooks-admin 规则/插件/派发、uploads 上传域、session-control 会话控制打键、path-refs 路径引用、session-insights 计划/命令/改动汇总、watches 空闲订阅/Web Push），主文件只剩「会话列表/改名/删会话/open-terminal/消息投递/重发/dismiss/能力矩阵/投递诊断」与各域的委托链；`message-deliverer.ts` 拆出 `hooks/delivery/` 七模块（ack-gate 闸、keys 键序、channels 通道尝试、queue 队列死信、relay 中继、views 只读派生面、send 通道裁决）。拆法 = **搬运不改行为**：schema/helper/路由体逐段平移、私有方法改薄委托、每步 tsc + 相关测试套件绿了才提交（九个提交）。**拆分途中踩的坑**：①`if (await handleXxx(...)) return;` 裸 return 在 `Promise<boolean>` 签名下是 TS2322（col 指向 `return` 而非参数——pretty 错误只给一行时极易误读成参数类型问题）；②搬运段落时漏了一段（公开 webhook 触发）导致 2 例 404，靠路由测试兜住；③Python 批量切割比正则改写安全（见 powershell-batch-rewrite-corruption 教训）。**顺带修三处预先存在的断言漂移**（0cdd63f3 MCP 改造遗留）：`DEFAULT_DAEMON_SETTINGS` 漏 `decision` 段、内置包清单测试漏 `weave-orchestration`、`readCodexMcpFromText` 的 doc 注释与测试断言还停留在「stdio only」（url 分支落地后没同步）。全量 2459 例绿。
+
 ## 2026-10-23
 
 - **终端分组闪没 = 探测快照整包替换 + 繁忙 GUI 上 `cli list` 延迟尖峰（用户问「会话列表的终端分组怎么没有显示了？」，次日确认「之前是因为wezterm卡顿导致分组丢失展示了是吗」）**：SSE 探针抓到 `terminalTopology` 帧在「14 会话全解析 ↔ 只剩 1 个」之间交替。链条：繁忙 GUI（13 个 claude pane 满载）上 `wezterm cli list` 实测延迟 542ms～45s 波动，超过 5s 捕获超时 → 该 socket 进 60s 冷却 → 下一轮 muxes 缺它 → 那 13 个会话在快照里**缺席**（契约 = 缺席保留上次，SSE 消费方确实如此）；但 `TerminalTopologyRefresher` 把每轮结果**整包替换**进 `last`，`GET /sessions` 又按 `lastSnapshot` 回 `terminal: null`——web 的周期 refresh（hook 帧防抖 500ms）不断用降级快照覆盖 push 攒下的好状态，分组就闪没了。修法 = refresher 的 terminals **按键合并**（缺席键继承上次值、显式 null 照常覆盖），快照从此单调完整，GET 与 push 同源稳定；单测钉住「缺席保留 / null 覆盖 / 回归覆盖」三态。GUI 卡顿本身（wezterm 软件渲染 + 13 pane 满载）是诱因，不在本次修程。

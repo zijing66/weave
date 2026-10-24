@@ -63,6 +63,7 @@ describe('内置仓落地（market/builtin）', () => {
       'file-guard',
       'md-lint',
       'mission-control',
+      'weave-orchestration',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);
