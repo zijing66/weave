@@ -283,7 +283,13 @@ public static class WeaveWtKeys
         if (c == (char)0x0D) return 0x0D;
         if (c == (char)0x09) return 0x09;
         if (c == (char)0x08) return 0x08;
+        if (c == (char)0x03) return 0x43; // Ctrl+C：裸 \x03 不是击键，要 VK_C + CTRL 按下
         return 0;
+    }
+
+    static uint CtrlOf(char c)
+    {
+        return c == (char)0x03 ? 0x8u : 0u; // LEFT_CTRL_PRESSED
     }
 
     public static string Send(uint pid, string keys)
@@ -307,6 +313,7 @@ public static class WeaveWtKeys
             {
                 char c = keys[i];
                 ushort vk = VkOf(c);
+                uint ctrl = CtrlOf(c);
                 for (int down = 0; down < 2; down++)
                 {
                     IntPtr r = new IntPtr(buf.ToInt64() + (i * 2 + down) * REC);
@@ -317,7 +324,7 @@ public static class WeaveWtKeys
                     Marshal.WriteInt16(r, 10, (short)vk);         // wVirtualKeyCode
                     Marshal.WriteInt16(r, 12, 0);                 // wVirtualScanCode
                     Marshal.WriteInt16(r, 14, (short)c);          // UnicodeChar
-                    Marshal.WriteInt32(r, 16, 0);                 // dwControlKeyState
+                    Marshal.WriteInt32(r, 16, ctrl);              // dwControlKeyState
                 }
             }
             uint written;

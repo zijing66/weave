@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -194,6 +194,8 @@ export function SessionMessages({
   const [confirmMode, setConfirmMode] = useState(false);
   /** ESC 的冷却剩余秒数（0 = 可点），防连发。 */
   const [escCooldown, setEscCooldown] = useState(0);
+  /** Ctrl+C 键帽的冷却剩余秒数（0 = 可点），防连发（硬中断连发没有意义）。 */
+  const [ctrlCCooldown, setCtrlCCooldown] = useState(0);
   /** 手动展开/收起的账（键 → 展开）：不记 = 按「最新那条展开、更早的收起」默认。 */
   const [expanded, setExpanded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   /** 改动汇总弹窗（默认按轮：右键哪条气泡就看那一轮的改动；「全部对话」是逃生门）。 */
@@ -389,6 +391,13 @@ export function SessionMessages({
     const id = window.setTimeout(() => setEscCooldown((n) => n - 1), 1000);
     return () => window.clearTimeout(id);
   }, [escCooldown]);
+
+  // Ctrl+C 键帽的冷却：同 ESC 口径。
+  useEffect(() => {
+    if (ctrlCCooldown <= 0) return;
+    const id = window.setTimeout(() => setCtrlCCooldown((n) => n - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [ctrlCCooldown]);
 
   // 菜单外点一下就关（并吞掉这一下：否则同一击会顺手把整扇弹窗关掉）
   useEffect(() => {
@@ -1511,17 +1520,18 @@ export function SessionMessages({
                 />
               </div>
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
-                  尺寸与 ESC 键帽同一格（正方形），窄屏那排三枚钮因此一条线对齐。
-                  `pointerdown` 压掉默认 = 不把焦点从输入框抢走（抢了软键盘会收）。 */}
+                  用文字不用图标——Enter 键帽已占了 CornerDownLeft，再摆一枚同形的
+                  就是两个一样的箭头。`pointerdown` 压掉默认 = 不把焦点从输入框抢走
+                  （抢了软键盘会收）。 */}
               <button
                 type="button"
                 title={t('tasks.msgNewline')}
                 aria-label={t('tasks.msgNewline')}
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={insertNewline}
-                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-8 max-lg:w-8"
+                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-8"
               >
-                <CornerDownLeft className="h-3.5 w-3.5" />
+                {t('tasks.msgNewline')}
               </button>
               {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏输入框独占一行、这三枚钮折到
                   第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
@@ -1551,6 +1561,64 @@ export function SessionMessages({
                         {escCooldown > 0 ? escCooldown : 'ESC'}
                       </span>
                     }
+                  />
+                </button>
+                {/* 硬中断 = 一枚 Ctrl+C 键帽：与 ESC 同格同冷却口径（连发没有意义）。
+                    不落转录标记，「停没停」判不了，只报送出。 */}
+                <button
+                  type="button"
+                  title={t('tasks.ctrlCTooltip')}
+                  aria-label={t('tasks.ctrlCTooltip')}
+                  disabled={ctrlCCooldown > 0}
+                  onClick={() => {
+                    void fb.run(
+                      `ctrlC:${sessionId}`,
+                      async () => {
+                        await api.pressSessionCtrlC(sessionId);
+                      },
+                      { fail: (e) => t('tasks.ctrlCFailed', { error: errorText(e) }) },
+                    );
+                    setCtrlCCooldown(ESC_COOLDOWN_S);
+                  }}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`ctrlC:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={
+                      ctrlCCooldown > 0 ? (
+                        <span className="text-9 font-medium tracking-tight max-lg:text-10">
+                          {ctrlCCooldown}
+                        </span>
+                      ) : (
+                        <Square className="h-2.5 w-2.5 fill-current max-lg:h-3 max-lg:w-3" />
+                      )
+                    }
+                  />
+                </button>
+                {/* 手动提交 = 一枚 Enter 键帽：提交宿主输入框里现成的内容（层② 自动
+                    补打的手动版）。盲打回车提交的是整个输入框——框里若有别的东西会
+                    一起出去，tooltip 如实说明。 */}
+                <button
+                  type="button"
+                  title={t('tasks.enterTooltip')}
+                  aria-label={t('tasks.enterTooltip')}
+                  disabled={!capability.prompt || fb.stateOf(`pressEnter:${sessionId}`) === 'loading'}
+                  onClick={() => {
+                    void fb.run(
+                      `pressEnter:${sessionId}`,
+                      async () => {
+                        await api.pressSessionEnter(sessionId);
+                      },
+                      { fail: (e) => t('tasks.enterFailed', { error: errorText(e) }) },
+                    );
+                  }}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(`pressEnter:${sessionId}`)}
+                    className="h-3 w-3"
+                    icon={<CornerDownLeft className="h-3 w-3" />}
                   />
                 </button>
                 {/* 发送键只有一枚：手动面恒走层② 终端击键，没有通道可选（直投/中继

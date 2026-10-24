@@ -381,8 +381,7 @@ Web Push 细节：
 - **未回执闸**：prompt 送达 `ackStallMs`（缺省 30s）未回执、或中继/终端投递失败 → 该会话**队列冲洗暂停**（`flushSession` 闸，防继续向 Held/Refused 灌），成因消息标 `stalled` + `message.stalled` 帧。
 - **斜杠命令走「短窗口」而不是「免除回执」**：以 `/` 开头的投递（判据 = `isSlashCommand`，与宿主同一条「trim 后以 `/` 开头」）分两类——**宿主内建命令**（`/compact`、`/model`、`/effort`、`/clear`…）内部执行、**不发 UPS**（实测 `/compact` 前后 8 分钟零 UPS，只有 `PreCompact`/`PreModelSwitch` 这类专属事件）；**skill/插件命令**照发一条 UPS，正文就是用户敲的那行（实测 `/minimax-xlsx  /minimax-docx` 0.6s 后到达）。故四路（中继/直投/层①-q/层②）落 `delivered` 时都进 `awaitingAck`，再按文本分派：命令走 `armCommandAck`（等 `commandAckGraceMs` 缺省 5s，UPS 先到就正常核销，过期仍未回执才按已送达收 + 解闸续排），**不布防**未回执闸；非命令照旧 `armAckWatch`。多行正文把命令写在后面不算，按普通 prompt 走。
 - **解除三条路**：成因消息回执命中（解闸 + 自续排空）／手动重发（`POST /sessions/:id/messages/:mid/resend`，仅 prompt 通道 failed（含判死的 offline 行，那是有意的可逆出口）/ delivered-未回执 开放，重走三层并重新布防）／闸到点自动清除（`ackStallReleaseMs` 缺省 90s：已发出却等不来回执的那条整个从队列清除——正文只在该行里、窗口期就是给人的，解闸/撤防/续排都在 `dismiss` 里；行头带 `releaseAt` 派生的 mm:ss 倒计时，投递失败的行不清）。
-- **重发 `delivered`-未回执且 `via=terminal` 的行只补一记回车**（`runTerminalSubmit`：正文早已贴进输入框，缺的就是那记提交键；重贴会在框里叠一份，用户收到两遍正文与两遍图）。
-- **回合判死（`HARNESS_LIFECYCLE[<harness>].closeFailed`，claude = `StopFailure`）= 输入框恢复响应的信号**（`onSessionStopFailure`，挂点 = inbox worker 的事件判定）：API 重试态对 hook 静默（重试期间一个事件都不发，宿主只在回合放弃时冒头），那记被吞掉的回车要等到这一刻才有意义——层② 已贴进框、没回执的队头行此刻**立即补一记回车**（同上只补回车的语义），把残框提交掉，UPS 按下面的比对核销在途、闸自然解除；补不动（pane 没了 / 等的不是终端行）则回落 30s 布防与 90s 自动清除的老节拍。
+- **重发 `delivered`-未回执且 `via=terminal` 的行只补一记回车**（`runTerminalSubmit`：正文早已贴进输入框，缺的就是那记提交键；重贴会在框里叠一份，用户收到两遍正文与两遍图）。补回车只由**人手触发**（队列行 Enter 按钮 / 对话页 Enter 键帽 / 重发）——**没有任何自动补打**（2026-10-24 裁决：自动补的回车提交的是整个输入框，用户手输的半句话会被一起发出去，见 DECISIONS.md）。
 - **回执先到即已送达**：投递进程的失败落定可能晚于回执（中继 exit 状态只管进程、不管送达；终端的 `sendText` 也可能在文本已进框之后才抛），故 `settleRelay` 与 `runTerminal` 的失败分支先看**当前行** `acked`——是就按已送达收、不置闸（翻成 failed 会让一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍）；`runTerminal` 的成功收尾同样用当前行而非 `write` 之前的快照，否则 write 期间到的回执会被抹掉、30s 后又被当未回执置闸。
 - 慢会话误伤暂停是接受过的代价——它处理到该 prompt 时 UPS 自解闸，真卡死人手重发。
 - **回执比对前先剥运输装饰**（直投的 `[weave] ` 标记，唯一实现 `stripInboxMarker`）——装饰不是正文，不剥则观测到的 prompt 恒比本体多一截、短正文（如「代码提交」）永远认不出自己。
@@ -543,6 +542,7 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 两个入口：事件链最新组头**折叠条的停止按钮** + **对话面板发送键左侧同款一枚**（共用 `interrupt:<id>` fb 键，同转同灭），两处**共用判据** `session-status.ts` 的 `canInterrupt`。
 
 - **对话面板那枚是一枚 ESC 键帽**：位置与尺寸恒在恒方（`h-6 w-6`，窄屏 `h-8 w-8`，与发送键、换行键同高同排），只是回合开着才可按。
+- **旁边还有两枚手动键帽**（`POST /sessions/:id/enter` → `pressEnter`、`POST /sessions/:id/ctrl-c` → `pressCtrlC`，键序同样固定死在服务端）：Enter = 一记 `\r`，提交宿主输入框里**现成的内容**——盲打回车提交的是整个输入框，框里若有别的东西会一起出去（tooltip 如实说明）；Ctrl+C = 一记 `\x03`（wt 侧编成 VK_C + LEFT_CTRL_PRESSED，裸 `\x03` 不是击键），宿主 TUI 的硬中断，**不落转录标记、「停没停」判不了**，只报送出。Ctrl+C 与 ESC 同款 3s 冷却（连发没有意义）；队列里「已发出（层② 终端）未回执」的行另有补 Enter 按钮（同一 `/enter` 路由）——文本多半已贴进输入框、只欠那记被吞掉的回车。
 - 事件链组头那枚仍是**回合开着才露**（含卡在报错重试时的长静默：hook 事件静默超窗口、状态回落 `open`，那正是最需要这一记的时候）。
 - **回合已关（收到 Stop，正常收尾）/ 失败落定 / 关闭 / 终止 / 已中断一律不露**（正常收尾后不再残留按钮）。
 - `turnOpen` 未知（旧 daemon、以及无回合开合信号的 harness——`hasTurnSignal` 认生命周期表，codex 的 `open` 还是空占位）才按状态兜底（`isSessionBusy`）。

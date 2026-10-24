@@ -1,5 +1,5 @@
 import { useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
-import { Pencil, RotateCcw, Trash2 } from 'lucide-react';
+import { CornerDownLeft, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import { api, type SessionMessageRow } from '@/lib/api';
 import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
@@ -166,9 +166,36 @@ const dequeue = (row: SessionMessageRow): void => {
   );
 };
 
-/** 队列每行右侧的操作（常显、纯图标，不占正文宽度）：重发 / 取回编辑 / 删除。 */
+/** 队列每行右侧的操作（常显、纯图标，不占正文宽度）：补回车 / 重发 / 取回编辑 / 删除。 */
 const queueActions = (m: SessionMessageRow) => (
   <>
+    {/* 已发出（层② 终端）却没回执 = 文本多半已贴进输入框、只欠那记被吞掉的回车：
+        补一记 Enter（提交的是整个输入框，与重发的「只补回车」同一语义）。 */}
+    {m.status === 'delivered' && m.acked !== true && m.via === 'terminal' && (
+      <button
+        type="button"
+        title={t('tasks.msgEnterHint')}
+        aria-label={t('tasks.msgEnter')}
+        disabled={fb.stateOf(`enter:${m.id}`) === 'loading'}
+        onClick={() =>
+          void fb.run(
+            `enter:${m.id}`,
+            async () => {
+              await api.pressSessionEnter(sessionId);
+              await refreshMessages();
+            },
+            { fail: (err) => t('tasks.msgEnterFailed', { error: errorText(err) }) },
+          )
+        }
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-blue-500/30 bg-blue-500/10 text-blue-300 transition-colors hover:border-blue-500/50 disabled:opacity-40"
+      >
+        <FeedbackIcon
+          state={fb.stateOf(`enter:${m.id}`)}
+          className="h-3 w-3"
+          icon={<CornerDownLeft className="h-3 w-3" />}
+        />
+      </button>
+    )}
     {(m.status === 'failed' || m.stalled === true) && (
       <button
         type="button"

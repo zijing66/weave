@@ -132,6 +132,40 @@ export async function handleSessionControlRoutes(
     return true;
   }
 
+  // ---- 手动提交：一记回车（提交宿主输入框里现成的内容；键序固定死在服务端）----
+  const enterMatch = pathname.match(/^\/sessions\/([^/]+)\/enter$/);
+  if (enterMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(enterMatch[1]!);
+    const result = await deps.messageDeliverer.pressEnter(sessionId);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
+  // ---- 手动硬中断：一记 Ctrl+C（不落转录标记，只报送出；键序固定死在服务端）----
+  const ctrlCMatch = pathname.match(/^\/sessions\/([^/]+)\/ctrl-c$/);
+  if (ctrlCMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(ctrlCMatch[1]!);
+    const result = await deps.messageDeliverer.pressCtrlC(sessionId);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
   // ---- 模型切换：宿主自己的 `/model <名>`（会话级、不落盘）----
   const modelMatch = pathname.match(/^\/sessions\/([^/]+)\/model$/);
   if (modelMatch && req.method === 'POST') {

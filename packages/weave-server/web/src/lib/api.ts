@@ -1767,6 +1767,12 @@ export const api = {
   /** 执行模式切换：一记 Shift+Tab，宿主自己算下一个模式（键序固定死在服务端）。 */
   cycleSessionMode: (sessionId: string): Promise<{ ok: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/mode`, { method: 'POST' }),
+  /** 手动提交：一记回车，提交宿主输入框里现成的内容（键序固定死在服务端）。 */
+  pressSessionEnter: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/enter`, { method: 'POST' }),
+  /** 手动硬中断：一记 Ctrl+C（不落转录标记，只报送出；键序固定死在服务端）。 */
+  pressSessionCtrlC: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/ctrl-c`, { method: 'POST' }),
   /** 模型切换：宿主自己的 `/model <名>`（会话级、不落盘）。名字用户自填，服务端只验形态。 */
   setSessionModel: (sessionId: string, model: string): Promise<{ ok: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/model`, {

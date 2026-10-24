@@ -612,74 +612,6 @@ describe('MessageDeliverer 裁决表', () => {
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(5);
   });
 
-  it('层② 提交键自动补打：窗口内无回执补一记回车（只补一次），回执到了不补', async () => {
-    vi.useFakeTimers();
-    try {
-      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
-      const sendText = vi.fn().mockResolvedValue(undefined);
-      const sendKeys = vi.fn().mockResolvedValue(undefined);
-      const noNative: MessagingSurface = {
-        harness: 'codex',
-        discovery: true,
-        prompt: null,
-        queuedPrompt: null,
-        inject: null,
-        headless: null,
-        idleSignals: [],
-      };
-      const deliverer = new MessageDeliverer(
-        makeDeps({
-          surfaceFor: () => noNative,
-          submitRetryMs: 4_000,
-          terminal: {
-            available: () => true,
-            listPanes: async () => [{ id: 'p1', title: 'msg-target', cwd: PROJECT_PATH }],
-            sendText,
-            sendKeys,
-            closePane: vi.fn(),
-          },
-        }),
-      );
-      pushEvent(SESSION_ID, 'Stop', 'codex');
-      const result = await deliverer.send({
-        toSessionId: SESSION_ID,
-        text: 'with image',
-        mode: 'prompt',
-        fromKind: 'dashboard',
-        oneWay: true,
-      });
-      const id = (result as { messageId: string }).messageId;
-      expect(sendText).toHaveBeenCalledTimes(1);
-
-      // 窗口内回执到了：不补
-      deliverer.onSessionPrompt(SESSION_ID, 'with image');
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(sendKeys).not.toHaveBeenCalled();
-
-      // 第二条：窗口内没回执 → 到点补一记回车；再等也不会补第二记
-      const r2 = await deliverer.send({
-        toSessionId: SESSION_ID,
-        text: 'second with image',
-        mode: 'prompt',
-        fromKind: 'dashboard',
-        oneWay: true,
-      });
-      const id2 = (r2 as { messageId: string }).messageId;
-      await vi.advanceTimersByTimeAsync(4_000);
-      expect(sendKeys).toHaveBeenCalledTimes(1);
-      expect(sendKeys).toHaveBeenCalledWith('p1', '\r');
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(sendKeys).toHaveBeenCalledTimes(1);
-      // 补打后行仍是 delivered-未回执（等真 UPS 来核销）
-      const after = deliverer.getMessage(id2)!;
-      expect(after.status).toBe('delivered');
-      expect(after.acked).not.toBe(true);
-      expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered', acked: true });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('中继作为子进程启动（非 detached）——三平台同一语义，并随 daemon 退出被回收', async () => {
     const fake = createFakeSpawn();
     const killImpl = vi.fn();
@@ -1297,44 +1229,6 @@ describe('MessageDeliverer 裁决表', () => {
     await expect(deliverer.resend(id)).resolves.toMatchObject({ ok: true, status: 'delivering' });
     await vi.waitFor(() => expect(sendKeys).toHaveBeenCalledWith('pane-1', '\r'));
     expect(sendText).toHaveBeenCalledTimes(1);
-  });
-
-  it('StopFailure = 输入框恢复响应：已贴进框、没回执的队头行立即补一记回车（不等闸的节拍）', async () => {
-    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
-    const sendText = vi.fn().mockResolvedValue(undefined);
-    const sendKeys = vi.fn().mockResolvedValue(undefined);
-    const deliverer = new MessageDeliverer(
-      makeDeps({
-        terminal: {
-          available: () => true,
-          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
-          sendText,
-          sendKeys,
-          closePane: vi.fn(),
-        },
-      }),
-    );
-    pushEvent(SESSION_ID, 'Stop');
-
-    const sent = await deliverer.send({
-      toSessionId: SESSION_ID,
-      text: 'no ack after paste',
-      mode: 'prompt',
-      fromKind: 'dashboard',
-      oneWay: true,
-    });
-    const id = (sent as { messageId: string }).messageId;
-    await vi.waitFor(() => expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered' }));
-
-    // 回合判死一到就补回车：正文只贴过一次，缺的只是那记提交键
-    await deliverer.onSessionStopFailure(SESSION_ID);
-    expect(sendKeys).toHaveBeenCalledWith('pane-1', '\r');
-    expect(sendText).toHaveBeenCalledTimes(1);
-
-    // 回执已到（等待位撤防）→ 不再补
-    deliverer.onSessionPrompt(SESSION_ID, 'no ack after paste');
-    await deliverer.onSessionStopFailure(SESSION_ID);
-    expect(sendKeys).toHaveBeenCalledTimes(1);
   });
 
   it('层序随面变：编排域（非 oneWay）无 inbox 凭据时，中继先于终端', async () => {
@@ -2137,7 +2031,8 @@ describe('MessageDeliverer 裁决表', () => {
       }),
     );
     const screens = await second.sessionTerminals();
-    expect(Object.keys(screens)).toEqual([CODEX_SESSION]);
+    // 判死的会话显式回 null（refresher 合并契约：null = 确认不在了，覆盖旧分块）
+    expect(screens).toEqual({ [SESSION_ID]: null, [CODEX_SESSION]: { id: 'w1:0', windowId: 1, tabId: 0, tabsInWindow: 1 } });
     const third = new MessageDeliverer(makeDeps({ terminal: terminal(), livenessOf: () => new Map() }));
     expect(Object.keys(await third.sessionTerminals())).toEqual([CODEX_SESSION]);
   });

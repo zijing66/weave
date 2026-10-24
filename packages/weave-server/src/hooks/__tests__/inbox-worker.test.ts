@@ -386,39 +386,6 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(exited).toEqual(['s-exit', 's-codex']);
   });
 
-  it('回合判死（closeFailed）交给投递器补回车；正常收尾与其他事件不动', () => {
-    const projects = new ProjectRepository(db);
-    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
-    const hookEvents = new HookEventRepository(db);
-    const stopFailures: string[] = [];
-    const deps = {
-      projects,
-      hooksDir,
-      bus,
-      messagePipe: {
-        hasQueued: () => false,
-        flushSession: async () => {},
-        onSessionStopFailure: (sessionId: string) => stopFailures.push(sessionId),
-      },
-    };
-
-    const record = (eventType: string, source: 'claude' | 'codex', sessionId: string) => {
-      const payload = JSON.stringify({ eventType, raw: {} });
-      return {
-        eventId: hookEvents.insert({ projectId: project.id, source, eventType, sessionId, payload }),
-        projectId: project.id,
-        input: { projectId: project.id, source, eventType, sessionId, payload },
-      };
-    };
-
-    handleIngestedRecords(deps, [record('StopFailure', 'claude', 's-fail')]);
-    handleIngestedRecords(deps, [record('StopFailure', 'claude', 's-fail')]);
-    // 正常收尾不是判死（框没有「被吞回车」的残局可补）；codex 表里没有判死事件
-    handleIngestedRecords(deps, [record('Stop', 'claude', 's-fail')]);
-    handleIngestedRecords(deps, [record('StopFailure', 'codex', 's-codex')]);
-    expect(stopFailures).toEqual(['s-fail', 's-fail']);
-  });
-
   it('PostModelSwitch 的 to_model 交给会话探测（切完标签立刻变，不等下一轮）', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

@@ -112,15 +112,19 @@ export async function sessionTerminals(
 ): Promise<Record<string, SessionTerminal | null>> {
   if (!terminal?.locateScreens || paneEnvs.size === 0) return {};
   const envs: Record<string, Record<string, string>> = {};
+  const out: Record<string, SessionTerminal | null> = {};
   const liveness = deps.livenessOf?.() ?? claudeLivenessById();
   for (const [sessionId, env] of paneEnvs) {
-    // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头
+    // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头。
+    // 必须显式回 null——refresher 的合并契约是「缺席 = 保留上次分块」，只摘不报
+    // 的话旧分块会永远留在快照里（手动关 pane 后会话仍挂在终端分组下的根源）。
     if (sessionJudgedDead(deps.sessions, sessionId, liveness)) {
       paneEnvs.delete(sessionId);
       persistPaneEnvs();
+      out[sessionId] = null;
       continue;
     }
     envs[sessionId] = env;
   }
-  return terminal.locateScreens(envs);
+  return { ...out, ...(await terminal.locateScreens(envs)) };
 }

@@ -18,6 +18,12 @@ export const ESC = '\x1b';
 /** 执行模式切换键 = 一记 Shift+Tab（固定死在服务端，不当参数收）。 */
 export const SHIFT_TAB = '\x1b[Z';
 
+/** 手动提交键 = 一记回车（提交宿主输入框里现成的内容；与层② 补打同一字节）。 */
+export const ENTER = '\r';
+
+/** 手动中断键 = 一记 Ctrl+C（宿主 TUI 的硬中断；wt 侧编成 VK_C + CTRL 按下）。 */
+export const CTRL_C = '\x03';
+
 /** 模型名形态：不含空白/控制字符、≤128 字符（贴宿主 `/model` 的 `\S*` 文法）。 */
 export const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;
 
