@@ -454,7 +454,8 @@ export function SessionMessages({
   const body = (
       <div
         ref={panelRef}
-        // 浮窗：桌面宽高跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽
+        // 浮窗：桌面宽高跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽。
+        // 缺省高走 h-[70%]（父容器 inset-0 蒙版有确定高），size.h 拖过后行内覆盖。
         style={
           !embedded && isDesktop && !fullscreen
             ? {
@@ -468,13 +469,16 @@ export function SessionMessages({
           'relative min-h-0 w-full flex-col overflow-hidden p-3',
           fullscreen
             ? // 全屏：自己铺满视口（不复用右栏/浮窗那套尺寸），z-55 在右栏之上、
-              // 菜单(60)/弹窗(60-70) 之下——开菜单或看大图不会被它挡住
-              'fixed inset-0 z-[55] flex h-[100dvh] w-screen rounded-none border-0 bg-neutral-900 shadow-none'
+              // 菜单(60)/弹窗(60-70) 之下——开菜单或看大图不会被它挡住。
+              // inset-0 拉伸即可，h/w 显式视口单位在根 zoom 下被二次放大（见 index.css #root 注）
+              'fixed inset-0 z-[55] flex rounded-none border-0 bg-neutral-900 shadow-none'
             : embedded
               ? // 嵌入右栏不再套卡片壳：右栏就是这扇对话，再描一圈边框只是多一道线
                 // display 只给一个：hidden 与 flex 同体并列是 Tailwind 源序赌局
                 cn('flex-1', minimized ? 'hidden' : 'flex')
-              : 'flex h-[70dvh] max-lg:h-[88dvh] rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac',
+              // 浮窗高度：桌面拖角记忆（size.h），没拖过走父容器（inset-0 蒙版）的
+              // 百分比——显式 dvh 在根 zoom 下被二次放大（见 index.css #root 注）
+              : 'flex h-[70%] max-lg:h-[88%] rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac',
         )}
         onClick={(e) => e.stopPropagation()}
         // 拖放面 = 整块面板（拖进任何一处都算，别让浏览器接管去打开那个文件）

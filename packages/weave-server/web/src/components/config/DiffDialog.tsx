@@ -47,7 +47,8 @@ export function DiffDialog({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-[860px] max-w-full max-h-[86dvh] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+      {/* max-h-[86%] 不用 86dvh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
+      <div className="relative w-[860px] max-w-full max-h-[86%] rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <span className="text-sm font-semibold text-neutral-200">{title}</span>
           <span className="text-11 text-neutral-500">

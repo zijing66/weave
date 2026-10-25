@@ -1163,10 +1163,11 @@ export function FilePicker({
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
       onClick={onClose}
     >
+      {/* h-[70%] 不用 70dvh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex h-[70dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac focus:outline-none max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
+        className="flex h-[70%] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac focus:outline-none max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头：面包屑 + 搜索 */}

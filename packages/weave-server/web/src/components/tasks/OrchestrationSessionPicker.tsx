@@ -75,8 +75,9 @@ export function OrchestrationSessionPicker({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
+      {/* max-h-[70%] 不用 70vh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
       <div
-        className="flex max-h-[70vh] w-full max-w-md flex-col rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac"
+        className="flex max-h-[70%] w-full max-w-md flex-col rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2 pb-2">

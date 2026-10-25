@@ -916,7 +916,8 @@ export function HooksPanel({
         createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60" />
-            <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac">
+            {/* max-h-[85%] 不用 85vh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
+            <div className="relative flex max-h-[85%] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac">
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge/[0.06] px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <h3 className="truncate text-sm font-semibold text-neutral-200">

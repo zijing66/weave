@@ -465,7 +465,8 @@ export function FileAssetTree({
       ) : (
         // Fixed max height: the tree scrolls inside itself instead of
         // stretching the page (chips + panel below stay reachable).
-        <div className="max-h-[45vh] overflow-y-auto rounded-lg border border-edge/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
+        // max-h-[45%] 不用 45vh：根 zoom 下视口单位被二次放大（见 index.css #root 注）
+        <div className="max-h-[45%] overflow-y-auto rounded-lg border border-edge/[0.06] bg-neutral-900/40 p-2 space-y-0.5">
           {tree.map((node) => (
             <AssetTreeNode
               key={node.type === 'dir' ? node.path : node.asset.relPath}

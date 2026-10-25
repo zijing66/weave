@@ -582,7 +582,7 @@ export function HarnessConfigPanel({
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             spellCheck={false}
-            className="w-full min-h-[40dvh] rounded-xl border border-edge/[0.08] bg-neutral-950/60 p-3 font-mono text-11 leading-5 text-neutral-200 focus:outline-none"
+            className="w-full min-h-[280px] rounded-xl border border-edge/[0.08] bg-neutral-950/60 p-3 font-mono text-11 leading-5 text-neutral-200 focus:outline-none"
           />
           <div className="flex items-center gap-2">
             <button

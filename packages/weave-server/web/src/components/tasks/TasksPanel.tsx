@@ -1177,11 +1177,12 @@ export function TasksPanel({
                     )}
                   </div>
                   {expanded && (
-                    <div className="h-[52dvh] min-h-[280px] lg:h-[calc(100dvh-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-edge/[0.06] p-1.5">
+                    <div className="h-[52%] min-h-[280px] lg:h-[calc(100%-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-edge/[0.06] p-1.5">
                       {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；
                           合体形态 = 该 prompt 的思维导图即事件链，逐级点开。
                           <lg 会话列表折到画布上方，330px 桌面预算失真 → 改按视口
-                          比例取高，展开后组头仍在首屏内；dvh 随移动端地址栏伸缩。 */}
+                          比例取高，展开后组头仍在首屏内。百分比不用 dvh：根 zoom
+                          下视口单位被二次放大（见 index.css #root 注）。 */}
                       <div className="relative h-full rounded-md border border-edge/[0.04] bg-neutral-950/40">
                         <LifecycleMindmap
                           key={`${selectedId}:${g.id}`}
@@ -1490,7 +1491,7 @@ export function TasksPanel({
           onClick={() => setChainDialog(false)}
         >
           <div
-            className="flex h-[86dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 p-3 shadow-mac"
+            className="flex h-[86%] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 p-3 shadow-mac"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-center justify-end">

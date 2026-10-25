@@ -573,7 +573,8 @@ export function ProjectList({
                   <X className="h-4 w-4" />
                 </button>
               </header>
-              <div className="p-4 max-h-[60vh] overflow-y-auto">
+              {/* max-h-[60%] 不用 60vh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
+              <div className="p-4 max-h-[60%] overflow-y-auto">
                 <div className="grid grid-cols-3 gap-3">
                   {archivedProjects.map((p) => (
                     <div

@@ -37,6 +37,15 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body,
+  /* 界面缩放（font-scale 的根 zoom）下视口单位会被二次放大（125% 时 h-dvh
+     实渲染 125% 视口高，页面下方溢出屏幕）——根容器一律走百分比链：钉住
+     这三层，App/LoginPage 的 h-full / min-h-full 才有界可依，且 zoom 校正后
+     坐标系里解析，不溢出。 */
+  #root {
+    height: 100%;
+  }
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;

@@ -79,7 +79,8 @@ export const toImageEntries = (entries: readonly ConvEntry[], planLabel: string)
     });
 
 /** 弹窗尺寸：宽度跟屏幕走（宽屏优先，窄屏交给 `w-full` 类），拖角可改并记住；
- *  高度缺省 0 = 不设行内高度，沿用 dvh 类（移动端地址栏伸缩才不失效）。 */
+ *  高度缺省 0 = 不设行内高度，沿用 h-[70%] 类（父容器 inset-0 蒙版有确定高，
+ *  显式 dvh 在根 zoom 下被二次放大——见 index.css #root 注）。 */
 export type ConvSize = { w: number; h: number };
 export const CONV_SIZE_KEY = 'weave:conv-size';
 /** 浮窗位置（相对居中位的位移）：拖标题栏挪过就记住，下次开在同一处。 */
@@ -94,7 +95,7 @@ export const clampConvSize = (w: number, h: number): ConvSize => ({
       : 0,
 });
 
-/** 默认宽 = 视口 62%，1100px 封顶（宽屏优先但不铺满整屏）。 */
+/** 默认宽 = 视口 62%、高 = 蒙版 70%（h-[70%] 类），1100px 封顶（宽屏优先但不铺满整屏）。 */
 export const defaultConvSize = (): ConvSize =>
   clampConvSize(Math.min(1100, Math.round(innerWidth * 0.62)), 0);
 

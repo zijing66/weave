@@ -211,8 +211,9 @@ export function QuestionAnswer({
         className={cn(
           'relative flex w-full flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 p-3 shadow-mac',
           // <lg 整屏单列（触屏没有拖窗口这回事）；桌面缺省宽 448 / 预览形态 880，高度可拖
-          // max-h-full：zoom 下 calc(dvh-rem) 基准错乱会爆高，父容器 inset-0+p-4 的百分比可靠
-          isDesktop ? 'max-h-full' : 'h-[90dvh]',
+          // max-h-full：zoom 下视口单位被二次放大（见 index.css #root 注），父容器
+          // inset-0+p-4 的百分比可靠
+          isDesktop ? 'max-h-full' : 'h-[90%]',
         )}
         onClick={(e) => e.stopPropagation()}
       >

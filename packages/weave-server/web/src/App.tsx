@@ -812,7 +812,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setDragPayload(null)}
     >
-      <div className="h-dvh p-0 lg:p-4 bg-neutral-950">
+      {/* h-full 不用 h-dvh：根 zoom 下视口单位被二次放大（125% 时整页溢出
+          25%），html/body/#root 已钉 100%（index.css），百分比链不溢出。 */}
+      <div className="h-full p-0 lg:p-4 bg-neutral-950">
         <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-edge/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
           <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-edge/[0.06] frosted">
             {/* <lg：左右栏收进滑出抽屉，顶栏放两个入口 */}
@@ -936,7 +938,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                               <p className="border-b border-edge/[0.06] px-3 py-2 text-11 text-neutral-500">
                                 {t('app.updateListTitle', { n: updateRows.length })}
                               </p>
-                              <ul className="max-h-[min(45dvh,320px)] overflow-y-auto py-1">
+                              <ul className="max-h-[320px] overflow-y-auto py-1">
                                 {updateRows.map((row) => (
                                   <li key={`${row.kind}:${row.name}`} className="flex items-baseline gap-2 px-3 py-1">
                                     <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-400">
