@@ -160,13 +160,15 @@ describe('POST /sessions/:id/open-terminal', () => {
     }
   });
 
-  it('codex 会话也能开：argv = `codex resume <id>`（id 就是 rollout 的 session_meta.session_id）', async () => {
+  it('codex 会话也能开：argv = `codex --no-daemon resume <id>`（launchArgs + openArgs；id 就是 rollout 的 session_meta.session_id）', async () => {
     const before = opener.runCalls.length;
     const res = await post('/sessions/sess-codex/open-terminal');
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { command: string }).command).toBe('codex resume sess-codex');
+    expect(((await res.json()) as { command: string }).command).toBe(
+      'codex --no-daemon resume sess-codex',
+    );
     expect(opener.runCalls).toHaveLength(before + 1);
-    expect(opener.runCalls.at(-1)!.argv).toEqual(['codex', 'resume', 'sess-codex']);
+    expect(opener.runCalls.at(-1)!.argv).toEqual(['codex', '--no-daemon', 'resume', 'sess-codex']);
   });
 
   it('转录已丢失 → 409（不 spawn 一个注定报 "No conversation found" 的进程）', async () => {

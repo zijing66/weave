@@ -190,10 +190,11 @@ export async function handleProjectRoutes(
       const stat = await fs.promises.stat(project.path);
       if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
       const settings = await readDaemonSettings();
-      await opener.runInTerminal(project.path, [spec.bin], settings.terminal);
+      const argv = [spec.bin, ...(spec.launchArgs ?? [])];
+      await opener.runInTerminal(project.path, argv, settings.terminal);
       // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
-      sendJson(res, 200, { ok: true, command: spec.bin, cwd: project.path });
+      sendJson(res, 200, { ok: true, command: argv.join(' '), cwd: project.path });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }

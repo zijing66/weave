@@ -1,13 +1,15 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AttachSpec, MessagingSurface, QueuedPromptSpec } from '../driver.js';
 
 /**
- * codex CLI 的可直接 spawn 入口。win32 的 `codex` 是 npm `.cmd` 垫片
- * （CreateProcess 不认），而 queue 的正文只能进 argv（CLI 没有 stdin 形）——
- * 经 shell 拼串会被 `%VAR%` 展开、`&` / 引号改写甚至注入。故 win32 走包里
- * 声明的 bin 入口：`node <pkg>/bin/codex.js`，argv 原样转交原生二进制。
- * 探不到（如 pnpm 全局布局）就按裸名 spawn，失败即回落下一层。
+ * codex CLI 的可直接 spawn 入口。win32 的 `codex` 可能是 `.cmd` 垫片
+ * （CreateProcess 不认，npm 垫片与 WindowsApps shim 都是），而 queue 的正文
+ * 只能进 argv（CLI 没有 stdin 形）——经 shell 拼串会被 `%VAR%` 展开、`&` /
+ * 引号改写甚至注入。故 win32 依次找：env 覆盖 → PATH 上的 `codex.exe`
+ * （原生 PE 可直接 spawn）→ `.cmd` 垫片（读首行引号里的 exe 真身，shim 我们
+ * 自己写的、npm 垫片也有同形首行）→ 包里声明的 bin 入口
+ * `node <pkg>/bin/codex.js`。都探不到就按裸名 spawn，失败即回落下一层。
  */
 function codexCommand(): { bin: string; prefix: string[] } {
   const override = process.env.WEAVE_CODEX_BIN;
@@ -15,6 +17,22 @@ function codexCommand(): { bin: string; prefix: string[] } {
   if (process.platform !== 'win32') return { bin: 'codex', prefix: [] };
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir) continue;
+    const exe = path.join(dir, 'codex.exe');
+    if (existsSync(exe)) return { bin: exe, prefix: [] };
+    const cmdShim = path.join(dir, 'codex.cmd');
+    if (existsSync(cmdShim)) {
+      try {
+        // 首个非空行可能是 `@echo off`；exe 行在其后（`"…codex.exe" %*`）
+        const line = readFileSync(cmdShim, 'utf8')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .find((l) => /^".+?\.exe"/.test(l));
+        const m = /^"(.+?\.exe)"/.exec(line ?? '');
+        if (m && existsSync(m[1]!)) return { bin: m[1]!, prefix: [] };
+      } catch {
+        /* 垫片读不了就试下一处 */
+      }
+    }
     const js = path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
     if (existsSync(js)) return { bin: process.execPath, prefix: [js] };
   }

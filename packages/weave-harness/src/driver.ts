@@ -299,6 +299,12 @@ export interface ResumeCommandSpec {
    */
   openArgs?(sessionId: string): string[];
   /**
+   * 交互式启动的固定旗标（置于 openArgs 之前，如 codex 的 `['--no-daemon']`）：
+   * 只加在「终端里起交互会话」这一侧（new-session / open-terminal），无头
+   * `args` 不带——exec 形态没有共享 daemon 通道，加了反而是未知旗标。
+   */
+  launchArgs?: string[];
+  /**
    * 编排边级提取的无头 fork 参数：从上游会话派生一个**一次性 fork 回合**提炼
    * 信息（`['--resume', sessionId, '--fork-session', '--no-session-persistence',
    * '--session-id', forkSessionId]` 形态），不动原会话、不留转录。缺省 = 该

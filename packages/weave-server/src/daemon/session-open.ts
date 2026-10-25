@@ -63,7 +63,7 @@ export async function openSessionTerminal(
     const info = await stat(project.path);
     if (!info.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
     const settings = await readDaemonSettings();
-    const argv = [spec.bin, ...spec.openArgs(sessionId)];
+    const argv = [spec.bin, ...(spec.launchArgs ?? []), ...spec.openArgs(sessionId)];
     if (target) {
       // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /
       // Terminal.app osascript / wt 进程表），其余明确拒绝而非静默忽略——调用方不列白名单。
