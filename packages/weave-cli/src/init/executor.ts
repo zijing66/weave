@@ -31,6 +31,7 @@ import { buildInitRegistry } from './wiring.js';
 import { type SurfacePipeline } from './types.js';
 import { createPromptPort, type PromptPort } from './prompt.js';
 import { commitInitOutputs, findGitRepoRoot } from './git-commit.js';
+import { ensureHarnessInstalled, prewriteTrust } from './provision.js';
 import { t } from '../i18n/index.js';
 
 /** Map preset → CLAUDE.md template */
@@ -58,10 +59,11 @@ async function selectHarnesses(options: InitOptions, prompt: PromptPort): Promis
 
 /**
  * init 编排器（图① InitOrchestrator，模板方法 executeInit）：
- * 0 prepare（平台 / 组件 / PromptPort）→ 1 selected → 2 逐 harness runSurface
- * （InitPipeline final 骨架 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config
- * → 10 嵌套 gitignore → 11 询问 commit init 生成物 → 12 汇总。表面步骤（1–7）
- * 的实现在 init/harnesses/ 下。`prompt` 可注入（测试用假实现驱动多选优先级）。
+ * 0 prepare（平台 / 组件 / PromptPort）→ 1 selected → 1.5/1.6 环境备置（安装
+ * 检测 + 信任预写）→ 2 逐 harness runSurface（InitPipeline final 骨架
+ * 1→2→3→4→5→6→6b→7）→ 8 指令文件 → 9 runtime config → 10 嵌套 gitignore
+ * → 11 询问 commit init 生成物 → 12 汇总。表面步骤（1–7）的实现在
+ * init/harnesses/ 下。`prompt` 可注入（测试用假实现驱动多选优先级）。
  */
 export async function executeInit(
   options: InitOptions,
@@ -89,6 +91,18 @@ export async function executeInit(
 
   // ---- Step 1: selected —— flag > 交互多选 > 默认 ['claude'] ----
   const selected = await selectHarnesses(options, prompt);
+
+  // ---- Step 1.5/1.6: 环境备置（安装检测 + 信任预写）——失败降级为 warn，不阻断 ----
+  try {
+    await ensureHarnessInstalled(selected, prompt);
+  } catch (err) {
+    logger.warn((err as Error).message);
+  }
+  try {
+    await prewriteTrust(selected, targetDir);
+  } catch (err) {
+    logger.warn((err as Error).message);
+  }
 
   // ---- Step 2: 逐 harness 跑 InitPipeline final 骨架 ----
   const ctx: InitContext = { ...options, platform };

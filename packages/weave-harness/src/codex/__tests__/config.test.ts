@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { CODEX_CONFIG } from '../config.js';
+import { parse } from 'smol-toml';
+import { CODEX_CONFIG, ensureTrustAccepted } from '../config.js';
 import { CodexTomlCorruptError } from '../toml.js';
 
 let home: string;
@@ -197,5 +198,58 @@ describe('CODEX_CONFIG parseRaw/serializeRaw', () => {
 
   it('非表顶层（数组/标量）parseRaw 拒绝', () => {
     expect(() => CODEX_CONFIG.parseRaw('[1, 2]')).toThrow();
+  });
+});
+
+describe('ensureTrustAccepted（信任预写）', () => {
+  // 文件级 beforeEach 把 CODEX_HOME 指到 home；ensureTrustAccepted 走 codexHome()
+  // 无参路径（CODEX_HOME 本身即 codex home），对齐 CODEX_CONFIG 的 home/.codex 约定
+  beforeEach(() => {
+    process.env.CODEX_HOME = path.join(home, '.codex');
+  });
+
+  // win32 下 codex 的 projects 键 = 全小写 + 反斜杠（0.164 实测）；测试里构造
+  // 期望键用同一归一，避免模板串里手写反斜杠
+  const norm = (dir: string): string =>
+    process.platform === 'win32' ? dir.toLowerCase().replaceAll('/', '\\') : dir;
+  const bs = String.fromCharCode(92);
+
+  it('空文件 → 新建 [projects.<归一键>] trust_level="trusted"', async () => {
+    await ensureTrustAccepted(project);
+    const text = await readFile(userFile(), 'utf-8');
+    const parsed = parse(text) as { projects: Record<string, { trust_level: string }> };
+    // 反斜杠路径作为单个键存活（写入器出 basic string 转义形，与 codex 自写的
+    // literal string 解析等价）
+    expect(parsed.projects[norm(project)]).toEqual({ trust_level: 'trusted' });
+    expect(text).toContain('[projects.');
+  });
+
+  it('已有 projects 节：沿用既有键形（异形键不另造一份）', async () => {
+    // codex 自己写过的键可能是混合大小写——weave 按等值（忽略大小写/分隔符）找到它
+    const mixed = process.platform === 'win32' ? `D:${bs}Mixed${bs}Case` : '/Mixed/Case';
+    await seedUser(`# user comment\n[projects.'${mixed}']\nother_key = 1\n`);
+    const target = process.platform === 'win32' ? `d:${bs}mixed${bs}case` : '/mixed/case';
+
+    await ensureTrustAccepted(target);
+
+    const text = await readFile(userFile(), 'utf-8');
+    const parsed = parse(text) as { projects: Record<string, Record<string, unknown>> };
+    expect(Object.keys(parsed.projects)).toEqual([mixed]);
+    expect(parsed.projects[mixed]).toEqual({ other_key: 1, trust_level: 'trusted' });
+    expect(text).toContain('# user comment');
+  });
+
+  it('已 trusted → no-op（文件字节不动）', async () => {
+    const key = norm(project);
+    await seedUser(`[projects.'${key}']\ntrust_level = "trusted"\n`);
+    const before = await readFile(userFile(), 'utf-8');
+    await ensureTrustAccepted(project);
+    expect(await readFile(userFile(), 'utf-8')).toBe(before);
+  });
+
+  it('坏 TOML → 抛 CodexTomlCorruptError 不写', async () => {
+    await seedUser('model = [unclosed\n');
+    await expect(ensureTrustAccepted(project)).rejects.toBeInstanceOf(CodexTomlCorruptError);
+    expect(await readFile(userFile(), 'utf-8')).toBe('model = [unclosed\n');
   });
 });

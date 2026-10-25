@@ -55,7 +55,7 @@ const VERSION_TTL_MS = 600_000;
 const versionCache = new Map<string, { at: number; value: Promise<string | null> }>();
 
 /** `<bin> --version` 的首个 semver；探不到 null（win32 上 npm shim 是 .cmd，须走 shell）。 */
-function probeBinVersion(bin: string): Promise<string | null> {
+export function probeBinVersion(bin: string): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     let out = '';
     const child =

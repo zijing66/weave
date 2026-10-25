@@ -12,7 +12,7 @@ import type {
 } from '../driver.js';
 import { CODEX_CONFIG_GROUPS, CODEX_CONFIG_KEYS } from './config-catalog.generated.js';
 import { codexHome } from './home.js';
-import { CodexTomlCorruptError } from './toml.js';
+import { CodexTomlCorruptError, setTomlValueInText } from './toml.js';
 
 type FileCtx = { projectPath: string | null; homedir: string };
 
@@ -110,6 +110,50 @@ async function modelsOf(input: {
     });
   }
   return { models, baseUrl: '', credential: 'none' };
+}
+
+/**
+ * 预写文件夹信任（init 时替用户答掉 codex 首开的「是否信任该文件夹」）：
+ * `~/.codex/config.toml` 的 `[projects.'<dir>'] trust_level = "trusted"`。
+ *
+ * 键形是 codex 自己的归一（本机 0.164 实测）：win32 = 全小写 + 反斜杠、
+ * literal string；posix = 原样。已有 `projects` 节时先按「忽略大小写与分隔符
+ * 等值」找既有键沿用其键形——codex 打开过的项目它自己已经写过一份，weave
+ * 再造一份异形键宿主不认。行级编辑保用户注释；损坏抛 `CodexTomlCorruptError`。
+ */
+export async function ensureTrustAccepted(projectPath: string): Promise<void> {
+  const target = path.join(codexHome(), 'config.toml');
+  let text = '';
+  try {
+    text = await fs.readFile(target, 'utf-8');
+  } catch {
+    /* 新文件 */
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parse(text) as Record<string, unknown>;
+  } catch (e) {
+    throw new CodexTomlCorruptError(
+      `${target} is not valid TOML — refusing to write: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const resolved = path.resolve(projectPath);
+  const projects = isPlainObject(parsed['projects']) ? parsed['projects'] : {};
+  const eq = (a: string, b: string) =>
+    process.platform === 'win32'
+      ? a.toLowerCase().replaceAll('/', '\\') === b.toLowerCase().replaceAll('/', '\\')
+      : a === b;
+  const existing = Object.keys(projects).find((k) => eq(k, resolved));
+  const dirKey = existing ?? codexProjectKey(resolved);
+  const next = setTomlValueInText(text, ['projects', dirKey, 'trust_level'], 'trusted');
+  if (next === text) return;
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, next, 'utf-8');
+}
+
+/** codex 归一的 projects 键（win32 = 小写反斜杠；posix = 原样）。 */
+function codexProjectKey(dir: string): string {
+  return process.platform === 'win32' ? dir.toLowerCase() : dir;
 }
 
 export const CODEX_CONFIG: ConfigSurface = {

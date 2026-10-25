@@ -61,7 +61,7 @@ export {
 export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from './mcp-gen.js';
 export { generateAutoMemoryHook } from './helpers-gen.js';
 export { CLAUDE_STATUSLINE } from './statusline/surface.js';
-export { CLAUDE_CONFIG } from './config.js';
+export { CLAUDE_CONFIG, ensureTrustAccepted as ensureClaudeTrustAccepted } from './config.js';
 export {
   generateStatuslineScript,
   type GenerateStatuslineOptions,

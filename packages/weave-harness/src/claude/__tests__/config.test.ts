@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { CONFIG_SHAPE_OVERRIDES } from '../config-shapes.js';
-import { CLAUDE_CONFIG } from '../config.js';
+import { CLAUDE_CONFIG, ensureTrustAccepted } from '../config.js';
 
 const tmpDirs: string[] = [];
 
@@ -200,5 +200,90 @@ describe('claude 配置面', () => {
     });
     expect(entries).toEqual([{ path: 'enabledPlugins', entry: 'weave-plugin-creator@weave' }]);
     expect(CLAUDE_CONFIG.managedKeys({ enabledPlugins: { 'figma@claude-plugins-official': true } })).toEqual([]);
+  });
+});
+
+describe('ensureTrustAccepted（信任预写）', () => {
+  let prevHome: string | undefined;
+  let prevUserProfile: string | undefined;
+
+  beforeEach(() => {
+    prevHome = process.env.HOME;
+    prevUserProfile = process.env.USERPROFILE;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevUserProfile;
+  });
+
+  /** os.homedir() 在 win32 认 USERPROFILE、posix 认 HOME——两边都指过去。 */
+  function pointHomeAt(dir: string): void {
+    process.env.HOME = dir;
+    process.env.USERPROFILE = dir;
+  }
+
+  const claudeJsonOf = (home: string): string => path.join(home, '.claude.json');
+
+  it('未信任 → 写入 projects[正斜杠原大小写].hasTrustDialogAccepted=true，其余键原样保留', async () => {
+    const home = tmpHome();
+    pointHomeAt(home);
+    fs.writeFileSync(
+      claudeJsonOf(home),
+      JSON.stringify({ model: 'opus', projects: { 'D:/Other/Proj': { allowedTools: ['Bash'] } } }),
+      'utf8',
+    );
+
+    const project = path.join(home, 'My Proj');
+    await ensureTrustAccepted(project);
+
+    const after = JSON.parse(fs.readFileSync(claudeJsonOf(home), 'utf8')) as {
+      model?: string;
+      projects: Record<string, Record<string, unknown>>;
+    };
+    expect(after.model).toBe('opus');
+    expect(after.projects['D:/Other/Proj']).toEqual({ allowedTools: ['Bash'] });
+    // 键形 = path.resolve 归一成正斜杠、保留原大小写（claude 2.1.296 实测）
+    const expectedKey = path.resolve(project).replace(/\\/g, '/');
+    expect(after.projects[expectedKey]).toEqual({ hasTrustDialogAccepted: true });
+  });
+
+  it('projects 缺失/非对象 → 新建；文件缺失 → 从零建', async () => {
+    const home = tmpHome();
+    pointHomeAt(home);
+    fs.writeFileSync(claudeJsonOf(home), '{"numProjects": 1}', 'utf8');
+    await ensureTrustAccepted(path.join(home, 'p1'));
+
+    const home2 = tmpHome();
+    pointHomeAt(home2);
+    await ensureTrustAccepted(path.join(home2, 'p2'));
+
+    const a = JSON.parse(fs.readFileSync(claudeJsonOf(home), 'utf8')) as Record<string, unknown>;
+    expect(a['numProjects']).toBe(1);
+    expect(Object.keys(a['projects'] as object)).toHaveLength(1);
+    const b = JSON.parse(fs.readFileSync(claudeJsonOf(home2), 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(b['projects'] as object)).toHaveLength(1);
+  });
+
+  it('已信任 → no-op（文件字节不动）', async () => {
+    const home = tmpHome();
+    pointHomeAt(home);
+    const project = path.join(home, 'already');
+    const key = path.resolve(project).replace(/\\/g, '/');
+    const seeded = JSON.stringify({ projects: { [key]: { hasTrustDialogAccepted: true } } });
+    fs.writeFileSync(claudeJsonOf(home), seeded, 'utf8');
+
+    await ensureTrustAccepted(project);
+    expect(fs.readFileSync(claudeJsonOf(home), 'utf8')).toBe(seeded);
+  });
+
+  it('坏 JSON → 抛错不写', async () => {
+    const home = tmpHome();
+    pointHomeAt(home);
+    fs.writeFileSync(claudeJsonOf(home), '{oops', 'utf8');
+    await expect(ensureTrustAccepted(path.join(home, 'p'))).rejects.toThrow(/不是合法 JSON/);
+    expect(fs.readFileSync(claudeJsonOf(home), 'utf8')).toBe('{oops');
   });
 });

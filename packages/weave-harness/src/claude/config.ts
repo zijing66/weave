@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { homedir as osHomedir } from 'node:os';
 import path from 'node:path';
 import type {
   ConfigCatalog,
@@ -153,6 +154,26 @@ function credentialOf(values: Record<string, unknown>, input: { apiKey?: string 
   if (apiKey) return { header: { 'x-api-key': apiKey }, credential: 'apiKey' };
   if (authToken) return { header: { authorization: `Bearer ${authToken}` }, credential: 'authToken' };
   return { header: {}, credential: 'none' };
+}
+
+/**
+ * 预写文件夹信任（init 时替用户答掉 claude 首开的「是否信任该文件夹」）：
+ * `~/.claude.json` 顶层 `projects` 里该目录的 `hasTrustDialogAccepted: true`。
+ *
+ * 键形是 claude 自己的归一（本机 2.1.296 实测）：正斜杠绝对路径、保留原大小写。
+ * 就着原对象改、只动这一个布尔，其余键（含其他项目条目）原位保留；已信任即
+ * no-op 不重写。原子写（tmp+rename）；文件损坏/超限抛错，由调用方捕获。
+ */
+export async function ensureTrustAccepted(projectPath: string): Promise<void> {
+  const file = pathOf('global', { projectPath: null, homedir: osHomedir() });
+  const raw = await readRawObject(file);
+  const key = path.resolve(projectPath).replace(/\\/g, '/');
+  const projects = isPlainObject(raw['projects']) ? raw['projects'] : {};
+  const entry = isPlainObject(projects[key]) ? projects[key] : {};
+  if (entry['hasTrustDialogAccepted'] === true) return;
+  projects[key] = { ...entry, hasTrustDialogAccepted: true };
+  raw['projects'] = projects;
+  await writeRawObject(file, raw);
 }
 
 export const CLAUDE_CONFIG: ConfigSurface = {

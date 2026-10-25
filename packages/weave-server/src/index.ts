@@ -56,6 +56,7 @@ export { resolveStaticDir } from './daemon/static.js';
 export { startDaemon } from './daemon/start.js';
 export { registerProject, unregisterProject } from './registry.js';
 export type { RegisterResult, UnregisterResult } from './registry.js';
+export { probeBinVersion } from './daemon/project-harnesses.js';
 
 // --- watch service (filesystem observation, in-memory cache only) ---
 export { classifyAsset, normalizeRelPath } from './watch/classifier.js';

@@ -20,7 +20,7 @@ export { CODEX_LOG_SOURCE, CodexLogSource } from './rollout.js';
 export { CODEX_CAPTURE } from './capture.js';
 export { codexInterruptMarkerAt } from './transcript.js';
 export { CODEX_PLUGINS, createCodexPluginSurface, CODEX_MARKETPLACE } from './plugins.js';
-export { CODEX_CONFIG } from './config.js';
+export { CODEX_CONFIG, ensureTrustAccepted as ensureCodexTrustAccepted } from './config.js';
 export * from './mcp.js';
 export * from './toml.js';
 export { CODEX_COMMANDS } from './commands.js';
