@@ -31,9 +31,21 @@ function storageDirOf(storage: ProjectStorage | null | undefined, mediaType: str
 /** 分块上限：一块 16MB，够大（大文件几百块）又不至于把内存顶爆。 */
 const UPLOAD_CHUNK_MAX_BYTES = 16 * 1024 * 1024;
 
-/** 上传件出参（不带落盘路径——路径是服务端的事，前端用 `/images/<id>` 取图）。 */
-function toUploadDto(row: UploadRow): { id: string; name: string; mediaType: string; size: number } {
-  return { id: row.id, name: row.name, mediaType: row.mediaType, size: row.size };
+/**
+ * 上传件出参。`path` = 落盘绝对路径：附件占位胶囊序列化要用它（原文里已含路径的
+ * 附件投递时不再重复追加），前端不拼路径、只透传。取图仍走 `/images/<id>`。
+ */
+function toUploadDto(
+  deps: WeaveServerDeps,
+  row: UploadRow,
+): { id: string; name: string; mediaType: string; size: number; path: string } {
+  return {
+    id: row.id,
+    name: row.name,
+    mediaType: row.mediaType,
+    size: row.size,
+    path: deps.uploads!.filePath(row.id, row.mediaType, row.name, row.dir ?? deps.uploads!.defaultDir),
+  };
 }
 
 /** 项目上传件落哪：项目不存在/没配 = null（全局默认）；按媒体类型分 images/files 档。 */
@@ -96,7 +108,7 @@ export async function handleUploadRoutes(
     }
     const row = await deps.uploads.adoptFromFile(info);
     await uploadSessions.abort(finishMatch[1]!);
-    sendJson(res, 201, { upload: toUploadDto(row) });
+    sendJson(res, 201, { upload: toUploadDto(deps, row) });
     return true;
   }
 
@@ -175,7 +187,7 @@ export async function handleUploadRoutes(
       bytes,
       dir: body.projectId ? projectUploadDir(deps, body.projectId, body.mediaType) : null,
     });
-    sendJson(res, 201, { upload: toUploadDto(row) });
+    sendJson(res, 201, { upload: toUploadDto(deps, row) });
     return true;
   }
 
@@ -188,7 +200,7 @@ export async function handleUploadRoutes(
     }
     const rows = deps.uploads.uploadsBySession(decodeURIComponent(sessionUploadsMatch[1]!));
     sendJson(res, 200, {
-      uploads: (rows ?? []).map((r) => ({ ...toUploadDto(r), createdAt: r.createdAt })),
+      uploads: (rows ?? []).map((r) => ({ ...toUploadDto(deps, r), createdAt: r.createdAt })),
       totalBytes: (rows ?? []).reduce((sum, r) => sum + r.size, 0),
     });
     return true;

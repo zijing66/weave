@@ -62,7 +62,11 @@ export const CODEX_QUEUED_PROMPT: QueuedPromptSpec = {
 export const CODEX_ATTACH: AttachSpec = {
   kinds: ['file'],
   composePrompt(text, files) {
-    const paths = files.map((f) => f.path).join('\n');
+    // 原文里已含某附件路径（web 的占位胶囊序列化进来的）＝用户已亲手摆了位置，
+    // 不再末尾追加——删掉胶囊路径就从原文消失，追加自动恢复（自愈）。
+    const rest = files.filter((f) => !text.includes(f.path));
+    if (rest.length === 0) return text;
+    const paths = rest.map((f) => f.path).join('\n');
     return text ? `${text}\n\n${paths}` : paths;
   },
 };

@@ -37,6 +37,27 @@ describe('CLAUDE_ATTACH.composePrompt', () => {
     ).toBe('读一下\n\nD:/up/notes.md');
     expect(CLAUDE_ATTACH.kinds).toEqual(['image', 'file']);
   });
+
+  it('原文已含某附件路径（占位胶囊原地展开）＝不再重复追加', () => {
+    expect(
+      CLAUDE_ATTACH.composePrompt('先看 D:/up/aa.png 这张', [img('D:/up/aa.png'), img('D:/up/bb.png')]),
+    ).toBe('先看 D:/up/aa.png 这张\n\nD:/up/bb.png');
+  });
+
+  it('全部附件都已内联 = 原样返回原文（不追加空尾巴）', () => {
+    expect(
+      CLAUDE_ATTACH.composePrompt('两张图 D:/up/aa.png 和 D:/up/bb.png', [
+        img('D:/up/aa.png'),
+        img('D:/up/bb.png'),
+      ]),
+    ).toBe('两张图 D:/up/aa.png 和 D:/up/bb.png');
+  });
+
+  it('删掉胶囊（路径从原文消失）＝追加自动恢复', () => {
+    expect(CLAUDE_ATTACH.composePrompt('先看这张', [img('D:/up/aa.png')])).toBe(
+      '先看这张\n\nD:/up/aa.png',
+    );
+  });
 });
 
 let dir: string;
