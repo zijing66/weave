@@ -359,10 +359,12 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
     const hookEvents = new HookEventRepository(db);
     const exited: string[] = [];
+    const kicks: number[] = [];
     const deps = {
       projects,
       hooksDir,
       bus,
+      terminalTopologyKick: () => kicks.push(1),
       messagePipe: {
         hasQueued: () => false,
         flushSession: async () => {},
@@ -384,6 +386,8 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     // codex 的退出事件也是 SessionEnd（e33f0f2 起 lifecycle 表有 sessionExit）
     handleIngestedRecords(deps, [record('SessionEnd', 'codex', 's-codex')]);
     expect(exited).toEqual(['s-exit', 's-codex']);
+    // 退出即对账终端拓扑（撤销的定位趁热报出去），Stop 这类非退出事件不催
+    expect(kicks).toEqual([1, 1]);
   });
 
   it('PostModelSwitch 的 to_model 交给会话探测（切完标签立刻变，不等下一轮）', () => {

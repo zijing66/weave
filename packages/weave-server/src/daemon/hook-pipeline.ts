@@ -50,6 +50,8 @@ export interface HookPipelineDeps {
   };
   /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
+  /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）。 */
+  terminalTopologyKick?: () => void;
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -174,6 +176,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         dashboardRate: deps.dashboardRate,
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
+        terminalTopologyKick: deps.terminalTopologyKick,
       },
       records,
     );

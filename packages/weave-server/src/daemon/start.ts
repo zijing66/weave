@@ -474,6 +474,7 @@ export function startDaemon(): void {
     sessionProbe,
     uploads,
     dashboardRate,
+    terminalTopologyKick: () => void terminalRefresher.refreshNow(),
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();

@@ -426,6 +426,8 @@ export interface IngestedHandlerDeps {
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
+  /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）；缺省跳过。 */
+  terminalTopologyKick?: () => void;
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
@@ -540,6 +542,9 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         : null;
       if (exitEvent !== null && record.input.eventType === exitEvent) {
         deps.messagePipe?.sessionExited?.(record.input.sessionId);
+        // 退出即对账终端拓扑：撤销的定位要趁热报出去（显式 null 摘出分组），
+        // 等 30s 周期的话会话行会一直挂在已关的终端块下。
+        deps.terminalTopologyKick?.();
       }
       if (deps.messagePipe?.hasQueued(record.input.sessionId)) {
         void deps.messagePipe.flushSession(record.input.sessionId);

@@ -109,10 +109,19 @@ export async function sessionTerminals(
   } | null,
   paneEnvs: Map<string, Record<string, string>>,
   persistPaneEnvs: () => void,
+  /** 定位已被撤销的会话（会话退出）：显式回 null 摘出分组，报完即焚。 */
+  revoked?: Set<string>,
 ): Promise<Record<string, SessionTerminal | null>> {
-  if (!terminal?.locateScreens || paneEnvs.size === 0) return {};
-  const envs: Record<string, Record<string, string>> = {};
   const out: Record<string, SessionTerminal | null> = {};
+  // 撤销了定位的会话不在 paneEnvs 里、这轮扫描也探不到它，而合并契约是
+  // 「缺席 = 保留上次分块」——不显式回 null，旧分块会永远留在快照里（会话
+  // 退出后仍挂在终端分组下的根源）。报完即焚：await 期间新撤销的下一轮再报。
+  if (revoked && revoked.size > 0) {
+    for (const sessionId of revoked) out[sessionId] = null;
+    revoked.clear();
+  }
+  if (!terminal?.locateScreens || paneEnvs.size === 0) return out;
+  const envs: Record<string, Record<string, string>> = {};
   const liveness = deps.livenessOf?.() ?? claudeLivenessById();
   for (const [sessionId, env] of paneEnvs) {
     // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头。

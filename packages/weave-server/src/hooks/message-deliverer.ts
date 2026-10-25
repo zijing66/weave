@@ -373,6 +373,12 @@ export class MessageDeliverer {
    * 长时间没动静的会话根本等不到，于是从终端分组里掉出去。
    */
   private readonly paneEnvs: Map<string, Record<string, string>>;
+  /**
+   * 定位已撤销的会话（会话退出）：pane env 已删、这轮扫描也探不到它，而拓扑
+   * 合并契约是「缺席 = 保留上次分块」——不显式报 null，旧分块会永远留在快照里。
+   * sessionTerminals() 报完即焚；会话再发事件（resume）会重新 notePaneEnv。
+   */
+  private readonly revokedPaneEnvs = new Set<string>();
   /** 上次落盘的 pane env（hook 每次事件都上报，值没变就不重写盘）。 */
   private persistedPaneEnvs: string;
   /** 已排自续冲洗的会话（防重复排拍）。 */
@@ -630,6 +636,7 @@ export class MessageDeliverer {
    */
   notePaneEnv(sessionId: string, env: Record<string, string>): void {
     this.paneEnvs.set(sessionId, env);
+    this.revokedPaneEnvs.delete(sessionId); // 会话又活了（resume）：撤销作废
     this.persistPaneEnvs();
   }
 
@@ -659,6 +666,9 @@ export class MessageDeliverer {
   sessionExited(sessionId: string): void {
     this.inboxSockets.forget(sessionId);
     this.paneEnvs.delete(sessionId);
+    // 定位撤销要显式报给拓扑快照（sessionTerminals 回 null 摘出终端分组）：
+    // 只删 env 的话，快照里上次扫到的分块按「缺席 = 保留」契约永远留着。
+    this.revokedPaneEnvs.add(sessionId);
     this.persistPaneEnvs();
     this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
     const session = this.deps.sessions.getBySessionId(sessionId);
@@ -677,7 +687,13 @@ export class MessageDeliverer {
    * 会话的 env：那是上一次见到它时的快照，它不会再来报一次，留着只会让死会话常占块头。
    */
   async sessionTerminals(): Promise<Record<string, SessionTerminal | null>> {
-    return sessionTerminalsIn(this.deps, this.terminalChannel(), this.paneEnvs, () => this.persistPaneEnvs());
+    return sessionTerminalsIn(
+      this.deps,
+      this.terminalChannel(),
+      this.paneEnvs,
+      () => this.persistPaneEnvs(),
+      this.revokedPaneEnvs,
+    );
   }
 
   /**
@@ -1341,6 +1357,7 @@ export class MessageDeliverer {
     this.gate.release(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
+    this.revokedPaneEnvs.add(sessionId); // 同退出：显式报 null 摘出终端分组
     this.persistPaneEnvs();
     return removed;
   }

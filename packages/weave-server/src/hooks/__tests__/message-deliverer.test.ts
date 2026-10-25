@@ -2012,6 +2012,9 @@ describe('MessageDeliverer 裁决表', () => {
     deliverer.sessionExited(SESSION_ID);
     // 旁路事实随进程作废：凭据出盘（旧 socket 已死，留着只会白试）、定位清
     expect(readFileSync(targetsFile, 'utf8')).not.toContain(SESSION_ID);
+    // 撤销的定位显式报 null（拓扑合并契约「缺席 = 保留」，不报旧分块永远留着），
+    // 报完即焚：再取一次就是空表
+    expect(await deliverer.sessionTerminals()).toEqual({ [SESSION_ID]: null });
     expect(await deliverer.sessionTerminals()).toEqual({});
     // 队列行此刻已成死信 → 一并按 offline 落定并清队
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
