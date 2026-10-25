@@ -7,6 +7,7 @@ import { CODEX_EVENT_SOURCE } from './event-source.js';
 import { CODEX_MESSAGING } from './messaging.js';
 import { CODEX_PLUGINS } from './plugins.js';
 import { CODEX_PLUGIN_STATE } from './plugin-state.js';
+import { CODEX_PROVISION } from './provision.js';
 import { CODEX_RESUME } from './resume.js';
 import { CODEX_LOG_SOURCE } from './rollout.js';
 import { CODEX_COMMANDS } from './commands.js';
@@ -21,6 +22,7 @@ export { CODEX_CAPTURE } from './capture.js';
 export { codexInterruptMarkerAt } from './transcript.js';
 export { CODEX_PLUGINS, createCodexPluginSurface, CODEX_MARKETPLACE } from './plugins.js';
 export { CODEX_CONFIG, ensureTrustAccepted as ensureCodexTrustAccepted } from './config.js';
+export { CODEX_PROVISION, codexProvisionCheck } from './provision.js';
 export * from './mcp.js';
 export * from './toml.js';
 export { CODEX_COMMANDS } from './commands.js';
@@ -32,7 +34,8 @@ export { CODEX_COMMANDS } from './commands.js';
  * `<CODEX_HOME>/hooks.json`，见 `capture.ts`）、logs 降为兜底（hooks 未被信任
  * 时仍能看到存量会话）、**plugins 补安装/市场面**（`codex plugin add` /
  * `marketplace`，见 `plugins.ts`）、**config 补配置面**（config.toml 词表 +
- * TOML 读写，见 `config.ts`）——init 槽不在此（由 cli init/wiring 携带）。
+ * TOML 读写，见 `config.ts`）、**provision 补安装形态检查**（桌面端/CLI 双面孔
+ * 的版本漂移警告，见 `provision.ts`）——init 槽不在此（由 cli init/wiring 携带）。
  */
 export const CODEX_DRIVER: HarnessDriver = {
   id: 'codex',
@@ -49,6 +52,7 @@ export const CODEX_DRIVER: HarnessDriver = {
     'logs',
     'config',
     'commands',
+    'provision',
   ],
   assets: CODEX_ASSETS,
   detect: CODEX_DETECTOR,
@@ -61,4 +65,5 @@ export const CODEX_DRIVER: HarnessDriver = {
   logs: CODEX_LOG_SOURCE,
   config: CODEX_CONFIG,
   commands: CODEX_COMMANDS,
+  provision: CODEX_PROVISION,
 };

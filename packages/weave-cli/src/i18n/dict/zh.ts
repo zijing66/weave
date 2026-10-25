@@ -224,6 +224,9 @@ export const zh = {
   'init.install.npmMissing': '  未找到 npm，无法自动安装。请手动执行：{command}',
   'init.trust.prewritten': '  已预写 {harness} 的文件夹信任（首次打开不再询问）',
   'init.trust.failed': '  预写 {harness} 信任状态失败（不影响 init）：{error}',
+  // --- init 安装形态冲突检查（provision 槽）---
+  'init.provision.conflict': '  ⚠ {harness} 安装形态冲突：{warning}\n    官方修法：{hint}',
+  'init.provision.checkFailed': '  {harness} 安装形态检查失败（不影响 init）：{error}',
   // --- CLAUDE.md 托管块（按 locale 生成；仅项目相关约定，产品内部机制不写进项目文件）---
   'claudemd.rules': '## 行为准则\n\n- 遵循本项目既有的代码约定与模式\n- 优先改既有文件，不要新建\n- 不为任务之外的东西加功能、做重构或引入抽象\n- 三行相似代码好过一处过早抽象\n- 除非「为什么」不明显，否则不写注释\n- 代码里绝不写多段解释\n- 不为不可能发生的状态加错误处理\n\n',
   'claudemd.files': '## 文件组织\n\n- 源码：`src/`\n- 测试：与源文件同目录的 `*.test.ts` 或 `__tests__/` 目录\n- 配置文件放项目根目录\n- 沿用既有目录结构——不要新造顶层目录\n\n',

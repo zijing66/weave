@@ -12,8 +12,9 @@ import { t } from '../i18n/index.js';
 
 /**
  * init 的环境备置步骤（executor Step 1 之后）：安装检测（未装经一次确认代跑
- * 官方安装命令）与文件夹信任预写（替用户答掉宿主首开的「是否信任该文件夹」）。
- * 两步都不阻断 init——失败降级为 warn，文件面照常生成。
+ * 官方安装命令）、多形态冲突检查（provision 槽：codex 桌面端/CLI 版本漂移）与
+ * 文件夹信任预写（替用户答掉宿主首开的「是否信任该文件夹」）。各步都不阻断
+ * init——失败降级为 warn，文件面照常生成。
  */
 
 /** 探测/安装动作的注入口（测试桩；缺省真跑子进程）。 */
@@ -38,6 +39,10 @@ const defaultIo: ProvisionIo = {
  * 不自动升）；未装经 `prompt.confirm` 一次确认后代跑安装命令并复验。非交互
  * （confirm 静默 true 的语义不适用于安装这种重操作）——`canPrompt` 为假时
  * 只提示命令、不提问也不安装。
+ *
+ * 已装的再过一遍 provision 槽（多形态冲突检查）：codex 桌面端与 CLI 共享
+ * `~/.codex`，daemon 版本漂移会让旧一方用旧快照回写 config.toml——冲突与
+ * 官方修法命令如实提示，weave 不代跑（会重启 daemon、中断在跑的任务）。
  */
 export async function ensureHarnessInstalled(
   selected: readonly Harness[],
@@ -57,6 +62,7 @@ export async function ensureHarnessInstalled(
       } else {
         logger.dim(t('init.install.installed', { harness: h, version }));
       }
+      await warnProvisionConflicts(h, spec.bin);
       continue;
     }
     logger.info(t('init.install.notFound', { harness: h }));
@@ -83,6 +89,21 @@ export async function ensureHarnessInstalled(
     const after = await io.versionOf(spec.bin);
     if (after !== null) logger.success(t('init.install.done', { harness: h, version: after }));
     else logger.warn(t('init.install.verifyFailed', { harness: h, command }));
+  }
+}
+
+/** provision 槽的冲突提示（槽缺席 = 该 harness 单形态无冲突；检查失败只 warn 不阻断）。 */
+async function warnProvisionConflicts(h: Harness, bin: string): Promise<void> {
+  const provision = HARNESS_DRIVERS[h].provision;
+  if (!provision) return;
+  try {
+    const check = await provision.check(bin);
+    for (let i = 0; i < check.warnings.length; i++) {
+      const hint = check.hints[i];
+      logger.warn(t('init.provision.conflict', { harness: h, warning: check.warnings[i], hint: hint ?? '' }));
+    }
+  } catch (err) {
+    logger.warn(t('init.provision.checkFailed', { harness: h, error: (err as Error).message }));
   }
 }
 

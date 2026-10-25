@@ -5,6 +5,7 @@ import path from 'node:path';
 import { logger } from '@weavecode/core';
 import { ensureHarnessInstalled, prewriteTrust, type ProvisionIo } from '../init/provision';
 import type { PromptPort } from '../init/prompt';
+import { CODEX_DRIVER } from '@weavecode/harness';
 
 let tmpDir: string;
 
@@ -148,6 +149,67 @@ describe('ensureHarnessInstalled（安装检测 + 一次确认代装）', () => 
       await expect(ensureHarnessInstalled(['claude'], port, io)).resolves.toBeUndefined();
     });
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('provision 槽消费（多形态冲突检查）', () => {
+  it('codex 已装 + provision.check 报冲突 → warn 带警告原文与修法命令', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const dim = vi.spyOn(logger, 'dim').mockImplementation(() => undefined);
+    const { port, confirm } = fakePrompt(true);
+    const { io } = fakeIo({ codex: '0.164.0' });
+    // 桩掉 CODEX_DRIVER 的 provision.check（vi.spyOn 对 frozen 对象的字段方法可行）
+    const checkSpy = vi.fn(async () => ({
+      desktopApp: true,
+      daemonPackage: true,
+      warnings: ['codex shared daemon (0.163.0) differs from CLI (0.164.0)'],
+      hints: ['codex app-server daemon update --from-cli --yes'],
+    }));
+    const original = CODEX_DRIVER.provision;
+    CODEX_DRIVER.provision = { harness: 'codex', check: checkSpy };
+    try {
+      await ensureHarnessInstalled(['codex'], port, io);
+    } finally {
+      CODEX_DRIVER.provision = original;
+    }
+    expect(checkSpy).toHaveBeenCalledWith('codex');
+    const conflictCall = warn.mock.calls.find((c) => String(c[0]).includes('0.163.0'));
+    expect(conflictCall).toBeTruthy();
+    expect(String(conflictCall?.[0])).toContain('codex app-server daemon update --from-cli --yes');
+    expect(dim).toHaveBeenCalledWith(expect.stringContaining('0.164.0'));
+  });
+
+  it('claude 无 provision 槽 → 不做冲突检查（单形态无冲突）', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const dim = vi.spyOn(logger, 'dim').mockImplementation(() => undefined);
+    const { port } = fakePrompt(true);
+    const { io } = fakeIo({ claude: '2.1.296' });
+    await ensureHarnessInstalled(['claude'], port, io);
+    // 只有「已安装」的 dim,没有冲突 warn
+    expect(dim).toHaveBeenCalledWith(expect.stringContaining('claude'));
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('provision.check 抛错 → warn 检查失败,不阻断安装检测', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const dim = vi.spyOn(logger, 'dim').mockImplementation(() => undefined);
+    const { port } = fakePrompt(true);
+    const { io } = fakeIo({ codex: '0.164.0' });
+    const original = CODEX_DRIVER.provision;
+    CODEX_DRIVER.provision = {
+      harness: 'codex',
+      check: async () => {
+        throw new Error('spawn failed');
+      },
+    };
+    try {
+      await expect(ensureHarnessInstalled(['codex'], port, io)).resolves.toBeUndefined();
+    } finally {
+      CODEX_DRIVER.provision = original;
+    }
+    expect(dim).toHaveBeenCalled();
+    const failCall = warn.mock.calls.find((c) => String(c[0]).includes('spawn failed'));
+    expect(failCall).toBeTruthy();
   });
 });
 

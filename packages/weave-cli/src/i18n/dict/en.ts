@@ -241,6 +241,9 @@ export const en: Record<keyof typeof zh, string> = {
   'init.install.npmMissing': '  npm not found — cannot auto-install. Run manually: {command}',
   'init.trust.prewritten': '  Prewrote {harness} folder trust (first open won\'t ask)',
   'init.trust.failed': '  Failed to prewrite {harness} trust state (init continues): {error}',
+  // --- init install-shape conflict check (provision slot) ---
+  'init.provision.conflict': '  ⚠ {harness} install-shape conflict: {warning}\n    Official fix: {hint}',
+  'init.provision.checkFailed': '  {harness} install-shape check failed (init continues): {error}',
   // --- CLAUDE.md managed block (generated per locale) ---
   'claudemd.rules': '## Behavioral Rules\n\n- Follow existing code conventions and patterns in this project\n- Prefer editing existing files over creating new ones\n- Don\'t add features, refactor, or introduce abstractions beyond the task\n- Three similar lines is better than a premature abstraction\n- Write no comments unless the WHY is non-obvious\n- Never write multi-paragraph explanations in code\n- Don\'t add error handling for states that can\'t happen\n\n',
   'claudemd.files': '## File Organization\n\n- Source code: `src/`\n- Tests: co-located `*.test.ts` or `__tests__/` directories\n- Config files at project root\n- Use existing directory structure — don\'t invent new top-level folders\n\n',

@@ -25,7 +25,8 @@ export type HarnessCapability =
   | 'config'
   | 'edits'
   | 'images'
-  | 'commands';
+  | 'commands'
+  | 'provision';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -1010,6 +1011,27 @@ export interface CommandsSurface {
   executions(transcriptPath: string | null): Promise<CommandExecution[] | null>;
 }
 
+/**
+ * 安装形态检查面（init 环境备置消费）：答「这台机器上该 harness 的多副面孔是否
+ * 互相打架」。有桌面端 + CLI 双形态的 harness（codex）在此声明冲突判据与修法；
+ * 单形态 harness（claude）不补槽——没有冲突可言，调用方按槽缺席跳过。
+ */
+export interface ProvisionCheck {
+  /** 桌面端（GUI app）是否在本机。 */
+  desktopApp: boolean;
+  /** 共享后台（daemon 包）是否在本机。 */
+  daemonPackage: boolean;
+  /** 检出的冲突（英文原文，i18n 由调用方包一层）。 */
+  warnings: readonly string[];
+  /** 每条冲突对应的官方修法命令。 */
+  hints: readonly string[];
+}
+
+export interface ProvisionSurface {
+  readonly harness: Harness;
+  check(bin: string): Promise<ProvisionCheck>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -1031,6 +1053,7 @@ export interface HarnessDriver {
   edits?: EditsSurface;
   images?: ImagesSurface;
   commands?: CommandsSurface;
+  provision?: ProvisionSurface;
 }
 
 /**
