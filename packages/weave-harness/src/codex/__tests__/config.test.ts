@@ -137,6 +137,32 @@ describe('CODEX_CONFIG models', () => {
     expect(r.models[0]!.name).toBe('GPT-5.2');
   });
 
+  it('相对路径按 CODEX_HOME 解析（对齐 codex-rs AbsolutePathBufGuard）', async () => {
+    await mkdir(path.join(home, '.codex'), { recursive: true });
+    await writeFile(
+      path.join(home, '.codex', 'cc-switch-model-catalog.json'),
+      JSON.stringify({ models: [{ slug: 'rel-model' }] }),
+    );
+    const r = await CODEX_CONFIG.models({
+      values: { model_catalog_json: 'cc-switch-model-catalog.json' },
+      homedir: home,
+    });
+    expect(r.models.map((m) => m.id)).toEqual(['rel-model']);
+  });
+
+  it('~ 前缀展开到用户主目录', async () => {
+    await mkdir(path.join(home, '.codex'), { recursive: true });
+    await writeFile(
+      path.join(home, '.codex', 'tilde-catalog.json'),
+      JSON.stringify({ models: [{ slug: 'tilde-model' }] }),
+    );
+    const r = await CODEX_CONFIG.models({
+      values: { model_catalog_json: '~/.codex/tilde-catalog.json' },
+      homedir: home,
+    });
+    expect(r.models.map((m) => m.id)).toEqual(['tilde-model']);
+  });
+
   it('文件缺失/坏 JSON → 明确报错', async () => {
     await expect(
       CODEX_CONFIG.models({ values: { model_catalog_json: path.join(home, 'nope.json') } }),

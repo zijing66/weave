@@ -885,10 +885,12 @@ export interface ConfigSurface {
   managedEntries(values: Record<string, unknown>): readonly ConfigManagedEntry[];
   /**
    * 模型列表（HTTP 调宿主自己的 API）。`baseUrl` / 凭据缺省时由实现从配置里取；
-   * 传输在实现侧，server 只传语义参数。
+   * 传输在实现侧，server 只传语义参数。`homedir` 供实现解析配置里的相对路径
+   * （codex 的 `model_catalog_json` 相对 CODEX_HOME）。
    */
   models(input: {
     values: Record<string, unknown>;
+    homedir?: string;
     baseUrl?: string | null;
     apiKey?: string | null;
     authToken?: string | null;

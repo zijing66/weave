@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { homedir as osHomedir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
 import type {
@@ -59,6 +60,18 @@ function managedKeysOf(values: Record<string, unknown>): readonly string[] {
 }
 
 /**
+ * `model_catalog_json` 的路径解析对齐 codex-rs（AbsolutePathBufGuard）：
+ * 相对路径按 CODEX_HOME 解析、`~` 前缀展开到用户主目录，绝对路径原样。
+ */
+function resolveCatalogPath(raw: string, home: string): string {
+  let p = raw.trim();
+  if (p === '~') return home;
+  if (p.startsWith('~/') || p.startsWith('~\\')) p = path.join(home, p.slice(2));
+  if (path.isAbsolute(p)) return p;
+  return path.join(codexHome(home), p);
+}
+
+/**
  * 模型列表：codex 没有可匿名调的 HTTP 模型接口——`model_catalog_json` 指向的
  * 本地 JSON（`{models:[{slug,display_name,…}]}`，codex-rs ModelsResponse）是
  * 自定义 provider 场景下唯一可靠的词表源；没配就诚实回空（宿主自己有内置
@@ -66,22 +79,24 @@ function managedKeysOf(values: Record<string, unknown>): readonly string[] {
  */
 async function modelsOf(input: {
   values: Record<string, unknown>;
+  homedir?: string;
 }): Promise<{ models: ConfigModelOption[]; baseUrl: string; credential: string }> {
   const catalogPath = input.values['model_catalog_json'];
   if (typeof catalogPath !== 'string' || !catalogPath.trim()) {
     return { models: [], baseUrl: '', credential: 'none' };
   }
+  const target = resolveCatalogPath(catalogPath, input.homedir ?? osHomedir());
   let raw: string;
   try {
-    raw = await fs.readFile(catalogPath, 'utf-8');
+    raw = await fs.readFile(target, 'utf-8');
   } catch {
-    throw new Error(`model_catalog_json 指向的文件读不到：${catalogPath}`);
+    throw new Error(`model_catalog_json 指向的文件读不到：${target}`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`model_catalog_json 不是合法 JSON：${catalogPath}`);
+    throw new Error(`model_catalog_json 不是合法 JSON：${target}`);
   }
   const modelsList = isPlainObject(parsed) ? parsed['models'] : null;
   if (!Array.isArray(modelsList)) throw new Error('model catalog 缺 models 数组');

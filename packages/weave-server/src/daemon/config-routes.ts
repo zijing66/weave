@@ -434,6 +434,7 @@ export async function handleConfigRoutes(
       const values = await surface.read(file, ctx);
       const result = await surface.models({
         values,
+        homedir: ctx.homedir,
         baseUrl: typeof body['baseUrl'] === 'string' ? body['baseUrl'] : null,
         apiKey: typeof body['apiKey'] === 'string' ? body['apiKey'] : null,
         authToken: typeof body['authToken'] === 'string' ? body['authToken'] : null,

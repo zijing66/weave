@@ -4,6 +4,8 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-10-25
 
+- **codex `model_catalog_json` 相对路径解析（用户报「刷新模型时报错：拉取失败：model_catalog_json 指向的文件读不到：cc-switch-model-catalog.json」，问「是不是 toml 配置加载机制没有定位完整」）**：不是——`read()` 正确读出了键值，缺口在 `modelsOf` 拿原始字符串直接 `fs.readFile`，相对路径按 **daemon 进程 CWD** 解析；而 codex-rs 宿主的语义是 `deserialize_config_toml_with_base(merged_toml, codex_home)`（core/config/mod.rs:2169）→ `AbsolutePathBufGuard` → **相对路径一律按 CODEX_HOME 解析、`~` 前缀展开到用户主目录**（utils/absolute-path/src/lib.rs 的 `resolve_path_against_base`），与键出自哪一层无关。cc-switch 写的就是裸文件名（文件在 `~/.codex/` 里），宿主认、weave 不认。修法 = `resolveCatalogPath` 对齐宿主三态（绝对原样 / `~` 展开 / 相对接 CODEX_HOME），基准走 `models` 入参新增的 `homedir`（driver 契约扩展，server 从 `ctx.homedir` 传入——与 `pathOf` 同源，测试可注入；不用无参 `codexHome()` 是因为它读 `CODEX_HOME` env，与配置面的 `ctx.homedir` 基准分裂）。活体验证：还原「裸文件名 + CWD 不在 .codex」现场，读出 4 个模型。教训：**凡配置里的路径键，解析基准必须钉宿主的语义，不能拿 Node 的 CWD 语义凑合**。
+
 - **配置树第三轮改判：彻底去两列化（用户原话「当前树格式还是不对，不需要严格的2列对齐。按树形展开，只要有keyvalue展示与编辑即可。意思就是，标签与输入框共同作为树的节点即可」）**：前两轮（e7e5ea41）只把 map 条目做成了内联树，但顶层叶子行仍是「名称列 + flex-1 控件拉满右缘」——输入框全部伸到行尾，视觉上还是两列表单。本轮三处收口：①**控件按内容出宽**（text=w-56 / number=w-24 / select=w-40 / list=w-64 / json=w-72，`min-w-0` 只防溢出不撑满），行内全部左聚；②**map / 对象数组值升格为容器节点**——顶层键的值是对象/对象数组时，箭头提到行首、条目缩进递归（此前裹在值列里的 ShapedField 折叠壳删除），收起时行内只露「N 项」；③**词表 fields 一层递归保留**（`objectChildrenOf`：词表字段按序 + 自由键接后可改名），`childSpecOf` 让 map 条目/数组元素继承父键的 valueType/valueOptions/fields。行尾动作统一 = 容器行 + / ↻ / 🗑、叶子行 ℹ️ / ↻(有默认才出) / 🗑。教训：**「树形」的判据不是有没有缩进，而是控件宽度和行结构是否还带着表格惯性**——flex-1 拉满是表单思维的最后残留。
 
 ## 2026-10-24
