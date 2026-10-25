@@ -1145,6 +1145,53 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(plainId)).toMatchObject({ acked: true });
   });
 
+  it('活动旁证：内建命令行靠宿主后续事件及时翻牌（不等 5s 短窗口），普通文本行不掺和', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 60_000, // 短窗口故意拉长：翻牌只能来自 noteActivity
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const cmd = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '/compact',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const cmdId = (cmd as { messageId: string }).messageId;
+    expect(deliverer.getMessage(cmdId)).toMatchObject({ status: 'delivered' });
+    expect(deliverer.getMessage(cmdId)?.acked).not.toBe(true);
+
+    // 宿主受理命令后的第一笔事件（PreCompact）= 活动旁证：命令行即时翻牌 + 帧
+    deliverer.noteActivity(SESSION_ID);
+    expect(deliverer.getMessage(cmdId)).toMatchObject({ status: 'delivered', acked: true });
+    expect(busEvents.filter((m) => m.kind === 'message.acknowledged' && m.messageId === cmdId)).toHaveLength(1);
+
+    // 普通文本行没有 UPS 就不翻牌（「发了没进」要靠未回执闸说话）
+    const plain = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'plain text body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const plainId = (plain as { messageId: string }).messageId;
+    deliverer.noteActivity(SESSION_ID);
+    expect(deliverer.getMessage(plainId)).toMatchObject({ status: 'delivered' });
+    expect(deliverer.getMessage(plainId)?.acked).not.toBe(true);
+  });
+
   it('强制终端随队列行落盘：pane 不在时入队，冲洗仍只打终端（不回落直投/中继）', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const path = uniqueInboxPath();

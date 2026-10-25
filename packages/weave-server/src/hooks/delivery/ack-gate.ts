@@ -1,3 +1,4 @@
+import { isSlashCommand } from '../message-deliverer.js';
 import type { PipeMessage } from '../message-deliverer.js';
 
 /**
@@ -120,16 +121,48 @@ export class AckGate {
    * 斜杠命令的回执收尾：给一个短窗口等 UPS——skill/插件命令会报，届时正常核销；
    * 窗口过期还没回执 = 宿主内建命令（`/compact` 之类压根不发 UPS），按已送达收、
    * 解闸续排，**不布防未回执闸**（否则压缩几分钟里整段显示「发送中」）。
+   * 翻牌要发帧：web 只靠 message.* 帧刷新投递行，静默翻牌 = 「已发出」挂到行消失。
    */
   armCommandAck(messageId: string, onRelease: (sessionId: string) => void): void {
     const timer = setTimeout(() => {
       const current = this.store.memory.get(messageId);
       if (!current || current.acked || current.status !== 'delivered') return;
-      this.store.memory.set(messageId, { ...current, acked: true });
-      this.release(current.sessionId, messageId);
+      this.acknowledge_(current.sessionId, messageId);
       onRelease(current.sessionId);
     }, this.times.commandAckGraceMs);
     timer.unref?.();
+  }
+
+  /**
+   * 活动旁证翻牌：内建命令没有 UPS 回执，宿主受理命令后的任何 hook 事件
+   * （`/compact` → PreCompact…）都是「命令已执行」的证据——该会话还挂着
+   * 「已发出未回执」的命令行就及时翻牌（5s 短窗口只是兜底）。普通文本行有
+   * UPS 正路，不掺和（会话重启清空输入框那类「发了没进」要靠未回执闸说话）。
+   * 返回是否翻了牌（测试用）。
+   */
+  noteActivity(sessionId: string): boolean {
+    let flipped = false;
+    for (const msg of this.store.memory.values()) {
+      if (msg.sessionId !== sessionId || msg.acked || msg.status !== 'delivered') continue;
+      if (msg.mode !== 'prompt' || !isSlashCommand(msg.text)) continue;
+      this.acknowledge_(sessionId, msg.id);
+      flipped = true;
+    }
+    return flipped;
+  }
+
+  /** 翻牌收尾（armCommandAck / noteActivity 共用）：标 acked + 撤防 + 帧。 */
+  private acknowledge_(sessionId: string, messageId: string): void {
+    const current = this.store.memory.get(messageId);
+    if (!current || current.acked) return;
+    this.store.memory.set(messageId, { ...current, acked: true });
+    this.release(sessionId, messageId);
+    this.events.emit({
+      kind: 'message.acknowledged',
+      messageId,
+      sessionId,
+      at: new Date().toISOString(),
+    });
   }
 
   /** 置闸：成因消息标记 stalled（常驻在途视图）+ message.stalled 帧（web 重拉）。 */

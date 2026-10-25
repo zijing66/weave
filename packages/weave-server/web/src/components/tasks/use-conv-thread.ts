@@ -10,7 +10,7 @@ import {
 import { summarizeEvent } from '@/lib/hook-payload';
 import { usePullLoad } from '@/lib/pull-load';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
-import { HARNESS_COMPACTION } from './lifecycle';
+import { HARNESS_COMPACTION, isCompactionEnd } from './lifecycle';
 import { useSessionStatus } from './session-status-store';
 import {
   attachDeliveries,
@@ -180,6 +180,11 @@ export function useConvThread(deps: {
       if (ingested) {
         wantLive = true;
         if (f.eventType === lifecycle.open || lifecycle.close.includes(f.eventType ?? '')) {
+          wantConv = true;
+        }
+        // 压缩收尾笔（claude = SessionStart[source=compact]）落成一条分隔气泡：
+        // 它不是 open/close，不认它就要刷新页面才看得到压缩发生过。
+        if (isCompactionEnd(harness, f.eventType ?? '', f.rawSource)) {
           wantConv = true;
         }
       } else if (f.kind === 'question.pending') {

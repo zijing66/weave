@@ -88,11 +88,15 @@ export const STATUS_KEY: Record<
 };
 
 /** 队列里的状态文案：已送达的行**还没落进对话**（气泡随会话自己的 UPS 事件来），
- *  在队列里标「已送达」自相矛盾——那是对话气泡上的事，这里它叫「已发出」。 */
+ *  在队列里标「已送达」自相矛盾——那是对话气泡上的事，这里它叫「已发出」。
+ *  已回执的命令行（`/compact` 之类）更进一步：内建命令没有气泡，宿主后续事件
+ *  即「已执行」的旁证——标「已执行」，别让它顶着「已发出」挂到行消失。 */
 export const queueStatusKey = (
-  status: SessionMessageRow['status'],
-): (typeof STATUS_KEY)[SessionMessageRow['status']] | 'tasks.msgStatusSent' =>
-  status === 'delivered' ? 'tasks.msgStatusSent' : STATUS_KEY[status];
+  m: Pick<SessionMessageRow, 'status' | 'acked'>,
+): (typeof STATUS_KEY)[SessionMessageRow['status']] | 'tasks.msgStatusSent' | 'tasks.msgStatusExecuted' => {
+  if (m.status === 'delivered') return m.acked === true ? 'tasks.msgStatusExecuted' : 'tasks.msgStatusSent';
+  return STATUS_KEY[m.status];
+};
 
 /** 自动清除的倒计时读数：mm:ss（窗口以分钟计，看秒才像在走）。 */
 export function countdownLabel(releaseAt: string, now: number): string {

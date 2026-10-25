@@ -760,6 +760,19 @@ export class MessageDeliverer {
     return imageIds;
   }
 
+  /**
+   * 活动旁证：该会话来了任何 hook 事件 = 宿主活着且在干活。内建命令（`/compact`
+   * 之类）没有 UPS 回执，命令行「已发出」的翻牌就靠它——宿主受理命令后的第一笔
+   * 事件（PreCompact…）及时把行翻成已回执（5s 短窗口只是兜底）。普通文本行有
+   * UPS 正路，不掺和。
+   */
+  noteActivity(sessionId: string): void {
+    if (this.gate.noteActivity(sessionId)) {
+      // 翻牌即解闸：队头在等的那条已落定，续排排空积压
+      if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+    }
+  }
+
   /** 未回执闸布防（判定与计时在 delivery/ack-gate.ts）。 */
   private armAckWatch(msg: PipeMessage): void {
     this.gate.armAckWatch(msg);

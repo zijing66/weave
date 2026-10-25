@@ -35,6 +35,8 @@ export interface HookFrame {
   spawnAgentId?: string;
   /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
   backgroundTasks?: Array<{ id: string; status: string }>;
+  /** raw.source（SessionStart 的 startup/resume/compact/clear——压缩收尾笔靠它认）。 */
+  rawSource?: string;
   ruleId?: string;
   eventId?: number;
   dispatchId?: number;

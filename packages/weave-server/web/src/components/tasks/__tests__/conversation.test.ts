@@ -7,6 +7,7 @@ import {
   failedTail,
   filterThread,
   isGenerating,
+  queueStatusKey,
   removableOf,
   withCommands,
   withPlan,
@@ -344,6 +345,19 @@ describe('removableOf（队列里的行能不能删）', () => {
     expect(removableOf(delivery({ status: 'delivered', stalled: true }))).toBe(true);
     expect(removableOf(delivery({ status: 'delivered', acked: null }))).toBe(true);
     expect(removableOf(delivery({ status: 'delivered', acked: false }))).toBe(true);
+  });
+});
+
+describe('queueStatusKey（队列行的状态文案）', () => {
+  it('① 已发出未回执 = 已发出；已回执的命令行（内建命令没有气泡）= 已执行', () => {
+    expect(queueStatusKey(delivery({ status: 'delivered', acked: null }))).toBe('tasks.msgStatusSent');
+    expect(queueStatusKey(delivery({ status: 'delivered', acked: true }))).toBe('tasks.msgStatusExecuted');
+  });
+
+  it('② 其余状态照旧（排队中 / 投递中 / 失败）', () => {
+    expect(queueStatusKey(delivery({ status: 'pending' }))).toBe('tasks.msgStatusQueued');
+    expect(queueStatusKey(delivery({ status: 'delivering' }))).toBe('tasks.msgStatusDelivering');
+    expect(queueStatusKey(delivery({ status: 'failed' }))).toBe('tasks.msgStatusFailed');
   });
 });
 

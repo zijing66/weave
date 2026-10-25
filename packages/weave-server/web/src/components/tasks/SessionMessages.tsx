@@ -969,7 +969,7 @@ export function SessionMessages({
                                 )}
                               >
                                 <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
-                                  {t(queueStatusKey(m.status))}
+                                  {t(queueStatusKey(m))}
                                 </Badge>
                                 {m.stalled === true && (
                                   <span className="shrink-0 text-10 text-amber-400">
@@ -999,7 +999,7 @@ export function SessionMessages({
                                 className="flex w-full min-w-0 items-center gap-1.5 text-left"
                               >
                                 <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
-                                  {t(queueStatusKey(m.status))}
+                                  {t(queueStatusKey(m))}
                                 </Badge>
                                 {m.stalled === true && (
                                   <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />

@@ -18,6 +18,8 @@ export type HookBusMessage =
       spawnAgentId?: string;
       /** Stop/SubagentStop 携带的后台任务快照（status 全为 running）——存活集权威对账源。 */
       backgroundTasks?: Array<{ id: string; status: string }>;
+      /** raw.source（SessionStart 的 startup/resume/compact/clear——压缩收尾笔靠它认）。 */
+      rawSource?: string;
       at: string;
     }
   | { kind: 'rule.matched'; ruleId: string; eventId: number; sessionId: string | null; at: string }

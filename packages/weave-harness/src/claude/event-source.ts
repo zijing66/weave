@@ -166,6 +166,8 @@ export interface ClaudeFrameFacts {
   agentId?: string;
   spawnAgentId?: string;
   backgroundTasks?: Array<{ id: string; status: string }>;
+  /** raw.source（SessionStart 的 startup/resume/compact/clear——压缩收尾笔靠它认）。 */
+  rawSource?: string;
 }
 
 /** frameFacts 所需的归一化 payload 形状（server NormalizedHookPayload 结构兼容）。 */
@@ -207,5 +209,10 @@ export function frameFacts(payload: FramePayloadLike | null): ClaudeFrameFacts {
   if (agentId) facts.agentId = agentId;
   if (spawnAgentId) facts.spawnAgentId = spawnAgentId;
   if (backgroundTasks) facts.backgroundTasks = backgroundTasks;
+  const rawSource =
+    raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).source === 'string'
+      ? ((raw as Record<string, unknown>).source as string)
+      : undefined;
+  if (rawSource) facts.rawSource = rawSource;
   return facts;
 }

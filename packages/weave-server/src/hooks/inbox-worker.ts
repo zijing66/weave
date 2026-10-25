@@ -420,6 +420,9 @@ export interface IngestedHandlerDeps {
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。
      *  `eventId` 随回执记下（对话面按它把投递行挂到这条事件的气泡上）。 */
     onSessionPrompt?(sessionId: string, prompt: string, eventId?: number): string[];
+    /** 活动旁证：内建命令没有 UPS，宿主后续任何 hook 事件即「命令已执行」的证据，
+     *  及时翻牌该会话「已发出未回执」的命令行（5s 短窗口只是兜底）。 */
+    noteActivity?(sessionId: string): void;
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
@@ -525,6 +528,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
             record.eventId,
           ) ?? [];
         if (ids.length > 0) deps.uploads?.linkToEvent(record.eventId, ids);
+      } else {
+        // 活动旁证：内建命令没有 UPS，宿主受理命令后的任何事件（PreCompact…）
+        // 都是「命令已执行」的证据——及时翻牌该会话「已发出未回执」的命令行。
+        deps.messagePipe?.noteActivity?.(record.input.sessionId);
       }
       // 会话退出（谁是退出事件归 harness 生命周期表）：旁路事实随进程作废——
       // inbox 凭据出盘、pane 定位清，压队的行也已成死信（sessionExited 内一并落定）。
