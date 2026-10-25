@@ -188,6 +188,8 @@ export function SessionMessages({
   const fileRef = useRef<HTMLInputElement>(null);
   /** 图片选择器（移动端 `accept` 收窄成相册；文件选择器不带 accept 才能选任意类型）。 */
   const imageFileRef = useRef<HTMLInputElement>(null);
+  /** `/` 命令菜单容器：键盘高亮项要滚进视野。 */
+  const cmdMenuRef = useRef<HTMLDivElement>(null);
   /** 全屏：面板自己铺满视口（两种形态都支持，ESC 也能退）。 */
   const [fullscreen, setFullscreen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -264,6 +266,11 @@ export function SessionMessages({
     picker,
     setPicker,
   });
+
+  /** 键盘高亮项滚进视野：候选超过 max-h-56 后上下键会走出可视区。 */
+  useEffect(() => {
+    cmdMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [cmdMenu?.active, cmdMatches]);
 
   // 附件暂存 + 发送队列域：选文件把关/上传/撤格，发送/出队/队列行操作
   const { stageFiles, unstage, send, queueActions } = useConvQueue({
@@ -1434,6 +1441,7 @@ export function SessionMessages({
                 {/* `/` 命令提示：候选归 harness 能力面，这里只筛与渲染 */}
                 {cmdMenu && cmdMatches.length > 0 && (
                   <div
+                    ref={cmdMenuRef}
                     data-cmd-menu
                     className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-56 overflow-y-auto overscroll-contain rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
                   >
@@ -1441,6 +1449,7 @@ export function SessionMessages({
                       <button
                         key={c.name}
                         type="button"
+                        aria-selected={i === cmdMenu.active}
                         // 用 mousedown 落定：click 之前焦点已经离开 composer，光标就没了
                         onMouseDown={(e) => {
                           e.preventDefault();
