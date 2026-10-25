@@ -19,6 +19,7 @@ import {
   buildSegments,
   cmdChipClass,
   commandTokensOf,
+  draftSnapshotOf,
   hasRefCandidate,
   pickerIntent,
   serializeDraft,
@@ -519,6 +520,50 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
   it('⑥ 命令胶囊还原成 /name，后面的参数照常拼上', () => {
     const chip = el('SPAN', [text('/model')], { 'data-cmd': 'model' });
     expect(serializeDraft(draft([chip, text(' opus')]))).toBe('/model opus');
+  });
+
+  it('⑥-b 附件占位胶囊：文件原地展开成落盘路径，图片序列化为空串', () => {
+    const fileChip = el('SPAN', [text('notes.md')], {
+      'data-attach': 'a'.repeat(64),
+      'data-attach-name': 'notes.md',
+      'data-attach-path': 'D:/up/notes.md',
+      'data-attach-media': 'text/markdown',
+    });
+    expect(serializeDraft(draft([text('先读 '), fileChip, text(' 再说')]))).toBe(
+      '先读 D:/up/notes.md 再说',
+    );
+    const imgChip = el('SPAN', [text('shot.png')], {
+      'data-attach': 'b'.repeat(64),
+      'data-attach-name': 'shot.png',
+      'data-attach-path': 'D:/up/shot.png',
+      'data-attach-media': 'image/png',
+    });
+    expect(serializeDraft(draft([text('看 '), imgChip]))).toBe('看 ');
+  });
+
+  it('⑥-c 附件胶囊缺 path 属性（旧快照）= 文件也序列化为空串，不猜', () => {
+    const chip = el('SPAN', [text('notes.md')], {
+      'data-attach': 'a'.repeat(64),
+      'data-attach-media': 'text/markdown',
+    });
+    expect(serializeDraft(draft([chip]))).toBe('');
+  });
+
+  it('⑥-d 附件胶囊进快照（a/p/n/m 四元组），快照序列化与 DOM 序列化同值', () => {
+    const chip = el('SPAN', [text('notes.md')], {
+      'data-attach': 'a'.repeat(64),
+      'data-attach-name': 'notes.md',
+      'data-attach-path': 'D:/up/notes.md',
+      'data-attach-media': 'text/markdown',
+    });
+    const root = draft([text('先读 '), chip]);
+    const snap = draftSnapshotOf(root as unknown as HTMLElement, []);
+    expect(snap?.parts).toEqual([
+      { t: '先读 ' },
+      { a: 'a'.repeat(64), p: 'D:/up/notes.md', n: 'notes.md', m: 'text/markdown' },
+    ]);
+    // 快照的 parts 走 applyDraftSnapshot 还原后序列化应同值——这里只验「存」半边：
+    // 还原半边依赖 document（node 测试环境没有），由活体验证兜底
   });
 
   it('⑥-a 粘贴快路：整段没有「行首/空白后的 @」就不必问服务端认引用', () => {

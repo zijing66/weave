@@ -7,6 +7,8 @@ export interface UploadFile {
   name: string;
   mediaType: string;
   size?: number;
+  /** 落盘绝对路径（daemon 下发；附件占位胶囊序列化用。旧 daemon 缺席 = 不摆占位）。 */
+  path?: string;
 }
 
 /** 某会话随附的上传件清单（按会话清理的统计面）。 */

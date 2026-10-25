@@ -129,6 +129,8 @@ export const tasksZh = {
   'tasks.msgAttach': '附件',
   'tasks.msgAttachHint': '随消息发送文件，单件最大 512MB（图片由宿主直接识别；其他文件发给会话的是绝对路径，由模型自己读）',
   'tasks.msgAttachRemove': '移除这个附件',
+  'tasks.msgAttachPlace': '摆入正文（原地引用）',
+  'tasks.msgAttachUnplace': '从正文取出',
   'tasks.msgAttachUnsupported': '该会话不收附件',
   'tasks.msgAttachTooLarge': '文件超过 512MB',
   'tasks.msgAttachTooMany': '一条最多带 8 个附件',
@@ -653,6 +655,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.msgAttachHint':
     'Send files with the message, up to 512MB each (images are recognized by the host; other files reach the session as an absolute path the model reads itself)',
   'tasks.msgAttachRemove': 'Remove this attachment',
+  'tasks.msgAttachPlace': 'Place into the message (inline reference)',
+  'tasks.msgAttachUnplace': 'Take out of the message',
   'tasks.msgAttachUnsupported': 'This session takes no attachments',
   'tasks.msgAttachTooLarge': 'File exceeds 512MB',
   'tasks.msgAttachTooMany': 'At most 8 attachments per message',

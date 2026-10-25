@@ -60,6 +60,7 @@ import {
   cmdChipClass,
   commandTokensOf,
   serializeDraft,
+  ATTACH_ATTR,
   REF_ATTR,
   type CmdSigil,
   type CmdInfo,
@@ -252,7 +253,7 @@ export function SessionMessages({
     draftRef,
     cmdMenu, setCmdMenu,
     insertText, insertNewline,
-    buildChip, buildCmdChip,
+    buildChip, buildCmdChip, buildAttachChip, insertAttach,
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
@@ -288,6 +289,42 @@ export function SessionMessages({
     newestQueuedId,
   });
 
+  /** 正文里已摆了占位胶囊的附件（id 集）：DOM 是唯一真源，扫一遍派生——
+   *  暂存格据此变暗/按钮换义，无双记账。 */
+  const [placedIds, setPlacedIds] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    const el = draftRef.current;
+    if (!el) return;
+    const scan = (): void => {
+      setPlacedIds(new Set(Array.from(el.querySelectorAll(`[${ATTACH_ATTR}]`)).map((n) => n.getAttribute(ATTACH_ATTR) ?? '')));
+    };
+    scan();
+    // 胶囊的增删都伴随 draft 镜像变化（insertAttach/setDraftText/退格删除都会 setDraft）
+    const obs = new MutationObserver(scan);
+    obs.observe(el, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, [draftRef, draft]);
+
+  /** 摆入/取出：已摆 = 从正文摘掉那枚胶囊（暂存格保留），未摆 = 光标处插一枚。 */
+  const togglePlace = (upload: UploadFile): void => {
+    const el = draftRef.current;
+    if (!el) return;
+    const chip = el.querySelector(`[${ATTACH_ATTR}="${CSS.escape(upload.id)}"]`);
+    if (!(chip instanceof HTMLElement)) {
+      insertAttach(upload);
+      return;
+    }
+    // 摘胶囊时把它旁边因摆放补的空格一并收掉（只收胶囊自己贡献的那一枚）
+    const eat = (n: ChildNode | null): ChildNode | null =>
+      n?.nodeType === 3 && (n.nodeValue ?? '') === ' ' ? n : null;
+    const lead = eat(chip.previousSibling);
+    const trail = eat(chip.nextSibling);
+    chip.remove();
+    lead?.remove();
+    trail?.remove();
+    setDraft(serializeDraft(el));
+  };
+
   // 会话控制面（执行模式/模型/effort）：显示恒为「最后已知」，切换只标本地乐观态
   const {
     sessionRow, modeNames, modelNames, effortLevels,
@@ -319,6 +356,7 @@ export function SessionMessages({
     setDraft,
     buildChip,
     buildCmdChip,
+    buildAttachChip,
     staged,
     threadRef,
   });
@@ -1296,6 +1334,10 @@ export function SessionMessages({
                           onOpen={setLightbox}
                           onRemove={() => unstage(item)}
                           removeLabel={t('tasks.msgAttachRemove')}
+                          placed={item.upload != null && placedIds.has(item.upload.id)}
+                          onTogglePlace={togglePlace}
+                          placeLabel={t('tasks.msgAttachPlace')}
+                          unplaceLabel={t('tasks.msgAttachUnplace')}
                         />
                       ))}
                   </StagedRow>
@@ -1309,6 +1351,10 @@ export function SessionMessages({
                           onOpen={setLightbox}
                           onRemove={() => unstage(item)}
                           removeLabel={t('tasks.msgAttachRemove')}
+                          placed={item.upload != null && placedIds.has(item.upload.id)}
+                          onTogglePlace={togglePlace}
+                          placeLabel={t('tasks.msgAttachPlace')}
+                          unplaceLabel={t('tasks.msgAttachUnplace')}
                         />
                       ))}
                   </StagedRow>

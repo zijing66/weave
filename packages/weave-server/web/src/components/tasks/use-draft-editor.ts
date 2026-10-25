@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { api } from '@/lib/api';
-import type { HarnessCommandRow } from '@/lib/api';
+import { api, API_BASE } from '@/lib/api';
+import type { HarnessCommandRow, UploadFile } from '@/lib/api';
 import type { PickItem, PickTarget } from './FilePicker';
 import {
   applyDraftSnapshot,
@@ -13,6 +13,10 @@ import {
   textBeforeCaret,
   writeDraftSnapshot,
   draftSnapshotOf,
+  ATTACH_ATTR,
+  ATTACH_MEDIA_ATTR,
+  ATTACH_NAME_ATTR,
+  ATTACH_PATH_ATTR,
   CMD_ATTR,
   CMD_SIG_ATTR,
   CMD_SRC_ATTR,
@@ -21,10 +25,11 @@ import {
   REF_LINES_ATTR,
   REF_PATH_ATTR,
   REF_CHIP_CLASS,
+  ATTACH_CHIP_CLASS,
   type CmdSigil,
   type CmdSource,
 } from './draft-editor';
-import { settledUploads, type StagedFile } from './attach';
+import { isImageUpload, settledUploads, type StagedFile } from './attach';
 
 /** 草稿写盘的抖动量：逐键写 sessionStorage 没必要，停手一小拍再写。 */
 const DRAFT_SAVE_MS = 250;
@@ -167,6 +172,68 @@ const buildCmdChip = (name: string, source?: CmdSource, sigil?: CmdSigil): HTMLE
   return chip;
 };
 
+/** 造一枚附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
+ *  序列化语义归 draft-editor（文件 → 落盘路径、图片 → 空串），这里只管长相。
+ *  入参加快照 part 形状（a/p/n/m）：applyDraftSnapshot 还原与 insertAttach 新建
+ *  走同一个构造器，不备两份。 */
+const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): HTMLElement => {
+  const chip = document.createElement('span');
+  chip.setAttribute('contenteditable', 'false');
+  chip.setAttribute(ATTACH_ATTR, part.a);
+  chip.setAttribute(ATTACH_NAME_ATTR, part.n);
+  chip.setAttribute(ATTACH_PATH_ATTR, part.p);
+  chip.setAttribute(ATTACH_MEDIA_ATTR, part.m);
+  chip.className = ATTACH_CHIP_CLASS;
+  chip.title = part.n; // 长名被截短时，悬停还看得见全文
+  if (isImageUpload({ mediaType: part.m })) {
+    const img = document.createElement('img');
+    img.src = `${API_BASE}/images/${part.a}`;
+    img.alt = part.n;
+    img.className = 'h-4 w-4 rounded-sm object-cover';
+    chip.appendChild(img);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'font-mono text-9 leading-none';
+    icon.textContent = '⌘';
+    chip.appendChild(icon);
+  }
+  const label = document.createElement('span');
+  label.className = 'min-w-0 truncate';
+  label.textContent = part.n.length > 12 ? `${part.n.slice(0, 11)}…` : part.n;
+  chip.appendChild(label);
+  return chip;
+};
+
+/** 在光标处摆一枚附件占位胶囊。**文件胶囊前后必须是空白**（与引用胶囊同一判据：
+ *  序列化出来的是一条路径，粘着字就成了另一段文字）；图片胶囊序列化为空串，
+ *  补空格只会留双空格，不补。 */
+const insertAttach = (upload: UploadFile): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  const pad = !isImageUpload(upload);
+  let lead = false;
+  let trail = false;
+  const range = caretInDraft(el);
+  if (range?.startContainer.nodeType === TEXT_NODE) {
+    const value = range.startContainer.nodeValue ?? '';
+    const at = range.startOffset;
+    lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
+    trail = at < value.length && !/\s/.test(value[at] ?? '');
+  }
+  const nodes: Node[] = [];
+  if (pad && lead) nodes.push(document.createTextNode(' '));
+  nodes.push(
+    buildAttachChip({
+      a: upload.id,
+      p: upload.path ?? '',
+      n: upload.name,
+      m: upload.mediaType,
+    }),
+  );
+  if (pad && trail) nodes.push(document.createTextNode(' '));
+  insertNodes(nodes);
+};
+
 /** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符
  *  与已敲的名字片段交出来。`/` 在句首才是官方命令，但 skill 句中也能用，
  *  故两种触发符都按「空白后」认。 */
@@ -243,7 +310,7 @@ useEffect(() => {
   const el = draftRef.current;
   const snap = readDraftSnapshot(sessionId);
   if (!el || !snap) return;
-  applyDraftSnapshot(el, snap, buildChip, buildCmdChip);
+  applyDraftSnapshot(el, snap, buildChip, buildCmdChip, buildAttachChip);
   setDraft(serializeDraft(el));
   if (snap.staged.length > 0)
     setStaged(
@@ -410,7 +477,7 @@ const setDraftText = (text: string): void => {
     draftRef, atRange,
     cmdMenu, setCmdMenu,
     caretInDraft, insertNodes, insertText, insertNewline,
-    buildChip, buildCmdChip,
+    buildChip, buildCmdChip, buildAttachChip, insertAttach,
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, escapeAt, maybeOpenPicker,

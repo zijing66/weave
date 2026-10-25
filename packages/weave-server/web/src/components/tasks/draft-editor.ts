@@ -1,4 +1,5 @@
 import type { HarnessCommandRow, RecognizedRef, UploadFile } from '@/lib/api';
+import { isImageUpload } from './attach';
 import type { PickItem, PickTarget } from './FilePicker';
 
 /** 输入框里一枚引用胶囊的标记属性：`contenteditable="false"` 让它成原子块——
@@ -17,6 +18,15 @@ export const CMD_SRC_ATTR = 'data-cmd-src';
 /** 胶囊的触发符（缺省 `/`；codex 的 skill 是 `$`）：序列化时原样拼回去。 */
 export const CMD_SIG_ATTR = 'data-cmd-sig';
 
+/** 附件占位胶囊：值 = 上传件 id（暂存格与它一一对应）。 */
+export const ATTACH_ATTR = 'data-attach';
+/** 胶囊自己留的账（展示名 / 落盘路径 / 媒体类型）：序列化与「是不是图」都从这取，
+ *  不对 id 反查——DOM 是唯一真源。展示名单独存：落盘路径是 hash 名，还原胶囊
+ *  （快照/全屏往返）还得靠它。 */
+export const ATTACH_NAME_ATTR = 'data-attach-name';
+export const ATTACH_PATH_ATTR = 'data-attach-path';
+export const ATTACH_MEDIA_ATTR = 'data-attach-media';
+
 /** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
  *  而这些数与 DOM 规范同寿，不会变。 */
 const ELEMENT_NODE = 1;
@@ -26,11 +36,12 @@ const TEXT_NODE = 3;
  *  `execCommand`、粘多行文本都落成 `<div>`，不是 `<br>`）。 */
 const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3']);
 
-/** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊或一枚命令胶囊。 */
+/** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊、一枚命令胶囊或一枚附件占位胶囊。 */
 type DraftToken =
   | { text: string }
   | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
-  | { cmd: string; sigil?: CmdSigil; source?: CmdSource };
+  | { cmd: string; sigil?: CmdSigil; source?: CmdSource }
+  | { attach: string; name: string; path: string; mediaType: string };
 
 /** composer DOM → 线性 token。**换行规则只说这一处**：
  *  - `<br>` = 一个换行；
@@ -74,6 +85,16 @@ function draftTokensOf(root: Node | null): DraftToken[] {
       chip(el, ref);
       return;
     }
+    const attach = el.getAttribute(ATTACH_ATTR);
+    if (attach != null) {
+      out.push({
+        attach,
+        name: el.getAttribute(ATTACH_NAME_ATTR) ?? '',
+        path: el.getAttribute(ATTACH_PATH_ATTR) ?? '',
+        mediaType: el.getAttribute(ATTACH_MEDIA_ATTR) ?? '',
+      });
+      return;
+    }
     if (el.tagName === 'BR') {
       text('\n');
       return;
@@ -109,10 +130,23 @@ function draftTokensOf(root: Node | null): DraftToken[] {
   return out;
 }
 
-/** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。 */
+/** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。
+ *  附件占位胶囊**原地展开**：文件 = 落盘绝对路径（真·原地引用，回执比对原样含它）；
+ *  图片 = 空串（宿主粘贴处理器只认独立成行的图片路径，句中内联是死文本——
+ *  图片路径仍由投递层追加在末尾，占位只标「这张图属于这句话」）。 */
 export function serializeDraft(root: Node | null): string {
   const out = draftTokensOf(root)
-    .map((t) => ('text' in t ? t.text : 'ref' in t ? t.ref : `${t.sigil ?? '/'}${t.cmd}`))
+    .map((t) =>
+      'text' in t
+        ? t.text
+        : 'ref' in t
+          ? t.ref
+          : 'attach' in t
+            ? isImageUpload({ mediaType: t.mediaType })
+              ? ''
+              : t.path
+            : `${t.sigil ?? '/'}${t.cmd}`,
+    )
     .join('');
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;
@@ -126,6 +160,7 @@ export interface DraftSnapshot {
     | { t: string }
     | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
     | { c: string; s?: CmdSource; g?: CmdSigil }
+    | { a: string; p: string; n: string; m: string }
   >;
   /** 已落盘、还没发出去的文件（同一条草稿的附件）。 */
   staged: UploadFile[];
@@ -152,6 +187,8 @@ export function draftSnapshotOf(
         ...(token.source ? { s: token.source } : {}),
         ...(token.sigil ? { g: token.sigil } : {}),
       });
+    } else if ('attach' in token) {
+      parts.push({ a: token.attach, p: token.path, n: token.name, m: token.mediaType });
     } else {
       parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
@@ -159,18 +196,25 @@ export function draftSnapshotOf(
   return parts.length > 0 || staged.length > 0 ? { parts, staged: [...staged] } : null;
 }
 
-/** 快照 → 输入框 DOM（全部新建节点；胶囊的 DOM 形状归调用方传进来的 `buildChip`）。 */
+/** 快照 → 输入框 DOM（全部新建节点；胶囊的 DOM 形状归调用方传进来的 `buildChip`）。
+ *  附件胶囊的还原回调缺席时退化成纯文本（展示名），不丢位置。 */
 export function applyDraftSnapshot(
   root: HTMLElement,
   snap: DraftSnapshot,
   buildChip: (ref: string, target: PickTarget) => HTMLElement,
   buildCmdChip?: (name: string, source?: CmdSource, sigil?: CmdSigil) => HTMLElement,
+  buildAttachChip?: (part: { a: string; p: string; n: string; m: string }) => HTMLElement,
 ): void {
   root.replaceChildren();
   for (const part of snap.parts) {
     if ('c' in part) {
       if (buildCmdChip) root.appendChild(buildCmdChip(part.c, part.s, part.g));
       else root.appendChild(document.createTextNode(`${part.g ?? '/'}${part.c}`));
+      continue;
+    }
+    if ('a' in part) {
+      if (buildAttachChip) root.appendChild(buildAttachChip(part));
+      else root.appendChild(document.createTextNode(part.n));
       continue;
     }
     if ('r' in part) {
@@ -302,6 +346,10 @@ export function textBeforeCaret(root: Node, range: Range): string {
  *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。 */
 export const REF_CHIP_CLASS =
   'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-blue-200';
+
+/** 附件占位胶囊：绿色系（与引用蓝、命令黄/红区分开），微缩略图 + 截短名。 */
+export const ATTACH_CHIP_CLASS =
+  'mx-0.5 inline-flex max-w-[12rem] items-center gap-1 truncate rounded-full border border-emerald-500/40 bg-emerald-500/15 px-1.5 align-middle font-mono text-11 leading-[1.5] text-emerald-200';
 
 /** 命令胶囊：黄色系、**不截断**（命令名本来就短，截断只会藏掉分辨它们的最后几位）。 */
 const CMD_CHIP_CLASS =

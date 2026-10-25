@@ -4,7 +4,7 @@ import { api, type SessionMessageRow } from '@/lib/api';
 import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
-import { serializeDraft } from './draft-editor';
+import { ATTACH_ATTR, serializeDraft } from './draft-editor';
 import {
   ATTACH_MAX_COUNT,
   FILE_MAX_BYTES,
@@ -104,10 +104,25 @@ const stageFiles = (files: FileList | File[]): void => {
   }
 };
 
-/** 从附件条上撤掉一格（上传中的连临时件一起丢）。 */
+/** 从附件条上撤掉一格（上传中的连临时件一起丢）。正文里已摆的占位胶囊一并摘掉
+ *  ——留着就是悬空胶囊，发出幽灵路径（服务端 refsOf 404 整条拒）。 */
 const unstage = (item: StagedFile): void => {
   uploadAborters.current.get(item.key)?.abort();
   if (item.state === 'uploading' && item.file) discardUpload(item.file);
+  if (item.upload) {
+    const el = draftRef.current;
+    const chip = el?.querySelector(`[${ATTACH_ATTR}="${CSS.escape(item.upload.id)}"]`);
+    if (el && chip instanceof HTMLElement) {
+      const eat = (n: ChildNode | null): ChildNode | null =>
+        n?.nodeType === 3 && (n.nodeValue ?? '') === ' ' ? n : null;
+      const lead = eat(chip.previousSibling);
+      const trail = eat(chip.nextSibling);
+      chip.remove();
+      lead?.remove();
+      trail?.remove();
+      setDraftText(serializeDraft(el));
+    }
+  }
   setStaged((s) => s.filter((x) => x.key !== item.key));
 };
 
