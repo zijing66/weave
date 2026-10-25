@@ -98,6 +98,12 @@ export interface ConfigModelsResponse {
   credential: 'apiKey' | 'authToken' | 'none';
 }
 
+/** 待保存预览：updates 应用在活配置上的前后两份原文（格式归 harness，web 只摆）。 */
+export interface ConfigPreviewResponse {
+  before: string;
+  after: string;
+}
+
 export const configApi = {
   // --- harness 配置文件（/harness-config/*） ---
   getConfigCatalog: (harness: Harness, file: ConfigFileId): Promise<ConfigCatalogResponse> =>
@@ -137,6 +143,16 @@ export const configApi = {
     authToken?: string;
   }): Promise<ConfigModelsResponse> =>
     apiFetch<ConfigModelsResponse>('/harness-config/models', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  postConfigPreview: (body: {
+    harness: Harness;
+    file: ConfigFileId;
+    projectId: number | null;
+    updates: ConfigUpdate[];
+  }): Promise<ConfigPreviewResponse> =>
+    apiFetch<ConfigPreviewResponse>('/harness-config/preview', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

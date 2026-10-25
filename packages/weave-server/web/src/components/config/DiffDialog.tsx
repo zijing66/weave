@@ -1,14 +1,47 @@
 import { useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { collapseDiff, countChanges, diffLines } from '@/lib/text-diff';
+import { collapseDiff, countChanges, diffLines, pairSplitRows, type SplitDiffRow } from '@/lib/text-diff';
 import { DiffRows } from '@/components/ui/diff-rows';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
+import { cn } from '@/lib/utils';
+
+/** 左右分栏的一行渲染（mod = 左旧右新，孤侧补空行）。 */
+function SplitRows({ rows }: { rows: readonly SplitDiffRow[] }) {
+  return (
+    <>
+      {rows.map((row, idx) => {
+        if (row.kind === 'skip') {
+          return (
+            <div key={idx} className="px-3 py-0.5 text-neutral-600 bg-neutral-950/40">
+              ⋯ {row.count}
+            </div>
+          );
+        }
+        const leftCls =
+          row.kind === 'same' ? 'text-neutral-400' : row.left !== null ? 'bg-red-500/10 text-red-200' : '';
+        const rightCls =
+          row.kind === 'same'
+            ? 'text-neutral-400'
+            : row.right !== null
+              ? 'bg-emerald-500/10 text-emerald-200'
+              : '';
+        return (
+          <div key={idx} className="grid grid-cols-2 divide-x divide-edge/[0.06]">
+            <div className={cn('px-3 whitespace-pre-wrap break-all', leftCls)}>{row.left ?? ''}</div>
+            <div className={cn('px-3 whitespace-pre-wrap break-all', rightCls)}>{row.right ?? ''}</div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 /**
  * 配置差异弹窗：切换快照 / 漂移确认前把两侧逐行摆出来。
  * 只读——确认动作由调用方在这层之外给按钮（这里只负责「看清楚再决定」）。
+ * `split` = Beyond Compare 式左右分栏（待保存预览用）；缺省上下堆叠。
  */
 export function DiffDialog({
   open,
@@ -17,6 +50,7 @@ export function DiffDialog({
   afterLabel,
   before,
   after,
+  split = false,
   footer,
   onClose,
 }: {
@@ -26,14 +60,17 @@ export function DiffDialog({
   afterLabel: string;
   before: string;
   after: string;
+  /** 左右分栏（左=前 右=后）；缺省上下堆叠。 */
+  split?: boolean;
   footer: ReactNode;
   onClose: () => void;
 }) {
   const t = useT();
-  const { rows, added, removed } = useMemo(() => {
+  const { rows, splitRows, added, removed } = useMemo(() => {
     const lines = diffLines(before, after);
     const counts = countChanges(lines);
-    return { rows: collapseDiff(lines, 3), ...counts };
+    const collapsed = collapseDiff(lines, 3);
+    return { rows: collapsed, splitRows: pairSplitRows(collapsed), ...counts };
   }, [before, after]);
 
   // 移动端返回键/侧滑 = 关闭弹窗（确认动作仍由 footer 的按钮做，返回只是退出）
@@ -71,6 +108,8 @@ export function DiffDialog({
         <div className="flex-1 min-h-0 overflow-auto font-mono text-11 leading-5">
           {rows.length === 0 ? (
             <p className="p-4 text-neutral-500">{t('cfg.diffNoChanges')}</p>
+          ) : split ? (
+            <SplitRows rows={splitRows} />
           ) : (
             <DiffRows rows={rows} />
           )}

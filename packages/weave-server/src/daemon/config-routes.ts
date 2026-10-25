@@ -446,6 +446,44 @@ export async function handleConfigRoutes(
     return true;
   }
 
+  // --- 待保存预览（不落盘：把 updates 应用在活配置上，回前后两份原文给 web 弹 diff） ---
+  if (pathname === '/harness-config/preview' && req.method === 'POST') {
+    const body = await readBodyJson(req);
+    if (!body) {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const harness = body['harness'];
+    const file = asFileId(body['file']);
+    if (!isHarness(harness) || !file) {
+      sendJson(res, 400, { error: 'Unknown harness or file' });
+      return true;
+    }
+    const surface = configSurfaceFor(harness);
+    if (!surface) {
+      sendJson(res, 400, { error: '配置面未实现' });
+      return true;
+    }
+    const ctx = resolveTarget(deps, file, body['projectId']);
+    if (typeof ctx === 'string') {
+      sendJson(res, 400, { error: ctx });
+      return true;
+    }
+    const updates = Array.isArray(body['updates']) ? (body['updates'] as ConfigUpdate[]) : null;
+    if (!updates) {
+      sendJson(res, 400, { error: 'Missing "updates"' });
+      return true;
+    }
+    try {
+      const current = await surface.read(file, ctx);
+      const next = applyUpdates(current, updates);
+      sendJson(res, 200, { before: textOf(surface, current), after: textOf(surface, next) });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return true;
+  }
+
   // 认领了前缀但没命中任何分支：给 404，别掉回主链当静态资源找
   sendJson(res, 404, { error: 'Not found' });
   return true;

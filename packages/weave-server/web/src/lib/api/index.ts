@@ -156,6 +156,7 @@ export type {
   ConfigUpdate,
   ConfigModelOption,
   ConfigModelsResponse,
+  ConfigPreviewResponse,
 } from './config';
 export type {
   ProjectConfig,

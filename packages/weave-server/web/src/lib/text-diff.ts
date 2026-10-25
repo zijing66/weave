@@ -96,3 +96,54 @@ export function collapseDiff(lines: readonly DiffLine[], context = 3): DiffRow[]
   if (skipped > 0) out.push({ kind: 'skip', count: skipped });
   return out;
 }
+
+/** 左右分栏的一行：`mod` = 配上对的删+增（左旧右新），孤侧补空行占位。 */
+export interface SplitDiffRow {
+  kind: 'same' | 'mod' | 'add' | 'del' | 'skip';
+  left: string | null;
+  right: string | null;
+  count?: number;
+}
+
+/**
+ * 把行级 diff 配对成左右两栏（Beyond Compare 式）：`same` 两侧同行；
+ * 连续 `del` 与连续 `add` 按序配对成 `mod`、多出的一侧补空行；`skip` 整行横跨两栏。
+ */
+export function pairSplitRows(rows: readonly DiffRow[]): SplitDiffRow[] {
+  const out: SplitDiffRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i]!;
+    if (row.kind === 'skip') {
+      out.push({ kind: 'skip', left: null, right: null, count: row.count });
+      i++;
+      continue;
+    }
+    if (row.kind !== 'del') {
+      out.push(row.kind === 'add'
+        ? { kind: 'add', left: null, right: row.text }
+        : { kind: 'same', left: row.text, right: row.text });
+      i++;
+      continue;
+    }
+    // 连续 del 段与紧随的连续 add 段按序配对
+    let j = i;
+    while (j < rows.length && rows[j]!.kind === 'del') j++;
+    let k = j;
+    while (k < rows.length && rows[k]!.kind === 'add') k++;
+    const dels = rows.slice(i, j) as Extract<DiffRow, DiffLine>[];
+    const adds = rows.slice(j, k) as Extract<DiffRow, DiffLine>[];
+    const len = Math.max(dels.length, adds.length);
+    for (let n = 0; n < len; n++) {
+      const left = dels[n]?.text ?? null;
+      const right = adds[n]?.text ?? null;
+      out.push({
+        kind: left !== null && right !== null ? 'mod' : left !== null ? 'del' : 'add',
+        left,
+        right,
+      });
+    }
+    i = k;
+  }
+  return out;
+}

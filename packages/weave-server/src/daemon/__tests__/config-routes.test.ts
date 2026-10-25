@@ -213,6 +213,30 @@ describe('harness 配置路由', () => {
     expect(accepted.body['activeText']).toContain('haiku');
   });
 
+  it('preview：updates 应用在活配置上回前后原文，不落盘不留备份', async () => {
+    const hit = await call('/harness-config/preview', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId,
+      updates: [{ path: 'model', value: 'sonnet' }, { path: 'env.FOO', value: '1' }],
+    });
+    expect(hit.status).toBe(200);
+    expect(hit.body['before']).toContain('"model": "opus"');
+    expect(hit.body['after']).toContain('"model": "sonnet"');
+    expect(hit.body['after']).toContain('"FOO": "1"');
+    // 不落盘：文件原样、无备份
+    expect(readSettings()['model']).toBe('opus');
+    const view = await call(`/harness-config?harness=claude&file=project&projectId=${projectId}`, 'GET');
+    expect((view.body['backups'] as unknown[]).length).toBe(0);
+
+    const bad = await call('/harness-config/preview', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      updates: [],
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it('codex：TOML 原样写 → 读回 values；坏 TOML 400', async () => {
     const ok = await call('/harness-config/raw', 'PUT', {
       harness: 'codex',

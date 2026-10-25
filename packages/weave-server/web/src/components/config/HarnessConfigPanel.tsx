@@ -103,6 +103,7 @@ export function HarnessConfigPanel({
     afterLabel: string;
     before: string;
     after: string;
+    split?: boolean;
     acceptKey: string;
     onAccept: () => void;
   } | null>(null);
@@ -215,6 +216,36 @@ export function HarnessConfigPanel({
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 待保存徽标 → 左右分栏 diff（前后原文由 server 算：序列化知识归 harness）
+  const updatesOfEdits = (): ConfigUpdate[] =>
+    Object.entries(edits).map(([path, edit]) =>
+      edit.remove || edit.value === undefined ? { path, remove: true } : { path, value: edit.value },
+    );
+
+  const showPendingDiff = async (): Promise<void> => {
+    setError(null);
+    try {
+      const preview = await api.postConfigPreview({
+        harness: target,
+        file,
+        projectId,
+        updates: updatesOfEdits(),
+      });
+      setDiffState({
+        title: t('cfg.pendingDiffTitle'),
+        beforeLabel: t('cfg.diffLive'),
+        afterLabel: t('cfg.pendingDiffAfter'),
+        before: preview.before,
+        after: preview.after,
+        split: true,
+        acceptKey: 'cfg.save',
+        onAccept: () => void save(),
+      });
+    } catch (err) {
+      setError((err as Error).message);
     }
   };
 
@@ -428,12 +459,13 @@ export function HarnessConfigPanel({
         {!view.exists && <span className="text-10 text-amber-400/80">{t('cfg.notExists')}</span>}
         <div className="ml-auto flex items-center gap-2">
           {pendingCount > 0 && (
-            <span
+            <button
+              onClick={() => void showPendingDiff()}
               title={pendingSummary}
-              className="cursor-help text-11 text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2"
+              className="text-11 text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2 hover:text-amber-200"
             >
               {t('cfg.pending', { count: pendingCount })}
-            </span>
+            </button>
           )}
           {pendingCount > 0 && (
             <button
@@ -636,6 +668,7 @@ export function HarnessConfigPanel({
           afterLabel={diffState.afterLabel}
           before={diffState.before}
           after={diffState.after}
+          split={diffState.split}
           onClose={() => setDiffState(null)}
           footer={
             <>
