@@ -346,11 +346,6 @@
   animation: boot-fade-out 320ms ease-in forwards;
 }
 
-/* 品牌标记的常驻辉光。静态 filter（不进 keyframes），只为让光带有「发光」质感。 */
-.wv-mark {
-  filter: drop-shadow(0 0 2px rgb(59 130 246 / 0.55));
-}
-
 /* 全部动效由 `.wv-anim` 挂上——静态 logo（顶栏、登录页）不带这个类，
    直接以最终形态出现。笔画 `pathLength="1"`，故 dasharray 与路径长短无关。 */
 @keyframes wv-flow {
