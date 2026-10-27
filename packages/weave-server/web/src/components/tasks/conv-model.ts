@@ -125,6 +125,8 @@ export interface ConvEntry {
   failed?: boolean;
   /** 计划模式交出的计划正文（不是某轮的收尾总结，单独标出来给人批阅）。 */
   plan?: boolean;
+  /** 阻塞提问前模型写下的说明（转录里认的，没有自己的事件）。 */
+  preQuestion?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
   commandOutput?: string;
 }
@@ -426,5 +428,23 @@ export function withPlan(entries: readonly ConvEntry[], plan: SessionPlan | null
     plan: true,
   };
   const at = entries.findIndex((e) => (e.eventId ?? 0) > plan.eventId);
+  return at < 0 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)];
+}
+
+/** 提问前说明插进对话流（位置 = 按时刻，与命令回显同一条时间线）：阻塞提问不发
+ *  Stop，这段话没有自己的事件，只有转录时刻——摆在提问气泡（若有）之前才对味。 */
+export function withPreQuestion(
+  entries: readonly ConvEntry[],
+  pre: { at: string; text: string } | null,
+): ConvEntry[] {
+  if (!pre || !pre.text.trim()) return [...entries];
+  const entry: ConvEntry = {
+    key: `q${pre.at}`,
+    role: 'assistant',
+    at: pre.at,
+    text: pre.text,
+    preQuestion: true,
+  };
+  const at = entries.findIndex((e) => e.at > pre.at);
   return at < 0 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)];
 }

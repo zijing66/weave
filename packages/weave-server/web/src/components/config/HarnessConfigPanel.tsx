@@ -6,7 +6,6 @@ import {
   type ConfigCatalogResponse,
   type ConfigEnvVarSpec,
   type ConfigFileId,
-  type ConfigUpdate,
   type ConfigView,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
@@ -19,16 +18,20 @@ import {
   textOf,
   valueAt,
   valueOfText,
+  withEdit,
   type ConfigTreeNode,
   type TreeNodeSpec,
 } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { ConfigTree, type ConfigTreeHandlers } from './ConfigTree';
 import { Combobox } from '@/components/ui/combobox';
 import type { RowEdit } from './ConfigValueRow';
-import { ConfigProfiles } from './ConfigProfiles';
+import { ConfigVault } from './ConfigVault';
 import { ConfigModelCard } from './ConfigModelCard';
 import { DiffDialog } from './DiffDialog';
 
@@ -73,6 +76,9 @@ export function HarnessConfigPanel({
   projectId: number | null;
 }) {
   const t = useT();
+  const { show: showToast } = useToast();
+  // 按钮本体自持三态反馈（loading 转圈 / success 打勾 / 失败 toast），与全站统一
+  const fb = useActionFeedback();
   // 'all' 页签要落到一个真有配置面的 harness 上：面清单由 /capabilities 派生
   const [configHarnesses, setConfigHarnesses] = useState<Harness[] | null>(null);
   useEffect(() => {
@@ -87,8 +93,8 @@ export function HarnessConfigPanel({
   const [file, setFile] = useState<ConfigFileId>(projectId != null ? 'project' : 'user');
   const [catalog, setCatalog] = useState<ConfigCatalogResponse | null>(null);
   const [view, setView] = useState<ConfigView | null>(null);
-  const [edits, setEdits] = useState<Record<string, RowEdit>>({});
-  const [busy, setBusy] = useState(false);
+  /** 表单草稿（临时）：树与原始视图都改它，保存才写盘。null = 与 view.values 一致。 */
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   // 默认只看已配置的（文件里真有 key 的）；「全部」才把词表里没配的键亮出来
@@ -118,7 +124,7 @@ export function HarnessConfigPanel({
         return;
       }
       setView(await api.getHarnessConfig(target, file, projectId));
-      setEdits({});
+      setDraft(null);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -133,7 +139,7 @@ export function HarnessConfigPanel({
     setExpanded({});
   }, [file, target]);
 
-  const values = view?.values ?? {};
+  const values = draft ?? view?.values ?? {};
   const managed = view?.managedKeys ?? [];
 
   // 配置里已存的凭据值（模型卡回显用）：ANTHROPIC_API_KEY 优先、AUTH_TOKEN 回退
@@ -148,12 +154,8 @@ export function HarnessConfigPanel({
   })();
 
   const currentValue = useCallback(
-    (dotted: string): unknown => {
-      const edit = edits[dotted];
-      if (edit) return edit.remove ? undefined : edit.value;
-      return valueAt(values, dotted);
-    },
-    [edits, values],
+    (dotted: string): unknown => valueAt(values, dotted),
+    [values],
   );
 
   const isManaged = useCallback(
@@ -169,23 +171,14 @@ export function HarnessConfigPanel({
   );
 
   const setEdit = (dotted: string, edit: RowEdit): void => {
-    setEdits((prev) => ({ ...prev, [dotted]: edit }));
+    setDraft((prev) => withEdit(prev ?? view?.values ?? {}, dotted, edit));
   };
 
-  const pendingCount = Object.keys(edits).length;
-
-  // 待保存清单（悬停「N 处待保存」看）：每行一条路径 → 新值 / 删除
-  const pendingSummary = useMemo(
-    () =>
-      Object.entries(edits)
-        .map(([path, edit]) => {
-          if (edit.remove || edit.value === undefined) return `${path} → ${t('cfg.clear')}`;
-          const flat = textOf(edit.value).replace(/\s+/g, ' ');
-          return `${path} → ${flat.length > 80 ? `${flat.slice(0, 80)}…` : flat}`;
-        })
-        .join('\n'),
-    [edits, t],
-  );
+  /** 草稿是否偏离 view.values（决定保存/还原按钮与「N 处待保存」徽标）。 */
+  const dirty = useMemo(() => {
+    if (!draft || !view) return false;
+    return textOf(draft) !== textOf(view.values);
+  }, [draft, view]);
 
   // raw 视图的即时校验：语言随活文件（claude=JSON / codex=TOML），空文本 = 清空不算错
   const rawInvalid = useMemo(() => {
@@ -202,37 +195,51 @@ export function HarnessConfigPanel({
     return valueOfText(rawText).error === 'invalidJson';
   }, [catalog?.rawFormat, rawText]);
 
+  /** raw 文本 → 草稿（进 raw 视图时从草稿序列化，编辑中只改 rawText，切回树时落草稿）。 */
+  const rawDirty = useMemo(() => {
+    if (!rawMode || !view) return false;
+    return rawText !== textOf(values);
+  }, [rawMode, rawText, values]);
+
   const save = async (): Promise<void> => {
-    if (pendingCount === 0 || !catalog) return;
-    const updates: ConfigUpdate[] = Object.entries(edits).map(([path, edit]) =>
-      edit.remove || edit.value === undefined ? { path, remove: true } : { path, value: edit.value },
+    if (!dirty || !catalog || !view) return;
+    await fb.run(
+      'cfg-save',
+      async () => {
+        const drifted = view.drifted;
+        const next = await api.putConfigValues({ harness: target, file, projectId, values: draft ?? {} });
+        setView(next);
+        setDraft(null);
+        // 漂移下保存 = 外部改动连同本次编辑一起进了存档，得说一声
+        if (drifted) showToast('info', t('cfg.driftAbsorbed'));
+      },
+      { fail: (e) => t('cfg.saveFailed', { error: errorText(e) }) },
     );
-    setBusy(true);
-    setError(null);
+  };
+
+  /** raw 编辑落回草稿（切回树视图 / 保存前）。 */
+  const commitRawToDraft = (): boolean => {
+    if (!view) return false;
+    if (rawText === textOf(values)) return true;
+    if (rawInvalid) return false;
     try {
-      setView(await api.putConfigValues({ harness: target, file, projectId, updates }));
-      setEdits({});
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
+      const parsed = catalog?.rawFormat === 'toml' ? parseToml(rawText) : JSON.parse(rawText);
+      setDraft(parsed as Record<string, unknown>);
+      return true;
+    } catch {
+      return false;
     }
   };
 
-  // 待保存徽标 → 左右分栏 diff（前后原文由 server 算：序列化知识归 harness）
-  const updatesOfEdits = (): ConfigUpdate[] =>
-    Object.entries(edits).map(([path, edit]) =>
-      edit.remove || edit.value === undefined ? { path, remove: true } : { path, value: edit.value },
-    );
-
   const showPendingDiff = async (): Promise<void> => {
     setError(null);
+    if (rawMode && !commitRawToDraft()) return;
     try {
       const preview = await api.postConfigPreview({
         harness: target,
         file,
         projectId,
-        updates: updatesOfEdits(),
+        values: draft ?? view?.values ?? {},
       });
       setDiffState({
         title: t('cfg.pendingDiffTitle'),
@@ -249,64 +256,106 @@ export function HarnessConfigPanel({
     }
   };
 
-  const saveRaw = async (): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
-      setView(await api.putConfigRaw({ harness: target, file, projectId, text: rawText }));
-      setEdits({});
-      setRawMode(false);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const profileAction = (body: Record<string, unknown>, key = 'cfg-profile'): Promise<void> =>
+    fb.run(
+      key,
+      async () => {
+        const res = await api.postConfigProfile<ConfigView & Record<string, unknown>>({
+          harness: target,
+          file,
+          projectId,
+          ...body,
+        });
+        if ('values' in res) {
+          // 覆盖类动作后表单草稿基于的是旧文件，留着会让树停在覆盖前的内容
+          setView(res);
+          setDraft(null);
+        } else await load();
+      },
+      { fail: (e) => t('cfg.saveFailed', { error: errorText(e) }) },
+    );
 
-  const profileAction = async (body: Record<string, unknown>): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.postConfigProfile<ConfigView & Record<string, unknown>>({
-        harness: target,
-        file,
-        projectId,
-        ...body,
-      });
-      if ('values' in res) setView(res);
-      else await load();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  /** 对比页：草稿（缺省 = 磁盘现值）vs 目标原文，弹窗里直接放动作。 */
+  const compareTo = (
+    target_: 'live' | 'profile' | 'backup',
+    ids: { id?: string; backupId?: string },
+  ): Promise<void> =>
+    fb.run(
+      `cfg-compare:${target_}:${ids.id ?? ids.backupId ?? ''}`,
+      async () => {
+        const [goal, mine] = await Promise.all([
+          api.postConfigCompare({ harness: target, file, projectId, target: target_, ...ids }),
+          api.postConfigPreview({
+            harness: target,
+            file,
+            projectId,
+            values: draft ?? view?.values ?? {},
+          }),
+        ]);
+        setDiffState({
+          title: t('cfg.compareTitle'),
+          beforeLabel: t('cfg.diffForm'),
+          afterLabel: t('cfg.diffTarget'),
+          before: mine.after,
+          after: goal.text,
+          acceptKey: 'cfg.applyToForm',
+          onAccept: () => {
+            // 目标 → 草稿：解析目标原文落进表单，保存才写盘
+            try {
+              const parsed =
+                catalog?.rawFormat === 'toml' ? parseToml(goal.text) : JSON.parse(goal.text);
+              setDraft(parsed as Record<string, unknown>);
+            } catch {
+              setError(t('cfg.invalidJson'));
+            }
+          },
+        });
+      },
+      { fail: (e) => t('cfg.saveFailed', { error: errorText(e) }) },
+    );
 
-  const activate = async (id: string): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
-      const preview = await api.postConfigProfile<{
-        requiresConfirm?: boolean;
-        liveText: string;
-        profileText: string;
-      }>({ harness: target, file, projectId, action: 'activate', id });
-      if (!preview.requiresConfirm) return;
-      setDiffState({
-        title: t('cfg.switchTitle'),
-        beforeLabel: t('cfg.diffLive'),
-        afterLabel: t('cfg.diffProfile'),
-        before: preview.liveText,
-        after: preview.profileText,
-        acceptKey: 'cfg.switchConfirm',
-        onAccept: () => void profileAction({ action: 'activate', id, confirm: true }),
-      });
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  /** 草稿 → 目标（存入配置 / 更新配置）：只写快照，不碰文件。 */
+  const saveInto = (id: string | null, name?: string): Promise<void> =>
+    fb.run(
+      `cfg-saveinto:${id ?? 'new'}`,
+      async () => {
+        await api.postConfigProfile({
+          harness: target,
+          file,
+          projectId,
+          action: id ? 'save' : 'create',
+          ...(id ? { id } : {}),
+          ...(name ? { name } : {}),
+          values: draft ?? view?.values ?? {},
+        });
+        await load();
+      },
+      { fail: (e) => t('cfg.saveFailed', { error: errorText(e) }) },
+    );
+
+  /** 漂移反向出口：把基线（活跃快照或自动基线）写回文件，恢复到差异之前（两拍）。 */
+  const restoreBaseline = (): Promise<void> =>
+    fb.run(
+      'cfg-restore-baseline',
+      async () => {
+        const preview = await api.postConfigProfile<{
+          requiresConfirm?: boolean;
+          liveText: string;
+          baselineText: string;
+        }>({ harness: target, file, projectId, action: 'restoreBaseline' });
+        if (!preview.requiresConfirm) return;
+        setDiffState({
+          title: t('cfg.restoreTitle'),
+          beforeLabel: t('cfg.diffLive'),
+          afterLabel: t('cfg.diffProfile'),
+          before: preview.liveText,
+          after: preview.baselineText,
+          acceptKey: 'cfg.restoreApply',
+          onAccept: () => void profileAction({ action: 'restoreBaseline', confirm: true }),
+        });
+      },
+      { fail: (e) => t('cfg.saveFailed', { error: errorText(e) }) },
+    );
 
   // env 块在树上就是 `env` 这个对象：孩子 = 已设置的那些变量，搜索时再补文档里命中的
   const envSpecs = useMemo<TreeNodeSpec[]>(() => {
@@ -316,12 +365,6 @@ export function HarnessConfigPanel({
     const names = new Set(
       typeof env === 'object' && env !== null && !Array.isArray(env) ? Object.keys(env) : [],
     );
-    for (const [path, edit] of Object.entries(edits)) {
-      if (!path.startsWith('env.')) continue;
-      const name = path.slice(4);
-      if (edit.remove) names.delete(name);
-      else names.add(name);
-    }
     if (query.trim()) {
       let added = 0;
       for (const envVar of catalog.envVars) {
@@ -342,7 +385,7 @@ export function HarnessConfigPanel({
         description: spec?.description ?? '',
       };
     });
-  }, [catalog, edits, filter, query, values]);
+  }, [catalog, filter, query, values]);
 
   const tree = useMemo(() => {
     if (!catalog || !catalog.supported) {
@@ -458,29 +501,29 @@ export function HarnessConfigPanel({
         </span>
         {!view.exists && <span className="text-10 text-amber-400/80">{t('cfg.notExists')}</span>}
         <div className="ml-auto flex items-center gap-2">
-          {pendingCount > 0 && (
+          {dirty && (
             <button
               onClick={() => void showPendingDiff()}
-              title={pendingSummary}
               className="text-11 text-amber-300 underline decoration-dotted decoration-amber-300/40 underline-offset-2 hover:text-amber-200"
             >
-              {t('cfg.pending', { count: pendingCount })}
+              {t('cfg.dirtyBadge')}
             </button>
           )}
-          {pendingCount > 0 && (
+          {dirty && (
             <button
-              onClick={() => setEdits({})}
+              onClick={() => setDraft(null)}
               className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700"
             >
               {t('cfg.reset')}
             </button>
           )}
           <button
-            disabled={busy || pendingCount === 0}
+            disabled={fb.stateOf('cfg-save') === 'loading' || !dirty}
             onClick={() => void save()}
             className="rounded-md bg-mac-accent px-3 py-1 text-11 font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
-            {busy ? t('cfg.saving') : t('cfg.save')}
+            <FeedbackIcon state={fb.stateOf('cfg-save')} className="h-3 w-3" />
+            {t('cfg.save')}
           </button>
           <button
             onClick={() => void load()}
@@ -494,7 +537,7 @@ export function HarnessConfigPanel({
 
       {error && <p className="text-11 text-red-400">{t('cfg.saveFailed', { error })}</p>}
 
-      {/* 漂移 */}
+      {/* 漂移：先看差异；两个方向都要过 diff 确认——文件→基线（采纳外部改动）与 基线→文件（恢复到差异之前） */}
       {view.drifted && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2">
           <FileWarning className="h-4 w-4 text-amber-400" />
@@ -518,26 +561,31 @@ export function HarnessConfigPanel({
               {t('cfg.driftDiff')}
             </button>
             <button
-              onClick={() => void profileAction({ action: 'acceptDrift', id: view.activeId })}
-              className="rounded-md bg-amber-500/20 px-2 py-1 text-11 text-amber-200 hover:bg-amber-500/30"
+              disabled={fb.stateOf('cfg-restore-baseline') === 'loading'}
+              onClick={() => void restoreBaseline()}
+              className="rounded-md bg-amber-500/20 px-2 py-1 text-11 text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"
             >
-              {t('cfg.driftAccept')}
+              <FeedbackIcon state={fb.stateOf('cfg-restore-baseline')} className="h-3 w-3" />
+              {t('cfg.driftRestore')}
             </button>
           </div>
         </div>
       )}
 
-      <ConfigProfiles
+      <ConfigVault
         profiles={view.profiles}
         activeId={view.activeId}
         enabled={files.find((f) => f.id === file)?.profiles ?? false}
-        busy={busy}
-        onCreate={(name) => void profileAction({ action: 'create', name })}
-        onRename={(id, name) => void profileAction({ action: 'rename', id, name })}
-        onDuplicate={(id) => void profileAction({ action: 'duplicate', id })}
-        onRemove={(id) => void profileAction({ action: 'remove', id })}
-        onSaveActive={() => void profileAction({ action: 'save', id: view.activeId })}
-        onActivate={(id) => void activate(id)}
+        backups={view.backups}
+        stateOf={fb.stateOf}
+        onCompareProfile={(id) => void compareTo('profile', { id })}
+        onCompareBackup={(backupId) => void compareTo('backup', { backupId })}
+        onCompareDisk={() => void compareTo('live', {})}
+        onSaveInto={(id) => void saveInto(id)}
+        onCreate={(name) => void saveInto(null, name)}
+        onRename={(id, name) => void profileAction({ action: 'rename', id, name }, `cfg-rename:${id}`)}
+        onDuplicate={(id) => void profileAction({ action: 'duplicate', id }, `cfg-dup:${id}`)}
+        onRemove={(id) => void profileAction({ action: 'remove', id }, `cfg-remove:${id}`)}
       />
 
       {/* 该档词表里有 model 键才摆模型卡（global 档写不进去 model） */}
@@ -595,8 +643,13 @@ export function HarnessConfigPanel({
         </button>
         <button
           onClick={() => {
-            setRawMode((v) => !v);
-            setRawText(view.liveText);
+            if (rawMode) {
+              // 切回树：raw 编辑落进草稿（非法文本留在 raw 里不丢）
+              if (commitRawToDraft()) setRawMode(false);
+              return;
+            }
+            setRawText(textOf(values));
+            setRawMode(true);
           }}
           className={cn(
             'ml-auto rounded-md px-2 py-1 text-11',
@@ -618,15 +671,20 @@ export function HarnessConfigPanel({
           />
           <div className="flex items-center gap-2">
             <button
-              disabled={busy}
-              onClick={() => void saveRaw()}
+              disabled={fb.stateOf('cfg-save') === 'loading' || !rawDirty || rawInvalid}
+              onClick={() => {
+                if (!commitRawToDraft()) return;
+                setRawMode(false);
+                void save();
+              }}
               className="rounded-md bg-mac-accent px-3 py-1 text-11 font-medium text-white hover:opacity-90 disabled:opacity-40"
             >
               {t('cfg.save')}
             </button>
             <button
-              onClick={() => setRawText(view.liveText)}
-              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700"
+              disabled={!rawDirty}
+              onClick={() => setRawText(textOf(values))}
+              className="rounded-md bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
             >
               {t('cfg.reset')}
             </button>
@@ -646,18 +704,6 @@ export function HarnessConfigPanel({
             </section>
           )}
         </>
-      )}
-
-      {view.backups.length > 0 && (
-        <div className="flex items-center gap-2 text-11 text-neutral-600">
-          <span>{t('cfg.backups', { count: view.backups.length })}</span>
-          <button
-            onClick={() => void profileAction({ action: 'restoreBackup', backupId: view.backups[0] })}
-            className="rounded-md bg-neutral-800 px-2 py-0.5 text-neutral-300 hover:bg-neutral-700"
-          >
-            {t('cfg.restore')}
-          </button>
-        </div>
       )}
 
       {diffState && (

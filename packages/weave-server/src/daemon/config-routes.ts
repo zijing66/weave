@@ -4,9 +4,10 @@ import { access } from 'node:fs/promises';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { ConfigFileId, ConfigSurface } from '@weavecode/harness';
 import { configSurfaceFor } from '../surfaces.js';
-import { applyUpdates, type ConfigUpdate } from '../config/dotted.js';
 import {
+  baselineSnapshot,
   createProfile,
+  LASTSEEN_ID,
   listBackups,
   listProfiles,
   readBackup,
@@ -16,6 +17,8 @@ import {
   pushBackup,
   saveProfile,
   setActive,
+  syncBaseline,
+  writeSnapshot,
 } from '../config/profiles.js';
 import { readBody, sendJson } from './http.js';
 import { getHarnessConfigDir } from '../db/paths.js';
@@ -80,8 +83,11 @@ async function snapshotView(
   const values = await surface.read(file, ctx);
   const liveText = textOf(surface, values);
   const state = await listProfiles(root, harness, file);
-  const active = state.activeId ? await readSnapshot(root, harness, file, state.activeId) : null;
-  const activeText = active ? textOf(surface, active) : null;
+  // 漂移基线：活跃快照优先；没有活跃快照（project 档 / 还没建快照）落自动基线，
+  // 首次查看立基线——否则这些档位的外部改动永远判不出漂移
+  const baseline = await baselineSnapshot(root, harness, file, state);
+  if (!baseline) await writeSnapshot(root, harness, file, LASTSEEN_ID, values);
+  const baselineText = baseline ? textOf(surface, baseline) : textOf(surface, values);
   return {
     harness,
     file,
@@ -93,8 +99,8 @@ async function snapshotView(
     profiles: state.profiles,
     activeId: state.activeId,
     liveText,
-    activeText,
-    drifted: activeText !== null && activeText !== liveText,
+    activeText: baselineText,
+    drifted: baselineText !== liveText,
     backups: await listBackups(root, harness, file),
   };
 }
@@ -183,7 +189,7 @@ export async function handleConfigRoutes(
     return true;
   }
 
-  // --- 表单批量写（读最新 → 深路径落值 → 备份 → 写盘 → 同步激活快照） ---
+  // --- 表单保存（整份草稿写盘：备份 → 写 → 同步基线） ---
   if (pathname === '/harness-config/values' && req.method === 'PUT') {
     const body = await readBodyJson(req);
     if (!body) {
@@ -206,18 +212,17 @@ export async function handleConfigRoutes(
       sendJson(res, 400, { error: ctx });
       return true;
     }
-    const updates = Array.isArray(body['updates']) ? (body['updates'] as ConfigUpdate[]) : null;
-    if (!updates) {
-      sendJson(res, 400, { error: 'Missing "updates"' });
+    const values = body['values'];
+    if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+      sendJson(res, 400, { error: 'Missing "values"' });
       return true;
     }
     try {
       const current = await surface.read(file, ctx);
-      const next = applyUpdates(current, updates);
       await pushBackup(root, harness, file, current);
-      await surface.write(file, ctx, next);
+      await surface.write(file, ctx, values as Record<string, unknown>);
       const state = await listProfiles(root, harness, file);
-      if (state.activeId) await saveProfile(root, harness, file, state.activeId, next);
+      await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
       return true;
@@ -261,7 +266,7 @@ export async function handleConfigRoutes(
       await pushBackup(root, harness, file, current);
       await surface.write(file, ctx, parsed);
       const state = await listProfiles(root, harness, file);
-      if (state.activeId) await saveProfile(root, harness, file, state.activeId, await surface.read(file, ctx));
+      await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
       return true;
@@ -296,6 +301,10 @@ export async function handleConfigRoutes(
     }
     const id = typeof body['id'] === 'string' ? body['id'] : '';
     const name = typeof body['name'] === 'string' ? body['name'].trim() : '';
+    // 表单值（create/save 用）：不传 = 沿用旧行为读磁盘
+    const formValues = typeof body['values'] === 'object' && body['values'] !== null && !Array.isArray(body['values'])
+      ? (body['values'] as Record<string, unknown>)
+      : null;
 
     switch (action) {
       case 'list': {
@@ -310,7 +319,7 @@ export async function handleConfigRoutes(
           harness,
           file,
           name || `配置 ${state.profiles.length + 1}`,
-          await surface.read(file, ctx),
+          formValues ?? (await surface.read(file, ctx)),
         );
         sendJson(res, 200, { profile: meta, state: await listProfiles(root, harness, file) });
         return true;
@@ -321,8 +330,33 @@ export async function handleConfigRoutes(
           sendJson(res, 404, { error: '配置不存在' });
           return true;
         }
-        await saveProfile(root, harness, file, id, await surface.read(file, ctx));
+        await saveProfile(root, harness, file, id, formValues ?? (await surface.read(file, ctx)));
         sendJson(res, 200, await listProfiles(root, harness, file));
+        return true;
+      }
+      case 'compare': {
+        // 对比页取目标原文：profile=快照 / backup=备份 / live=磁盘
+        const target = body['target'];
+        if (target === 'live') {
+          sendJson(res, 200, { text: textOf(surface, await surface.read(file, ctx)) });
+          return true;
+        }
+        if (target === 'backup') {
+          const backupId = typeof body['backupId'] === 'string' ? body['backupId'] : '';
+          const values = await readBackup(root, harness, file, backupId);
+          if (!values) {
+            sendJson(res, 404, { error: '备份不存在' });
+            return true;
+          }
+          sendJson(res, 200, { text: textOf(surface, values) });
+          return true;
+        }
+        const values = await readSnapshot(root, harness, file, id);
+        if (!values) {
+          sendJson(res, 404, { error: '配置不存在' });
+          return true;
+        }
+        sendJson(res, 200, { text: textOf(surface, values) });
         return true;
       }
       case 'duplicate': {
@@ -378,7 +412,39 @@ export async function handleConfigRoutes(
         return true;
       }
       case 'acceptDrift': {
-        await saveProfile(root, harness, file, id, await surface.read(file, ctx));
+        // 覆盖存档前把原基线留一份进备份——误点后还能从备份找回
+        const state = await listProfiles(root, harness, file);
+        const prev = await baselineSnapshot(root, harness, file, state);
+        if (prev) await pushBackup(root, harness, file, prev);
+        await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
+        sendJson(res, 200, await snapshotView(root, harness, surface, file, ctx));
+        return true;
+      }
+      case 'restoreBaseline': {
+        // 漂移的反向出口：把基线（活跃快照或自动基线）写回文件，恢复到差异之前
+        const state = await listProfiles(root, harness, file);
+        const baseline = await baselineSnapshot(root, harness, file, state);
+        if (!baseline) {
+          sendJson(res, 404, { error: '没有可恢复的基线' });
+          return true;
+        }
+        const live = await surface.read(file, ctx);
+        if (body['confirm'] !== true) {
+          sendJson(res, 200, {
+            requiresConfirm: true,
+            liveText: textOf(surface, live),
+            baselineText: textOf(surface, baseline),
+          });
+          return true;
+        }
+        try {
+          await pushBackup(root, harness, file, live);
+          await surface.write(file, ctx, baseline);
+          await syncBaseline(root, harness, file, state, baseline);
+        } catch (err) {
+          sendJson(res, 400, { error: (err as Error).message });
+          return true;
+        }
         sendJson(res, 200, await snapshotView(root, harness, surface, file, ctx));
         return true;
       }
@@ -389,11 +455,21 @@ export async function handleConfigRoutes(
           sendJson(res, 404, { error: '备份不存在' });
           return true;
         }
+        const live = await surface.read(file, ctx);
+        if (body['confirm'] !== true) {
+          // 先给两侧文本，由 web 弹 diff modal 交用户确认（此拍不落盘）
+          sendJson(res, 200, {
+            requiresConfirm: true,
+            liveText: textOf(surface, live),
+            backupText: textOf(surface, values),
+          });
+          return true;
+        }
         try {
-          await pushBackup(root, harness, file, await surface.read(file, ctx));
+          await pushBackup(root, harness, file, live);
           await surface.write(file, ctx, values);
           const state = await listProfiles(root, harness, file);
-          if (state.activeId) await saveProfile(root, harness, file, state.activeId, values);
+          await syncBaseline(root, harness, file, state, values);
         } catch (err) {
           sendJson(res, 400, { error: (err as Error).message });
           return true;
@@ -434,6 +510,7 @@ export async function handleConfigRoutes(
       const values = await surface.read(file, ctx);
       const result = await surface.models({
         values,
+        file,
         homedir: ctx.homedir,
         baseUrl: typeof body['baseUrl'] === 'string' ? body['baseUrl'] : null,
         apiKey: typeof body['apiKey'] === 'string' ? body['apiKey'] : null,
@@ -446,7 +523,7 @@ export async function handleConfigRoutes(
     return true;
   }
 
-  // --- 待保存预览（不落盘：把 updates 应用在活配置上，回前后两份原文给 web 弹 diff） ---
+  // --- 对比预览（不落盘：草稿 vs 目标原文，两侧文本给 web 弹 diff） ---
   if (pathname === '/harness-config/preview' && req.method === 'POST') {
     const body = await readBodyJson(req);
     if (!body) {
@@ -469,15 +546,17 @@ export async function handleConfigRoutes(
       sendJson(res, 400, { error: ctx });
       return true;
     }
-    const updates = Array.isArray(body['updates']) ? (body['updates'] as ConfigUpdate[]) : null;
-    if (!updates) {
-      sendJson(res, 400, { error: 'Missing "updates"' });
+    const values = body['values'];
+    if (typeof values !== 'object' || values === null || Array.isArray(values)) {
+      sendJson(res, 400, { error: 'Missing "values"' });
       return true;
     }
     try {
       const current = await surface.read(file, ctx);
-      const next = applyUpdates(current, updates);
-      sendJson(res, 200, { before: textOf(surface, current), after: textOf(surface, next) });
+      sendJson(res, 200, {
+        before: textOf(surface, current),
+        after: textOf(surface, values as Record<string, unknown>),
+      });
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
     }

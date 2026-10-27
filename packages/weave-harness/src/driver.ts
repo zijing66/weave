@@ -301,9 +301,8 @@ export interface ResumeCommandSpec {
    */
   openArgs?(sessionId: string): string[];
   /**
-   * 交互式启动的固定旗标（置于 openArgs 之前，如 codex 的 `['--no-daemon']`）：
-   * 只加在「终端里起交互会话」这一侧（new-session / open-terminal），无头
-   * `args` 不带——exec 形态没有共享 daemon 通道，加了反而是未知旗标。
+   * 交互式启动的固定旗标（置于 openArgs 之前）：只加在「终端里起交互会话」
+   * 这一侧（new-session / open-terminal），无头 `args` 不带。
    */
   launchArgs?: string[];
   /**
@@ -519,6 +518,13 @@ export interface PlanSpec {
   draftOf(toolName: string | null, toolInput: unknown, toolResponse: unknown): PlanDraft | null;
 }
 
+/** 阻塞提问前模型写下的说明正文（转录里认）。 */
+export interface PreQuestionText {
+  /** 该条 assistant 消息的时刻（ISO UTC，转录 timestamp）。 */
+  at: string;
+  text: string;
+}
+
 /**
  * 阻塞式交互面（会话卡住等输入：AskUserQuestion / 计划确认 / 权限确认）：
  * 哪些工具会挂起、权限通知类型、问题面归一化与作答键序全归 harness——
@@ -563,6 +569,13 @@ export interface BlockingPromptSpec {
     eventType: string,
     payload: { raw: unknown; toolName: string | null; toolInput: unknown },
   ): BlockingQuestion | null;
+  /**
+   * 阻塞提问前模型写下的说明正文（转录尾部最后一条阻塞工具调用之前的 assistant
+   * 文本；claude 把一条 assistant 消息拆成相邻多行，正文与工具调用同 message.id）。
+   * 阻塞提问不发 Stop ⇒ hook 事件里没有这段话，转录是唯一来源。null = 没有
+   * （没在提问 / 提问前没写字）。
+   */
+  preQuestion?(transcriptPath: string | null): Promise<PreQuestionText | null>;
 }
 
 /**
@@ -900,10 +913,12 @@ export interface ConfigSurface {
   /**
    * 模型列表（HTTP 调宿主自己的 API）。`baseUrl` / 凭据缺省时由实现从配置里取；
    * 传输在实现侧，server 只传语义参数。`homedir` 供实现解析配置里的相对路径
-   * （codex 的 `model_catalog_json` 相对 CODEX_HOME）。
+   * （codex 的 `model_catalog_json` 相对 CODEX_HOME）。`file` 让实现知道当前
+   * 档位——项目档缺地址/凭据时可继承 user 档的 env（claude）。
    */
   models(input: {
     values: Record<string, unknown>;
+    file?: ConfigFileId;
     homedir?: string;
     baseUrl?: string | null;
     apiKey?: string | null;

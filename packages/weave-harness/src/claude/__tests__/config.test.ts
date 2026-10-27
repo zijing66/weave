@@ -140,6 +140,63 @@ describe('claude 配置面', () => {
     }
   });
 
+  it('模型列表：项目档没配地址/凭据时继承 user 档的 env', async () => {
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'settings.json'),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example/v1/', ANTHROPIC_AUTH_TOKEN: 'tok-u' } }),
+      'utf8',
+    );
+
+    const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal('fetch', async (url: string, init: { headers: Record<string, string> }) => {
+      seen.push({ url, headers: init.headers });
+      return { ok: true, json: async () => ({ data: [] }) };
+    });
+    try {
+      const out = await CLAUDE_CONFIG.models({
+        values: { env: { WEAVE_ENABLED: 'true' } },
+        file: 'project',
+        homedir: home,
+      });
+      expect(out.baseUrl).toBe('https://gw.example');
+      expect(out.credential).toBe('authToken');
+      expect(seen[0].url).toBe('https://gw.example/v1/models?limit=1000');
+      expect(seen[0].headers['authorization']).toBe('Bearer tok-u');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('模型列表：当前档自己的 env 优先于 user 档继承', async () => {
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'settings.json'),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://user-gw.example', ANTHROPIC_API_KEY: 'sk-user' } }),
+      'utf8',
+    );
+
+    const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal('fetch', async (url: string, init: { headers: Record<string, string> }) => {
+      seen.push({ url, headers: init.headers });
+      return { ok: true, json: async () => ({ data: [] }) };
+    });
+    try {
+      const out = await CLAUDE_CONFIG.models({
+        values: { env: { ANTHROPIC_BASE_URL: 'https://proj-gw.example', ANTHROPIC_AUTH_TOKEN: 'tok-p' } },
+        file: 'project',
+        homedir: home,
+      });
+      expect(out.baseUrl).toBe('https://proj-gw.example');
+      expect(out.credential).toBe('authToken');
+      expect(seen[0].headers['authorization']).toBe('Bearer tok-p');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('模型列表：显式入参优先，失败带 HTTP 状态', async () => {
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => 'unauthorized' }));
     try {

@@ -186,6 +186,11 @@ export const messageApi = {
     apiFetch<{ questions: PendingQuestionEntry[] }>('/messaging/questions').then(
       (r) => r.questions,
     ),
+  /** 阻塞提问前模型写下的说明（转录里认的；没在提问 / 没写字 = null）。 */
+  sessionPreQuestion: (sessionId: string): Promise<{ at: string; text: string } | null> =>
+    apiFetch<{ preQuestion: { at: string; text: string } | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/pre-question`,
+    ).then((r) => r.preQuestion),
   /** 远程作答：整 call 一次提交（只传问题键 + 选项下标，键序由服务端 harness
    *  规格拼装并白名单校验）。 */
   answerQuestion: (

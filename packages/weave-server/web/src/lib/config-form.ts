@@ -254,3 +254,29 @@ export function listOfLines(text: string): string[] {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 }
+
+/** 表单草稿的一次改动：落值或删键（与服务端 ConfigUpdate 同形）。 */
+export interface DraftEdit {
+  value?: unknown;
+  remove?: boolean;
+}
+
+/** 草稿的一次改动 → 新草稿（深拷贝后沿点号路径落值/删键，不改入参）。 */
+export function withEdit(
+  root: Record<string, unknown>,
+  dotted: string,
+  edit: DraftEdit,
+): Record<string, unknown> {
+  const next = structuredClone(root);
+  const segs = dotted.split('.').filter(Boolean);
+  if (segs.length === 0) return next;
+  let cur = next as Record<string, unknown>;
+  for (const seg of segs.slice(0, -1)) {
+    if (typeof cur[seg] !== 'object' || cur[seg] === null || Array.isArray(cur[seg])) cur[seg] = {};
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  const last = segs[segs.length - 1];
+  if (edit.remove || edit.value === undefined) delete cur[last];
+  else cur[last] = edit.value;
+  return next;
+}

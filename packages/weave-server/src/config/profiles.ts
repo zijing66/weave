@@ -196,6 +196,47 @@ export async function setActive(
   });
 }
 
+/**
+ * 无活跃快照档位的自动基线（project/projectLocal 不支持快照、user/global 可能还没建）：
+ * 首次查看立基线、写入口同步——没有它这些档位的外部改动永远判不出漂移。
+ */
+export const LASTSEEN_ID = '_lastseen';
+
+/** 漂移基线：活跃快照优先，缺省落自动基线。 */
+export async function baselineSnapshot(
+  root: string,
+  harness: string,
+  file: ConfigFileId,
+  state: ConfigProfileState,
+): Promise<Record<string, unknown> | null> {
+  if (state.activeId) {
+    const active = await readSnapshot(root, harness, file, state.activeId);
+    if (active) return active;
+  }
+  return readSnapshot(root, harness, file, LASTSEEN_ID);
+}
+
+/** 写入口同步基线：有活跃快照同步它；`_lastseen` 恒跟着写（删掉活跃快照后基线不复活旧值）。 */
+export async function syncBaseline(
+  root: string,
+  harness: string,
+  file: ConfigFileId,
+  state: ConfigProfileState,
+  values: Record<string, unknown>,
+): Promise<void> {
+  if (state.activeId) await saveProfile(root, harness, file, state.activeId, values);
+  await writeSnapshot(root, harness, file, LASTSEEN_ID, values);
+}
+
+/** 备份 ID：本地时刻 `YYYY-MM-DD-HHmmss`（可读、可排序，与全局时刻戳同族）。 */
+function backupIdOf(at: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}` +
+    `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`
+  );
+}
+
 /** 写盘前把当前活配置存一份（每档留最新 20 份，超出按时间删旧）。 */
 export async function pushBackup(
   root: string,
@@ -203,26 +244,36 @@ export async function pushBackup(
   file: ConfigFileId,
   values: Record<string, unknown>,
 ): Promise<void> {
-  const id = nowIso().replace(/[:.]/g, '-');
+  // 秒级精度：同一秒内再备一份时追加序号（-2、-3…），别把前一份覆盖掉
+  const base = backupIdOf(new Date());
+  const existing = new Set(
+    (await fs.readdir(backupDir(root, harness)).catch(() => [] as string[])).filter((n) =>
+      n.startsWith(`${file}-${base}`),
+    ),
+  );
+  let id = base;
+  for (let seq = 2; existing.has(`${file}-${id}.json`); seq++) id = `${base}-${seq}`;
   await writeJson(backupPath(root, harness, file, id), values);
-  const prefix = `${file}-`;
-  const names = (await fs.readdir(backupDir(root, harness)).catch(() => [] as string[]))
-    .filter((n) => n.startsWith(prefix) && n.endsWith('.json'))
-    .sort()
-    .reverse();
-  for (const stale of names.slice(MAX_BACKUPS)) {
-    await fs.rm(path.join(backupDir(root, harness), stale), { force: true });
+  const stale = (await listBackups(root, harness, file)).slice(MAX_BACKUPS);
+  for (const old of stale) {
+    await fs.rm(backupPath(root, harness, file, old), { force: true });
   }
 }
 
-/** 备份列表（新 → 旧）。 */
+/** 备份列表（新 → 旧）。同秒序号（`-2`）比无后缀的更新——按「时刻 + 序号」排，不按裸字典序。 */
 export async function listBackups(root: string, harness: string, file: ConfigFileId): Promise<string[]> {
   const prefix = `${file}-`;
+  const rank = (id: string): number => {
+    const m = /^(\d{4}-\d{2}-\d{2}-\d{6})(?:-(\d+))?$/.exec(id);
+    if (!m) return 0;
+    return Number(`${m[1].replace(/-/g, '')}${m[2] ?? '1'}`);
+  };
   const names = (await fs.readdir(backupDir(root, harness)).catch(() => [] as string[]))
     .filter((n) => n.startsWith(prefix) && n.endsWith('.json'))
-    .sort()
+    .map((n) => n.slice(prefix.length, -'.json'.length))
+    .sort((a, b) => rank(a) - rank(b))
     .reverse();
-  return names.map((n) => n.slice(prefix.length, -'.json'.length));
+  return names;
 }
 
 export async function readBackup(

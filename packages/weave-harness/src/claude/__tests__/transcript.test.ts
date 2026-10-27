@@ -5,6 +5,7 @@ import {
   currentModeAt,
   currentModelAt,
   interruptMarkerAt,
+  preQuestionTextAt,
 } from '../transcript.js';
 
 const line = (o: unknown): string => JSON.stringify(o);
@@ -151,5 +152,56 @@ describe('currentContextTokensAt', () => {
 
   it('全零 usage 不算事实（合成/空轮）', () => {
     expect(currentContextTokensAt(usageLine({ input_tokens: 0, output_tokens: 0 }))).toBeNull();
+  });
+});
+
+describe('preQuestionTextAt（阻塞提问前的 assistant 正文）', () => {
+  // 实机形态：一条 assistant 消息拆成相邻多行（同 message.id），text 与 tool_use 各一行
+  const assistantText = (id: string, ts: string, text: string): string =>
+    line({ type: 'assistant', timestamp: ts, message: { id, content: [{ type: 'text', text }] } });
+  const blockingTool = (id: string, ts: string, name: string): string =>
+    line({ type: 'assistant', timestamp: ts, message: { id, content: [{ type: 'tool_use', name, input: {} }] } });
+
+  it('取最后一条阻塞工具所在消息里的正文（同 id 相邻行拼接）', () => {
+    const tail = [
+      assistantText('msg_a', '2026-10-26T02:00:00.000Z', '上一轮的收尾总结'),
+      assistantText('msg_b', '2026-10-26T02:19:24.521Z', '三个问题都有结论了。'),
+      blockingTool('msg_b', '2026-10-26T02:19:24.524Z', 'AskUserQuestion'),
+    ].join('\n');
+    expect(preQuestionTextAt(tail)).toEqual({ at: '2026-10-26T02:19:24.521Z', text: '三个问题都有结论了。' });
+  });
+
+  it('正文与工具之间隔着别的行（同 id）也认', () => {
+    const tail = [
+      assistantText('msg_b', '2026-10-26T02:19:24.521Z', '说明'),
+      line({ type: 'user', timestamp: '2026-10-26T02:19:25.000Z', message: { content: [{ type: 'tool_result' }] } }),
+      blockingTool('msg_b', '2026-10-26T02:19:26.000Z', 'ExitPlanMode'),
+    ].join('\n');
+    expect(preQuestionTextAt(tail)?.text).toBe('说明');
+  });
+
+  it('多条阻塞工具只认最后一条（更早的说明不顶上来）', () => {
+    const tail = [
+      assistantText('msg_old', '2026-10-26T01:00:00.000Z', '旧的提问前说明'),
+      blockingTool('msg_old', '2026-10-26T01:00:01.000Z', 'AskUserQuestion'),
+      assistantText('msg_mid', '2026-10-26T01:30:00.000Z', '中间的普通回复'),
+      assistantText('msg_new', '2026-10-26T02:00:00.000Z', '新的提问前说明'),
+      blockingTool('msg_new', '2026-10-26T02:00:01.000Z', 'ExitPlanMode'),
+    ].join('\n');
+    expect(preQuestionTextAt(tail)).toEqual({ at: '2026-10-26T02:00:00.000Z', text: '新的提问前说明' });
+  });
+
+  it('提问前没写字 → null（不拿旧回复凑数）', () => {
+    const tail = [
+      assistantText('msg_a', '2026-10-26T02:00:00.000Z', '普通回复'),
+      blockingTool('msg_b', '2026-10-26T02:19:24.524Z', 'AskUserQuestion'),
+    ].join('\n');
+    expect(preQuestionTextAt(tail)).toBeNull();
+  });
+
+  it('坏行 / 空串 / 无阻塞工具一律 null（不猜）', () => {
+    expect(preQuestionTextAt('')).toBeNull();
+    expect(preQuestionTextAt('{"type":"assistant","message":{"id":')).toBeNull();
+    expect(preQuestionTextAt(line({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } }))).toBeNull();
   });
 });

@@ -128,12 +128,12 @@ describe('POST /projects/:id/new-session', () => {
     expect(runCalls).toHaveLength(before);
   });
 
-  it('body 指定 codex：起 codex 裸 bin + launchArgs（--no-daemon，hook env 跟 TUI pane 走）', async () => {
+  it('body 指定 codex：起 codex 裸 bin（与手动 TUI 同一路径，hook 由共享 daemon 代跑）', async () => {
     const id = await makeProject('codex-pick', ['codex']);
     runCalls = [];
     const res = await post(`/projects/${id}/new-session`, { harness: 'codex' });
     expect(res.status).toBe(200);
-    expect(runCalls.map((c) => c.argv)).toEqual([['codex', '--no-daemon']]);
+    expect(runCalls.map((c) => c.argv)).toEqual([['codex']]);
   });
 
   it('已接入但注册表里没有该 harness（无 resume 槽）→ 501，缺省亦然', async () => {

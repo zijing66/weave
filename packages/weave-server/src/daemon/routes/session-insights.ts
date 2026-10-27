@@ -10,7 +10,7 @@ import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
 
 /**
- * 会话洞察域路由（只读）：计划模式正文、命令候选、命令返显、改动汇总。
+ * 会话洞察域路由（只读）：计划模式正文、提问前说明、命令候选、命令返显、改动汇总。
  * 数据源 = 各 harness 能力面（blockingPrompt / CommandsSurface / EditsSurface）+
  * hook 事件，server 只做按轮过滤与限额。
  */
@@ -216,6 +216,19 @@ export async function handleSessionInsightRoutes(
     sendJson(res, 200, {
       plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
     });
+    return true;
+  }
+
+  // ---- 提问前说明：阻塞提问（AskUserQuestion/计划确认）前模型写下的那段话 ----
+  // 阻塞提问不发 Stop ⇒ hook 事件里没有它，转录是唯一来源（提取归 harness 面）。
+  const preQMatch = pathname.match(/^\/sessions\/([^/]+)\/pre-question$/);
+  if (preQMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(preQMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const spec = src ? blockingPromptFor(src) : null;
+    const pre = await spec?.preQuestion?.(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
+    sendJson(res, 200, { preQuestion: pre ?? null });
     return true;
   }
 

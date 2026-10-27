@@ -143,14 +143,28 @@ function resolveFile(file: ConfigFileId, ctx: FileCtx): string {
   return p;
 }
 
-function credentialOf(values: Record<string, unknown>, input: { apiKey?: string | null; authToken?: string | null }): {
+function credentialOf(
+  values: Record<string, unknown>,
+  inherited: Record<string, unknown> | null,
+  input: { apiKey?: string | null; authToken?: string | null },
+): {
   header: Record<string, string>;
   credential: string;
 } {
-  const env = isPlainObject(values['env']) ? values['env'] : {};
-  const apiKey = input.apiKey || (typeof env['ANTHROPIC_API_KEY'] === 'string' ? env['ANTHROPIC_API_KEY'] : '');
+  const envOf = (src: Record<string, unknown> | null): Record<string, unknown> =>
+    src && isPlainObject(src['env']) ? (src['env'] as Record<string, unknown>) : {};
+  const str = (env: Record<string, unknown>, name: string): string =>
+    typeof env[name] === 'string' ? (env[name] as string) : '';
+  // 凭据整组取、不逐键混配：当前档自己有凭据就用当前档的（凭据跟 baseUrl 配套，
+  // 跨档混搭会把 user 档的 key 发去项目档的网关）；整档都没有才继承 user 档。
+  const own = envOf(values);
+  const inh = envOf(inherited);
+  const apiKey =
+    input.apiKey || str(own, 'ANTHROPIC_API_KEY') || (str(own, 'ANTHROPIC_AUTH_TOKEN') ? '' : str(inh, 'ANTHROPIC_API_KEY'));
   const authToken =
-    input.authToken || (typeof env['ANTHROPIC_AUTH_TOKEN'] === 'string' ? env['ANTHROPIC_AUTH_TOKEN'] : '');
+    input.authToken ||
+    str(own, 'ANTHROPIC_AUTH_TOKEN') ||
+    (str(own, 'ANTHROPIC_API_KEY') ? '' : str(inh, 'ANTHROPIC_AUTH_TOKEN'));
   if (apiKey) return { header: { 'x-api-key': apiKey }, credential: 'apiKey' };
   if (authToken) return { header: { authorization: `Bearer ${authToken}` }, credential: 'authToken' };
   return { header: {}, credential: 'none' };
@@ -245,9 +259,16 @@ export const CLAUDE_CONFIG: ConfigSurface = {
   async models(input) {
     const env = isPlainObject(input.values['env']) ? input.values['env'] : {};
     const configured = typeof env['ANTHROPIC_BASE_URL'] === 'string' ? env['ANTHROPIC_BASE_URL'] : '';
+    // 项目档没配地址/凭据时继承 user 档的 env（网关部署的常态是只在 user 档配一次）
+    const inherited =
+      input.file && input.file !== 'user' ? await readRawObject(pathOf('user', { projectPath: null, homedir: input.homedir ?? osHomedir() })) : null;
+    const inheritedUrl =
+      inherited && isPlainObject(inherited['env']) && typeof (inherited['env'] as Record<string, unknown>)['ANTHROPIC_BASE_URL'] === 'string'
+        ? ((inherited['env'] as Record<string, unknown>)['ANTHROPIC_BASE_URL'] as string)
+        : '';
     // baseUrl 有人会把 `/v1` 一起填进来，按 SDK 的根口径收齐后再拼 `/v1/models`
-    const baseUrl = (input.baseUrl || configured || DEFAULT_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
-    const { header, credential } = credentialOf(input.values, input);
+    const baseUrl = (input.baseUrl || configured || inheritedUrl || DEFAULT_BASE_URL).replace(/\/+$/, '').replace(/\/v1$/, '');
+    const { header, credential } = credentialOf(input.values, inherited, input);
     const res = await fetch(`${baseUrl}/v1/models?limit=1000`, {
       headers: { 'anthropic-version': ANTHROPIC_VERSION, ...header },
       signal: AbortSignal.timeout(input.timeoutMs ?? 10_000),

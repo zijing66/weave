@@ -1,7 +1,9 @@
+import { readFile } from 'node:fs/promises';
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } from '../driver.js';
 import { CLAUDE_PLAN } from './plan.js';
 import { defaultPermissionModeOf } from './model-aliases.js';
+import { preQuestionTextAt } from './transcript.js';
 
 /**
  * 阻塞式交互问答（AskUserQuestion / 计划确认 / 权限确认）的 claude 规格：
@@ -357,5 +359,15 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
   eventQuestion(eventType, payload) {
     if (eventType === 'PreModelSwitch') return switchQuestion(payload.raw);
     return null;
+  },
+  async preQuestion(transcriptPath) {
+    if (!transcriptPath) return null;
+    let tail: string;
+    try {
+      tail = await readFile(transcriptPath, 'utf8');
+    } catch {
+      return null;
+    }
+    return preQuestionTextAt(tail);
   },
 };

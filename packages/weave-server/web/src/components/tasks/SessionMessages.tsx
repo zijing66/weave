@@ -735,6 +735,11 @@ export function SessionMessages({
                               {t('tasks.convPlan')}
                             </span>
                           )}
+                          {m.preQuestion === true && (
+                            <span className="shrink-0 rounded bg-sky-500/15 px-1 py-px text-10 font-medium text-sky-300">
+                              {t('tasks.convPreQuestion')}
+                            </span>
+                          )}
                         </span>
                         {/* 宿主报的错不是回答：不排 markdown（原文就是一行技术串），
                             一律红字——系统错误得和正文一眼分得开 */}

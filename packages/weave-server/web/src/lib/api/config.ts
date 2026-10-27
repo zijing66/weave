@@ -86,6 +86,11 @@ export interface ConfigUpdate {
   remove?: boolean;
 }
 
+/** 对比目标的原文（草稿 vs 目标，两侧文本由 server 序列化）。 */
+export interface ConfigCompareResponse {
+  text: string;
+}
+
 export interface ConfigModelOption {
   id: string;
   name?: string;
@@ -121,7 +126,7 @@ export const configApi = {
     harness: Harness;
     file: ConfigFileId;
     projectId: number | null;
-    updates: ConfigUpdate[];
+    values: Record<string, unknown>;
   }): Promise<ConfigView> =>
     apiFetch<ConfigView>('/harness-config/values', { method: 'PUT', body: JSON.stringify(body) }),
   putConfigRaw: (body: {
@@ -150,10 +155,23 @@ export const configApi = {
     harness: Harness;
     file: ConfigFileId;
     projectId: number | null;
-    updates: ConfigUpdate[];
+    values: Record<string, unknown>;
   }): Promise<ConfigPreviewResponse> =>
     apiFetch<ConfigPreviewResponse>('/harness-config/preview', {
       method: 'POST',
       body: JSON.stringify(body),
+    }),
+  /** 对比页取目标原文：target = live（磁盘）/ backup（backupId）/ profile（id）。 */
+  postConfigCompare: (body: {
+    harness: Harness;
+    file: ConfigFileId;
+    projectId: number | null;
+    target: 'live' | 'backup' | 'profile';
+    id?: string;
+    backupId?: string;
+  }): Promise<ConfigCompareResponse> =>
+    apiFetch<ConfigCompareResponse>('/harness-config/profile', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, action: 'compare' }),
     }),
 };

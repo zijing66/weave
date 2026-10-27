@@ -66,7 +66,7 @@ describe('配置快照', () => {
     expect(state.profiles[0].updatedAt >= state.profiles[0].createdAt).toBe(true);
   });
 
-  it('备份列表新→旧，可回读', async () => {
+  it('备份列表新→旧，可回读；id 是本地时刻形 YYYY-MM-DD-HHmmss', async () => {
     const root = tmpRoot();
     await pushBackup(root, 'claude', 'user', { model: 'a' });
     await new Promise((r) => setTimeout(r, 5));
@@ -75,6 +75,8 @@ describe('配置快照', () => {
     expect(list).toHaveLength(2);
     expect(await readBackup(root, 'claude', 'user', list[0])).toEqual({ model: 'b' });
     expect(await readBackup(root, 'claude', 'user', list[1])).toEqual({ model: 'a' });
+    // 本地时刻、秒级精度（同秒再备追加 -N 序号）
+    expect(list[0]).toMatch(/^\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?$/);
   });
 
   it('备份 id 只认安全字符', async () => {

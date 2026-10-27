@@ -21,6 +21,7 @@ import {
   removableOf,
   withCommands,
   withPlan,
+  withPreQuestion,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -74,6 +75,8 @@ export function useConvThread(deps: {
   const [liveEvents, setLiveEvents] = useState<HookEventRow[]>([]);
   /** 计划模式最近交出的那份计划（没进计划模式 / 正文取不到 = null，不摆气泡）。 */
   const [plan, setPlan] = useState<SessionPlan | null>(null);
+  /** 阻塞提问前模型写下的说明（转录里认的；没在提问 / 没写字 = null）。 */
+  const [preQuestion, setPreQuestion] = useState<{ at: string; text: string } | null>(null);
   /** 内建命令的执行回显（转录里认出来的；null = 这个 harness 不记）。 */
   const [executions, setExecutions] = useState<CommandExecutionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -152,12 +155,22 @@ export function useConvThread(deps: {
     }
   }, [sessionId]);
 
+  /** 提问前说明（转录里认的）：取不到就当没有——多半没在提问 / 提问前没写字。 */
+  const loadPreQuestion = useCallback(async (): Promise<void> => {
+    try {
+      setPreQuestion(await api.sessionPreQuestion(sessionId));
+    } catch {
+      setPreQuestion(null);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     void loadNewest();
     void refreshMessages();
     void loadPlan();
+    void loadPreQuestion();
     void loadExecutions();
-  }, [loadExecutions, loadNewest, loadPlan, refreshMessages]);
+  }, [loadExecutions, loadNewest, loadPlan, loadPreQuestion, refreshMessages]);
 
   useEffect(() => {
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
@@ -173,6 +186,7 @@ export function useConvThread(deps: {
     let wantMessages = false;
     let wantLive = false;
     let wantPlan = false;
+    let wantPreQ = false;
     const onHook = (f: HookFrame): void => {
       if (f.sessionId !== sessionId) return;
       const ingested = f.kind === 'event.ingested';
@@ -190,6 +204,7 @@ export function useConvThread(deps: {
       } else if (f.kind === 'question.pending') {
         // 计划待批阅也走问答那条路（问句/选项归 harness，这边不认工具名）
         wantPlan = true;
+        wantPreQ = true;
       } else {
         wantMessages = true;
       }
@@ -200,12 +215,14 @@ export function useConvThread(deps: {
         const messages = wantMessages;
         const live = wantLive;
         const planWanted = wantPlan;
-        wantConv = wantMessages = wantLive = wantPlan = false;
+        const preQWanted = wantPreQ;
+        wantConv = wantMessages = wantLive = wantPlan = wantPreQ = false;
         if (conv) void loadNewest();
         if (conv) void loadExecutions();
         if (messages) void refreshMessages();
         if (live) void loadLive();
         if (planWanted) void loadPlan();
+        if (preQWanted) void loadPreQuestion();
       }, 500);
     };
     const off = subscribeHook(onHook);
@@ -213,7 +230,7 @@ export function useConvThread(deps: {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadExecutions, loadLive, loadNewest, loadPlan, refreshMessages, sessionId]);
+  }, [lifecycle, loadExecutions, loadLive, loadNewest, loadPlan, loadPreQuestion, refreshMessages, sessionId]);
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {
@@ -262,8 +279,12 @@ export function useConvThread(deps: {
     [messages],
   );
   const { thread, outbox } = useMemo(
-    () => attachDeliveries(withCommands(withPlan(entries ?? [], plan), executions), manualDeliveries),
-    [entries, executions, manualDeliveries, plan],
+    () =>
+      attachDeliveries(
+        withCommands(withPlan(withPreQuestion(entries ?? [], preQuestion), plan), executions),
+        manualDeliveries,
+      ),
+    [entries, executions, manualDeliveries, plan, preQuestion],
   );
   /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
   const newestAssistantKey = useMemo(() => {

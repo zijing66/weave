@@ -14,8 +14,4 @@ export const CODEX_RESUME: ResumeCommandSpec = {
   args: (sessionId) => ['exec', 'resume', sessionId, '-'],
   promptStdin: true,
   openArgs: (sessionId) => ['resume', sessionId],
-  // hook 由共享 app-server daemon 代跑，hook env = daemon 启动地的 pane（错分组
-  // 根源，2026-10-25 实测）；--no-daemon 让 TUI 自带 app-server，hook env 跟着
-  // TUI 所在 pane 走，终端分组与层② 定位才指得住。
-  launchArgs: ['--no-daemon'],
 };

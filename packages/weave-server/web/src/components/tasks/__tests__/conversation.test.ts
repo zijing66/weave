@@ -11,6 +11,7 @@ import {
   removableOf,
   withCommands,
   withPlan,
+  withPreQuestion,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -450,6 +451,38 @@ describe('withPlan（计划正文当一条对话气泡）', () => {
 
   it('④ 正文为空不摆（计划文件没写到 / 取不到）', () => {
     expect(withPlan(thread, { eventId: 5, at: at(5), text: '   ' }).map((e) => e.key)).toEqual([
+      'e1',
+      'e9',
+    ]);
+  });
+});
+
+describe('withPreQuestion（提问前说明当一条对话气泡）', () => {
+  const thread: ConvEntry[] = [
+    { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+    { key: 'e9', eventId: 9, role: 'assistant', at: at(9), text: '答' },
+  ];
+
+  it('① 没有说明 = 原样返回（不凭空多一条）', () => {
+    expect(withPreQuestion(thread, null).map((e) => e.key)).toEqual(['e1', 'e9']);
+  });
+
+  it('② 按时刻插进时间线（摆在提问气泡之前）', () => {
+    const out = withPreQuestion(thread, { at: at(5), text: '先说结论' });
+    expect(out.map((e) => [e.key, e.role, e.preQuestion])).toEqual([
+      ['e1', 'user', undefined],
+      ['q' + at(5), 'assistant', true],
+      ['e9', 'assistant', undefined],
+    ]);
+  });
+
+  it('③ 比所有条目都晚 → 排在尾上（提问还没被 UPS 认领时）', () => {
+    const out = withPreQuestion(thread, { at: at(20), text: '先说结论' });
+    expect(out.map((e) => e.key)).toEqual(['e1', 'e9', 'q' + at(20)]);
+  });
+
+  it('④ 正文为空不摆', () => {
+    expect(withPreQuestion(thread, { at: at(5), text: '   ' }).map((e) => e.key)).toEqual([
       'e1',
       'e9',
     ]);

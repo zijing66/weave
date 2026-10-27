@@ -157,3 +157,71 @@ export function currentContextTokensAt(tail: string): number | null {
   }
   return newest;
 }
+
+/**
+ * 转录尾部最后一条阻塞工具调用（AskUserQuestion / ExitPlanMode）**之前**的
+ * assistant 正文——模型提问前写给用户看的说明（「先答中途的问题，再汇报……」）。
+ *
+ * 为什么绕到转录：阻塞提问不发 Stop，hook 事件里只有工具三元组，这段话没有任何
+ * 事件照会。claude 把一条 assistant 消息拆成相邻多行（同 `message.id`），正文与
+ * 工具调用常在同一消息里——所以定位按「最后一条阻塞工具所在消息」收，正文取该
+ * 消息（含其前同 id 的相邻行）里全部 text 分区的拼接。
+ */
+export function preQuestionTextAt(tail: string): { at: string; text: string } | null {
+  const BLOCKING = /"(?:AskUserQuestion|ExitPlanMode)"/;
+  const lines = tail.split('\n');
+  let anchorId: string | null = null;
+  let anchorAt = '';
+  // 倒着找最后一条阻塞工具调用，记住它所属的 message.id
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (!BLOCKING.test(line)) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = raw as {
+      type?: unknown;
+      timestamp?: unknown;
+      message?: { id?: unknown; content?: unknown };
+    };
+    if (entry?.type !== 'assistant') continue;
+    const hasTool = (entry.message?.content as Array<{ type?: unknown; name?: unknown }> | undefined)?.some(
+      (part) => part?.type === 'tool_use' && (part.name === 'AskUserQuestion' || part.name === 'ExitPlanMode'),
+    );
+    if (!hasTool) continue;
+    anchorId = typeof entry.message?.id === 'string' ? entry.message.id : null;
+    anchorAt = typeof entry.timestamp === 'string' ? entry.timestamp : '';
+    break;
+  }
+  if (anchorId === null) return null;
+  // 正着收集该消息（含其前同 id 的相邻行）里的全部 text 分区
+  const parts: string[] = [];
+  let at = anchorAt;
+  for (const line of lines) {
+    if (!line.includes(anchorId)) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = raw as {
+      type?: unknown;
+      timestamp?: unknown;
+      message?: { id?: unknown; content?: unknown };
+    };
+    if (entry?.type !== 'assistant' || entry.message?.id !== anchorId) continue;
+    for (const part of (entry.message?.content as Array<{ type?: unknown; text?: unknown }> | undefined) ?? []) {
+      if (part?.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+        parts.push(part.text);
+        if (typeof entry.timestamp === 'string') at = entry.timestamp;
+      }
+    }
+  }
+  const text = parts.join('').trim();
+  if (!text) return null;
+  return { at, text };
+}

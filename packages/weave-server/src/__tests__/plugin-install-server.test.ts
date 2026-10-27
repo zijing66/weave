@@ -47,7 +47,7 @@ const fakeExec: PluginExecutor = async (args) => {
 };
 
 beforeAll(async () => {
-  for (const k of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) {
+  for (const k of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME', 'CODEX_HOME']) {
     envBak[k] = process.env[k];
   }
   base = mkdtempSync(join(tmpdir(), 'weave-pluginst-home-'));
@@ -56,6 +56,12 @@ beforeAll(async () => {
   process.env.USERPROFILE = base;
   process.env.APPDATA = base;
   process.env.XDG_CONFIG_HOME = base;
+  // codex 分支走 registry 真面 = 真 spawn codex CLI；codex.exe（Rust dirs crate）取
+  // home 走 SHGetKnownFolderPath、**不读 USERPROFILE** ⇒ 不设 CODEX_HOME 就会写进
+  // 真实 ~/.codex/config.toml（测试市场/插件残留 + 抹掉 hooks trust，2026-10-26 实测）。
+  // 目录必须先建：codex CLI 对不存在的 CODEX_HOME 直接 "failed to resolve"。
+  mkdirSync(join(base, '.codex'), { recursive: true });
+  process.env.CODEX_HOME = join(base, '.codex');
 
   // 外部市场包：<dataRoot>/market/ext-mkt/plugins/pack-a（带 CC manifest）
   marketPackDir = join(base, 'weave', 'data', 'market', 'ext-mkt', 'plugins', 'pack-a');

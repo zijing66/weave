@@ -34,7 +34,7 @@
 - **投递路径与 harness 无关**：脚本按 `<projectDir>/.weave/token` 取令牌、把**原始载荷**append 进 `<cacheDir>/hooks/inbox`，daemon 的 inbox worker 按 `report.source` 挑 `EventSource`（见 §9 的单通道口径）。故接一个新 harness 只需「装声明 + 让脚本跑起来」，服务端一条 SQL 都不用改。
 - **codex 侧四处与 claude 不同**：① 声明落点 `hooks.json`（`HooksFile` 形状 + `deny_unknown_fields`）；② 事件词表少几条、多一个 `Interrupt`（线名，weave 规范名是 `TurnAborted`）；③ **信任闸**（见下）；④ 项目档不装——写 `<repo>/.codex/hooks.json` 还额外要求该文件夹被 codex 标成 trusted，多一道用户自己解不了的坎。
 - **信任闸**：非 builtin / 非 managed 的 handler 必须有 `[hooks.state.'<hooks.json 绝对路径>:<snake_event>:<group>:<handler>']` 的 `trusted_hash`（键形 = `codex-rs/hooks/src/lib.rs:120` 的 `hook_key`，事件段是 `pre_tool_use` 这类下划线名），否则**不执行**。哈希盖住 handler 的声明内容 ⇒ `command` 串必须**恒定**（不带版本号/时间戳），这样「Trust all and continue」点一次即跨 weave 升级长期有效；weave 不自己算这个哈希（那等于替用户签字，且算错的表现是静默不跑）。CLI 只有一次性 `--dangerously-bypass-hook-trust`，config.toml 无持久开关 ⇒ 这一下只能用户在 codex 启动那张 Review hooks 弹窗里点。
-- **hook 的执行环境**：以 `current_dir = 会话 cwd` 跑；非 unix 先 `env_clear()` 再回放整份继承快照（只滤 `NON_INHERITABLE_ENV_VARS`）⇒ `WEZTERM_PANE` 还在，pane 定位（§4.10）不用为 codex 改。codex 不设 `CLAUDE_PROJECT_DIR`，脚本的项目目录回落到载荷里的 `cwd`。
+- **hook 的执行环境**：以 `current_dir = 会话 cwd` 跑；非 unix 先 `env_clear()` 再回放整份继承快照（只滤 `NON_INHERITABLE_ENV_VARS`）⇒ `WEZTERM_PANE` 还在，pane 定位（§4.10）不用为 codex 改。codex 不设 `CLAUDE_PROJECT_DIR`，脚本的项目目录回落到载荷里的 `cwd`。**codex 的 hook 由共享 app-server daemon 代跑**（TUI 默认连它，weave 起会话不加 `--no-daemon`、与手动 TUI 同一路径）⇒ hook env = daemon 启动时冻结的 env，`WEZTERM_PANE` 对 codex 系统性失真——pane 定位走「标题+cwd 回落」（§4.10 第 5 步），层①-q `codex queue` 不依赖 pane env 不受伤。
 - `hook_transcript_path()` 给的就是 rollout 文件路径（内部会 `ensure_rollout_materialized`）——将来 codex 的 `edits` 槽从这里读。
 
 ### logs 槽（拉取式兜底）
@@ -522,6 +522,10 @@ pane 定位复用层② 的 locator 优先 + 标题/cwd 回落（同一条 `term
 - **正文在事件里整份保真**：采集面的 4KB 叶子裁剪不裁计划形状的 `tool_input`——裁了气泡就只剩前 4000 字符、尾巴挂个「…」。
 - 批阅入口**不新开一处**，仍是那枚「回答」。
 
+### 提问前说明当对话气泡
+
+阻塞提问（AskUserQuestion / ExitPlanMode）**不发 Stop**，提问前模型写给用户看的那段说明没有任何事件照会——`BlockingPromptSpec.preQuestion?`（可选，无此面的 harness 缺席即静默）从转录尾部最后一条阻塞工具所在消息收齐 text 分区（claude 把一条 assistant 消息拆成相邻多行、同 `message.id`，正文与工具调用常在同一消息里；提取落 `claude/transcript.ts` 的 `preQuestionTextAt`）。`GET /sessions/:id/pre-question` 只读下发 `{at, text}`，web 按**时刻**插进对话流（没有自己的事件 id，与命令回显同一条时间线），气泡带 sky 徽标「提问前说明」；取数与 `question.pending` 帧同拍（与 loadPlan 并列）。
+
 ## §6 旁路会话
 
 claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 → `SideQuestionDialog`；能力面 false 即不渲染。
@@ -601,7 +605,7 @@ ESC 只救**在途**（内部重试 / 长工具卡住）的静默窗口；报错
 - `GET /projects`（含 `/archived`）逐行带 `harnesses: {id, canStartSession, version?, minVersion?}[]`，项目卡标签与「新建会话」的 harness 选项同源取数。`canStartSession` = resume 槽有裸 bin **且探到的宿主版本过 `resume.minVersion`**；`version`/`minVersion` 只为让 UI 说明为什么置灰。
 - **版本闸是 resume 槽的字段**（`ResumeCommandSpec.minVersion`，宿主版本要求是 harness 知识、不散写 server）：claude = `2.1.287`（与 `MIN_MOD_HOST_VERSION` 同一档——hook 面 / 问答键序 / 计划正文都按这版起写）。探测 = `<bin> --version` 取首个 semver（win32 上 npm shim 是 `.cmd`，须走 shell），**10 分钟缓存、并发共用一次 spawn**（缓存的正是在飞的那个 promise，`GET /projects` 逐项目取版本不会起一串子进程），**失败不缓存**；**探不到不拦**——与 mod 版本闸同口径（拿不到 ≠ 不兼容，低误报优先）。
 - `POST /projects/:id/new-session` 收 `harness`：非法 400、未接入 409、已接入但起不了（无裸 bin 或版本不够）501，缺省取已接入里第一个能起的。
-- **codex 的 resume 槽有裸 bin**（`codex` 起新会话，`codex exec resume <id> -` 是无头形、prompt 走 stdin）但**没有 `openArgs`**——交互式 resume 要 codex 自己的 session id，而 weave 不收 codex 事件（`CODEX_EVENT_SOURCE = null`）、手里没有这个 id ⇒「在终端打开 codex 会话」仍 501。
+- **codex 的 resume 槽有裸 bin**（`codex` 起新会话，`codex exec resume <id> -` 是无头形、prompt 走 stdin）与 `openArgs`（`codex resume <id>`，id = rollout 的 `session_meta.session_id`，rollout 尾读采集可得）；**无 `launchArgs`**——weave 起会话与手动 TUI 同一路径（共享 app-server daemon 代跑 hook，2026-10-26 裁决，见 DECISIONS）。
 - **web 侧只要项目选中了 harness 就恒弹 `HarnessPicker`**（一枚也展开，不再「1 个直接起」——用户要看见有哪几个、为什么起不了）：起不了的置灰并在行内说明原因（版本偏低带出实际版本与下限，其余为「暂不支持新建交互会话」），行与按钮都挂原生 `title`；只有「一个 harness 都没接入」才把按钮置灰。
 - 不落会话行的 harness（`HARNESS_LIFECYCLE[<harness>].sessionMarkers` 为空，今天 = codex）**不等新行**：新建会话的 loading 挂到「新会话行进列表」为止，但这类 harness 永远不会有行到来，等就是白转满 `OPEN_TERMINAL_ALIVE_MS`（30s）⇒ POST 回即收圈。
 - **不要求本项目已开终端**——没有就自己开一个（落点由终端后端自决：复用同项目 tab，没有就在活实例里新窗口）。
@@ -850,23 +854,30 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 `write(file, ctx, values)`：读**原文** → 只替换「该档词表可见的顶层键」→ tmp+rename 原子写、2 空格 + 尾换行。未知键与没动过的键**保持原位**（就着原对象改、新键追加在末尾）——改成「先收集未知键再拼回去」会让整份文件的键序翻个面，`settings.json` 进版本库的项目每次写都多一大片假 diff。`deletes` 靠 `applyUpdates` 的 `remove:true`（深路径删），危险段（`__proto__` / `constructor` / `prototype` / 空段）一律拒。`global` 档因此只碰文档列出的键，`projects` / `oauthAccount` 等宿主自己的键原样留着。读上限 2MB；文件不存在 = `{}`；非法 JSON 直接抛（**不覆盖**）。
 
 - 原始视图（`PUT /harness-config/raw`）先 `surface.parseRaw`（格式归 harness）再走同一个 `write`，所以「原始文件里删掉一个键」只在词表内键上生效，未知键不会被顺手清掉。
-- 每次写前 `pushBackup`（`backups/<file>-<ts>.json`，留最近 20 份），`restoreBackup` 反向写回。
+- 每次写前 `pushBackup`（`backups/<file>-<ts>.json`，留最近 20 份），`restoreBackup` 反向写回；`acceptDrift` 覆盖存档前也把**原基线** pushBackup 一份（误点后能从备份找回）。
+
+### 草稿中心制（web 交互模型）
+
+**一份草稿，一个写盘口**：树编辑与原始编辑改的都是同一份表单草稿（`draft`，临时、不落盘），顶部「保存」是唯一写文件的动作（`PUT /harness-config/values` 收**整份** values，不再收稀疏 updates）。raw 视图进入时从草稿序列化、切回树时落回草稿、保存 = 落草稿 + 写盘——两个视图是同一份内容的两种投影。`dirty` = 草稿 ≠ `view.values`（文本级比对），保存/还原按钮与「有未保存的改动」徽标都按它解锁。
+
+**配置库区（`ConfigVault`）在编辑区上方**：手动配置 + 自动备份两个 tab、一块区域。每一项都能「对比」——**恒为「当前表单 vs 目标」**（`compare` 动作回目标原文：profile=快照 / backup=备份 / live=磁盘），对比弹窗里「应用到表单」= 目标 → 草稿（之后点保存才写盘）；配置条目另有「存入」（`create`/`save` 收表单值，只写快照不碰文件）。**覆盖与恢复都落在对比页、都只改草稿**——写盘永远只有「保存」一个口。
 
 ### 快照 / 漂移 / 切换
 
 落点 `<local>/harness-config/<harness>/`（`getHarnessConfigDir()`）：`profiles.json`（`{ file: { activeId, profiles[] } }`）+ `<file>-<id>.json`（整份快照）+ `backups/`。放 `local/` 是因为**快照里可能带 API key**：本机专属、不进 settings 表、不随迁移带走。
 
-- **漂移只来自外部改文件**：本面板的写入口（values / raw / 切换 / 恢复）每次都把结果同步进激活快照，故 `liveText !== activeText` 必然意味着有人在外面改了文件。打开面板即比，横幅里给「看差异」/「用文件覆盖库」（`acceptDrift`）。
-- **切换是两拍**：`activate` 不带 `confirm` → 只回 `{ requiresConfirm, liveText, profileText }`，web 弹 `DiffDialog` 交用户确认；带 `confirm:true` 才备份 + 整体覆盖 + `setActive`。**不先弹 diff 就覆盖等于偷偷改宿主配置**。
+- **漂移基线**：活跃快照优先；没有活跃快照的档位（project/projectLocal、还没建快照的 user/global）落 `_lastseen` 自动基线——首次查看立基线、写入口恒同步（`syncBaseline`），否则这些档位的外部改动永远判不出漂移。漂移判据 = 基线 vs 活文件。
+- **漂移只来自外部改文件**：本面板的写入口（values / raw / 切换 / 恢复）每次都把结果同步进基线，故 `liveText !== activeText` 必然意味着有人在外面改了文件。打开面板即比，横幅给**双向出口**：「看差异」（accept = `acceptDrift`，采纳外部改动进存档）与「用库覆盖文件」（`restoreBaseline` 两拍，把基线写回文件恢复到差异之前）——两个方向都先弹 diff。
+- **覆盖类动作都是两拍**：`activate` / `restoreBackup` / `restoreBaseline` 不带 `confirm` → 只回 `{ requiresConfirm, liveText, …Text }`，web 弹 `DiffDialog` 交用户确认；带 `confirm:true` 才备份 + 覆盖（+ `setActive`）。**不先弹 diff 就覆盖等于偷偷改宿主配置**。
 - diff 是自写的行级 LCS（`web/src/lib/text-diff.ts`，`MAX_LINES` 超限退化成整段替换），不引依赖；比对文本 = `surface.serializeRaw(values)`（格式归 harness），两侧同口径才不会满屏假差异。
 
 ### 拉模型列表
 
-`POST /harness-config/models`：baseUrl 取 入参 → 配置 `env.ANTHROPIC_BASE_URL` → `https://api.anthropic.com`（尾部 `/v1` 收齐后再拼 `/v1/models?limit=1000`，因为有人会把 `/v1` 一起填）；凭据取 入参 → `env.ANTHROPIC_API_KEY`（`x-api-key`）→ `env.ANTHROPIC_AUTH_TOKEN`（`Authorization: Bearer`）。响应只回 `{ models, baseUrl, credential }`——**key 永不回显**，`credential` 只是个「用的哪一种」的标签。10s 超时，非 2xx 带状态码与 200 字正文。
+`POST /harness-config/models`：baseUrl 取 入参 → 当前档 `env.ANTHROPIC_BASE_URL` → **user 档同键**（项目档没配时继承 `~/.claude/settings.json` 的 env——网关部署的常态是只在 user 档配一次）→ `https://api.anthropic.com`（尾部 `/v1` 收齐后再拼 `/v1/models?limit=1000`，因为有人会把 `/v1` 一起填）；凭据取 入参 → 当前档 `env.ANTHROPIC_API_KEY`（`x-api-key`）→ 当前档 `env.ANTHROPIC_AUTH_TOKEN`（`Authorization: Bearer`）→ **user 档同键**。凭据**整组取、不逐键混配**：当前档自己有凭据就用当前档的（凭据跟 baseUrl 配套，跨档混搭会把 user 档的 key 发去项目档的网关），整档都没有才继承。响应只回 `{ models, baseUrl, credential }`——**key 永不回显**，`credential` 只是个「用的哪一种」的标签。10s 超时，非 2xx 带状态码与 200 字正文。
 
 ### web 侧
 
-`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、快照条、搜索/过滤、**配置树**、模型卡、原始文件视图（编辑语言随 `rawFormat`：claude=JSON / codex=TOML，即时校验同语言）、备份行、漂移横幅。**档位按视图分工**：项目页只摆 `project`（+ claude 的 `projectLocal`），全局页只摆 `user`（+ claude 的 `global`）——在项目语境里顺手改到全机配置是最容易出事的一类误操作。裁的是「怎么摆」不是「能不能读」。
+`资源管理` 页第三枚视图 tab「配置」→ `HarnessConfigPanel`（harness 页签即 `GET /capabilities` 的 `config` 列表）：档位选择、**配置库区（双 tab：手动配置/自动备份）**、搜索/过滤、**配置树**、模型卡、原始文件视图（编辑语言随 `rawFormat`：claude=JSON / codex=TOML，即时校验同语言）、漂移横幅。**档位按视图分工**：项目页只摆 `project`（+ claude 的 `projectLocal`），全局页只摆 `user`（+ claude 的 `global`）——在项目语境里顺手改到全机配置是最容易出事的一类误操作。裁的是「怎么摆」不是「能不能读」。
 
 树怎么拼（`buildConfigTree`，纯函数在 `web/src/lib/config-form.ts`）：
 

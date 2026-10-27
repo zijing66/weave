@@ -34,6 +34,7 @@ export {
   currentModeAt,
   currentEffortAt,
   currentContextTokensAt,
+  preQuestionTextAt,
 } from './transcript.js';
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
