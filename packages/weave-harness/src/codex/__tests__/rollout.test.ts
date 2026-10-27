@@ -116,6 +116,22 @@ describe('CodexLogSource', () => {
     expect((await poll()).length).toBe(0);
   });
 
+  it('半行未落的刚建文件不登记（下一拍重试），补齐后正常采——poll 撞上创建瞬间的竞态', async () => {
+    // 第一拍：文件只有半行（无换行符）——真实场景 = poll 撞上 rollout 刚创建
+    await writeFile(sessionFile, metaLine('th-1').slice(0, 40));
+    expect((await poll()).length).toBe(0);
+    // 半行期间不登记游标（登记了就永不采）——连游标文件都不会写
+    const raw = await import('node:fs/promises')
+      .then((fs) => fs.readFile(path.join(stateDir, 'cursors.json'), 'utf8'))
+      .catch(() => '{}');
+    expect(JSON.parse(raw).files?.[sessionFile]).toBeUndefined();
+    // 第二拍：补齐后正常采出 SessionStart
+    await writeFile(sessionFile, metaLine('th-1'));
+    const out = await poll();
+    expect(out.map((r) => r.report.eventType)).toEqual(['SessionStart']);
+    expect(out[0]!.report.sessionId).toBe('th-1');
+  });
+
   it('文件删掉后游标条目一并清（游标文件不随时间胀大）', async () => {
     await writeFile(sessionFile, metaLine('th-1'));
     await poll();

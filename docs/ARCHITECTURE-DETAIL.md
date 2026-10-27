@@ -558,7 +558,21 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 - 实时刷新 = 既有 hook 帧域的 kind 扩展 `sideQuestion.answered`（web 收到即重拉一页，不做增量协议）。
 - 删会话级联 = `purgeSession` 的 `sideQuestions`（空会话清扫器同口径）。
 - 命令文法与形态校验归 harness（`/btw <原文>`、单行、≤2000 字符），server 只传用户原文。
-- codex 的「侧边聊天」留位不实现（`sideQuestion: null` + `unsupportedReasons.sideQuestion`）。
+
+### codex = `/side` 读屏通道（2026-10-27 点亮）
+
+codex 0.164 的 `/side` 侧边会话是**父线程 fork**（继承历史仅作参考、子 agent 禁用、非变异探索为主），且 **ephemeral**：零落盘、零 hook 事件、关面板即丢 ⇒ 事件认领路径（`answerOf`）对 codex 恒判不出，**读屏是唯一信源**。`SideQuestionSpec` 扩两个可选字段：
+
+- `prerequisite`：发起前置说明（codex = 主线程至少发过一条消息，否则 `/side` 开不成、问句落主线程成回合）；server 闸 = `sessions.hasRunOf`（认 UPS/Stop/StopFailure/SessionEnd 四事件），不满足 409 文案直用。
+- `screen`（`SideQuestionScreenSpec`）：屏幕文法全归 harness 判据——`openKeys`（`/side`）、`submitKey`（`\r`）、`closeKey`（`\x03`）、`panelOpen`（底条指纹 `Side from main thread`）、`extractAnswer(question, before, now)`（锚定 before 里没有的问句行 `› <问句>`，取它到收尾行 `Worked for …` 之间的 `•` 块，跳过 `└ Tip:` 附加行；`• Working (…)` = 未落定继续轮询；判不出 = `done:true, answer:null` 如实落 timeout，不猜——屏幕文法随宿主版本变）。
+
+server 执行体 = `MessageDeliverer.pollScreenAnswer`（fire-and-forget：POST 先回、行先落 pending，回答到了经 `sideQuestion.answered` 帧推前端 + `side_questions.answerById` 按 (session, question) 直更最早 pending 行、幂等、无 eventId）。时序全部实测钉死（2026-10-27）：
+
+1. before 快照 → 发 `openKeys` → 300ms → `submitKey` → 1.5s 稳定窗 → 验屏；**开面板的 CR 常被吃**，没开成补一发再验，仍开不成放弃（不发问句，防落主线程）。
+2. `sendText` 问句 → 300ms → `submitKey` → 每 1s 轮询读屏（预算 120s，超窗行落 timeout）。
+3. **收尾前必须验屏确认面板还开着**才发 `closeKey`——用户中途 ctrl+c 关掉后，再打的 ctrl+c 落主线程语境（忙 = 中断确认菜单、闲 = **退出 TUI**），盲打比不收尾糟得多，面板不在就什么都不发。
+
+pane 读屏 = `TerminalBackend.getPaneText`（wezterm = `cli get-text --pane-id`，只取可视屏；其余后端 null 不谎报；`PromptTerminal.getPaneText?` 可缺省，无读屏能力的装配侧问入口对读屏 harness 置灰）。风险矩阵五场景实测见 DECISIONS 同日。
 
 ## §7 会话中断与 `SessionProbe`
 
@@ -619,6 +633,10 @@ ESC 只救**在途**（内部重试 / 长工具卡住）的静默窗口；报错
 - **web 侧只要项目选中了 harness 就恒弹 `HarnessPicker`**（一枚也展开，不再「1 个直接起」——用户要看见有哪几个、为什么起不了）：起不了的置灰并在行内说明原因（版本偏低带出实际版本与下限，其余为「暂不支持新建交互会话」），行与按钮都挂原生 `title`；只有「一个 harness 都没接入」才把按钮置灰。
 - 不落会话行的 harness（`HARNESS_LIFECYCLE[<harness>].sessionMarkers` 为空，今天 = codex）**不等新行**：新建会话的 loading 挂到「新会话行进列表」为止，但这类 harness 永远不会有行到来，等就是白转满 `OPEN_TERMINAL_ALIVE_MS`（30s）⇒ POST 回即收圈。
 - **不要求本项目已开终端**——没有就自己开一个（落点由终端后端自决：复用同项目 tab，没有就在活实例里新窗口）。
+
+### 回合开合基线（`turnOpen`）
+
+服务端基线 = `SessionRepository`（`listWithCounts` 计算字段与 `turnOpenOf` 同一判据）：最后一条 `UserPromptSubmit` 晚于最后一条回合收尾（`turnCloseSql`：close ∪ 起落标记，排除压缩收尾笔）。**排队回合补充臂**（`turnToolSql`，事件名归 core `HARNESS_TOOL_EVENTS`）：claude 宿主对「回合运行中发来的消息」UPS 在**入队时刻**就发、上一回合收尾发 Stop，出队开跑的新回合**不再发第二条 UPS**（2026-10-27 实测 bcdb8017：UPS 02:28:13 → Stop 02:28:27 → 出队回合跑到 02:37:11，九分钟全靠工具事件）⇒ 只认 UPS 会把这九分钟误判「已关」。最后收尾之后仍有工具事件（PreToolUse/PostToolUse/PostToolUseFailure）= 回合实际还开着；Notification（idle 提示）/ SubagentStop（away 总结）在收尾后也会来，不算。
 
 ### 压缩态
 

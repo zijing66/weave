@@ -95,6 +95,32 @@ export class SideQuestionRepository {
     );
   }
 
+  /**
+   * 读屏通道的直更（codex = `/side`）：按 (sessionId, question) 找**最早的待答
+   * 行**落回答——没有 eventId（回答不来自采集事件），answer_event_id 留空。
+   * 条件更新（status='pending'）幂等；无待答行 = 用户手动在宿主面板里问的，
+   * weave 不知道，不认领。
+   */
+  answerById(sessionId: string, question: string, answer: string): SideQuestionRow | null {
+    const target = this.db
+      .prepare(
+        `SELECT id FROM side_questions
+         WHERE session_id = ? AND status = 'pending' AND question = ?
+         ORDER BY id LIMIT 1`,
+      )
+      .get(sessionId, question) as { id: number } | undefined;
+    if (!target) return null;
+    const changes = Number(
+      this.db
+        .prepare(
+          `UPDATE side_questions SET answer = ?, status = 'answered', answered_at = ?
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(answer, new Date().toISOString(), target.id).changes,
+    );
+    return changes === 1 ? (this.getById(target.id) ?? null) : null;
+  }
+
   /** 游标向前翻页（`beforeId` 缺省 = 最新一页），倒序。 */
   list(sessionId: string, opts: { beforeId?: number; limit: number }): SideQuestionRow[] {
     const { beforeId, limit } = opts;

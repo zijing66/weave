@@ -24,7 +24,7 @@ export const HARNESS_LIFECYCLE = {
     open: 'UserPromptSubmit',
     close: ['Stop', 'TurnAborted'],
     closeFailed: [],
-    sessionMarkers: ['SessionStart'],
+    sessionMarkers: ['SessionStart', 'SessionEnd'],
     subagentStop: '',
     questionTools: [],
     sessionExit: null,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -169,6 +169,122 @@ describe('POST /projects/:id/new-session', () => {
       projectId: codexId,
       env: { WEZTERM_PANE: '42' },
     });
+  });
+
+  it('引导注入：spec 声明 bootstrapText 且有 spawn 回执 → 延时向起点 pane 贴文本并补 CR', async () => {
+    vi.useFakeTimers();
+    try {
+      const texts: Array<{ paneId: string; text: string }> = [];
+      const keys: Array<{ paneId: string; keys: string }> = [];
+      const codexId = await makeProject('bootstrap-codex', ['codex']);
+      runCalls = [];
+      opener.runInTerminal = async (dir, argv, terminal) => {
+        runCalls.push({ dir, argv, terminal });
+        return { env: { WEZTERM_PANE: '7', WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-3' } };
+      };
+      const terminal = {
+        available: () => true,
+        listPanes: async () => [],
+        locatePane: async (env: Record<string, string>) => env['WEZTERM_PANE'] ?? null,
+        sendText: async (paneId: string, text: string) => {
+          texts.push({ paneId, text });
+        },
+        sendKeys: async (paneId: string, sent: string) => {
+          keys.push({ paneId, keys: sent });
+        },
+        closePane: async () => {},
+      };
+      const alt = createWeaveServer({
+        projects,
+        port: 0,
+        harnesses: createRuntimeRegistry(),
+        opener,
+        terminal,
+      });
+      await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve));
+      const altPort = (alt.address() as { port: number }).port;
+      const postAlt = (body?: unknown): Promise<Response> =>
+        fetch(`http://127.0.0.1:${altPort}/projects/${codexId}/new-session`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        });
+      try {
+        await postAlt({ harness: 'codex' });
+        // T1 前不注入
+        expect(texts).toHaveLength(0);
+        await vi.advanceTimersByTimeAsync(8_000);
+        // T1：/rename <项目名> 贴进起点 pane
+        expect(texts).toEqual([{ paneId: '7', text: '/rename bootstrap-codex' }]);
+        expect(keys).toHaveLength(0);
+        // T2 补 CR、T3 整段重来——定时器在 T1 的 sendText 微任务延续里才注册，
+        // 先冲几拍微任务让它挂上，再一把跑完
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        await vi.runAllTimersAsync();
+        expect(keys).toEqual([{ paneId: '7', keys: '\r' }]);
+        expect(texts).toEqual([
+          { paneId: '7', text: '/rename bootstrap-codex' },
+          { paneId: '7', text: '/rename bootstrap-codex' },
+        ]);
+      } finally {
+        alt.close();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('引导注入不触发：无 spawn 回执（legacy start）或 harness 未声明 bootstrapText（claude）', async () => {
+    vi.useFakeTimers();
+    try {
+      const texts: string[] = [];
+      const terminal = {
+        available: () => true,
+        listPanes: async () => [],
+        locatePane: async () => '9',
+        sendText: async (_paneId: string, text: string) => {
+          texts.push(text);
+        },
+        sendKeys: async () => {},
+        closePane: async () => {},
+      };
+      const alt = createWeaveServer({
+        projects,
+        port: 0,
+        harnesses: createRuntimeRegistry(),
+        opener,
+        terminal,
+      });
+      await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve));
+      const altPort = (alt.address() as { port: number }).port;
+      const postAlt = (id: number, body?: unknown): Promise<Response> =>
+        fetch(`http://127.0.0.1:${altPort}/projects/${id}/new-session`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        });
+      try {
+        // claude：无 bootstrapText（SessionStart 启动即发，无需引导）
+        const claudeId = await makeProject('bootstrap-claude', ['claude']);
+        opener.runInTerminal = async (dir, argv, terminal) => {
+          runCalls.push({ dir, argv, terminal });
+          return { env: { WEZTERM_PANE: '8' } };
+        };
+        await postAlt(claudeId, { harness: 'claude' });
+        // codex 但无回执（fake opener 这次不返回 origin）
+        const codexId = await makeProject('bootstrap-noorigin', ['codex']);
+        opener.runInTerminal = async (dir, argv, terminal) => {
+          runCalls.push({ dir, argv, terminal });
+        };
+        await postAlt(codexId, { harness: 'codex' });
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(texts).toEqual([]);
+      } finally {
+        alt.close();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('已接入但注册表里没有该 harness（无 resume 槽）→ 501，缺省亦然', async () => {

@@ -3645,3 +3645,187 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(id)?.acked).toBeUndefined();
   });
 });
+
+describe('MessageDeliverer.askSideQuestion 读屏通道（codex = /side）', () => {
+  let db: ReturnType<typeof openDatabase>;
+  let sessions: SessionRepository;
+  let events: HookEventRepository;
+  let bus: HookEventBus;
+  let busEvents: HookBusMessage[];
+  let projectId: number;
+  let hooksDir: string;
+
+  const pushEvent = (sessionId: string, eventType: string, source: 'claude' | 'codex' = 'codex') =>
+    events.insert({ projectId, source, eventType, sessionId, payload: '{}' });
+
+  const makeDeps = (extra: Partial<MessageDelivererDeps> = {}): MessageDelivererDeps => ({
+    sessions,
+    projects: new ProjectRepository(db),
+    hookEvents: events,
+    bus,
+    hooksDir,
+    ...extra,
+  });
+
+  /** codex 面的读屏侧问规格（与 CODEX_SIDE_QUESTION 同形的测试替身）。 */
+  const screenSurface = () => {
+    const surface = {
+      harness: 'codex',
+      discovery: false,
+      prompt: null,
+      promptInbox: null,
+      queuedPrompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: ['Stop'],
+      paneEnvSource: 'launch',
+      attach: null,
+      pathRefs: null,
+      sideQuestion: {
+        command: (q: string) => q,
+        validate: (q: string) => (q.trim() ? { ok: true, text: q.trim() } : { ok: false, error: '空' }),
+        answerOf: () => null,
+        prerequisite: '主线程至少发过一条消息后才能开侧边会话（宿主限制）',
+        screen: {
+          openKeys: '/side',
+          submitKey: '\r',
+          closeKey: '\x03',
+          panelOpen: (s: string) => s.includes('Side from main thread'),
+          extractAnswer: (question: string, _before: string, now: string) =>
+            now.includes('• Working')
+              ? { answer: null, done: false }
+              : {
+                  answer: now.includes(`› ${question}`) ? '42' : null,
+                  done: true,
+                },
+        },
+      },
+    } as unknown as MessagingSurface;
+    return { surface };
+  };
+
+  /** 给测试会话登记 pane env（sessionKeysTarget 的 locator 命中前提）。 */
+  const notePane = (deliverer: MessageDeliverer) =>
+    deliverer.notePaneEnv(CODEX_SESSION, { WEZTERM_PANE: '5', WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-1' });
+
+  /** 假终端：键序/文本记账，屏幕按脚本逐拍返回。 */
+  const fakeTerminal = (screens: string[]) => {
+    const keys: string[] = [];
+    const texts: string[] = [];
+    let tick = 0;
+    const terminal: PromptTerminal = {
+      available: () => true,
+      listPanes: async () => [],
+      locatePane: async (env: Record<string, string>) => env['WEZTERM_PANE'] ?? null,
+      sendText: async (_paneId: string, text: string) => {
+        texts.push(text);
+      },
+      sendKeys: async (_paneId: string, sent: string) => {
+        keys.push(sent);
+      },
+      getPaneText: async () => screens[Math.min(tick++, screens.length - 1)] ?? '',
+      closePane: async () => {},
+    };
+    return { terminal, keys, texts };
+  };
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    projectId = projects.register({ path: PROJECT_PATH, name: 'msg', token: TOKEN, source: 'init' }).id;
+    sessions = new SessionRepository(db);
+    events = new HookEventRepository(db);
+    bus = new HookEventBus();
+    busEvents = [];
+    bus.subscribe((m) => busEvents.push(m));
+    sessions.touch(CODEX_SESSION, projectId);
+    hooksDir = mkdtempSync(join(tmpdir(), 'weave-msg-side-'));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(hooksDir, { recursive: true, force: true });
+  });
+
+  it('正路：开面板 → 问句 → 轮询取到回答 → 落库 + 帧 → 关面板', async () => {
+    pushEvent(CODEX_SESSION, 'Stop');
+    const { surface } = screenSurface();
+    const answered: Array<[string, string, string]> = [];
+    const { terminal, keys, texts } = fakeTerminal([
+      '› Ask Codex to do anything', // before 快照
+      '› Ask Codex to do anything', // 开面板后（还没开成）
+      '› Ask Codex to do anything\n  Side from main thread · ctrl+c to close', // 补 CR 后开成
+      '› q?\n• Working (2s)\n  Side from main thread', // 轮询 1：还在跑
+      '› q?\n• 42\n  Worked for 3s\n  Side from main thread', // 轮询 2：回答落定
+      '› q?\n• 42\n  Worked for 3s\n  Side from main thread', // 收尾前验屏
+    ]);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal,
+        sideAnswerStore: { answerById: (sid, q, a) => answered.push([sid, q, a]) },
+      }),
+    );
+    notePane(deliverer);
+    const result = await deliverer.askSideQuestion(CODEX_SESSION, 'q?');
+    expect(result).toEqual({ ok: true, question: 'q?' });
+    // 轮询是 fire-and-forget：等它跑完（7 拍 × 间隔 + 余量）
+    await new Promise((r) => setTimeout(r, 6500));
+    expect(texts).toEqual(['q?']);
+    expect(keys).toEqual(['/side', '\r', '\r', '\r', '\x03']); // 开面板、补 CR、提交、关面板
+    expect(answered).toEqual([[CODEX_SESSION, 'q?', '42']]);
+    expect(busEvents.some((m) => m.kind === 'sideQuestion.answered')).toBe(true);
+  }, 15_000);
+
+  it('前置闸：主线程没跑过（hasRun=false）→ 409 + prerequisite 文案', async () => {
+    pushEvent(CODEX_SESSION, 'SessionStart'); // 有 source 但不算 hasRun
+    const { surface } = screenSurface();
+    const { terminal } = fakeTerminal([]);
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface, terminal }));
+    notePane(deliverer);
+    const result = await deliverer.askSideQuestion(CODEX_SESSION, 'q?');
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect((result as { error: string }).error).toContain('主线程');
+  });
+
+  it('面板开不成（两次验屏都无指纹）→ 放弃，不发问句、不关面板', async () => {
+    pushEvent(CODEX_SESSION, 'Stop');
+    const { surface } = screenSurface();
+    const { terminal, keys, texts } = fakeTerminal([
+      '› Ask Codex to do anything',
+      '› Ask Codex to do anything',
+      '› Ask Codex to do anything',
+      '› Ask Codex to do anything',
+    ]);
+    const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface, terminal }));
+    notePane(deliverer);
+    expect(await deliverer.askSideQuestion(CODEX_SESSION, 'q?')).toEqual({ ok: true, question: 'q?' });
+    await new Promise((r) => setTimeout(r, 4500));
+    expect(texts).toEqual([]); // 问句没发（防落主线程）
+    expect(keys).toEqual(['/side', '\r', '\r']); // 只重试了一次开面板
+  });
+
+  it('用户中途关面板 → 落库跳过、零收尾键序（不盲打 ctrl+c）', async () => {
+    pushEvent(CODEX_SESSION, 'Stop');
+    const { surface } = screenSurface();
+    const answered: Array<[string, string, string]> = [];
+    const { terminal, keys } = fakeTerminal([
+      '› Ask Codex to do anything',
+      '› Ask Codex to do anything\n  Side from main thread', // 开成
+      '› q?\n• 42\n  Worked for 3s', // 轮询：回答在，但面板已被用户关掉（无指纹）
+      '› q?\n• 42\n  Worked for 3s', // 收尾前验屏：仍无指纹
+    ]);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal,
+        sideAnswerStore: { answerById: (sid, q, a) => answered.push([sid, q, a]) },
+      }),
+    );
+    notePane(deliverer);
+    await deliverer.askSideQuestion(CODEX_SESSION, 'q?');
+    await new Promise((r) => setTimeout(r, 6000));
+    expect(answered).toEqual([[CODEX_SESSION, 'q?', '42']]); // 回答照取
+    expect(keys).toEqual(['/side', '\r', '\r']); // 无 closeKey
+  }, 15_000);
+});

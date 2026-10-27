@@ -14,4 +14,6 @@ export const CODEX_RESUME: ResumeCommandSpec = {
   args: (sessionId) => ['exec', 'resume', sessionId, '-'],
   promptStdin: true,
   openArgs: (sessionId) => ['resume', sessionId],
+  // 懒建档破局：/rename 是本地命令（不过模型），对无线程 TUI 注入即建 rollout
+  bootstrapText: (projectName) => `/rename ${projectName}`,
 };

@@ -72,16 +72,18 @@ const REF_RE = /^<\$\.([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)>$/;
  * 的实测依据）。
  */
 /**
- * 计划正文整份保真：命中计划形状就原样返回 `tool_input`，一个叶子都不裁。
+ * 计划正文整份保真：命中计划形状就原样返回 `tool_input` / `tool_response` 一对，
+ * 一个叶子都不裁。
  *
- * 2.1.296 起 `ExitPlanMode` 的 `tool_input` 恒空，正文只在上一拍写计划文件那次
- * `Write` 的 `content` 里，而对话面板摆出来给人批阅的正是这一份——按
- * {@link capFields} 裁到 4KB 就是把计划砍掉大半、气泡尾巴上挂一个「…」。
- * 计划文件每次计划模式只写一两回，体积可忽略。
+ * 2.1.296 起 `ExitPlanMode` 的 `tool_input` 恒空，正文随宿主版本在两处出现：早期
+ * 在 `tool_input.plan`，后来挪到 `tool_response.plan`（input 只剩 planFilePath）。
+ * 对话面板摆出来给人批阅的正是这一份——按 {@link capFields} 裁到 4KB 就是把计划
+ * 砍掉大半、气泡尾巴上挂一个「…」（实测 10.4k 字符的计划只剩 4001）。计划事件
+ * 一次一对、每次计划模式只写一两回，体积可忽略。
  */
-function planBodyOf(toolName: unknown, input: unknown): unknown | null {
+function planBodyOf(toolName: unknown, input: unknown, response: unknown): { input: unknown; response: unknown } | null {
   if (typeof toolName !== 'string') return null;
-  return CLAUDE_PLAN.draftOf(toolName, input, null)?.text ? input : null;
+  return CLAUDE_PLAN.draftOf(toolName, input, response)?.text ? { input, response } : null;
 }
 
 /** raw 的浅拷贝：命中的重复键 → 指向顶层同名字段的引用，其余键原样。 */
@@ -137,12 +139,14 @@ export class ClaudeEventSource implements EventSource {
     const sessionId = report.sessionId ?? pick(raw, 'session_id', 'sessionId');
     const toolName = pick(raw, 'tool_name', 'toolName');
     const input = pick(raw, 'tool_input', 'toolInput');
+    const response = pick(raw, 'tool_response', 'toolResponse');
 
+    const planPair = planBodyOf(toolName, input, response);
     const normalized = {
       eventType,
       toolName,
-      toolInput: planBodyOf(toolName, input) ?? capFields(input),
-      toolResponse: capFields(pick(raw, 'tool_response', 'toolResponse')),
+      toolInput: planPair?.input ?? capFields(input),
+      toolResponse: planPair?.response ?? capFields(response),
       cwd: report.cwd ?? pick(raw, 'cwd'),
       transcriptPath: pick(raw, 'transcript_path', 'transcriptPath'),
       raw: compactRaw(raw),

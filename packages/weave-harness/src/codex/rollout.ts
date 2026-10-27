@@ -107,8 +107,14 @@ async function listRollouts(): Promise<RolloutFile[]> {
   return out;
 }
 
-/** 读文件头一行拿会话身份（老文件也只需要开头一截）。 */
-async function readMeta(filePath: string): Promise<{ sessionId: string; cwd: string | null } | null> {
+/**
+ * 读文件头一行拿会话身份（老文件也只需要开头一截）。
+ * `'pending'` = 首行还没写完（文件刚创建、半行未落的竞态窗口），下一拍重试；
+ * `null` = 真读不出身份（头一行超窗 / 坏行），登记后永不采。
+ */
+async function readMeta(
+  filePath: string,
+): Promise<{ sessionId: string; cwd: string | null } | 'pending' | null> {
   const handle = await openFile(filePath, 'r').catch(() => null);
   if (!handle) return null;
   try {
@@ -116,7 +122,9 @@ async function readMeta(filePath: string): Promise<{ sessionId: string; cwd: str
     const { bytesRead } = await handle.read(buf, 0, HEAD_BYTES, 0);
     const text = buf.subarray(0, bytesRead).toString('utf8');
     const newline = text.indexOf('\n');
-    if (newline < 0) return null;
+    // 窗口没读满还没有换行 = 文件就这么大且首行未完（半行 / 空，多半还在写）；
+    // 窗口读满仍无换行才是头一行真超窗
+    if (newline < 0) return bytesRead < HEAD_BYTES ? 'pending' : null;
     const line = parseJsonLine(text.slice(0, newline));
     return line ? metaOfLine(line) : null;
   } finally {
@@ -248,8 +256,9 @@ export class CodexLogSource implements LogSource {
       let partial = false;
       if (!entry) {
         const meta = await readMeta(file.path);
+        if (meta === 'pending') continue; // 半行未落：什么都不记，下一拍重试
         if (!meta) {
-          // 读不到身份（空文件 / 头一行超窗）：登记但永不采，不每拍重试
+          // 读不到身份（头一行超窗 / 坏行）：登记但永不采，不每拍重试
           state.files[file.path] = { offset: file.size, sessionId: null, cwd: null };
           dirty = true;
           continue;

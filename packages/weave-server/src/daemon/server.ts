@@ -24,7 +24,7 @@ import type { SessionProbe } from './session-probe.js';
 import { importPromptImagesOnce, needsImageImport } from './prompt-images.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
-import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import type { MessageDeliverer, PromptTerminal } from '../hooks/message-deliverer.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
 import type { SideQuestionDeps } from '../hooks/side-questions.js';
 import type { WatchEngine } from '../hooks/watch-engine.js';
@@ -124,6 +124,12 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
+  /**
+   * 层② 终端通道（promptTerminalChannel 的产物，与 messageDeliverer 的 terminal
+   * 同一实例）：new-session 的引导注入（`resume.bootstrapText`）借它定位 pane env
+   * → pane id 并打文本。缺省 = 无引导注入（会话行等宿主自己的建档节奏）。
+   */
+  terminal?: PromptTerminal;
   /** 会话上传件（内容寻址落盘 + event_images 指针）；/uploads 与 /images/:id 依赖它。 */
   uploads?: UploadRepository;
   /** 分块上传的半截件（cache/tmp）；/uploads/begin 等依赖它（缺省用进程内默认落点）。 */

@@ -258,7 +258,7 @@ export function SessionMessages({
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
-    onChipDragOver, onChipDrop, onChipDragEnd,
+    onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   } = useDraftEditor({
     sessionId,
@@ -1626,6 +1626,7 @@ export function SessionMessages({
                   onDragOver={onChipDragOver}
                   onDrop={onChipDrop}
                   onDragEnd={onChipDragEnd}
+                  onDragStart={onChipDragStart}
                   style={{ height: `calc(${inputRows * INPUT_ROW_PX}px + 0.75rem)` }}
                   className="w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs leading-4 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
                 />

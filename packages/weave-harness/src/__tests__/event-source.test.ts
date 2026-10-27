@@ -96,6 +96,18 @@ describe('ClaudeEventSource 重复字段折叠', () => {
     expect(payload.toolInput.content).toBe(plan);
   });
 
+  it('计划正文整份保真：ExitPlanMode 的 tool_response.plan 也不裁（新版宿主正文在 response 侧）', () => {
+    const plan = '# 计划\n' + 'x'.repeat(9000);
+    const payload = normalize({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      tool_name: 'ExitPlanMode',
+      tool_input: {},
+      tool_response: { plan, isAgent: false, filePath: 'C:\\Users\\u\\.claude\\plans\\p.md' },
+    });
+    expect(payload.toolResponse.plan).toBe(plan);
+  });
+
   it('计划之外照旧裁到 4KB（口子只开给计划正文）', () => {
     const payload = normalize({
       hook_event_name: 'PreToolUse',

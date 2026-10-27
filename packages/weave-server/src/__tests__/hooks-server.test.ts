@@ -328,6 +328,39 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect(sessions.turnOpenOf('sess-compact')).toBe(true);
   });
 
+  it('排队回合：UPS 在入队时刻发、上一回合 Stop 之后新回合开跑不再发 UPS——最后收尾后有工具事件仍判回合开着', async () => {
+    const turnOf = async (sessionId: string) => {
+      const { sessions: rows } = (await (await get('/sessions')).json()) as {
+        sessions: Array<{ sessionId: string; turnOpen?: boolean }>;
+      };
+      return rows.find((s) => s.sessionId === sessionId)!.turnOpen;
+    };
+
+    // 上一回合在跑时用户发消息：UPS（入队时刻）→ 上一回合 Stop → 出队开跑（只有工具事件）
+    seed('sess-queued', 'UserPromptSubmit');
+    seed('sess-queued', 'Stop');
+    // Stop 之后 UPS 不再晚于收尾，基线判关……
+    expect(await turnOf('sess-queued')).toBe(false);
+    // ……但出队的新回合开始跑工具：最后工具事件晚于最后收尾 = 回合实际开着
+    seed('sess-queued', 'PreToolUse');
+    seed('sess-queued', 'PostToolUse');
+    expect(await turnOf('sess-queued')).toBe(true);
+
+    // 新回合正常收尾（Stop 晚于最后工具事件）→ 回合关
+    seed('sess-queued', 'Stop');
+    expect(await turnOf('sess-queued')).toBe(false);
+
+    // 收尾之后的 Notification / SubagentStop（idle 提示、away 总结）不算回合在跑
+    seed('sess-queued', 'Notification');
+    seed('sess-queued', 'SubagentStop');
+    expect(await turnOf('sess-queued')).toBe(false);
+
+    // 单会话版与列表同一判据
+    expect(sessions.turnOpenOf('sess-queued')).toBe(false);
+    seed('sess-queued', 'PostToolUse');
+    expect(sessions.turnOpenOf('sess-queued')).toBe(true);
+  });
+
   it('GET /sessions/:id/plan 摆出最近一次计划模式的正文（老模型带在 events 里，新模型取写盘那次）', async () => {
     // 老模型：正文就在 ExitPlanMode 的 tool_input.plan 上，气泡按这条事件定位
     const commit = seedTool('sess-plan', 'PreToolUse', {

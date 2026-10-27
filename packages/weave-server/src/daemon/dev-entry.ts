@@ -201,6 +201,12 @@ async function main(): Promise<void> {
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
     // 判活图（claude 注册表 + codex 锁探针缓存）：判死落定/诊断全消费它。
     livenessOf: combinedLivenessOf,
+    // 读屏通道的回答落库（codex = /side；repo 在下面构造，闭包惰性取）。
+    sideAnswerStore: {
+      answerById: (sessionId, question, answer) => {
+        sideQuestions.answerById(sessionId, question, answer);
+      },
+    },
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
@@ -488,6 +494,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     uploads,
     questionTracker,
     sideQuestions: sideQuestionDeps,

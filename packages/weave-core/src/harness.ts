@@ -95,6 +95,19 @@ export const HARNESS_EVENTS = {
 } satisfies Record<Harness, readonly string[]>;
 
 /**
+ * 回合内事件表——「工具正在执行」的正面信号（turnOpen 的补充判据）：
+ * claude 宿主对「回合运行中发来的消息」先发 UPS（入队时刻）、再收上一回合的
+ * Stop，出队开跑的新回合**不再发第二条 UPS** ⇒ 「最后 UPS 晚于最后 Stop」在这类
+ * 排队回合上误判已关。最后收尾之后仍有工具事件 = 回合实际还开着。
+ * 只收工具执行三态——Notification（idle 提示）/ SubagentStop（away 总结）在
+ * 回合收尾后也会来，不算回合在跑。
+ */
+export const HARNESS_TOOL_EVENTS = {
+  claude: ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'] as const,
+  codex: ['PostToolUse'] as const,
+} satisfies Record<Harness, readonly string[]>;
+
+/**
  * inject（同步 additionalContext）白名单——按 harness 分表。
  * 规则的 harness 为 'any' 时不允许 inject（两 harness 注入通道不同）。
  */

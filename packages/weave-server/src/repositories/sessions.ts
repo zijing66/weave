@@ -1,5 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { HARNESS_COMPACTION, HARNESS_LIFECYCLE, isHarness, type Harness } from '@weavecode/core';
+import {
+  HARNESS_COMPACTION,
+  HARNESS_LIFECYCLE,
+  HARNESS_TOOL_EVENTS,
+  isHarness,
+  type Harness,
+} from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_SESSION_IDLE_DAYS } from '../daemon/settings.js';
 
 export interface SessionRow {
@@ -71,6 +77,20 @@ function turnCloseSql(alias: string): string {
 }
 
 /**
+ * 「回合内工具事件」的 SQL 判据（HARNESS_TOOL_EVENTS 并集）：最后收尾之后仍有
+ * 工具事件 = 排队回合实际还开着（claude 出队开跑的新回合不再发第二条 UPS，
+ * 见 HARNESS_TOOL_EVENTS 注）。事件名一律取表，不散写。
+ */
+function turnToolSql(alias: string): string {
+  const types = new Set<string>();
+  for (const list of Object.values(HARNESS_TOOL_EVENTS)) {
+    for (const t of list) types.add(t);
+  }
+  const list = [...types].map((t) => `'${t}'`).join(',');
+  return `${alias}.event_type IN (${list})`;
+}
+
+/**
  * sessions 表：daemon 自存的会话标题（不写回 Claude Code 内部文件）。
  * 双向 rename：读 = payload session_title diff；写 = pending_title 经 hook sessionTitle 输出生效。
  */
@@ -135,6 +155,7 @@ export class SessionRepository {
       '(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type, ' +
       '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
       `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = s.session_id AND ${turnCloseSql('e6')}) AS last_close, ` +
+      `(SELECT MAX(e7.id) FROM hook_events e7 WHERE e7.session_id = s.session_id AND ${turnToolSql('e7')}) AS last_tool, ` +
       '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
     const rows =
@@ -153,6 +174,7 @@ export class SessionRepository {
       const raw = (row as { harness?: unknown }).harness;
       const lastUps = (row as { last_ups?: number | null }).last_ups;
       const lastClose = (row as { last_close?: number | null }).last_close;
+      const lastTool = (row as { last_tool?: number | null }).last_tool;
       const lastStop = (row as { last_stop?: number | null }).last_stop;
       const lastEventType = (row as { last_event_type?: string | null }).last_event_type;
       return {
@@ -161,8 +183,11 @@ export class SessionRepository {
         harness: isHarness(raw) ? raw : null,
         // 收尾判据含起落标记（见 turnCloseSql）；hasRun 仍只认真跑过的那几种事件
         // ——只来过一笔 SessionStart 的空会话不该被当成「转录丢了」。
+        // 排队回合补充臂：最后收尾之后仍有工具事件 = 回合实际还开着
+        // （claude 出队开跑的新回合不再发第二条 UPS，见 HARNESS_TOOL_EVENTS 注）。
         turnOpen:
-          lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose)),
+          (lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose))) ||
+          (lastTool != null && (lastClose == null || Number(lastTool) > Number(lastClose))),
         lastEventType: lastEventType ?? null,
         hasRun: lastUps != null || lastStop != null,
         // 自动移除时刻（唯一判据/期限实现）两档：没等到用户 prompt（无 ups）的
@@ -180,23 +205,28 @@ export class SessionRepository {
   /**
    * 单会话 turnOpen（消息域 auto 裁决的忙/闲基准）：语义与 listWithCounts 的
    * 计算字段完全一致（最后一条 UserPromptSubmit 晚于最后一条回合收尾事件，
-   * 判据同 turnCloseSql）。会话不存在 → null；存在但零事件 → false（同列表口径：
-   * 无 ups 即不判开）。
+   * 判据同 turnCloseSql；排队回合补充臂同 turnToolSql）。会话不存在 → null；
+   * 存在但零事件 → false（同列表口径：无 ups 即不判开）。
    */
   turnOpenOf(sessionId: string): boolean | null {
     const row = this.db
       .prepare(
         'SELECT ' +
         '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
-        `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = ? AND ${turnCloseSql('e6')}) AS last_close`,
+        `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = ? AND ${turnCloseSql('e6')}) AS last_close, ` +
+        `(SELECT MAX(e7.id) FROM hook_events e7 WHERE e7.session_id = ? AND ${turnToolSql('e7')}) AS last_tool`,
       )
-      .get(sessionId, sessionId) as
-      | { last_ups?: number | null; last_close?: number | null }
+      .get(sessionId, sessionId, sessionId) as
+      | { last_ups?: number | null; last_close?: number | null; last_tool?: number | null }
       | undefined;
     if (!this.getBySessionId(sessionId)) return null;
     const lastUps = row?.last_ups ?? null;
     const lastClose = row?.last_close ?? null;
-    return lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose));
+    const lastTool = row?.last_tool ?? null;
+    return (
+      (lastUps != null && (lastClose == null || Number(lastUps) > Number(lastClose))) ||
+      (lastTool != null && (lastClose == null || Number(lastTool) > Number(lastClose)))
+    );
   }
 
   /**

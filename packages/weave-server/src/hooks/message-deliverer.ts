@@ -7,6 +7,7 @@ import {
   type MessagingSurface,
   type MessageMeta,
   type PromptRelaySpec,
+  type SideQuestionSpec,
 } from '@weavecode/harness';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
@@ -180,6 +181,11 @@ export interface PromptTerminal {
   sendText(paneId: string, text: string): Promise<void>;
   /** 裸键序注入（作答的选项键 / 中断的 ESC：模态框只吃键盘，不吃粘贴文本）。 */
   sendKeys(paneId: string, keys: string): Promise<void>;
+  /**
+   * 读 pane 可视屏文本（旁路会话读屏通道用）；可缺省（无读屏能力的装配 = 恒
+   * null，侧问入口对读屏 harness 置灰）。
+   */
+  getPaneText?(paneId: string): Promise<string | null>;
   /** 关掉这个 pane（会话生命周期收尾）；无通道的后端明确拒绝。 */
   closePane(paneId: string): Promise<void>;
 }
@@ -230,6 +236,9 @@ export interface MessageDelivererDeps {
   /** 会话存活图（测试注入）；缺省合并图（claude 注册表 + codex 锁探针缓存）——
    *  同两个引擎（watch/sequence）的取法：判不动的会话一律「查不到」，不猜。 */
   livenessOf?: () => Map<string, boolean>;
+  /** 读屏通道的回答落库（codex 侧问）：按 (sessionId, question) 找到待答行直更。
+   *  缺省 = 无落库（读屏取到的回答只发帧不存档）。 */
+  sideAnswerStore?: { answerById(sessionId: string, question: string, answer: string): void };
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -399,9 +408,17 @@ function readPaneEnvs(file: string): Record<string, Record<string, string>> {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** 读屏通道的节拍（实测标定）：键序间隔、面板切换稳定窗、轮询间隔与预算。 */
+const SIDE_STEP_GAP_MS = 300;
+const SIDE_PANEL_SETTLE_MS = 1_500;
+const SIDE_POLL_INTERVAL_MS = 1_000;
+const SIDE_POLL_BUDGET_MS = 120_000;
+
 export class MessageDeliverer {
   private readonly headless: HeadlessRunner;
   private readonly hooksDir: string;
+  /** 读屏通道的回答落库（codex = /side；缺省无——回答只发帧不存档）。 */
+  private readonly sideAnswerStore?: { answerById(sessionId: string, question: string, answer: string): void };
   /** 内存态注册表（pending 之后的生命周期）。 */
   private readonly memory = new Map<string, PipeMessage>();
   /** 有队列行的会话（ingest 冲洗守卫 + 刷新器探活索引；构造时从磁盘重建）。 */
@@ -460,6 +477,7 @@ export class MessageDeliverer {
     this.headless =
       deps.headless ?? new HeadlessRunner({ spawnImpl: deps.spawnImpl, killImpl: deps.killImpl });
     this.hooksDir = deps.hooksDir ?? hooksRoot();
+    this.sideAnswerStore = deps.sideAnswerStore;
     // 直投凭据落盘：**只解 daemon 自己的重启**（凭据活在会话进程里，重启不动它），
     // 会话自己重启/resume 换了 socket 靠下一次 hook 事件覆盖（连不上即回落）。
     this.inboxSockets = new InboxSocketRegistry(join(this.hooksDir, INBOX_TARGETS_FILE));
@@ -1068,10 +1086,11 @@ export class MessageDeliverer {
   }
 
   /**
-   * 旁路会话（claude = `/btw`）：问句经层② 终端打进会话 pane——宿主的侧问只
-   * 活在 TUI 里（`claude -p "/btw …"` 直说不支持这个环境），也不落任何文件，
-   * 故终端击键是唯一通道。不入队、不布防回执：回答不是 UPS 而是之后的一条
-   * 采集事件（认领见 `hooks/side-questions.ts`）。
+   * 旁路会话：问句经层② 终端打进会话 pane。两条通道按能力面分流——
+   * - **事件认领**（claude = `/btw`）：宿主的侧问只活在 TUI 里，也不落任何文件，
+   *   终端击键是唯一通道；回答是之后的一条采集事件（认领见 `hooks/side-questions.ts`）。
+   * - **读屏**（codex = `/side`）：宿主侧边会话 ephemeral（零落盘、零 hook 事件），
+   *   开面板 → 发问句 → 轮询读屏 → 关面板，回答同步取回（`pollScreenAnswer`）。
    *
    * 返回归一化后的问句（已过 harness 的形态校验）：调用方据此落历史行。
    */
@@ -1095,14 +1114,80 @@ export class MessageDeliverer {
     }
     const valid = spec.validate(question);
     if (!valid.ok) return { ok: false, status: 400, error: valid.error };
+    if (spec.prerequisite && this.deps.sessions.hasRunOf(sessionId) !== true) {
+      return { ok: false, status: 409, error: spec.prerequisite };
+    }
     const target = await this.sessionKeysTarget(sessionId, '发起旁路会话');
     if (!target.ok) return target;
     try {
+      if (spec.screen) {
+        this.pollScreenAnswer(sessionId, target.terminal, target.paneId, spec, valid.text);
+        return { ok: true, question: valid.text };
+      }
       await target.terminal.sendText(target.paneId, spec.command(valid.text));
       return { ok: true, question: valid.text };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * 读屏通道的执行体（fire-and-forget：POST 先回、行先落 pending，回答到了经
+   * `sideQuestion.answered` 帧推给前端）。时序全部实测钉死（2026-10-27）：
+   * 开面板的 CR 常被吃 → 发完验屏、没开成补一发再验；**收尾前必须确认面板还
+   * 开着**——用户中途关掉后，closeKey 落主线程语境（忙 = 中断确认菜单、闲 =
+   * 退出 TUI），盲打比不收尾糟得多，面板不在就什么都不发。
+   */
+  private pollScreenAnswer(
+    sessionId: string,
+    terminal: PromptTerminal,
+    paneId: string,
+    spec: SideQuestionSpec,
+    question: string,
+  ): void {
+    const screen = spec.screen!;
+    const readScreen = async (): Promise<string | null> =>
+      (await terminal.getPaneText?.(paneId).catch(() => null)) ?? null;
+    void (async () => {
+      const before = (await readScreen()) ?? '';
+      // 开面板：CR 常被吃（实测），发完验屏、没开成补一发再验
+      await terminal.sendKeys(paneId, screen.openKeys).catch(() => {});
+      await sleep(SIDE_STEP_GAP_MS);
+      await terminal.sendKeys(paneId, screen.submitKey).catch(() => {});
+      await sleep(SIDE_PANEL_SETTLE_MS);
+      let now = await readScreen();
+      if (!now || !screen.panelOpen(now)) {
+        await terminal.sendKeys(paneId, screen.submitKey).catch(() => {});
+        await sleep(SIDE_PANEL_SETTLE_MS);
+        now = await readScreen();
+        if (!now || !screen.panelOpen(now)) return; // 面板开不成：放弃（不发问句，防落主线程）
+      }
+      // 问句进面板输入框并提交
+      await terminal.sendText(paneId, question).catch(() => {});
+      await sleep(SIDE_STEP_GAP_MS);
+      await terminal.sendKeys(paneId, screen.submitKey).catch(() => {});
+      // 轮询读屏取回答
+      const deadline = Date.now() + SIDE_POLL_BUDGET_MS;
+      let answer: string | null = null;
+      while (Date.now() < deadline) {
+        await sleep(SIDE_POLL_INTERVAL_MS);
+        now = await readScreen();
+        if (now == null) return; // pane 没了：静默放弃（行由超窗落 timeout）
+        const got = screen.extractAnswer(question, before, now);
+        if (!got.done) continue;
+        answer = got.answer;
+        break;
+      }
+      if (answer != null) {
+        this.sideAnswerStore?.answerById(sessionId, question, answer);
+        this.bus({ kind: 'sideQuestion.answered', sessionId, at: new Date().toISOString() } as never);
+      }
+      // 收尾：面板还开着才关（用户中途关掉后盲打 ctrl+c 会砸菜单/退 TUI）
+      const final = await readScreen();
+      if (final && screen.panelOpen(final)) {
+        await terminal.sendKeys(paneId, screen.closeKey).catch(() => {});
+      }
+    })();
   }
 
   private async sessionKeysTarget(

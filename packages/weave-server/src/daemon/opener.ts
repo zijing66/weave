@@ -278,6 +278,14 @@ export abstract class TerminalBackend {
     );
   }
 
+  /**
+   * 读 pane 可视屏文本（旁路会话读屏通道用）；无读屏能力的后端 null（不谎报）。
+   * 只回可视屏（scrollback 不取）——读屏消费方（侧问回答提取）只需要当下画面。
+   */
+  async getPaneText(_paneId: string): Promise<string | null> {
+    return null;
+  }
+
   /** 关掉这个 pane（会话生命周期收尾 / 项目关终端共用）；无通道的后端明确拒绝。 */
   async closePane(_paneId: string): Promise<void> {
     throw new Error(
@@ -795,6 +803,19 @@ class WeztermBackend extends TerminalBackend {
       throw new Error(weztermStepError(['cli', 'kill-pane', '--pane-id', pane], mux.socket, killed));
     }
   }
+
+  /** 读 pane 可视屏（`cli get-text`）：mux 定位口径与 sendKeys 同；失败 null（不猜）。 */
+  override async getPaneText(paneId: string): Promise<string | null> {
+    const parsed = parsePromptPaneId(paneId);
+    if (!parsed) return null;
+    const mux = await weztermMuxForId(parsed.muxKey);
+    if (!mux) return null;
+    const got = await weztermCli(
+      ['cli', 'get-text', '--pane-id', String(parsed.paneId)],
+      mux.socket,
+    );
+    return got?.ok ? got.out : null;
+  }
 }
 
 /** auto：把本平台的具名 preset 候选按序串起来（与具名条目同源）。 */
@@ -870,6 +891,10 @@ class AutoBackend extends TerminalBackend {
 
   override sendKeys(paneId: string, keys: string): Promise<void> {
     return this.attachBackend().sendKeys(paneId, keys);
+  }
+
+  override getPaneText(paneId: string): Promise<string | null> {
+    return this.attachBackend().getPaneText(paneId);
   }
 
   override closePane(paneId: string): Promise<void> {

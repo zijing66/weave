@@ -175,7 +175,8 @@ const buildCmdChip = (name: string, source?: CmdSource, sigil?: CmdSigil): HTMLE
 /** 造一枚附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
  *  序列化语义归 draft-editor（文件 → 落盘路径、图片 → 空串），这里只管长相。
  *  入参加快照 part 形状（a/p/n/m）：applyDraftSnapshot 还原与 insertAttach 新建
- *  走同一个构造器，不备两份。 */
+ *  走同一个构造器，不备两份。拖动载荷由容器级 `onChipDragStart` 委托（execCommand
+ *  插回来的节点绑不上监听器，委托对两条来路都生效）。 */
 const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): HTMLElement => {
   const chip = document.createElement('span');
   chip.setAttribute('contenteditable', 'false');
@@ -186,11 +187,6 @@ const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): 
   chip.className = ATTACH_CHIP_CLASS;
   chip.title = part.n; // 长名被截短时，悬停还看得见全文
   chip.draggable = true; // 拖动调位置（载荷 = 附件 id，drop 时按它找到这枚）
-  chip.addEventListener('dragstart', (e) => {
-    const drag = e as unknown as DragEvent;
-    drag.dataTransfer?.setData('text/plain', part.a);
-    if (drag.dataTransfer) drag.dataTransfer.effectAllowed = 'move';
-  });
   if (isImageUpload({ mediaType: part.m })) {
     const img = document.createElement('img');
     img.src = `${API_BASE}/images/${part.a}`;
@@ -213,7 +209,9 @@ const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): 
 /** 在光标处摆一枚附件占位胶囊；框里没有可落的光标（从未聚焦 / 选区在别处）就
  *  贴在最后方。**文件胶囊前后必须是空白**（与引用胶囊同一判据：序列化出来的是
  *  一条路径，粘着字就成了另一段文字）；图片胶囊序列化时自己补行边界（独立成行
- *  是宿主认图的前提），前后不补空格。 */
+ *  是宿主认图的前提），前后不补空格。插入走 `execCommand('insertHTML')`——
+ *  粘贴文件后的自动摆入必须留在浏览器撤销栈里，Ctrl+Z 才能整步撤掉（手插节点
+ *  那条路没有撤销，undo 会跳过粘贴直接撤更早的打字）；不支持时退回手插。 */
 const insertAttach = (upload: UploadFile): void => {
   const el = draftRef.current;
   if (!el) return;
@@ -242,11 +240,32 @@ const insertAttach = (upload: UploadFile): void => {
     lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
     trail = at < value.length && !/\s/.test(value[at] ?? '');
   }
-  const nodes: Node[] = [];
-  if (pad && lead) nodes.push(document.createTextNode(' '));
-  nodes.push(chip);
-  if (pad && trail) nodes.push(document.createTextNode(' '));
-  insertNodes(nodes);
+  const wrapper = document.createElement('div');
+  if (pad && lead) wrapper.appendChild(document.createTextNode(' '));
+  wrapper.appendChild(chip);
+  if (pad && trail) wrapper.appendChild(document.createTextNode(' '));
+  // execCommand 落在当前选区（insertNodes 同款：先恢复 saved 选区）；wrapper 的
+  // 孩子逐个插，HTML 外壳不进 DOM
+  const saved = atRange.current;
+  atRange.current = null;
+  if (saved && el.contains(saved.startContainer)) {
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(saved);
+  } else {
+    el.focus({ preventScroll: true });
+  }
+  let ok = false;
+  try {
+    ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
+  } catch {
+    ok = false;
+  }
+  if (ok) {
+    setDraft(serializeDraft(el));
+    return;
+  }
+  insertNodes(Array.from(wrapper.childNodes));
 };
 
 /** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符
@@ -385,13 +404,15 @@ const insertRefs = (items: PickItem[]): void => {
 
 /** 粘贴回填：先把这段文本交给服务端认引用（文法归 harness、存在性归索引），
  *  认到的片段落成胶囊、其余照原文插入。认不出或这趟挂了就整段当纯文本——
- *  粘贴不能因为一个可选的服务而丢字。 */
+ *  粘贴不能因为一个可选的服务而丢字。纯文本走 `insertText`（execCommand，
+ *  留在浏览器撤销栈里——Ctrl+Z 撤粘贴靠它）；落胶囊的异步路没有撤销
+ *  （execCommand 插不进胶囊 + 文本混合体），可接受：带引用的粘贴少见。 */
 const insertRichText = (text: string): void => {
   const el = draftRef.current;
   if (!el) return;
   const range = caretInDraft(el);
   atRange.current = range ? range.cloneRange() : null;
-  const plain = (): void => insertNodes([document.createTextNode(text)]);
+  const plain = (): void => insertText(text);
   // 快路：整段没有一个「行首/空白后的 @」，就不可能含引用表达式——直接插，
   // 不等那一趟服务端认引用（粘贴卡顿的主因：纯文本也要等网络来回才落字）
   if (!hasRefCandidate(text)) {
@@ -491,6 +512,15 @@ const setDraftText = (text: string): void => {
 /** 拖动落点记账（dragover 实时更新；drop 消费）。 */
 const dropBefore = useRef<Node | null>(null);
 
+/** 附件胶囊的拖动起点（容器级委托）：载荷 = 附件 id。execCommand 插回来的胶囊
+ *  绑不上逐节点监听器，委托对「新建」与「undo 还原」两条来路都生效。 */
+const onChipDragStart = (e: ReactDragEvent): void => {
+  const chip = (e.target as HTMLElement).closest?.(`[${ATTACH_ATTR}]`);
+  if (!(chip instanceof HTMLElement)) return;
+  e.dataTransfer.setData('text/plain', chip.getAttribute(ATTACH_ATTR) ?? '');
+  e.dataTransfer.effectAllowed = 'move';
+};
+
 /** 拖动经过：算落点（指针在胶囊左半 = 落它前面，右半 = 落它后面）。
  *  只接「文本载荷」的拖动（胶囊自己的 dragstart 设 text/plain）；文件拖放
  *  （types 含 Files）不接——那是面板层 stageFiles 的事。 */
@@ -537,7 +567,7 @@ const onChipDragEnd = (): void => {
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, escapeAt, maybeOpenPicker,
-    onChipDragOver, onChipDrop, onChipDragEnd,
+    onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   };
 }

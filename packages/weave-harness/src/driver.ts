@@ -318,6 +318,13 @@ export interface ResumeCommandSpec {
    * 新会话（UI 置灰并说明）。缺省 = 不设闸。
    */
   minVersion?: string;
+  /**
+   * 起会话后的引导注入文本（weave new-session spawn 成功后延时打进 pane 并提交）。
+   * 使命：懒建会话档案的宿主（codex 的 rollout 首条消息才落盘）靠一条**零模型调用**
+   * 的本地命令（如 `/rename <项目名>`）强制建档，会话行即刻进列表。缺省 = 该
+   * harness 无需引导（claude 启动即发 SessionStart）。
+   */
+  bootstrapText?(projectName: string): string;
 }
 
 /** 消息通道名——支持矩阵与原因文案的键。 */
@@ -443,6 +450,40 @@ export interface SideQuestionSpec {
    * 普通子 agent 与 skill 子 agent 都有转录，skipTranscript 的 fork 才没有）。
    */
   answerOf(eventType: string, payload: unknown): string | null;
+  /**
+   * 读屏通道（codex = `/side`）：宿主的侧边会话 ephemeral——零落盘、零 hook
+   * 事件，回答只能从 pane 屏幕取。声明了它，server 走「开面板 → 发问句 →
+   * 轮询读屏 → 关面板」的同步路径；缺省 = 事件认领路径（claude）。
+   */
+  screen?: SideQuestionScreenSpec;
+  /** 发起侧问的前置条件说明（不满足时 409 文案直用）；缺省 = 无前置。 */
+  prerequisite?: string;
+}
+
+/** 读屏通道的 harness 侧文法（屏幕形态是版本耦合知识，判据全在这里）。 */
+export interface SideQuestionScreenSpec {
+  /** 开侧边面板的键序（如 `/side` + 提交键）。 */
+  openKeys: string;
+  /** 提交键（实测 CR 单发比连体稳——TUI 启动/切换面板时常吃掉连体的 CR）。 */
+  submitKey: string;
+  /** 关面板键（codex = ctrl+c）。 */
+  closeKey: string;
+  /**
+   * 屏幕上有没有开着的侧边面板（收尾键序的前置闸：面板已被用户关掉时，
+   * closeKey 会落进主线程语境——忙时弹中断确认菜单、闲时直接退出 TUI，
+   * 盲打比不收尾糟得多）。
+   */
+  panelOpen(screen: string): boolean;
+  /**
+   * 从屏幕文本提取回答。`before` = 问句发出前的屏幕快照（区分新旧内容）；
+   * `done` = 回合已落定（还在跑时 false，调用方继续轮询）；`answer` = null 且
+   * done = 判不出（如实落 timeout，不猜——屏幕文法随宿主版本变）。
+   */
+  extractAnswer(
+    question: string,
+    before: string,
+    now: string,
+  ): { answer: string | null; done: boolean };
 }
 
 /** 信封渲染入参。 */

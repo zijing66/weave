@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { AttachSpec, MessagingSurface, PathRefSpec, QueuedPromptSpec, RecognizedRef } from '../driver.js';
+import { CODEX_SIDE_QUESTION } from './side-question.js';
 
 /**
  * codex CLI 的可直接 spawn 入口。win32 的 `codex` 可能是 `.cmd` 垫片
@@ -141,13 +142,12 @@ export const CODEX_MESSAGING: MessagingSurface = {
   paneEnvSource: 'launch',
   attach: CODEX_ATTACH,
   pathRefs: CODEX_PATH_REF,
-  sideQuestion: null,
+  sideQuestion: CODEX_SIDE_QUESTION,
   unsupportedReasons: {
     discovery: 'Codex event ingestion is pending research (BACKLOG §10-6); sessions are not discoverable',
     prompt: 'Codex has no native peer-messaging channel; prompts reach it via its own queue or terminal text injection',
     inject: 'Codex has no synchronous injection channel yet (pending research)',
     headless: 'Codex resume is pending research',
     watch: 'Codex error-ended turns emit no Stop; those rounds never fire idle/turnEnd',
-    sideQuestion: 'Codex side chat is pending research (BACKLOG §10-6)',
   },
 };

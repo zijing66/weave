@@ -6,6 +6,16 @@ import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 
 /**
+ * 引导注入的三拍时序（实测 codex TUI 冷启动 2-6s 波动，注入早了整段被吃）：
+ * T1 贴文本+提交、T2 补一记 CR（T1 的 CR 被吃时兜底提交框里现成的文本）、
+ * T3 整段重来（T1 全被吃时兜底）。已提交的场景里 T2 是空输入框上的回车、
+ * T3 是对已命名线程的同名再改（幂等），都无害。
+ */
+const BOOTSTRAP_INJECT_DELAY_MS = 8_000;
+const BOOTSTRAP_FOLLOWUP_CR_MS = 11_000;
+const BOOTSTRAP_RETRY_MS = 14_000;
+
+/**
  * 转录状态的判定（列表与打开门禁共用）：探测只答「那文件里有没有内容」，而没内容
  * 有两种成因：①刚建的会话宿主先建空文件（或缺席），首条消息写进去才有内容；②曾经
  * 写过又被清理/删掉。只有 ② 接不回来。判据 = 这个会话确实跑过（有 prompt 或收尾
@@ -44,6 +54,38 @@ function noteLaunchOrigin(
 ): void {
   if (!origin || messagingSurfaceFor(harness).paneEnvSource !== 'launch') return;
   deps.messageDeliverer?.notePaneEnv(sessionId, origin.env);
+}
+
+/**
+ * 引导注入（`resume.bootstrapText`，懒建档宿主的会话行加速）：spawn 成功后延时把
+ * 引导文本贴进起点 pane 并提交——codex 的 `/rename` 是零模型调用的本地命令，注入
+ * 即建 rollout，会话行即刻进列表（起点候选也在同一拍被认领，分组同时点亮）。
+ * fire-and-forget：不阻塞响应、失败静默（注入只是加速，宿主自己的建档节奏照常兜底）。
+ */
+export function scheduleBootstrapInjection(
+  deps: Pick<WeaveServerDeps, 'terminal'>,
+  origin: { env: Record<string, string> },
+  text: string,
+): void {
+  const terminal = deps.terminal;
+  if (!terminal) return;
+  void (async () => {
+    // 先睡再定位：spawn 回执到手时 pane 往往还没进 mux 枚举（实测立即 locatePane
+    // 恒 null），T1 的延时正好覆盖这段注册延迟。
+    await new Promise((r) => setTimeout(r, BOOTSTRAP_INJECT_DELAY_MS));
+    const paneId = (await terminal.locatePane?.(origin.env).catch(() => null)) ?? null;
+    if (!paneId) return;
+    const inject = async (): Promise<void> => {
+      try {
+        await terminal.sendText(paneId, text);
+      } catch {
+        return; // pane 已没了（用户秒关）：后续拍全放弃
+      }
+    };
+    await inject();
+    setTimeout(() => void terminal.sendKeys(paneId, '\r').catch(() => {}), BOOTSTRAP_FOLLOWUP_CR_MS - BOOTSTRAP_INJECT_DELAY_MS);
+    setTimeout(() => void inject(), BOOTSTRAP_RETRY_MS - BOOTSTRAP_INJECT_DELAY_MS);
+  })();
 }
 
 /**

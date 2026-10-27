@@ -15,6 +15,7 @@ import {
 import { purgeProjectPipeline } from '../hook-pipeline.js';
 import { hooksRoot } from '../../hooks/mirror.js';
 import { projectHarnesses, withProjectHarnesses } from '../project-harnesses.js';
+import { scheduleBootstrapInjection } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
 
 /** 项目存储配置（projects.meta.storage）：图片/文件各自的落盘目录，空 = 全局默认。 */
@@ -203,6 +204,11 @@ export async function handleProjectRoutes(
           projectId: project.id,
           env: origin.env,
         });
+      }
+      // 引导注入（懒建档宿主的会话行加速）：spec 声明了 bootstrapText 才注入，
+      // 文本 = `/rename <项目名>` 这类零模型命令，会话行即刻进列表。
+      if (origin && picked && spec?.bootstrapText) {
+        scheduleBootstrapInjection(deps, origin, spec.bootstrapText(project.name));
       }
       // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
