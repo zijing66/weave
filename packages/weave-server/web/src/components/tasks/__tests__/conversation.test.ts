@@ -25,6 +25,7 @@ import {
   serializeDraft,
   textBeforeCaret,
 } from '../draft-editor';
+import { imageMarkerSegments } from '../conv-model';
 import { attachedFilesFrom } from '../attach';
 import { exportConversationText, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
@@ -522,7 +523,7 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     expect(serializeDraft(draft([chip, text(' opus')]))).toBe('/model opus');
   });
 
-  it('⑥-b 附件占位胶囊：文件原地展开成落盘路径，图片序列化为空串', () => {
+  it('⑥-b 附件占位胶囊：文件原地展开成落盘路径，图片独立成行（前后补行边界）', () => {
     const fileChip = el('SPAN', [text('notes.md')], {
       'data-attach': 'a'.repeat(64),
       'data-attach-name': 'notes.md',
@@ -538,7 +539,10 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
       'data-attach-path': 'D:/up/shot.png',
       'data-attach-media': 'image/png',
     });
-    expect(serializeDraft(draft([text('看 '), imgChip]))).toBe('看 ');
+    // 句中：前后补换行（宿主粘贴处理器只认独立成行的图片路径）
+    expect(serializeDraft(draft([text('看 '), imgChip]))).toBe('看 \nD:/up/shot.png');
+    // 行首 + 后面已是换行：不重复补
+    expect(serializeDraft(draft([imgChip, text('\n下一行')]))).toBe('D:/up/shot.png\n下一行');
   });
 
   it('⑥-c 附件胶囊缺 path 属性（旧快照）= 文件也序列化为空串，不猜', () => {
@@ -742,13 +746,13 @@ describe('随附图', () => {
     expect(entries[0]?.attachments?.[0]?.id).toBe('a'.repeat(64));
   });
 
-  it('`[Image #N]` 是宿主输入框的占位、不是正文：有图就剥掉，没图（图丢了）才留', () => {
+  it('`[Image #N]` 占位记号保留在正文里（气泡按它把图内联回原位置），没图的条目照原样', () => {
     const prompt = '[Image #6]消息重复了[Image #7]检查并修复';
     const withImage = conversationOf(
       [{ ...event(3, 'UserPromptSubmit', { prompt }), images: [img('a'.repeat(64))] }],
       claude,
     );
-    expect(withImage[0]?.text).toBe('消息重复了检查并修复');
+    expect(withImage[0]?.text).toBe(prompt);
     const withoutImage = conversationOf([event(4, 'UserPromptSubmit', { prompt })], claude);
     expect(withoutImage[0]?.text).toBe(prompt);
   });
@@ -802,6 +806,32 @@ describe('随附图', () => {
         },
       ],
       [delivery({ id: 'm1', text: '', at: at(3), attachments: [img('a'.repeat(64))] })],
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.pipe?.id).toBe('m1');
+  });
+
+  it('占位胶囊原地展开的图片路径行：会话那侧换成占位记号后照样认领得到', () => {
+    const path = 'D:/up/shot.png';
+    const { thread } = attachDeliveries(
+      [
+        {
+          key: 'e3',
+          eventId: 3,
+          role: 'user',
+          at: at(3),
+          text: '看这个\n[Image #1]',
+          attachments: [{ ...img('a'.repeat(64)), path }],
+        },
+      ],
+      [
+        delivery({
+          id: 'm1',
+          text: `看这个\n${path}`,
+          at: at(3),
+          attachments: [{ ...img('a'.repeat(64)), path }],
+        }),
+      ],
     );
     expect(thread).toHaveLength(1);
     expect(thread[0]?.pipe?.id).toBe('m1');
@@ -861,6 +891,27 @@ describe('随附图', () => {
     expect(text).toBe(
       '[2026-10-16 09:00:00] 我\n' + '看看这个\n' + '[Image #1] shot.png\n' + '[Image #2] two.png',
     );
+  });
+
+  it('imageMarkerSegments：记号处内联回图（按序对应），文本段原样', () => {
+    const a = img('a'.repeat(64), 'one.png');
+    const b = img('b'.repeat(64), 'two.png');
+    const segs = imageMarkerSegments('前[Image #1]中[Image #2]后', [a, b]);
+    expect(segs).toEqual([
+      { kind: 'text', text: '前' },
+      { kind: 'image', image: a },
+      { kind: 'text', text: '中' },
+      { kind: 'image', image: b },
+      { kind: 'text', text: '后' },
+    ]);
+    // 记号比图多：多出的记号当文本（宿主没真配上图）
+    const extra = imageMarkerSegments('[Image #1][Image #2]', [a]);
+    expect(extra).toEqual([
+      { kind: 'image', image: a },
+      { kind: 'text', text: '[Image #2]' },
+    ]);
+    // 没图：整段当文本（记号是死文本，照原样显示）
+    expect(imageMarkerSegments('看[Image #1]', [])).toEqual([{ kind: 'text', text: '看[Image #1]' }]);
   });
 });
 

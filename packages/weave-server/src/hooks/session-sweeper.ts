@@ -1,7 +1,8 @@
 import { purgeSession, type SessionPurgeDeps } from './session-purge.js';
 import type { WatchEngine } from './watch-engine.js';
 import type { OrchestrationEngine } from './orchestration-engine.js';
-import { claudeLivenessById, shellDiscardedByClaude } from '../daemon/claude-liveness.js';
+import { shellDiscardedByClaude } from '../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../daemon/liveness.js';
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
@@ -77,7 +78,9 @@ export function startSessionSweeper(
     watchEngine?: Pick<WatchEngine, 'sweepTerminated'>;
     orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
     uploadSessions?: { sweep(): Promise<number> };
+    /** 存活图来源；缺省合并图（claude 注册表 + codex 锁探针缓存）。 */
+    livenessOf?: () => Map<string, boolean>;
   },
 ): NodeJS.Timeout {
-  return new SessionSweeper({ ...deps, livenessOf: () => claudeLivenessById() }).start();
+  return new SessionSweeper({ ...deps, livenessOf: deps.livenessOf ?? combinedLivenessOf }).start();
 }

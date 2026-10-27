@@ -50,6 +50,7 @@ import {
 import {
   countdownLabel,
   editsWindowOf,
+  imageMarkerSegments,
   CONV_FILTERS,
   STATUS_BADGE,
   STATUS_KEY,
@@ -257,6 +258,7 @@ export function SessionMessages({
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
+    onChipDragOver, onChipDrop, onChipDragEnd,
     setDraftText,
   } = useDraftEditor({
     sessionId,
@@ -280,7 +282,9 @@ export function SessionMessages({
     staged,
     setStaged,
     draftRef,
+    setDraft,
     setDraftText,
+    insertAttach,
     stick,
     fb,
     t,
@@ -289,40 +293,17 @@ export function SessionMessages({
     newestQueuedId,
   });
 
-  /** 正文里已摆了占位胶囊的附件（id 集）：DOM 是唯一真源，扫一遍派生——
-   *  暂存格据此变暗/按钮换义，无双记账。 */
-  const [placedIds, setPlacedIds] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    const el = draftRef.current;
-    if (!el) return;
-    const scan = (): void => {
-      setPlacedIds(new Set(Array.from(el.querySelectorAll(`[${ATTACH_ATTR}]`)).map((n) => n.getAttribute(ATTACH_ATTR) ?? '')));
-    };
-    scan();
-    // 胶囊的增删都伴随 draft 镜像变化（insertAttach/setDraftText/退格删除都会 setDraft）
-    const obs = new MutationObserver(scan);
-    obs.observe(el, { childList: true, subtree: true });
-    return () => obs.disconnect();
-  }, [draftRef, draft]);
-
-  /** 摆入/取出：已摆 = 从正文摘掉那枚胶囊（暂存格保留），未摆 = 光标处插一枚。 */
-  const togglePlace = (upload: UploadFile): void => {
-    const el = draftRef.current;
-    if (!el) return;
-    const chip = el.querySelector(`[${ATTACH_ATTR}="${CSS.escape(upload.id)}"]`);
-    if (!(chip instanceof HTMLElement)) {
-      insertAttach(upload);
-      return;
+  /** 用户编辑正文后的对账：占位与暂存格是同一条附件的两个面（1:1）——胶囊被
+   *  退格/剪切/撤销删掉时，暂存格随之撤掉（反向的「撤格摘胶囊」在 unstage 里）。
+   *  只挂在 onInput：程序性重写（出队回填/快照还原/发送清空）不走这里，不会把
+   *  那些场景下暂时不在正文里的附件误撤掉。 */
+  const reconcilePlaced = (el: HTMLDivElement): void => {
+    const ids = new Set(
+      Array.from(el.querySelectorAll(`[${ATTACH_ATTR}]`)).map((n) => n.getAttribute(ATTACH_ATTR) ?? ''),
+    );
+    for (const s of staged) {
+      if (s.state === 'done' && s.upload && !ids.has(s.upload.id)) unstage(s);
     }
-    // 摘胶囊时把它旁边因摆放补的空格一并收掉（只收胶囊自己贡献的那一枚）
-    const eat = (n: ChildNode | null): ChildNode | null =>
-      n?.nodeType === 3 && (n.nodeValue ?? '') === ' ' ? n : null;
-    const lead = eat(chip.previousSibling);
-    const trail = eat(chip.nextSibling);
-    chip.remove();
-    lead?.remove();
-    trail?.remove();
-    setDraft(serializeDraft(el));
   };
 
   // 会话控制面（执行模式/模型/effort）：显示恒为「最后已知」，切换只标本地乐观态
@@ -780,6 +761,18 @@ export function SessionMessages({
                 const pipe = m.pipe;
                 // 官方命令只在句首生效；skill/插件可以插在句中（前后须是空白）
                 const cmdTokens = commandTokensOf(m.text, commandInfoOf);
+                // 带图条目按 `[Image #N]` 占位记号把图内联回原位置；被内联的图
+                // 不再进预览行（一张图只出现一次），记号比图少时多出来的图与
+                // 全部文件行仍归预览行（老消息没有记号 → 图全留预览行）
+                const inlineSegs =
+                  m.role === 'user' && m.attachments?.some(isImageUpload)
+                    ? imageMarkerSegments(m.text, m.attachments.filter(isImageUpload))
+                    : null;
+                const inlinedIds = new Set<string>();
+                for (const s of inlineSegs ?? []) if (s.kind === 'image') inlinedIds.add(s.image.id);
+                const previewAtts = (m.attachments ?? []).filter(
+                  (a) => !isImageUpload(a) || !inlinedIds.has(a.id),
+                );
                 return (
                   <div
                     key={m.key}
@@ -831,10 +824,11 @@ export function SessionMessages({
                           {formatStamp(m.at)}
                         </span>
                       </div>
-                      {/* 随附文件：图出缩略图（点开大图），其余出可下载的文件行 */}
-                      {m.attachments?.length ? (
+                      {/* 随附文件：图出缩略图（点开大图），其余出可下载的文件行。
+                          已按记号内联回正文的图不重复摆（见上方 inlineSegs）。 */}
+                      {previewAtts.length ? (
                         <div className="mb-1 flex flex-wrap items-start gap-1.5">
-                          {m.attachments.map((a) =>
+                          {previewAtts.map((a) =>
                             isImageUpload(a) ? (
                               <button
                                 key={a.id}
@@ -879,8 +873,38 @@ export function SessionMessages({
                       ) : null}
                       {/* 斜杠命令画成胶囊（skill 红 / 官方命令黄，参数照常当文字）；
                           其余走 markdown 预览（与左侧回复气泡同渲染器），
-                          `pre-wrap` 保住段落里的软换行 */}
-                      {cmdTokens.some((tok) => 'cmd' in tok) || m.commandOutput ? (
+                          `pre-wrap` 保住段落里的软换行。带图条目按 `[Image #N]`
+                          占位记号把图内联回去（内联了的不再进预览行）。记号位置
+                          是宿主给的——恒聚在消息开头（粘贴处理器先插记号后插
+                          剩余文本，都落在光标点），气泡照实渲染。 */}
+                      {inlineSegs ? (
+                        <div className="flex flex-col gap-1 [&_p]:whitespace-pre-wrap">
+                          {inlineSegs.map((seg, i) =>
+                            seg.kind === 'image' ? (
+                              <button
+                                key={i}
+                                type="button"
+                                title={seg.image.name}
+                                onClick={(e) => {
+                                  if (selecting) return;
+                                  e.stopPropagation();
+                                  setLightbox(seg.image);
+                                }}
+                                className="block h-20 w-20 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
+                              >
+                                <img
+                                  src={`${API_BASE}/images/${seg.image.id}`}
+                                  alt={seg.image.name}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              </button>
+                            ) : seg.text.trim() ? (
+                              <AssistantMarkdown key={i} text={seg.text} />
+                            ) : null,
+                          )}
+                        </div>
+                      ) : cmdTokens.some((tok) => 'cmd' in tok) || m.commandOutput ? (
                         <div className="flex flex-col gap-1">
                           <p className="flex flex-wrap items-baseline whitespace-pre-wrap break-words text-xs leading-relaxed">
                             {cmdTokens.map((tok, i) =>
@@ -1334,10 +1358,6 @@ export function SessionMessages({
                           onOpen={setLightbox}
                           onRemove={() => unstage(item)}
                           removeLabel={t('tasks.msgAttachRemove')}
-                          placed={item.upload != null && placedIds.has(item.upload.id)}
-                          onTogglePlace={togglePlace}
-                          placeLabel={t('tasks.msgAttachPlace')}
-                          unplaceLabel={t('tasks.msgAttachUnplace')}
                         />
                       ))}
                   </StagedRow>
@@ -1351,10 +1371,6 @@ export function SessionMessages({
                           onOpen={setLightbox}
                           onRemove={() => unstage(item)}
                           removeLabel={t('tasks.msgAttachRemove')}
-                          placed={item.upload != null && placedIds.has(item.upload.id)}
-                          onTogglePlace={togglePlace}
-                          placeLabel={t('tasks.msgAttachPlace')}
-                          unplaceLabel={t('tasks.msgAttachUnplace')}
                         />
                       ))}
                   </StagedRow>
@@ -1531,11 +1547,23 @@ export function SessionMessages({
                     if (maybeOpenPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
                     setDraft(serializeDraft(e.currentTarget));
                     syncCmdMenu(e.currentTarget);
+                    reconcilePlaced(e.currentTarget);
                   }}
                   onClick={(e) => {
-                    // 点胶囊 = 改这枚引用（胶囊是原子块，点它不会落光标）
-                    const chip = (e.target as HTMLElement | null)?.closest?.(`[${REF_ATTR}]`);
-                    if (chip instanceof HTMLElement) openChip(chip);
+                    // 点胶囊：引用 = 改这枚引用；附件占位 = 开大图预览
+                    // （胶囊是原子块，点它不会落光标）
+                    const target = e.target as HTMLElement | null;
+                    const chip = target?.closest?.(`[${REF_ATTR}]`);
+                    if (chip instanceof HTMLElement) {
+                      openChip(chip);
+                      return;
+                    }
+                    const att = target?.closest?.(`[${ATTACH_ATTR}]`);
+                    if (att instanceof HTMLElement) {
+                      const id = att.getAttribute(ATTACH_ATTR) ?? '';
+                      const upload = staged.find((s) => s.upload?.id === id)?.upload;
+                      if (upload) setLightbox(upload);
+                    }
                   }}
                   onKeyDown={(e) => {
                     // 输入法组字中的 Enter 是「确认候选词」，不是发送
@@ -1590,6 +1618,9 @@ export function SessionMessages({
                       insertRichText(text);
                     }
                   }}
+                  onDragOver={onChipDragOver}
+                  onDrop={onChipDrop}
+                  onDragEnd={onChipDragEnd}
                   style={{ height: `calc(${inputRows * INPUT_ROW_PX}px + 0.75rem)` }}
                   className="w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs leading-4 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
                 />

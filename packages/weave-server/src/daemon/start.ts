@@ -54,7 +54,8 @@ import { SnapshotRefresher } from './snapshot-refresher.js';
 import { SessionProbe, dbModelFactResolver, dbTranscriptPathResolver } from './session-probe.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
-import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
+import { pidAliveOf } from './claude-liveness.js';
+import { combinedLivenessOf } from './liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
@@ -198,6 +199,8 @@ export function startDaemon(): void {
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
+    // 判活图（claude 注册表 + codex 锁探针缓存）：判死落定/诊断全消费它。
+    livenessOf: combinedLivenessOf,
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2：空闲订阅引擎（ingest 即时 fire + sweeper 补射）
@@ -207,6 +210,7 @@ export function startDaemon(): void {
     deliverer: messageDeliverer,
     sessions: hookSessions,
     bus: hookBus,
+    livenessOf: combinedLivenessOf,
   });
   // Web Push 发送器（提醒第三条腿）：dashboard 订阅 fire 时向全部浏览器订阅
   // 推送——页面关着本地通知路径全死，只有厂商推送服务能唤起 SW。
@@ -302,10 +306,11 @@ export function startDaemon(): void {
   );
   terminalRefresher.start();
   // 会话存活（终端按钮图标）同理：claude 进程被杀无 hook 事件，GET 的 pidAlive
-  // 会卡旧值——判活零 spawn（注册表 + kill 0），15s 一拍、只推判得动的快照。
+  // 会卡旧值——判活零 spawn（注册表 + kill 0；codex 走锁探针缓存），15s 一拍、
+  // 只推判得动的快照。
   const livenessRefresher = new SnapshotRefresher(
     () => {
-      const liveness = claudeLivenessById();
+      const liveness = combinedLivenessOf();
       const alive: Record<string, boolean> = {};
       for (const s of hookSessions.listWithCounts()) {
         const v = pidAliveOf(s, liveness);
@@ -423,7 +428,7 @@ export function startDaemon(): void {
         if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
           return { ok: true, ack: 'session-start' };
         }
-        if (claudeLivenessById().get(sessionId) === true) alive = true;
+        if (combinedLivenessOf().get(sessionId) === true) alive = true;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       return alive
@@ -451,6 +456,7 @@ export function startDaemon(): void {
     probe: sessionProbe,
     uploads,
     uploadSessions: defaultUploadSessions,
+    livenessOf: combinedLivenessOf,
   });
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。

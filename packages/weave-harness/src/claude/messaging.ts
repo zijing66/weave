@@ -33,6 +33,13 @@ export const CLAUDE_ATTACH: AttachSpec = {
  * 目录同样可引用（宿主会列出目录内容），且**惯例带尾斜杠**——实机转录里
  * 手敲的目录引用都是 `@docs/plan/zcode/` 这个形状。
  *
+ * **带空格的路径用双引号包**：`@"my file.md"`。2026-10-26 实测（scratch 会话
+ * 逐形状发、转录里看 `attachment.type=file` 条目）：双引号形状宿主认（文件内容
+ * 直接进上下文），`@my\ file.md`（转义）、`@'my file.md'`（单引号）、裸空格
+ * `@my file.md` 都不认（模型只能自己 Read）；引号 + `#L` 行区间组合同样认
+ * （`@"my file.md"#L1` 实测出 attachment）。无空格路径不加引号——与宿主
+ * 补全插进去的形状一致。
+ *
  * 另一头的前提（决定回执比对能不能工作）：这段文本会**原样**出现在
  * `UserPromptSubmit` 的 prompt 里，不会被宿主改写成别的表示法——实测抓到的
  * 事件里 `@.bench/ev.json @docs/plan/zcode/ 分优先级…` 逐字都在。
@@ -45,16 +52,43 @@ const CLAUDE_PATH_REF: PathRefSpec = {
   kinds: ['file', 'dir'],
   lines: true,
   expression: ({ path, kind, lines }) => {
-    if (kind === 'dir') return `@${path}/`;
-    if (!lines) return `@${path}`;
+    // 含空格才加引号：无空格路径保持裸形状（宿主补全插的就是它）。引号 + #L
+    // 组合同样被实测背书（`@"my file.md"#L1` 转录出 file attachment）。
+    const quoted = /\s/.test(path) ? `"${path}"` : path;
+    if (kind === 'dir') return `@${quoted}/`;
+    if (!lines) return `@${quoted}`;
     return lines.start === lines.end
-      ? `@${path}#L${lines.start}`
-      : `@${path}#L${lines.start}-${lines.end}`;
+      ? `@${quoted}#L${lines.start}`
+      : `@${quoted}#L${lines.start}-${lines.end}`;
   },
   recognize: (text) => {
     const out: RecognizedRef[] = [];
     // 词取到空白 / 另一个 `@` / 全角标点为止：中文句子里的引用后面常直接跟「，还有」，
-    // 而全角标点不可能出现在路径里（CJK 字母可以，`@文档/说明.md` 照样能认）
+    // 而全角标点不可能出现在路径里（CJK 字母可以，`@文档/说明.md` 照样能认）。
+    // 双引号形式先行：`@"my file.md"` 整段引号内都是路径（含空格），闭引号后
+    // 照样要求空白（与裸形式同一判据）。
+    for (const m of text.matchAll(/(?:^|\s)@"([^"@，。；：！？、（）【】「」『』《》…]+)"/g)) {
+      const token = m[1]!;
+      // m[0] = [前导空白]@["][token]["]：从尾部倒推 `@` 的下标（闭引号+token+开引号+@）
+      const start = m.index + m[0].length - token.length - 3;
+      let end = start + token.length + 3; // 闭引号之后
+      // 闭引号后照样要求空白（与裸形式同一判据）；`#L` 行区间紧跟闭引号是
+      // 手敲的自然延伸，一并认走
+      const line = /#L(\d+)(?:-(\d+))?/.exec(text.slice(end, end + 16));
+      if (line && line.index === 0) end += line[0].length;
+      const next = text[end];
+      if (next !== undefined && !/\s/.test(next)) continue;
+      if (!token || token.startsWith('/') || token.includes(':') || token.includes('#')) continue;
+      out.push({
+        start,
+        end,
+        ref: text.slice(start, end),
+        path: token,
+        kind: 'file',
+        ...(line ? { lines: { start: Number(line[1]), end: Number(line[2] ?? line[1]) } } : {}),
+      });
+    }
+    // 裸形式（无空格路径）：词法同前，但跳过已被双引号形式认走的区间
     for (const m of text.matchAll(/(?:^|\s)@([^\s@，。；：！？、（）【】「」『』《》“”‘’…]+)/g)) {
       const token = m[1]!;
       const start = m.index + m[0].length - token.length - 1; // 那枚 `@` 的下标
@@ -68,8 +102,11 @@ const CLAUDE_PATH_REF: PathRefSpec = {
       // 目录惯例带尾斜杠；没有斜杠的交给调用方按索引判类型
       const dir = rest.endsWith('/');
       const path = dir ? rest.slice(0, -1) : rest;
-      // 绝对路径、盘符、另一个 `#` 都不是项目内引用
+      // 绝对路径、盘符、另一个 `#` 都不是项目内引用；`"` 开头是双引号形式的领地
       if (!path || path.startsWith('/') || path.includes(':') || path.includes('#')) continue;
+      if (path.startsWith('"')) continue;
+      // 双引号形式已认走这段（含空格路径）就不再按裸词法切它
+      if (out.some((r) => start >= r.start && end <= r.end)) continue;
       const from = line ? Number(line[1]) : null;
       const to = line?.[2] ? Number(line[2]) : from;
       out.push({
@@ -81,7 +118,7 @@ const CLAUDE_PATH_REF: PathRefSpec = {
         ...(from != null ? { lines: { start: from, end: to! } } : {}),
       });
     }
-    return out;
+    return out.sort((a, b) => a.start - b.start);
   },
 };
 

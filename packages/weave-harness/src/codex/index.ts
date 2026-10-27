@@ -4,6 +4,7 @@ import { CODEX_CAPTURE } from './capture.js';
 import { CODEX_CONFIG } from './config.js';
 import { CODEX_DETECTOR } from './detect.js';
 import { CODEX_EVENT_SOURCE } from './event-source.js';
+import { CODEX_IMAGES } from './images.js';
 import { CODEX_MESSAGING } from './messaging.js';
 import { CODEX_PLUGINS } from './plugins.js';
 import { CODEX_PLUGIN_STATE } from './plugin-state.js';
@@ -11,9 +12,11 @@ import { CODEX_PROVISION } from './provision.js';
 import { CODEX_RESUME } from './resume.js';
 import { CODEX_LOG_SOURCE } from './rollout.js';
 import { CODEX_COMMANDS } from './commands.js';
+import { CODEX_LIVENESS } from './liveness.js';
 
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
+export { CODEX_IMAGES } from './images.js';
 export { CODEX_MESSAGING } from './messaging.js';
 export { CODEX_RESUME } from './resume.js';
 export { CODEX_EVENT_SOURCE, CodexEventSource, CodexTurnBuffer } from './event-source.js';
@@ -26,6 +29,13 @@ export { CODEX_PROVISION, codexProvisionCheck } from './provision.js';
 export * from './mcp.js';
 export * from './toml.js';
 export { CODEX_COMMANDS } from './commands.js';
+export {
+  CODEX_LIVENESS,
+  codexLivenessById,
+  codexThreadLockDir,
+  CODEX_LOCK_GRACE_MS,
+  type LockProbe,
+} from './liveness.js';
 
 /**
  * Codex 接入模块的驱动：批 4a 补 assets 槽、批 5 补 detect、P2 补 pluginState
@@ -35,7 +45,8 @@ export { CODEX_COMMANDS } from './commands.js';
  * 时仍能看到存量会话）、**plugins 补安装/市场面**（`codex plugin add` /
  * `marketplace`，见 `plugins.ts`）、**config 补配置面**（config.toml 词表 +
  * TOML 读写，见 `config.ts`）、**provision 补安装形态检查**（桌面端/CLI 双面孔
- * 的版本漂移警告，见 `provision.ts`）——init 槽不在此（由 cli init/wiring 携带）。
+ * 的版本漂移警告，见 `provision.ts`）、**images 补入站图**（rollout 的
+ * UserMessage 条目，见 `images.ts`）——init 槽不在此（由 cli init/wiring 携带）。
  */
 export const CODEX_DRIVER: HarnessDriver = {
   id: 'codex',
@@ -53,6 +64,8 @@ export const CODEX_DRIVER: HarnessDriver = {
     'config',
     'commands',
     'provision',
+    'liveness',
+    'images',
   ],
   assets: CODEX_ASSETS,
   detect: CODEX_DETECTOR,
@@ -66,4 +79,6 @@ export const CODEX_DRIVER: HarnessDriver = {
   config: CODEX_CONFIG,
   commands: CODEX_COMMANDS,
   provision: CODEX_PROVISION,
+  liveness: CODEX_LIVENESS,
+  images: CODEX_IMAGES,
 };

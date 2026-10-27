@@ -7,7 +7,8 @@ import type {
 } from '../repositories/session-watches.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
-import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
+import { pidAliveOf } from '../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { HookBusMessage, HookEventBus } from './bus.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 
@@ -122,7 +123,7 @@ export class WatchEngine {
    */
   sweepTerminated(): number {
     try {
-      const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
+      const liveness = this.deps.livenessOf?.() ?? combinedLivenessOf();
       const rows = new Map(
         this.deps.sessions.listWithCounts().map((r) => [r.sessionId, r] as const),
       );

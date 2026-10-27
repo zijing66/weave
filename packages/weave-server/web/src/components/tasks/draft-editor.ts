@@ -132,21 +132,27 @@ function draftTokensOf(root: Node | null): DraftToken[] {
 
 /** composer DOM → 要发出去的原文（胶囊取 `data-ref`，换行还原成 `\n`）。
  *  附件占位胶囊**原地展开**：文件 = 落盘绝对路径（真·原地引用，回执比对原样含它）；
- *  图片 = 空串（宿主粘贴处理器只认独立成行的图片路径，句中内联是死文本——
- *  图片路径仍由投递层追加在末尾，占位只标「这张图属于这句话」）。 */
+ *  图片 = **独立成行的落盘路径**（宿主粘贴处理器只认独立成行的图片路径——句中
+ *  内联是死文本；转成 `[Image #N]` 后占位记号留在原位置，气泡按它内联回图）。
+ *  胶囊前后各补一个换行（已有行边界则不重复补），保证路径独立成行。 */
 export function serializeDraft(root: Node | null): string {
   const out = draftTokensOf(root)
-    .map((t) =>
-      'text' in t
-        ? t.text
-        : 'ref' in t
-          ? t.ref
-          : 'attach' in t
-            ? isImageUpload({ mediaType: t.mediaType })
-              ? ''
-              : t.path
-            : `${t.sigil ?? '/'}${t.cmd}`,
-    )
+    .map((t, i, all) => {
+      if ('text' in t) return t.text;
+      if ('ref' in t) return t.ref;
+      if ('cmd' in t) return `${t.sigil ?? '/'}${t.cmd}`;
+      // 附件胶囊：文件 = 路径；图片 = 独立成行的路径（前后补行边界）
+      if (!isImageUpload({ mediaType: t.mediaType })) return t.path;
+      // 行边界 = 没有邻居，或邻居是文本且贴着的那头已是换行；胶囊邻居（序列化成
+      // 路径/表达式）不算边界，同样要补
+      const prev = all[i - 1];
+      const next = all[i + 1];
+      const lead =
+        prev === undefined || (('text' in prev ? prev.text : '') as string).endsWith('\n');
+      const trail =
+        next === undefined || (('text' in next ? next.text : '') as string).startsWith('\n');
+      return `${lead ? '' : '\n'}${t.path}${trail ? '' : '\n'}`;
+    })
     .join('');
   // 末尾那个 <br> 是浏览器给空行留的占位，不当换行算
   return out.endsWith('\n') && out.trim() === '' ? '' : out;

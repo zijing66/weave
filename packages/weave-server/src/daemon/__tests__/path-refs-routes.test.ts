@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -113,6 +113,17 @@ describe('路径引用路由', () => {
     expect(dir.ref).toBe('@src/');
   });
 
+  it('②′ 符号链接条目带 symlink 标记（lstat 判本体；普通条目不带）', async () => {
+    registerSession('claude');
+    symlinkSync(join(projectPath, 'src', 'a.ts'), join(projectPath, 'link.ts'));
+    clearFileIndexCache();
+    const hit = await call('/sessions/sess/files');
+    const body = hit.body as { entries: { path: string; symlink?: boolean }[] };
+    const link = body.entries.find((e) => e.path === 'link.ts')!;
+    expect(link.symlink).toBe(true);
+    expect(body.entries.find((e) => e.path === 'page.html')!.symlink).toBeUndefined();
+  });
+
   it('③ 搜索模式带上命中区间（前端拿来上色）', async () => {
     registerSession('claude');
     const hit = await call('/sessions/sess/files?q=a.ts');
@@ -121,11 +132,12 @@ describe('路径引用路由', () => {
     expect(body.entries[0]!.ranges).toBeDefined();
   });
 
-  it('④ harness 没有路径文法（codex）= 409 并带上能力面的理由', async () => {
+  it('④ codex 的路径文法 = 裸相对路径（列表 ref 随文法出）', async () => {
     registerSession('codex');
-    const hit = await call('/sessions/sess/files');
-    expect(hit.status).toBe(409);
-    expect((hit.body as { error: string }).error).toMatch(/Codex/);
+    const hit = await call('/sessions/sess/files?dir=src');
+    expect(hit.status).toBe(200);
+    const body = hit.body as { entries: { path: string; ref: string }[] };
+    expect(body.entries[0]!.ref).toBe('src/a.ts');
   });
 
   it('⑤ 预览：非图一律 text/plain（绝不下发 text/html 把 origin 交出去）', async () => {
@@ -166,13 +178,14 @@ describe('路径引用路由', () => {
     expect(await ref('path=src&kind=dir')).toBe('@src/');
   });
 
-  it('⑩ 行引用的非法入参：倒序 400、缺路径 400、没有文法 409', async () => {
+  it('⑩ 行引用的非法入参：倒序 400、缺路径 400；codex 无行区间 = 整文件形状照出', async () => {
     registerSession('claude');
     expect((await call('/sessions/sess/ref?path=src/a.ts&start=9&end=3')).status).toBe(400);
     expect((await call('/sessions/sess/ref')).status).toBe(400);
     registerSession('codex');
     const hit = await call('/sessions/sess/ref?path=src/a.ts');
-    expect(hit.status).toBe(409);
+    expect(hit.status).toBe(200);
+    expect((hit.body as { ref: string }).ref).toBe('src/a.ts');
   });
 
   it('⑪ 二进制（含 NUL）不给编辑器：415', async () => {
@@ -192,8 +205,9 @@ describe('路径引用路由', () => {
     expect(claude.pathRefLines).toBe(true);
     expect(claude.pathRefKinds).toEqual(['file', 'dir']);
     const codex = body.capabilities.find((c) => c.harness === 'codex')!;
-    expect(codex.pathRefs).toBe(false);
-    expect(codex.pathRefKinds).toEqual([]);
+    expect(codex.pathRefs).toBe(true);
+    expect(codex.pathRefLines).toBe(false);
+    expect(codex.pathRefKinds).toEqual(['file', 'dir']);
   });
 
   it('⑬ 反向认引用：只认文法、存在性由索引判（索引里没有的不变胶囊）', async () => {
@@ -232,6 +246,10 @@ describe('路径引用路由', () => {
     expect(res.statusCode).toBe(400);
 
     registerSession('codex');
-    expect((await call('/sessions/sess/refs/recognize', { text: '@src/a.ts' })).status).toBe(409);
+    // codex 文法认裸相对路径：`src/a.ts` 在索引里 → 出胶囊
+    const hit = await call('/sessions/sess/refs/recognize', { text: '看 src/a.ts' });
+    expect(hit.status).toBe(200);
+    const body = hit.body as { refs: { path: string; ref: string }[] };
+    expect(body.refs.map((r) => [r.path, r.ref])).toEqual([['src/a.ts', 'src/a.ts']]);
   });
 });

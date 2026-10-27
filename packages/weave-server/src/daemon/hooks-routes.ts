@@ -26,7 +26,8 @@ import { handlePathRefRoutes } from './routes/path-refs.js';
 import { handleSessionInsightRoutes } from './routes/session-insights.js';
 import { handleWatchRoutes } from './routes/watches.js';
 import { openSessionTerminal, transcriptState } from './session-open.js';
-import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
+import { pidAliveOf } from './claude-liveness.js';
+import { combinedLivenessOf } from './liveness.js';
 import {
   captureSurfaces,
   messagingSurfaces,
@@ -134,9 +135,10 @@ export async function handleHooksRoutes(
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
     const sessions = deps.hookSessions.listWithCounts(projectId);
-    // claude 注册表判活随返回：true/false=判得动，null=判不动（codex/新鲜会话）不猜
+    // 判活随返回（claude 注册表 + codex 锁探针缓存）：true/false=判得动，
+    // null=判不动（新鲜会话）不猜
     // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
-    const liveness = claudeLivenessById();
+    const liveness = combinedLivenessOf();
     // 会话所在可见屏幕（列表分块）：探测要吃子进程，只能回隐藏刷新器的**上次快照**
     // （null = 反查不到，不分组），增量经 push 'terminalTopology' 到达——同角标口径。
     const screens = deps.terminalRefresher?.lastSnapshot?.terminals ?? {};
@@ -454,7 +456,7 @@ export async function handleHooksRoutes(
         .find((p) => p.id === projectId)
         ?.captures.find((c) => c.harness === harness) ?? null;
 
-    const liveness = claudeLivenessById();
+    const liveness = combinedLivenessOf();
     const rows = deps.hookSessions.listWithCounts(
       sessionFilter ? undefined : projectFilter ? Number(projectFilter) : undefined,
     );

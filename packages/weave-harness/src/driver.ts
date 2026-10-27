@@ -26,7 +26,8 @@ export type HarnessCapability =
   | 'edits'
   | 'images'
   | 'commands'
-  | 'provision';
+  | 'provision'
+  | 'liveness';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -1032,6 +1033,21 @@ export interface ProvisionSurface {
   check(bin: string): Promise<ProvisionCheck>;
 }
 
+/**
+ * 会话存活面：答「这个 harness 的会话进程还活着吗」。判据是 harness 专属知识
+ * （claude = `~/.claude/sessions/<pid>.json` 注册表 + kill 0；codex = thread-writer-locks
+ * 独占锁），server 不自拼。探测是异步批量（codex 的锁探针要 spawn PowerShell），
+ * 消费方要同步 map——由装配层缓存（见 server 的 liveness 装配助手）。
+ */
+export interface LivenessSurface {
+  readonly harness: Harness;
+  /**
+   * 批量探测给定会话的存活。只输出**判得动**的条目（判不动的会话不进 map，
+   * 上游把「查不到」当未知，不许误判死）；`ids` 缺省 = 全量。
+   */
+  alive(ids?: readonly string[]): Promise<Map<string, boolean>>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -1054,6 +1070,7 @@ export interface HarnessDriver {
   images?: ImagesSurface;
   commands?: CommandsSurface;
   provision?: ProvisionSurface;
+  liveness?: LivenessSurface;
 }
 
 /**

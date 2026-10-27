@@ -115,6 +115,29 @@ describe('MessagingSurface 契约', () => {
     expect(spec.expression({ path: 'src', kind: 'dir' })).toBe('@src/');
   });
 
+  it('claude：带空格路径 = 双引号形状（2026-10-26 实测宿主认；转义/单引号/裸空格都不认）', () => {
+    const spec = CLAUDE_MESSAGING.pathRefs!;
+    // expression：含空格才加引号；引号 + #L 组合同样被实测背书
+    expect(spec.expression({ path: 'my file.md', kind: 'file' })).toBe('@"my file.md"');
+    expect(spec.expression({ path: 'my dir', kind: 'dir' })).toBe('@"my dir"/');
+    expect(
+      spec.expression({ path: 'my file.md', kind: 'file', lines: { start: 3, end: 3 } }),
+    ).toBe('@"my file.md"#L3');
+    // recognize：双引号形式整段认回（含空格），闭引号后同样要求空白
+    const text = '看 @"my file.md" 和 @src/a.ts 两处';
+    const hits = spec.recognize(text);
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toMatchObject({ path: 'my file.md', kind: 'file', ref: '@"my file.md"' });
+    expect(text.slice(hits[0]!.start, hits[0]!.end)).toBe('@"my file.md"');
+    expect(hits[1]).toMatchObject({ path: 'src/a.ts', kind: 'file' });
+    // 行区间在引号形式里也认（用户手敲的形状，解析不设限）
+    const lined = spec.recognize('看 @"my file.md"#L3-5');
+    expect(lined).toHaveLength(1);
+    expect(lined[0]).toMatchObject({ path: 'my file.md', lines: { start: 3, end: 5 } });
+    // 闭引号后粘着字不算（与裸形式同一判据）
+    expect(spec.recognize('看 @"my file.md"，还有')).toEqual([]);
+  });
+
   it('claude：recognize 是 expression 的逆运算（粘贴回填：句子里的引用要被原样认出来）', () => {
     const spec = CLAUDE_MESSAGING.pathRefs!;
     const text = '看下 @src/a.ts 和 @src/b.ts#L12-34 两处，目录 @docs/plan/ 也看一眼，别碰 foo@bar.com';
@@ -141,7 +164,7 @@ describe('MessagingSurface 契约', () => {
     expect(spec.recognize('看这个\n@src/a.ts')).toHaveLength(1);
   });
 
-  it('codex：全通道 null/空 + reasons 齐全（可渲染「为什么置灰」）', () => {
+  it('codex：无通道 null/空 + reasons 齐全（可渲染「为什么置灰」）；pathRefs = 裸相对路径文法', () => {
     expect(CODEX_MESSAGING.harness).toBe('codex');
     expect(CODEX_MESSAGING.discovery).toBe(false);
     expect(CODEX_MESSAGING.prompt).toBeNull();
@@ -149,8 +172,10 @@ describe('MessagingSurface 契约', () => {
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
     expect(CODEX_MESSAGING.idleSignals).toEqual([]);
-    expect(CODEX_MESSAGING.pathRefs).toBeNull();
-    for (const channel of ['discovery', 'prompt', 'inject', 'headless', 'watch', 'pathRefs'] as const) {
+    expect(CODEX_MESSAGING.pathRefs).not.toBeNull();
+    expect(CODEX_MESSAGING.pathRefs!.lines).toBe(false);
+    expect(CODEX_MESSAGING.pathRefs!.expression({ path: 'src/a.ts', kind: 'file' })).toBe('src/a.ts');
+    for (const channel of ['discovery', 'prompt', 'inject', 'headless', 'watch'] as const) {
       expect(CODEX_MESSAGING.unsupportedReasons?.[channel]).toBeTruthy();
     }
   });

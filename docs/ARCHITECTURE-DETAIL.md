@@ -24,7 +24,7 @@
 
 ## §2 能力槽与 statusline / logs 面
 
-十五能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits / images）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十八能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits / images / commands / provision / liveness）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
 
 ### capture 槽（hook 脚本的安装面）
 
@@ -64,14 +64,15 @@
 
 ### images 槽（入站图采集）
 
-`ImagesSurface` = `sessionImages({ sessionId, transcriptPath }) → PromptImageSet[] | null`：一条 user 消息 = `{ text, at, images: [{ mediaType, bytes }] }`，时间序。今天唯一实现 = `weave-harness/src/claude/images.ts`（`CLAUDE_IMAGES`）；codex 留位（它的图是独立 `ImageView` TurnItem、且侧边会话不落 rollout，形状不同）。
+`ImagesSurface` = `sessionImages({ sessionId, transcriptPath }) → PromptImageSet[] | null`：一条 user 消息 = `{ text, at, images: [{ mediaType, bytes }] }`，时间序。两份实现 = `weave-harness/src/claude/images.ts`（`CLAUDE_IMAGES`，读转录 user 条目的 image block）与 `weave-harness/src/codex/images.ts`（`CODEX_IMAGES`，读 rollout）。
 
 - **为什么读转录**：终端输入框里粘的图，hook 载荷只有一个 `[Image #N]` 占位记号，base64 根本没进 payload；图只存在于转录 user 条目的 `{type:'image', source:{type:'base64', media_type, data}}`。与 `edits` 槽同一个理由：把被裁过的事件当真会丢数据。
 - **只认顶层 image 块**：工具结果（`toolUseResult` 非空的 user 条目、或包一层 `tool_result` 的内嵌图）与 assistant 条目都不算「人贴的图」，否则气泡会凭空多出图。媒体类型只认 uploads 支持的四种（png/jpeg/gif/webp），单张 ≤10MB，超了跳过不猜。
+- **codex 的读法**：rollout 的 `event_msg` → `payload.type = "item_completed"` → `item.type = "UserMessage"`（TurnItem tag 无 rename，PascalCase）→ `content[]` 里 `{type:'image', image_url:'data:...;base64,...'}`（`UserInput::Image` + untagged `ImageReference::Inline` 的 serde 形状）。hook 载荷的 `prompt` 只有 `[Image #N]` 占位文本（composer 的占位元素就是 textarea 文本的一部分，提交时原样进 `UserInput::Text`，0.164 测试实锤 `"{large} [Image #1]"`），与 claude 同构 ⇒ 认领逻辑零改动。`function_call_output` 里的 `input_image`（view_image 等工具回执）不是人贴的图，不搬。
 - **读法同 `edits`**：流式逐行，先按 `"type":"image"` 子串预筛再 parse；读崩回 `null`，不交半份。
 - **补采在 server**（`daemon/prompt-images.ts`）：`pendingOf` 取该会话 `UserPromptSubmit` 里「带占位、还没挂 `event_images`」的事件；与转录条目**归一去占位记号后按正文全等**认领（取时间最近的一条），纯图消息两侧正文皆空、只能按时间窗口（120s）兜底——空正文没有可比的证据，超窗宁可不挂。认到就把图 `save` 进 uploads（内容寻址，重复即 no-op）并 `linkToEvent`，之后缩略图 / lightbox / 分享图全走既有路径。
 - **触发恒被动**：`GET /projects/:id/hooks?sessionId=` 取事件时 `needsImageImport` 判一下，有缺口才 `importPromptImagesOnce`——**等它一拍再回响应**（历史会话不会再来事件帧，后台补完前端没有刷新时机，图会一直不出现直到重开对话）；同一会话进程内 `attempted` 只扫一次，失败静默（回 0）。**不在 ingest 里扫**：那时图可能还没落盘，且会拖慢事件管道。单次上限 64 张 / 64MB，超出的留到下次进程。代价 = 第一次打开这段对话多扫一遍转录（预筛只 parse 带 `"type":"image"` 的行）。
-- **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；claude adapter 不自己拼 `~/.claude/projects/<slug>/`。
+- **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；adapter 不自己拼目录——claude 是 `~/.claude/projects/<slug>/` 下的转录，codex 的 hook 载荷直接带 rollout 路径（`hook_transcript_path` = 当前 rollout 文件，实机库验证）。
 - **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
 
 ### commands 槽（`/` 候选与命令返显）
@@ -86,6 +87,16 @@
 - **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。
 - **路由**：`GET /sessions/:id/commands` → `{ supported, commands }`（`projectPath` 由 server 查库得出）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
 - **web 侧**：空白后敲 `/` 或 `$` 触发候选面板（两种触发符各筛各的候选），键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd` + 来源/触发符，与文件引用同一套 draft 序列化），提交时还原成 `<sigil><name> args` 原文。气泡侧 `commandTokensOf` 认 token：**前后必须是空白**（与引用表达式同一条判据），官方命令只在句首、skill/插件可插句中；配色 skill/插件红、官方与自定义命令黄。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
+
+### liveness 槽（会话存活判定）
+
+`LivenessSurface` = `alive(ids?) → Promise<Map<string, boolean>>`：批量探测会话进程还活着吗。判据是 harness 专属知识，server 不自拼；**只输出判得动的条目**——判不动的会话不进 map，上游把「查不到」当未知，绝不误判死。消费方（队列落定 / terminated 补射 / 诊断 / `pidAlive` 字段）全要同步 map，而 codex 探针是异步 spawn ⇒ 装配层缓存成同步图。
+
+- **claude = `claude/liveness.ts`**：`~/.claude/sessions/<pid>.json` 注册表（会话活动期持续刷新，进程死即停）+ `kill(pid, 0)`，全同步零 spawn。查无登记 + 过豁免窗（`CLAUDE_REG_GRACE_MS` 90s）→ false；空壳行（仅一条 SessionStart）不判。server 侧 `daemon/claude-liveness.ts` 只剩 re-export 壳（存量 import 点不动）。
+- **codex = `codex/liveness.ts`**：`<CODEX_HOME>/thread-writer-locks/<sessionId>.lock` 独占写锁（先于 rollout 创建、全程持有——实测跨回合与长空闲不释放、正常关闭即删、崩溃后句柄内核释放但文件残留）。HELD = 活；node 的 libuv 恒全共享打开探不到独占锁 ⇒ PowerShell 一枪批量探（`[IO.File]::Open` 以 None 共享开，IOException = HELD，~1s/轮）。非 UUID 命名（`.coordination.lock`）跳过。
+- **宽限窗**（`CODEX_LOCK_GRACE_MS` 90s）：失去 HELD（FREE/文件消失）不当场判死——锁的释放瞬间（正在关闭、queue 命令触碰）不该让在途消息落定 offline。锚点 = 进程内 `lastHeldAt`；daemon 重启后用 FREE 锁的 mtime 兜底（0 字节文件 mtime ≈ 创建时刻 ≤ 死亡时刻，宽限只长不短）。与 claude 豁免窗同构。
+- **装配 = `daemon/liveness.ts` 的 `combinedLivenessOf`**：claude 现算 + codex 15s 一拍后台缓存（探针失败保持旧值），合并成一张同步 map 注入全部消费点（MessageDeliverer / WatchEngine / OrchestrationEngine / SessionSweeper / livenessRefresher / hooks-routes / ensureOpen）。消费点的 `pidAliveOf` 三态合成（map 命中优先 → harness 判据 → 豁免窗）零改动吃到 codex 结论。
+- **非 win32 的 codex 探针**：flock 语义不同，v1 回空集（全不判）——只损失 true，绝不产生错误的「死」。
 
 ### plugins / pluginState 槽（插件安装与启用）
 
@@ -240,7 +251,8 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 ### 4.8 门控、图片随附、上传与孤儿回收
 
 - **prompt 门控** = 层① `MessagingSurface.prompt`（claude 有、codex null）**|| 层② 终端文本通道可用**，能力矩阵两者皆无才置灰。
-- **附件随附**：`MessagingSurface.attach`（`AttachSpec { kinds, composePrompt }`）答两件事——`kinds` 收哪些类型（`image` / `file`），`composePrompt` 一个已落盘文件怎么被认出来。这是 harness 知识，server 只传语义参数（原文 + 路径/媒体类型/原名）。claude = `['image','file']`：裸绝对路径放原文后独立一行（与它自己的粘贴文法同源），图会被粘贴处理器转成 `[Image #N]` + 真 image block，**普通文件没有附件形态**、路径原样留在 prompt 里由模型自己 `Read`；codex = `['file']`（queue 通道硬拒 `--images`）。null = 不收附件，按钮按位置灰。`GET /messaging/capabilities` 下发 `attachKinds`，web 据此出按钮与 `accept`。
+- **附件随附**：`MessagingSurface.attach`（`AttachSpec { kinds, composePrompt }`）答两件事——`kinds` 收哪些类型（`image` / `file`），`composePrompt` 一个已落盘文件怎么被认出来。这是 harness 知识，server 只传语义参数（原文 + 路径/媒体类型/原名）。claude = `['image','file']`：裸绝对路径放原文后独立一行（与它自己的粘贴文法同源），图会被粘贴处理器转成 `[Image #N]` + 真 image block，**普通文件没有附件形态**、路径原样留在 prompt 里由模型自己 `Read`；codex = `['file','image']`：同为路径进正文，普通文件模型自己读，**图片靠默认开启的 `view_image` 工具**（features 表 Stable + default_enabled，0.164 实测本机 rollout 有真实调用）拿路径自己看图——终端里用户粘贴图片路径时宿主也会当场转图附件（`handle_paste_image_path`），但那是「粘贴事件」才认，weave 投递的路径就是一段正文，两种形态模型都接得住（queue 通道硬拒 `--images` 形参，路径文本不受影响）。**原文已含某附件路径（web 占位胶囊的原地展开）时该附件不再追加**——删掉胶囊路径即从原文消失，追加自动恢复。null = 不收附件，按钮按位置灰。`GET /messaging/capabilities` 下发 `attachKinds`，web 据此出按钮与 `accept`。
+- **附件占位胶囊（web composer）**：暂存格一键「摆入正文」——文件胶囊序列化成落盘绝对路径（真·原地引用，回执比对原样含它）、图片胶囊序列化成空串（粘贴处理器只认独立成行的图片路径，图片仍由投递层追加在末尾，占位只标「这张图属于这句话」）。胶囊 = `contenteditable=false` 的 span（`data-attach` 五属性），草稿快照带 `{a,p,n,m}` 四元组；撤格同步摘胶囊（悬空胶囊会发幽灵路径）。上传 DTO 带 `path` 字段（前端不拼路径、只透传）。
 - **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存附件引用、重启后按现 harness 面重合成）。
 - **只有图才逼层② 终端**（`hasImages` 按媒体类型判，不看有没有附件）：普通文件的路径走 socket / 中继 / codex queue 与走终端是同一个结果。
 - **带图消息层② 优先**：只有 bracketed paste 能把路径转成 `[Image #N]` + 真 image block，socket/中继拿到的是裸文本路径；打不进照常回落层①-a / 层①（降级为路径文本）。
@@ -253,10 +265,11 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 表示法归 `MessagingSurface.pathRefs`（`PathRefSpec` 的 `kinds` / `lines` / `expression` / `recognize`）：答「这个 harness 怎么引用项目内文件」。
 
-- 表达式（`@p`、`@p#L起-止`、目录尾斜杠）**只在服务端产出**（列表 `GET /sessions/:id/files` 带整文件形状、带行区间走 `GET /sessions/:id/ref` 现算）；web 只当不透明字符串贴进输入框、胶囊另存服务端给的 path/kind/lines 原文、从不反解表达式。
+- 表达式（`@p`、`@p#L起-止`、目录尾斜杠；**带空格路径 = `@"p"` 双引号形状**，2026-10-26 实测宿主认、转义/单引号/裸空格都不认，见 DECISIONS）**只在服务端产出**（列表 `GET /sessions/:id/files` 带整文件形状、带行区间走 `GET /sessions/:id/ref` 现算）；web 只当不透明字符串贴进输入框、胶囊另存服务端给的 path/kind/lines 原文、从不反解表达式。
 - **反向认引用 = `recognize`（`expression` 的逆运算）**：粘贴回填时把一段现成文本还原成胶囊，走 `POST /sessions/:id/refs/recognize`。文法归 harness、**存在性归项目索引**（`hasPath` 二分查排序好的 files/dirs，不为此做一份 Set），索引里没有 / `kinds` 不认的一律不认；`ref` 回的是服务端 `expression` 归一后的形状（`@p` 归一成 `@p/` 这种差别由服务端消化）。
 - **引用前后必须是空白**（行首/行尾也算）：`看@a.ts`、`@a.ts，还有`、行内反引号里包着的都不算引用——前端那条 `@` 判据与服务端同一个规矩（输入框里粘着字敲 `@` 不弹选择器），否则邮箱、中文粘连全是误弹。胶囊不是空白：紧跟胶囊再敲 `@` 也不算。
-- `lines` 答「选择器摆不摆行号选择」；codex = null + `unsupportedReasons.pathRefs`（文件钮置灰）。
+- `lines` 答「选择器摆不摆行号选择」；codex = false（宿主不解析路径后缀，`#L` 只会是正文的一部分）。
+- **codex 的文法 = 裸相对路径**（`weave-harness/src/codex/messaging.ts` 的 `CODEX_PATH_REF`）：输入框里按 `@` 唤起的文件补全，选中后 `@` 连同查询词被**整体替换**成补全给出的相对路径（0.164 composer 测试实锤：`"@src  $HOME"` 补全 `src/main.rs` 后文本 = `"src/main.rs  $HOME"`；带空格路径包双引号，同 `insert_selected_path`）。目录引用惯例带尾斜杠。`recognize` 只认「长得像路径」的词（含 `/` 或 `.`）、双引号形式须内含空白（宿主只对带空格路径加引号，普通引语不进候选）、前后必须都是空白——存在性照旧由 server 的索引判。
 - 选择器手势（`FilePicker`）：**单击只挪光标**（第三栏跟着走）、**双击 / Enter 才落定**（目录行 = 进入），空格与左侧勾选框 = 加入/移出「已选」，`Ctrl/Cmd+单击` 与 `Shift+单击`（连选）是桌面加速键；触屏没有 hover 与修饰键 ⇒ 单击仍是「进入」，多选只靠**常显**的勾选框（藏起来的钮在触屏上等于没有，§11）。已选非空时底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序）。落点恒为**唤出选择器时那枚 `@` 的位置**（`atRange` 交给 `insertNodes` 消费，不是末尾追加）；胶囊前后必须是空白（服务端认引用的判据）——紧贴字补一个空格、本来就空着的不重复补。`pathRefKinds` 不含 `dir` 时目录行不给「引用此文件夹」。
 - **行选区 ⇄ 勾选联动**：行号点出区间（第一下起、第二下止，起点上再点一下 = 取消）即**自动勾上**该文件、取消即退勾；「只引用文件」没有区间可依，仍要手动勾或空格。勾掉带区间的那条同样退区间（两处手势一个口径）。落定时带区间的那条现算表达式（文法归服务端），其余用条目手里的 `ref`。
 - **键盘优先**：导航键挂 **document 捕获阶段**（点过侧栏/面包屑/底条、焦点落到 `body` 之后照样能用），查找/跳行小输入框除外（方向键归光标）。**默认焦点在弹窗自己身上**（`tabIndex=-1`），不在搜索框——否则空格成了打字、退格还会删掉背后输入框里那个触发用的 `@`；可打印字符一律转进搜索框（打开就能直接敲）。搜索框空着时空格仍是「勾选」，打了字才归查询。方向键一走 `kbdNav` 立起，**悬停不再抢选中**，直到鼠标真动一下（`mousemove`）才把选中权交回指针。

@@ -158,9 +158,9 @@ export function conversationOf(
         eventId: e.id,
         role: 'user',
         at: e.createdAt,
-        // `[Image #N]` 是宿主输入框的占位记号、不是正文：图缩略图已经挂在气泡上，
-        // 留着就成一串没人看得懂的标记（剥不掉的话，两条气泡也长得不像同一条）。
-        text: e.images?.length ? text.replace(IMAGE_MARKER, '').trim() : text,
+        // `[Image #N]` 占位记号**保留在正文里**：气泡按它把图内联回原位置
+        // （渲染层把记号换成缩略图），大预览行照旧挂在气泡上。
+        text,
         fromWeave,
         fromName,
         ...(e.images?.length ? { attachments: e.images } : {}),
@@ -222,16 +222,60 @@ function normalizeText(text: string): string {
 /** 会话那侧把随图的路径换成这个占位（与服务端回执比对剥的是同一个记号）。 */
 const IMAGE_MARKER = /\[Image #\d+\]/gi;
 
+/**
+ * 正文按 `[Image #N]` 占位记号切段：记号处内联回对应的图（`images[i]` 按出现
+ * 顺序对应），其余是文本段。记号比图多的尾段照常给文本；图比记号多时多余的
+ * 图不内联（大预览行里还有）。**只对带图条目用**——没图的条目记号是死文本
+ * （宿主没真的配上图），照原样显示。
+ *
+ * 记号的位置是宿主给的：claude 粘贴处理器把独立成行的图片路径抽出转图后，
+ * `[Image #N] ` 记号与剩余文本**先后都插在光标点**（2.1.296 取证）⇒ 记号恒聚在
+ * 消息开头，不管原路径写在句中还是句尾。气泡按记号位置渲染 = 忠实还原宿主
+ * TUI 里用户看到的形态（图在开头），不是 weave 丢了位置。
+ */
+export function imageMarkerSegments(
+  text: string,
+  images: readonly UploadFile[],
+): Array<{ kind: 'text'; text: string } | { kind: 'image'; image: UploadFile }> {
+  if (images.length === 0) return [{ kind: 'text', text }];
+  const out: Array<{ kind: 'text'; text: string } | { kind: 'image'; image: UploadFile }> = [];
+  let at = 0;
+  let n = 0;
+  for (const m of text.matchAll(IMAGE_MARKER)) {
+    if (m.index! > at) out.push({ kind: 'text', text: text.slice(at, m.index) });
+    if (n < images.length) out.push({ kind: 'image', image: images[n]! });
+    else out.push({ kind: 'text', text: m[0] });
+    n += 1;
+    at = m.index! + m[0].length;
+  }
+  if (at < text.length) out.push({ kind: 'text', text: text.slice(at) });
+  return out;
+}
+
 /** 投递行与事件条目是不是同一条消息（归一后全等）。带图的放宽一档：claude 的
  *  粘贴处理会把多行文本的 chunk 用空串连起来，且正文里的图会变成 `[Image #N]`
  *  占位——不剥占位就永远认领不到，同一条消息会显示两遍（一遍真气泡、一遍停在
- *  投递样式上）。 */
-function claims(entryText: string, rowText: string, hasImages = false): boolean {
+ *  投递样式上）。占位胶囊原地展开的图片路径行（`rowPaths` 里那些）在会话那侧
+ *  同样被换成占位记号，归一时一并剥掉。 */
+function claims(entryText: string, rowText: string, rowPaths: readonly string[] = []): boolean {
   const a = normalizeText(entryText);
   const b = normalizeText(rowText);
   if (a === b) return true;
-  if (!hasImages) return false;
-  const drop = (s: string): string => s.replace(IMAGE_MARKER, '').replace(/\s+/g, '');
+  if (rowPaths.length === 0) return false;
+  const drop = (s: string): string =>
+    s
+      .replace(IMAGE_MARKER, '')
+      .replace(
+        new RegExp(
+          rowPaths
+            .filter((p) => p)
+            .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('|'),
+          'g',
+        ),
+        '',
+      )
+      .replace(/\s+/g, '');
   return drop(a) === drop(b);
 }
 
@@ -264,7 +308,8 @@ export function attachDeliveries(
     let best: SessionMessageRow | undefined;
     let bestGap = CLAIM_MS;
     for (const m of deliveries) {
-      if (taken.has(m.id) || !claims(entry.text, m.text, (m.attachments?.length ?? 0) > 0)) continue;
+      if (taken.has(m.id)) continue;
+      if (!claims(entry.text, m.text, (m.attachments ?? []).map((a) => a.path ?? ''))) continue;
       const gap = Math.abs(Date.parse(m.at) - Date.parse(entry.at));
       if (gap < bestGap) {
         best = m;

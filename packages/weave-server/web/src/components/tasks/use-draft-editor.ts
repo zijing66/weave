@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type DragEvent as ReactDragEvent, type SetStateAction } from 'react';
 import { api, API_BASE } from '@/lib/api';
 import type { HarnessCommandRow, UploadFile } from '@/lib/api';
 import type { PickItem, PickTarget } from './FilePicker';
@@ -185,6 +185,12 @@ const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): 
   chip.setAttribute(ATTACH_MEDIA_ATTR, part.m);
   chip.className = ATTACH_CHIP_CLASS;
   chip.title = part.n; // 长名被截短时，悬停还看得见全文
+  chip.draggable = true; // 拖动调位置（载荷 = 附件 id，drop 时按它找到这枚）
+  chip.addEventListener('dragstart', (e) => {
+    const drag = e as unknown as DragEvent;
+    drag.dataTransfer?.setData('text/plain', part.a);
+    if (drag.dataTransfer) drag.dataTransfer.effectAllowed = 'move';
+  });
   if (isImageUpload({ mediaType: part.m })) {
     const img = document.createElement('img');
     img.src = `${API_BASE}/images/${part.a}`;
@@ -204,12 +210,28 @@ const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): 
   return chip;
 };
 
-/** 在光标处摆一枚附件占位胶囊。**文件胶囊前后必须是空白**（与引用胶囊同一判据：
- *  序列化出来的是一条路径，粘着字就成了另一段文字）；图片胶囊序列化为空串，
- *  补空格只会留双空格，不补。 */
+/** 在光标处摆一枚附件占位胶囊；框里没有可落的光标（从未聚焦 / 选区在别处）就
+ *  贴在最后方。**文件胶囊前后必须是空白**（与引用胶囊同一判据：序列化出来的是
+ *  一条路径，粘着字就成了另一段文字）；图片胶囊序列化时自己补行边界（独立成行
+ *  是宿主认图的前提），前后不补空格。 */
 const insertAttach = (upload: UploadFile): void => {
   const el = draftRef.current;
   if (!el) return;
+  const chip = buildAttachChip({ a: upload.id, p: upload.path ?? '', n: upload.name, m: upload.mediaType });
+  if (caretInDraft(el) == null && atRange.current == null) {
+    // 末尾追加：收尾若是非空白文本或胶囊，先补一个空格——否则路径粘在字上
+    // （两枚文件胶囊背靠背时路径会连成一串）；BR 收尾 = 已是新行，不用补
+    const last = el.lastChild;
+    const glued =
+      last != null &&
+      (last.nodeType === TEXT_NODE
+        ? !/\s$/.test(last.nodeValue ?? '')
+        : (last as HTMLElement).tagName !== 'BR');
+    if (glued) el.appendChild(document.createTextNode(' '));
+    el.appendChild(chip);
+    setDraft(serializeDraft(el));
+    return;
+  }
   const pad = !isImageUpload(upload);
   let lead = false;
   let trail = false;
@@ -222,14 +244,7 @@ const insertAttach = (upload: UploadFile): void => {
   }
   const nodes: Node[] = [];
   if (pad && lead) nodes.push(document.createTextNode(' '));
-  nodes.push(
-    buildAttachChip({
-      a: upload.id,
-      p: upload.path ?? '',
-      n: upload.name,
-      m: upload.mediaType,
-    }),
-  );
+  nodes.push(chip);
   if (pad && trail) nodes.push(document.createTextNode(' '));
   insertNodes(nodes);
 };
@@ -472,6 +487,47 @@ const setDraftText = (text: string): void => {
   if (el) el.textContent = text;
   setDraft(text);
 };
+
+/** 拖动落点记账（dragover 实时更新；drop 消费）。 */
+const dropBefore = useRef<Node | null>(null);
+
+/** 拖动经过：算落点（指针在胶囊左半 = 落它前面，右半 = 落它后面）。
+ *  只接「文本载荷」的拖动（胶囊自己的 dragstart 设 text/plain）；文件拖放
+ *  （types 含 Files）不接——那是面板层 stageFiles 的事。 */
+const onChipDragOver = (e: ReactDragEvent): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  if (e.dataTransfer.types.includes('Files')) return;
+  const chip = (e.target as HTMLElement).closest?.(`[${ATTACH_ATTR}],[${REF_ATTR}],[${CMD_ATTR}]`);
+  if (!chip) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const rect = (chip as HTMLElement).getBoundingClientRect();
+  dropBefore.current = e.clientX < rect.left + rect.width / 2 ? chip : chip.nextSibling;
+};
+
+/** 松手：把拖着的胶囊挪到落点（同一枚是移动不是复制），镜像同步。
+ *  拖动载荷 = 附件 id（只有附件胶囊可拖；引用/命令胶囊路过时也接，但
+ *  找不到对应节点就收手）。 */
+const onChipDrop = (e: ReactDragEvent): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  if (e.dataTransfer.types.includes('Files')) return;
+  const id = e.dataTransfer.getData('text/plain');
+  const node = id ? el.querySelector(`[${ATTACH_ATTR}="${CSS.escape(id)}"]`) : null;
+  if (!(node instanceof HTMLElement)) return;
+  e.preventDefault();
+  const anchor = (e.target as HTMLElement).closest?.(`[${ATTACH_ATTR}],[${REF_ATTR}],[${CMD_ATTR}]`);
+  const target = dropBefore.current ?? (anchor instanceof HTMLElement ? anchor.nextSibling : null);
+  el.insertBefore(node, target);
+  dropBefore.current = null;
+  setDraft(serializeDraft(el));
+};
+
+/** 拖动收尾：落点记账清掉。 */
+const onChipDragEnd = (): void => {
+  dropBefore.current = null;
+};
   return {
     draft, setDraft,
     draftRef, atRange,
@@ -481,6 +537,7 @@ const setDraftText = (text: string): void => {
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, escapeAt, maybeOpenPicker,
+    onChipDragOver, onChipDrop, onChipDragEnd,
     setDraftText,
   };
 }

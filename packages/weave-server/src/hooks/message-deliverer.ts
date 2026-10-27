@@ -13,7 +13,8 @@ import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { isImageMediaType } from '../repositories/uploads.js';
 import { messagingSurfaceFor } from '../surfaces.js';
-import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
+import { pidAliveOf } from '../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { SessionTerminal } from '../daemon/opener.js';
 import type { HookEventBus } from './bus.js';
 import { HeadlessRunner, type SpawnLike } from './headless-runner.js';
@@ -226,8 +227,8 @@ export interface MessageDelivererDeps {
    *  模态框在场时层② 的文本与回车会被它吃掉：投出去只换来一条「已发出却没回执」
    *  的假送达，回车还可能替用户按下某个选项。缺省 = 不判（测试与无 tracker 装配）。 */
   blockedByQuestion?: (sessionId: string) => boolean;
-  /** 会话存活图（测试注入）；缺省 `claudeLivenessById()`——同两个引擎（watch/sequence）
-   *  的取法：没有注册表就空图，会话一律「查不动」，不猜。 */
+  /** 会话存活图（测试注入）；缺省合并图（claude 注册表 + codex 锁探针缓存）——
+   *  同两个引擎（watch/sequence）的取法：判不动的会话一律「查不到」，不猜。 */
   livenessOf?: () => Map<string, boolean>;
 }
 
@@ -705,7 +706,7 @@ export class MessageDeliverer {
   diagnose(sessionId: string): SessionDeliveryDiagnosis {
     const surface = this.surfaceOfSession(sessionId);
     const row = this.deps.sessions.livenessRowOf(sessionId);
-    const alive = row ? pidAliveOf(row, this.deps.livenessOf?.() ?? claudeLivenessById()) : null;
+    const alive = row ? pidAliveOf(row, this.deps.livenessOf?.() ?? combinedLivenessOf()) : null;
 
     const inboxSpec = surface?.promptInbox ?? null;
     const target = this.inboxSockets.get(sessionId);
@@ -1572,7 +1573,7 @@ export class MessageDeliverer {
 
   private sessionJudgedDead(
     sessionId: string,
-    liveness: Map<string, boolean> = this.deps.livenessOf?.() ?? claudeLivenessById(),
+    liveness: Map<string, boolean> = this.deps.livenessOf?.() ?? combinedLivenessOf(),
   ): boolean {
     return sessionJudgedDeadIn(this.deps.sessions, sessionId, liveness);
   }

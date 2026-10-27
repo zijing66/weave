@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
-import { AlertTriangle, FileCode, Image as ImageIcon, TextCursorInput, X } from 'lucide-react';
+import { AlertTriangle, FileCode, Image as ImageIcon, X } from 'lucide-react';
 import { API_BASE, type UploadFile } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -83,34 +83,24 @@ export function sizeLabel(bytes: number): string {
 
 /** 附件条上的一格：图出缩略图（点开大图）、文件只出图标 + 名字（不预览）；
  *  上传中的进度（小进度条 + 百分比）就画在这一格上——别处再摆一条总进度，
- *  反而看不清是哪一个在传。右上角两枚常显角标：撤格（X）与摆入/取出正文
- *  （TextCursorInput；已摆 = 绿色实心，格子整体变暗）。 */
+ *  反而看不清是哪一个在传。右上角一枚常显角标：撤格（X，连正文里的占位胶囊
+ *  一起摘——占位与暂存格是同一条附件的两个面）。 */
 export function StagedTile({
   item,
   onOpen,
   onRemove,
   removeLabel,
-  placed = false,
-  onTogglePlace,
-  placeLabel,
-  unplaceLabel,
 }: {
   item: StagedFile;
   onOpen: (u: UploadFile) => void;
   onRemove: () => void;
   removeLabel: string;
-  /** 正文里已摆了这枚附件的占位胶囊（DOM 派生，主组件持有）。 */
-  placed?: boolean;
-  /** 摆入/取出正文（缺席 = 该 harness 不支持占位，不渲染这枚角标）。 */
-  onTogglePlace?: (u: UploadFile) => void;
-  placeLabel: string;
-  unplaceLabel: string;
 }): ReactElement {
   const pct = Math.round(item.progress * 100);
   const isImage = isImageUpload(item);
   const thumb = isImage && item.state === 'done' && item.upload;
   return (
-    <span className={cn('relative inline-flex shrink-0', placed && 'opacity-60')}>
+    <span className="relative inline-flex shrink-0">
       <button
         type="button"
         title={
@@ -169,22 +159,6 @@ export function StagedTile({
       >
         <X className="h-2.5 w-2.5" />
       </button>
-      {onTogglePlace && item.state === 'done' && item.upload && (
-        <button
-          type="button"
-          title={placed ? unplaceLabel : placeLabel}
-          aria-label={placed ? unplaceLabel : placeLabel}
-          onClick={() => onTogglePlace(item.upload!)}
-          className={cn(
-            'absolute -left-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border bg-neutral-800 max-lg:h-5 max-lg:w-5',
-            placed
-              ? 'border-emerald-500/50 text-emerald-300'
-              : 'border-edge/[0.15] text-neutral-300 hover:border-emerald-500/50 hover:text-emerald-300',
-          )}
-        >
-          <TextCursorInput className="h-2.5 w-2.5" />
-        </button>
-      )}
     </span>
   );
 }

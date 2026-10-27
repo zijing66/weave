@@ -61,7 +61,8 @@ import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectProjectUpdateCounts } from '../install/updates.js';
-import { claudeLivenessById, pidAliveOf } from './claude-liveness.js';
+import { pidAliveOf } from './claude-liveness.js';
+import { combinedLivenessOf } from './liveness.js';
 import { promptTerminalChannel, readTerminalCounts } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
@@ -194,6 +195,8 @@ async function main(): Promise<void> {
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
+    // 判活图（claude 注册表 + codex 锁探针缓存）：判死落定/诊断全消费它。
+    livenessOf: combinedLivenessOf,
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
@@ -203,6 +206,7 @@ async function main(): Promise<void> {
     deliverer: messageDeliverer,
     sessions: hookSessions,
     bus: hookBus,
+    livenessOf: combinedLivenessOf,
   });
   // Web Push 发送器（与生产入口同一装配）：fire 时向浏览器推送订阅投递。
   const pushSubscriptions = new PushSubscriptionRepository(db);
@@ -281,7 +285,7 @@ async function main(): Promise<void> {
   // GET 的 pidAlive 卡旧值；15s 一拍、值变才推判得动的绝对值快照。
   const livenessRefresher = new SnapshotRefresher(
     () => {
-      const liveness = claudeLivenessById();
+      const liveness = combinedLivenessOf();
       const alive: Record<string, boolean> = {};
       for (const s of hookSessions.listWithCounts()) {
         const v = pidAliveOf(s, liveness);
@@ -390,7 +394,7 @@ async function main(): Promise<void> {
         if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
           return { ok: true, ack: 'session-start' };
         }
-        if (claudeLivenessById().get(sessionId) === true) alive = true;
+        if (combinedLivenessOf().get(sessionId) === true) alive = true;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       return alive
@@ -426,6 +430,7 @@ async function main(): Promise<void> {
     probe: sessionProbe,
     uploads,
     uploadSessions: defaultUploadSessions,
+    livenessOf: combinedLivenessOf,
   });
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。

@@ -1,5 +1,6 @@
 import { isSlashCommand } from '../message-deliverer.js';
 import type { PipeMessage } from '../message-deliverer.js';
+import { isImageMediaType } from '../../repositories/uploads.js';
 
 /**
  * 回执闸与暂停闸（消息域投递的「1 送 1 回」秩序）：
@@ -234,6 +235,8 @@ export class AckGate {
    * 核销多条在途（宿主把连发的几条合成一次提交）；返回命中消息的随附图 id。
    * 比对规则：剥跨会话壳折叠空白后「包含」；短文本（< `ackMinText`）认**尾部相等**
    * （层② 往框里追加，框里先在的内容只会垫在前面）；带图消息再去尽空白比一次。
+   * 占位内联的图片路径（web 胶囊原地展开）宿主会剥掉换成 `[Image #N]`——比对前
+   * 把 want 里的图片附件路径一并剥掉（与 web 对话面的 claims 同一条规则）。
    */
   acknowledge(
     sessionId: string,
@@ -249,11 +252,17 @@ export class AckGate {
     for (const msg of [...this.store.memory.values()].reverse()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
+      const wantNoPaths = dropInlineImagePaths(want, msg.attachments);
       const textHit =
         !!want && (want.length >= opts.ackMinText ? seenRaw.includes(want) : seenRaw.endsWith(want));
       const imageHit =
         (msg.attachments?.length ?? 0) > 0 &&
-        (want ? stripSpace(seenRaw).includes(stripSpace(want)) : seen.length === 0);
+        (wantNoPaths
+          ? // 宿主把内联的图片路径换成 `[Image #N]`（claude 粘贴处理器）→ 剥路径对剥记号比；
+            // 路径原样在 UPS 里（codex / 宿主没认出）→ 走原来的剥空白包含
+            stripSpace(seen).includes(stripSpace(wantNoPaths)) ||
+            stripSpace(seenRaw).includes(stripSpace(want))
+          : seen.length === 0);
       if (!textHit && !imageHit) continue;
       hit = true;
       this.store.memory.set(msg.id, {
@@ -299,4 +308,18 @@ export function normalizePromptText(text: string): string {
 /** 带图消息的二次归一（粘贴处理器会把多行 chunk 用空串连起来）：去尽空白再比。 */
 export function stripSpace(text: string): string {
   return text.replace(/\s+/g, '');
+}
+
+/** 占位内联的图片路径从 want 里剥掉（宿主粘贴处理器把它们换成 `[Image #N]`，
+ *  回执原文里路径没了——不剥就永远比不中）。只剥**图片**附件的路径：文件路径
+ *  宿主不转记号、原样留在 UPS 里，剥了反而制造假命中。 */
+export function dropInlineImagePaths(
+  text: string,
+  attachments: readonly { path: string; mediaType: string }[] | undefined,
+): string {
+  const paths = (attachments ?? [])
+    .filter((a) => a.path && isImageMediaType(a.mediaType))
+    .map((a) => a.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (paths.length === 0) return text;
+  return text.replace(new RegExp(paths.join('|'), 'g'), '');
 }

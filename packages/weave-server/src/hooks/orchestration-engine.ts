@@ -16,7 +16,8 @@ import { graphDirections, pendingCountsOf } from '../repositories/orchestrations
 import type { SessionRepository } from '../repositories/sessions.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { matchesMinute, minuteKey, parseCron } from '../daemon/cron.js';
-import { claudeLivenessById, pidAliveOf } from '../daemon/claude-liveness.js';
+import { pidAliveOf } from '../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { HookEventBus } from './bus.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import { postJson } from './handlers/webhook.js';
@@ -607,7 +608,7 @@ export class OrchestrationEngine {
   sweepTerminated(): number {
     let touched = 0;
     try {
-      const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
+      const liveness = this.deps.livenessOf?.() ?? combinedLivenessOf();
       const rows = new Map(this.deps.sessions.listWithCounts().map((r) => [r.sessionId, r] as const));
       const now = Date.now();
       for (const rt of [...this.runtime.values()]) {
@@ -1172,7 +1173,7 @@ export class OrchestrationEngine {
   private aliveOf(sessionId: string): boolean | null {
     const row = this.deps.sessions.listWithCounts().find((r) => r.sessionId === sessionId);
     if (!row) return false;
-    const liveness = this.deps.livenessOf?.() ?? claudeLivenessById();
+    const liveness = this.deps.livenessOf?.() ?? combinedLivenessOf();
     return pidAliveOf(row, liveness);
   }
 

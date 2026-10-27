@@ -1,4 +1,4 @@
-import { claudeLivenessById } from '../../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../../daemon/liveness.js';
 import type { SessionTerminal } from '../../daemon/opener.js';
 import type { ProjectRepository } from '../../repositories/projects.js';
 import type { SessionRepository } from '../../repositories/sessions.js';
@@ -122,7 +122,7 @@ export async function sessionTerminals(
   }
   if (!terminal?.locateScreens || paneEnvs.size === 0) return out;
   const envs: Record<string, Record<string, string>> = {};
-  const liveness = deps.livenessOf?.() ?? claudeLivenessById();
+  const liveness = deps.livenessOf?.() ?? combinedLivenessOf();
   for (const [sessionId, env] of paneEnvs) {
     // 盘上的 env 是上一次见到它时的快照：进程已判死的会话不该还占着那块屏的块头。
     // 必须显式回 null——refresher 的合并契约是「缺席 = 保留上次分块」，只摘不报

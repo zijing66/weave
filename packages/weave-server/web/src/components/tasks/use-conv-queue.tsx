@@ -1,6 +1,6 @@
 import { useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
 import { CornerDownLeft, Pencil, RotateCcw, Trash2 } from 'lucide-react';
-import { api, type SessionMessageRow } from '@/lib/api';
+import { api, type SessionMessageRow, type UploadFile } from '@/lib/api';
 import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -30,7 +30,10 @@ export function useConvQueue(deps: {
   setStaged: Dispatch<SetStateAction<StagedFile[]>>;
   /** 草稿 DOM 与镜像（发送/出队要读写）。 */
   draftRef: RefObject<HTMLDivElement | null>;
+  setDraft: (text: string) => void;
   setDraftText: (text: string) => void;
+  /** 摆占位胶囊（上传成功后自动摆入光标处；无光标贴末尾）。 */
+  insertAttach: (upload: UploadFile) => void;
   /** 自己发的必然要看一眼：发送成功把贴底意图置回。 */
   stick: MutableRefObject<boolean>;
   fb: ActionFeedback;
@@ -40,7 +43,7 @@ export function useConvQueue(deps: {
   /** 队尾那条还没送出去的（出队按钮只给它）。 */
   newestQueuedId: string | undefined;
 }) {
-  const { sessionId, attachKinds, staged, setStaged, draftRef, setDraftText, stick, fb, t, show, refreshMessages, newestQueuedId } = deps;
+  const { sessionId, attachKinds, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, newestQueuedId } = deps;
   /** 在飞上传的取消把手（按 staged 本地键索引）。 */
   const uploadAborters = useRef(new Map<string, AbortController>());
   /** staged 本地键的自增尾号（同名同大小的两个文件各占一格）。 */
@@ -92,7 +95,12 @@ const stageFiles = (files: FileList | File[]): void => {
     const patch = (next: Partial<StagedFile>): void =>
       setStaged((s) => s.map((x) => (x.key === key ? { ...x, ...next } : x)));
     void uploadFileWithProgress(f, (ratio) => patch({ progress: ratio }), { signal: ctl.signal })
-      .then((upload) => patch({ state: 'done', progress: 1, upload }))
+      .then((upload) => {
+        patch({ state: 'done', progress: 1, upload });
+        // 落盘即自动摆入正文（光标处；无光标贴末尾）——占位是默认形态，
+        // 角标留给取出/重摆，不用每次手点
+        insertAttach(upload);
+      })
       .catch((e: unknown) => {
         if (e instanceof DOMException && e.name === 'AbortError') {
           setStaged((s) => s.filter((x) => x.key !== key));
@@ -105,7 +113,9 @@ const stageFiles = (files: FileList | File[]): void => {
 };
 
 /** 从附件条上撤掉一格（上传中的连临时件一起丢）。正文里已摆的占位胶囊一并摘掉
- *  ——留着就是悬空胶囊，发出幽灵路径（服务端 refsOf 404 整条拒）。 */
+ *  ——占位与暂存格是同一条附件的两个面（1:1），删任一头两头同消。摘胶囊走
+ *  外科手术（只删那枚节点 + 镜像同步），不走 setDraftText 整段重写——那会把
+ *  其余胶囊打回纯文本，1:1 对账下引发连锁撤格。 */
 const unstage = (item: StagedFile): void => {
   uploadAborters.current.get(item.key)?.abort();
   if (item.state === 'uploading' && item.file) discardUpload(item.file);
@@ -120,7 +130,7 @@ const unstage = (item: StagedFile): void => {
       chip.remove();
       lead?.remove();
       trail?.remove();
-      setDraftText(serializeDraft(el));
+      setDraft(serializeDraft(el));
     }
   }
   setStaged((s) => s.filter((x) => x.key !== item.key));

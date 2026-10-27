@@ -1,4 +1,5 @@
-import { claudeLivenessById, pidAliveOf } from '../../daemon/claude-liveness.js';
+import { pidAliveOf } from '../../daemon/claude-liveness.js';
+import { combinedLivenessOf } from '../../daemon/liveness.js';
 import type { SessionRepository } from '../../repositories/sessions.js';
 import type { ProjectRepository } from '../../repositories/projects.js';
 import {
@@ -33,15 +34,15 @@ export function appendQueueEntry(hooksDir: string, token: string, entry: PipeMes
 }
 
 /**
- * 该会话是否已判死：claude 注册表 `pidAlive === false` 才认，`null` 不猜
- * （codex / 新会话豁免窗 / SessionStart 空壳行都落 null）。判据与「已终止」
- * 态、两条 terminated 补射同源（claude-liveness 的 pidAliveOf）——消息行与
- * 会话行不会各说各话。
+ * 该会话是否已判死：存活图 `pidAlive === false` 才认，`null` 不猜
+ * （codex 锁宽限窗 / 新会话豁免窗 / SessionStart 空壳行都落 null）。判据与
+ * 「已终止」态、两条 terminated 补射同源（claude-liveness 的 pidAliveOf）
+ * ——消息行与会话行不会各说各话。
  */
 export function sessionJudgedDead(
   sessions: Pick<SessionRepository, 'livenessRowOf'>,
   sessionId: string,
-  liveness: Map<string, boolean> = claudeLivenessById(),
+  liveness: Map<string, boolean> = combinedLivenessOf(),
 ): boolean {
   const row = sessions.livenessRowOf(sessionId);
   if (!row) return false;

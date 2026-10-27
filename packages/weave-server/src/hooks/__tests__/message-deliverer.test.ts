@@ -1936,6 +1936,44 @@ describe('MessageDeliverer 裁决表', () => {
     expect(codexResult).toMatchObject({ ok: true, status: 'pending' });
   });
 
+  it('codex 判得动：存活图给出 false（锁宽限窗过后）→ 当场落 offline，不白等 stalled', async () => {
+    const { surface } = relaySurface(() => null);
+    const noNative: MessagingSurface = {
+      harness: 'codex',
+      discovery: true,
+      prompt: null,
+      queuedPrompt: null,
+      inject: null,
+      headless: null,
+      idleSignals: [],
+    };
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => noNative,
+        // codex 锁探针缓存给出的死结论（HELD 失去已过宽限窗）
+        livenessOf: () => new Map([[CODEX_SESSION, false]]),
+        terminal: {
+          available: () => true,
+          listPanes: async () => [],
+          sendText: vi.fn(),
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(CODEX_SESSION, 'Stop', 'codex');
+    backdateLastSeen(CODEX_SESSION);
+    const result = await deliverer.send({
+      toSessionId: CODEX_SESSION,
+      text: 'codex 判死',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+    });
+    expect(result).toMatchObject({ ok: true, status: 'failed' });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.message.reason).toBe('offline');
+  });
+
   it('冲洗判死：队列整批转 offline 并清队（不再每轮白探 pane）', async () => {
     const { surface } = relaySurface(() => null);
     let alive = false;
@@ -3515,6 +3553,29 @@ describe('MessageDeliverer 裁决表', () => {
     const id = (result as { messageId: string }).messageId;
     // claude 粘贴处理会把多行 chunk 用空串连起来——回执原文与 msg.text 差在空白上
     deliverer.onSessionPrompt(SESSION_ID, '第一行正文第二行正文（够长）');
+    expect(deliverer.getMessage(id)?.acked).toBe(true);
+  });
+
+  it('占位内联的图片路径被宿主剥掉换 [Image #N]：剥路径后仍能认领（web 胶囊原地展开）', async () => {
+    const fake = createFakeSpawn();
+    const { surface } = surfaceWithImages();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: fake.spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    const imgPath = 'D:/up/aa.png';
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: `看看这张\n${imgPath}\n后续说明（够长）`,
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+      attachments: oneImage(imgPath),
+    });
+    const id = (result as { messageId: string }).messageId;
+    // 宿主粘贴处理器把独立成行的图片路径剥掉换成记号（且恒提到消息开头）：
+    // UPS 原文里路径没了，只剩 [Image #N] + 剩余文本——不剥路径就永远比不中
+    deliverer.onSessionPrompt(SESSION_ID, '[Image #1]看看这张 后续说明（够长）');
     expect(deliverer.getMessage(id)?.acked).toBe(true);
   });
 
