@@ -5,6 +5,7 @@ import { CODEX_CONFIG } from './config.js';
 import { CODEX_DETECTOR } from './detect.js';
 import { CODEX_EVENT_SOURCE } from './event-source.js';
 import { CODEX_IMAGES } from './images.js';
+import { CODEX_NARRATION } from './narration.js';
 import { CODEX_MESSAGING } from './messaging.js';
 import { CODEX_PLUGINS } from './plugins.js';
 import { CODEX_PLUGIN_STATE } from './plugin-state.js';
@@ -19,6 +20,7 @@ import { CODEX_TITLES } from './titles.js';
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
 export { CODEX_IMAGES } from './images.js';
+export { CODEX_NARRATION } from './narration.js';
 export { CODEX_MESSAGING } from './messaging.js';
 export { CODEX_QUESTIONS } from './questions.js';
 export { CODEX_RESUME } from './resume.js';
@@ -73,6 +75,7 @@ export const CODEX_DRIVER: HarnessDriver = {
     'provision',
     'liveness',
     'images',
+    'narration',
     'questions',
   ],
   assets: CODEX_ASSETS,
@@ -89,6 +92,7 @@ export const CODEX_DRIVER: HarnessDriver = {
   provision: CODEX_PROVISION,
   liveness: CODEX_LIVENESS,
   images: CODEX_IMAGES,
+  narration: CODEX_NARRATION,
   questions: CODEX_QUESTIONS,
   titles: CODEX_TITLES,
 };

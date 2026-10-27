@@ -120,6 +120,10 @@ export interface SessionFileEntry {
   /** 仅目录浏览模式（搜索模式不带，免得每键一堆 stat）。 */
   size?: number;
   mtime?: string;
+  /** 条目本体是符号链接（lstat 判定；搜索模式同样不带）。 */
+  symlink?: boolean;
+  /** 嵌套 git 仓（子模块）目录：建索引那一拍的实际 HEAD 短 hash。 */
+  head?: string;
 }
 
 /** mirror of `RecognizedRef` in packages/weave-harness/src/driver.ts：一段现成文本里

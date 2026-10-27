@@ -9,6 +9,7 @@ import {
   type EditsSurface,
   type ImagesSurface,
   type MessagingSurface,
+  type NarrationSurface,
   type PluginStateSurface,
   type PluginSurface,
   type SessionTitleSurface,
@@ -150,6 +151,11 @@ export function editSurfaceFor(harness: Harness): EditsSurface | null {
 /** 按 harness 取入站图面；null = 该 harness 的粘贴图无处可取（对话里只剩 `[Image #N]` 占位）。 */
 export function imagesSurfaceFor(harness: Harness): ImagesSurface | null {
   return registry.get(harness)?.images ?? null;
+}
+
+/** 按 harness 取旁白面；null = 该 harness 的中间输出无处可取（对话里只有每轮收尾那句）。 */
+export function narrationSurfaceFor(harness: Harness): NarrationSurface | null {
+  return registry.get(harness)?.narration ?? null;
 }
 
 /** 按 harness 取命令面；null = 该 harness 没有 `/` 提示（前端不弹命令菜单）。 */

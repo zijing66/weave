@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
@@ -150,12 +150,13 @@ export async function handlePathRefRoutes(
     const q = url.searchParams.get('q') ?? '';
     const dir = (url.searchParams.get('dir') ?? '').replace(/^\/+|\/+$/g, '');
     const limit = clampLimit(url.searchParams.get('limit'));
-    const toEntry = (p: string, kind: 'file' | 'dir', ranges?: [number, number][]) => ({
+    const toEntry = (p: string, kind: 'file' | 'dir', extra?: { ranges?: [number, number][]; head?: string }) => ({
       path: p,
       name: p.slice(p.lastIndexOf('/') + 1),
       kind,
       ref: refSpec.expression({ path: p, kind }),
-      ...(ranges ? { ranges } : {}),
+      ...(extra?.ranges ? { ranges: extra.ranges } : {}),
+      ...(extra?.head ? { head: extra.head } : {}),
     });
 
     // 搜索模式：`dir` 子树内按名字模糊匹配，不带 size/mtime（100 条 stat 每键一次太贵）
@@ -167,23 +168,25 @@ export async function handlePathRefRoutes(
         total,
         capped,
         truncated: index.truncated,
-        entries: hits.map((h) => toEntry(h.path, h.kind, h.ranges)),
+        entries: hits.map((h) => toEntry(h.path, h.kind, { ranges: h.ranges, head: index.submodules[h.path] })),
       });
       return true;
     }
 
-    // 目录浏览模式：直接子项，文件补 size/mtime（≤200 条，一次并行 stat）
+    // 目录浏览模式：直接子项，文件补 size/mtime（≤200 条，一次并行 stat）；
+    // 符号链接补 `symlink`（lstat 判条目本体，stat 会穿到目标身上）
     const children = listDirOf(index, dir);
     const entries = await Promise.all(
       children.slice(0, limit).map(async (c) => {
-        const base = toEntry(c.path, c.kind);
-        if (c.kind !== 'file') return base;
-        try {
-          const s = await stat(path.join(project.path, c.path));
-          return { ...base, size: s.size, mtime: s.mtime.toISOString() };
-        } catch {
-          return base;
-        }
+        const base = toEntry(c.path, c.kind, { head: c.head });
+        const abs = path.join(project.path, c.path);
+        const [ls, ss] = await Promise.all([
+          lstat(abs).catch(() => null),
+          c.kind === 'file' ? stat(abs).catch(() => null) : Promise.resolve(null),
+        ]);
+        const sym = ls?.isSymbolicLink() ? { symlink: true } : null;
+        if (!ss) return sym ? { ...base, ...sym } : base;
+        return { ...base, ...sym, size: ss.size, mtime: ss.mtime.toISOString() };
       }),
     );
     sendJson(res, 200, {

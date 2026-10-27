@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -103,6 +103,35 @@ describe('buildIndex', () => {
     expect((await buildIndex(root)).dirs).toEqual(['a', 'a/b', 'a/b/c']);
   });
 
+  it('③′ 目录型符号链接：内容进索引（可进入可检索），环不死循环', async () => {
+    write(root, 'real/inside.ts');
+    symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'junction');
+    // 环：real 里再摆一枚指回根的链接
+    symlinkSync(root, path.join(root, 'real', 'loop'), 'junction');
+    const idx = await buildIndex(root);
+    expect(idx.files).toEqual(['link/inside.ts', 'real/inside.ts']);
+    expect(idx.dirs).toEqual(['link', 'real']);
+    // 链接目录能进（子项在 children map 里）
+    expect(listDirOf(idx, 'link').map((e) => `${e.kind}:${e.path}`)).toEqual(['file:link/inside.ts']);
+  });
+
+  it.skipIf(!hasGit)('③″ git 仓里已跟踪的目录链接（120000）也当目录：avic/temp 实测形态', async () => {
+    write(root, 'real/inside.ts');
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    // 先 add 真目录（此刻还没有链接，git 不会平铺 junction），再塞 120000 叶子
+    execFileSync('git', ['add', 'real'], { cwd: root, stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['update-index', '--add', '--cacheinfo', '120000,0123456789012345678901234567890123456789,link'],
+      { cwd: root, stdio: 'ignore' },
+    );
+    symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'junction');
+    const idx = await buildIndex(root);
+    expect(idx.files).toEqual(['link/inside.ts', 'real/inside.ts']);
+    expect(idx.dirs).toEqual(['link', 'real']);
+    expect(listDirOf(idx, '').map((e) => `${e.kind}:${e.path}`)).toEqual(['dir:link', 'dir:real']);
+  });
+
   it.skipIf(!hasGit)('④ 子模块里的文件也在索引里（git 只给一个 gitlink）', async () => {
     const lib = mkdtempSync(path.join(tmpdir(), 'weave-lib-'));
     try {
@@ -128,8 +157,39 @@ describe('buildIndex', () => {
         'vendor/lib/untracked.ts',
       ]);
       expect(idx.dirs).toEqual(['vendor', 'vendor/lib', 'vendor/lib/src']);
-      // gitlink 不当文件露一遍：子模块那一行只该是目录
-      expect(listDirOf(idx, 'vendor').map((e) => `${e.kind}:${e.path}`)).toEqual(['dir:vendor/lib']);
+      // gitlink 不当文件露一遍：子模块那一行只该是目录，且带实际 HEAD 短 hash
+      const vendored = listDirOf(idx, 'vendor');
+      expect(vendored.map((e) => `${e.kind}:${e.path}`)).toEqual(['dir:vendor/lib']);
+      expect(vendored[0]!.head).toMatch(/^[0-9a-f]{7}$/);
+      expect(idx.submodules['vendor/lib']).toBe(vendored[0]!.head);
+    } finally {
+      rmSync(lib, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasGit)('④′ gitlink 无 .gitmodules 也进得去（avic/aadl-adapter 实测形态）', async () => {
+    const lib = mkdtempSync(path.join(tmpdir(), 'weave-lib2-'));
+    try {
+      execFileSync('git', ['init'], { cwd: lib, stdio: 'ignore' });
+      write(lib, 'a.ts');
+      commit(lib);
+      execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+      write(root, 'm.ts');
+      commit(root);
+      // 手搓 gitlink（不经 submodule add，故无 .gitmodules）：index 里塞 160000 条目
+      execFileSync(
+        'git',
+        ['update-index', '--add', '--cacheinfo', '160000,0123456789012345678901234567890123456789,nested/repo'],
+        { cwd: root, stdio: 'ignore' },
+      );
+      // 工作区里摆上子仓本体（clone 的等价物）
+      cpSync(lib, path.join(root, 'nested/repo'), { recursive: true });
+      const idx = await buildIndex(root);
+      expect(idx.files).toEqual(['m.ts', 'nested/repo/a.ts']);
+      expect(idx.dirs).toEqual(['nested', 'nested/repo']);
+      const nested = listDirOf(idx, 'nested');
+      expect(nested.map((e) => `${e.kind}:${e.path}`)).toEqual(['dir:nested/repo']);
+      expect(nested[0]!.head).toMatch(/^[0-9a-f]{7}$/);
     } finally {
       rmSync(lib, { recursive: true, force: true });
     }

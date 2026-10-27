@@ -20,7 +20,8 @@ const CLAIM_MS = 10 * 60_000;
  * 不引入第二事实源：过期条目按 eventId 被服务端页覆盖，投递行（pipe）恒现拉。
  */
 const CONV_CACHE_TTL_MS = 10 * 60_000;
-const CONV_CACHE_MAX = 60;
+/** 滑动窗口 100 条（用户裁决）：只留尾巴这么多，超出从头裁。 */
+const CONV_CACHE_MAX = 100;
 
 const CONV_KEY = (sessionId: string): string => `weave:conv:${sessionId}`;
 
@@ -127,6 +128,8 @@ export interface ConvEntry {
   plan?: boolean;
   /** 阻塞提问前模型写下的说明（转录里认的，没有自己的事件）。 */
   preQuestion?: boolean;
+  /** 旁白：转录补采的中间 assistant 输出（Stop.lam 之外的段落，没有自己的事件）。 */
+  narration?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
   commandOutput?: string;
 }
@@ -447,4 +450,41 @@ export function withPreQuestion(
   };
   const at = entries.findIndex((e) => e.at > pre.at);
   return at < 0 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)];
+}
+
+/** 旁白文本与既有气泡同文案的归一比对（空白折叠后相等 = 同一句话）。 */
+function sameNarration(a: string, b: string): boolean {
+  return a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 旁白插进对话流（位置 = 按时刻）：hook 域只有 Stop.lam 一个文本载体，一轮里
+ * 多次输出只有最后一句能进对话气泡——转录里的其余段落（写工具后又补的收尾、
+ * 分段讲解）按时刻补进来。**与 close 气泡同文案的跳过**（Stop.lam 本来就在，
+ * 补进来就是同一条显示两遍）；时刻取不到的旁白不摆（插哪儿都是猜）。
+ */
+export function withNarration(
+  entries: readonly ConvEntry[],
+  narration: ReadonlyArray<{ at: string | null; text: string }> | null,
+): ConvEntry[] {
+  if (!narration?.length) return [...entries];
+  const closeTexts = entries.filter((e) => e.role === 'assistant' && !e.preQuestion).map((e) => e.text);
+  const out = [...entries];
+  let n = 0;
+  for (const seg of narration) {
+    const at0 = seg.at;
+    if (!at0 || !seg.text.trim()) continue;
+    if (closeTexts.some((t) => sameNarration(t, seg.text))) continue;
+    const entry: ConvEntry = {
+      key: `n${at0}:${n++}`,
+      role: 'assistant',
+      at: at0,
+      text: seg.text,
+      narration: true,
+    };
+    const idx = out.findIndex((e) => e.at > at0);
+    if (idx < 0) out.push(entry);
+    else out.splice(idx, 0, entry);
+  }
+  return out;
 }

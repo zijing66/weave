@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -122,6 +123,41 @@ describe('路径引用路由', () => {
     const link = body.entries.find((e) => e.path === 'link.ts')!;
     expect(link.symlink).toBe(true);
     expect(body.entries.find((e) => e.path === 'page.html')!.symlink).toBeUndefined();
+  });
+
+  it('②″ 嵌套仓目录带 head 短 hash（浏览与搜索都透传）', async () => {
+    registerSession('claude');
+    const lib = mkdtempSync(join(tmpdir(), 'weave-head-'));
+    try {
+      execFileSync('git', ['init'], { cwd: lib, stdio: 'ignore' });
+      writeFileSync(join(lib, 'a.ts'), 'x');
+      execFileSync('git', ['add', '-A'], { cwd: lib, stdio: 'ignore' });
+      execFileSync(
+        'git',
+        ['commit', '-qm', 'init'],
+        { cwd: lib, stdio: 'ignore', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } },
+      );
+      execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
+      execFileSync(
+        'git',
+        ['update-index', '--add', '--cacheinfo', '160000,0123456789012345678901234567890123456789,nested'],
+        { cwd: projectPath, stdio: 'ignore' },
+      );
+      cpSync(lib, join(projectPath, 'nested'), { recursive: true });
+      clearFileIndexCache();
+      const browse = await call('/sessions/sess/files');
+      const browsed = (browse.body as { entries: { path: string; head?: string }[] }).entries.find(
+        (e) => e.path === 'nested',
+      )!;
+      expect(browsed.head).toMatch(/^[0-9a-f]{7}$/);
+      const search = await call('/sessions/sess/files?q=nested');
+      const searched = (search.body as { entries: { path: string; head?: string }[] }).entries.find(
+        (e) => e.path === 'nested',
+      )!;
+      expect(searched.head).toBe(browsed.head);
+    } finally {
+      rmSync(lib, { recursive: true, force: true });
+    }
   });
 
   it('③ 搜索模式带上命中区间（前端拿来上色）', async () => {

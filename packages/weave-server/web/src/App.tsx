@@ -46,10 +46,10 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { navigate, parseRoute, useRoutePath } from '@/lib/route';
-import { toggleTheme, useTheme } from '@/lib/theme';
+import { setThemePreference, useThemePreference } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, X } from 'lucide-react';
+import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, SunMoon, X } from 'lucide-react';
 import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -145,7 +145,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   /** 按钮反馈（loading → ✅ → 2s 复原），按 key 记状态。 */
   const fb = useActionFeedback();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const themeMode = useTheme();
+  const themePref = useThemePreference();
   // 移动端外壳（<1024px 单栏）：左右栏改滑出抽屉；拖拽 sensor 按指针类型分流。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const finePointer = useMediaQuery('(pointer: fine)');
@@ -858,14 +858,39 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 <span className="text-11 tabular-nums">{formatStars(stars)}</span>
               )}
             </a>
-            {/* 深色 / 浅色切换：图标画的是「按下去会变成哪个」 */}
+            {/* 主题三态循环：dark → light → auto(跟系统) → dark。图标画**当前态**
+                （auto 恒 SunMoon 半日半月）——三态图标互不相同，每点一次必变；
+                「按下去变成哪个」的画法在 auto+系统深色时会与钉死深色长得一样，
+                点一下界面还不变，分不清自己处在哪个态。 */}
             <button
-              onClick={toggleTheme}
+              onClick={() =>
+                setThemePreference(
+                  themePref === 'dark' ? 'light' : themePref === 'light' ? 'auto' : 'dark',
+                )
+              }
               className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={themeMode === 'dark' ? t('app.themeToLight') : t('app.themeToDark')}
-              aria-label={themeMode === 'dark' ? t('app.themeToLight') : t('app.themeToDark')}
+              title={
+                themePref === 'dark'
+                  ? t('app.themeDark')
+                  : themePref === 'light'
+                    ? t('app.themeLight')
+                    : t('app.themeAuto')
+              }
+              aria-label={
+                themePref === 'dark'
+                  ? t('app.themeDark')
+                  : themePref === 'light'
+                    ? t('app.themeLight')
+                    : t('app.themeAuto')
+              }
             >
-              {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {themePref === 'dark' ? (
+                <Moon className="h-4 w-4" />
+              ) : themePref === 'light' ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <SunMoon className="h-4 w-4" />
+              )}
             </button>
             <button
               onClick={() => setSettingsOpen(true)}

@@ -12,6 +12,7 @@ import { CLAUDE_STATUSLINE } from './statusline/surface.js';
 import { CLAUDE_CONFIG } from './config.js';
 import { CLAUDE_EDITS } from './edits.js';
 import { CLAUDE_IMAGES } from './images.js';
+import { CLAUDE_NARRATION } from './narration.js';
 import { CLAUDE_COMMANDS } from './commands.js';
 import { CLAUDE_LIVENESS } from './liveness.js';
 
@@ -38,6 +39,7 @@ export {
 } from './transcript.js';
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
+export { CLAUDE_NARRATION } from './narration.js';
 export { CLAUDE_COMMANDS, commandExecutions } from './commands.js';
 export {
   CLAUDE_LIVENESS,
@@ -104,6 +106,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'config',
     'edits',
     'images',
+    'narration',
     'commands',
     'liveness',
   ],
@@ -120,6 +123,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   config: CLAUDE_CONFIG,
   edits: CLAUDE_EDITS,
   images: CLAUDE_IMAGES,
+  narration: CLAUDE_NARRATION,
   commands: CLAUDE_COMMANDS,
   liveness: CLAUDE_LIVENESS,
 };

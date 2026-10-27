@@ -13,6 +13,7 @@ import { readAiKey, writeAiKey } from '../ai-config.js';
 import { readDecisionKey, writeDecisionKey } from '../decision-config.js';
 import { accessUrls } from '../tls.js';
 import { applyLaunchOnLogin } from '../auto-start.js';
+import { WEAVE_VERSION } from '../../version.js';
 import { readProjectConfig, writeProjectConfig } from '../../install/project-config.js';
 import type { ProjectConfig } from '../../install/project-config.js';
 import {
@@ -84,6 +85,9 @@ export async function handleSettingsRoutes(
         platform: process.platform,
         // 对外访问地址（设置页展示面）：全部局域网 IP × 已开协议。
         urls: accessUrls(deps.port, deps.tlsPort ?? 0),
+        // 「关于」展示面：版本与仓库主页（设置页只读，不进保存流程）。
+        version: WEAVE_VERSION,
+        repoUrl: 'https://github.com/zijing66/weave',
       });
       return true;
     }

@@ -25,6 +25,7 @@ export type HarnessCapability =
   | 'config'
   | 'edits'
   | 'images'
+  | 'narration'
   | 'commands'
   | 'provision'
   | 'liveness';
@@ -1044,6 +1045,28 @@ export interface ImagesSurface {
   }): Promise<PromptImageSet[] | null>;
 }
 
+/** 转录里的一段 assistant 正文（时间序）。 */
+export interface NarrationText {
+  /** 该条 assistant 消息的时刻（ISO UTC，转录 timestamp）；宿主没带 → null。 */
+  at: string | null;
+  text: string;
+}
+
+/**
+ * 旁白采集面：模型在一轮里的**全部** assistant 正文（时间序）。hook 域只有
+ * Stop 的 `last_assistant_message` 一个文本载体——一轮里多次输出（写工具后又
+ * 补一段收尾）只有最后一句能进对话气泡，前面的没有任何事件照会，转录是唯一
+ * 来源。缺这个槽 = 该 harness 的中间输出无处可取（对话里只有每轮收尾那句）。
+ */
+export interface NarrationSurface {
+  /** 全部 assistant 正文（时间序，含每轮收尾那句）；读不到 → null（不猜）。 */
+  sessionNarration(req: {
+    sessionId: string;
+    /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<NarrationText[] | null>;
+}
+
 /**
  * 聊天窗口 `/` 提示里的一条命令：内建命令来自宿主（版本快照，随升级复核），
  * 其余按目录现扫（自定义命令 / skill / 插件 skill）。
@@ -1152,6 +1175,7 @@ export interface HarnessDriver {
   config?: ConfigSurface;
   edits?: EditsSurface;
   images?: ImagesSurface;
+  narration?: NarrationSurface;
   commands?: CommandsSurface;
   provision?: ProvisionSurface;
   liveness?: LivenessSurface;

@@ -74,6 +74,7 @@ import {
   MENU_H,
   MENU_W,
 } from './conv-widgets';
+import { NarrationStack, stackUnitsOf } from './conv-stack';
 
 /** ESC 键帽点完歇几秒：连点会连发好几记（宿主的 ESC 后面接 rewind，连发会把
  *  刚开的那层菜单也退掉）。冷却只为防连发，与「能不能点」无关。 */
@@ -694,7 +695,22 @@ export function SessionMessages({
                   {t('tasks.convFilterEmpty')}
                 </p>
               )}
-              {visible.map((m) => {
+              {stackUnitsOf(visible, selecting).map((unit) => {
+                if (unit.kind === 'group') {
+                  const g = unit.group;
+                  return (
+                    <div key={g.key} className="group/stack">
+                      <NarrationStack
+                        group={g}
+                        selecting={selecting}
+                        coarse={coarse}
+                        isOpen={isOpen}
+                        toggleOpen={toggleOpen}
+                      />
+                    </div>
+                  );
+                }
+                const m = unit.entry;
                 if (m.role === 'compaction') {
                   // 压缩分隔：不是谁说的话，只标上下文在这里断过一次（不参与勾选）
                   return (
@@ -740,6 +756,11 @@ export function SessionMessages({
                               {t('tasks.convPreQuestion')}
                             </span>
                           )}
+                          {m.narration === true && (
+                            <span className="shrink-0 rounded bg-neutral-500/15 px-1 py-px text-10 font-medium text-neutral-400">
+                              {t('tasks.convNarration')}
+                            </span>
+                          )}
                         </span>
                         {/* 宿主报的错不是回答：不排 markdown（原文就是一行技术串），
                             一律红字——系统错误得和正文一眼分得开 */}
@@ -755,7 +776,12 @@ export function SessionMessages({
                             onToggle={() => toggleOpen(m.key)}
                             disabled={selecting}
                           >
-                            <AssistantMarkdown text={m.text} />
+                            {/* markdown 段落里的单 \n（软换行）要显示成换行：
+                                不加 pre-wrap 会被 HTML 空白折叠并成空格（与
+                                user 气泡同款包装） */}
+                            <div className="[&_p]:whitespace-pre-wrap">
+                              <AssistantMarkdown text={m.text} />
+                            </div>
                           </Collapsible>
                         )}
                       </div>

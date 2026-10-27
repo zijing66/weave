@@ -87,6 +87,10 @@ export interface DaemonSettingsBundle {
   presets: TerminalPresetMeta[];
   platform: string;
   urls?: AccessUrl[];
+  /** daemon 版本（设置页「关于」展示面；旧 daemon 不带 → undefined）。 */
+  version?: string;
+  /** 仓库主页（设置页「关于」展示面）。 */
+  repoUrl?: string;
 }
 
 /** user 档采集状态行（GET/PUT /capture；§6-2d 安装即启用，无独立开关位）。 */

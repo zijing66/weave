@@ -25,8 +25,10 @@ import {
   Eye,
   EyeOff,
   FileCode,
+  Github,
   Globe,
   Image as ImageIcon,
+  Info,
   Languages,
   Loader2,
   Paperclip,
@@ -217,6 +219,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [presets, setPresets] = useState<Array<{ id: TerminalPreset; label: string }>>([]);
   /** 对外访问地址（服务端派生，只读展示面）。 */
   const [urls, setUrls] = useState<AccessUrl[]>([]);
+  /** 「关于」展示面：daemon 版本与仓库主页（GET /settings 随行下发）。 */
+  const [version, setVersion] = useState<string | null>(null);
+  const [repoUrl, setRepoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // AI / 决策模型 key：服务端回显已存值进输入框（掩码展示），编辑即改、清空 = 保存时清除。
@@ -469,6 +474,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         setDecisionKeyInput(s.decision?.apiKey ?? '');
         setPresets(r.presets);
         setUrls(r.urls ?? []);
+        setVersion(r.version ?? null);
+        setRepoUrl(r.repoUrl ?? null);
         // 已配置（存的地址 + key 齐全）**不自动拉**——模型一般已选好，按需点「拉取模型」；
         // 只有首次配置（未配置态）在表单两栏填齐后才自动拉一次（见下面的 debounce effect）。
       })
@@ -631,6 +638,29 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </nav>
           <div ref={scrollRef} onScroll={onContentScroll} className="min-w-0 flex-1 overflow-y-auto p-4 space-y-6">
           <SettingsSection id="general" icon={Settings} title={t('settings.sectionGeneral')}>
+          {/* 关于：版本号 + 仓库主页（服务端随 GET /settings 下发，只读展示）。 */}
+          {(version || repoUrl) && (
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+                <Info className="h-3.5 w-3.5 text-neutral-500" />
+                {t('settings.about')}
+              </label>
+              <div className="flex items-center gap-2 text-11 text-neutral-400">
+                {version && <span className="tabular-nums">weave v{version}</span>}
+                {repoUrl && (
+                  <a
+                    href={repoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <Github className="h-3 w-3" />
+                    <span className="truncate">{repoUrl.replace(/^https:\/\/github\.com\//, '')}</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
@@ -1282,7 +1312,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 hide: t('settings.aiApiKeyHide'),
               }}
             />
-            <p className="text-11 text-neutral-500">{t('settings.decisionHint')}</p>
           </div>
           </SettingsSection>
 

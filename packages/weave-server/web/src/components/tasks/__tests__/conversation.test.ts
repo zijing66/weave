@@ -11,6 +11,7 @@ import {
   removableOf,
   withCommands,
   withPlan,
+  withNarration,
   withPreQuestion,
   readConvCache,
   writeConvCache,
@@ -27,6 +28,7 @@ import {
   textBeforeCaret,
 } from '../draft-editor';
 import { imageMarkerSegments } from '../conv-model';
+import { stackUnitsOf } from '../conv-stack';
 import { attachedFilesFrom } from '../attach';
 import { exportConversationText, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
@@ -486,6 +488,48 @@ describe('withPreQuestion（提问前说明当一条对话气泡）', () => {
       'e1',
       'e9',
     ]);
+  });
+});
+
+describe('withNarration（转录补采的中间输出当对话气泡）', () => {
+  const thread: ConvEntry[] = [
+    { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+    { key: 'e9', eventId: 9, role: 'assistant', at: at(9), text: '收尾那句' },
+  ];
+
+  it('① 没有旁白 = 原样返回（不凭空多一条）', () => {
+    expect(withNarration(thread, null).map((e) => e.key)).toEqual(['e1', 'e9']);
+    expect(withNarration(thread, []).map((e) => e.key)).toEqual(['e1', 'e9']);
+  });
+
+  it('② 按时刻插进时间线（写工具前后的中间段落回到原位）', () => {
+    const out = withNarration(thread, [{ at: at(5), text: '先说结论：改三处。' }]);
+    expect(out.map((e) => [e.key, e.role, e.narration])).toEqual([
+      ['e1', 'user', undefined],
+      ['n' + at(5) + ':0', 'assistant', true],
+      ['e9', 'assistant', undefined],
+    ]);
+  });
+
+  it('③ 与 close 气泡同文案（首尾空白差异不算）的跳过——Stop.lam 本来就在', () => {
+    const out = withNarration(thread, [
+      { at: at(3), text: '收尾那句' },
+      { at: at(3.5), text: ' 收尾那句 ' },
+    ]);
+    expect(out.map((e) => e.key)).toEqual(['e1', 'e9']);
+  });
+
+  it('④ 时刻缺失的旁白不摆（插哪儿都是猜）', () => {
+    const out = withNarration(thread, [{ at: null, text: '没有时刻的一段' }]);
+    expect(out.map((e) => e.key)).toEqual(['e1', 'e9']);
+  });
+
+  it('⑤ 多段按各自时刻各归各位', () => {
+    const out = withNarration(thread, [
+      { at: at(5), text: '第一段' },
+      { at: at(7), text: '第二段' },
+    ]);
+    expect(out.map((e) => e.text)).toEqual(['问', '第一段', '第二段', '收尾那句']);
   });
 });
 
@@ -1041,15 +1085,15 @@ describe('对话缓存（sessionStorage）', () => {
     expect(readConvCache('别的会话')).toBeNull();
   });
 
-  it('只留尾巴若干条（长会话的翻页历史不一直堆在会话存储里）', () => {
+  it('只留尾巴若干条（滑动窗口 100 条；长会话的翻页历史不一直堆在会话存储里）', () => {
     writeConvCache(
       's1',
-      Array.from({ length: 70 }, (_, i) => conv(i + 1)),
+      Array.from({ length: 120 }, (_, i) => conv(i + 1)),
     );
     const cached = readConvCache('s1')!;
-    expect(cached).toHaveLength(60);
-    expect(cached[0]!.eventId).toBe(11);
-    expect(cached[59]!.eventId).toBe(70);
+    expect(cached).toHaveLength(100);
+    expect(cached[0]!.eventId).toBe(21);
+    expect(cached[99]!.eventId).toBe(120);
   });
 
   it('过期的、写坏的、没写过的都当没有（缓存是加速不是功能）', () => {
@@ -1218,5 +1262,63 @@ describe('withCommands（命令执行插进对话流）', () => {
     const entries = [conv(1)];
     expect(withCommands(entries, null)).toEqual(entries);
     expect(withCommands(entries, [])).toEqual(entries);
+  });
+});
+
+describe('stackUnitsOf（连续过程输出折成叠层）', () => {
+  const narr = (id: number, at: string): ConvEntry => ({
+    key: `n${id}`,
+    role: 'assistant',
+    at,
+    text: `段${id}`,
+    narration: true,
+  });
+  const user = (id: number, at: string): ConvEntry => ({
+    key: `u${id}`,
+    role: 'user',
+    at,
+    text: '问',
+  });
+  const close = (id: number, at: string): ConvEntry => ({
+    key: `e${id}`,
+    role: 'assistant',
+    at,
+    text: '答',
+  });
+
+  it('① 连续 narration 折成一组；单段不成叠', () => {
+    const entries = [user(1, 'a'), narr(2, 'b'), narr(3, 'c'), close(4, 'd')];
+    const units = stackUnitsOf(entries);
+    expect(units).toEqual([
+      { kind: 'entry', entry: entries[0] },
+      { kind: 'group', group: { key: 'stk:n2', at: 'c', segs: [entries[1], entries[2]] } },
+      { kind: 'entry', entry: entries[3] },
+    ]);
+  });
+
+  it('② 中间插最终消息即断组（各成一叠或单条）', () => {
+    const entries = [narr(1, 'a'), close(2, 'b'), narr(3, 'c')];
+    const units = stackUnitsOf(entries);
+    expect(units).toHaveLength(3);
+    expect(units[0]).toEqual({ kind: 'entry', entry: entries[0] });
+    expect(units[2]).toEqual({ kind: 'entry', entry: entries[2] });
+  });
+
+  it('③ 多选态（flat）整叠摊平成独立条目', () => {
+    const entries = [narr(1, 'a'), narr(2, 'b'), narr(3, 'c')];
+    const units = stackUnitsOf(entries, true);
+    expect(units.map((u) => (u.kind === 'entry' ? u.entry.key : 'GROUP'))).toEqual([
+      'n1',
+      'n2',
+      'n3',
+    ]);
+  });
+
+  it('④ 全是 narration 也只折一叠；空表出空表', () => {
+    const entries = [narr(1, 'a'), narr(2, 'b')];
+    expect(stackUnitsOf(entries)).toEqual([
+      { kind: 'group', group: { key: 'stk:n1', at: 'b', segs: entries } },
+    ]);
+    expect(stackUnitsOf([])).toEqual([]);
   });
 });

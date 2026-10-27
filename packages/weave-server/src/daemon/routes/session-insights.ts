@@ -5,7 +5,7 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { FileEdit } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
-import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor } from '../../surfaces.js';
+import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor } from '../../surfaces.js';
 import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
 
@@ -229,6 +229,26 @@ export async function handleSessionInsightRoutes(
     const spec = src ? blockingPromptFor(src) : null;
     const pre = await spec?.preQuestion?.(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
     sendJson(res, 200, { preQuestion: pre ?? null });
+    return true;
+  }
+
+  // ---- 旁白：模型在一轮里的全部 assistant 正文（hook 域只有 Stop.lam 一个载体，
+  // 中间输出只在转录里——对话气泡据此把「写工具后又补的那段」也摆出来）----
+  const narrationMatch = pathname.match(/^\/sessions\/([^/]+)\/narration$/);
+  if (narrationMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(narrationMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? narrationSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, narration: null });
+      return true;
+    }
+    const narration = await surface.sessionNarration({
+      sessionId,
+      transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
+    });
+    sendJson(res, 200, { supported: narration !== null, narration });
     return true;
   }
 

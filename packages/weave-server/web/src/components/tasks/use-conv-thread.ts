@@ -20,6 +20,7 @@ import {
   failedTail,
   removableOf,
   withCommands,
+  withNarration,
   withPlan,
   withPreQuestion,
   readConvCache,
@@ -27,9 +28,13 @@ import {
   type ConvEntry,
   type ConvFilter,
 } from './conv-model';
+import { stackUnitsOf } from './conv-stack';
 
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
+/** 首屏窗口按**渲染单元**计（连续过程输出整叠算 1 条，用户裁决）：页尾若落在
+ *  叠层中间，最多再补拉这么多页凑单元数（防超长叠层把首屏拉爆）。 */
+const CONV_UNIT_TOPUP = 4;
 
 /** 生成中那一行的素材窗口：取最近多少条事件（展示只挑最新那条有内容的）。 */
 const LIVE_FETCH = 40;
@@ -77,6 +82,8 @@ export function useConvThread(deps: {
   const [plan, setPlan] = useState<SessionPlan | null>(null);
   /** 阻塞提问前模型写下的说明（转录里认的；没在提问 / 没写字 = null）。 */
   const [preQuestion, setPreQuestion] = useState<{ at: string; text: string } | null>(null);
+  /** 旁白：转录补采的中间 assistant 输出（无该面 / 读不到 = null，不摆）。 */
+  const [narration, setNarration] = useState<ReadonlyArray<{ at: string | null; text: string }> | null>(null);
   /** 内建命令的执行回显（转录里认出来的；null = 这个 harness 不记）。 */
   const [executions, setExecutions] = useState<CommandExecutionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +91,8 @@ export function useConvThread(deps: {
   const [filter, setFilter] = useState<ConvFilter>('all');
 
   /** 最新一页：与手上这批重叠就续接（保留翻过的旧页），不重叠整批换成新页
-   *  ——宁可重翻，也不留一段看不见的空档。 */
+   *  ——宁可重翻，也不留一段看不见的空档。首屏窗口按渲染单元计：页尾落在
+   *  叠层中间就再往前补拉，直到凑满 CONV_PAGE 个单元（或到头/补拉次数用尽）。 */
   const loadNewest = useCallback(async (): Promise<void> => {
     try {
       if (convTypes.length === 0) {
@@ -99,8 +107,32 @@ export function useConvThread(deps: {
         undefined,
         convTypes,
       );
-      const page = conversationOf(events, lifecycle, harness);
-      setHeadDone(events.length < CONV_PAGE);
+      let page = conversationOf(events, lifecycle, harness);
+      let headDone = events.length < CONV_PAGE;
+      // 页尾落在叠层中间 = 首屏单元数虚高（一大叠只算 1 个单元却占了一整页）：
+      // 以「最新 CONV_PAGE 个渲染单元」为准往前补拉，超长叠层由 CONV_UNIT_TOPUP 封顶。
+      for (
+        let tops = 0;
+        !headDone &&
+        tops < CONV_UNIT_TOPUP &&
+        stackUnitsOf(page).slice(-CONV_PAGE).some((u) => u.kind === 'group');
+        tops++
+      ) {
+        const older = await api.listSessionHooks(
+          projectId,
+          sessionId,
+          CONV_PAGE,
+          page[0]?.eventId,
+          convTypes,
+        );
+        if (older.length === 0) {
+          headDone = true;
+          break;
+        }
+        page = [...conversationOf(older, lifecycle, harness), ...page];
+        headDone = older.length < CONV_PAGE;
+      }
+      setHeadDone(headDone);
       setEntries((prev) => {
         const prevNewest = prev?.length ? prev[prev.length - 1]!.eventId : undefined;
         const pageOldest = page[0]?.eventId;
@@ -164,13 +196,23 @@ export function useConvThread(deps: {
     }
   }, [sessionId]);
 
+  /** 旁白（转录里认的）：取不到就当没有——没有该面的 harness / 读不到转录是常态。 */
+  const loadNarration = useCallback(async (): Promise<void> => {
+    try {
+      setNarration(await api.sessionNarration(sessionId));
+    } catch {
+      setNarration(null);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     void loadNewest();
     void refreshMessages();
     void loadPlan();
     void loadPreQuestion();
+    void loadNarration();
     void loadExecutions();
-  }, [loadExecutions, loadNewest, loadPlan, loadPreQuestion, refreshMessages]);
+  }, [loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, refreshMessages]);
 
   useEffect(() => {
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
@@ -219,6 +261,7 @@ export function useConvThread(deps: {
         wantConv = wantMessages = wantLive = wantPlan = wantPreQ = false;
         if (conv) void loadNewest();
         if (conv) void loadExecutions();
+        if (conv) void loadNarration();
         if (messages) void refreshMessages();
         if (live) void loadLive();
         if (planWanted) void loadPlan();
@@ -230,7 +273,7 @@ export function useConvThread(deps: {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadExecutions, loadLive, loadNewest, loadPlan, loadPreQuestion, refreshMessages, sessionId]);
+  }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, refreshMessages, sessionId]);
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {
@@ -281,15 +324,21 @@ export function useConvThread(deps: {
   const { thread, outbox } = useMemo(
     () =>
       attachDeliveries(
-        withCommands(withPlan(withPreQuestion(entries ?? [], preQuestion), plan), executions),
+        withCommands(
+          withPlan(withNarration(withPreQuestion(entries ?? [], preQuestion), narration), plan),
+          executions,
+        ),
         manualDeliveries,
       ),
-    [entries, executions, manualDeliveries, plan, preQuestion],
+    [entries, executions, manualDeliveries, narration, plan, preQuestion],
   );
   /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
   const newestAssistantKey = useMemo(() => {
     for (let i = thread.length - 1; i >= 0; i--) {
-      if (thread[i]!.role === 'assistant') return thread[i]!.key;
+      const e = thread[i]!;
+      // 过程输出不算「最新回复」：它缺省收纳在叠层里（展开态禁滑动，自动展开
+      // 会把牌堆卡死），「缺省展开最新那条」只认真正的收尾总结。
+      if (e.role === 'assistant' && e.narration !== true) return e.key;
     }
     return null;
   }, [thread]);
@@ -347,7 +396,13 @@ export function useConvThread(deps: {
    *  尾条就从 user 变成 compaction，不认它这一轮会一直不显「生成中…」。 */
   const compacting = status === 'compacting';
   const interrupted = status === 'interrupted';
-  const generating = isGenerating(status, thread[thread.length - 1]?.role);
+  // 尾条是过程输出（narration）≠ 已回话：那是一轮中间的旁白，收尾总结还没来，
+  // 「生成中…」必须照挂（否则流式期间状态条消失，用户以为卡住了）。
+  const tail = thread[thread.length - 1];
+  const generating = isGenerating(
+    status,
+    tail?.role === 'assistant' && tail.narration === true ? 'user' : tail?.role,
+  );
   /** 这一轮是失败收尾（API 报错）→ 尾上显那条错，压过「生成中…」与压缩态。 */
   const failed = interrupted ? null : failedTail(thread, outbox.length > 0);
   /** 滚动带只认**本轮**的事（晚到事件里混着上一轮的尾巴，同一份素材还要跨轮）：

@@ -278,6 +278,21 @@
   animation: weave-ticker-in 220ms ease-out;
 }
 
+/* 过程输出叠层：新段到达时顶卡从右侧滑入（牌堆翻页的方向感）。 */
+@keyframes weave-card-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.weave-card-in {
+  animation: weave-card-in 180ms ease-out;
+}
+
 /* ---- 移动端滑出抽屉动效（<lg 布局，一次滑入） ---- */
 @keyframes drawer-slide-left {
   from {

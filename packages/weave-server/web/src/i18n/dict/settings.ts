@@ -1,6 +1,7 @@
 /** 设置弹窗词条。 */
 export const settingsZh = {
   'settings.title': '设置',
+  'settings.about': '关于',
   'settings.sectionGeneral': '通用',
   'settings.sectionService': '服务',
   'settings.sectionData': '数据',
@@ -84,6 +85,7 @@ export const settingsZh = {
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.title': 'Settings',
+  'settings.about': 'About',
   'settings.sectionGeneral': 'General',
   'settings.sectionService': 'Service',
   'settings.sectionData': 'Data',

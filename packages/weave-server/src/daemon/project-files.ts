@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -21,7 +21,7 @@ const execFileAsync = promisify(execFile);
 export const MAX_INDEX_FILES = 300_000;
 
 /** 快照格式版本：作废盘上的旧文件，改形状必须递增。 */
-export const INDEX_VERSION = 1;
+export const INDEX_VERSION = 2;
 
 /** 硬窗：到点必重建。**新建的未跟踪文件不动 `.git/index`**（实测），只有这条能兜住。 */
 const INDEX_TTL_MS = 30_000;
@@ -62,6 +62,8 @@ export interface FileIndexSnapshot {
   files: string[];
   /** 目录集：由文件路径前缀派生 + 子模块的 gitlink（git 不列目录）。 */
   dirs: string[];
+  /** 嵌套仓（子模块/嵌套 git 仓）路径 → 实际 HEAD 短 hash（建索引那一拍读的）。 */
+  submodules?: Record<string, string>;
 }
 
 /** 一个目录的直接子项（完整相对路径）。排序**等第一次浏览这个目录时再做**：
@@ -78,6 +80,8 @@ export interface FileIndex extends FileIndexSnapshot {
   dirLower: string[];
   /** 目录 → 直接子项：浏览面 O(子项数)，不再扫全索引。 */
   children: Map<string, DirChildren>;
+  /** 嵌套仓 HEAD 短 hash（快照缺省 = 旧快照没有这张表，空）。 */
+  submodules: Readonly<Record<string, string>>;
 }
 
 export interface PathHit {
@@ -110,12 +114,49 @@ async function gitlinksOf(root: string): Promise<string[]> {
   return staged.filter((l) => l.startsWith('160000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
 }
 
+/** 已跟踪的符号链接：`--stage` 里的 mode 120000（avic/temp 实测形态）。 */
+async function trackedSymlinksOf(root: string): Promise<string[]> {
+  const staged = await gitLsFiles(root, ['--stage']);
+  if (!staged) return [];
+  return staged.filter((l) => l.startsWith('120000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
+}
+
 /** 该目录是不是一个仓库的根（`.git` 目录 = 普通仓，`.git` 文件 = worktree / 子模块）。 */
 function hasGitDir(dir: string): Promise<boolean> {
   return lstat(path.join(dir, '.git')).then(
     () => true,
     () => false,
   );
+}
+
+/** 嵌套仓的实际 HEAD 短 hash（零子进程：HEAD → loose ref → packed-refs）。
+ *  读不动（detached 之外的任何意外）返回 null，条目照常在、只是没徽标。 */
+async function nestedHeadOf(dir: string): Promise<string | null> {
+  try {
+    let gitDir = path.join(dir, '.git');
+    if (!(await lstat(gitDir)).isDirectory()) {
+      const line = /^gitdir:\s*(.+)$/m.exec(await readFile(gitDir, 'utf8'));
+      if (!line) return null;
+      gitDir = path.resolve(dir, line[1]!.trim());
+    }
+    const head = (await readFile(path.join(gitDir, 'HEAD'), 'utf8')).trim();
+    const sha: string | null = head.startsWith('ref: ')
+      ? await (async () => {
+          const ref = head.slice(5);
+          try {
+            return (await readFile(path.join(gitDir, ref), 'utf8')).trim();
+          } catch {
+            // loose ref 不在 → packed-refs 兜底
+            const packed = await readFile(path.join(gitDir, 'packed-refs'), 'utf8');
+            const hit = packed.split('\n').find((l) => l.endsWith(` ${ref}`));
+            return hit ? hit.slice(0, hit.indexOf(' ')) : null;
+          }
+        })()
+      : head;
+    return sha !== null && /^[0-9a-f]{40}$/i.test(sha) ? sha.slice(0, 7) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -150,32 +191,77 @@ async function ignoredReposOf(root: string): Promise<string[]> {
 async function listViaGit(
   root: string,
   prefix = '',
-): Promise<{ files: string[]; links: string[] } | null> {
+): Promise<{ files: string[]; links: string[]; heads: Record<string, string> } | null> {
   const listed = await gitLsFiles(root, ['--cached', '--others', '--exclude-standard']);
   if (!listed) return null;
   const nested = new Set<string>();
-  // `.gitmodules` 不在列就一次额外的 git 都不起
-  if (listed.includes('.gitmodules')) for (const p of await gitlinksOf(root)) nested.add(p);
+  // gitlink 直接认 `--stage` 的 160000 行——不门在 `.gitmodules` 上（子模块可以
+  // 没登记进它，avic/aadl-adapter 实测：gitlink 在、.gitmodules 无，门住就进不去）
+  for (const p of await gitlinksOf(root)) nested.add(p);
   for (const p of listed) if (p.endsWith('/')) nested.add(p.slice(0, -1));
   for (const p of await ignoredReposOf(root)) nested.add(p);
+  // 已跟踪的目录型符号链接也当目录（avic/temp 实测：git 记 120000 叶子，但用户眼里
+  // 它就是个能进的文件夹）——stat 穿透判型，目标目录的挪进 links 并递归列内容
+  const dirLinks = new Set<string>();
+  for (const p of await trackedSymlinksOf(root)) {
+    if (nested.has(p)) continue;
+    try {
+      if ((await stat(path.join(root, p))).isDirectory()) dirLinks.add(p);
+    } catch {
+      // 失效链接：留在 files 当叶子，至少名字可见
+    }
+  }
   // 边界自身不是文件——它由 links 当目录给出，留在 files 里会让同一行出现两次
-  const files = listed.filter((f) => !f.endsWith('/') && !nested.has(f)).map((f) => prefix + f);
-  const links = [...nested].map((p) => prefix + p);
+  const files = listed
+    .filter((f) => !f.endsWith('/') && !nested.has(f) && !dirLinks.has(f))
+    .map((f) => prefix + f);
+  const links = [...nested, ...dirLinks].map((p) => prefix + p);
+  const heads: Record<string, string> = {};
   for (const p of nested) {
     const dir = path.join(root, p);
     // 没克隆的子模块（工作区里没有 `.git`）别去问 git：那样的空目录里 `ls-files`
     // 会一路上溯找到外层仓库，把外层文件挂到子模块名下
     if (!(await hasGitDir(dir))) continue;
+    const head = await nestedHeadOf(dir);
+    if (head) heads[`${prefix}${p}`] = head;
     const inner = await listViaGit(dir, `${prefix}${p}/`);
     if (!inner) continue;
     files.push(...inner.files);
     links.push(...inner.links);
+    Object.assign(heads, inner.heads);
   }
-  return { files, links };
+  // 目录链接的内容：目标可能在仓外（temp → 别的仓/普通目录），git/walk 各按其形；
+  // 环防护 = 祖先 realpath 集（起点 root 在内，指回根的链接第一次就拦下）。
+  // git 对 junction 会把目标内容平铺进 --others（link/inside.ts），与递归结果重复
+  // ——递归前先剔掉前缀命中的，递归结果才是权威（含刚建未跟踪的）。
+  const ancestors = new Set<string>([await realpath(root).catch(() => root)]);
+  for (const p of dirLinks) {
+    const dir = path.join(root, p);
+    const real = await realpath(dir).catch(() => null);
+    if (real === null || ancestors.has(real)) continue;
+    ancestors.add(real);
+    const withPrefix = `${prefix}${p}/`;
+    for (let i = files.length - 1; i >= 0; i--) {
+      if (files[i]!.startsWith(withPrefix)) files.splice(i, 1);
+    }
+    const inner = (await listViaGit(dir, withPrefix)) ?? {
+      files: await listViaWalk(dir),
+      links: [] as string[],
+      heads: {} as Record<string, string>,
+    };
+    files.push(...inner.files);
+    links.push(...inner.links);
+    Object.assign(heads, inner.heads);
+  }
+  return { files, links, heads };
 }
 
 async function listViaWalk(root: string): Promise<string[]> {
   const out: string[] = [];
+  // 目录型符号链接也递归（用户建链就是为了把别处的目录挂进项目里）；环防护 =
+  // 递归链上的祖先 realpath 集（起点 root 也在内：指回根的链接第一次就拦下）——
+  // 同一真实目录在本枝出现第二次就不再进去。
+  const ancestors = new Set<string>([await realpath(root).catch(() => root)]);
   const walk = async (rel: string): Promise<void> => {
     if (out.length >= MAX_INDEX_FILES) return;
     let entries;
@@ -187,11 +273,34 @@ async function listViaWalk(root: string): Promise<string[]> {
     for (const e of entries) {
       if (out.length >= MAX_INDEX_FILES) return;
       const child = rel ? `${rel}/${e.name}` : e.name;
-      if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name)) await walk(child);
-      } else if (e.isFile() && e.name !== '.git') {
+      if (e.isDirectory() || e.isSymbolicLink()) {
+        if (SKIP_DIRS.has(e.name)) continue;
+        // symlink 穿透判型：目标是目录才递归（文件链接/失效链接落成叶子）
+        if (e.isSymbolicLink()) {
+          let targetIsDir: boolean;
+          try {
+            targetIsDir = (await stat(path.join(root, child))).isDirectory();
+          } catch {
+            targetIsDir = false; // 失效链接：当叶子留着，至少名字可见
+          }
+          if (!targetIsDir) {
+            if (e.name !== '.git') out.push(child);
+            continue;
+          }
+          const real = await realpath(path.join(root, child)).catch(() => null);
+          if (real === null || ancestors.has(real)) continue;
+          ancestors.add(real);
+          try {
+            await walk(child);
+          } finally {
+            ancestors.delete(real);
+          }
+        } else {
+          await walk(child);
+        }
+      } else if (e.isFile()) {
         // `.git` 文件（worktree / 子模块）不是要看的东西
-        out.push(child);
+        if (e.name !== '.git') out.push(child);
       }
     }
   };
@@ -253,6 +362,7 @@ async function enumerateIndex(root: string): Promise<FileIndexSnapshot> {
     truncated,
     files: kept,
     dirs,
+    ...(fromGit && Object.keys(fromGit.heads).length > 0 ? { submodules: fromGit.heads } : {}),
   };
 }
 
@@ -274,7 +384,7 @@ export function hydrateIndex(snap: FileIndexSnapshot): FileIndex {
   };
   for (const d of snap.dirs) kidsOf(d.slice(0, Math.max(0, d.lastIndexOf('/')))).dirs.push(d);
   for (const f of snap.files) kidsOf(f.slice(0, Math.max(0, f.lastIndexOf('/')))).files.push(f);
-  return { ...snap, lower, dirLower, children };
+  return { ...snap, lower, dirLower, children, submodules: snap.submodules ?? {} };
 }
 
 export async function buildIndex(root: string): Promise<FileIndex> {
@@ -296,7 +406,7 @@ function indexPathOf(projectId: number): string {
   return path.join(indexRoot ?? getIndexDir(), `${projectId}.json`);
 }
 
-/** 只挑可序列化那七个字段：`FileIndex` 上的派生表（小写 / 子项）绝不进盘。 */
+/** 只挑可序列化那些字段：`FileIndex` 上的派生表（小写 / 子项）绝不进盘。 */
 function snapshotOf(index: FileIndex): FileIndexSnapshot {
   return {
     v: index.v,
@@ -306,6 +416,7 @@ function snapshotOf(index: FileIndex): FileIndexSnapshot {
     truncated: index.truncated,
     files: index.files,
     dirs: index.dirs,
+    ...(Object.keys(index.submodules).length > 0 ? { submodules: { ...index.submodules } } : {}),
   };
 }
 
@@ -428,8 +539,12 @@ export function pruneFileIndexes(projectIds: readonly number[]): void {
  *  每次都现造排序器，30 万条排一遍要六百毫秒，这个只要二十六毫秒。 */
 const BY_NAME = new Intl.Collator(undefined, { numeric: true });
 
-/** 目录浏览：`dir`（相对，'' = 根）的直接子项，目录在前、名字排（自然序）。 */
-export function listDirOf(index: FileIndex, dir: string): { path: string; kind: PathRefKind }[] {
+/** 目录浏览：`dir`（相对，'' = 根）的直接子项，目录在前、名字排（自然序）。
+ *  嵌套仓目录带 `head`（建索引那一拍的短 hash），前端拿它摆 submodule 徽标。 */
+export function listDirOf(
+  index: FileIndex,
+  dir: string,
+): { path: string; kind: PathRefKind; head?: string }[] {
   const kids = index.children.get(dir);
   if (!kids) return [];
   if (!kids.sorted) {
@@ -438,8 +553,11 @@ export function listDirOf(index: FileIndex, dir: string): { path: string; kind: 
     kids.files.sort(BY_NAME.compare);
     kids.sorted = true;
   }
-  const out: { path: string; kind: PathRefKind }[] = [];
-  for (const d of kids.dirs) out.push({ path: d, kind: 'dir' });
+  const out: { path: string; kind: PathRefKind; head?: string }[] = [];
+  for (const d of kids.dirs) {
+    const head = index.submodules[d];
+    out.push(head ? { path: d, kind: 'dir', head } : { path: d, kind: 'dir' });
+  }
   for (const f of kids.files) out.push({ path: f, kind: 'file' });
   return out;
 }

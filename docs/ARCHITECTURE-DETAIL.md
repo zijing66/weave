@@ -75,6 +75,16 @@
 - **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；adapter 不自己拼目录——claude 是 `~/.claude/projects/<slug>/` 下的转录，codex 的 hook 载荷直接带 rollout 路径（`hook_transcript_path` = 当前 rollout 文件，实机库验证）。
 - **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
 
+### narration 槽（旁白：一轮里的全部 assistant 输出）
+
+`NarrationSurface` = `sessionNarration({ sessionId, transcriptPath }) → NarrationText[] | null`，`NarrationText` = `{ at: string | null, text }`，时间序。两份实现 = `weave-harness/src/claude/narration.ts`（`CLAUDE_NARRATION`，读转录主链 assistant 条目的 text 分区）与 `weave-harness/src/codex/narration.ts`（`CODEX_NARRATION`，读 rollout 的 `event_msg`/`AgentMessage`）。
+
+- **为什么存在**：hook 域只有 Stop 的 `last_assistant_message` 一个文本载体——一轮里模型多次输出（写工具后又补一段收尾、分段讲解）只有最后一句能进对话气泡，前面的没有任何事件照会，转录是唯一来源。与 `edits`/`images` 同一个理由：把被裁过的事件当真会丢数据。
+- **claude 读法**：只认主链（`isSidechain !== true`）assistant 条目的 text 分区；thinking 是内部推理、tool_use 是调用，都不算正文。同一条 assistant 消息宿主拆成相邻多行（同 `message.id`），各段独立成条（拼接语义留给消费方）。流式逐行、`"type":"assistant"` 子串预筛再 parse；读崩回 `null`。
+- **codex 读法**：rollout 的 `event_msg` → `payload.type = "AgentMessage"` → `payload.message`（与 images 面同一条目族，`UserMessage` 是用户侧）。TUI 内建命令不落 rollout，天然不重复。
+- **路由**：`GET /sessions/:id/narration` → `{ supported, narration }`，`latestHarnessOf` + `narrationSurfaceFor`，不写 harness 白名单；转录路径取 `SessionProbe.transcriptPathOf`。
+- **web 合成**：`withNarration(entries, narration)` 按时刻插进对话流（`n<at>:<序>` 键、`narration: true` 徽标「过程输出」）；**与 close 气泡同文案的跳过**（空白归一比对——Stop.lam 本来就在，补进来就是同一条显示两遍）；`at` 为 null 的段落不摆（插哪儿都是猜）。SSE 的 conv 刷新拍顺带重拉（收尾落定后中间段落才齐）。
+
 ### commands 槽（`/` 候选与命令返显）
 
 `CommandsSurface` = `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source, sigil? }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源），`sigil` 答「怎么敲」（缺省 `/`，codex 的 skill 是 `$name`）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。

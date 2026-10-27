@@ -11,8 +11,10 @@ import {
   File as FileIcon,
   FileCode,
   FileImage,
+  FileSymlink,
   FileText,
   Folder,
+  FolderSymlink,
   Hash,
   Loader2,
   Search,
@@ -124,6 +126,14 @@ export interface PickTarget {
 }
 
 function iconFor(entry: SessionFileEntry) {
+  // 符号链接有自己的字形（FolderSymlink/FileSymlink），配色沿用原类型的
+  if (entry.symlink) {
+    return entry.kind === 'dir' ? (
+      <FolderSymlink className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+    ) : (
+      <FileSymlink className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
+    );
+  }
   if (entry.kind === 'dir') return <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />;
   if (IMAGE_EXT.test(entry.name)) return <FileImage className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" />;
   if (CODE_EXT.test(entry.name)) return <FileCode className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />;
@@ -136,6 +146,18 @@ function sizeText(bytes: number | undefined): string | null {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 嵌套仓（子模块）徽标：`@918bebb`——一眼认出「这是个别人的仓、钉在这个版本」。 */
+function HeadBadge({ head }: { head: string }) {
+  return (
+    <span
+      title={`submodule @ ${head}`}
+      className="shrink-0 rounded bg-violet-500/15 px-1 font-mono text-10 text-violet-300"
+    >
+      @{head}
+    </span>
+  );
 }
 
 /** 搜索行尾的目录标注：搜索范围是当前目录的子树，命中条目摆出**相对当前目录**
@@ -782,11 +804,11 @@ export function FilePicker({
       if (hit) confirm(hit);
       return;
     }
-    // 空格 = 加入/移出已选。搜索框空着时也算勾选（打开就按空格是主路径），
-    // 一旦打了字，空格还给查询；按钮上的空格是它自己的。
+    // 空格 = 加入/移出已选。搜索框里也勾（检索中空格勾选是主路径，检索词要空格
+    // 就粘贴）；按钮上的空格是它自己的。
     if (e.key === ' ') {
       if (inInput) {
-        if (e.target !== searchRef.current || query !== '') return;
+        if (e.target !== searchRef.current) return;
       } else if (e.target instanceof HTMLElement && e.target.closest('button')) return;
       const hit = entries[selected];
       if (!hit) return;
@@ -933,16 +955,22 @@ export function FilePicker({
                   const full = entry.path.slice(0, entry.path.length - entry.name.length);
                   const rel = dir && full.startsWith(`${dir}/`) ? full.slice(dir.length + 1) : full;
                   const badge = dirBadge(rel);
-                  return badge ? (
-                    <span className="shrink-0 font-mono text-10 text-neutral-600">{badge}</span>
-                  ) : null;
+                  return (
+                    <>
+                      {entry.head && <HeadBadge head={entry.head} />}
+                      {badge && <span className="shrink-0 font-mono text-10 text-neutral-600">{badge}</span>}
+                    </>
+                  );
                 })()
               ) : (
-                entry.size != null && (
-                  <span className="shrink-0 text-10 tabular-nums text-neutral-600">
-                    {sizeText(entry.size)}
-                  </span>
-                )
+                <>
+                  {entry.head && <HeadBadge head={entry.head} />}
+                  {entry.size != null && (
+                    <span className="shrink-0 text-10 tabular-nums text-neutral-600">
+                      {sizeText(entry.size)}
+                    </span>
+                  )}
+                </>
               )}
             </button>
           </li>
@@ -1088,6 +1116,7 @@ export function FilePicker({
                   <span className="min-w-0 flex-1 truncate font-mono">
                     {child.kind === 'dir' ? `${child.name}/` : child.name}
                   </span>
+                  {child.head && <HeadBadge head={child.head} />}
                   {child.size != null && (
                     <span className="shrink-0 text-10 tabular-nums text-neutral-600">
                       {sizeText(child.size)}
@@ -1265,10 +1294,11 @@ export function FilePicker({
                               )}
                             >
                               {iconFor(sib)}
-                              <span className="truncate font-mono">
+                              <span className="min-w-0 flex-1 truncate font-mono">
                                 {sib.name}
                                 {sib.path === dir ? '/' : ''}
                               </span>
+                              {sib.head && <HeadBadge head={sib.head} />}
                             </button>
                           </li>
                         ) : (

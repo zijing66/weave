@@ -191,6 +191,11 @@ export const messageApi = {
     apiFetch<{ preQuestion: { at: string; text: string } | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/pre-question`,
     ).then((r) => r.preQuestion),
+  /** 旁白：模型在一轮里的全部 assistant 正文（转录里认的；无该面 / 读不到 = null）。 */
+  sessionNarration: (sessionId: string): Promise<Array<{ at: string | null; text: string }> | null> =>
+    apiFetch<{ supported: boolean; narration: Array<{ at: string | null; text: string }> | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/narration`,
+    ).then((r) => r.narration),
   /** 远程作答：整 call 一次提交（只传问题键 + 选项下标，键序由服务端 harness
    *  规格拼装并白名单校验）。 */
   answerQuestion: (
