@@ -119,6 +119,11 @@ export class HookDispatcher {
       fetchImpl?: typeof fetch;
       /** classify：对某一轮 fork 无头子 agent 判定类别（装配侧 = edgeExtract.run）。 */
       classify?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
+      /**
+       * 宿主侧用户自定义名（titles 面；装配侧按会话 harness 分派，claude 无此
+       * 通道恒 null）。读方向 diff 采纳：TUI 改名后下一次 hook 事件反显前端。
+       */
+      sessionTitleOf?: (sessionId: string) => Promise<string | null>;
     },
   ) {}
 
@@ -142,17 +147,27 @@ export class HookDispatcher {
       const outcome: IngestOutcome = {};
       if (ctx.sessionId) {
         // 会话行由 server 路由 ingest 前 touch（单一 owner），此处只读。
+        // codex 无 hook session_title 通道：宿主侧名字经 titles 面查（session_index
+        // 快照 diff 采纳）；读失败静默不拦 ingest。快照只走 applyReportedTitle
+        // 的 diff 臂——不进下方 pending 的 confirm 条件（「reported 非 null = 宿主
+        // 上报过标题」是 hook 上报语义，宿主侧名字快照没有这层含义）。
         const reported = extractReportedTitle(ctx.payload);
-        if (
-          reported !== null &&
-          this.deps.sessions.applyReportedTitle(ctx.sessionId, reported)
-        ) {
+        let hostTitle: string | null = null;
+        if (reported === null && this.deps.sessionTitleOf) {
+          try {
+            hostTitle = await this.deps.sessionTitleOf(ctx.sessionId);
+          } catch {
+            // 宿主侧读失败不拦 ingest
+          }
+        }
+        const effectiveTitle = reported ?? hostTitle;
+        if (effectiveTitle !== null && this.deps.sessions.applyReportedTitle(ctx.sessionId, effectiveTitle)) {
           // 更名生效确认：pending 落地/外部改名被采纳 → 广播，dashboard 校验
           // 「实际是否更名」并把待生效徽标切换为新名字。
           this.deps.bus.emit({
             kind: 'session.renamed',
             sessionId: ctx.sessionId,
-            title: reported,
+            title: effectiveTitle,
             at: new Date().toISOString(),
           });
         }

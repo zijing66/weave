@@ -337,6 +337,47 @@ export function isSlashCommand(text: string): boolean {
 
 /** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
 const PANE_ENVS_FILE = 'pane-envs.json';
+const PENDING_ORIGINS_FILE = 'pending-origins.json';
+/** 起点等到被认领的窗口：起完会话没人发消息 / rollout 采集失效就过期释放，不常驻。 */
+const PENDING_ORIGIN_TTL_MS = 15 * 60_000;
+
+/** 起点候选（weave 起会话的 spawn 回执）：sessionId 事后才知道（宿主自己生成），
+ *  先按 (harness, projectId) 排队，ingest 侧认领。 */
+interface PendingOrigin {
+  harness: Harness;
+  projectId: number;
+  env: Record<string, string>;
+  at: string;
+}
+
+/** 读盘上的起点候选：缺失 / 坏文件 / 值形不对一律视同没有；顺手剪过期。 */
+function readPendingOrigins(file: string): PendingOrigin[] {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    const out: PendingOrigin[] = [];
+    for (const item of parsed) {
+      if (typeof item !== 'object' || item === null) continue;
+      const o = item as Partial<PendingOrigin>;
+      if (
+        !isHarness(o.harness) ||
+        typeof o.projectId !== 'number' ||
+        typeof o.env !== 'object' ||
+        o.env === null ||
+        typeof o.at !== 'string'
+      ) {
+        continue;
+      }
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(o.env)) if (typeof v === 'string' && v) env[k] = v;
+      if (Object.keys(env).length === 0) continue;
+      out.push({ harness: o.harness, projectId: o.projectId, env, at: o.at });
+    }
+    return out.filter((o) => Date.now() - Date.parse(o.at) < PENDING_ORIGIN_TTL_MS);
+  } catch {
+    return [];
+  }
+}
 
 /** 读盘上的 pane 定位 env：缺失 / 坏文件 / 值不是字符串表一律视同没有（靠 hook 事件补回来）。 */
 function readPaneEnvs(file: string): Record<string, Record<string, string>> {
@@ -382,6 +423,14 @@ export class MessageDeliverer {
   private readonly revokedPaneEnvs = new Set<string>();
   /** 上次落盘的 pane env（hook 每次事件都上报，值没变就不重写盘）。 */
   private persistedPaneEnvs: string;
+  /**
+   * 起点候选（weave 起会话的 spawn 回执）。paneEnvSource='launch' 的 harness
+   * （codex）hook env 系统性失真，pane 定位改信这里——sessionId 事后才知道
+   * （宿主自己生成），先按 (harness, projectId) 排队，ingest 侧认领（FIFO）。
+   * 落盘同 pane-envs：只解 daemon 自己的重启。
+   */
+  private pendingOrigins: PendingOrigin[];
+  private persistedPendingOrigins: string;
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
   /**
@@ -417,6 +466,8 @@ export class MessageDeliverer {
     const loadedPaneEnvs = readPaneEnvs(join(this.hooksDir, PANE_ENVS_FILE));
     this.paneEnvs = new Map(Object.entries(loadedPaneEnvs));
     this.persistedPaneEnvs = JSON.stringify(loadedPaneEnvs);
+    this.pendingOrigins = readPendingOrigins(join(this.hooksDir, PENDING_ORIGINS_FILE));
+    this.persistedPendingOrigins = JSON.stringify(this.pendingOrigins);
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
     this.gate = new AckGate(
       { awaitingAck: this.awaitingAck, stalled: this.stalled, memory: this.memory },
@@ -641,6 +692,33 @@ export class MessageDeliverer {
     this.persistPaneEnvs();
   }
 
+  /**
+   * 记一条起点候选（weave 起会话的 spawn 回执）。只为 paneEnvSource='launch'
+   * 的 harness 而来（调用侧闸）：'hook' 的 harness env 精确，起点只会引入过期源。
+   */
+  notePendingOrigin(origin: { harness: Harness; projectId: number; env: Record<string, string> }): void {
+    this.pendingOrigins = this.pendingOrigins.filter(
+      (o) => Date.now() - Date.parse(o.at) < PENDING_ORIGIN_TTL_MS,
+    );
+    this.pendingOrigins.push({ ...origin, at: new Date().toISOString() });
+    this.persistPendingOrigins();
+  }
+
+  /**
+   * 认领起点候选：首个 (harness, projectId) 匹配的 FIFO 条目即该会话的 pane 定位
+   * （notePaneEnv 全语义——分组、层② 定位同一份数据）。没有匹配 no-op：手动开的
+   * 会话没有起点，不分组（与现状持平，不猜）。
+   */
+  claimPendingOrigin(sessionId: string, harness: Harness, projectId: number): void {
+    const i = this.pendingOrigins.findIndex(
+      (o) => o.harness === harness && o.projectId === projectId,
+    );
+    if (i < 0) return;
+    const [claimed] = this.pendingOrigins.splice(i, 1);
+    this.notePaneEnv(sessionId, claimed!.env);
+    this.persistPendingOrigins();
+  }
+
   /** 原子写（临时文件 + rename）+ 0600；失败静默（内存态照常能定位，下次再落）。 */
   private persistPaneEnvs(): void {
     const next = JSON.stringify(Object.fromEntries(this.paneEnvs));
@@ -655,6 +733,22 @@ export class MessageDeliverer {
       this.persistedPaneEnvs = next;
     } catch {
       // 这条路径由 hook 事件驱动：落盘失败绝不能冒泡
+    }
+  }
+
+  private persistPendingOrigins(): void {
+    const next = JSON.stringify(this.pendingOrigins);
+    if (next === this.persistedPendingOrigins) return;
+    const file = join(this.hooksDir, PENDING_ORIGINS_FILE);
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      const tmp = `${file}.tmp`;
+      writeFileSync(tmp, `${next}\n`, { encoding: 'utf8', mode: 0o600 });
+      renameSync(tmp, file);
+      chmodSync(file, 0o600);
+      this.persistedPendingOrigins = next;
+    } catch {
+      // 同 persistPaneEnvs：落盘失败绝不能冒泡
     }
   }
 
@@ -1365,6 +1459,10 @@ export class MessageDeliverer {
 
   /** 项目归档级联（内存态按会话→项目归属判定；队列行按会话逐个清）。 */
   forgetProject(projectId: number): number {
+    // 该项目的起点候选一并出队（项目没了，起点没意义）
+    const before = this.pendingOrigins.length;
+    this.pendingOrigins = this.pendingOrigins.filter((o) => o.projectId !== projectId);
+    if (this.pendingOrigins.length !== before) this.persistPendingOrigins();
     let removed = 0;
     for (const [id, msg] of this.memory) {
       const session = this.deps.sessions.getBySessionId(msg.sessionId);

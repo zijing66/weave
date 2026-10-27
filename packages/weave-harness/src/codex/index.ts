@@ -14,6 +14,7 @@ import { CODEX_RESUME } from './resume.js';
 import { CODEX_LOG_SOURCE } from './rollout.js';
 import { CODEX_COMMANDS } from './commands.js';
 import { CODEX_LIVENESS } from './liveness.js';
+import { CODEX_TITLES } from './titles.js';
 
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
@@ -38,6 +39,7 @@ export {
   CODEX_LOCK_GRACE_MS,
   type LockProbe,
 } from './liveness.js';
+export { CODEX_TITLES, codexSessionTitleOf, codexSetSessionTitle } from './titles.js';
 
 /**
  * Codex 接入模块的驱动：批 4a 补 assets 槽、批 5 补 detect、P2 补 pluginState
@@ -49,7 +51,8 @@ export {
  * TOML 读写，见 `config.ts`）、**provision 补安装形态检查**（桌面端/CLI 双面孔
  * 的版本漂移警告，见 `provision.ts`）、**images 补入站图**（rollout 的
  * UserMessage 条目，见 `images.ts`）、**questions 补阻塞式交互**（审批对话框
- * 的 PermissionRequest hook 采集 + 稳定键位作答，见 `questions.ts`）——init
+ * 的 PermissionRequest hook 采集 + 稳定键位作答，见 `questions.ts`）、**titles 补
+ * 会话标题读写**（session_index 读 + thread/name/set 写，见 `titles.ts`）——init
  * 槽不在此（由 cli init/wiring 携带）。
  */
 export const CODEX_DRIVER: HarnessDriver = {
@@ -87,4 +90,5 @@ export const CODEX_DRIVER: HarnessDriver = {
   liveness: CODEX_LIVENESS,
   images: CODEX_IMAGES,
   questions: CODEX_QUESTIONS,
+  titles: CODEX_TITLES,
 };

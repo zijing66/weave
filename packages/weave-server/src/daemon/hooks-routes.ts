@@ -31,6 +31,7 @@ import { combinedLivenessOf } from './liveness.js';
 import {
   captureSurfaces,
   messagingSurfaces,
+  sessionTitleSurfaceFor,
 } from '../surfaces.js';
 import { getDataDir } from '../db/paths.js';
 import { WEAVE_VERSION } from '../version.js';
@@ -204,6 +205,23 @@ export async function handleHooksRoutes(
     }
     try {
       const body = RenameSessionBody.parse(await readJson(req));
+      // 宿主侧名字通道（titles 面，codex = thread/name/set）：写宿主成功才落库，
+      // 不挂 pending——该通道无 hook 回执，挂了永不 confirm、徽标常驻。失败如实报错。
+      const latest = deps.hookEvents?.listBySession(sessionId, 1);
+      const src = latest?.[latest.length - 1]?.source;
+      const titleSurface = isHarness(src) ? sessionTitleSurfaceFor(src) : null;
+      if (titleSurface) {
+        try {
+          await titleSurface.setSessionTitle(sessionId, body.title);
+        } catch (err) {
+          sendJson(res, 502, { error: err instanceof Error ? err.message : 'Host rename failed' });
+          return true;
+        }
+        const session = deps.hookSessions.setTitle(sessionId, body.title);
+        if (session?.projectId != null) deps.hookMirror?.syncProject(session.projectId);
+        sendJson(res, 200, { session });
+        return true;
+      }
       const session = deps.hookSessions.setPendingTitle(sessionId, body.title);
       // 改名挂起/撤销即时进 mirror——不然要等到下一个 hook 事件才同步
       if (session?.projectId != null) deps.hookMirror?.syncProject(session.projectId);

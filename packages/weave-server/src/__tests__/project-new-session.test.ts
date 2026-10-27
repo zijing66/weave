@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CLAUDE_DRIVER, HarnessRegistry, createRuntimeRegistry } from '@weavecode/harness';
@@ -9,6 +9,9 @@ import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from '../daemon/settings.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { SessionRepository } from '../repositories/sessions.js';
+import { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 describe('POST /projects/:id/new-session', () => {
@@ -23,6 +26,7 @@ describe('POST /projects/:id/new-session', () => {
   let opener: ProjectOpener;
   /** 临时项目目录清单（afterAll 统一清）。 */
   const tmpDirs: string[] = [];
+  let hooksTmp: string;
 
   const post = (url: string, body?: unknown): Promise<Response> =>
     fetch(`http://127.0.0.1:${port}${url}`, {
@@ -69,11 +73,20 @@ describe('POST /projects/:id/new-session', () => {
       locale: 'zh-CN',
       hooks: { enabled: true },
     });
+    // 真 deliverer（临时 hooksDir）：起点候选落盘的断言面
+    hooksTmp = await mkdtemp(path.join(tmpdir(), 'weave-new-session-hooks-'));
+    tmpDirs.push(hooksTmp);
     server = createWeaveServer({
       projects,
       port: 0,
       harnesses: createRuntimeRegistry(),
       opener,
+      messageDeliverer: new MessageDeliverer({
+        sessions: new SessionRepository(db),
+        projects,
+        hookEvents: new HookEventRepository(db),
+        hooksDir: hooksTmp,
+      }),
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -134,6 +147,28 @@ describe('POST /projects/:id/new-session', () => {
     const res = await post(`/projects/${id}/new-session`, { harness: 'codex' });
     expect(res.status).toBe(200);
     expect(runCalls.map((c) => c.argv)).toEqual([['codex']]);
+  });
+
+  it('spawn 回执起点：launch 信源的 harness（codex）记起点候选，hook 信源（claude）不记', async () => {
+    const codexId = await makeProject('origin-codex', ['codex']);
+    const claudeId = await makeProject('origin-claude', ['claude']);
+    runCalls = [];
+    opener.runInTerminal = async (dir, argv, terminal) => {
+      runCalls.push({ dir, argv, terminal });
+      return { env: { WEZTERM_PANE: '42', WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-9' } };
+    };
+    await post(`/projects/${codexId}/new-session`, { harness: 'codex' });
+    await post(`/projects/${claudeId}/new-session`, { harness: 'claude' });
+    // 起点候选落盘（paneEnvSource='launch' 才记；claude 的 pending 永无人认领，不记）
+    const origins = JSON.parse(
+      await readFile(path.join(hooksTmp, 'pending-origins.json'), 'utf8'),
+    ) as Array<{ harness: string; projectId: number; env: Record<string, string> }>;
+    expect(origins).toHaveLength(1);
+    expect(origins[0]).toMatchObject({
+      harness: 'codex',
+      projectId: codexId,
+      env: { WEZTERM_PANE: '42' },
+    });
   });
 
   it('已接入但注册表里没有该 harness（无 resume 槽）→ 501，缺省亦然', async () => {

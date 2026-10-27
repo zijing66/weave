@@ -610,6 +610,13 @@ export interface QueuedPromptSpec {
 }
 
 /**
+ * 会话 pane 定位 env 的信源。hook 旁路上报的 env 生在会话自己的进程树里才可信
+ * （claude）；hook 由宿主共享 daemon 代跑的 harness（codex）env 冻结在 daemon
+ * 启动地，系统性失真——改信 weave 起会话时的 spawn 回执起点（`launch`）。
+ */
+export type PaneEnvSource = 'hook' | 'launch';
+
+/**
  * 会话消息能力面（session-orchestration 批 1）：每 harness 一份声明式规格，
  * server 的 MessageDeliverer 按面裁决支持状态与编排控制；claude = 完整参考实现，
  * codex = 显式不支持面（缺席无法渲染「为什么置灰」）。设计见
@@ -631,6 +638,8 @@ export interface MessagingSurface {
   readonly headless: ResumeCommandSpec | null;
   /** 空闲信号事件名（watch 触发源）；空数组 = 不支持空闲订阅。 */
   readonly idleSignals: readonly string[];
+  /** 会话 pane 定位 env 的信源（hook 旁路上报 vs weave 起会话的 spawn 回执起点）。 */
+  readonly paneEnvSource: PaneEnvSource;
   /** 注入信封渲染（缺省 = server 的 weave 统一信封）。 */
   renderEnvelope?(text: string, meta: MessageMeta): string;
   /** 附件随 prompt 的对齐面；null = 该 harness 不收附件（web 据此置灰附件钮）。 */
@@ -1068,6 +1077,20 @@ export interface LivenessSurface {
   alive(ids?: readonly string[]): Promise<Map<string, boolean>>;
 }
 
+/**
+ * 会话标题读写面：宿主侧**用户自定义名**（codex = thread name，落 session_index
+ * 与 sqlite threads.name）的读/写通道。读 = 宿主持久层 diff 采纳（TUI 改名反显
+ * 前端）；写 = 官方 RPC（thread/name/set，前端改名进宿主）。claude 不挂此槽——
+ * 它的名字通道是 hook session_title 双向管线，不经这里。
+ */
+export interface SessionTitleSurface {
+  readonly harness: Harness;
+  /** 宿主侧当前用户自定义名；无名/无文件返回 null（宿主清除名字时置空串 → null）。 */
+  sessionTitleOf(sessionId: string): Promise<string | null>;
+  /** 经官方通道写宿主侧名字；trim 后空串抛错，宿主拒绝/超时/协议不认识抛错。 */
+  setSessionTitle(sessionId: string, name: string): Promise<void>;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -1091,6 +1114,8 @@ export interface HarnessDriver {
   commands?: CommandsSurface;
   provision?: ProvisionSurface;
   liveness?: LivenessSurface;
+  /** 不入 capabilities 清单——无 web 面，消费点仅 server 两处（dispatcher diff 采纳 / PATCH rename RPC）。 */
+  titles?: SessionTitleSurface;
 }
 
 /**

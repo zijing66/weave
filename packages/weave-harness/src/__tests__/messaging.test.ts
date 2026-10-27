@@ -73,6 +73,10 @@ describe('MessagingSurface 契约', () => {
     expect(CLAUDE_MESSAGING.idleSignals).toContain('Stop');
   });
 
+  it('claude：paneEnvSource = hook（hook 生在会话自己 pane，env 精确可信）', () => {
+    expect(CLAUDE_MESSAGING.paneEnvSource).toBe('hook');
+  });
+
   it('claude：headless 规格 promptStdin——args 不含 prompt（命令行无用户内容）', () => {
     expect(CLAUDE_RESUME.promptStdin).toBe(true);
     expect(CLAUDE_RESUME.args('sid-1', '任意 prompt')).toEqual(['--resume', 'sid-1', '-p']);
@@ -172,6 +176,7 @@ describe('MessagingSurface 契约', () => {
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
     expect(CODEX_MESSAGING.idleSignals).toEqual([...HARNESS_LIFECYCLE.codex.close, 'SessionEnd']);
+    expect(CODEX_MESSAGING.paneEnvSource).toBe('launch');
     expect(CODEX_MESSAGING.pathRefs).not.toBeNull();
     expect(CODEX_MESSAGING.pathRefs!.lines).toBe(false);
     expect(CODEX_MESSAGING.pathRefs!.expression({ path: 'src/a.ts', kind: 'file' })).toBe('src/a.ts');

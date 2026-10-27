@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
+import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
 
 export interface WeztermPaneInfo {
@@ -735,14 +736,15 @@ export async function openInWezterm(dir: string): Promise<boolean> {
 /**
  * wezterm run 主通道：同项目 → 分屏复用（复用目标长满 = 没有可复用落点）；
  * 否则 → 最活跃 mux 开新窗口；命令一律 send-text。**一个活 mux 都没有 → 返回
- * false**（调用方回落 legacy `start` 起新 GUI——那是另一套流程，不在这条里猜）。
+ * null**（调用方回落 legacy `start` 起新 GUI——那是另一套流程，不在这条里猜）。
  * 有 mux 之后的任何失败（某步 rc≠0 / 超时）一律 throw：错误经路由 400 转 toast，
- * 绝不静默落到假成功的 legacy start。
+ * 绝不静默落到假成功的 legacy start。成功带回落子的起点 pane（spawn 回执），
+ * paneEnvSource='launch' 的 harness 据此定位会话。
  */
-export async function runInWezterm(dir: string, argv: string[]): Promise<boolean> {
+export async function runInWezterm(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
   const platform = process.platform;
   const { muxes } = await weztermLiveMuxes();
-  if (muxes.length === 0) return false;
+  if (muxes.length === 0) return null;
   // 同项目分屏：任一 mux 里 cwd 对上就在那里切；多 mux 命中取更活跃的那个
   let chosen: WeztermMux | null = null;
   let split: WeztermSplitTarget | null = null;
@@ -755,8 +757,7 @@ export async function runInWezterm(dir: string, argv: string[]): Promise<boolean
   }
   // 无命中 → 在最近活跃（idle 最小）的 mux 开新窗
   chosen ??= muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
-  await weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
-  return true;
+  return weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
 }
 
 /**
@@ -783,7 +784,8 @@ export async function weztermSpawnPane(
 
 /**
  * spawn + send-text 投递：runInWezterm 与定点附加共用的尾部。任何一步失败一律
- * throw（路由 400 → 前端报因）。
+ * throw（路由 400 → 前端报因）。成功回起点 pane 的定位 env（键形出 core 表，
+ * paneEnvSource='launch' 的 harness 据此反查这块屏）。
  */
 export async function weztermSpawnAndSend(
   socket: string,
@@ -792,7 +794,7 @@ export async function weztermSpawnAndSend(
   split: WeztermSplitTarget | null,
   workspace: string | null,
   platform: NodeJS.Platform = process.platform,
-): Promise<void> {
+): Promise<LaunchOrigin> {
   const paneId = await weztermSpawnPane(socket, dir, split, workspace);
   const sendArgs = [
     'cli',
@@ -804,4 +806,6 @@ export async function weztermSpawnAndSend(
   ];
   const sent = await weztermCli(sendArgs, socket);
   if (!sent?.ok) throw new Error(weztermStepError(sendArgs, socket, sent));
+  const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+  return { env: { [paneKey]: paneId, [socketKey]: socket } };
 }

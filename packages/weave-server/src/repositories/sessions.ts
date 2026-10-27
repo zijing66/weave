@@ -317,6 +317,17 @@ export class SessionRepository {
     return res.changes > 0;
   }
 
+  /**
+   * 宿主 RPC 改名落定（titles 面写通道成功后调用）：title 直接落 + 清任何
+   * pending——该通道无 hook 回执，pending 机制不适用（挂了永不 confirm）。
+   */
+  setTitle(sessionId: string, title: string): SessionRow | undefined {
+    this.db
+      .prepare('UPDATE sessions SET title = ?, pending_title = NULL WHERE session_id = ?')
+      .run(title, sessionId);
+    return this.getBySessionId(sessionId);
+  }
+
   remove(sessionId: string): void {
     this.db.prepare('DELETE FROM sessions WHERE session_id = ?').run(sessionId);
   }

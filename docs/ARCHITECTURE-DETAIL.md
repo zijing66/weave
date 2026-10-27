@@ -34,7 +34,7 @@
 - **投递路径与 harness 无关**：脚本按 `<projectDir>/.weave/token` 取令牌、把**原始载荷**append 进 `<cacheDir>/hooks/inbox`，daemon 的 inbox worker 按 `report.source` 挑 `EventSource`（见 §9 的单通道口径）。故接一个新 harness 只需「装声明 + 让脚本跑起来」，服务端一条 SQL 都不用改。
 - **codex 侧四处与 claude 不同**：① 声明落点 `hooks.json`（`HooksFile` 形状 + `deny_unknown_fields`）；② 事件词表少几条、多一个 `Interrupt`（线名，weave 规范名是 `TurnAborted`）；③ **信任闸**（见下）；④ 项目档不装——写 `<repo>/.codex/hooks.json` 还额外要求该文件夹被 codex 标成 trusted，多一道用户自己解不了的坎。
 - **信任闸**：非 builtin / 非 managed 的 handler 必须有 `[hooks.state.'<hooks.json 绝对路径>:<snake_event>:<group>:<handler>']` 的 `trusted_hash`（键形 = `codex-rs/hooks/src/lib.rs:120` 的 `hook_key`，事件段是 `pre_tool_use` 这类下划线名），否则**不执行**。哈希盖住 handler 的声明内容 ⇒ `command` 串必须**恒定**（不带版本号/时间戳），这样「Trust all and continue」点一次即跨 weave 升级长期有效；weave 不自己算这个哈希（那等于替用户签字，且算错的表现是静默不跑）。CLI 只有一次性 `--dangerously-bypass-hook-trust`，config.toml 无持久开关 ⇒ 这一下只能用户在 codex 启动那张 Review hooks 弹窗里点。
-- **hook 的执行环境**：以 `current_dir = 会话 cwd` 跑；非 unix 先 `env_clear()` 再回放整份继承快照（只滤 `NON_INHERITABLE_ENV_VARS`）⇒ `WEZTERM_PANE` 还在，pane 定位（§4.10）不用为 codex 改。codex 不设 `CLAUDE_PROJECT_DIR`，脚本的项目目录回落到载荷里的 `cwd`。**codex 的 hook 由共享 app-server daemon 代跑**（TUI 默认连它，weave 起会话不加 `--no-daemon`、与手动 TUI 同一路径）⇒ hook env = daemon 启动时冻结的 env，`WEZTERM_PANE` 对 codex 系统性失真——pane 定位走「标题+cwd 回落」（§4.10 第 5 步），层①-q `codex queue` 不依赖 pane env 不受伤。
+- **hook 的执行环境**：以 `current_dir = 会话 cwd` 跑；非 unix 先 `env_clear()` 再回放整份继承快照（只滤 `NON_INHERITABLE_ENV_VARS`）⇒ `WEZTERM_PANE` 还在，pane 定位（§4.10）不用为 codex 改。codex 不设 `CLAUDE_PROJECT_DIR`，脚本的项目目录回落到载荷里的 `cwd`。**codex 的 hook 由共享 app-server daemon 代跑**（TUI 默认连它，weave 起会话不加 `--no-daemon`、与手动 TUI 同一路径）⇒ hook env = daemon 启动时冻结的 env，`WEZTERM_PANE` 对 codex 系统性失真——pane 定位的 env 信源闸（§4.10 第 4 步）对 codex 忽略上报、改信 weave 起会话的 spawn 回执起点，层①-q `codex queue` 不依赖 pane env 不受伤。
 - `hook_transcript_path()` 给的就是 rollout 文件路径（内部会 `ensure_rollout_materialized`）——将来 codex 的 `edits` 槽从这里读。
 
 ### logs 槽（拉取式兜底）
@@ -87,6 +87,15 @@
 - **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。
 - **路由**：`GET /sessions/:id/commands` → `{ supported, commands }`（`projectPath` 由 server 查库得出）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
 - **web 侧**：空白后敲 `/` 或 `$` 触发候选面板（两种触发符各筛各的候选），键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd` + 来源/触发符，与文件引用同一套 draft 序列化），提交时还原成 `<sigil><name> args` 原文。气泡侧 `commandTokensOf` 认 token：**前后必须是空白**（与引用表达式同一条判据），官方命令只在句首、skill/插件可插句中；配色 skill/插件红、官方与自定义命令黄。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
+
+### titles 面（会话标题双向 rename）
+
+`SessionTitleSurface` = `sessionTitleOf(sessionId) → Promise<string|null>` + `setSessionTitle(sessionId, name) → Promise<void>`。答「宿主侧**用户自定义名**」的读/写；claude 不挂此槽（它的名字通道是 hook `session_title` 双向管线，见下），codex = `codex/titles.ts`。**不入 `HarnessCapability` 清单**——无 web 面（前端照常 PATCH rename，server 自己分派），消费点仅 server 两处。
+
+- **codex 名字模型（0.164 源码核对）**：两层——`title` = 宿主自动名（首条消息派生，不进 session_index）、`name` = 用户自定义名。TUI rename 与外部客户端同走 app-server RPC **`thread/name/set`**（`{threadId, name}`，camelCase）：服务端 `update_thread_metadata(name)` 落两处——sqlite `threads.name` + `<CODEX_HOME>/session_index.jsonl` append（行形 `{"id","thread_name","updated_at"}`，**append-only 最新胜**，宿主读侧 `find_thread_name_by_id` 从尾扫；清名字 = append 空串）。改完向**发起连接**广播 `thread/name/updated` 通知（TUI agents overview 据此刷新行）——weave 的短连接收不到也不需要。
+- **读方向（TUI → 前端）**：`sessionTitleOf` = 读 `session_index.jsonl` 从尾扫（与宿主同判据），mtime+size 指纹缓存（hook ingest 每条 codex 事件都查一次）。接线 = `HookDispatcher.onIngest`：`extractReportedTitle` 为 null 时查装配注入的 `sessionTitleOf`（装配侧按最新事件 source 挑 titles 面，claude 无此面恒 null），得值走既有 `applyReportedTitle` diff 采纳 → `session.renamed` 帧。**快照不进 pending 的 confirm 条件**——「reported 非 null = 宿主上报过标题」是 hook 上报语义，宿主侧名字快照没有这层含义（进去了会把 pending 误清）。宿主自动名不采（session_index 无条目）。限制（如实）：TUI 改名后无后续 hook 事件的会话，反显延迟到下一次事件。
+- **写方向（前端 → TUI）**：PATCH `/sessions/:id` rename 先查 `sessionTitleSurfaceFor`——有面（codex）→ `setSessionTitle` 走 app-server JSON-RPC（spawn `codex app-server` 短连接，initialize → thread/name/set → 杀树，与 commands 槽 `skills/list` 同一范式，10s 超时；trim 空串拒绝），**成功才 `SessionRepository.setTitle` 落库**——不挂 pending（该通道无 hook 回执，挂了永不 confirm、amber 徽标常驻；`setTitle` 顺带清任何遗留 pending），失败 502 如实报错。无面（claude）→ 既有 `setPendingTitle` + mirror 下发管线不动。限制（如实）：TUI 正开着的标题不即时变（通知只发发起连接），TUI 重开会话/列表后可见。
+- **server 装配**：`surfaces.ts` 的 `sessionTitleSurfaceFor(harness)`；dispatcher 的 `sessionTitleOf` 注入在 start.ts / dev-entry.ts 两处（照 classify 引用占位同款闭包）。
 
 ### liveness 槽（会话存活判定）
 
@@ -299,10 +308,11 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 1. hook 子进程与目标会话同 pane、天然继承 `WEZTERM_PANE`/`WEZTERM_UNIX_SOCKET` 或 `CLAUDE_PID`（键表唯一出处 = core 的 `TERMINAL_LOCATOR_ENV`，内联进生成的 hook 脚本、同 `TITLE_EFFECTIVE_EVENTS` 先例）。
 2. **键表按「内到外」排，最内层的先命中**——`wt` 必须排在 `wezterm` 前：从 wezterm shell 里起的 wt pane 会同时带着外层 `WEZTERM_*`，只有 pid 指得住真正在跑的那个会话。键表增改后存量项目须重跑 `weave init` 才有新键，采集脚本是 init 生成物、不随包升级。
 3. 随每次 hook 事件旁路上报（与 inbox 凭据同口径：**逐行**字段、只放内存、不落库——inbox shard 按**项目 token** 分片，同一 claim 里常混着同项目多个会话 ⇒ 会话级事实一律逐行取，按组聚合会把 A 的 socket 记到 B 头上、消息直投进别的会话）。
-4. `MessageDeliverer.notePaneEnv` 存本会话的 env → `TerminalBackend.locatePane` 用「pane 号 + 同实例 socket」反查（`weztermPaneFromEnv` 纯函数，枚举到的活 mux 里比对；`WEZTERM_*` 键缺或实例对不上即 null；wt 走 `wtPanePidFromEnv` 纯函数，pid 须仍存活）→ 命中即用、**不做任何猜测**。
-5. 未上报或定位失效（pane 已关 / 换 mux / 换窗口）才回落标题剥 ✳ spinner 前缀 + cwd 匹配、歧义拒绝不打。
+4. **信源闸（能力面 `MessagingSurface.paneEnvSource`）**：`'hook'`（claude，缺省）= 旁路上报可信，照采；`'launch'`（codex：hook 由共享 app-server daemon 代跑、env 冻结在 daemon 启动地，系统性失真）= **忽略上报**，改信 weave 起会话的 spawn 回执起点——`TerminalBackend.run/runAt` 返回 `LaunchOrigin`（env 形状同上报、键形归后端出 core 表；候选路径与 wt/osascript 无回执 = null 不产出）。sessionId 事后才知道（宿主自己生成）：new-session 走**起点候选队列**（`MessageDeliverer.notePendingOrigin` → `pending-origins.json`，FIFO + TTL 15min，ingest 侧 `claimPendingOrigin` 按 (harness, projectId) 认领）；open-terminal / 编排判死拉起（sessionId 已知）直接 `notePaneEnv`。手动开的会话没有起点，不分组（不猜）。
+5. `MessageDeliverer.notePaneEnv` 存本会话的 env → `TerminalBackend.locatePane` 用「pane 号 + 同实例 socket」反查（`weztermPaneFromEnv` 纯函数，枚举到的活 mux 里比对；`WEZTERM_*` 键缺或实例对不上即 null；wt 走 `wtPanePidFromEnv` 纯函数，pid 须仍存活）→ 命中即用、**不做任何猜测**。
+6. 未上报或定位失效（pane 已关 / 换 mux / 换窗口）才回落标题剥 ✳ spinner 前缀 + cwd 匹配、歧义拒绝不打。
 
-因此**手动调整 pane 位置天然被跟上**：会话下一次 hook 事件就带着新 pane 重报，旧值随 `forgetSession`/`forgetProject` 清；代价是「上报滞后于移动」窗口期内可能落到旧 pane——但 locator 有存在性校验，失效宁可 409 也不误注入。
+因此**手动调整 pane 位置天然被跟上**（'hook' 信源）：会话下一次 hook 事件就带着新 pane 重报，旧值随 `forgetSession`/`forgetProject` 清；'launch' 信源（codex）的起点是 spawn 时刻快照、不随移动自愈——失效时 locator 存在性校验回 null，回落标题+cwd（宁可 409 也不误注入），resume 到新 pane 则由下一次 open-terminal 的起点覆盖。
 
 ### 4.11 inject / headless / auto
 

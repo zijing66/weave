@@ -390,6 +390,44 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(kicks).toEqual([1, 1]);
   });
 
+  it('pane env 信源闸：launch 的 harness 忽略上报改认领起点；hook（缺省）照采', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const noted: Array<[string, Record<string, string>]> = [];
+    const claimed: Array<[string, string, number]> = [];
+    const deps = {
+      projects,
+      hooksDir,
+      bus,
+      paneEnvSource: (h: string) => (h === 'codex' ? 'launch' : 'hook') as 'launch' | 'hook',
+      messagePipe: {
+        hasQueued: () => false,
+        flushSession: async () => {},
+        notePaneEnv: (sessionId: string, env: Record<string, string>) => noted.push([sessionId, env]),
+        claimPendingOrigin: (sessionId: string, harness: string, projectId: number) =>
+          claimed.push([sessionId, harness, projectId]),
+      },
+    };
+
+    const record = (source: 'claude' | 'codex', sessionId: string, terminalEnv: Record<string, string>) => {
+      const eventType = 'Stop';
+      const payload = JSON.stringify({ eventType, raw: {} });
+      return {
+        eventId: hookEvents.insert({ projectId: project.id, source, eventType, sessionId, payload }),
+        projectId: project.id,
+        input: { projectId: project.id, source, eventType, sessionId, payload },
+        terminalEnv,
+      };
+    };
+
+    handleIngestedRecords(deps, [record('claude', 's-claude', { WEZTERM_PANE: '3' })]);
+    handleIngestedRecords(deps, [record('codex', 's-codex', { WEZTERM_PANE: '8' })]);
+    // claude（hook 信源）照采；codex（launch 信源）的死 env 不入库、改认领起点
+    expect(noted).toEqual([['s-claude', { WEZTERM_PANE: '3' }]]);
+    expect(claimed).toEqual([['s-codex', 'codex', project.id]]);
+  });
+
   it('PostModelSwitch 的 to_model 交给会话探测（切完标签立刻变，不等下一轮）', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

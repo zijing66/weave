@@ -147,6 +147,10 @@ export function startDaemon(): void {
     plugins: pluginHostHolder,
     pluginStates: new PluginStateRepository(db),
     classify: (input) => (classifyRef.run ? classifyRef.run(input) : Promise.resolve(null)),
+    sessionTitleOf: async (sessionId) => {
+      const src = hookEvents.listBySession(sessionId, 1).at(-1)?.source;
+      return isHarness(src) ? (harnesses.get(src)?.titles?.sessionTitleOf(sessionId) ?? null) : null;
+    },
   });
   // 内置仓落地必须先于装载：内置规则包装载根与工具包扫描根都指向 <dataDir>/market/weave。
   void ensureBuiltinMarket({ libraries })

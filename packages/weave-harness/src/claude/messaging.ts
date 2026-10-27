@@ -141,6 +141,7 @@ export const CLAUDE_MESSAGING: MessagingSurface = {
   inject: { rideEvents: INJECTABLE_EVENTS.claude },
   headless: CLAUDE_RESUME,
   idleSignals: [...HARNESS_LIFECYCLE.claude.close, 'SessionEnd'],
+  paneEnvSource: 'hook',
   attach: CLAUDE_ATTACH,
   pathRefs: CLAUDE_PATH_REF,
   sideQuestion: CLAUDE_SIDE_QUESTION,

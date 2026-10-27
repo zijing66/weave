@@ -172,6 +172,10 @@ async function main(): Promise<void> {
     plugins: hookPlugins,
     pluginStates: new PluginStateRepository(db),
     classify: (input) => (classifyRef.run ? classifyRef.run(input) : Promise.resolve(null)),
+    sessionTitleOf: async (sessionId) => {
+      const src = hookEvents.listBySession(sessionId, 1).at(-1)?.source;
+      return isHarness(src) ? (harnesses.get(src)?.titles?.sessionTitleOf(sessionId) ?? null) : null;
+    },
   });
   // session-orchestration 批 1（与 start.ts 同装配）：两域共享无头执行核。
   const headlessRunner = new HeadlessRunner();

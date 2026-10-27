@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
@@ -2703,6 +2703,52 @@ describe('MessageDeliverer 裁决表', () => {
     expect(fake.calls).toHaveLength(2);
     expect(fake.children[1]!.stdin.writes[0]).toContain('[one-way]');
     expect(readPromptbox(hooksDir, TOKEN)).toHaveLength(0);
+  });
+
+  describe('起点候选（paneEnvSource=launch 的 harness：spawn 回执 → 会话）', () => {
+    it('note → claim 命中：FIFO 最早匹配条目落成 pane 定位，其余留存', () => {
+      const deliverer = new MessageDeliverer(makeDeps());
+      deliverer.notePendingOrigin({ harness: 'codex', projectId, env: { WEZTERM_PANE: '1' } });
+      deliverer.notePendingOrigin({ harness: 'codex', projectId, env: { WEZTERM_PANE: '2' } });
+      deliverer.claimPendingOrigin(SESSION_ID, 'codex', projectId);
+      expect(deliverer.diagnose(SESSION_ID).paneEnvReported).toBe(true);
+      // 第二条还在队里：换个 sessionId 再认领拿到它（FIFO）
+      deliverer.claimPendingOrigin('other-session', 'codex', projectId);
+      expect(deliverer.diagnose('other-session').paneEnvReported).toBe(true);
+    });
+
+    it('不匹配 no-op：条目留存、会话不误挂', () => {
+      const deliverer = new MessageDeliverer(makeDeps());
+      deliverer.notePendingOrigin({ harness: 'codex', projectId, env: { WEZTERM_PANE: '1' } });
+      deliverer.claimPendingOrigin(SESSION_ID, 'claude', projectId);
+      expect(deliverer.diagnose(SESSION_ID).paneEnvReported).toBe(false);
+      deliverer.claimPendingOrigin(SESSION_ID, 'codex', projectId + 999);
+      expect(deliverer.diagnose(SESSION_ID).paneEnvReported).toBe(false);
+      // 原条目仍可被正确认领
+      deliverer.claimPendingOrigin(SESSION_ID, 'codex', projectId);
+      expect(deliverer.diagnose(SESSION_ID).paneEnvReported).toBe(true);
+    });
+
+    it('daemon 重启：未认领的候选从盘上恢复；过期条目被剪', async () => {
+      const deliverer = new MessageDeliverer(makeDeps());
+      deliverer.notePendingOrigin({ harness: 'codex', projectId, env: { WEZTERM_PANE: '1' } });
+      // 手工把盘上唯一条目改成过期时刻，再起一代实例
+      const file = join(hooksDir, 'pending-origins.json');
+      const stale = JSON.parse(readFileSync(file, 'utf8')) as Array<{ at: string }>;
+      stale[0]!.at = new Date(Date.now() - 16 * 60_000).toISOString();
+      writeFileSync(file, JSON.stringify(stale));
+      const second = new MessageDeliverer(makeDeps());
+      second.claimPendingOrigin(SESSION_ID, 'codex', projectId);
+      expect(second.diagnose(SESSION_ID).paneEnvReported).toBe(false);
+    });
+
+    it('项目归档级联：该项目的候选一并出队', () => {
+      const deliverer = new MessageDeliverer(makeDeps());
+      deliverer.notePendingOrigin({ harness: 'codex', projectId, env: { WEZTERM_PANE: '1' } });
+      deliverer.forgetProject(projectId);
+      deliverer.claimPendingOrigin(SESSION_ID, 'codex', projectId);
+      expect(deliverer.diagnose(SESSION_ID).paneEnvReported).toBe(false);
+    });
   });
 
   describe('dismiss（删掉在途视图里的一行）', () => {

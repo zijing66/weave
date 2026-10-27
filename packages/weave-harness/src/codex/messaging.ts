@@ -138,6 +138,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   inject: null,
   headless: null,
   idleSignals: [...HARNESS_LIFECYCLE.codex.close, 'SessionEnd'],
+  paneEnvSource: 'launch',
   attach: CODEX_ATTACH,
   pathRefs: CODEX_PATH_REF,
   sideQuestion: null,

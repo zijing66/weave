@@ -398,6 +398,74 @@ describe('HookDispatcher', () => {
     expect(messages).toHaveLength(0);
   });
 
+  it('titles 读方向：sessionTitleOf diff 采纳（TUI 改名反显）；pending 存在时只认同值', async () => {
+    const sessions = new SessionRepository(db);
+    sessions.touch('s1', project.id);
+    let hostName: string | null = null;
+    let titleCalls = 0;
+    const dispatcher2 = new HookDispatcher({
+      registry,
+      dispatches,
+      bus,
+      projects,
+      sessions,
+      sessionTitleOf: (sessionId) => {
+        expect(sessionId).toBe('s1');
+        titleCalls += 1;
+        return Promise.resolve(hostName);
+      },
+    });
+
+    // 宿主侧无名 → null → 无动作
+    await dispatcher2.onIngest(ctx());
+    expect(sessions.getBySessionId('s1')?.title).toBeNull();
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(0);
+
+    // TUI 改名 → 下一次事件 diff 采纳 + 广播
+    hostName = 'codex测试';
+    await dispatcher2.onIngest(ctx());
+    expect(sessions.getBySessionId('s1')?.title).toBe('codex测试');
+    const renamed = messages.filter((m) => m.kind === 'session.renamed');
+    expect(renamed).toHaveLength(1);
+    expect(renamed[0]).toMatchObject({ sessionId: 's1', title: 'codex测试' });
+
+    // 同名幂等：不再广播
+    await dispatcher2.onIngest(ctx());
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1);
+
+    // pending 存在（dashboard 挂起）→ 宿主名不同值被忽略（pending 更晚创建）
+    sessions.setPendingTitle('s1', 'dashboard改名');
+    hostName = '宿主名';
+    await dispatcher2.onIngest(ctx());
+    expect(sessions.getBySessionId('s1')).toMatchObject({
+      title: 'dashboard改名',
+      pendingTitle: 'dashboard改名',
+    });
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1);
+
+    // 宿主名与 pending 同值 → 落定清 pending；title 无实际变化 → 不广播
+    hostName = 'dashboard改名';
+    await dispatcher2.onIngest(ctx());
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: 'dashboard改名', pendingTitle: null });
+    expect(messages.filter((m) => m.kind === 'session.renamed')).toHaveLength(1);
+    expect(titleCalls).toBe(5);
+  });
+
+  it('titles 读方向：注入面抛错不拦 ingest', async () => {
+    const sessions = new SessionRepository(db);
+    sessions.touch('s1', project.id);
+    const dispatcher2 = new HookDispatcher({
+      registry,
+      dispatches,
+      bus,
+      projects,
+      sessions,
+      sessionTitleOf: () => Promise.reject(new Error('read failed')),
+    });
+    await expect(dispatcher2.onIngest(ctx())).resolves.toEqual({});
+    expect(sessions.getBySessionId('s1')?.title).toBeNull();
+  });
+
   describe('plugin 处理器分支', () => {
     /** 构造一个带 plugin host 的 dispatcher（复用既有 db/registry/bus）。 */
     const makeDispatcher = (handlers: Record<string, (c: unknown) => unknown>, config: Record<string, unknown> = {}): HookDispatcher =>

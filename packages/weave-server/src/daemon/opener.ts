@@ -173,6 +173,15 @@ export function parsePromptPaneId(id: string): { muxKey: string; paneId: number 
   return { muxKey: m[1]!, paneId: Number(m[2]) };
 }
 
+/**
+ * 起会话落子的起点定位（spawn 回执）：env 形状与 hook 旁路上报同构（键形归
+ * 后端、出 core 表），paneEnvSource='launch' 的 harness 据此关联会话。拿不到
+ * 回执的后端（wt 等 stdio ignore 路径）不产出——那些会话不分组，不猜。
+ */
+export interface LaunchOrigin {
+  readonly env: Record<string, string>;
+}
+
 /** 终端后端基类。模板方法定义骨架，子类只填候选与真正不同的流程。 */
 export abstract class TerminalBackend {
   protected constructor(
@@ -198,13 +207,15 @@ export abstract class TerminalBackend {
   /**
    * 开一个终端并把 `argv` 送进去（模板方法）。缺省把命令并进候选参数；wezterm
    * 覆写为走 mux——唯一流程真正不同的 preset（legacy `start -- PROG` 绕过
-   * default_prog，且 mux 在时会挂死出无窗僵尸而 trySpawn 假成功）。
+   * default_prog，且 mux 在时会挂死出无窗僵尸而 trySpawn 假成功）。返回落子的
+   * 起点（spawn 回执）；候选路径无回执 = null。
    */
-  async run(dir: string, argv: string[]): Promise<void> {
+  async run(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
     await this.spawnFirst(
       this.candidates(dir, argv),
       `Terminal preset "${this.preset}" cannot run a command here — pick another preset in settings`,
     );
+    return null;
   }
 
   /** 每目录已开终端数（单位 = 本后端的可见屏幕）；不支持的 preset 走这里（空表 = 角标不显示，不谎报）。 */
@@ -218,7 +229,7 @@ export abstract class TerminalBackend {
   }
 
   /** 定点附加（多终端弹窗选定的目标）；无通道的 preset 明确拒绝，不静默忽略。 */
-  async runAt(_dir: string, _argv: string[], _targetId: string): Promise<void> {
+  async runAt(_dir: string, _argv: string[], _targetId: string): Promise<LaunchOrigin | null> {
     throw new Error(
       `Terminal preset "${this.preset}" cannot attach to a chosen pane — pick wezterm, wt or Terminal.app in settings`,
     );
@@ -446,8 +457,9 @@ class GhosttyBackend extends TerminalBackend {
     return this.openViaIpcThenStandalone(dir, []);
   }
 
-  override run(dir: string, argv: string[]): Promise<void> {
-    return this.openViaIpcThenStandalone(dir, argv);
+  override async run(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
+    await this.openViaIpcThenStandalone(dir, argv);
+    return null;
   }
 }
 
@@ -502,7 +514,7 @@ class WtBackend extends TerminalBackend {
   }
 
   /** 定点附加：命名窗口里分屏跑命令；窗口已关则 wt 重建（原生语义，落点自愈）。 */
-  override async runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+  override async runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {
     if (this.platform !== 'win32') {
       throw new Error(`Terminal preset "${this.preset}" is unavailable on this platform`);
     }
@@ -523,6 +535,7 @@ class WtBackend extends TerminalBackend {
       ],
       `Terminal preset "${this.preset}" is unavailable on this platform`,
     );
+    return null;
   }
 
   /**
@@ -609,8 +622,10 @@ class WeztermBackend extends TerminalBackend {
    * 「wezterm mux undiscoverable — is wezterm running?」，用户点「打开终端」得到的
    * 却是一条报错；「`start` 在 mux 在时会挂死出无窗僵尸」那条只对活实例成立。
    */
-  override async run(dir: string, argv: string[]): Promise<void> {
-    if (!(await runInWezterm(dir, argv))) await super.run(dir, argv);
+  override async run(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
+    const origin = await runInWezterm(dir, argv);
+    if (origin) return origin;
+    return super.run(dir, argv);
   }
 
   override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
@@ -634,7 +649,7 @@ class WeztermBackend extends TerminalBackend {
     return listAttachTargets(dir, this.platform);
   }
 
-  override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+  override runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {
     return runInWeztermAt(dir, argv, targetId, this.platform);
   }
 
@@ -831,7 +846,7 @@ class AutoBackend extends TerminalBackend {
     return this.attachBackend().listTargets(dir);
   }
 
-  override runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+  override runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {
     return this.attachBackend().runAt(dir, argv, targetId);
   }
 
@@ -1007,17 +1022,18 @@ export function promptTerminalChannel(
 
 
 /** Open a terminal at `dir` that runs `argv` (e.g. `claude --resume <id>`).
- * Same detached semantics as `openInTerminal` — the process outlives the daemon. */
+ * Same detached semantics as `openInTerminal` — the process outlives the daemon.
+ * Returns the launch origin (spawn receipt) when the backend can get one. */
 export async function runInTerminal(
   dir: string,
   argv: string[],
   terminal: TerminalSettings,
-): Promise<void> {
+): Promise<LaunchOrigin | null> {
   // wezterm 分流在 WeztermBackend 覆写的 run 里，不在这里 if preset：有活 mux
   // 走 mux（legacy `start -- PROG` 绕过 default_prog，且 mux 在时 `start` 只会
   // 挂死出一个无窗僵尸 + trySpawn 假成功）；一个活 mux 都没有 → 回落 `start`
   // 起新 GUI（用户此刻还没开 wezterm 的常态），回落里起不来才抛。
-  await terminalBackendFor(terminal).run(dir, argv);
+  return terminalBackendFor(terminal).run(dir, argv);
 }
 
 /**
@@ -1031,7 +1047,7 @@ export async function runInWeztermAt(
   argv: string[],
   targetId: string,
   platform: NodeJS.Platform = process.platform,
-): Promise<void> {
+): Promise<LaunchOrigin | null> {
   const parsed = parseAttachTargetId(targetId);
   if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
   const { muxes } = await weztermLiveMuxes();
@@ -1046,7 +1062,7 @@ export async function runInWeztermAt(
       `terminal is full (${MAX_PANES_PER_SCREEN} panes) — pick another terminal or open a new one`,
     );
   }
-  await weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace, platform);
+  return weztermSpawnAndSend(mux.socket, dir, argv, planWeztermGrid(tabPanes), mux.workspace, platform);
 }
 
 export async function countOpenTerminals(
@@ -1216,7 +1232,7 @@ export async function openInTerminal(dir: string, terminal: TerminalSettings): P
 export interface ProjectOpener {
   openExplorer(dir: string): Promise<void>;
   openTerminal(dir: string, terminal: TerminalSettings): Promise<void>;
-  runInTerminal(dir: string, argv: string[], terminal: TerminalSettings): Promise<void>;
+  runInTerminal(dir: string, argv: string[], terminal: TerminalSettings): Promise<LaunchOrigin | null>;
   /** 已打开终端窗口计数（可选：不实现的 spy 由路由回落到默认实现）。 */
   countTerminals?(dirs: string[], terminal: TerminalSettings): Promise<Map<string, number>>;
   /** 关掉本目录的已开终端（可选）：只关清单里的 pane，回关掉几个。 */
@@ -1235,7 +1251,7 @@ export interface ProjectOpener {
     argv: string[],
     targetId: string,
     terminal: TerminalSettings,
-  ): Promise<void>;
+  ): Promise<LaunchOrigin | null>;
   focusTerminal?(dir: string, targetId: string, terminal: TerminalSettings): Promise<void>;
 }
 /** wezterm：run 走 mux 通道；窗口/pane 反查走 `cli list`；prompt 文本走 send-text。 */
@@ -1429,16 +1445,17 @@ class TerminalAppBackend extends TerminalBackend {
   }
 
   /** 同项目已有 Terminal.app 窗口 → 在那个窗口开新 tab；窗口中途没了 → 落回新窗。 */
-  override async run(dir: string, argv: string[]): Promise<void> {
+  override async run(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
     if (this.platform === 'darwin') {
       const surfaces = await listTerminalAppSurfaces(this.platform);
       const win = pickTerminalAppWindow(surfaces, dir, this.platform);
-      if (win && (await doScriptInTerminalWindow(dir, argv, win.windowId))) return;
+      if (win && (await doScriptInTerminalWindow(dir, argv, win.windowId))) return null;
     }
     await this.spawnFirst(
       this.candidates(dir, argv),
       `Terminal preset "${this.preset}" is unavailable on this platform`,
     );
+    return null;
   }
 
   override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
@@ -1459,13 +1476,14 @@ class TerminalAppBackend extends TerminalBackend {
     return listTerminalAppTargets(dir, this.platform);
   }
 
-  /** 定点附加：落点是所选 tab 的窗口（do script 在该窗口开新 tab）。 */
-  override async runAt(dir: string, argv: string[], targetId: string): Promise<void> {
+  /** 定点附加：落点是所选 tab 的窗口（do script 在该窗口开新 tab）；osascript 无回执。 */
+  override async runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {
     const parsed = parseTerminalAppTargetId(targetId);
     if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
     if (!(await doScriptInTerminalWindow(dir, argv, parsed.windowId))) {
       throw new Error('Terminal window is gone — pick a terminal again');
     }
+    return null;
   }
 }
 

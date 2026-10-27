@@ -1,8 +1,9 @@
 import { stat } from 'node:fs/promises';
-import { isHarness } from '@weavecode/core';
+import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
+import { messagingSurfaceFor } from '../surfaces.js';
 
 /**
  * 转录状态的判定（列表与打开门禁共用）：探测只答「那文件里有没有内容」，而没内容
@@ -18,12 +19,32 @@ export function transcriptState(present: boolean | null, hasRun: boolean | undef
 
 export type SessionOpenDeps = Pick<
   WeaveServerDeps,
-  'hookSessions' | 'hookEvents' | 'projects' | 'harnesses' | 'sessionProbe' | 'opener' | 'terminalRefresher'
+  | 'hookSessions'
+  | 'hookEvents'
+  | 'projects'
+  | 'harnesses'
+  | 'sessionProbe'
+  | 'opener'
+  | 'terminalRefresher'
+  | 'messageDeliverer'
 >;
 
 export type SessionOpenResult =
   | { ok: true; sessionId: string; command: string; cwd: string; target?: string }
   | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
+
+/** resume 的 sessionId 已知：起点直接落 pane 定位，不走 pending 队列。
+ *  只为 paneEnvSource='launch' 的 harness 生效（'hook' 的 env 精确且自愈，
+ *  起点只会引入过期源）。 */
+function noteLaunchOrigin(
+  deps: SessionOpenDeps,
+  harness: Harness,
+  sessionId: string,
+  origin: { env: Record<string, string> } | null,
+): void {
+  if (!origin || messagingSurfaceFor(harness).paneEnvSource !== 'launch') return;
+  deps.messageDeliverer?.notePaneEnv(sessionId, origin.env);
+}
 
 /**
  * 在默认终端打开会话（spawn 独立终端跑 harness 交互式 resume，如 `claude --resume <id>`）。
@@ -74,9 +95,11 @@ export async function openSessionTerminal(
       }
       const runAt = opener.runInTerminalAt;
       if (!runAt) throw new Error('Targeted attach is unavailable');
-      await runAt(project.path, argv, target, settings.terminal);
+      const origin = await runAt(project.path, argv, target, settings.terminal);
+      noteLaunchOrigin(deps, src, sessionId, origin);
     } else {
-      await opener.runInTerminal(project.path, argv, settings.terminal);
+      const origin = await opener.runInTerminal(project.path, argv, settings.terminal);
+      noteLaunchOrigin(deps, src, sessionId, origin);
     }
     // 角标对账：新 pane 的 cwd 上报有一拍延迟（立即探看不到增量），600ms 后补一枪。
     setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);

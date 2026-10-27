@@ -12,7 +12,8 @@ import {
   type LogRecord,
   type LogSource,
 } from '@weavecode/harness';
-import { HARNESS_LIFECYCLE, isHarness } from '@weavecode/core';
+import { HARNESS_LIFECYCLE, isHarness, type Harness } from '@weavecode/core';
+import type { PaneEnvSource } from '@weavecode/harness';
 import { getLogsDir } from '../db/paths.js';
 import { projectHarnessIds } from '../daemon/project-harnesses.js';
 import { openDatabase } from '../db/db.js';
@@ -417,6 +418,8 @@ export interface IngestedHandlerDeps {
     noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
     /** hook 旁路上报的会话 pane 定位 env（内存态；层② 精确定位用）。 */
     notePaneEnv?(sessionId: string, env: Record<string, string>): void;
+    /** 认领起点候选（weave 起会话的 spawn 回执；paneEnvSource='launch' 的 harness 用）。 */
+    claimPendingOrigin?(sessionId: string, harness: Harness, projectId: number): void;
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。
      *  `eventId` 随回执记下（对话面按它把投递行挂到这条事件的气泡上）。 */
     onSessionPrompt?(sessionId: string, prompt: string, eventId?: number): string[];
@@ -428,6 +431,12 @@ export interface IngestedHandlerDeps {
   };
   /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）；缺省跳过。 */
   terminalTopologyKick?: () => void;
+  /**
+   * pane 定位 env 的信源（能力面声明）：'hook' 采旁路上报（缺省 = 现行为）；
+   * 'launch' 忽略上报（hook 由宿主共享 daemon 代跑、env 冻结失真），改认领
+   * weave 起会话的起点候选。
+   */
+  paneEnvSource?: (harness: Harness) => PaneEnvSource;
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
@@ -519,7 +528,17 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // 既不落转录也没有专门事件，只读转录会一直停在切之前那个模式上。
       const permissionMode = permissionModeOf(payload?.raw);
       if (permissionMode) deps.sessionProbe?.noteMode?.(record.input.sessionId, permissionMode);
-      if (record.terminalEnv) deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
+      // pane 定位 env：信源闸（能力面声明）。'hook'（缺省）= 旁路上报可信，照采；
+      // 'launch'（codex：hook 由共享 daemon 代跑、env 冻结在 daemon 启动地）=
+      // 上报不可信，改认领 weave 起会话的起点候选（没有候选 = 手动开的会话，不分组）。
+      if (record.terminalEnv || isHarness(record.input.source)) {
+        const src = record.input.source;
+        if (isHarness(src) && deps.paneEnvSource?.(src) === 'launch') {
+          deps.messagePipe?.claimPendingOrigin?.(record.input.sessionId, src, record.projectId);
+        } else if (record.terminalEnv) {
+          deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
+        }
+      }
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。
       // 纯图发送的 prompt 是空的也要进（空串即认领信号），回执命中把随附图挂到本条事件。
       if (record.input.eventType === 'UserPromptSubmit') {

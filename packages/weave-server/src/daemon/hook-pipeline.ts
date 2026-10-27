@@ -8,6 +8,7 @@ import type { OrchestrationEngine } from '../hooks/orchestration-engine.js';
 import { MirrorWriter, hookShardId, hooksRoot, mirrorPathOf, outboxPathOf } from '../hooks/mirror.js';
 import { promptboxPathOf } from '../hooks/promptbox.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { messagingSurfaceFor } from '../surfaces.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
 import type { SideQuestionEvent } from '../hooks/side-questions.js';
 import {
@@ -177,6 +178,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
         terminalTopologyKick: deps.terminalTopologyKick,
+        paneEnvSource: (h) => messagingSurfaceFor(h).paneEnvSource,
       },
       records,
     );

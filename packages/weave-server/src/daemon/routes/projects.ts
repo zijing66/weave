@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
+import { messagingSurfaceFor } from '../../surfaces.js';
 import { readBody, sendJson } from '../http.js';
 import { readDaemonSettings } from '../settings.js';
 import {
@@ -191,7 +192,18 @@ export async function handleProjectRoutes(
       if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
       const settings = await readDaemonSettings();
       const argv = [spec.bin, ...(spec.launchArgs ?? [])];
-      await opener.runInTerminal(project.path, argv, settings.terminal);
+      const origin = await opener.runInTerminal(project.path, argv, settings.terminal);
+      // 起点候选：sessionId 事后才知道（宿主自己生成）——spawn 回执先按
+      // (harness, projectId) 排队，ingest 侧（hook 事件 / rollout session_meta）
+      // 认领。只为 paneEnvSource='launch' 的 harness 记（'hook' 的 env 精确，
+      // 起点只会引入过期源）。
+      if (origin && picked && messagingSurfaceFor(picked.id).paneEnvSource === 'launch') {
+        deps.messageDeliverer?.notePendingOrigin({
+          harness: picked.id,
+          projectId: project.id,
+          env: origin.env,
+        });
+      }
       // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
       sendJson(res, 200, { ok: true, command: argv.join(' '), cwd: project.path });

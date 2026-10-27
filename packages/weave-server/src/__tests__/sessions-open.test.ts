@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRuntimeRegistry } from '@weavecode/harness';
@@ -13,6 +13,7 @@ import { SessionRepository } from '../repositories/sessions.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from '../daemon/settings.js';
 import { SessionProbe } from '../daemon/session-probe.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 const SESSION = 'sess-open-1';
@@ -30,6 +31,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
     atCalls: Array<{ dir: string; argv: string[]; target: string }>;
   };
+  let hooksTmp: string;
 
   const post = (url: string): Promise<Response> =>
     fetch(`http://127.0.0.1:${port}${url}`, {
@@ -88,6 +90,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     writeFileSync(empty, '');
     sessionProbe.noteTranscript(SESSION_NEW, empty);
     setDaemonSettingsDb(db);
+    hooksTmp = await mkdtemp(path.join(tmpdir(), 'weave-sess-open-hooks-'));
     server = createWeaveServer({
       projects,
       port: 0,
@@ -96,6 +99,12 @@ describe('POST /sessions/:id/open-terminal', () => {
       harnesses: createRuntimeRegistry(),
       opener,
       sessionProbe,
+      messageDeliverer: new MessageDeliverer({
+        sessions,
+        projects,
+        hookEvents,
+        hooksDir: hooksTmp,
+      }),
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -106,6 +115,7 @@ describe('POST /sessions/:id/open-terminal', () => {
     db.close();
     setDaemonSettingsDb(null);
     await rm(projectPath, { recursive: true, force: true });
+    if (hooksTmp) await rm(hooksTmp, { recursive: true, force: true });
   });
 
   it('opens a claude session with the interactive resume argv in the project dir', async () => {
@@ -167,6 +177,21 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(((await res.json()) as { command: string }).command).toBe('codex resume sess-codex');
     expect(opener.runCalls).toHaveLength(before + 1);
     expect(opener.runCalls.at(-1)!.argv).toEqual(['codex', 'resume', 'sess-codex']);
+  });
+
+  it('spawn 回执起点：launch 信源（codex）直接落 pane 定位，不走 pending', async () => {
+    opener.runInTerminal = async (dir, argv, terminal) => {
+      opener.runCalls.push({ dir, argv, terminal });
+      return { env: { WEZTERM_PANE: '29', WEZTERM_UNIX_SOCKET: 'D:/sock/gui-sock-7' } };
+    };
+    const res = await post('/sessions/sess-codex/open-terminal');
+    expect(res.status).toBe(200);
+    // sessionId 已知 → 直接 notePaneEnv（pane-envs.json 有行），不产生 pending-origins
+    const paneEnvs = JSON.parse(
+      await readFile(path.join(hooksTmp, 'pane-envs.json'), 'utf8'),
+    ) as Record<string, Record<string, string>>;
+    expect(paneEnvs['sess-codex']).toMatchObject({ WEZTERM_PANE: '29' });
+    await expect(readFile(path.join(hooksTmp, 'pending-origins.json'), 'utf8')).rejects.toThrow();
   });
 
   it('转录已丢失 → 409（不 spawn 一个注定报 "No conversation found" 的进程）', async () => {

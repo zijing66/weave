@@ -11,6 +11,7 @@ import {
   type MessagingSurface,
   type PluginStateSurface,
   type PluginSurface,
+  type SessionTitleSurface,
   type StatuslineSurface,
 } from '@weavecode/harness';
 
@@ -162,4 +163,12 @@ export function configSurfaces(): Array<{ harness: Harness; surface: ConfigSurfa
     .all()
     .filter((d) => d.config !== undefined)
     .map((d) => ({ harness: d.id, surface: d.config! }));
+}
+
+/**
+ * 按 harness 取会话标题读写面；null = 该 harness 无宿主侧名字通道
+ * （claude 走 hook session_title 双向管线，不经此面）。
+ */
+export function sessionTitleSurfaceFor(harness: Harness): SessionTitleSurface | null {
+  return registry.get(harness)?.titles ?? null;
 }
