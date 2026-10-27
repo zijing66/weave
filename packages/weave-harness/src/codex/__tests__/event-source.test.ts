@@ -186,6 +186,12 @@ describe('CodexEventSource.normalize', () => {
     expect((out.raw as Record<string, unknown>).last_assistant_message).toBe('搞定');
   });
 
+  it('rollout 的 SessionStart 标 source=rollout（非宿主启动照会，模型闩不认）', () => {
+    const out = normalize(meta());
+    expect(out.eventType).toBe('SessionStart');
+    expect((out.raw as Record<string, unknown>).source).toBe('rollout');
+  });
+
   it('API 错误收尾同时贴 error', () => {
     const out = normalize(
       event('task_complete', { error: { message: 'stream disconnected before completion' } }),

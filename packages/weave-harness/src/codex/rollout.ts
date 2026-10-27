@@ -209,12 +209,15 @@ export class CodexLogSource implements LogSource {
   private capture: { root: string; at: number; on: boolean } | null = null;
 
   /**
-   * 采集装上就由 hooks 主供事件——这时 rollout 再读一遍，同一条用户输入 / 回合
-   * 收尾会入库两次。停止轮询是本槽唯一安全的兜底语义：hooks 一装上，兜底就该让位
-   * （codex 还没信任 hooks 的那段时间确实看不到新事件，`scriptHealth` 与
-   * `weave doctor` 是明说这一点的诊断面）。
+   * 采集装上就由 hooks 主供事件——rollout 再读一遍，同一条用户输入 / 回合收尾会
+   * 入库两次。但 hooks 的 SessionStart 是**懒触发**（首条消息才发，实测 0.164），
+   * 「TUI 开着还没说话」的会话 hooks 一条都不发，rollout 若也让位，这段窗口里
+   * 会话列表就没有行。故让位是**部分的**：capture 已装时只采 `session_meta`
+   * （会话启动信号，hooks 懒触发期间唯一漏掉的行型），其余行型照旧让位。
+   * codex 还没信任 hooks 的那段时间看不到任何 hook 事件——那不是本槽的锅，
+   * `scriptHealth` 与 `weave doctor` 是明说这一点的诊断面。
    */
-  private async hooksTakeOver(): Promise<boolean> {
+  private async captureInstalled(): Promise<boolean> {
     const now = Date.now();
     const root = codexHome();
     if (this.capture && this.capture.root === root && now - this.capture.at < CAPTURE_CHECK_MS) {
@@ -226,7 +229,7 @@ export class CodexLogSource implements LogSource {
   }
 
   async poll(options: LogPollOptions): Promise<LogRecord[]> {
-    if (await this.hooksTakeOver()) return [];
+    const captureOn = await this.captureInstalled();
     if (!(await acquireLock(options.stateDir))) return [];
     const files = (await listRollouts()).sort((a, b) => a.mtimeMs - b.mtimeMs);
     const state = await readState(options.stateDir);
@@ -318,6 +321,10 @@ export class CodexLogSource implements LogSource {
         if (!raw || raw.length > MAX_LINE_CHARS) continue;
         const line = parseJsonLine(raw);
         if (!line) continue;
+        // capture 已装时只认 session_meta（hooks 懒触发漏掉的启动信号）；
+        // 其余行型归 hooks，读了就重复。buffer 的轮内缓存（last agent message）
+        // 因此缺料也无妨——那些行型本就不产出。
+        if (captureOn && line.type !== 'session_meta') continue;
         const report = buffer.report(line);
         if (!report) continue;
         report.sessionId = entry.sessionId ?? undefined;

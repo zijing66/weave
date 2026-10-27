@@ -28,8 +28,7 @@ import { codexHome } from './home.js';
 /**
  * 要订阅的 codex 线名（`HookEventsToml` 的键，`codex-rs/config/src/hook_config.rs:39`）
  * ——由 `HARNESS_EVENTS.codex` 反推，不另抄一份线名表。`PreToolUse` /
- * `PermissionRequest` / `PreModelRequest` / `PostModelRequest` 不订阅：量最大且
- * 眼下没有消费方。
+ * `PreModelRequest` / `PostModelRequest` 不订阅：量最大且眼下没有消费方。
  */
 export const CODEX_HOOK_EVENTS: readonly string[] = HARNESS_EVENTS.codex.map(
   (event) => CANONICAL_TO_WIRE[event] ?? event,
@@ -111,8 +110,10 @@ export function sweepWeaveHookEvents(hooks: unknown): Record<string, unknown> {
  */
 export function captureHookGroup(event: string, script: string): Array<Record<string, unknown>> {
   const command = `node "${toPosix(script)}"`;
-  // 工具事件每轮几十条，同步等它会拖住 agent；其余事件一轮/一会话才一条，值得等。
-  const background = event === 'PostToolUse';
+  // 工具事件每轮几十条，同步等它会拖住 agent；PermissionRequest 在审批对话框
+  // 弹出前触发（每轮至多几条），async 让它绝不拖慢审批路径。其余事件一轮/
+  // 一会话才一条，值得等。
+  const background = event === 'PostToolUse' || event === 'PermissionRequest';
   return [
     {
       hooks: [{ type: 'command', command, commandWindows: command, timeout: HOOK_TIMEOUT_SEC, ...(background ? { async: true } : {}) }],

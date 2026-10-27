@@ -76,6 +76,10 @@ export function defaultModelOf(
  * 真名；`source=resume` **不带**（实测）——但重开 = 宿主把模型落回默认，默认值就写
  * 在全局配置里（{@link defaultModelOf}），直接答它：不答的话转录里上一轮的旧照会
  * 会一直顶到第一轮新条目落地。这条事件与模型无关时返回 null。
+ *
+ * `raw.source` 是宿主认识的启动源（startup/resume/compact/clear）才触发默认闩——
+ * 其他来源（如 codex rollout 兜底产的 `rollout`）不是「宿主重定了模型」，只是
+ * 「会话文件出现了」；拿 claude 的全局默认去标它们是错报。
  */
 export function startedModelOf(
   eventType: string,
@@ -84,10 +88,16 @@ export function startedModelOf(
   env: NodeJS.ProcessEnv = process.env,
 ): { model: string | null } | null {
   if (eventType !== 'SessionStart') return null;
-  const model = (raw as { model?: unknown } | null)?.model;
+  const record = (raw ?? {}) as { model?: unknown; source?: unknown };
+  const model = record.model;
   if (typeof model === 'string' && model) return { model };
+  const source = typeof record.source === 'string' ? record.source : null;
+  if (source != null && !HOST_START_SOURCES.has(source)) return null;
   return { model: defaultModelOf(homedir, env) };
 }
+
+/** 宿主自己的 SessionStart 启动源（claude 实测词表；rollout 兜底的标记不在其中）。 */
+const HOST_START_SOURCES = new Set(['startup', 'resume', 'compact', 'clear']);
 
 /**
  * 推理档位（`effort.level`）：工具/回合类 hook 事件都带，与生成脚本填 `thinking`

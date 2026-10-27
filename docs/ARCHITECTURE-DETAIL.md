@@ -39,7 +39,7 @@
 
 ### logs 槽（拉取式兜底）
 
-`LogSource` = `poll(options) → LogRecord[]` + `health()`。`events` 槽答「一份上报怎么归一」，前提是有人把上报递进来（hook 脚本写 inbox）；没有 push 面的 harness 只能拉，这个槽就是那条面。今天唯一实现 = codex（`weave-harness/src/codex/rollout.ts`），且**已降为兜底**：`capture` 装上（10s 记忆、按 `CODEX_HOME` 失效）就让位，避免同一事件入库两份。
+`LogSource` = `poll(options) → LogRecord[]` + `health()`。`events` 槽答「一份上报怎么归一」，前提是有人把上报递进来（hook 脚本写 inbox）；没有 push 面的 harness 只能拉，这个槽就是那条面。今天唯一实现 = codex（`weave-harness/src/codex/rollout.ts`），且**已降为部分兜底**：`capture` 装上（10s 记忆、按 `CODEX_HOME` 失效）后只采 `session_meta`，其余行型让位——hooks 的 SessionStart 是**懒触发**（首条消息才发，0.164 实测），「TUI 开着还没说话」的窗口 hooks 一条不发，rollout 若全让位这段窗口里会话列表就没有行；`session_meta` 是该窗口唯一漏掉的行型，采它与 hook 事件不重叠（hook 的 SessionStart 只在线程建立时发，rollout 的在 TUI 启动即写盘）。
 
 - **尾读 rollout JSONL**：codex 把每个会话 durable 地写在 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`（归档的在 `archived_sessions/`）。会话身份 = 首行 `session_meta.session_id`（与文件名里的 uuid 同值）；实测 `codex resume` **接着写同一个文件**（`ordinal` 续号、不重发 `session_meta`），子线程 / 归档仍可能让一个 id 跨多个文件 ⇒ 游标按**文件字节偏移**记（`<dataDir>/logs/codex/cursors.json`），不假设一 id 一文件。
 - **规范化事件名**：0.163 的行形状是 `TurnItem`（`AgentMessage` / `CommandExecution` / `FileChange` / `McpToolCall` / `UserMessage`），adapter 归一成 `SessionStart` / `UserPromptSubmit` / `Stop` / `TurnAborted` / `PostToolUse`，服务端的 `turnOpen` 判据、`hasRun`、事件链配色一条 SQL 都不改。**`"Text"`（AgentMessage）与 `"text"`（UserMessage）大小写不统一**，按 `type` 逐字比会漏正文。
@@ -191,7 +191,7 @@ claude 专属机制（inbox socket）；其他 harness 的 `PromptInboxSpec` = n
 ### 4.2 触发源 ⊥ 投递通道
 
 - **manual**：dashboard 唯一人工面。
-- **会话提醒订阅**（`session_watches`）：触发类型集 `on_events` = `idle` / `turnEnd`(`HARNESS_LIFECYCLE[<harness>].close`) / `messageFailed`；`remaining` = 剩余次数、NULL = 持久化、**已选类型共用一个计数**。dashboard 订阅按目标 upsert——`POST /watch` 对同目标已有 pending dashboard 行**改写原行**（类型集/次数，`updateById` 拒改已落定行）而非新插影子行；会话订阅方多行合法仍走 insert。命中走 `consumeHit` CAS、同一次转场的邻接事件 1s 内合并一次；`watch.fired` 帧带 `reason`。
+- **会话提醒订阅**（`session_watches`）：触发类型集 `on_events` = `idle` / `turnEnd`(`HARNESS_LIFECYCLE[<harness>].close`) / `messageFailed`；`remaining` = 剩余次数、NULL = 持久化、**已选类型共用一个计数**。dashboard 订阅按目标 upsert——`POST /watch` 对同目标已有 pending dashboard 行**改写原行**（类型集/次数，`updateById` 拒改已落定行）而非新插影子行；会话订阅方多行合法仍走 insert。命中走 `consumeHit` CAS、同一次转场的邻接事件 1s 内合并一次；`watch.fired` 帧带 `reason`。`idle` 的命中判据 = `MessagingSurface.idleSignals`（claude 与 codex 同构 = close + SessionEnd；codex 错误收尾不发 Stop，这类回合不触发 idle/turnEnd——claude 有 StopFailure 兜底、codex 无对应事件，盲区如实写进 `unsupportedReasons.watch`）。
 - **编排**：见 4.12 起。
 - **不预抽 `TriggerSource` 统一接口**（三种以上触发源形态收敛后再议）。
 
@@ -320,7 +320,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 
 ### 4.13 推进 = 消息传递（每到一条执行一次）
 
-- **扇入无 join/barrier**：某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude = Stop + SessionEnd）就消费掉一条待处理、把它所有出边各投一次（`Promise.allSettled`）。
+- **扇入无 join/barrier**：某会话每收一条投递、下一轮完成（`MessagingSurface.idleSignals`，claude 与 codex 同构 = close + SessionEnd）就消费掉一条待处理、把它所有出边各投一次（`Promise.allSettled`）。
 - 任务节点每收一条消息被激活一次（`state.pending[to]` 一条对一次 idle），无待处理且在飞清零即 done。
 - 环被校验挡在保存时、`ORCH_MAX_DELIVERIES = 200` 兜底活环；`ORCH_MAX_FORKS = 50` 管 condition/extract 的 fork 次数（token 闸——fork 不在投递预算内，评审点名的成本失控洞；到顶 condition 拦下记原因、extract 回落 `{upstream}`，run 不因此失败）。
 - **并发分组**（评审：Actions concurrency）：同编排已有在跑 run 时再触发不 409 丢弃——本次首步（session 入口投消息 / webhook·trigger 入口 fire 载荷）直接并进在跑 run 的 pending，runId 沿用；扇入语义本来就是「每到一条执行一次」，多一条 pending 只是多一轮消费。自然回合连拍不再白扔第二发。
@@ -459,14 +459,18 @@ Web Push 细节：
 
 ## §5 阻塞式问答
 
-规格归 `questions` 槽（`BlockingPromptSpec`，claude 落 `weave-harness/src/claude/questions.ts`）：
+规格归 `questions` 槽（`BlockingPromptSpec`，claude 落 `weave-harness/src/claude/questions.ts`、codex 落 `weave-harness/src/codex/questions.ts`）：
 
 - 阻塞工具清单。
 - 权限 Notification 类型。
 - 静默权限模式名单：该模式下宿主结构上不弹对话框，其 permission_prompt 恒为噪声；名单是「宿主是否可能问人」的事实，只放结构上不可能弹框的模式；模式名是 harness 知识，不得散写进 server。
-- 事件弹框判据（`eventQuestion`）：不是工具、也非权限提醒的对话框（claude 的「Switch model?」）——事件到达且**对话框确实要弹**才给问题面；弹不弹是 harness 知识，猜错即幽灵问题。采集面 = 可裁剪开关 `hooks.preModelSwitch`（Pre 置位 / Post 落定成对登记，存量项目须重跑 `weave init`）。
+- 事件弹框判据（`eventQuestion`）：不是工具、也非权限提醒的对话框（claude 的「Switch model?」、codex 的审批框）——事件到达且**对话框确实要弹**才给问题面；弹不弹是 harness 知识，猜错即幽灵问题。claude 的采集面 = 可裁剪开关 `hooks.preModelSwitch`（Pre 置位 / Post 落定成对登记，存量项目须重跑 `weave init`）；载荷 = 归一化视图（`toolName`/`toolInput` 已提升顶层——raw 里的同名键被 `compactRaw` 折叠成 `<$.…>` 引用，读工具面必须走顶层）。
 - 问题面解析：AskUserQuestion 的 toolInput 全量解析；ExitPlanMode toolInput 恒空 → 合成固定两选项（`1` = 批准并切会话默认模式、`2` = 拒绝，文案取宿主模态框原文）；解析不出 → OPAQUE 兜底「看得见阻塞、无远程作答面」。
 - **预览形态** = 单选 && 任一选项带 preview（多选即使带预览也落旧形态）——每选项归一化出 `preview` 文案（超 2000 字符或含不可见/双向字符 → withhold 文案、无可见内容 → 「No preview available」、缺省 → null 且不计入判据）+ `previewMode`。
+
+### codex 面（PermissionRequest hook，2026-10-26）
+
+codex 的审批对话框本身是 transient EventMsg——不落 rollout、不是 hook 事件，采集链路看不见；但宿主在对话框弹出**前**发 `PermissionRequest` hook（`request_approval` 的第一优先级，载荷带 `tool_name`/`tool_input`/`permission_mode`），问题面由它合成。weave 只采集不裁决（handler 不回 JSON decision，宿主照常弹框）。**作答键位的安全设计**：exec 对话框行集随 available_decisions 变（2-4 行，hook 载荷不带该字段 ⇒ 数字映射不可知），只发**行集无关的稳定键**——exec/patch/write_stdin 发 `y`/`n`（keymap 硬编码默认：approve 恒第一行、decline 恒末行），request_permissions 发 `y`/`d`（permissions overlay 恒 4 行），MCP 工具发 `1`（RequestUserInputOverlay 恒 Accept 开头）；中间增强选项（a/p/r）语义随行集变，绝不进面。`bypassPermissions`（Never 档）不摆面——宿主不弹框，摆了就是幽灵问题。codex 无阻塞工具（`request_user_input` 的事件 transient 且不落 rollout，hook 采集链路不可达——Plan 模式结构化问答暂缓），`blockingTools` 恒空。信任闸：event_name 参与信任哈希 ⇒ 存量项目重跑 `weave init` 后须在 codex TUI 再点一次 Trust all（weave 绝不代签）。
 
 ### 选项键序
 
@@ -574,7 +578,7 @@ hook 域**没有**中断事件（45 次 ESC 实测里 41 次连 Stop 都不发�
 
 - **换模型**：`PostModelSwitch` 的 `to_model` 进闩锁、取更晚的那个——换模型不在转录里留条目，标签靠它才跟得上；事件名与键形归 claude adapter 的 `switchedModelOf`，server 不自拼。
 - **闩扛不过重启 ⇒ 回读库**：闩在内存，daemon 一重启就没了，而转录只在本轮 assistant 条目上照会模型 ⇒「换完就放着」的会话重启后一直停在切换前那个模型（实测窗口：切换 17:35:23 → dev daemon 重启 17:37:18 → 转录 17:40:39 才照会，见 DECISIONS 同日）。兜底 = `session-probe.ts` 的 `dbModelFactResolver`：取库里这条会话最近一条 `HARNESS_SESSION_CONTROL[<harness>].modelFactEvents` 事件（claude = `PostModelSwitch` + `SessionStart`），**是换模型**才拿 `from_model` 跟转录此刻照会的值比（`bareModelName` 剥网关前缀），相同即宿主还没跑过新一轮 → 用 `to_model` 锁进闩；**最新一条是 `SessionStart`** 就什么都不补（`--resume` 把模型交还宿主重定，旧答案作废）。每个会话 daemon 生命周期内只问一次（`probed`；`sessionStarted` / `forget` 清掉）。
-- **开/恢复会话**：`SessionStart` 的 `startedModelOf`——带真名（startup / compact）就以它为准；`--resume` 的 raw 里**不带** `model`（实测，40 条抽样恒 null），但重开 = 宿主把模型落回默认，**默认值就写在全局配置里**：`defaultModelOf` 读同一份 settings.json（env 块 `ANTHROPIC_MODEL` → 顶层 `model` 键、别名经 `ANTHROPIC_DEFAULT_<别名>_MODEL` 换真名 → 内建 `sonnet` 档）直接答上并经 `noteModel` 闩死——不答的话转录里上一轮的照会会顶着旧模型直到第一轮新条目落地（8c85b9c7 实测：上一轮 deepseek-flash、重开实际落 ftm）。转录新照会 / `PostModelSwitch` 照旧接管；重启回读那拍仍按上条「重开不补」（回读侧没有可比对的 `from_model`）。清闩重读只剩不带值的 harness 降级路径（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
+- **开/恢复会话**：`SessionStart` 的 `startedModelOf`——带真名（startup / compact）就以它为准；`--resume` 的 raw 里**不带** `model`（实测，40 条抽样恒 null），但重开 = 宿主把模型落回默认，**默认值就写在全局配置里**：`defaultModelOf` 读同一份 settings.json（env 块 `ANTHROPIC_MODEL` → 顶层 `model` 键、别名经 `ANTHROPIC_DEFAULT_<别名>_MODEL` 换真名 → 内建 `sonnet` 档）直接答上并经 `noteModel` 闩死——不答的话转录里上一轮的照会会顶着旧模型直到第一轮新条目落地（8c85b9c7 实测：上一轮 deepseek-flash、重开实际落 ftm）。**默认闩只认宿主启动源**（`HOST_START_SOURCES` = startup/resume/compact/clear）：codex rollout 兜底产的 SessionStart 标 `raw.source='rollout'`（「文件出现了」，不是「宿主重定了模型」），不触发默认闩——否则 claude 的全局默认模型会错标到 codex 会话上。转录新照会 / `PostModelSwitch` 照旧接管；重启回读那拍仍按上条「重开不补」（回读侧没有可比对的 `from_model`）。清闩重读只剩不带值的 harness 降级路径（否则新照会恰好等于切换闩的 stale 时，标签永远停在关会话之前那个模型）。
 - **执行模式同归它、且事件优先**——每条 hook 事件都带 `raw.permission_mode`、答的是「此刻」，转录里最后一条 `permissionMode` 只到上一次写条目为止（宿主切模式既不落转录、也没有专门事件），故 `noteMode` 逐条覆盖、`currentMode` 事件优先转录兜底，键形归 adapter 的 `permissionModeOf`。
 - web 的模式 chip 在切出去之后、新模式被事件回报之前显示「切换中…」（60s 没事件就回落最后已知——下一个模式由宿主自己算、还会被 settings 过滤，猜就是撒谎）。
 - **思考强度（effort）同归它**：工具/回合类事件每条带 `raw.effort.level`（`effortLevelOf`），`noteEffort` 逐条覆盖、`currentEffort` 只放内存——状态栏 `thinking` 块与对话控制行的 slider 同吃这一个事实。

@@ -282,7 +282,11 @@ function rolloutInput(r: CodexReport, projectId: number): CodexHookEventInput {
     raw.reason = p.reason ?? null;
     raw.duration_ms = p.duration_ms ?? null;
   } else if (eventType === 'SessionStart') {
-    raw.source = 'startup';
+    // 'rollout' 而非 'startup'：这不是宿主的启动照会（hook 的 SessionStart 才是，
+    // 带 model / permission_mode），是「rollout 文件出现了」——TUI 开了、线程还没建
+    // （SessionStart 懒触发）。server 的模型闩（startedModelOf）只认宿主启动源，
+    // 别把 claude 全局默认模型错标到 codex 会话上。
+    raw.source = 'rollout';
   }
   if (line.ordinal !== undefined) raw.seq = line.ordinal;
   const { toolName, toolInput, toolResponse } = toolOf(line);

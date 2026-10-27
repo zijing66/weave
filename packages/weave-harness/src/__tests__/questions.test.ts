@@ -233,7 +233,7 @@ describe('claude 阻塞问答面', () => {
 
   describe('模型切换确认（eventQuestion）', () => {
     const face = (eventType: string, raw: unknown) =>
-      CLAUDE_BLOCKING_PROMPT.eventQuestion(eventType, raw);
+      CLAUDE_BLOCKING_PROMPT.eventQuestion(eventType, { raw, toolName: null, toolInput: null });
     const warm = {
       from_model: 'claude-sonnet-4-5',
       to_model: 'deepseek-flash',

@@ -148,19 +148,52 @@ describe('CodexLogSource', () => {
   });
 });
 
-describe('CodexLogSource 让位给 hooks', () => {
-  it('采集装上后不再轮询 rollout（否则同一条事件入库两次）', async () => {
+describe('CodexLogSource 部分让位给 hooks', () => {
+  it('采集装上后只采 session_meta（hooks 懒触发漏掉的启动信号），其余行型让位', async () => {
+    await installUserCapture({ version: '1.2.3' });
     await writeFile(
       sessionFile,
       metaLine('th-1') +
         line({ timestamp: '2026-11-01T00:00:10.000Z', ordinal: 2, type: 'event_msg', payload: { type: 'user_message', message: '跑测试' } }),
     );
+    // 装着 capture：session_meta 照常产出（TUI 开了就要有行），user_message 让位给 hooks
     const source = new CodexLogSource();
-    expect((await poll(source)).length).toBeGreaterThan(0);
+    const out = await poll(source);
+    expect(out.map((r) => r.report.eventType)).toEqual(['SessionStart']);
+    expect(out[0]!.report.sessionId).toBe('th-1');
+    expect((await poll(source)).length).toBe(0);
 
-    await installUserCapture({ home, version: '1.2.3' });
-    // 同实例的缓存窗内也换过来了？走新实例，避开 10s 缓存窗
+    // 游标已推进到 session_meta 行尾：后续追加的行型（hooks 的领地）不再产出
+    await appendFile(
+      sessionFile,
+      line({ timestamp: '2026-11-01T00:00:20.000Z', ordinal: 3, type: 'event_msg', payload: { type: 'task_complete', last_agent_message: null } }),
+    );
+    expect(await poll(source)).toEqual([]);
+
+    // 卸载 capture：回到全采兜底，刚才让位的行型（已过游标的不补）之后的新行照采
+    const { uninstallUserCapture } = await import('../capture.js');
+    await uninstallUserCapture();
+    const bare = new CodexLogSource();
+    await appendFile(
+      sessionFile,
+      line({ timestamp: '2026-11-01T00:00:30.000Z', ordinal: 4, type: 'event_msg', payload: { type: 'user_message', message: '第二条' } }),
+    );
+    expect((await poll(bare)).map((r) => r.report.eventType)).toEqual(['UserPromptSubmit']);
+  });
+
+  it('capture 装上前已消费过的文件：装上后新文件的 session_meta 照常产出', async () => {
+    await writeFile(sessionFile, metaLine('th-1'));
+    const source = new CodexLogSource();
+    expect((await poll(source)).length).toBe(1);
+    await installUserCapture({ version: '1.2.3' });
     const after = new CodexLogSource();
+    // 同一文件不会再有 session_meta（resume 续写不重发）——空拍
     expect(await poll(after)).toEqual([]);
+    // 新文件（新 TUI 会话）的 session_meta 照常产出
+    const second = path.join(path.dirname(sessionFile), 'rollout-2026-11-01T00-05-00-th-2.jsonl');
+    await writeFile(second, metaLine('th-2'));
+    const out = await poll(after);
+    expect(out.map((r) => r.report.eventType)).toEqual(['SessionStart']);
+    expect(out[0]!.report.sessionId).toBe('th-2');
   });
 });

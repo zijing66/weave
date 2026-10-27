@@ -118,11 +118,11 @@ describe('onEvent：ingest 命中 idleSignals', () => {
     expect(d.send).not.toHaveBeenCalled();
   });
 
-  it('codex 事件源（idleSignals 空）不 fire——判据来自事件源面，不散写事件名', () => {
+  it('codex 事件源：Stop 命中 idleSignals（close + SessionEnd）照 fire——判据来自事件源面，不散写事件名', () => {
     const { engine, frames } = setup();
     watches.insert({ watcherSessionId: null, targetSessionId: 'a', notify: null });
     engine.onEvent({ sessionId: 'a', eventType: 'Stop', source: 'codex' });
-    expect(frames).toHaveLength(0);
+    expect(frames).toHaveLength(1);
   });
 
   it('CAS：同批 Stop+SessionEnd 只 fire 一次（帧/投递各一）', () => {

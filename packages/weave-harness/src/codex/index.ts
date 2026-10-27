@@ -9,6 +9,7 @@ import { CODEX_MESSAGING } from './messaging.js';
 import { CODEX_PLUGINS } from './plugins.js';
 import { CODEX_PLUGIN_STATE } from './plugin-state.js';
 import { CODEX_PROVISION } from './provision.js';
+import { CODEX_QUESTIONS } from './questions.js';
 import { CODEX_RESUME } from './resume.js';
 import { CODEX_LOG_SOURCE } from './rollout.js';
 import { CODEX_COMMANDS } from './commands.js';
@@ -18,6 +19,7 @@ export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
 export { CODEX_IMAGES } from './images.js';
 export { CODEX_MESSAGING } from './messaging.js';
+export { CODEX_QUESTIONS } from './questions.js';
 export { CODEX_RESUME } from './resume.js';
 export { CODEX_EVENT_SOURCE, CodexEventSource, CodexTurnBuffer } from './event-source.js';
 export { CODEX_LOG_SOURCE, CodexLogSource } from './rollout.js';
@@ -46,7 +48,9 @@ export {
  * `marketplace`，见 `plugins.ts`）、**config 补配置面**（config.toml 词表 +
  * TOML 读写，见 `config.ts`）、**provision 补安装形态检查**（桌面端/CLI 双面孔
  * 的版本漂移警告，见 `provision.ts`）、**images 补入站图**（rollout 的
- * UserMessage 条目，见 `images.ts`）——init 槽不在此（由 cli init/wiring 携带）。
+ * UserMessage 条目，见 `images.ts`）、**questions 补阻塞式交互**（审批对话框
+ * 的 PermissionRequest hook 采集 + 稳定键位作答，见 `questions.ts`）——init
+ * 槽不在此（由 cli init/wiring 携带）。
  */
 export const CODEX_DRIVER: HarnessDriver = {
   id: 'codex',
@@ -66,6 +70,7 @@ export const CODEX_DRIVER: HarnessDriver = {
     'provision',
     'liveness',
     'images',
+    'questions',
   ],
   assets: CODEX_ASSETS,
   detect: CODEX_DETECTOR,
@@ -81,4 +86,5 @@ export const CODEX_DRIVER: HarnessDriver = {
   provision: CODEX_PROVISION,
   liveness: CODEX_LIVENESS,
   images: CODEX_IMAGES,
+  questions: CODEX_QUESTIONS,
 };

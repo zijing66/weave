@@ -171,7 +171,7 @@ describe('MessagingSurface 契约', () => {
     expect(CODEX_MESSAGING.promptInbox).toBeNull();
     expect(CODEX_MESSAGING.inject).toBeNull();
     expect(CODEX_MESSAGING.headless).toBeNull();
-    expect(CODEX_MESSAGING.idleSignals).toEqual([]);
+    expect(CODEX_MESSAGING.idleSignals).toEqual([...HARNESS_LIFECYCLE.codex.close, 'SessionEnd']);
     expect(CODEX_MESSAGING.pathRefs).not.toBeNull();
     expect(CODEX_MESSAGING.pathRefs!.lines).toBe(false);
     expect(CODEX_MESSAGING.pathRefs!.expression({ path: 'src/a.ts', kind: 'file' })).toBe('src/a.ts');

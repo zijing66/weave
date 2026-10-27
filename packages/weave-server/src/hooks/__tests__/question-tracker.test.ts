@@ -263,6 +263,43 @@ describe('QuestionTracker 状态机', () => {
     expect(tracker.get(CODEX)).toBeNull();
   });
 
+  it('codex：PermissionRequest 事件 → 置位（面由 eventQuestion 合成，kind=switch 口径）', () => {
+    feed(
+      CODEX,
+      payload({
+        eventType: 'PermissionRequest',
+        toolName: 'Bash',
+        toolInput: { command: ['git', 'push'] },
+        raw: { permission_mode: 'default' },
+      }),
+      'codex',
+    );
+    const entry = tracker.get(CODEX);
+    expect(entry).not.toBeNull();
+    expect(entry!.harness).toBe('codex');
+    expect(entry!.questions).toHaveLength(1);
+    expect(entry!.questions[0]!.key).toBe('PermissionRequest:exec');
+    expect(entry!.questions[0]!.options.map((o) => o.keys)).toEqual([['y'], ['n']]);
+  });
+
+  it('codex：bypassPermissions 不摆面；后续事件清除待答态', () => {
+    feed(
+      CODEX,
+      payload({ eventType: 'PermissionRequest', toolName: 'Bash', toolInput: {}, raw: { permission_mode: 'bypassPermissions' } }),
+      'codex',
+    );
+    expect(tracker.get(CODEX)).toBeNull();
+    feed(
+      CODEX,
+      payload({ eventType: 'PermissionRequest', toolName: 'apply_patch', toolInput: { command: '*** Begin Patch' }, raw: {} }),
+      'codex',
+    );
+    expect(tracker.get(CODEX)).not.toBeNull();
+    // 对话框了结必有下文：任意后续事件（PostToolUse）即清
+    feed(CODEX, postTool('Bash'), 'codex');
+    expect(tracker.get(CODEX)).toBeNull();
+  });
+
   it('markAnswered：整 call 一次提交 → 整条摘除（无条目 = 空操作）', () => {
     feed(
       SESSION,

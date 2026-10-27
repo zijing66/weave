@@ -714,7 +714,7 @@ function EnvVarPicker({
   const [picked, setPicked] = useState('');
   const spec = envVars.find((v) => v.name === picked);
   return (
-    <div style={{ paddingLeft: depth * 14 }} className="flex items-start gap-1.5 rounded-md px-1.5 py-1">
+    <div style={{ paddingLeft: depth * 14 }} className="flex items-start gap-1.5 rounded-md px-1 py-1">
       {/* 391 个候选走统一 Combobox（虚拟滚动 + 可搜）；词表是建议不是白名单，creatable 兜自由输入。
           选定即落进表单（待保存行），不再要一次「写入」——值下一步就能填。 */}
       <Combobox

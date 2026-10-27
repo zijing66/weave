@@ -30,8 +30,13 @@ export const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;
 export const modelCommand = (name: string) => `/model ${name}`;
 export const effortCommand = (level: string) => `/effort ${level}`;
 
-/** 作答原子形态与原子间隔（宿主把连打的字符当粘贴/筛选输入，必须一次一个）。 */
-export const ANSWER_ATOM = /^(?:[1-9]|n|\t|\r|\x1b\[B)$/;
+/**
+ * 作答原子形态与原子间隔（宿主把连打的字符当粘贴/筛选输入，必须一次一个）。
+ * 字母原子 = 两家宿主模态框的**稳定快捷键**：`n`（claude 备注 / codex decline）、
+ * `y`/`d`（codex 审批 overlay 的 approve/deny，keymap 硬编码默认）——键序本身
+ * 仍由 harness 规格拼出，白名单只挡任意击键。
+ */
+export const ANSWER_ATOM = /^(?:[1-9]|y|n|d|\t|\r|\x1b\[B)$/;
 export const ANSWER_TEXT = /^[^\x00-\x1f\x7f]*$/;
 export const ANSWER_ATOM_GAP_MS = 120;
 

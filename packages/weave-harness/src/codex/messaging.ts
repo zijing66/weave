@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { AttachSpec, MessagingSurface, PathRefSpec, QueuedPromptSpec, RecognizedRef } from '../driver.js';
 
 /**
@@ -136,7 +137,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
   queuedPrompt: CODEX_QUEUED_PROMPT,
   inject: null,
   headless: null,
-  idleSignals: [],
+  idleSignals: [...HARNESS_LIFECYCLE.codex.close, 'SessionEnd'],
   attach: CODEX_ATTACH,
   pathRefs: CODEX_PATH_REF,
   sideQuestion: null,
@@ -145,7 +146,7 @@ export const CODEX_MESSAGING: MessagingSurface = {
     prompt: 'Codex has no native peer-messaging channel; prompts reach it via its own queue or terminal text injection',
     inject: 'Codex has no synchronous injection channel yet (pending research)',
     headless: 'Codex resume is pending research',
-    watch: 'Codex idle signals are pending research; watch is unavailable',
+    watch: 'Codex error-ended turns emit no Stop; those rounds never fire idle/turnEnd',
     sideQuestion: 'Codex side chat is pending research (BACKLOG §10-6)',
   },
 };

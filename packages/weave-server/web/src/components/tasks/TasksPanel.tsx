@@ -1260,7 +1260,17 @@ export function TasksPanel({
           onOpenChain={() => setChainDialog(true)}
         />
       ))}
-      {!hasConv && chainEl}
+      {/* 能力矩阵在途时不摆事件链（openConv 还挂不上对话，摆了必闪一拍）；
+          就绪后解不出能力的会话才真回落到事件链。 */}
+      {!hasConv &&
+        (messagingCaps === null ? (
+          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {t('hooks.loading')}
+          </p>
+        ) : (
+          chainEl
+        ))}
     </div>
   );
 

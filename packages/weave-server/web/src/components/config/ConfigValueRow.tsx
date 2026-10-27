@@ -165,18 +165,18 @@ export function ConfigValueRow({
   return (
     <div style={{ paddingLeft: depth * TREE_INDENT }} className="group">
       <div className="flex items-start gap-1.5 rounded-md px-1 py-1 hover:bg-neutral-800/30">
-        {container ? (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
-            title={t('cfg.shapedToggle')}
-          >
-            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          </button>
-        ) : (
-          <span className="w-[13px] shrink-0" />
-        )}
+        <span className="flex w-4 shrink-0 justify-center">
+          {container ? (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+              title={t('cfg.shapedToggle')}
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            </button>
+          ) : null}
+        </span>
         <span
           className={cn(
             'shrink-0 truncate font-mono text-11 leading-6',
@@ -188,7 +188,10 @@ export function ConfigValueRow({
         </span>
         {container ? (
           !open && (
-            <span className="pt-1 text-10 text-neutral-600">{t('cfg.entryCount', { count: container.count })}</span>
+            <>
+              <span className="pt-1 text-10 text-neutral-600">{t('cfg.entryCount', { count: container.count })}</span>
+              {spec.group && <span className="truncate pt-1 text-10 text-neutral-700">{spec.group}</span>}
+            </>
           )
         ) : (
           <>
@@ -430,19 +433,19 @@ function ValueNode({
   };
   return (
     <div>
-      <div className="flex items-start gap-1.5 rounded px-1 py-0.5 hover:bg-neutral-800/20">
-        {container ? (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mt-1 shrink-0 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
-            title={t('cfg.shapedToggle')}
-          >
-            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          </button>
-        ) : (
-          <span className="w-[13px] shrink-0" />
-        )}
+      <div className="flex items-start gap-1.5 rounded px-1 py-1 hover:bg-neutral-800/30">
+        <span className="flex w-4 shrink-0 justify-center">
+          {container ? (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+              title={t('cfg.shapedToggle')}
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            </button>
+          ) : null}
+        </span>
         {nameEditable ? (
           <input
             value={name}
@@ -452,7 +455,7 @@ function ValueNode({
           />
         ) : (
           <span
-            className="shrink-0 truncate font-mono text-10 leading-6 text-neutral-500"
+            className="shrink-0 truncate font-mono text-11 leading-6 text-neutral-500"
             title={spec.description || name}
           >
             {name}

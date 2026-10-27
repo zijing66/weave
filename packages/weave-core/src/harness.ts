@@ -87,6 +87,10 @@ export const HARNESS_EVENTS = {
     'SubagentStart',
     /** 子代理收尾（带 last_assistant_message 与 agent_transcript_path）。 */
     'SubagentStop',
+    /** 即将向用户弹审批对话框（exec / apply_patch / 权限授予 / MCP 工具；带
+     *  tool_name / tool_input / permission_mode）——对话框本身是 transient 事件
+     *  不落 rollout，hook 是唯一采集口。weave 只采集不裁决（不回 decision）。 */
+    'PermissionRequest',
   ] as const,
 } satisfies Record<Harness, readonly string[]>;
 

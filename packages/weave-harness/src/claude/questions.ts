@@ -354,8 +354,8 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
       },
     ];
   },
-  eventQuestion(eventType, raw) {
-    if (eventType === 'PreModelSwitch') return switchQuestion(raw);
+  eventQuestion(eventType, payload) {
+    if (eventType === 'PreModelSwitch') return switchQuestion(payload.raw);
     return null;
   },
 };

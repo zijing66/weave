@@ -149,9 +149,15 @@ export class QuestionTracker {
       }
       return; // 其他 Notification（idle 等）不动状态
     }
-    // 事件弹框（如 claude 的「Switch model?」）：问题面与「弹不弹」的判据都归
-    // harness 规格——它说 null 就是不弹，这里绝不猜（幽灵问题会把键序打进输入框）。
-    const face = spec.eventQuestion(payload.eventType, payload.raw);
+    // 事件弹框（如 claude 的「Switch model?」、codex 的审批框）：问题面与「弹不弹」
+    // 的判据都归 harness 规格——它说 null 就是不弹，这里绝不猜（幽灵问题会把键序
+    // 打进输入框）。载荷传归一化视图（toolName/toolInput 在顶层；raw 的同名键已被
+    // compactRaw 折叠成引用）。
+    const face = spec.eventQuestion(payload.eventType, {
+      raw: payload.raw,
+      toolName,
+      toolInput: payload.toolInput,
+    });
     if (face) {
       const prev = this.pending.get(sessionId);
       const entry: PendingQuestionEntry = {

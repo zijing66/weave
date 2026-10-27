@@ -51,15 +51,22 @@ export function ConfigTree({
               <button
                 onClick={() => handlers.onToggle(node.path)}
                 style={{ paddingLeft: depth * TREE_INDENT }}
-                className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-neutral-800/40"
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-neutral-800/30"
                 title={node.path}
               >
-                {open ? (
-                  <ChevronDown className="h-3 w-3 shrink-0 text-neutral-500" />
-                ) : (
-                  <ChevronRight className="h-3 w-3 shrink-0 text-neutral-500" />
-                )}
-                <span className={cn('font-mono text-11', setCount > 0 ? 'text-neutral-200' : 'text-neutral-400')}>
+                <span className="flex w-4 shrink-0 justify-center">
+                  {open ? (
+                    <ChevronDown className="h-3 w-3 text-neutral-600" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3 text-neutral-600" />
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    'shrink-0 truncate font-mono text-11 leading-6',
+                    setCount > 0 ? 'text-neutral-200' : 'text-neutral-500',
+                  )}
+                >
                   {node.segment}
                 </span>
                 <span className="text-10 text-neutral-600">
@@ -85,13 +92,14 @@ export function ConfigTree({
             <div
               key={node.path}
               style={{ paddingLeft: depth * TREE_INDENT }}
-              className="flex items-start gap-2 rounded-md px-1.5 py-1"
+              className="flex items-start gap-1.5 rounded-md px-1 py-1"
               title={t('cfg.extraHint')}
             >
+              <span className="w-4 shrink-0" />
               <span className="shrink-0 truncate font-mono text-11 leading-6 text-neutral-500">
                 {node.segment}
               </span>
-              <span className="shrink-0 pt-0.5 text-11 leading-6 text-neutral-600">=</span>
+              <span className="shrink-0 pt-1 text-11 text-neutral-600">=</span>
               <span className="min-w-0 flex-1 truncate font-mono text-11 leading-6 text-neutral-600">
                 {textOf(handlers.valueOf(node.path))}
               </span>

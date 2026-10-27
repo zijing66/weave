@@ -140,6 +140,10 @@ describe('startedModelOf', () => {
     fs.rmSync(h, { recursive: true, force: true });
   });
 
+  it('非宿主启动源（rollout 兜底）不触发默认闩——别把 claude 默认模型错标到别家会话', () => {
+    expect(startedModelOf('SessionStart', { source: 'rollout' })).toBeNull();
+  });
+
   it('别的动静一律 null', () => {
     expect(startedModelOf('SessionEnd', { model: 'opus-model' })).toBeNull();
     expect(startedModelOf('Stop', null)).toBeNull();
