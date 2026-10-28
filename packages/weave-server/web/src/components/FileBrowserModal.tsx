@@ -154,7 +154,7 @@ export function FileBrowserModal({
   const viewRef = useRef<EditorView | null>(null);
   /** 请求序号守卫：慢响应不许覆盖新结果（LAN 下会有明显乱序）。 */
   const seq = useRef(0);
-  /** 打开浏览器后的第一拍：带 `fresh=1` 让服务端重建一次索引（刚建的文件才在）。 */
+  /** 打开后的第一拍带 `fresh=1`：旧账毫秒级先出，服务端后台重建、随后静默补一发换新账。 */
   const firstLoad = useRef(true);
   /** 预览单独一份守卫——它和列表是两条并行的取数，共用会把对方顶掉。 */
   const previewSeq = useRef(0);
@@ -169,14 +169,14 @@ export function FileBrowserModal({
   const kbdNav = useRef(false);
 
   const load = useCallback(
-    (q: string, target: string, signal: AbortSignal, fresh = false) => {
+    (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
       const mine = ++seq.current;
       setLoading(true);
       setError(null);
       // 没有斜杠但非空（`src`）= 父目录是项目根 `''`；根自身没有父
       const slash = target.lastIndexOf('/');
       const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
-      void Promise.all([
+      return Promise.all([
         api.listProjectFiles(projectId, { q, dir: target, signal, fresh }),
         // 左栏 = 父目录的条目（根没有父，摆一行项目名占位）
         !q && isDesktop && parent !== null
@@ -216,11 +216,27 @@ export function FileBrowserModal({
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
-      load(query.trim(), dir, ctrl.signal, firstLoad.current);
+      const fresh = firstLoad.current;
       firstLoad.current = false;
+      // fresh 拍端的是旧账（服务端后台重建中）：等它回来再静默补一发（此刻重建
+      // 必然已在飞，搭车拿新账）；用户已输入/换目录（seq 前进了）就让位
+      void load(query.trim(), dir, ctrl.signal, fresh).then(() => {
+        if (!fresh || ctrl.signal.aborted) return;
+        const mine = seq.current;
+        return api
+          .listProjectFiles(projectId, { q: query.trim(), dir, signal: ctrl.signal, fresh: true })
+          .then((listing) => {
+            if (mine !== seq.current || ctrl.signal.aborted) return;
+            setEntries(listing.entries);
+            setTotal(listing.total);
+            setCapped(listing.capped ?? false);
+            setTruncated(listing.truncated);
+          })
+          .catch(() => {});
+      });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, dir, load]);
+  }, [query, dir, load, projectId]);
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
 

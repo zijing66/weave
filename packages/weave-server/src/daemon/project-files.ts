@@ -9,8 +9,9 @@ import { getIndexDir } from '../db/paths.js';
 const execFileAsync = promisify(execFile);
 
 /**
- * 项目文件索引：对话页的路径补全面。**不常驻、不 watch**——打开选择器即重建
- * （`?fresh=1`），开着的期间靠 git 指纹（`.git/index`）重验 + 硬窗兜底；**重建
+ * 项目文件索引：对话页的路径补全面。**不常驻、不 watch**——打开选择器那一拍
+ * （`?fresh=1`）先端核过指纹的旧账（毫秒级）、同时在后台重建，跟进的请求搭在飞
+ * 的车拿新账；开着的期间靠 git 指纹（`.git/index`）重验 + 硬窗兜底；**重建
  * 结果落盘**（`<dataDir>/cache/index/<projectId>.json`，可弃档）当下一次进程启动
  * 的 L2，省掉冷启动后第一次补全/粘贴认引用的整棵重建。
  * 理由：重建是事实、watch 是猜测（事件会漏，漏了就永远陈旧），而枚举一个项目
@@ -107,18 +108,17 @@ async function gitLsFiles(cwd: string, args: string[]): Promise<string[] | null>
   }
 }
 
-/** 子模块（gitlink）：`--stage` 里的 mode 160000，路径读 tab 之后那一截（可能带空格）。 */
-async function gitlinksOf(root: string): Promise<string[]> {
+/** `--stage` 一枪两用：160000 = 子模块 gitlink、120000 = 已跟踪符号链接
+ *  （avic/temp 实测形态），路径都读 tab 之后那一截（可能带空格）。 */
+async function stagedSpecialOf(root: string): Promise<{ links: string[]; symlinks: string[] }> {
   const staged = await gitLsFiles(root, ['--stage']);
-  if (!staged) return [];
-  return staged.filter((l) => l.startsWith('160000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
-}
-
-/** 已跟踪的符号链接：`--stage` 里的 mode 120000（avic/temp 实测形态）。 */
-async function trackedSymlinksOf(root: string): Promise<string[]> {
-  const staged = await gitLsFiles(root, ['--stage']);
-  if (!staged) return [];
-  return staged.filter((l) => l.startsWith('120000 ')).map((l) => l.slice(l.indexOf('\t') + 1));
+  const links: string[] = [];
+  const symlinks: string[] = [];
+  for (const l of staged ?? []) {
+    if (l.startsWith('160000 ')) links.push(l.slice(l.indexOf('\t') + 1));
+    else if (l.startsWith('120000 ')) symlinks.push(l.slice(l.indexOf('\t') + 1));
+  }
+  return { links, symlinks };
 }
 
 /** 该目录是不是一个仓库的根（`.git` 目录 = 普通仓，`.git` 文件 = worktree / 子模块）。 */
@@ -192,18 +192,23 @@ async function listViaGit(
   root: string,
   prefix = '',
 ): Promise<{ files: string[]; links: string[]; heads: Record<string, string> } | null> {
-  const listed = await gitLsFiles(root, ['--cached', '--others', '--exclude-standard']);
+  // 三枪并行：Windows 上每次 spawn 数百 ms，串行四枪是重建的大头（实测 550ms → ~220ms）
+  const [listed, staged, ignored] = await Promise.all([
+    gitLsFiles(root, ['--cached', '--others', '--exclude-standard']),
+    stagedSpecialOf(root),
+    ignoredReposOf(root),
+  ]);
   if (!listed) return null;
   const nested = new Set<string>();
   // gitlink 直接认 `--stage` 的 160000 行——不门在 `.gitmodules` 上（子模块可以
   // 没登记进它，avic/aadl-adapter 实测：gitlink 在、.gitmodules 无，门住就进不去）
-  for (const p of await gitlinksOf(root)) nested.add(p);
+  for (const p of staged.links) nested.add(p);
   for (const p of listed) if (p.endsWith('/')) nested.add(p.slice(0, -1));
-  for (const p of await ignoredReposOf(root)) nested.add(p);
+  for (const p of ignored) nested.add(p);
   // 已跟踪的目录型符号链接也当目录（avic/temp 实测：git 记 120000 叶子，但用户眼里
   // 它就是个能进的文件夹）——stat 穿透判型，目标目录的挪进 links 并递归列内容
   const dirLinks = new Set<string>();
-  for (const p of await trackedSymlinksOf(root)) {
+  for (const p of staged.symlinks) {
     if (nested.has(p)) continue;
     try {
       if ((await stat(path.join(root, p))).isDirectory()) dirLinks.add(p);
@@ -473,38 +478,66 @@ function rebuild(projectId: number, root: string): Promise<FileIndex> {
 }
 
 /**
- * 取项目索引：`fresh` = 打开选择器那一拍，无条件重建；否则在飞则共用一次构建
- * （同 `/toolkit` 的口径），命中缓存则**先核 git 指纹**——变了立刻重建，没变才复用
- * （一次 lstat + 一次 stat，比一个请求本身还便宜）。
+ * 取项目索引：命中缓存则**先核 git 指纹**——变了立刻重建，没变才复用（一次 lstat +
+ * 一次 stat，比一个请求本身还便宜）；在飞则共用一次构建（同 `/toolkit` 的口径）。
  *
  * 内存里没有（daemon 刚起来）先看**盘上那份**：版本、根、git 指纹全对得上、年纪
  * 在 `INDEX_MAX_STALE_MS` 内就直接端出去，省掉整棵重建（粘贴认引用是每次粘贴都要
- * 走的路径）。`fresh` 仍然不许走后门——它就是「现在重建」。
+ * 走的路径）。
+ *
+ * `fresh`（打开选择器那一拍）**不阻塞在重建上**：手里有任何旧账（内存或盘上快照，
+ * 指纹变了也算——旧账好过白等）就先端出去，同时在后台发起重建；重建已在飞的
+ * fresh 请求（前端打开后静默补的那一发）搭车等新账。只有手里真没有（daemon 首启
+ * 且从未建过）才同步重建。这样「每次打开」都是毫秒级出画面，刚建的文件由后台
+ * 那一拍补上。
  */
 export async function projectFileIndex(
   projectId: number,
   root: string,
   opts: { fresh?: boolean } = {},
 ): Promise<FileIndex> {
+  // 重建已在飞的 fresh 请求（前端补的那一发）搭车：在飞的就是新账本身
+  if (opts.fresh) {
+    const flying = inflight.get(projectId);
+    if (flying) return flying;
+  }
+
   const hit = cache.get(projectId);
-  if (hit && hit.root === root && !opts.fresh) {
-    if (Date.now() - hit.at < INDEX_TTL_MS && (await gitStamp(root)) === hit.stamp) return hit;
+  if (hit && hit.root !== root) cache.delete(projectId); // 换了根：内存这份不再作数
+  const mem = hit && hit.root === root ? hit : null;
+
+  if (mem && opts.fresh) {
+    // 旧账先出（毫秒级），重建在后台跑；指纹变了也一样——旧账好过白等，
+    // 跟进的请求拿新账
+    void rebuild(projectId, root).catch(() => {});
+    return mem;
+  }
+  if (mem && (await gitStamp(root)) === mem.stamp) {
+    if (Date.now() - mem.at < INDEX_TTL_MS) return mem;
     cache.delete(projectId);
-  } else if (hit) {
-    cache.delete(projectId); // 换了根 / 要求重建：内存这份不再作数
+  } else if (mem) {
+    cache.delete(projectId); // 指纹变了：非 fresh 走重建（正确性优先）
   }
 
   const flying = inflight.get(projectId);
   if (flying) return flying;
 
   // 盘上那份只在**内存空着**（daemon 刚起来）时接手：内存里那份是被硬窗判过期的，
-  // 再从盘上捞回来等于把 30 秒硬窗悄悄延长到十分钟。
-  if (!hit && !opts.fresh) {
+  // 再从盘上捞回来等于把 30 秒硬窗悄悄延长到十分钟。fresh 同样先端它（年纪没超限
+  // 的旧账好过白等一场重建），后台重建随后把它换掉。
+  if (!mem) {
     const snap = await readSnapshot(projectId, root);
-    if (snap && Date.now() - snap.at < INDEX_MAX_STALE_MS && (await gitStamp(root)) === snap.stamp) {
+    if (snap && Date.now() - snap.at < INDEX_MAX_STALE_MS) {
       const index = hydrateIndex(snap);
-      remember(projectId, index);
-      return index;
+      if (opts.fresh) {
+        remember(projectId, index);
+        void rebuild(projectId, root).catch(() => {});
+        return index;
+      }
+      if ((await gitStamp(root)) === snap.stamp) {
+        remember(projectId, index);
+        return index;
+      }
     }
   }
   return rebuild(projectId, root);

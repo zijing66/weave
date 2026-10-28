@@ -118,7 +118,7 @@ export async function handleProjectFileRoutes(
       return true;
     }
 
-    // 打开浏览器那一拍带 `fresh=1`：索引立刻重建一次，之后按 git 指纹重验
+    // 打开浏览器那一拍带 `fresh=1`：旧账先出（毫秒级）、后台重建，跟进请求拿新账
     const index = await projectFileIndex(project.id, project.path, {
       fresh: url.searchParams.get('fresh') === '1',
     });

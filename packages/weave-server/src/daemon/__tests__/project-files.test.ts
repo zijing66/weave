@@ -413,12 +413,14 @@ describe('projectFileIndex（缓存）', () => {
     expect(second).toBe(first);
   });
 
-  it('④ 刚建、还没跟踪的文件不动 git 指纹 → 只有 `fresh`（打开选择器）才看得到', async () => {
+  it('④ 刚建、还没跟踪的文件不动 git 指纹 → `fresh` 旧账先出、跟进一发看到', async () => {
     write(root, 'a.ts');
     const first = await projectFileIndex(1, root);
     write(root, 'b.ts');
     expect(await projectFileIndex(1, root)).toBe(first);
-    const again = await projectFileIndex(1, root, { fresh: true });
+    const stale = await projectFileIndex(1, root, { fresh: true });
+    expect(stale).toBe(first); // 旧账先出（毫秒级），重建在后台跑
+    const again = await projectFileIndex(1, root, { fresh: true }); // 跟进搭在飞的车
     expect(again.files).toEqual(['a.ts', 'b.ts']);
   });
 
@@ -480,13 +482,16 @@ describe('projectFileIndex（落盘）', () => {
     expect(fresh.v).toBe(INDEX_VERSION);
   });
 
-  it('⑨ `fresh` 不走盘（它就是「现在重建」）', async () => {
+  it('⑨ `fresh` 手里有旧账就先端（盘上快照也算），后台重建随后换掉', async () => {
     write(root, 'a.ts');
     await projectFileIndex(1, root);
     await waitForFile(path.join(indexDir, '1.json'));
     rmSync(path.join(root, 'a.ts'));
     clearFileIndexCache();
-    expect((await projectFileIndex(1, root, { fresh: true })).files).toEqual([]);
+    const served = await projectFileIndex(1, root, { fresh: true });
+    expect(served.files).toEqual(['a.ts']); // 旧账先出，不等重建
+    const rebuilt = await projectFileIndex(1, root, { fresh: true }); // 跟进搭在飞的车
+    expect(rebuilt.files).toEqual([]);
   });
 
   it('⑩ pruneFileIndexes 只留还在库里的项目', async () => {
