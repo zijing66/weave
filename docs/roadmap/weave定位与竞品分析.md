@@ -14,46 +14,71 @@
 
 **共同盲区：agent 在它们那里是「跑一次任务的工人」，不是持续存活的会话。**
 
-### Codeg：正面重叠最大的竞品（2026-10-28 补充探索）
+### Codeg：正面重叠最大的竞品（2026-10-28 补充探索，同日按 README 全文校准）
 
-[Codeg（Code Generation）](https://github.com/spacering-net/codeg)（docs.codeg.app）是开源的
-企业级**多智能体编码工作台**：把 Claude Code、Codex CLI、Gemini、OpenCode、Grok、OpenClaw
-等约 15 个主流编码 agent 统一收进同一工作区。形态三栖——桌面 app / 自托管 server / Docker，
-v0.4.0 起可开 Web 服务浏览器访问。核心机制与卖点（据公开材料）：
+[Codeg（Code Generation）](https://github.com/spacering-net/codeg)（docs.codeg.app，
+Apache-2.0，v0.41.1、迭代很快）是开源的**多智能体编码工作台**（"The multi-agent coding
+workspace"）。技术栈 = Next.js + Tauri（Rust 桌面壳）+ Rust `codeg-server`；形态 = 桌面 /
+自托管 server / Docker / iOS / Android，外加 Telegram、Lark、微信聊天通道。核心事实
+（README 全文实测）：
 
-- **接线 = ACP（Agent Client Protocol）**：Zed/JetBrains 2026 年初联合推的开放协议，agent
-  以 ACP 兼容形态被 spawn，客户端拿到结构化对话流；自定义 agent「三步注册」（任意 ACP
-  兼容 agent 自动安装、校验、纳入统一管理）。
-- **协作面**：分屏视图一屏监控多 agent 会话（「左边重构、右边评审」）、会话聚合同一
-  工作区、agent 间互相派活（让 Claude Code 审查、让另一个 agent 查测试失败，各自独立
-  会话并行跑）。
-- **企业叙事**：远程协作工作空间、统一管理。
+- **接线 = ACP（Agent Client Protocol）是唯一协议**：所有 agent 经 ACP 接入、同一结构化
+  对话界面（工具卡、live diff、交互回复，非终端）。**内置 20 个 agent**（Claude Code、
+  Codex、Gemini CLI、OpenClaw、OpenCode、Cline、Hermes、CodeBuddy、Kimi Code、MiniMax、
+  Pi、Grok、Cursor、DeepSeek Harness、Qoder、Google Antigravity、Kiro CLI、**ZCode**、
+  TRAE CLI、Command Code）+ 任意 ACP agent（公共 ACP registry 或贴 distribution JSON，
+  自动安装、验证可启动、当内置对待）。**weave 接入计划里的 zcode 它已内置**。
+- **Sessions that travel**：导入 / 搜索 / resume 任意 agent 落盘的历史会话，**再交给
+  另一个 agent 接手**——跨 harness 会话交接。
+- **多 agent 协作**：`@` 某个 agent 即委派，并行跑、进度流回对话；**Fork & Steer**——
+  从已完成的回复 fork 对话，或向**运行中的回合**插话（支持的 agent）。
+- **To-dos 无人值守**：任务排进**隔离 worktree**，agent 干活、人 review 并 approve——
+  三栏 merge 编辑器、live diff、Git 面板齐备。
+- **Repository Panel**：GitHub / GitLab / Gitea / Forgejo 的 issue / PR / checks / merge，
+  任何 issue 或 PR 可转 to-do。
+- **Automations**：保存配置好的 composer，headless 跑、cron 或按需。
+- **Token Usage**：趋势、缓存命中率、活动热图、按目录 / agent / 模型 / 会话的用量、
+  按 API 牌价折算成本。
+- **还有**：无限画布（chat/文件/终端/便签摆一板）、codeg-cli（脚本 / CI 跑 prompt、连
+  运行中的实例收 JSON 事件）、Computer Use（preview）、Office 文档 + 科研 skills、
+  浏览器分享、加密备份 + WebDAV 配置同步、URL scheme。
 
 **与 weave 的对照**（按本文差异化轴逐条过）：
 
 | 轴 | Codeg | weave |
 |---|---|---|
 | 接线方式 | ACP：把 agent 装进自己的壳（spawn 子进程、结构化流） | hook 采集 + 终端共生：不搬家、寄生用户已有终端 |
-| 会话观 | 工作台 UI（分屏/侧边栏/监控） | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
-| agent 协作 | 会话间互相派活（人点按钮级） | 三层投递 + 回执闸/暂停闸 + L2 DAG 编排（when/condition/autoFire） |
-| 多 harness | ACP 适配即接入（广而浅） | 十八能力槽深度适配（窄而深：问答作答、中断、改动汇总、判活） |
-| 可靠性 | 未见投递语义/daemon 重启续跑的公开材料 | 生产消费解耦、rearm 最小续跑、1送1回 |
+| 会话观 | 工作台 UI（编辑器 + 分屏 + 画布） | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
+| agent 协作 | `@` 委派 + 运行中插话 | 三层投递 + 回执闸/暂停闸 + L2 DAG 编排（when/condition/autoFire） |
+| 多 harness | ACP 适配即接入（广而浅，20 家） | 十八能力槽深度适配（窄而深：问答作答、中断、改动汇总、判活） |
+| 任务/隔离 | worktree to-do + review/approve + 三栏 merge | 短板（B5 worktree + A1 批阅在路上） |
+| 成本面 | Token Usage 全套 | 短板（B4 在路上） |
+| 移动端 | iOS/Android app + 聊天通道 | 局域网 HTTPS web + Web Push |
+| 可靠性 | 未见投递语义 / daemon 重启续跑的公开材料 | 生产消费解耦、rearm 最小续跑、1送1回 |
 
-**威胁评估：目前材料里与 weave 正面重叠最大的一家**——多 agent + 多 harness + 本地/
-自托管 + 协作派活全占，比任务板类（Vibe Kanban）近一个身位。但它的中心仍是「工作台
-UI」，weave 的中心是「会话运行时 + 编排引擎」；终端共生（pane 定位、击键注入、阻塞问答
-作答）与投递可靠性工程它没有对应物。
+**威胁评估（校准后上调）：它覆盖本文「诚实的短板」五条中的四条**——worktree 隔离、
+review/approve 闭环、任务语义（to-do + issue/PR 转办）、成本面，外加移动端 app 与聊天
+通道（「手机可用」不再是 weave 独有）。它不是任务板类竞品，是**全功能工作台**，与 weave
+的正面重叠比初判大一个量级。weave 仍然独有的地层：**终端共生**（pane 定位、击键注入、
+阻塞问答作答、中断、可见屏幕、唤出——Codeg 自带编辑器与终端，是替代不是共生；ACP 原生
+有 permission/cancel，但只对 ACP 通道内的 agent 有效）、**投递可靠性工程**（回执闸 /
+暂停闸 / 1送1回 / 补回车只人手）、**L2 DAG 编排引擎**（Codeg 的 Automations = 单
+composer 的 cron/headless，不是图：无 when/condition/judgeBatch/autoFire/扇入语义/
+rearm）、**生产消费解耦**（daemon 死 harness 零感知）、跨机联邦与 RPG 视图（roadmap）。
 
 **战略注：ACP 是威胁也是机会**。ACP 正在成为 IDE 侧事实标准（Zed/JetBrains 联合，
-claude code / gemini cli 已实验性支持）——ACP 普及会稀释「多 agent 接入」门槛，weave 的
-多 harness 护城河会被部分摊薄。但 ACP 管的是「客户端 ↔ agent 对话流」，不管终端、不管
-投递可靠性、不管编排状态机、不管跨机联邦。**应对方向：把 ACP 视为潜在的接入通道**
-（采集与投递的备选路径，可作能力槽的又一信源），而不是纯竞品——ACP 生态越大，weave
-「编排 + 运行时」层的稀缺性反而越突出。
+claude code / gemini cli 已实验性支持，还有公共 ACP registry）——ACP 普及会稀释「多
+agent 接入」门槛，weave 的多 harness 护城河会被摊薄（Codeg 内置 20 家就是证明）。但
+ACP 管的是「客户端 ↔ agent 对话流」，不管终端、不管投递可靠性、不管编排状态机、不管
+跨机。**应对方向：把 ACP 视为潜在的接入通道**（采集与投递的备选路径，可作能力槽的又一
+信源），而不是纯竞品——ACP 生态越大，weave「编排 + 运行时」层的稀缺性反而越突出。
 
-**可借鉴**：自定义 agent 三步注册（自动安装 + 校验）的 onboarding 体验，对 weave 的
-RPG 角色插件安装流有直接参照价值；分屏多 agent 对照监控的视图形态可与「可见屏幕分块」
-互补。
+**可借鉴**：① 自定义 agent 注册（registry / distribution JSON → 自动安装 + 验证可
+启动）的 onboarding，对 RPG 角色插件安装流有直接参照价值；② **Sessions that travel**
+证明跨 agent 会话交接有真实需求——weave 的 resume 槽 + 转录解析能力其实做得到（读
+claude 转录喂给 codex），可入 backlog；③ Fork & Steer 的「向运行中回合插话」与 weave
+「人在场闸 defer」是同一问题的两种答案，值得对照复盘；④ Token Usage 的按目录 / agent /
+模型多维归因口径，B4 成本面落地时直接参照。
 
 ## 二、weave 的差异化（按护城河深度排序）
 
@@ -218,10 +243,10 @@ N 个分支依次合入时，**合并顺序影响总冲突量**。贪心策略�
   [nimbalyst: platforms 2026](https://nimbalyst.com/blog/best-ai-agent-orchestration-platforms-2026/)
 - [Paperclip](https://github.com/paperclipai/paperclip) · [ruflo (claude-flow)](https://github.com/ruvnet/ruflo) ·
   [LangGraph](https://docs.langchain.com/oss/python/langgraph/use-graph-api)
-- Codeg 探索（2026-10-28，公开材料快照）：[spacering-net/codeg](https://github.com/spacering-net/codeg) ·
+- Codeg 探索（2026-10-28，README 全文 + package.json 实测校准；GitHub 直连被墙，经
+  gh-proxy 镜像取 raw）：[spacering-net/codeg](https://github.com/spacering-net/codeg) ·
+  [docs.codeg.app](https://docs.codeg.app) ·
   [Codeg v0.4.0 发布帖（V2EX）](https://www.v2ex.com/t/1201200) ·
-  [统一 15 个 AI 编程 Agent 的多智能体工作台（CSDN）](https://blog.csdn.net/gitblog_00050/article/details/166643036) ·
-  [自定义 Agent 三步注册（CSDN）](https://blog.csdn.net/weixin_27251469/article/details/160775460) ·
-  [分屏视图实操（CSDN）](https://blog.csdn.net/gitblog_00114/article/details/166643658) ·
-  [ACP（Agent Client Protocol）](https://github.com/zed-industries/claude-code-acp)
+  [ACP（Agent Client Protocol）](https://agentclientprotocol.com) ·
+  [claude-code-acp（Zed）](https://github.com/zed-industries/claude-code-acp)
 - 三方对标评审记录见 [`会话扩展点与编排重设计.md`](./会话扩展点与编排重设计.md) 头部修订注。
