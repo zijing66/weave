@@ -272,7 +272,11 @@ export function startDaemon(): void {
     // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
     interruptedAt: (sessionId) => {
       const session = hookSessions.getBySessionId(sessionId);
-      return session ? sessionProbe.interruptedAt(sessionId, session.lastSeenAt) : null;
+      if (!session) return null;
+      return sessionProbe.interruptedAt(
+        sessionId,
+        hookSessions.lastMainEventAtOf(sessionId) ?? session.lastSeenAt,
+      );
     },
   });
   questionTracker.seedFromDb();
@@ -354,7 +358,10 @@ export function startDaemon(): void {
       const interrupted: Record<string, number> = {};
       for (const s of hookSessions.listWithCounts()) {
         if (s.turnOpen !== true) continue;
-        const at = sessionProbe.interruptedAt(s.sessionId, s.lastSeenAt);
+        const at = sessionProbe.interruptedAt(
+          s.sessionId,
+          hookSessions.lastMainEventAtOf(s.sessionId) ?? s.lastSeenAt,
+        );
         if (at !== null) interrupted[s.sessionId] = at;
       }
       return { interrupted };

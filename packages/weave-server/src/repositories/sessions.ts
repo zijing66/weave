@@ -258,6 +258,26 @@ export class SessionRepository {
   }
 
   /**
+   * 最后一条**主回合**事件的真实时刻（排除 SubagentStop——后台子代理收尾与主回合
+   * 无关，可在主回合停下后很久才异步到达）：「已中断」的盖过基准用它而不是
+   * lastSeenAt，否则中断后被 SubagentStop 盖回「生成中」（256de1f1 实测）。
+   * 事件名取生命周期表；无事件 / 会话不存在 → null。
+   */
+  lastMainEventAtOf(sessionId: string): string | null {
+    const excluded = [...new Set(Object.values(HARNESS_LIFECYCLE).map((l) => l.subagentStop))]
+      .map((t) => `'${t}'`)
+      .join(',');
+    const row = this.db
+      .prepare(
+        `SELECT created_at FROM hook_events
+         WHERE session_id = ? AND event_type NOT IN (${excluded})
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(sessionId) as { created_at?: unknown } | undefined;
+    return row ? String(row.created_at) : null;
+  }
+
+  /**
    * 单会话判活输入（`daemon/claude-liveness.ts` 的 `pidAliveOf` 消费形状）——
    * harness / lastEventType / eventCount 都是 listWithCounts 的计算字段，单行版与
    * 列表版同源同判据（同 turnOpenOf 的先例）。会话不存在 → null。

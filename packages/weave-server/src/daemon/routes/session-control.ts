@@ -66,7 +66,12 @@ export async function handleSessionControlRoutes(
     const session = deps.hookSessions?.getBySessionId(sessionId) ?? null;
     const judgeable = !!probe && !!session && probe.transcriptPresent(sessionId) !== null;
     const markerOf = (): number | null =>
-      judgeable ? (probe!.interruptedAt(sessionId, session!.lastSeenAt) ?? null) : null;
+      judgeable
+        ? (probe!.interruptedAt(
+            sessionId,
+            deps.hookSessions!.lastMainEventAtOf(sessionId) ?? session!.lastSeenAt,
+          ) ?? null)
+        : null;
     const before = markerOf() ?? 0;
 
     const result = await deps.messageDeliverer.interrupt(sessionId);

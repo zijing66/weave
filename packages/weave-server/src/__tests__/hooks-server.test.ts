@@ -361,6 +361,26 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     expect(sessions.turnOpenOf('sess-queued')).toBe(true);
   });
 
+  it('lastMainEventAtOf：SubagentStop 不算主回合事件（后台收尾不该盖掉中断标记）', async () => {
+    // 中断前最后一记主回合事件 → SubagentStop 异步到达（晚于中断）→ 基准仍是前者
+    seed('sess-main', 'PostToolUse');
+    seed('sess-main', 'SubagentStop');
+    const main = sessions.lastMainEventAtOf('sess-main');
+    expect(main).not.toBeNull();
+    // 基准 = PostToolUse 那条（SubagentStop 被排除）：显式带 createdAt 再验一次
+    hookEvents.insert({
+      projectId,
+      source: 'claude' as const,
+      eventType: 'SubagentStop',
+      sessionId: 'sess-main',
+      payload: '{}',
+      createdAt: '2026-10-28T10:00:00.000Z',
+    });
+    expect(sessions.lastMainEventAtOf('sess-main')).toBe(main);
+    // 无事件会话 → null
+    expect(sessions.lastMainEventAtOf('sess-nobody')).toBeNull();
+  });
+
   it('GET /sessions/:id/plan 摆出最近一次计划模式的正文（老模型带在 events 里，新模型取写盘那次）', async () => {
     // 老模型：正文就在 ExitPlanMode 的 tool_input.plan 上，气泡按这条事件定位
     const commit = seedTool('sess-plan', 'PreToolUse', {

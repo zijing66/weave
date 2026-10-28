@@ -241,16 +241,17 @@ export class SessionProbe {
   }
 
   /**
-   * 单会话的中断时刻（ms）：转录最后一条中断标记**晚于**最后一条 hook 事件才算
-   * ——之后任何事件（用户又发了一条、工具收尾）都会把它盖过去，故是自愈的；
-   * 未知路径/读不到/没标记一律 null（不猜）。
+   * 单会话的中断时刻（ms）：转录最后一条中断标记**晚于**最后一条主回合事件才算
+   * ——之后任何主回合事件（用户又发了一条、工具收尾）都会把它盖过去，故是自愈的；
+   * 未知路径/读不到/没标记一律 null（不猜）。基准由调用方给（`lastMainEventAtOf`
+   * ，排除 SubagentStop——后台子代理收尾与主回合无关，中断后异步到达不该盖掉它）。
    */
-  interruptedAt(sessionId: string, lastSeenAt: string): number | null {
+  interruptedAt(sessionId: string, lastMainEventAt: string): number | null {
     const path = this.pathOf(sessionId);
     if (!path) return null;
     const marker = this.factsOf(path).markerAt;
     if (marker === null) return null;
-    const seen = Date.parse(lastSeenAt);
+    const seen = Date.parse(lastMainEventAt);
     return Number.isFinite(seen) && marker > seen ? marker : null;
   }
 

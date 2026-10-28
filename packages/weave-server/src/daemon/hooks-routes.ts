@@ -135,7 +135,8 @@ export async function handleHooksRoutes(
     }
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
-    const sessions = deps.hookSessions.listWithCounts(projectId);
+    const hookSessions = deps.hookSessions;
+    const sessions = hookSessions.listWithCounts(projectId);
     // 判活随返回（claude 注册表 + codex 锁探针缓存）：true/false=判得动，
     // null=判不动（新鲜会话）不猜
     // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
@@ -163,9 +164,14 @@ export async function handleHooksRoutes(
           pidAlive: pidAliveOf(s, liveness),
           canOpenTerminal: !!(resume?.supported && resume.openArgs),
           terminal: screens[s.sessionId] ?? null,
-          // 已中断（转录最后一条标记晚于最后一条事件）：只有「看着还在跑」的会话才现算
+          // 已中断（转录最后一条标记晚于最后一条主回合事件）：只有「看着还在跑」的会话才现算
           interruptedAt:
-            s.turnOpen === true ? (deps.sessionProbe?.interruptedAt(s.sessionId, s.lastSeenAt) ?? null) : null,
+            s.turnOpen === true
+              ? (deps.sessionProbe?.interruptedAt(
+                  s.sessionId,
+                  hookSessions.lastMainEventAtOf(s.sessionId) ?? s.lastSeenAt,
+                ) ?? null)
+              : null,
           // 当前模型：换模型落定由 `PostModelSwitch` 先说（标签立刻跟得上），转录
           // 只在 assistant 消息上照会——两边取更晚的那个；null = 不知道（不猜）。
           model,
