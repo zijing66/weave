@@ -11,6 +11,7 @@ import {
   type Harness,
 } from '@weavecode/core';
 import { createRuntimeRegistry, type AssetSurface, type FileAssetCategory } from '@weavecode/harness';
+import { WEAVE_VERSION } from '@weavecode/server';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
@@ -103,7 +104,11 @@ export const statusCommand: Command = {
       );
 
     const entries: SurfaceRow[] = [
-      [t('out.status.col.version'), config.initVersion ?? t('out.status.unknown')],
+      // 两行分开：「CLI 版本」是当下跑的这个命令的版本（WEAVE_VERSION 实时）；
+      // 「init 版本」是本项目 init 生成物当初的版本（config.initVersion，重跑
+      // init 才更新）——混在一行会让人拿着 0.1.0 以为 CLI 是旧的。
+      [t('out.status.col.cliVersion'), WEAVE_VERSION],
+      [t('out.status.col.initVersion'), config.initVersion ?? t('out.status.unknown')],
       [t('out.status.col.initialized'), config.initTimestamp ?? t('out.status.unknown')],
       [t('out.status.col.preset'), config.preset ?? t('out.status.unknown')],
       [t('out.status.col.harness'), detected.length > 0 ? detected.join(', ') : t('out.status.unknown')],

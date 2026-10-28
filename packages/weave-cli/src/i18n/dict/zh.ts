@@ -163,7 +163,8 @@ export const zh = {
   // --- status 命令运行时输出 ---
   'out.status.notInitialized': 'Weave 尚未初始化。请先运行 `weave init`。',
   'out.status.header': '\n  Weave Harness 状态\n',
-  'out.status.col.version': '版本',
+  'out.status.col.cliVersion': 'CLI 版本',
+  'out.status.col.initVersion': 'init 版本',
   'out.status.col.initialized': '初始化时间',
   'out.status.col.preset': '预设',
   'out.status.col.harness': 'harness',
@@ -174,7 +175,7 @@ export const zh = {
   'out.status.issue': '    - {message}',
   'out.status.fix': '      修复：{fix}',
   // --- init 流程输出与表头 ---
-  'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
+  'init.banner': '\n  Weave — coding-agent harness v{version}\n',
   'init.presetTarget': '  预设：{preset}  |  目标：{target}\n',
   'init.failed': '\n  初始化失败：{error}\n',
   'init.complete': '\n  初始化完成\n',

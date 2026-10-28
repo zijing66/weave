@@ -179,7 +179,8 @@ export const en: Record<keyof typeof zh, string> = {
   // --- status command output ---
   'out.status.notInitialized': 'Weave not initialized. Run `weave init` first.',
   'out.status.header': '\n  Weave Harness Status\n',
-  'out.status.col.version': 'Version',
+  'out.status.col.cliVersion': 'CLI version',
+  'out.status.col.initVersion': 'Init version',
   'out.status.col.initialized': 'Initialized',
   'out.status.col.preset': 'Preset',
   'out.status.col.harness': 'Harness',
@@ -190,7 +191,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.status.issue': '    - {message}',
   'out.status.fix': '      fix: {fix}',
   // --- init flow output and table headers ---
-  'init.banner': '\n  Weave — coding-agent harness v0.1.0\n',
+  'init.banner': '\n  Weave — coding-agent harness v{version}\n',
   'init.presetTarget': '  Preset: {preset}  |  Target: {target}\n',
   'init.failed': '\n  Init failed: {error}\n',
   'init.complete': '\n  Init complete\n',

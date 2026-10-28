@@ -9,7 +9,7 @@ import {
   resolveComponents,
 } from '@weavecode/core';
 import { executeInit } from '../init/executor.js';
-import { registerProject } from '@weavecode/server';
+import { registerProject, WEAVE_VERSION } from '@weavecode/server';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
@@ -123,7 +123,7 @@ export const initCommand: Command = {
     const interactive = ctx.flags.noInteractive !== true && ctx.flags.interactive !== false;
     const targetDir = String(ctx.flags.dir ?? process.cwd());
 
-    logger.info(t('init.banner'));
+    logger.info(t('init.banner', { version: WEAVE_VERSION }));
     logger.dim(t('init.presetTarget', { preset, target: targetDir }));
 
     const components = resolveComponents(preset);
