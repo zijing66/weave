@@ -347,7 +347,7 @@ describe('executeInit', () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     expect(result.updated).toContain(handlerPath);
     const content = await readFile(handlerPath, 'utf-8');
-    expect(content).toContain('@version weave@0.1.0');
+    expect(content).toContain(`@version weave@${WEAVE_VERSION}`);
     // 旧版本戳被替换（不断言不含 'old' 子串——正文注释里合法出现，见 drop-oldest）
     expect(content).not.toContain('@version weave@0.0.1');
   });
@@ -388,7 +388,7 @@ describe('executeInit', () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     expect(result.updated).toContain(configPath);
     const content = await readFile(configPath, 'utf-8');
-    expect(content).toContain('initVersion: 0.1.0');
+    expect(content).toContain(`initVersion: ${WEAVE_VERSION}`);
   });
 
   // ---- CLAUDE.md: user file, append-only block ----

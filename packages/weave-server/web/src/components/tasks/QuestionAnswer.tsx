@@ -424,9 +424,18 @@ export function QuestionAnswer({
                               ) : (
                                 index
                               )}
+                              {/* label 与 placeholder 不同时（如 plan 反馈行：label 是
+                                  动作名、placeholder 是提交键提示）把 label 摆出来——
+                                  只看「shift+tab to approve…」不知道这框是干嘛的 */}
+                              {opt.description && (
+                                <span className="shrink-0 text-11 text-neutral-400">
+                                  {opt.label}
+                                </span>
+                              )}
                               <input
                                 value={draft}
                                 disabled={busy}
+                                aria-label={opt.label}
                                 placeholder={opt.description ?? opt.label}
                                 onChange={(e) => {
                                   const v = e.target.value;

@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS hook_events (
 );
 CREATE INDEX IF NOT EXISTS idx_hook_events_project ON hook_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_hook_events_session ON hook_events(session_id);
+-- 全局搜索（GET /search）的聊天记录路：event_type 先收窄到对话类（约占 2%），
+-- 再对 payload 做 json_extract + LIKE——没有这把索引就是 20 万行全表扫。
+CREATE INDEX IF NOT EXISTS idx_hook_events_type ON hook_events(event_type);
 
 CREATE TABLE IF NOT EXISTS libraries (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,

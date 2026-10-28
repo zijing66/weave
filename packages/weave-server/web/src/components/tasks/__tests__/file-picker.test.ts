@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { rangePick, togglePick } from '../FilePicker';
-import type { SessionFileEntry } from '@/lib/api';
+import type { ProjectFileEntry } from '@/lib/api';
 
-const entry = (path: string, kind: 'file' | 'dir' = 'file'): SessionFileEntry => ({
+const entry = (path: string, kind: 'file' | 'dir' = 'file'): ProjectFileEntry => ({
   path,
   name: path.slice(path.lastIndexOf('/') + 1),
   kind,
-  ref: kind === 'dir' ? `@${path}/` : `@${path}`,
 });
 
-const paths = (rows: readonly SessionFileEntry[]): string[] => rows.map((r) => r.path);
+const paths = (rows: readonly ProjectFileEntry[]): string[] => rows.map((r) => r.path);
 
 describe('togglePick（勾选加入 / 移出）', () => {
   it('① 按路径去重、保持加入顺序', () => {

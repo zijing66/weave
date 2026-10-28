@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Harness } from '@weavecode/core';
+import { HARNESS_LIFECYCLE, type Harness } from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
 
 export interface HookEventInput {
@@ -224,6 +224,69 @@ export class HookEventRepository {
       .all(...params, limit);
     return rows.map((row) => toHookEvent(row)).reverse();
   }
+
+  /**
+   * 全局搜索的聊天记录路：对话类事件（HARNESS_LIFECYCLE 的 open + close 全族，
+   * 不散写事件名）的正文键（UPS = raw.prompt，Stop 族 = raw.last_assistant_message）
+   * 做 LIKE——event_type 先走 idx_hook_events_type 收窄（对话类只占全库约 2%），
+   * json_extract 精确提键（不扫 cwd/transcriptPath 等非正文键）。
+   * `ORDER BY id DESC` 倒序早停：最新对话优先，凑满 limit 即停。
+   */
+  searchConversationTexts(q: string, limit: number): ConversationTextHit[] {
+    const types = new Set<string>();
+    for (const l of Object.values(HARNESS_LIFECYCLE)) {
+      types.add(l.open);
+      for (const t of l.close) types.add(t);
+    }
+    const typeList = [...types].map((t) => `'${t}'`).join(',');
+    const needle = likeEscape(q);
+    const rows = this.db
+      .prepare(
+        `SELECT id, project_id, source, event_type, session_id, payload, created_at
+         FROM hook_events
+         WHERE event_type IN (${typeList})
+           AND (COALESCE(json_extract(payload, '$.raw.prompt'), '') LIKE '%' || ? || '%' ESCAPE '\\'
+            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')
+         ORDER BY id DESC
+         LIMIT ?`,
+      )
+      .all(needle, needle, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const payload = JSON.parse(String(row.payload)) as {
+        raw?: { prompt?: unknown; last_assistant_message?: unknown };
+      };
+      const text = strOf(payload.raw?.prompt) ?? strOf(payload.raw?.last_assistant_message) ?? '';
+      return {
+        eventId: Number(row.id),
+        projectId: Number(row.project_id),
+        source: String(row.source),
+        eventType: String(row.event_type),
+        sessionId: row.session_id == null ? null : String(row.session_id),
+        at: String(row.created_at),
+        text,
+      };
+    });
+  }
+}
+
+/** 一条聊天正文命中（全文随行带；命中窗口由路由层截）。 */
+export interface ConversationTextHit {
+  eventId: number;
+  projectId: number;
+  source: string;
+  eventType: string;
+  sessionId: string | null;
+  at: string;
+  text: string;
+}
+
+/** LIKE 通配符转义（`%`/`_`/`\`），配 `ESCAPE '\'` 使用。 */
+function likeEscape(q: string): string {
+  return q.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+function strOf(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 function toHookEvent(row: Record<string, unknown>): HookEventRow {

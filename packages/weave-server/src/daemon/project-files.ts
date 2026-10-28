@@ -510,6 +510,33 @@ export async function projectFileIndex(
   return rebuild(projectId, root);
 }
 
+/**
+ * 只读窥视：内存/盘上快照就绪且指纹新鲜才给，miss 返回 null——**绝不触发重建**
+ * （全局搜索对十几个项目逐个问，冷项目跳过，不能让一次搜索背起整排索引构建）。
+ * `maxStaleMs` 放宽盘上快照的年纪窗（搜索路传 24h：文件名索引陈一天照样能用，
+ * git 指纹不符仍会拒——10 分钟硬窗是「粘贴认引用」的保真口径，搜索不需要）。
+ */
+export async function peekCachedIndex(
+  projectId: number,
+  root: string,
+  opts: { maxStaleMs?: number } = {},
+): Promise<FileIndex | null> {
+  const hit = cache.get(projectId);
+  if (hit && hit.root === root) {
+    if (Date.now() - hit.at < INDEX_TTL_MS && (await gitStamp(root)) === hit.stamp) return hit;
+    cache.delete(projectId);
+    return null;
+  }
+  const maxStale = opts.maxStaleMs ?? INDEX_MAX_STALE_MS;
+  const snap = await readSnapshot(projectId, root);
+  if (snap && Date.now() - snap.at < maxStale && (await gitStamp(root)) === snap.stamp) {
+    const index = hydrateIndex(snap);
+    remember(projectId, index);
+    return index;
+  }
+  return null;
+}
+
 /** 测试用：清空索引缓存。 */
 export function clearFileIndexCache(): void {
   cache.clear();

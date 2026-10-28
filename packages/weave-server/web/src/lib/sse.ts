@@ -50,6 +50,8 @@ export interface HookFrame {
   count?: number;
   /** watch.fired 帧的命中类型（idle / turnEnd / messageFailed——提醒正文按它措辞）。 */
   reason?: string;
+  /** narration.updated 帧：增量监视从转录新字节里认出的段（时间序，直接 append）。 */
+  segs?: Array<{ at: string | null; text: string }>;
   // ---- 编排域帧（orchestration.run / orchestration.delivery）：两条都带全量
   // 轻量态（投递数 + 每会话待回计数），画布就地更新、不重拉。 ----
   orchestrationId?: number;

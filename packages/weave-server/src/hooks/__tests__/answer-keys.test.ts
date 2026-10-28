@@ -99,6 +99,17 @@ describe('composeAnswerAtoms', () => {
     ).toEqual(['1', '1', '\t', '2']);
   });
 
+  it('plan 反馈行（ExitPlanMode 第 3 项）：数字 + 文本 + shift+tab 提交', () => {
+    const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});
+    const feedback = plan[0]!.options.findIndex((o) => o.input);
+    if (feedback < 0) return; // 本机默认模式是 2 行面（无反馈行）——形态断言在 harness 测试
+    const out = composeAnswerAtoms(plan, [
+      { questionKey: 'ExitPlanMode:approve', options: [feedback], text: '先别动数据库' },
+    ]);
+    if (!out.ok) throw new Error(out.error);
+    expect(out.atoms).toEqual(['3', '先别动数据库', '\x1b[Z']);
+  });
+
   it('坏输入：越界下标 / 单选多选 / 输入行缺文本 / 未知问题 / 缺收尾选择 / 空面', () => {
     const questions = [single, { ...multi, header: 'M2' }];
     const fail = (picks: AnswerPick[], face: unknown = questions): string => {

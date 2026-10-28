@@ -19,6 +19,7 @@ import { updatesApi } from './updates';
 import { statuslineApi } from './statusline-api';
 import { configApi } from './config';
 import { settingsApi } from './settings';
+import { searchApi } from './search';
 import { refreshDashboard, eventsUrl } from './client';
 
 export const api = {
@@ -34,6 +35,7 @@ export const api = {
   ...statuslineApi,
   ...configApi,
   ...settingsApi,
+  ...searchApi,
   refreshDashboard,
   eventsUrl,
 };
@@ -64,9 +66,7 @@ export type {
   SessionPlan,
   SessionEditHunk,
   SessionEdits,
-  SessionFileEntry,
   RecognizedRef,
-  SessionFileListing,
   SideQuestionRow,
 } from './sessions';
 export type {
@@ -79,6 +79,7 @@ export type {
   AnswerPick,
   PendingQuestionEntry,
 } from './messages';
+export type { ProjectFileEntry, ProjectFileListing } from './projects';
 export type {
   OrchestrationEdge,
   OrchestrationNodeKind,
@@ -172,4 +173,5 @@ export type {
   DaemonSettingsBundle,
   CaptureRow,
 } from './settings';
+export type { SearchMessageHit, SearchFileHit, SearchResult } from './search';
 export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';

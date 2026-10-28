@@ -103,6 +103,8 @@ export type HookBusMessage =
     }
   // ---- 旁路会话域：一条侧问认领到回答（旁路弹窗据此重拉历史） ----
   | { kind: 'sideQuestion.answered'; sessionId: string; sideQuestionId: number; at: string }
+  // ---- 旁白域：增量监视从转录新字节里认出的段（web 增量 append，不重拉） ----
+  | { kind: 'narration.updated'; sessionId: string; segs: Array<{ at: string | null; text: string }>; at: string }
   // ---- 首页仪表盘：连接时流式下发历史（分块），此后只在有事件时推增量 ----
   | {
       kind: 'dashboard.totals';

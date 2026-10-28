@@ -114,7 +114,7 @@ export const installApi = {
   // --- file reader / mcp ---
   readFile: (projectId: number, relPath: string): Promise<ProjectFile> =>
     apiFetch<ProjectFile>(
-      `/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`,
+      `/projects/${projectId}/asset-file?path=${encodeURIComponent(relPath)}`,
     ),
   /** Read a machine-level harness file (same allowed roots as readFile). */
   readGlobalFile: (relPath: string): Promise<ProjectFile> =>

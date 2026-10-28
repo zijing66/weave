@@ -20,23 +20,8 @@ export const CODEX_NARRATION: NarrationSurface = {
     });
     try {
       for await (const line of rl) {
-        // 预筛：AgentMessage 行才值得 parse（rollout 动辄几十 MB）
-        if (!line.includes('"AgentMessage"')) continue;
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (entry.type !== 'event_msg') continue;
-        const payload = entry.payload as Record<string, unknown> | undefined;
-        if (payload?.type !== 'AgentMessage') continue;
-        const text = typeof payload.message === 'string' ? payload.message : '';
-        if (!text.trim()) continue;
-        out.push({
-          at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
-          text,
-        });
+        const seg = parseLine(line);
+        if (seg) out.push(seg);
       }
     } catch {
       return null;
@@ -45,4 +30,26 @@ export const CODEX_NARRATION: NarrationSurface = {
     }
     return out;
   },
+  lineParser: parseLine,
 };
+
+/** 一行 rollout → 一段旁白（全量读与增量监视共用这份文法）。 */
+function parseLine(line: string): NarrationText | null {
+  // 预筛：AgentMessage 行才值得 parse（rollout 动辄几十 MB）
+  if (!line.includes('"AgentMessage"')) return null;
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (entry.type !== 'event_msg') return null;
+  const payload = entry.payload as Record<string, unknown> | undefined;
+  if (payload?.type !== 'AgentMessage') return null;
+  const text = typeof payload.message === 'string' ? payload.message : '';
+  if (!text.trim()) return null;
+  return {
+    at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
+    text,
+  };
+}

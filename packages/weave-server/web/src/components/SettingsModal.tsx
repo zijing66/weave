@@ -126,6 +126,13 @@ const SECTIONS: Array<{ id: string; key: MessageKey; icon: LucideIcon }> = [
   { id: 'export', key: 'settings.sectionExport', icon: FileCode },
 ];
 
+/** 「关于」恒排最后；旧 daemon 不下发 version/repoUrl 时整段与导航项一起不出现。 */
+const ABOUT_SECTION: { id: string; key: MessageKey; icon: LucideIcon } = {
+  id: 'about',
+  key: 'settings.sectionAbout',
+  icon: Info,
+};
+
 /** 分段容器：标题行 + 内容；id 供导航锚点与 IntersectionObserver 观察。 */
 function SettingsSection(props: { id: string; icon: LucideIcon; title: string; children: ReactNode }) {
   const Icon = props.icon;
@@ -616,7 +623,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
         <div className="min-h-0 flex-1 flex overflow-hidden">
           <nav className="hidden lg:flex w-32 shrink-0 flex-col gap-0.5 border-r border-edge/[0.06] p-2">
-            {SECTIONS.map((s) => {
+            {[
+              ...SECTIONS,
+              // 「关于」恒排最后；旧 daemon 不带版本字段时不进导航。
+              ...(version || repoUrl ? [ABOUT_SECTION] : []),
+            ].map((s) => {
               const Icon = s.icon;
               return (
                 <button
@@ -638,29 +649,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </nav>
           <div ref={scrollRef} onScroll={onContentScroll} className="min-w-0 flex-1 overflow-y-auto p-4 space-y-6">
           <SettingsSection id="general" icon={Settings} title={t('settings.sectionGeneral')}>
-          {/* 关于：版本号 + 仓库主页（服务端随 GET /settings 下发，只读展示）。 */}
-          {(version || repoUrl) && (
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
-                <Info className="h-3.5 w-3.5 text-neutral-500" />
-                {t('settings.about')}
-              </label>
-              <div className="flex items-center gap-2 text-11 text-neutral-400">
-                {version && <span className="tabular-nums">weave v{version}</span>}
-                {repoUrl && (
-                  <a
-                    href={repoUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <Github className="h-3 w-3" />
-                    <span className="truncate">{repoUrl.replace(/^https:\/\/github\.com\//, '')}</span>
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
@@ -1391,6 +1379,26 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </div>
 
           </SettingsSection>
+
+          {/* 关于：版本号 + 仓库主页（服务端随 GET /settings 下发，只读展示）——恒排最后。 */}
+          {(version || repoUrl) && (
+            <SettingsSection id="about" icon={Info} title={t('settings.sectionAbout')}>
+              <div className="flex items-center gap-2 text-11 text-neutral-400">
+                {version && <span className="tabular-nums">weave v{version}</span>}
+                {repoUrl && (
+                  <a
+                    href={repoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <Github className="h-3 w-3" />
+                    <span className="truncate">{repoUrl.replace(/^https:\/\/github\.com\//, '')}</span>
+                  </a>
+                )}
+              </div>
+            </SettingsSection>
+          )}
 
           {error && <p className="text-11 text-red-400 break-all">{error}</p>}
           </div>

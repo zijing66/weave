@@ -196,12 +196,13 @@ export function useConvThread(deps: {
     }
   }, [sessionId]);
 
-  /** 旁白（转录里认的）：取不到就当没有——没有该面的 harness / 读不到转录是常态。 */
+  /** 旁白（转录里认的）：取不到就当没有——没有该面的 harness / 读不到转录是常态。
+   *  失败保留旧值：高频补采下偶发读崩不该把已摆出的卡片闪收走。 */
   const loadNarration = useCallback(async (): Promise<void> => {
     try {
       setNarration(await api.sessionNarration(sessionId));
     } catch {
-      setNarration(null);
+      // 保留旧值：narration 是补采面，读崩多半是转录正被写，下一拍还会再来
     }
   }, [sessionId]);
 
@@ -261,6 +262,8 @@ export function useConvThread(deps: {
         wantConv = wantMessages = wantLive = wantPlan = wantPreQ = false;
         if (conv) void loadNewest();
         if (conv) void loadExecutions();
+        // 轮边界无条件补采（兜底压缩换文件等游标作废的场景）；轮中间的增量
+        // 已由 narration.updated 帧推送（见下方订阅），不再节流重拉。
         if (conv) void loadNarration();
         if (messages) void refreshMessages();
         if (live) void loadLive();
@@ -274,6 +277,19 @@ export function useConvThread(deps: {
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, refreshMessages, sessionId]);
+
+  // 旁白增量帧：daemon 的监视器从转录新字节里认出新段即推过来，直接 append
+  // （亚秒进场，不重拉不轮询）。与全量拉的对账由 withNarration 的同文案去重兜底
+  // ——帧先到、全量拉后到也不会摆出重复段。
+  useEffect(() => {
+    const off = subscribeHook((f) => {
+      if (f.kind !== 'narration.updated' || f.sessionId !== sessionId) return;
+      const segs = f.segs;
+      if (!segs?.length) return;
+      setNarration((prev) => [...(prev ?? []), ...segs]);
+    }, ['narration.updated']);
+    return off;
+  }, [sessionId]);
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {

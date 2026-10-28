@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { installPlugin, uninstallPlugin, exportPlugin, isGitSource } from '../plugin-installer.js';
+
+// pruneInstallTmp 读 getTmpDir()：指到临时目录，别碰真数据目录的 cache/tmp。
+const tmpRoot = vi.hoisted(() => ({ dir: '' }));
+vi.mock('../../db/paths.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../db/paths.js')>()),
+  getTmpDir: () => tmpRoot.dir,
+}));
+
+import { installPlugin, uninstallPlugin, exportPlugin, isGitSource, pruneInstallTmp } from '../plugin-installer.js';
 
 async function writeSourcePlugin(root: string, id: string, extra: Record<string, unknown> = {}): Promise<string> {
   const dir = path.join(root, id);
@@ -42,11 +50,13 @@ describe('plugin-installer', () => {
   beforeEach(async () => {
     srcRoot = await mkdtemp(path.join(tmpdir(), 'weave-pi-src-'));
     destRoot = await mkdtemp(path.join(tmpdir(), 'weave-pi-dest-'));
+    tmpRoot.dir = mkdtempSync(path.join(tmpdir(), 'weave-pi-tmp-'));
   });
 
   afterEach(async () => {
     await rm(srcRoot, { recursive: true, force: true });
     await rm(destRoot, { recursive: true, force: true });
+    await rm(tmpRoot.dir, { recursive: true, force: true });
   });
 
   it('isGitSource：识别 URL，拒绝普通路径', () => {
@@ -119,5 +129,25 @@ describe('plugin-installer', () => {
     // 覆盖导出不报错
     await exportPlugin('share-me', out, { root: destRoot });
     await expect(exportPlugin('missing', out, { root: destRoot })).rejects.toThrow(/不存在/);
+  });
+
+  it('pruneInstallTmp：只清 install-* 残留，别的 tmp 内容不动', () => {
+    mkdirSync(path.join(tmpRoot.dir, 'install-123'), { recursive: true });
+    writeFileSync(path.join(tmpRoot.dir, 'install-123', 'repo'), 'x');
+    mkdirSync(path.join(tmpRoot.dir, 'install-456'), { recursive: true });
+    mkdirSync(path.join(tmpRoot.dir, 'uploads'), { recursive: true });
+    writeFileSync(path.join(tmpRoot.dir, 'keep.txt'), 'x');
+
+    pruneInstallTmp();
+
+    expect(existsSync(path.join(tmpRoot.dir, 'install-123'))).toBe(false);
+    expect(existsSync(path.join(tmpRoot.dir, 'install-456'))).toBe(false);
+    expect(existsSync(path.join(tmpRoot.dir, 'uploads'))).toBe(true);
+    expect(existsSync(path.join(tmpRoot.dir, 'keep.txt'))).toBe(true);
+  });
+
+  it('pruneInstallTmp：tmp 区不存在时静默返回', () => {
+    tmpRoot.dir = path.join(tmpRoot.dir, 'no-such-dir');
+    expect(() => pruneInstallTmp()).not.toThrow();
   });
 });

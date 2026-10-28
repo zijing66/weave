@@ -38,6 +38,8 @@ import { preQuestionTextAt } from './transcript.js';
 const DOWN = '\x1b[B';
 /** 下一个 tab（多选勾完、或跳过未作答的问题；Submit 屏上再按是空操作——实测不绕回）。 */
 const TAB = '\t';
+/** 反馈提交键：plan 第 3 行的反馈文本框里，shift+tab = 带反馈批准（宿主原文提示）。 */
+const SHIFT_TAB = '\x1b[Z';
 
 /** 预览模式（宿主左右分栏形态）的原文字串——实机 claude 2.1.296 口径。 */
 const PREVIEW_MAX_CHARS = 2000;
@@ -91,9 +93,13 @@ export function planApprovalOptions(
     },
     { keys: ['2'], label: 'Yes, manually approve edits' },
     {
+      // 第 3 行 = 反馈输入行（宿主按 3 进文本框、打完 shift+tab 带反馈批准）：
+      // 标成 input 行 web 才出输入框，键序 = 数字 + 文本 + shift+tab。
       keys: ['3'],
       label: 'Tell Claude what to change',
       description: 'shift+tab to approve with this feedback',
+      input: true,
+      textTail: [SHIFT_TAB],
     },
   ];
 }

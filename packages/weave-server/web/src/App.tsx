@@ -41,15 +41,17 @@ import { DashboardOverview } from '@/components/DashboardOverview';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { LibraryPanel } from '@/components/LibraryPanel';
 import { FileViewer } from '@/components/FileViewer';
+import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { Resizer } from '@/components/Resizer';
 import { SettingsModal } from '@/components/SettingsModal';
+import { CommandPalette } from '@/components/CommandPalette';
 import { cn } from '@/lib/utils';
 import { countEffectiveSkills } from '@/lib/skill-stats';
 import { navigate, parseRoute, useRoutePath } from '@/lib/route';
 import { setThemePreference, useThemePreference } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Settings, Sun, SunMoon, X } from 'lucide-react';
+import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
 import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -145,11 +147,28 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   /** 按钮反馈（loading → ✅ → 2s 复原），按 key 记状态。 */
   const fb = useActionFeedback();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 全局搜索弹层（Ctrl/Cmd+K；顶栏按钮是移动端入口）。 */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  /** 项目文件浏览器（只读 modal）：项目卡快捷按钮与全局搜索的文件结果共用。 */
+  const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
   const themePref = useThemePreference();
   // 移动端外壳（<1024px 单栏）：左右栏改滑出抽屉；拖拽 sensor 按指针类型分流。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const finePointer = useMediaQuery('(pointer: fine)');
   const [mobilePanel, setMobilePanel] = useState<'projects' | 'library' | null>(null);
+
+  // 全局 Ctrl/Cmd+K 开搜索：capture 阶段拦（输入框里的 Ctrl+K 也要归我们——
+  // 浏览器默认没有占用它，preventDefault 只是防未来冲突）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   // Main area
   const [mainCategory, setMainCategory] = useState<MainCategory>('tasks');
@@ -761,6 +780,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       }}
       onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
       onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
+      onOpenFiles={(p) => setFileBrowser({ projectId: p.id })}
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}
@@ -831,7 +851,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             <TrafficLight />
             {/* 组合标（图形 + 手写 WEAVE 单词）：图形部分固定品牌色，单词吃 currentColor。 */}
             <WeaveLogo className="h-[18px] w-auto text-neutral-200" />
-            <span className="text-xs text-neutral-500">
+            {/* 项目计数只桌面摆：<lg 顶栏要给搜索/主题/设置/退出留位，这行字会被挤成竖条。 */}
+            <span className={cn('text-xs text-neutral-500', !isDesktop && 'hidden')}>
               {t('app.projectCount', { n: projects.length })}
             </span>
             <button
@@ -844,6 +865,15 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             >
               <Library className="h-4 w-4" />
             </button>
+            {/* 全局搜索（Ctrl/Cmd+K；顶栏按钮兼作移动端入口）。 */}
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title={t('search.open')}
+              aria-label={t('search.open')}
+            >
+              <Search className="h-4 w-4" />
+            </button>
             {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边。
                 不挂 title：图标语义自明，悬停提示属噪音（保留 aria-label 供读屏）。 */}
             <a
@@ -851,7 +881,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               target="_blank"
               rel="noreferrer"
               aria-label="GitHub"
-              className="ml-auto inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
             >
               <Github className="h-4 w-4" />
               {stars !== null && (
@@ -1190,6 +1220,20 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       )}
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenFile={({ projectId, path }) => setFileBrowser({ projectId, path })}
+      />
+      {/* 项目文件浏览器（只读）：定位信息随打开时的项目名现查（projects 已在手） */}
+      {fileBrowser && (
+        <FileBrowserModal
+          projectId={fileBrowser.projectId}
+          projectName={projects.find((p) => p.id === fileBrowser.projectId)?.name ?? ''}
+          path={fileBrowser.path}
+          onClose={() => setFileBrowser(null)}
+        />
+      )}
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />
     </DndContext>

@@ -96,6 +96,16 @@ describe('getLibraryScan', () => {
     expect(hit.skills.map((s) => s.name)).toEqual(['alpha']);
   });
 
+  it('库目录被外部删掉：不命中幽灵缓存，孤儿 scans.json 顺手清掉', async () => {
+    const dir = makeLib();
+    await getLibraryScan(dir);
+    clearScanCache();
+    rmSync(dir, { recursive: true, force: true });
+    const scan = await getLibraryScan(dir);
+    expect(scan.skills).toEqual([]); // 目录没了 = 空扫描，不是缓存里的旧资产
+    expect(existsSync(cacheDirOf(dir))).toBe(false);
+  });
+
   it('invalidate 后删缓存目录并重扫', async () => {
     const dir = makeLib();
     await getLibraryScan(dir);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { formatStamp } from '@/lib/hook-payload';
@@ -117,6 +117,14 @@ export function NarrationStack({
       return next;
     });
   };
+  /** 直接跳到某张（首/尾按钮用）：跳到最新一张即恢复流式跟进。 */
+  const jump = (target: number): void => {
+    setIdx(() => {
+      const next = Math.min(Math.max(target, 0), n - 1);
+      atLatest.current = next === n - 1;
+      return next;
+    });
+  };
   // 组内段数变化（新段并入）时夹回合法区间
   useEffect(() => {
     setIdx((prev) => Math.min(prev, n - 1));
@@ -201,8 +209,60 @@ export function NarrationStack({
                 {t('tasks.convNarration')}
               </span>
               {n > 1 && (
-                <span className="ml-auto shrink-0 tabular-nums text-neutral-500">
-                  {idx + 1}/{n}
+                <span className="flex shrink-0 items-center gap-0.5">
+                  {/* 翻页器收进头部行（用户裁决）：位置恒定不随气泡尺寸变化，
+                      箭头围页码是标准 pager 形态；桌面 hover 浮现、触屏常显。
+                      双箭头 = 跳到最前/最后（长叠层一格格翻太慢）。
+                      置灰只在「看得见」的态生效——disabled:opacity-30 特异性
+                      压过 opacity-0，非 hover 态的到头按钮会漏出来（实测）。 */}
+                  {([
+                    { icon: ChevronsLeft, label: 'tasks.convStackFirst', at: 0, act: () => jump(0) },
+                    { icon: ChevronLeft, label: 'tasks.convStackPrev', at: 0, act: () => go(-1) },
+                  ] as const).map(({ icon: Icon, label, at, act }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-label={t(label)}
+                      onClick={act}
+                      disabled={idx === at}
+                      className={cn(
+                        'rounded p-px text-neutral-500 transition-colors hover:text-neutral-200',
+                        'disabled:pointer-events-none',
+                        // 置灰挂 hover/focus 态（触屏常显则直接挂基础态），
+                        // 不与「非 hover 全隐」的 opacity-0 打架
+                        coarse
+                          ? 'disabled:opacity-30'
+                          : 'opacity-0 group-hover/stack:opacity-100 focus-visible:opacity-100 group-hover/stack:disabled:opacity-30',
+                      )}
+                    >
+                      <Icon className="h-3 w-3" />
+                    </button>
+                  ))}
+                  {/* 页码夹在 ◀ ▶ 之间（标准 pager 形态；b57f3b6a 表渲染重构时被挤掉过） */}
+                  <span className="tabular-nums text-neutral-500">
+                    {idx + 1}/{n}
+                  </span>
+                  {([
+                    { icon: ChevronRight, label: 'tasks.convStackNext', at: n - 1, act: () => go(1) },
+                    { icon: ChevronsRight, label: 'tasks.convStackLast', at: n - 1, act: () => jump(n - 1) },
+                  ] as const).map(({ icon: Icon, label, at, act }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-label={t(label)}
+                      onClick={act}
+                      disabled={idx === at}
+                      className={cn(
+                        'rounded p-px text-neutral-500 transition-colors hover:text-neutral-200',
+                        'disabled:pointer-events-none',
+                        coarse
+                          ? 'disabled:opacity-30'
+                          : 'opacity-0 group-hover/stack:opacity-100 focus-visible:opacity-100 group-hover/stack:disabled:opacity-30',
+                      )}
+                    >
+                      <Icon className="h-3 w-3" />
+                    </button>
+                  ))}
                 </span>
               )}
             </span>
@@ -218,38 +278,6 @@ export function NarrationStack({
             </Collapsible>
           </div>
         </div>
-        {/* hover 箭头（桌面）：两侧浮现；触屏靠滑动，不摆（§11 hover 常显约束
-            不适用——这枚是翻页器不是行操作，滑动已是等效手势） */}
-        {n > 1 && (
-          <>
-            <button
-              type="button"
-              aria-label={t('tasks.convStackPrev')}
-              onClick={() => go(-1)}
-              className={cn(
-                'absolute top-1/2 -translate-y-1/2 rounded-full border border-edge/[0.08]',
-                'bg-neutral-900/80 p-0.5 text-neutral-400 opacity-0 transition-opacity hover:text-neutral-200',
-                'left-[2px] group-hover/stack:opacity-100 focus-visible:opacity-100',
-                idx === 0 && 'invisible',
-              )}
-            >
-              <ChevronLeft className="h-3 w-3" />
-            </button>
-            <button
-              type="button"
-              aria-label={t('tasks.convStackNext')}
-              onClick={() => go(1)}
-              className={cn(
-                'absolute top-1/2 -translate-y-1/2 rounded-full border border-edge/[0.08]',
-                'bg-neutral-900/80 p-0.5 text-neutral-400 opacity-0 transition-opacity hover:text-neutral-200',
-                'right-[2px] group-hover/stack:opacity-100 focus-visible:opacity-100',
-                idx === n - 1 && 'invisible',
-              )}
-            >
-              <ChevronRight className="h-3 w-3" />
-            </button>
-          </>
-        )}
       </div>
     </div>
   );

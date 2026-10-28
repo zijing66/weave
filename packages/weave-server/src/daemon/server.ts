@@ -52,6 +52,8 @@ import { handleConfigRoutes } from './config-routes.js';
 import { handleMarketRoutes } from './routes/market.js';
 import { handleProjectRoutes } from './routes/projects.js';
 import { handleSettingsRoutes } from './routes/settings-statusline.js';
+import { handleSearchRoutes } from './routes/search.js';
+import { handleProjectFileRoutes } from './routes/project-files.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import type { ProjectOpener } from './opener.js';
 import { DAEMON_HOST } from './port.js';
@@ -343,6 +345,12 @@ async function handleRequest(
 
   // --- 设置/状态栏域 → routes/settings-statusline.ts（settings/目录浏览/config/statusline/assets）---
   if (await handleSettingsRoutes(req, res, deps, pathname, url)) return;
+
+  // --- 全局搜索 → routes/search.ts（Ctrl+K：会话名/聊天记录/项目文件三路聚合）---
+  if (await handleSearchRoutes(req, res, deps, pathname, url)) return;
+
+  // --- 项目文件数据面 → routes/project-files.ts（索引浏览/搜索 + 根内只读预览）---
+  if (await handleProjectFileRoutes(req, res, deps, pathname, url)) return;
 
   // /events — Server-Sent Events stream of asset change events.
   if (pathname === '/events' && req.method === 'GET') {

@@ -1,13 +1,13 @@
 /** 设置弹窗词条。 */
 export const settingsZh = {
   'settings.title': '设置',
-  'settings.about': '关于',
   'settings.sectionGeneral': '通用',
   'settings.sectionService': '服务',
   'settings.sectionData': '数据',
   'settings.sectionNotify': '通知',
   'settings.sectionAi': 'AI',
   'settings.sectionExport': '导出',
+  'settings.sectionAbout': '关于',
   'settings.language': '语言',
   'settings.languageHint': 'dashboard 与 weave CLI 共用的界面语言。',
   'settings.fontScale': '界面缩放',
@@ -85,13 +85,13 @@ export const settingsZh = {
 
 export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.title': 'Settings',
-  'settings.about': 'About',
   'settings.sectionGeneral': 'General',
   'settings.sectionService': 'Service',
   'settings.sectionData': 'Data',
   'settings.sectionNotify': 'Notifications',
   'settings.sectionAi': 'AI',
   'settings.sectionExport': 'Export',
+  'settings.sectionAbout': 'About',
   'settings.language': 'Language',
   'settings.languageHint': 'UI language shared by the dashboard and the weave CLI.',
   'settings.fontScale': 'Interface scaling',

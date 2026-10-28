@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setGlobalStatuslineDir } from '../../statusline/manager.js';
+import { WEAVE_VERSION } from '../../version.js';
 import { applyInitFile, detectInitFileUpdates, needsInit } from '../init-files.js';
 
 /**
@@ -99,7 +100,7 @@ describe('detectInitFileUpdates', () => {
 
     expect(await applyInitFile(handler)).toBe(true);
     const content = read(handlerRel);
-    expect(content).toContain('@version weave@0.1.0');
+    expect(content).toContain(`@version weave@${WEAVE_VERSION}`);
     expect(content).not.toContain('0.0.1');
   });
 

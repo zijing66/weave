@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { WEAVE_PLUGIN_MANIFEST, WeavePluginManifestSchema } from '@weavecode/core';
@@ -24,6 +24,28 @@ interface InstalledEntry {
 
 export function globalPluginRoot(): string {
   return getPluginsDir();
+}
+
+/**
+ * 清掉 git 安装崩溃残留的 `install-<ts>` 临时目录（clone 后、cleanup 前进程死了
+ * 就没人删）。daemon 启动时清一次：tmp 区归 daemon 单进程所有，此刻必无人占用。
+ */
+export function pruneInstallTmp(): void {
+  const dir = getTmpDir();
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return; // 还没建过 tmp 区
+  }
+  for (const name of names) {
+    if (!name.startsWith('install-')) continue;
+    try {
+      rmSync(path.join(dir, name), { recursive: true, force: true });
+    } catch {
+      // 正被别的进程用着：下次启动再清
+    }
+  }
 }
 
 function installedManifestPath(root?: string): string {

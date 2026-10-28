@@ -51,6 +51,7 @@ import {
   countdownLabel,
   editsWindowOf,
   imageMarkerSegments,
+  pipePathSegments,
   CONV_FILTERS,
   STATUS_BADGE,
   STATUS_KEY,
@@ -735,13 +736,15 @@ export function SessionMessages({
                       )}
                     >
                       {/* 长内容（markdown 里没得换行的长串）在气泡自己里面横滚，
-                          不把整块对话撑出横向滚动条 */}
+                          不把整块对话撑出横向滚动条。过程输出单段（未成叠）与叠层
+                          顶卡同款右侧滑入——实时进场的第一段也有方向感。 */}
                       <div
                         className={cn(
                           'min-w-0 max-w-[92%] overflow-x-auto rounded-lg border px-2 py-1.5',
                           m.failed
                             ? 'border-red-500/30 bg-red-950/20'
                             : 'border-edge/[0.08] bg-neutral-800/50',
+                          m.narration === true && 'weave-card-in',
                         )}
                       >
                         <span className="mb-0.5 flex items-center gap-1.5 text-10 text-neutral-600">
@@ -794,10 +797,14 @@ export function SessionMessages({
                 const cmdTokens = commandTokensOf(m.text, commandInfoOf);
                 // 带图条目按 `[Image #N]` 占位记号把图内联回原位置；被内联的图
                 // 不再进预览行（一张图只出现一次），记号比图少时多出来的图与
-                // 全部文件行仍归预览行（老消息没有记号 → 图全留预览行）
+                // 全部文件行仍归预览行（老消息没有记号 → 图全留预览行）。
+                // **web 发的（有投递行）优先按投递行原文的路径位置切段**：宿主
+                // 粘贴处理把记号聚到消息开头，会话侧正文已丢位置；投递行存的
+                // 用户原文里位置完好（占位胶囊原地展开），按它切才回得去。
                 const inlineSegs =
                   m.role === 'user' && m.attachments?.some(isImageUpload)
-                    ? imageMarkerSegments(m.text, m.attachments.filter(isImageUpload))
+                    ? (pipe && pipePathSegments(pipe.text, m.attachments.filter(isImageUpload))) ??
+                      imageMarkerSegments(m.text, m.attachments.filter(isImageUpload))
                     : null;
                 const inlinedIds = new Set<string>();
                 for (const s of inlineSegs ?? []) if (s.kind === 'image') inlinedIds.add(s.image.id);
@@ -1949,6 +1956,7 @@ export function SessionMessages({
         {picker && (
           <FilePicker
             sessionId={sessionId}
+            projectId={projectId}
             rootLabel={projectLabel}
             linesSupported={capability.pathRefLines}
             dirSupported={capability.pathRefKinds.includes('dir')}

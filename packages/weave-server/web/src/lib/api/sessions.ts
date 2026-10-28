@@ -2,8 +2,7 @@
 
 import type { ModelAliasTarget } from '@weavecode/harness';
 import type { Harness } from '@weavecode/core/harness';
-import { apiFetch, API_BASE, errorText } from './client';
-import { markUnauthorized } from '../auth';
+import { apiFetch } from './client';
 import type { SessionTerminal } from './projects';
 
 /** mirror of `SessionRow` in packages/weave-server/src/repositories/sessions.ts。 */
@@ -107,25 +106,6 @@ export interface SessionEdits {
   reason?: 'unsupported' | 'unreadable';
 }
 
-/** 文件选择器的一行：`ref` 是**服务端按 harness 引用文法算好的表达式**，web 只把它
- *  当不透明字符串贴进输入框（路径怎么被宿主认出来是 harness 知识，前端不拼）。 */
-export interface SessionFileEntry {
-  /** 项目相对路径（正斜杠分隔）。 */
-  path: string;
-  name: string;
-  kind: 'file' | 'dir';
-  ref: string;
-  /** 搜索命中的字符区间 `[起点, 长度]`，供高亮。 */
-  ranges?: [number, number][];
-  /** 仅目录浏览模式（搜索模式不带，免得每键一堆 stat）。 */
-  size?: number;
-  mtime?: string;
-  /** 条目本体是符号链接（lstat 判定；搜索模式同样不带）。 */
-  symlink?: boolean;
-  /** 嵌套 git 仓（子模块）目录：建索引那一拍的实际 HEAD 短 hash。 */
-  head?: string;
-}
-
 /** mirror of `RecognizedRef` in packages/weave-harness/src/driver.ts：一段现成文本里
  *  的一段引用。`start`/`end` 是它在原文里的字符区间，`ref` 是服务端归一后的表达式。 */
 export interface RecognizedRef {
@@ -135,19 +115,6 @@ export interface RecognizedRef {
   path: string;
   kind: 'file' | 'dir';
   lines?: { start: number; end: number };
-}
-
-export interface SessionFileListing {
-  /** 项目绝对路径（面包屑头）。 */
-  root: string;
-  /** 当前目录（相对，'' = 根）。 */
-  dir: string;
-  entries: SessionFileEntry[];
-  total: number;
-  /** 搜索满档即停：`total` 只是「至少这么多」，后面的没扫（浏览模式恒 false）。 */
-  capped?: boolean;
-  /** 索引到上限被截断（搜索退化为目录浏览）。 */
-  truncated: boolean;
 }
 
 /** 旁路会话（claude = /btw）的一条历史：问句由 weave 发出去时记下，回答由采集
@@ -226,44 +193,6 @@ export const sessionApi = {
       .filter(Boolean)
       .join('&');
     return apiFetch<SessionEdits>(`/sessions/${encodeURIComponent(sessionId)}/edits${qs ? `?${qs}` : ''}`);
-  },
-  /** 项目文件索引的一页：`q` 非空 = 全索引模糊匹配，空 = 列 `dir` 的直接子项。
-   *  harness 无路径引用文法时 409（入口本就不渲染，兜底而已）。 */
-  listSessionFiles: (
-    sessionId: string,
-    opts: {
-      q?: string;
-      dir?: string;
-      limit?: number;
-      /** 打开选择器那一拍带上：索引立刻重建一次（之后按 git 指纹重验，不再每键重扫）。 */
-      fresh?: boolean;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<SessionFileListing> => {
-    const params = new URLSearchParams();
-    if (opts.q) params.set('q', opts.q);
-    if (opts.dir) params.set('dir', opts.dir);
-    if (opts.limit) params.set('limit', String(opts.limit));
-    if (opts.fresh) params.set('fresh', '1');
-    const qs = params.toString();
-    return apiFetch<SessionFileListing>(
-      `/sessions/${encodeURIComponent(sessionId)}/files${qs ? `?${qs}` : ''}`,
-      opts.signal ? { signal: opts.signal } : {},
-    );
-  },
-  /** 预览栏的字节源（`<img src>` 与文本 fetch 共用；Content-Type 由服务端定）。 */
-  sessionFileUrl: (sessionId: string, relPath: string): string =>
-    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(relPath)}`,
-  /** 预览正文：行号/选区都在前端按文本算，截断由服务端标在响应头上。 */
-  sessionFileText: async (
-    sessionId: string,
-    relPath: string,
-    signal?: AbortSignal,
-  ): Promise<{ text: string; truncated: boolean }> => {
-    const res = await fetch(sessionApi.sessionFileUrl(sessionId, relPath), signal ? { signal } : {});
-    if (res.status === 401) markUnauthorized();
-    if (!res.ok) throw new Error(await errorText(res));
-    return { text: await res.text(), truncated: res.headers.get('x-weave-truncated') === '1' };
   },
   /** 反向认引用：一段现成文本（粘贴 / 取回队列）里哪些片段是引用、换成什么胶囊。
    *  文法归 harness、存在性归索引，前端拿到的已经是「区间 + 表达式」。 */

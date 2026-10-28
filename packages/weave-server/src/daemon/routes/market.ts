@@ -730,8 +730,9 @@ export async function handleMarketRoutes(
     return true;
   }
 
-  // --- project file reader (e.g. a skill's SKILL.md) ---
-  const fileMatch = pathname.match(/^\/projects\/(\d+)\/file$/);
+  // --- project asset file reader (e.g. a skill's SKILL.md; allowed roots only —
+  // the whole-project preview lives in project-files.ts) ---
+  const fileMatch = pathname.match(/^\/projects\/(\d+)\/asset-file$/);
   if (fileMatch && req.method === 'GET') {
     const project = deps.projects.getById(Number(fileMatch[1]));
     if (!project) {

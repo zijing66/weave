@@ -1,11 +1,28 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 /**
- * The version baked into artifacts weave generates.
+ * The version baked into artifacts weave generates — derived from this
+ * package's package.json at module load, so there is exactly one source of
+ * truth (bump package.json, everything follows: the statusline logo, the
+ * helper scripts' `@version`, the daemon handshake, init's `initVersion`).
  *
- * Kept here rather than read from package.json so every consumer — the
- * statusline script, the helper scripts, the daemon handshake — stamps the
- * same value without each one resolving JSON at runtime.
- *
- * NOTE: bump this alongside package.json when releasing. Deriving it from
- * package.json is the eventual fix (tracked in docs/BACKLOG.md).
+ * `../package.json` resolves identically from src/ and dist/ (npm always
+ * ships package.json alongside); falls back to '0.0.0' only if the file is
+ * unreadable, which callers already tolerate.
  */
-export const WEAVE_VERSION = '0.1.0';
+
+function readOwnVersion(): string {
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(path.join(here, '..', 'package.json'), 'utf-8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+export const WEAVE_VERSION = readOwnVersion();

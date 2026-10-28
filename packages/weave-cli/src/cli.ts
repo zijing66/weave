@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { CommandParser } from './parser.js';
 import { initCommand } from './commands/init.js';
 import { statusCommand } from './commands/status.js';
@@ -13,17 +10,11 @@ import { uninstallCommand } from './commands/uninstall.js';
 import type { Command, CommandContext } from './parser.js';
 import { initCliLocale, t } from './i18n/index.js';
 import type { MessageKey } from './i18n/dict/index.js';
+import { WEAVE_VERSION } from '@weavecode/server';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function readVersion(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
+// CLI 与 server 同版本发布（monorepo 同步 bump）——版本号单一出口在
+// @weavecode/server 的 WEAVE_VERSION（从其 package.json 派生）。
+const readVersion = (): string => WEAVE_VERSION;
 
 /** Render one command (with its subcommands, indented) as help lines. */
 function printCommandEntry(cmd: Command): void {

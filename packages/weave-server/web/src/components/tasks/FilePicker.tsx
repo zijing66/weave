@@ -22,7 +22,7 @@ import {
   TextSearch,
   X,
 } from 'lucide-react';
-import { api, type SessionFileEntry } from '@/lib/api';
+import { api, type ProjectFileEntry } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
@@ -73,9 +73,9 @@ export interface PickItem {
 
 /** 多选的加入/移出：按路径去重，**保持加入顺序**（落定时胶囊的先后 = 点选先后）。 */
 export function togglePick(
-  picked: readonly SessionFileEntry[],
-  entry: SessionFileEntry,
-): SessionFileEntry[] {
+  picked: readonly ProjectFileEntry[],
+  entry: ProjectFileEntry,
+): ProjectFileEntry[] {
   return picked.some((p) => p.path === entry.path)
     ? picked.filter((p) => p.path !== entry.path)
     : [...picked, entry];
@@ -83,11 +83,11 @@ export function togglePick(
 
 /** Shift 连选：把 `from`…`to` 之间的行并进来（已在的保持原位，新增的按列表序追加）。 */
 export function rangePick(
-  picked: readonly SessionFileEntry[],
-  rows: readonly SessionFileEntry[],
+  picked: readonly ProjectFileEntry[],
+  rows: readonly ProjectFileEntry[],
   from: number,
   to: number,
-): SessionFileEntry[] {
+): ProjectFileEntry[] {
   const lo = Math.max(0, Math.min(from, to));
   const hi = Math.min(rows.length - 1, Math.max(from, to));
   const out = [...picked];
@@ -125,7 +125,8 @@ export interface PickTarget {
   lines?: { start: number; end: number };
 }
 
-function iconFor(entry: SessionFileEntry) {
+/** 条目图标（浏览器与选择器共用）：符号链接/目录/图片/代码/文本/兜底六分支。 */
+export function iconFor(entry: ProjectFileEntry) {
   // 符号链接有自己的字形（FolderSymlink/FileSymlink），配色沿用原类型的
   if (entry.symlink) {
     return entry.kind === 'dir' ? (
@@ -141,7 +142,7 @@ function iconFor(entry: SessionFileEntry) {
   return <FileIcon className="h-3.5 w-3.5 shrink-0 text-neutral-500" />;
 }
 
-function sizeText(bytes: number | undefined): string | null {
+export function sizeText(bytes: number | undefined): string | null {
   if (bytes == null) return null;
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -149,7 +150,7 @@ function sizeText(bytes: number | undefined): string | null {
 }
 
 /** 嵌套仓（子模块）徽标：`@918bebb`——一眼认出「这是个别人的仓、钉在这个版本」。 */
-function HeadBadge({ head }: { head: string }) {
+export function HeadBadge({ head }: { head: string }) {
   return (
     <span
       title={`submodule @ ${head}`}
@@ -162,7 +163,7 @@ function HeadBadge({ head }: { head: string }) {
 
 /** 搜索行尾的目录标注：搜索范围是当前目录的子树，命中条目摆出**相对当前目录**
  *  的所在路径——同名文件只有它能区分。太长的只留最深两级（`…/` 收头）。 */
-function dirBadge(dir: string): string | null {
+export function dirBadge(dir: string): string | null {
   const trimmed = dir.endsWith('/') ? dir.slice(0, -1) : dir;
   if (!trimmed) return null;
   const segs = trimmed.split('/');
@@ -170,7 +171,7 @@ function dirBadge(dir: string): string | null {
 }
 
 /** 把命中区间切成「亮 / 暗」交替的片段（区间来自服务端，已按路径下标给好）。 */
-function segmentsOf(name: string, ranges: [number, number][] | undefined): { text: string; hit: boolean }[] {
+export function segmentsOf(name: string, ranges: [number, number][] | undefined): { text: string; hit: boolean }[] {
   if (!ranges || ranges.length === 0) return [{ text: name, hit: false }];
   const out: { text: string; hit: boolean }[] = [];
   let at = 0;
@@ -186,7 +187,7 @@ function segmentsOf(name: string, ranges: [number, number][] | undefined): { tex
 /** 只读代码视图的样式：底透明，跟着父容器走。色值全取 CSS 变量（`data-theme`
  *  一翻就跟着翻）——写死浅色字在浅色主题下就是一片看不清。`dark` 只决定
  *  CodeMirror 自己的兜底色（光标等），跟着主题走。 */
-const cmTheme = (dark: boolean): Extension =>
+export const cmTheme = (dark: boolean): Extension =>
   EditorView.theme(
     {
       '&': { height: '100%', fontSize: '0.6875rem', color: 'rgb(var(--w-neutral-300))', backgroundColor: 'transparent' },
@@ -213,10 +214,10 @@ const cmTheme = (dark: boolean): Extension =>
   );
 
 /** 主题翻的时候只重配这一格，不重建视图（重建会丢滚动位置与选区）。 */
-const themeConf = new Compartment();
+export const themeConf = new Compartment();
 
 /** 只读代码视图。`viewRef` 由父组件持有：查找与跳行都要拿它现算。 */
-function CodePreview({
+export function CodePreview({
   text,
   lines,
   viewRef,
@@ -301,6 +302,7 @@ function CodePreview({
 
 export function FilePicker({
   sessionId,
+  projectId,
   rootLabel,
   linesSupported,
   dirSupported,
@@ -309,6 +311,8 @@ export function FilePicker({
   onClose,
 }: {
   sessionId: string;
+  /** 所属项目：文件数据面（索引/预览）是项目的，表达式才按会话现算。 */
+  projectId: number;
   /** 项目名：面包屑与左栏的根那一格不写 `/`，写它。 */
   rootLabel: string;
   /** harness 认不认行区间（能力矩阵的 `pathRefLines`）。 */
@@ -330,9 +334,9 @@ export function FilePicker({
     if (initial.kind === 'dir') return initial.path;
     return initial.path.includes('/') ? initial.path.slice(0, initial.path.lastIndexOf('/')) : '';
   });
-  const [entries, setEntries] = useState<SessionFileEntry[]>([]);
+  const [entries, setEntries] = useState<ProjectFileEntry[]>([]);
   /** 父目录条目：只有桌面三栏的左栏用得上（窄屏不取）。 */
-  const [siblings, setSiblings] = useState<SessionFileEntry[]>([]);
+  const [siblings, setSiblings] = useState<ProjectFileEntry[]>([]);
   const [total, setTotal] = useState(0);
   /** 搜索满档即停：命中的先后只是扫描序，条数是下限（文案得如实说「前 N 条」）。 */
   const [capped, setCapped] = useState(false);
@@ -342,9 +346,9 @@ export function FilePicker({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ path: string; text: string | null; truncated: boolean } | null>(null);
   /** 第三栏的子目录预览（选中一条目录时列它的直接子项；只读，不下钻）。 */
-  const [sub, setSub] = useState<{ dir: string; entries: SessionFileEntry[]; total: number } | null>(null);
+  const [sub, setSub] = useState<{ dir: string; entries: ProjectFileEntry[]; total: number } | null>(null);
   /** 多选中的一批（顺序 = 加入顺序）。编辑既有胶囊时恒为空。 */
-  const [picked, setPicked] = useState<SessionFileEntry[]>([]);
+  const [picked, setPicked] = useState<ProjectFileEntry[]>([]);
   /** Shift 连选的锚点（列表下标）。 */
   const [pickAnchor, setPickAnchor] = useState<number | null>(null);
   /** 行号选区：`anchor` 存的是「已点了起始行、等第二下」；`lines` 是生效的区间。 */
@@ -372,7 +376,7 @@ export function FilePicker({
   /** 预览单独一份守卫——它和列表是两条并行的取数，共用会把对方顶掉。 */
   const previewSeq = useRef(0);
   /** 目录列表 / 预览正文的本地缓存（箭头连滑时命中即出，不打请求）。 */
-  const dirCache = useRef(new Map<string, { entries: SessionFileEntry[]; total: number }>());
+  const dirCache = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
   const textCache = useRef(new Map<string, { text: string | null; truncated: boolean }>());
   /** 每一波列表请求一个 controller：新的一波来就掐掉上一波，卸载也掐。 */
   const ctrlRef = useRef<AbortController | null>(null);
@@ -392,10 +396,10 @@ export function FilePicker({
       const slash = target.lastIndexOf('/');
       const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
       void Promise.all([
-        api.listSessionFiles(sessionId, { q, dir: target, signal, fresh }),
+        api.listProjectFiles(projectId, { q, dir: target, signal, fresh }),
         // 左栏 = 父目录的条目（根没有父，摆一行 `/` 占位）
         !q && isDesktop && parent !== null
-          ? api.listSessionFiles(sessionId, { dir: parent, signal }).catch(() => null)
+          ? api.listProjectFiles(projectId, { dir: parent, signal }).catch(() => null)
           : Promise.resolve(null),
       ])
         .then(([listing, parentListing]) => {
@@ -421,7 +425,7 @@ export function FilePicker({
           if (mine === seq.current) setLoading(false);
         });
     },
-    [sessionId, isDesktop],
+    [projectId, isDesktop],
   );
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
@@ -466,7 +470,7 @@ export function FilePicker({
     const timer = setTimeout(() => {
       if (cur.kind === 'dir') {
         void api
-          .listSessionFiles(sessionId, { dir: cur.path, limit: 100 })
+          .listProjectFiles(projectId, { dir: cur.path, limit: 100 })
           .then((listing) => {
             if (!alive || mine !== previewSeq.current) return;
             const value = cacheSet(
@@ -483,7 +487,7 @@ export function FilePicker({
         return;
       }
       void api
-        .sessionFileText(sessionId, cur.path)
+        .projectFileText(projectId, cur.path)
         .then(({ text, truncated: cut }) => {
           if (!alive || mine !== previewSeq.current) return;
           setPreview({ path: cur.path, ...cacheSet(textCache.current, cur.path, { text, truncated: cut }, TEXT_CACHE_MAX) });
@@ -500,7 +504,7 @@ export function FilePicker({
       alive = false;
       clearTimeout(timer);
     };
-  }, [current, sessionId]);
+  }, [current, projectId]);
 
   // 换一条选中：选区与查找条重来；编辑既有引用时按它带来的行区间先选好。
   // 离开上一条文件 = 它那份行选区没了，勾选跟着退（只引用文件才留着手动勾）。
@@ -674,22 +678,20 @@ export function FilePicker({
     });
   };
 
-  /** 落定一条：带行区间时表达式由服务端现算（前端不拼文法）。 */
-  const pick = async (entry: SessionFileEntry, withLines: boolean): Promise<void> => {
+  /** 落定一条：表达式恒由服务端现算（文法归 harness，前端不拼；带行区间时多带
+   *  start/end，不带就是整条路径的形状）。 */
+  const pick = async (entry: ProjectFileEntry, withLines: boolean): Promise<void> => {
     const range = linesSupported && withLines && entry.kind === 'file' ? lines : null;
-    if (!range) {
-      onPick([{ ref: entry.ref, target: { path: entry.path, kind: entry.kind } }]);
-      return;
-    }
     setBusy(true);
     try {
       const { ref } = await api.sessionFileRef(sessionId, {
         path: entry.path,
-        kind: 'file',
-        start: range.start,
-        end: range.end,
+        kind: entry.kind,
+        ...(range ? { start: range.start, end: range.end } : {}),
       });
-      onPick([{ ref, target: { path: entry.path, kind: 'file', lines: range } }]);
+      onPick([
+        { ref, target: { path: entry.path, kind: entry.kind, ...(range ? { lines: range } : {}) } },
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -698,40 +700,36 @@ export function FilePicker({
   };
 
   /** 落定底条那一枚钮：有已选就整批插（顺序 = 点选顺序），否则就当前这条。
-   *  带行区间的那一条要现算表达式（文法归服务端），其余直接用条目手里的 `ref`。 */
+   *  每条的表达式都由服务端现算（文法归服务端），并行打。 */
   const commit = async (): Promise<void> => {
     if (picked.length === 0) {
       if (current) await pick(current, true);
       return;
     }
-    const items: PickItem[] = [];
-    for (const e of picked) {
-      const range = linesSupported && e.kind === 'file' && e.path === current?.path ? lines : null;
-      if (!range) {
-        items.push({ ref: e.ref, target: { path: e.path, kind: e.kind } });
-        continue;
-      }
-      setBusy(true);
-      try {
-        const { ref } = await api.sessionFileRef(sessionId, {
-          path: e.path,
-          kind: 'file',
-          start: range.start,
-          end: range.end,
-        });
-        items.push({ ref, target: { path: e.path, kind: 'file', lines: range } });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setBusy(false);
-        return;
-      }
+    setBusy(true);
+    try {
+      const items: PickItem[] = await Promise.all(
+        picked.map(async (e) => {
+          const range =
+            linesSupported && e.kind === 'file' && e.path === current?.path ? lines : null;
+          const { ref } = await api.sessionFileRef(sessionId, {
+            path: e.path,
+            kind: e.kind,
+            ...(range ? { start: range.start, end: range.end } : {}),
+          });
+          return { ref, target: { path: e.path, kind: e.kind, ...(range ? { lines: range } : {}) } };
+        }),
+      );
+      onPick(items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setBusy(false);
     }
-    onPick(items);
   };
 
   /** 进一条：目录就下钻，文件则（桌面直接落定 / 窄屏先进预览）。 */
-  const enter = (entry: SessionFileEntry): void => {
+  const enter = (entry: ProjectFileEntry): void => {
     if (entry.kind === 'dir') {
       setQuery('');
       setDir(entry.path);
@@ -751,7 +749,7 @@ export function FilePicker({
 
   /** Enter = 确认选择：有已选就整批落定，否则落定当前这条（目录也按目录引用贴）。
    *  与「进入目录」分开——下钻归 `→` / 双击，回车只管「就它了」。 */
-  const confirm = (entry: SessionFileEntry): void => {
+  const confirm = (entry: ProjectFileEntry): void => {
     if (picked.length > 0) {
       void commit();
       return;
@@ -765,7 +763,7 @@ export function FilePicker({
   };
 
   /** 勾选/取消一条。取消的正是带行选区的那条 ⇒ 行选区跟着退（两处手势同一口径）。 */
-  const toggleCurrentPick = (entry: SessionFileEntry): void => {
+  const toggleCurrentPick = (entry: ProjectFileEntry): void => {
     const on = picked.some((p) => p.path === entry.path);
     if (on && lines && entry.path === current?.path) {
       applyLines(null);
@@ -1135,7 +1133,7 @@ export function FilePicker({
       ) : current && IMAGE_EXT.test(current.name) ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">
           <img
-            src={api.sessionFileUrl(sessionId, current.path)}
+            src={api.projectFileUrl(projectId, current.path)}
             alt={current.name}
             className="max-h-full max-w-full object-contain"
           />

@@ -35,6 +35,7 @@ import {
   ArrowUpRight,
   FolderOpen,
   FolderCog,
+  FolderTree,
   Globe,
   GripVertical,
   Plus,
@@ -56,6 +57,8 @@ interface ProjectListProps {
   onOpenExplorer: (p: ProjectRow) => void;
   /** Context-menu action: open a terminal at the project folder. */
   onOpenTerminal: (p: ProjectRow) => void;
+  /** Row quick action: 弹项目文件浏览器（只读 modal）。 */
+  onOpenFiles?: (p: ProjectRow) => void;
   /** Row hover → lazily fetch + cache that project's pending-update count. */
   onHoverProject?: (projectId: number) => void;
   /** Row quick action: pending update count (undefined until hover-loaded). */
@@ -106,6 +109,7 @@ export function ProjectList({
   onSelectGlobal,
   onOpenExplorer,
   onOpenTerminal,
+  onOpenFiles,
   onHoverProject,
   updatesOf,
   needsInitOf,
@@ -507,6 +511,12 @@ export function ProjectList({
                     icon={<FolderOpen className="h-3.5 w-3.5" />}
                   />
                 </QuickButton>
+                {/* 项目文件浏览器（只读）：OS 资源管理器管磁盘，这枚管项目内浏览+搜索+预览 */}
+                {onOpenFiles && (
+                  <QuickButton title={t('project.filesBrowser')} onClick={() => onOpenFiles(p)}>
+                    <FolderTree className="h-3.5 w-3.5" />
+                  </QuickButton>
+                )}
                 {/* 终端：点开是一张卡片列表（本项目已开的终端 + 末尾一枚「+」），
                     点卡片 = 把那个终端切到前台，点「+」= 照旧开新终端；没有终端时
                     列表里只剩那张「+」。图标转绿 + 角标示数仍是窗口级口径（分屏

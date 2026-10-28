@@ -27,12 +27,12 @@ import {
   serializeDraft,
   textBeforeCaret,
 } from '../draft-editor';
-import { imageMarkerSegments } from '../conv-model';
+import { imageMarkerSegments, pipePathSegments } from '../conv-model';
 import { stackUnitsOf } from '../conv-stack';
 import { attachedFilesFrom } from '../attach';
 import { exportConversationText, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
-import type { HookEventRow, SessionMessageRow } from '@/lib/api';
+import type { HookEventRow, SessionMessageRow, UploadFile } from '@/lib/api';
 
 const claude = HARNESS_LIFECYCLE.claude;
 
@@ -808,7 +808,11 @@ describe('导出到剪贴板', () => {
 });
 
 describe('随附图', () => {
-  const img = (id: string, name = 'a.png') => ({ id, name, mediaType: 'image/png' });
+  const img = (id: string, name = 'a.png'): UploadFile & { path?: string } => ({
+    id,
+    name,
+    mediaType: 'image/png',
+  });
 
   it('开轮事件带的图挂到对话条目上（气泡缩略图的源）', () => {
     const entries = conversationOf(
@@ -989,6 +993,33 @@ describe('随附图', () => {
     ]);
     // 没图：整段当文本（记号是死文本，照原样显示）
     expect(imageMarkerSegments('看[Image #1]', [])).toEqual([{ kind: 'text', text: '看[Image #1]' }]);
+  });
+
+  it('pipePathSegments：按投递行原文里的路径位置切段（图回用户摆的位置）', () => {
+    const a = img('a'.repeat(64), 'one.png');
+    const b = img('b'.repeat(64), 'two.png');
+    a.path = 'D:\\shots\\one.png';
+    b.path = 'D:\\shots\\two.png';
+    // 用户原文：图夹在句中——宿主侧记号聚在开头，投递行原文里位置完好
+    const segs = pipePathSegments(
+      `先看这张\nD:\\shots\\one.png\n再对比\nD:\\shots\\two.png\n谢谢`,
+      [a, b],
+    );
+    expect(segs).toEqual([
+      { kind: 'text', text: '先看这张\n' },
+      { kind: 'image', image: a },
+      { kind: 'text', text: '\n再对比\n' },
+      { kind: 'image', image: b },
+      { kind: 'text', text: '\n谢谢' },
+    ]);
+    // 认不出路径（终端手贴的老消息 / 路径被改写）：null = 退回记号切段
+    expect(pipePathSegments('正文里没有路径', [a])).toBeNull();
+    // 路径重复出现：取首现位置（indexOf 语义）
+    const dup = pipePathSegments(`D:\\shots\\one.png 提到 D:\\shots\\one.png 两次`, [a]);
+    expect(dup).toEqual([
+      { kind: 'image', image: a },
+      { kind: 'text', text: ' 提到 D:\\shots\\one.png 两次' },
+    ]);
   });
 });
 

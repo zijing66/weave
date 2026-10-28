@@ -18,7 +18,7 @@ import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { TERMINAL_LOCATOR_ENV_KEYS, isHarness } from '@weavecode/core';
-import { messagingSurfaceFor } from '../surfaces.js';
+import { messagingSurfaceFor, narrationSurfaceFor } from '../surfaces.js';
 import { syntheticSessionIds } from '../hooks/synthetic-sessions.js';
 import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
@@ -57,6 +57,7 @@ import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
 import { SessionProbe, dbModelFactResolver, dbTranscriptPathResolver } from './session-probe.js';
+import { NarrationWatcher } from './narration-watcher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { FingerprintCache } from '../install/fingerprint.js';
@@ -69,6 +70,7 @@ import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree 
 import { writeDaemonState } from './state.js';
 import { ensureDataLayout } from '../db/layout.js';
 import { pruneFileIndexes } from './project-files.js';
+import { pruneInstallTmp } from '../hooks/plugin-installer.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
 import { resolveStaticDir } from './static.js';
@@ -109,6 +111,8 @@ async function main(): Promise<void> {
   const projects = new ProjectRepository(db);
   // 索引快照是 cache 档：已删项目的快照没人再读，启动清一次（大仓库一份按 MB 计）。
   pruneFileIndexes(projects.list().map((p) => p.id));
+  // git 安装的临时目录同理：崩溃残留没人删，启动清一次。
+  pruneInstallTmp();
   const hookEvents = new HookEventRepository(db);
   const libraries = new LibraryRepository(db);
   // 图② 装配：registry 注册运行时驱动 → adapters 由 events 能力槽派生
@@ -235,6 +239,17 @@ async function main(): Promise<void> {
     // 换模型闩只在内存，重启即清零——回读库里这条会话最近一条落定事件补回来。
     dbModelFactResolver(hookEvents, (sessionId) => hookSessions.getBySessionId(sessionId)?.harness ?? null),
   );
+  // 旁白增量监视（与生产入口同一装配）：hook 事件 = 「转录刚被写过」的信号，
+  // 字节游标增量读、新段广播 narration.updated 帧（web 增量 append，不重拉不轮询）。
+  // harness 归属走 livenessRowOf（getBySessionId 的行没有 harness——那是
+  // listWithCounts/livenessRowOf 的计算字段，直接取恒 undefined、pump 恒早退）。
+  const narrationWatcher = new NarrationWatcher(
+    hookBus,
+    (harness) => narrationSurfaceFor(isHarness(harness) ? harness : 'claude'),
+    (sessionId) => sessionProbe.transcriptPathOf(sessionId),
+    (sessionId) => hookSessions.livenessRowOf(sessionId)?.harness ?? null,
+  );
+  narrationWatcher.start();
   // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
   const questionTracker = new QuestionTracker({
     sessions: hookSessions,
@@ -529,6 +544,7 @@ async function main(): Promise<void> {
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
+    narrationWatcher.stop();
     dashboardPusher.stop();
     void hookPipeline.stop();
     server.close();

@@ -61,3 +61,76 @@ describe('dashboard queries', () => {
     }
   });
 });
+
+describe('searchConversationTexts（全局搜索的聊天记录路）', () => {
+  const ups = (prompt: string): string =>
+    JSON.stringify({ raw: { prompt, cwd: '/x', transcript_path: '/t' } });
+  const stop = (summary: string): string =>
+    JSON.stringify({ raw: { last_assistant_message: summary, cwd: '/x' } });
+
+  it('UPS 正文与 Stop 总结都命中；非对话事件与非正文键不命中', () => {
+    const d = db();
+    try {
+      const repo = new HookEventRepository(d);
+      const [p1] = projectIds(d, ['/p1']);
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'UserPromptSubmit', sessionId: 's1', payload: ups('帮我写个编排图') });
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'Stop', sessionId: 's1', payload: stop('编排已画好,共三个节点') });
+      // 工具事件:即使 payload 里别处(如 cwd)含词也不命中
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'PostToolUse', sessionId: 's1', payload: JSON.stringify({ raw: { cwd: '/编排' } }) });
+      // 对话事件但正文不含词
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'UserPromptSubmit', sessionId: 's1', payload: ups('另一条') });
+
+      const hits = repo.searchConversationTexts('编排', 20);
+      expect(hits).toHaveLength(2);
+      // 倒序:最新的 Stop 在前
+      expect(hits[0]!.eventType).toBe('Stop');
+      expect(hits[0]!.text).toBe('编排已画好,共三个节点');
+      expect(hits[1]!.eventType).toBe('UserPromptSubmit');
+      expect(hits[1]!.text).toBe('帮我写个编排图');
+    } finally {
+      d.close();
+    }
+  });
+
+  it('事件集合随 HARNESS_LIFECYCLE 表(codex 的 TurnAborted 也算收尾)', () => {
+    const d = db();
+    try {
+      const repo = new HookEventRepository(d);
+      const [p1] = projectIds(d, ['/p1']);
+      repo.insert({ projectId: p1!, source: 'codex', eventType: 'TurnAborted', sessionId: 's2', payload: stop('被打断的总结提到编排') });
+      expect(repo.searchConversationTexts('编排', 20)).toHaveLength(1);
+    } finally {
+      d.close();
+    }
+  });
+
+  it('LIKE 通配符按字面匹配(%/_ 不当通配符)', () => {
+    const d = db();
+    try {
+      const repo = new HookEventRepository(d);
+      const [p1] = projectIds(d, ['/p1']);
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'UserPromptSubmit', sessionId: 's1', payload: ups('100% 完成') });
+      repo.insert({ projectId: p1!, source: 'claude', eventType: 'UserPromptSubmit', sessionId: 's1', payload: ups('100x 完成') });
+      expect(repo.searchConversationTexts('%', 20)).toHaveLength(1);
+      expect(repo.searchConversationTexts('%', 20)[0]!.text).toBe('100% 完成');
+    } finally {
+      d.close();
+    }
+  });
+
+  it('limit 早停:倒序取最新的 N 条', () => {
+    const d = db();
+    try {
+      const repo = new HookEventRepository(d);
+      const [p1] = projectIds(d, ['/p1']);
+      for (let i = 0; i < 5; i++) {
+        repo.insert({ projectId: p1!, source: 'claude', eventType: 'UserPromptSubmit', sessionId: 's1', payload: ups(`第${i}条提到关键词`) });
+      }
+      const hits = repo.searchConversationTexts('关键词', 3);
+      expect(hits).toHaveLength(3);
+      expect(hits[0]!.text).toBe('第4条提到关键词');
+    } finally {
+      d.close();
+    }
+  });
+});

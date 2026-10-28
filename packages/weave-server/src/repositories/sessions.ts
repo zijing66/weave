@@ -144,6 +144,20 @@ export class SessionRepository {
   }
 
   /**
+   * 全局搜索的会话名路：已生效标题 LIKE（`pending_title` 还没经 hook 下发，
+   * 不搜）。表只有几十行，LIKE 全扫毫秒级；最近活跃在前。
+   */
+  searchByTitle(q: string, limit: number): SessionRow[] {
+    const needle = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM sessions WHERE title LIKE ? ESCAPE '\\' ORDER BY last_seen_at DESC LIMIT ?",
+      )
+      .all(needle, limit);
+    return rows.map(toSession);
+  }
+
+  /**
    * 会话列表 + 事件计数（任务视图左栏用）：LEFT JOIN 一次查出避免 N+1。
    * 计数不过滤项目（会话可能有跨项目事件），与事件链的 sessionId-only 语义一致。
    */

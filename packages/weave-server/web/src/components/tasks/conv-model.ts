@@ -227,6 +227,9 @@ function normalizeText(text: string): string {
 /** 会话那侧把随图的路径换成这个占位（与服务端回执比对剥的是同一个记号）。 */
 const IMAGE_MARKER = /\[Image #\d+\]/gi;
 
+/** 正文切段的一节：文本段或内联图。 */
+export type ImageSeg = { kind: 'text'; text: string } | { kind: 'image'; image: UploadFile };
+
 /**
  * 正文按 `[Image #N]` 占位记号切段：记号处内联回对应的图（`images[i]` 按出现
  * 顺序对应），其余是文本段。记号比图多的尾段照常给文本；图比记号多时多余的
@@ -238,12 +241,9 @@ const IMAGE_MARKER = /\[Image #\d+\]/gi;
  * 消息开头，不管原路径写在句中还是句尾。气泡按记号位置渲染 = 忠实还原宿主
  * TUI 里用户看到的形态（图在开头），不是 weave 丢了位置。
  */
-export function imageMarkerSegments(
-  text: string,
-  images: readonly UploadFile[],
-): Array<{ kind: 'text'; text: string } | { kind: 'image'; image: UploadFile }> {
+export function imageMarkerSegments(text: string, images: readonly UploadFile[]): ImageSeg[] {
   if (images.length === 0) return [{ kind: 'text', text }];
-  const out: Array<{ kind: 'text'; text: string } | { kind: 'image'; image: UploadFile }> = [];
+  const out: ImageSeg[] = [];
   let at = 0;
   let n = 0;
   for (const m of text.matchAll(IMAGE_MARKER)) {
@@ -254,6 +254,30 @@ export function imageMarkerSegments(
     at = m.index! + m[0].length;
   }
   if (at < text.length) out.push({ kind: 'text', text: text.slice(at) });
+  return out;
+}
+
+/**
+ * 投递行原文按图片路径切段（web 发的带图消息用）：占位胶囊原地展开，路径在
+ * 原文里的位置就是用户摆的位置。宿主粘贴处理会把独立成行的图片路径抽走转图、
+ * `[Image #N]` 记号聚到消息开头（见上）——会话侧正文已丢位置，投递行存的用户
+ * 原文里位置完好，按它切段才能把图内联回用户摆的地方。认不出任何路径返回
+ * null（调用方退回记号切段，图归预览行）。
+ */
+export function pipePathSegments(pipeText: string, images: readonly UploadFile[]): ImageSeg[] | null {
+  const spots = images
+    .flatMap((image) => (image.path ? [{ image, at: pipeText.indexOf(image.path) }] : []))
+    .filter((s) => s.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  if (spots.length === 0) return null;
+  const out: ImageSeg[] = [];
+  let at = 0;
+  for (const spot of spots) {
+    if (spot.at > at) out.push({ kind: 'text', text: pipeText.slice(at, spot.at) });
+    out.push({ kind: 'image', image: spot.image });
+    at = spot.at + spot.image.path!.length;
+  }
+  if (at < pipeText.length) out.push({ kind: 'text', text: pipeText.slice(at) });
   return out;
 }
 

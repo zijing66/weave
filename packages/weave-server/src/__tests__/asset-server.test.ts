@@ -56,9 +56,9 @@ describe('daemon server — file / mcp / statusline', () => {
 
   const base = () => `http://127.0.0.1:${port}`;
 
-  it('GET /projects/:id/file returns file content', async () => {
+  it('GET /projects/:id/asset-file returns file content', async () => {
     const res = await fetch(
-      `${base()}/api/projects/${projectId}/file?path=${encodeURIComponent('.claude/skills/foo/SKILL.md')}`,
+      `${base()}/api/projects/${projectId}/asset-file?path=${encodeURIComponent('.claude/skills/foo/SKILL.md')}`,
     );
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -66,16 +66,16 @@ describe('daemon server — file / mcp / statusline', () => {
     expect(data.size).toBeGreaterThan(0);
   });
 
-  it('GET /projects/:id/file 403 on traversal', async () => {
+  it('GET /projects/:id/asset-file 403 on traversal', async () => {
     const res = await fetch(
-      `${base()}/api/projects/${projectId}/file?path=${encodeURIComponent('../etc/passwd')}`,
+      `${base()}/api/projects/${projectId}/asset-file?path=${encodeURIComponent('../etc/passwd')}`,
     );
     expect(res.status).toBe(403);
   });
 
-  it('GET /projects/:id/file 404 on missing', async () => {
+  it('GET /projects/:id/asset-file 404 on missing', async () => {
     const res = await fetch(
-      `${base()}/api/projects/${projectId}/file?path=${encodeURIComponent('.claude/skills/none/SKILL.md')}`,
+      `${base()}/api/projects/${projectId}/asset-file?path=${encodeURIComponent('.claude/skills/none/SKILL.md')}`,
     );
     expect(res.status).toBe(404);
   });

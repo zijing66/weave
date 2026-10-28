@@ -1,7 +1,8 @@
-/** 项目域：项目行、harness 接入面、健康检查、终端目标与 pane。 */
+/** 项目域：项目行、harness 接入面、健康检查、终端目标与 pane、项目文件数据面。 */
 
 import type { Harness } from '@weavecode/core/harness';
-import { apiFetch } from './client';
+import { apiFetch, API_BASE, errorText } from './client';
+import { markUnauthorized } from '../auth';
 import type { AssetEntry } from './assets';
 
 /**
@@ -88,6 +89,37 @@ export interface ProjectStorageResult {
   storage: ProjectStorage;
   /** 生效目录（自定义 ?? 全局默认）——展示用，配置为空时就是它。 */
   effective: { images: string; files: string };
+}
+
+/** 项目文件索引的一行（浏览与搜索共用；表达式不在此面——那是会话域的
+ *  `/sessions/:id/ref`，落定时现算）。 */
+export interface ProjectFileEntry {
+  /** 项目相对路径（正斜杠分隔）。 */
+  path: string;
+  name: string;
+  kind: 'file' | 'dir';
+  /** 搜索命中的字符区间 `[起点, 长度]`，供高亮。 */
+  ranges?: [number, number][];
+  /** 仅目录浏览模式（搜索模式不带，免得每键一堆 stat）。 */
+  size?: number;
+  mtime?: string;
+  /** 条目本体是符号链接（lstat 判定；搜索模式同样不带）。 */
+  symlink?: boolean;
+  /** 嵌套 git 仓（子模块）目录：建索引那一拍的实际 HEAD 短 hash。 */
+  head?: string;
+}
+
+export interface ProjectFileListing {
+  /** 项目绝对路径（面包屑头）。 */
+  root: string;
+  /** 当前目录（相对，'' = 根）。 */
+  dir: string;
+  entries: ProjectFileEntry[];
+  total: number;
+  /** 搜索满档即停：`total` 只是「至少这么多」，后面的没扫（浏览模式恒 false）。 */
+  capped?: boolean;
+  /** 索引到上限被截断（搜索退化为目录浏览）。 */
+  truncated: boolean;
 }
 
 export const projectApi = {
@@ -182,4 +214,43 @@ export const projectApi = {
   /** Machine-level harness files (~/.claude, ~/.codex) for the global tree. */
   listGlobalFileAssets: (): Promise<AssetEntry[]> =>
     apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
+
+  // --- 项目文件数据面（索引浏览/搜索 + 根内只读预览） ---
+  /** 项目文件索引的一页：`q` 非空 = `dir` 子树内模糊匹配，空 = 列 `dir` 的直接子项。 */
+  listProjectFiles: (
+    projectId: number,
+    opts: {
+      q?: string;
+      dir?: string;
+      limit?: number;
+      /** 打开浏览器那一拍带上：索引立刻重建一次（之后按 git 指纹重验，不再每键重扫）。 */
+      fresh?: boolean;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<ProjectFileListing> => {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.dir) params.set('dir', opts.dir);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.fresh) params.set('fresh', '1');
+    const qs = params.toString();
+    return apiFetch<ProjectFileListing>(
+      `/projects/${projectId}/files${qs ? `?${qs}` : ''}`,
+      opts.signal ? { signal: opts.signal } : {},
+    );
+  },
+  /** 预览栏的字节源（`<img src>` 与文本 fetch 共用；Content-Type 由服务端定）。 */
+  projectFileUrl: (projectId: number, relPath: string): string =>
+    `${API_BASE}/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`,
+  /** 预览正文：行号/选区都在前端按文本算，截断由服务端标在响应头上。 */
+  projectFileText: async (
+    projectId: number,
+    relPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ text: string; truncated: boolean }> => {
+    const res = await fetch(projectApi.projectFileUrl(projectId, relPath), signal ? { signal } : {});
+    if (res.status === 401) markUnauthorized();
+    if (!res.ok) throw new Error(await errorText(res));
+    return { text: await res.text(), truncated: res.headers.get('x-weave-truncated') === '1' };
+  },
 };

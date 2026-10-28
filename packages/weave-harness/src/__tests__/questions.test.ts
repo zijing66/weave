@@ -74,7 +74,10 @@ describe('claude 阻塞问答面', () => {
       'Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session',
     );
     expect(bypass[1]!.label).toBe('Yes, manually approve edits');
+    // 第 3 行 = 反馈输入行：web 出输入框，键序 = 数字 + 文本 + shift+tab（宿主
+    // 按 3 进文本框、打完 shift+tab 带反馈批准——裸按 3 会卡在反馈输入态）
     expect(bypass[2]!.label).toBe('Tell Claude what to change');
+    expect(bypass[2]).toMatchObject({ input: true, textTail: ['\x1b[Z'] });
 
     // 接线：ExitPlanMode 那一面永远只有一条问题，行数取自本机默认模式
     const plan = CLAUDE_BLOCKING_PROMPT.parseQuestions('ExitPlanMode', {});

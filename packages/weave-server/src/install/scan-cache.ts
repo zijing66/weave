@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   scanLibraryFileAssets,
@@ -69,6 +70,18 @@ export async function getLibraryScan(libPath: string): Promise<LibraryScan> {
 }
 
 async function load(libPath: string): Promise<LibraryScan> {
+  // 库目录被外部删掉后缓存文件仍在、root 校验也照样相等 ⇒ 会命中返回幽灵资产。
+  // 读缓存前先验目录在不在：不在 = miss + 顺手清掉孤儿缓存文件。
+  if (!existsSync(libPath)) {
+    try {
+      await rm(cacheDirOf(libPath), { recursive: true, force: true });
+    } catch {
+      // 孤儿缓存清不掉不碍事：目录都不在了，缓存命中已被跳过
+    }
+    const scan = await scanLibrary(libPath);
+    memory.set(libPath, scan);
+    return scan;
+  }
   const cached = await readScanFile(libPath);
   if (cached) {
     memory.set(libPath, cached);

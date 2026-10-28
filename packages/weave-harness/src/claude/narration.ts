@@ -23,33 +23,8 @@ export const CLAUDE_NARRATION: NarrationSurface = {
     });
     try {
       for await (const line of rl) {
-        // 预筛：assistant 条目行才值得 parse（转录动辄几十 MB）
-        if (!line.includes('"type":"assistant"')) continue;
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (entry.type !== 'assistant' || entry.isSidechain === true) continue;
-        const content = (entry.message as { content?: unknown } | undefined)?.content;
-        if (!Array.isArray(content)) continue;
-        const text = content
-          .filter(
-            (part): part is { type: 'text'; text: string } =>
-              !!part &&
-              typeof part === 'object' &&
-              (part as { type?: unknown }).type === 'text' &&
-              typeof (part as { text?: unknown }).text === 'string',
-          )
-          .map((part) => part.text)
-          .join('')
-          .trim();
-        if (!text) continue;
-        out.push({
-          at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
-          text,
-        });
+        const seg = parseLine(line);
+        if (seg) out.push(seg);
       }
     } catch {
       return null;
@@ -58,4 +33,36 @@ export const CLAUDE_NARRATION: NarrationSurface = {
     }
     return out;
   },
+  lineParser: parseLine,
 };
+
+/** 一行转录 → 一段旁白（全量读与增量监视共用这份文法）。 */
+function parseLine(line: string): NarrationText | null {
+  // 预筛：assistant 条目行才值得 parse（转录动辄几十 MB）
+  if (!line.includes('"type":"assistant"')) return null;
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (entry.type !== 'assistant' || entry.isSidechain === true) return null;
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter(
+      (part): part is { type: 'text'; text: string } =>
+        !!part &&
+        typeof part === 'object' &&
+        (part as { type?: unknown }).type === 'text' &&
+        typeof (part as { text?: unknown }).text === 'string',
+    )
+    .map((part) => part.text)
+    .join('')
+    .trim();
+  if (!text) return null;
+  return {
+    at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
+    text,
+  };
+}

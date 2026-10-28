@@ -1065,6 +1065,13 @@ export interface NarrationSurface {
     /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
     transcriptPath: string | null;
   }): Promise<NarrationText[] | null>;
+  /**
+   * 行文法（增量监视用）：喂一行转录原文，吐该行认出的段（0 或 1 段）。
+   * 与 `sessionNarration` 共用同一份文法——全量读是「逐行 feed」，增量监视是
+   * 「只 feed 新增字节切出的行」。缺省 = 该 harness 不支持增量监视（web 退回
+   * 轮边界补采）。
+   */
+  lineParser?(line: string): NarrationText | null;
 }
 
 /**
