@@ -5,7 +5,7 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { FileEdit } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
-import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor } from '../../surfaces.js';
+import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor } from '../../surfaces.js';
 import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
 
@@ -249,6 +249,26 @@ export async function handleSessionInsightRoutes(
       transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
     });
     sendJson(res, 200, { supported: narration !== null, narration });
+    return true;
+  }
+
+  // ---- 对话回退：宿主 rewind 在转录里留的锚点（解析归 harness 面）——
+  // 前端据此把被回退区间的气泡置灰保留展示 ----
+  const rewindMatch = pathname.match(/^\/sessions\/([^/]+)\/rewinds$/);
+  if (rewindMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(rewindMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? rewindSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, rewinds: null });
+      return true;
+    }
+    const rewinds = await surface.sessionRewinds({
+      sessionId,
+      transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
+    });
+    sendJson(res, 200, { supported: rewinds !== null, rewinds });
     return true;
   }
 

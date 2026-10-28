@@ -46,6 +46,8 @@ export const zh = {
   // --- daemon 命令运行时输出 ---
   'out.daemon.alreadyRunning': '守护进程已在 {port} 端口运行',
   'out.daemon.started': '守护进程已启动：http://{host}:{port}',
+  'out.daemon.startUnconfirmed':
+    '守护进程在 {port} 端口迟迟未应答——可能启动失败了（详见数据目录 cache/logs/daemon-boot.log）',
   'out.daemon.stopped': '守护进程已停止（pid {pid}）。',
   'out.daemon.statusNotRunning': '守护进程：未运行',
   'out.daemon.statusRunning': '守护进程：运行中（pid {pid}，端口 {port}，已运行 {uptime}s）',

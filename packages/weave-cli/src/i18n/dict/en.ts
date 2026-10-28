@@ -47,6 +47,8 @@ export const en: Record<keyof typeof zh, string> = {
   // --- daemon command output ---
   'out.daemon.alreadyRunning': 'Daemon already running on port {port}',
   'out.daemon.started': 'Daemon started on http://{host}:{port}',
+  'out.daemon.startUnconfirmed':
+    'Daemon not answering on port {port} — it may have crashed at boot (see cache/logs/daemon-boot.log in the data dir)',
   'out.daemon.stopped': 'Daemon stopped (pid {pid}).',
   'out.daemon.statusNotRunning': 'Daemon: not running',
   'out.daemon.statusRunning': 'Daemon: running (pid {pid}, port {port}, up {uptime}s)',

@@ -57,6 +57,22 @@
    红线；形态同 `PluginSurface` / 决策内核先例）：**读侧**给观察态派生素材（会话
    状态、事件统计、工具安装态），**写侧**即动词门面（5.2）。RPG 可整体启停
    （settings 闸，缺省不装 = 零开销），未来可整体拆包甚至独立发布而不动既有域。
+7. **化身运行时 = 双通道：ACP-lite 与终端共生分管两个场景**（2026-10-28 裁决，据
+   Codeg / claude-agent-acp 源码实测）。**RPG 化身与编排目标会话走 ACP-lite**（weave
+   spawn 适配器起 daemon 子进程——游戏视图即视图、不占用户终端 pane；`session/prompt`
+   → `TurnComplete` 即回执，回执闸天然满足；`session/fork` 原生支撑分身术；ACP 流自带
+   live diff / tool call，游戏视图素材更富）；**用户自己的终端会话走既有终端共生**
+   （hook 采集 + 击键，ACP 够不着的场景，见定位稿「ACP 覆盖边界」）。**角色属性与协议
+   无关**：角色 = 独立 project，skill / MCP 是 agent 启动时自己读项目文件（`.claude/
+   skills`、`.mcp.json`），ACP spawn 传 `working_dir` = 角色仓库即全部生效——裁决 3
+   的对象层级原样成立。**三个整合点**：① 事件归一——ACP `session/update` 流翻成
+   `HARNESS_EVENTS` canonical 词表入库（autoFire / turnOpen / 编排推进照旧）；待实测
+   红利 = claude-agent-acp 基于 Agent SDK，SDK 会话可能仍触发项目 hooks，若属实采集面
+   零改动、ACP 只管投递；② 投递通道——`MessageDeliverer` 加 ACP 层，层序按会话运行时
+   分流（ACP 会话 prompt 即达，终端会话层序不动）；③ 混合图——DAG 节点双运行时，
+   事件归一后引擎无感。**steer 编排 v1 不用**（保持回合边界模型），留用户手动插话。
+   **落位**：C3（RPG-1）v1 化身仍走既有终端 spawn（零新依赖、验收不变），ACP-lite
+   作独立工作项（ACP-1）落地后化身默认运行时切换为 ACP、两通道并存。
 
 ## 二、概念映射表（weaveRPG.md 游戏概念 → weave 基础设施）
 

@@ -756,6 +756,8 @@ export function SessionMessages({
                           m.failed
                             ? 'border-red-500/30 bg-red-950/20'
                             : 'border-edge/[0.08] bg-neutral-800/50',
+                          // 被回退的段落：红虚线框 + 整体降不透明度（保留展示，一眼看出已退场）
+                          m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
                           m.narration === true && 'weave-card-in',
                         )}
                       >
@@ -774,6 +776,11 @@ export function SessionMessages({
                           {m.narration === true && (
                             <span className="shrink-0 rounded bg-neutral-500/15 px-1 py-px text-10 font-medium text-neutral-400">
                               {t('tasks.convNarration')}
+                            </span>
+                          )}
+                          {m.rewound === true && (
+                            <span className="shrink-0 rounded bg-red-500/15 px-1 py-px text-10 font-medium text-red-300">
+                              {t('tasks.convRewound')}
                             </span>
                           )}
                         </span>
@@ -843,11 +850,18 @@ export function SessionMessages({
                         pipe
                           ? 'border-blue-500/30 bg-blue-500/[0.12]'
                           : 'border-blue-500/15 bg-blue-500/[0.05]',
+                        // 被回退的段落：红虚线框 + 整体降不透明度（与回复气泡同口径）
+                        m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
                       )}
                     >
                       {/* 时刻与左侧回复气泡同布局：气泡上部、靠屏幕边缘那一侧
                           （这里右对齐），weave 来源 tag 与投递状态徽标和它并排 */}
                       <div className="mb-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {m.rewound === true && (
+                          <span className="shrink-0 rounded bg-red-500/15 px-1 py-px text-10 font-medium text-red-300">
+                            {t('tasks.convRewound')}
+                          </span>
+                        )}
                         {m.fromWeave && (
                           <span className="shrink-0 rounded bg-blue-500/15 px-1 py-px text-10 font-medium text-blue-300">
                             weave

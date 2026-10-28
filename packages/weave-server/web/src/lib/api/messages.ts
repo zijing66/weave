@@ -196,6 +196,11 @@ export const messageApi = {
     apiFetch<{ supported: boolean; narration: Array<{ at: string | null; text: string }> | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/narration`,
     ).then((r) => r.narration),
+  /** 对话回退锚点（宿主 rewind 在转录里留的；无该面 / 读不到 = null）。 */
+  sessionRewinds: (sessionId: string): Promise<Array<{ at: string; boundaryAt: string | null }> | null> =>
+    apiFetch<{ supported: boolean; rewinds: Array<{ at: string; boundaryAt: string | null }> | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/rewinds`,
+    ).then((r) => r.rewinds),
   /** 远程作答：整 call 一次提交（只传问题键 + 选项下标，键序由服务端 harness
    *  规格拼装并白名单校验）。 */
   answerQuestion: (

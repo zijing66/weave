@@ -14,24 +14,25 @@
 
 **共同盲区：agent 在它们那里是「跑一次任务的工人」，不是持续存活的会话。**
 
-### Codeg：正面重叠最大的竞品（2026-10-28 补充探索，同日按 README 全文校准）
+### Codeg：正面重叠最大的竞品（2026-10-28 补充探索；README 全文 + 本地 clone 源码级校准）
 
 [Codeg（Code Generation）](https://github.com/spacering-net/codeg)（docs.codeg.app，
 Apache-2.0，v0.41.1、迭代很快）是开源的**多智能体编码工作台**（"The multi-agent coding
-workspace"）。技术栈 = Next.js + Tauri（Rust 桌面壳）+ Rust `codeg-server`；形态 = 桌面 /
-自托管 server / Docker / iOS / Android，外加 Telegram、Lark、微信聊天通道。核心事实
-（README 全文实测）：
+workspace"）。技术栈 = Next.js + Tauri（Rust 桌面壳）+ Rust `codeg-server`（Axum HTTP +
+WebSocket）+ SeaORM/SQLite；形态 = 桌面 / 自托管 server / Docker / iOS / Android，外加
+Telegram、Lark、微信聊天通道。功能面（README 实测）：
 
 - **接线 = ACP（Agent Client Protocol）是唯一协议**：所有 agent 经 ACP 接入、同一结构化
   对话界面（工具卡、live diff、交互回复，非终端）。**内置 20 个 agent**（Claude Code、
   Codex、Gemini CLI、OpenClaw、OpenCode、Cline、Hermes、CodeBuddy、Kimi Code、MiniMax、
   Pi、Grok、Cursor、DeepSeek Harness、Qoder、Google Antigravity、Kiro CLI、**ZCode**、
   TRAE CLI、Command Code）+ 任意 ACP agent（公共 ACP registry 或贴 distribution JSON，
-  自动安装、验证可启动、当内置对待）。**weave 接入计划里的 zcode 它已内置**。
+  自动安装、sha256 校验、验证可启动、当内置对待）。**weave 接入计划里的 zcode 它已内置**。
 - **Sessions that travel**：导入 / 搜索 / resume 任意 agent 落盘的历史会话，**再交给
   另一个 agent 接手**——跨 harness 会话交接。
 - **多 agent 协作**：`@` 某个 agent 即委派，并行跑、进度流回对话；**Fork & Steer**——
-  从已完成的回复 fork 对话，或向**运行中的回合**插话（支持的 agent）。
+  从历史某条消息 fork 对话（ACP `session/fork`），或向**运行中的回合**插话
+  （`_session/steering` 扩展）。
 - **To-dos 无人值守**：任务排进**隔离 worktree**，agent 干活、人 review 并 approve——
   三栏 merge 编辑器、live diff、Git 面板齐备。
 - **Repository Panel**：GitHub / GitLab / Gitea / Forgejo 的 issue / PR / checks / merge，
@@ -39,46 +40,103 @@ workspace"）。技术栈 = Next.js + Tauri（Rust 桌面壳）+ Rust `codeg-ser
 - **Automations**：保存配置好的 composer，headless 跑、cron 或按需。
 - **Token Usage**：趋势、缓存命中率、活动热图、按目录 / agent / 模型 / 会话的用量、
   按 API 牌价折算成本。
-- **还有**：无限画布（chat/文件/终端/便签摆一板）、codeg-cli（脚本 / CI 跑 prompt、连
-  运行中的实例收 JSON 事件）、Computer Use（preview）、Office 文档 + 科研 skills、
-  浏览器分享、加密备份 + WebDAV 配置同步、URL scheme。
+- **还有**：无限画布、codeg-cli（脚本 / CI 跑 prompt、连运行中的实例收 JSON 事件）、
+  Computer Use（preview）、Office 文档 + 科研 skills、加密备份 + WebDAV 同步、URL scheme。
 
-**与 weave 的对照**（按本文差异化轴逐条过）：
+**源码级校准**（本地 clone 实测，15 万行 Rust + 4.6 万行 TS）——功能面之下的深度分层：
+
+- **编排深度浅于 README 印象**：Automations = **单任务 cron**（TriggerKind 仅
+  Schedule/Manual，30s tick + CAS claim），无 DAG / 依赖图 / 多步编排；work_task 状态机
+  （todo→queued→preparing→running⇄awaiting_input→review→merging→done/failed/canceled）
+  每任务一 worktree（`task/<id>` 分支），两阶段 merge 且 **merge intent 持久化供 crash
+  recovery**——但**重启不自动续跑**：boot reconcile 把在途任务一律判
+  failed(interrupted)，仅 merging 态从 git truth 恢复，靠用户手动 retry。
+- **委派 = codeg-mcp MCP 工具（LLM 驱动编排）**：`@` 提及转内部路由帧，父 LLM 调
+  `delegate_to_agent`（stdio 伴生进程 → UDS/named pipe token 认证 → DelegationBroker →
+  起新子 ACP 会话）；异步 task_id + `get_delegation_status` 轮询 + cancel/resume；子
+  agent **冷启动**（无父上下文）；**结果只在内存**（FIFO 512MB cache，逐出后 DB 只剩
+  状态）、**无投递重试**；agent 间无直接消息通道。steer 仅用户→运行中 agent（三态回执
+  injected/startedNewTurn/promptRequired），非 agent→agent。
+- **能力差异 = 硬编码**：`AgentType::` 具名匹配在 connection.rs **744 处**，registry.rs
+  数百行 per-agent 版本考据；无能力面 / unsupported-reasons 抽象。**接新 agent 的成本是
+  散写分支，不是实现一个 driver**。
+- **持久化双轨**：DB 只存元数据（31 实体、无消息表）；历史靠 20 个 per-agent parser
+  逆向各 agent 本地存储 + 自定义 agent 自录 ACP wire transcript（JSONL 落盘）。
+- **审批语义**：`session/request_permission` 挂起到人答 / agent 撤回 / 连接拆除，无超时
+  无默认放行；审批结果落 `tool_approval` 表。
+- **终端 = 内嵌 PTY**（portable-pty 本地起 shell，无 SSH/远程后端）——**替代不是共生**，
+  weave 的系统终端共生（pane 定位、击键注入）它没有。
+- **判活**：child.wait() reap 回调 + idle_sweep 3 分钟无活动断连（前端 30s keepalive 续命）
+  + codeg-mcp parent-pid watchdog；WS 客户端 since_seq 游标 + snapshot/replay 恢复。
+- **多机**：server 模式 = 同一 web 客户端远程访问（HTTP + WS attach）；**全库无
+  mDNS/zeroconf，无跨机 agent 联邦**；chat channel = IM 桥 60s 轮询。
+
+**与 weave 的对照**（源码校准后）：
 
 | 轴 | Codeg | weave |
 |---|---|---|
 | 接线方式 | ACP：把 agent 装进自己的壳（spawn 子进程、结构化流） | hook 采集 + 终端共生：不搬家、寄生用户已有终端 |
-| 会话观 | 工作台 UI（编辑器 + 分屏 + 画布） | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
-| agent 协作 | `@` 委派 + 运行中插话 | 三层投递 + 回执闸/暂停闸 + L2 DAG 编排（when/condition/autoFire） |
-| 多 harness | ACP 适配即接入（广而浅，20 家） | 十八能力槽深度适配（窄而深：问答作答、中断、改动汇总、判活） |
-| 任务/隔离 | worktree to-do + review/approve + 三栏 merge | 短板（B5 worktree + A1 批阅在路上） |
-| 成本面 | Token Usage 全套 | 短板（B4 在路上） |
+| 会话观 | 工作台 UI（编辑器 + 分屏 + 画布）；DB 只存元数据 | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
+| agent 协作 | LLM 驱动委派（MCP 工具 + 轮询，结果仅内存） | 图驱动编排（DAG + when/condition/autoFire）+ 三层投递 + 回执闸 |
+| 多 harness | ACP 适配即接入（广而浅，20 家；差异靠 744 处硬编码分支） | 十八能力槽深度适配（窄而深；不支持也是面） |
+| 任务/隔离 | worktree to-do + review/approve + 两阶段 merge | 短板（B5 worktree + A1 批阅在路上） |
+| 重启续跑 | boot reconcile 判 interrupted，用户手动 retry | rearm 最小续跑（pending 原样重建） |
+| 成本面 | Token Usage 全套（per-turn 表 + sync 水位） | 短板（B4 在路上） |
 | 移动端 | iOS/Android app + 聊天通道 | 局域网 HTTPS web + Web Push |
-| 可靠性 | 未见投递语义 / daemon 重启续跑的公开材料 | 生产消费解耦、rearm 最小续跑、1送1回 |
+| 跨机 | 无（server = 远程访问同一实例） | 联邦规划（mDNS + pairing + 服务路由） |
 
-**威胁评估（校准后上调）：它覆盖本文「诚实的短板」五条中的四条**——worktree 隔离、
-review/approve 闭环、任务语义（to-do + issue/PR 转办）、成本面，外加移动端 app 与聊天
-通道（「手机可用」不再是 weave 独有）。它不是任务板类竞品，是**全功能工作台**，与 weave
-的正面重叠比初判大一个量级。weave 仍然独有的地层：**终端共生**（pane 定位、击键注入、
-阻塞问答作答、中断、可见屏幕、唤出——Codeg 自带编辑器与终端，是替代不是共生；ACP 原生
-有 permission/cancel，但只对 ACP 通道内的 agent 有效）、**投递可靠性工程**（回执闸 /
-暂停闸 / 1送1回 / 补回车只人手）、**L2 DAG 编排引擎**（Codeg 的 Automations = 单
-composer 的 cron/headless，不是图：无 when/condition/judgeBatch/autoFire/扇入语义/
-rearm）、**生产消费解耦**（daemon 死 harness 零感知）、跨机联邦与 RPG 视图（roadmap）。
+**威胁评估（源码校准后：面广、深度分层）**：功能广度覆盖本文「诚实的短板」五条中的
+四条（worktree 隔离、review/approve 闭环、任务语义、成本面）+ 移动端 app 与聊天通道，
+是**全功能工作台**、与 weave 正面重叠最大的竞品。但运行时与编排深度是分层的：
+**无 DAG 编排**（Automations 单任务 cron；委派是 LLM 自决的 MCP 工具，无 when/condition/
+judgeBatch/autoFire/扇入语义）、**重启不续跑**（在途任务判 interrupted）、**委派结果不
+落库无重试**、**能力差异靠 744 处硬编码**、**无终端共生**（内嵌 PTY 替代用户终端）、
+**无跨机联邦**。weave 的应对不是拼功能面，是守住「会话运行时 + 图编排引擎 + 终端共生」
+地层，同时把它验证过的工程细节抄过来（见下）。
 
-**战略注：ACP 是威胁也是机会**。ACP 正在成为 IDE 侧事实标准（Zed/JetBrains 联合，
-claude code / gemini cli 已实验性支持，还有公共 ACP registry）——ACP 普及会稀释「多
-agent 接入」门槛，weave 的多 harness 护城河会被摊薄（Codeg 内置 20 家就是证明）。但
-ACP 管的是「客户端 ↔ agent 对话流」，不管终端、不管投递可靠性、不管编排状态机、不管
-跨机。**应对方向：把 ACP 视为潜在的接入通道**（采集与投递的备选路径，可作能力槽的又一
-信源），而不是纯竞品——ACP 生态越大，weave「编排 + 运行时」层的稀缺性反而越突出。
+**战略注：ACP 是威胁也是机会**（经 claude-agent-acp v0.98 源码实证强化）。ACP 正在成为
+IDE 侧事实标准（Zed/JetBrains 联合 + 公共 ACP registry），官方
+[@agentclientprotocol/claude-agent-acp](https://github.com/zed-industries/claude-agent-acp)
+适配器已把 weave 十八能力槽里大半件事协议化：permission 审批、plan 模式、**steer 插话**
+（`_session/steering` 三态回执——weave 人在场闸 defer 的协议版）、fork 会话、模型 /
+effort 切换、subagent 子会话（RFD）、usage 上报。更值得注意的是它的 session-index 对
+**不是自己起的**会话走 CLI 注册表 + 转录扫描判活——与 weave 的
+`claude-session-pid-registry` + 转录解析是**同一套原语**：生态在向 weave 的采集面收敛。
+ACP 普及会摊薄「多 agent 接入」门槛（Codeg 内置 20 家即证明），但 ACP 管的是「客户端 ↔
+agent 对话流」，不管终端、不管投递可靠性、不管编排状态机、不管跨机。**应对方向：把
+ACP 作为 weave 的又一接入通道**——weave 自己起的新会话（provision 槽场景）可 spawn
+claude-agent-acp 拿结构化流（采集与投递的备选路径，与 hook 采集互补），存量用户终端里
+的会话仍走 hook + 终端共生。ACP 生态越大，weave「编排 + 运行时」层的稀缺性越突出。
 
-**可借鉴**：① 自定义 agent 注册（registry / distribution JSON → 自动安装 + 验证可
-启动）的 onboarding，对 RPG 角色插件安装流有直接参照价值；② **Sessions that travel**
-证明跨 agent 会话交接有真实需求——weave 的 resume 槽 + 转录解析能力其实做得到（读
-claude 转录喂给 codex），可入 backlog；③ Fork & Steer 的「向运行中回合插话」与 weave
-「人在场闸 defer」是同一问题的两种答案，值得对照复盘；④ Token Usage 的按目录 / agent /
-模型多维归因口径，B4 成本面落地时直接参照。
+**两层接入策略（2026-10-28 定）**：Codeg 的广度是「借生态」——ACP 适配器由 Zed/agent
+厂商/社区维护，它自己只写怪癖补丁（744 处硬编码）+ 注册表化安装。weave 接新 harness
+（zcode / dsh 等）照此分两层：**生态有 ACP 适配器的，先走 ACP-lite 拿公分母能力**
+（对话流 / 审批 / 中断 / fork——spawn 适配器即得，driver 只做薄壳），**深度件（问答
+键序、改动汇总、判活、配置面）再逐步补全 driver**；广度借生态、深度自己攒，两层并行。
+Codeg 的教训同时记下：只借广度不建能力面，终点就是 744 处硬编码分支。
+
+**ACP 覆盖边界（2026-10-28 逐槽核定，18 槽口径）**：良好覆盖约 9 槽——questions
+（request_permission/elicitation，优于键序）、中断（session/cancel）、edits（live diff
++ AIR 扩展，优于转录解析）、images（内联）、events（session/update 流）、resume
+（load/fork）、provision（spawn 即起）、liveness（自有子进程）、assets（半）；**完全不
+覆盖约 7 槽**——init / capture / statusline / config / plugins / pluginState / logs
+（安装期与 agent 配置域，协议不碰）+ detect（weave 侧判据）；messaging 半覆盖（无队列
+/回执/idle 信号，steer 仅一件）。**两条结构性边界**：① ACP 只存在于 weave spawn 的
+会话——用户自己终端里的会话（终端共生主场景）永远够不着，hook + 击键不可替代；
+② 「ACP 覆盖 X」实为「该 agent 的适配器覆盖 X」，适配器参差（Codeg 744 处补丁即证），
+ACP-lite 壳须留 per-agent 怪癖层。
+
+**可借鉴**（源码级，标注落点）：① 自定义 agent 注册（ACP registry distribution JSON →
+自动安装 + sha256 校验 + 验证可启动 + hydrate 跳过失败行）的 onboarding——RPG 角色插件
+安装流直接参照；② **codeg-mcp 的「给会话内 LLM 的委派工具」**——weave 的 MCP 面可加
+delegate 类工具，让模型自决扇出补充图驱动编排（与 L2 正交互补）；③ work_task 的**两阶段
+merge + merge intent 持久化 crash recovery**——B5 worktree 落地参照；④
+`token_usage_turn` 每 turn 一行 + sync 水位表——B4 成本面参照；⑤ **Sessions that
+travel** 证明跨 agent 会话交接有真实需求——weave 的 resume 槽 + 转录解析做得到（读
+claude 转录喂给 codex），可入 backlog；⑥ steer 三态回执（injected/startedNewTurn/
+promptRequired）——weave 层② mid-turn 投递的结果语义可对照（人在场闸 defer 是另一种
+答案）；⑦ WS since_seq 游标 + snapshot/replay——与 weave SSE 帧编号 + 环形缓冲互相
+印证，无需动作。
 
 ## 二、weave 的差异化（按护城河深度排序）
 
@@ -243,10 +301,10 @@ N 个分支依次合入时，**合并顺序影响总冲突量**。贪心策略�
   [nimbalyst: platforms 2026](https://nimbalyst.com/blog/best-ai-agent-orchestration-platforms-2026/)
 - [Paperclip](https://github.com/paperclipai/paperclip) · [ruflo (claude-flow)](https://github.com/ruvnet/ruflo) ·
   [LangGraph](https://docs.langchain.com/oss/python/langgraph/use-graph-api)
-- Codeg 探索（2026-10-28，README 全文 + package.json 实测校准；GitHub 直连被墙，经
-  gh-proxy 镜像取 raw）：[spacering-net/codeg](https://github.com/spacering-net/codeg) ·
+- Codeg 探索（2026-10-28，README 全文 + 本地 clone 源码级校准——15 万行 Rust 双路
+  子 agent 实测，file:line 证据在探索记录）：[spacering-net/codeg](https://github.com/spacering-net/codeg) ·
   [docs.codeg.app](https://docs.codeg.app) ·
   [Codeg v0.4.0 发布帖（V2EX）](https://www.v2ex.com/t/1201200) ·
   [ACP（Agent Client Protocol）](https://agentclientprotocol.com) ·
-  [claude-code-acp（Zed）](https://github.com/zed-industries/claude-code-acp)
+  [claude-agent-acp（Zed 官方适配器，v0.98 源码实测）](https://github.com/zed-industries/claude-agent-acp)
 - 三方对标评审记录见 [`会话扩展点与编排重设计.md`](./会话扩展点与编排重设计.md) 头部修订注。

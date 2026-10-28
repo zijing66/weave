@@ -182,6 +182,10 @@ export function startDaemon(): void {
       pluginHostHolder.getHandler = (id, type) => loader.getHandler(id, type);
       pluginHostHolder.getConfig = (id) => loader.getConfig(id);
       loader.watchRoots();
+    })
+    .catch((err) => {
+      // 插件装载失败不拦 daemon：规则/工具包少装，核心面照常服务。
+      console.error('[weave] plugin load failed:', err instanceof Error ? err.message : err);
     });
   // session-orchestration 批 1：dispatch 域（ResumeRunner）与 message 域
   // （MessageDeliverer）共享同一无头执行核 = 同会话并发闸跨域生效。
@@ -581,10 +585,20 @@ export function startDaemon(): void {
     clearInterval(cronTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
-    void hookPipeline.stop();
     server.close();
     tls?.server.close();
-    process.exit(0);
+    // 等 inbox worker 真停（terminate 是异步的，worker 的 DB 连接/WAL 锁要
+    // 干净释放）再退——立刻 exit 会把锁释放甩给 OS 慢慢收，紧跟的 start
+    // 撞上垂死锁（boot log 实测过 database is locked）。兜底 3s：worker
+    // 卡死也不能拖着 daemon 不退。
+    const forceExit = setTimeout(() => process.exit(0), 3_000);
+    hookPipeline
+      .stop()
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(forceExit);
+        process.exit(0);
+      });
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
@@ -594,5 +608,11 @@ export function startDaemon(): void {
     writeDaemonState({ ...state, pid: process.pid, host: bindHost, tlsPort });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
+  });
+  // 端口被占等 listen 失败：不挂这个就是 uncaughtException 静默死（stdio:ignore
+  // 下连 stderr 都没有），CLI 那边只看到「已启动」却永远等不到 /health。
+  server.on('error', (err) => {
+    console.error(`[weave] daemon listen failed on ${bindHost}:${state.port}: ${err.message}`);
+    throw err;
   });
 }

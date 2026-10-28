@@ -28,7 +28,8 @@ export type HarnessCapability =
   | 'narration'
   | 'commands'
   | 'provision'
-  | 'liveness';
+  | 'liveness'
+  | 'rewind';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -1148,6 +1149,37 @@ export interface LivenessSurface {
   alive(ids?: readonly string[]): Promise<Map<string, boolean>>;
 }
 
+/** 一次对话回退（宿主 rewind）：何时发生的、退回到了哪里之前。 */
+export interface RewindMark {
+  /**
+   * 回退发生的时刻（ISO）。claude 的锚点行自身不带 timestamp，取锚点行之前
+   * 最近一条带 timestamp 转录行的时刻——rewind 只能发生在最后活动之后。
+   */
+  at: string;
+  /**
+   * 回退边界（退回到哪条消息之前）的时刻；宿主锚点只给 uuid 不给时刻，
+   * server 按事件时刻近似——这里恒 null（不猜）。
+   */
+  boundaryAt: string | null;
+}
+
+/**
+ * 对话回退面：宿主的 rewind（claude = Esc Esc / `/rewind`，退回代码与/或对话）
+ * 在转录里留下的痕迹归 harness 解析，server 只把「哪些气泡被回退了」交给前端
+ * 置灰展示。缺这个槽 = 该 harness 的回退不可观测（前端不摆「已回退」标记）。
+ */
+export interface RewindSurface {
+  /**
+   * 该会话的全部回退（时间序）；读不到（无转录 / 路径未知 / 半路出错）→
+   * null（不猜）。没有回退 = 空数组。
+   */
+  sessionRewinds(req: {
+    sessionId: string;
+    /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<RewindMark[] | null>;
+}
+
 /**
  * 会话标题读写面：宿主侧**用户自定义名**（codex = thread name，落 session_index
  * 与 sqlite threads.name）的读/写通道。读 = 宿主持久层 diff 采纳（TUI 改名反显
@@ -1186,6 +1218,7 @@ export interface HarnessDriver {
   commands?: CommandsSurface;
   provision?: ProvisionSurface;
   liveness?: LivenessSurface;
+  rewind?: RewindSurface;
   /** 不入 capabilities 清单——无 web 面，消费点仅 server 两处（dispatcher diff 采纳 / PATCH rename RPC）。 */
   titles?: SessionTitleSurface;
 }

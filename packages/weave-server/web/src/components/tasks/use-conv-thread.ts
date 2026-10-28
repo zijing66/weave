@@ -23,6 +23,7 @@ import {
   withNarration,
   withPlan,
   withPreQuestion,
+  withRewinds,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -84,6 +85,8 @@ export function useConvThread(deps: {
   const [preQuestion, setPreQuestion] = useState<{ at: string; text: string } | null>(null);
   /** 旁白：转录补采的中间 assistant 输出（无该面 / 读不到 = null，不摆）。 */
   const [narration, setNarration] = useState<ReadonlyArray<{ at: string | null; text: string }> | null>(null);
+  /** 回退锚点（宿主 rewind 在转录里留的；无该面 / 读不到 = null，不标）。 */
+  const [rewinds, setRewinds] = useState<ReadonlyArray<{ at: string; boundaryAt: string | null }> | null>(null);
   /** 内建命令的执行回显（转录里认出来的；null = 这个 harness 不记）。 */
   const [executions, setExecutions] = useState<CommandExecutionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -206,14 +209,24 @@ export function useConvThread(deps: {
     }
   }, [sessionId]);
 
+  /** 回退锚点（转录里认的）：取不到就当没有——没 rewind 过 / 无该面是常态。 */
+  const loadRewinds = useCallback(async (): Promise<void> => {
+    try {
+      setRewinds(await api.sessionRewinds(sessionId));
+    } catch {
+      setRewinds(null);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     void loadNewest();
     void refreshMessages();
     void loadPlan();
     void loadPreQuestion();
     void loadNarration();
+    void loadRewinds();
     void loadExecutions();
-  }, [loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, refreshMessages]);
+  }, [loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, loadRewinds, refreshMessages]);
 
   useEffect(() => {
     if (entries && entries.length > 0) writeConvCache(sessionId, entries);
@@ -265,6 +278,8 @@ export function useConvThread(deps: {
         // 轮边界无条件补采（兜底压缩换文件等游标作废的场景）；轮中间的增量
         // 已由 narration.updated 帧推送（见下方订阅），不再节流重拉。
         if (conv) void loadNarration();
+        // rewind 锚点同源转录：回退后用户重发消息（conv 帧）即补拍
+        if (conv) void loadRewinds();
         if (messages) void refreshMessages();
         if (live) void loadLive();
         if (planWanted) void loadPlan();
@@ -276,7 +291,7 @@ export function useConvThread(deps: {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, refreshMessages, sessionId]);
+  }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, loadRewinds, refreshMessages, sessionId]);
 
   // 旁白增量帧：daemon 的监视器从转录新字节里认出新段即推过来，直接 append
   // （亚秒进场，不重拉不轮询）。与全量拉的对账由 withNarration 的同文案去重兜底
@@ -341,12 +356,12 @@ export function useConvThread(deps: {
     () =>
       attachDeliveries(
         withCommands(
-          withPlan(withNarration(withPreQuestion(entries ?? [], preQuestion), narration), plan),
+          withRewinds(withPlan(withNarration(withPreQuestion(entries ?? [], preQuestion), narration), plan), rewinds),
           executions,
         ),
         manualDeliveries,
       ),
-    [entries, executions, manualDeliveries, narration, plan, preQuestion],
+    [entries, executions, manualDeliveries, narration, plan, preQuestion, rewinds],
   );
   /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
   const newestAssistantKey = useMemo(() => {

@@ -24,7 +24,7 @@
 
 ## §2 能力槽与 statusline / logs 面
 
-十八能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits / images / commands / provision / liveness）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
+十九能力槽（init / events / assets / resume / detect / plugins / pluginState / messaging / questions / capture / statusline / logs / config / edits / images / commands / provision / liveness / rewind）+ `HarnessRegistry` 统一装配。`driver.ts` 的 `HarnessCapability` 是能力槽唯一权威，server/cli/web 不自造槽清单。harness 专属实现各自落 `weave-harness/src/<name>/`（claude/、codex/），server/cli 只做装配编排，不写 harness 硬编码。「不支持也是面」：能力为 null 时同时给 `unsupportedReasons`，让前端能渲染「为什么置灰」。
 
 ### capture 槽（hook 脚本的安装面）
 
@@ -74,6 +74,15 @@
 - **触发恒被动**：`GET /projects/:id/hooks?sessionId=` 取事件时 `needsImageImport` 判一下，有缺口才 `importPromptImagesOnce`——**等它一拍再回响应**（历史会话不会再来事件帧，后台补完前端没有刷新时机，图会一直不出现直到重开对话）；同一会话进程内 `attempted` 只扫一次，失败静默（回 0）。**不在 ingest 里扫**：那时图可能还没落盘，且会拖慢事件管道。单次上限 64 张 / 64MB，超出的留到下次进程。代价 = 第一次打开这段对话多扫一遍转录（预筛只 parse 带 `"type":"image"` 的行）。
 - **转录路径归 server**：先取库里该会话最新事件的 `transcriptPath`（daemon 重启后仍在），`SessionProbe.transcriptPathOf` 兜底；adapter 不自己拼目录——claude 是 `~/.claude/projects/<slug>/` 下的转录，codex 的 hook 载荷直接带 rollout 路径（`hook_transcript_path` = 当前 rollout 文件，实机库验证）。
 - **web 零改动**：`HookEventRow.images` → `conversationOf` → `ConvEntry.images` 的渲染早已在（发出去的图走同一条）；补采只是把「事件上有图」这件事补成真。
+
+### rewind 槽（对话回退标记）
+
+`RewindSurface` = `sessionRewinds({ sessionId, transcriptPath }) → RewindMark[] | null`，`RewindMark` = `{ at, boundaryAt }`（`at` = 回退发生的近似时刻，`boundaryAt` = 回退目标时刻，claude 暂 null）。今天唯一实现 = `weave-harness/src/claude/rewind.ts`（`CLAUDE_REWIND`），codex 没有这个槽（app-server 有 `thread/revert` RPC 但 rollout 观测痕迹未证实，不猜文法）。
+
+- **源头是转录，不是库**：claude 转录 append-only，rewind 不删旧行、只追加锚点行 `{"type":"last-prompt",…,"rewound":true}`（无 timestamp）。锚点时刻 = 其前最近一条带 timestamp 行（回退前最后活动的上界）。
+- **读法同 edits/narration**：流式逐行 + `"type":"last-prompt"` 子串预筛再 parse；读崩回 `null`，不交半份。`parseRewindLine` 单独导出，全量读与将来的增量监视共用文法。
+- **路由**：`GET /sessions/:id/rewinds` → `{ supported, rewinds }`，`latestHarnessOf` + `rewindSurfaceFor`，转录路径取 `SessionProbe.transcriptPathOf`；无面答 `supported:false`。
+- **web 合成**：`withRewinds(entries, rewinds)` 判据 = 任一锚点时刻晚于气泡时刻即标 `rewound`（多次回退取并集——锚点只记「何时退的」，不记退到哪，无法精确圈定区间）；被回退气泡红虚线边框 + 置灰 + 「已回退」tag，保留展示在历史中。SSE 的 conv 刷新拍顺带重拉（回退后重发消息即刷新标记）。
 
 ### narration 槽（旁白：一轮里的全部 assistant 输出）
 

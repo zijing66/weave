@@ -30,6 +30,8 @@ export interface DaemonHandle {
   port: number;
   /** False when an already-running daemon was reused. */
   started: boolean;
+  /** waitForDaemon 是否等到 /health 应答（false = 起没起没把握）。 */
+  ready: boolean;
 }
 
 /**
@@ -95,10 +97,10 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
   // Reuse a live daemon, preferring the state file's port.
   const existing = readDaemonState();
   if (existing && (await probeDaemon(existing.port))) {
-    return { port: existing.port, started: false };
+    return { port: existing.port, started: false, ready: true };
   }
   if (await probeDaemon(DEFAULT_PORT)) {
-    return { port: DEFAULT_PORT, started: false };
+    return { port: DEFAULT_PORT, started: false, ready: true };
   }
 
   // Resolve port: default when free, otherwise scan forward.
@@ -117,9 +119,9 @@ export async function ensureDaemonRunning(): Promise<DaemonHandle> {
   }
 
   // 起好了才算「起了」：调用方紧接着就要读它写出的文件、打它的接口。
-  await waitForDaemon(port);
+  const ready = await waitForDaemon(port);
 
-  return { port, started: true };
+  return { port, started: true, ready };
 }
 
 async function startAction(): Promise<void> {
@@ -128,7 +130,13 @@ async function startAction(): Promise<void> {
     logger.info(t('out.daemon.alreadyRunning', { port: handle.port }));
     return;
   }
-  logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
+  // 起好了才算「已启动」；等不到 /health 就如实说——daemon 可能在启动期崩了
+  //（取证在 cache/logs/daemon-boot.log），报成功会让人白等。
+  if (handle.ready) {
+    logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
+  } else {
+    logger.warn(t('out.daemon.startUnconfirmed', { port: handle.port }));
+  }
 }
 
 /** /health 的活体数据（probe 之后取 pid 等真实值）。 */
@@ -163,9 +171,31 @@ async function stopAction(): Promise<void> {
   }
   clearDaemonState();
   if (killedPid !== undefined) {
+    // 「已停止」要等进程真死：shutdown 链（inbox worker 的 DB 连接、WAL 锁
+    // 释放）在 SIGTERM 之后还在收尾，立刻返回会让紧跟的 start 撞上垂死锁
+    //（boot log 实测过一次 database is locked）。探不到端口 = 监听已撤，
+    // 再留一小拍给句柄收尾。
+    await waitForDaemonExit(killedPid, port);
     logger.success(t('out.daemon.stopped', { pid: killedPid }));
   } else {
     logger.warn(t('out.daemon.statusStale', { pid: pid ?? 0, port }));
+  }
+}
+
+/** 等 daemon 进程死透（pid 消失或端口不再应答），超时放弃（不无限等）。 */
+async function waitForDaemonExit(pid: number, port: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let alive: boolean;
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch {
+      alive = false;
+    }
+    if (!alive && !(await probeDaemon(port))) return;
+    if (Date.now() >= deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 

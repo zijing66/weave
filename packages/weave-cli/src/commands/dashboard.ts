@@ -46,9 +46,11 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
 
   if (!handle.started) {
     logger.info(t('out.daemon.alreadyRunning', { port: handle.port }));
-  } else {
+  } else if (handle.ready) {
     logger.success(t('out.daemon.started', { host: DAEMON_HOST, port: handle.port }));
     logger.dim(t('out.dash.stopHint'));
+  } else {
+    logger.warn(t('out.daemon.startUnconfirmed', { port: handle.port }));
   }
 
   if (!resolveStaticDir()) {

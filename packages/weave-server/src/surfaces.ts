@@ -12,6 +12,7 @@ import {
   type NarrationSurface,
   type PluginStateSurface,
   type PluginSurface,
+  type RewindSurface,
   type SessionTitleSurface,
   type StatuslineSurface,
 } from '@weavecode/harness';
@@ -156,6 +157,11 @@ export function imagesSurfaceFor(harness: Harness): ImagesSurface | null {
 /** 按 harness 取旁白面；null = 该 harness 的中间输出无处可取（对话里只有每轮收尾那句）。 */
 export function narrationSurfaceFor(harness: Harness): NarrationSurface | null {
   return registry.get(harness)?.narration ?? null;
+}
+
+/** 按 harness 取回退面；null = 该 harness 的 rewind 不可观测（前端不摆「已回退」标记）。 */
+export function rewindSurfaceFor(harness: Harness): RewindSurface | null {
+  return registry.get(harness)?.rewind ?? null;
 }
 
 /** 按 harness 取命令面；null = 该 harness 没有 `/` 提示（前端不弹命令菜单）。 */

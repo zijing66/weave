@@ -130,6 +130,8 @@ export interface ConvEntry {
   preQuestion?: boolean;
   /** 旁白：转录补采的中间 assistant 输出（Stop.lam 之外的段落，没有自己的事件）。 */
   narration?: boolean;
+  /** 已被回退（宿主 rewind 把这段对话退掉了）：置灰保留展示，不参与「最新回复」。 */
+  rewound?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
   commandOutput?: string;
 }
@@ -511,4 +513,26 @@ export function withNarration(
     else out.splice(idx, 0, entry);
   }
   return out;
+}
+
+/**
+ * 回退标记：宿主 rewind（Esc Esc / `/rewind`）把对话退回历史某处后，被退掉的
+ * 那段（上一次回退边界 → 这一次回退时刻之间的既有气泡）置灰保留展示。锚点
+ * 时刻是「回退前最后活动」的上界——**晚于它**的既有气泡都在被退掉的区间里；
+ * 更早的回退同理逐段叠加（多次 rewind 各管各的段）。
+ */
+export function withRewinds(
+  entries: readonly ConvEntry[],
+  rewinds: ReadonlyArray<{ at: string; boundaryAt: string | null }> | null,
+): ConvEntry[] {
+  if (!rewinds?.length) return [...entries];
+  const bounds = rewinds.map((r) => Date.parse(r.at)).filter(Number.isFinite);
+  if (bounds.length === 0) return [...entries];
+  return entries.map((e) => {
+    const at = Date.parse(e.at);
+    if (!Number.isFinite(at)) return e;
+    // 任一回退锚点晚于该气泡 = 这一段被退掉过（多次回退取并集）
+    if (bounds.some((b) => b > at)) return { ...e, rewound: true };
+    return e;
+  });
 }
