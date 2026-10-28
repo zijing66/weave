@@ -87,6 +87,13 @@ const INPUT_ROWS_MAX = 20;
 /** 一行的高度（px）：拖拽位移换算行数用，与 textarea 的实际行高同量级。 */
 const INPUT_ROW_PX = 16;
 
+/** 发送快捷键：`enter` = Enter 发送 / Shift+Enter 换行；`shift-enter` = 反过来。
+ *  全局偏好，localStorage 记住（与输入框行数同一口径）。 */
+type SendKeyMode = 'enter' | 'shift-enter';
+const SEND_KEY_KEY = 'weave:conv-send-key';
+const sendKeyOf = (): SendKeyMode =>
+  localStorage.getItem(SEND_KEY_KEY) === 'shift-enter' ? 'shift-enter' : 'enter';
+
 
 /**
  * 会话对话：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
@@ -223,6 +230,11 @@ export function SessionMessages({
   });
   useEffect(() => localStorage.setItem('weave:conv-input-rows', String(inputRows)), [inputRows]);
   const rowsGrip = useRef<{ y: number; rows: number } | null>(null);
+  /** 发送快捷键（全局偏好）：enter = Enter 发送 / Shift+Enter 换行；shift-enter = 交换。 */
+  const [sendKey, setSendKey] = useState<SendKeyMode>(sendKeyOf);
+  useEffect(() => localStorage.setItem(SEND_KEY_KEY, sendKey), [sendKey]);
+  const sendCombo = sendKey === 'enter' ? 'Enter' : 'Shift+Enter';
+  const newlineCombo = sendKey === 'enter' ? 'Shift+Enter' : 'Enter';
 
   /** `/` 菜单的候选：进面板取一次（目录扫描，不随每条消息重取）。 */
   useEffect(() => {
@@ -1535,7 +1547,7 @@ export function SessionMessages({
               <div className="relative min-w-0 flex-1 max-lg:basis-full">
                 {draft === '' && (
                   <span className="pointer-events-none absolute left-2 top-1.5 text-xs text-neutral-600">
-                    {t('tasks.messagesPlaceholder')}
+                    {t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
                   </span>
                 )}
                 {/* `/` 命令提示：候选归 harness 能力面，这里只筛与渲染 */}
@@ -1629,12 +1641,13 @@ export function SessionMessages({
                         return;
                       }
                     }
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    // 发送/换行的键序随全局偏好（发送键旁那枚钮可交换）
+                    if (e.key === 'Enter' && e.shiftKey === (sendKey === 'shift-enter')) {
                       e.preventDefault();
                       send();
                       return;
                     }
-                    if (e.key === 'Enter' && e.shiftKey) {
+                    if (e.key === 'Enter') {
                       e.preventDefault();
                       insertText('\n');
                     }
@@ -1765,6 +1778,17 @@ export function SessionMessages({
                     className="h-3 w-3"
                     icon={<CornerDownLeft className="h-3 w-3" />}
                   />
+                </button>
+                {/* 发送快捷键切换 = 一枚键帽：点一下交换「发送」与「换行」的键序
+                    （全局偏好，localStorage 记住；placeholder 文案跟着走）。 */}
+                <button
+                  type="button"
+                  title={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                  aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                  onClick={() => setSendKey((k) => (k === 'enter' ? 'shift-enter' : 'enter'))}
+                  className="inline-flex h-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] px-1 text-9 font-medium tracking-tight text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:h-8 max-lg:px-1.5 max-lg:text-10"
+                >
+                  {sendCombo}
                 </button>
                 {/* 发送键只有一枚：手动面恒走层② 终端击键，没有通道可选（直投/中继
                     留给后续的会话协作与编排域）。恒为方块（文字会把它撑宽，还让
