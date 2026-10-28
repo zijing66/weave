@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/templates",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Weave built-in resource repository (marketplace-shaped): packs, rule packs, and init assets",
   "type": "module",

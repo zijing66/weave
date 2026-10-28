@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/server",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Weave daemon — HTTP server, SQLite data layer, and hook ingestion",
   "type": "module",
