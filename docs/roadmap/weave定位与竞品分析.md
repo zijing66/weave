@@ -14,6 +14,47 @@
 
 **共同盲区：agent 在它们那里是「跑一次任务的工人」，不是持续存活的会话。**
 
+### Codeg：正面重叠最大的竞品（2026-10-28 补充探索）
+
+[Codeg（Code Generation）](https://github.com/spacering-net/codeg)（docs.codeg.app）是开源的
+企业级**多智能体编码工作台**：把 Claude Code、Codex CLI、Gemini、OpenCode、Grok、OpenClaw
+等约 15 个主流编码 agent 统一收进同一工作区。形态三栖——桌面 app / 自托管 server / Docker，
+v0.4.0 起可开 Web 服务浏览器访问。核心机制与卖点（据公开材料）：
+
+- **接线 = ACP（Agent Client Protocol）**：Zed/JetBrains 2026 年初联合推的开放协议，agent
+  以 ACP 兼容形态被 spawn，客户端拿到结构化对话流；自定义 agent「三步注册」（任意 ACP
+  兼容 agent 自动安装、校验、纳入统一管理）。
+- **协作面**：分屏视图一屏监控多 agent 会话（「左边重构、右边评审」）、会话聚合同一
+  工作区、agent 间互相派活（让 Claude Code 审查、让另一个 agent 查测试失败，各自独立
+  会话并行跑）。
+- **企业叙事**：远程协作工作空间、统一管理。
+
+**与 weave 的对照**（按本文差异化轴逐条过）：
+
+| 轴 | Codeg | weave |
+|---|---|---|
+| 接线方式 | ACP：把 agent 装进自己的壳（spawn 子进程、结构化流） | hook 采集 + 终端共生：不搬家、寄生用户已有终端 |
+| 会话观 | 工作台 UI（分屏/侧边栏/监控） | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
+| agent 协作 | 会话间互相派活（人点按钮级） | 三层投递 + 回执闸/暂停闸 + L2 DAG 编排（when/condition/autoFire） |
+| 多 harness | ACP 适配即接入（广而浅） | 十八能力槽深度适配（窄而深：问答作答、中断、改动汇总、判活） |
+| 可靠性 | 未见投递语义/daemon 重启续跑的公开材料 | 生产消费解耦、rearm 最小续跑、1送1回 |
+
+**威胁评估：目前材料里与 weave 正面重叠最大的一家**——多 agent + 多 harness + 本地/
+自托管 + 协作派活全占，比任务板类（Vibe Kanban）近一个身位。但它的中心仍是「工作台
+UI」，weave 的中心是「会话运行时 + 编排引擎」；终端共生（pane 定位、击键注入、阻塞问答
+作答）与投递可靠性工程它没有对应物。
+
+**战略注：ACP 是威胁也是机会**。ACP 正在成为 IDE 侧事实标准（Zed/JetBrains 联合，
+claude code / gemini cli 已实验性支持）——ACP 普及会稀释「多 agent 接入」门槛，weave 的
+多 harness 护城河会被部分摊薄。但 ACP 管的是「客户端 ↔ agent 对话流」，不管终端、不管
+投递可靠性、不管编排状态机、不管跨机联邦。**应对方向：把 ACP 视为潜在的接入通道**
+（采集与投递的备选路径，可作能力槽的又一信源），而不是纯竞品——ACP 生态越大，weave
+「编排 + 运行时」层的稀缺性反而越突出。
+
+**可借鉴**：自定义 agent 三步注册（自动安装 + 校验）的 onboarding 体验，对 weave 的
+RPG 角色插件安装流有直接参照价值；分屏多 agent 对照监控的视图形态可与「可见屏幕分块」
+互补。
+
 ## 二、weave 的差异化（按护城河深度排序）
 
 ### 1. 会话是「活的生物」，不是任务卡——根本定位差异
@@ -177,4 +218,10 @@ N 个分支依次合入时，**合并顺序影响总冲突量**。贪心策略�
   [nimbalyst: platforms 2026](https://nimbalyst.com/blog/best-ai-agent-orchestration-platforms-2026/)
 - [Paperclip](https://github.com/paperclipai/paperclip) · [ruflo (claude-flow)](https://github.com/ruvnet/ruflo) ·
   [LangGraph](https://docs.langchain.com/oss/python/langgraph/use-graph-api)
+- Codeg 探索（2026-10-28，公开材料快照）：[spacering-net/codeg](https://github.com/spacering-net/codeg) ·
+  [Codeg v0.4.0 发布帖（V2EX）](https://www.v2ex.com/t/1201200) ·
+  [统一 15 个 AI 编程 Agent 的多智能体工作台（CSDN）](https://blog.csdn.net/gitblog_00050/article/details/166643036) ·
+  [自定义 Agent 三步注册（CSDN）](https://blog.csdn.net/weixin_27251469/article/details/160775460) ·
+  [分屏视图实操（CSDN）](https://blog.csdn.net/gitblog_00114/article/details/166643658) ·
+  [ACP（Agent Client Protocol）](https://github.com/zed-industries/claude-code-acp)
 - 三方对标评审记录见 [`会话扩展点与编排重设计.md`](./会话扩展点与编排重设计.md) 头部修订注。
