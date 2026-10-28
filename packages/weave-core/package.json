@@ -1,6 +1,6 @@
 {
   "name": "@weavecode/core",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Core types, schemas, and utilities for weave",
   "type": "module",
