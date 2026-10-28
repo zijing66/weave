@@ -59,11 +59,19 @@ async function spawnOutsideJob(exe: string, args: string[]): Promise<boolean> {
   if (process.platform !== 'win32') return false;
   const quote = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
   const literal = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  // ShowWindow=0（SW_HIDE）：Win32_Process.Create 出来的控制台程序默认**新建
+  // 可见窗口**——daemon start 那一瞬间的 cmd 闪现弹窗由此而来；startup 里
+  // 压掉它（[wmiclass] 强类型才能过 Invoke-CimMethod 的类型推断）。
   const script =
     "$ErrorActionPreference='Stop';" +
-    '$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{' +
-    `CommandLine=${literal([exe, ...args].map(quote).join(' '))};` +
-    `CurrentDirectory=${literal(process.cwd())}};` +
+    "$su=[wmiclass]'Win32_ProcessStartup';" +
+    '$psi=$su.CreateInstance();' +
+    '$psi.ShowWindow=0;' +
+    "$proc=[wmiclass]'Win32_Process';" +
+    '$r=$proc.Create(' +
+    `${literal([exe, ...args].map(quote).join(' '))},` +
+    `${literal(process.cwd())},` +
+    '$psi);' +
     'if($r.ReturnValue -ne 0){exit 1}';
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return new Promise((resolve) => {

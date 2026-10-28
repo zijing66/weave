@@ -12,6 +12,16 @@ import { initCliLocale, t } from './i18n/index.js';
 import type { MessageKey } from './i18n/dict/index.js';
 import { WEAVE_VERSION } from '@weavecode/server';
 
+// node:sqlite 的实验期警告在 CLI 每条命令上都刷一遍（加载链经 @weavecode/server
+// → db/db.js），对用户零信息量——我们自己在 24.x 上跑得很稳。只吞 SQLite 这一条
+// （按措辞认，别的 ExperimentalWarning 照发），在模块加载最早期装上。
+const origEmitWarning = process.emitWarning.bind(process);
+process.emitWarning = (warning, ...args: unknown[]) => {
+  const text = typeof warning === 'string' ? warning : String(warning);
+  if (text.includes('SQLite is an experimental feature')) return;
+  return (origEmitWarning as (...a: unknown[]) => void)(warning, ...args);
+};
+
 // CLI 与 server 同版本发布（monorepo 同步 bump）——版本号单一出口在
 // @weavecode/server 的 WEAVE_VERSION（从其 package.json 派生）。
 const readVersion = (): string => WEAVE_VERSION;
