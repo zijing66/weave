@@ -3272,7 +3272,7 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
-  describe('interrupt（停止按钮 → 一记 ESC）', () => {
+  describe('interrupt（停止按钮 → Kitty Esc / 裸 ESC / Ctrl+B 梯子）', () => {
     const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
       const sendKeys = vi.fn().mockResolvedValue(undefined);
       const terminal: PromptTerminal = {
@@ -3285,7 +3285,7 @@ describe('MessageDeliverer 裁决表', () => {
       return { terminal, sendKeys };
     };
 
-    it('屏上已显示中断 → 只打一记 ESC（连打两次在 claude 里是历史回退菜单）', async () => {
+    it('中断梯子第一记是 Kitty 编码的 Esc——屏上已停就只打这一记', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
@@ -3303,10 +3303,10 @@ describe('MessageDeliverer 裁决表', () => {
         sent: true,
         confirmed: true,
       });
-      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b[27u']]);
     });
 
-    it('宿主吞掉 ESC（屏上没出现中断）→ 换键补一记 Ctrl+C，不再发第二记 ESC', async () => {
+    it('Kitty Esc 没停 → 依次补裸 ESC、Ctrl+B；都没停就如实答没停', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
@@ -3321,19 +3321,19 @@ describe('MessageDeliverer 裁决表', () => {
         }),
       );
 
-      // 补完键屏上仍挂着 `esc to interrupt`：键被吞了，如实答没停
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
         ok: true,
         sent: true,
         confirmed: false,
       });
       expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b[27u'],
         ['pane-1', '\x1b'],
-        ['pane-1', '\x03'],
+        ['pane-1', '\x02'],
       ]);
     });
 
-    it('补完 Ctrl+C 屏上落到中断态 → confirmed:true（不因第一拍没停就报没停）', async () => {
+    it('第二记（裸 ESC）落下中断态 → 不再打 Ctrl+B', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
@@ -3346,12 +3346,12 @@ describe('MessageDeliverer 裁决表', () => {
 
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: true });
       expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b[27u'],
         ['pane-1', '\x1b'],
-        ['pane-1', '\x03'],
       ]);
     });
 
-    it('补完键屏上既无 esc to interrupt 也无 · done（工具间隙）→ 仍答没停', async () => {
+    it('屏上既无 Interrupted 也无 · done（工具间隙）→ 仍答没停', async () => {
       // 2026-10-30 实测 c2271f5b 的漏判：工具间隙那一拍屏上没有 esc 提示，
       // 「没挂提示」被当成了已停，实际工具又继续跑了 90 秒——只认正面证据。
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
@@ -3365,8 +3365,9 @@ describe('MessageDeliverer 裁决表', () => {
 
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: false });
       expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b[27u'],
         ['pane-1', '\x1b'],
-        ['pane-1', '\x03'],
+        ['pane-1', '\x02'],
       ]);
     });
 
@@ -3384,6 +3385,22 @@ describe('MessageDeliverer 裁决表', () => {
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: true });
     });
 
+    it('回滚里的旧 Interrupted 不算证据（只认屏尾）→ 梯子照走', async () => {
+      // get-text 会把历史轮次的 Interrupted 一起带出来：整屏匹配会让第一记被骗停。
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const stale = ['⎿  Interrupted · What should Claude do instead?', ...Array(20).fill('  filler'), '✻ Discombobulating… · esc to interrupt'].join('\n');
+      const getPaneText = vi.fn(async () => stale);
+      const deliverer = new MessageDeliverer(
+        makeDeps({ terminal: { ...terminal, getPaneText }, interruptVerifyMs: 0 }),
+      );
+
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: false });
+      expect(sendKeys.mock.calls).toHaveLength(3);
+    });
+
     it('读不到屏幕（后端无读屏能力）→ 不补打，不凭猜打第二记', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
@@ -3397,7 +3414,7 @@ describe('MessageDeliverer 裁决表', () => {
         sent: true,
         confirmed: true,
       });
-      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b[27u']]);
     });
 
     it('补打参数已退役：interrupt 只收 sessionId，env 命中即用（locator 优先、标题+cwd 回落）', async () => {

@@ -139,12 +139,16 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   ignore(relPath) {
     if (relPath === '.claude' || relPath.startsWith('.claude/')) {
-      // 会话历史与缓存子树是噪音，不观测（原 shouldIgnore 显式 drop）。
+      // 会话历史、缓存与 worktree 子树不是资产：observing them means chokidar
+      // opens one fs.watch per directory — a repo with worktrees carried 1185
+      // dirs / 18k files and pinned the daemon's event loop.
       return (
         relPath === '.claude/projects' ||
         relPath.startsWith('.claude/projects/') ||
         relPath === '.claude/cache' ||
-        relPath.startsWith('.claude/cache/')
+        relPath.startsWith('.claude/cache/') ||
+        relPath === '.claude/worktrees' ||
+        relPath.startsWith('.claude/worktrees/')
       );
     }
     // 本面其余观测项：根级 .mcp.json 与根级 CLAUDE.md（其余路径皆不在观测集）。

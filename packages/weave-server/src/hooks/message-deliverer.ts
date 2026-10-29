@@ -29,9 +29,11 @@ import {
   ANSWER_ATOM,
   ANSWER_ATOM_GAP_MS,
   ANSWER_TEXT,
-  CTRL_C,
+  CTRL_B,
+  CTRL_C_KITTY,
   ENTER,
   ESC,
+  ESC_KITTY,
   MODEL_NAME,
   SHIFT_TAB,
   effortCommand,
@@ -327,6 +329,15 @@ const INTERRUPTED_SCREEN = /interrupted/i;
 /** 屏上「回合已收尾」的判据：宿主状态行的 `· done`（回合跑着的时候这里是
  *  spinner）。输入框（❯）当不了判据——跑着的时候它也常驻（可以边跑边排队输入）。 */
 const DONE_SCREEN = /· done/;
+/** 证据只认屏**尾部**这几行：`get-text` 会把回滚一起带出来，历史轮次的
+ *  `Interrupted` 挂在上面——整屏匹配会让梯子第一记就被旧文案骗停。 */
+const SCREEN_TAIL_LINES = 12;
+/** 中断键梯子（按序试，每记之后读屏）：Kitty 协议的 Esc（真实按键形态）→ 裸
+ *  ESC（没开该协议的宿主）→ Ctrl+B（工具执行窗口里也能直接落 Interrupted，
+ *  纯控制字节、任何协议下无歧义）。详见 `interrupt` 的注释。 */
+const INTERRUPT_KEYS: readonly string[] = [ESC_KITTY, ESC, CTRL_B];
+/** 兜底那几记的读屏等待（首记用 `interruptVerifyMs`）：它们只是补刀，快一点试。 */
+const INTERRUPT_FALLBACK_VERIFY_MS = 600;
 
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
@@ -997,19 +1008,23 @@ export class MessageDeliverer {
   }
 
   /**
-   * 中断目标会话正在跑的回合（dashboard 停止按钮）：先打**一记 ESC**，
-   * 读屏确认没停再补一记 **Ctrl+C**。
+   * 中断目标会话正在跑的回合（dashboard 停止按钮）：按 `INTERRUPT_KEYS` 的梯子
+   * 逐记试，每记之后读屏，看到「已停」就收手。
    *
-   * 为什么要有补打（2026-10-29 实测，推翻「键送出即必然中断」的旧口径）：
-   * 宿主在**工具执行/收尾窗口**里会吞掉注入的 ESC（同一会话三次实测两次没停，
-   * 而模型生成中那一记立刻生效；TUI 手按在同一窗口能停），而 ESC 送出本身
-   * 照样 exit 0 —— 只发一记就会出现「点了没反应」。补打**换键**而不是再发 ESC：
-   * 两记 ESC 在 claude 里是历史回退菜单。读屏拿不到（无读屏能力的后端）就不补，
-   * 不凭猜打第二记。键序固定死在服务端，不当参数收。
+   * **为什么梯子第一记是 Kitty 编码的 Esc**（2026-10-30 活体实测定案）：claude 的
+   * TUI 开着 Kitty 键盘协议，手按 Esc 送出的其实是 `ESC[27u`，而裸 `0x1b` 会被
+   * 当成一个未完成的转义序列丢掉——这就是「TUI 里手按能停、weave 注入不停」的
+   * 真因。同一个正在跑的工具上逐键单测：裸 ESC 观察 8 秒无效、裸 Ctrl+C 观察
+   * 12 秒无效，`ESC[27u` 与 `ESC[99;5u` 各自 1 秒内落 `Interrupted`。
    *
-   * 补完**再看一眼屏**：宿主状态行还挂着 `esc to interrupt` 就答 `confirmed:false`
-   * ——工具执行窗口里两记都会被吞（2026-10-30 实测四次全无反应），这时按键层
-   * 没有更强的招，只能让 UI 把「没停」如实说出来，不摆成功态。
+   * 后续两记是兜底：裸 ESC（没开该协议的宿主）、Ctrl+B（实测在工具执行窗口里
+   * 也能直接落 `Interrupted`，纯控制字节，任何协议下都无歧义）。不再发第二记
+   * 裸 ESC——claude 里两记 Esc 是历史回退菜单。读屏拿不到（无读屏能力的后端）
+   * 就不往下打，不凭猜继续注入。键序固定死在服务端，不当参数收。
+   *
+   * 结果**只认正面证据**：屏上写着 `Interrupted` 或状态行落到 `· done` 才算停；
+   * 否则 `confirmed:false`，UI 把「没停」如实说出来。「没挂 esc to interrupt」
+   * 当判停会漏判（工具间隙那一拍屏上本来就没有它），故不作判据。
    */
   async interrupt(
     sessionId: string,
@@ -1026,33 +1041,32 @@ export class MessageDeliverer {
         return null;
       }
     };
-    try {
-      await target.terminal.sendKeys(target.paneId, ESC);
-    } catch (err) {
-      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
-    }
-    await sleep(this.deps.interruptVerifyMs ?? INTERRUPT_VERIFY_MS);
-    const screen = await readScreen();
-    // 读不到屏（后端没这个通道）/ 屏上已经写着 Interrupted：这一记就够了
-    if (screen === null || INTERRUPTED_SCREEN.test(screen)) {
-      return { ok: true, paneId: target.paneId, sent: true, confirmed: true };
-    }
-    try {
-      await target.terminal.sendKeys(target.paneId, CTRL_C);
-    } catch {
-      // 第一记已经送出：补打失败不改变「已送出停止」的答复
-    }
-    // 补完再看一眼，**只认正面证据**：屏上写着 Interrupted、或状态行落到
-    // `· done`。光凭「没挂 esc to interrupt」会漏判——工具间隙那一拍屏上本来
-    // 就没有它（2026-10-30 实测 c2271f5b：答了 confirmed:true，工具又继续跑了
-    // 90 秒）。确认不了（读不到屏）就往好处答，不让 UI 凭空报「没停」。
-    const after = await readScreen();
-    return {
-      ok: true,
-      paneId: target.paneId,
-      sent: true,
-      confirmed: after === null || INTERRUPTED_SCREEN.test(after) || DONE_SCREEN.test(after),
+    const stopped = (screen: string): boolean => {
+      const tail = screen.split('\n').slice(-SCREEN_TAIL_LINES).join('\n');
+      return INTERRUPTED_SCREEN.test(tail) || DONE_SCREEN.test(tail);
     };
+    const verifyMs = this.deps.interruptVerifyMs ?? INTERRUPT_VERIFY_MS;
+    let confirmed = false;
+    for (const [i, key] of INTERRUPT_KEYS.entries()) {
+      try {
+        await target.terminal.sendKeys(target.paneId, key);
+      } catch (err) {
+        if (i === 0) {
+          return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+        }
+        break; // 首记已经送出：补打失败不改变「已送出停止」的答复
+      }
+      await sleep(i === 0 ? verifyMs : INTERRUPT_FALLBACK_VERIFY_MS);
+      const screen = await readScreen();
+      if (screen === null) {
+        return { ok: true, paneId: target.paneId, sent: true, confirmed: true };
+      }
+      if (stopped(screen)) {
+        confirmed = true;
+        break;
+      }
+    }
+    return { ok: true, paneId: target.paneId, sent: true, confirmed };
   }
 
   /**
@@ -1104,14 +1118,15 @@ export class MessageDeliverer {
   }
 
   /**
-   * 手动硬中断（Ctrl+C 键帽）：往 pane 打一记 Ctrl+C。与 ESC 不同——它是宿主
-   * TUI 的硬中断（杀当前行/退出输入态），不落转录标记，「停没停」判不了，只报送出。
+   * 手动硬中断（Ctrl+C 键帽）：往 pane 打一记 Ctrl+C。与 ESC 同源——宿主开着
+   * Kitty 键盘协议，真实按键是 `ESC[99;5u`，裸 `0x03` 不被认（2026-10-30 实测：
+   * 手按 Ctrl+C 能停、注入裸 0x03 不能）。不落转录标记，只报送出。
    */
   async pressCtrlC(sessionId: string): Promise<AnswerResult> {
     const target = await this.sessionKeysTarget(sessionId);
     if (!target.ok) return target;
     try {
-      await target.terminal.sendKeys(target.paneId, CTRL_C);
+      await target.terminal.sendKeys(target.paneId, CTRL_C_KITTY);
       return { ok: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };

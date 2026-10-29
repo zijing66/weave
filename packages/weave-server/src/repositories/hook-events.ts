@@ -184,6 +184,7 @@ export class HookEventRepository {
     tools: readonly string[],
     needle: string | null,
     limit: number,
+    sinceId?: number,
   ): HookEventRow[] {
     if (tools.length === 0) return [];
     const conds = [
@@ -195,6 +196,13 @@ export class HookEventRepository {
     if (needle) {
       conds.push('payload LIKE ?');
       params.push(`%${needle}%`);
+    }
+    // 扫描窗口（渐进扫描用）：`payload LIKE` 匹配不上索引，行数决定成本——
+    // 3.8 万条事件的会话全量扫要 0.7s（读 72MB payload）。稀有的工具先扫最近
+    // 一段，命中就没必要翻全史。
+    if (sinceId != null) {
+      conds.push('id > ?');
+      params.push(sinceId);
     }
     const rows = this.db
       .prepare(`SELECT * FROM hook_events WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ?`)

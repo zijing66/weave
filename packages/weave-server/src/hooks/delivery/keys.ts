@@ -12,8 +12,17 @@ import type { AnswerResult, PromptTerminal } from '../message-deliverer.js';
  * 解析链，失败原因是**可判定的语义拒绝**（404/409），调用方原样回给 HTTP。
  */
 
-/** 中断键 = 一记 ESC（claude 里连打两次是历史回退菜单，故只打一记）。 */
+/** 裸 ESC（没有开 Kitty 键盘协议的宿主用它；claude 里连打两次是历史回退菜单）。 */
 export const ESC = '\x1b';
+
+/** Kitty **键盘协议**的 Esc（CSI 27 u）。claude 的 TUI 开着该协议，
+ *  裸 `0x1b` 会被当成一个转义序列的开头丢掉——手按 Esc 有效、注入裸 ESC 无效的
+ *  真因就在这里（2026-10-30 活体实测：`ESC[27u` 1 秒内中断，裸 `0x1b` 观察 8 秒
+ *  纹丝不动）。同理 Ctrl+C 的真实按键形态是 `ESC[99;5u`。 */
+export const ESC_KITTY = '\x1b[27u';
+
+/** Kitty 键盘协议的 Ctrl+C（CSI 99;5 u）：宿主开着该协议时裸 `0x03` 不被认。 */
+export const CTRL_C_KITTY = '\x1b[99;5u';
 
 /** 执行模式切换键 = 一记 Shift+Tab（固定死在服务端，不当参数收）。 */
 export const SHIFT_TAB = '\x1b[Z';
@@ -21,8 +30,9 @@ export const SHIFT_TAB = '\x1b[Z';
 /** 手动提交键 = 一记回车（提交宿主输入框里现成的内容；与层② 补打同一字节）。 */
 export const ENTER = '\r';
 
-/** 手动中断键 = 一记 Ctrl+C（宿主 TUI 的硬中断；wt 侧编成 VK_C + CTRL 按下）。 */
-export const CTRL_C = '\x03';
+/** 中断梯子的兜底档 = 一记 Ctrl+B。纯控制字节、不属于任何转义序列，宿主开着
+ *  Kitty 键盘协议也照收（该窗口屏上提示的正是 `(ctrl+b to run in background)`）。 */
+export const CTRL_B = '\x02';
 
 /** 模型名形态：不含空白/控制字符、≤128 字符（贴宿主 `/model` 的 `\S*` 文法）。 */
 export const MODEL_NAME = /^[^\s\x00-\x1f\x7f]{1,128}$/;

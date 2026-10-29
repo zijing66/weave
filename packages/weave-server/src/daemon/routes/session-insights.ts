@@ -52,6 +52,16 @@ function latestHarnessOf(deps: WeaveServerDeps, sessionId: string): Harness | nu
 
 /** 计划扫描窗口（最近的提交/写盘调用条数；一次计划模式只留最近的一两份）。 */
 const PLAN_SCAN = 20;
+/**
+ * 渐进扫描的事件窗口：先只扫最近这么多条。`payload LIKE` 用不上索引，成本随
+ * 行数线性涨（3.8 万条事件的会话全量扫 0.7s）；计划总在最近几轮出现，先扫
+ * 一段就够，没有才退回全量。
+ */
+const PLAN_SCAN_WINDOW = 2_000;
+/** 计划正文缓存：按会话记「最新事件 id → 结果」，满了整体清空（够用即可）。 */
+const PLAN_CACHE_MAX = 200;
+type PlanPayload = { eventId: number; at: string; text: string };
+const planCache = new Map<string, { latestId: number; plan: PlanPayload | null }>();
 /** 计划正文上限：超了截断（气泡要能渲染，别把几 MB 的文档塞进响应）。 */
 const PLAN_MAX_CHARS = 200_000;
 
@@ -194,29 +204,46 @@ export async function handleSessionInsightRoutes(
         const draft = spec.draftOf(...payloadTools(row.payload));
         return draft ? [{ row, draft }] : [];
       });
-    const [commit] = scan(deps.hookEvents.listByTools(sessionId, [spec.tool], null, PLAN_SCAN));
-    if (!commit) {
-      sendJson(res, 200, { plan: null });
+    // 渐进扫描：计划类工具在事件流里很稀有，全量按 payload LIKE 扫要读几十 MB
+    // （3.8 万条事件的会话实测 0.7s）。先扫最近 PLAN_SCAN_WINDOW 条，命中就不用
+    // 翻全史；没有才退回全量（老会话翻旧计划仍能找到）。
+    const latestId = latest[latest.length - 1]?.id ?? 0;
+    const events = deps.hookEvents;
+    // 事件流 append-only ⇒ 会话最新事件 id 没变，这次的结果和上次一模一样。老
+    // 会话翻旧计划要全量扫（3.8 万条事件 1.4s），而对话页每次切换回来都问一次。
+    const cached = planCache.get(sessionId);
+    if (cached && cached.latestId === latestId) {
+      sendJson(res, 200, { plan: cached.plan });
       return true;
     }
+    const remember = (plan: PlanPayload | null): true => {
+      if (planCache.size >= PLAN_CACHE_MAX) planCache.clear();
+      planCache.set(sessionId, { latestId, plan });
+      sendJson(res, 200, { plan });
+      return true;
+    };
+    const rowsOf = (tools: readonly string[], needle: string | null) => {
+      const near = events.listByTools(sessionId, tools, needle, PLAN_SCAN, latestId - PLAN_SCAN_WINDOW);
+      return near.length > 0 ? near : events.listByTools(sessionId, tools, needle, PLAN_SCAN);
+    };
+    const [commit] = scan(rowsOf([spec.tool], null));
+    if (!commit) return remember(null);
     // 只认**提交之前**的那次写盘：之后的写盘属于下一轮计划，拿它当这一份的正文
     // 就是张冠李戴（同一个会话可以来回好几轮计划模式）。
-    const [write] = scan(
-      deps.hookEvents.listByTools(sessionId, spec.writeTools, spec.fileHint, PLAN_SCAN),
-    ).filter((w) => w.row.id < commit.row.id);
+    const [write] = scan(rowsOf(spec.writeTools, spec.fileHint)).filter(
+      (w) => w.row.id < commit.row.id,
+    );
     const text =
       commit.draft.text ??
       readPlanFile(commit.draft.filePath) ??
       write?.draft.text ??
       readPlanFile(write?.draft.filePath ?? null);
-    if (!text) {
-      sendJson(res, 200, { plan: null });
-      return true;
-    }
-    sendJson(res, 200, {
-      plan: { eventId: commit.row.id, at: commit.row.createdAt, text: text.slice(0, PLAN_MAX_CHARS) },
+    if (!text) return remember(null);
+    return remember({
+      eventId: commit.row.id,
+      at: commit.row.createdAt,
+      text: text.slice(0, PLAN_MAX_CHARS),
     });
-    return true;
   }
 
   // ---- 提问前说明：阻塞提问（AskUserQuestion/计划确认）前模型写下的那段话 ----
