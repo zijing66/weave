@@ -324,9 +324,9 @@ const PANE_CLAIM_HANDOVER_MS = 120_000;
 const INTERRUPT_VERIFY_MS = 1_200;
 /** 屏上「已中断」的判据（宿主文案 `Interrupted · What should Claude do instead?`）。 */
 const INTERRUPTED_SCREEN = /interrupted/i;
-/** 屏上「还在跑」的判据（宿主状态行的 `esc to interrupt` 提示）。补完键再看一眼
- *  还有它 = 键被工具执行窗口吞了，如实回报，不假装停下来了。 */
-const RUNNING_SCREEN = /esc to interrupt/i;
+/** 屏上「回合已收尾」的判据：宿主状态行的 `· done`（回合跑着的时候这里是
+ *  spinner）。输入框（❯）当不了判据——跑着的时候它也常驻（可以边跑边排队输入）。 */
+const DONE_SCREEN = /· done/;
 
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
@@ -1042,15 +1042,16 @@ export class MessageDeliverer {
     } catch {
       // 第一记已经送出：补打失败不改变「已送出停止」的答复
     }
-    // 补完再看一眼：状态行还挂着 `esc to interrupt` = 两记都被吞了（2026-10-30
-    // 实测：Bash 工具执行窗口里连按四次 ESC + Ctrl+C 全无反应，工具跑满自己的
-    // 超时才收）。确认不了（读不到屏）就往好处答，不让 UI 凭空报「没停」。
+    // 补完再看一眼，**只认正面证据**：屏上写着 Interrupted、或状态行落到
+    // `· done`。光凭「没挂 esc to interrupt」会漏判——工具间隙那一拍屏上本来
+    // 就没有它（2026-10-30 实测 c2271f5b：答了 confirmed:true，工具又继续跑了
+    // 90 秒）。确认不了（读不到屏）就往好处答，不让 UI 凭空报「没停」。
     const after = await readScreen();
     return {
       ok: true,
       paneId: target.paneId,
       sent: true,
-      confirmed: after === null || !RUNNING_SCREEN.test(after),
+      confirmed: after === null || INTERRUPTED_SCREEN.test(after) || DONE_SCREEN.test(after),
     };
   }
 

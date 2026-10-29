@@ -3351,6 +3351,39 @@ describe('MessageDeliverer 裁决表', () => {
       ]);
     });
 
+    it('补完键屏上既无 esc to interrupt 也无 · done（工具间隙）→ 仍答没停', async () => {
+      // 2026-10-30 实测 c2271f5b 的漏判：工具间隙那一拍屏上没有 esc 提示，
+      // 「没挂提示」被当成了已停，实际工具又继续跑了 90 秒——只认正面证据。
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const getPaneText = vi.fn(async () => '✻ Thinking…');
+      const deliverer = new MessageDeliverer(
+        makeDeps({ terminal: { ...terminal, getPaneText }, interruptVerifyMs: 0 }),
+      );
+
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: false });
+      expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b'],
+        ['pane-1', '\x03'],
+      ]);
+    });
+
+    it('补完键状态行落到 · done（回合收尾）→ confirmed:true', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const screens = ['✻ Discombobulating… (esc to interrupt)', '✻ Cooked for 3m 10s · done 0:39'];
+      const getPaneText = vi.fn(async () => screens.shift() ?? '');
+      const deliverer = new MessageDeliverer(
+        makeDeps({ terminal: { ...terminal, getPaneText }, interruptVerifyMs: 0 }),
+      );
+
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: true });
+    });
+
     it('读不到屏幕（后端无读屏能力）→ 不补打，不凭猜打第二记', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([

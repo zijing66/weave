@@ -601,7 +601,7 @@ pane 读屏 = `TerminalBackend.getPaneText`（wezterm = `cli get-text --pane-id`
 
 **ESC + 读屏确认 + 必要时补一记 Ctrl+C**（2026-10-29 实测，推翻 10-28 的「送出即必然中断」）：宿主在工具执行/收尾窗口里会吞掉注入的 ESC（同一会话三次点停止两次没停，而 TUI 手按同窗口能停；pane 定位与字节通道正常——同一 pane 发文本立刻落进输入框）。故 `interrupt` = 一记 ESC → 等 `interruptVerifyMs`（缺省 1.2s）读屏 → 屏上没有「Interrupted」就**换键**补一记 Ctrl+C（再发 ESC 就是历史回退菜单）→ 恒答 200。读屏拿不到（后端无该能力）就不补，不凭猜打第二记。**转录标记仍不作为确认判据**（落盘要等工具收尾 10–29s），「已中断」的呈现照旧交给 `interruptRefresher` 在标记落地后推 `sessionInterrupt` 帧（路由补 1.5s / 12s 两拍探针加速首翻）。
 
-**`confirmed` 只在补打完那一拍判**（2026-10-30 加，同日第二次现场证据：Bash 工具执行窗口里连按四次停止，四次 ESC + 四次 Ctrl+C 全被宿主吞，工具跑满自己的 `timeout` 才收，转录里连中断标记都没有）：补完再读一眼屏，状态行仍挂着 `esc to interrupt` ⇒ 响应带 `confirmed:false`，web 就地提示「键已送出但宿主还在跑」，**不摆成功态**；读不到屏 / 屏上已落「Interrupted」都答 `confirmed:true`（判不了就往好处答，不凭猜报没停）。键层没有更强的招——再发的 ESC 会撞历史回退菜单，杀宿主进程属于「关会话」不是「停这一轮」，故 v1 到此为止。
+**`confirmed` 只在补打完那一拍判、只认正面证据**（2026-10-30 加，同日第二次现场证据：Bash 工具执行窗口里连按四次停止，四次 ESC + 四次 Ctrl+C 全被宿主吞，工具跑满自己的 `timeout` 才收，转录里连中断标记都没有）：补完再读一眼屏，**屏上写着 `Interrupted`、或状态行落到 `· done`** 才答 `confirmed:true`；否则 `confirmed:false`，web 就地提示「键已送出但宿主还在跑」。光凭「没挂 `esc to interrupt`」判停是漏判——工具间隙那一拍屏上本来就没有它（同日实测 c2271f5b：答了 true，工具又继续跑了 90 秒）；输入框（❯）也当不了判据（跑着的时候它也常驻，可以边跑边排队输入）。读不到屏（后端无读屏能力）就往好处答，不凭猜报没停。键层没有更强的招——再发的 ESC 会撞历史回退菜单，杀宿主进程属于「关会话」不是「停这一轮」，故 v1 到此为止。
 
 **locator 覆盖度 = 那条通道的覆盖度**：项目侧 `.claude/helpers/hook-handler.cjs` 若是加 locator 之前生成的（脚本里没有 `terminal` 字段）就永不落 `paneEnvs`，只剩标题等值回落，而 `--resume` 起的会话 TUI 标题回 claude 默认、无题会话（`title` null）直接判无 → 这类会话一律 409「Session pane not found」。跨项目一次性覆盖靠 user 档采集（`PUT /capture`），或对该项目重跑 `weave init`。
 
