@@ -3,7 +3,10 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'n
 import { dirname, join } from 'node:path';
 import { isHarness, type Harness } from '@weavecode/core';
 import {
+  commandModeAt,
   turnOutputOf,
+  type CommandInputMode,
+  type CommandsSurface,
   type MessagingSurface,
   type MessageMeta,
   type PromptRelaySpec,
@@ -13,7 +16,7 @@ import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { isImageMediaType } from '../repositories/uploads.js';
-import { messagingSurfaceFor } from '../surfaces.js';
+import { commandsSurfaceFor, messagingSurfaceFor } from '../surfaces.js';
 import { pidAliveOf } from '../daemon/claude-liveness.js';
 import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { SessionTerminal } from '../daemon/opener.js';
@@ -213,6 +216,9 @@ export interface MessageDelivererDeps {
   hooksDir?: string;
   /** 能力面访问器（测试注入）；缺省 surfaces.ts 模块级 registry。 */
   surfaceFor?: (harness: Harness) => MessagingSurface;
+  /** 命令面访问器（测试注入）；缺省 surfaces.ts 模块级 registry——命令形态的
+   *  触发符表由它答（`/` 斜杠命令、`!` bash 模式），投递闸按它分流回执窗口。 */
+  commandsFor?: (harness: Harness) => CommandsSurface | null;
   /** 层② 终端 send-text 通道（装配侧按 TerminalBackend 能力注入；缺省无兜底）。 */
   terminal?: PromptTerminal;
   /** 冲洗节流：同一会话两次投递之间的最小间隔（毫秒）；缺省 1000。Claude Code 对
@@ -229,6 +235,8 @@ export interface MessageDelivererDeps {
   ackStallReleaseMs?: number;
   /** 斜杠命令等回执的短窗口（毫秒）；缺省 5s——过了仍无 UPS 即按内建命令收。 */
   commandAckGraceMs?: number;
+  /** 中断后读屏确认的等待（毫秒）；缺省 1.2s——没看到「已中断」就补一记 Ctrl+C。 */
+  interruptVerifyMs?: number;
   /** 该会话此刻是否挂着阻塞式模态框（questions 槽；QuestionTracker 是唯一实现）。
    *  模态框在场时层② 的文本与回车会被它吃掉：投出去只换来一条「已发出却没回执」
    *  的假送达，回车还可能替用户按下某个选项。缺省 = 不判（测试与无 tracker 装配）。 */
@@ -265,12 +273,6 @@ export type SendResult =
 /** answer() 返回（作答不建消息条目，无 messageId）。 */
 export type AnswerResult = { ok: true } | { ok: false; status: 400 | 404 | 409; error: string };
 
-/**
- * 层② 定位来源：both = pane env 优先、标题+cwd 回落（投递路径的常规口径）；
- * locator = 只认 env；heuristic = 只按标题+cwd（中断补打用，见 interrupt）。
- */
-export type PaneTargetSource = 'both' | 'locator' | 'heuristic';
-
 /** 通道现况：ready = 现在就能投；unknown = 判不动（终端只剩标题/cwd 回落，被动面看不出来）。 */
 interface ChannelState<R extends string> {
   status: 'ready' | 'unavailable' | 'unknown';
@@ -284,7 +286,7 @@ export interface SessionDeliveryDiagnosis {
   inbox: ChannelState<'no-mechanism' | 'no-credentials' | 'auth-token-required'>;
   queue: ChannelState<'no-mechanism'>;
   relay: ChannelState<'no-mechanism' | 'no-peer-name'>;
-  terminal: ChannelState<'no-backend' | 'no-pane-env'>;
+  terminal: ChannelState<'no-backend' | 'no-pane-env' | 'pane-env-conflict'>;
   /** 该会话有没有上报过 pane 定位 env。 */
   paneEnvReported: boolean;
   /** 队列里压着的行数。 */
@@ -314,6 +316,18 @@ const COMMAND_ACK_GRACE_MS = 5_000;
 /** 回执比对的最短文本（防「ok」这类短消息误配到别的在途条目）。 */
 const ACK_MIN_TEXT = 8;
 
+/** 同一 pane 定位的让位窗口：前持有者静默超过这个时长，后到者才接管（fork 继承同一
+ *  env 时，旧会话还在跑就不让位——照投只会打进别人的终端）。 */
+const PANE_CLAIM_HANDOVER_MS = 120_000;
+
+/** 中断后读屏确认的等待（宿主把「已中断」摆上屏通常 <0.3s，留一拍余量）。 */
+const INTERRUPT_VERIFY_MS = 1_200;
+/** 屏上「已中断」的判据（宿主文案 `Interrupted · What should Claude do instead?`）。 */
+const INTERRUPTED_SCREEN = /interrupted/i;
+/** 屏上「还在跑」的判据（宿主状态行的 `esc to interrupt` 提示）。补完键再看一眼
+ *  还有它 = 键被工具执行窗口吞了，如实回报，不假装停下来了。 */
+const RUNNING_SCREEN = /esc to interrupt/i;
+
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
 
@@ -334,15 +348,12 @@ const DISMISS_GUARD_MAX = 200;
  */
 
 /**
- * 斜杠命令（宿主内建命令与 skill/插件命令都算）：判据跟宿主一致——**trim 后以
- * `/` 开头**（命令只在最前面生效）。两者的回执行为不同：内建命令（`/compact`、
- * `/model`、`/effort`…）由宿主内部执行、**不发 UserPromptSubmit**，而 skill/插件
- * 命令会把敲的那行原样报一条 UPS（实测 0.6s）。故不能一律当「无回执」收，见
- * `armCommandAck` 的短窗口。
+ * 命令形态的回执语义（触发符表归能力面，见 `CommandsSurface.inputModes`）：
+ * 宿主内建命令（`/compact`、`/model`…）与 bash 模式由宿主自己执行、**不发
+ * UserPromptSubmit**，而 skill/插件命令会把敲的那行原样报一条 UPS（实测 0.6s）。
+ * 故不能一律当「无回执」收——统一走 `armCommandAck` 的短窗口：UPS 先到就正常
+ * 核销，窗口过期还没来就按已执行收。
  */
-export function isSlashCommand(text: string): boolean {
-  return /^\/[A-Za-z][A-Za-z0-9:_-]*(\s|$)/.test(text.trim());
-}
 
 /** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
 const PANE_ENVS_FILE = 'pane-envs.json';
@@ -438,6 +449,12 @@ export class MessageDeliverer {
    * sessionTerminals() 报完即焚；会话再发事件（resume）会重新 notePaneEnv。
    */
   private readonly revokedPaneEnvs = new Set<string>();
+  /**
+   * sessionId → 占着同一 pane 定位的另一个会话（fork 继承同一份 env）：有值 =
+   * 这个会话的终端定位不可信，投递/击键一律如实拒绝，绝不打进别人的终端。
+   * 只在内存：重启后由下一个事件重新裁决（窗口内可能漏一次，可接受）。
+   */
+  private readonly paneEnvConflicts = new Map<string, string>();
   /** 上次落盘的 pane env（hook 每次事件都上报，值没变就不重写盘）。 */
   private persistedPaneEnvs: string;
   /**
@@ -495,6 +512,7 @@ export class MessageDeliverer {
         commandAckGraceMs: deps.commandAckGraceMs ?? COMMAND_ACK_GRACE_MS,
       },
       { emit: (m) => this.bus(m as Parameters<HookEventBus['emit']>[0]) },
+      (sessionId, text) => this.commandModeOf(sessionId, text) !== null,
     );
     this.gate.onAutoRelease = (sessionId) => this.scheduleFlushContinuation(sessionId);
   }
@@ -602,6 +620,7 @@ export class MessageDeliverer {
       this.memory,
       sessionId,
       this.deps.visibleTtlMs ?? VISIBLE_TTL_MS,
+      (text) => this.commandModeOf(sessionId, text) !== null,
     );
   }
 
@@ -703,11 +722,38 @@ export class MessageDeliverer {
   /**
    * hook 旁路上报的会话 pane 定位 env（**每个 hook 事件覆盖刷新**：会话换 pane /
    * resume 到新窗口后，下一次事件就把定位改过来，与 inbox 凭据同一自愈口径）。
+   *
+   * **同一份 env 只归一个会话**：claude 的 fork 会让新会话继承旧会话的 pane env
+   * （实测 pane 0 同时挂在 256de1f1 与 fork 出的 f59a061a 名下），照着投递就会把
+   * 消息打进别人终端、而目标永远收不到。裁决 = 先到先得：前持有者还有活动就
+   * 不让位（本会话记成冲突，投递/击键如实 409）；前持有者静默超过
+   * `PANE_CLAIM_HANDOVER_MS` 才让位（那才是真的退出了）。
    */
   notePaneEnv(sessionId: string, env: Record<string, string>): void {
+    const sig = JSON.stringify(env);
+    for (const [other, otherEnv] of this.paneEnvs) {
+      if (other === sessionId || JSON.stringify(otherEnv) !== sig) continue;
+      const otherSeen = this.deps.sessions.getBySessionId(other)?.lastSeenAt;
+      const quietMs = otherSeen ? Date.now() - Date.parse(otherSeen) : Number.POSITIVE_INFINITY;
+      if (quietMs < PANE_CLAIM_HANDOVER_MS) {
+        // 前持有者还活着：本会话不让位——env 不入表，避免把键打进别人的终端
+        this.paneEnvs.delete(sessionId);
+        this.paneEnvConflicts.set(sessionId, other);
+        this.persistPaneEnvs();
+        return;
+      }
+      this.paneEnvs.delete(other);
+      this.revokedPaneEnvs.add(other);
+    }
+    this.paneEnvConflicts.delete(sessionId);
     this.paneEnvs.set(sessionId, env);
     this.revokedPaneEnvs.delete(sessionId); // 会话又活了（resume）：撤销作废
     this.persistPaneEnvs();
+  }
+
+  /** 该会话的终端定位是否被另一个会话占着（fork 继承同一 pane）；有值 = 不可投递。 */
+  paneEnvConflictOf(sessionId: string): string | null {
+    return this.paneEnvConflicts.get(sessionId) ?? null;
   }
 
   /**
@@ -846,7 +892,9 @@ export class MessageDeliverer {
       ? { status: 'unavailable', reason: 'no-backend' }
       : paneEnvReported
         ? { status: 'ready', reason: null }
-        : { status: 'unknown', reason: 'no-pane-env' };
+        : this.paneEnvConflicts.has(sessionId)
+          ? { status: 'unavailable', reason: 'pane-env-conflict' }
+          : { status: 'unknown', reason: 'no-pane-env' };
 
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
@@ -949,35 +997,61 @@ export class MessageDeliverer {
   }
 
   /**
-   * 中断目标会话正在跑的回合（dashboard 停止按钮）：往 pane 打**一记 ESC**。
-   * 键序固定死在服务端（**不当参数收**）——这条通道一放开就是任意击键注入；
-   * 且只打一记：claude 里 ESC 一次是中断，连打两次是开历史回退菜单。
+   * 中断目标会话正在跑的回合（dashboard 停止按钮）：先打**一记 ESC**，
+   * 读屏确认没停再补一记 **Ctrl+C**。
    *
-   * `source` / `avoidPaneId` 只给 /interrupt 的**补打**用（缺省 = 老口径：locator
-   * 优先、标题+cwd 回落）。宿主没反应时可指定 'heuristic' 只按标题+cwd 重打一记——
-   * pane env 指着旧 pane（会话换了窗口）时，第一记落进的是别人的输入行，宿主
-   * 那边毫无动静，而错误在投递侧根本看不出来（send-text 照样 exit 0）。
-   * `avoidPaneId` 命中即**不打**（`sent:false`）：落到同一个 pane 的第二记只会
-   * 在 claude 里开出历史回退菜单。
+   * 为什么要有补打（2026-10-29 实测，推翻「键送出即必然中断」的旧口径）：
+   * 宿主在**工具执行/收尾窗口**里会吞掉注入的 ESC（同一会话三次实测两次没停，
+   * 而模型生成中那一记立刻生效；TUI 手按在同一窗口能停），而 ESC 送出本身
+   * 照样 exit 0 —— 只发一记就会出现「点了没反应」。补打**换键**而不是再发 ESC：
+   * 两记 ESC 在 claude 里是历史回退菜单。读屏拿不到（无读屏能力的后端）就不补，
+   * 不凭猜打第二记。键序固定死在服务端，不当参数收。
+   *
+   * 补完**再看一眼屏**：宿主状态行还挂着 `esc to interrupt` 就答 `confirmed:false`
+   * ——工具执行窗口里两记都会被吞（2026-10-30 实测四次全无反应），这时按键层
+   * 没有更强的招，只能让 UI 把「没停」如实说出来，不摆成功态。
    */
   async interrupt(
     sessionId: string,
-    source: PaneTargetSource = 'both',
-    avoidPaneId?: string,
   ): Promise<
-    { ok: true; paneId: string; sent: boolean } | Extract<AnswerResult, { ok: false }>
+    | { ok: true; paneId: string; sent: boolean; confirmed: boolean }
+    | Extract<AnswerResult, { ok: false }>
   > {
-    const target = await this.sessionKeysTarget(sessionId, '击键', source);
+    const target = await this.sessionKeysTarget(sessionId, '击键');
     if (!target.ok) return target;
-    if (avoidPaneId != null && target.paneId === avoidPaneId) {
-      return { ok: true, paneId: target.paneId, sent: false };
-    }
+    const readScreen = async (): Promise<string | null> => {
+      try {
+        return (await target.terminal.getPaneText?.(target.paneId)) ?? null;
+      } catch {
+        return null;
+      }
+    };
     try {
       await target.terminal.sendKeys(target.paneId, ESC);
-      return { ok: true, paneId: target.paneId, sent: true };
     } catch (err) {
       return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
     }
+    await sleep(this.deps.interruptVerifyMs ?? INTERRUPT_VERIFY_MS);
+    const screen = await readScreen();
+    // 读不到屏（后端没这个通道）/ 屏上已经写着 Interrupted：这一记就够了
+    if (screen === null || INTERRUPTED_SCREEN.test(screen)) {
+      return { ok: true, paneId: target.paneId, sent: true, confirmed: true };
+    }
+    try {
+      await target.terminal.sendKeys(target.paneId, CTRL_C);
+    } catch {
+      // 第一记已经送出：补打失败不改变「已送出停止」的答复
+    }
+    // 补完再看一眼：状态行还挂着 `esc to interrupt` = 两记都被吞了（2026-10-30
+    // 实测：Bash 工具执行窗口里连按四次 ESC + Ctrl+C 全无反应，工具跑满自己的
+    // 超时才收）。确认不了（读不到屏）就往好处答，不让 UI 凭空报「没停」。
+    const after = await readScreen();
+    return {
+      ok: true,
+      paneId: target.paneId,
+      sent: true,
+      confirmed: after === null || !RUNNING_SCREEN.test(after),
+    };
   }
 
   /**
@@ -1193,9 +1267,8 @@ export class MessageDeliverer {
   private async sessionKeysTarget(
     sessionId: string,
     action = '击键',
-    source: PaneTargetSource = 'both',
   ): Promise<{ ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>> {
-    return sessionKeysTarget(this.keysDeps(), sessionId, action, source);
+    return sessionKeysTarget(this.keysDeps(), sessionId, action);
   }
 
   /** bus 可选 → 必选形状（delivery 模块的入参）。 */
@@ -1211,7 +1284,7 @@ export class MessageDeliverer {
       setMemory: (msg: PipeMessage) => this.memory.set(msg.id, msg),
       deleteMemory: (messageId: string) => this.memory.delete(messageId),
       awaitAck: (sessionId: string, messageId: string) => this.gate.await(sessionId, messageId),
-      isSlashCommand,
+      commandModeOf: (text: string, sessionId: string) => this.commandModeOf(sessionId, text),
       armAckWatch: (msg: PipeMessage) => this.gate.armAckWatch(msg),
       armCommandAck: (messageId: string) =>
         this.gate.armCommandAck(messageId, (sessionId) => {
@@ -1240,11 +1313,9 @@ export class MessageDeliverer {
       projects: this.deps.projects,
       hookEvents: this.deps.hookEvents,
       terminalChannel: () => this.terminalChannel(),
-      terminalPaneFor: (
-        session: { sessionId: string; title: string | null },
-        project: { path: string },
-        source?: PaneTargetSource,
-      ) => this.terminalPaneFor(session, project, source),
+      terminalPaneFor: (session: { sessionId: string; title: string | null }, project: { path: string }) =>
+        this.terminalPaneFor(session, project),
+      paneEnvConflictOf: (sessionId: string) => this.paneEnvConflictOf(sessionId),
     };
   }
 
@@ -1537,6 +1608,7 @@ export class MessageDeliverer {
     this.gate.release(sessionId);
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
+    this.paneEnvConflicts.delete(sessionId);
     this.revokedPaneEnvs.add(sessionId); // 同退出：显式报 null 摘出终端分组
     this.persistPaneEnvs();
     return removed;
@@ -1576,6 +1648,15 @@ export class MessageDeliverer {
     return this.deps.surfaceFor?.(src) ?? messagingSurfaceFor(src);
   }
 
+  /** 这段输入命中哪种命令形态（触发符表归能力面）；null = 普通 prompt。 */
+  private commandModeOf(sessionId: string, text: string): CommandInputMode | null {
+    const latest = this.deps.hookEvents.listBySession(sessionId, 1);
+    const src = latest[latest.length - 1]?.source;
+    if (!isHarness(src)) return null;
+    const surface = this.deps.commandsFor?.(src) ?? commandsSurfaceFor(src);
+    return surface ? commandModeAt(text, surface.inputModes) : null;
+  }
+
   /**
    * mode → 实际通道。prompt = 层① 原生 || 层② 终端通道（都没有才 409）；
    * auto 的忙/闲基准 = turnOpenOf，忙 → inject（无通道才拒绝，绝不无头抢占），
@@ -1594,16 +1675,15 @@ export class MessageDeliverer {
    * 与标题是否漂移无关，也覆盖从没上报过标题的会话；后端已做存在性校验）→
    * ② 回落「标题（剥 spinner 前缀，字符集含 ◐ 等输入等待态）+ 项目 cwd」启发式
    * （无定位能力的终端 / 老 hook），歧义拒绝不打。
-   *
-   * `source='heuristic'` 跳过 ①：只给中断的补打用——① 命中的 pane 活着但已经
-   * 不是这个会话（换过窗口），宿主对那一记毫无反应，此时只剩「按标题认回来」一条路。
    */
   private async terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
-    source: PaneTargetSource = 'both',
   ): Promise<{ id: string } | null> {
-    return locateTerminalPane(this.terminalChannel(), this.paneEnvs, session, project, source);
+    // 定位被另一个会话占着（fork 继承同一 pane）：不猜、不回落标题启发式
+    // ——那同样会命中别人的终端。投递如实落「找不到终端」。
+    if (this.paneEnvConflicts.has(session.sessionId)) return null;
+    return locateTerminalPane(this.terminalChannel(), this.paneEnvs, session, project);
   }
 
   /** 层② 通道现取（装配期注入；与 settings 的 preset 无关，只有「没装」才是 null）。 */
@@ -1777,7 +1857,7 @@ export class MessageDeliverer {
       setMemory: (msg) => this.memory.set(msg.id, msg),
       awaitAck: (sessionId, messageId) => this.gate.await(sessionId, messageId),
       stall: (sessionId, msg, reason) => this.gate.stall(sessionId, msg, reason),
-      isSlashCommand,
+      commandModeOf: (text: string, sessionId: string) => this.commandModeOf(sessionId, text),
       armAckWatch: (msg) => this.gate.armAckWatch(msg),
       armCommandAck: (messageId, onRelease) =>
         this.gate.armCommandAck(messageId, (sessionId) => {
@@ -1828,7 +1908,7 @@ export class MessageDeliverer {
       if (!current) return;
       const done: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
       this.memory.set(messageId, done);
-      if (isSlashCommand(current.text)) this.armCommandAck(messageId);
+      if (this.commandModeOf(current.sessionId, current.text)) this.armCommandAck(messageId);
       else this.armAckWatch(done);
       this.bus({
         kind: 'message.delivered',

@@ -11,6 +11,7 @@
  * 自己的样式/脚本」的口子，只在导出文件里生效，绝不进 dashboard 的渲染面。
  */
 import { parseMarkdown, type MdBlock, type MdItem, type MdSpan } from './conv-markdown';
+import { stripVisualizeRefs } from '../components/tasks/conv-model';
 
 /** 导出需要的条目形状（`ConvEntry` 结构上满足它；纯函数不绑组件类型）。 */
 export interface ConvHtmlEntry {
@@ -160,7 +161,8 @@ function blockHtml(block: MdBlock, diagrams?: Map<string, string>): string {
 }
 
 function bodyHtml(text: string, diagrams?: Map<string, string>): string {
-  return parseMarkdown(text)
+  // 渲染块引用行在导出 HTML 里没有宿主可渲染（私有区字符是乱码），剥行保文
+  return parseMarkdown(stripVisualizeRefs(text))
     .map((b) => blockHtml(b, diagrams))
     .join('\n');
 }
@@ -285,12 +287,12 @@ ${parts.join('\n')}
 `;
 }
 
-/** 导出文件名：`weave-<safe>-YYYYMMDD-HHmmss.html`（与图片导出同形）。 */
+/** 导出文件名：`<safe>-YYYYMMDD-HHmmss.html`（与图片导出同形）。 */
 export function htmlFileName(label: string, at: Date = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   const safe = label.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
   const ts =
     `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}` +
     `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
-  return `weave-${safe || 'conversation'}-${ts}.html`;
+  return `${safe || 'conversation'}-${ts}.html`;
 }

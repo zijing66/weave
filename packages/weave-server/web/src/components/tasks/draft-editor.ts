@@ -1,4 +1,4 @@
-import type { HarnessCommandRow, RecognizedRef, UploadFile } from '@/lib/api';
+import type { CommandInputModeRow, HarnessCommandRow, RecognizedRef, UploadFile } from '@/lib/api';
 import { isImageUpload } from './attach';
 import type { PickItem, PickTarget } from './FilePicker';
 
@@ -172,7 +172,39 @@ export interface DraftSnapshot {
   staged: UploadFile[];
 }
 
-const DRAFT_KEY = (sessionId: string): string => `weave:draft:${sessionId}`;
+const DRAFT_KEY_PREFIX = 'weave:draft:';
+const DRAFT_KEY = (sessionId: string): string => `${DRAFT_KEY_PREFIX}${sessionId}`;
+
+/** 草稿写盘/清空的变更信号：真源恒是 sessionStorage，事件只负责喊「该重读了」
+ *  ——会话卡片的「草稿未发送」图标靠它跟着输入框动。 */
+const DRAFT_CHANGED_EVENT = 'weave:draft-changed';
+
+export function subscribeDraftChanges(listener: () => void): () => void {
+  window.addEventListener(DRAFT_CHANGED_EVENT, listener);
+  return () => window.removeEventListener(DRAFT_CHANGED_EVENT, listener);
+}
+
+/** 当前有未发送草稿的会话集合（扫 sessionStorage 键前缀：草稿只在浏览器本地，
+ *  服务端一无所知，卡片图标因此纯前端判定）。 */
+export function draftSessionIds(): Set<string> {
+  const ids = new Set<string>();
+  try {
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
+      const id = key.slice(DRAFT_KEY_PREFIX.length);
+      // 只剩空白/换行的快照不算「有草稿」（空输入框的占位 <br> 会存成一截 '\n'）
+      const snap = readDraftSnapshot(id);
+      if (!snap) continue;
+      if (snap.staged.length > 0 || snap.parts.some((p) => !('t' in p) || p.t.trim() !== '')) {
+        ids.add(id);
+      }
+    }
+  } catch {
+    // 隐私模式读不到：当作没有草稿
+  }
+  return ids;
+}
 
 /** 输入框 DOM → 快照；空草稿（没字也没附件）返回 null（调用方据此删键）。 */
 export function draftSnapshotOf(
@@ -257,6 +289,7 @@ export function writeDraftSnapshot(sessionId: string, snap: DraftSnapshot | null
   try {
     if (snap) sessionStorage.setItem(DRAFT_KEY(sessionId), JSON.stringify(snap));
     else sessionStorage.removeItem(DRAFT_KEY(sessionId));
+    window.dispatchEvent(new Event(DRAFT_CHANGED_EVENT));
   } catch {
     // 隐私模式写不进去：本次会话内照常，刷新后丢草稿，不影响别的
   }
@@ -371,6 +404,30 @@ export type CmdSigil = '/' | '$';
 /** 一枚命令胶囊该长什么样：skill/插件红、官方与自定义命令黄。 */
 export function cmdChipClass(source: CmdSource | undefined): string {
   return source === 'skill' || source === 'plugin' ? SKILL_CHIP_CLASS : CMD_CHIP_CLASS;
+}
+
+/** 输入框里当前草稿命中的命令形态（触发符表来自服务端能力面）：null = 普通 prompt。
+ *  判据与宿主一致——trim 后以触发符开头；`named` 的还要求紧跟命令名（`/name`），
+ *  bash 模式（`!`）是整行命令行，不要求。 */
+export function commandModeOf(
+  text: string,
+  modes: readonly CommandInputModeRow[],
+): CommandInputModeRow | null {
+  const t = text.trim();
+  for (const mode of modes) {
+    if (!t.startsWith(mode.sigil)) continue;
+    if (mode.named && !/^[A-Za-z][A-Za-z0-9:_-]*(\s|$)/.test(t.slice(mode.sigil.length))) continue;
+    return mode;
+  }
+  return null;
+}
+
+/** 输入框的模式色：claude 的输入框在 bash 模式换成品红边框（`bashBorder`），
+ *  斜杠命令用与命令胶囊同色系的琥珀——一眼看出这条会不会被宿主当 prompt 提交。 */
+export function commandModeClass(mode: CommandInputModeRow): string {
+  return mode.kind === 'bash'
+    ? 'border-[#ff0087]/60 ring-1 ring-[#ff0087]/25'
+    : 'border-amber-500/50 ring-1 ring-amber-500/20';
 }
 
 /** 气泡里认出命令 token：官方/自定义命令**只在整句开头**生效（宿主判据），

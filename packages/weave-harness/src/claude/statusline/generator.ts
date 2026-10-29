@@ -233,14 +233,35 @@ function cacheKeyOf(input) {
   return crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 16);
 }
 
+// 分片文件的键恒为项目根：会话可以 cd 进子目录，而 dashboard 底条按项目路径找
+// 同一个文件——两边必须哈希同一个字符串（否则底条永远读不到）。项目根优先取
+// 脚本自身位置（本文件固定在 <项目>/.claude/helpers/ 下 = weave init 的那个目录），
+// 其次宿主的 workspace.project_dir，最后才回落到当前目录。
+// 注意：探测仍用会话真实的工作目录（cwd）——状态栏要显示用户此刻所在的位置与
+// 那里的改动，只有文件落在哪不跟着漂。
+function projectRootOf(input) {
+  var path = require('path');
+  // 只在脚本确实躺在 <项目>/.claude/helpers/<name> 下时才用位置推导——
+  // 别处跑的副本（测试、手工调用）位置没有意义，走宿主给的项目根。
+  try {
+    var helpers = path.dirname(__filename);
+    if (path.basename(helpers) === 'helpers' && path.basename(path.dirname(helpers)) === '.claude') {
+      return path.dirname(path.dirname(helpers));
+    }
+  } catch (e) {}
+  var dir = input.workspace && input.workspace.project_dir;
+  if (typeof dir === 'string' && dir) return dir;
+  return (input.workspace && input.workspace.current_dir) || process.cwd();
+}
+
 function initCache(input) {
   var path = require('path');
   var crypto = require('crypto');
   CACHE_FILE = path.join(CACHE_DIR, cacheKeyOf(input) + '.json');
-  var cwd = (input.workspace && input.workspace.current_dir) || process.cwd();
+  var root = projectRootOf(input);
   // 一个目录一个文件：大小写不敏感（Windows），分隔符与尾斜杠的不同写法也算同一个
   var dirKey = crypto.createHash('sha1')
-    .update(String(cwd).toLowerCase().replace(/\\\\/g, '/').replace(/\\/+$/, ''))
+    .update(String(root).toLowerCase().replace(/\\\\/g, '/').replace(/\\/+$/, ''))
     .digest('hex').slice(0, 16);
   GIT_FILE = path.join(CACHE_DIR, 'git-' + dirKey + '.json');
 }

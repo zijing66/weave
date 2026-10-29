@@ -52,6 +52,8 @@ export interface HookFrame {
   reason?: string;
   /** narration.updated 帧：增量监视从转录新字节里认出的段（时间序，直接 append）。 */
   segs?: Array<{ at: string | null; text: string }>;
+  /** message.* 帧：投递行的管道 id（就地改那一行，不等全量重拉）。 */
+  messageId?: string;
   // ---- 编排域帧（orchestration.run / orchestration.delivery）：两条都带全量
   // 轻量态（投递数 + 每会话待回计数），画布就地更新、不重拉。 ----
   orchestrationId?: number;

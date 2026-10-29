@@ -76,6 +76,8 @@ interface ProjectListProps {
   onCloseTerminal?: (p: ProjectRow, paneIds: string[]) => void;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
+  /** 该项目下待答的阻塞问题数：有则卡片边框换成与会话行问答图标同一档 amber。 */
+  pendingQuestionsOf?: (projectId: number) => number;
   /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
   /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
@@ -119,6 +121,7 @@ export function ProjectList({
   openTerminalStateOf,
   onCloseTerminal,
   sessionStatsOf,
+  pendingQuestionsOf,
   terminalsOf,
   onReorder,
   archivedProjects = [],
@@ -394,17 +397,26 @@ export function ProjectList({
           const needsInit = needsInitOf?.(p.id);
           const stats = sessionStatsOf?.(p.id) ?? [];
           const terminals = terminalsOf?.(p.id) ?? 0;
+          // 有待答问题 → 边框换成与会话行问答图标同一档 amber（扫一眼就知道哪张卡要人答）
+          const pendingQuestions = pendingQuestionsOf?.(p.id) ?? 0;
           return (
             <SortableProjectLi key={p.id} id={p.id}>
               {({ setNodeRef, style, attributes, listeners, isDragging }) => (
             <li
               ref={setNodeRef}
               style={style}
+              title={
+                pendingQuestions > 0
+                  ? t('project.questionsPending', { n: pendingQuestions })
+                  : undefined
+              }
               className={cn(
                 'group relative rounded-xl border transition-colors duration-200',
                 !globalActive && selectedId === p.id
                   ? 'border-edge/[0.14] bg-neutral-800/60'
                   : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10]',
+                // 待答：静态 amber 打底 + 呼吸动效（只闪边框与光晕，内容不跟着闪）
+                pendingQuestions > 0 && 'border-amber-400/60 hover:border-amber-400/70 weave-question-breath',
                 isDragging && 'z-10 opacity-80',
               )}
               onMouseEnter={() => onHoverProject?.(p.id)}

@@ -204,6 +204,8 @@ export function createCodexCommandSurface(
   const skillsOf = deps.skills ?? officialSkills;
   return {
     harness: 'codex',
+    // codex 的 TUI 只有 `/` 命令（提示词 / skill），没有 bash 模式。
+    inputModes: [{ kind: 'slash', sigil: '/', named: true }],
     async list({ projectPath, homedir = osHomedir() }) {
       const home = process.env.CODEX_HOME ?? path.join(homedir, '.codex');
       return dedupe([

@@ -291,9 +291,9 @@ describe('drawConversation', () => {
 });
 
 describe('imageFileName', () => {
-  it('剥掉路径不友好字符', () => {
+  it('剥掉路径不友好字符（无 weave 前缀：会话名+时间戳）', () => {
     const name = imageFileName('a/b:c*d', new Date(2026, 9, 16, 9, 8, 7));
-    expect(name).toBe('weave-a-b-c-d-20261016-090807.png');
+    expect(name).toBe('a-b-c-d-20261016-090807.png');
   });
 });
 

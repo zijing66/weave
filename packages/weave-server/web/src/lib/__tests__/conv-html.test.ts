@@ -128,9 +128,9 @@ describe('conversationHtml', () => {
 });
 
 describe('htmlFileName', () => {
-  it('weave-<label>-<时间>.html，非法字符换掉', () => {
+  it('<label>-<时间>.html，非法字符换掉（无 weave 前缀）', () => {
     expect(htmlFileName('会话/A', new Date(2026, 9, 22, 4, 5, 6))).toBe(
-      'weave-会话-A-20261022-040506.html',
+      '会话-A-20261022-040506.html',
     );
   });
 });

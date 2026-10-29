@@ -114,6 +114,7 @@ export const zh = {
   'out.doctor.reason.noPeerName': '注册表里没有 peer name',
   'out.doctor.reason.noBackend': '该终端 preset 没有文本注入后端',
   'out.doctor.reason.noPaneEnv': '没上报 pane 定位',
+  'out.doctor.reason.paneEnvConflict': 'pane 定位被另一会话占着（fork 继承同一终端）',
   'out.doctor.hint.noHookScript': '没装 weave 生成的 hook 脚本 → 跑 `weave init`',
   'out.doctor.hint.hookScriptNotWeave':
     'hook 脚本不是 weave 生成的（weave 不刷新也不认）→ 移走它，或 `weave init --force` 覆盖',
@@ -126,6 +127,7 @@ export const zh = {
   'out.doctor.hint.noPeerName': '这条会话在注册表里没有 peer name——中继按名字寻址，没名字直接跳过',
   'out.doctor.hint.terminalNoBackend': '终端 preset 不支持文本注入 → 换 wezterm 才有层② 兜底',
   'out.doctor.hint.terminalNoPaneEnv': '没上报 pane 定位（该终端不导出 WEZTERM_*）→ 只剩标题+cwd 回落',
+  'out.doctor.hint.terminalPaneEnvConflict': '这个会话的 pane 定位与另一个会话重叠（fork 继承了同一个终端）→ 已拒绝投递，避免打进别人的终端；关掉其中一个会话即可恢复',
   'out.doctor.hint.notRunning': '会话进程已不在跑（消息落 failed/offline，连队列都不进）',
   'out.doctor.hint.queued': '队列里还有积压',
   'out.doctor.hint.stalled': '暂停闸已置（未回执超窗或投递失败）→ 重发、或等回执解除',

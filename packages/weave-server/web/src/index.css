@@ -263,6 +263,23 @@
   animation: harness-breathe 1.6s ease-in-out infinite;
 }
 
+/* 项目卡待答呼吸边框：amber 一明一暗 + 一圈极淡光晕，提示「这里等人回答」。
+   只动 border-color / box-shadow，不动元素 opacity——内容不许跟着整卡闪。 */
+@keyframes weave-question-breath {
+  0%,
+  100% {
+    border-color: rgba(251, 191, 36, 0.35);
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+  50% {
+    border-color: rgba(251, 191, 36, 0.85);
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+  }
+}
+.weave-question-breath {
+  animation: weave-question-breath 2.2s ease-in-out infinite;
+}
+
 /* 生成中滚动带：新事件一到，新的那条从下面滚进来顶掉旧的。 */
 @keyframes weave-ticker-in {
   from {

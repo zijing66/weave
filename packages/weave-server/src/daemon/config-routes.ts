@@ -10,6 +10,7 @@ import {
   LASTSEEN_ID,
   listBackups,
   listProfiles,
+  profileKeyOf,
   readBackup,
   readSnapshot,
   removeProfile,
@@ -28,7 +29,14 @@ const FILE_IDS: readonly ConfigFileId[] = ['user', 'project', 'projectLocal', 'g
 
 interface SurfaceCtx {
   projectPath: string | null;
+  /** project/projectLocal 档的快照/备份/基线按它隔离（profileKeyOf）。 */
+  projectId: number | null;
   homedir: string;
+}
+
+/** 快照存储键：project/projectLocal 档带项目后缀，user/global 原样。 */
+function scopeOf(file: ConfigFileId, ctx: SurfaceCtx): string {
+  return profileKeyOf(file, ctx.projectId);
 }
 
 function asFileId(raw: unknown): ConfigFileId | null {
@@ -79,14 +87,15 @@ async function snapshotView(
   file: ConfigFileId,
   ctx: SurfaceCtx,
 ): Promise<Record<string, unknown>> {
+  const key = scopeOf(file, ctx);
   const target = pathFor(surface, file, ctx);
   const values = await surface.read(file, ctx);
   const liveText = textOf(surface, values);
-  const state = await listProfiles(root, harness, file);
+  const state = await listProfiles(root, harness, key);
   // 漂移基线：活跃快照优先；没有活跃快照（project 档 / 还没建快照）落自动基线，
   // 首次查看立基线——否则这些档位的外部改动永远判不出漂移
-  const baseline = await baselineSnapshot(root, harness, file, state);
-  if (!baseline) await writeSnapshot(root, harness, file, LASTSEEN_ID, values);
+  const baseline = await baselineSnapshot(root, harness, key, state);
+  if (!baseline) await writeSnapshot(root, harness, key, LASTSEEN_ID, values);
   const baselineText = baseline ? textOf(surface, baseline) : textOf(surface, values);
   return {
     harness,
@@ -101,7 +110,7 @@ async function snapshotView(
     liveText,
     activeText: baselineText,
     drifted: baselineText !== liveText,
-    backups: await listBackups(root, harness, file),
+    backups: await listBackups(root, harness, key),
   };
 }
 
@@ -111,14 +120,16 @@ function resolveTarget(
   projectIdRaw: unknown,
 ): SurfaceCtx | string {
   let projectPath: string | null = null;
+  let projectId: number | null = null;
   if (file === 'project' || file === 'projectLocal') {
-    const projectId = Number(projectIdRaw);
-    if (!Number.isInteger(projectId) || projectId <= 0) return '需要 projectId';
-    const project = deps.projects.getById(projectId);
+    const id = Number(projectIdRaw);
+    if (!Number.isInteger(id) || id <= 0) return '需要 projectId';
+    const project = deps.projects.getById(id);
     if (!project) return '项目不存在';
     projectPath = project.path;
+    projectId = id;
   }
-  return { projectPath, homedir: homedir() };
+  return { projectPath, projectId, homedir: homedir() };
 }
 
 /**
@@ -152,7 +163,7 @@ export async function handleConfigRoutes(
       return true;
     }
     const file = asFileId(url.searchParams.get('file')) ?? 'user';
-    const ctx: SurfaceCtx = { projectPath: null, homedir: homedir() };
+    const ctx: SurfaceCtx = { projectPath: null, projectId: null, homedir: homedir() };
     const catalog = surface.catalog(file);
     sendJson(res, 200, {
       supported: true,
@@ -219,10 +230,10 @@ export async function handleConfigRoutes(
     }
     try {
       const current = await surface.read(file, ctx);
-      await pushBackup(root, harness, file, current);
+      await pushBackup(root, harness, scopeOf(file, ctx), current);
       await surface.write(file, ctx, values as Record<string, unknown>);
-      const state = await listProfiles(root, harness, file);
-      await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
+      const state = await listProfiles(root, harness, scopeOf(file, ctx));
+      await syncBaseline(root, harness, scopeOf(file, ctx), state, await surface.read(file, ctx));
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
       return true;
@@ -263,10 +274,10 @@ export async function handleConfigRoutes(
     }
     try {
       const current = await surface.read(file, ctx);
-      await pushBackup(root, harness, file, current);
+      await pushBackup(root, harness, scopeOf(file, ctx), current);
       await surface.write(file, ctx, parsed);
-      const state = await listProfiles(root, harness, file);
-      await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
+      const state = await listProfiles(root, harness, scopeOf(file, ctx));
+      await syncBaseline(root, harness, scopeOf(file, ctx), state, await surface.read(file, ctx));
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
       return true;
@@ -308,30 +319,30 @@ export async function handleConfigRoutes(
 
     switch (action) {
       case 'list': {
-        const state = await listProfiles(root, harness, file);
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
         sendJson(res, 200, state);
         return true;
       }
       case 'create': {
-        const state = await listProfiles(root, harness, file);
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
         const meta = await createProfile(
           root,
           harness,
-          file,
+          scopeOf(file, ctx),
           name || `配置 ${state.profiles.length + 1}`,
           formValues ?? (await surface.read(file, ctx)),
         );
-        sendJson(res, 200, { profile: meta, state: await listProfiles(root, harness, file) });
+        sendJson(res, 200, { profile: meta, state: await listProfiles(root, harness, scopeOf(file, ctx)) });
         return true;
       }
       case 'save': {
-        const state = await listProfiles(root, harness, file);
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
         if (!state.profiles.some((p) => p.id === id)) {
           sendJson(res, 404, { error: '配置不存在' });
           return true;
         }
-        await saveProfile(root, harness, file, id, formValues ?? (await surface.read(file, ctx)));
-        sendJson(res, 200, await listProfiles(root, harness, file));
+        await saveProfile(root, harness, scopeOf(file, ctx), id, formValues ?? (await surface.read(file, ctx)));
+        sendJson(res, 200, await listProfiles(root, harness, scopeOf(file, ctx)));
         return true;
       }
       case 'compare': {
@@ -343,7 +354,7 @@ export async function handleConfigRoutes(
         }
         if (target === 'backup') {
           const backupId = typeof body['backupId'] === 'string' ? body['backupId'] : '';
-          const values = await readBackup(root, harness, file, backupId);
+          const values = await readBackup(root, harness, scopeOf(file, ctx), backupId);
           if (!values) {
             sendJson(res, 404, { error: '备份不存在' });
             return true;
@@ -351,7 +362,7 @@ export async function handleConfigRoutes(
           sendJson(res, 200, { text: textOf(surface, values) });
           return true;
         }
-        const values = await readSnapshot(root, harness, file, id);
+        const values = await readSnapshot(root, harness, scopeOf(file, ctx), id);
         if (!values) {
           sendJson(res, 404, { error: '配置不存在' });
           return true;
@@ -360,14 +371,14 @@ export async function handleConfigRoutes(
         return true;
       }
       case 'duplicate': {
-        const values = await readSnapshot(root, harness, file, id);
+        const values = await readSnapshot(root, harness, scopeOf(file, ctx), id);
         if (!values) {
           sendJson(res, 404, { error: '配置不存在' });
           return true;
         }
-        const state = await listProfiles(root, harness, file);
-        const meta = await createProfile(root, harness, file, name || `配置 ${state.profiles.length + 1}`, values);
-        sendJson(res, 200, { profile: meta, state: await listProfiles(root, harness, file) });
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
+        const meta = await createProfile(root, harness, scopeOf(file, ctx), name || `配置 ${state.profiles.length + 1}`, values);
+        sendJson(res, 200, { profile: meta, state: await listProfiles(root, harness, scopeOf(file, ctx)) });
         return true;
       }
       case 'rename': {
@@ -375,17 +386,17 @@ export async function handleConfigRoutes(
           sendJson(res, 400, { error: '缺少名称' });
           return true;
         }
-        await renameProfile(root, harness, file, id, name);
-        sendJson(res, 200, await listProfiles(root, harness, file));
+        await renameProfile(root, harness, scopeOf(file, ctx), id, name);
+        sendJson(res, 200, await listProfiles(root, harness, scopeOf(file, ctx)));
         return true;
       }
       case 'remove': {
-        await removeProfile(root, harness, file, id);
-        sendJson(res, 200, await listProfiles(root, harness, file));
+        await removeProfile(root, harness, scopeOf(file, ctx), id);
+        sendJson(res, 200, await listProfiles(root, harness, scopeOf(file, ctx)));
         return true;
       }
       case 'activate': {
-        const values = await readSnapshot(root, harness, file, id);
+        const values = await readSnapshot(root, harness, scopeOf(file, ctx), id);
         if (!values) {
           sendJson(res, 404, { error: '配置不存在' });
           return true;
@@ -401,9 +412,9 @@ export async function handleConfigRoutes(
           return true;
         }
         try {
-          await pushBackup(root, harness, file, live);
+          await pushBackup(root, harness, scopeOf(file, ctx), live);
           await surface.write(file, ctx, values);
-          await setActive(root, harness, file, id);
+          await setActive(root, harness, scopeOf(file, ctx), id);
         } catch (err) {
           sendJson(res, 400, { error: (err as Error).message });
           return true;
@@ -413,17 +424,17 @@ export async function handleConfigRoutes(
       }
       case 'acceptDrift': {
         // 覆盖存档前把原基线留一份进备份——误点后还能从备份找回
-        const state = await listProfiles(root, harness, file);
-        const prev = await baselineSnapshot(root, harness, file, state);
-        if (prev) await pushBackup(root, harness, file, prev);
-        await syncBaseline(root, harness, file, state, await surface.read(file, ctx));
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
+        const prev = await baselineSnapshot(root, harness, scopeOf(file, ctx), state);
+        if (prev) await pushBackup(root, harness, scopeOf(file, ctx), prev);
+        await syncBaseline(root, harness, scopeOf(file, ctx), state, await surface.read(file, ctx));
         sendJson(res, 200, await snapshotView(root, harness, surface, file, ctx));
         return true;
       }
       case 'restoreBaseline': {
         // 漂移的反向出口：把基线（活跃快照或自动基线）写回文件，恢复到差异之前
-        const state = await listProfiles(root, harness, file);
-        const baseline = await baselineSnapshot(root, harness, file, state);
+        const state = await listProfiles(root, harness, scopeOf(file, ctx));
+        const baseline = await baselineSnapshot(root, harness, scopeOf(file, ctx), state);
         if (!baseline) {
           sendJson(res, 404, { error: '没有可恢复的基线' });
           return true;
@@ -438,9 +449,9 @@ export async function handleConfigRoutes(
           return true;
         }
         try {
-          await pushBackup(root, harness, file, live);
+          await pushBackup(root, harness, scopeOf(file, ctx), live);
           await surface.write(file, ctx, baseline);
-          await syncBaseline(root, harness, file, state, baseline);
+          await syncBaseline(root, harness, scopeOf(file, ctx), state, baseline);
         } catch (err) {
           sendJson(res, 400, { error: (err as Error).message });
           return true;
@@ -450,7 +461,7 @@ export async function handleConfigRoutes(
       }
       case 'restoreBackup': {
         const backupId = typeof body['backupId'] === 'string' ? body['backupId'] : '';
-        const values = await readBackup(root, harness, file, backupId);
+        const values = await readBackup(root, harness, scopeOf(file, ctx), backupId);
         if (!values) {
           sendJson(res, 404, { error: '备份不存在' });
           return true;
@@ -466,10 +477,10 @@ export async function handleConfigRoutes(
           return true;
         }
         try {
-          await pushBackup(root, harness, file, live);
+          await pushBackup(root, harness, scopeOf(file, ctx), live);
           await surface.write(file, ctx, values);
-          const state = await listProfiles(root, harness, file);
-          await syncBaseline(root, harness, file, state, values);
+          const state = await listProfiles(root, harness, scopeOf(file, ctx));
+          await syncBaseline(root, harness, scopeOf(file, ctx), state, values);
         } catch (err) {
           sendJson(res, 400, { error: (err as Error).message });
           return true;

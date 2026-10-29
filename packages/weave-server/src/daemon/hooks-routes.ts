@@ -23,6 +23,7 @@ import { handleHookAdminRoutes } from './routes/hooks-admin.js';
 import { handleUploadRoutes } from './routes/uploads.js';
 import { handleSessionControlRoutes } from './routes/session-control.js';
 import { handlePathRefRoutes } from './routes/path-refs.js';
+import { handleVisualizationRoutes } from './routes/visualizations.js';
 import { handleSessionInsightRoutes } from './routes/session-insights.js';
 import { handleWatchRoutes } from './routes/watches.js';
 import { openSessionTerminal, transcriptState } from './session-open.js';
@@ -90,6 +91,7 @@ function deliveryHints(input: {
   if (diag.relay.reason === 'no-peer-name') hints.push('no-peer-name');
   if (diag.terminal.reason === 'no-backend') hints.push('terminal-no-backend');
   if (diag.terminal.reason === 'no-pane-env') hints.push('terminal-no-pane-env');
+  if (diag.terminal.reason === 'pane-env-conflict') hints.push('terminal-pane-env-conflict');
   if (diag.pending > 0) hints.push('queued');
   if (diag.stalled) hints.push('stalled');
   return hints;
@@ -113,7 +115,8 @@ export async function handleHooksRoutes(
     pathname.startsWith('/webhooks/orchestrate/') ||
     pathname === '/uploads' ||
     pathname.startsWith('/uploads/') ||
-    pathname.startsWith('/images/');
+    pathname.startsWith('/images/') ||
+    pathname === '/visualizations/fragment';
   if (!isOwnedPath) return false;
 
   // ---- hooks 管理域 → routes/hooks-admin.ts（规则 CRUD/插件面/派发/指令池）----
@@ -135,8 +138,18 @@ export async function handleHooksRoutes(
     }
     const projectIdRaw = url.searchParams.get('projectId');
     const projectId = projectIdRaw != null && projectIdRaw !== '' ? Number(projectIdRaw) : undefined;
+    // 增量补丁（`?ids=a,b`）：一条 hook 事件只改它自己那条会话的判据，前端据此
+    // 只补那几行——不然工具调用一票接一票时等于每拍把 200 行全部重算一遍。
+    const idsRaw = url.searchParams.get('ids');
+    const sessionIds = idsRaw
+      ? idsRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 100)
+      : undefined;
     const hookSessions = deps.hookSessions;
-    const sessions = hookSessions.listWithCounts(projectId);
+    const sessions = hookSessions.listWithCounts(projectId, sessionIds);
     // 判活随返回（claude 注册表 + codex 锁探针缓存）：true/false=判得动，
     // null=判不动（新鲜会话）不猜
     // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
@@ -375,6 +388,9 @@ export async function handleHooksRoutes(
 
   // ---- 路径引用域 → routes/path-refs.ts（文件索引/引用表达式/反向认引用/预览）----
   if (await handlePathRefRoutes(req, res, deps, pathname, url)) return true;
+
+  // ---- 渲染块域 → routes/visualizations.ts（对话内嵌可视化 fragment 只读回显）----
+  if (await handleVisualizationRoutes(req, res, deps, pathname, url)) return true;
 
   // ---- 手动重发（暂停闸解除动作）：prompt 通道 failed / delivered-未回执 才可重发 ----
   const resendMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/resend$/);

@@ -20,6 +20,7 @@ import { statuslineApi } from './statusline-api';
 import { configApi } from './config';
 import { settingsApi } from './settings';
 import { searchApi } from './search';
+import { visualizationApi } from './visualizations';
 import { refreshDashboard, eventsUrl } from './client';
 
 export const api = {
@@ -36,6 +37,7 @@ export const api = {
   ...configApi,
   ...settingsApi,
   ...searchApi,
+  ...visualizationApi,
   refreshDashboard,
   eventsUrl,
 };
@@ -62,6 +64,7 @@ export type {
   SessionRow,
   SessionListResult,
   HarnessCommandRow,
+  CommandInputModeRow,
   CommandExecutionRow,
   SessionPlan,
   SessionEditHunk,
@@ -174,4 +177,5 @@ export type {
   CaptureRow,
 } from './settings';
 export type { SearchMessageHit, SearchFileHit, SearchResult } from './search';
+export type { VisualizationFragment } from './visualizations';
 export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';

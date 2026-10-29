@@ -77,10 +77,10 @@
 
 ### rewind 槽（对话回退标记）
 
-`RewindSurface` = `sessionRewinds({ sessionId, transcriptPath }) → RewindMark[] | null`，`RewindMark` = `{ at, boundaryAt }`（`at` = 回退发生的近似时刻，`boundaryAt` = 回退目标时刻，claude 暂 null）。今天唯一实现 = `weave-harness/src/claude/rewind.ts`（`CLAUDE_REWIND`），codex 没有这个槽（app-server 有 `thread/revert` RPC 但 rollout 观测痕迹未证实，不猜文法）。
+`RewindSurface` = `sessionRewinds({ sessionId, transcriptPath }) → RewindMark[] | null`，`RewindMark` = `{ at, boundaryAt }`（`at` = 回退发生的时刻，`boundaryAt` = 回退目标时刻，claude 暂 null）。今天唯一实现 = `weave-harness/src/claude/rewind.ts`（`CLAUDE_REWIND`），codex 没有这个槽（app-server 有 `thread/revert` RPC 但 rollout 观测痕迹未证实，不猜文法）。
 
-- **源头是转录，不是库**：claude 转录 append-only，rewind 不删旧行、只追加锚点行 `{"type":"last-prompt",…,"rewound":true}`（无 timestamp）。锚点时刻 = 其前最近一条带 timestamp 行（回退前最后活动的上界）。
-- **读法同 edits/narration**：流式逐行 + `"type":"last-prompt"` 子串预筛再 parse；读崩回 `null`，不交半份。`parseRewindLine` 单独导出，全量读与将来的增量监视共用文法。
+- **源头是转录，不是库**：claude 转录 append-only，rewind 不删旧行。**痕迹 = 下一次提交时宿主写的 `parentUuid:null` 新链根**（2.1.296 实测：rewind 确认后转录零写入，`rewound:true` 锚点行不写；`explicit` last-prompt 普通轮也写，均非信号）。锚点时刻 = 新链根自身 timestamp。会话开头第一条与斜杠命令展开（`<command-message>` 开头，每次执行都立新根）都算链根但不算 rewind——rewind 是**下一个**根。
+- **读法同 edits/narration**：流式逐行 + `"type":"user"` 子串预筛再 parse；读崩回 `null`，不交半份。`parseRewindLine` 单独导出，全量读与将来的增量监视共用文法。
 - **路由**：`GET /sessions/:id/rewinds` → `{ supported, rewinds }`，`latestHarnessOf` + `rewindSurfaceFor`，转录路径取 `SessionProbe.transcriptPathOf`；无面答 `supported:false`。
 - **web 合成**：`withRewinds(entries, rewinds)` 判据 = 任一锚点时刻晚于气泡时刻即标 `rewound`（多次回退取并集——锚点只记「何时退的」，不记退到哪，无法精确圈定区间）；被回退气泡红虚线边框 + 置灰 + 「已回退」tag，保留展示在历史中。SSE 的 conv 刷新拍顺带重拉（回退后重发消息即刷新标记）。
 
@@ -96,16 +96,17 @@
 
 ### commands 槽（`/` 候选与命令返显）
 
-`CommandsSurface` = `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source, sigil? }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源），`sigil` 答「怎么敲」（缺省 `/`，codex 的 skill 是 `$name`）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。
+`CommandsSurface` = `inputModes`（输入的命令形态表）+ `list({ projectPath, homedir? }) → HarnessCommand[]` + `executions(transcriptPath) → CommandExecution[] | null`。`HarnessCommand` = `{ name, description, argsHint?, source, sigil? }`，`source` 四档 `builtin | command | skill | plugin`（前端只渲染、不按名字猜来源），`sigil` 答「怎么敲」（缺省 `/`，codex 的 skill 是 `$name`）。claude = `claude/commands.ts`，codex = `codex/commands.ts`。
 
 - **skill 只列「当前生效」的**（用户裁决：只有生效的才可选）：claude 走官方 `claude plugin list --json` 的 `enabled` + `installPath`——**停用插件里的 skill 不进候选**；用户/项目 skill 没有逐条停用通道，照目录扫。codex 走官方 app-server 的 `skills/list`（JSON-RPC：initialize → skills/list `{cwds:[project]}`，`enabled`/`scope`/`pluginId` 都是宿主算的，插件 skill 自带 `<plugin>:<skill>` 名）；这是 Codex 唯一给出「生效集」的通道，也顺带说明它的 skill 触发符是 `$`。两条官方通道都拿不到（老版本 / CLI 缺失 / 超时）才退回目录扫描，**不假装知道启用态**。
 - **候选来源各归各的目录**：claude = 内建快照 + `<proj>/.claude/commands/**/*.md`（子目录成命名空间 `db/migrate.md` → `db:migrate`）+ 项目/用户 `skills/<name>/SKILL.md`；codex = 内建快照 + `$CODEX_HOME/prompts/*.md`（文件名即命令名），`CODEX_HOME` 优先于 `~/.codex`。**内建表是版本快照**（宿主没有可扫目录），升级宿主后按 `/help` 复核——不联网、也不去猜二进制里的字符串。
 - **扫描跟随符号链接**（`Dirent` 只报链接本身，不报目标）：用户常把仓库里的 skill 链进 `~/.claude/skills`（本机 9 个 skill 里 8 个是链接），`isDirectory()` 一把筛就会漏掉；判据与资源管理的 skill 扫描同口径——`isDirectory()` 为假时再 `stat` 一次看真身。目录与 `.md` 两边都这样判，符号链接成环不追（只 stat 一层）。
-- **成本**：官方通道每次 `list` 起一次进程（claude ~0.9s / codex app-server ~0.5s，冷启 ~5s），一扇会话面板只取一次；不做缓存——启停插件要立刻反映到候选里。
+- **成本**：官方通道每次 `list` 起一次进程（claude ~0.9s / codex app-server ~0.5s，冷启 ~5s；Windows 经 `cmd /d /s /c` 起 `.cmd` 壳还要 +4s），故整份候选按 `projectPath|homedir` 缓 60s（`LIST_TTL_MS`）——启停插件最多晚一分钟反映到候选里，换掉的是每次请求一次进程。
+- **命令形态归 `inputModes`**：`CommandInputMode = { kind: 'slash' | 'bash', sigil, named }`，claude = `/`（`named`：`/name`）与 `!`（bash 模式，整行命令行）、codex = 只有 `/`。判据唯一实现 = `commandModeAt(text, modes)`（harness driver）。这类输入**由宿主自己执行、不当作一条 prompt 提交**（实测 claude 的 `!cmd` 转录只留 `<bash-input>`/`<bash-stdout>`，hook 域零事件）⇒ 投递侧走 `armCommandAck` 的 5s 短窗口（UPS 先到就正常核销 = skill/插件命令；窗口过期按「已执行」收，不布防未回执闸），`noteActivity` 的旁证翻牌与在途视图的「已执行常驻」同用这张表。
 - **返显只能读转录**：内建命令在宿主里就地执行、**不发 UserPromptSubmit**（`/compact` 只有 PreCompact、`/model` 只有 Pre/PostModelSwitch、`/clear` 只有 `SessionStart(source:"clear")`）⇒ hook 域里根本没有这一轮。转录里它们是 `<command-name>/x</command-name>` + 紧随一条 `<local-command-stdout>`；**skill/插件命令没有 stdout**（展开成 prompt、走 UPS，对话里已有气泡）⇒ 只认带 stdout 的，天然不重复。ANSI 转义剥掉再入库。
 - **codex 返显如实答 null**：rollout 只记模型看得到的东西，TUI 内建命令一个字节都不落盘 ⇒ `executions` 恒 `null`（`supported:false`），前端不摆空壳。
-- **路由**：`GET /sessions/:id/commands` → `{ supported, commands }`（`projectPath` 由 server 查库得出）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
-- **web 侧**：空白后敲 `/` 或 `$` 触发候选面板（两种触发符各筛各的候选），键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd` + 来源/触发符，与文件引用同一套 draft 序列化），提交时还原成 `<sigil><name> args` 原文。气泡侧 `commandTokensOf` 认 token：**前后必须是空白**（与引用表达式同一条判据），官方命令只在句首、skill/插件可插句中；配色 skill/插件红、官方与自定义命令黄。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。
+- **路由**：`GET /sessions/:id/commands` → `{ supported, commands, inputModes }`（`projectPath` 由 server 查库得出；`inputModes` 随候选一起下发，web 只按 `kind` 上色、不自带触发符知识）；`GET /sessions/:id/command-executions` → `{ supported, executions }`，转录路径取 `SessionProbe.transcriptPathOf`。两条都走 `latestHarnessOf` + `commandsSurfaceFor`，不写 harness 白名单。
+- **web 侧**：空白后敲 `/` 或 `$` 触发候选面板（两种触发符各筛各的候选），键盘上下选中 + Enter/Tab 插入；插入的是**原子胶囊**（`data-cmd` + 来源/触发符，与文件引用同一套 draft 序列化），提交时还原成 `<sigil><name> args` 原文。气泡侧 `commandTokensOf` 认 token：**前后必须是空白**（与引用表达式同一条判据），官方命令只在句首、skill/插件可插句中；配色 skill/插件红、官方与自定义命令黄。返显由 `withCommands(entries, executions)` 按 `at` 插进对话流（键 `x<at>:<name>`），气泡同样渲染成胶囊 + 参数 + 可选输出块。**输入框按命令形态换色**：`commandModeOf(draft, inputModes)` 命中哪些形态就换哪身皮——bash 模式用 claude 的 `bashBorder` 品红（`#ff0087`，宿主 TUI 里 bash 模式就是把输入框边框换成品红），斜杠命令用与命令胶囊同色系的琥珀；普通 prompt 保持中性。
 
 ### titles 面（会话标题双向 rename）
 
@@ -428,7 +429,7 @@ Web Push 细节：
 - **回执先到即已送达**：投递进程的失败落定可能晚于回执（中继 exit 状态只管进程、不管送达；终端的 `sendText` 也可能在文本已进框之后才抛），故 `settleRelay` 与 `runTerminal` 的失败分支先看**当前行** `acked`——是就按已送达收、不置闸（翻成 failed 会让一个已送达的会话队列无限期停住，用户还会照着 failed 重发一遍）；`runTerminal` 的成功收尾同样用当前行而非 `write` 之前的快照，否则 write 期间到的回执会被抹掉、30s 后又被当未回执置闸。
 - 慢会话误伤暂停是接受过的代价——它处理到该 prompt 时 UPS 自解闸，真卡死人手重发。
 - **回执比对前先剥运输装饰**（直投的 `[weave] ` 标记，唯一实现 `stripInboxMarker`）——装饰不是正文，不剥则观测到的 prompt 恒比本体多一截、短正文（如「代码提交」）永远认不出自己。
-- 长文本按「包含」认，**短文本（< 8 字符）认尾部相等**——层② 是往输入框追加，框里先在的内容只会垫在提交原文前面（实测「1」+「继续」→ 提交出来是「1继续」、两条队列行并一 →「继续继续」），整条相等在这些形态面前永不命中、「已发出」行只能一路挂到未回执闸；尾部相等仍比包含紧：宿主自己接的后文（「继续……不要」）不认，整条相等是它的特例。
+- 长文本按「包含」认（含**去尽空白再比一次**——宿主粘贴处理器会把多行 chunk 用空串拼接，归一把换行折成空格后带空白那一比会落空，不补这档的行永远等不到回执、落 failed 而气泡已经在了），**短文本（< 8 字符）认尾部相等**——层② 是往输入框追加，框里先在的内容只会垫在提交原文前面（实测「1」+「继续」→ 提交出来是「1继续」、两条队列行并一 →「继续继续」），整条相等在这些形态面前永不命中、「已发出」行只能一路挂到未回执闸；尾部相等仍比包含紧：宿主自己接的后文（「继续……不要」）不认，整条相等是它的特例。
 - **一条 UPS 可核销多条在途**——宿主会把连着发的几次合成一次提交（终端里多行粘贴 / 队列合并），只认首条的话其余会一路挂到未回执闸、把该会话的队列误暂停，故遍历所有未回执行逐条核销（web 侧同口径：一条事件条目按 `ackedEventId` 认领多条投递行，谁也不再留在队列尾巴上）。
 
 ### 4.20 对话面板（`SessionMessages`）
@@ -447,7 +448,7 @@ Web Push 细节：
 
 - prompt 原文先剥**运输装饰**（唯一实现 = `web/src/lib/hook-payload.ts` 的 `stripPromptDecor`：直投的来源标记 / CC 的 `<cross-session-message>` 壳 / 壳内 weave 单向注记）——装饰不是正文，留着既在气泡里露馅、也让该条目认领不到自己的投递行（同一条消息显示两遍）。
 - 剥壳后 `from-name` 非 weave 的（别的会话自己用 CC SendMessage 发的）挂发送方名 tag 与手敲 prompt 区分。
-- 投递行只取 `mode='prompt'`（人工面恒 prompt 通道；编排域 inject/headless 不进），且**未被同文案相邻时刻的事件条目认领**——认领到的状态/回执/重发挂在那个气泡上不另起一条；认领不到的（Held/Refused、失败、暂停闸成因、仍在途、**已送达但气泡还没来**）**当作最新那几条气泡排在对话尾巴上**（不横占一条面；虚线框 = 还没落定）：多条时收进**同一个容器气泡**、每行一句（超了截断、点开看全文；只有一条时仍是当前那份单气泡的样子），行内保留队列那套样式（状态徽标 + 通道 + 原文 + 操作）。
+- 投递行只取 `mode='prompt'`（人工面恒 prompt 通道；编排域 inject/headless 不进），且**未被事件条目认领**——**首选键 = 服务端回执时记下的 `ackedEventId`**（回执帧 `message.acknowledged` 也带同一个 `eventId`，前端收到就地改写那一行并补一拍对话尾部，让「队列行退场」与「气泡出现」落在同一拍）；同文案 + 相邻时刻只是它的兜底（重发只补的那记回车提交的是整个输入框，文案对不上也认得出）。认领到的状态/回执/重发挂在那个气泡上不另起一条；认领不到的（Held/Refused、失败、暂停闸成因、仍在途、**已送达但气泡还没来**）**当作最新那几条气泡排在对话尾巴上**（不横占一条面；虚线框 = 还没落定）：多条时收进**同一个容器气泡**、每行一句（超了截断、点开看全文；只有一条时仍是当前那份单气泡的样子），行内保留队列那套样式（状态徽标 + 通道 + 原文 + 操作）。
 - **队列里的 `delivered` 叫「已发出」不叫「已送达」**（它还没落进对话，气泡随会话自己的 UPS 事件才来；「已送达」是对话气泡上的事），**认领即退场**——真气泡接手时位置不变，同一条消息不会两处都露。
 
 **操作三枚纯图标常显居右**：
@@ -598,7 +599,9 @@ pane 读屏 = `TerminalBackend.getPaneText`（wezterm = `cli get-text --pane-id`
 
 `POST /sessions/:id/interrupt` → `MessageDeliverer.interrupt`：经层② 终端 `TerminalBackend.sendKeys` 向 pane 打**一记** ESC（连打两记是 claude 的历史回退菜单；与开窗 preset 无关，层② 门控见 §4）。pane 定位同 `terminalPaneFor`（locator 优先 + 标题/cwd 回落）。
 
-**一记之后要自证，键送出去 ≠ 宿主停了**：路由打完键等一拍（`INTERRUPT_CONFIRM_WAIT_MS` = 1.2s）回读转录，回 `interrupted: true | false | null`（true = 出现比打键前更新的中断标记；false = 转录在、没有新标记；null = 判不了：没探针 / 转录路径未知）。**false 时按标题+cwd 补打一记**（`interrupt(id, 'heuristic', <第一记的 pane>)`）——pane env 指着旧 pane（会话换过窗口）时第一记落进的是别人的输入行，宿主一声不响，而投递侧照样拿 exit 0（实机 2026-10-21：8c85b9c7 连按三次全 200、转录里一个标记都没有，同一分钟另一会话 0.5 秒即中断）。**补打落到同一个 pane 就不打**（`sent:false`，第二记会在 claude 里开出历史回退菜单）；web 依 `interrupted === false` 报错提示，不再拿「已送出停止」冒充「已停」。
+**ESC + 读屏确认 + 必要时补一记 Ctrl+C**（2026-10-29 实测，推翻 10-28 的「送出即必然中断」）：宿主在工具执行/收尾窗口里会吞掉注入的 ESC（同一会话三次点停止两次没停，而 TUI 手按同窗口能停；pane 定位与字节通道正常——同一 pane 发文本立刻落进输入框）。故 `interrupt` = 一记 ESC → 等 `interruptVerifyMs`（缺省 1.2s）读屏 → 屏上没有「Interrupted」就**换键**补一记 Ctrl+C（再发 ESC 就是历史回退菜单）→ 恒答 200。读屏拿不到（后端无该能力）就不补，不凭猜打第二记。**转录标记仍不作为确认判据**（落盘要等工具收尾 10–29s），「已中断」的呈现照旧交给 `interruptRefresher` 在标记落地后推 `sessionInterrupt` 帧（路由补 1.5s / 12s 两拍探针加速首翻）。
+
+**`confirmed` 只在补打完那一拍判**（2026-10-30 加，同日第二次现场证据：Bash 工具执行窗口里连按四次停止，四次 ESC + 四次 Ctrl+C 全被宿主吞，工具跑满自己的 `timeout` 才收，转录里连中断标记都没有）：补完再读一眼屏，状态行仍挂着 `esc to interrupt` ⇒ 响应带 `confirmed:false`，web 就地提示「键已送出但宿主还在跑」，**不摆成功态**；读不到屏 / 屏上已落「Interrupted」都答 `confirmed:true`（判不了就往好处答，不凭猜报没停）。键层没有更强的招——再发的 ESC 会撞历史回退菜单，杀宿主进程属于「关会话」不是「停这一轮」，故 v1 到此为止。
 
 **locator 覆盖度 = 那条通道的覆盖度**：项目侧 `.claude/helpers/hook-handler.cjs` 若是加 locator 之前生成的（脚本里没有 `terminal` 字段）就永不落 `paneEnvs`，只剩标题等值回落，而 `--resume` 起的会话 TUI 标题回 claude 默认、无题会话（`title` null）直接判无 → 这类会话一律 409「Session pane not found」。跨项目一次性覆盖靠 user 档采集（`PUT /capture`），或对该项目重跑 `weave init`。
 
@@ -912,7 +915,7 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
 
 ### 快照 / 漂移 / 切换
 
-落点 `<local>/harness-config/<harness>/`（`getHarnessConfigDir()`）：`profiles.json`（`{ file: { activeId, profiles[] } }`）+ `<file>-<id>.json`（整份快照）+ `backups/`。放 `local/` 是因为**快照里可能带 API key**：本机专属、不进 settings 表、不随迁移带走。
+落点 `<local>/harness-config/<harness>/`（`getHarnessConfigDir()`）：`profiles.json`（`{ file: { activeId, profiles[] } }`）+ `<file>-<id>.json`（整份快照）+ `backups/`。放 `local/` 是因为**快照里可能带 API key**：本机专属、不进 settings 表、不随迁移带走。存储键 = `profileKeyOf(file, projectId)`：user/global 全机共享原样，project/projectLocal 带 `@p<projectId>` 后缀按项目隔离（`project@p3-_lastseen.json`）——否则所有项目共享同一份基线与备份命名空间，A 项目的基线会被 B 项目的 restoreBaseline 写进 B 的文件。旧的无后缀 `project-*.json` 是隔离前的混合数据，休眠不迁移（各项目首次打开重建自己的基线）。
 
 - **漂移基线**：活跃快照优先；没有活跃快照的档位（project/projectLocal、还没建快照的 user/global）落 `_lastseen` 自动基线——首次查看立基线、写入口恒同步（`syncBaseline`），否则这些档位的外部改动永远判不出漂移。漂移判据 = 基线 vs 活文件。
 - **漂移只来自外部改文件**：本面板的写入口（values / raw / 切换 / 恢复）每次都把结果同步进基线，故 `liveText !== activeText` 必然意味着有人在外面改了文件。打开面板即比，横幅给**双向出口**：「看差异」（accept = `acceptDrift`，采纳外部改动进存档）与「用库覆盖文件」（`restoreBaseline` 两拍，把基线写回文件恢复到差异之前）——两个方向都先弹 diff。
@@ -962,3 +965,15 @@ web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChar
 > **已退役**：与编排的「自然回合（autoFire）+ when 预筛 + condition 判断」是同一件事的两套实现，裁决收敛进编排画布（触发/过滤/判断的唯一配置入口；见 §4.13 边闸两道与本节存档）。`HandlerConfigSchema` 与 `dispatcher.runClassifyAsync` **保留兼容读**——存量 classify 规则仍会执行，但 UI 不再露出、不可创建/编辑，删一条少一条。
 
 退役前的机制（存档）：规则来源 = `Stop`（`raw.last_assistant_message` 即本轮最终输出）。预筛（`prefilter` 任一关键词命中才继续，零成本）→ fork 无头子 agent 判定（复用 `edgeExtract.run`，模型只回一行 JSON `{label, reason?}`）→ `label` 命中 `routes[].label` 才 `postJson` 出站（可带 `secret` HMAC）→ `cooldownMs`（默认 10 分钟）防下游回投的回环。fork 不支持的 harness 判定拿不到结果，按 `no label` 结束（不报错）。
+
+## §20 渲染块（对话内嵌可视化 fragment）
+
+模型把 HTML fragment 写盘、在 assistant 最终回复里写一行**引用行**，web 气泡把它渲染成 sandbox iframe。协议锚点 = core `VISUALIZATION_PROTOCOL`（文法常量唯一权威）：`\u{E200}visualize\u{E202}{"path":"<abs>","mode":"wide"?,"title"?}\u{E201}`（suffix 可缺席；与 codex Desktop visualize 引用行兼容，见 DECISIONS 2026-10-29）。**跨 harness 通用**——引用行就是回复里的一行文本，识别唯一实现 = web `conv-model.visualizeSegments`（按行扫、trim 后以前缀开头才认、JSON 坏行当普通文本）。
+
+- **server 只读端点** `GET /visualizations/fragment?path=<abs>`（`routes/visualizations.ts`，挂 hooks-routes 的 `isOwnedPath` 表）：白名单根 = `~/.codex/visualizations` ∪ `~/.claude` ∪ `~/.codex/plugins`（从 `HARNESS_DIRS[*].userDir` 派生）∪ 已注册项目根；`isInsideDir`（market/resolve.ts）判界（跨盘符安全）；只回 `.html`、≤ `maxFragmentBytes`（1MB）；403/404/413/400 各有明确文案。fragment 是模型产物，绝不能变成任意文件读取口。
+- **web 渲染** `VisualizationFrame`：fetch（cookie 认证）→ `materialize`（lib/visualization.ts）→ `<iframe sandbox="allow-scripts" srcDoc>`。**srcdoc 而非 src 直连**：src 导航会被认证门的 GET+Accept:text/html 豁免绕过（server.ts `isPublicRequest`），srcdoc 走 fetch = 认证完整生效。opaque origin 读不到父页 cookie/storage；文档内 CSP meta 对齐 fragment 契约的 CDN 白名单。
+- **主题注入**：weave 只有 `--w-<family>-<shade>` 令牌（RGB triple），fragment 契约用 shadcn 风格语义变量——`THEME_ALIAS_TOKENS` 按主题选令牌名，`themeVarsOf` 从 stylesheet 读实际值，materialize 时**解析成 `rgb(...)` 色值**写进 iframe `:root`（srcdoc 是独立文档树，`var(--w-*)` 引用过去解析不到）。主题翻转 → srcDoc 重算 → iframe 重载。
+- **高度桥**：materialize 注入测量脚本，`postMessage({type:'viz-resize',height})` → 父页 clamp 40–1200px 调 iframe 高（超出内部滚动）。sandbox 无 same-origin 时父页读不到 contentDocument，postMessage 是唯一通道。
+- **openai shim**：`window.openai.setWidgetState/sendFollowUpMessage` best-effort no-op——codex skill 生成的 fragment 调它们不报错；真实回传通道 weave 没有，如实降级。
+- **导出/分享剥离**：`stripVisualizeRefs` 用于 HTML 导出（conv-html）与分享图片（conv-widgets `toImageEntries`）——私有区字符在那两种载体是乱码；**复制与纯文本/Markdown 导出保留原文**。
+- **新鲜度**：挂载 fetch 一次 + 手动刷新按钮；不加轮询。同一 path 多轮引用 = 时间线上自然形成演进快照序列。

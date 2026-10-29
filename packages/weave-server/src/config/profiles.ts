@@ -6,7 +6,19 @@ import type { ConfigFileId } from '@weavecode/harness';
 /**
  * 配置快照的落盘面。`root` = `local/harness-config`（由调用方给，测试用临时目录）：
  * 快照里可能带 API key ⇒ 本机专属、不进 settings 表、不随迁移带走。
+ *
+ * `file` 实参是存储键（profileKeyOf 的输出）：user/global 全机共享原样；
+ * project/projectLocal 带 `@p<projectId>` 后缀按项目隔离——活文件路径仍由
+ * 调用方按真实档位解析，这里的键只管快照/备份/基线落在谁的名下。
  */
+
+/** project/projectLocal 档的快照按项目隔离；user/global 全机共享，不带后缀。 */
+export function profileKeyOf(file: ConfigFileId, projectId: number | null): string {
+  if ((file === 'project' || file === 'projectLocal') && projectId !== null) {
+    return `${file}@p${projectId}`;
+  }
+  return file;
+}
 export interface ConfigProfileMeta {
   id: string;
   name: string;
@@ -32,7 +44,7 @@ function storePath(root: string, harness: string): string {
   return path.join(harnessDir(root, harness), 'profiles.json');
 }
 
-function snapshotPath(root: string, harness: string, file: ConfigFileId, id: string): string {
+function snapshotPath(root: string, harness: string, file: string, id: string): string {
   return path.join(harnessDir(root, harness), `${file}-${id}.json`);
 }
 
@@ -40,7 +52,7 @@ function backupDir(root: string, harness: string): string {
   return path.join(harnessDir(root, harness), 'backups');
 }
 
-function backupPath(root: string, harness: string, file: ConfigFileId, id: string): string {
+function backupPath(root: string, harness: string, file: string, id: string): string {
   return path.join(backupDir(root, harness), `${file}-${id}.json`);
 }
 
@@ -71,14 +83,14 @@ function emptyState(): FileState {
   return { activeId: null, profiles: [] };
 }
 
-function stateOf(store: Store, file: ConfigFileId): FileState {
+function stateOf(store: Store, file: string): FileState {
   return store[file] ?? emptyState();
 }
 
 export async function listProfiles(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
 ): Promise<ConfigProfileState> {
   return stateOf(await readStore(root, harness), file);
 }
@@ -86,7 +98,7 @@ export async function listProfiles(
 async function mutate(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   fn: (state: FileState) => void,
 ): Promise<FileState> {
   const store = await readStore(root, harness);
@@ -105,7 +117,7 @@ function nowIso(): string {
 export async function writeSnapshot(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
   values: Record<string, unknown>,
 ): Promise<void> {
@@ -115,7 +127,7 @@ export async function writeSnapshot(
 export async function readSnapshot(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
 ): Promise<Record<string, unknown> | null> {
   return readJsonObject(snapshotPath(root, harness, file, id));
@@ -124,7 +136,7 @@ export async function readSnapshot(
 export async function createProfile(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   name: string,
   values: Record<string, unknown>,
 ): Promise<ConfigProfileMeta> {
@@ -145,7 +157,7 @@ export async function createProfile(
 export async function saveProfile(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
   values: Record<string, unknown>,
 ): Promise<void> {
@@ -159,7 +171,7 @@ export async function saveProfile(
 export async function renameProfile(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
   name: string,
 ): Promise<void> {
@@ -175,7 +187,7 @@ export async function renameProfile(
 export async function removeProfile(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
 ): Promise<void> {
   await mutate(root, harness, file, (state) => {
@@ -188,7 +200,7 @@ export async function removeProfile(
 export async function setActive(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string | null,
 ): Promise<void> {
   await mutate(root, harness, file, (state) => {
@@ -206,7 +218,7 @@ export const LASTSEEN_ID = '_lastseen';
 export async function baselineSnapshot(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   state: ConfigProfileState,
 ): Promise<Record<string, unknown> | null> {
   if (state.activeId) {
@@ -220,7 +232,7 @@ export async function baselineSnapshot(
 export async function syncBaseline(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   state: ConfigProfileState,
   values: Record<string, unknown>,
 ): Promise<void> {
@@ -241,7 +253,7 @@ function backupIdOf(at: Date): string {
 export async function pushBackup(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   values: Record<string, unknown>,
 ): Promise<void> {
   // 秒级精度：同一秒内再备一份时追加序号（-2、-3…），别把前一份覆盖掉
@@ -261,7 +273,7 @@ export async function pushBackup(
 }
 
 /** 备份列表（新 → 旧）。同秒序号（`-2`）比无后缀的更新——按「时刻 + 序号」排，不按裸字典序。 */
-export async function listBackups(root: string, harness: string, file: ConfigFileId): Promise<string[]> {
+export async function listBackups(root: string, harness: string, file: string): Promise<string[]> {
   const prefix = `${file}-`;
   const rank = (id: string): number => {
     const m = /^(\d{4}-\d{2}-\d{2}-\d{6})(?:-(\d+))?$/.exec(id);
@@ -279,7 +291,7 @@ export async function listBackups(root: string, harness: string, file: ConfigFil
 export async function readBackup(
   root: string,
   harness: string,
-  file: ConfigFileId,
+  file: string,
   id: string,
 ): Promise<Record<string, unknown> | null> {
   if (!/^[A-Za-z0-9-]+$/.test(id)) return null;

@@ -72,6 +72,16 @@ export interface HarnessCommandRow {
   sigil?: '/' | '$';
 }
 
+/**
+ * 输入框的命令形态（触发符表归 harness 能力面）：`/` 命令、claude 的 `!` bash
+ * 模式。web 只按 `kind` 上色与换提示语，不自带任何 harness 的触发符知识。
+ */
+export interface CommandInputModeRow {
+  kind: 'slash' | 'bash';
+  sigil: string;
+  named: boolean;
+}
+
 /** 转录里的一条命令执行（返显；内建命令没有 hook 事件）。 */
 export interface CommandExecutionRow {
   name: string;
@@ -132,11 +142,15 @@ export interface SideQuestionRow {
 }
 
 export const sessionApi = {
-  /** 不带 projectId 返回全部会话（最近活跃在前，最多 200 条）。 */
-  listSessions: (projectId?: number): Promise<SessionListResult> =>
-    apiFetch<SessionListResult>(
-      `/sessions${projectId === undefined ? '' : `?projectId=${projectId}`}`,
-    ),
+  /** 不带 projectId 返回全部会话（最近活跃在前，最多 200 条）。`ids` = 只取这几行
+   *  （事件增量补丁：一条事件只改它自己那条会话，不必把整张表重算一遍）。 */
+  listSessions: (projectId?: number, ids?: readonly string[]): Promise<SessionListResult> => {
+    const q = new URLSearchParams();
+    if (projectId !== undefined) q.set('projectId', String(projectId));
+    if (ids && ids.length > 0) q.set('ids', ids.join(','));
+    const qs = q.toString();
+    return apiFetch<SessionListResult>(`/sessions${qs ? `?${qs}` : ''}`);
+  },
   /** dashboard 改名：写 pendingTitle，下次 hook 下发时生效。 */
   renameSession: (sessionId: string, title: string): Promise<SessionRow> =>
     apiFetch<{ session: SessionRow }>(
@@ -169,8 +183,13 @@ export const sessionApi = {
       { method: 'DELETE' },
     ),
   /** 聊天窗口 `/` 的命令候选（发现规则归 harness；supported=false = 没有命令面）。 */
-  listSessionCommands: (sessionId: string): Promise<{ supported: boolean; commands: HarnessCommandRow[] }> =>
-    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/commands`),
+  listSessionCommands: (
+    sessionId: string,
+  ): Promise<{
+    supported: boolean;
+    commands: HarnessCommandRow[];
+    inputModes: CommandInputModeRow[];
+  }> => apiFetch(`/sessions/${encodeURIComponent(sessionId)}/commands`),
   /** 命令执行的返显（内建命令不发 hook 事件，只有转录记着）。`executions: null` =
    *  该 harness 不记命令执行（前端如实说明）。 */
   listCommandExecutions: (
@@ -212,9 +231,9 @@ export const sessionApi = {
     if (opts.end != null) params.set('end', String(opts.end));
     return apiFetch<{ ref: string }>(`/sessions/${encodeURIComponent(sessionId)}/ref?${params.toString()}`);
   },
-  /** 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）。 */
-  /** 停止会话：`interrupted` 是宿主到底停没停（转录里有没有新标记）——null = 判不了。 */
-  interruptSession: (sessionId: string): Promise<{ ok: boolean; interrupted?: boolean | null }> =>
+  /** 停止会话：ESC + 读屏 + 必要的一记 Ctrl+C。「已中断」的呈现走 sessionInterrupt
+   *  推送；`confirmed === false` = 键打进去了但宿主没停（工具执行窗口会吞键）。 */
+  interruptSession: (sessionId: string): Promise<{ ok: boolean; confirmed?: boolean }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: 'POST' }),
   /** 执行模式切换：一记 Shift+Tab，宿主自己算下一个模式（键序固定死在服务端）。 */
   cycleSessionMode: (sessionId: string): Promise<{ ok: boolean }> =>

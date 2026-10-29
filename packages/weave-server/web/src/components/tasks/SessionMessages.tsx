@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
   api,
+  type CommandInputModeRow,
   type HarnessCommandRow,
   type MessagingCapability,
   type UploadFile,
@@ -50,16 +51,21 @@ import {
 import {
   countdownLabel,
   editsWindowOf,
+  hasVisualizeRef,
   imageMarkerSegments,
   pipePathSegments,
+  visualizeSegments,
   CONV_FILTERS,
   STATUS_BADGE,
   STATUS_KEY,
   queueStatusKey,
   isRemotePrompt,
 } from './conv-model';
+import { VizSegments } from './VisualizationFrame';
 import {
   cmdChipClass,
+  commandModeClass,
+  commandModeOf,
   commandTokensOf,
   serializeDraft,
   ATTACH_ATTR,
@@ -87,12 +93,12 @@ const INPUT_ROWS_MAX = 20;
 /** 一行的高度（px）：拖拽位移换算行数用，与 textarea 的实际行高同量级。 */
 const INPUT_ROW_PX = 16;
 
-/** 发送快捷键：`enter` = Enter 发送 / Shift+Enter 换行；`shift-enter` = 反过来。
+/** 发送快捷键：`ctrl-enter` = Ctrl+Enter 发送 / Enter 换行；`enter` = 反过来。
  *  全局偏好，localStorage 记住（与输入框行数同一口径）。 */
-type SendKeyMode = 'enter' | 'shift-enter';
+type SendKeyMode = 'ctrl-enter' | 'enter';
 const SEND_KEY_KEY = 'weave:conv-send-key';
 const sendKeyOf = (): SendKeyMode =>
-  localStorage.getItem(SEND_KEY_KEY) === 'shift-enter' ? 'shift-enter' : 'enter';
+  localStorage.getItem(SEND_KEY_KEY) === 'enter' ? 'enter' : 'ctrl-enter';
 
 
 /**
@@ -171,6 +177,7 @@ export function SessionMessages({
     compacting, interrupted, generating, failed, liveText,
     pull,
     refreshMessages,
+    setMessages,
   } = useConvThread({
     sessionId,
     projectId,
@@ -196,6 +203,9 @@ export function SessionMessages({
   /** `/` 命令菜单：候选来自 harness 能力面（null = 还没取到）。`query` 是已经敲进去的
    *  那截命令名，`active` 是键盘高亮项。 */
   const [commands, setCommands] = useState<HarnessCommandRow[] | null>(null);
+  /** 输入框的命令形态表（`/` 命令、claude 的 `!` bash 模式）：归 harness 能力面，
+   *  随候选一起下发；web 只按 `kind` 上色，不自带触发符知识。 */
+  const [inputModes, setInputModes] = useState<CommandInputModeRow[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   /** 图片选择器（移动端 `accept` 收窄成相册；文件选择器不带 accept 才能选任意类型）。 */
   const imageFileRef = useRef<HTMLInputElement>(null);
@@ -230,25 +240,48 @@ export function SessionMessages({
   });
   useEffect(() => localStorage.setItem('weave:conv-input-rows', String(inputRows)), [inputRows]);
   const rowsGrip = useRef<{ y: number; rows: number } | null>(null);
-  /** 发送快捷键（全局偏好）：enter = Enter 发送 / Shift+Enter 换行；shift-enter = 交换。 */
+  /** 发送快捷键（全局偏好）：ctrl-enter = Ctrl+Enter 发送 / Enter 换行；enter = 交换。 */
   const [sendKey, setSendKey] = useState<SendKeyMode>(sendKeyOf);
   useEffect(() => localStorage.setItem(SEND_KEY_KEY, sendKey), [sendKey]);
-  const sendCombo = sendKey === 'enter' ? 'Enter' : 'Shift+Enter';
-  const newlineCombo = sendKey === 'enter' ? 'Shift+Enter' : 'Enter';
+  const sendCombo = sendKey === 'ctrl-enter' ? 'Ctrl+Enter' : 'Enter';
+  const newlineCombo = sendKey === 'ctrl-enter' ? 'Enter' : 'Ctrl+Enter';
+  /** 发送钮的下拉（桌面限定：切发送/换行键序；移动端只有发送钮本体）。 */
+  const [sendKeyMenu, setSendKeyMenu] = useState(false);
+  const sendKeyMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sendKeyMenu) return;
+    const dismiss = (e: Event): void => {
+      if ((e.target as HTMLElement | null)?.closest?.('[data-send-key-menu]')) return;
+      setSendKeyMenu(false);
+    };
+    window.addEventListener('pointerdown', dismiss, true);
+    return () => window.removeEventListener('pointerdown', dismiss, true);
+  }, [sendKeyMenu]);
 
-  /** `/` 菜单的候选：进面板取一次（目录扫描，不随每条消息重取）。 */
+  /** `/` 菜单的候选：进面板取一次（目录扫描，不随每条消息重取）。
+   *  失败（daemon 正在重启 / 网络抖动）不把空表钉死——退一拍重试，最多两拍；
+   *  否则面板会一直「敲 / 没有候选」，只能等重挂载才自愈。 */
   useEffect(() => {
     let alive = true;
-    void api.listSessionCommands(sessionId).then(
-      (r) => {
-        if (alive) setCommands(r.commands);
-      },
-      () => {
-        if (alive) setCommands([]);
-      },
-    );
+    let timer: number | null = null;
+    const load = (attempt: number): void => {
+      void api.listSessionCommands(sessionId).then(
+        (r) => {
+          if (!alive) return;
+          setCommands(r.commands);
+          setInputModes(r.inputModes ?? []);
+        },
+        () => {
+          if (!alive) return;
+          if (attempt < 2) timer = window.setTimeout(() => load(attempt + 1), 3_000);
+          else setCommands([]);
+        },
+      );
+    };
+    load(0);
     return () => {
       alive = false;
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [sessionId]);
 
@@ -284,6 +317,10 @@ export function SessionMessages({
     setPicker,
   });
 
+  /** 草稿此刻的命令形态（`!` bash 模式 / `/` 命令）：输入框据此换色——这些形态
+   *  宿主自己执行、不当作 prompt 提交，发出去之前就该看得出来（claude 同款）。 */
+  const draftMode = useMemo(() => commandModeOf(draft, inputModes), [draft, inputModes]);
+
   /** 键盘高亮项滚进视野：候选超过 max-h-56 后上下键会走出可视区。 */
   useEffect(() => {
     cmdMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -304,6 +341,7 @@ export function SessionMessages({
     t,
     show,
     refreshMessages,
+    setMessages,
     newestQueuedId,
   });
 
@@ -364,7 +402,7 @@ export function SessionMessages({
   } = useConvSelect({ thread, coarse });
 
   // 分享/导出域：复制 / canvas 图片 / 单页 HTML（反馈键共用 convImg:<id>）
-  const { copyPicked, shareImage, exportHtml, openShareMenu } = useConvShare({
+  const { copyPicked, shareImage, exportHtml, exportMarkdown, openShareMenu } = useConvShare({
     sessionId,
     label,
     pickedEntries,
@@ -382,6 +420,7 @@ export function SessionMessages({
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return;
       if (menu) setMenu(null);
+      else if (sendKeyMenu) setSendKeyMenu(false);
       else if (selecting) {
         setSelecting(false);
         setPicked(new Set());
@@ -393,7 +432,7 @@ export function SessionMessages({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [menu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize, staged]);
+  }, [menu, sendKeyMenu, selecting, confirmMode, confirming, fullscreen, minimized, onMinimize, staged]);
 
   // 移动端返回键/侧滑逐层退：与 ESC 同一顺序（挂起中的扇子不吃返回——只有露着
   // 的那扇该退；嵌入形态没有「挂起」这回事，恒挂）。文件选择器/大图/改动汇总/
@@ -737,6 +776,8 @@ export function SessionMessages({
                   );
                 }
                 if (m.role === 'assistant') {
+                  // 渲染块引用行只在最终回复出现；无引用行时 null（走原路渲染，零开销）
+                  const vizSegs = m.failed ? null : hasVisualizeRef(m.text) ? visualizeSegments(m.text) : null;
                   return (
                     <div
                       key={m.key}
@@ -800,10 +841,18 @@ export function SessionMessages({
                           >
                             {/* markdown 段落里的单 \n（软换行）要显示成换行：
                                 不加 pre-wrap 会被 HTML 空白折叠并成空格（与
-                                user 气泡同款包装） */}
-                            <div className="[&_p]:whitespace-pre-wrap">
-                              <AssistantMarkdown text={m.text} />
-                            </div>
+                                user 气泡同款包装）。带渲染块引用行时按段切：
+                                引用行整行换成 sandbox iframe，其余照常 markdown。 */}
+                            {vizSegs ? (
+                              <VizSegments
+                                segments={vizSegs}
+                                markdown={(text) => <AssistantMarkdown text={text} />}
+                              />
+                            ) : (
+                              <div className="[&_p]:whitespace-pre-wrap">
+                                <AssistantMarkdown text={m.text} />
+                              </div>
+                            )}
                           </Collapsible>
                         )}
                       </div>
@@ -1656,7 +1705,7 @@ export function SessionMessages({
                       }
                     }
                     // 发送/换行的键序随全局偏好（发送键旁那枚钮可交换）
-                    if (e.key === 'Enter' && e.shiftKey === (sendKey === 'shift-enter')) {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) === (sendKey === 'ctrl-enter')) {
                       e.preventDefault();
                       send();
                       return;
@@ -1688,7 +1737,12 @@ export function SessionMessages({
                   onDragEnd={onChipDragEnd}
                   onDragStart={onChipDragStart}
                   style={{ height: `calc(${inputRows * INPUT_ROW_PX}px + 0.75rem)` }}
-                  className="w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1.5 text-xs leading-4 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+                  className={cn(
+                    'w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded border bg-neutral-950 px-2 py-1.5 text-xs leading-4 text-neutral-100 focus:outline-none',
+                    draftMode
+                      ? commandModeClass(draftMode)
+                      : 'border-edge/[0.1] focus:border-blue-500/40',
+                  )}
                 />
               </div>
               {/* 换行：只在窄屏露面（桌面有 Shift+Enter）；触屏没有修饰键这一说。
@@ -1793,44 +1847,79 @@ export function SessionMessages({
                     icon={<CornerDownLeft className="h-3 w-3" />}
                   />
                 </button>
-                {/* 发送快捷键切换 = 一枚键帽：点一下交换「发送」与「换行」的键序
-                    （全局偏好，localStorage 记住；placeholder 文案跟着走）。 */}
-                <button
-                  type="button"
-                  title={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
-                  aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
-                  onClick={() => setSendKey((k) => (k === 'enter' ? 'shift-enter' : 'enter'))}
-                  className="inline-flex h-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] px-1 text-9 font-medium tracking-tight text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:h-8 max-lg:px-1.5 max-lg:text-10"
-                >
-                  {sendCombo}
-                </button>
-                {/* 发送键只有一枚：手动面恒走层② 终端击键，没有通道可选（直投/中继
-                    留给后续的会话协作与编排域）。恒为方块（文字会把它撑宽，还让
-                    它与 ESC、换行那两枚不同高）。 */}
-                <button
-                  type="button"
-                  disabled={
-                    !capability.prompt ||
-                    (!draft.trim() && staged.length === 0) ||
-                    // 附件还在传：此刻发出去等于把它悄悄丢掉
-                    staged.some((s) => s.state === 'uploading') ||
-                    fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
-                  }
-                  title={
-                    capability.prompt
-                      ? undefined
-                      : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
-                  }
-                  aria-label={t('tasks.messagesSend')}
-                  onClick={send}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8"
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf(`sendMsg:${sessionId}`)}
-                    className="h-3 w-3"
-                    icon={<Send className="h-3 w-3" />}
-                  />
-                </button>
+                {/* 发送 = split button：主体发送；桌面端贴一枚下拉箭头展开键序菜单
+                    （发送/换行键序切换，全局偏好 localStorage 记住，placeholder 文案
+                    跟着走）。移动端只有发送钮本体——换行有专门的键帽，键序无从谈起。 */}
+                <div className="flex shrink-0 items-stretch">
+                  <button
+                    type="button"
+                    disabled={
+                      !capability.prompt ||
+                      (!draft.trim() && staged.length === 0) ||
+                      // 附件还在传：此刻发出去等于把它悄悄丢掉
+                      staged.some((s) => s.state === 'uploading') ||
+                      fb.stateOf(`sendMsg:${sessionId}`) === 'loading'
+                    }
+                    title={
+                      capability.prompt
+                        ? undefined
+                        : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
+                    }
+                    aria-label={t('tasks.messagesSend')}
+                    onClick={send}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-l bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8 max-lg:rounded-r"
+                  >
+                    <FeedbackIcon
+                      state={fb.stateOf(`sendMsg:${sessionId}`)}
+                      className="h-3 w-3"
+                      icon={<Send className="h-3 w-3" />}
+                    />
+                  </button>
+                  {isDesktop && (
+                    /* flex：这层若是 block，inline-flex 按钮落在文本行盒里，descender
+                       会把层撑高 1px——整组随之错位（主钮上浮、与键帽不齐）。 */
+                    <div className="relative flex" ref={sendKeyMenuRef}>
+                      <button
+                        type="button"
+                        title={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                        aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                        aria-expanded={sendKeyMenu}
+                        onClick={() => setSendKeyMenu((v) => !v)}
+                        className="inline-flex h-6 w-4 shrink-0 items-center justify-center rounded-r border-l border-blue-400/40 bg-blue-600/80 text-white transition-colors hover:bg-blue-500"
+                      >
+                        <ChevronDown className={cn('h-2.5 w-2.5', sendKeyMenu && 'rotate-180')} />
+                      </button>
+                      {sendKeyMenu && (
+                        <div
+                          data-send-key-menu
+                          className="absolute bottom-full right-0 z-30 mb-1 rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
+                        >
+                          {(['ctrl-enter', 'enter'] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => {
+                                setSendKey(mode);
+                                setSendKeyMenu(false);
+                              }}
+                              className={cn(
+                                'flex w-full items-center gap-1.5 whitespace-nowrap px-2.5 py-1 text-left text-11',
+                                sendKey === mode ? 'text-neutral-100' : 'text-neutral-400 hover:bg-edge/[0.06]',
+                              )}
+                            >
+                              <Check
+                                className={cn('h-3 w-3 shrink-0', sendKey === mode ? 'text-blue-400' : 'invisible')}
+                              />
+                              {mode === 'ctrl-enter'
+                                ? t('tasks.sendKeyCtrlEnter')
+                                : t('tasks.sendKeyEnter')}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1933,6 +2022,14 @@ export function SessionMessages({
                   >
                     <FileCode className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareHtml')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportMarkdown(pickedEntries())}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <FileText className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareMd')}
                   </button>
                 </>
               )}

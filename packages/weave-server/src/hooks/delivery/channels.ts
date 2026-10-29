@@ -22,11 +22,11 @@ export interface ChannelAttemptDeps {
   deleteMemory(messageId: string): void;
   /** 占住队头（送出即登记，等它的 UPS）。 */
   awaitAck(sessionId: string, messageId: string): void;
-  /** 斜杠命令判定（内建命令不发 UPS，回执收尾走短窗口）。 */
-  isSlashCommand(text: string): boolean;
+  /** 命令形态判定（触发符表归能力面：内建命令与 bash 模式不发 UPS，回执走短窗口）。 */
+  commandModeOf(text: string, sessionId: string): unknown;
   /** 回执布防（普通 prompt）。 */
   armAckWatch(msg: PipeMessage): void;
-  /** 回执布防（斜杠命令短窗口）。 */
+  /** 回执布防（命令形态的短窗口）。 */
   armCommandAck(messageId: string): void;
   /** 消息域帧。 */
   emit(message: { kind: string; [key: string]: unknown }): void;
@@ -105,7 +105,7 @@ export function settleDelivered(
   };
   deps.setMemory(delivered);
   deps.awaitAck(entry.sessionId, entry.id);
-  if (deps.isSlashCommand(entry.text)) deps.armCommandAck(entry.id);
+  if (deps.commandModeOf(entry.text, entry.sessionId)) deps.armCommandAck(entry.id);
   else deps.armAckWatch(delivered);
   deps.emit({
     kind: 'message.delivered',

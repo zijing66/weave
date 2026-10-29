@@ -1,4 +1,3 @@
-import { isSlashCommand } from '../message-deliverer.js';
 import type { PipeMessage } from '../message-deliverer.js';
 import { isImageMediaType } from '../../repositories/uploads.js';
 
@@ -48,6 +47,9 @@ export class AckGate {
     private readonly store: AckGateStore,
     private readonly times: AckGateTimes,
     private readonly events: AckGateEvents,
+    /** 这段输入是不是宿主的命令形态（触发符表归能力面：`/` 命令、`!` bash 模式）。
+     *  命令形态的输入多半不发 prompt 提交事件，回执走短窗口。 */
+    private readonly isCommandInput: (sessionId: string, text: string) => boolean = () => false,
   ) {}
 
   /** 等回执的那条已经落地（回执到 / 失败 / 行没了）→ 撤防，返回 true。 */
@@ -135,17 +137,17 @@ export class AckGate {
   }
 
   /**
-   * 活动旁证翻牌：内建命令没有 UPS 回执，宿主受理命令后的任何 hook 事件
-   * （`/compact` → PreCompact…）都是「命令已执行」的证据——该会话还挂着
-   * 「已发出未回执」的命令行就及时翻牌（5s 短窗口只是兜底）。普通文本行有
-   * UPS 正路，不掺和（会话重启清空输入框那类「发了没进」要靠未回执闸说话）。
-   * 返回是否翻了牌（测试用）。
+   * 活动旁证翻牌：内建命令与 bash 模式都没有 UPS 回执，宿主受理后的任何 hook
+   * 事件（`/compact` → PreCompact…、`!cmd` → 转录里的 `<bash-stdout>`）都是
+   * 「命令已执行」的证据——该会话还挂着「已发出未回执」的命令行就及时翻牌
+   * （5s 短窗口只是兜底）。普通文本行有 UPS 正路，不掺和（会话重启清空输入框
+   * 那类「发了没进」要靠未回执闸说话）。返回是否翻了牌（测试用）。
    */
   noteActivity(sessionId: string): boolean {
     let flipped = false;
     for (const msg of this.store.memory.values()) {
       if (msg.sessionId !== sessionId || msg.acked || msg.status !== 'delivered') continue;
-      if (msg.mode !== 'prompt' || !isSlashCommand(msg.text)) continue;
+      if (msg.mode !== 'prompt' || !this.isCommandInput(sessionId, msg.text)) continue;
       this.acknowledge_(sessionId, msg.id);
       flipped = true;
     }
@@ -253,8 +255,14 @@ export class AckGate {
       if (msg.sessionId !== sessionId || msg.acked || msg.mode !== 'prompt') continue;
       const want = normalizePromptText(msg.text);
       const wantNoPaths = dropInlineImagePaths(want, msg.attachments);
+      // 长文本认「包含」：用户在框里前后补字都还命中；宿主把多行 chunk 用空串
+      // 拼接（不只见于带图消息）时，去尽空白再比一次——否则这条永远等不到回执，
+      // 行落 failed 而气泡已经在了（同一条显示两遍）。
       const textHit =
-        !!want && (want.length >= opts.ackMinText ? seenRaw.includes(want) : seenRaw.endsWith(want));
+        !!want &&
+        (want.length >= opts.ackMinText
+          ? seenRaw.includes(want) || stripSpace(seenRaw).includes(stripSpace(want))
+          : seenRaw.endsWith(want));
       const imageHit =
         (msg.attachments?.length ?? 0) > 0 &&
         (wantNoPaths
@@ -281,6 +289,9 @@ export class AckGate {
         kind: 'message.acknowledged',
         messageId: msg.id,
         sessionId,
+        // 命中的那条开轮事件：对话面据此把「队列行退场」与「气泡出现」放进同一拍
+        // （精确配对键；文案比对只是它的兜底）。内建命令没有这一轮，帧照发不带它。
+        ...(eventId === undefined ? {} : { eventId }),
         at: new Date().toISOString(),
       });
     }

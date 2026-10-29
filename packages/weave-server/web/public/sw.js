@@ -72,24 +72,26 @@ async function fetchShell() {
   }
 }
 
-/** 网络优先、超时回落缓存；拿到新壳就替换掉 `/` 那条（产物条目照旧留着）。 */
+/** 网络优先、超时回落缓存；拿到新壳就替换掉 `/` 那条（产物条目照旧留着）。
+ *  **没有壳可回落时不设超时**（dev 从 vite 起、或首装还没铺上）：到点也没人接，
+ *  只会把一次慢导航变成 `Uncaught (in promise) Error: shell-timeout` 的白屏。 */
 async function navigateWithShell(request) {
   const cache = await caches.open(SHELL);
+  const prev = await cache.match('/');
+  let res;
   try {
-    const res = await withTimeout(fetch(request), SHELL_TIMEOUT_MS);
-    if (res.ok && res.type === 'basic') {
-      const html = await res.clone().text();
-      if (isBuiltShell(html)) {
-        const prev = await cache.match('/');
-        if (!prev || (await prev.text()) !== html) await cache.put('/', shellResponse(html));
-      }
-    }
-    return res;
+    res = prev ? await withTimeout(fetch(request), SHELL_TIMEOUT_MS) : await fetch(request);
   } catch (err) {
-    const hit = await cache.match('/');
-    if (hit) return hit;
+    if (prev) return prev;
     throw err;
   }
+  if (res.ok && res.type === 'basic') {
+    const html = await res.clone().text();
+    if (isBuiltShell(html) && (!prev || (await prev.text()) !== html)) {
+      await cache.put('/', shellResponse(html));
+    }
+  }
+  return res;
 }
 
 async function cacheFirst(request) {

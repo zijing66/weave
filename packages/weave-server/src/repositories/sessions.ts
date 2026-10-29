@@ -160,8 +160,11 @@ export class SessionRepository {
   /**
    * 会话列表 + 事件计数（任务视图左栏用）：LEFT JOIN 一次查出避免 N+1。
    * 计数不过滤项目（会话可能有跨项目事件），与事件链的 sessionId-only 语义一致。
+   *
+   * `sessionIds` = 只算这几行（增量补丁用）：事件只会改动它自己那条会话的
+   * 「最新事件 / 回合开合」判据，没必要为了一条事件把 200 行全部重算一遍。
    */
-  listWithCounts(projectId?: number): SessionRow[] {
+  listWithCounts(projectId?: number, sessionIds?: readonly string[]): SessionRow[] {
     // harness = 最新事件的 source（计算字段，sessions 表零 schema 变更）。
     const base =
       'SELECT s.*, COUNT(e.id) AS event_count, ' +
@@ -172,18 +175,21 @@ export class SessionRepository {
       `(SELECT MAX(e7.id) FROM hook_events e7 WHERE e7.session_id = s.session_id AND ${turnToolSql('e7')}) AS last_tool, ` +
       '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop ' +
       'FROM sessions s LEFT JOIN hook_events e ON e.session_id = s.session_id';
-    const rows =
-      projectId === undefined
-        ? this.db
-            .prepare(
-              `${base} GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT 200`,
-            )
-            .all()
-        : this.db
-            .prepare(
-              `${base} WHERE s.project_id = ? GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT 200`,
-            )
-            .all(projectId);
+    const where: string[] = [];
+    const params: Array<number | string> = [];
+    if (projectId !== undefined) {
+      where.push('s.project_id = ?');
+      params.push(projectId);
+    }
+    if (sessionIds && sessionIds.length > 0) {
+      where.push(`s.session_id IN (${sessionIds.map(() => '?').join(',')})`);
+      params.push(...sessionIds);
+    }
+    const rows = this.db
+      .prepare(
+        `${base}${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''} GROUP BY s.session_id ORDER BY s.created_at DESC LIMIT 200`,
+      )
+      .all(...params);
     return rows.map((row) => {
       const raw = (row as { harness?: unknown }).harness;
       const lastUps = (row as { last_ups?: number | null }).last_ups;

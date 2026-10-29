@@ -1091,6 +1091,35 @@ export interface HarnessCommand {
   sigil?: '/' | '$';
 }
 
+/**
+ * 输入框里的一种「命令形态」：宿主自己执行、**不当作一条 prompt 提交**的敲法。
+ * 触发符归 harness（claude = `/` 斜杠命令与 `!` bash 模式，codex = `/` 命令），
+ * 投递闸据此走命令的短回执窗口（这类输入多半不发 prompt 提交事件），前端据此
+ * 给输入框上色（颜色是渲染层的事，这里只答形态）。
+ */
+export interface CommandInputMode {
+  /** 形态。`bash` = 宿主本地 shell 模式（claude 输入框在此时变品红）。 */
+  readonly kind: 'slash' | 'bash';
+  /** 触发符：trim 后以此开头即该形态。 */
+  readonly sigil: string;
+  /** 触发符后必须紧跟命令名（`/name`）才算；bash 模式是整行命令行，不要求。 */
+  readonly named: boolean;
+}
+
+/** 这段输入命中哪种命令形态（触发符表归 harness）；null = 普通 prompt。 */
+export function commandModeAt(
+  text: string,
+  modes: readonly CommandInputMode[],
+): CommandInputMode | null {
+  const t = text.trim();
+  for (const mode of modes) {
+    if (!t.startsWith(mode.sigil)) continue;
+    if (mode.named && !/^[A-Za-z][A-Za-z0-9:_-]*(\s|$)/.test(t.slice(mode.sigil.length))) continue;
+    return mode;
+  }
+  return null;
+}
+
 /** 转录里的一条命令执行记录（内建命令不发 hook 事件，只有转录记着）。 */
 export interface CommandExecution {
   name: string;
@@ -1107,6 +1136,8 @@ export interface CommandExecution {
  */
 export interface CommandsSurface {
   readonly harness: Harness;
+  /** 输入框的命令形态表（触发符 + 形态）；空表 = 该 harness 没有命令形态。 */
+  readonly inputModes: readonly CommandInputMode[];
   /** 该会话此刻可用的命令（项目级命令按项目路径现扫；`homedir` 缺省 = 本机家目录）。 */
   list(req: { projectPath: string; homedir?: string }): Promise<HarnessCommand[]>;
   /** 转录里的命令执行（时间序）；读不到（无转录 / 路径未知 / 半路出错）→ null（不猜）。 */

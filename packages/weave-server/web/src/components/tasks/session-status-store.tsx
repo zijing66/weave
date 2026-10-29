@@ -92,6 +92,12 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [dispatches, setDispatches] = useState<HookDispatch[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 帧处理里要判「这个会话在不在列表上」（新会话第一笔事件得整套重拉一次）。 */
+  const sessionsRef = useRef<SessionRow[] | null>(null);
+  sessionsRef.current = sessions;
+  /** 上一次**整套**重拉的落地时刻：帧驱动的补丁攒够这么久就对一次全量
+   *  （会话被保留策略删掉、标题改了这类没有事件信号的变化只能这么兜）。 */
+  const lastFullAt = useRef(0);
   /** SSE 即时状态覆盖（帧已到、refetch 未回；refetch 完成后以 API 为准清除）。 */
   const [overlay, setOverlay] = useState<Map<string, SessionStatus>>(new Map());
   /** 后台子 agent 存活账（sessionId → agentId → 最近事件时刻）：spawn 出生、
@@ -112,6 +118,42 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     interrupted?: Record<string, number>;
   }>({});
 
+  /** 行级补丁：只重算这几行的判据并就地换行（其余行保持原引用，不重渲染）。
+   *  一条 hook 事件只改它自己那条会话的「最新事件 / 回合开合」，不必整套重拉。 */
+  const patchRows = useCallback(async (ids: string[]): Promise<void> => {
+    try {
+      const r = await api.listSessions(undefined, ids);
+      setModelCatalog(r.modelCatalog ?? {});
+      setSessions((prev) => {
+        if (!prev) return prev;
+        const byId = new Map(r.sessions.map((s) => [s.sessionId, s]));
+        let changed = false;
+        const next = prev.map((s) => {
+          const row = byId.get(s.sessionId);
+          if (!row) return s;
+          changed = true;
+          return applyRowPush([row], rowPush.current)[0] ?? row;
+        });
+        return changed ? next : prev;
+      });
+      setError(null);
+    } catch {
+      // 补丁失败不打扰：下一拍事件还会再来，状态推导降级为帧态与旧值
+    }
+  }, []);
+
+  /** 待答面单独一路重拉：`QuestionTracker` 是事件驱动的内存态，问题出现与作答
+   *  落地都只随 hook 帧变——帧到了就打这一枪，**不搭全量的车**（全量要等外壳
+   *  那三道判据，答完一条问题坐在那儿半小时也不会再有全量）。 */
+  const refreshQuestions = useCallback(async (): Promise<void> => {
+    try {
+      const entries = await api.listQuestions();
+      setQuestions(new Map(entries.map((entry) => [entry.sessionId, entry])));
+    } catch {
+      // 老 daemon 没这个路由：静默降级
+    }
+  }, []);
+
   const refresh = useCallback(async (): Promise<string | null> => {
     const [s, d, q] = await Promise.allSettled([
       api.listSessions(),
@@ -128,6 +170,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       setSessions(() => applyRowPush(s.value.sessions, rowPush.current));
       setModelCatalog(s.value.modelCatalog ?? {});
       setError(null);
+      lastFullAt.current = Date.now();
       return null;
     }
     const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
@@ -183,15 +226,40 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let timer: number | null = null;
-    const refetch = (): void => {
-      if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        timer = null;
+    /** 这一拍里被事件动过的会话：只补这几行，其余行原样。 */
+    const dirty = new Set<string>();
+    /** 这一拍里有「不只是某条会话的事件」的帧（派发/待答/投递）⇒ 整套重拉一次。 */
+    let wantFull = false;
+    /** 兜底的全量节奏：补丁攒够这么久对一次全量（删会话、改标题没有事件信号）。 */
+    const FULL_REFRESH_MIN_MS = 15_000;
+    const flush = (): void => {
+      timer = null;
+      const ids = [...dirty];
+      dirty.clear();
+      const full = wantFull;
+      wantFull = false;
+      // 待答面每拍都跟一次（问题挂起 / 作答落地都认帧）：行补丁只管会话行，
+      // 不带它——不在这里补，答完问题的图标与项目卡边框会一直挂着。
+      void refreshQuestions();
+      const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
+      const missed =
+        full ||
+        sessionsRef.current === null ||
+        // 没见过的会话 = 新会话的第一笔事件：整套重拉（新行得摆上去）
+        ids.some((id) => !known.has(id)) ||
+        Date.now() - lastFullAt.current >= FULL_REFRESH_MIN_MS;
+      if (missed) {
         void refresh().then(() => {
           // API 数据已回，overlay 完成使命（started/finished 的行状态已落库）
           setOverlay(new Map());
         });
-      }, 500);
+      } else if (ids.length > 0) {
+        void patchRows(ids);
+      }
+    };
+    const refetch = (): void => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(flush, 500);
     };
 
     const onHook = (f: HookFrame): void => {
@@ -261,6 +329,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         default:
           break;
       }
+      if (f.kind === 'event.ingested' && f.sessionId) dirty.add(f.sessionId);
+      else wantFull = true;
       refetch();
     };
 
@@ -269,7 +339,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [patchRows, refresh, refreshQuestions]);
 
   const dispatchBySession = useMemo(() => {
     const m = new Map<string, HookDispatch[]>();

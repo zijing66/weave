@@ -242,7 +242,8 @@ export async function handleSettingsRoutes(
         readStatuslineScript(project.path),
         readGlobalStatuslineConfig(),
       ]);
-      // 渲染脚本已算好的块事实（git 三块）：对话页底条摆同款块，前端不另算
+      // 渲染脚本已算好的块事实（git 三块）：对话页底条摆同款块，前端不另算。
+      // 分片键 = **项目根**（脚本也按项目根探测与落盘，会话 cd 进子目录同样命中）。
       sendJson(res, 200, {
         config,
         script,

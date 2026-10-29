@@ -8,15 +8,14 @@ import { handleHooksRoutes } from '../hooks-routes.js';
 import type { WeaveServerDeps } from '../server.js';
 
 /**
- * `POST /sessions/:id/interrupt`：键送出去之后要**回读转录**才敢说「停了」。
- * 只有转录里的中断标记是「宿主到底停没停」的证据（hook 域没有中断事件）——
- * 实机 2026-10-21 8c85b9c7 连按三次停止全 200、转录里一个标记都没有。
+ * `POST /sessions/:id/interrupt`：ESC 送进运行中的会话 = **必然中断**（2026-10-28
+ * 裁决）——宿主收到 ESC 就停，只是中断标记要等工具收尾才写进转录（实测 10–29s）。
+ * 故键送出即 200，不做「等标记确认」的阻塞轮询（那只会把「正在停」误报成失败）；
+ * 「已中断」的呈现交给 interruptRefresher 在标记落地后推 sessionInterrupt 帧。
  */
-describe('中断路由：一记 ESC 之后的自证与补打', () => {
+describe('中断路由：一记 ESC，送出即成功', () => {
   let db: ReturnType<typeof openDatabase>;
   let deps: WeaveServerDeps;
-  let marker: number | null;
-  let transcriptKnown: boolean;
   const interrupt = vi.fn();
 
   const call = async (): Promise<{ status: number; body: unknown }> => {
@@ -39,6 +38,7 @@ describe('中断路由：一记 ESC 之后的自证与补打', () => {
   };
 
   beforeEach(() => {
+    vi.useFakeTimers();
     db = openDatabase(':memory:');
     const project = new ProjectRepository(db).register({
       path: '/p',
@@ -47,62 +47,35 @@ describe('中断路由：一记 ESC 之后的自证与补打', () => {
       source: 'init',
     });
     new SessionRepository(db).touch('sess', project.id);
-    marker = null;
-    transcriptKnown = true;
     interrupt.mockReset();
-    interrupt.mockResolvedValue({ ok: true, paneId: 'pane-locator' });
+    interrupt.mockResolvedValue({ ok: true, paneId: 'pane-locator', sent: true });
     deps = {
       hookSessions: new SessionRepository(db),
-      sessionProbe: {
-        transcriptPresent: () => (transcriptKnown ? true : null),
-        interruptedAt: () => marker,
-      },
       messageDeliverer: { interrupt },
     } as unknown as WeaveServerDeps;
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     db.close();
   });
 
-  it('标记落地 → interrupted:true（不再补打）', async () => {
-    interrupt.mockImplementation(async () => {
-      marker = Date.now();
-      return { ok: true, sent: true, paneId: 'pane-locator' };
-    });
+  it('键送出 → 200 立即返回，不轮询转录、不补打第二记', async () => {
     const hit = await call();
     expect(hit.status).toBe(200);
-    expect(hit.body).toMatchObject({ ok: true, interrupted: true });
+    expect(hit.body).toMatchObject({ ok: true });
+    expect(hit.body).not.toHaveProperty('interrupted');
     expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(interrupt).toHaveBeenCalledWith('sess');
+    // 两拍探针已排（标记落地后由它们推 sessionInterrupt）
+    expect(vi.getTimerCount()).toBe(2);
   });
 
-  it('第一记没反应、按标题+cwd 补打的是另一个 pane → 补打生效', async () => {
-    interrupt.mockImplementation(async (_sid: string, source?: string) => {
-      if (source === 'heuristic') marker = Date.now();
-      return { ok: true, sent: true, paneId: source === 'heuristic' ? 'pane-title' : 'pane-locator' };
-    });
+  it('投递侧拒绝（找不到 pane 等 409）→ 原样透传', async () => {
+    interrupt.mockResolvedValue({ ok: false, status: 409, error: '找不到会话所在的终端窗口' });
     const hit = await call();
-    expect(hit.body).toMatchObject({ ok: true, interrupted: true });
-    expect(interrupt).toHaveBeenCalledTimes(2);
-    expect(interrupt.mock.calls[1]).toEqual(['sess', 'heuristic', 'pane-locator']);
-  });
-
-  it('补打会落到同一个 pane（sent:false，压根没打）→ 如实答「没停」', async () => {
-    interrupt.mockImplementation(async (_sid: string, source?: string) => ({
-      ok: true,
-      paneId: 'pane-locator',
-      sent: source !== 'heuristic',
-    }));
-    const hit = await call();
-    expect(hit.body).toMatchObject({ ok: true, interrupted: false });
-    expect(interrupt).toHaveBeenCalledTimes(2);
-    expect(interrupt.mock.calls[1]).toEqual(['sess', 'heuristic', 'pane-locator']);
-  });
-
-  it('转录路径未知（判不了）→ interrupted:null，照旧只报送出', async () => {
-    transcriptKnown = false;
-    const hit = await call();
-    expect(hit.body).toMatchObject({ ok: true, interrupted: null });
+    expect(hit.status).toBe(409);
+    expect(hit.body).toMatchObject({ error: '找不到会话所在的终端窗口' });
     expect(interrupt).toHaveBeenCalledTimes(1);
   });
 });

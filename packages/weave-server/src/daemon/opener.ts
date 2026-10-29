@@ -252,6 +252,8 @@ export function promptTerminalChannel(
   locateScreens(envs: Record<string, Record<string, string>>): Promise<Record<string, SessionTerminal | null>>;
   sendText(paneId: string, text: string): Promise<void>;
   sendKeys(paneId: string, keys: string): Promise<void>;
+  /** 读 pane 可视屏（中断后的读屏确认：宿主吞掉 ESC 时才补打）。 */
+  getPaneText(paneId: string): Promise<string | null>;
   closePane(paneId: string): Promise<void>;
 } {
   const backendFor = (preset: TerminalPreset) => terminalBackendFor({ ...settings(), preset });
@@ -311,6 +313,11 @@ export function promptTerminalChannel(
       const backend = backendForPaneId(paneId);
       if (!backend) throw new Error(`Invalid prompt pane "${paneId}"`);
       await backend.sendKeys(paneId, keys);
+    },
+    getPaneText: async (paneId) => {
+      const backend = backendForPaneId(paneId);
+      if (!backend) throw new Error(`Invalid prompt pane "${paneId}"`);
+      return backend.getPaneText(paneId);
     },
     closePane: async (paneId) => {
       const backend = backendForPaneId(paneId);

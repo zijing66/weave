@@ -122,6 +122,8 @@ export const en: Record<keyof typeof zh, string> = {
   'out.doctor.reason.noPeerName': 'no peer name in the registry',
   'out.doctor.reason.noBackend': 'this terminal preset has no text-injection backend',
   'out.doctor.reason.noPaneEnv': 'no pane locator was reported',
+  'out.doctor.reason.paneEnvConflict':
+    'pane locator is held by another session (fork inherited the same terminal)',
   'out.doctor.hint.noHookScript': 'no weave-generated hook script → run `weave init`',
   'out.doctor.hint.hookScriptNotWeave':
     'the hook script is not weave-generated (weave neither refreshes nor trusts it) → move it aside, or `weave init --force`',
@@ -139,6 +141,8 @@ export const en: Record<keyof typeof zh, string> = {
     'this terminal preset cannot inject text → wezterm is what gives layer ② a fallback',
   'out.doctor.hint.terminalNoPaneEnv':
     'no pane locator was reported (this terminal exports no WEZTERM_*) → only the title+cwd fallback is left',
+  'out.doctor.hint.terminalPaneEnvConflict':
+    "this session's pane locator overlaps another session's (fork inherited the same terminal) → delivery is refused so keys never land in someone else's terminal; close one of the two to recover",
   'out.doctor.hint.notRunning':
     'the session process is gone (messages settle as failed/offline, they never queue)',
   'out.doctor.hint.queued': 'the queue still holds backlog',

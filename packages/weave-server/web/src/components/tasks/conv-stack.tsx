@@ -5,7 +5,8 @@ import { useT } from '@/i18n/I18nProvider';
 import { formatStamp } from '@/lib/hook-payload';
 import { Collapsible } from './conv-widgets';
 import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
-import type { ConvEntry } from './conv-model';
+import { hasVisualizeRef, visualizeSegments, type ConvEntry } from './conv-model';
+import { VizSegments } from './VisualizationFrame';
 
 /**
  * 过程输出叠层（扑克牌堆）：两条最终消息之间的连续 narration 段收纳成一叠。
@@ -272,9 +273,17 @@ export function NarrationStack({
               onToggle={() => toggleOpen(seg.key)}
               disabled={selecting}
             >
-              <div className="[&_p]:whitespace-pre-wrap">
-                <AssistantMarkdown text={seg.text} />
-              </div>
+              {/* 渲染块引用行整行换成 sandbox iframe（与 assistant 气泡同口径） */}
+              {hasVisualizeRef(seg.text) ? (
+                <VizSegments
+                  segments={visualizeSegments(seg.text)}
+                  markdown={(text) => <AssistantMarkdown text={text} />}
+                />
+              ) : (
+                <div className="[&_p]:whitespace-pre-wrap">
+                  <AssistantMarkdown text={seg.text} />
+                </div>
+              )}
             </Collapsible>
           </div>
         </div>

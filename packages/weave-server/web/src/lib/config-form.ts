@@ -135,7 +135,7 @@ export function withFieldValue(item: unknown, field: ConfigFieldSpec, value: unk
   return next;
 }
 
-/** 新加一个元素：字段都填上宿主认的默认值吗？不——留空，靠用户填。 */
+/** 新加一个元素（数组）/条目（map）：有字段表起手空对象，标量按值类型给默认。 */
 export function emptyItemOf(spec: TreeNodeSpec): unknown {
   return spec.fields && spec.fields.length > 0 ? {} : defaultValueOf(spec.valueType ?? 'string', spec.valueOptions);
 }

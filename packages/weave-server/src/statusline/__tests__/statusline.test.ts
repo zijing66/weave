@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { generateStatuslineScript } from '../generator.js';
 import {
   DEFAULT_STATUSLINE_CONFIG,
@@ -783,6 +784,48 @@ describe('statusline — data segments', () => {
     writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n');
     const second = runScript(generateStatuslineScript(changesCfg), { workspace: { current_dir: repo } });
     expect(second).toContain('(+1, -0)');
+  });
+
+  it('分片文件落在项目根的键下（会话 cd 进子目录，底条照样读得到）', () => {
+    const root = tmp('weave-sl-rootkey-');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: root, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(root, 'a.txt'), 'one\n');
+    const sub = join(root, 'sub');
+    mkdirSync(sub);
+    writeFileSync(join(sub, 'tracked.txt'), 'one\n');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    // 根与子目录各留一处改动：按 cwd 探测只会数出子目录那一处（+1）
+    writeFileSync(join(root, 'a.txt'), 'one\ntwo\n');
+    writeFileSync(join(sub, 'tracked.txt'), 'one\ntwo\n');
+
+    // 脚本放回真实位置（<项目>/.claude/helpers/），位置推导才生效
+    const helpers = join(root, '.claude', 'helpers');
+    mkdirSync(helpers, { recursive: true });
+    const file = join(helpers, 'statusline.cjs');
+    writeFileSync(file, generateStatuslineScript(changesCfg));
+    const out = spawnSync(process.execPath, [file], {
+      input: JSON.stringify({ workspace: { current_dir: sub } }),
+      encoding: 'utf8',
+    }).stdout;
+    // changes 恒为全仓库口径（`git diff --numstat` 不带路径限制），根与子目录
+    // 两处改动都算——这与宿主 TUI 的现状一致，本用例只锁“文件落在哪”
+    expect(out).toContain('(+2, -0)');
+
+    // 但文件落在项目根的键下——底条按 project.path 读得到
+    const key = createHash('sha1')
+      .update(root.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, ''))
+      .digest('hex')
+      .slice(0, 16);
+    expect(readdirSync(join(slCacheHome, 'weave', 'cache', 'statusline'))).toContain(
+      `git-${key}.json`,
+    );
   });
 
   it('shares the git answers across sessions of one project', () => {

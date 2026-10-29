@@ -284,6 +284,21 @@ export const HARNESS_SESSION_CONTROL = {
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /**
+ * 渲染块协议——对话内嵌可视化的引用行文法与 fragment 契约（跨 harness 统一，
+ * 模型侧由 skill 教；文法与 codex Desktop 的 visualize 引用行兼容）。
+ * 识别唯一实现 = web 的 visualizeSegments；服务端只读端点的白名单与大小上限
+ * 亦从此表取值。suffix 可缺席（codex TUI 实测如此）。
+ */
+export const VISUALIZATION_PROTOCOL = {
+  /** 引用行开头：U+E200 + `visualize` + U+E202，其后紧跟 JSON。 */
+  referencePrefix: '\u{e200}visualize\u{e202}',
+  /** 引用行结尾（可缺席）。 */
+  referenceSuffix: '\u{e201}',
+  /** fragment 文件大小上限（字节）。 */
+  maxFragmentBytes: 1024 * 1024,
+} as const;
+
+/**
  * 可选 harness 键序（= 名单表）：`--harness` flag 值域与 init 交互多选的
  * 选项表共用（批 5）。经名单表派生而非 `Object.keys(HARNESS_EVENTS)`——
  * 单一来源，顺序即名单顺序。

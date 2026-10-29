@@ -1,6 +1,5 @@
-import { createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
 import type { NarrationSurface, NarrationText } from '../driver.js';
+import { readNewLines, transcriptSize, type LineCursor } from './transcript-cursor.js';
 
 /**
  * 旁白（claude）：模型在一轮里的全部 assistant 正文——hook 域只有 Stop 的
@@ -13,25 +12,42 @@ import type { NarrationSurface, NarrationText } from '../driver.js';
  * - 同一条 assistant 消息宿主拆成相邻多行（同 `message.id`），text 分区各自成段
  *   ——按行原样保留（每行一段、时刻取该行 timestamp），拼接语义留给消费方。
  */
+/**
+ * 按**字节游标**增量累积：转录 append-only，每拍只读新增那截（对话页每次轮边界都
+ * 重拉一遍，几十 MB 的转录整份重扫 3s+ 全压在打开对话那一拍）。文件被截断/换掉
+ * （size 比游标还小）⇒ 已认出的段一起作废，从头再来。
+ */
+const cursors = new Map<string, { cur: LineCursor; segs: NarrationText[] }>();
+const CURSOR_MAX = 64;
+
 export const CLAUDE_NARRATION: NarrationSurface = {
   async sessionNarration({ transcriptPath }) {
     if (!transcriptPath) return null;
-    const out: NarrationText[] = [];
-    const rl = createInterface({
-      input: createReadStream(transcriptPath, { encoding: 'utf8' }),
-      crlfDelay: Infinity,
-    });
-    try {
-      for await (const line of rl) {
-        const seg = parseLine(line);
-        if (seg) out.push(seg);
-      }
-    } catch {
+    const size = transcriptSize(transcriptPath);
+    if (size === null) {
+      cursors.delete(transcriptPath);
       return null;
-    } finally {
-      rl.close();
     }
-    return out;
+    const hit = cursors.get(transcriptPath);
+    cursors.delete(transcriptPath);
+    const entry = hit ?? { cur: { offset: 0 }, segs: [] };
+    // 文件比游标还短 = 被换掉了：已认出的段跟着作废，别把旧账接到新文件上。
+    if (size < entry.cur.offset) {
+      entry.cur.offset = 0;
+      entry.segs = [];
+    }
+    const lines = readNewLines(transcriptPath, entry.cur, size);
+    if (lines === null) return null;
+    for (const line of lines) {
+      const seg = parseLine(line);
+      if (seg) entry.segs.push(seg);
+    }
+    if (cursors.size >= CURSOR_MAX) {
+      const oldest = cursors.keys().next().value;
+      if (oldest !== undefined) cursors.delete(oldest);
+    }
+    cursors.set(transcriptPath, entry);
+    return entry.segs;
   },
   lineParser: parseLine,
 };

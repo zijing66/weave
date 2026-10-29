@@ -19,69 +19,111 @@ const write = (lines: unknown[]): string => {
   return path;
 };
 
-/** 普通 last-prompt 行（每轮都写，不是回退）。 */
+/** 会话开头那条（parentUuid:null，不算 rewind）。 */
+const firstRoot = (text: string, ts: string) => ({
+  type: 'user',
+  parentUuid: null,
+  message: { role: 'user', content: text },
+  timestamp: ts,
+});
+
+/** 普通续轮（parentUuid 指向前一行，经 attachment 桥接）。 */
+const followUp = (text: string, ts: string, parent: string) => ({
+  type: 'user',
+  parentUuid: parent,
+  message: { role: 'user', content: text },
+  timestamp: ts,
+});
+
+/** rewind 后的新链根（下一次提交时宿主写；parentUuid:null + 自带 timestamp）。 */
+const rewindRoot = (text: string, ts: string) => ({
+  type: 'user',
+  parentUuid: null,
+  message: { role: 'user', content: text },
+  timestamp: ts,
+});
+
+/** 普通 last-prompt 行（每轮都写，与 rewind 无关——旧文法的干扰项）。 */
 const lastPrompt = (prompt: string, leaf: string) => ({
   type: 'last-prompt',
   lastPrompt: prompt,
   leafUuid: leaf,
 });
 
-/** rewind 锚点行（宿主 rewind 后追加；实测四键、无 timestamp）。 */
-const rewindAnchor = (leaf: string) => ({
+/** explicit last-prompt 行（普通轮也写，不是 rewind 信号——旧文法的干扰项）。 */
+const explicitPrompt = () => ({
   type: 'last-prompt',
-  lastPrompt: '被退掉的那条',
-  leafUuid: leaf,
-  rewound: true,
+  leafUuid: '00000000-0000-0000-0000-000000000000',
+  explicit: true,
 });
 
 describe('parseRewindLine', () => {
-  it('只认 rewound:true 的锚点；普通 last-prompt 行不算', () => {
-    expect(parseRewindLine(JSON.stringify(rewindAnchor('u1')), '2026-10-28T01:00:00.000Z')).toEqual({
-      at: '2026-10-28T01:00:00.000Z',
-      boundaryAt: null,
-    });
-    expect(parseRewindLine(JSON.stringify(lastPrompt('hi', 'u1')), '2026-10-28T01:00:00.000Z')).toBeNull();
+  it('只认第 2 条及以后的 parentUuid:null user 行；会话开头那条不算', () => {
+    expect(
+      parseRewindLine(JSON.stringify(rewindRoot('again', '2026-10-28T02:00:00.000Z')), true),
+    ).toEqual({ at: '2026-10-28T02:00:00.000Z', boundaryAt: null });
+    expect(parseRewindLine(JSON.stringify(firstRoot('hi', '2026-10-28T01:00:00.000Z')), false)).toBeNull();
   });
 
-  it('锚点行自身不带 timestamp：时刻取前面最近一条带 timestamp 行的（调用方喂）', () => {
-    expect(parseRewindLine(JSON.stringify(rewindAnchor('u1')), null)).toBeNull();
+  it('斜杠命令展开（command-message 开头）立根但不算 rewind', () => {
+    const cmd = {
+      type: 'user',
+      parentUuid: null,
+      message: { role: 'user', content: '<command-message>init</command-message>' },
+      timestamp: '2026-10-28T01:30:00.000Z',
+    };
+    // 命令展开是第一个根：它自己不算 rewind……
+    expect(parseRewindLine(JSON.stringify(cmd), false)).toBeNull();
+    // ……但它立了根，其后的普通新链根就算 rewind
+    expect(
+      parseRewindLine(JSON.stringify(rewindRoot('again', '2026-10-28T02:00:00.000Z')), true),
+    ).toEqual({ at: '2026-10-28T02:00:00.000Z', boundaryAt: null });
   });
 
-  it('坏 JSON / 非锚点行一律 null（尾部半行不是标记）', () => {
-    expect(parseRewindLine('{"type":"last-prompt","rewo', '2026-10-28T01:00:00.000Z')).toBeNull();
-    expect(parseRewindLine('{"type":"custom-title","customTitle":"x"}', '2026-10-28T01:00:00.000Z')).toBeNull();
+  it('普通续轮（parentUuid 非空）/ 侧链 / 无 timestamp 一律 null', () => {
+    expect(
+      parseRewindLine(JSON.stringify(followUp('x', '2026-10-28T01:00:00.000Z', 'abc')), true),
+    ).toBeNull();
+    expect(
+      parseRewindLine(JSON.stringify({ type: 'user', parentUuid: null, isSidechain: true, timestamp: 'x' }), true),
+    ).toBeNull();
+    expect(parseRewindLine(JSON.stringify({ type: 'user', parentUuid: null }), true)).toBeNull();
+  });
+
+  it('坏 JSON / 非 user 行一律 null（尾部半行不是标记）', () => {
+    expect(parseRewindLine('{"type":"user","pare', true)).toBeNull();
+    expect(parseRewindLine(JSON.stringify(explicitPrompt()), true)).toBeNull();
   });
 });
 
 describe('CLAUDE_REWIND.sessionRewinds', () => {
-  it('锚点时刻 = 锚点行之前最近一条带 timestamp 行（rewind 只能在最后活动之后）', async () => {
+  it('rewind 痕迹 = 会话开头之外的新链根；时刻 = 该行自身 timestamp', async () => {
     const path = write([
-      { type: 'user', timestamp: '2026-10-28T01:00:00.000Z', message: 'hi' },
+      firstRoot('hi', '2026-10-28T01:00:00.000Z'),
       { type: 'assistant', timestamp: '2026-10-28T01:00:10.000Z', message: { content: [] } },
-      // 元数据块（锚点行的近邻，都不带 timestamp）
-      { type: 'custom-title', customTitle: 'x' },
-      { type: 'mode' },
-      rewindAnchor('u1'),
-      { type: 'user', timestamp: '2026-10-28T01:05:00.000Z', message: 'again' },
+      // rewind 确认后下一次提交：explicit LP（干扰项）+ 新链根
+      explicitPrompt(),
+      lastPrompt('hi', 'deadbeef'),
+      rewindRoot('again', '2026-10-28T02:00:00.000Z'),
+      followUp('more', '2026-10-28T02:30:00.000Z', 'abc'),
     ]);
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([
-      { at: '2026-10-28T01:00:10.000Z', boundaryAt: null },
+      { at: '2026-10-28T02:00:00.000Z', boundaryAt: null },
     ]);
   });
 
   it('多次回退各成一条（时间序）；没有回退 = 空数组', async () => {
     const path = write([
-      { type: 'user', timestamp: '2026-10-28T01:00:00.000Z', message: 'a' },
-      rewindAnchor('u1'),
-      { type: 'user', timestamp: '2026-10-28T02:00:00.000Z', message: 'b' },
-      rewindAnchor('u2'),
+      firstRoot('a', '2026-10-28T01:00:00.000Z'),
+      rewindRoot('b', '2026-10-28T02:00:00.000Z'),
+      rewindRoot('c', '2026-10-28T03:00:00.000Z'),
     ]);
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([
-      { at: '2026-10-28T01:00:00.000Z', boundaryAt: null },
       { at: '2026-10-28T02:00:00.000Z', boundaryAt: null },
+      { at: '2026-10-28T03:00:00.000Z', boundaryAt: null },
     ]);
 
-    const plain = write([lastPrompt('hi', 'u1')]);
+    const plain = write([firstRoot('a', '2026-10-28T01:00:00.000Z'), followUp('b', '2026-10-28T01:01:00.000Z', 'x')]);
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: plain })).toEqual([]);
   });
 

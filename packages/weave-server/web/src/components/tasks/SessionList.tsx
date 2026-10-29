@@ -16,6 +16,7 @@ import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { WatchPicker } from './WatchPicker';
 import { QuestionAnswer } from './QuestionAnswer';
 import { SessionStatusIcon } from './SessionStatusIcon';
+import { draftSessionIds, subscribeDraftChanges } from './draft-editor';
 
 /** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
 const ACTION_BTN =
@@ -35,6 +36,22 @@ export function remainingMsOf(
 ): number {
   if (row.autoDeleteAt == null) return 0;
   return Date.parse(row.autoDeleteAt) - Math.max(now, Date.parse(row.lastSeenAt));
+}
+
+/** 有未发送草稿的会话（真源恒是 sessionStorage——草稿只在浏览器本地，服务端一无所知）。 */
+function useDraftSessionIds(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(() => draftSessionIds());
+  useEffect(() => {
+    const sync = () =>
+      setIds((prev) => {
+        const next = draftSessionIds();
+        // 成员没变就还回旧引用：写盘抖动不该带着整张列表重渲染
+        return prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next;
+      });
+    sync();
+    return subscribeDraftChanges(sync);
+  }, []);
+  return ids;
 }
 
 /** 会话行的最后更新时刻：跨天要认得出是哪天——当天只给时刻、昨天标「昨天」、更早
@@ -298,6 +315,8 @@ export function SessionList({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [droppingId, setDroppingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  /** 有未发送草稿的会话（输入框里还有字没发出去 → 行首蓝色消息图标）。 */
+  const draftIds = useDraftSessionIds();
 
   // ---- 顺序门控：sortedIds 随事件流实时算，落地序只在「成员变化」或周期 tick
   // 时取快照（见 useActivityOrder）——两次快照之间顺序冻结（不随事件实时跳动），
@@ -421,16 +440,6 @@ export function SessionList({
         {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
             codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
         <SessionStatusIcon status={status} harness={s.harness} />
-        {/* 在途消息（服务端计数）——纯指示、不可点：对话入口就是行本身 */}
-        {inflight > 0 && (
-          <span
-            title={t('tasks.messageInflight', { n: inflight })}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300"
-          >
-            <MessageSquareText className="h-3 w-3" />
-            {inflight > 9 ? '9+' : inflight}
-          </span>
-        )}
 
         {editingId === s.sessionId ? (
           <input
@@ -448,11 +457,34 @@ export function SessionList({
           />
         ) : (
           <>
-            {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行） */}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
+            {/* 第 1 行：名称 + 悬停操作（basis-full 徽标组强制换到第 2 行）。
+                名称有最小宽度底线：卡片窄（窄侧栏/窄屏）到摆不下时按钮组整组
+                折到下一行右对齐（ml-auto）——名称独占首行，不被七枚按钮挤瘪；
+                折行跟卡片实际宽度走，与视口断点无关。 */}
+            <span className="min-w-[8rem] flex-1 truncate text-xs font-medium text-neutral-200">
               {sessionLabel(s.title, s.sessionId)}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
+              {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：在途 amber
+                  （服务端计数）与草稿 blue（纯前端——草稿只存 sessionStorage）。
+                  纯指示、不可点：对话入口就是行本身。 */}
+              {inflight > 0 && (
+                <span
+                  title={t('tasks.messageInflight', { n: inflight })}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300"
+                >
+                  <MessageSquareText className="h-3 w-3" />
+                  {inflight > 9 ? '9+' : inflight}
+                </span>
+              )}
+              {draftIds.has(s.sessionId) && (
+                <span
+                  title={t('tasks.draftUnsent')}
+                  className="inline-flex shrink-0 items-center rounded border border-blue-400/40 bg-blue-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-blue-300"
+                >
+                  <MessageSquareText className="h-3 w-3" />
+                </span>
+              )}
               {/* 能力位由服务端派生（canOpenTerminal = harness 的 resume 槽有
                   openArgs），这里只渲染它——不自带 harness 白名单；路由侧仍做
                   同样的 501 校验。该会话的宿主进程活着（pidAlive）→ 终端图标

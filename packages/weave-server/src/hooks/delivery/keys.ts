@@ -4,7 +4,7 @@ import type { ProjectRepository } from '../../repositories/projects.js';
 import type { SessionRepository } from '../../repositories/sessions.js';
 import type { HookEventRepository } from '../../repositories/hook-events.js';
 import { normalizeDirKey } from '../../daemon/opener.js';
-import type { AnswerResult, PaneTargetSource, PromptTerminal } from '../message-deliverer.js';
+import type { AnswerResult, PromptTerminal } from '../message-deliverer.js';
 
 /**
  * 键序注入域（会话控制面）的共享落点解析与常量：作答 / 中断 / 关 pane / 模式 /
@@ -50,12 +50,13 @@ export interface KeysTargetDeps {
   hookEvents: Pick<HookEventRepository, 'listBySession'>;
   /** 层② 通道现取（null = 未装配）。 */
   terminalChannel(): PromptTerminal | null;
-  /** pane 定位（locator 优先、标题+cwd 回落；heuristic 跳过 locator）。 */
+  /** pane 定位（locator 优先、标题+cwd 回落）。 */
   terminalPaneFor(
     session: { sessionId: string; title: string | null },
     project: { path: string },
-    source?: PaneTargetSource,
   ): Promise<{ id: string } | null>;
+  /** 该会话的 pane 定位是否被另一个会话占着（fork 继承同一 env）；有值 = 不可击键。 */
+  paneEnvConflictOf?(sessionId: string): string | null;
 }
 
 /**
@@ -67,7 +68,6 @@ export async function sessionKeysTarget(
   deps: KeysTargetDeps,
   sessionId: string,
   action = '击键',
-  source: PaneTargetSource = 'both',
 ): Promise<
   { ok: true; terminal: PromptTerminal; paneId: string } | Extract<AnswerResult, { ok: false }>
 > {
@@ -82,7 +82,15 @@ export async function sessionKeysTarget(
   if (!terminal) {
     return { ok: false, status: 409, error: `终端通道未装配，无法远程${action}` };
   }
-  const pane = await deps.terminalPaneFor(session, project, source);
+  const conflict = deps.paneEnvConflictOf?.(sessionId) ?? null;
+  if (conflict) {
+    return {
+      ok: false,
+      status: 409,
+      error: `这个会话的终端定位被另一个会话（${conflict.slice(0, 8)}）占着（fork 继承了同一个 pane），为避免把${action}打进别人的终端已拒绝`,
+    };
+  }
+  const pane = await deps.terminalPaneFor(session, project);
   if (!pane) {
     return {
       ok: false,
@@ -115,16 +123,15 @@ export function sideQuestionSurfaceOf(
   return surfaceFor?.(src) ?? null;
 }
 
-/** pane 定位（层② 共用）：locator 优先、标题+cwd 回落；heuristic 跳过 locator。 */
+/** pane 定位（层② 共用）：locator 优先、标题+cwd 回落。 */
 export async function locateTerminalPane(
   terminal: PromptTerminal | null,
   paneEnvs: ReadonlyMap<string, Record<string, string>>,
   session: { sessionId: string; title: string | null },
   project: { path: string },
-  source: PaneTargetSource = 'both',
 ): Promise<{ id: string } | null> {
   if (!terminal) return null;
-  const env = source === 'heuristic' ? undefined : paneEnvs.get(session.sessionId);
+  const env = paneEnvs.get(session.sessionId);
   if (env) {
     const located = await terminal.locatePane?.(env).catch(() => null);
     if (located) return { id: located };

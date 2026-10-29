@@ -281,10 +281,16 @@ export async function handleSessionInsightRoutes(
     const src = latestHarnessOf(deps, sessionId);
     const surface = src ? commandsSurfaceFor(src) : null;
     if (!surface) {
-      sendJson(res, 200, { supported: false, commands: [] });
+      sendJson(res, 200, { supported: false, commands: [], inputModes: [] });
       return true;
     }
-    sendJson(res, 200, { supported: true, commands: await surface.list({ projectPath: project.path }) });
+    sendJson(res, 200, {
+      supported: true,
+      commands: await surface.list({ projectPath: project.path }),
+      // 输入框的命令形态（`/` 命令、claude 的 `!` bash 模式）：前端据此上色，
+      // 投递侧按同一张表判回执窗口——web 不自带 harness 的触发符知识。
+      inputModes: surface.inputModes,
+    });
     return true;
   }
 

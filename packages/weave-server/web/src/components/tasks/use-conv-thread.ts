@@ -228,9 +228,33 @@ export function useConvThread(deps: {
     void loadExecutions();
   }, [loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, loadRewinds, refreshMessages]);
 
+  // 缓存写盘节流：entries 随 SSE 500ms 一拍刷新，逐拍 JSON.stringify 上百条长
+  // 正文再同步写 sessionStorage 会卡主线程（会话越长越明显）。攒到 2s 写一次，
+  // 切会话/卸载时补写最后一版——缓存只是加速，晚两秒不影响正确性。
+  const latestEntries = useRef(entries);
+  latestEntries.current = entries;
+  const cacheTimer = useRef<number | null>(null);
+  const lastCacheWrite = useRef(0);
   useEffect(() => {
-    if (entries && entries.length > 0) writeConvCache(sessionId, entries);
+    if (!entries || entries.length === 0) return;
+    if (cacheTimer.current !== null) return;
+    const wait = Math.max(0, 2_000 - (Date.now() - lastCacheWrite.current));
+    cacheTimer.current = window.setTimeout(() => {
+      cacheTimer.current = null;
+      lastCacheWrite.current = Date.now();
+      const cur = latestEntries.current;
+      if (cur && cur.length > 0) writeConvCache(sessionId, cur);
+    }, wait);
   }, [entries, sessionId]);
+  useEffect(
+    () => () => {
+      if (cacheTimer.current !== null) window.clearTimeout(cacheTimer.current);
+      cacheTimer.current = null;
+      const cur = latestEntries.current;
+      if (cur && cur.length > 0) writeConvCache(sessionId, cur);
+    },
+    [sessionId],
+  );
 
   // SSE：开/闭轮事件帧补对话尾部，其余事件帧刷生成中的滚动带，message.* 帧刷
   // 在途投递行（三路共用一次防抖）。**防抖窗内的事件只累加、不互相覆盖**：
@@ -262,6 +286,18 @@ export function useConvThread(deps: {
         wantPlan = true;
         wantPreQ = true;
       } else {
+        // 回执帧带上了它命中的开轮事件：先把这一行就地标成已被该事件认领
+        // （attachDeliveries 立刻按 ackedEventId 精确归位），再补一拍对话尾部
+        // ——「队列行退场」与「气泡出现」成为同一拍的两半，中间不空窗。
+        if (f.kind === 'message.acknowledged' && f.eventId !== undefined && f.messageId) {
+          const { messageId, eventId } = f;
+          setMessages((prev) =>
+            (prev ?? []).map((m) =>
+              m.id === messageId ? { ...m, acked: true, ackedEventId: eventId } : m,
+            ),
+          );
+          wantConv = true;
+        }
         wantMessages = true;
       }
       if (timer !== null) window.clearTimeout(timer);
@@ -291,7 +327,7 @@ export function useConvThread(deps: {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, loadRewinds, refreshMessages, sessionId]);
+  }, [lifecycle, loadExecutions, loadLive, loadNarration, loadNewest, loadPlan, loadPreQuestion, loadRewinds, refreshMessages, sessionId, setMessages]);
 
   // 旁白增量帧：daemon 的监视器从转录新字节里认出新段即推过来，直接 append
   // （亚秒进场，不重拉不轮询）。与全量拉的对账由 withNarration 的同文案去重兜底
@@ -502,5 +538,6 @@ export function useConvThread(deps: {
     compacting, interrupted, generating, failed, liveText,
     pull,
     refreshMessages,
+    setMessages,
   };
 }

@@ -2,7 +2,6 @@ import { tmpdir } from 'node:os';
 import type { PromptRelaySpec } from '@weavecode/harness';
 import type { HeadlessRunner, HeadlessSettleResult } from '../headless-runner.js';
 import type { PipeMessage } from '../message-deliverer.js';
-import { isSlashCommand } from '../message-deliverer.js';
 
 /**
  * 层① 原生中继（claude SendMessage）：复用 HeadlessRunner 的 spawn 基建
@@ -26,8 +25,8 @@ export interface RelayDeps {
   awaitAck(sessionId: string, messageId: string): void;
   /** 暂停闸（失败时置）。 */
   stall(sessionId: string, msg: PipeMessage, reason: 'failed'): void;
-  /** 斜杠命令判定。 */
-  isSlashCommand(text: string): boolean;
+  /** 命令形态判定（触发符表归能力面）。 */
+  commandModeOf(text: string, sessionId: string): unknown;
   armAckWatch(msg: PipeMessage): void;
   armCommandAck(messageId: string, onRelease: (sessionId: string) => void): void;
   /** 中继闸释放后若还有积压，续排下一批。 */
@@ -84,7 +83,7 @@ export function settleRelay(
       settledAt: new Date().toISOString(),
     };
     deps.setMemory(delivered);
-    if (isSlashCommand(msg.text)) deps.armCommandAck(messageId, deps.onReleased);
+    if (deps.commandModeOf(msg.text, msg.sessionId)) deps.armCommandAck(messageId, deps.onReleased);
     else deps.armAckWatch(delivered);
     deps.emit({
       kind: 'message.delivered',

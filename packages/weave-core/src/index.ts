@@ -43,6 +43,7 @@ export {
   HARNESS_LIFECYCLE,
   HARNESS_COMPACTION,
   HARNESS_SESSION_CONTROL,
+  VISUALIZATION_PROTOCOL,
   type HarnessCompaction,
   isHarness,
 } from './harness.js';

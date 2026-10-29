@@ -75,6 +75,7 @@ const REASON: Record<string, MessageKey> = {
   'no-peer-name': 'out.doctor.reason.noPeerName',
   'no-backend': 'out.doctor.reason.noBackend',
   'no-pane-env': 'out.doctor.reason.noPaneEnv',
+  'pane-env-conflict': 'out.doctor.reason.paneEnvConflict',
 };
 
 /** 修法码（码表与 server 的 deliveryHints 一一对应）。 */
@@ -88,6 +89,7 @@ const HINT: Record<string, MessageKey> = {
   'no-peer-name': 'out.doctor.hint.noPeerName',
   'terminal-no-backend': 'out.doctor.hint.terminalNoBackend',
   'terminal-no-pane-env': 'out.doctor.hint.terminalNoPaneEnv',
+  'terminal-pane-env-conflict': 'out.doctor.hint.terminalPaneEnvConflict',
   'not-running': 'out.doctor.hint.notRunning',
   queued: 'out.doctor.hint.queued',
   stalled: 'out.doctor.hint.stalled',

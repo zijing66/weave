@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,8 +29,10 @@ describe('harness 配置路由', () => {
   let db: ReturnType<typeof openDatabase>;
   let root: string;
   let projectPath: string;
+  let projectPathB: string;
   let deps: WeaveServerDeps;
   let projectId: number;
+  let projectIdB: number;
 
   const call = async (
     path: string,
@@ -56,8 +58,11 @@ describe('harness 配置路由', () => {
   };
 
   const settingsFile = (): string => join(projectPath, '.claude', 'settings.json');
+  const settingsFileB = (): string => join(projectPathB, '.claude', 'settings.json');
   const readSettings = (): Record<string, unknown> =>
     JSON.parse(readFileSync(settingsFile(), 'utf8')) as Record<string, unknown>;
+  const readSettingsB = (): Record<string, unknown> =>
+    JSON.parse(readFileSync(settingsFileB(), 'utf8')) as Record<string, unknown>;
 
   beforeEach(() => {
     db = openDatabase(':memory:');
@@ -66,14 +71,25 @@ describe('harness 配置路由', () => {
     projectPath = join(root, 'proj');
     mkdirSync(join(projectPath, '.claude'), { recursive: true });
     writeFileSync(settingsFile(), JSON.stringify({ model: 'opus', customKey: { keep: true } }), 'utf8');
+    // 第二个项目：基线内容与 A 可区分（B=haiku），隔离回归靠它断言「不跨写」
+    projectPathB = join(root, 'proj-b');
+    mkdirSync(join(projectPathB, '.claude'), { recursive: true });
+    writeFileSync(settingsFileB(), JSON.stringify({ model: 'haiku', customKey: { keep: true } }), 'utf8');
     // codex 的 user 档落 <homedir>/.codex——homedir 隔离到临时目录，别碰真 ~/.codex
     paths.home = join(root, 'home');
     mkdirSync(paths.home, { recursive: true });
     deps = { projects: new ProjectRepository(db) } as unknown as WeaveServerDeps;
-    projectId = new ProjectRepository(db).register({
+    const repo = new ProjectRepository(db);
+    projectId = repo.register({
       path: projectPath,
       name: 'p',
       token: 'tok',
+      source: 'init',
+    }).id;
+    projectIdB = repo.register({
+      path: projectPathB,
+      name: 'p-b',
+      token: 'tok-b',
       source: 'init',
     }).id;
   });
@@ -442,5 +458,101 @@ describe('harness 配置路由', () => {
     });
     expect(bad.status).toBe(400);
     expect(String(bad.body['error'])).toContain('TOML');
+  });
+
+  it('项目隔离：两个项目的基线/漂移/备份/快照互不串（restoreBaseline 不跨写）', async () => {
+    // 各自首次 GET：各立各的基线，都无漂移
+    const firstA = await call(`/harness-config?harness=claude&file=project&projectId=${projectId}`, 'GET');
+    const firstB = await call(`/harness-config?harness=claude&file=project&projectId=${projectIdB}`, 'GET');
+    expect(firstA.body['drifted']).toBe(false);
+    expect(firstB.body['drifted']).toBe(false);
+
+    // 盘上两份独立基线（键形 project@p<id>）
+    const dir = join(paths.root, 'claude');
+    expect(existsSync(join(dir, `project@p${projectId}-_lastseen.json`))).toBe(true);
+    expect(existsSync(join(dir, `project@p${projectIdB}-_lastseen.json`))).toBe(true);
+
+    // 外部改 A 的文件：A 漂移，B 不受牵连
+    writeFileSync(settingsFile(), JSON.stringify({ model: 'sonnet', customKey: { keep: true } }), 'utf8');
+    const driftA = await call(`/harness-config?harness=claude&file=project&projectId=${projectId}`, 'GET');
+    const driftB = await call(`/harness-config?harness=claude&file=project&projectId=${projectIdB}`, 'GET');
+    expect(driftA.body['drifted']).toBe(true);
+    expect(driftB.body['drifted']).toBe(false);
+
+    // 核心回归：对 B 两拍恢复 → B 回到自己（haiku）的基线，A 的文件原样
+    const ask = await call('/harness-config/profile', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId: projectIdB,
+      action: 'restoreBaseline',
+    });
+    expect(ask.body['requiresConfirm']).toBe(true);
+    expect(ask.body['baselineText']).toContain('haiku');
+    const done = await call('/harness-config/profile', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId: projectIdB,
+      action: 'restoreBaseline',
+      confirm: true,
+    });
+    expect(done.status).toBe(200);
+    expect(readSettingsB()['model']).toBe('haiku');
+    expect(readSettings()['model']).toBe('sonnet');
+
+    // 备份互不相见：B 此刻的备份（restoreBaseline 留的 1 条）在 A 写盘后不增长
+    const beforeB = await call(`/harness-config?harness=claude&file=project&projectId=${projectIdB}`, 'GET');
+    const beforeCount = (beforeB.body['backups'] as unknown[]).length;
+    await call('/harness-config/values', 'PUT', {
+      harness: 'claude',
+      file: 'project',
+      projectId,
+      values: { model: 'sonnet' },
+    });
+    const viewA = await call(`/harness-config?harness=claude&file=project&projectId=${projectId}`, 'GET');
+    const viewB = await call(`/harness-config?harness=claude&file=project&projectId=${projectIdB}`, 'GET');
+    expect((viewA.body['backups'] as unknown[]).length).toBe(1); // A 首次写盘留 1 条
+    expect((viewB.body['backups'] as unknown[]).length).toBe(beforeCount);
+
+    // profile 生命周期隔离：A 建的快照 B 看不见，B activate A 的 id → 404
+    const created = await call('/harness-config/profile', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId,
+      action: 'create',
+      name: '甲的',
+    });
+    const idA = (created.body['profile'] as { id: string }).id;
+    const listB = await call('/harness-config/profile', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId: projectIdB,
+      action: 'list',
+    });
+    expect((listB.body['profiles'] as unknown[]).length).toBe(0);
+    const crossActivate = await call('/harness-config/profile', 'POST', {
+      harness: 'claude',
+      file: 'project',
+      projectId: projectIdB,
+      action: 'activate',
+      id: idA,
+    });
+    expect(crossActivate.status).toBe(404);
+  });
+
+  it('项目隔离：user/global 档不带项目后缀（防过度隔离），projectLocal 带后缀', async () => {
+    await call(`/harness-config?harness=claude&file=user`, 'GET');
+    const dir = join(paths.root, 'claude');
+    expect(existsSync(join(dir, 'user-_lastseen.json'))).toBe(true);
+    // user 档的基线不该长成 project@p* 形
+    const names = readdirSync(dir);
+    expect(names.some((n) => n.startsWith('user@p'))).toBe(false);
+
+    // projectLocal 同样按项目隔离
+    const localA = await call(`/harness-config?harness=claude&file=projectLocal&projectId=${projectId}`, 'GET');
+    const localB = await call(`/harness-config?harness=claude&file=projectLocal&projectId=${projectIdB}`, 'GET');
+    expect(localA.status).toBe(200);
+    expect(localB.status).toBe(200);
+    expect(existsSync(join(dir, `projectLocal@p${projectId}-_lastseen.json`))).toBe(true);
+    expect(existsSync(join(dir, `projectLocal@p${projectIdB}-_lastseen.json`))).toBe(true);
   });
 });

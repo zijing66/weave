@@ -331,11 +331,7 @@ export function OrchestrationCanvas({
       void fb.run(
         `interrupt:${sessionId}`,
         async () => {
-          const res = await api.interruptSession(sessionId);
-          if (res.interrupted === false) {
-            show('error', t('tasks.stopUnconfirmed'));
-            return;
-          }
+          await api.interruptSession(sessionId);
           show('success', t('tasks.stopOk'));
         },
         { fail: (e) => t('tasks.stopFail', { error: errorText(e) }) },

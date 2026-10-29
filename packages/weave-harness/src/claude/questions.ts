@@ -1,9 +1,12 @@
-import { readFile } from 'node:fs/promises';
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { BlockingPromptSpec, BlockingQuestion, BlockingQuestionOption } from '../driver.js';
 import { CLAUDE_PLAN } from './plan.js';
 import { defaultPermissionModeOf } from './model-aliases.js';
 import { preQuestionTextAt } from './transcript.js';
+import { readTail } from './transcript-cursor.js';
+
+/** 提问前说明的取数窗口：锚点（阻塞工具调用）恒在文件末尾附近。 */
+const PRE_QUESTION_TAIL_BYTES = 512 * 1024;
 
 /**
  * 阻塞式交互问答（AskUserQuestion / 计划确认 / 权限确认）的 claude 规格：
@@ -368,12 +371,9 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
   },
   async preQuestion(transcriptPath) {
     if (!transcriptPath) return null;
-    let tail: string;
-    try {
-      tail = await readFile(transcriptPath, 'utf8');
-    } catch {
-      return null;
-    }
-    return preQuestionTextAt(tail);
+    // 只读尾部：提问前那段话与阻塞工具调用是相邻行（同一 message 被拆成几行），
+    // 此刻宿主正卡在提问上、后面没有内容——整份读几十 MB 纯属浪费。
+    const tail = readTail(transcriptPath, PRE_QUESTION_TAIL_BYTES);
+    return tail === null ? null : preQuestionTextAt(tail);
   },
 };

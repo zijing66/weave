@@ -3,6 +3,7 @@ import { homedir as osHomedir } from 'node:os';
 import path from 'node:path';
 import type { CommandExecution, CommandsSurface, HarnessCommand } from '../driver.js';
 import { execCli as claudeExec, type PluginExecutor } from './plugins.js';
+import { readNewLines, transcriptSize, type LineCursor } from './transcript-cursor.js';
 
 /**
  * Claude Code 的斜杠命令：`/` 提示的候选清单 + 命令执行的返显。
@@ -273,20 +274,43 @@ function argsOf(text: string): string {
   return /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? '';
 }
 
+/** 命令回显的增量账（按转录路径），同 narration 的游标缓存。 */
+const execCursors = new Map<
+  string,
+  {
+    cur: LineCursor;
+    out: CommandExecution[];
+    pending: { name: string; args: string; at: string } | null;
+  }
+>();
+const EXEC_CURSOR_MAX = 64;
+
 /**
  * 转录里的命令执行：`<command-name>` 那一条之后若紧跟 `<local-command-stdout>`，
  * 就是一次内建命令（skill 命令后面跟的是 isMeta 展开正文，不算——它已经有 UPS 气泡）。
+ *
+ * 按**字节游标**增量累积（同 narration）：`pending`（等 stdout 的那条命令）是跨行
+ * 状态，跟着游标一起存——两行可能分在两次读里。文件被截断/换掉 ⇒ 全部作废重来。
  */
 export async function commandExecutions(transcriptPath: string): Promise<CommandExecution[] | null> {
-  let text: string;
-  try {
-    text = await readFile(transcriptPath, 'utf8');
-  } catch {
+  const size = transcriptSize(transcriptPath);
+  if (size === null) {
+    execCursors.delete(transcriptPath);
     return null;
   }
-  const out: CommandExecution[] = [];
-  let pending: { name: string; args: string; at: string } | null = null;
-  for (const line of text.split('\n')) {
+  const hit = execCursors.get(transcriptPath);
+  execCursors.delete(transcriptPath);
+  const entry = hit ?? { cur: { offset: 0 }, out: [], pending: null };
+  if (size < entry.cur.offset) {
+    entry.cur.offset = 0;
+    entry.out = [];
+    entry.pending = null;
+  }
+  const lines = readNewLines(transcriptPath, entry.cur, size);
+  if (lines === null) return null;
+  const out = entry.out;
+  let pending = entry.pending;
+  for (const line of lines) {
     if (!line.includes('<command-name>') && !line.includes('<local-command-stdout>')) continue;
     let row: unknown;
     try {
@@ -311,16 +335,38 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
     out.push({ ...pending, ...(clean !== '' ? { output: clean } : {}) });
     pending = null;
   }
+  entry.pending = pending;
+  if (execCursors.size >= EXEC_CURSOR_MAX) {
+    const oldest = execCursors.keys().next().value;
+    if (oldest !== undefined) execCursors.delete(oldest);
+  }
+  execCursors.set(transcriptPath, entry);
   return out;
 }
 
+/** 候选清单的短 TTL：一次 list 要扫六个目录 + 起一次 `claude plugin list`（Windows
+ *  经 cmd 壳 5s+），而候选集合只随命令/skill 文件与插件启停变——60s 内复用。 */
+const LIST_TTL_MS = 60_000;
+const LIST_CACHE_MAX = 16;
+
 export function createClaudeCommandSurface(deps: { exec?: PluginExecutor } = {}): CommandsSurface {
   const exec = deps.exec ?? claudeExec;
+  const cache = new Map<string, { at: number; rows: HarnessCommand[] }>();
   return {
     harness: 'claude',
+    // `/` = 斜杠命令（内建的不发 UPS，skill/插件的会发）；`!` = bash 模式（宿主本地
+    // 执行，同样不发 UPS——投递侧一律走命令的短窗口，别干等普通回执）。
+    inputModes: [
+      { kind: 'slash', sigil: '/', named: true },
+      { kind: 'bash', sigil: '!', named: false },
+    ],
     async list({ projectPath, homedir = osHomedir() }) {
+      const key = `${projectPath}\0${homedir}`;
+      const now = Date.now();
+      const hit = cache.get(key);
+      if (hit && now - hit.at < LIST_TTL_MS) return hit.rows;
       const home = path.join(homedir, '.claude');
-      return dedupe([
+      const rows = dedupe([
         ...BUILTINS,
         ...(await readCommands(path.join(projectPath, '.claude', 'commands'))),
         ...(await readCommands(path.join(home, 'commands'))),
@@ -328,6 +374,12 @@ export function createClaudeCommandSurface(deps: { exec?: PluginExecutor } = {})
         ...(await readSkills(path.join(home, 'skills'))),
         ...((await enabledPluginSkills(exec)) ?? (await readPluginSkills(home))),
       ]);
+      if (cache.size >= LIST_CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+      cache.set(key, { at: now, rows });
+      return rows;
     },
     executions: (transcriptPath) => (transcriptPath ? commandExecutions(transcriptPath) : Promise.resolve(null)),
   };

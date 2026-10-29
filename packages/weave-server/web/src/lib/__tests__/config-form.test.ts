@@ -134,4 +134,16 @@ describe('配置表单纯函数', () => {
     expect(shapeOf({ key: 'model', type: 'string', group: 'G', description: '' })).toBeNull();
     expect(arrayItemsOf({})).toEqual([]);
   });
+
+  it('值形状：map 新条目同规——带字段起手空对象，标量按值类型给默认', () => {
+    const servers = { key: 'mcp_servers', type: 'Object', group: 'G', description: '', shape: 'map' as const, fields: [{ name: 'command', type: 'string' }] };
+    expect(emptyItemOf(servers)).toEqual({});
+    const counts = { key: 'counts', type: 'Object', group: 'G', description: '', shape: 'map' as const, valueType: 'Integer' };
+    expect(emptyItemOf(counts)).toBe(0);
+    const enums = { key: 'filters', type: 'Object', group: 'G', description: '', shape: 'map' as const, valueType: 'String', valueOptions: ['include', 'exclude'] };
+    expect(emptyItemOf(enums)).toBe('include');
+    // 自由对象（无 shape/fields）维持空串，行为不变
+    const free = { key: 'hooks', type: 'object', group: 'G', description: '' };
+    expect(emptyItemOf(free)).toBe('');
+  });
 });

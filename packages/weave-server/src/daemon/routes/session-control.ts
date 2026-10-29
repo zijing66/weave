@@ -27,19 +27,6 @@ const AnswerBody = z.object({
     .min(1),
 });
 
-/** 中断后等宿主把标记写进转录的时间（实测 0.5s 落地，留一倍余量）。 */
-const INTERRUPT_CONFIRM_WAIT_MS = 1_200;
-
-/**
- * 中断标记等一拍再读：出现比打键前更新的标记 = 这一记 ESC 真让宿主停下来了。
- * 标记只会被更新的事件盖过（自愈），故「新标记」就是「刚停的」这一件事。
- */
-async function confirmInterrupt(markerOf: () => number | null, before: number): Promise<boolean> {
-  await new Promise((resolve) => setTimeout(resolve, INTERRUPT_CONFIRM_WAIT_MS));
-  const after = markerOf();
-  return after !== null && after > before;
-}
-
 /**
  * 会话控制域路由：中断、关 pane、执行模式/模型/思考强度切换、阻塞问答作答、
  * 旁路会话（/btw）。全部经 MessageDeliverer 的层② 终端通道打键。返回 true = 本路由
@@ -53,6 +40,10 @@ export async function handleSessionControlRoutes(
   url: URL,
 ): Promise<boolean> {
   // ---- 中断：向会话 pane 打一记 ESC（停止正在跑的回合；键序固定死在服务端）----
+  // 语义（2026-10-28 裁决）：ESC 送进运行中的会话 = **必然中断**——宿主收到 ESC
+  // 就停，只是中断标记要等工具收尾才写进转录（实测 10–29s）。故键送出即答成功，
+  // 不做「等标记确认」的阻塞轮询（那只会把「正在停」误报成失败）；「已中断」的
+  // 呈现交给 interruptRefresher 在标记落地后推 sessionInterrupt 帧。
   const interruptMatch = pathname.match(/^\/sessions\/([^/]+)\/interrupt$/);
   if (interruptMatch && req.method === 'POST') {
     if (!deps.messageDeliverer) {
@@ -60,40 +51,18 @@ export async function handleSessionControlRoutes(
       return true;
     }
     const sessionId = decodeURIComponent(interruptMatch[1]!);
-    // 「停没停」的唯一证据在转录里（hook 域没有中断事件）。判不了（没探针 / 转录
-    // 路径未知 / 非 claude）就只报送出，不猜结果。
-    const probe = deps.sessionProbe;
-    const session = deps.hookSessions?.getBySessionId(sessionId) ?? null;
-    const judgeable = !!probe && !!session && probe.transcriptPresent(sessionId) !== null;
-    const markerOf = (): number | null =>
-      judgeable
-        ? (probe!.interruptedAt(
-            sessionId,
-            deps.hookSessions!.lastMainEventAtOf(sessionId) ?? session!.lastSeenAt,
-          ) ?? null)
-        : null;
-    const before = markerOf() ?? 0;
-
     const result = await deps.messageDeliverer.interrupt(sessionId);
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
       return true;
     }
-    // 一记没反应就按标题+cwd 补打一记（**只打别的 pane**）：pane env 指着旧 pane
-    // 时第一记落进的是别人的输入行，宿主一声不响，投递侧却照样拿 exit 0 —— 实机
-    // 2026-10-21：8c85b9c7 连按三次 200 全无效果，而同一分钟另一会话 0.5 秒即中断。
-    let interrupted: boolean | null = null;
-    if (judgeable) {
-      interrupted = await confirmInterrupt(markerOf, before);
-      if (interrupted === false) {
-        const retry = await deps.messageDeliverer.interrupt(sessionId, 'heuristic', result.paneId);
-        if (retry.ok && retry.sent) interrupted = await confirmInterrupt(markerOf, before);
-      }
-    }
-    // 打断之后 claude 要过一下才把中断标记写进转录：补一拍探针，让「生成中」尽快
-    // 变成「已中断」（不补则要等下一个周期）。同 terminalTopology 的即时刷新口径。
+    // 标记落地要等工具收尾（10–29s）：补两拍探针，让「生成中」尽快变「已中断」
+    // （不补则要等下一个 5s 周期拍；12s 那拍兜工具收尾慢的）。
     setTimeout(() => deps.interruptRefresher?.tick(), 1_500);
-    sendJson(res, 200, { ok: true, sessionId, interrupted });
+    setTimeout(() => deps.interruptRefresher?.tick(), 12_000);
+    // confirmed=false = 补完键屏上还挂着 `esc to interrupt`（工具执行窗口吞键）：
+    // 键已送出、但宿主没停，UI 据此说真话而不是摆成功态。
+    sendJson(res, 200, { ok: true, sessionId, confirmed: result.confirmed });
     return true;
   }
 

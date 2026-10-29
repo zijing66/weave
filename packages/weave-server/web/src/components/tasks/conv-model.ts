@@ -283,6 +283,83 @@ export function pipePathSegments(pipeText: string, images: readonly UploadFile[]
   return out;
 }
 
+/**
+ * 渲染块引用行（weave 渲染块协议，文法常量镜像自 core `VISUALIZATION_PROTOCOL`
+ * ——web 运行时不能 import core 值，import type 纪律，见 lifecycle.ts 同款说辞）：
+ * U+E200 + `visualize` + U+E202 + JSON + 可选 U+E201，独立成行出现在 assistant
+ * 最终回复里，指向一个 HTML fragment 文件的绝对路径。
+ */
+const VIZ_REF_PREFIX = '\u{e200}visualize\u{e202}';
+const VIZ_REF_SUFFIX = '\u{e201}';
+
+/** 渲染块引用（引用行解析产物）：fragment 文件绝对路径 + 可选标题/宽幅。 */
+export interface VisualizeRef {
+  path: string;
+  title?: string;
+  mode?: 'wide';
+}
+
+/** 对话正文切段的一节：文本段或渲染块。 */
+export type VizSeg = { kind: 'text'; text: string } | { kind: 'viz'; ref: VisualizeRef };
+
+/** 引用行 → ref；认不出（JSON 坏 / 缺 path / path 非字符串）返回 null，调用方当普通文本。 */
+function visualizeRefOf(line: string): VisualizeRef | null {
+  if (!line.startsWith(VIZ_REF_PREFIX)) return null;
+  const body = line.slice(VIZ_REF_PREFIX.length).endsWith(VIZ_REF_SUFFIX)
+    ? line.slice(VIZ_REF_PREFIX.length, -VIZ_REF_SUFFIX.length)
+    : line.slice(VIZ_REF_PREFIX.length);
+  try {
+    const parsed = JSON.parse(body) as { path?: unknown; title?: unknown; mode?: unknown };
+    if (typeof parsed.path !== 'string' || !parsed.path) return null;
+    return {
+      path: parsed.path,
+      ...(typeof parsed.title === 'string' && parsed.title ? { title: parsed.title } : {}),
+      ...(parsed.mode === 'wide' ? { mode: 'wide' as const } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * assistant 正文按渲染块引用行切段：引用行整行替换成 viz 段（气泡里渲染成
+ * sandbox iframe），其余是文本段。坏行（前缀对但 JSON 认不出）当普通文本——
+ * 最宽容，不摆错误壳。**只对 assistant 条目用**（引用行只出现在最终回复）。
+ */
+export function visualizeSegments(text: string): VizSeg[] {
+  const out: VizSeg[] = [];
+  let buf: string[] = [];
+  for (const line of text.split('\n')) {
+    const ref = visualizeRefOf(line.trim());
+    if (ref) {
+      if (buf.length) {
+        out.push({ kind: 'text', text: buf.join('\n') });
+        buf = [];
+      }
+      out.push({ kind: 'viz', ref });
+    } else {
+      buf.push(line);
+    }
+  }
+  if (buf.length) out.push({ kind: 'text', text: buf.join('\n') });
+  return out;
+}
+
+/** 正文里有没有渲染块引用行（渲染层零开销短路用）。 */
+export function hasVisualizeRef(text: string): boolean {
+  return text.includes(VIZ_REF_PREFIX);
+}
+
+/** 剥掉全部渲染块引用行（HTML 导出与分享图片用——私有区字符在那两种载体里是乱码）。 */
+export function stripVisualizeRefs(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !visualizeRefOf(line.trim()))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** 投递行与事件条目是不是同一条消息（归一后全等）。带图的放宽一档：claude 的
  *  粘贴处理会把多行文本的 chunk 用空串连起来，且正文里的图会变成 `[Image #N]`
  *  占位——不剥占位就永远认领不到，同一条消息会显示两遍（一遍真气泡、一遍停在

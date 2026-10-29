@@ -67,6 +67,7 @@ export const appZh = {
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
   'project.sessionsOpen': '{n} 个会话就绪（等输入）',
+  'project.questionsPending': '本项目的会话有 {n} 个待答问题',
   // 已接入 harness 标签（init 选择结果）
   'project.harnessesTip': '本项目 init 时选择接入的 harness',
   // —— 归档（右键归档 + 归档面查看/恢复）——
@@ -208,6 +209,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
   'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
+  'project.questionsPending': '{n} pending question(s) in this project',
   'project.harnessesTip': 'Harness integrated for this project at init',
   // —— Archive (context-menu archive + archived view/restore) ——
   'project.archive': 'Archive project',

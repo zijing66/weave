@@ -120,7 +120,24 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
   // 会话与状态全部来自全局状态总线（Provider 挂在 main.tsx）——App 只读计数，
   // 不再自拉一份（与项目行徽标/任务视图同源，状态不会各页漂移）。
-  const { sessions: allSessions, projectStats, statuses: sessionStatuses } = useSessionStatus();
+  const {
+    sessions: allSessions,
+    projectStats,
+    statuses: sessionStatuses,
+    questions: sessionQuestions,
+  } = useSessionStatus();
+  /** projectId → 待答问题数（项目行边框预警用；与会话行问答图标同一份数据、
+   *  同一个「不含收尾屏」口径）。 */
+  const pendingQuestionsByProject = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const s of allSessions ?? []) {
+      const question = sessionQuestions.get(s.sessionId);
+      if (!question || s.projectId == null) continue;
+      const n = question.questions.filter((q) => !q.submit).length;
+      if (n > 0) counts.set(s.projectId, (counts.get(s.projectId) ?? 0) + n);
+    }
+    return counts;
+  }, [allSessions, sessionQuestions]);
   // 全局总览跳进项目任务视图的初始选中会话（离开任务视图即失效）。
   const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
   // 分类卡计数（hook 规则 / 编排定义）：变更经 window 事件回报，见 useCardCounts。
@@ -790,6 +807,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       syncStateOf={syncActionStateOf}
       onSyncNow={(p) => void syncNowWithFeedback(p)}
       sessionStatsOf={(id) => projectStats.get(id)}
+      pendingQuestionsOf={(id) => pendingQuestionsByProject.get(id) ?? 0}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
       onReorder={reorderProjects}
       archivedProjects={archivedProjects}

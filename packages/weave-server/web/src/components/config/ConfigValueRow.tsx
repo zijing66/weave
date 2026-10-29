@@ -75,7 +75,7 @@ export function ConfigValueRow({
     let key = 'new_key';
     let i = 2;
     while (key in base) key = `new_key_${i++}`;
-    onChange({ value: { ...base, [key]: '' } });
+    onChange({ value: { ...base, [key]: emptyItemOf(spec) } });
   };
 
   const addArrayItem = (): void => {

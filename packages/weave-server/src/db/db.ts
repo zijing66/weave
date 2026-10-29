@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS hook_events (
 );
 CREATE INDEX IF NOT EXISTS idx_hook_events_project ON hook_events(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_hook_events_session ON hook_events(session_id);
+-- 会话列表（listWithCounts）的那几个相关子查询：MAX(id) WHERE session_id=? AND
+-- event_type IN (…)。只有 (session_id) 时每个子查询都要扫该会话全部事件（最大的
+-- 会话几万条），实测 63 个会话 3.9s；带上 event_type 后每个类型一次定位，2.6ms。
+CREATE INDEX IF NOT EXISTS idx_hook_events_session_type ON hook_events(session_id, event_type, id);
 -- 全局搜索（GET /search）的聊天记录路：event_type 先收窄到对话类（约占 2%），
 -- 再对 payload 做 json_extract + LIKE——没有这把索引就是 20 万行全表扫。
 CREATE INDEX IF NOT EXISTS idx_hook_events_type ON hook_events(event_type);

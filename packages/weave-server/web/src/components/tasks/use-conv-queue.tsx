@@ -40,10 +40,12 @@ export function useConvQueue(deps: {
   t: TFunc;
   show: (kind: 'success' | 'error', msg: string) => void;
   refreshMessages: () => Promise<void>;
+  /** 在途视图的落点（乐观反显：发送那一拍就插一行本地 pending，服务端数据回来覆盖）。 */
+  setMessages: Dispatch<SetStateAction<SessionMessageRow[] | null>>;
   /** 队尾那条还没送出去的（出队按钮只给它）。 */
   newestQueuedId: string | undefined;
 }) {
-  const { sessionId, attachKinds, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, newestQueuedId } = deps;
+  const { sessionId, attachKinds, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, setMessages, newestQueuedId } = deps;
   /** 在飞上传的取消把手（按 staged 本地键索引）。 */
   const uploadAborters = useRef(new Map<string, AbortController>());
   /** staged 本地键的自增尾号（同名同大小的两个文件各占一格）。 */
@@ -145,6 +147,25 @@ const send = (): void => {
   setDraftText('');
   setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));
   stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
+  // 乐观反显：真正投递要 1–2s（终端击键），没有这一行的话输入框清了、对话里却
+  // 什么都没有；服务端那一版回来（refreshMessages 全量替换）就顶掉这条本地行。
+  const localId = `local:${Date.now()}`;
+  setMessages((prev) => [
+    ...(prev ?? []),
+    {
+      id: localId,
+      sessionId,
+      text,
+      mode: 'prompt',
+      oneWay: true,
+      channel: 'prompt',
+      status: 'pending',
+      output: null,
+      error: null,
+      at: new Date().toISOString(),
+      ...(files.length > 0 ? { attachments: files } : {}),
+    },
+  ]);
   void fb.run(
     `sendMsg:${sessionId}`,
     async () => {
@@ -162,6 +183,7 @@ const send = (): void => {
       } catch (e) {
         // 发送失败：草稿与附件原样放回输入框，不让用户重打一遍（offline 不抛——
         // 那趟已落成 failed 行、重发按钮在行上）；飞行途中敲下的字垫在后面。
+        setMessages((prev) => (prev ?? []).filter((m) => m.id !== localId));
         const cur = serializeDraft(draftRef.current);
         setDraftText(cur.trim() ? `${text}\n${cur}` : text);
         setStaged((s) => [...s, ...doneStaged]);

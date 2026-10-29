@@ -10,6 +10,7 @@
 
 import { parseMarkdown, type MdSpan, type MdStyle } from './conv-markdown';
 import { renderMermaidImage, type MermaidImage } from './mermaid';
+import { visualizeSegments, hasVisualizeRef, type VizSeg } from '../components/tasks/conv-model';
 import type { Theme } from './theme';
 
 export type ConvRole = 'user' | 'assistant';
@@ -32,6 +33,8 @@ export interface ConvImageEntry {
   viaWeave?: boolean;
   /** 这一轮以失败收尾（`lifecycle.closeFailed`）：红气泡红字，与面板同色。 */
   failed?: boolean;
+  /** 渲染块：正文里的引用行按序对应这里的 fragment 位图（有图就画图，无图回落占位行）。 */
+  frags?: MermaidImage[];
 }
 
 /** 逻辑像素（画布按 scale 倍率放大）。 */
@@ -446,15 +449,18 @@ function metaRow(
   return { left, right, w };
 }
 
-/** markdown 块 → 带位置的块（y 相对气泡内容区；宽度已按 TEXT_MAX 量过）。 */
+/** markdown 块 → 带位置的块（y 相对气泡内容区；宽度已按 TEXT_MAX 量过）。
+ *  `frags` = 渲染块位图（与正文 viz 段按序对应；缺位 = 占位行）。 */
 function layoutBlocks(
   measure: Measure,
   text: string,
   pal: Palette,
   diagrams?: Map<string, MermaidImage>,
+  frags?: readonly MermaidImage[],
 ): ConvImageBlock[] {
   const out: ConvImageBlock[] = [];
   let y = 0;
+  let fragsConsumed = 0;
   const add = (draft: BlockDraft): void => {
     const gap = out.length === 0 ? 0 : gapFor(draft.kind);
     out.push({ ...draft, y, gap });
@@ -466,7 +472,37 @@ function layoutBlocks(
     w: Math.max(0, ...lines.map(lineWidth)),
     lines,
   });
-  for (const b of parseMarkdown(text)) {
+  // 渲染块引用行把正文切成段：文本段照常排版，viz 段有位图画位图、无位画占位行
+  const segs = frags ? visualizeSegments(text) : [{ kind: 'text', text } as VizSeg];
+  for (const seg of segs) {
+    if (seg.kind === 'viz') {
+      const frag = frags![fragsConsumed] ?? null;
+      if (frag) {
+        fragsConsumed += 1;
+        add({
+          kind: 'box',
+          h: frag.h + CODE_PAD * 2,
+          w: Math.min(TEXT_MAX, frag.w + CODE_PAD * 2),
+          fill: pal.codeBg,
+          border: pal.codeBorder,
+          pad: CODE_PAD,
+          lines: [],
+          image: frag,
+        });
+      } else {
+        const lines = wrapSpans(
+          measure,
+          [{ text: `[visualization] ${seg.ref.path}`, style: 'plain' }],
+          { ...pal, fg: pal.quote },
+          TEXT_MAX,
+          SMALL_LH,
+          { base: 'mono' },
+        );
+        add(flow(lines));
+      }
+      continue;
+    }
+    for (const b of parseMarkdown(seg.text)) {
     switch (b.kind) {
       case 'hr':
         add({ kind: 'rule', h: 1, w: TEXT_MAX });
@@ -598,6 +634,7 @@ function layoutBlocks(
         break;
       }
     }
+    }
   }
   return out;
 }
@@ -626,7 +663,7 @@ export function layoutConversation(
   let y = PAD;
   const bubbles: ConvImageBubble[] = [];
   for (const e of entries) {
-    const blocks = layoutBlocks(measure, e.text, pal, diagrams);
+    const blocks = layoutBlocks(measure, e.text, pal, diagrams, e.frags);
     const meta = metaRow(measure, opts.theme, e.at, e.tags ?? [], e.role, opts);
     const contentW = Math.max(meta.w, 0, ...blocks.map((b) => b.w));
     const contentH = blocks.reduce((n, b) => n + b.gap + b.h, 0);
@@ -855,9 +892,73 @@ export async function prepareDiagrams(
   return out;
 }
 
+/**
+ * 渲染块位图：正文里的引用行按序对应这里的位图（`ConvImageEntry.frags`）。
+ * fragment 经 materialize 包成完整文档 → foreignObject SVG → Image 解码——
+ * canvas 画不了活 iframe，foreignObject 是唯一的「HTML 进位图」通道。
+ * 渲染失败的一块不进数组（排版回落占位行），不阻断整张图。
+ */
+export async function prepareFrags(
+  entries: readonly ConvImageEntry[],
+  fetchFragment: (path: string) => Promise<string>,
+): Promise<MermaidImage[][]> {
+  const out: MermaidImage[][] = [];
+  for (const e of entries) {
+    const frags: MermaidImage[] = [];
+    if (hasVisualizeRef(e.text)) {
+      for (const seg of visualizeSegments(e.text)) {
+        if (seg.kind !== 'viz') continue;
+        try {
+          const html = await fetchFragment(seg.ref.path);
+          frags.push(await renderFragmentImage(html));
+        } catch {
+          // 取不到/渲不出：这一块按占位行出，不阻断整张图
+        }
+      }
+    }
+    out.push(frags);
+  }
+  return out;
+}
+
+/** fragment HTML → 位图（foreignObject SVG 光栅化；宽度压到气泡内宽）。
+ *  fragment 自带主题 fallback 色，光栅化不再注入 weave 变量。 */
+async function renderFragmentImage(fragmentHtml: string): Promise<MermaidImage> {
+  const width = TEXT_MAX - CODE_PAD * 2;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="10">` +
+    `<foreignObject width="100%" height="100%">` +
+    `<div xmlns="http://www.w3.org/1999/xhtml" id="viz-measure-root" style="width:${width}px;"></div>` +
+    `</foreignObject></svg>`;
+  // 先量高：把 fragment 塞进量高容器，借一次光栅化读 scrollHeight
+  const probeDiv = `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;font:12px sans-serif;color:#e5e5e5;">${fragmentHtml}</div>`;
+  const probeSvg = svg.replace(
+    `<div xmlns="http://www.w3.org/1999/xhtml" id="viz-measure-root" style="width:${width}px;"></div>`,
+    probeDiv,
+  );
+  const probeImg = await svgImage(probeSvg);
+  const height = Math.max(40, Math.min(probeImg.height || 200, 1600));
+  const finalSvg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+    `<foreignObject width="100%" height="100%">${probeDiv}</foreignObject></svg>`;
+  const img = await svgImage(finalSvg);
+  return { img, w: width, h: height };
+}
+
+/** SVG 字符串 → 解码好的 Image（foreignObject 要求 data URL 同源加载）。 */
+function svgImage(svg: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('svg image decode failed'));
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  });
+}
+
 export async function renderConversationImage(
   entries: readonly ConvImageEntry[],
   opts: ConvImageOpts,
+  fetchFragment?: (path: string) => Promise<string>,
 ): Promise<Blob> {
   const probe = document.createElement('canvas').getContext('2d');
   if (!probe) throw new Error('canvas 2d context unavailable');
@@ -866,6 +967,12 @@ export async function renderConversationImage(
     return probe.measureText(text).width;
   };
   const diagrams = await prepareDiagrams(entries, opts.theme);
+  if (fetchFragment) {
+    const fragLists = await prepareFrags(entries, fetchFragment);
+    entries.forEach((e, i) => {
+      if (fragLists[i]?.length) e.frags = fragLists[i];
+    });
+  }
   const layout = layoutConversation(measure, entries, opts, diagrams);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(layout.width * layout.scale);
@@ -885,7 +992,7 @@ export function imageFileName(label: string, at: Date = new Date()): string {
   const ts =
     `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}` +
     `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
-  return `weave-${safe || 'conversation'}-${ts}.png`;
+  return `${safe || 'conversation'}-${ts}.png`;
 }
 
 export function downloadBlob(blob: Blob, name: string): void {

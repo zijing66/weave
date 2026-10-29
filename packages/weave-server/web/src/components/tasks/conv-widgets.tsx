@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
 import type { ConvEntry } from './conv-model';
-import { isRemotePrompt } from './conv-model';
+import { isRemotePrompt, stripVisualizeRefs } from './conv-model';
 import { api, API_BASE } from '@/lib/api';
 import type { ConvImageEntry, ConvImageTag } from '@/lib/conv-image';
 
@@ -25,7 +25,7 @@ export type ConvMenu =
   | { kind: 'share'; left: number; bottom: number };
 
 export const MENU_W = 168;
-/** 菜单高度上限（分享菜单三项）：只用于向上定位与下沿夹取，略大无害。 */
+/** 菜单高度上限（气泡菜单至多三项）：只用于向上定位与下沿夹取，略大无害。 */
 export const MENU_H = 104;
 
 /** 设置页「当前使用」的自定义头；读不到设置就当没有（导出不该被设置面挡住）。 */
@@ -71,7 +71,8 @@ export const toImageEntries = (entries: readonly ConvEntry[], planLabel: string)
       return {
         role: e.role as ConvImageEntry['role'],
         at: e.at,
-        text: e.text,
+        // 渲染块引用行在分享图里是乱码，剥行保文（与 HTML 导出同口径）
+        text: stripVisualizeRefs(e.text),
         ...(tags.length > 0 ? { tags } : {}),
         ...(e.pipe !== undefined ? { viaWeave: true } : {}),
         ...(e.failed === true ? { failed: true } : {}),

@@ -1,4 +1,5 @@
 import { copyImage, copyText } from '@/lib/clipboard';
+import { api } from '@/lib/api';
 import {
   downloadBlob,
   imageFileName,
@@ -8,7 +9,15 @@ import { conversationHtml, htmlFileName } from '@/lib/conv-html';
 import { parseMarkdown } from '@/lib/conv-markdown';
 import { renderMermaidSvg } from '@/lib/mermaid';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
-import { exportConversationText, exportStamp, activeHtmlHead, imageDataUrl, toImageEntries } from './conv-export';
+import {
+  exportConversationMarkdown,
+  exportConversationText,
+  exportStamp,
+  markdownFileName,
+  activeHtmlHead,
+  imageDataUrl,
+  toImageEntries,
+} from './conv-export';
 import { isImageUpload } from './attach';
 import { MENU_W, type ConvMenu } from './conv-widgets';
 import type { ConvEntry } from './conv-model';
@@ -63,10 +72,11 @@ const shareImage = (to: 'clipboard' | 'download'): void => {
     async () => {
       let blob: Blob;
       try {
-        blob = await renderConversationImage(toImageEntries(chosen, t('tasks.convPlan')), {
-          stamp: exportStamp,
-          theme,
-        });
+        blob = await renderConversationImage(
+          toImageEntries(chosen, t('tasks.convPlan')),
+          { stamp: exportStamp, theme },
+          (path) => api.visualizationFragment(path).then((r) => r.html),
+        );
       } catch (e) {
         throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
       }
@@ -137,6 +147,20 @@ const exportHtml = (): void => {
   );
 };
 
+/** 导出 Markdown 文件：单条 = 纯正文（不带文档头），多条 = 对话记录（带头）。
+ *  气泡菜单传单条、分享菜单传勾选集，同一份函数按条数分流。 */
+const exportMarkdown = (entries: readonly ConvEntry[]): void => {
+  if (entries.length === 0) return;
+  setMenu(null);
+  const md = exportConversationMarkdown(entries, {
+    user: t('tasks.convRoleUser'),
+    assistant: t('tasks.convRoleAssistant'),
+    plan: t('tasks.convPlan'),
+    title: label,
+  });
+  downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), markdownFileName(label));
+};
+
 /** 分享菜单往上开：底栏在下沿，向下没有可用的地方。 */
 const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
   const r = e.currentTarget.getBoundingClientRect();
@@ -148,5 +172,5 @@ const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
   });
 };
 
-  return { copyPicked, shareImage, exportHtml, openShareMenu };
+  return { copyPicked, shareImage, exportHtml, exportMarkdown, openShareMenu };
 }

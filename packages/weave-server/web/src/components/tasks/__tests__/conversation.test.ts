@@ -30,7 +30,7 @@ import {
 import { imageMarkerSegments, pipePathSegments } from '../conv-model';
 import { stackUnitsOf } from '../conv-stack';
 import { attachedFilesFrom } from '../attach';
-import { exportConversationText, exportStamp } from '../conv-export';
+import { exportConversationText, exportConversationMarkdown, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
 import type { HookEventRow, SessionMessageRow, UploadFile } from '@/lib/api';
 
@@ -804,6 +804,59 @@ describe('导出到剪贴板', () => {
       { user: '我', assistant: '会话', plan: '计划' },
     );
     expect(text).toBe('[2026-10-16 01:00:00] 我\nA\n\n[2026-10-16 01:02:00] 会话\nB');
+  });
+
+  it('⑥ 渲染块引用行剥行保文（私有区字符粘出去是乱码）', () => {
+    const ref = '\u{e200}visualize\u{e202}{"path":"D:/x/a.html"}\u{e201}';
+    const text = exportConversationText(
+      [{ key: 'e1', role: 'assistant', at: ts(1, 0, 0), text: `结论如下\n\n${ref}\n\n完` }],
+      { user: '我', assistant: '会话', plan: '计划' },
+    );
+    expect(text).toBe('[2026-10-16 01:00:00] 会话\n结论如下\n\n完');
+    expect(text).not.toContain('\u{e200}');
+  });
+});
+
+describe('导出 Markdown', () => {
+  // 本地时区构造，期望值不带时区假设
+  const ts = (h: number, m: number, s: number): string =>
+    new Date(2026, 9, 16, h, m, s).toISOString();
+
+  it('① 单条 = 纯正文（markdown 原样，不带文档头与角色行）', () => {
+    const md = exportConversationMarkdown(
+      [{ key: 'e1', role: 'assistant', at: ts(9, 0, 0), text: '# 标题\n\n正文一段。' }],
+      { user: '我', assistant: '会话', plan: '计划', title: '会话 A' },
+    );
+    expect(md).toBe('# 标题\n\n正文一段。');
+  });
+
+  it('② 多条 = 对话记录：文档头（标题+时刻+条数）+ 每条角色行', () => {
+    const md = exportConversationMarkdown(
+      [
+        { key: 'e1', role: 'user', at: ts(9, 0, 0), text: 'A' },
+        { key: 'e2', role: 'assistant', at: ts(9, 1, 0), text: 'B' },
+      ],
+      { user: '我', assistant: '会话', plan: '计划', title: '会话 A' },
+    );
+    const head = md.slice(0, md.indexOf('\n\n###'));
+    // 文档头时刻 = 导出当下（不绑死日期），条数 = 过滤压缩分隔后的条数
+    expect(head).toMatch(/^# 会话 A\n\n\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} · 2$/);
+    expect(md).toContain('### [2026-10-16 09:00:00] 我\n\nA');
+    expect(md).toContain('### [2026-10-16 09:01:00] 会话\n\nB');
+  });
+
+  it('③ 压缩分隔不进导出；计划条目在角色行带计划 tag', () => {
+    const md = exportConversationMarkdown(
+      [
+        { key: 'e1', role: 'user', at: ts(1, 0, 0), text: 'A' },
+        { key: 'e2', role: 'compaction', at: ts(1, 1, 0), text: '' },
+        { key: 'e3', role: 'assistant', plan: true, at: ts(1, 2, 0), text: 'B' },
+      ],
+      { user: '我', assistant: '会话', plan: '计划', title: 'T' },
+    );
+    expect(md).toContain('· 2');
+    expect(md).not.toContain('compaction');
+    expect(md).toContain('### [2026-10-16 01:02:00] 会话 · 计划\n\nB');
   });
 });
 

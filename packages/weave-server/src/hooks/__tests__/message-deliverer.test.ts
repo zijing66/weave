@@ -1145,6 +1145,38 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(plainId)).toMatchObject({ acked: true });
   });
 
+  it('bash 模式也算命令形态（触发符 `!` 归能力面）：宿主本地执行不发 UPS，过短窗口按已执行收、不置暂停闸', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 20,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '!weave-dev init',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    expect(sendText).toHaveBeenCalledWith('pane-1', '!weave-dev init');
+    await new Promise((r) => setTimeout(r, 60));
+    // bash 模式压根不发 UserPromptSubmit：窗口过期即按已执行收，也不该挂「未回执」闸
+    expect(deliverer.getMessage(id)).toMatchObject({ via: 'terminal', status: 'delivered', acked: true });
+    expect(deliverer.getMessage(id)?.stalled).not.toBe(true);
+  });
+
   it('活动旁证：内建命令行靠宿主后续事件及时翻牌（不等 5s 短窗口），普通文本行不掺和', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const sendText = vi.fn().mockResolvedValue(undefined);
@@ -1190,6 +1222,54 @@ describe('MessageDeliverer 裁决表', () => {
     deliverer.noteActivity(SESSION_ID);
     expect(deliverer.getMessage(plainId)).toMatchObject({ status: 'delivered' });
     expect(deliverer.getMessage(plainId)?.acked).not.toBe(true);
+  });
+
+  it('已执行的斜杠命令常驻在途视图（TTL 豁免）——/rewind 类没有认领事件，TTL 一到就消失无从查起', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 20,
+        visibleTtlMs: 80,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const cmd = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '/rewind',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const cmdId = (cmd as { messageId: string }).messageId;
+    await new Promise((r) => setTimeout(r, 60)); // 短窗口过期 → 翻牌 acked
+    expect(deliverer.getMessage(cmdId)).toMatchObject({ status: 'delivered', acked: true });
+
+    const plain = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'plain body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const plainId = (plain as { messageId: string }).messageId;
+
+    await new Promise((r) => setTimeout(r, 160)); // 双双越过 TTL
+    const visible = deliverer.listVisible(SESSION_ID).map((m) => m.id);
+    // 命令行常驻；普通文本行（未回执）也跨窗留着，但那是「在飞」语义，不是豁免
+    expect(visible).toContain(cmdId);
+    deliverer.onSessionPrompt(SESSION_ID, 'plain body');
+    // 普通行回执一到即退场（TTL 早过了）；命令行还在
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(plainId);
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(cmdId);
   });
 
   it('强制终端随队列行落盘：pane 不在时入队，冲洗仍只打终端（不回落直投/中继）', async () => {
@@ -1424,8 +1504,9 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(id)?.acked).toBe(true);
     // 命中的那条事件 id 记在行上：对话面按它把投递行挂到对应气泡（文案对不上也认得出）
     expect(deliverer.getMessage(id)?.ackedEventId).toBe(777);
+    // 帧里带上命中的事件 id：前端据此把队列行退场与气泡出现放进同一拍
     expect(busEvents).toContainEqual(
-      expect.objectContaining({ kind: 'message.acknowledged', messageId: id }),
+      expect.objectContaining({ kind: 'message.acknowledged', messageId: id, eventId: 777 }),
     );
 
     // 短文本（< ACK_MIN_TEXT）认**尾部相等**：宿主在后面接的别的后文不算，尾部是本
@@ -1447,6 +1528,41 @@ describe('MessageDeliverer 裁决表', () => {
     // 尾部相等即回执（整条相等是它的特例）
     shortDeliverer.onSessionPrompt(SESSION_ID, 'ok');
     expect(shortDeliverer.getMessage(tinyId)?.acked).toBe(true);
+  });
+
+  it('回执比对：多行 chunk 被宿主用空串拼接（带空白比不中）→ 去空白再比一次', async () => {
+    pushEvent(SESSION_ID, 'Stop');
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({ spawnImpl: createFakeSpawn().spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '第一行正文\n第二行正文',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const id = (result as { messageId: string }).messageId;
+    // 归一把换行折成空格 → 与宿主拼接后的原文差一个空白，包含比对落空；
+    // 不补这一档这条永远等不到回执，行落 failed 而气泡已经在了（同一条显示两遍）
+    deliverer.onSessionPrompt(SESSION_ID, '第一行正文第二行正文', 888);
+    expect(deliverer.getMessage(id)).toMatchObject({ acked: true, ackedEventId: 888 });
+
+    // 只沾前半句（去空白后也不够长/不包含）不许被误认领
+    const other = new MessageDeliverer(
+      makeDeps({ spawnImpl: createFakeSpawn().spawnImpl, surfaceFor: () => surface, bin: 'fake-relay' }),
+    );
+    const second = await other.send({
+      toSessionId: SESSION_ID,
+      text: '另一条完全不同的正文内容',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const secondId = (second as { messageId: string }).messageId;
+    other.onSessionPrompt(SESSION_ID, '另一条', 889);
+    expect(other.getMessage(secondId)?.acked).toBeUndefined();
   });
 
   it('一条 UPS 核销多条在途：宿主把连着发的两次合成一次提交，不能只认第一条', async () => {
@@ -3095,6 +3211,67 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  describe('pane env 认领冲突（fork 继承同一份 env）', () => {
+    const ENV = { WEZTERM_PANE: '0', WEZTERM_UNIX_SOCKET: '/tmp/gui-sock-1' };
+
+    it('同一份 env 只归先到者：后到者记冲突，击键如实 409，绝不打进别人的终端', async () => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue([{ id: 'pane-0', title: null, cwd: null }]),
+        sendText: vi.fn(),
+        sendKeys,
+        locatePane: vi.fn().mockResolvedValue('pane-0'),
+        closePane: vi.fn(),
+      };
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop');
+      pushEvent(CODEX_SESSION, 'Stop'); // 只是让两行都有事件（lastSeenAt 新鲜）
+
+      deliverer.notePaneEnv(SESSION_ID, ENV);
+      deliverer.notePaneEnv(CODEX_SESSION, ENV);
+
+      expect(deliverer.paneEnvConflictOf(SESSION_ID)).toBeNull();
+      expect(deliverer.paneEnvConflictOf(CODEX_SESSION)).toBe(SESSION_ID);
+
+      await expect(deliverer.interrupt(CODEX_SESSION)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+      });
+      expect(sendKeys).not.toHaveBeenCalled();
+
+      // 先到者照常
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true });
+      expect(sendKeys).toHaveBeenCalledTimes(1);
+    });
+
+    it('前持有者静默超过让位窗口 → 后到者接管（旧会话确实退出了）', async () => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue([{ id: 'pane-0', title: null, cwd: null }]),
+        sendText: vi.fn(),
+        sendKeys,
+        locatePane: vi.fn().mockResolvedValue('pane-0'),
+        closePane: vi.fn(),
+      };
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop');
+      pushEvent(CODEX_SESSION, 'Stop');
+      deliverer.notePaneEnv(SESSION_ID, ENV);
+
+      // 把先到者的 lastSeenAt 推回让位窗口之外
+      db.prepare('UPDATE sessions SET last_seen_at = ? WHERE session_id = ?').run(
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+        SESSION_ID,
+      );
+      deliverer.notePaneEnv(CODEX_SESSION, ENV);
+
+      expect(deliverer.paneEnvConflictOf(CODEX_SESSION)).toBeNull();
+      await expect(deliverer.interrupt(CODEX_SESSION)).resolves.toMatchObject({ ok: true });
+    });
+  });
+
   describe('interrupt（停止按钮 → 一记 ESC）', () => {
     const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
       const sendKeys = vi.fn().mockResolvedValue(undefined);
@@ -3108,44 +3285,109 @@ describe('MessageDeliverer 裁决表', () => {
       return { terminal, sendKeys };
     };
 
-    it('往 pane 打恰好一记 ESC（连打两次在 claude 里是历史回退菜单）', async () => {
+    it('屏上已显示中断 → 只打一记 ESC（连打两次在 claude 里是历史回退菜单）', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
       ]);
-      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      const deliverer = new MessageDeliverer(
+        makeDeps({
+          terminal: { ...terminal, getPaneText: vi.fn(async () => 'Interrupted · What should Claude do instead?') },
+          interruptVerifyMs: 0,
+        }),
+      );
 
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toEqual({
         ok: true,
         paneId: 'pane-1',
         sent: true,
+        confirmed: true,
       });
       expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
     });
 
-    it('补打 source=heuristic 绕开 pane env、只按标题+cwd 认回来（env 指着旧 pane 的那种）', async () => {
+    it('宿主吞掉 ESC（屏上没出现中断）→ 换键补一记 Ctrl+C，不再发第二记 ESC', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(
+        makeDeps({
+          terminal: {
+            ...terminal,
+            getPaneText: vi.fn(async () => '✻ Discombobulating… (29m 15s) · esc to interrupt'),
+          },
+          interruptVerifyMs: 0,
+        }),
+      );
+
+      // 补完键屏上仍挂着 `esc to interrupt`：键被吞了，如实答没停
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
+        ok: true,
+        sent: true,
+        confirmed: false,
+      });
+      expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b'],
+        ['pane-1', '\x03'],
+      ]);
+    });
+
+    it('补完 Ctrl+C 屏上落到中断态 → confirmed:true（不因第一拍没停就报没停）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const screens = ['✻ Discombobulating… (esc to interrupt)', 'Interrupted · What should Claude do instead?'];
+      const getPaneText = vi.fn(async () => screens.shift() ?? '');
+      const deliverer = new MessageDeliverer(
+        makeDeps({ terminal: { ...terminal, getPaneText }, interruptVerifyMs: 0 }),
+      );
+
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ ok: true, confirmed: true });
+      expect(sendKeys.mock.calls).toEqual([
+        ['pane-1', '\x1b'],
+        ['pane-1', '\x03'],
+      ]);
+    });
+
+    it('读不到屏幕（后端无读屏能力）→ 不补打，不凭猜打第二记', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const deliverer = new MessageDeliverer(makeDeps({ terminal, interruptVerifyMs: 0 }));
+
+      // 判不了就往好处答：不凭猜报「没停」
+      await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({
+        ok: true,
+        sent: true,
+        confirmed: true,
+      });
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b']]);
+    });
+
+    it('补打参数已退役：interrupt 只收 sessionId，env 命中即用（locator 优先、标题+cwd 回落）', async () => {
       db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
       const { terminal, sendKeys } = paneFixture([
         { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
       ]);
       const locatePane = vi.fn(async () => 'stale-pane');
-      const deliverer = new MessageDeliverer(makeDeps({ terminal: { ...terminal, locatePane } }));
+      const deliverer = new MessageDeliverer(
+        makeDeps({
+          terminal: {
+            ...terminal,
+            locatePane,
+            getPaneText: vi.fn(async () => 'Interrupted'),
+          },
+          interruptVerifyMs: 0,
+        }),
+      );
       deliverer.notePaneEnv(SESSION_ID, { WEZTERM_PANE: '3' });
 
-      // 常规口径：env 命中即用（即使它指的是别的 pane）
       await expect(deliverer.interrupt(SESSION_ID)).resolves.toMatchObject({ paneId: 'stale-pane' });
       expect(locatePane).toHaveBeenCalledTimes(1);
-      // 补打：不再问 env，按标题+cwd 认回真正的那个 pane
-      await expect(deliverer.interrupt(SESSION_ID, 'heuristic', 'stale-pane')).resolves.toMatchObject(
-        { paneId: 'pane-1', sent: true },
-      );
-      expect(locatePane).toHaveBeenCalledTimes(1);
-      // 会落到同一个 pane 就不打（连打两记在 claude 里是历史回退菜单）
-      await expect(deliverer.interrupt(SESSION_ID, 'heuristic', 'pane-1')).resolves.toMatchObject({
-        paneId: 'pane-1',
-        sent: false,
-      });
-      expect(sendKeys).toHaveBeenCalledTimes(2);
+      expect(sendKeys).toHaveBeenCalledTimes(1);
     });
 
     it('与作答同一套落点判定：会话没有 404 / 无终端通道 409 / pane 找不到 409', async () => {
