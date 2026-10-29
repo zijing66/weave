@@ -5,9 +5,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import { getUploadsDir } from '../db/paths.js';
 
 /**
- * 会话上传件：文件内容寻址（sha256 = id）落 `<dataDir>/data/uploads/<id>.<ext>`，
- * 行只记展示名与媒体类型。**上传 ≠ 投递**——资源不因消息发送而搬家，harness
- * 拿到的是这个稳定绝对路径（claude 的粘贴处理器按扩展名认出它是图）。
+ * 会话上传件：文件内容寻址（sha256 = id）落
+ * `<dataDir>/data/uploads/<净化原名>-<id 前 16 位><ext>`——原名进路径，会话里才
+ * 看得见用户传的是哪个文件；行只记展示名与媒体类型。**上传 ≠ 投递**——资源不因
+ * 消息发送而搬家，harness 拿到的是这个稳定绝对路径（claude 的粘贴处理器按扩展名
+ * 认出它是图）。
  *
  * 图片四型 = claude 路径识别集 `\.(png|jpe?g|gif|webp)$`（宿主把它变成 image
  * block + 输入框 `[Image #N]` 占位）；**其它类型宿主没有附件形态**，路径原样
@@ -52,6 +54,27 @@ const EXT_BY_MEDIA: Record<UploadImageType, string> = {
   'image/webp': '.webp',
 };
 
+/** 落盘名里原名段的上限（路径别撑爆 MAX_PATH）。 */
+const UPLOAD_NAME_MAX = 48;
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * 落盘名里的原名段：**空白折成 `-`**（claude 的粘贴处理器按空白切路径边界，
+ * 带空格的路径会破坏图片识别）、Windows 非法字符换 `-`、保留设备名加前缀、
+ * 截到 48 个码点。全空 = 不带宽名，落盘名只剩哈希前缀。
+ */
+function safeBaseOf(name: string): string {
+  const base = (name.split(/[\\/]/).pop() ?? '').replace(/\.[A-Za-z0-9]{1,10}$/, '');
+  const cleaned = base
+    .replace(/[\u0000-\u001f<>:"|?*]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/^[.-]+/, '')
+    .replace(/[.-]+$/, '')
+    .slice(0, UPLOAD_NAME_MAX);
+  if (!cleaned) return '';
+  return WINDOWS_RESERVED.test(cleaned) ? `_${cleaned}` : cleaned;
+}
+
 /** 落盘扩展名：图片按媒体类型（claude 靠它认图），其它沿用原文件名的后缀。 */
 function extOf(mediaType: string, name: string): string {
   if (isImageMediaType(mediaType)) return EXT_BY_MEDIA[mediaType];
@@ -87,6 +110,19 @@ export class UploadRepository {
    */
   save(input: { name: string; mediaType: string; bytes: Buffer; dir?: string | null }): UploadRow {
     const id = createHash('sha256').update(input.bytes).digest('hex');
+    // 同一份内容再来一次（哪怕换了名字）：行留下、盘上那份也留着（首名的形状），
+    // 不按新名字写第二份副本；文件真丢了才按原行补写。
+    const existing = this.getById(id);
+    if (existing) {
+      const file = this.pathOf(existing);
+      if (existsSync(file)) return existing;
+      mkdirSync(this.dirOf(existing), { recursive: true });
+      writeFileSync(
+        this.filePath(existing.id, existing.mediaType, existing.name, this.dirOf(existing)),
+        input.bytes,
+      );
+      return existing;
+    }
     const dir = input.dir ?? this.dir;
     mkdirSync(dir, { recursive: true });
     const file = this.filePath(id, input.mediaType, input.name, dir);
@@ -119,10 +155,22 @@ export class UploadRepository {
     });
     const id = hash.digest('hex');
     const size = statSync(input.file).size;
+    // 内容寻址：同一份内容可能已经在了（重复上传），那就只留旧的
+    const existing = this.getById(id);
+    if (existing) {
+      const file = this.pathOf(existing);
+      if (!existsSync(file)) {
+        mkdirSync(this.dirOf(existing), { recursive: true });
+        renameSync(
+          input.file,
+          this.filePath(existing.id, existing.mediaType, existing.name, this.dirOf(existing)),
+        );
+      } else rmSync(input.file, { force: true });
+      return existing;
+    }
     const dir = input.dir ?? this.dir;
     mkdirSync(dir, { recursive: true });
     const target = this.filePath(id, input.mediaType, input.name, dir);
-    // 内容寻址：同一份内容可能已经在了（重复上传），那就只留旧的
     if (existsSync(target)) rmSync(input.file, { force: true });
     else renameSync(input.file, target);
     this.db
@@ -139,9 +187,25 @@ export class UploadRepository {
     return row ? toRow(row) : undefined;
   }
 
-  /** 磁盘绝对路径（harness 的 `composePrompt` 引用的就是它）。 */
+  /**
+   * 磁盘绝对路径（harness 的 `composePrompt` 引用的就是它）：`<原名>-<id 前 16 位><ext>`。
+   * 原名进路径 = 会话 TUI / 转录 / 模型上下文直接看得见用户传的是哪个文件。
+   */
   filePath(id: string, mediaType: string, name: string, dir: string = this.dir): string {
-    return path.join(dir, `${id}${extOf(mediaType, name)}`);
+    const base = safeBaseOf(name);
+    const tag = id.slice(0, 16);
+    return path.join(dir, `${base ? `${base}-${tag}` : tag}${extOf(mediaType, name)}`);
+  }
+
+  /**
+   * 盘上真实路径：新形状优先，没有就回落旧形状 `<sha256><ext>`（存量件不迁移）。
+   * 两处都没有就答新形状（写入口据此建文件）。
+   */
+  pathOf(row: Pick<UploadRow, 'id' | 'mediaType' | 'name' | 'dir'>): string {
+    const next = this.filePath(row.id, row.mediaType, row.name, this.dirOf(row));
+    if (existsSync(next)) return next;
+    const legacy = path.join(this.dirOf(row), `${row.id}${extOf(row.mediaType, row.name)}`);
+    return existsSync(legacy) ? legacy : next;
   }
 
   /** 行的实际落盘目录：行里记了就用行里的，否则全局默认。 */
@@ -159,7 +223,7 @@ export class UploadRepository {
         id: row.id,
         name: row.name,
         mediaType: row.mediaType,
-        path: this.filePath(row.id, row.mediaType, row.name, this.dirOf(row)),
+        path: this.pathOf(row),
       });
     }
     return out;
@@ -169,7 +233,7 @@ export class UploadRepository {
   fileStatOf(id: string): { row: UploadRow; file: string; size: number } | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
-    const file = this.filePath(row.id, row.mediaType, row.name, this.dirOf(row));
+    const file = this.pathOf(row);
     if (!existsSync(file)) return undefined;
     return { row, file, size: statSync(file).size };
   }
@@ -178,7 +242,7 @@ export class UploadRepository {
   fileOf(id: string): { row: UploadRow; bytes: Buffer } | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
-    const file = this.filePath(row.id, row.mediaType, row.name, this.dirOf(row));
+    const file = this.pathOf(row);
     if (!existsSync(file)) return undefined;
     return { row, bytes: readFileSync(file) };
   }
@@ -210,7 +274,9 @@ export class UploadRepository {
     }>;
     const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
     for (const row of rows) {
-      rmSync(this.filePath(row.id, row.media_type, row.name, row.dir ?? this.dir), { force: true });
+      rmSync(this.pathOf({ id: row.id, mediaType: row.media_type, name: row.name, dir: row.dir }), {
+        force: true,
+      });
       del.run(row.id);
     }
     return rows.length;
@@ -311,7 +377,7 @@ export class UploadRepository {
     for (const id of ids) {
       const row = this.getById(id);
       if (!row) continue;
-      rmSync(this.filePath(row.id, row.mediaType, row.name, this.dirOf(row)), { force: true });
+      rmSync(this.pathOf(row), { force: true });
       removed += Number(del.run(id).changes);
     }
     return removed;
@@ -392,7 +458,9 @@ export class UploadRepository {
     const del = this.db.prepare('DELETE FROM uploads WHERE id = ?');
     let removed = 0;
     for (const row of rows) {
-      rmSync(this.filePath(row.id, row.media_type, row.name, row.dir ?? this.dir), { force: true });
+      rmSync(this.pathOf({ id: row.id, mediaType: row.media_type, name: row.name, dir: row.dir }), {
+        force: true,
+      });
       removed += Number(del.run(row.id).changes);
       onProgress(removed, rows.length);
     }

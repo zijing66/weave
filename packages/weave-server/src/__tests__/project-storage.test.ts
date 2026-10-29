@@ -129,9 +129,9 @@ describe('项目存储路径（GET/PUT /projects/:id/storage + 上传按项目�
     const upload = (await res.json()) as { upload: { id: string } };
     const row = uploads.getById(upload.upload.id)!;
     expect(row.dir).toBe(imgDir);
-    expect(existsSync(path.join(imgDir, `${row.id}.png`))).toBe(true);
+    expect(existsSync(path.join(imgDir, `shot-${row.id.slice(0, 16)}.png`))).toBe(true);
     // 不落全局默认目录
-    expect(existsSync(path.join(globalDir, `${row.id}.png`))).toBe(false);
+    expect(existsSync(path.join(globalDir, `shot-${row.id.slice(0, 16)}.png`))).toBe(false);
 
     // 不带 projectId 的上传仍走全局默认
     const plain = await postUpload({

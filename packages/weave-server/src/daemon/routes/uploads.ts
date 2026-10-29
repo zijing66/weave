@@ -44,7 +44,7 @@ function toUploadDto(
     name: row.name,
     mediaType: row.mediaType,
     size: row.size,
-    path: deps.uploads!.filePath(row.id, row.mediaType, row.name, row.dir ?? deps.uploads!.defaultDir),
+    path: deps.uploads!.pathOf(row),
   };
 }
 

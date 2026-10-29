@@ -285,7 +285,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存附件引用、重启后按现 harness 面重合成）。
 - **只有图才逼层② 终端**（`hasImages` 按媒体类型判，不看有没有附件）：普通文件的路径走 socket / 中继 / codex queue 与走终端是同一个结果。
 - **带图消息层② 优先**：只有 bracketed paste 能把路径转成 `[Image #N]` + 真 image block，socket/中继拿到的是裸文本路径；打不进照常回落层①-a / 层①（降级为路径文本）。
-- **上传件内容寻址**：`<dataDir>/data/uploads/<sha256>.<ext>`（图按媒体类型定扩展名，非图沿用原文件后缀），`GET /images/:id` 长缓存；**上传 ≠ 投递**。
+- **上传件内容寻址**：`<dataDir>/data/uploads/<净化原名>-<sha256 前 16 位><ext>`（图按媒体类型定扩展名，非图沿用原文件后缀）——原名进路径是为了让会话 TUI / 转录 / 模型上下文直接看得见用户传的是哪个文件（此前纯哈希名，会话里认不出附件）。净化 = 去扩展名、Windows 非法字符换 `-`、**空白折成 `-`**（claude 的粘贴处理器按空白切路径边界，带空格的路径会破坏图片识别）、截 48 码点。存量旧行保持 `<sha256><ext>`，`pathOf` 读时回落、**不迁移**；重复内容（同 id 不同名）只留首名那份文件。`GET /images/:id` 长缓存；**上传 ≠ 投递**。
 - **分块上传（断点续传）**：`POST /uploads/begin`（name/mediaType/size，超限当场 413）→ `PUT /uploads/:id?offset=N`（裸字节，单块 ≤16MB）→ `POST /uploads/:id/finish`。半截件落 `cache/tmp/uploads/<id>.part` + 同名 `.json`（**可弃产物**，不进库），finish 才流式算 sha256 并 `rename` 进 `data/uploads`（同盘原子）。偏移对不上回 409 `{received}`、没收到最后一块 finish 回 409——**服务端不猜不补齐**。临时件 24h 被 `UploadSessions.sweep` 回收（与孤儿回收同轮）。web 侧唯一实现 = `web/src/lib/upload.ts`：4MB 一块、XHR 取 `upload.onprogress`（fetch 没有上传进度），续传点记 sessionStorage（键 = 名字+大小+修改时刻），进度画在附件格自己的图标上（小进度条 + 百分比）。
 - **孤儿回收 = 引用计数式**（`UploadRepository.pruneUnreferenced`：删「没有任何 `event_images` 引用」的文件 + 行，1h 宽限——编辑器里选了图还没发的那份此刻也无引用；三处触发 = 删会话（`purgeSession` 内、**在 `events.deleteBySession` 之后**，指针靠级联先没）/ 项目归档 / `SessionSweeper` 每轮；**被引用即永不删**，历史气泡的图不会因清理破掉；否决按会话分目录——去重失效且上传时本就无归属）。
 - 回执命中把 upload id 挂到那条 UserPromptSubmit 事件上（`event_images` 指针，消息本身仍不落库）供气泡缩略图跨刷新回显；带图回执比对放宽一档（claude 的粘贴处理器会吃掉多行原文的换行）、纯图发送认空 UPS。

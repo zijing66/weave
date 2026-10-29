@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, renameSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -60,9 +60,10 @@ describe('UploadRepository 清理面（设置页「对话附件存储」）', ()
   it('removeMany 删文件 + 行；已删的 id 跳过不重复计', () => {
     const a = uploads.save({ name: 'a.png', mediaType: 'image/png', bytes: bytesOf('a') });
     uploads.linkToEvent(eventId, [a.id]);
+    const file = uploads.pathOf(a);
     expect(uploads.removeMany([a.id])).toBe(1);
     expect(uploads.getById(a.id)).toBeUndefined();
-    expect(existsSync(uploads.filePath(a.id, 'image/png'))).toBe(false);
+    expect(existsSync(file)).toBe(false);
     expect(uploads.removeMany([a.id])).toBe(0);
   });
 
@@ -265,7 +266,35 @@ describe('UploadRepository', () => {
     expect(a.id).toBe(createHash('sha256').update(bytes).digest('hex'));
     expect(b.id).toBe(a.id);
     expect(uploads.getById(a.id)?.name).toBe('a.png'); // 首次的名字留下
-    expect(existsSync(uploads.filePath(a.id, 'image/png'))).toBe(true);
+    expect(existsSync(uploads.pathOf(a))).toBe(true);
+    // 换了名字的同一份内容不再写第二份副本
+    expect(existsSync(uploads.filePath(b.id, 'image/png', 'renamed.png'))).toBe(false);
+  });
+
+  it('落盘名 = 净化原名 + id 前 16 位：中文名保留、空白折成 -、非法字符换 -', () => {
+    const md = uploads.save({
+      name: '应用组件管理 datalayer 接口V0.1.md',
+      mediaType: 'text/markdown',
+      bytes: bytesOf('zh'),
+    });
+    expect(uploads.pathOf(md)).toBe(join(dir, `应用组件管理-datalayer-接口V0.1-${md.id.slice(0, 16)}.md`));
+
+    const weird = uploads.save({ name: 'a:b*c?.txt', mediaType: 'text/plain', bytes: bytesOf('w') });
+    expect(uploads.pathOf(weird)).toBe(join(dir, `a-b-c-${weird.id.slice(0, 16)}.txt`));
+
+    const unnamed = uploads.save({ name: '   ', mediaType: 'text/plain', bytes: bytesOf('n') });
+    expect(uploads.pathOf(unnamed)).toBe(join(dir, `${unnamed.id.slice(0, 16)}.bin`));
+  });
+
+  it('存量旧形状（<sha256><ext>）不迁移：读到就回落旧路径，删也删得掉', () => {
+    const row = uploads.save({ name: 'old.md', mediaType: 'text/markdown', bytes: bytesOf('o') });
+    const legacy = join(dir, `${row.id}.md`);
+    renameSync(uploads.pathOf(row), legacy);
+    expect(uploads.pathOf(row)).toBe(legacy);
+    expect(uploads.fileOf(row.id)?.bytes.equals(bytesOf('o'))).toBe(true);
+    expect(uploads.refsOf([row.id])![0]!.path).toBe(legacy);
+    expect(uploads.removeMany([row.id])).toBe(1);
+    expect(existsSync(legacy)).toBe(false);
   });
 
   it('refsOf 带落盘绝对路径；任一 id 查不到整条返 null', () => {
@@ -276,7 +305,7 @@ describe('UploadRepository', () => {
         id: row.id,
         name: 'a.png',
         mediaType: 'image/png',
-        path: join(dir, `${row.id}.png`),
+        path: join(dir, `a-${row.id.slice(0, 16)}.png`),
       },
     ]);
     expect(uploads.refsOf([row.id, 'f'.repeat(64)])).toBeNull();
@@ -286,7 +315,7 @@ describe('UploadRepository', () => {
   it('fileOf 回字节；行在文件不在 = undefined（serve 404）', () => {
     const row = uploads.save({ name: 'c.webp', mediaType: 'image/webp', bytes: bytesOf('c') });
     expect(uploads.fileOf(row.id)?.bytes.equals(bytesOf('c'))).toBe(true);
-    rmSync(uploads.filePath(row.id, 'image/webp'));
+    rmSync(uploads.pathOf(row));
     expect(uploads.fileOf(row.id)).toBeUndefined();
     expect(uploads.fileOf('0'.repeat(64))).toBeUndefined();
   });
@@ -309,11 +338,12 @@ describe('UploadRepository', () => {
     uploads.linkToEvent(eventId, [kept.id]);
     db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
 
+    const orphanFile = uploads.pathOf(orphan);
     expect(uploads.pruneUnreferenced()).toBe(1);
     expect(uploads.getById(orphan.id)).toBeUndefined();
-    expect(existsSync(uploads.filePath(orphan.id, 'image/png'))).toBe(false);
+    expect(existsSync(orphanFile)).toBe(false);
     expect(uploads.getById(kept.id)).toBeDefined();
-    expect(existsSync(uploads.filePath(kept.id, 'image/png'))).toBe(true);
+    expect(existsSync(uploads.pathOf(kept))).toBe(true);
   });
 
   it('宽限期内的无引用上传件不动（编辑器里选了图、还没发）', () => {
@@ -347,20 +377,21 @@ describe('UploadRepository', () => {
       dir: custom,
     });
     expect(row.dir).toBe(custom);
-    expect(existsSync(join(custom, `${row.id}.png`))).toBe(true);
-    expect(existsSync(uploads.filePath(row.id, 'image/png'))).toBe(false);
+    const customFile = join(custom, `p-${row.id.slice(0, 16)}.png`);
+    expect(existsSync(customFile)).toBe(true);
+    expect(existsSync(uploads.filePath(row.id, 'image/png', row.name))).toBe(false);
     // 读取侧（refsOf/fileOf）按行 dir 解析，不落全局目录
-    expect(uploads.refsOf([row.id])![0]!.path).toBe(join(custom, `${row.id}.png`));
+    expect(uploads.refsOf([row.id])![0]!.path).toBe(customFile);
     expect(uploads.fileOf(row.id)?.bytes.equals(bytesOf('p'))).toBe(true);
 
     const plain = uploads.save({ name: 'q.png', mediaType: 'image/png', bytes: bytesOf('q') });
     expect(plain.dir).toBeNull();
-    expect(uploads.refsOf([plain.id])![0]!.path).toBe(join(dir, `${plain.id}.png`));
+    expect(uploads.refsOf([plain.id])![0]!.path).toBe(join(dir, `q-${plain.id.slice(0, 16)}.png`));
 
     // 孤儿回收按行 dir 删文件
     db.prepare('UPDATE uploads SET created_at = ?').run(new Date(Date.now() - 2 * 60 * 60_000).toISOString());
     expect(uploads.pruneUnreferenced()).toBe(2);
-    expect(existsSync(join(custom, `${row.id}.png`))).toBe(false);
+    expect(existsSync(customFile)).toBe(false);
   });
 });
 
