@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { materialize } from '../visualization';
+import { materialize, visualizationHeightCap } from '../visualization';
 
 const VARS = {
   '--w-neutral-950': '10 10 10',
@@ -18,6 +18,23 @@ const VARS = {
   '--w-neutral-500': '115 115 115',
 };
 
+describe('visualizationHeightCap', () => {
+  it('块再高也不超过气泡区的 70%', () => {
+    expect(visualizationHeightCap(1440)).toBe(1008);
+    expect(visualizationHeightCap(800)).toBe(560);
+  });
+
+  it('硬顶 1200：超大气泡区不再涨', () => {
+    expect(visualizationHeightCap(4000)).toBe(1200);
+  });
+
+  it('气泡区不够也给足 320：装不下就整区滚，不把块压没', () => {
+    expect(visualizationHeightCap(600)).toBe(420);
+    expect(visualizationHeightCap(200)).toBe(320);
+    expect(visualizationHeightCap(0)).toBe(320);
+  });
+});
+
 describe('materialize', () => {
   it('fragment 原文原样进 body', () => {
     const frag = '<div id="x">hi</div>';
@@ -30,6 +47,11 @@ describe('materialize', () => {
     expect(doc).toMatch(/<meta http-equiv="Content-Security-Policy"/);
     expect(doc).toContain('https://cdn.jsdelivr.net');
     expect(doc).toContain("default-src 'none'");
+  });
+
+  it('color-scheme 跟随 weave 主题（iframe 里原生滚动条/表单控件不再跟系统走）', () => {
+    expect(materialize('<div/>', { theme: 'dark', vars: VARS })).toContain('color-scheme: dark;');
+    expect(materialize('<div/>', { theme: 'light', vars: VARS })).toContain('color-scheme: light;');
   });
 
   it('主题别名解析成实际色值（dark）', () => {

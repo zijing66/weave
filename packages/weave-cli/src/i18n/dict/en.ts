@@ -256,6 +256,7 @@ export const en: Record<keyof typeof zh, string> = {
   'claudemd.files': '## File Organization\n\n- Source code: `src/`\n- Tests: co-located `*.test.ts` or `__tests__/` directories\n- Config files at project root\n- Use existing directory structure — don\'t invent new top-level folders\n\n',
   'claudemd.security': '## Security\n\n- Never commit secrets, credentials, or API keys\n- Validate all user input at system boundaries\n- Don\'t introduce XSS, SQL injection, or command injection vectors\n- Prefer parameterized queries and safe APIs over string concatenation\n\n',
   'claudemd.skills': '## Skills\n\nReusable skills live in your harness\'s own skills directory (Claude Code: `.claude/skills/`): one directory per skill, each with a `SKILL.md`; invoke a skill by name when the task matches one.\n\n',
+  'claudemd.visualize': '## Render Blocks\n\nTo embed an HTML snapshot in a weave conversation: write the fragment inside the project (e.g. `.weave/previews/<name>.html`; for throwaway artifacts use the `weave/` subdirectory of the system temp dir) — the server rejects any other location; put the reference on its **own line**: U+E200 + `visualize` + U+E202 + `{"path":"<abs>"}` + U+E201.\n\n',
   'init.removed': '  Removed {count} stale generated file(s) by marker.\n',
   // --- harness health-check message / fix ---
   'harness.instructionLinkNotMaterialised.message':

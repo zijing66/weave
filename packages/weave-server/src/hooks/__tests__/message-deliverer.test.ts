@@ -1272,6 +1272,38 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(cmdId);
   });
 
+  it('skill 命令（UPS 认领、记下 eventId）不享受 TTL 豁免：气泡已经在对话里，行必须退场', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 60_000, // 短窗口拉长：翻牌只能来自 UPS 正路（带 eventId）
+        visibleTtlMs: 80,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText: vi.fn().mockResolvedValue(undefined),
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const skill = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '/zj-code-abss-worktime 10-08的工时填写',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const id = (skill as { messageId: string }).messageId;
+    deliverer.onSessionPrompt(SESSION_ID, '/zj-code-abss-worktime 10-08的工时填写', 4242);
+    expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered', acked: true, ackedEventId: 4242 });
+
+    await new Promise((r) => setTimeout(r, 160)); // 越过 TTL
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).not.toContain(id);
+  });
+
   it('强制终端随队列行落盘：pane 不在时入队，冲洗仍只打终端（不回落直投/中继）', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const path = uniqueInboxPath();

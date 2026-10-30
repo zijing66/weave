@@ -161,6 +161,8 @@ export function NarrationStack({
   };
 
   const seg = group.segs[Math.min(idx, n - 1)]!;
+  const vizSegs = hasVisualizeRef(seg.text) ? visualizeSegments(seg.text) : null;
+  const vizCount = vizSegs?.filter((s) => s.kind === 'viz').length ?? 0;
   return (
     <div
       // 只挂 touch-pan-y：横向手势归 JS（浏览器不当滚动接管、不发 pointercancel），
@@ -209,6 +211,12 @@ export function NarrationStack({
               <span className="shrink-0 rounded bg-neutral-500/15 px-1 py-px text-10 font-medium text-neutral-400">
                 {t('tasks.convNarration')}
               </span>
+              {vizSegs && (
+                <span className="shrink-0 rounded bg-violet-500/15 px-1 py-px text-10 font-medium text-violet-300">
+                  {t('tasks.convVisual')}
+                  {vizCount > 1 ? ` ×${vizCount}` : ''}
+                </span>
+              )}
               {n > 1 && (
                 <span className="flex shrink-0 items-center gap-0.5">
                   {/* 翻页器收进头部行（用户裁决）：位置恒定不随气泡尺寸变化，
@@ -274,9 +282,9 @@ export function NarrationStack({
               disabled={selecting}
             >
               {/* 渲染块引用行整行换成 sandbox iframe（与 assistant 气泡同口径） */}
-              {hasVisualizeRef(seg.text) ? (
+              {vizSegs ? (
                 <VizSegments
-                  segments={visualizeSegments(seg.text)}
+                  segments={vizSegs}
                   markdown={(text) => <AssistantMarkdown text={text} />}
                 />
               ) : (

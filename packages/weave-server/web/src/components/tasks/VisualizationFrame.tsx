@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
-import { materialize, themeVarsOf } from '@/lib/visualization';
+import {
+  materialize,
+  themeVarsOf,
+  visualizationHeightCap,
+  CONV_SCROLLER_ATTR,
+  VIZ_MIN_HEIGHT,
+  VIZ_MAX_HEIGHT,
+} from '@/lib/visualization';
 import { useTheme } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import type { VisualizeRef, VizSeg } from './conv-model';
@@ -10,10 +17,8 @@ import type { VisualizeRef, VizSeg } from './conv-model';
  * 渲染块：assistant 气泡里的可视化引用行渲染成 sandbox iframe。
  * fetch（cookie 认证）→ materialize（CSP + 主题注入 + openai shim + resize 桥）
  * → srcdoc iframe（allow-scripts，opaque origin）。高度由 iframe 内 postMessage
- * 桥上报，父页调高（clamp 1200px，超出内部滚动）。
+ * 桥上报，父页调高（clamp 1200px，且不超过当前视口，超出内部滚动）。
  */
-
-const MAX_HEIGHT = 1200;
 
 export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
   const t = useT();
@@ -21,8 +26,22 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [height, setHeight] = useState<number | null>(null);
+  const [cap, setCap] = useState(VIZ_MAX_HEIGHT);
   const [nonce, setNonce] = useState(0);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // 上限基准 = 对话滚动容器（气泡区），不是窗口：右栏 / 手机抽屉里对话区远小于视口。
+  // 容器尺寸一变（转屏 / 拉窗口 / 抽屉展开）就重算，已报上来的高度也被重新收口。
+  useEffect(() => {
+    const scroller =
+      wrapRef.current?.closest<HTMLElement>(`[${CONV_SCROLLER_ATTR}]`) ?? document.documentElement;
+    const measure = (): void => setCap(visualizationHeightCap(scroller.clientHeight));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +64,7 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
       if (e.source !== frameRef.current?.contentWindow) return;
       const data = e.data as { type?: unknown; height?: unknown } | null;
       if (data?.type !== 'viz-resize' || typeof data.height !== 'number') return;
-      setHeight(Math.min(Math.max(Math.round(data.height), 40), MAX_HEIGHT));
+      setHeight(Math.min(Math.max(Math.round(data.height), VIZ_MIN_HEIGHT), VIZ_MAX_HEIGHT));
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -56,7 +75,7 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
   const doc = html ? materialize(html, { theme, vars: themeVarsOf() }) : null;
 
   return (
-    <div className="overflow-hidden rounded-md border border-edge/[0.12] bg-neutral-950/40">
+    <div ref={wrapRef} className="overflow-hidden rounded-md border border-edge/[0.12] bg-neutral-950/40">
       {!doc && !error && (
         <div className="flex items-center gap-2 px-3 py-4 text-11 text-neutral-500">
           <RefreshCw className="h-3 w-3 animate-spin" />
@@ -88,7 +107,7 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
             sandbox="allow-scripts"
             srcDoc={doc}
             className="block w-full border-0"
-            style={{ height: height ?? 160 }}
+            style={{ height: Math.min(Math.max(height ?? 160, VIZ_MIN_HEIGHT), cap) }}
           />
           <button
             type="button"

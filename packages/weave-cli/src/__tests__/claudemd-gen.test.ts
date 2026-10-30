@@ -53,6 +53,15 @@ describe('generateClaudeMd', () => {
     expect(md).not.toContain('live in `skills/`');
   });
 
+  it('渲染块落点写进托管块（每条模板都有）：项目内或临时目录的 weave/ 子目录', () => {
+    for (const t of ['minimal', 'standard', 'full'] as const) {
+      const md = generateClaudeMd({ template: t, projectName: 'p' });
+      expect(md).toContain('## Render Blocks');
+      expect(md).toContain('system temp dir');
+      expect(md).toContain('U+E200');
+    }
+  });
+
   it('is deterministic for the same inputs', () => {
     const a = generateClaudeMd({ template: 'full', projectName: 'p' });
     const b = generateClaudeMd({ template: 'full', projectName: 'p' });

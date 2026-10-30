@@ -62,6 +62,7 @@ import {
   isRemotePrompt,
 } from './conv-model';
 import { VizSegments } from './VisualizationFrame';
+import { CONV_SCROLLER_ATTR } from '@/lib/visualization';
 import {
   cmdChipClass,
   commandModeClass,
@@ -712,6 +713,8 @@ export function SessionMessages({
           onTouchEnd={pull.touchEnd}
           onTouchCancel={pull.touchEnd}
           className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain pr-1"
+          // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
+          {...{ [CONV_SCROLLER_ATTR]: '' }}
         >
           {/* 拉动位移：正文整体往下让位（transform 不进布局，故不影响翻页时的滚动补偿），
               提示贴在这段空隙里跟着走 */}
@@ -782,6 +785,7 @@ export function SessionMessages({
                 if (m.role === 'assistant') {
                   // 渲染块引用行只在最终回复出现；无引用行时 null（走原路渲染，零开销）
                   const vizSegs = m.failed ? null : hasVisualizeRef(m.text) ? visualizeSegments(m.text) : null;
+                  const vizCount = vizSegs?.filter((s) => s.kind === 'viz').length ?? 0;
                   return (
                     <div
                       key={m.key}
@@ -821,6 +825,12 @@ export function SessionMessages({
                           {m.narration === true && (
                             <span className="shrink-0 rounded bg-neutral-500/15 px-1 py-px text-10 font-medium text-neutral-400">
                               {t('tasks.convNarration')}
+                            </span>
+                          )}
+                          {vizSegs && (
+                            <span className="shrink-0 rounded bg-violet-500/15 px-1 py-px text-10 font-medium text-violet-300">
+                              {t('tasks.convVisual')}
+                              {vizCount > 1 ? ` ×${vizCount}` : ''}
                             </span>
                           )}
                           {m.rewound === true && (

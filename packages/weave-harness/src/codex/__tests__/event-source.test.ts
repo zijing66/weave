@@ -186,6 +186,12 @@ describe('CodexEventSource.normalize', () => {
     expect((out.raw as Record<string, unknown>).last_assistant_message).toBe('搞定');
   });
 
+  it('Stop 正文不裁 4KB（引用行挂在回复末尾，裁了就丢渲染块）', () => {
+    const body = `${'字'.repeat(3000)}\nvisualize{"path":"D:/x/a.html"}`;
+    const out = normalize(event('task_complete', { last_agent_message: body }));
+    expect((out.raw as Record<string, unknown>).last_assistant_message).toBe(body);
+  });
+
   it('rollout 的 SessionStart 标 source=rollout（非宿主启动照会，模型闩不认）', () => {
     const out = normalize(meta());
     expect(out.eventType).toBe('SessionStart');

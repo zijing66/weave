@@ -291,6 +291,14 @@ export function pipePathSegments(pipeText: string, images: readonly UploadFile[]
  */
 const VIZ_REF_PREFIX = '\u{e200}visualize\u{e202}';
 const VIZ_REF_SUFFIX = '\u{e201}';
+/**
+ * 同义写法（镜像自 core 的 `referencePrefixAliases` / `referenceSuffixAliases`）：
+ * 模型实测会把三枚私有区字符整组写成 LANGUAGE TAG 区（U+E200→U+E0000、
+ * U+E202→U+E0001、U+E201→U+E0002）——屏上全不可见、语义一致，认不出整块就
+ * 静默退化成普通文本（2026-10-30 转录实测，9/9 行如此）。
+ */
+const VIZ_REF_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}', 'visualize'] as const;
+const VIZ_REF_SUFFIXES = [VIZ_REF_SUFFIX, '\u{e0002}'] as const;
 
 /** 渲染块引用（引用行解析产物）：fragment 文件绝对路径 + 可选标题/宽幅。 */
 export interface VisualizeRef {
@@ -304,10 +312,11 @@ export type VizSeg = { kind: 'text'; text: string } | { kind: 'viz'; ref: Visual
 
 /** 引用行 → ref；认不出（JSON 坏 / 缺 path / path 非字符串）返回 null，调用方当普通文本。 */
 function visualizeRefOf(line: string): VisualizeRef | null {
-  if (!line.startsWith(VIZ_REF_PREFIX)) return null;
-  const body = line.slice(VIZ_REF_PREFIX.length).endsWith(VIZ_REF_SUFFIX)
-    ? line.slice(VIZ_REF_PREFIX.length, -VIZ_REF_SUFFIX.length)
-    : line.slice(VIZ_REF_PREFIX.length);
+  const prefix = VIZ_REF_PREFIXES.find((p) => line.startsWith(p));
+  if (!prefix) return null;
+  let body = line.slice(prefix.length);
+  const suffix = VIZ_REF_SUFFIXES.find((s) => body.endsWith(s));
+  if (suffix) body = body.slice(0, -suffix.length);
   try {
     const parsed = JSON.parse(body) as { path?: unknown; title?: unknown; mode?: unknown };
     if (typeof parsed.path !== 'string' || !parsed.path) return null;
@@ -347,7 +356,10 @@ export function visualizeSegments(text: string): VizSeg[] {
 
 /** 正文里有没有渲染块引用行（渲染层零开销短路用）。 */
 export function hasVisualizeRef(text: string): boolean {
-  return text.includes(VIZ_REF_PREFIX);
+  return VIZ_REF_PREFIXES.some((p) =>
+    // 裸 `visualize` 太常见，只认「单独一行且紧跟 `{`」——真正的成立与否在分段的 JSON 校验里
+    p === 'visualize' ? /(^|\n)[ \t]*visualize\{/.test(text) : text.includes(p),
+  );
 }
 
 /** 剥掉全部渲染块引用行（HTML 导出与分享图片用——私有区字符在那两种载体里是乱码）。 */

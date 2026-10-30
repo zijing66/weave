@@ -28,6 +28,36 @@ describe('visualizeSegments', () => {
     expect(segs).toEqual([{ kind: 'viz', ref: { path: 'D:/x/a.html' } }]);
   });
 
+  it('LANGUAGE TAG 区同义写法照认（U+E200/E202/E201 → U+E0000/E0001/E0002）', () => {
+    const tagRef = (path: string, suffix = true): string =>
+      `\u{e0000}visualize\u{e0001}{"path":"${path}"}${suffix ? '\u{e0002}' : ''}`;
+    expect(visualizeSegments(tagRef('D:/x/a.html'))).toEqual([
+      { kind: 'viz', ref: { path: 'D:/x/a.html' } },
+    ]);
+    // suffix 缺席照认；夹在正文中间也照切
+    const segs = visualizeSegments(`before\n${tagRef('D:/x/b.html', false)}\nafter`);
+    expect(segs).toEqual([
+      { kind: 'text', text: 'before' },
+      { kind: 'viz', ref: { path: 'D:/x/b.html' } },
+      { kind: 'text', text: 'after' },
+    ]);
+    expect(hasVisualizeRef(tagRef('D:/x/c.html'))).toBe(true);
+    expect(stripVisualizeRefs(`a\n${tagRef('D:/x/d.html')}\nb`)).toBe('a\nb');
+  });
+
+  it('降级形（裸 `visualize` 行）照认——压缩摘要会把不可见字符整个吃掉', () => {
+    const bare = 'visualize{"path":"D:/x/a.html"}';
+    expect(visualizeSegments(bare)).toEqual([{ kind: 'viz', ref: { path: 'D:/x/a.html' } }]);
+    expect(hasVisualizeRef(`前文\n\n${bare}\n\n后文`)).toBe(true);
+    // 正文里提到语法（带前缀文字 / 反引号）不算引用行
+    expect(hasVisualizeRef('输出 `visualize{"path":"D:/x/a.html"}` 这行')).toBe(false);
+    expect(visualizeSegments('1. 写 visualize{"path":"D:/x/a.html"}')).toEqual([
+      { kind: 'text', text: '1. 写 visualize{"path":"D:/x/a.html"}' },
+    ]);
+    // 裸形也必须过 JSON 校验：坏 JSON 当文本
+    expect(visualizeSegments('visualize{oops}')).toEqual([{ kind: 'text', text: 'visualize{oops}' }]);
+  });
+
   it('title 与 mode 解析', () => {
     const segs = visualizeSegments(
       `\u{e200}visualize\u{e202}{"path":"D:/x/a.html","title":"Chart","mode":"wide"}\u{e201}`,

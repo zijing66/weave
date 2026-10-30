@@ -296,7 +296,9 @@ function rolloutInput(r: CodexReport, projectId: number): CodexHookEventInput {
     toolInput: capFields(toolInput),
     toolResponse: capFields(toolResponse),
     cwd: r.cwd ?? null,
-    raw: capFields({ ...raw, turn_id: p.turn_id ?? null, call_id: p.call_id ?? null }),
+    // raw 只装标量 + 两个对话正文载体（prompt / last_assistant_message），与 claude
+    // 路径一致不裁：4KB 封顶会把挂在回复末尾的渲染块引用行截掉。
+    raw: { ...raw, turn_id: p.turn_id ?? null, call_id: p.call_id ?? null },
   };
   return {
     projectId,

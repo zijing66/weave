@@ -294,6 +294,17 @@ export const VISUALIZATION_PROTOCOL = {
   referencePrefix: '\u{e200}visualize\u{e202}',
   /** 引用行结尾（可缺席）。 */
   referenceSuffix: '\u{e201}',
+  /**
+   * 同义写法（识别侧一并接受，生成侧仍以上面的 canonical 形为准）：模型实测
+   * 会把三枚私有区字符整组写成 LANGUAGE TAG 区（U+E200→U+E0000、U+E202→
+   * U+E0001、U+E201→U+E0002）——屏上全不可见、语义一致，认不出整块就静默
+   * 退化成普通文本（2026-10-30 转录实测）。**降级形（裸 `visualize`）也认**：
+   * 压缩摘要这一层常把不可见字符整个吃掉，模型据摘要复述时写出的就是裸行
+   * （同日实测两条，都在压缩之后）。裸行只在一整行恰好是 `visualize` + 合法
+   * JSON 且带 path 时才成立，正文里的提及（带前缀文字 / 反引号包裹）不命中。
+   */
+  referencePrefixAliases: ['\u{e0000}visualize\u{e0001}', 'visualize'],
+  referenceSuffixAliases: ['\u{e0002}'],
   /** fragment 文件大小上限（字节）。 */
   maxFragmentBytes: 1024 * 1024,
 } as const;

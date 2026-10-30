@@ -71,6 +71,31 @@ const THEME_ALIAS_TOKENS: Record<'dark' | 'light', Record<string, string>> = {
   },
 };
 
+/** 渲染块高度下限（空 fragment 也要有壳）与硬顶（超大视口不再长）。 */
+export const VIZ_MIN_HEIGHT = 40;
+export const VIZ_MAX_HEIGHT = 1200;
+/** 气泡区占比：块再高也不占满整个对话区，上下留出上下文。 */
+const VIZ_HEIGHT_RATIO = 0.7;
+/** 极窄气泡区（手机横屏 / 右栏 / 分屏）的兜底：块再挤也给到这个高度，装不下就整区滚。 */
+const VIZ_HEIGHT_FLOOR = 320;
+
+/**
+ * 渲染块高度上限 = 气泡区（对话滚动容器）可给的高度
+ * `min(1200, max(320, 气泡区高 × 0.7))`。基准是**气泡区**不是窗口：右栏 / 手机抽屉里
+ * 对话区远小于视口，按视口算出来的块会一屏都放不下。超出部分在 iframe 内部滚动；
+ * 气泡区小到连兜底都装不下时宁可整区滚，也不把块压没。
+ */
+export function visualizationHeightCap(bubbleAreaHeight: number): number {
+  return Math.min(VIZ_MAX_HEIGHT, Math.max(VIZ_HEIGHT_FLOOR, Math.round(bubbleAreaHeight * VIZ_HEIGHT_RATIO)));
+}
+
+/**
+ * 对话气泡区的标记属性（挂在对话滚动容器上）。**不能靠「最近的滚动祖先」去猜**：
+ * 气泡自己带 `overflow-x-auto`，按 CSS 规则那一轴的 `visible` 会算成 `auto`，
+ * 猜出来的就是气泡本身——高度跟着块自己变，成了自锁环。
+ */
+export const CONV_SCROLLER_ATTR = 'data-conv-scroller';
+
 export interface MaterializeOptions {
   /** 当前主题（`useTheme()` 的返回值；主题翻转时调用方重算 srcDoc）。 */
   theme: 'dark' | 'light';
@@ -126,6 +151,7 @@ export function materialize(fragmentHtml: string, options: MaterializeOptions): 
 ${CSP_META}
 <style>
   :root {
+    color-scheme: ${options.theme};
     ${varLines}
   }
   html, body { margin: 0; padding: 0; background: transparent; }

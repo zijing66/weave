@@ -87,6 +87,25 @@ describe('渲染块 fragment 端点', () => {
     }
   });
 
+  it('临时目录下的 <tmp>/weave 子目录内回显（整个 %TEMP% 不放行）', async () => {
+    const dir = join(os.tmpdir(), 'weave', 'viz-test-' + process.pid);
+    mkdirSync(dir, { recursive: true });
+    try {
+      const file = join(dir, 'f.html');
+      writeFileSync(file, '<i>t</i>');
+      const res = await call(`path=${encodeURIComponent(file)}`);
+      expect(res.status).toBe(200);
+      expect((res.body as { html: string }).html).toBe('<i>t</i>');
+
+      // 同盘同前缀的旁支（<tmp>/weave-viz-…）仍在外
+      const sibling = join(root, 'sibling.html');
+      writeFileSync(sibling, 'x');
+      expect((await call(`path=${encodeURIComponent(sibling)}`)).status).toBe(403);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('白名单外 403（文案带根集）', async () => {
     const res = await call(`path=${encodeURIComponent(join(root, 'elsewhere', 'a.html'))}`);
     expect(res.status).toBe(403);

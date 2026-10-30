@@ -32,7 +32,9 @@ function pendingView(sessionId: string, entry: PromptboxEntry): PipeMessage {
  * 终态短时驻留（delivered/injected/succeeded 在 settledAt+ttl 内可见，展示
  * via/acked），failed/timeout/暂停闸成因常驻。历史在会话自己的转录里。
  * 例外：已执行的斜杠命令（/rewind 类，宿主不回 UPS）也常驻——它们没有认领
- * 事件可退场，TTL 一到就消失会让「刚才那条命令呢」无从查起。
+ * 事件可退场，TTL 一到就消失会让「刚才那条命令呢」无从查起。**判据是「没有
+ * 认领事件」**（`ackedEventId` 空）：skill/插件命令的正文也以 `/` 开头，但它的
+ * UPS 就是气泡，留着这行等于同一条消息在对话尾巴上多挂一个「已执行」。
  */
 export function listVisible(
   deps: {
@@ -71,9 +73,14 @@ export function listVisible(
     // 送达未回执 = 在飞（气泡还没来）：窗口过了也别撤，否则队列里那条先消失、
     // 等到未回执闸落定时又冒出来，看着像发丢了。
     const unacked = msg.status === 'delivered' && msg.acked !== true;
-    // 已执行的斜杠命令常驻（见上）：TTL 豁免，与 failed 同待遇
+    // 已执行的斜杠命令常驻（见上）：TTL 豁免，与 failed 同待遇。只有没有认领
+    // 事件的那些（内建命令 / bash 模式）才常驻——有 `ackedEventId` 的行气泡已经在
+    // 对话里，留着它同一条消息会露两遍。
     const executedCmd =
-      msg.status === 'delivered' && msg.acked === true && isCommandInput(msg.text);
+      msg.status === 'delivered' &&
+      msg.acked === true &&
+      msg.ackedEventId == null &&
+      isCommandInput(msg.text);
     if (unacked || executedCmd || (!Number.isNaN(settled) && now - settled < ttlMs)) out.push(msg);
   }
   return out.sort((a, b) => (a.at < b.at ? -1 : 1));
