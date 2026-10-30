@@ -509,7 +509,10 @@ function mime(filePath: string): string {
   if (filePath.endsWith('.css')) return 'text/css';
   if (filePath.endsWith('.html')) return 'text/html';
   if (filePath.endsWith('.svg')) return 'image/svg+xml';
+  if (filePath.endsWith('.png')) return 'image/png';
   if (filePath.endsWith('.json')) return 'application/json';
+  // PWA manifest：类型不对（octet-stream）时 Chrome 会拒绝安装，仍不影响页面访问。
+  if (filePath.endsWith('.webmanifest')) return 'application/manifest+json';
   return 'application/octet-stream';
 }
 
