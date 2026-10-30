@@ -74,6 +74,8 @@ export async function handleVisualizationRoutes(
   }
 
   const html = await fsp.readFile(abs, 'utf8');
+  // fragment 是活文件（模型随时重写）：不缓存，跨机访问才拿得到当下快照
+  res.setHeader('cache-control', 'no-store');
   sendJson(res, 200, { html });
   return true;
 }
