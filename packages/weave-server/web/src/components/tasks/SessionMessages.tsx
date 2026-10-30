@@ -545,7 +545,7 @@ export function SessionMessages({
             : undefined
         }
         className={cn(
-          'relative min-h-0 w-full flex-col overflow-hidden p-3',
+          'relative min-h-0 w-full flex-col overflow-hidden p-3 max-lg:pt-2',
           fullscreen
             ? // 全屏：自己铺满视口（不复用右栏/浮窗那套尺寸），z-55 在右栏之上、
               // 菜单(60)/弹窗(60-70) 之下——开菜单或看大图不会被它挡住。
@@ -604,7 +604,7 @@ export function SessionMessages({
                     title={t('tasks.sideTitle')}
                     aria-label={t('tasks.sideTitle')}
                     onClick={() => setSideOpen(true)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
                     <span className="max-lg:hidden">{t('tasks.sideTitle')}</span>
@@ -615,7 +615,7 @@ export function SessionMessages({
                   title={t('tasks.chainTitle')}
                   aria-label={t('tasks.chainTitle')}
                   onClick={onOpenChain}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
                   <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
@@ -629,7 +629,7 @@ export function SessionMessages({
               title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               onClick={toggleFullscreen}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
             >
               {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
               <span className="max-lg:hidden">
@@ -1386,7 +1386,7 @@ export function SessionMessages({
               {/* 不挂 flex-1：`flex: 1 1 0%` 的基准是 0，换行判定时它永远「放得下」→
                   右组从不折行，左组被压到 0 宽、里面的附件钮溢出去盖在模式/模型上。
                   让左组按内容占位，放不下时父级的 flex-wrap 才会把右组挪到下一行。 */}
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 max-lg:contents">
                 {/* 图片选择器：`accept` 收窄成相册（移动端相册直开）；文件选择器
                     显式 accept 星斜杠星——部分安卓内核（微信 X5 等）对不带 accept
                     的输入框只给「图片/相机」，写了才会弹系统文件管理器（任意类型）。 */}
@@ -1422,7 +1422,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachImage')}
                   onClick={() => imageFileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <ImageIcon className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.msgAttachImage')}</span>
@@ -1437,7 +1437,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachFile')}
                   onClick={() => fileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   {staged.some((s) => !isImageUpload(s) && s.state === 'uploading') ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -1458,7 +1458,7 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.fileAttach')}
                   onClick={() => setPicker({ chip: null })}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <FileCode className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.fileAttach')}</span>
@@ -1498,7 +1498,7 @@ export function SessionMessages({
                 )}
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
-                <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:ml-0">
+                <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:contents">
                   {modeNames.length > 0 && (
                     <button
                       type="button"
@@ -1512,7 +1512,7 @@ export function SessionMessages({
                         className="h-3 w-3 text-neutral-500"
                         icon={<RotateCcw className="h-3 w-3" />}
                       />
-                      <span className="shrink-0 text-10 text-neutral-500 max-lg:hidden">
+                      <span className="shrink-0 text-10 text-neutral-500">
                         {t('tasks.modeLabel')}
                       </span>
                       <span
@@ -1574,7 +1574,7 @@ export function SessionMessages({
                   {contextLabel !== null && (
                     <span
                       title={t('tasks.contextLastKnown')}
-                      className="flex shrink-0 items-center gap-1.5 font-mono text-11 text-neutral-400"
+                      className="flex shrink-0 items-center gap-1.5 font-mono text-11 text-neutral-400 max-lg:ml-auto"
                     >
                       {contextLabel}
                       {/* 迷你进度条：同一读数按窗口档位折成的百分比（200k/1M 两档） */}
@@ -1763,7 +1763,7 @@ export function SessionMessages({
                 aria-label={t('tasks.msgNewline')}
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={insertNewline}
-                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-8"
+                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-6"
               >
                 {t('tasks.msgNewline')}
               </button>
@@ -1785,7 +1785,7 @@ export function SessionMessages({
                     onInterrupt(sessionId);
                     setEscCooldown(ESC_COOLDOWN_S);
                   }}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6"
                 >
                   <FeedbackIcon
                     state={interruptStateOf(sessionId)}
@@ -1814,7 +1814,7 @@ export function SessionMessages({
                     );
                     setCtrlCCooldown(ESC_COOLDOWN_S);
                   }}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6"
                 >
                   <FeedbackIcon
                     state={fb.stateOf(`ctrlC:${sessionId}`)}
@@ -1847,7 +1847,7 @@ export function SessionMessages({
                       { fail: (e) => t('tasks.enterFailed', { error: errorText(e) }) },
                     );
                   }}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-8 max-lg:w-8"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-edge/[0.1] text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-30 disabled:hover:border-edge/[0.1] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6"
                 >
                   <FeedbackIcon
                     state={fb.stateOf(`pressEnter:${sessionId}`)}
@@ -1875,7 +1875,7 @@ export function SessionMessages({
                     }
                     aria-label={t('tasks.messagesSend')}
                     onClick={send}
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-l bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-8 max-lg:w-8 max-lg:rounded-r"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-l bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:rounded-r"
                   >
                     <FeedbackIcon
                       state={fb.stateOf(`sendMsg:${sessionId}`)}
