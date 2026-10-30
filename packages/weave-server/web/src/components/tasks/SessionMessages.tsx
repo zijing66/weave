@@ -578,7 +578,7 @@ export function SessionMessages({
                 onPointerCancel: onDragUp,
               })}
           className={cn(
-            'flex items-center justify-between gap-2 pb-2',
+            'flex items-center justify-between gap-2 pb-2 max-lg:pb-1',
             !embedded && isDesktop && !fullscreen && 'cursor-grab active:cursor-grabbing',
           )}
         >
@@ -602,21 +602,23 @@ export function SessionMessages({
                   <button
                     type="button"
                     title={t('tasks.sideTitle')}
+                    aria-label={t('tasks.sideTitle')}
                     onClick={() => setSideOpen(true)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
-                    {t('tasks.sideTitle')}
+                    <span className="max-lg:hidden">{t('tasks.sideTitle')}</span>
                   </button>
                 )}
                 <button
                   type="button"
                   title={t('tasks.chainTitle')}
+                  aria-label={t('tasks.chainTitle')}
                   onClick={onOpenChain}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
-                  {t('tasks.chainTitle')}
+                  <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
                 </button>
               </>
             )}
@@ -627,10 +629,12 @@ export function SessionMessages({
               title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               onClick={toggleFullscreen}
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
             >
               {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
-              {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+              <span className="max-lg:hidden">
+                {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+              </span>
             </button>
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
@@ -659,7 +663,7 @@ export function SessionMessages({
         </div>
 
         {/* 历史过滤：只改显示，不动手上的翻页游标与勾选 */}
-        <div className="flex shrink-0 items-center gap-1 pb-2">
+        <div className="flex shrink-0 items-center gap-1 pb-2 max-lg:pb-1">
           {CONV_FILTERS.map((f) => (
             <button
               key={f}
@@ -1373,8 +1377,8 @@ export function SessionMessages({
              模式做成按钮（点 = Shift+Tab 一档）；模型有 `/model <名>`，做成下拉。
              **图片上传对齐位**：附件钮 + 预览缩略图居左，模式/模型居右（`ml-auto`），
              放不下即折行；别占到输入行与发送键那两格去。 */
-          <div className="mt-2 flex shrink-0 flex-col gap-1.5 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-2">
-            {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行。 */}
+          <div className="mt-2 flex shrink-0 flex-col gap-1.5 max-lg:mt-1 max-lg:gap-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-1.5">
+            {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行（不做横向滚动）。 */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* 附件钮（图片/文件两枚）+ 两个预览区（图片区 / 文件区各自一段，
                   <lg 各占一行、lg 起同行自适应折行）。粘贴/拖放也走同一份 staged
@@ -1418,10 +1422,10 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachImage')}
                   onClick={() => imageFileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
                 >
                   <ImageIcon className="h-3 w-3" />
-                  {t('tasks.msgAttachImage')}
+                  <span className="max-lg:hidden">{t('tasks.msgAttachImage')}</span>
                 </button>
                 <button
                   type="button"
@@ -1433,14 +1437,14 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.msgAttachFile')}
                   onClick={() => fileRef.current?.click()}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
                 >
                   {staged.some((s) => !isImageUpload(s) && s.state === 'uploading') ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <Paperclip className="h-3 w-3" />
                   )}
-                  {t('tasks.msgAttachFile')}
+                  <span className="max-lg:hidden">{t('tasks.msgAttachFile')}</span>
                 </button>
                 {/* 引用文件（@ 路径引用选择器）：与上传是两扇门——它插的是项目内
                     文件的引用胶囊，不占附件格。 */}
@@ -1454,43 +1458,47 @@ export function SessionMessages({
                   }
                   aria-label={t('tasks.fileAttach')}
                   onClick={() => setPicker({ chip: null })}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:px-2.5 max-lg:py-1.5"
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:w-7 max-lg:justify-center max-lg:px-0"
                 >
                   <FileCode className="h-3 w-3" />
-                  {t('tasks.fileAttach')}
+                  <span className="max-lg:hidden">{t('tasks.fileAttach')}</span>
                 </button>
-                {/* 两个预览区：<lg 各占一行（basis-full），lg 起同行自适应折行。 */}
-                <div className="flex min-w-0 basis-full flex-wrap items-center gap-1.5 lg:basis-auto">
-                  <StagedRow label={t('tasks.msgAttachImage')} items={staged.filter(isImageUpload)}>
-                    {staged
-                      .filter(isImageUpload)
-                      .map((item) => (
-                        <StagedTile
-                          key={item.key}
-                          item={item}
-                          onOpen={setLightbox}
-                          onRemove={() => unstage(item)}
-                          removeLabel={t('tasks.msgAttachRemove')}
-                        />
-                      ))}
-                  </StagedRow>
-                  <StagedRow label={t('tasks.msgAttachFile')} items={staged.filter((s) => !isImageUpload(s))}>
-                    {staged
-                      .filter((s) => !isImageUpload(s))
-                      .map((item) => (
-                        <StagedTile
-                          key={item.key}
-                          item={item}
-                          onOpen={setLightbox}
-                          onRemove={() => unstage(item)}
-                          removeLabel={t('tasks.msgAttachRemove')}
-                        />
-                      ))}
-                  </StagedRow>
-                </div>
+                {/* 两个预览区：<lg 各占一行（basis-full），lg 起同行自适应折行。
+                    没有暂存件时整块不渲染——空的 `basis-full` 照样占满一行，
+                    会把右侧「模式/模型」挤到下一行去（移动端每多一行都是从气泡区挤的）。 */}
+                {staged.length > 0 && (
+                  <div className="flex min-w-0 basis-full flex-wrap items-center gap-1.5 lg:basis-auto">
+                    <StagedRow label={t('tasks.msgAttachImage')} items={staged.filter(isImageUpload)}>
+                      {staged
+                        .filter(isImageUpload)
+                        .map((item) => (
+                          <StagedTile
+                            key={item.key}
+                            item={item}
+                            onOpen={setLightbox}
+                            onRemove={() => unstage(item)}
+                            removeLabel={t('tasks.msgAttachRemove')}
+                          />
+                        ))}
+                    </StagedRow>
+                    <StagedRow label={t('tasks.msgAttachFile')} items={staged.filter((s) => !isImageUpload(s))}>
+                      {staged
+                        .filter((s) => !isImageUpload(s))
+                        .map((item) => (
+                          <StagedTile
+                            key={item.key}
+                            item={item}
+                            onOpen={setLightbox}
+                            onRemove={() => unstage(item)}
+                            removeLabel={t('tasks.msgAttachRemove')}
+                          />
+                        ))}
+                    </StagedRow>
+                  </div>
+                )}
               </div>
               {(modeNames.length > 0 || modelNames.length > 0) && (
-                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:ml-0 max-lg:basis-full max-lg:justify-between">
+                <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:ml-0">
                   {modeNames.length > 0 && (
                     <button
                       type="button"
@@ -1504,7 +1512,7 @@ export function SessionMessages({
                         className="h-3 w-3 text-neutral-500"
                         icon={<RotateCcw className="h-3 w-3" />}
                       />
-                      <span className="shrink-0 text-10 text-neutral-500">
+                      <span className="shrink-0 text-10 text-neutral-500 max-lg:hidden">
                         {t('tasks.modeLabel')}
                       </span>
                       <span
@@ -1515,7 +1523,7 @@ export function SessionMessages({
                         }
                         style={{ color: modeTint ?? undefined }}
                         className={cn(
-                          'truncate font-mono text-11 max-lg:max-w-[7rem]',
+                          'truncate font-mono text-11 max-lg:max-w-[6rem]',
                           !modeTint && 'text-neutral-400',
                         )}
                       >
@@ -1538,7 +1546,7 @@ export function SessionMessages({
                           }}
                           title={t('tasks.modelLastKnown')}
                           placeholder={t('tasks.modelUnknown')}
-                          className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-11 max-lg:max-w-[8rem]"
+                          className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-11 max-lg:max-w-[7rem]"
                           options={[
                             ...modelOptions,
                             // 认不出别名的真名（别名表缺配）也得能显示成选中
