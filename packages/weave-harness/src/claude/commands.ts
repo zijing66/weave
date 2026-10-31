@@ -162,14 +162,15 @@ async function subdirs(dir: string): Promise<string[]> {
   }
 }
 
-/** 自定义命令：`<root>/**\/*.md`，子目录成命名空间（`db/migrate.md` → `db:migrate`）。 */
+/** 自定义命令：`<root>/**\/*.md`，子目录成命名空间（`db/migrate.md` → `db:migrate`）。
+ *  自定义命令是 prompt 型（宿主 mention 扫描只认 prompt 型）⇒ 句中可用。 */
 async function readCommands(root: string): Promise<HarnessCommand[]> {
   const out: HarnessCommand[] = [];
   const walk = async (dir: string, prefix: string): Promise<void> => {
     for (const file of await markdownFiles(dir)) {
       const name = `${prefix}${path.basename(file, '.md')}`;
       const description = describeMarkdown(await readFile(file, 'utf8').catch(() => ''));
-      out.push({ name, description, source: 'command' });
+      out.push({ name, description, source: 'command', inline: true });
     }
     for (const dir2 of await subdirs(dir)) {
       await walk(dir2, `${prefix}${path.basename(dir2)}:`);
@@ -179,12 +180,12 @@ async function readCommands(root: string): Promise<HarnessCommand[]> {
   return out;
 }
 
-/** skill：`<root>/<name>/SKILL.md`（名字取目录名）。 */
+/** skill：`<root>/<name>/SKILL.md`（名字取目录名）。skill 都是 prompt 型 ⇒ 句中可用。 */
 async function readSkills(root: string, prefix = '', source: HarnessCommand['source'] = 'skill'): Promise<HarnessCommand[]> {
   const out: HarnessCommand[] = [];
   for (const dir of await subdirs(root)) {
     const description = describeMarkdown(await readFile(path.join(dir, 'SKILL.md'), 'utf8').catch(() => ''));
-    out.push({ name: `${prefix}${path.basename(dir)}`, description, source });
+    out.push({ name: `${prefix}${path.basename(dir)}`, description, source, inline: true });
   }
   return out;
 }
@@ -254,6 +255,10 @@ async function enabledPluginSkills(exec: PluginExecutor): Promise<HarnessCommand
   }
   return out;
 }
+
+/** 内建的 prompt 型命令（宿主 mention 扫描只认 prompt 型 ⇒ 句中可用）：
+ *  2.1.296 二进制命令注册表里 type:"prompt" 的可见项。升级宿主后随 BUILTINS 复核。 */
+const INLINE_BUILTINS = new Set(['init', 'statusline', 'insights']);
 
 /** 按名字去重（内建优先，其次项目/用户命令与 skill）。 */
 function dedupe(rows: readonly HarnessCommand[]): HarnessCommand[] {
@@ -367,7 +372,7 @@ export function createClaudeCommandSurface(deps: { exec?: PluginExecutor } = {})
       if (hit && now - hit.at < LIST_TTL_MS) return hit.rows;
       const home = path.join(homedir, '.claude');
       const rows = dedupe([
-        ...BUILTINS,
+        ...BUILTINS.map((c) => (INLINE_BUILTINS.has(c.name) ? { ...c, inline: true } : c)),
         ...(await readCommands(path.join(projectPath, '.claude', 'commands'))),
         ...(await readCommands(path.join(home, 'commands'))),
         ...(await readSkills(path.join(projectPath, '.claude', 'skills'))),

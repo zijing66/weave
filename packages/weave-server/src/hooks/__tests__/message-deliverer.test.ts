@@ -165,7 +165,10 @@ describe('MessageDeliverer 裁决表', () => {
     hooksDir = mkdtempSync(join(tmpdir(), 'weave-msg-'));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // 投递的后台续跑（终端/中继落定）在关库后还会摸 DB：等一拍让它走完，
+    // 不让「database is not open」漏成 unhandled rejection。
+    await new Promise((r) => setTimeout(r, 60));
     db.close();
     rmSync(hooksDir, { recursive: true, force: true });
   });
@@ -3967,6 +3970,28 @@ describe('MessageDeliverer 裁决表', () => {
     const id = (result as { messageId: string }).messageId;
     expect(deliverer.onSessionPrompt(SESSION_ID, '我自己另敲的一句话')).toEqual([]);
     expect(deliverer.getMessage(id)?.acked).toBeUndefined();
+  });
+
+  it('判死的会话照旧 failOffline（回归：判死落定 offline、可重发）', async () => {
+    const { surface } = relaySurface(() => null);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        livenessOf: () => new Map([[SESSION_ID, false]]),
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '手动面不拉起',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    expect(result).toMatchObject({ ok: true, status: 'failed' });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.message.reason).toBe('offline');
   });
 });
 

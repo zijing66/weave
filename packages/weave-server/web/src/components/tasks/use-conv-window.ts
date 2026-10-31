@@ -35,6 +35,7 @@ export function useConvWindow(deps: {
   buildChip: (ref: string, target: PickTarget) => HTMLElement;
   buildCmdChip: (name: string, source?: CmdSource, sigil?: CmdSigil) => HTMLElement;
   buildAttachChip: (part: { a: string; p: string; n: string; m: string }) => HTMLElement;
+  buildSessionChip: (sessionId: string, name: string) => HTMLElement;
   /** 附件暂存（草稿快照的 staged 半份）。 */
   staged: StagedFile[];
   /** 气泡滚动容器（全屏快照存/还滚动位置）。 */
@@ -42,7 +43,7 @@ export function useConvWindow(deps: {
 }) {
   const {
     embedded, isDesktop, fullscreen, setFullscreen,
-    draftRef, setDraft, buildChip, buildCmdChip, buildAttachChip, staged, threadRef,
+    draftRef, setDraft, buildChip, buildCmdChip, buildAttachChip, buildSessionChip, staged, threadRef,
   } = deps;
 const [size, setSize] = useState<ConvSize>(() => loadConvSize());
 const [pos, setPos] = useState(loadConvPos);
@@ -76,7 +77,7 @@ useLayoutEffect(() => {
   // 草稿只在嵌入形态会被重建（浮窗的 body 自始至终挂在同一个 portal 里）；
   // 拿快照重建 DOM，胶囊按 data-* 还原，与「刷新不丢」同一套路径
   if (embedded && keep.draft && draftRef.current) {
-    applyDraftSnapshot(draftRef.current, keep.draft, buildChip, buildCmdChip, buildAttachChip);
+    applyDraftSnapshot(draftRef.current, keep.draft, buildChip, buildCmdChip, buildAttachChip, buildSessionChip);
     setDraft(serializeDraft(draftRef.current));
   }
 }, [fullscreen, embedded]);

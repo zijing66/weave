@@ -43,7 +43,7 @@ import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
 import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
 import { readDecisionKey } from './decision-config.js';
-import { openSessionTerminal } from './session-open.js';
+import { createEnsureOpen } from './session-open.js';
 import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -398,6 +398,17 @@ async function main(): Promise<void> {
       extract: (input) => edgeExtract.run(input),
     }),
   });
+  // 判死拉起 = 共享工厂（session-open.ts，与 start.ts 同一份）：编排引擎的
+  // 「目标会话没开就拉起来」用它（判据、预算、单飞只有一处）。
+  const ensureOpen = createEnsureOpen({
+    hookSessions,
+    hookEvents,
+    projects,
+    harnesses,
+    sessionProbe,
+    terminalRefresher,
+    livenessOf: combinedLivenessOf,
+  });
   // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。
   const orchestrationEngine = new OrchestrationEngine({
     orchestrations,
@@ -410,29 +421,7 @@ async function main(): Promise<void> {
     conditionJudge,
     // 人在场闸（与 start.ts 同口径）：目标闲着且用户刚在看 → defer 搭车。
     deferWhenUserPresent: true,
-    ensureOpen: async (sessionId) => {
-      // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
-      // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
-      const baseline = hookEvents.listBySession(sessionId, 1).at(-1)?.id ?? 0;
-      const opened = await openSessionTerminal(
-        { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
-        sessionId,
-      );
-      if (!opened.ok) return opened;
-      let alive = false;
-      for (let i = 0; i < 60; i++) {
-        // 15s 预算：冷启动 + 宿主落 SessionStart 的实测富余
-        const recent = hookEvents.listBySession(sessionId, 20);
-        if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
-          return { ok: true, ack: 'session-start' };
-        }
-        if (combinedLivenessOf().get(sessionId) === true) alive = true;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      return alive
-        ? { ok: true, ack: 'registry' }
-        : { ok: false, error: 'session did not report ready within 15s' };
-    },
+    ensureOpen,
   });
   orchestrationEngine.rearm();
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);

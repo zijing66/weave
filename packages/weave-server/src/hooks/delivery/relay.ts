@@ -50,7 +50,12 @@ export function runRelay(
       sessionId: `prompt-relay:${entry.sessionId}`,
       cwd: tmpdir(),
       prompt: relay.instruction(peerName, wireText, { oneWay: entry.oneWay === true }),
-      spec: { supported: true, bin: relay.bin, args: () => [...relay.args], promptStdin: true },
+      spec: {
+        supported: true,
+        bin: relay.bin,
+        args: () => [...relay.args],
+        promptStdin: true,
+      },
       bin: deps.bin ?? process.env.WEAVE_CLAUDE_BIN ?? relay.bin,
       timeoutMs: deps.relayTimeoutMs ?? 0,
       detached: false,

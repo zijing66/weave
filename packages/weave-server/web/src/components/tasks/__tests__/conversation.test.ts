@@ -20,11 +20,16 @@ import {
 import {
   buildSegments,
   cmdChipClass,
+  cmdMenuMatches,
+  cmdMenuShouldOpen,
+  cmdQueryIn,
   commandTokensOf,
   draftSnapshotOf,
   hasRefCandidate,
   pickerIntent,
+  refSigilsOf,
   serializeDraft,
+  sessionPickerIntent,
   textBeforeCaret,
 } from '../draft-editor';
 import { imageMarkerSegments, pipePathSegments } from '../conv-model';
@@ -692,6 +697,41 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     } as unknown as Range);
     expect(pickerIntent(before)).toBe('open');
   });
+
+  it('⑧ `#` 会话引用同判据：前面必须空白，`\\#` 是转义', () => {
+    expect(sessionPickerIntent('#')).toBe('open');
+    expect(sessionPickerIntent('看看 #')).toBe('open');
+    expect(sessionPickerIntent('看#')).toBe('ignore');
+    expect(sessionPickerIntent('\\#')).toBe('escape');
+  });
+
+  it('⑨ 会话目标胶囊：序列化展开成 `#<id>` 收件人标注（发送 = 本会话的 prompt）、进快照（ss/n）', () => {
+    const chip = el('SPAN', [text('#目标会话')], {
+      'data-session-target': 'sess-b',
+      'data-session-name': '目标会话',
+    });
+    // 正文只出 id：名字会重名也会改，胶囊上显示名字是给人看的
+    expect(serializeDraft(draft([chip, text('帮我看下这个报错')]))).toBe('#sess-b帮我看下这个报错');
+    const root = draft([text('帮我看下 '), chip, text(' 这个报错')]);
+    const snap = draftSnapshotOf(root as unknown as HTMLElement, []);
+    expect(snap?.parts).toEqual([{ t: '帮我看下 ' }, { ss: 'sess-b', n: '目标会话' }, { t: ' 这个报错' }]);
+  });
+
+  it('⑩ placeholder 的触发符只摆 harness 真能敲的：`#` 恒有、`@` 看能力面、`$` 随候选清单', () => {
+    const modes = [
+      { kind: 'slash', sigil: '/', named: true },
+      { kind: 'bash', sigil: '!', named: true },
+    ] as const;
+    expect(refSigilsOf(true, modes, null)).toEqual(['@', '#', '/', '!']);
+    // codex 形状：无 `!` bash、skill 走 `$`，且 `$` 只随候选出现（清单没拉到就不摆）
+    expect(refSigilsOf(true, [{ kind: 'slash', sigil: '/', named: true }], null)).toEqual(['@', '#', '/']);
+    const skill = { name: 'x', description: '', source: 'skill', sigil: '$' } as const;
+    expect(refSigilsOf(false, [{ kind: 'slash', sigil: '/', named: true }], [skill])).toEqual([
+      '#',
+      '/',
+      '$',
+    ]);
+  });
 });
 
 describe('buildSegments（粘贴时把表达式还原成胶囊）', () => {
@@ -1240,19 +1280,20 @@ describe('editsWindowOf（按轮取数的窗口）', () => {
 
 describe('commandTokensOf（气泡里的命令 token 识别）', () => {
   type Src = 'builtin' | 'command' | 'skill' | 'plugin';
-  const table: Record<string, Src> = {
-    'compact': 'builtin',
-    'model': 'builtin',
-    'goal': 'builtin',
-    'deploy': 'command',
-    'minimax-docx': 'skill',
-    'plug:design': 'plugin',
-    'triage': 'skill',
+  const table: Record<string, { source: Src; inline?: boolean }> = {
+    'compact': { source: 'builtin' },
+    'model': { source: 'builtin' },
+    'goal': { source: 'builtin' },
+    'init': { source: 'builtin', inline: true },
+    'deploy': { source: 'command', inline: true },
+    'minimax-docx': { source: 'skill', inline: true },
+    'plug:design': { source: 'plugin', inline: true },
+    'triage': { source: 'skill', inline: true },
   };
   /** codex 的 skill 走 `$`；其余一律 `/`。 */
-  const src = (sigil: '/' | '$', name: string): { source: Src; sigil: '/' | '$' } | undefined => {
-    const source: Src | undefined = sigil === '$' ? (name === 'triage' ? 'skill' : undefined) : table[name];
-    return source ? { source, sigil } : undefined;
+  const src = (sigil: '/' | '$', name: string): { source: Src; sigil: '/' | '$'; inline?: boolean } | undefined => {
+    const hit = sigil === '$' ? (name === 'triage' ? table[name] : undefined) : table[name];
+    return hit ? { source: hit.source, sigil, inline: hit.inline } : undefined;
   };
 
   it('句首的官方命令：名字成 token，参数留作文字', () => {
@@ -1268,7 +1309,7 @@ describe('commandTokensOf（气泡里的命令 token 识别）', () => {
     ]);
   });
 
-  it('skill 可以插在句中任何位置（前后须空白）', () => {
+  it('inline 命令可以插在句中任何位置（前后须空白）', () => {
     expect(commandTokensOf('帮我用 /minimax-docx 生成文档', src)).toEqual([
       { text: '帮我用 ' },
       { cmd: 'minimax-docx', source: 'skill', sigil: '/' },
@@ -1278,6 +1319,12 @@ describe('commandTokensOf（气泡里的命令 token 识别）', () => {
       { cmd: 'plug:design', source: 'plugin', sigil: '/' },
       { text: ' 和 ' },
       { cmd: 'minimax-docx', source: 'skill', sigil: '/' },
+    ]);
+    // 自定义命令也是 prompt 型（claude mention 扫描认它）
+    expect(commandTokensOf('先 /deploy 再说', src)).toEqual([
+      { text: '先 ' },
+      { cmd: 'deploy', source: 'command', sigil: '/' },
+      { text: ' 再说' },
     ]);
   });
 
@@ -1289,14 +1336,23 @@ describe('commandTokensOf（气泡里的命令 token 识别）', () => {
     ]);
   });
 
-  it('skill 贴着字就不认（与引用表达式同一条判据）', () => {
+  it('inline 命令贴着字就不认（与引用表达式同一条判据）', () => {
     expect(commandTokensOf('用/minimax-docx生成', src)).toEqual([{ text: '用/minimax-docx生成' }]);
     expect(commandTokensOf('/minimax-docx，帮我', src)).toEqual([{ text: '/minimax-docx，帮我' }]);
     expect(commandTokensOf('价格$5', src)).toEqual([{ text: '价格$5' }]);
   });
 
-  it('官方命令只在句首：句中不认', () => {
+  it('非 inline 命令只在整条输入开头：句中不认（多行第二行的行首也不算）', () => {
     expect(commandTokensOf('看看 /model', src)).toEqual([{ text: '看看 /model' }]);
+    expect(commandTokensOf('第一行\n/compact 第二行', src)).toEqual([
+      { text: '第一行\n/compact 第二行' },
+    ]);
+    // inline 的内建（prompt 型）不受此限
+    expect(commandTokensOf('记得 /init 一下', src)).toEqual([
+      { text: '记得 ' },
+      { cmd: 'init', source: 'builtin', sigil: '/' },
+      { text: ' 一下' },
+    ]);
   });
 
   it('认不出的名字当普通文字', () => {
@@ -1311,6 +1367,49 @@ describe('commandTokensOf（气泡里的命令 token 识别）', () => {
     expect(cmdChipClass('builtin')).toContain('amber');
     expect(cmdChipClass('command')).toContain('amber');
     expect(cmdChipClass(undefined)).toContain('amber');
+  });
+});
+
+describe('cmdQueryIn / cmdMenuShouldOpen / cmdMenuMatches（菜单触发与候选池）', () => {
+  const commands = [
+    { name: 'compact', description: '', source: 'builtin' as const },
+    { name: 'init', description: '', source: 'builtin' as const, inline: true },
+    { name: 'deploy', description: '', source: 'command' as const, inline: true },
+    { name: 'triage', description: '', source: 'skill' as const, sigil: '$' as const, inline: true },
+  ];
+
+  it('触发位识别：空白后的触发符 + 片段，head 判据 = 整条输入开头', () => {
+    expect(cmdQueryIn('/com')).toEqual({ sigil: '/', query: 'com', head: true });
+    expect(cmdQueryIn('  /com')).toEqual({ sigil: '/', query: 'com', head: true });
+    expect(cmdQueryIn('看看 /mo')).toEqual({ sigil: '/', query: 'mo', head: false });
+    expect(cmdQueryIn('第一行\n/com')).toEqual({ sigil: '/', query: 'com', head: false });
+    expect(cmdQueryIn('$tri')).toEqual({ sigil: '$', query: 'tri', head: true });
+    // 贴着字不算触发位
+    expect(cmdQueryIn('abc/def')).toBeNull();
+    // 名字字符集外的尾巴不算片段
+    expect(cmdQueryIn('/com.')).toBeNull();
+  });
+
+  it('菜单开闸：开头位只要有该触发符的候选就开；句中要有 inline 候选才开', () => {
+    expect(cmdMenuShouldOpen(commands, '/', true)).toBe(true);
+    expect(cmdMenuShouldOpen(commands, '/', false)).toBe(true); // init/deploy 是 inline
+    expect(cmdMenuShouldOpen(commands, '$', false)).toBe(true);
+    // 全是非 inline 的候选时句中不开
+    const builtinOnly = [{ name: 'compact', description: '', source: 'builtin' as const }];
+    expect(cmdMenuShouldOpen(builtinOnly, '/', false)).toBe(false);
+    expect(cmdMenuShouldOpen(builtinOnly, '/', true)).toBe(true);
+  });
+
+  it('候选池：句中滤掉非 inline；前缀优先、包含殿后、截 40', () => {
+    expect(cmdMenuMatches(commands, '/', '', true).map((c) => c.name)).toEqual(['compact', 'init', 'deploy']);
+    expect(cmdMenuMatches(commands, '/', '', false).map((c) => c.name)).toEqual(['init', 'deploy']);
+    expect(cmdMenuMatches(commands, '$', '', true).map((c) => c.name)).toEqual(['triage']);
+    // 前缀命中排前
+    const pool = [
+      ...commands,
+      { name: 'deploy-fast', description: '', source: 'command' as const, inline: true },
+    ];
+    expect(cmdMenuMatches(pool, '/', 'depl', false).map((c) => c.name)).toEqual(['deploy', 'deploy-fast']);
   });
 });
 

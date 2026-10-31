@@ -1089,6 +1089,13 @@ export interface HarnessCommand {
   source: 'builtin' | 'command' | 'skill' | 'plugin';
   /** 触发符：缺省 `/`；codex 的 skill 是 `$name`。前端按它展示与插胶囊。 */
   sigil?: '/' | '$';
+  /**
+   * 宿主能不能在**句子中间**（前后空白）认出这条命令：claude 的 skill / 插件 /
+   * 自定义命令走 mention 扫描可以，内建只在整条输入开头分派；codex 只有
+   * `$skill` 是 mention（且无前置边界），`/` 命令一律只在开头。缺省 = 只在
+   * 开头可用——前端据此决定句中敲触发符时菜单还弹不弹、气泡还认不认。
+   */
+  inline?: boolean;
 }
 
 /**

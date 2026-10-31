@@ -35,8 +35,8 @@ describe('codex 命令清单', () => {
     touch(path.join(codexHome(), 'prompts/plain.md'), '第一行就是说明\n第二行');
     const surface = createCodexCommandSurface({
       skills: official([
-        { name: 'visualize:visualize', description: 'Turn ideas into visuals', source: 'plugin', sigil: '$' },
-        { name: 'triage', description: 'Triage failures', source: 'skill', sigil: '$' },
+        { name: 'visualize:visualize', description: 'Turn ideas into visuals', source: 'plugin', sigil: '$', inline: true },
+        { name: 'triage', description: 'Triage failures', source: 'skill', sigil: '$', inline: true },
       ]),
     });
 
@@ -44,10 +44,11 @@ describe('codex 命令清单', () => {
     const byName = new Map(list.map((c) => [c.name, c]));
 
     expect(byName.get('compact')).toMatchObject({ source: 'builtin' });
-    expect(byName.get('audit')).toMatchObject({ source: 'command', description: 'Audit deps' });
-    expect(byName.get('plain')).toMatchObject({ source: 'command', description: '第一行就是说明' });
-    expect(byName.get('visualize:visualize')).toMatchObject({ source: 'plugin', sigil: '$' });
-    expect(byName.get('triage')).toMatchObject({ source: 'skill', sigil: '$' });
+    // codex 只有 `$skill` 是 mention（句中可用）；`/` 命令一律只在输入开头
+    expect(byName.get('compact')?.inline).toBeUndefined();
+    expect(byName.get('audit')?.inline).toBeUndefined();
+    expect(byName.get('visualize:visualize')).toMatchObject({ source: 'plugin', sigil: '$', inline: true });
+    expect(byName.get('triage')).toMatchObject({ source: 'skill', sigil: '$', inline: true });
   });
 
   it('官方通道拿不到 → 退回扫 $CODEX_HOME/skills（同样是 `$`）', async () => {
@@ -55,7 +56,7 @@ describe('codex 命令清单', () => {
     const surface = createCodexCommandSurface({ skills: official(null) });
 
     const list = await surface.list({ projectPath: root, homedir: home() });
-    expect(list.find((c) => c.name === 'triage')).toMatchObject({ source: 'skill', sigil: '$' });
+    expect(list.find((c) => c.name === 'triage')).toMatchObject({ source: 'skill', sigil: '$', inline: true });
   });
 
   it('符号链接进来的 skill 也识（退回目录扫描那条路）', async (ctx) => {

@@ -139,7 +139,9 @@ const unstage = (item: StagedFile): void => {
 };
 
 const send = (): void => {
-  // 从 DOM 现序列化：镜像可能落后一拍，而这一份是要真发出去的
+  // 从 DOM 现序列化：镜像可能落后一拍，而这一份是要真发出去的。
+  // `#` 会话胶囊在这里展开成 `#<会话名>` 收件人标注——发送仍是本会话的一次
+  // 普通 prompt，由模型自己整理内容并调宿主 SendMessage（weave 不代投）。
   const text = serializeDraft(draftRef.current).trim();
   const doneStaged = staged.filter((s) => s.state === 'done' && s.upload);
   const files = doneStaged.map((s) => s.upload!);
@@ -147,9 +149,16 @@ const send = (): void => {
   setDraftText('');
   setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));
   stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
+  const localId = `local:${Date.now()}`;
+  const restore = (): void => {
+    // 发送失败：草稿与附件原样放回输入框，不让用户重打一遍（offline 不抛——
+    // 那趟已落成 failed 行、重发按钮在行上）；飞行途中敲下的字垫在后面。
+    const cur = serializeDraft(draftRef.current);
+    setDraftText(cur.trim() ? `${text}\n${cur}` : text);
+    setStaged((s) => [...s, ...doneStaged]);
+  };
   // 乐观反显：真正投递要 1–2s（终端击键），没有这一行的话输入框清了、对话里却
   // 什么都没有；服务端那一版回来（refreshMessages 全量替换）就顶掉这条本地行。
-  const localId = `local:${Date.now()}`;
   setMessages((prev) => [
     ...(prev ?? []),
     {
@@ -181,12 +190,8 @@ const send = (): void => {
         // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
         if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
       } catch (e) {
-        // 发送失败：草稿与附件原样放回输入框，不让用户重打一遍（offline 不抛——
-        // 那趟已落成 failed 行、重发按钮在行上）；飞行途中敲下的字垫在后面。
         setMessages((prev) => (prev ?? []).filter((m) => m.id !== localId));
-        const cur = serializeDraft(draftRef.current);
-        setDraftText(cur.trim() ? `${text}\n${cur}` : text);
-        setStaged((s) => [...s, ...doneStaged]);
+        restore();
         throw e;
       }
       await refreshMessages();

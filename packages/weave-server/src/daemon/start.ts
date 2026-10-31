@@ -39,7 +39,7 @@ import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
 import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
 import { readDecisionKey } from './decision-config.js';
-import { openSessionTerminal } from './session-open.js';
+import { createEnsureOpen } from './session-open.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -432,6 +432,17 @@ export function startDaemon(): void {
       extract: (input) => edgeExtract.run(input),
     }),
   });
+  // 判死拉起 = 共享工厂（session-open.ts）：编排引擎的「目标会话没开就拉起来」
+  // 用它（判据、预算、单飞只有一处；路由侧 openSessionTerminal 同源）。
+  const ensureOpen = createEnsureOpen({
+    hookSessions,
+    hookEvents,
+    projects,
+    harnesses,
+    sessionProbe,
+    terminalRefresher,
+    livenessOf: combinedLivenessOf,
+  });
   // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。
   // 新起的 resume 进程要先在 claude 注册表落名，投递器才不把它判成离线——
   // 等它出现（最多 8s）；等不到也放行，交给队列在 SessionStart 后冲洗。
@@ -447,29 +458,7 @@ export function startDaemon(): void {
     // 人在场闸：目标闲着且用户刚在看 → 编排投递 defer（搭用户下一轮的车），
     // 防层② 击键突袭手输中的输入框（评审点名的中高概率/高后果风险）。
     deferWhenUserPresent: true,
-    ensureOpen: async (sessionId) => {
-      // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
-      // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
-      const baseline = hookEvents.listBySession(sessionId, 1).at(-1)?.id ?? 0;
-      const opened = await openSessionTerminal(
-        { hookSessions, hookEvents, projects, harnesses, sessionProbe, terminalRefresher },
-        sessionId,
-      );
-      if (!opened.ok) return opened;
-      let alive = false;
-      for (let i = 0; i < 60; i++) {
-        // 15s 预算：冷启动 + 宿主落 SessionStart 的实测富余
-        const recent = hookEvents.listBySession(sessionId, 20);
-        if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
-          return { ok: true, ack: 'session-start' };
-        }
-        if (combinedLivenessOf().get(sessionId) === true) alive = true;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      return alive
-        ? { ok: true, ack: 'registry' }
-        : { ok: false, error: 'session did not report ready within 15s' };
-    },
+    ensureOpen,
   });
   orchestrationEngine.rearm();
   // 定时触发：30s 一枪（同分钟只 fire 一次、跑着的跳过）。

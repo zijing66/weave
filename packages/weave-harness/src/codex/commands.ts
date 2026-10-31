@@ -97,11 +97,12 @@ async function readPrompts(root: string): Promise<HarnessCommand[]> {
   return out;
 }
 
+/** skill：`$name` 是宿主唯一的 mention 形态（无前置边界）⇒ 句中可用。 */
 async function readSkills(root: string): Promise<HarnessCommand[]> {
   const out: HarnessCommand[] = [];
   for (const dir of await subdirs(root)) {
     const description = describeMarkdown(await readFile(path.join(dir, 'SKILL.md'), 'utf8').catch(() => ''));
-    out.push({ name: path.basename(dir), description, source: 'skill', sigil: '$' });
+    out.push({ name: path.basename(dir), description, source: 'skill', sigil: '$', inline: true });
   }
   return out;
 }
@@ -122,6 +123,7 @@ function parseSkills(result: unknown): HarnessCommand[] | null {
         description: typeof r.description === 'string' ? r.description : '',
         source: typeof r.pluginId === 'string' ? 'plugin' : 'skill',
         sigil: '$',
+        inline: true,
       });
     }
   }

@@ -54,12 +54,15 @@ describe('claude 命令清单', () => {
     const byName = new Map(list.map((c) => [c.name, c]));
 
     expect(byName.get('compact')).toMatchObject({ source: 'builtin', argsHint: '[instructions]' });
-    expect(byName.get('deploy')).toMatchObject({ source: 'command', description: 'Ship it' });
+    // 内建默认只在输入开头；prompt 型内建（init）句中也可用
+    expect(byName.get('compact')?.inline).toBeUndefined();
+    expect(byName.get('init')?.inline).toBe(true);
+    expect(byName.get('deploy')).toMatchObject({ source: 'command', description: 'Ship it', inline: true });
     // 子目录 = 命名空间
-    expect(byName.get('db:migrate')).toMatchObject({ source: 'command', description: '把库迁上去' });
-    expect(byName.get('reviewer')).toMatchObject({ source: 'skill', description: 'Review code' });
-    expect(byName.get('helper')).toMatchObject({ source: 'skill', description: '帮个忙' });
-    expect(byName.get('plug:design')).toMatchObject({ source: 'plugin', description: 'Design things' });
+    expect(byName.get('db:migrate')).toMatchObject({ source: 'command', description: '把库迁上去', inline: true });
+    expect(byName.get('reviewer')).toMatchObject({ source: 'skill', description: 'Review code', inline: true });
+    expect(byName.get('helper')).toMatchObject({ source: 'skill', description: '帮个忙', inline: true });
+    expect(byName.get('plug:design')).toMatchObject({ source: 'plugin', description: 'Design things', inline: true });
     // 停用插件里的 skill 不可选
     expect(byName.has('off:old')).toBe(false);
   });

@@ -11,6 +11,7 @@ import {
   type UploadFile,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Combobox } from '@/components/ui/combobox';
@@ -23,6 +24,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
+import { SessionShuttlePicker } from './SessionShuttlePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { StatuslineBar } from './StatuslineBar';
@@ -68,6 +70,8 @@ import {
   commandModeClass,
   commandModeOf,
   commandTokensOf,
+  refSigilsOf,
+  SIGIL_KEY,
   serializeDraft,
   ATTACH_ATTR,
   REF_ATTR,
@@ -163,7 +167,15 @@ export function SessionMessages({
   const theme = useTheme();
   /** 旁路会话弹窗（旁路历史与提问都在这扇里）。 */
   const [sideOpen, setSideOpen] = useState(false);
-  const { sessions, refresh, modelCatalog } = useSessionStatus();
+  const { sessions, statuses, refresh, modelCatalog } = useSessionStatus();
+  /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。 */
+  const { data: projects } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => api.listProjects(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: 'always',
+    retry: false,
+  });
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   // 对话数据域：翻页/SSE 增量/投递认领/贴底跟随（数据形状与刷新节奏都在 hook 里）
   const {
@@ -291,7 +303,7 @@ export function SessionMessages({
   const commandInfoOf = useCallback(
     (sigil: CmdSigil, name: string): CmdInfo | undefined => {
       const hit = (commands ?? []).find((c) => c.name === name && (c.sigil ?? '/') === sigil);
-      return hit ? { source: hit.source, sigil } : undefined;
+      return hit ? { source: hit.source, sigil, inline: hit.inline } : undefined;
     },
     [commands],
   );
@@ -301,11 +313,13 @@ export function SessionMessages({
     draft, setDraft,
     draftRef,
     cmdMenu, setCmdMenu,
+    sessionPickerOpen, setSessionPickerOpen,
     insertText, insertNewline,
     buildChip, buildCmdChip, buildAttachChip, insertAttach,
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
+    buildSessionChip, insertSessionTarget, maybeOpenSessionPicker, closeSessionPicker,
     onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   } = useDraftEditor({
@@ -321,6 +335,16 @@ export function SessionMessages({
   /** 草稿此刻的命令形态（`!` bash 模式 / `/` 命令）：输入框据此换色——这些形态
    *  宿主自己执行、不当作 prompt 提交，发出去之前就该看得出来（claude 同款）。 */
   const draftMode = useMemo(() => commandModeOf(draft, inputModes), [draft, inputModes]);
+
+  /** placeholder 上的引用块触发符：只摆这个 harness 真能敲出来的（`@` 看
+   *  pathRefs、`/` 与 `!` 看 inputModes、`$` 看候选清单），`#` 会话引用恒有。 */
+  const refHints = useMemo(
+    () =>
+      refSigilsOf(capability.pathRefs, inputModes, commands).map(
+        (sigil) => `${sigil} ${t(SIGIL_KEY[sigil] ?? 'tasks.sigilSession')}`,
+      ),
+    [capability.pathRefs, inputModes, commands, t],
+  );
 
   /** 键盘高亮项滚进视野：候选超过 max-h-56 后上下键会走出可视区。 */
   useEffect(() => {
@@ -391,6 +415,7 @@ export function SessionMessages({
     buildChip,
     buildCmdChip,
     buildAttachChip,
+    buildSessionChip,
     staged,
     threadRef,
   });
@@ -875,7 +900,7 @@ export function SessionMessages({
                   );
                 }
                 const pipe = m.pipe;
-                // 官方命令只在句首生效；skill/插件可以插在句中（前后须是空白）
+                // 命令 token：开头位全认；句中只认宿主 mention 得起的（能力面 inline）
                 const cmdTokens = commandTokensOf(m.text, commandInfoOf);
                 // 带图条目按 `[Image #N]` 占位记号把图内联回原位置；被内联的图
                 // 不再进预览行（一张图只出现一次），记号比图少时多出来的图与
@@ -1627,8 +1652,13 @@ export function SessionMessages({
                   插——浏览器 Enter 那套会给出 `<div>`，序列化就不干净了。 */}
               <div className="relative min-w-0 flex-1 max-lg:basis-full">
                 {draft === '' && (
-                  <span className="pointer-events-none absolute left-2 top-1.5 text-xs text-neutral-600">
+                  /* 触发符提示拼在文案尾部，窄屏一行摆不下会被 truncate 整段截掉
+                     ⇒ 移动端放开换行（两行装得进两行的输入框），桌面维持单行截断 */
+                  <span className="pointer-events-none absolute left-2 right-2 top-1.5 truncate text-xs text-neutral-600 max-lg:whitespace-normal max-lg:break-words">
                     {t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
+                    {refHints.length > 0 && (
+                      <span className="text-neutral-700"> · {refHints.join(' · ')}</span>
+                    )}
                   </span>
                 )}
                 {/* `/` 命令提示：候选归 harness 能力面，这里只筛与渲染 */}
@@ -1676,6 +1706,7 @@ export function SessionMessages({
                   suppressContentEditableWarning
                   onInput={(e) => {
                     if (maybeOpenPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
+                    if (maybeOpenSessionPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
                     setDraft(serializeDraft(e.currentTarget));
                     syncCmdMenu(e.currentTarget);
                     reconcilePlaced(e.currentTarget);
@@ -2116,6 +2147,23 @@ export function SessionMessages({
             initial={picker.initial}
             onPick={insertRefs}
             onClose={closePicker}
+          />
+        )}
+
+        {/* 会话穿梭选择器（`#` 触发）：挑一个目标会话插成胶囊——发送仍是本会话的
+            普通 prompt（胶囊序列化成 `#<名>` 收件人标注），由模型自己转发。候选 =
+            全部会话，排除当前会话（自己引用自己没有意义）。 */}
+        {sessionPickerOpen && (
+          <SessionShuttlePicker
+            sessions={(sessions ?? []).filter((s) => s.sessionId !== sessionId)}
+            projects={projects ?? []}
+            statuses={statuses}
+            currentProjectId={sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null}
+            onPick={(picked, name) => {
+              insertSessionTarget(picked, name);
+              setSessionPickerOpen(false);
+            }}
+            onClose={closeSessionPicker}
           />
         )}
 

@@ -27,6 +27,13 @@ export const ATTACH_NAME_ATTR = 'data-attach-name';
 export const ATTACH_PATH_ATTR = 'data-attach-path';
 export const ATTACH_MEDIA_ATTR = 'data-attach-media';
 
+/** 会话目标胶囊（`#` 引用）：值 = 目标会话 id。**发送语义 = 本会话的一次普通
+ *  prompt**：序列化把胶囊展开成 `#<会话名>` 标注（模型可读的收件人指示），由
+ *  当前会话的模型自己整理内容并调宿主原生 SendMessage——weave 不代投。名字
+ *  单独存：还原胶囊（快照往返）与序列化都靠它。 */
+export const SESSION_ATTR = 'data-session-target';
+export const SESSION_NAME_ATTR = 'data-session-name';
+
 /** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
  *  而这些数与 DOM 规范同寿，不会变。 */
 const ELEMENT_NODE = 1;
@@ -36,12 +43,14 @@ const TEXT_NODE = 3;
  *  `execCommand`、粘多行文本都落成 `<div>`，不是 `<br>`）。 */
 const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3']);
 
-/** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊、一枚命令胶囊或一枚附件占位胶囊。 */
+/** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊、一枚命令胶囊、一枚附件占位
+ *  胶囊或一枚会话目标胶囊。 */
 type DraftToken =
   | { text: string }
   | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
   | { cmd: string; sigil?: CmdSigil; source?: CmdSource }
-  | { attach: string; name: string; path: string; mediaType: string };
+  | { attach: string; name: string; path: string; mediaType: string }
+  | { session: string; name: string };
 
 /** composer DOM → 线性 token。**换行规则只说这一处**：
  *  - `<br>` = 一个换行；
@@ -95,6 +104,11 @@ function draftTokensOf(root: Node | null): DraftToken[] {
       });
       return;
     }
+    const session = el.getAttribute(SESSION_ATTR);
+    if (session != null) {
+      out.push({ session, name: el.getAttribute(SESSION_NAME_ATTR) ?? '' });
+      return;
+    }
     if (el.tagName === 'BR') {
       text('\n');
       return;
@@ -116,6 +130,11 @@ function draftTokensOf(root: Node | null): DraftToken[] {
       const ref = el.getAttribute(REF_ATTR);
       if (ref != null) {
         chip(el, ref);
+        return;
+      }
+      const session = el.getAttribute(SESSION_ATTR);
+      if (session != null) {
+        out.push({ session, name: el.getAttribute(SESSION_NAME_ATTR) ?? '' });
         return;
       }
       const inner = Array.from(el.childNodes);
@@ -141,6 +160,9 @@ export function serializeDraft(root: Node | null): string {
       if ('text' in t) return t.text;
       if ('ref' in t) return t.ref;
       if ('cmd' in t) return `${t.sigil ?? '/'}${t.cmd}`;
+      // 会话目标胶囊 = 收件人标注：展开成 `#<会话 id>`（名字会重名也会改，
+      // 正文里认会话只认 id；胶囊上仍显示名字，那是给人看的）
+      if ('session' in t) return `#${t.session}`;
       // 附件胶囊：文件 = 路径；图片 = 独立成行的路径（前后补行边界）
       if (!isImageUpload({ mediaType: t.mediaType })) return t.path;
       // 行边界 = 没有邻居，或邻居是文本且贴着的那头已是换行；胶囊邻居（序列化成
@@ -167,6 +189,7 @@ export interface DraftSnapshot {
     | { r: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
     | { c: string; s?: CmdSource; g?: CmdSigil }
     | { a: string; p: string; n: string; m: string }
+    | { ss: string; n: string }
   >;
   /** 已落盘、还没发出去的文件（同一条草稿的附件）。 */
   staged: UploadFile[];
@@ -227,6 +250,8 @@ export function draftSnapshotOf(
       });
     } else if ('attach' in token) {
       parts.push({ a: token.attach, p: token.path, n: token.name, m: token.mediaType });
+    } else if ('session' in token) {
+      parts.push({ ss: token.session, n: token.name });
     } else {
       parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
@@ -242,12 +267,19 @@ export function applyDraftSnapshot(
   buildChip: (ref: string, target: PickTarget) => HTMLElement,
   buildCmdChip?: (name: string, source?: CmdSource, sigil?: CmdSigil) => HTMLElement,
   buildAttachChip?: (part: { a: string; p: string; n: string; m: string }) => HTMLElement,
+  buildSessionChip?: (sessionId: string, name: string) => HTMLElement,
 ): void {
   root.replaceChildren();
   for (const part of snap.parts) {
     if ('c' in part) {
       if (buildCmdChip) root.appendChild(buildCmdChip(part.c, part.s, part.g));
       else root.appendChild(document.createTextNode(`${part.g ?? '/'}${part.c}`));
+      continue;
+    }
+    if ('ss' in part) {
+      if (buildSessionChip) root.appendChild(buildSessionChip(part.ss, part.n));
+      // 无构造器时落成正文形（`#<id>`）：退化路也要发出同一个标识
+      else root.appendChild(document.createTextNode(`#${part.ss}`));
       continue;
     }
     if ('a' in part) {
@@ -311,6 +343,47 @@ export type PickerIntent = 'open' | 'escape' | 'ignore';
 export function pickerIntent(before: string): PickerIntent {
   if (!before.endsWith('@')) return 'ignore';
   if (before.endsWith('\\@')) return 'escape';
+  const prev = before[before.length - 2];
+  if (prev !== undefined && !/\s/.test(prev)) return 'ignore';
+  return 'open';
+}
+
+/** 触发符的说明文案键（placeholder 的「`@` 文件 · `#` 会话」用）。 */
+export const SIGIL_KEY: Record<
+  string,
+  'tasks.sigilFile' | 'tasks.sigilSession' | 'tasks.sigilCommand' | 'tasks.sigilBash' | 'tasks.sigilSkill'
+> = {
+  '@': 'tasks.sigilFile',
+  '#': 'tasks.sigilSession',
+  '/': 'tasks.sigilCommand',
+  '!': 'tasks.sigilBash',
+  '$': 'tasks.sigilSkill',
+};
+
+/** 输入框能敲出引用块的触发符（placeholder 按它出）：`@` 文件引用看能力面
+ *  `pathRefs`、`#` 会话引用恒有（weave 自带，与 harness 无关）、命令形态的
+ *  sigil 随能力面下发（`/` 命令、claude 的 `!` bash）、skill 的 `$` 随候选
+ *  清单出现（codex）。顺序 = 用户最常敲的在前，同一枚只出一次。 */
+export function refSigilsOf(
+  pathRefs: boolean,
+  modes: readonly CommandInputModeRow[],
+  commands: readonly HarnessCommandRow[] | null,
+): string[] {
+  const out: string[] = [];
+  if (pathRefs) out.push('@');
+  out.push('#');
+  for (const m of modes) if (!out.includes(m.sigil)) out.push(m.sigil);
+  for (const c of commands ?? []) if (c.sigil && !out.includes(c.sigil)) out.push(c.sigil);
+  return out;
+}
+
+/** 敲下 `#` 之后该怎么处理（与 `pickerIntent` 同一套形状）：`#` 是会话引用的
+ *  触发键——`@` 归文件、`/` 归命令、`!` 归 bash、`$` 归 codex skill，全 harness
+ *  空闲的引用惯例符只剩它。markdown 标题（行首 `# `）撞同一枚键：选择器关掉时
+ *  会把 `#` 补回去（见 use-draft-editor 的 closeSessionPicker），标题照敲不误。 */
+export function sessionPickerIntent(before: string): PickerIntent {
+  if (!before.endsWith('#')) return 'ignore';
+  if (before.endsWith('\\#')) return 'escape';
   const prev = before[before.length - 2];
   if (prev !== undefined && !/\s/.test(prev)) return 'ignore';
   return 'open';
@@ -398,6 +471,10 @@ const CMD_CHIP_CLASS =
 const SKILL_CHIP_CLASS =
   'mx-0.5 inline-block whitespace-nowrap rounded-full border border-red-500/40 bg-red-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-red-200';
 
+/** 会话目标胶囊：紫色系（跨会话这个概念全站一色）。 */
+export const SESSION_CHIP_CLASS =
+  'mx-0.5 inline-block max-w-[14rem] truncate rounded-full border border-violet-500/40 bg-violet-500/15 px-1.5 align-baseline text-11 leading-[1.5] text-violet-200';
+
 export type CmdSource = HarnessCommandRow['source'];
 export type CmdSigil = '/' | '$';
 
@@ -430,13 +507,16 @@ export function commandModeClass(mode: CommandInputModeRow): string {
     : 'border-amber-500/50 ring-1 ring-amber-500/20';
 }
 
-/** 气泡里认出命令 token：官方/自定义命令**只在整句开头**生效（宿主判据），
- *  skill/插件命令可以插在句中任何位置，但**前后必须是空白**（与引用表达式同一条
- *  判据）。触发符也归能力面（claude 全 `/`、codex 的 skill 是 `$`）。
+/** 气泡里认出命令 token：**整条输入开头**（前面只有空白）的走宿主命令分派、全部
+ *  可用；句中的只有宿主 mention 扫描认得出的（能力面 `inline`——claude 的
+ *  prompt 型命令与 codex 的 `$skill`，前后必须是空白，与引用表达式同一条判据）。
+ *  触发符也归能力面（claude 全 `/`、codex 的 skill 是 `$`）。
  *  认不出的名字一律当普通文字，不猜。 */
 export interface CmdInfo {
   source: CmdSource;
   sigil: CmdSigil;
+  /** 宿主能在句子中间（前后空白）认出这条命令；缺省 = 只在整条输入开头可用。 */
+  inline?: boolean;
 }
 export type CmdToken =
   | { text: string }
@@ -455,14 +535,54 @@ export function commandTokensOf(
     const info = infoOf(sigil, name);
     if (!info) continue;
     const start = m.index + m[1]!.length;
-    // 整句开头（前面只有空白）才认官方命令；skill/插件不看位置
+    // 整条输入开头（前面只有空白）才走命令分派；句中只认宿主 mention 得起的
     const head = text.slice(0, start).trim() === '';
-    const skill = info.source === 'skill' || info.source === 'plugin';
-    if (sigil === '/' && !head && !skill) continue;
+    if (!head && !info.inline) continue;
     if (start > at) out.push({ text: text.slice(at, start) });
     out.push({ cmd: name, source: info.source, sigil });
     at = start + name.length + 1;
   }
   if (at < text.length) out.push({ text: text.slice(at) });
   return out;
+}
+
+/** 光标前那截文字里的命令触发位（空白后的 `/word` / `$word`）：交出触发符、已敲的
+ *  名字片段与「是否整条输入开头」。head 判据与宿主分派一致——整条输入 trim 后以
+ *  触发符开头才算，多行第二行的行首不算（宿主也不会分派它）。 */
+export interface CmdQueryHit {
+  sigil: CmdSigil;
+  query: string;
+  head: boolean;
+}
+
+export function cmdQueryIn(before: string): CmdQueryHit | null {
+  const m = /(?:^|\s)([/$])([A-Za-z0-9:_-]*)$/.exec(before);
+  if (!m) return null;
+  return { sigil: m[1] as CmdSigil, query: m[2]!, head: before.slice(0, m.index).trim() === '' };
+}
+
+/** 这个位置敲下触发符，菜单有没有可给的候选：开头位全量可用；句中只摆宿主认
+ *  mention 的（inline）——内建命令句中发了就是死文本，不如不弹。 */
+export function cmdMenuShouldOpen(
+  commands: readonly HarnessCommandRow[],
+  sigil: CmdSigil,
+  head: boolean,
+): boolean {
+  return commands.some((c) => (c.sigil ?? '/') === sigil && (head || c.inline === true));
+}
+
+/** 菜单候选：位置先筛（同上），再按前缀命中的排前面、包含命中的排后面（都按
+ *  大小写不敏感比），截前 40。 */
+export function cmdMenuMatches(
+  commands: readonly HarnessCommandRow[],
+  sigil: CmdSigil,
+  query: string,
+  head: boolean,
+): HarnessCommandRow[] {
+  const pool = commands.filter((c) => (c.sigil ?? '/') === sigil && (head || c.inline === true));
+  const q = query.toLowerCase();
+  const low = (c: HarnessCommandRow): string => c.name.toLowerCase();
+  const prefix = pool.filter((c) => low(c).startsWith(q));
+  const rest = pool.filter((c) => !low(c).startsWith(q) && low(c).includes(q));
+  return [...prefix, ...rest].slice(0, 40);
 }

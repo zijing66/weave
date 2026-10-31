@@ -24,7 +24,15 @@ export interface SessionMessageRow {
   via?: 'socket' | 'relay' | 'terminal' | null;
   /** 发送人强制走层② 终端（下拉选的通道）；重发沿用。 */
   forceTerminal?: boolean | null;
-  status: 'pending' | 'delivering' | 'running' | 'injected' | 'delivered' | 'succeeded' | 'failed' | 'timeout';
+  status:
+    | 'pending'
+    | 'delivering'
+    | 'running'
+    | 'injected'
+    | 'delivered'
+    | 'succeeded'
+    | 'failed'
+    | 'timeout';
   /** 投递回执：目标会话自己的 UserPromptSubmit 与本文匹配上了（真到达）。 */
   acked?: boolean | null;
   /** 回执命中的那条开轮事件：对话面按它把投递行挂到对应气泡上（文案对不上也认得出）。 */
@@ -154,7 +162,11 @@ export const messageApi = {
    *  409，由 apiFetch 抛 Error（error 字段原文）。 */
   sendSessionMessage: (
     sessionId: string,
-    body: { text: string; attachments?: string[]; forceTerminal?: boolean },
+    body: {
+      text: string;
+      attachments?: string[];
+      forceTerminal?: boolean;
+    },
   ): Promise<{ ok: boolean; messageId: string; status: string; message?: SessionMessageRow }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',

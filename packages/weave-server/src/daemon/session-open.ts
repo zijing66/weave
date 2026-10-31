@@ -3,6 +3,7 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
 import { readDaemonSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
+import { combinedLivenessOf } from './liveness.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 
 /**
@@ -155,4 +156,47 @@ export async function openSessionTerminal(
   } catch (e) {
     return { ok: false, status: 400, error: e instanceof Error ? e.message : 'Open failed' };
   }
+}
+
+/** ensureOpen 的返回（与编排引擎 `deps.ensureOpen` 的形状逐字一致，两边共用一份）。 */
+export type EnsureOpenResult =
+  | { ok: true; ack?: 'session-start' | 'registry' }
+  | { ok: false; error: string };
+
+/**
+ * 「判死会话先拉起再投递」的共享工厂：`openSessionTerminal` spawn + 等「真进了
+ * 会话」（SessionStart 事件 id 超过拉起前基线；注册表出现 pid 只算弱信号）。
+ * 编排引擎的「目标会话没开就拉起来」用这一份——判据、预算、错误口径只有一处。
+ * **单飞**：同一会话被并发投递时只拉起一次（后到的搭同一班车的结果）。
+ */
+export function createEnsureOpen(
+  deps: SessionOpenDeps & { livenessOf?: () => Map<string, boolean> },
+): (sessionId: string) => Promise<EnsureOpenResult> {
+  const opening = new Map<string, Promise<EnsureOpenResult>>();
+  const ensure = async (sessionId: string): Promise<EnsureOpenResult> => {
+    if (!deps.hookEvents) return { ok: false, error: 'Hook ingestion unavailable' };
+    // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
+    // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
+    const baseline = deps.hookEvents.listBySession(sessionId, 1).at(-1)?.id ?? 0;
+    const opened = await openSessionTerminal(deps, sessionId);
+    if (!opened.ok) return { ok: false, error: opened.error };
+    let alive = false;
+    for (let i = 0; i < 60; i++) {
+      // 15s 预算：冷启动 + 宿主落 SessionStart 的实测富余
+      const recent = deps.hookEvents.listBySession(sessionId, 20);
+      if (recent.some((e) => e.id > baseline && e.eventType === 'SessionStart')) {
+        return { ok: true, ack: 'session-start' };
+      }
+      if ((deps.livenessOf?.() ?? combinedLivenessOf()).get(sessionId) === true) alive = true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return alive ? { ok: true, ack: 'registry' } : { ok: false, error: 'session did not report ready within 15s' };
+  };
+  return (sessionId) => {
+    const existing = opening.get(sessionId);
+    if (existing) return existing;
+    const task = ensure(sessionId).finally(() => opening.delete(sessionId));
+    opening.set(sessionId, task);
+    return task;
+  };
 }

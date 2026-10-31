@@ -6,6 +6,9 @@ import {
   applyDraftSnapshot,
   buildSegments,
   cmdChipClass,
+  cmdMenuMatches,
+  cmdMenuShouldOpen,
+  cmdQueryIn,
   hasRefCandidate,
   pickerIntent,
   readDraftSnapshot,
@@ -26,6 +29,11 @@ import {
   REF_PATH_ATTR,
   REF_CHIP_CLASS,
   ATTACH_CHIP_CLASS,
+  SESSION_ATTR,
+  SESSION_NAME_ATTR,
+  SESSION_CHIP_CLASS,
+  sessionPickerIntent,
+  type CmdQueryHit,
   type CmdSigil,
   type CmdSource,
 } from './draft-editor';
@@ -61,10 +69,16 @@ export function useDraftEditor(deps: {
   /** 输入框的**镜像**（真源是 contenteditable 的 DOM）：只给按钮置灰、占位、关闭
    *  确认这几处读；发出去的内容恒从 DOM 序列化，不信这份。 */
   const [draft, setDraft] = useState('');
-  /** `/` 命令菜单：`query` 是已经敲进去的那截命令名，`active` 是键盘高亮项。 */
-  const [cmdMenu, setCmdMenu] = useState<{ sigil: CmdSigil; query: string; active: number } | null>(null);
+  /** `/` 命令菜单：`query` 是已经敲进去的那截命令名，`head` = 触发位在整条输入
+   *  开头（决定候选池），`active` 是键盘高亮项。 */
+  const [cmdMenu, setCmdMenu] = useState<{ sigil: CmdSigil; query: string; head: boolean; active: number } | null>(null);
+  /** `#` 会话选择器开着（引用目标会话的挑选）。 */
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   /** `@` 触发时那枚 `@` 被删掉了，记下它的位置：取消就补回去，落定就地插胶囊。 */
   const atRange = useRef<Range | null>(null);
+  /** `#` 触发时那枚 `#` 同样被删掉了：取消（Escape/蒙版）补回去——markdown 标题
+   *  （行首 `# `）撞的就是这枚键，不补回去标题就丢字了。 */
+  const hashRange = useRef<Range | null>(null);
   /** composer 用 contenteditable 而不是 textarea：内联引用胶囊要成原子块
    *  （`contenteditable=false` 的 span 里退格整枚删、光标进不去）。 */
   const draftRef = useRef<HTMLDivElement>(null);
@@ -82,10 +96,11 @@ const insertNodes = (nodes: Node[]): void => {
   const el = draftRef.current;
   if (!el) return;
   el.focus({ preventScroll: true });
-  // 选择器开着时焦点不在框里，浏览器那份选区已经没了；`@` 触发的那次要回到
-  // 那枚 `@` 的位置，而不是末尾（focus 之后才设，否则会被 focus 抢走）。
-  const saved = atRange.current;
+  // 选择器开着时焦点不在框里，浏览器那份选区已经没了；`@` / `#` 触发的那次要
+  // 回到那枚触发符的位置，而不是末尾（focus 之后才设，否则会被 focus 抢走）。
+  const saved = atRange.current ?? hashRange.current;
   atRange.current = null;
+  hashRange.current = null;
   // 等落定的这段时间里那截文字可能已经被删掉（粘贴要先问一趟服务端）：
   // 挂一个游离节点的 Range 会抛，退回末尾追加
   if (saved && el.contains(saved.startContainer)) {
@@ -118,8 +133,11 @@ const insertNodes = (nodes: Node[]): void => {
   setDraft(serializeDraft(el));
 };
 
-/** 插纯文本（换行钮 / 粘贴 / 出队回填）。走 `execCommand` 是为了留在浏览器的
- *  撤销栈里；不支持就退回手插节点（那条路没有撤销，但不至于插不进去）。 */
+/** 插纯文本（Enter 换行 / 移动端换行钮 / 关选择器补 `#`）。走
+ *  `execCommand('insertText')` 是为了留在浏览器的撤销栈里；不支持就退回手插
+ *  节点（那条路没有撤销，但不至于插不进去）。**这条路的撤销语义是「并入打字
+ *  组」**——单字符插入与前后打字同组撤销正合直觉，且换行后光标正确落在新行
+ *  （insertHTML 插 `\n` 会把光标留在换行之前）；粘贴不能走它（见 insertPasted）。 */
 const insertText = (text: string): void => {
   const el = draftRef.current;
   if (!el) return;
@@ -141,6 +159,32 @@ const insertText = (text: string): void => {
 
 /** 换行（移动端那枚按钮）：移动端没有 Shift+Enter 这个手势。 */
 const insertNewline = (): void => insertText('\n');
+
+/** 插一段**粘贴来的**文本：必须走 `execCommand('insertHTML')`——`insertText`
+ *  会把插入并进「打字」撤销组，Ctrl+Z 一口气把粘贴连同之前的打字全撤掉；
+ *  `insertHTML` 是独立撤销步，与原生粘贴一致（2026-10-31 Chromium 实测）。
+ *  文本经 createTextNode 转义成 HTML，换行保持字面 `\n`（pre-wrap 下照常
+ *  渲染、序列化单换行；换成 `<br>` 反倒在文本交界被 Chromium 塞进额外的
+ *  `\n` 变双倍换行）。不支持时退回手插节点（那条路没有撤销，但不至于插不进）。 */
+const insertPasted = (text: string): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  if (!caretInDraft(el)) {
+    insertNodes([document.createTextNode(text)]);
+    return;
+  }
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(document.createTextNode(text));
+  let ok = false;
+  try {
+    ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
+  } catch {
+    ok = false;
+  }
+  if (!ok) insertNodes([document.createTextNode(text)]);
+  else setDraft(serializeDraft(el));
+};
 
 /** 造一枚胶囊：正文 = 服务端算好的表达式，另存路径/类型/行区间供再次编辑。 */
 const buildChip = (ref: string, target: PickTarget): HTMLElement => {
@@ -172,7 +216,30 @@ const buildCmdChip = (name: string, source?: CmdSource, sigil?: CmdSigil): HTMLE
   return chip;
 };
 
-/** 造一枚附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
+/** 造一枚会话目标胶囊：值 = 目标会话 id，展示 = 会话名。发送时序列化展开成
+ *  `#<名>` 收件人标注（发送仍是本会话的 prompt，模型自己转发）。 */
+const buildSessionChip = (sessionId: string, name: string): HTMLElement => {
+  const chip = document.createElement('span');
+  chip.setAttribute('contenteditable', 'false');
+  chip.setAttribute(SESSION_ATTR, sessionId);
+  chip.setAttribute(SESSION_NAME_ATTR, name);
+  chip.className = SESSION_CHIP_CLASS;
+  chip.textContent = `#${name}`;
+  chip.title = name; // 长名被截断时，悬停还看得见全文
+  return chip;
+};
+
+/** 落定引用目标：**单目标**——先摘掉既有目标胶囊再在 `#` 的位置插新的一枚。
+ *  光标停在胶囊后面一格（正文接着敲就行）。 */
+const insertSessionTarget = (sessionId: string, name: string): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  hashRange.current = null;
+  el.querySelector(`[${SESSION_ATTR}]`)?.remove();
+  insertNodes([buildSessionChip(sessionId, name), document.createTextNode(' ')]);
+};
+
+/** 附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
  *  序列化语义归 draft-editor（文件 → 落盘路径、图片 → 空串），这里只管长相。
  *  入参加快照 part 形状（a/p/n/m）：applyDraftSnapshot 还原与 insertAttach 新建
  *  走同一个构造器，不备两份。拖动载荷由容器级 `onChipDragStart` 委托（execCommand
@@ -268,29 +335,29 @@ const insertAttach = (upload: UploadFile): void => {
   insertNodes(Array.from(wrapper.childNodes));
 };
 
-/** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符
- *  与已敲的名字片段交出来。`/` 在句首才是官方命令，但 skill 句中也能用，
- *  故两种触发符都按「空白后」认。 */
-const commandQueryAt = (el: HTMLDivElement): { sigil: CmdSigil; query: string } | null => {
+/** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符、
+ *  已敲的名字片段与「是否整条输入开头」交出来。文法归 draft-editor 的纯函数
+ *  （与宿主分派判据同源），这里只做 DOM 取料。 */
+const commandQueryAt = (el: HTMLDivElement): CmdQueryHit | null => {
   const range = caretInDraft(el);
   if (!range) return null;
-  const m = /(?:^|\s)([/$])([A-Za-z0-9:_-]*)$/.exec(textBeforeCaret(el, range));
-  return m ? { sigil: m[1] as CmdSigil, query: m[2]! } : null;
+  return cmdQueryIn(textBeforeCaret(el, range));
 };
 
-/** 敲字时同步命令菜单：不再是命令词就收起（发送/点走/删光都走这一处）。 */
+/** 敲字时同步命令菜单：不再是命令词、或这个位置宿主根本不认（句中敲 `/` 而该
+ *  触发符下没有 inline 候选）就收起（发送/点走/删光都走这一处）。 */
 const syncCmdMenu = (el: HTMLDivElement): void => {
   const hit = commandQueryAt(el);
-  if (!hit || !commands || commands.length === 0) {
+  if (
+    !hit ||
+    !commands ||
+    commands.length === 0 ||
+    !cmdMenuShouldOpen(commands, hit.sigil, hit.head)
+  ) {
     if (cmdMenu) setCmdMenu(null);
     return;
   }
-  const known = commands.some((c) => (c.sigil ?? '/') === hit.sigil);
-  if (!known) {
-    if (cmdMenu) setCmdMenu(null);
-    return;
-  }
-  setCmdMenu({ sigil: hit.sigil, query: hit.query, active: 0 });
+  setCmdMenu({ sigil: hit.sigil, query: hit.query, head: hit.head, active: 0 });
 };
 
 /** 落定一条命令：把已敲的 `/query` 换成胶囊（颜色随来源），光标停在它后面一格
@@ -324,16 +391,11 @@ const insertCommand = (name: string, sigil: CmdSigil): void => {
   setDraft(serializeDraft(el));
 };
 
-/** 菜单里的候选：前缀命中的排前面，其余按包含排后面（都按大小写不敏感比）。 */
+/** 菜单里的候选：位置先筛（句中只摆宿主认 mention 的），再前缀命中的排前面、
+ *  其余按包含排后面（都按大小写不敏感比）。 */
 const cmdMatches = useMemo(() => {
   if (!cmdMenu || !commands) return [];
-  const q = cmdMenu.query.toLowerCase();
-  const same = commands.filter((c) => (c.sigil ?? '/') === cmdMenu.sigil);
-  const prefix = same.filter((c) => c.name.toLowerCase().startsWith(q));
-  const rest = same.filter(
-    (c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q),
-  );
-  return [...prefix, ...rest].slice(0, 40);
+  return cmdMenuMatches(commands, cmdMenu.sigil, cmdMenu.query, cmdMenu.head);
 }, [cmdMenu, commands]);
 
 /** 刷新后把没发出去的草稿还回来（每个会话只还一次；键按会话分，多扇对话互不覆盖）。 */
@@ -344,7 +406,7 @@ useEffect(() => {
   const el = draftRef.current;
   const snap = readDraftSnapshot(sessionId);
   if (!el || !snap) return;
-  applyDraftSnapshot(el, snap, buildChip, buildCmdChip, buildAttachChip);
+  applyDraftSnapshot(el, snap, buildChip, buildCmdChip, buildAttachChip, buildSessionChip);
   setDraft(serializeDraft(el));
   if (snap.staged.length > 0)
     setStaged(
@@ -404,15 +466,15 @@ const insertRefs = (items: PickItem[]): void => {
 
 /** 粘贴回填：先把这段文本交给服务端认引用（文法归 harness、存在性归索引），
  *  认到的片段落成胶囊、其余照原文插入。认不出或这趟挂了就整段当纯文本——
- *  粘贴不能因为一个可选的服务而丢字。纯文本走 `insertText`（execCommand，
- *  留在浏览器撤销栈里——Ctrl+Z 撤粘贴靠它）；落胶囊的异步路没有撤销
- *  （execCommand 插不进胶囊 + 文本混合体），可接受：带引用的粘贴少见。 */
+ *  粘贴不能因为一个可选的服务而丢字。两条路都走 `execCommand('insertHTML')`
+ *  （独立撤销步，Ctrl+Z 撤粘贴靠它；手插节点不进撤销栈，undo 会跳过粘贴）：
+ *  纯文本走 `insertPasted`，胶囊混合体把节点摊平成 HTML 一次插入。 */
 const insertRichText = (text: string): void => {
   const el = draftRef.current;
   if (!el) return;
   const range = caretInDraft(el);
   atRange.current = range ? range.cloneRange() : null;
-  const plain = (): void => insertText(text);
+  const plain = (): void => insertPasted(text);
   // 快路：整段没有一个「行首/空白后的 @」，就不可能含引用表达式——直接插，
   // 不等那一趟服务端认引用（粘贴卡顿的主因：纯文本也要等网络来回才落字）
   if (!hasRefCandidate(text)) {
@@ -420,13 +482,34 @@ const insertRichText = (text: string): void => {
     return;
   }
   api.recognizeRefs(sessionId, text).then((refs) => {
-    insertNodes(
-      buildSegments(text, refs).flatMap((seg): Node[] =>
-        seg.kind === 'text'
-          ? [document.createTextNode(seg.text)]
-          : [buildChip(seg.item.ref, seg.item.target)],
-      ),
+    const nodes = buildSegments(text, refs).flatMap((seg): Node[] =>
+      seg.kind === 'text'
+        ? [document.createTextNode(seg.text)]
+        : [buildChip(seg.item.ref, seg.item.target)],
     );
+    // 摊平成 HTML 走 insertHTML（独立撤销步）；wrapper 的孩子逐个搬，外壳不进 DOM
+    const wrapper = document.createElement('div');
+    nodes.forEach((n) => wrapper.appendChild(n));
+    el.focus({ preventScroll: true });
+    const saved = atRange.current;
+    atRange.current = null;
+    if (saved && el.contains(saved.startContainer)) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(saved);
+    }
+    if (!caretInDraft(el)) {
+      insertNodes(nodes);
+      return;
+    }
+    let ok = false;
+    try {
+      ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
+    } catch {
+      ok = false;
+    }
+    if (!ok) insertNodes(nodes);
+    else setDraft(serializeDraft(el));
   }, plain);
 };
 
@@ -501,6 +584,64 @@ const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
   return true;
 };
 
+/** 敲 `#` 唤出会话选择器（`\#` 除外；判据见 sessionPickerIntent）。返回 true =
+ *  这次输入已被接管。 */
+const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
+  // 只认真的敲进来一个半角 `#`：IME 组字、粘贴、替换都不算
+  if (native.inputType !== 'insertText' || native.data !== '#') return false;
+  const range = caretInDraft(el);
+  if (!range) return false;
+  const intent = sessionPickerIntent(textBeforeCaret(el, range));
+  if (intent === 'ignore') return false;
+  if (intent === 'escape') {
+    escapeHash(el);
+    return true;
+  }
+
+  document.execCommand('delete'); // 收掉这枚 `#`：胶囊自己带
+  const caret = window.getSelection();
+  hashRange.current = caret?.rangeCount ? caret.getRangeAt(0).cloneRange() : null;
+  setDraft(serializeDraft(el));
+  setSessionPickerOpen(true);
+  return true;
+};
+
+/** 关掉会话选择器：把那枚 `#` 补回原位（markdown 标题撞的就是这枚键，不补回去
+ *  标题就丢字了——想引用会话就选中一个目标，而不是关掉它）。 */
+const closeSessionPicker = (): void => {
+  setSessionPickerOpen(false);
+  const saved = hashRange.current;
+  hashRange.current = null;
+  const el = draftRef.current;
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  if (!saved) return;
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(saved);
+  insertText('#');
+};
+
+/** `\#` 是转义：吃掉反斜杠、留下字面 `#`、不弹选择器。 */
+const escapeHash = (el: HTMLDivElement): void => {
+  const sel = window.getSelection();
+  const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+  const node = range?.startContainer;
+  const off = range?.startOffset ?? 0;
+  if (node && node.nodeType === TEXT_NODE && off >= 2) {
+    const value = node.nodeValue ?? '';
+    if (value[off - 1] === '#' && value[off - 2] === '\\') {
+      node.nodeValue = `${value.slice(0, off - 2)}#${value.slice(off)}`;
+      const after = document.createRange();
+      after.setStart(node, off - 1);
+      after.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(after);
+    }
+  }
+  setDraft(serializeDraft(el));
+};
+
 /** 整段写回（出队编辑 / 发走清空）：DOM 与镜像一起换。胶囊在这里退化回
  *  表达式原文——那是它本来就等于的东西，再拼回去也不能保证还是同一枚。 */
 const setDraftText = (text: string): void => {
@@ -562,11 +703,13 @@ const onChipDragEnd = (): void => {
     draft, setDraft,
     draftRef, atRange,
     cmdMenu, setCmdMenu,
+    sessionPickerOpen, setSessionPickerOpen,
     caretInDraft, insertNodes, insertText, insertNewline,
     buildChip, buildCmdChip, buildAttachChip, insertAttach,
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
     closePicker, openChip, escapeAt, maybeOpenPicker,
+    buildSessionChip, insertSessionTarget, maybeOpenSessionPicker, closeSessionPicker,
     onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   };

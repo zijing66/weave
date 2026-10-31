@@ -70,6 +70,8 @@ export interface HarnessCommandRow {
   source: 'builtin' | 'command' | 'skill' | 'plugin';
   /** 触发符（缺省 `/`）：codex 的 skill 是 `$name`。 */
   sigil?: '/' | '$';
+  /** 宿主能在句子中间（前后空白）认出这条命令；缺省 = 只在整条输入开头可用。 */
+  inline?: boolean;
 }
 
 /**
