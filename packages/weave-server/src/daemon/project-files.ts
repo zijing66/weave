@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { PathRefKind } from '@weavecode/harness';
@@ -22,7 +23,7 @@ const execFileAsync = promisify(execFile);
 export const MAX_INDEX_FILES = 300_000;
 
 /** 快照格式版本：作废盘上的旧文件，改形状必须递增。 */
-export const INDEX_VERSION = 2;
+export const INDEX_VERSION = 3;
 
 /** 硬窗：到点必重建。**新建的未跟踪文件不动 `.git/index`**（实测），只有这条能兜住。 */
 const INDEX_TTL_MS = 30_000;
@@ -100,12 +101,66 @@ async function gitLsFiles(cwd: string, args: string[]): Promise<string[] | null>
       maxBuffer: 64 * 1024 * 1024,
       windowsHide: true,
     });
-    // gitignore 语义（嵌套 / 取反 / 全局 excludes）白拿；--others 让刚建还没 add 的也在列
+    // gitignore 语义（嵌套 / 取反 / 跨源优先级）白拿；--others 让刚建还没 add 的也在列
     return stdout.split('\0').filter(Boolean);
   } catch {
     // 非 git 仓库 / 没有 git / 超时 → 这一层回落枚举
     return null;
   }
+}
+
+/**
+ * 个人排除文件（`.git/info/exclude`）里的**未跟踪**文件也要进索引——那是用户的
+ * 收纳区（不进 .gitignore、也不想提交，但日常还要引用）。做法 = 不用
+ * `--exclude-standard`（它把 info/exclude 也算上），改显式给「各级 .gitignore +
+ * 全局 excludesFile」两件套：实测与 standard 在取反、跨源优先级上完全同判，唯独
+ * info/exclude 不再参与。全局 excludesFile 的落点自己解析（显式给排除参数时
+ * config 不被读，XDG 默认 `~/.config/git/ignore` 更不会）：`core.excludesFile`
+ * （`--path` 展开 `~/`，相对值按仓库根解）→ XDG → `~/.config/git/ignore`；文件
+ * 不存在就跳过这一源（`--exclude-from` 指向缺失文件是 fatal）。
+ */
+async function globalExcludeFileOf(root: string): Promise<string | null> {
+  const exists = async (p: string): Promise<string | null> =>
+    (await lstat(p).then(
+      () => true,
+      () => false,
+    ))
+      ? p
+      : null;
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['config', '--get', '--path', 'core.excludesFile'],
+      { cwd: root, timeout: 5_000, windowsHide: true },
+    );
+    const p = stdout.trim();
+    if (p) return exists(path.resolve(root, p));
+  } catch {
+    // 没配就走默认落点
+  }
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config');
+  return exists(path.join(xdg, 'git', 'ignore'));
+}
+
+/** 排除参数两件套（standard 减去 info/exclude，见 globalExcludeFileOf）。 */
+async function excludeArgsOf(root: string): Promise<string[]> {
+  const args = ['--exclude-per-directory=.gitignore'];
+  const global = await globalExcludeFileOf(root);
+  if (global) args.push(`--exclude-from=${global}`);
+  return args;
+}
+
+/** 排除参数按根缓存：嵌套仓递归共用同一份（avic 六个子模块，别每次递归都重 spawn）。 */
+const excludeArgsCache = new Map<string, string[]>();
+
+/** 缓存版 excludeArgsOf：同一 root 只解析一次全局 excludesFile。 */
+async function excludeArgsCached(root: string): Promise<string[]> {
+  let args = excludeArgsCache.get(root);
+  if (!args) {
+    args = await excludeArgsOf(root);
+    excludeArgsCache.set(root, args);
+  }
+  return args;
 }
 
 /** `--stage` 一枪两用：160000 = 子模块 gitlink、120000 = 已跟踪符号链接
@@ -169,7 +224,7 @@ async function ignoredReposOf(root: string): Promise<string[]> {
   const listed = await gitLsFiles(root, [
     '--others',
     '--ignored',
-    '--exclude-standard',
+    ...(await excludeArgsCached(root)),
     '--directory',
   ]);
   const out: string[] = [];
@@ -191,10 +246,17 @@ async function ignoredReposOf(root: string): Promise<string[]> {
 async function listViaGit(
   root: string,
   prefix = '',
+  excludeArgs: string[] = [],
 ): Promise<{ files: string[]; links: string[]; heads: Record<string, string> } | null> {
   // 三枪并行：Windows 上每次 spawn 数百 ms，串行四枪是重建的大头（实测 550ms → ~220ms）
   const [listed, staged, ignored] = await Promise.all([
-    gitLsFiles(root, ['--cached', '--others', '--exclude-standard']),
+    (async () => {
+      // 个人排除文件（.git/info/exclude）里的未跟踪文件也进索引（用户的收纳区，
+      // 日常还要引用）——不用 --exclude-standard（它把 info/exclude 也算上），改
+      // 显式「各级 .gitignore + 全局 excludesFile」两件套，实测与 standard 同判
+      const args = ['--cached', '--others', ...(excludeArgs.length ? excludeArgs : await excludeArgsCached(root))];
+      return gitLsFiles(root, args);
+    })(),
     stagedSpecialOf(root),
     ignoredReposOf(root),
   ]);
@@ -229,7 +291,7 @@ async function listViaGit(
     if (!(await hasGitDir(dir))) continue;
     const head = await nestedHeadOf(dir);
     if (head) heads[`${prefix}${p}`] = head;
-    const inner = await listViaGit(dir, `${prefix}${p}/`);
+    const inner = await listViaGit(dir, `${prefix}${p}/`, excludeArgs);
     if (!inner) continue;
     files.push(...inner.files);
     links.push(...inner.links);
@@ -249,7 +311,7 @@ async function listViaGit(
     for (let i = files.length - 1; i >= 0; i--) {
       if (files[i]!.startsWith(withPrefix)) files.splice(i, 1);
     }
-    const inner = (await listViaGit(dir, withPrefix)) ?? {
+    const inner = (await listViaGit(dir, withPrefix, excludeArgs)) ?? {
       files: await listViaWalk(dir),
       links: [] as string[],
       heads: {} as Record<string, string>,

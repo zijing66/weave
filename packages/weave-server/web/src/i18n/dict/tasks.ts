@@ -176,6 +176,8 @@ export const tasksZh = {
   'tasks.fileTruncated': '结果被截断，请细化搜索',
   'tasks.fileHint': '↑↓ 选择 · →/双击 进入 · Enter 确认 · 空格勾选 · ← 返回',
   'tasks.fileHintBrowse': '↑↓ 选择 · →/双击 进入 · Enter 预览 · ← 返回',
+  'tasks.fileVisibilityHint':
+    '列表含未跟踪与 .git/info/exclude（个人排除）里的文件；.gitignore 与全局排除的照旧隐藏。',
   'tasks.fileBack': '返回列表',
   'tasks.fileFind': '查找',
   'tasks.fileGoToLine': '跳到行',
@@ -731,6 +733,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.fileTruncated': 'Results truncated — narrow the search',
   'tasks.fileHint': '↑↓ select · →/double-click open · Enter confirm · Space tick · ← back',
   'tasks.fileHintBrowse': '↑↓ select · →/double-click open · Enter preview · ← back',
+  'tasks.fileVisibilityHint':
+    'Includes untracked files and anything in .git/info/exclude (personal excludes); .gitignore and global excludes still hide.',
   'tasks.fileBack': 'Back to list',
   'tasks.fileFind': 'Find',
   'tasks.fileGoToLine': 'Go to line',

@@ -260,6 +260,20 @@ describe('buildIndex', () => {
     expect(idx.files).toEqual(['inner/README.md', 'm.ts']);
     expect(idx.dirs).toEqual(['inner']);
   });
+
+  it.skipIf(!hasGit)('⑧ 个人排除文件（.git/info/exclude）里的未跟踪文件照样进索引（收纳区可见）', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    write(root, '.git/info/exclude', 'pers/\n*.local.md\n');
+    write(root, 'pers/b.txt');
+    write(root, 'note.local.md');
+    write(root, '.gitignore', 'drop/\n');
+    write(root, 'drop/d.txt');
+    const idx = await buildIndex(root);
+    // info/exclude 的两条模式不再隐藏文件；.gitignore 的照旧隐藏
+    expect(idx.files).toEqual(['.gitignore', 'm.ts', 'note.local.md', 'pers/b.txt']);
+    expect(idx.dirs).toEqual(['pers']);
+  });
 });
 
 describe('listDirOf', () => {

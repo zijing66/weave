@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { api, type ProjectFileEntry } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { FieldHint } from '@/components/ui/field-hint';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
@@ -1243,6 +1244,7 @@ export function FilePicker({
               </span>
             ))}
           </div>
+          <FieldHint>{t('tasks.fileVisibilityHint')}</FieldHint>
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
             <input
