@@ -583,12 +583,26 @@ export function startDaemon(): void {
     // 干净释放）再退——立刻 exit 会把锁释放甩给 OS 慢慢收，紧跟的 start
     // 撞上垂死锁（boot log 实测过 database is locked）。兜底 3s：worker
     // 卡死也不能拖着 daemon 不退。
-    const forceExit = setTimeout(() => process.exit(0), 3_000);
+    // WAL 并回主库再退：下一个进程（升级后重启）打开时只剩一个完整文件，
+    // 不必依赖它去回放一个孤儿 -wal——升级期最容易出岔子的正是这里。
+    const closeDb = (): void => {
+      try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        db.close();
+      } catch {
+        /* 已关/已坏：退出即可，句柄由 OS 收 */
+      }
+    };
+    const forceExit = setTimeout(() => {
+      closeDb();
+      process.exit(0);
+    }, 3_000);
     hookPipeline
       .stop()
       .catch(() => {})
       .finally(() => {
         clearTimeout(forceExit);
+        closeDb();
         process.exit(0);
       });
   };

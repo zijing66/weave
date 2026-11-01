@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { getDbPath } from './paths.js';
@@ -221,30 +221,149 @@ CREATE TABLE IF NOT EXISTS event_images (
 );
 `;
 
-/** Open (creating + migrating if needed) the weave database. */
+/** schema 版本（写进 PRAGMA user_version）：结构有变就递增，迁移前据此备份。 */
+const SCHEMA_VERSION = 1;
+/** 迁移备份保留份数（`<dataDir>/backups/`，每份按库大小计）。 */
+const BACKUP_KEEP = 3;
+
+/**
+ * 损坏类错误：SQLite 在解析 schema / 读页时给出的那几条。只有这一类才走
+ * 「隔离 + 重建」——权限、锁之类的错误重建只会把用户数据白扔掉。
+ */
+function isCorruptionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /malformed database schema|database disk image is malformed|file is not a database|SQLITE_CORRUPT/i.test(
+    msg,
+  );
+}
+
+function userVersionOf(db: DatabaseSync): number {
+  const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
+  return typeof row?.user_version === 'number' ? row.user_version : 0;
+}
+
+/**
+ * 迁移前备份：库的 user_version 落后于当前代码时才做（升级到带版本号的版本、
+ * 以及以后每次结构变更）。走 `VACUUM INTO`——WAL 模式下直接复制主库会漏掉还在
+ * `-wal` 里的已提交页，VACUUM INTO 在同一连接上取一致性快照。备份失败只记日志：
+ * 盘满/没权限不该挡住启动。
+ */
+function backupIfMigrating(db: DatabaseSync, dbPath: string): void {
+  if (dbPath === ':memory:') return;
+  const current = userVersionOf(db);
+  if (current >= SCHEMA_VERSION) return;
+  const objects = db.prepare('SELECT count(*) AS n FROM sqlite_master').get() as
+    | { n: number }
+    | undefined;
+  if (!objects || objects.n === 0) return; // 新库，没有可备份的东西
+  const dir = path.join(path.dirname(dbPath), 'backups');
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = path.join(dir, `weave-v${current}-${stamp}.db`);
+  try {
+    db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+    console.log(`[weave] database backup before migration: ${dest}`);
+    pruneBackups(dir);
+  } catch (err) {
+    console.error(
+      `[weave] database backup failed (continuing): ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+function pruneBackups(dir: string): void {
+  try {
+    const files = readdirSync(dir)
+      .filter((n) => n.startsWith('weave-v') && n.endsWith('.db'))
+      .sort();
+    for (const stale of files.slice(0, Math.max(0, files.length - BACKUP_KEEP))) {
+      try {
+        unlinkSync(path.join(dir, stale));
+      } catch {
+        /* 删不掉就留着，下次再试 */
+      }
+    }
+  } catch {
+    /* 目录读不到：备份已写成功与否由 VACUUM 那步决定 */
+  }
+}
+
+/**
+ * 损坏的库隔离到旁边、重建空库继续启动。dashboard 起不来等于全部功能消失；
+ * 坏文件留在 `.corrupt-<时间戳>` 里（连 -wal/-shm 一起），事后可抢救。
+ */
+function quarantineAndRebuild(dbPath: string, err: unknown): DatabaseSync {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const quarantine = `${dbPath}.corrupt-${stamp}`;
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      if (existsSync(dbPath + suffix)) renameSync(dbPath + suffix, quarantine + suffix);
+    } catch {
+      /* 占着搬不动：下面重建会失败，错误照常上抛 */
+    }
+  }
+  const note = err instanceof Error ? err.message : String(err);
+  console.error(
+    `[weave] database is corrupt (${note}); moved to ${quarantine} and starting with a fresh one. ` +
+      `Recover the old data with: sqlite3 "${quarantine}" ".recover" | sqlite3 "${dbPath}"`,
+  );
+  return openAndMigrate(dbPath);
+}
+
+/**
+ * Open (creating + migrating if needed) the weave database. 损坏类错误在隔离
+ * 重建后继续启动（见 quarantineAndRebuild），其余错误原样上抛。
+ */
 export function openDatabase(dbPath: string = getDbPath()): DatabaseSync {
   if (dbPath !== ':memory:') {
     mkdirSync(path.dirname(dbPath), { recursive: true });
   }
+  try {
+    return openAndMigrate(dbPath);
+  } catch (err) {
+    if (!isCorruptionError(err)) throw err;
+    return quarantineAndRebuild(dbPath, err);
+  }
+}
+
+function openAndMigrate(dbPath: string): DatabaseSync {
   const db = new DatabaseSync(dbPath);
-  // WAL 允许跨连接并发读写，但写写仍互斥：inbox 消费线程持有第二个连接，
-  // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。必须先于下面那条
-  // WAL pragma——后者是改写头部的独占写，daemon 正在启动（跑 SCHEMA/迁移）
-  // 时另起的 CLI 撞上它就是无重试的 SQLITE_IOERR（Windows 上报 disk I/O error）。
-  db.exec('PRAGMA busy_timeout = 5000');
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA foreign_keys = ON');
-  rebuildOrchestrations(db);
-  db.exec(SCHEMA);
-  // 消息域重塑：session_messages 退役（消息 = 纯递送管道，本地文件 + 内存态）。
-  // 存量行均为测试数据，随表删；DROP 幂等。
-  db.exec('DROP TABLE IF EXISTS session_messages');
-  migrateHookRulesColumns(db);
-  migrateProjectsColumns(db);
-  migrateProjectPaths(db);
-  migrateSessionWatchesColumns(db);
-  migrateUploadsColumns(db);
-  return db;
+  try {
+    // WAL 允许跨连接并发读写，但写写仍互斥：inbox 消费线程持有第二个连接，
+    // 默认 busy_timeout=0 会让瞬时争用直接抛 SQLITE_BUSY。必须先于下面那条
+    // WAL pragma——后者是改写头部的独占写，daemon 正在启动（跑 SCHEMA/迁移）
+    // 时另起的 CLI 撞上它就是无重试的 SQLITE_IOERR（Windows 上报 disk I/O error）。
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA foreign_keys = ON');
+    // 打开就是坏的（页损坏/截断）：在跑任何迁移前挑明，交给上层隔离重建。
+    // quick_check 只扫结构一致性，比 integrity_check 快得多，启动用足够。
+    const check = db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
+    if (check?.quick_check !== undefined && check.quick_check !== 'ok') {
+      throw new Error(`malformed database schema (${check.quick_check})`);
+    }
+    backupIfMigrating(db, dbPath);
+    rebuildOrchestrations(db);
+    db.exec(SCHEMA);
+    // 消息域重塑：session_messages 退役（消息 = 纯递送管道，本地文件 + 内存态）。
+    // 存量行均为测试数据，随表删；DROP 幂等。
+    db.exec('DROP TABLE IF EXISTS session_messages');
+    migrateHookRulesColumns(db);
+    migrateProjectsColumns(db);
+    migrateProjectPaths(db);
+    migrateSessionWatchesColumns(db);
+    migrateUploadsColumns(db);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    return db;
+  } catch (err) {
+    // 抛错时连接还开着：Windows 上文件被占会让隔离改名失败，必须先关
+    try {
+      db.close();
+    } catch {
+      /* 已关或底层坏透：上层按原错误处理 */
+    }
+    throw err;
+  }
 }
 
 /**

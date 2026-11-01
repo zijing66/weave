@@ -7,8 +7,12 @@
     "weave": "./bin/weave.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "scripts"
   ],
+  "scripts": {
+    "preinstall": "node ./scripts/preinstall.mjs"
+  },
   "sideEffects": false,
   "author": "zijing66",
   "license": "Apache-2.0",

@@ -174,6 +174,10 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
   // Umbrella manifest: the five are BOTH dependencies (npm requirement) and
   // bundleDependencies (include them in the tarball instead of fetching).
   await cp(path.join(root, 'packages', 'weave', 'bin'), path.join(stage, 'bin'), { recursive: true });
+  // 安装前停机脚本：npm 全局安装时跑它，避免旧 daemon 占着库去换包
+  await cp(path.join(root, 'packages', 'weave', 'scripts'), path.join(stage, 'scripts'), {
+    recursive: true,
+  });
   await cp(path.join(root, 'packages', 'weave', 'README.md'), path.join(stage, 'README.md'));
   await cp(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
   const bundled = PACKAGES.map((d) => `@weavecode/${d.replace('weave-', '')}`);
