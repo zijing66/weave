@@ -10,10 +10,17 @@ import { cn } from '@/lib/utils';
  * 裁掉；水平位置夹在视口内，靠右的字段也不会溢出。点击可切换（触屏没有 hover），
  * 滚动/缩放自动收起（fixed 坐标会跟着失真）。
  */
+
+/** 同一次手势的间隔上限：触屏/键盘的动作里合成 hover/focus 先到、click 后到，
+ *  盖章后这么久以内的 click 只确保显示、不反转（否则 tap 等于没反应）。 */
+const GESTURE_GAP_MS = 500;
+
 export function FieldHint(props: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [box, setBox] = useState<{ left: number; top: number; width: number } | null>(null);
+  const shownAt = useRef(0);
   const show = (): void => {
+    shownAt.current = Date.now();
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
     const width = Math.min(280, window.innerWidth - 24);
@@ -46,13 +53,16 @@ export function FieldHint(props: { children: ReactNode; className?: string }) {
         onFocus={show}
         onMouseLeave={hide}
         onBlur={hide}
-        onClick={() => (box ? hide() : show())}
+        onClick={() => {
+          if (box && Date.now() - shownAt.current > GESTURE_GAP_MS) hide();
+          else show();
+        }}
         className={cn(
-          'ml-0.5 -translate-y-1 shrink-0 rounded-full text-neutral-600 hover:text-neutral-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
+          'ml-1 inline-flex shrink-0 items-center rounded-full text-neutral-500 hover:text-neutral-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
           props.className,
         )}
       >
-        <HelpCircle className="h-2.5 w-2.5" />
+        <HelpCircle className="h-3 w-3" />
       </button>
       {box &&
         createPortal(

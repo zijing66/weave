@@ -1498,7 +1498,7 @@ function TemplateSection({
         )}
         {icon}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
-        {hint && <FieldHint className="-translate-y-0.5">{hint}</FieldHint>}
+        {hint && <FieldHint>{hint}</FieldHint>}
         {tag ?? (count !== undefined && <Badge variant="other">{count}</Badge>)}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}

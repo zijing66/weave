@@ -796,7 +796,7 @@ export function StatuslinePanel({
               }
             />
             {t('statusline.powerlineStyle')}
-            <FieldHint className="-translate-y-0.5">{t('statusline.powerlineHint')}</FieldHint>
+            <FieldHint>{t('statusline.powerlineHint')}</FieldHint>
           </label>
 
           {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
@@ -830,12 +830,12 @@ export function StatuslinePanel({
                 allowNone
                 onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
               />
-              <FieldHint className="-translate-y-0.5">{t('statusline.nerdFontHint')}</FieldHint>
+              <FieldHint>{t('statusline.nerdFontHint')}</FieldHint>
             </div>
           )}
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             {t('statusline.logo')}
-            <FieldHint className="-translate-y-0.5">{t('statusline.logoHint')}</FieldHint>
+            <FieldHint>{t('statusline.logoHint')}</FieldHint>
             {/* The badge is fixed (text and visibility are not user settings);
                 only its colour below is configurable. */}
             <span className="rounded bg-neutral-900 px-2 py-0.5 font-mono text-neutral-300">
@@ -852,7 +852,7 @@ export function StatuslinePanel({
 
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             {t('statusline.separator')}
-            <FieldHint className="-translate-y-0.5">{t('statusline.separatorHint')}</FieldHint>
+            <FieldHint>{t('statusline.separatorHint')}</FieldHint>
             <input
               value={config.separator}
               disabled={!editable}

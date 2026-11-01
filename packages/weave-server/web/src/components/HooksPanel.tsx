@@ -396,7 +396,7 @@ function CaptureSection() {
     <Card>
       <CardHeader className="flex-row items-center gap-2 space-y-0">
         <CardTitle className="text-sm">{t('hooks.capture.title')}</CardTitle>
-        <FieldHint className="-translate-y-0.5">
+        <FieldHint>
           {t('hooks.capture.hint')}
           <br />
           {t('hooks.capture.note')}
@@ -830,7 +830,7 @@ export function HooksPanel({
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-sm">{t('hooks.pluginsAndRules')}</CardTitle>
-          <FieldHint className="-translate-y-0.5">
+          <FieldHint>
             {mode === 'project' ? t('hooks.plugins.projectHint') : t('hooks.plugins.hint')}
           </FieldHint>
         </CardHeader>

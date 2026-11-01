@@ -147,7 +147,7 @@ export const hooksZh = {
   // —— user 档采集（§6-2d） ——
   'hooks.capture.title': '事件采集（user 档）',
   'hooks.capture.hint': '跨项目采集全部会话事件',
-  'hooks.capture.note': '安装即启用；项目档已有的采集组会被自动清理，不会重复采集',
+  'hooks.capture.note': '开启后立即生效；重复的采集配置会被自动清理，同一个事件只记一次。',
   'hooks.capture.toggleTip': '安装 / 停用 user 档事件采集',
   'hooks.capture.onOk': 'user 档采集已安装',
   'hooks.capture.offOk': 'user 档采集已停用',
@@ -307,7 +307,7 @@ export const hooksEn: Record<keyof typeof hooksZh, string> = {
   'hooks.capture.title': 'Event capture (user scope)',
   'hooks.capture.hint': 'Captures session events across every project',
   'hooks.capture.note':
-    'Install = enabled; existing project-scope capture groups are cleaned up so nothing is captured twice',
+    'Takes effect immediately; duplicate capture config is cleaned up automatically, so each event is recorded once.',
   'hooks.capture.toggleTip': 'Install / disable user-scope event capture',
   'hooks.capture.onOk': 'User-scope capture installed',
   'hooks.capture.offOk': 'User-scope capture disabled',

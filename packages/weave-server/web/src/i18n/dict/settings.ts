@@ -12,7 +12,7 @@ export const settingsZh = {
   'settings.petPickHint': '想换造型？让 agent 跑内置技能 weave-pet-hatcher 孵一只新的。',
   'settings.petNone': '还没有宠物资产——跑一次内置技能 weave-pet-hatcher 即可孵一只。',
   'settings.petNotify': '状态提醒',
-  'settings.petNotifyHint': '待答/失败时宠物头顶冒气泡，并弹系统通知（与 dashboard 提醒同源去重）。',
+  'settings.petNotifyHint': '待答或失败时，宠物头顶冒出一个气泡并弹系统通知；与 dashboard 的提醒不会重复。',
   'settings.sectionAi': 'AI',
   'settings.sectionExport': '导出',
   'settings.sectionAbout': '关于',
@@ -106,7 +106,7 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.petNone': 'No pet assets yet — run the built-in weave-pet-hatcher skill to hatch one.',
   'settings.petNotify': 'Status alerts',
   'settings.petNotifyHint':
-    'Bubble + system notification on pending questions / failures (deduped with dashboard alerts).',
+    'Shows a bubble over the pet and a system notification for pending questions or failures; the dashboard alert is not duplicated.',
   'settings.sectionAi': 'AI',
   'settings.sectionExport': 'Export',
   'settings.sectionAbout': 'About',
