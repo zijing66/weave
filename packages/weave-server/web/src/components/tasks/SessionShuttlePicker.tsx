@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Folder, Search, X } from 'lucide-react';
+import { ChevronLeft, Folder, Search, X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { sessionLabel } from '@/lib/hook-payload';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { STATUS_KEY, type SessionStatus } from './session-status';
 
 /**
- * 会话穿梭选择器（`#` 触发，层级同文件选择器）：左栏 = 项目、右栏 = 该项目下的
- * 会话（带终端状态图标与文案——与会话列表同一份状态机，`statuses` 由调用方从
- * 全局状态总线取）。键盘是主路径：**←→ 换层**（左＝回项目栏，右＝进会话栏）、
+ * 会话穿梭选择器（`#` 触发，层级同文件选择器）：桌面左栏 = 项目、右栏 = 该项目
+ * 下的会话（带终端状态图标与文案——与会话列表同一份状态机，`statuses` 由调用方
+ * 从全局状态总线取）。键盘是主路径：**←→ 换层**（左＝回项目栏，右＝进会话栏）、
  * **↑↓ 栏内移动**、**Enter 落定**（项目行＝下钻，会话行＝选定）、Esc 先清搜索
  * 再关；可打印字符直接进搜索框——监听挂 document 捕获阶段，焦点落在哪儿都还能
  * 用键盘（FilePicker 同款）。搜索时跨全部项目平铺（每行带所属项目），清空即回
  * 层级模式。
+ *
+ * 移动端一屏一列（同 FilePicker）：项目列表 ⇄ 会话列表两屏下钻，头部返回箭头 +
+ * 系统返回手势都归「回项目列表」，退无可退才关弹窗；触屏单击会话行直接落定。
  */
 
 export function SessionShuttlePicker({
@@ -39,11 +43,14 @@ export function SessionShuttlePicker({
   onClose: () => void;
 }) {
   const t = useT();
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [query, setQuery] = useState('');
   /** 焦点在哪一栏（层级模式才有意义；搜索态恒在右栏的结果列表上）。 */
   const [col, setCol] = useState<'projects' | 'sessions'>('sessions');
   const [projIdx, setProjIdx] = useState(0);
   const [sessIdx, setSessIdx] = useState(0);
+  /** 窄屏两屏下钻：项目列表 ⇄ 会话列表（同 FilePicker 的 list/preview）。 */
+  const [screen, setScreen] = useState<'projects' | 'sessions'>('sessions');
 
   const searchRef = useRef<HTMLInputElement>(null);
   const projListRef = useRef<HTMLUListElement>(null);
@@ -110,6 +117,12 @@ export function SessionShuttlePicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightRows.length]);
 
+  // 窄屏层级态焦点栏跟屏走：一屏一列，↑↓/Enter 永远作用于看得见的那份（桌面
+  // 两栏各有焦点不动）；搜索态不管——平铺列表只认会话栏。
+  useEffect(() => {
+    if (!isDesktop && !flat) setCol(screen);
+  }, [isDesktop, flat, screen]);
+
   // 高亮项滚进视野：↑↓ 连滑会走出可视区（两栏各自滚各自的）
   useEffect(() => {
     projListRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -135,8 +148,16 @@ export function SessionShuttlePicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  // 移动端返回键/侧滑 = 关闭弹窗
+  // 移动端返回键/侧滑：先归弹窗自己的层（会话屏回项目列表 → 清搜索），退无可退才关
   useBackPop(true, () => {
+    if (!isDesktop && !flat && screen === 'sessions') {
+      setScreen('projects');
+      return true;
+    }
+    if (query !== '') {
+      setQuery('');
+      return true;
+    }
     onClose();
     return true;
   });
@@ -161,18 +182,27 @@ export function SessionShuttlePicker({
         setQuery(''); // 搜索态 ← 清搜索回层级
         return;
       }
+      // 窄屏两屏下钻：会话屏 ← 回项目屏（同返回手势）
+      if (!isDesktop && screen === 'sessions') {
+        setScreen('projects');
+        return;
+      }
       if (col === 'sessions') setCol('projects');
       return;
     }
     if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (!flat && col === 'projects') setCol('sessions');
+      if (!flat && col === 'projects') {
+        if (!isDesktop) setScreen('sessions');
+        setCol('sessions');
+      }
       return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
       // 项目行的 Enter = 下钻（与 → 同义）；会话行的 Enter 才是落定
       if (!flat && col === 'projects') {
+        if (!isDesktop) setScreen('sessions');
         setCol('sessions');
         return;
       }
@@ -208,16 +238,32 @@ export function SessionShuttlePicker({
     focused ? 'bg-violet-500/15 text-neutral-100' : 'bg-violet-500/[0.07] text-neutral-200';
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
+      onClick={onClose}
+    >
       {/* h-[70%] 不用 70dvh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
       <div
-        className="flex h-[70%] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac"
+        className="flex h-[70%] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 头：标题 + 搜索 */}
+        {/* 头：标题 + 搜索。窄屏会话屏换「← 项目名」——箭头即回项目列表。 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
+          {!isDesktop && !flat && screen === 'sessions' && (
+            <button
+              type="button"
+              title={t('tasks.fileBack')}
+              aria-label={t('tasks.fileBack')}
+              onClick={() => setScreen('projects')}
+              className="-ml-1 rounded p-1 text-neutral-400 hover:text-neutral-100"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
           <p className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
-            {t('tasks.sessionPickerTitle')}
+            {!isDesktop && !flat && screen === 'sessions'
+              ? (groups[projIdx]?.name ?? t('tasks.sessionPickerTitle'))
+              : t('tasks.sessionPickerTitle')}
           </p>
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
@@ -250,9 +296,10 @@ export function SessionShuttlePicker({
           </button>
         </div>
 
-        {/* 体：项目 | 会话（层级）；搜索态右栏独占（平铺结果，每行带所属项目）。 */}
+        {/* 体：项目 | 会话（层级）；搜索态右栏独占（平铺结果，每行带所属项目）。
+            窄屏一屏一列：项目列表 ⇄ 会话列表两屏下钻（同 FilePicker 的 list/preview）。 */}
         <div className="flex min-h-0 flex-1">
-          {!flat && (
+          {!flat && (isDesktop || screen === 'projects') && (
             <ul
               ref={projListRef}
               role="listbox"
@@ -260,7 +307,10 @@ export function SessionShuttlePicker({
               onMouseMove={() => {
                 kbdNav.current = false;
               }}
-              className="w-44 shrink-0 overflow-y-auto overscroll-contain border-r border-edge/[0.06] py-1"
+              className={cn(
+                'shrink-0 overflow-y-auto overscroll-contain py-1',
+                isDesktop ? 'w-44 border-r border-edge/[0.06]' : 'min-h-0 w-full',
+              )}
             >
               {groups.map((g, i) => (
                 <li key={g.projectId ?? 'none'}>
@@ -277,10 +327,13 @@ export function SessionShuttlePicker({
                     onClick={() => {
                       setProjIdx(i);
                       setCol('projects');
+                      // 窄屏点项目行 = 下钻进该项目的会话列表（同文件选择器进目录）
+                      if (!isDesktop) setScreen('sessions');
                     }}
                     onDoubleClick={() => {
                       setProjIdx(i);
                       setCol('sessions');
+                      if (!isDesktop) setScreen('sessions');
                     }}
                     className={cn(
                       'flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs transition-colors',
@@ -302,7 +355,11 @@ export function SessionShuttlePicker({
             onMouseMove={() => {
               kbdNav.current = false;
             }}
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-1"
+            className={cn(
+              'min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain py-1',
+              // 窄屏项目屏：会话列表让位（一屏一列）
+              !isDesktop && !flat && screen === 'projects' && 'hidden',
+            )}
           >
             {rightRows.length === 0 && (
               <li className="px-3 py-6 text-11 text-neutral-500">{t('orch.pickerEmpty')}</li>
@@ -325,6 +382,8 @@ export function SessionShuttlePicker({
                     onClick={() => {
                       setSessIdx(i);
                       setCol('sessions');
+                      // 触屏没有可靠的双击，会话也没有预览步骤：单击直接落定
+                      if (!isDesktop) onPick(s.sessionId, sessionLabel(s.title, s.sessionId));
                     }}
                     onDoubleClick={() => onPick(s.sessionId, sessionLabel(s.title, s.sessionId))}
                     className={cn(

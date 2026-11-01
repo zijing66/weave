@@ -73,7 +73,7 @@ export function ConfigTree({
                   {setCount}/{node.children.length}
                 </span>
                 {node.spec?.group && (
-                  <span className="truncate text-10 text-neutral-700">{node.spec.group}</span>
+                  <span className="truncate text-10 text-neutral-600/70">{node.spec.group}</span>
                 )}
                 {handlers.isManaged(node.path) && (
                   <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1 text-10 text-amber-300">

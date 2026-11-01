@@ -190,7 +190,7 @@ export function ConfigValueRow({
           !open && (
             <>
               <span className="pt-1 text-10 text-neutral-600">{t('cfg.entryCount', { count: container.count })}</span>
-              {spec.group && <span className="truncate pt-1 text-10 text-neutral-700">{spec.group}</span>}
+              {spec.group && <span className="truncate pt-1 text-10 text-neutral-600/70">{spec.group}</span>}
             </>
           )
         ) : (

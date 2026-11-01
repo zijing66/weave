@@ -1673,7 +1673,8 @@ export function SessionMessages({
                   <span className="pointer-events-none absolute left-2 right-2 top-1.5 truncate text-xs text-neutral-600 max-lg:whitespace-normal max-lg:break-words">
                     {t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
                     {refHints.length > 0 && (
-                      <span className="text-neutral-700"> · {refHints.join(' · ')}</span>
+                      /* 比 600 再退半档用透明度而不是 700：浅色下 neutral≥700 已是底色侧（#d4d4d4），当文字色近乎隐形 */
+                      <span className="text-neutral-600/70"> · {refHints.join(' · ')}</span>
                     )}
                   </span>
                 )}

@@ -705,16 +705,22 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     expect(sessionPickerIntent('\\#')).toBe('escape');
   });
 
-  it('⑨ 会话目标胶囊：序列化展开成 `#<id>` 收件人标注（发送 = 本会话的 prompt）、进快照（ss/n）', () => {
+  it('⑨ 会话目标胶囊：序列化展开成 `#<id>「<名>」` 收件人标注（发送 = 本会话的 prompt）、进快照（ss/n）', () => {
     const chip = el('SPAN', [text('#目标会话')], {
       'data-session-target': 'sess-b',
       'data-session-name': '目标会话',
     });
-    // 正文只出 id：名字会重名也会改，胶囊上显示名字是给人看的
-    expect(serializeDraft(draft([chip, text('帮我看下这个报错')]))).toBe('#sess-b帮我看下这个报错');
+    // id 是标识，名字是宿主 SendMessage 唯一能寻址的形态
+    expect(serializeDraft(draft([chip, text('帮我看下这个报错')]))).toBe(
+      '#sess-b「目标会话」帮我看下这个报错',
+    );
     const root = draft([text('帮我看下 '), chip, text(' 这个报错')]);
     const snap = draftSnapshotOf(root as unknown as HTMLElement, []);
     expect(snap?.parts).toEqual([{ t: '帮我看下 ' }, { ss: 'sess-b', n: '目标会话' }, { t: ' 这个报错' }]);
+
+    // 没有名字（老快照/异常）时退回裸 id，别写出空括号
+    const bare = el('SPAN', [text('#x')], { 'data-session-target': 'sess-c' });
+    expect(serializeDraft(draft([bare]))).toBe('#sess-c');
   });
 
   it('⑩ placeholder 的触发符只摆 harness 真能敲的：`#` 恒有、`@` 看能力面、`$` 随候选清单', () => {

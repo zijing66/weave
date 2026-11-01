@@ -160,9 +160,10 @@ export function serializeDraft(root: Node | null): string {
       if ('text' in t) return t.text;
       if ('ref' in t) return t.ref;
       if ('cmd' in t) return `${t.sigil ?? '/'}${t.cmd}`;
-      // 会话目标胶囊 = 收件人标注：展开成 `#<会话 id>`（名字会重名也会改，
-      // 正文里认会话只认 id；胶囊上仍显示名字，那是给人看的）
-      if ('session' in t) return `#${t.session}`;
+      // 会话目标胶囊 = 收件人标注：`#<id>「<名字>」`——id 是标识（重名/改名都不
+      // 影响判断），名字是宿主 SendMessage 唯一能寻址的形态：它的解析器只认
+      // 名字 / `名字 [ref]` / agent id / uds|bridge，session id 不是地址
+      if ('session' in t) return t.name ? `#${t.session}「${t.name}」` : `#${t.session}`;
       // 附件胶囊：文件 = 路径；图片 = 独立成行的路径（前后补行边界）
       if (!isImageUpload({ mediaType: t.mediaType })) return t.path;
       // 行边界 = 没有邻居，或邻居是文本且贴着的那头已是换行；胶囊邻居（序列化成
@@ -278,8 +279,11 @@ export function applyDraftSnapshot(
     }
     if ('ss' in part) {
       if (buildSessionChip) root.appendChild(buildSessionChip(part.ss, part.n));
-      // 无构造器时落成正文形（`#<id>`）：退化路也要发出同一个标识
-      else root.appendChild(document.createTextNode(`#${part.ss}`));
+      // 无构造器时落成正文形：退化路也要发出与序列化一致的标注
+      else
+        root.appendChild(
+          document.createTextNode(part.n ? `#${part.ss}「${part.n}」` : `#${part.ss}`),
+        );
       continue;
     }
     if ('a' in part) {
