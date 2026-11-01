@@ -53,7 +53,7 @@ describe('内置仓落地（market/builtin）', () => {
     expect(await readdir(builtinRulesDir(dataDir))).toHaveLength(3);
   });
 
-  it('6 个内置工具包仍从落地仓发现，scope 不变', async () => {
+  it('7 个内置工具包仍从落地仓发现，scope 不变', async () => {
     await ensureBuiltinMarket({ libraries });
     const packs = await discoverToolkitPacks({
       root: builtinPacksDir(dataDir),
@@ -64,6 +64,7 @@ describe('内置仓落地（market/builtin）', () => {
       'md-lint',
       'mission-control',
       'weave-orchestration',
+      'weave-pet-hatcher',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);

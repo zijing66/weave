@@ -50,6 +50,11 @@ export function getUploadsDir(dir?: string): string {
   return path.join(dataRoots(dir).data, 'uploads');
 }
 
+/** 桌面宠物资产根（`<id>/pet.json + spritesheet.webp`；skill 生成、随数据迁移）。 */
+export function getPetsDir(dir?: string): string {
+  return path.join(dataRoots(dir).data, 'pets');
+}
+
 /** Absolute path to the daemon auth file (password hash + secrets, 0600). */
 export function getAuthPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'auth.json');

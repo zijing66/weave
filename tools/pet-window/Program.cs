@@ -1,0 +1,149 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Threading;
+using Microsoft.Web.WebView2.Core;
+
+namespace WeavePetWindow;
+
+/// <summary>
+/// weave 桌面宠物窗宿主：无边框、透明、置顶、不进任务栏的 WebView2 壳。
+/// 用法：weave-pet-window &lt;url&gt; --cookie &lt;sessionValue&gt; [--size WxH] [--pos X,Y]
+/// cookie 在首次导航前种进独立 profile——pet.html 与 dashboard 走同一条会话认证。
+/// 回收通道两条：stdin 一行（daemon 侧）或页面 postMessage "close"（用户侧）；
+/// 页面 postMessage "drag-start" 触发原生 DragMove。窗口标题恒为
+/// weave-pet-window（daemon 找窗用）。
+/// </summary>
+public static class Program
+{
+    public const string WindowTitle = "weave-pet-window";
+    public const string SessionCookieName = "weave_session";
+
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            MessageBox.Show("usage: weave-pet-window <url> --cookie <sessionValue> [--size WxH] [--pos X,Y]", WindowTitle);
+            return;
+        }
+
+        var url = args[0];
+        string? cookie = null;
+        int width = 200, height = 240, x = -1, y = -1;
+        for (int i = 1; i + 1 < args.Length; i += 2)
+        {
+            if (args[i] == "--size")
+            {
+                var parts = (args[i + 1] ?? "").Split('x');
+                if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
+                {
+                    width = Math.Clamp(w, 80, 2000);
+                    height = Math.Clamp(h, 80, 2000);
+                }
+            }
+            else if (args[i] == "--pos")
+            {
+                var parts = (args[i + 1] ?? "").Split(',');
+                if (parts.Length == 2 && int.TryParse(parts[0], out var px) && int.TryParse(parts[1], out var py))
+                {
+                    x = px;
+                    y = py;
+                }
+            }
+            else if (args[i] == "--cookie")
+            {
+                cookie = args[i + 1];
+            }
+        }
+
+        var app = new Application();
+        var window = BuildWindow(url, cookie, width, height, x, y);
+
+        // daemon 回收通道：stdin 一行（或 EOF）→ UI 线程关窗。后台线程读，
+        // 绝不挡 app.Run。
+        _ = Task.Run(() =>
+        {
+            try { Console.ReadLine(); } catch { /* stdin 已关 */ }
+            window.Dispatcher.BeginInvoke(() => window.Close());
+        });
+
+        app.Run(window);
+    }
+
+    private static Window BuildWindow(string url, string? cookie, int width, int height, int x, int y)
+    {
+        var webView = new Microsoft.Web.WebView2.Wpf.WebView2
+        {
+            DefaultBackgroundColor = System.Drawing.Color.Transparent,
+        };
+
+        var window = new Window
+        {
+            Title = WindowTitle,
+            Width = width,
+            Height = height,
+            WindowStyle = WindowStyle.None,
+            ResizeMode = ResizeMode.NoResize,
+            AllowsTransparency = true,
+            Background = System.Windows.Media.Brushes.Transparent,
+            Topmost = true,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            Content = webView,
+        };
+        if (x >= 0 && y >= 0)
+        {
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.Left = x;
+            window.Top = y;
+        }
+
+        window.Loaded += async (_, _) =>
+        {
+            try
+            {
+                // 独立用户数据目录：不污染用户 Edge 档，落在 weave cache（可弃档）
+                var userDataFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "weave", "cache", "pet-window-profile");
+                Directory.CreateDirectory(userDataFolder);
+                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+                await webView.EnsureCoreWebView2Async(env);
+                var core = webView.CoreWebView2;
+                core.Settings.AreDevToolsEnabled = false;
+                core.Settings.AreDefaultContextMenusEnabled = false;
+                core.Settings.IsZoomControlEnabled = false;
+                core.Settings.IsStatusBarEnabled = false;
+                // 会话 cookie 种进独立 profile：pet.html 的 fetch/EventSource 与
+                // dashboard 同一条认证路径（同源自动带），daemon 不开 query token 面
+                if (!string.IsNullOrEmpty(cookie))
+                {
+                    var target = new Uri(url);
+                    var c = core.CookieManager.CreateCookie(
+                        SessionCookieName, cookie, target.Host, "/");
+                    core.CookieManager.AddOrUpdateCookie(c);
+                }
+                // 页面侧通道：drag-start / close（宠物页拖拽与右键关闭走这里）
+                core.WebMessageReceived += (_, e) =>
+                {
+                    if (e.TryGetWebMessageAsString() == "drag-start")
+                        window.DragMove();
+                    else if (e.TryGetWebMessageAsString() == "close")
+                        window.Close();
+                };
+                core.Navigate(url);
+            }
+            catch (Exception ex)
+            {
+                // WebView2 runtime 缺失等启动失败：弹说明后退出，不留白窗
+                MessageBox.Show(
+                    "WebView2 initialization failed:\n" + ex.Message +
+                    "\n\nInstall the Evergreen WebView2 Runtime: https://developer.microsoft.com/microsoft-edge/webview2/",
+                    WindowTitle);
+                window.Close();
+            }
+        };
+
+        return window;
+    }
+}

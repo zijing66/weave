@@ -67,6 +67,8 @@ import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } 
 import { AuthService } from './dashboard-auth.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
+import { openPetWindow, shutdownPetWindow } from './pet-window.js';
+import { seedBuiltinPets } from './pet-seed.js';
 
 // 同 dev-entry：入口剥离 Claude Code child-session 标记与继承来的终端 pane
 // 定位键，防污染派生物（后者留着会让新会话把自己报成活在别人的 pane 里）。
@@ -569,6 +571,7 @@ export function startDaemon(): void {
     interruptRefresher.stop();
     syncScheduler.stop();
     watch.stop();
+    shutdownPetWindow();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
@@ -597,6 +600,11 @@ export function startDaemon(): void {
     writeDaemonState({ ...state, pid: process.pid, host: bindHost, tlsPort });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
+    // 桌面宠物窗：settings pet.enabled 开着才拉（本机回环地址，cookie 认证）。
+    // 内置默认宠先播种（缺失才拷），窗与 /pets 列表才有货。
+    void seedBuiltinPets().then(() => {
+      openPetWindow({ baseUrl: `http://localhost:${state.port}`, auth });
+    });
   });
   // 端口被占等 listen 失败：不挂这个就是 uncaughtException 静默死（stdio:ignore
   // 下连 stderr 都没有），CLI 那边只看到「已启动」却永远等不到 /health。

@@ -24,6 +24,7 @@ import { handleUploadRoutes } from './routes/uploads.js';
 import { handleSessionControlRoutes } from './routes/session-control.js';
 import { handlePathRefRoutes } from './routes/path-refs.js';
 import { handleVisualizationRoutes } from './routes/visualizations.js';
+import { handlePetRoutes } from './routes/pets.js';
 import { handleSessionInsightRoutes } from './routes/session-insights.js';
 import { handleWatchRoutes } from './routes/watches.js';
 import { openSessionTerminal, transcriptState } from './session-open.js';
@@ -116,7 +117,9 @@ export async function handleHooksRoutes(
     pathname === '/uploads' ||
     pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/') ||
-    pathname === '/visualizations/fragment';
+    pathname === '/visualizations/fragment' ||
+    pathname === '/pets' ||
+    pathname.startsWith('/pets/');
   if (!isOwnedPath) return false;
 
   // ---- hooks 管理域 → routes/hooks-admin.ts（规则 CRUD/插件面/派发/指令池）----
@@ -391,6 +394,9 @@ export async function handleHooksRoutes(
 
   // ---- 渲染块域 → routes/visualizations.ts（对话内嵌可视化 fragment 只读回显）----
   if (await handleVisualizationRoutes(req, res, deps, pathname, url)) return true;
+
+  // ---- 宠物域 → routes/pets.ts（桌面宠物资产列举与 spritesheet 回吐）----
+  if (await handlePetRoutes(req, res, deps, pathname, url)) return true;
 
   // ---- 手动重发（暂停闸解除动作）：prompt 通道 failed / delivered-未回执 才可重发 ----
   const resendMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/resend$/);

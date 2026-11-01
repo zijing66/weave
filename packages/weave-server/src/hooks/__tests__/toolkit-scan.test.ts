@@ -219,7 +219,7 @@ describe('toolkit-scan 识别与发现', () => {
     }
   });
 
-  it('内置真实树冒烟：6 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
+  it('内置真实树冒烟：7 个包、scope/类型齐全、md-lint 命中 weave 成分', async () => {
     const packs = await discoverToolkitPacks({ root: BUILTIN_ROOT, provenance: 'builtin' });
     const ids = packs.map((p) => p.id).sort();
     expect(ids).toEqual([
@@ -227,6 +227,7 @@ describe('toolkit-scan 识别与发现', () => {
       'md-lint',
       'mission-control',
       'weave-orchestration',
+      'weave-pet-hatcher',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);

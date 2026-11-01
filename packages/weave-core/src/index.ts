@@ -44,6 +44,7 @@ export {
   HARNESS_COMPACTION,
   HARNESS_SESSION_CONTROL,
   VISUALIZATION_PROTOCOL,
+  PET_SPRITE_CONTRACT,
   type HarnessCompaction,
   isHarness,
 } from './harness.js';

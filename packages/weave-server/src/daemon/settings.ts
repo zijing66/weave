@@ -73,6 +73,8 @@ export interface DaemonSettings {
   decision?: DecisionSettings;
   /** 对话导出 HTML 的自定义头（多份保存、一份在用——读时归一化）。 */
   htmlExport?: HtmlExportSettings;
+  /** 桌面宠物窗（开关/选宠/提醒——读时归一化）。 */
+  pet?: PetSettings;
 }
 
 export interface HooksSettings {
@@ -168,6 +170,19 @@ export const DEFAULT_DECISION_SETTINGS: DecisionSettings = { baseUrl: '', model:
 /** 缺省没有头配置（导出不带自定义头）。 */
 export const DEFAULT_HTML_EXPORT_SETTINGS: HtmlExportSettings = { activeId: null, profiles: [] };
 
+/** 桌面宠物窗：默认关、默认内置蜘蛛、提醒开。 */
+export interface PetSettings {
+  enabled: boolean;
+  petId: string;
+  notifications: boolean;
+}
+
+export const DEFAULT_PET_SETTINGS: PetSettings = {
+  enabled: false,
+  petId: 'weave-spider',
+  notifications: true,
+};
+
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   terminal: DEFAULT_TERMINAL_SETTINGS,
   locale: DEFAULT_LOCALE,
@@ -179,6 +194,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   server: DEFAULT_SERVER_SETTINGS,
   ai: DEFAULT_AI_SETTINGS,
   htmlExport: DEFAULT_HTML_EXPORT_SETTINGS,
+  pet: DEFAULT_PET_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -276,6 +292,22 @@ function normalizeHtmlExport(raw: unknown): HtmlExportSettings {
   return { activeId, profiles };
 }
 
+/** 宠物窗归一：布尔/字符串矫正；petId 认不回合法形状就回落内置默认宠。 */
+function normalizePet(raw: unknown): PetSettings {
+  const obj = (raw ?? {}) as Partial<PetSettings>;
+  return {
+    enabled: typeof obj.enabled === 'boolean' ? obj.enabled : DEFAULT_PET_SETTINGS.enabled,
+    petId:
+      typeof obj.petId === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/i.test(obj.petId)
+        ? obj.petId
+        : DEFAULT_PET_SETTINGS.petId,
+    notifications:
+      typeof obj.notifications === 'boolean'
+        ? obj.notifications
+        : DEFAULT_PET_SETTINGS.notifications,
+  };
+}
+
 function mergeDefaults(raw: unknown): DaemonSettings {
   const obj = (raw ?? {}) as Partial<DaemonSettings>;
   const term = (obj.terminal ?? {}) as Partial<TerminalSettings>;
@@ -287,6 +319,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const ai = (obj.ai ?? {}) as Partial<AiSettings>;
   const decision = (obj.decision ?? {}) as Partial<DecisionSettings>;
   const htmlExport = normalizeHtmlExport(obj.htmlExport);
+  const pet = normalizePet(obj.pet);
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -330,6 +363,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       model: typeof decision.model === 'string' ? decision.model.trim() : '',
     },
     htmlExport,
+    pet,
   };
 }
 
@@ -354,6 +388,8 @@ const KEYS = {
   decisionModel: 'decision.model',
   /** 整段 JSON（首个非标量键）：头配置是一组对象，不为它单开表。 */
   htmlExport: 'htmlExport',
+  /** 整段 JSON：宠物窗配置（开关/选宠/提醒）。 */
+  pet: 'pet.config',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -433,6 +469,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(jsonOf(map.get(KEYS.htmlExport)) != null
       ? { htmlExport: jsonOf(map.get(KEYS.htmlExport)) as Partial<HtmlExportSettings> }
       : {}),
+    ...(jsonOf(map.get(KEYS.pet)) != null
+      ? { pet: jsonOf(map.get(KEYS.pet)) as Partial<PetSettings> }
+      : {}),
   });
 }
 
@@ -473,6 +512,7 @@ function toEntries(settings: DaemonSettings): [string, string][] {
       KEYS.htmlExport,
       JSON.stringify(settings.htmlExport ?? DEFAULT_HTML_EXPORT_SETTINGS),
     ],
+    [KEYS.pet, JSON.stringify(settings.pet ?? DEFAULT_PET_SETTINGS)],
   ];
 }
 

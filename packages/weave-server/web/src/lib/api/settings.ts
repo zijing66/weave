@@ -55,6 +55,8 @@ export interface DaemonSettings {
   decision?: { baseUrl: string; model: string; apiKey?: string | null; apiKeySet?: boolean };
   /** 对话导出 HTML 的自定义头：多份保存、一份在用（activeId 为空 = 不带自定义头）。 */
   htmlExport?: HtmlExportSettings;
+  /** 桌面宠物窗（开关/选宠/提醒——读时归一化）。 */
+  pet?: PetSettings;
 }
 
 /** 一份自定义头（原样注入导出 HTML 的 `</head>` 之前；只在导出文件里生效）。 */
@@ -67,6 +69,13 @@ export interface HtmlExportProfile {
 export interface HtmlExportSettings {
   activeId: string | null;
   profiles: HtmlExportProfile[];
+}
+
+/** 桌面宠物窗配置（mirror of `PetSettings` in daemon/settings.ts — 保持同步）。 */
+export interface PetSettings {
+  enabled: boolean;
+  petId: string;
+  notifications: boolean;
 }
 
 export interface TerminalPresetMeta {

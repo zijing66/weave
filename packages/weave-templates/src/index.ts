@@ -115,3 +115,8 @@ export function builtinPacksRoot(): string {
 export function builtinRulesRoot(): string {
   return path.join(builtinMarketRoot(), 'rules');
 }
+
+/** 内置宠物资产根（`resources/pets/`，daemon 播种到 `<data>/pets/`）。 */
+export function builtinPetsRoot(): string {
+  return path.join(__dirname, 'resources', 'pets');
+}

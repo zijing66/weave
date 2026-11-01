@@ -105,6 +105,7 @@ describe('daemon /toolkit routes', () => {
       'md-lint',
       'mission-control',
       'weave-orchestration',
+      'weave-pet-hatcher',
       'weave-plugin-creator',
       'weave-user-guide',
     ]);

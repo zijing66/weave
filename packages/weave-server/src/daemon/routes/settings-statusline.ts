@@ -13,6 +13,7 @@ import { readAiKey, writeAiKey } from '../ai-config.js';
 import { readDecisionKey, writeDecisionKey } from '../decision-config.js';
 import { accessUrls } from '../tls.js';
 import { applyLaunchOnLogin } from '../auto-start.js';
+import { closePetWindow, openPetWindow } from '../pet-window.js';
 import { WEAVE_VERSION } from '../../version.js';
 import { readProjectConfig, writeProjectConfig } from '../../install/project-config.js';
 import type { ProjectConfig } from '../../install/project-config.js';
@@ -130,6 +131,12 @@ export async function handleSettingsRoutes(
       deps.hookEvents?.resetPrune();
       // 开机自启即刻注册/注销（内部吞错，不阻塞保存响应）。
       (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
+      // 宠物窗联动：enabled 开 → 拉起（已在跑则不动）；关 → 收窗。
+      if (saved.pet?.enabled) {
+        openPetWindow({ baseUrl: `http://localhost:${deps.port}`, auth: deps.auth ?? null });
+      } else {
+        closePetWindow();
+      }
       deps.dataBus?.emit({ key: 'settings' });
       sendJson(res, 200, withApiKeyStatus(saved, deps.aiKeyPath, deps.decisionKeyPath));
       return true;

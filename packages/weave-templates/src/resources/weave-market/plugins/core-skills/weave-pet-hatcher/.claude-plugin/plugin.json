@@ -1,0 +1,8 @@
+{
+  "name": "weave-pet-hatcher",
+  "version": "0.1.0",
+  "description": "Hatch a weave desktop pet: generate spritesheet rows, assemble the codex-compatible v2 atlas, validate, and install into the weave pets data dir",
+  "author": {
+    "name": "weave"
+  }
+}

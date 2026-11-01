@@ -73,6 +73,8 @@ import { pruneFileIndexes } from './project-files.js';
 import { pruneInstallTmp } from '../hooks/plugin-installer.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
+import { openPetWindow, shutdownPetWindow } from './pet-window.js';
+import { seedBuiltinPets } from './pet-seed.js';
 import { resolveStaticDir } from './static.js';
 
 // daemon 若启于 Claude Code 会话内，环境携带的 CLAUDE_CODE_CHILD_SESSION 会
@@ -537,6 +539,7 @@ async function main(): Promise<void> {
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
+    shutdownPetWindow();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
@@ -557,6 +560,10 @@ async function main(): Promise<void> {
     console.log(`[dev] child-session marker stripped: ${hadChildMarker}`);
     if (staticDir) console.log(`[dev] static: ${staticDir}`);
     else console.log('[dev] static: (web/dist not built — run pnpm build:web)');
+    // 桌面宠物：播种内置默认宠后按 settings 拉窗（与 start.ts 同口径）。
+    void seedBuiltinPets().then(() => {
+      openPetWindow({ baseUrl: `http://localhost:${port}`, auth });
+    });
   });
 }
 

@@ -310,6 +310,41 @@ export const VISUALIZATION_PROTOCOL = {
 } as const;
 
 /**
+ * 宠物精灵契约——桌面宠物窗的资产文法与动画时长表（跨 harness 统一，
+ * 模型侧由 skill 教；资产格式与 codex 的 v2 pet 兼容，社区现成资产可直接导入）。
+ * 网格/行号/帧时长与 codex TUI 的 default_animations 对齐（2026-10-31 考证）；
+ * 时长表是宿主内建默认，manifest 不写时长。
+ */
+export const PET_SPRITE_CONTRACT = {
+  /** 单元格尺寸与列数（8 列 × 192×208）。 */
+  cellWidth: 192,
+  cellHeight: 208,
+  columns: 8,
+  /** v1 = 9 行（仅标准动画）；v2 = 11 行（+2 行 16 方向注视）。 */
+  rowsV1: 9,
+  rowsV2: 11,
+  /** v2 标记值：manifest 缺此值按 v1 处理，2288 高的资产会被拒。 */
+  spriteVersionV2: 2,
+  /** spritesheet 文件大小上限（字节）。 */
+  maxSpritesheetBytes: 8 * 1024 * 1024,
+  /**
+   * 行号 → 帧数与时长（ms）。idle 单列时长；其余 uniform 帧间隔 + 尾帧加长。
+   * 播放模式：主循环 ×3 后接 idle 帧回落（loop_start = 主段帧数）。
+   */
+  animations: {
+    idle: { row: 0, frames: 6, durationsMs: [1680, 660, 660, 840, 840, 1920] },
+    'running-right': { row: 1, frames: 8, frameMs: 120, finalMs: 220 },
+    'running-left': { row: 2, frames: 8, frameMs: 120, finalMs: 220 },
+    waving: { row: 3, frames: 4, frameMs: 140, finalMs: 280 },
+    jumping: { row: 4, frames: 5, frameMs: 140, finalMs: 280 },
+    failed: { row: 5, frames: 8, frameMs: 140, finalMs: 240 },
+    waiting: { row: 6, frames: 6, frameMs: 150, finalMs: 260 },
+    running: { row: 7, frames: 6, frameMs: 120, finalMs: 220 },
+    review: { row: 8, frames: 6, frameMs: 150, finalMs: 280 },
+  } as const,
+} as const;
+
+/**
  * 可选 harness 键序（= 名单表）：`--harness` flag 值域与 init 交互多选的
  * 选项表共用（批 5）。经名单表派生而非 `Object.keys(HARNESS_EVENTS)`——
  * 单一来源，顺序即名单顺序。

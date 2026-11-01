@@ -9,6 +9,15 @@ import path from 'node:path';
 // it binds 127.0.0.1 only, so the machine boundary is the trust boundary.
 export default defineConfig(() => ({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      // pet.html 是桌面宠物窗的独立入口（WebView2 壳加载，不进 React 树）
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        pet: path.resolve(__dirname, 'pet.html'),
+      },
+    },
+  },
   resolve: {
     alias: {
       // 源码直引（批 1）：web 不依赖 workspace 包运行时，别名指到 core 源文件。

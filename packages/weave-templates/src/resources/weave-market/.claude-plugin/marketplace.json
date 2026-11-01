@@ -34,6 +34,12 @@
       "description": "Weave orchestration via MCP: list/get/create/update/delete/trigger/runs — workflow, argument shapes, response formats and pitfalls",
       "version": "0.1.0",
       "source": "./plugins/core-skills/weave-orchestration"
+    },
+    {
+      "name": "weave-pet-hatcher",
+      "description": "Hatch a weave desktop pet: generate spritesheet rows, assemble the codex-compatible v2 atlas, validate, and install into the weave pets data dir",
+      "version": "0.1.0",
+      "source": "./plugins/core-skills/weave-pet-hatcher"
     }
   ]
 }

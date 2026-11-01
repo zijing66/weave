@@ -7,6 +7,7 @@ import {
   type HtmlExportProfile,
   type HtmlExportSettings,
   type Locale,
+  type PetRow,
   type SessionRow,
   type SessionUploadsResult,
   type TerminalPreset,
@@ -17,6 +18,7 @@ import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
   Bell,
+  Cat,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -122,6 +124,7 @@ const SECTIONS: Array<{ id: string; key: MessageKey; icon: LucideIcon }> = [
   { id: 'service', key: 'settings.sectionService', icon: Server },
   { id: 'data', key: 'settings.sectionData', icon: Database },
   { id: 'notify', key: 'settings.sectionNotify', icon: Bell },
+  { id: 'pet', key: 'settings.sectionPet', icon: Cat },
   { id: 'ai', key: 'settings.sectionAi', icon: Sparkles },
   { id: 'export', key: 'settings.sectionExport', icon: FileCode },
 ];
@@ -257,6 +260,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   /** 清理进行中（进度 = 已清 / 预告数）；确认弹窗的目标（null = 关着）。 */
   const [cleaning, setCleaning] = useState<{ done: number; total: number } | null>(null);
   const [confirmClean, setConfirmClean] = useState<'unref' | string | null>(null);
+  /** 宠物资产清单（pet section 下拉用；打开时拉一次）。 */
+  const [pets, setPets] = useState<PetRow[]>([]);
   const fb = useActionFeedback();
   const { show } = useToast();
   const scale = useFontScale();
@@ -308,6 +313,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setDetail(null);
     setDetailChecked(new Set());
     void loadStorage();
+    api
+      .listPets()
+      .then(setPets)
+      .catch(() => setPets([])); // 老 daemon 无 /pets：下拉空着，不挡设置页
   }, [open, loadStorage]);
 
   /** 展开某会话：拉单件清单（懒加载），收起即清。 */
@@ -1139,6 +1148,77 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </ul>
             </div>
           )}
+          </SettingsSection>
+
+          <SettingsSection id="pet" icon={Cat} title={t('settings.sectionPet')}>
+
+          {/* 桌面宠物窗：开关 + 选宠 + 提醒。保存走统一的 handleSave（PUT /settings）。 */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Cat className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="text-xs font-medium text-neutral-300">{t('settings.petEnabled')}</label>
+              <span className="ml-auto">
+                <Switch
+                  checked={settings?.pet?.enabled ?? false}
+                  onChange={(v) =>
+                    setSettings((s) =>
+                      s === null ? s : { ...s, pet: { ...(s.pet ?? { petId: 'weave-spider', notifications: true }), enabled: v } },
+                    )
+                  }
+                  title={t('settings.petEnabled')}
+                />
+              </span>
+            </div>
+            <p className="text-11 text-neutral-500">{t('settings.petEnabledHint')}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Cat className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.petPick')}
+            </label>
+            {pets.length > 0 ? (
+              <select
+                value={settings?.pet?.petId ?? 'weave-spider'}
+                onChange={(e) =>
+                  setSettings((s) =>
+                    s === null
+                      ? s
+                      : { ...s, pet: { ...(s.pet ?? { enabled: false, notifications: true }), petId: e.target.value } },
+                  )
+                }
+                className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {pets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.displayName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-11 text-neutral-500">{t('settings.petNone')}</p>
+            )}
+            <p className="text-11 text-neutral-500">{t('settings.petPickHint')}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Bell className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="text-xs font-medium text-neutral-300">{t('settings.petNotify')}</label>
+              <span className="ml-auto">
+                <Switch
+                  checked={settings?.pet?.notifications ?? true}
+                  onChange={(v) =>
+                    setSettings((s) =>
+                      s === null ? s : { ...s, pet: { ...(s.pet ?? { enabled: false, petId: 'weave-spider' }), notifications: v } },
+                    )
+                  }
+                  title={t('settings.petNotify')}
+                />
+              </span>
+            </div>
+            <p className="text-11 text-neutral-500">{t('settings.petNotifyHint')}</p>
+          </div>
           </SettingsSection>
 
           <SettingsSection id="ai" icon={Sparkles} title={t('settings.sectionAi')}>
