@@ -557,6 +557,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   if (!open) return null;
 
+  // 只有存储账目要等统计返回来（扫面板两枪）；其余分段字段都有兜底值，直出。
+  const storageLoading = overview === null || unref === null;
+
   const preset = settings?.terminal.preset ?? 'auto';
   const customCommand = settings?.terminal.customCommand ?? '';
 
@@ -863,13 +866,17 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           {/* 对话附件存储清理（微信式）：总览大数字 + 图/文件占比条 + 「可安全清」
               一键 + 按会话多选批量清 + 展开钻取按单件/分组删。每项先给「是什么、
               多大、清了损什么」再动手；清理中显示进度。 */}
-          {overview !== null && unref !== null && (
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
-                <Database className="h-3.5 w-3.5 text-neutral-500" />
-                {t('settings.cleanStorage')}
-                <FieldHint>{t('settings.cleanStorageHint')}</FieldHint>
-              </label>
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Database className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.cleanStorage')}
+              <FieldHint>{t('settings.cleanStorageHint')}</FieldHint>
+            </label>
+            {/* 这一段要等两枪统计回来；标题与说明常在，只有内容区盖蒙版 */}
+            <div className="relative min-h-16">
+              <div className="space-y-1.5" aria-hidden={storageLoading || undefined}>
+                {overview !== null && unref !== null && (
+                  <>
 
               {/* 总览：大数字 + 图/文件占比条（微信存储页的形态） */}
               <div className="rounded-lg border border-edge/[0.08] bg-neutral-950/60 p-2.5">
@@ -1122,8 +1129,20 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   </ul>
                 </div>
               )}
+                  </>
+                )}
+              </div>
+              {storageLoading ? (
+                <div
+                  role="status"
+                  className="absolute inset-0 flex items-center justify-center rounded-lg bg-neutral-900/75 backdrop-blur-[1px]"
+                >
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-300" />
+                  <span className="sr-only">{t('common.loading')}</span>
+                </div>
+              ) : null}
             </div>
-          )}
+          </div>
           </SettingsSection>
 
           <SettingsSection id="notify" icon={Bell} title={t('settings.sectionNotify')}>
